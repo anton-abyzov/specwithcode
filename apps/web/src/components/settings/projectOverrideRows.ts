@@ -20,6 +20,7 @@ export const PROJECT_OVERRIDE_LABELS: Readonly<
   worktreeLocationMode: { label: "Worktree storage", page: "Storage" },
   worktreesDirectory: { label: "Custom worktree folder", page: "Storage" },
   defaultModelSelection: { label: "Model for new threads", page: "General" },
+  threadModelMode: { label: "New threads use", page: "Models" },
   defaultModelProviders: { label: "Providers for the recommended model", page: "General" },
   defaultRuntimeMode: { label: "Permissions for new threads", page: "General" },
   defaultThreadEnvMode: { label: "Workspace for new threads", page: "General" },
@@ -64,6 +65,7 @@ export const PROJECT_OVERRIDE_LABELS: Readonly<
   modelLanes: { label: "Model tiers", page: "Providers" },
   modelTiers: { label: "Regular and frontier models", page: "Providers" },
   adversarialReview: { label: "Adversarial review", page: "Providers" },
+  advisor: { label: "Advisor", page: "Models" },
   learnedModelPreferences: { label: "Learned model preferences", page: "Providers" },
   keepActiveThreadsPerProject: { label: "Keep active chats per project", page: "Storage" },
 };

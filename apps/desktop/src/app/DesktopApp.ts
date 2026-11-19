@@ -18,12 +18,12 @@ import * as ElectronPowerMonitor from "../electron/ElectronPowerMonitor.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import { installDesktopIpcHandlers } from "../ipc/DesktopIpcHandlers.ts";
+import { repairCommandLineToolAtLaunch } from "../ipc/methods/commandLineTool.ts";
 import * as DesktopAppActivation from "./DesktopAppActivation.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
 import {
   DesktopSuspendNoticeError,
-  notifyServerOfAwaySleep,
   notifyServerOfAwayWake,
   notifyServerOfSuspend,
   registerAwayWakeNotice,
@@ -35,6 +35,7 @@ import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "../backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopLocalService from "../backend/DesktopLocalService.ts";
 import { embeddedBackendRefusal, reservedServicePorts } from "../backend/localServiceAttach.ts";
+import { followLocalService } from "../backend/followLocalService.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
 import * as DesktopLegacyLocalStorage from "./DesktopLegacyLocalStorage.ts";
@@ -50,6 +51,10 @@ import * as DesktopState from "./DesktopState.ts";
 import * as DesktopRemoteUpdates from "../updates/DesktopRemoteUpdates.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as MacBundleName from "../updates/macBundleName.ts";
+import { refreshMacIconAfterUpdate } from "../updates/macIconRefresh.ts";
+import { isDesktopOffscreenTest } from "../electron/DesktopOffscreen.ts";
+import { runElectronSelfInstall } from "../install/electronSelfInstall.ts";
+import type { SelfInstallOutcome } from "../install/macSelfInstall.ts";
 import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
@@ -213,6 +218,18 @@ const handleFatalStartupError = Effect.fn("desktop.startup.handleFatalStartupErr
   }
   yield* shutdown.request;
   yield* electronApp.quit;
+});
+
+/** Waits until one of the app's windows is visible, plus a moment so a prompt lands over it. */
+const whenFirstWindowShown = Effect.gen(function* () {
+  while (
+    !Electron.BrowserWindow.getAllWindows().some(
+      (window) => !window.isDestroyed() && window.isVisible(),
+    )
+  ) {
+    yield* Effect.sleep("500 millis");
+  }
+  yield* Effect.sleep("2 seconds");
 });
 
 const fatalStartupCause = <E>(stage: string, cause: Cause.Cause<E>) =>
@@ -382,6 +399,38 @@ const bootstrap = Effect.gen(function* () {
           ),
         );
       }
+      const exposure = yield* DesktopServerExposure.DesktopServerExposure;
+      // A service that restarts on another port (a fleet update hands off to a
+      // server on the default port) would leave every window calling the old one.
+      yield* Effect.forkScoped(
+        followLocalService({
+          attached: localService.attached,
+          answers: localService.answers,
+          relocate: localService.relocate,
+          reattach: (service) =>
+            Effect.gen(function* () {
+              if (yield* Ref.get(state.quitting)) return;
+              yield* exposure.attachLocalService({ port: service.runtime.port });
+              yield* localService.attach(service);
+              yield* logBootstrapInfo("followed the Studio server to its new address", {
+                pid: service.runtime.pid,
+                origin: service.httpBaseUrl.href,
+                serverVersion: service.descriptor.serverVersion,
+              });
+              // Windows read the address again on their next topology poll; this
+              // wakes their reconnect now. No reload, so drafts and files stay.
+              yield* desktopWindow.handleBackendReady(service.httpBaseUrl);
+            }).pipe(
+              // Logged, then failed again, so the next check retries it.
+              Effect.catchCause((cause) =>
+                logBootstrapWarning("could not follow the Studio server to its new address", {
+                  origin: service.httpBaseUrl.href,
+                  cause: String(cause),
+                }).pipe(Effect.andThen(Effect.failCause(cause))),
+              ),
+            ),
+        }),
+      );
       return;
     }
   }
@@ -543,6 +592,31 @@ const startup = Effect.gen(function* () {
     Effect.catchCause((cause) => fatalStartupCause("whenReady", cause)),
   );
   yield* logStartupInfo("app ready");
+  // Opened from the disk image (or a translocated copy): offer to install into
+  // Applications before anything records this path, starts the backend or
+  // checks for updates. Installing relaunches from Applications.
+  const selfInstallContext = yield* Effect.context<never>();
+  const selfInstall = yield* Effect.promise(() =>
+    runElectronSelfInstall({
+      platform: environment.platform,
+      isPackaged: environment.isPackaged,
+      workDir: userDataPath,
+      log: (message, data) => {
+        void Effect.runPromiseWith(selfInstallContext)(logStartupInfo(message, data ?? {}));
+      },
+    }),
+  ).pipe(
+    Effect.catchCause((cause) =>
+      logStartupError("app install step unavailable", { cause: Cause.pretty(cause) }).pipe(
+        Effect.as<SelfInstallOutcome>({ kind: "continue", reason: "error" }),
+      ),
+    ),
+  );
+  if (selfInstall.kind === "exit") {
+    yield* logStartupInfo("quitting for the installed app", { reason: selfInstall.reason });
+    yield* electronApp.exit(0);
+    return yield* Effect.never;
+  }
   // An install updated from a release with an earlier bundle name (such as
   // "SpecWeave Studio (Alpha).app") renames itself before anything starts:
   // a script moves the bundle once this process has exited and reopens it.
@@ -571,6 +645,40 @@ const startup = Effect.gen(function* () {
     yield* electronApp.exit(0);
     return yield* Effect.never;
   }
+  // The first launch of each version re-registers the bundle so macOS draws its current icon.
+  const iconRefreshContext = yield* Effect.context<never>();
+  yield* Effect.forkScoped(
+    Effect.promise(() =>
+      refreshMacIconAfterUpdate({
+        platform: environment.platform,
+        isPackaged: environment.isPackaged,
+        execPath: process.execPath,
+        appVersion: environment.appVersion,
+        stateDir: environment.stateDir,
+        canAsk: !isDesktopOffscreenTest(),
+        whenWindowShown: () => Effect.runPromiseWith(iconRefreshContext)(whenFirstWindowShown),
+        ask: async (prompt) =>
+          (
+            await Electron.dialog.showMessageBox({
+              type: "info",
+              message: prompt.title,
+              detail: prompt.detail,
+              buttons: [...prompt.buttons],
+              defaultId: 0,
+              cancelId: 1,
+              noLink: true,
+            })
+          ).response,
+        log: (message, data) => {
+          void Effect.runPromiseWith(iconRefreshContext)(logStartupInfo(message, data ?? {}));
+        },
+      }),
+    ).pipe(
+      Effect.catchCause((cause) =>
+        logStartupError("could not refresh the app icon", { cause: Cause.pretty(cause) }),
+      ),
+    ),
+  );
   // After a manual install both apps can sit side by side; the older copy goes to the Trash.
   yield* Effect.forkScoped(
     Effect.promise(() =>
@@ -588,6 +696,24 @@ const startup = Effect.gen(function* () {
       ),
       Effect.catchCause((cause) =>
         logStartupError("could not remove an earlier app copy", { cause: Cause.pretty(cause) }),
+      ),
+      // Again once the earlier copies are gone, for a command that pointed into one of them.
+      Effect.andThen(repairCommandLineToolAtLaunch()),
+      Effect.catchCause((cause) =>
+        logStartupError("could not repair the specwithcode command", {
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    ),
+  );
+  // A specwithcode command that points into a copy of the app that is gone (moved or deleted) is
+  // pointed at this app right away, not only after the slower trash step above.
+  yield* Effect.forkScoped(
+    repairCommandLineToolAtLaunch().pipe(
+      Effect.catchCause((cause) =>
+        logStartupError("could not repair the specwithcode command", {
+          cause: Cause.pretty(cause),
+        }),
       ),
     ),
   );
@@ -610,10 +736,9 @@ const startup = Effect.gen(function* () {
   };
   yield* powerMonitor.onSimpleEvent("resume", checkIfStale("resume"));
   yield* powerMonitor.onSimpleEvent("unlock-screen", checkIfStale("unlock"));
-  // Handoff mode: the main window asks the local server to move running threads
-  // to the chosen machine before this Mac sleeps (no reveal; it may be hidden).
-  // The main process also tells the server directly, with the desktop service
-  // credential, so coordinator standbys hear of the sleep with no window open.
+  // Before this Mac sleeps the main process tells its server, with the desktop
+  // service credential, so coordinator standbys hear of the sleep with no window
+  // open. Sleep moves no thread.
   const handoffWindow = yield* DesktopWindow.DesktopWindow;
   const sleepLocalService = yield* DesktopLocalService.DesktopLocalService;
   const sleepPool = yield* DesktopBackendPool.DesktopBackendPool;
@@ -673,26 +798,17 @@ const startup = Effect.gen(function* () {
     Effect.forever,
     Effect.forkScoped,
   );
-  // Away mode's lid-close trigger (1267 AC-09), macOS only: the main process
-  // asks its own server, which decides from the Away settings and the battery
-  // and sends the target an away intent. When Away takes the sleep, the
-  // renderer's "move running threads" path is skipped. On wake or unlock the
-  // server cancels an intent still in its grace, or the wake card shows.
+  // A sleep is only told to this Mac's server, so coordinator standbys never read it
+  // as silence; it moves nothing (1390 AC-36). On wake or unlock (macOS) the server
+  // settles a lid close an earlier release sent, and the wake card shows if work moved.
   const awayOnMac = environment.platform === "darwin";
   const handoffDispatch = (action: string) =>
     handoffWindow.dispatchMenuAction(action, { reveal: false, target: "main" });
   yield* registerHandoffSleepNotice(
     powerMonitor,
-    handoffDispatch,
     notifyServerOfSuspend(localServer).pipe(
       Effect.provideService(HttpClient.HttpClient, sleepHttpClient),
     ),
-    awayOnMac
-      ? powerMonitor.isOnBatteryPower.pipe(
-          Effect.flatMap((onBattery) => notifyServerOfAwaySleep(localServer, onBattery)),
-          Effect.provideService(HttpClient.HttpClient, sleepHttpClient),
-        )
-      : undefined,
   );
   if (awayOnMac) {
     yield* registerAwayWakeNotice(

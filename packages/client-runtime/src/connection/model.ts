@@ -84,8 +84,16 @@ export class ConnectionTransientError extends Schema.TaggedError<ConnectionTrans
     traceId: Schema.optionalKey(Schema.String),
     /** The relay reached its tunnel but the machine did not answer: it is asleep or off. */
     machineOffline: Schema.optionalKey(Schema.Boolean),
+    /**
+     * The relay itself gave this device no answer (the request failed in
+     * transport or timed out), so nothing is known about the machine and this
+     * device's network may be in the way.
+     */
+    relayUnreachable: Schema.optionalKey(Schema.Boolean),
     /** The machine refused this client for a while; no retry comes sooner. */
     retryAfterMs: Schema.optionalKey(Schema.Number),
+    /** The machine waits for its owner to type this code (1327); `detail` says where. */
+    deviceApprovalCode: Schema.optionalKey(Schema.String),
   },
 ) {
   override get message(): string {
@@ -103,6 +111,20 @@ export class ConnectionBlockedError extends Schema.TaggedError<ConnectionBlocked
     serverUpdateRequired: Schema.optionalKey(Schema.Boolean),
     /** The host no longer accepts this device's approval; pairing again restores the connection. */
     reapprovalRequired: Schema.optionalKey(Schema.Boolean),
+    /**
+     * This device has no SpecWithCode Connect sign-in, and the route needs one;
+     * signing in restores the connection. Never set for a machine's own
+     * credential refusal, which signing in does not fix.
+     */
+    connectSignInRequired: Schema.optionalKey(Schema.Boolean),
+    /**
+     * The relay refused this window's Connect sign-in itself: its session token
+     * was missing or no longer accepted, or this device was removed from the
+     * account. A new sign-in fixes it. Never set for a DPoP proof the relay
+     * rejected or one this device could not make, which a sign-in does not
+     * fix (1417, AC-13).
+     */
+    connectSessionRefused: Schema.optionalKey(Schema.Boolean),
   },
 ) {
   override get message(): string {
@@ -153,6 +175,24 @@ export interface SupervisorConnectionState {
   readonly generation: number;
   readonly lastFailure: ConnectionAttemptError | null;
   readonly retryAt: number | null;
+  /**
+   * When this device last had a session with the machine in this run (epoch
+   * ms): when it was established while connected, when it ended afterwards.
+   * Absent or null when it has had none.
+   */
+  readonly lastConnectedAt?: number | null;
+  /**
+   * Since when this device has had no session while wanting one (epoch ms):
+   * when the last session ended, else when the connection was asked for.
+   * Null while connected or not wanted.
+   */
+  readonly lostAt?: number | null;
+  /**
+   * Why the latest attempt since {@link lostAt} failed. Unlike `lastFailure`
+   * it survives an explicit retry, so what a person reads about the machine
+   * does not blank while the retry runs.
+   */
+  readonly lossFailure?: ConnectionAttemptError | null;
 }
 
 export type ConnectionProjectionPhase = "disconnected" | "synchronizing" | "ready";

@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { IsoDateTime, NonNegativeInt, ProjectId, ThreadId } from "./baseSchemas.ts";
+import { EnvironmentId, IsoDateTime, NonNegativeInt, ProjectId, ThreadId } from "./baseSchemas.ts";
 import {
   LogicalProject,
   LogicalProjectMember,
@@ -128,8 +128,35 @@ export const ProjectLinkNote = Schema.Struct({
   name: ProjectMemoryName,
   revision: NonNegativeInt,
   content: bounded(PROJECT_MEMORY_FILE_BYTES),
+  /** The hash memory merges compare, from servers that send it (a link preview). */
+  contentSha256: Schema.optional(bounded(64)),
 });
 export type ProjectLinkNote = typeof ProjectLinkNote.Type;
+
+/** A routine this copy's coordinator owns, as the link review names it. */
+/** Most routines a link preview names; a copy with more lists the first ones. */
+export const PROJECT_LINK_ROUTINES_MAX = 200;
+export const ProjectLinkRoutine = Schema.Struct({
+  id: bounded(256),
+  title: bounded(1000),
+});
+export type ProjectLinkRoutine = typeof ProjectLinkRoutine.Type;
+
+/**
+ * A joining copy's version of a note the person chose not to keep. The kept copy
+ * records it as an earlier version of its own note, so the first memory merge
+ * replaces it on the joining copy instead of treating the two as concurrent edits.
+ */
+export const ProjectLinkSupersededNote = Schema.Struct({
+  name: ProjectMemoryName,
+  contentSha256: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/)),
+  /**
+   * The kept copy's version the person reviewed. A kept note edited since then
+   * was never weighed against the joining one, so nothing is recorded for it.
+   */
+  keptSha256: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/))),
+});
+export type ProjectLinkSupersededNote = typeof ProjectLinkSupersededNote.Type;
 
 /** Why this copy cannot take a role; the UI names the fix. */
 export const ProjectLinkRefusal = Schema.Literals([
@@ -211,10 +238,19 @@ export const ProjectLinkPreview = Schema.Struct({
   keepRefusal: Schema.NullOr(ProjectLinkRefusal),
   /** Null when this copy may join another as a member, otherwise why not. */
   joinRefusal: Schema.NullOr(ProjectLinkRefusal),
+  /** This machine keeps its coordinator when it joins. Absent before equal coordinators. */
+  equalCoordinators: Schema.optional(Schema.Literal(true)),
   /** A member's read-only copy of its coordinator's notes, goal and instructions. */
   replica: Schema.optional(Schema.NullOr(ProjectCoordinatorReplica)),
   /** After a takeover: coordinator turns this copy ran while it was unreachable. */
   ranWhileDisconnected: Schema.optional(Schema.Array(ProjectDisconnectedTurn)),
+  /**
+   * The routines this copy's coordinator owns. They stop running when this copy
+   * joins another as a member. Absent from servers that do not report them.
+   */
+  routines: Schema.optional(
+    Schema.Array(ProjectLinkRoutine).check(Schema.isMaxLength(PROJECT_LINK_ROUTINES_MAX)),
+  ),
 });
 export type ProjectLinkPreview = typeof ProjectLinkPreview.Type;
 
@@ -233,6 +269,12 @@ export const ProjectLinkPrepareInput = Schema.Struct({
   operationId: ProjectLinkOperationId,
   projectId: ProjectId,
   joining: LogicalProjectMember,
+  /**
+   * The caller checked that the joining machine keeps its coordinator when it accepts
+   * (`equalCoordinators`). Without it the kept copy refuses with `needs_update` and writes
+   * nothing: a caller from before equal coordinators never sends it.
+   */
+  equalCoordinators: Schema.optional(Schema.Literal(true)),
 });
 export type ProjectLinkPrepareInput = typeof ProjectLinkPrepareInput.Type;
 export const ProjectLinkPrepareResult = Schema.Struct({
@@ -256,6 +298,11 @@ export const ProjectLinkAcceptInput = Schema.Struct({
   coordinatorBinding: ProjectCoordinatorBinding,
   keptFingerprint: RepositoryFingerprint,
   sharedIcon: Schema.optionalKey(ProjectLinkSharedIcon),
+  /**
+   * The kept machine runs equal coordinators too, by the caller's check. Without it the
+   * joining copy refuses with `needs_update` and writes nothing.
+   */
+  equalCoordinators: Schema.optional(Schema.Literal(true)),
 });
 export type ProjectLinkAcceptInput = typeof ProjectLinkAcceptInput.Type;
 export const ProjectLinkAcceptResult = Schema.Struct({
@@ -286,6 +333,10 @@ export const ProjectLinkCommitInput = Schema.Struct({
   projectId: ProjectId,
   joining: LogicalProjectMember,
   notes: NoteWrites,
+  /** The joining copy's versions the person chose not to keep; older servers ignore it. */
+  superseded: Schema.optional(
+    Schema.Array(ProjectLinkSupersededNote).check(Schema.isMaxLength(4096)),
+  ),
 });
 export type ProjectLinkCommitInput = typeof ProjectLinkCommitInput.Type;
 export const ProjectLinkCommitResult = Schema.Struct({
@@ -308,6 +359,8 @@ export const ProjectUnlinkInput = Schema.Union([
     projectId: ProjectId,
     notes: NoteWrites,
     changeAnyway: Schema.optional(Schema.Boolean),
+    /** It runs a coordinator beside main (`startCoordinator`) and leaves with it. */
+    leaveCoordinator: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     side: Schema.Literal("coordinator"),
@@ -400,6 +453,26 @@ export const ProjectTakeoverInput = Schema.Struct({
   predecessor: Schema.optional(LogicalProjectMember),
 });
 export type ProjectTakeoverInput = typeof ProjectTakeoverInput.Type;
+
+/**
+ * What claiming a takeover's epoch on one other member's machine came to.
+ * `claimed`: that machine now takes steering for the project only from the new
+ * coordinator. `refused`: it answered, or this machine's access to it did, and
+ * no claim stands there. `unreachable`: no answer, or this machine has no link
+ * to it. Each machine is asked once per takeover call; calling the takeover
+ * again with the same operation id asks again.
+ */
+export const ProjectTakeoverEpochClaim = Schema.Struct({
+  /** The member's machine. */
+  machine: EnvironmentId,
+  /** That machine's name on this one; absent when this machine has no link to it. */
+  label: Schema.optional(bounded(256)),
+  outcome: Schema.Literals(["claimed", "refused", "unreachable"]),
+  /** Why the claim does not stand, in the server's words. */
+  detail: Schema.optional(bounded(500)),
+});
+export type ProjectTakeoverEpochClaim = typeof ProjectTakeoverEpochClaim.Type;
+
 export const ProjectTakeoverResult = Schema.Struct({
   operationId: ProjectLinkOperationId,
   logicalProject: LogicalProject,
@@ -409,6 +482,15 @@ export const ProjectTakeoverResult = Schema.Struct({
   /** When the replica this copy started from was taken; null without one. */
   replicaFrom: Schema.NullOr(IsoDateTime),
   replayed: Schema.Boolean,
+  /**
+   * After a person's takeover: one entry per other member machine, saying
+   * whether it took the new epoch. Only machines this copy lists as members
+   * are asked. Absent from older servers, and when a copy only starts its own
+   * coordinator.
+   */
+  epochClaims: Schema.optional(
+    Schema.Array(ProjectTakeoverEpochClaim).check(Schema.isMaxLength(256)),
+  ),
 });
 export type ProjectTakeoverResult = typeof ProjectTakeoverResult.Type;
 
@@ -469,6 +551,7 @@ export class ProjectLinkError extends Schema.TaggedError<ProjectLinkError>()("Pr
     "not_member",
     "superseded_conflict",
     "standby_unreachable",
+    "needs_update",
   ]),
   /** Names what differs, such as the two root repositories. */
   detail: Schema.optional(bounded(1000)),
@@ -502,6 +585,8 @@ export class ProjectLinkError extends Schema.TaggedError<ProjectLinkError>()("Pr
         "Another copy took over in a way this copy cannot confirm. Reload both machines and check which one coordinates.",
       standby_unreachable:
         "The Mac that takes over automatically did not answer. Choose Change anyway to go ahead without it.",
+      needs_update:
+        "One of the two machines is on a version from before every machine ran its own coordinator. Update SpecWithCode on both, then link again.",
     };
     return this.detail ? `${messages[this.code]} ${this.detail}` : messages[this.code];
   }

@@ -2,7 +2,6 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   connectionCatalogDisplayUrl,
   hasRelayRoute,
-  type EnvironmentConnectionPhase,
   type EnvironmentPresentation as BaseEnvironmentPresentation,
 } from "@specweave-studio/client-runtime/connection";
 import { Discovery } from "@specweave-studio/client-runtime/relay";
@@ -10,8 +9,14 @@ import type { EnvironmentId } from "@specweave-studio/contracts";
 import * as Option from "effect/Option";
 import { useMemo } from "react";
 
+import {
+  type ConnectAccountState,
+  connectAccountStateAtom,
+  connectSignInShown,
+} from "../cloud/connectAccountState";
 import { environmentCatalog } from "../connection/catalog";
-import { isThisMachineTarget } from "../connection/desktopLocal";
+import { txNow, useLocale } from "../i18n";
+import { translateDeviceRefusal } from "../studio/connectDevices.logic";
 import {
   environmentPresentations,
   environmentSummaries,
@@ -28,12 +33,38 @@ export interface EnvironmentPresentation extends BaseEnvironmentPresentation {
   readonly relayManaged: boolean;
 }
 
-function projectEnvironmentPresentation(
+const deviceRefusalText = (message: string) => translateDeviceRefusal(message, txNow);
+
+/**
+ * The connection with its sign-in mark dropped unless Clerk says signed out
+ * (1417). Until then the refusal is a startup step, neither a sign-in to ask
+ * for nor this machine refusing the window, so its "authentication" reason
+ * goes with it and every word keyed on that reason waits too.
+ */
+export function gateConnectSignIn<
+  T extends { readonly connectSignInRequired?: boolean; readonly blockedReason?: string },
+>(connection: T, account: ConnectAccountState): T {
+  if (connection.connectSignInRequired === undefined) return connection;
+  if (connectSignInShown(connection.connectSignInRequired, account)) return connection;
+  const { connectSignInRequired: _dropped, blockedReason, ...rest } = connection;
+  return (
+    blockedReason === undefined || blockedReason === "authentication"
+      ? rest
+      : { ...rest, blockedReason }
+  ) as T;
+}
+
+export function projectEnvironmentPresentation(
   environmentId: EnvironmentId,
   presentation: BaseEnvironmentPresentation,
+  account: ConnectAccountState,
 ): EnvironmentPresentation {
+  const gated = gateConnectSignIn(presentation.connection, account);
+  const error = gated.error;
   return {
     ...presentation,
+    // The device gate's refusal, in this window's language (1327).
+    connection: error ? { ...gated, error: deviceRefusalText(error) } : gated,
     environmentId,
     label: presentation.entry.target.label,
     displayUrl: connectionCatalogDisplayUrl(presentation.entry),
@@ -45,13 +76,17 @@ export function useEnvironments() {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const networkStatus = useAtomValue(environmentCatalog.networkStatusValueAtom);
   const presentationById = useAtomValue(environmentPresentations.presentationsAtom);
+  const account = useAtomValue(connectAccountStateAtom);
+  // A refusal is said in the window's language, so a language change redraws it.
+  const locale = useLocale();
 
   const environments = useMemo(
     () =>
       [...presentationById.entries()].map(([environmentId, presentation]) =>
-        projectEnvironmentPresentation(environmentId, presentation),
+        projectEnvironmentPresentation(environmentId, presentation, account),
       ),
-    [presentationById],
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- locale changes the projected text
+    [presentationById, account, locale],
   );
 
   return {
@@ -70,12 +105,13 @@ export function useEnvironment(
   environmentId: EnvironmentId | null,
 ): EnvironmentPresentation | null {
   const { presentation } = useEnvironmentPresentation(environmentId);
+  const account = useAtomValue(connectAccountStateAtom);
   return useMemo(
     () =>
       environmentId === null || presentation === null
         ? null
-        : projectEnvironmentPresentation(environmentId, presentation),
-    [environmentId, presentation],
+        : projectEnvironmentPresentation(environmentId, presentation, account),
+    [environmentId, presentation, account],
   );
 }
 
@@ -112,42 +148,11 @@ export function useConnectedEnvironmentIds() {
   return useAtomValue(environmentSummaries.connectedEnvironmentIdsAtom);
 }
 
-/**
- * Hosts that cannot be reached now: retrying, stopped or refused. A host on its
- * first connection attempt is not one yet, so a page load does not flash every
- * remote host as offline.
- *
- * This machine is never offline: its server shares this device, so a slow or
- * dropped answer means the app is busy (a stalled event loop, a full disk) and
- * catches up on its own. It counts only once the connection has stopped for
- * good ("error") or this build cannot talk to it ("unsupported").
- */
-export function isEnvironmentUnreachable(
-  phase: EnvironmentConnectionPhase,
-  isThisMachine = false,
-): boolean {
-  if (isThisMachine) return phase === "error" || phase === "unsupported";
-  return phase !== "connected" && phase !== "connecting";
-}
-
-/** The ids of {@link isEnvironmentUnreachable} environments, this machine judged as local. */
-export function unreachableEnvironmentIds(
-  environments: ReadonlyArray<
-    Pick<EnvironmentPresentation, "environmentId" | "entry" | "connection">
-  >,
-): ReadonlyArray<EnvironmentId> {
-  return environments
-    .filter((environment) =>
-      isEnvironmentUnreachable(
-        environment.connection.phase,
-        isThisMachineTarget(environment.entry),
-      ),
-    )
-    .map((environment) => environment.environmentId);
-}
-
-export function useUnreachableEnvironmentIds(): ReadonlySet<string> {
-  const { environments } = useEnvironments();
-  const key = unreachableEnvironmentIds(environments).join("\n");
-  return useMemo(() => new Set(key === "" ? [] : key.split("\n")), [key]);
-}
+export {
+  environmentReachState,
+  isEnvironmentUnreachable,
+  unreachableEnvironmentIds,
+  useMachineReachStates,
+  useUnreachableEnvironmentIds,
+  type MachineReachStates,
+} from "./machineReach";

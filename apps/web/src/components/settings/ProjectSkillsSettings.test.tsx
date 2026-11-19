@@ -12,6 +12,8 @@ import {
 } from "@specweave-studio/contracts";
 
 const state = vi.hoisted(() => ({
+  latest: new Map<string, string>() as ReadonlyMap<string, string>,
+  latestScopes: [] as unknown[],
   data: null as unknown,
   error: null as string | null,
   isPending: false,
@@ -126,6 +128,29 @@ vi.mock("~/hooks/useCopyToClipboard", () => ({
     isCopied: false,
   }),
 }));
+vi.mock("../skills/SkillsManagementSlot", () => ({
+  SkillsManagementSlot: (props: {
+    machineName: string;
+    userLevel: boolean;
+    cwd?: string;
+    threadId?: string;
+  }) => (
+    <div
+      data-testid="skills-management-slot"
+      data-machine={props.machineName}
+      data-cwd={props.cwd ?? ""}
+      data-thread={props.threadId ?? ""}
+    >
+      {String(props.userLevel)}
+    </div>
+  ),
+}));
+vi.mock("../skills/SkillUpdateLatest", () => ({
+  useSkillLatestVersions: (scope: unknown) => {
+    state.latestScopes.push(scope);
+    return state.latest;
+  },
+}));
 vi.mock("./settingsLayout", () => ({
   SettingsSection: (props: { id?: string; title: string; children: unknown }) => (
     <section id={props.id} aria-label={props.title}>
@@ -215,6 +240,7 @@ beforeEach(() => {
   state.actions = [];
   state.toasts = [];
   state.search = {};
+  state.latestScopes = [];
   state.navigations = [];
   state.skillsInputs = [];
   state.versionInputs = [];
@@ -475,6 +501,11 @@ describe("ProjectSkillsView", () => {
       outdated: { latest: "1.3.0", updateAvailable: true, pinned: true, pinnedVersion: "1.2.0" },
     };
     await render();
+    // Search, installs and updates in the slot target the same thread folder as the list.
+    const slot = container.querySelector<HTMLElement>("[data-testid=skills-management-slot]")!;
+    expect(slot.dataset.cwd).toBe("/work/thread");
+    expect(slot.dataset.thread).toBe("thread-1");
+    expect(state.latestScopes.at(-1)).toMatchObject({ cwd: "/work/thread", threadId: "thread-1" });
     await act(async () =>
       container.querySelector<HTMLElement>("button[aria-label='Show details for deploy']")!.click(),
     );
@@ -725,6 +756,92 @@ describe("ProjectSkillsView", () => {
     expect(container.querySelector('[data-facet="codex"]')?.getAttribute("aria-pressed")).toBe(
       "true",
     );
+  });
+  describe("an agent filter from the composer link that no row matches", () => {
+    const codex = {
+      instanceId: ProviderInstanceId.make("codex"),
+      driver: ProviderDriverKind.make("codex"),
+      label: "Codex",
+    };
+    const codexRow = (name: string) =>
+      row(name, {
+        providers: [
+          {
+            ...codex,
+            path: `/home/me/.codex/skills/${name}/SKILL.md`,
+            scope: "user",
+            enabled: true,
+          },
+        ],
+      });
+    async function renderSeeded(
+      overrides: Partial<ProjectSkillsSnapshot> = {},
+      agent = "claudeAgent",
+    ) {
+      state.data = {
+        ...snapshot,
+        rows: [codexRow("imagegen"), codexRow("openai-docs")],
+        providers: [
+          { ...claude, state: "ok", skills: 0 },
+          { ...codex, state: "ok", skills: 2 },
+        ],
+        locks: [],
+        ...overrides,
+      } satisfies ProjectSkillsSnapshot;
+      state.search = { agent };
+      await render();
+    }
+    const agentChip = (value: string) =>
+      container.querySelector<HTMLElement>(
+        `[aria-label='Filter by agent'] [data-facet='${value}']`,
+      );
+
+    it("shows the filter as a selected Claude 0 chip next to Codex, and one click clears it", async () => {
+      await renderSeeded();
+      expect(bodyRows()).toEqual([]);
+      expect(agentChip("claudeAgent")?.getAttribute("aria-pressed")).toBe("true");
+      expect(agentChip("claudeAgent")?.textContent).toBe("Claude0");
+      expect(agentChip("codex")?.getAttribute("aria-pressed")).toBe("false");
+      expect(agentChip("codex")?.textContent).toBe("Codex2");
+      await act(async () => agentChip("claudeAgent")!.click());
+      expect(bodyRows()).toEqual(["imagegen", "openai-docs"]);
+      expect(agentChip("claudeAgent")).toBeNull();
+    });
+
+    it("names a built-in agent the machine does not list, never by its raw id", async () => {
+      await renderSeeded({ providers: [{ ...codex, state: "ok", skills: 2 }] });
+      expect(agentChip("claudeAgent")?.getAttribute("aria-pressed")).toBe("true");
+      expect(agentChip("claudeAgent")?.textContent).toBe("Claude0");
+    });
+
+    it("shows an agent id from the link that is not a driver kind as a removable chip", async () => {
+      await renderSeeded({}, "claude.work");
+      expect(agentChip("claude.work")?.getAttribute("aria-pressed")).toBe("true");
+      await act(async () => agentChip("claude.work")!.click());
+      expect(bodyRows()).toEqual(["imagegen", "openai-docs"]);
+    });
+
+    it("keeps the filter row when the machine has no skills at all", async () => {
+      await renderSeeded({ rows: [] });
+      expect(agentChip("claudeAgent")?.getAttribute("aria-pressed")).toBe("true");
+      expect(agentChip("claudeAgent")?.textContent).toBe("Claude0");
+      const clear = [...container.querySelectorAll("button")].find(
+        (button) => button.textContent === "Clear filters",
+      )!;
+      await act(async () => clear.click());
+      expect(agentChip("claudeAgent")).toBeNull();
+      expect(container.querySelector("[data-testid='skills-filters']")).toBeNull();
+    });
+
+    it("restores every row with Clear filters", async () => {
+      await renderSeeded();
+      const clear = [...container.querySelectorAll("button")].find(
+        (button) => button.textContent === "Clear filters",
+      )!;
+      await act(async () => clear.click());
+      expect(bodyRows()).toEqual(["imagegen", "openai-docs"]);
+      expect(agentChip("claudeAgent")).toBeNull();
+    });
   });
   it("ignores a thread folder after switching to another settings context", async () => {
     state.search = {

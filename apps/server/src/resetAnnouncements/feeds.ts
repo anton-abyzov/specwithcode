@@ -1,0 +1,350 @@
+/**
+ * The public feeds reset announcements are read from, and how their items
+ * become announcements. Pure apart from `fetchFeed`, so the parsing and the
+ * merge are tested without a network.
+ *
+ * A feed is untrusted text: only verified items with an https source link are
+ * kept, text is cut to a length, and nothing in it is ever followed or run.
+ *
+ * @module resetAnnouncements/feeds
+ */
+import type { ResetAnnouncement, ResetAnnouncementKind } from "@specweave-studio/contracts";
+
+import { isoAt } from "../usage/usageLimitHistoryStore.ts";
+
+/** Confirmed events: limits reset, banked resets granted, limits changed. */
+export const CONFIRMED_FEED_URL = "https://airesets.dev/alert-feed.json";
+/** Promises by a named source that a reset is coming. */
+export const PROMISED_FEED_URL = "https://airesets.dev/wire-fallback.json";
+
+const FEED_TIMEOUT_MS = 10_000;
+const FEED_MAX_BYTES = 1_000_000;
+const HEADLINE_MAX = 240;
+/** Announcements are news; older ones leave the list. */
+export const ANNOUNCEMENT_RETENTION_MS = 180 * 24 * 60 * 60_000;
+export const ANNOUNCEMENT_MAX = 200;
+
+export type FeedReading =
+  | { readonly state: "fresh"; readonly text: string; readonly etag: string | null }
+  | { readonly state: "unchanged" }
+  | { readonly state: "failed" };
+
+/** The body as text, or null once it passes the cap: it is never held whole first. */
+async function readCapped(response: Response): Promise<string | null> {
+  const reader = response.body?.getReader();
+  if (reader === undefined) return "";
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let text = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return text + decoder.decode();
+    bytes += value.byteLength;
+    if (bytes > FEED_MAX_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+}
+
+/** GET `url`, conditional on the `etag` of the last read. Never throws. */
+export async function fetchFeed(
+  url: string,
+  etag: string | null,
+  fetcher: typeof globalThis.fetch = globalThis.fetch,
+): Promise<FeedReading> {
+  try {
+    const response = await fetcher(url, {
+      headers: {
+        accept: "application/json",
+        ...(etag === null ? {} : { "if-none-match": etag }),
+      },
+      redirect: "manual",
+      signal: AbortSignal.timeout(FEED_TIMEOUT_MS),
+    });
+    if (response.status === 304) return { state: "unchanged" };
+    // A redirect is never followed: the feed has one address, and a hijacked answer must
+    // not send this machine's request anywhere else.
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
+      return { state: "failed" };
+    }
+    const declared = Number(response.headers.get("content-length"));
+    if (Number.isFinite(declared) && declared > FEED_MAX_BYTES) {
+      await response.body?.cancel().catch(() => undefined);
+      return { state: "failed" };
+    }
+    const text = await readCapped(response);
+    return text === null
+      ? { state: "failed" }
+      : { state: "fresh", text, etag: response.headers.get("etag") };
+  } catch {
+    return { state: "failed" };
+  }
+}
+
+type FeedKinds = ReadonlyMap<string, ResetAnnouncementKind>;
+// Maps, not object literals: a feed's `kind` of "toString" must not find a prototype.
+const CONFIRMED_KINDS: FeedKinds = new Map([
+  ["hard-reset", "full_reset"],
+  ["banked-reset", "banked_grant"],
+  ["boost", "limit_change"],
+]);
+const PROMISED_KINDS: FeedKinds = new Map([["reset-untyped", "expected_reset"]]);
+const LINK_MAX = 2048;
+/** A post dated later than this past the read is a wrong clock or a forgery. */
+const FUTURE_ALLOWANCE_MS = 5 * 60_000;
+
+const text = (value: unknown): string | null =>
+  typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+
+export const X_HOSTS: ReadonlySet<string> = new Set([
+  "x.com",
+  "www.x.com",
+  "mobile.x.com",
+  "twitter.com",
+  "www.twitter.com",
+  "mobile.twitter.com",
+]);
+const X_POST = /^\/([A-Za-z0-9_]{1,15})\/status\/(\d{1,25})(?:\/.*)?$/u;
+/** Click ids that only say where a reader came from; other keys may pick the page. */
+const TRACKING_KEY = /^(utm_.+|fbclid|gclid)$/u;
+const UNRESERVED_ESCAPE =
+  /%(2[DdEe]|3[0-9]|4[1-9A-Fa-f]|5[0-9Aa]|5[Ff]|6[1-9A-Fa-f]|7[0-9Aa]|7[Ee])/gu;
+
+/** An X post as `{ handle, id }` from a parsed link, or null for anything else on X or off it. */
+export function xPost(url: URL): { readonly handle: string; readonly id: string } | null {
+  if (!X_HOSTS.has(url.hostname.toLowerCase())) return null;
+  const post = X_POST.exec(url.pathname);
+  if (post === null) return null;
+  return { handle: post[1]!.toLowerCase(), id: post[2]!.replace(/^0+(?=\d)/u, "") };
+}
+
+/**
+ * One spelling per post, so the feed and a recording of the same post are one
+ * announcement: an X post becomes `https://x.com/{handle}/status/{id}`; any other
+ * page loses its fragment, a leading `www.`, repeated or trailing slashes,
+ * escapes of plain characters and click ids, and keeps the rest of its query
+ * sorted. Announcement pages are articles, so a fragment never picks a page.
+ */
+export function canonicalLink(url: URL): string {
+  const post = xPost(url);
+  if (post !== null) return `https://x.com/${post.handle}/status/${post.id}`;
+  const hostname = url.hostname.toLowerCase();
+  const host = hostname.startsWith("www.") ? hostname.slice(4) : hostname;
+  const path = url.pathname
+    .replace(UNRESERVED_ESCAPE, (escape) =>
+      String.fromCharCode(Number.parseInt(escape.slice(1), 16)),
+    )
+    .replace(/\/{2,}/gu, "/")
+    .replace(/\/+$/u, "");
+  const query = [...url.searchParams]
+    .filter(([key]) => !TRACKING_KEY.test(key.toLowerCase()))
+    .toSorted(
+      ([leftKey, leftValue], [rightKey, rightValue]) =>
+        leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue),
+    );
+  const search = query.length === 0 ? "" : `?${new URLSearchParams(query).toString()}`;
+  return `https://${host}${url.port === "" ? "" : `:${url.port}`}${path}${search}`;
+}
+
+const httpsLink = (value: unknown): string | null => {
+  const link = text(value);
+  if (link === null || link.length > LINK_MAX) return null;
+  try {
+    const url = new URL(link);
+    return url.protocol === "https:" ? canonicalLink(url) : null;
+  } catch {
+    return null;
+  }
+};
+
+/** The items of one feed that are verified, typed and linked; anything else is dropped. */
+export function parseFeed(raw: string, kinds: FeedKinds, now: number): ResetAnnouncement[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  const items = (parsed as { readonly items?: unknown } | null)?.items;
+  if (!Array.isArray(items)) return [];
+  return items.flatMap((item: Record<string, unknown> | null): ResetAnnouncement[] => {
+    if (item === null || typeof item !== "object" || item.evidence !== "verified") return [];
+    const kind = typeof item.kind === "string" ? kinds.get(item.kind) : undefined;
+    const id = text(item.id);
+    const provider = text(item.provider);
+    const headline = text(item.headline);
+    const sourceUrl = httpsLink(item.sourceUrl);
+    const published = Date.parse(text(item.publishedAt) ?? "");
+    if (
+      kind === undefined ||
+      id === null ||
+      provider === null ||
+      headline === null ||
+      sourceUrl === null ||
+      !Number.isFinite(published) ||
+      published > now + FUTURE_ALLOWANCE_MS
+    ) {
+      return [];
+    }
+    return [
+      {
+        id: id.slice(0, 200),
+        provider: provider.toLowerCase().slice(0, 40),
+        kind,
+        headline: headline.slice(0, HEADLINE_MAX),
+        sourceUrl,
+        publishedAt: isoAt(published),
+      } as ResetAnnouncement,
+    ];
+  });
+}
+
+export const parseConfirmedFeed = (raw: string, now: number) =>
+  parseFeed(raw, CONFIRMED_KINDS, now);
+export const parsePromisedFeed = (raw: string, now: number) => parseFeed(raw, PROMISED_KINDS, now);
+
+/**
+ * Whether `next` takes the place of `seen` for the same link. The verified feed
+ * always replaces what an agent recorded and a recording never replaces the feed;
+ * within one origin a confirmed event replaces a promise.
+ */
+export function replaces(next: ResetAnnouncement, seen: ResetAnnouncement): boolean {
+  const nextRecorded = next.origin === "recorded";
+  const seenRecorded = seen.origin === "recorded";
+  if (nextRecorded !== seenRecorded) return seenRecorded;
+  return seen.kind === "expected_reset" && next.kind !== "expected_reset";
+}
+
+/**
+ * `known` with `read` added: one announcement per source link, a confirmed
+ * event replacing a promise for the same post, newest first, within the
+ * retention and the cap.
+ */
+export function mergeAnnouncements(
+  known: readonly ResetAnnouncement[],
+  read: readonly ResetAnnouncement[],
+  now: number,
+): ResetAnnouncement[] {
+  const byLink = new Map<string, ResetAnnouncement>();
+  for (const announcement of [...known, ...read]) {
+    const seen = byLink.get(announcement.sourceUrl);
+    if (seen === undefined || replaces(announcement, seen)) {
+      byLink.set(announcement.sourceUrl, announcement);
+    }
+  }
+  return [...byLink.values()]
+    .filter((announcement) => {
+      const published = Date.parse(announcement.publishedAt);
+      // Also for what an earlier read saved: a post dated ahead of now is never listed.
+      return published <= now + FUTURE_ALLOWANCE_MS && now - published <= ANNOUNCEMENT_RETENTION_MS;
+    })
+    .toSorted(
+      (left, right) =>
+        Date.parse(right.publishedAt) - Date.parse(left.publishedAt) ||
+        left.id.localeCompare(right.id),
+    )
+    .slice(0, ANNOUNCEMENT_MAX);
+}
+
+export interface AnnouncementFile {
+  readonly announcements: readonly ResetAnnouncement[];
+  readonly checkedAt: number | null;
+  readonly etags: { readonly confirmed: string | null; readonly promised: string | null };
+}
+
+export const EMPTY_ANNOUNCEMENT_FILE: AnnouncementFile = {
+  announcements: [],
+  checkedAt: null,
+  etags: { confirmed: null, promised: null },
+};
+
+/** The saved file, tolerant of anything: a file it cannot read is an empty one. */
+export function decodeAnnouncementFile(raw: string): AnnouncementFile {
+  try {
+    const parsed = JSON.parse(raw) as Partial<AnnouncementFile> | null;
+    const announcements = Array.isArray(parsed?.announcements)
+      ? parsed.announcements
+          .filter(
+            (entry): entry is ResetAnnouncement =>
+              typeof entry?.id === "string" &&
+              typeof entry.provider === "string" &&
+              typeof entry.headline === "string" &&
+              httpsLink(entry.sourceUrl) !== null &&
+              Number.isFinite(Date.parse(entry.publishedAt)) &&
+              ["full_reset", "banked_grant", "limit_change", "expected_reset"].includes(
+                entry.kind,
+              ) &&
+              (entry.origin === undefined || entry.origin === "recorded"),
+          )
+          // A file saved before links were canonical gets one spelling per post; the
+          // merge on the next list or read then keeps one of each.
+          .map((entry) => ({ ...entry, sourceUrl: httpsLink(entry.sourceUrl)! }))
+      : [];
+    const etag = (value: unknown) => (typeof value === "string" ? value : null);
+    return {
+      announcements,
+      checkedAt: typeof parsed?.checkedAt === "number" ? parsed.checkedAt : null,
+      etags: { confirmed: etag(parsed?.etags?.confirmed), promised: etag(parsed?.etags?.promised) },
+    };
+  } catch {
+    return EMPTY_ANNOUNCEMENT_FILE;
+  }
+}
+
+/**
+ * What the list shows from a saved file at `now`. The file is read as saved, so this
+ * drops a post dated ahead of now or past the retention even when no check has run.
+ */
+export const listedAnnouncements = (file: AnnouncementFile, now: number): ResetAnnouncement[] =>
+  mergeAnnouncements(file.announcements, [], now);
+
+export const encodeAnnouncementFile = (file: AnnouncementFile): string =>
+  `${JSON.stringify(file)}\n`;
+
+/**
+ * One read of both feeds folded into the file. A feed that failed or did not
+ * change keeps what was known; `checkedAt` moves only when a feed answered.
+ */
+export function applyFeedReadings(
+  file: AnnouncementFile,
+  readings: { readonly confirmed: FeedReading; readonly promised: FeedReading },
+  now: number,
+): AnnouncementFile {
+  const read = [
+    ...(readings.confirmed.state === "fresh"
+      ? parseConfirmedFeed(readings.confirmed.text, now)
+      : []),
+    ...(readings.promised.state === "fresh" ? parsePromisedFeed(readings.promised.text, now) : []),
+  ];
+  const answered = readings.confirmed.state !== "failed" || readings.promised.state !== "failed";
+  return {
+    announcements: mergeAnnouncements(file.announcements, read, now),
+    checkedAt: answered ? now : file.checkedAt,
+    etags: {
+      confirmed:
+        readings.confirmed.state === "fresh" ? readings.confirmed.etag : file.etags.confirmed,
+      promised: readings.promised.state === "fresh" ? readings.promised.etag : file.etags.promised,
+    },
+  };
+}
+
+/**
+ * `file` with `announcement` merged in, and whether it was new. A post already
+ * known by its link stays, except that a confirmed recording replaces a recorded
+ * promise; a recording never replaces what the feed brought.
+ */
+export function recordIntoFile(
+  file: AnnouncementFile,
+  announcement: ResetAnnouncement,
+  now: number,
+): { readonly file: AnnouncementFile; readonly recorded: boolean } {
+  const known = file.announcements.find((entry) => entry.sourceUrl === announcement.sourceUrl);
+  const takesPlace = known === undefined || replaces(announcement, known);
+  const announcements = mergeAnnouncements(file.announcements, [announcement], now);
+  // New or replacing a recorded promise, and still kept within the retention and the cap.
+  const recorded = takesPlace && announcements.includes(announcement);
+  return { file: recorded ? { ...file, announcements } : file, recorded };
+}

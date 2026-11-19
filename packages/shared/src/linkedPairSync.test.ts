@@ -59,6 +59,29 @@ describe("pendingSupersede", () => {
   it("asks a returning coordinator at a lower epoch to give way", () => {
     expect(pendingSupersede(successor, side("a", active(1)))).toBe(true);
   });
+  it("breaks an equal-epoch double flip for the earlier takeover, then the smaller ref", () => {
+    const earlier = side(
+      "b",
+      active(2, { predecessor: ref("a"), takenOverAt: "2026-11-01T00:00:00Z" }),
+    );
+    const later = side(
+      "c",
+      active(2, { predecessor: ref("a"), takenOverAt: "2026-11-01T01:00:00Z" }),
+    );
+    expect(pendingSupersede(earlier, later)).toBe(true);
+    expect(pendingSupersede(later, earlier)).toBe(false);
+    const sameTimeB = side(
+      "b",
+      active(2, { predecessor: ref("a"), takenOverAt: "2026-11-01T00:00:00Z" }),
+    );
+    const sameTimeC = side(
+      "c",
+      active(2, { predecessor: ref("a"), takenOverAt: "2026-11-01T00:00:00Z" }),
+    );
+    expect(pendingSupersede(sameTimeB, sameTimeC)).toBe(true);
+    expect(pendingSupersede(sameTimeC, sameTimeB)).toBe(false);
+  });
+
   it("leaves a copy that already gave way, another project, or a copy it did not replace", () => {
     expect(pendingSupersede(successor, side("a", transferred(2)))).toBe(false);
     expect(pendingSupersede(successor, side("a", active(1), { logicalProjectId: "other" }))).toBe(

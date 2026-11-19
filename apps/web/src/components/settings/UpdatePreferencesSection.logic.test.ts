@@ -1,4 +1,4 @@
-import type { StudioServiceUpdateState } from "@specweave-studio/contracts";
+import type { StudioServiceUpdateRun, StudioServiceUpdateState } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { SERVICE_REQUEST_EXPIRED } from "../sidebar/SidebarRestartToUpdate.logic";
@@ -37,6 +37,58 @@ describe("UpdatePreferencesSection.logic", () => {
     // None below 10: the agent passes every 10 minutes.
     expect(PAUSE_WORK_AFTER_OPTIONS).toEqual([10, 30, 60]);
     expect(Math.min(...PAUSE_WORK_AFTER_OPTIONS)).toBe(10);
+  });
+
+  it("says a downloaded update waits for the button when automatic installs are off", () => {
+    const downloaded = state({ status: "downloaded", downloadedVersion: "0.2.0" });
+    expect(describeServiceUpdate(downloaded, { installAutomatically: false })).toBe(
+      "Version 0.1.4. Version 0.2.0 is downloaded. Install automatically is off, so it installs only when you press Install now.",
+    );
+    // On, not read yet, or no desktop preferences at all: the line is unchanged.
+    const ready = "Version 0.1.4. Version 0.2.0 is ready to install.";
+    expect(describeServiceUpdate(downloaded, { installAutomatically: true })).toBe(ready);
+    expect(describeServiceUpdate(downloaded, null)).toBe(ready);
+    expect(describeServiceUpdate(downloaded)).toBe(ready);
+    // The switch changes no other stage, and never a version the service already runs.
+    expect(
+      describeServiceUpdate(state({ status: "waiting-for-quiet", downloadedVersion: "0.2.0" }), {
+        installAutomatically: false,
+      }),
+    ).toBe(
+      "Version 0.1.4. Version 0.2.0 installs once running work finishes, or press Update now.",
+    );
+    expect(
+      describeServiceUpdate(state({ status: "downloaded", downloadedVersion: "0.1.4" }), {
+        installAutomatically: false,
+      }),
+    ).toBe("Version 0.1.4. Up to date.");
+    // An install run is under way: the button is hidden, so nothing waits for it.
+    const installing: StudioServiceUpdateRun = {
+      runId: "run-1",
+      phase: "installing",
+      terminal: false,
+      targetVersion: "0.2.0",
+      appTargetVersion: null,
+      startedAt: "2026-10-21T12:00:00.000Z",
+      deadlineAt: "2026-10-21T12:30:00.000Z",
+      lastSignAt: "2026-10-21T12:00:00.000Z",
+      noProgress: false,
+      step: null,
+      app: null,
+      message: null,
+      outcome: null,
+      endedAt: null,
+    };
+    expect(
+      describeServiceUpdate({ ...downloaded, run: installing }, { installAutomatically: false }),
+    ).toBe(ready);
+    // A run that ended leaves the update waiting for the button again.
+    expect(
+      describeServiceUpdate(
+        { ...downloaded, run: { ...installing, terminal: true } },
+        { installAutomatically: false },
+      ),
+    ).toContain("Install automatically is off");
   });
 
   it("describes each service update stage", () => {

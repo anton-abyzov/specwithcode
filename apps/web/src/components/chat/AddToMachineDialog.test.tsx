@@ -6,6 +6,10 @@ import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/
 import type { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 
 import { readAddToMachineJob } from "../../studio/addToMachine";
+import {
+  linkRefusalsForTest as refusalsKept,
+  resetLinkRefusalsForTest,
+} from "../../studio/linkRefusals";
 import { AddToMachineDialog } from "./AddToMachineDialog";
 
 const state = vi.hoisted(() => ({
@@ -13,6 +17,15 @@ const state = vi.hoisted(() => ({
   handlers: {} as Record<string, (input: unknown) => unknown>,
   environments: {} as Record<string, unknown>,
   waitForProject: vi.fn(async () => ({})),
+  /** How the link of a consolidated copy ends; a test replaces it to refuse or throw. */
+  link: (async () => ({ status: "linked" })) as () => Promise<unknown>,
+  /** This window's access:write on the source, as the session reports it. */
+  sourceAccess: "unknown" as "granted" | "denied" | "unknown",
+}));
+vi.mock("../../state/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/session")>()),
+  useEnvironmentScopeAccess: () => state.sourceAccess,
+  readEnvironmentScopeAccess: () => state.sourceAccess,
 }));
 
 vi.mock("../../state/sourceControl", () => ({
@@ -25,7 +38,7 @@ vi.mock("../../studio/projectLink", () => ({
   projectLink: new Proxy({}, { get: (_target, name) => `link:${String(name)}` }),
   linkCopyAsWorkers: (...args: unknown[]) => {
     state.calls.push(["linkCopyAsWorkers", args[1]]);
-    return Promise.resolve({ status: "linked" });
+    return state.link();
   },
 }));
 vi.mock("../studio/ProjectLinkDialog", () => ({ ProjectLinkDialog: () => null }));
@@ -155,6 +168,7 @@ beforeEach(() => {
   onAdded.mockClear();
   onOpenChange.mockClear();
   localStorage.clear();
+  state.sourceAccess = "unknown";
   container = document.createElement("div");
   document.body.append(container);
 });
@@ -281,7 +295,7 @@ it("asks an older destination to update", async () => {
 it("points a project with no Git remote to its folder copy, not to pushing it first", async () => {
   await render({ ...source, repositoryIdentity: null } as EnvironmentProject);
   expect(text()).toContain("has nothing to clone from");
-  expect(text()).toContain("Review files to transfer");
+  expect(text()).toContain("the machine menu > Add to another machine… > Copy the whole folder.");
   expect(text()).not.toContain("Push it to GitHub");
 });
 
@@ -335,6 +349,22 @@ it("clones, stores the follow-up job and hands the new project to the menu", asy
   expect(onAdded).toHaveBeenCalledWith({ environmentId: "mini", projectId: "project-new" });
 });
 
+it("does not start the clone before the secret scan answers", async () => {
+  const offered = state.handlers.copyOffer!;
+  let answer: () => void = () => {};
+  state.handlers.copyOffer = (request) =>
+    new Promise((resolve) => {
+      answer = () => resolve(offered(request));
+    });
+  await render();
+  // Started now, the clone would carry none of the secret files the scan is about to list.
+  expect(button("Clone to Mini")!.disabled).toBe(true);
+  await act(async () => answer());
+  await settle();
+  expect(text()).toContain("Secrets (.env, keys): 1 file, included");
+  expect(button("Clone to Mini")!.disabled).toBe(false);
+});
+
 it("carries no secrets once the line is unticked, and ignored files when asked", async () => {
   await render();
   await act(async () => includeSecrets()!.click());
@@ -351,7 +381,8 @@ it("carries no secrets once the line is unticked, and ignored files when asked",
   });
 });
 
-it("links and consolidates an existing checkout after the copy is applied", async () => {
+/** Copies into the existing checkout and presses Apply and link. */
+async function applyAndLink() {
   const copyStatus = (copyState: string) => ({
     operationId: "00000000-0000-4000-8000-000000000001",
     state: copyState,
@@ -382,6 +413,10 @@ it("links and consolidates an existing checkout after the copy is applied", asyn
     },
   ]);
   await act(async () => button("Apply and link")!.click());
+}
+
+it("links and consolidates an existing checkout after the copy is applied", async () => {
+  await applyAndLink();
   // Secrets travel by default.
   expect(calls("copySecrets")).toEqual([
     expect.objectContaining({ input: expect.objectContaining({ paths: [".env"] }) }),
@@ -396,4 +431,73 @@ it("links and consolidates an existing checkout after the copy is applied", asyn
   await act(async () => button("Done")!.click());
   expect(onAdded).toHaveBeenCalledWith({ environmentId: "mini", projectId: "existing" });
   expect(onOpenChange).toHaveBeenCalledWith(false);
+});
+
+it.each([
+  {
+    how: "is refused",
+    link: async () => ({ status: "review", reason: "The two notes could not be merged." }),
+  },
+  {
+    how: "throws",
+    link: async () => {
+      throw new Error("The two notes could not be merged.");
+    },
+  },
+])("keeps for the machine menu why the link $how after consolidating", async ({ link }) => {
+  state.link = link;
+  try {
+    await applyAndLink();
+    await settle();
+    expect(refusalsKept()).toEqual([
+      { text: "The two notes could not be merged.", verbatim: true },
+    ]);
+  } finally {
+    state.link = async () => ({ status: "linked" });
+    resetLinkRefusalsForTest();
+  }
+});
+
+it("leaves secrets on the source in a window that may not send them", async () => {
+  state.sourceAccess = "denied";
+  await render();
+  expect(text()).toContain(
+    "Only SpecWithCode on M4 can send secrets. To include them, start this copy in the SpecWithCode window on M4.",
+  );
+  await act(async () => button("Clone to Mini")!.click());
+  expect(readAddToMachineJob("mini" as EnvironmentId, "project-new" as ProjectId)).toMatchObject({
+    secrets: [],
+  });
+});
+
+it("links and consolidates without sending secrets from a window that may not send them", async () => {
+  state.sourceAccess = "denied";
+  // The source reports nothing staged, so there is nothing to take off.
+  state.handlers.copySourceStatus = () => ({ state: "ready", secrets: null });
+  const copyStatus = (copyState: string) => ({
+    operationId: "00000000-0000-4000-8000-000000000001",
+    state: copyState,
+    rows: [],
+    totals: { decisionsNeeded: 0 },
+    disk: null,
+    error: null,
+    checks: [],
+    projectId: copyState === "applied" ? "existing" : null,
+    committed: copyState === "applied",
+  });
+  let applied = false;
+  state.handlers.inspectDestination = () => inspected("repository", true);
+  state.handlers.copyStatus = () => copyStatus(applied ? "applied" : "previewed");
+  state.handlers.copyApprove = () => {
+    applied = true;
+    return copyStatus("applying");
+  };
+  await render();
+  await act(async () => button("Link and consolidate")!.click());
+  await act(async () => button("Apply and link")!.click());
+  expect(calls("copySecrets")).toEqual([]);
+  // The destination takes no secrets, even ones an earlier allowed attempt staged.
+  expect(calls("copyApprove")).toEqual([
+    expect.objectContaining({ input: expect.objectContaining({ withoutSecrets: true }) }),
+  ]);
 });

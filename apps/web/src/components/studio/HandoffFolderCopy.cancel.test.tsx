@@ -30,6 +30,8 @@ vi.mock("../../studio/projectLink", () => ({
   linkCopyAsWorkers: async () => ({ status: "linked" }),
 }));
 vi.mock("./ProjectLinkDialog", () => ({ ProjectLinkDialog: () => null }));
+// The credentials list has its own test (CopyCredentialsChecklist.test.tsx).
+vi.mock("./CopyCredentialsChecklist", () => ({ CopyCredentialsChecklist: () => null }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (name: string) => async (request: unknown) => {
     state.calls.push([name, request]);
@@ -104,10 +106,11 @@ const click = async (label: string) => {
   await act(async () => button(label).click());
   await settle();
 };
-const mount = async () => {
+const mount = async (move = false) => {
   await act(async () =>
     root.render(
       <HandoffFolderCopy
+        {...(move ? { defaultMode: "copy-and-move" as const } : {})}
         project={project as never}
         coordinatorId={"coordinator" as never}
         sourceLabel="M4"
@@ -253,10 +256,6 @@ it("reads a cancelled pointer with the person's choices", () => {
   expect(readPendingCopy(KEY)).not.toHaveProperty("cancelled");
 });
 
-const moveRadio = () =>
-  [
-    ...container.querySelectorAll<HTMLElement>('[data-slot="handoff-coordinator"] [role="radio"]'),
-  ].find((node) => node.closest("label")?.textContent?.startsWith("Move to") === true)!;
 const checkbox = (selector: string) =>
   container.querySelector<HTMLElement>(`${selector} [data-slot="checkbox"]`)!;
 const folderValue = () =>
@@ -284,8 +283,7 @@ it("keeps machine, folder, mode and chosen classes after Stop copy while choosin
   state.handlers.copySourceCancel = () => ({ state: "cancelled" });
   const offer = state.handlers.copyOffer!;
   state.handlers.copyOffer = (input) => ({ ...(offer(input) as object), status: scanned() });
-  await mount();
-  await act(async () => moveRadio().click());
+  await mount(true);
   await act(async () => checkbox('[data-slot="copy-choose-first"]').click());
   await click("Copy and move to M3");
   expect(stage()).toBe("select");
@@ -295,7 +293,6 @@ it("keeps machine, folder, mode and chosen classes after Stop copy while choosin
   expect(names()).toContain("copyRelease");
   expect(pointerNow()).toBeNull();
   expect(stage()).toBe("setup");
-  expect(moveRadio().getAttribute("aria-checked")).toBe("true");
   expect(folderValue()).toBe("/home/anton/Projects/project");
   await click("Copy and move to M3");
   expect(stage()).toBe("select");

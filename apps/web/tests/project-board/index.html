@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Project board</title>
+    <script>
+      // The fixture's clock, before any module reads it: ages and "updated 35m ago"
+      // are measured from the fixture's own now, not the day the captures run.
+      (() => {
+        const now = Date.parse("2026-11-14T18:00:00Z");
+        const RealDate = Date;
+        class FixtureDate extends RealDate {
+          constructor(...args) {
+            super(...(args.length > 0 ? args : [now]));
+          }
+          static now() {
+            return now;
+          }
+        }
+        window.Date = FixtureDate;
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/main.tsx"></script>
+  </body>
+</html>

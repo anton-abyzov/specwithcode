@@ -82,6 +82,34 @@ describe("Cursor usage limits", () => {
     ]);
   });
 
+  it("reports the billing cycle's end as the renewal only for a plan it names as monthly", () => {
+    const response = {
+      billingCycleStart: "1787284386000",
+      billingCycleEnd: "1789876386000",
+      planUsage: { totalPercentUsed: 10, autoPercentUsed: 5, apiPercentUsed: 8 },
+    };
+    const renewal = (planInfo?: Parameters<typeof cursorUsageResponseToLimits>[2], at = checkedAt) =>
+      cursorUsageResponseToLimits(response, at, planInfo).renewsAt;
+    const monthly = { planInfo: { includedUsagePeriod: "INCLUDED_USAGE_PERIOD_MONTHLY" } };
+    expect(renewal(monthly)).toBe("2026-09-20T03:53:06.000Z");
+    // No plan information: the reader assumes monthly windows, but reports no renewal.
+    expect(renewal()).toBeUndefined();
+    expect(renewal({})).toBeUndefined();
+    expect(renewal({ planInfo: { includedUsagePeriod: "INCLUDED_USAGE_PERIOD_WEEKLY" } })).toBeUndefined();
+    expect(renewal({ planInfo: { includedUsagePeriod: 1 } })).toBeUndefined();
+    expect(renewal({ planInfo: { includedUsagePeriod: "INCLUDED_USAGE_PERIOD_UNSPECIFIED" } })).toBeUndefined();
+    // A cycle that already ended is not a renewal ahead.
+    expect(renewal(monthly, "2026-09-21T00:00:00.000Z")).toBeUndefined();
+    expect(
+      cursorUsageResponseToLimits({ ...response, billingCycleEnd: "not a date" }, checkedAt, monthly)
+        .renewsAt,
+    ).toBeUndefined();
+    // A reading with no windows reports none.
+    expect(
+      cursorUsageResponseToLimits({ billingCycleEnd: "1789876386000" }, checkedAt, monthly).renewsAt,
+    ).toBeUndefined();
+  });
+
   it("shows one weekly included pool for X Subscription accounts", () => {
     const limits = cursorUsageResponseToLimits(
       {

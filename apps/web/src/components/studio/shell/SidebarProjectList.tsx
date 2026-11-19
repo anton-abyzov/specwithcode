@@ -103,10 +103,14 @@ import { sharedProjectBadge } from "../../../studio/linkedMachines";
 import type { ArrangedProjects, ProjectDropTarget } from "../../../studio/projectOrder";
 import { isScratchMember, type ScratchRootLookup } from "../../../studio/projectListVisibility";
 import { Tip } from "./Tip";
+import { useRetiredMachineRecords } from "../../settings/useReplacedMachineRecords";
 import { requestProjectSettings } from "../../../studio/projectSettingsRequests";
 import type { ProjectNameCheck } from "../../../studio/projectRename";
 import {
+  copyActivityKey,
   copyActivityText,
+  overallFraction,
+  registerCopyNavigator,
   requestCopyReview,
   useCopyActivities,
   useKeyedCopyActivity,
@@ -215,6 +219,8 @@ export function SidebarProjectList(props: {
     | ((group: SidebarProjectSnapshot, level: ProjectNotificationLevel) => void)
     | undefined;
 }) {
+  // Read once for the list: the same retired records Settings and the project menu use.
+  const retired = useRetiredMachineRecords();
   const tx = useTx();
   // A move's destination joins the project only when the move finishes; until then it is
   // the same project mid-move, shown once on its source row.
@@ -372,6 +378,7 @@ export function SidebarProjectList(props: {
     <ProjectRow
       key={group.projectKey}
       group={group}
+      retired={retired}
       {...props.rowState(group)}
       sortable
       pinned={pinned}
@@ -515,20 +522,18 @@ function isPersonalGroup(group: SidebarProjectSnapshot): boolean {
 /** One project in the Projects list, with its move, pin and archive actions. */
 /** A thin bar along the row's bottom edge: how far a background copy is, or a sweep. */
 function CopyProgressLine({ activity }: { readonly activity: CopyActivity }) {
+  // The whole copy across its three phases, so the line never runs back to empty.
+  const fraction = overallFraction(activity);
   return (
     <span
       className="sws-copy-progress"
       data-waiting={activity.waiting || undefined}
-      data-indeterminate={(activity.fraction === null && !activity.waiting) || undefined}
+      data-indeterminate={(fraction === null && !activity.waiting) || undefined}
       aria-hidden
     >
       <span
         className="sws-copy-progress-fill"
-        style={
-          activity.fraction === null
-            ? undefined
-            : { width: `${Math.round(activity.fraction * 100)}%` }
-        }
+        style={fraction === null ? undefined : { width: `${Math.round(fraction * 100)}%` }}
       />
     </span>
   );
@@ -536,6 +541,8 @@ function CopyProgressLine({ activity }: { readonly activity: CopyActivity }) {
 
 export function ProjectRow(props: {
   group: SidebarProjectSnapshot;
+  /** Old records of machines that joined again; they never lead in the copies line. */
+  retired?: ReadonlyMap<string, string>;
   displayedProject: SidebarProjectGroupMember | undefined;
   archived: boolean;
   /** Absent in the archived list, which keeps no order. */
@@ -578,7 +585,7 @@ export function ProjectRow(props: {
   const quiet = archived || muted;
   const coverageText =
     !quiet && props.attentionComplete === false
-      ? (props.attentionLabel ?? "Some machines are offline")
+      ? (props.attentionLabel ?? "Some machines can't be reached")
       : null;
   const waiting = quiet ? 0 : props.waiting;
   const [renaming, setRenaming] = useState<RenameState | null>(null);
@@ -611,23 +618,47 @@ export function ProjectRow(props: {
   const displayName = displayNameOf(group, props.displayedProject);
   const personal = isPersonalGroup(group);
   const nickname = useMachineNicknames();
-  const copies = copyRolesSummary(group.memberProjects, (member) =>
-    nickname(member.environmentId, member.environmentLabel),
+  const copiesText = copyRolesSummary(
+    group.memberProjects,
+    (member) => nickname(member.environmentId, member.environmentLabel),
+    props.retired,
   );
+  const copies = copiesText ? tx(copiesText.text, copiesText.values) : null;
   // A project shared with or handed off from another machine wears a badge.
-  const shared = personal
+  const badge = personal
     ? null
     : sharedProjectBadge(
         props.displayedProject ?? group.memberProjects[0],
         group.memberProjects,
         (id) => {
           const name = nickname(id);
-          return name === id ? "another machine" : name;
+          return name === id ? tx("another machine") : name;
         },
       );
+  const shared = badge
+    ? { role: badge.role, label: tx(badge.label.text, badge.label.values) }
+    : null;
   // A folder copy to another machine running in the background: dimmed with its progress.
   const keyedCopy = useKeyedCopyActivity(group.memberProjects);
   const copying = keyedCopy?.activity ?? null;
+  // A copy's toast opens its details from any project: this row knows the page to open.
+  // Every member stays registered, so a done or failed toast's button still works after
+  // the copy's activity clears, and a second copy in the same group has its own.
+  const memberKeys = group.memberProjects
+    .map((member) => copyActivityKey(member.environmentId, member.id))
+    .join("\n");
+  useEffect(() => {
+    const unregister = memberKeys.split("\n").map((key) =>
+      registerCopyNavigator(key, () => {
+        void navigate({
+          to: "/projects/$projectKey",
+          params: { projectKey: group.projectKey },
+          search: { checkout: key },
+        });
+      }),
+    );
+    return () => unregister.forEach((stop) => stop());
+  }, [memberKeys, group.projectKey, navigate]);
   const copyingText = copying ? copyActivityText(copying) : null;
   // A project with no copy on this device still opens and runs on its machine; the
   // row says where, mutes its name, and offers to bring a copy here.
@@ -637,7 +668,7 @@ export function ProjectRow(props: {
   const elsewhereName = elsewhere.map((machine) => machine.name).join(", ");
   const elsewhereText =
     elsewhere.length > 0
-      ? tx("Runs on {machine}. No copy on this device.", { machine: elsewhereName })
+      ? tx("On {machine}. Not on this device.", { machine: elsewhereName })
       : null;
   const [addingHere, setAddingHere] = useState<{ seq: number } | null>(null);
   const addSource = props.displayedProject ?? group.memberProjects[0];
@@ -715,18 +746,27 @@ export function ProjectRow(props: {
               ) : null}
               {props.linkSuggestion && !shared ? (
                 // Opens the link dialog, which compares both folders before anything links.
-                <span
-                  className="sws-side-row-pin sws-side-row-link-suggestion"
-                  role="img"
-                  aria-label={`${props.linkSuggestion.label}. Link them?`}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    props.linkSuggestion?.onLink();
-                  }}
-                >
-                  <Link2Icon aria-hidden />
-                </span>
+                // A mouse shortcut, as Review is below: the row is a link, so no control
+                // nests in it. The row's name says the offer, and its menu holds the same
+                // action for the keyboard and screen readers.
+                <>
+                  <span className="sr-only">, {props.linkSuggestion.label}</span>
+                  <span
+                    className="sws-side-row-link-suggestion"
+                    aria-hidden="true"
+                    data-link-suggestion=""
+                    title={`${props.linkSuggestion.label}. ${props.linkSuggestion.action}`}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      props.linkSuggestion?.onLink();
+                    }}
+                    onDoubleClick={(event) => event.stopPropagation()}
+                  >
+                    <Link2Icon aria-hidden />
+                    {tx("Link")}
+                  </span>
+                </>
               ) : null}
               {shared ? (
                 <span

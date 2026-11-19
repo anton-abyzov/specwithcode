@@ -9,7 +9,15 @@ import { AuthOrchestrationOperateScope } from "@specweave-studio/contracts";
 import { useMemo } from "react";
 
 import { isThisMachineTarget } from "~/connection/desktopLocal";
-import { isThisMachineCatchingUp, machineStatus } from "~/lib/machineStatus";
+import { machineReach } from "@specweave-studio/client-runtime/connection";
+
+import {
+  IDENTITY_MISMATCH_STATUS,
+  identityMismatchShown,
+  isThisMachineCatchingUp,
+  machineStatus,
+} from "~/lib/machineStatus";
+import { useHostIdentityMismatch } from "~/studio/unreachableHosts";
 import { useMachineIdentities } from "~/studio/machineIdentity";
 import { useEnvironment } from "~/state/environments";
 import { useEnvironmentScope } from "~/state/session";
@@ -69,20 +77,26 @@ export function threadMachinePresentation(input: {
   readonly isThisMachine: boolean;
   readonly phase: Parameters<typeof machineStatus>[0]["phase"];
   readonly error: string | null;
+  /** The whole connection, so a machine inside its reconnect grace reads as reconnecting. */
+  readonly connection?: Parameters<typeof machineStatus>[0] | undefined;
   readonly canOperate: boolean;
   /** How the thread's own menu offers "Move thread…" now; the tip says no more than that. */
   readonly handoff: ThreadMachineHandoff;
   readonly color?: MachineColorId | undefined;
+  /** The fleet says its address now answers as a different SpecWithCode. */
+  readonly identityMismatch?: boolean | undefined;
 }): ThreadMachine {
   const os = input.os ? OS_LABELS[input.os] : null;
   const host = input.hostLabel && input.hostLabel !== input.name ? input.hostLabel : null;
   const facts = [host, os].filter((fact): fact is string => fact !== null).join(", ");
   const where = input.isThisMachine ? `this computer, ${input.name}` : input.name;
-  const status = machineStatus(
-    { phase: input.phase, error: input.error },
-    input.canOperate,
-    input.isThisMachine,
-  );
+  const connection = input.connection ?? { phase: input.phase, error: input.error };
+  // Down at an address that answers as another SpecWithCode: retrying never fixes it.
+  const status =
+    !input.isThisMachine &&
+    identityMismatchShown(machineReach(connection, Date.now()).state, input.identityMismatch)
+      ? IDENTITY_MISMATCH_STATUS
+      : machineStatus(connection, input.canOperate, input.isThisMachine);
   const unreachable = input.phase !== "connected";
   const busy = input.isThisMachine && isThisMachineCatchingUp(input.phase);
   const warning = !unreachable
@@ -91,9 +105,7 @@ export function threadMachinePresentation(input: {
       ? null
       : input.isThisMachine
         ? status.text
-        : status.retryable
-          ? "Can't reach"
-          : status.text;
+        : status.short;
   // The menu greys out "Move thread…" for a viewer who cannot operate the machine.
   const handoff = input.handoff === "available" && !input.canOperate ? "none" : input.handoff;
   return {
@@ -120,6 +132,7 @@ export function useThreadMachine(
   const environment = useEnvironment(environmentId);
   const identityOf = useMachineIdentities();
   const canOperate = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const identityMismatch = useHostIdentityMismatch(environmentId);
   return useMemo(() => {
     if (environment === null) return null;
     const config = environment.serverConfig ?? null;
@@ -135,8 +148,10 @@ export function useThreadMachine(
       isThisMachine: isThisMachineTarget(environment.entry),
       phase: environment.connection.phase,
       error: environment.connection.error ?? null,
+      connection: environment.connection,
       canOperate,
       handoff,
+      identityMismatch,
     });
-  }, [environment, identityOf, canOperate, handoff]);
+  }, [environment, identityOf, canOperate, handoff, identityMismatch]);
 }

@@ -50,6 +50,9 @@ public protocol ConnectAccount: AnyObject, Sendable {
   func signOut() async throws
   /// A session JWT from the relay's JWT template, nil when signed out.
   func sessionToken(refresh: Bool) async throws -> String?
+  /// Asks the account service again whether the session is over. True only
+  /// when it confirms there is no session; a check that fails says false.
+  func confirmSessionEnded() async -> Bool
 }
 
 /// What the app shows about SpecWithCode Connect. Nil on `AppModel` when the
@@ -77,6 +80,9 @@ public struct ConnectState: Sendable, Hashable {
   }
 
   public var isSignedIn: Bool { user != nil }
+
+  /// Shown while the relay refuses a sign-in Clerk still holds.
+  public static let relayRefusedMessage = "SpecWithCode Connect couldn't check your sign-in. Retrying."
 
   /// The Connect row on a machine's screen. Someone signed in is not told to sign in.
   public var machineRowSubtitle: String {

@@ -1,8 +1,16 @@
 import { useEffect } from "react";
+import { useAtomValue } from "@effect/atom-react";
 import { logicalProjectTitle, type EnvironmentId } from "@specweave-studio/contracts";
 import { useProjects } from "../../state/entities";
+import { environmentServerConfigsAtom } from "../../state/server";
 import { useNamedEnvironments } from "../settings/useNamedEnvironments";
-import { unwatchCopy, useCopyWatches, watchCopy } from "../../studio/folderCopyActivity";
+import {
+  unwatchCopy,
+  useCopyActivities,
+  useCopyWatches,
+  watchCopy,
+} from "../../studio/folderCopyActivity";
+import { syncCopyToasts } from "./folderCopyToasts";
 import { HandoffFolderCopyWatcher } from "./HandoffFolderCopyWatcher";
 import { readPendingCopy } from "./handoffFolderCopyPending";
 
@@ -35,6 +43,9 @@ function pendingPointers(): ReadonlyArray<{ environmentId: string; projectId: st
  */
 export function FolderCopyWatchers() {
   const watches = useCopyWatches();
+  const activities = useCopyActivities();
+  // A copy running with its dialog closed keeps a progress toast, like an update does.
+  useEffect(() => syncCopyToasts(activities, watches), [activities, watches]);
   const { environments } = useNamedEnvironments();
   const projects = useProjects();
   // A restored watch has no dialog's name for its project; the project list has it.
@@ -43,6 +54,12 @@ export function FolderCopyWatchers() {
       (item) => item.environmentId === environmentId && item.id === projectId,
     );
     return found ? logicalProjectTitle(found) : undefined;
+  };
+  const configs = useAtomValue(environmentServerConfigsAtom);
+  // Which machines take `~/` secret files, as the dialog knows it; null until that loads.
+  const homeSecrets = (environmentId: string) => {
+    const config = configs.get(environmentId as EnvironmentId);
+    return config ? config.environment.capabilities?.homeSecretFiles === true : null;
   };
   const label = (environmentId: string) =>
     environments.find((item) => item.environmentId === environmentId)?.label ?? "the other machine";
@@ -75,6 +92,8 @@ export function FolderCopyWatchers() {
               : watch.sourceLabel
           }
           restored={watch.restored ?? false}
+          reviewOnly={watch.reviewOnly ?? false}
+          homeSecrets={homeSecrets}
           onDone={() => unwatchCopy(key)}
         />
       ))}

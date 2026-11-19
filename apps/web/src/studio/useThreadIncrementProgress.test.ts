@@ -67,6 +67,40 @@ describe("makeProgressRefreshGate", () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
+  it("waits longer between timed reads after a slow read, then recovers", () => {
+    const { gate, refresh } = gateWithCount();
+    gate.setPending(true);
+    vi.advanceTimersByTime(20_000);
+    gate.setPending(false);
+
+    // A 20s read stretches the period to 80s from the last refresh (at mount).
+    for (let elapsed = 20_000; elapsed < 65_000; elapsed += 15_000) {
+      vi.advanceTimersByTime(15_000);
+      gate.tick();
+    }
+    expect(refresh).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(15_000);
+    gate.tick();
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    // A fast read brings back the usual period.
+    gate.setPending(true);
+    vi.advanceTimersByTime(200);
+    gate.setPending(false);
+    vi.advanceTimersByTime(15_000);
+    gate.tick();
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("still refreshes a hand-made link change at once after a slow read", () => {
+    const { gate, refresh } = gateWithCount();
+    gate.setPending(true);
+    vi.advanceTimersByTime(30_000);
+    gate.setPending(false);
+    gate.linkChanged();
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
   it("drops a scheduled refresh when disposed", () => {
     const { gate, refresh } = gateWithCount();
     gate.activity();

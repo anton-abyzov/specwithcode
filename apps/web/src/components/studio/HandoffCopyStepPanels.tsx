@@ -15,8 +15,10 @@ import type {
 import type { LeftOnSource } from "./HandoffSourceChanges";
 import type { CopyLinkOutcome } from "../../studio/projectLink";
 import { formatBytes } from "../../studio/folderCopy";
-import { HandoffSecretsStep } from "./HandoffSecretsStep";
-import { CopyClassPicker, CopyPlanPreview, CopyProgress } from "./HandoffCopyPreview";
+import { HandoffSecretsStep, SecretsUnreadStep } from "./HandoffSecretsStep";
+import { CopyCredentialsChecklist } from "./CopyCredentialsChecklist";
+import { CopyClassPicker, CopyPlanPreview } from "./HandoffCopyPreview";
+import { CopyProgressPanel } from "./CopyProgressPanel";
 import {
   planRepositoryChoices,
   secretFilesCopied,
@@ -26,7 +28,12 @@ import type { useCopyScope } from "./HandoffCopyScope";
 import type { PendingCopy } from "./handoffFolderCopyPending";
 import { HandoffCopySetup, type CopyMachine } from "./HandoffCopySetup";
 import { HandoffCopyDone, HandoffCopyFailed, HandoffCopyUndone } from "./HandoffCopyDone";
-import { sourceProgressText, type CopyStage, type TransferBusy } from "./handoffCopySteps";
+import {
+  workingView,
+  type CopyRecompare,
+  type CopyStage,
+  type TransferBusy,
+} from "./handoffCopySteps";
 import { replacesNothing } from "./handoffCopyAuto";
 import type { CopyNotices } from "./handoffCopyNotices";
 import { CopyNextStep, CopyNoticesBlock, CopyWorkingHint } from "./HandoffCopyGuide";
@@ -51,8 +58,6 @@ export function HandoffCopyStepPanels({
   onFolderChange,
   findingHome,
   mode,
-  onModeChange,
-  canMove,
   chooseFirst,
   onChooseFirstChange,
   selection,
@@ -84,6 +89,9 @@ export function HandoffCopyStepPanels({
   leftOnSource,
   keptHere,
   secretsNote,
+  onSendSecrets = null,
+  secretsLocked = null,
+  secretsVia = null,
   link,
   linkDialog,
   onLinkDialogClose,
@@ -92,6 +100,7 @@ export function HandoffCopyStepPanels({
   notices,
   next,
   working,
+  recompare = null,
   choices,
   lastCopy,
   onViewLast,
@@ -113,8 +122,6 @@ export function HandoffCopyStepPanels({
   readonly onFolderChange: (value: string) => void;
   readonly findingHome: boolean;
   readonly mode: FolderCopyMode;
-  readonly onModeChange: (mode: FolderCopyMode) => void;
-  readonly canMove: boolean;
   readonly chooseFirst: boolean;
   readonly onChooseFirstChange: (chooseFirst: boolean) => void;
   readonly selection: ReadonlyArray<FolderCopyFileClass>;
@@ -158,6 +165,12 @@ export function HandoffCopyStepPanels({
   /** The person kept the coordinator on the source. */
   readonly keptHere: boolean;
   readonly secretsNote: string | null;
+  /** Starts a fresh copy with every secret ticked; null when this window cannot send them. */
+  readonly onSendSecrets?: (() => void) | null;
+  /** Why this window cannot send secrets and where to send them from; null when it can. */
+  readonly secretsLocked?: string | null;
+  /** How included secrets travel when not through this window. */
+  readonly secretsVia?: string | null;
   readonly link: CopyLinkOutcome | { readonly status: "linking" } | null;
   readonly linkDialog: boolean;
   readonly onLinkDialogClose: () => void;
@@ -167,15 +180,22 @@ export function HandoffCopyStepPanels({
   readonly next: ReactNode;
   /** The one progress line while measuring, comparing, copying or moving. */
   readonly working: string | null;
+  /** Why the destination compares again, for the panel's note. */
+  readonly recompare?: CopyRecompare;
   /** Your choices, with its Change link, once a copy has started. */
   readonly choices: ReactNode;
   /** The last finished copy, kept for View and Undo while a new one is set up. */
   readonly lastCopy: { readonly targetFolder: string; readonly label: string } | null;
   readonly onViewLast: () => void;
 }) {
+  const view = working
+    ? workingView({ stage, sourceLabel, targetLabel, measured, copy, recompare })
+    : null;
   return (
     <>
-      {(stage === "setup" || stage === "scanning") && (
+      {/* Once a copy runs, its choices summary replaces the form: machines, folder and
+          options cannot change mid-copy, and account notices about other machines are noise. */}
+      {(stage === "setup" || (stage === "scanning" && pending === null)) && (
         <>
           {/* On top: a reopen after a finished copy shows it before the next copy's choices. */}
           {stage === "setup" && !pending && lastCopy && (
@@ -204,6 +224,8 @@ export function HandoffCopyStepPanels({
               uncommittedFiles,
               includeSecrets,
               onIncludeSecretsChange,
+              secretsLocked,
+              secretsVia,
               details,
             }}
             folder={folder}
@@ -211,8 +233,6 @@ export function HandoffCopyStepPanels({
             findingHome={findingHome}
             projectRelativePath={scope.selected.projectRelativePath}
             mode={mode}
-            onModeChange={onModeChange}
-            canMove={canMove}
             chooseFirst={
               pending && pending.cancelled !== true ? pending.auto !== true : chooseFirst
             }
@@ -242,22 +262,18 @@ export function HandoffCopyStepPanels({
       )}
 
       {working && (
-        <div className="space-y-1.5">
-          {stage === "copying" && copy ? (
-            <CopyProgress status={copy} line={working} />
+        <div className="space-y-2">
+          {view ? (
+            <CopyProgressPanel
+              view={view}
+              sourceLabel={sourceLabel}
+              targetLabel={targetLabel}
+              startedAt={copy?.startedAt ?? null}
+              stepSlot={stage === "scanning" ? "copy-measuring" : "copy-working"}
+            />
           ) : (
-            <p
-              role="status"
-              aria-live="polite"
-              className="text-sm"
-              data-slot={stage === "scanning" ? "copy-measuring" : "copy-working"}
-            >
+            <p role="status" aria-live="polite" className="text-sm" data-slot="copy-working">
               {working}
-              {stage === "planning" && measured?.step && measured.step !== "listing" && (
-                <span className="block text-xs text-muted-foreground" data-slot="copy-source-step">
-                  {sourceProgressText(measured, sourceLabel)}
-                </span>
-              )}
             </p>
           )}
           {/* Moving the coordinator must finish here; everything else carries on closed. */}
@@ -310,6 +326,15 @@ export function HandoffCopyStepPanels({
               {formatBytes(copy.disk.free)}.
             </p>
           )}
+          {!summary && (
+            <SecretsUnreadStep
+              included={includeSecrets}
+              sourceLabel={sourceLabel}
+              disabled={busy}
+              locked={secretsLocked}
+              onChange={(included) => onSecretsChange(included, [])}
+            />
+          )}
           {summary && (
             <HandoffSecretsStep
               files={secretFilesCopied(
@@ -326,7 +351,19 @@ export function HandoffCopyStepPanels({
                 machines.find((entry) => entry.id === machine)?.homeSecretFiles === true
               }
               disabled={busy}
+              locked={secretsLocked}
+              via={secretsVia}
               onChange={onSecretsChange}
+            />
+          )}
+          {machine && (
+            <CopyCredentialsChecklist
+              sourceEnvironmentId={project.environmentId}
+              projectId={project.id}
+              destinationEnvironmentId={machine}
+              sourceLabel={sourceLabel}
+              targetLabel={targetLabel}
+              disabled={busy}
             />
           )}
         </>
@@ -361,11 +398,24 @@ export function HandoffCopyStepPanels({
           leftOnSource={leftOnSource}
           keptHere={keptHere}
           secretsNote={secretsNote}
+          onSendSecrets={onSendSecrets}
           link={link}
           undoPreview={undoPreview}
           linkDialog={linkDialog}
           onLinkDialogClose={onLinkDialogClose}
           onLinked={onLinked}
+        />
+      )}
+
+      {/* After the copy: what the new machine still needs before the project works there. */}
+      {stage === "done" && machine && (
+        <CopyCredentialsChecklist
+          sourceEnvironmentId={project.environmentId}
+          projectId={project.id}
+          destinationEnvironmentId={machine}
+          destinationProjectId={copy?.projectId ?? undefined}
+          sourceLabel={sourceLabel}
+          targetLabel={targetLabel}
         />
       )}
 

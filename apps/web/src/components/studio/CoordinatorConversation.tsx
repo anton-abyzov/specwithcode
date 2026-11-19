@@ -1156,7 +1156,8 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
         data-metadata-only-activity
         onClick={() => onOpenCoordinatorActivity(message.runId!)}
       >
-        {failedActivity ? "Turn failed · View activity" : "View activity"}
+        <span>{failedActivity ? "Turn failed · View activity" : "View activity"}</span>
+        <ChevronRightIcon aria-hidden />
       </button>
     ) : null;
   }

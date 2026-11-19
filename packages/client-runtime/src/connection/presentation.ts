@@ -3,10 +3,12 @@ import * as Option from "effect/Option";
 
 import type { ConnectionCatalogEntry } from "./catalog.ts";
 import type {
+  ConnectionAttemptError,
   ConnectionBlockedReason,
   ConnectionTarget,
   SupervisorConnectionState,
 } from "./model.ts";
+import { connectionLossCause, type ConnectionLossCause } from "./reach.ts";
 import { connectionRouteId, connectionRoutes, routeHttpBaseUrl } from "./routes.ts";
 
 export type EnvironmentConnectionPhase =
@@ -26,6 +28,22 @@ export interface EnvironmentConnectionPresentation {
   readonly blockedReason?: ConnectionBlockedReason;
   /** The host no longer accepts this device's approval, such as after an update. */
   readonly reapprovalRequired?: boolean;
+  /** Stopped because this device has no SpecWithCode Connect sign-in; signing in restores it. */
+  readonly connectSignInRequired?: boolean;
+  /**
+   * Since when this device has had no session with the machine while wanting
+   * one (epoch ms). Absent while connected, when nobody asked for a
+   * connection, and on a presentation built without a supervisor.
+   */
+  readonly lostAt?: number;
+  /** When this device last had a session with the machine in this run (epoch ms). */
+  readonly lastConnectedAt?: number;
+  /** When the next automatic attempt starts (epoch ms), while waiting between attempts. */
+  readonly retryAt?: number;
+  /** Why the latest attempt failed; kept through an explicit retry. */
+  readonly cause?: ConnectionLossCause;
+  /** The host waits for its owner to type this code before this device may use it (1327). */
+  readonly deviceApprovalCode?: string;
 }
 
 export interface EnvironmentPresentation {
@@ -34,7 +52,37 @@ export interface EnvironmentPresentation {
   readonly serverConfig: ServerConfig | null;
 }
 
+/** The reach facts of a state, each left out when the supervisor has none. */
+function reachFacts(
+  state: SupervisorConnectionState,
+): Pick<EnvironmentConnectionPresentation, "lostAt" | "lastConnectedAt" | "retryAt" | "cause"> {
+  const cause =
+    state.phase === "available" || state.phase === "connected"
+      ? undefined
+      : connectionLossCause(
+          state.lossFailure ?? state.lastFailure,
+          state.phase === "offline" ? "offline" : "online",
+        );
+  return {
+    ...(state.lostAt == null ? {} : { lostAt: state.lostAt }),
+    ...(state.lastConnectedAt == null ? {} : { lastConnectedAt: state.lastConnectedAt }),
+    ...(state.retryAt === null ? {} : { retryAt: state.retryAt }),
+    ...(cause === undefined ? {} : { cause }),
+  };
+}
+
+const approvalCodeOf = (failure: ConnectionAttemptError | null | undefined) =>
+  failure?._tag === "ConnectionTransientError" && failure.deviceApprovalCode !== undefined
+    ? { deviceApprovalCode: failure.deviceApprovalCode }
+    : {};
+
 export function presentConnectionState(
+  state: SupervisorConnectionState,
+): EnvironmentConnectionPresentation {
+  return { ...presentConnectionPhase(state), ...reachFacts(state) };
+}
+
+function presentConnectionPhase(
   state: SupervisorConnectionState,
 ): EnvironmentConnectionPresentation {
   switch (state.phase) {
@@ -47,6 +95,7 @@ export function presentConnectionState(
         phase: state.attempt <= 1 && state.lastFailure === null ? "connecting" : "reconnecting",
         error: state.lastFailure?.message ?? null,
         traceId: state.lastFailure?.traceId ?? null,
+        ...approvalCodeOf(state.lastFailure),
       };
     case "connected":
       return { phase: "connected", error: null, traceId: null };
@@ -55,6 +104,7 @@ export function presentConnectionState(
         phase: "reconnecting",
         error: state.lastFailure?.message ?? null,
         traceId: state.lastFailure?.traceId ?? null,
+        ...approvalCodeOf(state.lastFailure),
       };
     case "blocked":
       return {
@@ -66,6 +116,9 @@ export function presentConnectionState(
               blockedReason: state.lastFailure.reason,
               ...(state.lastFailure.reapprovalRequired === true
                 ? { reapprovalRequired: true }
+                : {}),
+              ...(state.lastFailure.connectSignInRequired === true
+                ? { connectSignInRequired: true }
                 : {}),
             }
           : {}),
@@ -94,7 +147,7 @@ export function settlingConnectionPresentation(
   switch (connection.phase) {
     case "available":
     case "reconnecting":
-      return { phase: "connecting", error: null, traceId: null };
+      return { ...connection, phase: "connecting", error: null, traceId: null };
     default:
       return connection;
   }

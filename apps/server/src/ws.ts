@@ -119,6 +119,7 @@ import {
   WsRpcGroup,
   WsCoreRpcGroup,
   ModsError,
+  firstFeatureGuideFinishedIn,
 } from "@specweave-studio/contracts";
 import { resolveServerBackgroundActivitySettings } from "@specweave-studio/shared/backgroundActivitySettings";
 import {
@@ -233,6 +234,11 @@ import { linkCreatedPullRequest } from "./git/linkCreatedPullRequest.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
+import {
+  routeUnnamedLaunch,
+  type UnnamedLaunchInput,
+  type UnnamedLaunchModel,
+} from "./project/TracksLaunch.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import { projectMutationOperation } from "./project/ProjectMutation.ts";
 import * as ProjectActionRequests from "./project/ProjectActionRequests.ts";
@@ -281,6 +287,7 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import {
   failEnvironmentAuthInvalid,
+  failEnvironmentAuthRefused,
   failEnvironmentInternal,
   upgradeUntilSessionEnds,
 } from "./auth/http.ts";
@@ -292,6 +299,8 @@ import {
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
 import * as UsageLimitHistory from "./usage/UsageLimitHistory.ts";
+import * as ResetAnnouncementMonitor from "./resetAnnouncements/ResetAnnouncementMonitor.ts";
+import * as UsageResetLedger from "./usage/UsageResetLedger.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
@@ -1422,6 +1431,45 @@ const layerWsRpc = (
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
+      // A thread sent without a model pick starts on its project's tracks (TracksLaunch.ts).
+      const unnamedLaunchModel = (input: UnnamedLaunchInput) =>
+        input.modelUnnamed !== true
+          ? Effect.succeed<UnnamedLaunchModel>({
+              modelSelection: input.modelSelection,
+              routing: null,
+              refused: null,
+            })
+          : Effect.all([
+              projectStore.get(input.projectId).pipe(
+                Effect.map(Option.getOrUndefined),
+                Effect.orElseSucceed(() => undefined),
+              ),
+              providerRegistry.getProviders,
+            ]).pipe(
+              Effect.flatMap(([project, providers]) =>
+                routeUnnamedLaunch({
+                  project,
+                  providers,
+                  modelSelection: input.modelSelection,
+                  title: input.title,
+                  text: input.initialMessage?.text ?? "",
+                  settings: Option.some(serverSettings),
+                }),
+              ),
+              // Nothing on the tracks can run and the shown model is billed per use.
+              Effect.flatMap(
+                (model): Effect.Effect<UnnamedLaunchModel, OrchestrationV2ThreadLaunchError> =>
+                  model.refused === null
+                    ? Effect.succeed(model)
+                    : Effect.fail(
+                        new OrchestrationV2ThreadLaunchError({
+                          commandId: input.commandId,
+                          projectId: input.projectId,
+                          message: model.refused,
+                        }),
+                      ),
+              ),
+            );
       const projectRuntimeAccess = yield* ProjectRuntimeAccess.ProjectRuntimeAccess;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const adversarialReview = yield* AdversarialReviewService.AdversarialReviewService;
@@ -1836,6 +1884,16 @@ const layerWsRpc = (
           const auth = yield* serverAuth.getDescriptor();
           const scratchWorkspaceRoot = yield* managedFolders.scratchRoot;
           const teamRules = yield* ServerSettings.currentTeamRulesSummary;
+          // Removed projects too: a finished sample a person removed still ends the offer (1398 AC-21).
+          const firstFeatureFinished = yield* projectStore.list({ includeDeleted: true }).pipe(
+            Effect.map(firstFeatureGuideFinishedIn),
+            // The config still loads; the offer may show again, so the reason is logged.
+            Effect.catch((cause) =>
+              Effect.logWarning("Failed to read projects for the first feature offer", {
+                detail: String(cause),
+              }).pipe(Effect.as(false)),
+            ),
+          );
           const editorConfig = yield* resolveEditorConfig(
             yield* resolveAvailableEditorsForConfig(externalLauncher.resolveAvailableEditors()),
             resolveFileManagerRevealKindForConfig(externalLauncher.resolveFileManagerRevealKind()),
@@ -1878,6 +1936,8 @@ const layerWsRpc = (
             threadResumeCompletionMarker: true,
             threadSnapshotPagination: true,
             specweaveSetUp: true,
+            firstFeatureSample: true,
+            ...(firstFeatureFinished ? { firstFeatureFinished: true } : {}),
             ...Option.match(scratchWorkspaceRoot, {
               onNone: () => ({}),
               onSome: (root) => ({ scratchWorkspaceRoot: root }),
@@ -2152,44 +2212,50 @@ const layerWsRpc = (
             Effect.andThen(
               startup
                 .enqueueCommand(
-                  ThreadMessageIntake.launchThread({
-                    commandId: input.commandId,
-                    ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
-                    ...(input.reuseExistingThread === undefined
-                      ? {}
-                      : { reuseExistingThread: input.reuseExistingThread }),
-                    projectId: input.projectId,
-                    title: input.title,
-                    ...(input.generateTitle === undefined
-                      ? {}
-                      : { generateTitle: input.generateTitle }),
-                    modelSelection: input.modelSelection,
-                    runtimeMode: input.runtimeMode,
-                    interactionMode: input.interactionMode,
-                    workspaceStrategy: input.workspaceStrategy,
-                    ...(input.initialMessage === undefined
-                      ? {}
-                      : {
-                          initialMessage: {
-                            ...(input.initialMessage.manualCodexCreditIntent
-                              ? {
-                                  manualCodexCreditIntent:
-                                    input.initialMessage.manualCodexCreditIntent,
-                                }
-                              : {}),
-                            ...(input.initialMessage.messageId === undefined
-                              ? {}
-                              : { messageId: input.initialMessage.messageId }),
-                            text: input.initialMessage.text,
-                            attachments: input.initialMessage.attachments,
-                            ...(input.initialMessage.context === undefined
-                              ? {}
-                              : { context: input.initialMessage.context }),
-                          },
-                        }),
-                    createdBy: "user",
-                    creationSource: input.creationSource ?? "web",
-                  }).pipe(Effect.provide(intakeContext)),
+                  unnamedLaunchModel(input).pipe(
+                    Effect.flatMap((launchModel) =>
+                      ThreadMessageIntake.launchThread({
+                        commandId: input.commandId,
+                        ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
+                        ...(input.reuseExistingThread === undefined
+                          ? {}
+                          : { reuseExistingThread: input.reuseExistingThread }),
+                        projectId: input.projectId,
+                        title: input.title,
+                        ...(input.generateTitle === undefined
+                          ? {}
+                          : { generateTitle: input.generateTitle }),
+                        modelSelection: launchModel.modelSelection,
+                        ...(launchModel.routing === null ? {} : { routing: launchModel.routing }),
+                        runtimeMode: input.runtimeMode,
+                        interactionMode: input.interactionMode,
+                        workspaceStrategy: input.workspaceStrategy,
+                        ...(input.initialMessage === undefined
+                          ? {}
+                          : {
+                              initialMessage: {
+                                ...(input.initialMessage.manualCodexCreditIntent
+                                  ? {
+                                      manualCodexCreditIntent:
+                                        input.initialMessage.manualCodexCreditIntent,
+                                    }
+                                  : {}),
+                                ...(input.initialMessage.messageId === undefined
+                                  ? {}
+                                  : { messageId: input.initialMessage.messageId }),
+                                text: input.initialMessage.text,
+                                attachments: input.initialMessage.attachments,
+                                ...(input.initialMessage.context === undefined
+                                  ? {}
+                                  : { context: input.initialMessage.context }),
+                              },
+                            }),
+                        createdBy: "user",
+                        creationSource: input.creationSource ?? "web",
+                      }),
+                    ),
+                    Effect.provide(intakeContext),
+                  ),
                 )
                 .pipe(
                   Effect.tap(() =>
@@ -2385,6 +2451,12 @@ const layerWsRpc = (
           ),
         [WS_METHODS.serverRefreshProviders]: (input) =>
           Effect.gen(function* () {
+            // An agent installed since the server started may sit in a folder
+            // the shell added to PATH since. A person's click asks the shell
+            // again; any other refresh does so only when a startup file changed.
+            yield* providerRegistry.rereadPath({
+              force: input.fresh === true || input.refreshModels === true,
+            });
             if (input.discover && providerRegistry.findAgents) {
               return yield* providerRegistry.findAgents({ fresh: input.fresh === true });
             }
@@ -2417,6 +2489,16 @@ const layerWsRpc = (
             if (input.instanceId === undefined) {
               yield* usageLimitSources.refresh;
             }
+            // A person pressed Refresh: every instance reads its account past
+            // its probe cache, as a targeted fresh refresh does for one.
+            if (input.fresh === true && input.instanceId === undefined && !input.refreshModels) {
+              const instances = yield* providerInstances.listInstances;
+              yield* Effect.forEach(
+                instances,
+                (instance) => instance.invalidateCaches ?? Effect.void,
+                { concurrency: "unbounded", discard: true },
+              );
+            }
             let providers = yield* input.cwd !== undefined && input.instanceId !== undefined
               ? providerRegistry.refreshWorkspaceSnapshot({
                   instanceId: input.instanceId,
@@ -2424,7 +2506,9 @@ const layerWsRpc = (
                   fresh: input.fresh === true,
                 })
               : input.instanceId !== undefined
-                ? providerRegistry.refreshInstance(input.instanceId)
+                ? providerRegistry.refreshInstance(input.instanceId, {
+                    fresh: input.fresh === true,
+                  })
                 : providerRegistry.refresh();
             if (input.refreshModels) {
               const instances = yield* providerInstances.listInstances;
@@ -3473,11 +3557,7 @@ export const serveRpcWebSocket = <E, R>(
     const analytics = yield* AnalyticsService.AnalyticsService;
     const session = yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
       Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
-        failEnvironmentAuthInvalid(
-          EnvironmentAuth.serverAuthCredentialReason(error),
-          EnvironmentAuth.serverAuthDpopFailureReason(error),
-          EnvironmentAuth.serverAuthTeamRulesMessage(error),
-        ),
+        failEnvironmentAuthRefused(error),
       ),
       Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
         failEnvironmentInternal("internal_error", error),
@@ -3516,7 +3596,7 @@ const inferredWebSocketLayer = Layer.unwrap(
             Effect.provideService(RpcServer.Protocol, withTerminalOutputWindow(protocol)),
             Effect.provide(
               Layer.mergeAll(
-                RpcAuthorization.layer(session.scopes, session.principal),
+                RpcAuthorization.layer(session.scopes, session.principal, session.deviceKey),
                 rpcDeadlineLayer,
                 rpcInstrumentationLayer,
               ),
@@ -3551,6 +3631,8 @@ const inferredWebSocketLayer = Layer.unwrap(
                   ProjectWorkspaceRpc.layerPlanningRpcHandlers,
                   designLayers.layerRpcHandlers(session),
                   UsageLimitHistory.layerRpcHandlers,
+                  UsageResetLedger.layerRpcHandlers,
+                  ResetAnnouncementMonitor.layerRpcHandlers,
                   skillsActionsHandlers,
                 ),
               ),

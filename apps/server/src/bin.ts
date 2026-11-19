@@ -13,6 +13,27 @@ import { quietSqliteExperimentalWarning } from "./quietWarnings.ts";
 import { installFatalCrashReportMonitor } from "./telemetry/crashReportFiles.ts";
 import { ensureServerThreadPoolSize } from "./threadPool.ts";
 
+/** A stream the server logs to: process.stdout or process.stderr. */
+export interface OutputStream {
+  readonly on: (event: "error", listener: (error: Error) => void) => unknown;
+  readonly listeners: (event: "error") => ReadonlyArray<unknown>;
+}
+
+function ignoreOutputError(): void {}
+
+/**
+ * Logs go to stdout and stderr, which may be a closed desktop launcher pipe or a
+ * log file on a full disk. Node turns a failed write into an unhandled stream
+ * error that crashes the process and skips shutdown, leaving the ownership lock
+ * behind, so the line is dropped instead. Safe to call more than once.
+ */
+export function ignoreOutputStreamErrors(streams: ReadonlyArray<OutputStream>): void {
+  for (const stream of streams) {
+    if (stream.listeners("error").includes(ignoreOutputError)) continue;
+    stream.on("error", ignoreOutputError);
+  }
+}
+
 if (
   isEntrypoint({
     moduleUrl: import.meta.url,
@@ -30,6 +51,9 @@ if (
     const { runAcpMcpCliFastPath } = await import("./mcp/AcpMcpStdioBridge.ts");
     await runAcpMcpCliFastPath(command, process.argv.slice(3));
   } else {
+    // Only here: the commands above answer on stdout for another program, so a broken
+    // pipe there must stay a failure the caller sees.
+    ignoreOutputStreamErrors([process.stdout, process.stderr]);
     // Before the CLI graph loads: the pool is sized on its first job, and
     // Effect's file system captures node:fs at import.
     ensureServerThreadPoolSize();

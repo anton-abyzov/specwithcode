@@ -42,7 +42,7 @@ public struct ConnectDevice: Sendable, Hashable {
 
   /// The hardware identifier, e.g. "iPhone17,1". A simulator reports the
   /// device it simulates.
-  static func hardwareIdentifier(environment: [String: String] = ProcessInfo.processInfo.environment) -> String? {
+  public static func hardwareIdentifier(environment: [String: String] = ProcessInfo.processInfo.environment) -> String? {
     if let simulated = environment["SIMULATOR_MODEL_IDENTIFIER"], !simulated.isEmpty { return simulated }
     var info = utsname()
     guard uname(&info) == 0 else { return nil }

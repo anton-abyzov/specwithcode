@@ -200,6 +200,23 @@ function resolveProjectOverrides(
     effective[key] = value;
     sources[key] = "project";
   }
+  // Tracks are saved one at a time: a project that set only its Daily order
+  // keeps this machine's Complex and Review orders, and follows later edits to them.
+  // A lane or review field the project left out follows the machine; an empty
+  // list the project saved is its choice of the built-in order.
+  if (sources.modelLanes === "project") {
+    const own = overrides.modelLanes ?? {};
+    effective.modelLanes = {
+      complex: own.complex ?? settings.modelLanes.complex,
+      routine: own.routine ?? settings.modelLanes.routine,
+    };
+  }
+  if (sources.adversarialReview === "project") {
+    effective.adversarialReview = { ...settings.adversarialReview, ...overrides.adversarialReview };
+  }
+  if (sources.advisor === "project") {
+    effective.advisor = { ...settings.advisor, ...overrides.advisor };
+  }
   // Same per-project rule as the no-overrides path above: without the
   // project's own workspace choice, the environment tier's stored value is
   // not inherited.
@@ -277,4 +294,26 @@ export function resolveWorktreeCleanup(
   const { worktreeAfterDays, worktreeOnMerge, worktreeOnDelete, worktreeUnchanged } =
     settings.storageCleanup;
   return { worktreeAfterDays, worktreeOnMerge, worktreeOnDelete, worktreeUnchanged };
+}
+
+/**
+ * The model a project's new threads start on, as the project chose it: a
+ * Project settings override, else the project's own saved field. Null when
+ * only the machine default would apply. The saved field still counts after
+ * the install folded its legacy fields, because the project dialog keeps
+ * writing it; the resolver alone would drop it and show no model.
+ */
+export function projectThreadModel(
+  settings: ServerSettings,
+  projectId: ProjectId,
+  project: LegacyProjectSettingsFields | null | undefined,
+): ModelSelection | null {
+  const resolved = resolveProjectSettings(settings, projectId, project);
+  // On Tracks no single model is the project's: the track for the task decides.
+  if (resolved.settings.threadModelMode === "tracks") return null;
+  if (resolved.sources.defaultModelSelection === "project")
+    return resolved.settings.defaultModelSelection;
+  // Like an override, a saved model on a disabled provider does not count.
+  const saved = project?.defaultModelSelection ?? null;
+  return saved !== null && isModelSelectionProviderEnabled(settings, saved) ? saved : null;
 }

@@ -2,7 +2,12 @@ import { TeamRulesCarried } from "./teamRules.ts";
 import { LifecycleReceipt, LifecycleReceiptReport } from "./threadLifecycleEvidence.ts";
 import { ThreadRuntimeModeSetCommand } from "./threadRuntimeModeCommand.ts";
 import { ManualCodexCreditIntent } from "./manualCodexCredits.ts";
-import { StartAdversarialReviewInput, StartAdversarialReviewResult } from "./adversarialReview.ts";
+import {
+  StartAdversarialReviewInput,
+  StartAdversarialReviewResult,
+  ThreadReviewMode,
+} from "./adversarialReview.ts";
+import { AdvisorTaskPurpose, ThreadAdvisorMode } from "./advisor.ts";
 export {
   ManualCodexCreditIntent,
   manualCreditBindingMatches,
@@ -510,6 +515,12 @@ export const OrchestrationV2AppThread = Schema.Struct({
   limitPreswitchFrom: Schema.optional(Schema.NullOr(OrchestrationV2LimitPreswitchOrigin)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  /** The thread's own advisor choice; absent or null follows the project. */
+  advisorMode: Schema.optional(Schema.NullOr(ThreadAdvisorMode)),
+  /** The thread's own adversarial review choice; absent or null follows the project. */
+  reviewMode: Schema.optional(Schema.NullOr(ThreadReviewMode)),
+  /** Set on a child that exists only to advise its parent; never changed. */
+  purpose: Schema.optional(AdvisorTaskPurpose),
   // Fractional-index slot in the user-arranged pinned order. Optional so
   // payloads from pre-reorder servers still decode.
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -916,6 +927,8 @@ export const OrchestrationV2Subagent = Schema.Struct({
   // blocking tool call). Absent on legacy records; treated as settled_only.
   completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
   completionDelivery: Schema.optional(OrchestrationV2DelegatedCompletionTaskDelivery),
+  /** Set when the task is an advisor consult rather than delegated work. */
+  purpose: Schema.optional(AdvisorTaskPurpose),
   status: Schema.Literals([
     "idle",
     "pending",
@@ -1156,6 +1169,16 @@ export const OrchestrationV2HistoricalMessage = Schema.Struct({
   providerThreadId: Schema.NullOr(ProviderThreadId),
   status: Schema.String,
   kind: Schema.String,
+  /** The turn item's ordinal in its thread; absent on older handoffs. */
+  ordinal: Schema.optional(NonNegativeInt),
+  /** Compact identity for bounded worker selection; absent on older handoffs. */
+  worker: Schema.optional(
+    Schema.Struct({
+      key: Schema.String,
+      origin: Schema.String,
+      status: Schema.String,
+    }),
+  ),
 });
 export type OrchestrationV2HistoricalMessage = typeof OrchestrationV2HistoricalMessage.Type;
 
@@ -1186,6 +1209,7 @@ export const OrchestrationV2ContextHandoff = Schema.Struct({
       messages: Schema.Array(OrchestrationV2HistoricalMessage),
       coverage: Schema.String,
       omittedItems: NonNegativeInt,
+      omittedWorkers: Schema.optional(NonNegativeInt),
       // IDs omitted during preparation, before the target's delivery budget is known.
       omittedItemIds: Schema.optional(Schema.Array(TurnItemId)),
     }),
@@ -2274,6 +2298,19 @@ export const OrchestrationV2ThreadProjection = Schema.Struct({
 });
 export type OrchestrationV2ThreadProjection = typeof OrchestrationV2ThreadProjection.Type;
 
+/**
+ * What a running turn's newest unfinished step is: a shell command, a tool, a
+ * subagent, a wait on another thread or on a delegated task.
+ */
+export const OrchestrationV2ActiveWorkKind = Schema.Literals([
+  "command",
+  "tool",
+  "subagent",
+  "thread",
+  "task",
+]);
+export type OrchestrationV2ActiveWorkKind = typeof OrchestrationV2ActiveWorkKind.Type;
+
 export const OrchestrationV2ShellThreadStatus = Schema.Union([
   Schema.Literal("idle"),
   OrchestrationV2RunStatus,
@@ -2292,6 +2329,12 @@ export const OrchestrationV2PendingRuntimeRequestSummary = Schema.Struct({
   reopenedFromAskedAt: Schema.optional(Schema.NullOr(Schema.String)),
   /** What a waiting access request asks for; absent for every other request. */
   access: Schema.optional(OrchestrationV2PendingAccessRequest),
+  /**
+   * A question card in a row's words ("MCP sign-in: Ship without it or I will
+   * sign in once"), at most 160 characters. Absent for other requests and from
+   * older servers, whose rows then say only "Answer needed".
+   */
+  prompt: Schema.optional(Schema.String),
 });
 export type OrchestrationV2PendingRuntimeRequestSummary =
   typeof OrchestrationV2PendingRuntimeRequestSummary.Type;
@@ -2374,6 +2417,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
         startedAt: Schema.DateTimeUtc,
         /** The thread a wait is on, so the UI can link it instead of calling it stalled. */
         waitThreadId: Schema.optional(Schema.String),
+        /** What kind of step it is, so a summary can say it in words; absent from older servers. */
+        kind: Schema.optional(OrchestrationV2ActiveWorkKind),
       }),
     ),
   ),
@@ -2441,6 +2486,12 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   /** Omitted by servers that predate thread pinning. */
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  /** The thread's own advisor choice; absent or null follows the project. */
+  advisorMode: Schema.optional(Schema.NullOr(ThreadAdvisorMode)),
+  /** The thread's own adversarial review choice; absent or null follows the project. */
+  reviewMode: Schema.optional(Schema.NullOr(ThreadReviewMode)),
+  /** Set on a child that exists only to advise its parent; never changed. */
+  purpose: Schema.optional(AdvisorTaskPurpose),
   /** Slot in the user-arranged pinned order; omitted by pre-reorder servers. */
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Slot in the user-arranged active order; omitted by pre-reorder servers. */
@@ -2975,6 +3026,7 @@ export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFiel
         label: Schema.String,
         startedAt: Schema.DateTimeUtcFromString,
         waitThreadId: Schema.optional(Schema.String),
+        kind: Schema.optional(OrchestrationV2ActiveWorkKind),
       }),
     ),
   ),
@@ -3406,6 +3458,26 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     modelSelection: ModelSelection,
+    /**
+     * The selection the move was planned from. When set, the move is refused
+     * if the thread's selection changed since, so a server move never
+     * replaces a pick made after it was planned.
+     */
+    expectedModelSelection: Schema.optional(ModelSelection),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.advisor-mode.set"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    /** null follows the project again. */
+    advisorMode: Schema.NullOr(ThreadAdvisorMode),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.review-mode.set"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    /** null follows the project again. */
+    reviewMode: Schema.NullOr(ThreadReviewMode),
   }),
   Schema.Struct({
     type: Schema.Literal("provider-session.detach"),
@@ -3626,6 +3698,8 @@ export const OrchestrationV2Command = Schema.Union([
     // Omitted behaves as "settled_only" (no wake while the parent has a live
     // run); producers that want fire-and-forget wakes must set "always".
     completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
+    /** An advisor consult: the child is read-only and cannot consult or delegate. */
+    purpose: Schema.optional(AdvisorTaskPurpose),
     createdAt: Schema.optional(Schema.DateTimeUtc),
   }),
   Schema.Struct({
@@ -3884,6 +3958,12 @@ export type OrchestrationV2ServerCommand =
        * provider sessions stay attached.
        */
       readonly sameWorkingFolder?: true;
+      /**
+       * Server only: an agent moves its own thread into a worktree and has
+       * queued the prompt that continues its work there, so the turn it stops
+       * is a pause: a delegated task's parent is not told the child stopped.
+       */
+      readonly continuesInWorktree?: true;
       readonly limitRecoveryAffinity?: NonNullable<OrchestrationV2LimitAvailability["affinity"]>;
       readonly limitAvailability?: {
         readonly runId: RunId;
@@ -3946,6 +4026,11 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
   title: TrimmedNonEmptyString,
   generateTitle: Schema.optional(Schema.Boolean),
   modelSelection: ModelSelection,
+  /**
+   * Nobody picked `modelSelection`: it is only what the composer showed. A
+   * project on Tracks then starts the thread on its Daily or Complex track.
+   */
+  modelUnnamed: Schema.optional(Schema.Boolean),
   /** The Auto routing decision behind `modelSelection`, kept on the thread. */
   routing: Schema.optional(TaskRoutingDecision),
   /** The model the thread stands in for: its launch moved off it because it had no room. */

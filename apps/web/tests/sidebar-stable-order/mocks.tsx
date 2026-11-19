@@ -31,6 +31,8 @@ export const fixture = {
   environments: [] as Array<{ environmentId: string; label: string }>,
   /** Machines this device can't reach. */
   unreachable: [] as string[],
+  /** Plan progress by scoped thread key ("environment:thread"). */
+  plans: new Map() as Map<string, unknown>,
 };
 export function publish(change: Partial<typeof fixture>): void {
   Object.assign(fixture, change);
@@ -199,6 +201,10 @@ export const serverEnvironment = new Proxy(
   {},
   { get: () => () => ({ name: "server-environment" }) },
 ) as Record<string, (...args: unknown[]) => unknown>;
+// The quota banner reads its switch before asking whether settings have a server.
+const NO_PRIMARY_SETTINGS: Record<string, unknown> = {};
+export const usePrimarySettings = <T,>(select?: (s: typeof NO_PRIMARY_SETTINGS) => T) =>
+  select ? select(NO_PRIMARY_SETTINGS) : NO_PRIMARY_SETTINGS;
 export const usePrimarySettingsAvailable = () => false;
 export const useUpdatePrimarySettings = () => () => {};
 export const useScratchProject = () => ({
@@ -232,8 +238,16 @@ const GROUPS = [
   },
 ];
 export const useSettingsProjectGroups = () => useFixture(() => fixture.groups ?? GROUPS);
-const NO_PLANS = { plans: new Map(), loaders: null };
-export const useSidebarThreadPlans = () => NO_PLANS;
+let plansFor: unknown = null;
+let planResult = { plans: new Map(), loaders: null };
+export const useSidebarThreadPlans = () =>
+  useFixture(() => {
+    if (plansFor !== fixture.plans) {
+      plansFor = fixture.plans;
+      planResult = { plans: fixture.plans, loaders: null };
+    }
+    return planResult;
+  });
 export const ProjectFavicon = ({ project }: { project?: { title?: string } }) =>
   new URLSearchParams(location.search).get("scenario") === "automated-attention" ? (
     <b className="inline-block w-5 text-center text-[11px]" data-monogram>

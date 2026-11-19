@@ -7,7 +7,7 @@ import type { ServerProvider } from "@specweave-studio/contracts";
 import { PROVIDER_DISPLAY_NAMES } from "@specweave-studio/contracts";
 import { Link } from "@tanstack/react-router";
 import { PlusIcon, SettingsIcon } from "lucide-react";
-import { useEffect, type ReactNode } from "react";
+import { Fragment, useEffect, type ComponentProps, type ReactNode } from "react";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
@@ -19,9 +19,31 @@ import {
   sessionStateSince,
   type SessionView,
 } from "../../studio/overviewModel";
+import { machineColorProps, type MachineIdentity } from "../../studio/machineIdentity";
+import type { MachineTone } from "../../studio/overviewMachines";
+import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { ThreadModelBadge } from "./shell/ModelBadge";
 import { PlanProgressChip } from "./PlanProgressChip";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+
+/**
+ * A span that explains itself on hover or focus when there is more to say.
+ * `data-hint` carries the same text for tests and scripts.
+ */
+function Hinted({
+  hint,
+  children,
+  ...span
+}: ComponentProps<"span"> & { readonly hint: string | null | undefined }) {
+  if (hint == null || hint === "") return <span {...span}>{children}</span>;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span {...span} data-hint={hint} />}>{children}</TooltipTrigger>
+      <TooltipPopup>{hint}</TooltipPopup>
+    </Tooltip>
+  );
+}
 
 /** relativeTime from the overview model, with its words translated. */
 export function relativeTimeLabel(
@@ -88,21 +110,48 @@ function sessionTone(s: SessionView): Tone {
   return s.working ? "moss" : s.settled ? "muted" : "plain";
 }
 
-/** One chat on one line: state dot, title, where it runs, its state and age. */
+/** A machine as Overview names it: who it is here, and its host label for the tooltip. */
+export type OverviewMachine = {
+  readonly identity: MachineIdentity;
+  /** The saved connection's host label ("Anton's MacBook M4MAX"). */
+  readonly fullName: string;
+};
+
+/**
+ * A machine's name in its color behind a small square of it, as the sidebar's
+ * chat rows show it. The host label is the tooltip when it says more than the name.
+ */
+export function MachineMark({ machine }: { machine: OverviewMachine }) {
+  const { identity, fullName } = machine;
+  return (
+    <Hinted
+      className="studio-machine-mark machine-mark"
+      {...machineColorProps(identity)}
+      hint={fullName !== identity.name ? fullName : null}
+    >
+      {identity.name}
+    </Hinted>
+  );
+}
+
+/** One chat: its title, then the machine, project, model and plan, its state and age. */
 export function ChatRow({
   session: s,
   target,
-  host,
+  machine,
   provider,
   entries,
   now,
+  quiet = false,
 }: {
   session: SessionView;
   target: ChatTarget;
-  host: string;
+  machine: OverviewMachine;
   provider: string;
   entries: ReadonlyMap<string, ProviderInstanceEntry>;
   now: number;
+  /** Under Working: a row that is simply working says so by being listed. */
+  quiet?: boolean;
 }) {
   const tx = useTx();
   // A cached row from an older host can arrive without its model.
@@ -118,6 +167,10 @@ export function ChatRow({
   const state = s.attention
     ? tx(s.attentionLabel ?? sessionAttentionLabel(s.attention, s.thread))
     : s.state;
+  // An idle chat in Recent needs no label; the dot and the list already say so.
+  const unlabelled =
+    (tone === "plain" && s.state === "Ready") ||
+    (quiet && s.attention === null && s.state === "Working");
   return (
     <ChatLink
       target={target}
@@ -127,11 +180,11 @@ export function ChatRow({
       <span className="studio-row-main">
         <span className="studio-row-title">{s.thread.title || tx("Untitled chat")}</span>
         <span className="studio-row-meta" style={{ container: "sessmeta / inline-size" }}>
-          <strong className="studio-session-project">
-            {s.project?.title ?? tx("Project unavailable")}
-          </strong>
+          <MachineMark machine={machine} />
           <span aria-hidden="true"> · </span>
-          {host}
+          <span className="studio-session-project">
+            {s.project?.title ?? tx("Project unavailable")}
+          </span>
           <span aria-hidden="true"> · </span>
           {selection ? <ThreadModelBadge thread={s.thread} entries={entries} /> : provider}
           {plan ? (
@@ -142,11 +195,13 @@ export function ChatRow({
           ) : null}
         </span>
       </span>
-      {/* An idle chat in Recent needs no label; the dot and the list already say so. */}
-      {tone === "plain" && s.state === "Ready" ? (
+      {unlabelled ? (
         <span />
       ) : (
-        <span className={`studio-pill ${tone}`}>{state}</span>
+        // The chip says the state in words; the step's own text (a command) is its tooltip.
+        <Hinted className={`studio-pill ${tone}`} hint={s.stateDetail}>
+          {state}
+        </Hinted>
       )}
       <time className="studio-row-age" dateTime={sessionStateSince(s.thread)}>
         {relativeTimeLabel(tx, sessionStateSince(s.thread), now)}
@@ -166,7 +221,8 @@ export type ProjectRowView = {
 /** A project in the rail: opens the project; its count filters Needs you to it. */
 export function ProjectRow({
   card,
-  hosts,
+  machines,
+  note,
   filtered,
   canStart,
   onFilter,
@@ -174,7 +230,10 @@ export function ProjectRow({
   personal = false,
 }: {
   card: ProjectRowView;
-  hosts: string;
+  /** The machines that hold the project, each named in its color. */
+  machines: readonly OverviewMachine[];
+  /** Said after the machines: "this machine", "extra". */
+  note?: string | undefined;
   filtered: boolean;
   canStart: boolean;
   onFilter: () => void;
@@ -197,7 +256,14 @@ export function ProjectRow({
         className="studio-row-main studio-row-link"
       >
         <span className="studio-row-title">{card.group.displayName}</span>
-        {hosts ? <span className="studio-row-meta">{hosts}</span> : null}
+        {machines.length > 0 || note ? (
+          <span className="studio-row-meta studio-row-machines">
+            {machines.map((machine) => (
+              <MachineMark key={machine.identity.environmentId} machine={machine} />
+            ))}
+            {note ? <span>{note}</span> : null}
+          </span>
+        ) : null}
       </Link>
       <span className="studio-row-counts">
         {card.attention > 0 ? (
@@ -233,7 +299,9 @@ export function ProjectRow({
             aria-label={
               personal
                 ? tx("New topic in {title}", { title: card.group.displayName })
-                : tx("New chat in {project}", { project: card.group.displayName })
+                : tx("New chat in {project}", {
+                    project: card.group.displayName,
+                  })
             }
             onClick={onNewChat}
           >
@@ -245,18 +313,34 @@ export function ProjectRow({
   );
 }
 
-export type MachineRowView = {
+export type MachineRowView = OverviewMachine & {
   readonly environmentId: string;
-  readonly label: string;
-  readonly status: string;
-  readonly tone: "moss" | "amber" | "red";
-  readonly version: string | null;
+  /** "Online", "Can’t reach it · retrying": the connection in words. */
+  readonly state: string;
+  /** The state as it reads after "m1 is": "offline", "not reachable". */
+  readonly stateWord: string;
+  readonly tone: MachineTone;
+  /** Why the last attempt failed, for the state's tooltip. */
+  readonly error: string | null;
+  readonly version:
+    | { readonly kind: "unknown" }
+    | { readonly kind: "current"; readonly version: string }
+    | { readonly kind: "update"; readonly version: string; readonly to: string };
+  /** False for a machine that never answered: its chats and projects are unknown, not zero. */
+  readonly counted: boolean;
+  /** What runs there and how many projects, or that neither is counted. */
+  readonly activity: readonly {
+    readonly text: string;
+    readonly values?: Record<string, number>;
+  }[];
   readonly attention: number;
-  readonly projects: number;
   readonly thisMachine: boolean;
 };
 
-/** A machine: picking it shows only its chats and projects; the gear opens Connections. */
+/**
+ * A machine: who it is, whether it answers, its version and what runs there.
+ * Picking it shows only its chats and projects; the gear opens Connections.
+ */
 export function MachineRow({
   machine,
   selected,
@@ -267,9 +351,15 @@ export function MachineRow({
   onSelect: () => void;
 }) {
   const tx = useTx();
+  const { identity, fullName, version } = machine;
   return (
-    <div className={`studio-row studio-side-row studio-machine${selected ? " selected" : ""}`}>
-      <span className={`studio-state-dot ${machine.tone}`} aria-hidden="true" />
+    <div
+      className={`studio-row studio-side-row studio-machine${selected ? " selected" : ""}`}
+      {...machineColorProps(identity)}
+    >
+      <span className="studio-machine-icon" aria-hidden="true">
+        <EnvironmentMachineIcon kind={identity.icon} />
+      </span>
       <button
         type="button"
         className="studio-row-main studio-row-link"
@@ -277,23 +367,43 @@ export function MachineRow({
         onClick={onSelect}
       >
         <span className="studio-row-title">
-          {machine.label}
+          <Hinted hint={fullName !== identity.name ? fullName : null}>{identity.name}</Hinted>
           {machine.thisMachine ? (
             <span className="studio-row-note"> · {tx("this machine")}</span>
           ) : null}
         </span>
         <span className="studio-row-meta">
-          {[
-            // The green dot already says connected; any other state is spelled out.
-            machine.tone === "moss" ? null : machine.status,
-            machine.version,
-            tx(machine.projects === 1 ? "{count} project" : "{count} projects", {
-              count: machine.projects,
-            }),
-          ]
-            .filter(Boolean)
-            .join(" · ")}
+          <Hinted className={`studio-machine-state ${machine.tone}`} hint={machine.error}>
+            <span className={`studio-state-dot ${machine.tone}`} aria-hidden="true" />
+            {tx(machine.state)}
+          </Hinted>
+          {/* What runs there follows its state; a machine that is not counted says so below. */}
+          {machine.counted
+            ? machine.activity.map((part) => (
+                <Fragment key={part.text}>
+                  <span aria-hidden="true"> · </span>
+                  {tx(part.text, part.values)}
+                </Fragment>
+              ))
+            : null}
         </span>
+        {machine.counted ? null : (
+          <span className="studio-row-meta">
+            {machine.activity.map((part) => tx(part.text, part.values)).join(" · ")}
+          </span>
+        )}
+        {version.kind === "unknown" ? null : (
+          <Hinted
+            className={`studio-row-meta studio-machine-version ${version.kind}`}
+            hint={
+              version.kind === "update"
+                ? tx("{version} is available", { version: version.to })
+                : null
+            }
+          >
+            {version.version} · {version.kind === "update" ? tx("update available") : tx("current")}
+          </Hinted>
+        )}
       </button>
       <span className="studio-row-counts">
         {machine.attention > 0 ? (
@@ -305,7 +415,9 @@ export function MachineRow({
         <Link
           to="/settings/connections"
           className="studio-icon-button"
-          aria-label={tx("Connection settings for {machine}", { machine: machine.label })}
+          aria-label={tx("Connection settings for {machine}", {
+            machine: identity.name,
+          })}
         >
           <SettingsIcon aria-hidden="true" />
         </Link>
@@ -370,4 +482,31 @@ export function useOverviewKeys(
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [root, onNewChat, onFilter]);
+}
+
+/** A folder copy waiting for review: Review opens it, as the project's banner does. */
+export function CopyReviewRow({
+  title,
+  onReview,
+}: {
+  readonly title: string;
+  readonly onReview: () => void;
+}) {
+  const tx = useTx();
+  return (
+    <button
+      type="button"
+      className="studio-row studio-session-item studio-attention-item"
+      data-overview-row
+      onClick={onReview}
+    >
+      <span className="studio-state-dot amber" aria-hidden="true" />
+      <span className="studio-row-main">
+        <span className="studio-row-title">{title}</span>
+        <span className="studio-row-meta">{tx("Nothing is copied until you approve it.")}</span>
+      </span>
+      <span className="studio-pill amber">{tx("Review")}</span>
+      <span />
+    </button>
+  );
 }

@@ -501,6 +501,7 @@ describe("RemoteWorkers", () => {
                 { id: "default", label: "Pi default" },
                 { id: "openrouter/anthropic/claude-sonnet-5", label: "Sonnet", paid: true },
                 { id: "lmstudio/qwen3", label: "Qwen", paid: "yes" },
+                { id: "anthropic/claude", label: "Claude", held: true },
               ],
             },
           ],
@@ -526,6 +527,7 @@ describe("RemoteWorkers", () => {
       expect(grok).not.toHaveProperty("allowedByGrant");
       expect(codex).not.toHaveProperty("paidModels");
       expect(pi?.paidModels).toEqual(["openrouter/anthropic/claude-sonnet-5"]);
+      expect(pi?.heldModels).toEqual(["anthropic/claude"]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -695,6 +697,7 @@ describe("RemoteWorkers", () => {
         {
           commandId: "remote-worker-wake:rwt:command-1:b-run-1",
           mode: "queue",
+          threadId: "coordinator",
           text: 'Remote worker [Fix the flaky test](studio://thread/env-m1/b-thread-1) on M1 finished: completed. Read it with studio_thread_read {threadId:"studio://thread/env-m1/b-thread-1"}.',
         },
       ]);
@@ -836,6 +839,55 @@ describe("RemoteWorkers", () => {
         1,
       );
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("tries the app's pick first, and never starts it on a model held back there", () => {
+    const codex = ProviderInstanceId.make("codex");
+    const held = { instanceId: codex, model: "gpt-5.5" } as ModelSelection;
+    const plan = { instanceId: codex, model: "gpt-5.5-mini" } as ModelSelection;
+    // That machine bills gpt-5.5 per use, or cannot say how; the mini runs on its plan.
+    const sent = (input: Parameters<typeof launchInput>[0]) => {
+      const { remote, layer } = setup({
+        orchestrator_capabilities: () => ({
+          result: {
+            ...capabilities,
+            providers: [
+              {
+                ...capabilities.providers[0],
+                models: [
+                  { id: held.model, label: null, held: true },
+                  { id: plan.model, label: null },
+                ],
+              },
+            ],
+          },
+        }),
+      });
+      return Effect.gen(function* () {
+        yield* allow();
+        yield* (yield* RemoteWorkers.RemoteWorkers).launch(launchInput(input));
+        return remote.toolCalls.find((call) => call.name === "studio_thread_launch")?.args
+          .modelSelection;
+      }).pipe(Effect.provide(layer));
+    };
+    return Effect.gen(function* () {
+      // The pick runs there on a plan: it wins over what the caller runs on.
+      expect(
+        yield* sent({ pickedModelSelection: plan, inheritedModelSelection: held }),
+      ).toMatchObject(plan);
+      // The pick is held back there: the caller's own model starts, as it did before.
+      expect(
+        yield* sent({ pickedModelSelection: held, inheritedModelSelection: plan }),
+      ).toMatchObject(plan);
+      // The caller's own model is inherited whatever it costs there, as before.
+      expect(
+        yield* sent({ pickedModelSelection: held, inheritedModelSelection: held }),
+      ).toMatchObject(held);
+      // A model the caller names is the caller's choice.
+      expect(
+        yield* sent({ explicitModelSelection: held, pickedModelSelection: undefined }),
+      ).toMatchObject(held);
+    });
   });
 
   it.live("falls back to this project's worker model when the remote project has none", () => {
@@ -1147,6 +1199,27 @@ describe("RemoteWorkers", () => {
       ).toBe(false);
       expect(yield* workers.launchedBy({ ...key, callerThreadId: "" as ThreadId })).toBe(false);
       expect(yield* workers.workersForProject(ProjectId.make("local-project"))).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("lists a project thread's scratch worker on that project's page", () => {
+    const { remote, layer } = setup();
+    return Effect.gen(function* () {
+      yield* allow();
+      const workers = yield* RemoteWorkers.RemoteWorkers;
+      // A reviewer on a machine without the project: scratch there, the project's here.
+      yield* workers.launch({
+        ...launchInput(),
+        localProject: undefined,
+        listedUnder: ProjectId.make("local-project"),
+      });
+      const launch = remote.toolCalls.find((call) => call.name === "studio_thread_launch");
+      expect(launch?.args).toMatchObject({ scratch: true });
+      const listed = yield* eventually(
+        workers.workersForProject(ProjectId.make("local-project")),
+        (current) => current[0]?.remoteThreadId === "b-thread-1",
+      );
+      expect(listed).toMatchObject([{ machineId: "m1", remoteThreadId: "b-thread-1" }]);
     }).pipe(Effect.provide(layer));
   });
 

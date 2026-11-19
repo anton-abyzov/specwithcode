@@ -7,7 +7,10 @@ import {
   ProviderInstanceId,
   RunId,
   ThreadId,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
+  type ServerSettings,
+  type StorageStatus,
 } from "@specweave-studio/contracts";
 import * as NodeSqliteClient from "@specweave-studio/shared/nodeSqliteClient";
 import * as Clock from "effect/Clock";
@@ -17,6 +20,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import type * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
@@ -25,14 +29,19 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "./config.ts";
 import * as GitManager from "./git/GitManager.ts";
+import * as DiskSpaceMonitor from "./observability/DiskSpaceMonitor.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as Settings from "./serverSettings.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
-import { storageCleanupActivityAt, storageCleanupThreadIdle } from "./storageCleanup.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
+import {
+  storageCleanupActivityAt,
+  storageCleanupThreadIdle,
+  WorktreeSweepProcessCwds,
+} from "./worktreeCleanupSweep.ts";
 
 const NOW_MS = Date.parse("2026-06-10T12:00:00.000Z");
 const DAY_MS = 24 * 60 * 60 * 1_000;
@@ -177,6 +186,7 @@ const cleanupFixture = Effect.gen(function* () {
   yield* sql`CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT, payload_json TEXT, deleted_at TEXT, archived_at TEXT)`;
   yield* sql`CREATE TABLE orchestration_v2_effect_outbox (thread_id TEXT, status TEXT)`;
   yield* sql`CREATE TABLE orchestration_v2_projection_provider_sessions (payload_json TEXT, status TEXT, thread_id TEXT)`;
+  yield* sql`CREATE TABLE orchestration_v2_projection_runs (thread_id TEXT, status TEXT)`;
   yield* sql`INSERT INTO projection_projects VALUES (${repo}, NULL)`;
   const worktreesRoot = yield* fs.realPath(config.worktreesDir);
   // The managed worktrees folder reached through a symlinked parent, like a
@@ -221,7 +231,26 @@ const cleanupFixture = Effect.gen(function* () {
   const hooks = {
     onPullRequest: Effect.void as Effect.Effect<unknown, SqlError>,
     pullRequestState: (_branch: string): "open" | "closed" | "merged" => "merged",
+    /** The branch of every pull request lookup, in order. */
+    lookups: [] as Array<string>,
+    /** Times the worktree pass read the folder named by `watched`: once per sweep. */
+    watched: null as string | null,
+    watchedReads: 0,
+    /** The chat list cannot be read, as when the projection store fails. */
+    threadsUnreadable: false,
+    settings: {
+      ...DEFAULT_SERVER_SETTINGS,
+      storageCleanup: {
+        ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+        worktreeAfterDays: null,
+        worktreeOnMerge: true,
+        worktreeOnDelete: false,
+        worktreeUnchanged: false,
+      },
+    } as ServerSettings,
   };
+  const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+  const disk = yield* Queue.unbounded<StorageStatus>();
   const provideCleanup = <A, E>(
     effect: Effect.Effect<
       A,
@@ -244,36 +273,40 @@ const cleanupFixture = Effect.gen(function* () {
       Effect.provide(
         Layer.mergeAll(
           Layer.mock(Settings.ServerSettingsService)({
-            getSettings: Effect.succeed({
-              ...DEFAULT_SERVER_SETTINGS,
-              storageCleanup: {
-                ...DEFAULT_SERVER_SETTINGS.storageCleanup,
-                worktreeAfterDays: null,
-                worktreeOnMerge: true,
-                worktreeOnDelete: false,
-                worktreeUnchanged: false,
-              },
-            }),
+            getSettings: Effect.sync(() => hooks.settings),
             subscribeChanges: Effect.succeed(Stream.never),
           }),
           Layer.mock(ProjectStore.ProjectStoreV2)({
             listShells: () => Effect.succeed([{ id: PROJECT_ID, workspaceRoot: repo }] as never),
           }),
-          Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.never }),
+          Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.fromQueue(events) }),
+          Layer.mock(DiskSpaceMonitor.DiskSpaceMonitor)({
+            current: Effect.succeed(Option.none()),
+            changes: Stream.fromQueue(disk),
+            reportHomeUsage: () => Effect.void,
+          }),
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getShellSnapshot: (options) =>
-              Effect.succeed({
-                schemaVersion: 1,
-                snapshotSequence: 0,
-                threads: threads.filter(
-                  (thread) => (thread.archivedAt !== null) === (options?.location === "archive"),
-                ),
-                archivedThreads: [],
-              }),
+              (hooks.threadsUnreadable
+                ? Effect.fail("projection store unavailable")
+                : Effect.void
+              ).pipe(
+                Effect.as({
+                  schemaVersion: 1,
+                  snapshotSequence: 0,
+                  // As the store answers: archived chats come under `archivedThreads`.
+                  threads:
+                    options?.location === "archive"
+                      ? []
+                      : threads.filter((thread) => thread.archivedAt === null),
+                  archivedThreads: threads.filter((thread) => thread.archivedAt !== null),
+                }),
+              ) as never,
           }),
           Layer.mock(GitManager.GitManager)({
             branchPullRequest: (input) =>
-              Effect.suspend(() => hooks.onPullRequest).pipe(
+              Effect.sync(() => hooks.lookups.push(input.branch)).pipe(
+                Effect.andThen(Effect.suspend(() => hooks.onPullRequest)),
                 Effect.orDie,
                 Effect.map(() => ({ state: hooks.pullRequestState(input.branch) }) as never),
               ),
@@ -286,11 +319,19 @@ const cleanupFixture = Effect.gen(function* () {
       ),
       Effect.provideService(GitVcsDriver.GitVcsDriver, {
         ...git,
+        statusDetailsLocal: (cwd) =>
+          Effect.sync(() => {
+            if (cwd === hooks.watched) hooks.watchedReads += 1;
+          }).pipe(Effect.andThen(git.statusDetailsLocal(cwd))),
         removeWorktree: (input) =>
-          Effect.sync(() => removed.push(input.path)).pipe(
+          Effect.sync(() =>
+            removed.push(input.path.replace(/\/\.([^/]+)\.retiring-\d{8}-\d{6}$/, "/$1")),
+          ).pipe(
             Effect.andThen(git.removeWorktree(input)),
           ),
       }),
+      // No process of this machine works in the test's folders.
+      Effect.provideService(WorktreeSweepProcessCwds, Effect.succeed([])),
     );
   /** A sweep by a freshly made service, as after a restart. */
   const sweep = provideCleanup(
@@ -311,7 +352,10 @@ const cleanupFixture = Effect.gen(function* () {
     realSpelling,
     addThread,
     removed,
+    threads,
     hooks,
+    events,
+    disk,
     sweep,
     started,
   };
@@ -411,6 +455,11 @@ describe("storage cleanup keeps folders of open threads", () => {
       const f = yield* cleanupFixture;
       const settled = yield* f.addWorktree("reopened");
       yield* f.addThread("reopened", "reopened", settled, "settled");
+      // The merged rule asks the host, which is when the chat is reopened here.
+      f.hooks.settings = {
+        ...f.hooks.settings,
+        storageCleanup: { ...f.hooks.settings.storageCleanup, removeResolvedWorktrees: false },
+      };
       f.hooks.onPullRequest = f.sql`
         UPDATE orchestration_v2_projection_threads
         SET payload_json = json_set(payload_json, '$.settledOverride', 'active')
@@ -419,6 +468,91 @@ describe("storage cleanup keeps folders of open threads", () => {
       expect(yield* f.fs.exists(settled)).toBe(true);
       expect(f.removed).toEqual([]);
     }).pipe(Effect.provide(cleanupLayer)),
+  );
+});
+
+describe("storage cleanup keeps work that Git status does not show", () => {
+  EffectVitest.it.effect(
+    "keeps a settled thread's folder with edits to files marked assume-unchanged or skip-worktree",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* cleanupFixture;
+        const assumed = yield* f.addWorktree("hidden-assumed");
+        const skipped = yield* f.addWorktree("hidden-skipped");
+        const flaggedClean = yield* f.addWorktree("hidden-flagged-clean");
+        for (const [worktree, flag] of [
+          [assumed, "--assume-unchanged"],
+          [skipped, "--skip-worktree"],
+          [flaggedClean, "--assume-unchanged"],
+        ] as const)
+          yield* f.run(worktree, ["update-index", flag, "file.txt"]);
+        yield* f.fs.writeFileString(f.path.join(assumed, "file.txt"), "edited, hidden\n");
+        yield* f.fs.writeFileString(f.path.join(skipped, "file.txt"), "edited, skipped\n");
+        // Git status shows none of these edits, and a plain worktree remove deletes them.
+        for (const worktree of [assumed, skipped])
+          expect((yield* f.run(worktree, ["status", "--porcelain"])).stdout).toBe("");
+        yield* f.addThread("assumed", "hidden-assumed", assumed, "settled");
+        yield* f.addThread("skipped", "hidden-skipped", skipped, "settled");
+        yield* f.addThread("flagged-clean", "hidden-flagged-clean", flaggedClean, "settled");
+        yield* f.sweep;
+        expect(f.removed).toEqual([flaggedClean]);
+        expect(yield* f.fs.readFileString(f.path.join(assumed, "file.txt"))).toBe(
+          "edited, hidden\n",
+        );
+        expect(yield* f.fs.readFileString(f.path.join(skipped, "file.txt"))).toBe(
+          "edited, skipped\n",
+        );
+      }).pipe(Effect.provide(cleanupLayer)),
+  );
+
+  EffectVitest.it.effect(
+    "keeps a settled thread's folder that holds a repository inside an ignored dependency folder",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* cleanupFixture;
+        yield* f.fs.writeFileString(
+          f.path.join(f.repo, ".git", "info", "exclude"),
+          "node_modules/\n",
+        );
+        const withClone = yield* f.addWorktree("nested-clone");
+        const withBare = yield* f.addWorktree("nested-bare");
+        const plain = yield* f.addWorktree("nested-none");
+        const clone = f.path.join(withClone, "node_modules", "tool");
+        yield* f.fs.makeDirectory(clone, { recursive: true });
+        yield* f.run(clone, ["init", "-b", "main"]);
+        yield* f.fs.writeFileString(f.path.join(clone, "work.txt"), "only here\n");
+        const bare = f.path.join(withBare, "node_modules", "cache.git");
+        yield* f.fs.makeDirectory(bare, { recursive: true });
+        yield* f.run(bare, ["init", "--bare", "-b", "main"]);
+        yield* f.fs.makeDirectory(f.path.join(plain, "node_modules", "dep"), { recursive: true });
+        yield* f.fs.writeFileString(f.path.join(plain, "node_modules", "dep", "index.js"), "x\n");
+        yield* f.addThread("with-clone", "nested-clone", withClone, "settled");
+        yield* f.addThread("with-bare", "nested-bare", withBare, "settled");
+        yield* f.addThread("plain", "nested-none", plain, "settled");
+        yield* f.sweep;
+        expect(f.removed).toEqual([plain]);
+        expect(yield* f.fs.exists(f.path.join(clone, "work.txt"))).toBe(true);
+        expect(yield* f.fs.exists(f.path.join(bare, "HEAD"))).toBe(true);
+      }).pipe(Effect.provide(cleanupLayer)),
+  );
+
+  EffectVitest.it.effect(
+    "treats two spellings of one checkout through a symlinked parent as one folder, removed once both chats are done",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* cleanupFixture;
+        const shared = yield* f.addWorktree("two-spellings", { linked: true });
+        const openShared = yield* f.addWorktree("two-spellings-open", { linked: true });
+        // Grouped by real path, the two chats of each folder decide together.
+        yield* f.addThread("spelling-linked", "two-spellings", shared, "settled");
+        yield* f.addThread("spelling-real", "two-spellings", f.realSpelling(shared), "archived");
+        yield* f.addThread("open-linked", "two-spellings-open", openShared, "settled");
+        yield* f.addThread("open-real", "two-spellings-open", f.realSpelling(openShared), "open");
+        yield* f.sweep;
+        expect(f.removed).toEqual([shared]);
+        expect(yield* f.fs.exists(shared)).toBe(false);
+        expect(yield* f.fs.exists(openShared)).toBe(true);
+      }).pipe(Effect.provide(cleanupLayer)),
   );
 });
 
@@ -435,6 +569,12 @@ describe("storage cleanup removes worktrees of PRs closed without merging", () =
           "open-clean": "open",
         };
         f.hooks.pullRequestState = (branch) => states[branch] ?? "merged";
+        // Only the pull request rule: with "Delete worktrees of resolved chats"
+        // on, the settled chats of open-clean and closed-pushed would go anyway.
+        f.hooks.settings = {
+          ...f.hooks.settings,
+          storageCleanup: { ...f.hooks.settings.storageCleanup, removeResolvedWorktrees: false },
+        };
         const commit = (worktree: string, file: string) =>
           Effect.gen(function* () {
             yield* f.fs.writeFileString(f.path.join(worktree, file), "work\n");
@@ -678,6 +818,33 @@ describe("storage cleanup removes finished worktrees no thread records", () => {
       expect(yield* f.fs.exists(f.path.join(worktree, "node_modules", "kept.txt"))).toBe(true);
     }).pipe(Effect.provide(cleanupLayer)),
   );
+
+  EffectVitest.it.effect(
+    "keeps a finished worktree with hidden tracked edits or a repository in its dependencies",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* cleanupFixture;
+        yield* f.fs.writeFileString(
+          f.path.join(f.repo, ".git", "info", "exclude"),
+          "node_modules/\n",
+        );
+        const hidden = yield* f.addWorktree("agent-hidden-edit");
+        yield* f.run(hidden, ["update-index", "--skip-worktree", "file.txt"]);
+        yield* f.fs.writeFileString(f.path.join(hidden, "file.txt"), "edited, skipped\n");
+        const nested = yield* f.addWorktree("agent-nested-repo");
+        const clone = f.path.join(nested, "node_modules", "tool");
+        yield* f.fs.makeDirectory(clone, { recursive: true });
+        yield* f.run(clone, ["init", "-b", "main"]);
+        const finished = yield* f.addWorktree("agent-plain");
+        yield* age(f, [hidden, nested, finished]);
+        yield* f.sweep;
+        expect(f.removed).toEqual([finished]);
+        expect(yield* f.fs.readFileString(f.path.join(hidden, "file.txt"))).toBe(
+          "edited, skipped\n",
+        );
+        expect(yield* f.fs.exists(f.path.join(clone, ".git"))).toBe(true);
+      }).pipe(Effect.provide(cleanupLayer)),
+  );
 });
 
 describe("storage cleanup sweeps are not repeated by a restart", () => {
@@ -778,4 +945,325 @@ describe("storage cleanup sweeps are not repeated by a restart", () => {
       expect(f.removed).toEqual([worktree]);
     }).pipe(Effect.provide(cleanupLayer)),
   );
+});
+
+describe("storage cleanup plan, Clean up now and the sweeps events ask for", () => {
+  /** The file system's time now, which leftover-file ages compare. */
+  const fileSystemNow = Effect.fn("test.fileSystemNow")(function* (
+    f: Effect.Success<typeof cleanupFixture>,
+  ) {
+    const marker = f.path.join(f.repo, ".git", "clock");
+    yield* f.fs.writeFileString(marker, "");
+    return Option.getOrThrow((yield* f.fs.stat(marker)).mtime).getTime();
+  });
+
+  /** Drains until `done` holds; event and timer fibers run between drains. */
+  const until = Effect.fn("test.until")(function* (
+    cleanup: Effect.Success<Effect.Success<typeof cleanupFixture>["started"]>,
+    done: () => boolean,
+  ) {
+    for (let attempt = 0; attempt < 500 && !done(); attempt++) {
+      yield* cleanup.drain;
+      yield* TestClock.withLive(Effect.sleep("10 millis"));
+    }
+    yield* cleanup.drain;
+  });
+
+  EffectVitest.it.effect(
+    "plans without removing, then Clean up now removes worktrees and leftover downloads before the startup delay",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* cleanupFixture;
+        const finished = yield* f.addWorktree("plan-finished");
+        const edited = yield* f.addWorktree("plan-edited");
+        yield* f.fs.writeFileString(f.path.join(edited, "file.txt"), "uncommitted\n");
+        yield* f.addThread("plan-finished", "plan-finished", finished, "settled");
+        yield* f.addThread("plan-edited", "plan-edited", edited, "archived");
+        // A checks copy with a download that stopped; Git's temporary name.
+        const copy = f.path.join(f.config.baseDir, "verify", "copy");
+        const pack = f.path.join(copy, ".git", "objects", "pack", "tmp_pack_abc123");
+        yield* f.fs.makeDirectory(f.path.dirname(pack), { recursive: true });
+        yield* f.fs.writeFileString(pack, "x".repeat(4096));
+        const realPack = f.path.join(copy, ".git", "objects", "pack", "pack-abc.pack");
+        yield* f.fs.writeFileString(realPack, "keep");
+        const second = f.path.join(copy, ".git", "objects", "pack", "tmp_obj_def456");
+        yield* f.fs.writeFileString(second, "y".repeat(1024));
+        // Leftovers go once they are six hours old; a two-hour-old one may still be downloading.
+        const clockNow = (yield* fileSystemNow(f)) + 7 * 3_600_000;
+        yield* TestClock.setTime(clockNow);
+        const recent = f.path.join(copy, ".git", "objects", "pack", "tmp_pack_recent");
+        yield* f.fs.writeFileString(recent, "z".repeat(512));
+        const twoHoursAgo = (clockNow - 2 * 3_600_000) / 1000;
+        yield* f.fs.utimes(recent, twoHoursAgo, twoHoursAgo);
+
+        const cleanup = yield* f.started;
+        const plan = yield* cleanup.plan;
+        expect(f.removed).toEqual([]);
+        expect(yield* f.fs.exists(pack)).toBe(true);
+        expect(plan.items.map((item) => [item.kind, item.path, item.action, item.reason])).toEqual([
+          ["worktree", edited, "keep", "changes"],
+          ["worktree", finished, "remove", "resolved"],
+          ["interrupted-downloads", copy, "remove", "interrupted-downloads"],
+        ]);
+        expect(plan.complete).toBe(true);
+        expect(plan.failed).toBeUndefined();
+        expect(plan.items.find((item) => item.path === copy)).toMatchObject({
+          detail: "2 leftover files",
+          bytes: 4096 + 1024,
+        });
+        const finishedBytes = plan.items.find((item) => item.path === finished)?.bytes ?? 0;
+        expect(finishedBytes).toBeGreaterThan(0);
+        expect(plan.removableBytes).toBe(finishedBytes + 4096 + 1024);
+        expect(plan.items.find((item) => item.path === finished)).toMatchObject({
+          threadId: "plan-finished",
+          threadTitle: "plan-finished",
+          threadCount: 1,
+        });
+
+        // The service started a moment ago; Clean up now does not wait for it to settle.
+        const result = yield* cleanup.cleanNow;
+        // One entry per checks copy, as the plan listed it, not one per leftover file.
+        expect(result.removed.toSorted()).toEqual([finished, copy].toSorted());
+        expect(result.removedBytes).toBe(finishedBytes + 4096 + 1024);
+        expect(f.removed).toEqual([finished]);
+        expect(yield* f.fs.exists(pack)).toBe(false);
+        expect(yield* f.fs.exists(second)).toBe(false);
+        expect(yield* f.fs.exists(recent)).toBe(true);
+        expect(yield* f.fs.exists(realPack)).toBe(true);
+        expect(result.plan.items.map((item) => [item.path, item.reason])).toEqual([
+          [edited, "changes"],
+        ]);
+      }).pipe(Effect.provide(cleanupLayer)),
+  );
+
+  EffectVitest.it.effect(
+    "sweeps after a chat is resolved, a pull request merges or the disk turns low, at most every 2 minutes",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* cleanupFixture;
+        // Kept on every sweep, and read once by each.
+        const counter = yield* f.addWorktree("counter");
+        f.hooks.watched = counter;
+        yield* f.fs.writeFileString(f.path.join(counter, "file.txt"), "local only\n");
+        yield* f.run(counter, ["commit", "-am", "local"]);
+        yield* f.addThread("counter", "counter", counter, "settled");
+        f.hooks.pullRequestState = () => "open";
+        const sweeps = () => f.hooks.watchedReads;
+        const link = (number: number, state: string) => ({
+          host: "github.com",
+          repository: "owner/repo",
+          number,
+          snapshot: { state },
+        });
+        const event = (type: string, links: ReadonlyArray<ReturnType<typeof link>> = []) =>
+          ({
+            type,
+            threadId: "counter",
+            payload: { id: "counter", pullRequests: links },
+          }) as unknown as OrchestrationV2DomainEvent;
+        // Merged before this start: a later sync of it is old news.
+        f.threads[0] = { ...f.threads[0]!, pullRequests: [link(7, "merged")] as never };
+
+        const cleanup = yield* f.started;
+        yield* TestClock.adjust(StorageCleanup.STARTUP_SWEEP_DELAY_MS);
+        yield* until(cleanup, () => sweeps() === 1);
+        expect(sweeps()).toBe(1);
+
+        // A resolved chat asks for a sweep at once.
+        yield* Queue.offer(f.events, event("thread.settled"));
+        yield* until(cleanup, () => sweeps() === 2);
+        expect(sweeps()).toBe(2);
+        // More events within 2 minutes wait, and become one sweep.
+        for (const type of ["thread.archived", "thread.settled", "thread.archived"])
+          yield* Queue.offer(f.events, event(type));
+        yield* until(cleanup, () => sweeps() > 2);
+        expect(sweeps()).toBe(2);
+        yield* TestClock.adjust(StorageCleanup.EVENT_SWEEP_INTERVAL_MS);
+        yield* until(cleanup, () => sweeps() === 3);
+        expect(sweeps()).toBe(3);
+        yield* TestClock.adjust(StorageCleanup.EVENT_SWEEP_INTERVAL_MS);
+        yield* until(cleanup, () => sweeps() > 3);
+        expect(sweeps()).toBe(3);
+
+        // A pull request sync asks only when a pull request newly turned merged.
+        yield* Queue.offer(f.events, event("thread.pull-request-synced", [link(8, "open")]));
+        yield* Queue.offer(f.events, event("thread.metadata-updated"));
+        yield* Queue.offer(
+          f.events,
+          event("thread.pull-request-synced", [link(7, "merged"), link(8, "open")]),
+        );
+        yield* until(cleanup, () => sweeps() > 3);
+        expect(sweeps()).toBe(3);
+        yield* Queue.offer(
+          f.events,
+          event("thread.pull-request-synced", [link(7, "merged"), link(8, "merged")]),
+        );
+        yield* until(cleanup, () => sweeps() === 4);
+        expect(sweeps()).toBe(4);
+        // The same merged links synced again, after the interval, ask for nothing.
+        yield* TestClock.adjust(StorageCleanup.EVENT_SWEEP_INTERVAL_MS);
+        yield* Queue.offer(
+          f.events,
+          event("thread.pull-request-synced", [link(7, "merged"), link(8, "merged")]),
+        );
+        yield* until(cleanup, () => sweeps() > 4);
+        expect(sweeps()).toBe(4);
+
+        // The disk turning low asks once; staying low does not ask again.
+        yield* TestClock.adjust(StorageCleanup.EVENT_SWEEP_INTERVAL_MS);
+        const status = (level: "ok" | "low") => ({ level }) as unknown as StorageStatus;
+        yield* Queue.offer(f.disk, status("ok"));
+        yield* Queue.offer(f.disk, status("low"));
+        yield* until(cleanup, () => sweeps() === 5);
+        expect(sweeps()).toBe(5);
+        yield* TestClock.adjust(StorageCleanup.EVENT_SWEEP_INTERVAL_MS);
+        yield* Queue.offer(f.disk, status("low"));
+        yield* until(cleanup, () => sweeps() > 5);
+        expect(sweeps()).toBe(5);
+
+        // The scheduled sweep comes back an hour after the first one, and only once.
+        yield* TestClock.adjust("1 hour");
+        yield* until(cleanup, () => sweeps() > 5);
+        expect(sweeps()).toBe(6);
+        expect(yield* f.fs.exists(counter)).toBe(true);
+      }).pipe(Effect.provide(cleanupLayer)),
+  );
+});
+
+describe("storage cleanup Clean up now scope and plans that could not run", () => {
+  /** Backdates an agent worktree past the orphan idle day; returns the file system's time. */
+  const ageOrphan = Effect.fn("test.ageOrphan")(function* (
+    f: Effect.Success<typeof cleanupFixture>,
+    worktree: string,
+  ) {
+    const marker = f.path.join(f.repo, ".git", "clock");
+    yield* f.fs.writeFileString(marker, "");
+    const now = Option.getOrThrow((yield* f.fs.stat(marker)).mtime).getTime();
+    const gitDir = (yield* f.run(worktree, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
+    const old = (now - 2 * DAY_MS) / 1000;
+    const reflog = f.path.join(gitDir, "logs", "HEAD");
+    if (yield* f.fs.exists(reflog)) {
+      const entries = yield* f.fs.readFileString(reflog);
+      yield* f.fs.writeFileString(
+        reflog,
+        entries.replace(/ \d+ ([+-]\d{4})\t/g, ` ${Math.floor(old)} $1\t`),
+      );
+    }
+    for (const target of [
+      worktree,
+      f.path.join(gitDir, "HEAD"),
+      reflog,
+      ...(yield* f.fs.readDirectory(worktree)).map((name) => f.path.join(worktree, name)),
+    ])
+      yield* f.fs.utimes(target, old, old);
+    return now;
+  });
+
+  EffectVitest.it.effect(
+    "Clean up now leaves agent worktrees no chat records to the scheduled sweep",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* cleanupFixture;
+        const finished = yield* f.addWorktree("now-finished");
+        yield* f.addThread("now-finished", "now-finished", finished, "settled");
+        const orphan = yield* f.addWorktree("now-orphan");
+        // Past the quiet period of the resolved chat's folder too.
+        const now = (yield* ageOrphan(f, orphan)) + 7 * 3_600_000;
+        yield* TestClock.setTime(now);
+        const cleanup = yield* f.started;
+        const result = yield* cleanup.cleanNow;
+        // Only what the plan lists, and the result names all of it.
+        expect(result.removed).toEqual([finished]);
+        expect(f.removed).toEqual([finished]);
+        expect(yield* f.fs.exists(orphan)).toBe(true);
+
+        // The scheduled sweep runs every pass.
+        yield* TestClock.adjust(StorageCleanup.STARTUP_SWEEP_DELAY_MS);
+        yield* cleanup.runOnce;
+        expect(f.removed).toEqual([finished, orphan]);
+      }).pipe(Effect.provide(cleanupLayer)),
+  );
+
+  EffectVitest.it.effect(
+    "keeps every chat worktree and lists nothing while another instance's database shares the folder",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* cleanupFixture;
+        const finished = yield* f.addWorktree("other-finished");
+        yield* f.addThread("other-finished", "other-finished", finished, "settled");
+        const copy = f.path.join(f.config.baseDir, "verify", "copy");
+        const pack = f.path.join(copy, ".git", "objects", "pack", "tmp_pack_other");
+        yield* f.fs.makeDirectory(f.path.dirname(pack), { recursive: true });
+        yield* f.fs.writeFileString(pack, "x".repeat(64));
+        const marker = f.path.join(f.repo, ".git", "clock");
+        yield* f.fs.writeFileString(marker, "");
+        const fileSystemNow = Option.getOrThrow((yield* f.fs.stat(marker)).mtime).getTime();
+        yield* TestClock.setTime(fileSystemNow + 7 * 3_600_000);
+        // An empty file in this test's own folder stands for a dev server's database.
+        const other = f.path.join(f.config.baseDir, "dev");
+        yield* f.fs.makeDirectory(other, { recursive: true });
+        yield* f.fs.writeFileString(f.path.join(other, "statev2.sqlite"), "");
+
+        const cleanup = yield* f.started;
+        const plan = yield* cleanup.plan;
+        expect(plan.items).toEqual([]);
+        expect(plan.removableBytes).toBe(0);
+        expect(plan.complete).toBe(false);
+        expect(plan.failed).toMatch(/^Another copy of the app keeps its chats in this folder/);
+        const result = yield* cleanup.cleanNow;
+        expect(result.removed).toEqual([]);
+        expect(result.plan.complete).toBe(false);
+        // Clean up now removes only what the plan listed, and it listed nothing.
+        expect(yield* f.fs.exists(pack)).toBe(true);
+        yield* TestClock.adjust(StorageCleanup.STARTUP_SWEEP_DELAY_MS);
+        yield* cleanup.runOnce;
+        expect(f.removed).toEqual([]);
+        expect(yield* f.fs.exists(finished)).toBe(true);
+        expect(yield* f.fs.exists(pack)).toBe(false);
+
+        // Once it is gone, the same folder is planned for removal again.
+        yield* f.fs.remove(other, { recursive: true });
+        const after = yield* cleanup.plan;
+        expect(after.items.map((item) => [item.path, item.action])).toEqual([[finished, "remove"]]);
+        expect(after.complete).toBe(true);
+        expect(after.failed).toBeUndefined();
+      }).pipe(Effect.provide(cleanupLayer)),
+  );
+
+  EffectVitest.it.effect("answers an incomplete plan when the chats cannot be read", () =>
+    Effect.gen(function* () {
+      const f = yield* cleanupFixture;
+      const finished = yield* f.addWorktree("unread-finished");
+      yield* f.addThread("unread-finished", "unread-finished", finished, "settled");
+      const cleanup = yield* f.started;
+      f.hooks.threadsUnreadable = true;
+      const plan = yield* cleanup.plan;
+      expect(plan.items).toEqual([]);
+      expect(plan.complete).toBe(false);
+      expect(plan.failed).toBe("Chat worktrees could not be checked, so none of them is listed.");
+      const result = yield* cleanup.cleanNow;
+      expect(result.removed).toEqual([]);
+      expect(result.plan.complete).toBe(false);
+      expect(yield* f.fs.exists(finished)).toBe(true);
+    }).pipe(Effect.provide(cleanupLayer)),
+  );
+
+  it("remembers merged pull requests per chat, forgetting the oldest past its limit", () => {
+    const merged = new StorageCleanup.MergedPullRequests(2);
+    const link = (number: number, state = "merged") => ({
+      host: "github.com",
+      repository: "owner/repo",
+      number,
+      snapshot: { state },
+    });
+    expect(merged.note("a", [link(1, "open")])).toBe(false);
+    expect(merged.note("a", [link(1)])).toBe(true);
+    expect(merged.note("a", [link(1)])).toBe(false);
+    // The same pull request in another chat is that chat's news.
+    expect(merged.note("b", [link(1)])).toBe(true);
+    expect(merged.note("a", [link(2)])).toBe(true);
+    // Past the limit the oldest, a/1, is forgotten and counts as new once more.
+    expect(merged.note("a", [link(1)])).toBe(true);
+    expect(merged.note("a", [{ ...link(3), snapshot: null }])).toBe(false);
+  });
 });

@@ -2,6 +2,8 @@
 // ClaudeAdapterV2.test.ts cross-checks this list against the toolkit.
 export const CLAUDE_READ_ONLY_STUDIO_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__studio-code__orchestrator_capabilities",
+  // Starts only a read-only advisor child, so plan-mode and read-only threads may consult.
+  "mcp__studio-code__advisor",
   "mcp__studio-code__list_scheduled_tasks",
   "mcp__studio-code__studio_thread_list",
   "mcp__studio-code__studio_thread_wait",
@@ -37,4 +39,5 @@ export const CLAUDE_READ_ONLY_STUDIO_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = 
   "mcp__studio-code__design_screenshot",
   "mcp__studio-code__design_system_list",
   "mcp__studio-code__design_system_get",
+  "mcp__studio-code__sheet_read",
 ];

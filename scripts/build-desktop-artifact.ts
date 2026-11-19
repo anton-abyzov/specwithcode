@@ -107,8 +107,15 @@ const readWorkspaceConfig = Effect.fn("readWorkspaceConfig")(function* () {
   return yield* decodeWorkspaceConfig(workspaceYaml);
 });
 
+// Staged into build resources and named by mac.icon; app.asar excludes it.
+export const MAC_ICON_COMPOSER_FILE = "icon.icon";
+
 interface DesktopBuildIconAssets {
   readonly macIconPng: string;
+  // The Icon Composer project (an .icon folder). electron-builder compiles it
+  // with actool into Assets.car and sets CFBundleIconName, which macOS 26 and
+  // later need to draw the icon full size instead of inside a grey tile.
+  readonly macIconComposerProject: string;
   readonly linuxIconPng: string;
   readonly windowsIconIco: string;
 }
@@ -1039,6 +1046,12 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   // The voice helper is an executable; it ships once at resources/voice.
   "!apps/desktop/prod-resources/voice",
   "!apps/desktop/prod-resources/voice/**/*",
+  // The specwithcode command shim is run by the shell; it ships once at resources/cli.
+  "!apps/desktop/prod-resources/cli",
+  "!apps/desktop/prod-resources/cli/**/*",
+  // The Icon Composer source is compiled into Assets.car; the app never reads it.
+  "!apps/desktop/prod-resources/icon.icon",
+  "!apps/desktop/prod-resources/icon.icon/**/*",
   "!apps/desktop/gnome-extension",
   "!apps/desktop/gnome-extension/**/*",
 ] as const;
@@ -1154,6 +1167,14 @@ export const DESKTOP_EXTRA_RESOURCES = [
     from: "apps/desktop/prod-resources/resource-monitor",
     to: "resource-monitor",
   },
+] as const;
+// The specwithcode command inside the bundle (apps/desktop/resources/cli). Settings > Machines >
+// Command line puts it on PATH; it runs this bundle's own CLI, so updates keep it current.
+export const POSIX_CLI_SHIM_EXTRA_RESOURCES = [
+  { from: "apps/desktop/prod-resources/cli", to: "cli", filter: ["specwithcode"] },
+] as const;
+export const WINDOWS_CLI_SHIM_EXTRA_RESOURCES = [
+  { from: "apps/desktop/prod-resources/cli", to: "cli", filter: ["specwithcode.cmd"] },
 ] as const;
 // On-device speech for voice calls (native/voice/main.swift), macOS only.
 export const MAC_VOICE_EXTRA_RESOURCES = [
@@ -2614,15 +2635,19 @@ function generateMacIconSet(
   });
 }
 
-function stageMacIcons(stageResourcesDir: string, sourcePng: string, verbose: boolean) {
+function stageMacIcons(
+  stageResourcesDir: string,
+  sourcePng: string,
+  iconComposerProject: string,
+  verbose: boolean,
+) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    if (!(yield* fs.exists(sourcePng))) {
-      return yield* new DesktopIconSourceMissingError({
-        platform: "mac",
-        sourcePath: sourcePng,
-      });
+    for (const sourcePath of [sourcePng, iconComposerProject]) {
+      if (!(yield* fs.exists(sourcePath))) {
+        return yield* new DesktopIconSourceMissingError({ platform: "mac", sourcePath });
+      }
     }
 
     const tmpRoot = yield* fs.makeTempDirectoryScoped({
@@ -2638,6 +2663,7 @@ function stageMacIcons(stageResourcesDir: string, sourcePng: string, verbose: bo
     });
 
     yield* generateMacIconSet(sourcePng, iconIcnsPath, tmpRoot, path, verbose);
+    yield* fs.copy(iconComposerProject, path.join(stageResourcesDir, MAC_ICON_COMPOSER_FILE));
   });
 }
 
@@ -2902,6 +2928,7 @@ export function resolveDesktopBuildIconAssets(version: string): DesktopBuildIcon
   if (resolveDesktopUpdateChannel(version) === "nightly") {
     return {
       macIconPng: BRAND_ASSET_PATHS.nightlyMacIconPng,
+      macIconComposerProject: BRAND_ASSET_PATHS.nightlyIconComposerProject,
       linuxIconPng: BRAND_ASSET_PATHS.nightlyLinuxIconPng,
       windowsIconIco: BRAND_ASSET_PATHS.nightlyWindowsIconIco,
     };
@@ -2909,6 +2936,7 @@ export function resolveDesktopBuildIconAssets(version: string): DesktopBuildIcon
 
   return {
     macIconPng: BRAND_ASSET_PATHS.productionMacIconPng,
+    macIconComposerProject: BRAND_ASSET_PATHS.productionIconComposerProject,
     linuxIconPng: BRAND_ASSET_PATHS.productionLinuxIconPng,
     windowsIconIco: BRAND_ASSET_PATHS.productionWindowsIconIco,
   };
@@ -3012,6 +3040,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       : {}),
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
+      ...(platform === "win" ? WINDOWS_CLI_SHIM_EXTRA_RESOURCES : POSIX_CLI_SHIM_EXTRA_RESOURCES),
       ...(platform === "mac" ? MAC_SERVICE_UPDATER_EXTRA_RESOURCES : []),
       ...(platform === "mac" ? MAC_VOICE_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
@@ -3061,7 +3090,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     if (localIdentity) buildConfig.forceCodeSigning = true;
     buildConfig.mac = {
       target: target === "dmg" ? [target, "zip"] : [target],
-      icon: "icon.icns",
+      // An .icon project makes electron-builder write Assets.car, set
+      // CFBundleIconName and render icon.icns from it for older macOS.
+      icon: MAC_ICON_COMPOSER_FILE,
       category: "public.app-category.developer-tools",
       extendInfo: {
         NSScreenCaptureUsageDescription:
@@ -3125,6 +3156,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     buildConfig.toolsets = { appimage: "1.0.3" };
     const path = yield* Path.Path;
     const repoRoot = yield* RepoRoot;
+    // Drops group and world write bits the Electron zip can carry before the
+    // .deb and AppImage are built from the unpacked app.
+    buildConfig.afterPack = path.join(repoRoot, "scripts/linux-after-pack.ts");
     buildConfig.linux = {
       // The .deb is built from the same unpacked app after the AppImage.
       // electron-builder lists both in latest-linux.yml and writes
@@ -3216,7 +3250,12 @@ const assertPlatformBuildResources = Effect.fn("assertPlatformBuildResources")(f
   verbose: boolean,
 ) {
   if (platform === "mac") {
-    yield* stageMacIcons(stageResourcesDir, iconAssets.macIconPng, verbose);
+    yield* stageMacIcons(
+      stageResourcesDir,
+      iconAssets.macIconPng,
+      iconAssets.macIconComposerProject,
+      verbose,
+    );
     return;
   }
 
@@ -4040,6 +4079,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     stageResourcesDir,
     {
       macIconPng: path.join(repoRoot, iconAssets.macIconPng),
+      macIconComposerProject: path.join(repoRoot, iconAssets.macIconComposerProject),
       linuxIconPng: path.join(repoRoot, iconAssets.linuxIconPng),
       windowsIconIco: path.join(repoRoot, iconAssets.windowsIconIco),
     },

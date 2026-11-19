@@ -22,6 +22,13 @@ import {
   windowModelScope,
   windowTitle,
 } from "@specweave-studio/shared/usageWindows";
+import {
+  isMachineReachDown,
+  type ConnectionLossCause,
+  type EnvironmentConnectionPhase,
+} from "@specweave-studio/client-runtime/connection";
+import { isLoopbackHttpBaseUrl } from "@specweave-studio/client-runtime/connection";
+import { hostReachOr, machineReachWords, type HostDownNote } from "../lib/machineStatus";
 import { planLabel } from "./accountSwitches";
 import { usageToneOfUsed } from "./usageIndicatorModel";
 
@@ -75,6 +82,8 @@ export interface HostLimitBlock {
   /** The machine this window is served from: the app's own host. */
   readonly isThisMachine: boolean;
   readonly status: HostStatus;
+  /** The state in the words every surface uses: "Reconnecting", "Not answering", "Offline". */
+  readonly statusWord: string;
   /** Newest provider reading on this host, epoch ms. */
   readonly readAt: number | null;
   /** True when the rows come from the last saved reading, not a live host. */
@@ -93,7 +102,12 @@ export type HostLimitPresentations = ReadonlyMap<
   EnvironmentId,
   {
     readonly entry: { readonly target: { readonly label: string; readonly _tag?: string } };
-    readonly connection: { readonly phase: string };
+    readonly connection: {
+      readonly phase: string;
+      readonly lostAt?: number;
+      readonly lastConnectedAt?: number;
+      readonly cause?: ConnectionLossCause;
+    };
     readonly serverConfig: { readonly providers?: readonly ServerProvider[] | undefined } | null;
   }
 >;
@@ -112,6 +126,37 @@ export function hostStatus(phase: string): HostStatus {
   if (phase === "connected") return "online";
   if (phase === "connecting" || phase === "reconnecting") return "connecting";
   return "offline";
+}
+
+/**
+ * A host's status and the word for it. Another machine is judged by its reach
+ * (`machineReach`): it is still "connecting" while inside its reconnect grace
+ * and "offline" after it, named by its cause. This machine goes by its phase.
+ */
+export function hostReachStatus(
+  connection: HostLimitPresentations extends ReadonlyMap<EnvironmentId, infer P>
+    ? P extends { readonly connection: infer C }
+      ? C
+      : never
+    : never,
+  isThisMachine: boolean,
+  now: number,
+  /** Why another machine is down beyond its reach state (1417). */
+  note: HostDownNote | null = null,
+): { readonly status: HostStatus; readonly word: string } {
+  const phase = connection.phase as EnvironmentConnectionPhase;
+  if (isThisMachine || phase === "connected") {
+    const status = hostStatus(phase);
+    return {
+      status,
+      word: status === "online" ? "Online" : status === "connecting" ? "Connecting" : "Offline",
+    };
+  }
+  const reach = hostReachOr(undefined, { ...connection, phase }, now);
+  return {
+    status: isMachineReachDown(reach) ? "offline" : "connecting",
+    word: machineReachWords(reach, phase, false, note).short.replace(/…$/, ""),
+  };
 }
 
 function windowsOf(limits: ServerProviderUsageLimits, now: number): HostLimitWindow[] {
@@ -261,6 +306,12 @@ function providerRows(
     );
 }
 
+function reachedOnLoopback(target: object): boolean {
+  return "httpBaseUrl" in target && typeof target.httpBaseUrl === "string"
+    ? isLoopbackHttpBaseUrl(target.httpBaseUrl)
+    : false;
+}
+
 /**
  * One block per host: the project's host first, then the app's own machine,
  * then online hosts, then offline hosts with their last saved reading.
@@ -275,11 +326,21 @@ export function collectHostLimitBlocks(
     /** The display name for a host: its nickname when the user set one. */
     readonly machineName?: (environmentId: EnvironmentId, hostLabel: string) => string;
     readonly now: number;
+    /** Each host's down note, from the gated presentations (1417). */
+    readonly notes?: ReadonlyMap<string, HostDownNote>;
   },
 ): readonly HostLimitBlock[] {
   const blocks: HostLimitBlock[] = [];
   for (const [environmentId, presentation] of presentations) {
-    const status = hostStatus(presentation.connection.phase);
+    const isThisMachine = presentation.entry.target._tag === "PrimaryConnectionTarget";
+    // Only a primary reached on loopback is busy rather than down; over the
+    // relay it is a remote machine and names its cause like any other.
+    const { status, word: statusWord } = hostReachStatus(
+      presentation.connection,
+      isThisMachine && reachedOnLoopback(presentation.entry.target),
+      options.now,
+      options.notes?.get(environmentId) ?? null,
+    );
     const live = providerRows(
       presentation.serverConfig?.providers ?? [],
       options.driverLabel,
@@ -308,8 +369,9 @@ export function collectHostLimitBlocks(
         options.machineName?.(environmentId, presentation.entry.target.label) ??
         presentation.entry.target.label,
       isProjectHost: environmentId === options.projectEnvironmentId,
-      isThisMachine: presentation.entry.target._tag === "PrimaryConnectionTarget",
+      isThisMachine,
       status,
+      statusWord,
       readAt: readings.length > 0 ? Math.max(...readings) : useSaved ? saved.savedAt : null,
       fromSavedReading: useSaved,
       providers,

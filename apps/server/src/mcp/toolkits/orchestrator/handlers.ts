@@ -107,14 +107,14 @@ const guardProject = (projectId: string) =>
   });
 
 const handlers = {
-  orchestrator_capabilities: McpToolAccess.reads(() =>
+  orchestrator_capabilities: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       const platform = yield* thisMachinePlatform;
       // Another machine places simulator and Xcode work by what this one reports here.
       const capabilities = {
-        ...(yield* service.capabilities(scope)),
+        ...(yield* service.capabilities(scope, input)),
         ...(platform === undefined ? {} : { platform }),
       };
       // Another machine judging this one as a limit handoff target needs to know which sign-ins its grant allows.
@@ -138,6 +138,13 @@ const handlers = {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.delegateTask(scope, withoutMachine(input), yield* routingOptions);
+    }),
+  ),
+  advisor: McpToolAccess.consults((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      return yield* service.consultAdvisor(scope, input);
     }),
   ),
   task_status: McpToolAccess.actsAsCaller(({ taskId }) =>

@@ -16,14 +16,28 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as ServerConfig from "../../config.ts";
+import {
+  MCP_CLIENT_MAX_JSON_VALUES,
+  MCP_STDIO_MAX_MESSAGE_BYTES,
+  guardTransport,
+  isMcpAnswerTooLarge,
+} from "../../mcp/client/mcpResponseLimits.ts";
 import { redactConnectionText, redactConnectionValue, toolFingerprint } from "./config.ts";
 
 export class ConnectionTransportError extends Schema.TaggedError<ConnectionTransportError>()(
   "ConnectionTransportError",
   {
-    reason: Schema.Literals(["unavailable", "changed"]),
+    reason: Schema.Literals(["unavailable", "changed", "too_large"]),
   },
-) {}
+) {
+  override get message(): string {
+    return {
+      unavailable: "The connection is unavailable.",
+      changed: "The connection's tools changed.",
+      too_large: "The connection's answer was too large.",
+    }[this.reason];
+  }
+}
 /**
  * A process given a stored token never starts in the project's folder. Agents can
  * write there, and npx runs a matching package it finds in node_modules there or in
@@ -62,7 +76,11 @@ export class ProjectConnectionTransport extends Context.Service<
 
 const safeError = () => new ConnectionTransportError({ reason: "unavailable" });
 const toTransportError = (error: unknown) =>
-  Schema.is(ConnectionTransportError)(error) ? error : safeError();
+  Schema.is(ConnectionTransportError)(error)
+    ? error
+    : isMcpAnswerTooLarge(error)
+      ? new ConnectionTransportError({ reason: "too_large" })
+      : safeError();
 // The SDK's own close waits up to 2 s after ending stdin and 2 s after SIGTERM, then
 // sends SIGKILL; the wait for the exit after that is bounded too, about 6 s in all.
 const EXIT_WAIT_MS = 2_000;
@@ -84,6 +102,8 @@ const open = (target: Target, secretsDir: string) => {
     cwd: emptyFolder ?? target.cwd,
     env,
     stderr: "ignore",
+    // Past this the SDK drops the connection and closes the process.
+    maxBufferSize: MCP_STDIO_MAX_MESSAGE_BYTES,
   });
   const client = new Client(
     { name: "specweave-studio-project", version: "0.2.0" },
@@ -134,7 +154,13 @@ const run = <A>(
           const { transport, client } = session;
           const bound = AbortSignal.any([signal, AbortSignal.timeout(limits.totalMs)]);
           session.started = true;
-          await client.connect(transport, { signal: bound, timeout: limits.connectMs });
+          await client.connect(
+            guardTransport(transport, { maxJsonValues: MCP_CLIENT_MAX_JSON_VALUES }),
+            {
+              signal: bound,
+              timeout: limits.connectMs,
+            },
+          );
           return await action(client, bound);
         },
         catch: toTransportError,

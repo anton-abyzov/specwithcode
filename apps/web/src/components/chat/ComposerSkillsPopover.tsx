@@ -371,7 +371,7 @@ function ComposerSkillsPanel(
         <Button
           type="button"
           size="xs"
-          variant="ghost"
+          variant="outline"
           disabled={busy || (!plan.server && !plan.providers)}
           onClick={onRescan}
         >

@@ -564,6 +564,39 @@ describe("EnvironmentConnector", () => {
     }).pipe(Effect.provide(layerConnectorTest(execute)));
   });
 
+  // A machine short of memory accepts the request and answers too late. The
+  // relay says so itself, well inside its own request deadline.
+  it.effect("reports offline status when the managed endpoint health request hangs", () => {
+    let resolveRequestStarted: (() => void) | undefined;
+    const requestStarted = new Promise<void>((resolve) => {
+      resolveRequestStarted = () => resolve();
+    });
+    const execute = () =>
+      Effect.sync(() => {
+        resolveRequestStarted?.();
+      }).pipe(Effect.andThen(Effect.never as Effect.Effect<HttpClientResponse.HttpClientResponse>));
+
+    return Effect.gen(function* () {
+      const connector = yield* EnvironmentConnector.EnvironmentConnector;
+      const resultFiber = yield* connector
+        .status({ userId: "user_123", environmentId: "env-connector-test" })
+        .pipe(Effect.forkScoped);
+
+      yield* Effect.promise(() => requestStarted);
+      yield* TestClock.adjust(
+        Duration.millis(EnvironmentConnector.ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS),
+      );
+      const result = yield* Fiber.join(resultFiber);
+
+      expect(result).toMatchObject({
+        environmentId: "env-connector-test",
+        status: "offline",
+        error: "Managed endpoint health request timed out.",
+        traceId: expect.any(String),
+      });
+    }).pipe(Effect.provide(Layer.merge(TestClock.layer(), layerConnectorTest(execute))));
+  });
+
   it.effect("reports a released tunnel as the reason an environment is offline", () => {
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
       Effect.succeed(

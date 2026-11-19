@@ -1,4 +1,6 @@
 import { sha256 } from "../../nodeCrypto.ts";
+import { ADVISOR_GUIDANCE } from "@specweave-studio/shared/advisor";
+import { PROVIDER_SIGN_IN_EXPIRED_FAILURE_CODE } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import { seedReplayProject } from "../../project/ProjectContextTestkit.ts";
 import * as NodeOS from "node:os";
 
@@ -523,6 +525,37 @@ describe("CodexAdapterV2 runtime policy", () => {
       const detailed = yield* runtimeContext("detailed");
       assert.include(detailed, '<response_style mode="detailed">');
       assert.notInclude(detailed, '<response_style mode="concise">');
+    }),
+  );
+
+  it.effect("sends the advisor guidance only with the studio-code tools and the advisor on", () =>
+    Effect.gen(function* () {
+      const advisorContext = (input: { advisorGuidance?: string; hasStudioMcp: boolean }) =>
+        CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "native-advisor-guidance",
+          codexInput: [{ type: "text", text: "explain the change" }],
+          runtimePolicy: {
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: null,
+            ...(input.advisorGuidance === undefined
+              ? {}
+              : { advisorGuidance: input.advisorGuidance }),
+          },
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.4",
+          },
+          hasStudioMcp: input.hasStudioMcp,
+        }).pipe(Effect.map((params) => params.additionalContext?.studio_code_advisor?.value));
+      assert.equal(
+        yield* advisorContext({ advisorGuidance: ADVISOR_GUIDANCE, hasStudioMcp: true }),
+        ADVISOR_GUIDANCE,
+      );
+      assert.isUndefined(
+        yield* advisorContext({ advisorGuidance: ADVISOR_GUIDANCE, hasStudioMcp: false }),
+      );
+      assert.isUndefined(yield* advisorContext({ hasStudioMcp: true }));
     }),
   );
 
@@ -2183,6 +2216,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     onEvent: (event: ProviderAdapterV2Event) => Effect.Effect<unknown> = () => Effect.void,
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
+    adapterHooks: Pick<
+      CodexAdapterV2.CodexAdapterV2Options,
+      "onSignInRejected" | "renewedAccessExpiresAt" | "resolveRuntime"
+    > = {},
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2242,6 +2279,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               continuationRequests.push(request);
             }),
         },
+        ...adapterHooks,
       });
       const threadId = ThreadId.make(`thread-${transcript.scenario}`);
       const runtime = yield* adapter.openSession({
@@ -3914,6 +3952,183 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ),
     );
   }
+
+  it.effect.each([{ withRetries: true }, { withRetries: false }])(
+    "asks for a fresh app-server and a renewed sign-in when the API says the token expired (retries first: $withRetries)",
+    ({ withRetries }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const scenario = `codex-token-expired-${withRetries ? "retried" : "final"}`;
+          const nativeThreadId = `native-${scenario}-thread`;
+          const nativeTurnId = `native-${scenario}-turn`;
+          const nativeMessage =
+            "unexpected status 401 Unauthorized: Provided authentication token is expired. Please try signing in again., url: https://api.openai.com/v1/responses, auth error: 401, auth error code: token_expired";
+          const retry = (attempt: number) => ({
+            type: "emit_inbound" as const,
+            label: `error/retry-${attempt}`,
+            frame: {
+              method: "error",
+              params: {
+                threadId: nativeThreadId,
+                turnId: nativeTurnId,
+                willRetry: true,
+                error: {
+                  message: `Reconnecting... ${attempt}/5`,
+                  additionalDetails: nativeMessage,
+                },
+              },
+            },
+          });
+          const transcript = makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Say hi." }),
+              ...(withRetries ? [retry(1), retry(2)] : []),
+              {
+                type: "emit_inbound",
+                label: "turn/completed",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: {
+                      ...makeCodexReplayTurn({ id: nativeTurnId, status: "failed" }),
+                      error: { message: nativeMessage, codexErrorInfo: "other" },
+                    },
+                  },
+                },
+              },
+            ],
+          });
+          let rejections = 0;
+          const harness = yield* makeCodexReplayHarness(
+            transcript,
+            undefined,
+            undefined,
+            undefined,
+            {
+              onSignInRejected: Effect.sync(() => {
+                rejections += 1;
+              }),
+            },
+          );
+          assert.isNull(yield* harness.runtime.restartRequired!);
+          const now = yield* DateTime.now;
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make(`attempt-${scenario}`),
+              text: "Say hi.",
+            }),
+          );
+          yield* awaitUntil(() => harness.terminalEvents().length === 1, "token-expired turn");
+
+          const terminal = harness.terminalEvents()[0];
+          assert.equal(terminal?.status, "failed");
+          const failure = terminal?.status === "failed" ? terminal.failure : undefined;
+          assert.equal(failure?.code, PROVIDER_SIGN_IN_EXPIRED_FAILURE_CODE);
+          assert.equal(failure?.message, CodexAdapterV2.CODEX_SIGN_IN_EXPIRED_FAILURE_MESSAGE);
+          assert.equal(
+            yield* harness.runtime.restartRequired!,
+            CodexAdapterV2.CODEX_SIGN_IN_EXPIRED_RESTART_REASON,
+          );
+          // One renewal request per process, however many retries Codex made.
+          assert.equal(rejections, 1);
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      ),
+  );
+
+  it.effect.each([{ renewed: "later" }, { renewed: "same" }, { renewed: "none" }] as const)(
+    "replaces an idle managed process whose token is about to expire only for a renewed one ($renewed)",
+    ({ renewed }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const scenario = `codex-access-expiring-${renewed}`;
+          const transcript = makeCodexReplayTranscript({
+            scenario,
+            entries: codexReplayPreamble({
+              nativeThreadId: `native-${scenario}-thread`,
+              nativeTurnId: `native-${scenario}-turn`,
+              prompt: "Say hi.",
+            }).slice(0, 5),
+          });
+          const nowMs = yield* Clock.currentTimeMillis;
+          const processExpiresAt = nowMs + 60 * 60_000;
+          const harness = yield* makeCodexReplayHarness(
+            transcript,
+            undefined,
+            undefined,
+            undefined,
+            {
+              resolveRuntime: Effect.succeed({
+                config: DEFAULT_CODEX_SETTINGS,
+                environment: {},
+                revision: "first-token",
+                accessExpiresAt: processExpiresAt,
+              }),
+              renewedAccessExpiresAt: Effect.succeed(
+                renewed === "later"
+                  ? nowMs + 120 * 60_000
+                  : renewed === "same"
+                    ? processExpiresAt
+                    : null,
+              ),
+            },
+          );
+          // Fresh: nowhere near expiry, whatever a renewal would return.
+          assert.isNull(yield* harness.runtime.replaceWhenIdle!);
+          yield* TestClock.adjust("55 minutes");
+          const reason = yield* harness.runtime.replaceWhenIdle!;
+          if (renewed === "later")
+            assert.equal(reason, CodexAdapterV2.CODEX_ACCESS_EXPIRING_REASON);
+          else assert.isNull(reason);
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      ),
+  );
+
+  it("recognizes the API's expired, revoked and reused sign-in errors only", () => {
+    for (const message of [
+      "unexpected status 401 Unauthorized: Provided authentication token is expired. Please try signing in again., auth error code: token_expired",
+      "Your refresh token has expired. Please sign in again.",
+      "refresh_token_reused",
+    ])
+      assert.isTrue(CodexAdapterV2.isCodexSignInExpiredMessage(message), message);
+    for (const message of [
+      "Reconnecting... 2/5",
+      "unexpected status 429 Too Many Requests",
+      "Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.",
+      undefined,
+    ])
+      assert.isFalse(CodexAdapterV2.isCodexSignInExpiredMessage(message), String(message));
+  });
+
+  it("replaces a managed process only inside the renewal window", () => {
+    const now = 1_000_000;
+    assert.isNull(CodexAdapterV2.codexAccessExpiryReplacement(null, now));
+    assert.isNull(
+      CodexAdapterV2.codexAccessExpiryReplacement(
+        now + CodexAdapterV2.CODEX_ACCESS_RENEW_BEFORE_MS + 1,
+        now,
+      ),
+    );
+    assert.equal(
+      CodexAdapterV2.codexAccessExpiryReplacement(now + 60_000, now),
+      CodexAdapterV2.CODEX_ACCESS_EXPIRING_REASON,
+    );
+    // A five-minute token launched now is not replaced until half its life is gone.
+    const launched = now;
+    const shortLived = now + 5 * 60_000;
+    assert.isNull(CodexAdapterV2.codexAccessExpiryReplacement(shortLived, now, launched));
+    assert.isNull(
+      CodexAdapterV2.codexAccessExpiryReplacement(shortLived, now + 2 * 60_000, launched),
+    );
+    assert.equal(
+      CodexAdapterV2.codexAccessExpiryReplacement(shortLived, now + 3 * 60_000, launched),
+      CodexAdapterV2.CODEX_ACCESS_EXPIRING_REASON,
+    );
+  });
 
   it("recognizes only Codex's account-changed refresh failure", () => {
     assert.isTrue(

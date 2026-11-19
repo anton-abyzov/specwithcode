@@ -4,24 +4,18 @@ import {
   ThreadId,
   OrchestratorMcpFailure,
   ProjectId,
-  type LearnedModelPreference,
   type ModelLane,
   type ModelSelection,
   type OrchestrationV2ThreadShell,
   type Project as ProjectRecord,
-  type ProjectRepository,
   type ProviderInstanceId,
   type ProviderModelTier,
+  type ServerProvider,
   type ThreadEnvMode,
 } from "@specweave-studio/contracts";
 import { launchTier, launchTierModel } from "../../launchTier.ts";
 import { sameRunModel } from "@specweave-studio/shared/threadModelIdentity";
-import {
-  learnedPreferenceBillingBlock,
-  withLearnedPreference,
-} from "@specweave-studio/shared/modelLanes";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
-import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as ServerSettings from "../../../serverSettings.ts";
 import { formatStudioThreadLink } from "@specweave-studio/shared/studioThreadLinks";
@@ -42,12 +36,17 @@ import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts"
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as ProjectActionRequests from "../../../project/ProjectActionRequests.ts";
+import { type ProjectModelRole } from "../../../project/projectModelChange.ts";
 import * as ProjectLink from "../../../project/ProjectLink.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import { workerLaunchWithRoom } from "../../../project/WorkerLaunchRoom.ts";
-import { projectWorkerModel, workerModelUnderGrant } from "../../../project/ProjectDelegation.ts";
+import {
+  newWorkerModel,
+  projectUsesTracks,
+  workerModelUnderGrant,
+} from "../../../project/ProjectDelegation.ts";
 import { defaultWorkerModelSelection } from "@specweave-studio/shared/coordinatorDefault";
 import {
   launchIncrementFields,
@@ -63,6 +62,7 @@ import {
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
 import { launchOriginOf } from "../../threadOrigin.ts";
 import { projectInGrant } from "../../../fleet/workGrantPolicy.ts";
@@ -82,6 +82,7 @@ import {
   createProjectOnMachine,
   GRANT_GITHUB_MESSAGE,
   resolveCreateMachine,
+  specweaveCreateNote,
 } from "./createOnMachine.ts";
 import {
   absoluteParentPath,
@@ -107,18 +108,25 @@ import {
   worktreeSetNotice,
   WORKTREE_OFF_NOTICE,
 } from "./launchWorkspace.ts";
+import { modelPreference, projectFailure, updateProject } from "./projectSettings.ts";
 import { ProjectToolkit } from "./tools.ts";
+import * as ServerConfig from "../../../config.ts";
+import { specweaveState as readSpecweaveState } from "../../../project/ThreadIncrementProgress.ts";
+import {
+  launchPlansWithoutSpecweave,
+  raiseSetupCardBeside,
+  requestSpecweaveSetup,
+  setupTargetOf,
+  specweaveNeededLaunch,
+} from "../orchestrator/requestSpecweaveSetup.ts";
 
-function projectFailure(error: Project.ProjectServiceError) {
-  if (error._tag === "ProjectOperationError") return unavailable();
-  const message =
-    error._tag === "ProjectNotFoundError"
-      ? "The project was not found."
-      : error._tag === "ProjectConflictError"
-        ? `${error.workspaceRoot} already belongs to another project. studio_project_list shows which.`
-        : Project.projectMutationErrorMessage(error);
-  return new OrchestratorMcpFailure({ code: "invalid_request", message });
-}
+/** Whether SpecWeave is on in a folder used as it is (1396); unknown counts as not. */
+const specweaveIsOn = (workspaceRoot: string) =>
+  Effect.tryPromise(() => readSpecweaveState(workspaceRoot)).pipe(
+    Effect.timeoutOption("3 seconds"),
+    Effect.map((state) => Option.isSome(state) && state.value === "on"),
+    Effect.orElseSucceed(() => false),
+  );
 
 /** Shows the approval card in the calling thread; the user's answer applies the change. */
 const requestProjectAction = Effect.fn("mcp.requestProjectAction")(function* (input: {
@@ -126,6 +134,8 @@ const requestProjectAction = Effect.fn("mcp.requestProjectAction")(function* (in
   readonly projectId?: ProjectId | undefined;
   readonly workspaceRoot?: string | undefined;
   readonly folder?: string | undefined;
+  readonly role?: ProjectModelRole | undefined;
+  readonly modelSelection?: ModelSelection | undefined;
   readonly reason?: string | undefined;
 }) {
   const context = yield* readCaller();
@@ -137,6 +147,19 @@ const requestProjectAction = Effect.fn("mcp.requestProjectAction")(function* (in
         "Only an agent in a SpecWithCode thread can ask for this. Ask the user to do it in the project's settings.",
     });
   const projectId = yield* resolveProjectId(context, input.projectId);
+  // Another machine's work asks only about projects its grant covers, as when it
+  // reads or updates one; this does nothing for this machine's own threads.
+  yield* assertProjectReadable(context, projectId);
+  // The card names models the way this machine lists them, and a model it does
+  // not list is refused before the user is asked. Another machine's work asks
+  // only for a sign-in its grant allows, as when it sets a thread's model.
+  let providers: ReadonlyArray<ServerProvider> = [];
+  if (input.action === "change_model") {
+    if (input.modelSelection !== undefined)
+      yield* assertAccountInGrant(yield* workGrantOf(context), input.modelSelection.instanceId);
+    const registry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
+    if (Option.isSome(registry)) providers = yield* registry.value.getProviders;
+  }
   const requests = yield* ProjectActionRequests.ProjectActionRequests;
   const { requestId } = yield* requests
     .request({
@@ -146,6 +169,9 @@ const requestProjectAction = Effect.fn("mcp.requestProjectAction")(function* (in
       reason: input.reason ?? "No reason given.",
       ...(input.workspaceRoot === undefined ? {} : { workspaceRoot: input.workspaceRoot }),
       ...(input.folder === undefined ? {} : { folder: input.folder }),
+      ...(input.role === undefined ? {} : { modelRole: input.role }),
+      ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+      ...(input.action === "change_model" ? { providers } : {}),
     })
     .pipe(
       Effect.mapError(
@@ -198,7 +224,7 @@ const providerTierSelection = Effect.fn("mcp.providerTierSelection")(function* (
   return selection;
 });
 
-/** The project's own thread and worker model (see projectWorkerModel), else null. */
+/** The model a new unnamed worker of the project starts on (see newWorkerModel), else null. */
 const projectWorkerModelOf = Effect.fn("mcp.projectWorkerModelOf")(function* (
   project: ProjectRecord,
 ) {
@@ -206,7 +232,22 @@ const projectWorkerModelOf = Effect.fn("mcp.projectWorkerModelOf")(function* (
   const settings = Option.isNone(settingsService)
     ? null
     : yield* settingsService.value.getSettings.pipe(Effect.orElseSucceed(() => null));
-  return settings === null ? project.defaultModelSelection : projectWorkerModel(settings, project);
+  if (settings === null) return project.defaultModelSelection;
+  // A running quota boost starts new workers on its model (see newWorkerModel).
+  const providers = yield* (yield* ProviderRegistry.ProviderRegistry).getProviders;
+  return newWorkerModel(settings, project, providers, DateTime.toEpochMillis(yield* DateTime.now));
+});
+
+/** Whether the project starts unnamed workers on its tracks (see projectUsesTracks). */
+const projectUsesTracksOf = Effect.fn("mcp.projectUsesTracksOf")(function* (
+  project: ProjectRecord,
+) {
+  const settingsService = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+  if (Option.isNone(settingsService)) return false;
+  return yield* settingsService.value.getSettings.pipe(
+    Effect.map((settings) => projectUsesTracks(settings, project)),
+    Effect.orElseSucceed(() => false),
+  );
 });
 
 /** Whether the project's own "Use worktrees" switch is on. */
@@ -386,6 +427,26 @@ const access = Effect.gen(function* () {
   return yield* Project.ProjectService;
 });
 export const layer = McpToolAccess.toLayer(ProjectToolkit, {
+  request_specweave_setup: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const context = yield* readCaller();
+      const projectId = yield* resolveProjectId(context, input.projectId);
+      const projects = yield* Project.ProjectService;
+      const project = Option.getOrUndefined(
+        yield* projects.getById(projectId).pipe(Effect.mapError(unavailable)),
+      );
+      if (project === undefined)
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "The project was not found.",
+        });
+      yield* assertProjectInGrant(yield* workGrantOf(context), project);
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      return yield* Effect.promise(() =>
+        requestSpecweaveSetup(setupTargetOf(project, context.caller, stateDir), input),
+      );
+    }),
+  ),
   studio_thread_launch: McpToolAccess.startsThreads(
     (input) => input,
     (input, { runtimeMode, interactionMode }) =>
@@ -584,10 +645,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         // the project lacks is looked up in the caller's own worktree, as
         // delegate_task and create_threads do. A bad ref launches nothing.
         const strategy = input.workspaceStrategy;
+        const { stateDir } = yield* ServerConfig.ServerConfig;
         const incrementResolution =
           project === undefined
             ? ({ ok: true, value: {} } as const)
-            : yield* Effect.promise(() =>
+            : yield* Effect.promise(async () =>
                 resolveLaunchIncrement({
                   workspaceRoot: project.workspaceRoot,
                   worktreePath:
@@ -607,6 +669,9 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                           worktreePath: caller.worktreePath,
                         },
                   isCoordinator,
+                  specweaveDeclined: await launchPlansWithoutSpecweave(
+                    setupTargetOf(project, caller, stateDir),
+                  ),
                 }),
               );
         if (!incrementResolution.ok)
@@ -615,6 +680,15 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             message: incrementResolution.message,
           });
         const increment = incrementResolution.value;
+        // "new" without SpecWeave: a card for the user instead of a thread (1396).
+        if (project !== undefined && increment.needsSpecweave === true)
+          return yield* Effect.promise(() =>
+            specweaveNeededLaunch(setupTargetOf(project, caller, stateDir)),
+          );
+        if (project !== undefined && increment.raiseSetupCard === true)
+          yield* Effect.promise(() =>
+            raiseSetupCardBeside(setupTargetOf(project, caller, stateDir)),
+          );
         // A provider named without a model starts on its tier model; an
         // explicit model wins, and naming neither keeps the picks below.
         const namedSelection =
@@ -695,6 +769,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           autoRoutingApplies({
             // A project's own model is not moved by lanes or Auto.
             pinned: namedSelection !== undefined || projectModel !== null,
+            tracks: namedSelection === undefined && (yield* projectUsesTracksOf(project)),
             isCoordinator,
             taskClass: input.taskClass,
             taskLane: input.taskLane,
@@ -893,11 +968,18 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           message: "The project was not found.",
         });
       yield* assertProjectInGrant(yield* workGrantOf(yield* readCaller()), result.value);
-      return result.value;
+      const specweaveState = yield* Effect.promise(() =>
+        readSpecweaveState(result.value.workspaceRoot, {
+          personal: result.value.workspaceSettings?.kind === "personal",
+        }),
+      ).pipe(Effect.timeoutOption("3 seconds"));
+      return Option.isSome(specweaveState)
+        ? { ...result.value, specweaveState: specweaveState.value }
+        : result.value;
     }),
   ),
   studio_project_create: McpToolAccess.writesEnvironment(
-    ({ workspaceRoot, machine, parentPath, github, ...input }) =>
+    ({ workspaceRoot, machine, parentPath, github, specweave, ...input }) =>
       Effect.gen(function* () {
         const unusable = refuseUnusableOptions({ ...input, workspaceRoot, parentPath, github });
         if (unusable !== undefined) return yield* unusable;
@@ -912,6 +994,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
                 ...(parentPath === undefined ? {} : { parentPath }),
                 ...(github === undefined ? {} : { github }),
+                ...(specweave === undefined ? {} : { specweave }),
               },
             });
         }
@@ -964,7 +1047,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             return yield* new OrchestratorMcpFailure({
               code: "invalid_request",
               message:
-                "A project started from its title takes only a title; set scripts or defaultModelSelection afterwards with studio_project_update.",
+                "A project started from its title takes only a title, and its threads start from this machine's model tracks. Set scripts afterwards with studio_project_update. To start a project on one model, register its folder with workspaceRoot and defaultModelSelection; later the user picks one in project settings.",
             });
           // A title-only project is a new repository for the person; a check brings its own folder.
           if (input.origin === "automated")
@@ -982,6 +1065,10 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               : input.kind === "personal"
                 ? undefined
                 : folders.suggestedProjectsRoot;
+          // SpecWeave by default, as in the dialog, but only in a folder the
+          // create makes or an empty one it takes: the create decides that
+          // under its own lock, so a folder with files never gets it (1396 AC-17, D-02).
+          const wantsSpecweave = input.kind !== "personal" && specweave !== false;
           // Another machine's work starts new folders only: a parentPath that is,
           // or holds, a project here would hand that project over, so it goes
           // through workspaceRoot and its grant check instead.
@@ -1002,6 +1089,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               ...(parent === undefined ? {} : { parentPath: parent }),
               // A personal one comes back as this machine's assistant when one exists.
               ...(input.kind === undefined ? {} : { kind: input.kind }),
+              ...(wantsSpecweave ? { specweave: true, specweaveOnlyIfNew: true } : {}),
             })
             .pipe(Effect.mapError(createFailure));
           const project = yield* projects
@@ -1017,8 +1105,22 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             github === undefined || github === false || created.existing === true
               ? {}
               : yield* publishNewProject({ workspaceRoot: created.workspaceRoot, github });
+          const specweaveNote = specweaveCreateNote({
+            kind: input.kind,
+            asked: specweave,
+            ...(wantsSpecweave && created.existing === true
+              ? {
+                  skipped: "existing_folder" as const,
+                  workspaceRoot: created.workspaceRoot,
+                  present: yield* specweaveIsOn(created.workspaceRoot),
+                }
+              : {}),
+            error: created.specweaveError,
+            needsNode: created.specweaveNeedsNode,
+          });
           return {
             ...project,
+            ...(specweaveNote === undefined ? {} : { specweave: specweaveNote }),
             ...(created.commitError === undefined ? {} : { commitError: created.commitError }),
             ...(created.existing === true ? { existing: true } : {}),
             ...published,
@@ -1032,8 +1134,31 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               'Only the user moves a project to their own projects. Omit origin for a project they asked for, or pass origin "automated" for a check.',
           });
         const commandId = yield* newCommandId();
+        // A folder that is registered keeps its files as they are.
+        const withNote = <A extends { readonly workspaceRoot: string }>(result: A) =>
+          Effect.gen(function* () {
+            const wanted = input.kind !== "personal" && specweave !== false;
+            const note = specweaveCreateNote({
+              kind: input.kind,
+              asked: specweave,
+              skipped: "registered",
+              workspaceRoot: result.workspaceRoot,
+              present: wanted ? yield* specweaveIsOn(result.workspaceRoot) : false,
+            });
+            return note === undefined ? result : { ...result, specweave: note };
+          });
         return yield* projects
-          .create({ ...input, workspaceRoot, commandId, projectId: ProjectId.make(commandId) })
+          .create({
+            ...input,
+            workspaceRoot,
+            commandId,
+            projectId: ProjectId.make(commandId),
+            // The model the caller named is the new project's own: saved with the
+            // creation, so no default is seeded over it and no later update is needed.
+            ...(input.defaultModelSelection == null
+              ? {}
+              : { initialWorkerModelSelection: input.defaultModelSelection }),
+          })
           .pipe(
             // A folder that is already a project returns that project; nothing is made.
             Effect.catch((error) =>
@@ -1054,92 +1179,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 ),
               ),
             ),
+            Effect.flatMap(withNote),
           );
       }),
   ),
-  studio_project_update: McpToolAccess.writesEnvironment((input) =>
-    Effect.gen(function* () {
-      const projects = yield* Project.ProjectService;
-      // Another machine's work changes only projects its grant covers, and never
-      // the scripts this machine runs when it prepares a worktree.
-      const work = yield* assertProjectReadable(yield* readCaller(), input.projectId);
-      if (work !== undefined && input.scripts !== undefined)
-        return yield* new OrchestratorMcpFailure({
-          code: "outside_grant_scope",
-          message: `Project scripts run on this machine, so only its user changes them; ${work.coordinatorLabel}'s work cannot. Ask the user here to change them in project settings.`,
-        });
-      // Pause, archive and auto-resume are the user's lifecycle controls; an agent must not lift them.
-      const lifecycle = input.workspaceSettings;
-      if (input.workspaceRoot !== undefined)
-        return yield* new OrchestratorMcpFailure({
-          code: "invalid_request",
-          message:
-            "Moving a project to another folder needs the user's approval: call studio_project_request with action change_folder and workspaceRoot.",
-        });
-      if (
-        lifecycle?.paused !== undefined ||
-        lifecycle?.archived !== undefined ||
-        lifecycle?.autoResume !== undefined ||
-        lifecycle?.workerMachine !== undefined ||
-        lifecycle?.workerMachines !== undefined
-      )
-        return yield* new OrchestratorMcpFailure({
-          code: "invalid_request",
-          message:
-            "Pause, auto-resume and the worker machines are the user's to change in project settings. To archive or restore a project, call studio_project_request; the user approves it.",
-        });
-      // Which list a project sits in is the person's choice once the project exists:
-      // an agent must not hide their project under Automated or lift a check into theirs.
-      if (lifecycle?.origin !== undefined)
-        return yield* new OrchestratorMcpFailure({
-          code: "invalid_request",
-          message:
-            "Whether a project is listed under Automated is the user's to change from its sidebar menu. Pass origin when you create a check's project instead.",
-        });
-      // The context labels these the user's own instructions, ranked above agent memory;
-      // an agent that could rewrite them could raise its own text to that rank.
-      if (lifecycle?.instructions !== undefined)
-        return yield* new OrchestratorMcpFailure({
-          code: "invalid_request",
-          message:
-            "Project instructions are the user's to change in project settings. Save what you learned with studio_project_memory_write instead.",
-        });
-      // Approved folders, repositories and the project kind are the access evidence the
-      // personal assistant routes on and what worktree threads may reach; an agent widening
-      // them would grant itself projects and folders without the user's card.
-      const environment = lifecycle?.environment;
-      if (lifecycle?.kind !== undefined || environment !== undefined) {
-        const current = Option.getOrUndefined(
-          yield* projects.getById(input.projectId).pipe(Effect.mapError(unavailable)),
-        )?.workspaceSettings;
-        const same = (left: ReadonlyArray<string>, right: ReadonlyArray<string>) =>
-          left.length === right.length && left.every((entry) => right.includes(entry));
-        const repositoryKeys = (repositories: ReadonlyArray<ProjectRepository>) =>
-          repositories.map((repository) =>
-            JSON.stringify([repository.id, repository.url, repository.localPath]),
-          );
-        if (
-          (lifecycle?.kind !== undefined && lifecycle.kind !== (current?.kind ?? "code")) ||
-          (environment !== undefined &&
-            (!same(environment.additionalFolders, current?.environment.additionalFolders ?? []) ||
-              !same(
-                repositoryKeys(environment.repositories),
-                repositoryKeys(current?.environment.repositories ?? []),
-              )))
-        )
-          return yield* new OrchestratorMcpFailure({
-            code: "invalid_request",
-            message:
-              lifecycle?.kind !== undefined && lifecycle.kind !== (current?.kind ?? "code")
-                ? "A project's kind is fixed when it is created; make a new project of the kind you need."
-                : "Agents cannot change approved folders or repositories themselves; the user decides what agents here can reach. To add a folder, call studio_project_request with action add_folder and folder: the user approves it in a card. Repositories and removing a folder are the user's to change in project settings.",
-          });
-      }
-      return yield* projects
-        .update({ ...input, commandId: yield* newCommandId() })
-        .pipe(Effect.mapError(projectFailure));
-    }),
-  ),
+  studio_project_update: McpToolAccess.writesEnvironment((input) => updateProject(input)),
   studio_project_request: McpToolAccess.actsAsCaller((input) => requestProjectAction(input)),
   studio_project_delete: McpToolAccess.actsAsCaller((input) =>
     requestProjectAction({ ...input, action: "delete" }),
@@ -1165,7 +1209,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
     Effect.gen(function* () {
       // Only the machine copying its project folder here, under a grant covering
       // every project here (as for a clone), drives this side; its agents may not.
-      const work = yield* workGrantOf(yield* readCaller());
+      const caller = yield* readCaller();
+      const work = yield* workGrantOf(caller);
       if (work === undefined || work.origin !== undefined)
         return yield* new OrchestratorMcpFailure({
           code: "capability_denied",
@@ -1179,6 +1224,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         });
       return yield* receiveAgentCopy(input, {
         environmentId: work.grant.coordinatorEnvironmentId,
+        label: work.coordinatorLabel,
+        // Sealed secrets of a copy: the bar a secret sent with studio_file_transfer meets.
+        mayCarrySecrets:
+          work.grant.owner === "self" &&
+          McpInvocationContext.clientRuntimeModeCeiling(caller.scope.client) === "full-access",
       });
     }),
   ),
@@ -1210,114 +1260,5 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         );
     }),
   ),
-  studio_model_preference: McpToolAccess.actsAsCaller((input) =>
-    Effect.gen(function* () {
-      const context = yield* readCaller();
-      const projectId = yield* resolveProjectId(context, input.projectId);
-      const settingsService = yield* ServerSettings.ServerSettingsService;
-      const settings = yield* settingsService.getSettings.pipe(Effect.mapError(unavailable));
-      const projectOverrides = settings.projectSettingsOverrides[projectId] ?? {};
-      const preferences = projectOverrides.learnedModelPreferences ?? [];
-      if (input.action === "list") {
-        return {
-          action: "list" as const,
-          projectId,
-          preferences,
-        };
-      }
-      if (input.action === "delete") {
-        if (!input.id) {
-          return yield* new OrchestratorMcpFailure({
-            code: "invalid_request",
-            message: "Pass id: the rule id to delete.",
-          });
-        }
-        const updated = preferences.filter((pref) => pref.id !== input.id);
-        const deleted = updated.length !== preferences.length;
-        if (deleted) {
-          yield* settingsService
-            .updateSettings({
-              projectSettingsOverrideChanges: {
-                [projectId]: { set: { learnedModelPreferences: updated } },
-              },
-            })
-            .pipe(Effect.mapError(unavailable));
-        }
-        return {
-          action: "delete" as const,
-          projectId,
-          preferences: updated,
-          deleted,
-        };
-      }
-      if (input.action === "record") {
-        if (!input.preference) {
-          return yield* new OrchestratorMcpFailure({
-            code: "invalid_request",
-            message:
-              "Pass preference: {kind: 'prefer', model}, {kind: 'avoid', model}, or {kind: 'lane', lane}.",
-          });
-        }
-        // A rule recorded here is not the person's own choice: it may not
-        // send workers to a paid or unknown-billing model they did not allow
-        // (routing checks coordinator rules again when one is used).
-        if (input.preference.kind === "prefer") {
-          const registry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
-          if (Option.isSome(registry)) {
-            const providers = yield* registry.value.getProviders;
-            const project = yield* (yield* Project.ProjectService)
-              .getById(projectId)
-              .pipe(Effect.mapError(unavailable));
-            const rule = resolveProjectSettings(
-              settings,
-              projectId,
-              Option.getOrUndefined(project),
-            ).settings;
-            const blocked = learnedPreferenceBillingBlock(input.preference.model, {
-              providers,
-              lanes: rule.modelLanes,
-              policy: rule.taskRouting,
-            });
-            if (blocked !== null) {
-              return yield* new OrchestratorMcpFailure({
-                code: "invalid_request",
-                message: `Not recorded: ${input.preference.model.model} on ${input.preference.model.instanceId} is ${blocked}. Only the person can send work there, by adding it to a model lane or allowing paid API models in Auto.`,
-              });
-            }
-          }
-        }
-        const crypto = yield* Crypto.Crypto;
-        const id = `pref-${(yield* crypto.randomUUIDv4.pipe(Effect.orDie)).slice(0, 12)}`;
-        const now = yield* DateTime.now;
-        const recorded: LearnedModelPreference = {
-          id,
-          keywords: (input.keywords ?? []).map((k) => k.toLowerCase().trim()),
-          ...(input.taskClass !== undefined ? { taskClass: input.taskClass } : {}),
-          ...(input.lane !== undefined ? { lane: input.lane } : {}),
-          action: input.preference,
-          ...(input.note !== undefined ? { note: input.note } : {}),
-          recordedBy: "coordinator",
-          createdAt: DateTime.formatIso(now),
-        };
-        const updated = withLearnedPreference(preferences, recorded);
-        yield* settingsService
-          .updateSettings({
-            projectSettingsOverrideChanges: {
-              [projectId]: { set: { learnedModelPreferences: updated } },
-            },
-          })
-          .pipe(Effect.mapError(unavailable));
-        return {
-          action: "record" as const,
-          projectId,
-          preferences: updated,
-          recorded,
-        };
-      }
-      return yield* new OrchestratorMcpFailure({
-        code: "invalid_request",
-        message: `Unknown action: ${(input as { action: string }).action}`,
-      });
-    }),
-  ),
+  studio_model_preference: McpToolAccess.actsAsCaller((input) => modelPreference(input)),
 });

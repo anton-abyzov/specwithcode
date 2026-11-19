@@ -1,3 +1,4 @@
+import { maskEmail } from "@specweave-studio/shared/maskEmail";
 import { memo } from "react";
 import { cn } from "~/lib/utils";
 import type { ProviderInstanceEntry } from "../../providerInstances";
@@ -24,7 +25,7 @@ export function providerGroupAccount(entry: ProviderInstanceEntry): {
   const auth = entry.snapshot.auth;
   return {
     plan: auth.status === "authenticated" ? (auth.label ?? null) : null,
-    email: auth.status === "authenticated" ? (auth.email ?? null) : null,
+    email: auth.status === "authenticated" ? (maskEmail(auth.email) ?? auth.email ?? null) : null,
   };
 }
 

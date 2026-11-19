@@ -9,10 +9,14 @@ export default defineConfig({
   resolve: {
     alias: [
       { find: /(?:\.\.\/)+state\/(use-atom-command|filesystem|query)$/, replacement: stub },
-      { find: /(?:\.\.\/)+studio\/(machineHandoff|projectLink)$/, replacement: stub },
+      {
+        find: /(?:\.\.\/)+studio\/(machineHandoff|projectLink|projectCredentials)$/,
+        replacement: stub,
+      },
       { find: "@specweave-studio/client-runtime/state/runtime", replacement: stub },
       { find: /(?:\.\.\/)+settings\/MachineReadinessChecklist$/, replacement: stub },
       { find: "./ProjectLinkDialog", replacement: stub },
+      { find: "./CopyCredentialInstall", replacement: stub },
       { find: "~", replacement: NodeURL.fileURLToPath(new URL("../../src", import.meta.url)) },
     ],
   },

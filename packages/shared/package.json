@@ -4,6 +4,18 @@
   "license": "MIT",
   "type": "module",
   "exports": {
+    "./maskEmail": {
+      "types": "./src/maskEmail.ts",
+      "import": "./src/maskEmail.ts"
+    },
+    "./reservedDeviceNames": {
+      "types": "./src/reservedDeviceNames.ts",
+      "import": "./src/reservedDeviceNames.ts"
+    },
+    "./deviceShortId": {
+      "types": "./src/deviceShortId.ts",
+      "import": "./src/deviceShortId.ts"
+    },
     "./threadLifecycleEvidence": {
       "types": "./src/threadLifecycleEvidence.ts",
       "import": "./src/threadLifecycleEvidence.ts"
@@ -172,6 +184,10 @@
       "types": "./src/htmlRender.ts",
       "import": "./src/htmlRender.ts"
     },
+    "./officeSheet": {
+      "types": "./src/officeSheet/index.ts",
+      "import": "./src/officeSheet/index.ts"
+    },
     "./favicon": {
       "types": "./src/favicon.ts",
       "import": "./src/favicon.ts"
@@ -276,9 +292,25 @@
       "types": "./src/modelSearchIntents.ts",
       "import": "./src/modelSearchIntents.ts"
     },
+    "./subscriptionWindowRules": {
+      "types": "./src/subscriptionWindowRules.ts",
+      "import": "./src/subscriptionWindowRules.ts"
+    },
     "./providerUsageLinks": {
       "types": "./src/providerUsageLinks.ts",
       "import": "./src/providerUsageLinks.ts"
+    },
+    "./modelTrackRules": {
+      "types": "./src/modelTrackRules.ts",
+      "import": "./src/modelTrackRules.ts"
+    },
+    "./modelTracks": {
+      "types": "./src/modelTracks.ts",
+      "import": "./src/modelTracks.ts"
+    },
+    "./modelVendor": {
+      "types": "./src/modelVendor.ts",
+      "import": "./src/modelVendor.ts"
     },
     "./modelTiers": {
       "types": "./src/modelTiers.ts",
@@ -287,6 +319,10 @@
     "./adversarialReview": {
       "types": "./src/adversarialReview.ts",
       "import": "./src/adversarialReview.ts"
+    },
+    "./advisor": {
+      "types": "./src/advisor.ts",
+      "import": "./src/advisor.ts"
     },
     "./reviewPolicy": {
       "types": "./src/reviewPolicy.ts",
@@ -508,6 +544,22 @@
       "types": "./src/usageLimitForecast.ts",
       "import": "./src/usageLimitForecast.ts"
     },
+    "./expiringQuota": {
+      "types": "./src/expiringQuota.ts",
+      "import": "./src/expiringQuota.ts"
+    },
+    "./usageResetLedger": {
+      "types": "./src/usageResetLedger.ts",
+      "import": "./src/usageResetLedger.ts"
+    },
+    "./quotaAlerts": {
+      "types": "./src/quotaAlerts.ts",
+      "import": "./src/quotaAlerts.ts"
+    },
+    "./quotaBoost": {
+      "types": "./src/quotaBoost.ts",
+      "import": "./src/quotaBoost.ts"
+    },
     "./desktopAppControl": {
       "types": "./src/desktopAppControl.ts",
       "import": "./src/desktopAppControl.ts"
@@ -576,6 +628,10 @@
       "types": "./src/reportDocument.ts",
       "import": "./src/reportDocument.ts"
     },
+    "./attentionAsk": {
+      "types": "./src/attentionAsk.ts",
+      "import": "./src/attentionAsk.ts"
+    },
     "./threadReport": {
       "types": "./src/threadReport.ts",
       "import": "./src/threadReport.ts"
@@ -635,6 +691,10 @@
     "./cloneUrl": {
       "types": "./src/cloneUrl.ts",
       "import": "./src/cloneUrl.ts"
+    },
+    "./existingCopy": {
+      "types": "./src/existingCopy.ts",
+      "import": "./src/existingCopy.ts"
     },
     "./coordinatorReplySources": {
       "types": "./src/coordinatorReplySources.ts",

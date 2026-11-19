@@ -240,6 +240,19 @@ export function describeThreadPlan(plan: ThreadPlanCompact): string {
     .join(" ");
 }
 
+/**
+ * The plan a Chats row shows, if any. The row has one status: a failed run's dot
+ * says it alone (its hover keeps the plan), a finished plan says nothing, and an
+ * open one is a bare "3/4" so the chat's name keeps the room.
+ */
+export function chatRowPlan(
+  plan: ThreadPlanCompact | null,
+  tone: string,
+): ThreadPlanCompact | null {
+  if (plan === null || tone === "failed" || tone === "resolved") return null;
+  return plan.total > 0 && plan.completed < plan.total ? plan : null;
+}
+
 /** Whether a step link opens in the browser (https) rather than as a file on the host. */
 export function isExternalStepLink(href: string): boolean {
   return /^https:\/\//iu.test(href);

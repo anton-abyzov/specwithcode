@@ -186,7 +186,7 @@ export function MachineToolRow({
   const action = present ? undefined : readOnly ? (
     <>
       {readOnlyMacGit || linuxCommand !== null ? null : <DownloadLink tool={tool} />}
-      <Button size="sm" variant="ghost" onClick={onCheckAgain}>
+      <Button size="sm" variant="outline" onClick={onCheckAgain}>
         {tx("Check again")}
       </Button>
     </>
@@ -213,14 +213,14 @@ export function MachineToolRow({
   ) : linuxCommand !== null || tool === "git" ? (
     <>
       {os === "windows" ? <DownloadLink tool={tool} /> : null}
-      <Button size="sm" variant="ghost" onClick={onCheckAgain}>
+      <Button size="sm" variant="outline" onClick={onCheckAgain}>
         {tx("Check again")}
       </Button>
     </>
   ) : (
     <>
       <DownloadLink tool={tool} />
-      <Button size="sm" variant="ghost" onClick={onCheckAgain}>
+      <Button size="sm" variant="outline" onClick={onCheckAgain}>
         {tx("Check again")}
       </Button>
     </>

@@ -16,15 +16,27 @@
  * The Agent SDK init handshake surfaces skills only as slash commands without
  * their filesystem paths, so the provider snapshot scans the same locations
  * directly, mirroring how the Codex app-server reports its skills.
+ * Skills synced from claude.ai live one level deeper, in
+ * `<config dir>/skills/synced/<bucket>/<skill>/SKILL.md`, and are published as
+ * `anthropic-skills:<skill>`. They are reported under the `claude.ai` scope:
+ * the sync rewrites those folders, so nothing here switches or edits them.
+ * Which bucket a session loads is not recorded on disk, so every bucket is
+ * read and the most recently synced copy of a name is the one listed.
  *
  * @module provider/Drivers/ClaudeSkills
  */
 import * as NodeOS from "node:os";
 
-import type { ClaudeSettings, ServerProviderSkill } from "@specweave-studio/contracts";
+import {
+  CLAUDE_AI_SKILL_NAMESPACE,
+  CLAUDE_AI_SKILL_SCOPE,
+  type ClaudeSettings,
+  type ServerProviderSkill,
+} from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { fromLenientJson } from "@specweave-studio/shared/schemaJson";
@@ -33,6 +45,10 @@ import { parse as parseYamlDocument } from "yaml";
 import { expandHomePath } from "../../pathExpansion.ts";
 
 type ClaudeSkillScope = "user" | "project" | "plugin";
+
+const SyncedManifestJson = fromLenientJson(
+  Schema.Struct({ lastUpdated: Schema.optional(Schema.Number) }),
+);
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 
@@ -715,6 +731,8 @@ export const discoverClaudePluginSkills = Effect.fn("discoverClaudePluginSkills"
     readonly settingsFiles: ReadonlyArray<ClaudeSettingsFile>;
     readonly cwd: string | undefined;
     readonly repositoryRoot: string | undefined;
+    /** Told when a folder or skill file that is there could not be read. */
+    readonly onUnreadable?: ((error: unknown) => void) | undefined;
   }): Effect.fn.Return<
     ReadonlyArray<ServerProviderSkill>,
     never,
@@ -768,9 +786,10 @@ export const discoverClaudePluginSkills = Effect.fn("discoverClaudePluginSkills"
       seenNamespaces.add(namespace);
 
       for (const file of yield* listPluginSkillFiles(pluginRoot, manifest, namespace)) {
-        const contents = yield* fileSystem
-          .readFileString(file.skillPath)
-          .pipe(Effect.orElseSucceed(() => undefined));
+        const contents = yield* fileSystem.readFileString(file.skillPath).pipe(
+          Effect.tapError((error) => Effect.sync(() => input.onUnreadable?.(error))),
+          Effect.orElseSucceed(() => undefined),
+        );
         if (contents === undefined) continue;
         const frontmatter = parseSkillFrontmatter(contents);
         if (frontmatter.kind === "malformed") continue;
@@ -833,11 +852,109 @@ export const readClaudeSkillSwitches = Effect.fn("readClaudeSkillSwitches")(func
  * project copy instead would attach its invocation metadata to a command
  * Claude Code resolves elsewhere.
  */
+/**
+ * Skills claude.ai syncs into `<skills>/synced/<bucket>/<skill>/SKILL.md`.
+ * Dot entries (`.bucket-*` markers, `.staging`) are the sync's own bookkeeping.
+ * A name in several buckets is listed once, from the bucket whose manifest was
+ * updated last. `skillOverrides` are not applied: these are not switched here.
+ */
+const discoverClaudeSyncedSkills = Effect.fn("discoverClaudeSyncedSkills")(function* (
+  skillsRoot: string,
+  onUnreadable?: (error: unknown) => void,
+): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const syncedRoot = path.join(skillsRoot, "synced");
+  const list = (directory: string) =>
+    fileSystem.readDirectory(directory).pipe(
+      Effect.map((entries) => entries.filter((entry) => !entry.startsWith(".")).sort()),
+      Effect.tapError((error) => Effect.sync(() => onUnreadable?.(error))),
+      Effect.orElseSucceed((): ReadonlyArray<string> => []),
+    );
+  const decodeManifest = Schema.decodeUnknownOption(SyncedManifestJson);
+
+  const found = new Map<
+    string,
+    { readonly updated: number; readonly skill: ServerProviderSkill }
+  >();
+  for (const bucket of yield* list(syncedRoot)) {
+    const bucketPath = path.join(syncedRoot, bucket);
+    const manifest = yield* fileSystem
+      .readFileString(path.join(bucketPath, "manifest.json"))
+      .pipe(Effect.orElseSucceed(() => undefined));
+    const decoded = manifest === undefined ? undefined : decodeManifest(manifest);
+    const updated =
+      decoded !== undefined && decoded._tag === "Some" ? (decoded.value.lastUpdated ?? 0) : 0;
+    for (const entry of yield* list(bucketPath)) {
+      const skillPath = path.join(bucketPath, entry, "SKILL.md");
+      const contents = yield* fileSystem.readFileString(skillPath).pipe(
+        Effect.tapError((error) => Effect.sync(() => onUnreadable?.(error))),
+        Effect.orElseSucceed(() => undefined),
+      );
+      if (contents === undefined) continue;
+      const frontmatter = parseSkillFrontmatter(contents);
+      if (frontmatter.kind === "malformed") continue;
+      const leaf = entry.trim();
+      if (!leaf) continue;
+      const name = `${CLAUDE_AI_SKILL_NAMESPACE}:${leaf}`;
+      const prior = found.get(name);
+      if (prior !== undefined && prior.updated >= updated) continue;
+      found.set(name, {
+        updated,
+        skill: {
+          name,
+          path: skillPath,
+          enabled: true,
+          scope: CLAUDE_AI_SKILL_SCOPE,
+          ...(frontmatter.kind === "parsed" && frontmatter.description
+            ? { description: frontmatter.description }
+            : {}),
+          ...(frontmatter.kind === "parsed" && frontmatter.userInvocationOnly === true
+            ? { userInvocationOnly: true }
+            : {}),
+          ...(frontmatter.kind === "parsed" && frontmatter.userInvocable === false
+            ? { userInvocable: false }
+            : {}),
+        },
+      });
+    }
+  }
+  return [...found.values()].map((entry) => entry.skill);
+});
+
+/** What a Claude skill scan found, and whether a folder it should have read refused. */
+export interface ClaudeSkillsReport {
+  readonly skills: ReadonlyArray<ServerProviderSkill>;
+  /**
+   * A skills folder or a skill's SKILL.md is there but could not be read
+   * (permission denied or another error that is not "not found"), so a skill
+   * missing from `skills` may still be installed.
+   */
+  readonly incomplete: boolean;
+}
+
+/**
+ * Whether a failed read means "there is nothing here" (no folder, no
+ * SKILL.md, a plain file where a folder was expected) rather than "there is
+ * something here this scan could not open".
+ */
+const isAbsentRead = (error: unknown): boolean =>
+  PlatformError.isPlatformError(error) &&
+  (error.reason._tag === "NotFound" || error.reason._tag === "BadResource");
+
 export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* (
   config: Pick<ClaudeSettings, "homePath">,
   cwd?: string,
   environment?: NodeJS.ProcessEnv,
 ): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
+  return (yield* discoverClaudeSkillsReport(config, cwd, environment)).skills;
+});
+
+export const discoverClaudeSkillsReport = Effect.fn("discoverClaudeSkillsReport")(function* (
+  config: Pick<ClaudeSettings, "homePath">,
+  cwd?: string,
+  environment?: NodeJS.ProcessEnv,
+): Effect.fn.Return<ClaudeSkillsReport, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const configDirPath = yield* resolveClaudeConfigDirPath(config, environment ?? process.env, cwd);
@@ -861,16 +978,23 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
   ];
 
   const skillsByName = new Map<string, ServerProviderSkill>();
+  // Discovery stays best-effort, but a folder that is there and refused is remembered.
+  let incomplete = false;
+  const noteUnreadable = (error: unknown) => {
+    if (!isAbsentRead(error)) incomplete = true;
+  };
   for (const root of roots) {
-    const entries = yield* fileSystem
-      .readDirectory(root.directory)
-      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    const entries = yield* fileSystem.readDirectory(root.directory).pipe(
+      Effect.tapError((error) => Effect.sync(() => noteUnreadable(error))),
+      Effect.orElseSucceed((): ReadonlyArray<string> => []),
+    );
 
     for (const entry of [...entries].sort()) {
       const skillPath = path.join(root.directory, entry, "SKILL.md");
-      const contents = yield* fileSystem
-        .readFileString(skillPath)
-        .pipe(Effect.orElseSucceed(() => undefined));
+      const contents = yield* fileSystem.readFileString(skillPath).pipe(
+        Effect.tapError((error) => Effect.sync(() => noteUnreadable(error))),
+        Effect.orElseSucceed(() => undefined),
+      );
       if (contents === undefined) {
         continue;
       }
@@ -920,15 +1044,26 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
     }
   }
 
+  for (const skill of yield* discoverClaudeSyncedSkills(
+    path.join(configDirPath, "skills"),
+    noteUnreadable,
+  )) {
+    if (!skillsByName.has(skill.name)) skillsByName.set(skill.name, skill);
+  }
+
   const pluginSkills = yield* discoverClaudePluginSkills({
     pluginsRoot: claudePluginsRootPath(path, configDirPath, environment ?? process.env, cwd),
     settingsFiles,
     cwd,
     repositoryRoot,
+    onUnreadable: noteUnreadable,
   });
   for (const skill of pluginSkills) {
     if (!skillsByName.has(skill.name)) skillsByName.set(skill.name, skill);
   }
 
-  return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
+  return {
+    skills: [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name)),
+    incomplete,
+  };
 });

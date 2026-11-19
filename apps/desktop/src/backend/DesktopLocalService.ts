@@ -93,6 +93,8 @@ const DESKTOP_SESSION_LABEL = "SpecWithCode Desktop";
 export interface AttachedLocalService {
   /** The Studio home the service runs with; pairing must target the same one. */
   readonly baseDir: string;
+  /** Where the service writes its runtime state; `<baseDir>/userdata` when absent. */
+  readonly stateDir?: string;
   readonly runtime: RunningServerRuntimeState;
   readonly descriptor: ExecutionEnvironmentDescriptor;
   readonly httpBaseUrl: URL;
@@ -280,6 +282,16 @@ export class DesktopLocalService extends Context.Service<
     readonly discover: (options?: DiscoverOptions) => Effect.Effect<LocalServiceDiscovery>;
     readonly attach: (service: AttachedLocalService) => Effect.Effect<void>;
     readonly attached: Effect.Effect<Option.Option<AttachedLocalService>>;
+    /** Whether a Studio server answers its descriptor at this origin right now. */
+    readonly answers: (origin: string) => Effect.Effect<boolean>;
+    /**
+     * The same service at a new address: its home's runtime state names another
+     * origin, a live process answers there, and it is the same environment.
+     * Never looks at other homes, waits, or starts a stopped service.
+     */
+    readonly relocate: (
+      service: AttachedLocalService,
+    ) => Effect.Effect<Option.Option<AttachedLocalService>>;
     /** Installed services on this machine (fleet receipts with `service.installed`). */
     readonly installedServices: Effect.Effect<ReadonlyArray<InstalledService>>;
     /**
@@ -653,6 +665,7 @@ export const make = Effect.gen(function* () {
               _tag: "running",
               service: {
                 baseDir: candidate.baseDir,
+                stateDir: candidate.stateDir,
                 runtime,
                 descriptor: descriptor.value,
                 httpBaseUrl: new URL(runtime.origin),
@@ -958,6 +971,35 @@ export const make = Effect.gen(function* () {
         Effect.andThen(Ref.set(tokenRef, Option.none())),
       ),
     attached: Ref.get(attachedRef),
+    answers: (origin) => Effect.map(probeDescriptor(origin), Option.isSome),
+    relocate: (service) =>
+      Effect.gen(function* () {
+        const stateDir = service.stateDir ?? environment.path.join(service.baseDir, "userdata");
+        const runtime = yield* readRuntime(stateDir);
+        if (
+          runtime === null ||
+          runtime.origin === service.runtime.origin ||
+          runtime.pid === process.pid ||
+          !isProcessAlive(runtime.pid)
+        )
+          return Option.none<AttachedLocalService>();
+        const descriptor = yield* probeDescriptor(runtime.origin);
+        if (Option.isNone(descriptor)) return Option.none<AttachedLocalService>();
+        if (descriptor.value.environmentId !== service.descriptor.environmentId) {
+          yield* logWarning("the attached home's runtime names another server", {
+            baseDir: service.baseDir,
+            origin: runtime.origin,
+          });
+          return Option.none<AttachedLocalService>();
+        }
+        return Option.some<AttachedLocalService>({
+          ...service,
+          stateDir,
+          runtime,
+          descriptor: descriptor.value,
+          httpBaseUrl: new URL(runtime.origin),
+        });
+      }),
     markSpawned: Ref.set(spawnedRef, true),
     ownsBundledService: Effect.map(
       Effect.all([Ref.get(spawnedRef), Ref.get(attachedRef)]),
@@ -988,6 +1030,8 @@ export const layerTest = (input?: {
       usesDefaultHome: input?.usesDefaultHome ?? true,
       attach: () => Effect.void,
       attached: Effect.succeed(Option.fromUndefinedOr(input?.attached)),
+      answers: () => Effect.succeed(true),
+      relocate: () => Effect.succeed(Option.none()),
       markSpawned: Effect.void,
       ownsBundledService: Effect.succeed(input?.spawned === true && !input.attached),
       bearerToken:

@@ -42,6 +42,14 @@ export class RoutineCopies extends Context.Service<
     readonly snapshot: (input: {
       readonly projectId: ProjectId;
       readonly logicalProjectId: string;
+      /** The machine the routines go to: each is sent as that machine must keep it. */
+      readonly recipient: string;
+      /**
+       * The routines go with the coordinator role itself (a planned handover),
+       * not beside it: one whose runner here is not settled runs where the
+       * coordinator is, so the recipient gets it on (ScheduledTaskRunner).
+       */
+      readonly handover?: boolean | undefined;
     }) => Effect.Effect<RoutineCopiesSnapshot | null, ScheduledTaskError>;
     /**
      * Keeps `routines` as this copy's own: each saved under its id, and the
@@ -54,6 +62,16 @@ export class RoutineCopies extends Context.Service<
       readonly logicalProjectId: string;
       readonly routines: ReadonlyArray<CoordinatorRoutineCopy>;
     }) => Effect.Effect<void, ScheduledTaskError>;
+    /**
+     * The project's coordinator-owned routines that are turned on, by title, for
+     * the link review. Reads only: unlike `snapshot` it marks nothing.
+     */
+    readonly owned?: (
+      projectId: ProjectId,
+    ) => Effect.Effect<
+      ReadonlyArray<{ readonly id: string; readonly title: string }>,
+      ScheduledTaskError
+    >;
   }
 >()("specweave-studio/scheduledTasks/ScheduledTaskCopies/RoutineCopies") {}
 
@@ -148,6 +166,23 @@ export interface RoutineCopiesDeps {
     options: { readonly grantedBy: ScheduledTaskGrantedBy | null },
   ) => Effect.Effect<unknown, ScheduledTaskError>;
   readonly remove: (id: ScheduledTaskId) => Effect.Effect<unknown, ScheduledTaskError>;
+  /**
+   * Whether this machine runs the routine itself, or is moving it
+   * (ScheduledTaskRunner). A coordinator's replica never rewrites, turns on
+   * or removes such a routine: its runner's row is the one that counts.
+   */
+  readonly heldByRunner?: (id: ScheduledTaskId) => Effect.Effect<boolean>;
+  /**
+   * The routines whose copy on `recipient` rests for this machine by an
+   * acknowledgement that still counts (ScheduledTaskRunner). They are sent to
+   * that machine off: one put back on a release before runners saves what it
+   * is sent, and would fire a copy sent on beside this machine. A failure
+   * fails the snapshot: unknown is never sent as on.
+   */
+  readonly restsAt?: (
+    recipient: string,
+    handover: boolean,
+  ) => Effect.Effect<ReadonlySet<string>, ScheduledTaskError>;
 }
 
 const decodeUpsert = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);
@@ -202,18 +237,41 @@ export const makeRoutineCopies = (deps: RoutineCopiesDeps) =>
     // Read on every lease, so kept until a routine changes.
     const cached = new Map<
       string,
-      { readonly generation: number; readonly snapshot: RoutineCopiesSnapshot | null }
+      {
+        readonly generation: number;
+        readonly rests: string;
+        readonly snapshot: RoutineCopiesSnapshot | null;
+      }
     >();
-    const snapshot: RoutineCopies["Service"]["snapshot"] = ({ projectId, logicalProjectId }) =>
+    const snapshot: RoutineCopies["Service"]["snapshot"] = ({
+      projectId,
+      logicalProjectId,
+      recipient,
+      handover,
+    }) =>
       Effect.gen(function* () {
+        // A caller that does not say who the routines are for gets none: which of
+        // them must go off depends on the machine they go to.
+        if (typeof recipient !== "string" || recipient === "")
+          return yield* taskError("Routines are sent to a named machine only.");
         const generation = yield* deps.generation;
-        const key = `${projectId}\u0000${logicalProjectId}`;
+        // Read every time, and once more when it fails: a machine joining or
+        // leaving changes it, and no routine does. Still unreadable, nothing is sent.
+        const resting =
+          deps.restsAt === undefined
+            ? new Set<string>()
+            : yield* deps.restsAt(recipient, handover === true).pipe(Effect.retry({ times: 1 }));
+        const rests = [...resting].toSorted().join("\u0000");
+        const key = `${projectId}\u0000${logicalProjectId}\u0000${recipient}`;
         const held = cached.get(key);
-        if (held !== undefined && held.generation === generation) return held.snapshot;
+        if (held !== undefined && held.generation === generation && held.rests === rests)
+          return held.snapshot;
         const routines = routineCopiesOf(
           yield* deps.listTasks,
           projectId,
           yield* grantsOf(projectId),
+        ).map((copy) =>
+          resting.has(copy.id) && copy.enabled ? { ...copy, enabled: false } : copy,
         );
         const json = encodeRoutinesJson(routines);
         let result: RoutineCopiesSnapshot | null = null;
@@ -230,7 +288,7 @@ export const makeRoutineCopies = (deps: RoutineCopiesDeps) =>
           );
           result = { routines, digest: coordinatorRoutinesDigest(routines) };
         }
-        cached.set(key, { generation, snapshot: result });
+        cached.set(key, { generation, rests, snapshot: result });
         return result;
       });
 
@@ -241,6 +299,7 @@ export const makeRoutineCopies = (deps: RoutineCopiesDeps) =>
       grants: ReadonlyMap<string, ScheduledTaskGrantedBy>,
     ) =>
       Effect.gen(function* () {
+        if (deps.heldByRunner !== undefined && (yield* deps.heldByRunner(copy.id))) return;
         const held = yield* deps.findTask(copy.id);
         // An id this machine uses for another project's routine is never taken over.
         if (held !== null && held.projectId !== projectId) {
@@ -303,10 +362,31 @@ export const makeRoutineCopies = (deps: RoutineCopiesDeps) =>
         `.pipe(Effect.mapError(failed("Could not list routine copies.")));
         yield* Effect.forEach(
           held.filter((row) => !sent.has(row.task_id)),
-          (row) => deps.remove(ScheduledTaskId.make(row.task_id)),
+          (row) =>
+            Effect.gen(function* () {
+              const id = ScheduledTaskId.make(row.task_id);
+              if (deps.heldByRunner !== undefined && (yield* deps.heldByRunner(id))) return;
+              yield* deps.remove(id);
+            }),
           { concurrency: 1, discard: true },
         );
       });
 
-    return RoutineCopies.of({ snapshot, replace });
+    const owned: NonNullable<RoutineCopies["Service"]["owned"]> = (projectId) =>
+      deps.listTasks.pipe(
+        Effect.map((tasks) =>
+          tasks
+            .filter(
+              (task) =>
+                task.projectId === projectId &&
+                task.enabled &&
+                isCoordinatorOwnedRoutine(task) &&
+                task.schedule.type !== "webhook",
+            )
+            .slice(0, COORDINATOR_ROUTINE_COPIES_MAX)
+            .map((task) => ({ id: task.id, title: task.title.slice(0, 1000) })),
+        ),
+      );
+
+    return RoutineCopies.of({ snapshot, replace, owned });
   });

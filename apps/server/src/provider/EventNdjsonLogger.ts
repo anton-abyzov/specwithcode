@@ -64,6 +64,15 @@ const transientNativeMethods = new Set([
   "turn/diff/updated",
 ]);
 const transientAcpUpdates = new Set(["agent_message_chunk", "agent_thought_chunk"]);
+// Cursor SDK streaming updates. Completed, started and ended updates carry the
+// same content in final form and stay in the log.
+const transientCursorUpdateTypes = new Set([
+  "partial-tool-call",
+  "shell-output-delta",
+  "text-delta",
+  "thinking-delta",
+  "token-delta",
+]);
 
 export type EventNdjsonStream = "native" | "canonical" | "orchestration";
 
@@ -229,6 +238,19 @@ function providerLogPath(directory: string, prefix: string, threadSegment: strin
   return NodePath.join(directory, `${prefix}${threadSegment}.log`);
 }
 
+function shouldPersistCursorUpdate(update: unknown): boolean {
+  if (typeof update !== "object" || update === null) return true;
+  const updateType = Reflect.get(update, "type");
+  if (updateType === "tool-call-delta") {
+    // Subagent progress arrives wrapped in a tool call; judge the inner update.
+    const inner = Reflect.get(update, "taskUpdate");
+    if (typeof inner !== "object" || inner === null) return true;
+    const innerType = Reflect.get(inner, "type");
+    return typeof innerType !== "string" || !transientCursorUpdateTypes.has(innerType);
+  }
+  return typeof updateType !== "string" || !transientCursorUpdateTypes.has(updateType);
+}
+
 export function shouldPersistProviderEvent(stream: EventNdjsonStream, event: unknown): boolean {
   if (stream === "orchestration" || typeof event !== "object" || event === null) {
     return true;
@@ -272,6 +294,10 @@ export function shouldPersistProviderEvent(stream: EventNdjsonStream, event: unk
       ) {
         return false;
       }
+    }
+
+    if (nativeType === "interaction.update") {
+      return shouldPersistCursorUpdate(Reflect.get(nativeEvent, "update"));
     }
 
     const payload = Reflect.get(nativeEvent, "payload");

@@ -46,6 +46,7 @@ import {
   writeAddToMachineCopy,
 } from "~/studio/addToMachineCopy";
 import { useMachineNicknames } from "~/studio/machineNickname";
+import { linkSide, recordLinkFailure, recordLinkOutcome } from "~/studio/linkRefusals";
 import { linkCopyAsWorkers } from "~/studio/projectLink";
 import { ProjectLinkDialog } from "./studio/ProjectLinkDialog";
 import { toastManager } from "./ui/toast";
@@ -328,7 +329,7 @@ async function runJob(job: AddToMachineJob, context: RunContext): Promise<void> 
 
   if (job.copyIgnored || job.secrets.length > 0) {
     try {
-      await copyExtras(job, context.commands, destName);
+      await copyExtras(job, context.commands, destName, sourceName);
     } catch (cause) {
       const transient = isTransient(cause);
       toastManager.add(
@@ -358,6 +359,8 @@ async function runJob(job: AddToMachineJob, context: RunContext): Promise<void> 
       newOperationId: randomUUID,
     });
     finish(job);
+    // The machine menu says why beside Link, after this notice is gone.
+    recordLinkOutcome(linkSide(job.source), linkSide(destination), outcome);
     if (outcome.status === "review")
       toastManager.add(
         stackedThreadToast({
@@ -370,6 +373,13 @@ async function runJob(job: AddToMachineJob, context: RunContext): Promise<void> 
   } catch (cause) {
     const transient = isTransient(cause);
     if (!transient) finish(job);
+    // A failure that is not tried again is this pair's last word until Link succeeds.
+    if (!transient)
+      recordLinkFailure(
+        linkSide(job.source),
+        linkSide(destination),
+        messageOf(cause, "Linking stopped."),
+      );
     toastManager.add(
       stackedThreadToast({
         type: "error",
@@ -388,6 +398,7 @@ async function copyExtras(
   job: AddToMachineJob,
   commands: CopyCommands,
   destName: string,
+  sourceName: string,
 ): Promise<void> {
   const { source, destination } = job;
   const env = destination.environmentId;
@@ -445,6 +456,7 @@ async function copyExtras(
     sourceEnvironmentId: source.environmentId,
     destinationEnvironmentId: env,
     destinationLabel: destName,
+    sourceLabel: sourceName,
     operationId,
     secrets,
   });

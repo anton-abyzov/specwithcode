@@ -178,13 +178,21 @@ export function carryModelOptions(input: {
       options.push(selection);
       continue;
     }
-    // A switched-off toggle or a default choice loses nothing.
+    // A switched-off toggle, a toggle at its own default (Claude's Thinking is
+    // on unless turned off) or a default choice loses nothing.
     const before = input.previousDescriptors?.find((candidate) => candidate.id === selection.id);
     const isDefault =
       selection.value === false ||
+      (before?.type === "boolean" && selection.value === before.currentValue) ||
       (before?.type === "select" &&
         before.options.some((option) => option.id === selection.value && option.isDefault));
-    if (!isDefault) dropped.push(before?.label ?? optionIdLabel(selection.id));
+    // A Thinking toggle is how some models switch reasoning on; a model with an
+    // effort setting reasons at that level, so the toggle has nothing to lose.
+    const coveredByEffort =
+      typeof selection.value === "boolean" &&
+      isEffortId(selection.id) &&
+      findEffortDescriptor(next) !== undefined;
+    if (!isDefault && !coveredByEffort) dropped.push(before?.label ?? optionIdLabel(selection.id));
   }
 
   return { options, dropped, adjusted };
@@ -208,9 +216,9 @@ export function describeCarriedOptions(
     return `${modelLabel} has not listed its options yet, so effort and speed start at its defaults.`;
   const parts = [
     carried.dropped.length > 0
-      ? `${modelLabel} has no ${joinLabels(carried.dropped)}, so ${
-          carried.dropped.length > 1 ? "they were" : "it was"
-        } left off.`
+      ? `${modelLabel} doesn't offer ${joinLabels(carried.dropped)}, so ${
+          carried.dropped.length > 1 ? "those settings were" : "that setting was"
+        } not carried over.`
       : null,
     carried.adjusted.length > 0 ? `${carried.adjusted.join(", ")}.` : null,
   ].filter((part): part is string => part !== null);

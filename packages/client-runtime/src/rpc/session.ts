@@ -18,7 +18,6 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
-import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type * as Rpc from "effect/rpc/Rpc";
@@ -29,7 +28,6 @@ import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
 
 import { makeWsRpcProtocolClient, type WsRpcProtocolClient } from "./protocol.ts";
-import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import type {
   ConnectionAttemptError,
   ConnectionTransientError,
@@ -144,8 +142,6 @@ function serverConfigReplayEvents(
   ];
 }
 
-const isSocketErrorReason = Schema.is(Socket.SocketErrorReason);
-
 /** The same socket, running `onFrames` each time a batch of frames arrives. */
 function observeInbound(socket: Socket.Socket, onFrames: Effect.Effect<void>): Socket.Socket {
   return Socket.make({
@@ -166,19 +162,32 @@ function sameFrame(left: SocketFrame | Socket.CloseEvent, right: SocketFrame): b
 }
 
 /**
- * The same socket, for the server on this machine: the RPC client's pinger
- * only counts a decoded Pong as proof of life and gives up after three
+ * The same socket, counting any frame from the server as proof of life: the
+ * RPC client's pinger only counts a decoded Pong and gives up after three
  * unanswered 5 second windows, which drops a working connection to a starved
- * local server that is still streaming replies with its Pong queued behind
- * them. So a Pong the server never sent is added (a) after every batch of
- * frames that does arrive, and (b) in answer to each outbound Ping while the
- * last real frame is at most `answeredSilenceMs` old. Past that the pinger
- * times out as usual. A loopback server that has gone away closes the socket
- * at once, so this delays nothing but the verdict on a slow one.
+ * server that is still streaming replies with its Pong queued behind them. So
+ * a Pong the server never sent is added (a) after every batch of frames that
+ * does arrive, and (b) in answer to each outbound Ping while the last real
+ * frame is at most `answeredSilenceMs` old. Past that the pinger times out as
+ * usual, so a socket that carries nothing still closes. A loopback server that
+ * has gone away closes the socket at once, so the long budget for this machine
+ * delays nothing but the verdict on a slow one. A remote socket can stay half
+ * open, so its budget is short (`REMOTE_ANSWERED_SILENCE_MS`).
  *
  * Real frames are pulled by a pump fiber into a one-slot mailbox (keeping
  * backpressure), so a synthetic Pong never races a real pull for its frames.
  */
+/**
+ * How long after the last frame from a remote server the session still answers
+ * its own pings for it. A machine under memory pressure answered requests in 10
+ * to 26 seconds while its Pongs waited behind the replies, and each drop cost
+ * it a full reconnect and resubscribe on top of the load it already had. With
+ * this budget a remote socket counts as dead after about 30 seconds of total
+ * silence, against 20 before, and a slow machine that still sends frames stays
+ * connected.
+ */
+export const REMOTE_ANSWERED_SILENCE_MS = 10_000;
+
 const answerPingsWhileHeard = Effect.fnUntraced(function* (
   socket: Socket.Socket,
   answeredSilenceMs: number,
@@ -254,7 +263,6 @@ const answerPingsWhileHeard = Effect.fnUntraced(function* (
 
 function mapSessionRpcError(
   error: InitialConfigError | ProbeError | ServerConfigSubscriptionError,
-  networkHint: string,
 ): ConnectionAttemptError {
   switch (error._tag) {
     case "EnvironmentAuthorizationError":
@@ -271,7 +279,7 @@ function mapSessionRpcError(
     case "RpcClientError":
       return new ConnectionTransientErrorClass({
         reason: "transport",
-        detail: `${error.message}${isSocketErrorReason(error.reason) ? networkHint : ""}`,
+        detail: error.message,
       });
   }
 }
@@ -292,10 +300,10 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     connectOptions: RpcSessionConnectOptions = {},
   ) {
     const thisMachine = connectOptions.thisMachine === true;
-    const networkHint =
-      connection.target._tag === "RelayConnectionTarget" ? ` ${NETWORK_BLOCKING_HINT}` : "";
-    const mapRpcError = (error: Parameters<typeof mapSessionRpcError>[0]) =>
-      mapSessionRpcError(error, networkHint);
+    // No DNS or firewall hint on any socket failure: the relay answered
+    // before the socket was opened, so a socket that will not open, closes or
+    // goes silent is the machine's doing, not this device's network.
+    const mapRpcError = mapSessionRpcError;
     yield* Effect.annotateCurrentSpan({
       "connection.environment.id": connection.environmentId,
     });
@@ -322,13 +330,11 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
             disconnected,
             new ConnectionTransientErrorClass({
               reason: "transport",
-              detail: `${
-                !wasConnected
-                  ? `${connection.label} could not establish a WebSocket connection.`
-                  : timedOut
-                    ? `${connection.label} stopped responding.`
-                    : `${connection.label} disconnected.`
-              }${networkHint}`,
+              detail: !wasConnected
+                ? `${connection.label} could not establish a WebSocket connection.`
+                : timedOut
+                  ? `${connection.label} stopped responding.`
+                  : `${connection.label} disconnected.`,
             }),
           ),
         ),
@@ -341,9 +347,10 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       Socket.Socket,
       Effect.gen(function* () {
         const observed = observeInbound(yield* Socket.Socket, recordInbound);
-        return thisMachine
-          ? yield* answerPingsWhileHeard(observed, LOOPBACK_ANSWERED_SILENCE_MS)
-          : observed;
+        return yield* answerPingsWhileHeard(
+          observed,
+          thisMachine ? LOOPBACK_ANSWERED_SILENCE_MS : REMOTE_ANSWERED_SILENCE_MS,
+        );
       }),
     ).pipe(
       Layer.provide(

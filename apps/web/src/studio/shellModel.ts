@@ -17,7 +17,10 @@ import {
   threadBlocker,
   threadHeldQueue,
 } from "./projectWorkspaceModel";
+import type { MachineReachState } from "@specweave-studio/client-runtime/connection";
+import { hostDownWord, type HostDownNote } from "../lib/machineStatus";
 import { approvalWaitLabel } from "./accessWait";
+import { blockerAsk } from "@specweave-studio/shared/attentionAsk";
 
 /** The slice of a provider instance that names it; `ProviderInstanceEntry` satisfies it. */
 export type ProviderNameSource = {
@@ -329,6 +332,16 @@ export type ChatGroup = {
   readonly threads: readonly EnvironmentThreadShell[];
 };
 
+/**
+ * A status group's heading (1417). The "Offline" group holds threads of every
+ * machine this window cannot reach, a running one included (signed out of
+ * Connect, or only this window cut off), so its heading says that; each row
+ * says why. The key stays "Offline", so folded groups keep their state.
+ */
+export function threadGroupHeading(group: string): string {
+  return group === "Offline" ? "Not reachable from here" : group;
+}
+
 const STATUS_GROUP_ORDER: readonly ProjectThreadGroup[] = [
   "Needs you",
   "Working",
@@ -403,7 +416,8 @@ export function buildChatGroups(
         labels.set(key, input.machine?.(thread).label ?? thread.environmentId);
     }
   }
-  const labelOf = (key: string) => labels.get(key) ?? key;
+  const labelOf = (key: string) =>
+    labels.get(key) ?? (options.groupBy === "status" ? threadGroupHeading(key) : key);
   const fixed: readonly string[] | null =
     options.groupBy === "date"
       ? DATE_BUCKETS
@@ -462,7 +476,10 @@ export function buildThreadPaneGroups(
     if (root?.actions.length) return "Needs you";
     if (thread.settledOverride === "settled")
       return projectThreadGroup(thread, unreachable?.has(thread.environmentId) ?? false);
-    if (root && root.freshness !== "live") return "Offline";
+    // Only a machine the app cannot reach lists its threads as offline. One that
+    // is reconnecting or still reading its list keeps them where they were.
+    if (root && (root.freshness === "offline" || root.freshness === "unauthorized"))
+      return "Offline";
     if (root?.working || root?.waits?.length) return "Working";
     const group = projectThreadGroup(thread, unreachable?.has(thread.environmentId) ?? false);
     return group === "Idle" &&
@@ -552,7 +569,7 @@ export function threadsSummary(
   const parts = [
     waiting === 0
       ? unreachable?.size
-        ? "Some machines are offline"
+        ? "Some machines can't be reached"
         : "Nothing needs you"
       : waiting === 1
         ? "1 thread needs you"
@@ -625,6 +642,10 @@ export function threadTone(thread: EnvironmentThreadShell, hostOffline = false):
   return group === "Working" ? "working" : "idle";
 }
 
+/** "Reply needed · Do you accept this plan?": what the person must do, then what about. */
+const withAsk = (word: string, ask: string | null | undefined): string =>
+  ask ? `${word} · ${ask}` : word;
+
 /**
  * The word a row leads its second line with when the thread wants something
  * or is busy; a quiet thread says nothing and lets its model speak.
@@ -632,14 +653,21 @@ export function threadTone(thread: EnvironmentThreadShell, hostOffline = false):
 export function threadStatusWord(
   thread: EnvironmentThreadShell,
   hostOffline = false,
+  /** Why the host is down, so a busy machine's row does not say "offline". */
+  hostReach?: MachineReachState,
+  /** The fleet says the host's address now answers as a different SpecWithCode. */
+  hostIdentityMismatch = false,
+  /** Why the host is out of reach beyond its reach state ("Needs sign-in"). */
+  hostNote: HostDownNote | null = null,
 ): string | null {
   if (threadTone(thread, hostOffline) === "resolved") return null;
   // Its last known state is stale; "Blocked" or "Working" would be a guess.
-  if (hostOffline) return "Host offline";
+  if (hostOffline) return hostDownWord(hostReach, hostIdentityMismatch, hostNote);
   const status = resolveSidebarThreadStatus(thread);
   if (status === "approval" && thread.source?.pendingRuntimeRequest !== null)
     return approvalWaitLabel(thread);
-  if (status === "input" && thread.source?.pendingRuntimeRequest !== null) return "Answer needed";
+  if (status === "input" && thread.source?.pendingRuntimeRequest !== null)
+    return withAsk("Answer needed", thread.source?.pendingRuntimeRequest?.prompt);
   const dependency = threadDependencyWait(thread);
   if (dependency) return dependency;
   if (status === "limited") return "Usage limit reached";
@@ -647,10 +675,26 @@ export function threadStatusWord(
   // ask the reader to act, so the word agrees with the Idle group it sits in.
   if (status === "failed") return "Run failed";
   if (threadHeldQueue(thread) !== null) return "Queue held";
-  if (threadBlocker(thread) !== null) return "Blocked";
+  // A report's Blockers part is a decision only the person can make: say so,
+  // and what it is, rather than "Blocked", which reads as broken work.
+  const blocker = threadBlocker(thread);
+  if (blocker !== null) return withAsk("Reply needed", blockerAsk(blocker));
   const tone = threadTone(thread);
   if (tone === "waiting") return thread.hasActionableProposedPlan ? "Plan ready" : "Needs you";
   return tone === "working" ? "Working" : null;
+}
+
+/**
+ * Why a failed run failed, short enough for a row's hover: an expired sign-in says
+ * what to do, anything else is the host's first sentence. Null when it gave none.
+ */
+export function runFailureReason(lastError: string | null | undefined): string | null {
+  const text = lastError?.replace(/\s+/gu, " ").trim();
+  if (!text) return null;
+  if (/token_expired|token is expired|401 Unauthorized/iu.test(text))
+    return "The provider's sign-in expired. Sign in again on that machine.";
+  const sentence = text.replace(/^Provider error after \d+\/\d+ retries:\s*/iu, "");
+  return sentence.length > 140 ? `${sentence.slice(0, 139).trimEnd()}…` : sentence;
 }
 
 export const THREAD_TONE_LABELS: Record<ThreadTone, string> = {

@@ -13,6 +13,7 @@ import { Checkbox } from "../ui/checkbox";
 import { Switch } from "../ui/switch";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { useSettingsScope } from "./SettingsScopeContext";
+import { TeamUsageSettings } from "./TeamUsageSettings";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
@@ -242,7 +243,7 @@ export function PrivacySettingsPanel() {
                 : tx("Connect an environment to inspect its diagnostic export settings.")}
             </p>
             <Collapsible>
-              <CollapsibleTrigger render={<Button size="sm" variant="ghost" />}>
+              <CollapsibleTrigger render={<Button size="sm" variant="outline" />}>
                 {tx("Technical details")}
               </CollapsibleTrigger>
               <CollapsiblePanel className="pt-3">
@@ -255,6 +256,14 @@ export function PrivacySettingsPanel() {
             </Collapsible>
           </div>
         </SettingsSection>
+        {environmentId !== null ? (
+          <SettingsSection id="privacy-team-usage" title="Team usage">
+            <TeamUsageSettings
+              environmentId={environmentId}
+              environmentLabel={environment?.label ?? "This machine"}
+            />
+          </SettingsSection>
+        ) : null}
         <SettingsSection
           id="privacy-report"
           title="Help improve SpecWithCode"

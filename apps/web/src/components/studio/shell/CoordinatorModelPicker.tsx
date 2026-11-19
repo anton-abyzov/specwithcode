@@ -16,7 +16,6 @@ import {
   type ModelSelection,
   type ProviderInstanceId,
 } from "@specweave-studio/contracts";
-import { createModelSelection } from "@specweave-studio/shared/model";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useEnvironmentSettings } from "../../../hooks/useSettings";
 import { getCustomModelOptionsByInstance } from "../../../modelSelection";
@@ -32,11 +31,14 @@ import { readEnvironmentScope, useEnvironmentScope } from "../../../state/sessio
 import { useAtomCommand } from "../../../state/use-atom-command";
 import { useMachineNickname } from "../../../studio/machineNickname";
 import { modelLabel } from "../../../studio/shellModel";
+import { Button } from "../../ui/button";
 import { fallbackModelState, modelStateText, type ModelState } from "../../chat/ModelStateTag";
 import { ProviderModelPicker } from "../../chat/ProviderModelPicker";
 import { MachineLimitsButton, MachineLimitsPanel } from "./ProjectUsageIndicator";
 import { ProjectModelsPopover, type ProjectThreadModel } from "./ProjectModelsPopover";
 import { ModelBadge } from "./ModelBadge";
+import { toastManager } from "../../ui/toast";
+import { carriedProjectModelSelection, type HeldProjectModelOptions } from "../projectModelCarry";
 import { useCoordinatorModelsLoading } from "./useCoordinatorModelsLoading";
 
 function CoordinatorProviderRecovery(props: {
@@ -84,15 +86,15 @@ function CoordinatorProviderRecovery(props: {
   if (!canRefresh) return null;
   return (
     <span className="inline-flex min-w-0 items-center gap-1">
-      <button
-        type="button"
-        className="sws-model-trigger"
+      <Button
+        variant="outline"
+        size="xs"
         disabled={props.saving || pending}
         aria-busy={pending}
         onClick={() => void checkAgain()}
       >
         {pending ? "Checking…" : "Check again"}
-      </button>
+      </Button>
       {failed ? (
         <span
           role="alert"
@@ -276,6 +278,8 @@ export function CoordinatorModelPicker(props: {
     if (!running.onSwitchBack) return "Switching back isn't available here";
     return running.switching ? "Switching models…" : null;
   };
+  // Options a model along the way could not run, kept so going back restores them.
+  const heldOptions = useRef<HeldProjectModelOptions | null>(null);
   const changeModel = (id: ProviderInstanceId, model: string) => {
     if (props.disabled || props.saving || getModelDisabledReason(id, model)) return;
     if (isSaved(id, model)) {
@@ -284,8 +288,20 @@ export function CoordinatorModelPicker(props: {
       if (running?.offPick) running.onSwitchBack?.();
       return;
     }
-    // Effort and other traits belong to the model they were chosen for.
-    props.onChange(createModelSelection(id, model));
+    // The saved effort, context window and other options move to the new model where it
+    // offers them; the ones it does not are named, never dropped without a word.
+    const carried = carriedProjectModelSelection({
+      previous: value,
+      instanceId: id,
+      model,
+      entries,
+      planModeEnabled: settings.planModeEnabled,
+      held: heldOptions.current,
+    });
+    heldOptions.current = carried.held;
+    props.onChange(carried.selection);
+    if (carried.note)
+      toastManager.add({ type: "info", title: "Model options", description: carried.note });
   };
 
   const content = () => {
@@ -388,14 +404,14 @@ export function CoordinatorModelPicker(props: {
             />
           </span>
           {!props.disabled ? (
-            <button
-              type="button"
-              className="sws-model-trigger"
+            <Button
+              variant="outline"
+              size="xs"
               disabled={props.saving}
               onClick={() => openProviderSetup(active?.instanceId)}
             >
               Add or manage providers
-            </button>
+            </Button>
           ) : null}
           {!props.disabled ? (
             <MachineLimitsButton

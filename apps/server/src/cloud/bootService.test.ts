@@ -25,6 +25,28 @@ import {
   serviceStateHasPendingUpdate,
 } from "./serviceProtocol.ts";
 
+const INSIDE_SERVICE_CGROUP =
+  "0::/user.slice/user-501.slice/user@501.service/app.slice/studio.service\n";
+
+it("tells a process inside the service's unit from one beside it", () => {
+  expect(BootService.cgroupIsInsideBootServiceUnit(INSIDE_SERVICE_CGROUP)).toBe(true);
+  // cgroup v1 lists one line per controller.
+  expect(
+    BootService.cgroupIsInsideBootServiceUnit(
+      "12:pids:/user.slice/user-501.slice/user@501.service/studio.service\n1:name=systemd:/x\n",
+    ),
+  ).toBe(true);
+  expect(
+    BootService.cgroupIsInsideBootServiceUnit(
+      "0::/user.slice/user-501.slice/user@501.service/app.slice/studio-restart.service\n",
+    ),
+  ).toBe(false);
+  expect(
+    BootService.cgroupIsInsideBootServiceUnit("0::/user.slice/user@501.service/mystudio.service\n"),
+  ).toBe(false);
+  expect(BootService.cgroupIsInsideBootServiceUnit("")).toBe(false);
+});
+
 const linuxRuntime = "/home/dev/.specweave-studio/runtime/versions/1.2.3/specweave-studio";
 const linuxPlan = {
   program: [linuxRuntime, "__service-launcher"],
@@ -82,6 +104,24 @@ it("contains a memory overrun inside the service's cgroup", () => {
 
   expect(unit).toContain("MemoryMax=75%");
   expect(unit).toContain("MemorySwapMax=1G");
+});
+
+it("lets the server divide its cgroup, and adds that to a unit installed before it", () => {
+  const unit = BootService.renderBootServiceUnit(linuxPlan);
+  expect(unit).toContain("MemorySwapMax=1G\nDelegate=yes\nRestart=always");
+  expect(BootService.withUnitDelegation(unit)).toBeUndefined();
+
+  // What an earlier version wrote: the same unit without the line.
+  const installed = unit.replace("Delegate=yes\n", "");
+  expect(BootService.withUnitDelegation(installed)).toBe(unit);
+
+  // A unit from before the memory limits still gets it, inside [Service].
+  const older = installed.replace(/^Memory.*\n/gm, "");
+  expect(BootService.withUnitDelegation(older)).toContain("[Service]\nDelegate=yes\nType=simple");
+  expect(BootService.withUnitDelegation("[Unit]\nDescription=x\n")).toBeUndefined();
+  expect(
+    BootService.withUnitDelegation("[Service]\nDelegate=memory\nExecStart=/x\n"),
+  ).toBeUndefined();
 });
 
 const macRuntime = "/Users/dev/.specweave-studio/runtime/versions/1.2.3/specweave-studio";
@@ -207,6 +247,13 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   yield* fs.writeFileString(runtime.entryPath, "#!/bin/sh\n");
   yield* fs.writeFileString(runtime.sentinelPath, "1.2.3\n");
 
+  // This process's cgroup as the service reads it; a test inside the unit rewrites it.
+  const cgroupPath = path.join(home, "cgroup");
+  yield* fs.writeFileString(
+    cgroupPath,
+    "0::/user.slice/user-501.slice/user@501.service/app.slice/app-terminal.scope\n",
+  );
+
   const commands: string[] = [];
   const timeouts = new Map<string, unknown>();
   const envs = new Map<string, NodeJS.ProcessEnv | undefined>();
@@ -295,7 +342,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         baseDir: serviceBaseDir,
         logsDir: path.join(serviceBaseDir, "userdata", "logs"),
         cliVersion,
-        host: { execPath: "/usr/bin/specweave-studio" },
+        host: { execPath: "/usr/bin/specweave-studio", cgroupPath },
       });
     }).pipe(
       Effect.provideService(ProcessRunner.ProcessRunner, runner),
@@ -325,7 +372,18 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       ),
     );
   const service = yield* makeService();
-  return { service, makeService, fs, statePath, commands, timeouts, envs, control, runtime };
+  return {
+    service,
+    makeService,
+    fs,
+    statePath,
+    commands,
+    timeouts,
+    envs,
+    control,
+    runtime,
+    cgroupPath,
+  };
 });
 
 it.layer(NodeServices.layer)("boot service install", (it) => {
@@ -703,6 +761,80 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         "systemctl --user enable studio.service",
         "systemctl --user restart studio.service",
       ]);
+    }),
+  );
+
+  it.effect(
+    "restart from inside the service hands the start to systemd instead of stopping itself",
+    () =>
+      Effect.gen(function* () {
+        const { service, fs, commands, makeService, cgroupPath } = yield* makeHarness();
+        yield* service.install();
+        yield* fs.writeFileString(cgroupPath, INSIDE_SERVICE_CGROUP);
+        const inside = yield* makeService();
+        commands.length = 0;
+
+        expect(yield* inside.restart).toBe(true);
+        expect(
+          commands.filter(
+            (command) =>
+              (command.startsWith("systemctl ") || command.startsWith("systemd-run ")) &&
+              !command.includes("show-environment"),
+          ),
+        ).toEqual([
+          "systemctl --user daemon-reload",
+          "systemctl --user enable studio.service",
+          "systemd-run --user --collect --quiet --unit=studio-restart systemctl --user restart studio.service",
+        ]);
+      }),
+  );
+
+  it.effect(
+    "an update from inside the service writes its files while it runs and hands off the restart",
+    () =>
+      Effect.gen(function* () {
+        const { service, fs, statePath, commands, makeService, cgroupPath } = yield* makeHarness();
+        yield* service.install();
+        yield* fs.writeFileString(cgroupPath, INSIDE_SERVICE_CGROUP);
+        const inside = yield* makeService(undefined, "1.2.4");
+        commands.length = 0;
+
+        yield* inside.install({ start: true });
+        const systemCommands = commands.filter(
+          (command) =>
+            (command.startsWith("systemctl ") || command.startsWith("systemd-run ")) &&
+            !command.includes("show-environment") &&
+            !command.includes(" is-"),
+        );
+        expect(systemCommands).not.toContain("systemctl --user stop studio.service");
+        expect(systemCommands.at(-1)).toBe(
+          "systemd-run --user --collect --quiet --unit=studio-restart systemctl --user restart studio.service",
+        );
+        expect(parseServiceState(yield* fs.readFileString(statePath))?.activeVersion).toBe("1.2.4");
+        const path = yield* Path.Path;
+        // The launcher that starts on 1.2.4 clears this; until then the service is known to be behind.
+        expect(
+          (yield* fs.readFileString(
+            path.join(path.dirname(statePath), SERVICE_RESTART_PENDING_FILE),
+          )).trim(),
+        ).toBe("1.2.4");
+      }),
+  );
+
+  it.effect("a failed hand-off leaves the running service alone", () =>
+    Effect.gen(function* () {
+      const { service, fs, commands, control, makeService, cgroupPath } = yield* makeHarness();
+      yield* service.install();
+      yield* fs.writeFileString(cgroupPath, INSIDE_SERVICE_CGROUP);
+      const inside = yield* makeService(undefined, "1.2.4");
+      commands.length = 0;
+      control.failCommand =
+        "systemd-run --user --collect --quiet --unit=studio-restart systemctl --user restart studio.service";
+
+      const error = yield* inside.install({ start: true }).pipe(Effect.flip);
+      expect(error._tag).toBe("BootServiceCommandError");
+      expect(commands).not.toContain("systemctl --user stop studio.service");
+      expect(commands).not.toContain("systemctl --user restart studio.service");
     }),
   );
 

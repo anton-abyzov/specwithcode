@@ -30,7 +30,12 @@ import {
   resumeQueueWithProjectModel,
 } from "../studio/coordinatorContinuation";
 import { latestWorkStep } from "../studio/coordinatorProgress";
-import { useUnreachableHosts } from "../studio/unreachableHosts";
+import {
+  useHostDownNote,
+  useHostIdentityMismatch,
+  useHostReach,
+  useUnreachableHosts,
+} from "../studio/unreachableHosts";
 import { threadBlocker } from "../studio/projectWorkspaceModel";
 import {
   machineNickname as machineNicknameNow,
@@ -103,6 +108,7 @@ import {
 } from "@specweave-studio/client-runtime/state/models";
 import { visibleThreadPullRequests } from "@specweave-studio/shared/threadPullRequests";
 import {
+  isProviderSignInExpiredFailureCode,
   latestRootProviderFailureItem,
   providerFailureDisplayMessage,
   resumableRunId as resumableRunIdOf,
@@ -184,7 +190,10 @@ import {
   type WorktreeSetupSnapshot,
   isInlineRunTerminalId,
 } from "@specweave-studio/contracts";
-import { type EnvironmentConnectionPresentation } from "@specweave-studio/client-runtime/connection";
+import {
+  isMachineReachDown,
+  type EnvironmentConnectionPresentation,
+} from "@specweave-studio/client-runtime/connection";
 import { PendingAccessRequestPanel, accessAgentLabel } from "./chat/AccessRequestCard";
 import { deriveThreadTitleSeed } from "@specweave-studio/client-runtime/operations";
 import {
@@ -514,6 +523,7 @@ import {
 } from "../logicalProject";
 import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../threadRoutes";
 import { HANDOFF_CONTINUED, movedAwayBanner, threadMoveBanner } from "./threadMove.logic";
+import { BringBackButton, useBringBackOffer } from "./handoff/BringBack";
 import {
   isSameSidebarThreadRef,
   useSidebarPendingFileDropStore,
@@ -558,12 +568,7 @@ import {
   recordChatContinuation,
   useChatContinuationsVersion,
 } from "../lib/chatContinuations";
-import {
-  environmentUnavailableSendToast,
-  isThisMachineCatchingUp,
-  lastSeenLabel,
-  machineDetail,
-} from "../lib/machineStatus";
+import { environmentUnavailableSendToast, isThisMachineCatchingUp } from "../lib/machineStatus";
 import { isDesktopLocalConnectionTarget, isThisMachineTarget } from "../connection/desktopLocal";
 import { useEnvironmentDisconnectDelay } from "../hooks/useEnvironmentDisconnectDelay";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -582,6 +587,7 @@ import { workspacePreparationRetryRunIds } from "@specweave-studio/client-runtim
 import { CoordinatorNativeControls } from "./studio/CoordinatorNativeControls";
 import { resolveProviderSkillsForCwd } from "@specweave-studio/client-runtime/providerSkills";
 import { vcsEnvironment } from "../state/vcs";
+import { useChatGitStatus } from "../state/chatGitStatus";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useProjectClone } from "../state/projectClones";
 import { clearAddToMachineJob, readAddToMachineJob } from "../studio/addToMachine";
@@ -633,9 +639,11 @@ import { resolveTimelineIsAtEnd, worktreeSetupAgentStarted } from "./chat/Messag
 import {
   overlayComposerIsResting,
   resolveComposerTimelineInset,
-  resolveScrollToEndClearance,
+  measureScrollToEndClearance,
+  publishChatPanelHeight,
 } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
+import { requestChatSettings } from "../studio/chatSettingsRequest";
 import { limitFallbackPairing } from "../studio/runIdentity";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
@@ -755,8 +763,8 @@ import {
   shouldRefocusComposerOnWindowFocus,
   environmentUnavailableBanner,
   environmentWaitsForReconnectGrace,
-  THIS_MACHINE_BUSY_DESCRIPTION,
 } from "./ChatView.logic";
+import { useClockWhile } from "~/hooks/useClockWhile";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
 import {
@@ -781,8 +789,7 @@ import {
   parseAwayAppCommand,
   parseComposerAppCommand,
 } from "../studio/composerAppCommands";
-import { requestAway } from "../studio/awayRequest";
-import { useComposerAppCommands } from "../studio/useComposerAppCommands";
+import { openComposerAppDialog, useComposerAppCommands } from "../studio/useComposerAppCommands";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { Button } from "./ui/button";
 import {
@@ -811,6 +818,7 @@ import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { deriveThreadPlanView, displayFolder } from "../studio/threadPlanProgress";
 import { useThreadIncrementState } from "../studio/useThreadIncrementProgress";
+import { NotOnBoardNote, SpecweaveOffer } from "./chat/SpecweaveOffer";
 import { useUnplannedNoticeShown } from "../studio/unplannedNotice";
 import { ThreadPlanCard } from "./chat/ThreadPlanCard";
 import { ThreadBlockerNote } from "./chat/ThreadBlockerNote";
@@ -3093,6 +3101,17 @@ function useChatViewState(props: ChatViewProps) {
     [activeCoordinatorThreadId, activeThread],
   );
   const coordinatorThreadShell = useThreadShell(activeCoordinatorTarget);
+  // 1396 AC-18: the coordinator's composer may offer SpecWeave once.
+  const specweaveOffer = useMemo(
+    () =>
+      activeThread && activeCoordinatorThreadId === activeThread.id && activeThread.projectId ? (
+        <SpecweaveOffer
+          environmentId={activeThread.environmentId}
+          projectId={activeThread.projectId}
+        />
+      ) : null,
+    [activeCoordinatorThreadId, activeThread],
+  );
   const activeCoordinatorShell = useMemo(
     () =>
       coordinatorThreadShell === null
@@ -3182,7 +3201,7 @@ function useChatViewState(props: ChatViewProps) {
         actions: (
           <Button
             size="xs"
-            variant="ghost"
+            variant="outline"
             onClick={() =>
               void (addJob
                 ? cancelAddToMachine(environmentId, projectId, true)
@@ -3208,7 +3227,7 @@ function useChatViewState(props: ChatViewProps) {
         <>
           <Button
             size="xs"
-            variant="ghost"
+            variant="destructive-outline"
             onClick={() =>
               void (addJob
                 ? cancelAddToMachine(environmentId, projectId, false)
@@ -3219,7 +3238,7 @@ function useChatViewState(props: ChatViewProps) {
           </Button>
           <Button
             size="xs"
-            variant="ghost"
+            variant="outline"
             onClick={() =>
               void runProjectCloneAction("Failed to retry clone", () =>
                 retryProjectClone({ environmentId, input: { projectId } }),
@@ -3318,6 +3337,11 @@ function useChatViewState(props: ChatViewProps) {
   )
     ? (activeEnvironment?.environmentId ?? null)
     : null;
+  const activeEnvironmentReach = useHostReach(activeEnvironment?.environmentId);
+  const activeEnvironmentIdentityMismatch = useHostIdentityMismatch(
+    activeEnvironment?.environmentId,
+  );
+  const activeEnvironmentNote = useHostDownNote(activeEnvironment?.environmentId);
   const [reconnectWarningGraceElapsedEnvironmentId, setReconnectWarningGraceElapsedEnvironmentId] =
     useState<EnvironmentId | null>(null);
   const reconnectWarningGraceElapsed = hasEnvironmentReconnectWarningGraceElapsed(
@@ -3700,6 +3724,9 @@ function useChatViewState(props: ChatViewProps) {
   const activeMachineLastSeenAt = activeEnvironmentUnavailableState
     ? machineLastSeenAt(activeEnvironmentUnavailableState.environmentId)
     : null;
+  // Reconnect attempts can be minutes apart, and nothing else re-renders the
+  // banner between them, so "last seen 5m ago" needs its own clock.
+  const lastSeenNowMs = useClockWhile(activeEnvironmentUnavailableState !== null);
   // A sent thread whose machine can't be reached can carry on elsewhere: the
   // same project on another machine, or that machine's own chat folder for a
   // chat without a project.
@@ -3713,6 +3740,9 @@ function useChatViewState(props: ChatViewProps) {
     ) {
       return null;
     }
+    // Nor is a machine inside its reconnect grace: most drops heal in seconds.
+    if (activeEnvironmentReach !== undefined && !isMachineReachDown(activeEnvironmentReach))
+      return null;
     const machineCandidate = (
       id: EnvironmentId,
       projectId: ProjectId | null,
@@ -3764,6 +3794,7 @@ function useChatViewState(props: ChatViewProps) {
       nowMs: renderNowMs,
     });
   }, [
+    activeEnvironmentReach,
     activeEnvironmentUnavailableState,
     activeProjectIsScratch,
     activeThread,
@@ -3795,7 +3826,7 @@ function useChatViewState(props: ChatViewProps) {
       canDisconnectActiveEnvironment && activeEnvironmentUnavailableState ? (
         <Button
           size="xs"
-          variant="ghost"
+          variant="destructive-outline"
           disabled={disconnectingEnvironment}
           title="Hide this server's threads. Switch it on again in Connections."
           onClick={() =>
@@ -3811,19 +3842,19 @@ function useChatViewState(props: ChatViewProps) {
             label: activeEnvironmentUnavailableState.label,
             connection: unavailableConnection,
             isThisMachine: activeEnvironmentUnavailableState.isThisMachine,
+            reach: activeEnvironmentReach,
+            identityMismatch: activeEnvironmentIdentityMismatch,
+            note: activeEnvironmentNote,
           })
         : null;
     const unavailableStatus = unavailableBanner?.status ?? null;
-    // Why it is unreachable and when it was last connected, so the banner says
-    // more than "offline". This machine is only busy: one calm line instead.
-    const unavailableDetail = unavailableBanner?.calm
-      ? THIS_MACHINE_BUSY_DESCRIPTION
-      : activeEnvironmentUnavailableState
-        ? machineDetail(
-            lastSeenLabel(activeMachineLastSeenAt, Date.now()),
-            unavailableStatus?.reason ?? null,
-          )
-        : "";
+    // Why it is down, when it last answered and that the app retries. A machine
+    // that is reconnecting, or this machine while it is busy, gets one calm line.
+    const unavailableDetail =
+      unavailableBanner?.describe(
+        unavailableConnection?.lastConnectedAt ?? activeMachineLastSeenAt,
+        lastSeenNowMs,
+      ) ?? "";
     const environmentReconnecting = unavailableBanner?.waitsForGrace === true;
     // While an update runs, transient connect blips are expected (the server
     // restarts) and the update banner already shows progress. Hard failure
@@ -3900,7 +3931,7 @@ function useChatViewState(props: ChatViewProps) {
             {unavailableStatus?.retryable ? (
               <Button
                 size="xs"
-                variant="ghost"
+                variant="outline"
                 onClick={() =>
                   void handleReconnectActiveEnvironment(
                     activeEnvironmentUnavailableState.environmentId,
@@ -3927,7 +3958,7 @@ function useChatViewState(props: ChatViewProps) {
         actions: (
           <Button
             size="xs"
-            variant="ghost"
+            variant="outline"
             onClick={() =>
               void openThreadRoute(
                 scopeThreadRef(
@@ -3955,6 +3986,9 @@ function useChatViewState(props: ChatViewProps) {
     continuingElsewhere,
     openThreadRoute,
     automaticEnvironment,
+    activeEnvironmentReach,
+    activeEnvironmentIdentityMismatch,
+    activeEnvironmentNote,
     activeEnvironmentUnavailableState,
     handleReconnectActiveEnvironment,
     canDisconnectActiveEnvironment,
@@ -3963,6 +3997,7 @@ function useChatViewState(props: ChatViewProps) {
     reconnectWarningGraceElapsed,
     serverUpdateState,
     activeMachineLastSeenAt,
+    lastSeenNowMs,
   ]);
   const providerInstanceEntries = useMemo(
     () =>
@@ -4938,7 +4973,7 @@ function useChatViewState(props: ChatViewProps) {
       })
     : null;
   const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
-  const gitStatusQuery = useEnvironmentQuery(
+  const gitStatusQuery = useChatGitStatus(
     gitStatusCwd === null
       ? null
       : vcsEnvironment.status({
@@ -5069,7 +5104,7 @@ function useChatViewState(props: ChatViewProps) {
           : "available",
   );
   // The composer wears the color of the machine the next message goes to: the thread's
-  // own, or the one a draft's Run on names. On another machine, Send says so.
+  // own, or the one a draft's Run on names. On another machine, Send wears it too.
   const composerMachine = useMachineIdentity(
     activeEnvironment?.environmentId ?? null,
     activeEnvironment?.label,
@@ -5077,11 +5112,11 @@ function useChatViewState(props: ChatViewProps) {
   const composerSendTarget = useMemo(
     () =>
       // The machine this window belongs to, not "is it loopback": a phone's own machine
-      // is its primary one, and only a send that leaves it names where it goes.
+      // is its primary one, and only a send that leaves it wears where it goes.
       composerMachine &&
       primaryEnvironmentId !== null &&
       composerMachine.environmentId !== primaryEnvironmentId
-        ? { name: composerMachine.name, color: composerMachine.color, short: composerMachine.short }
+        ? { name: composerMachine.name, color: composerMachine.color }
         : null,
     [composerMachine, primaryEnvironmentId],
   );
@@ -5629,6 +5664,7 @@ function useChatViewState(props: ChatViewProps) {
     supportsProviderSwitchingViaHandoff,
     supportsPullRequests,
     supportsQuestionAttachments,
+    specweaveOffer,
     suspendChatInput,
     switchGitRevision,
     systemComposerBannerItems,
@@ -8608,26 +8644,9 @@ function useChatViewActions(
         composerTimelineInsetRef.current = nextInset;
         setComposerTimelineInset(nextInset);
       }
-      const mainSurface = composerOverlayElement?.querySelector<HTMLElement>(
-        '[data-chat-composer-main-surface="true"]',
-      );
-      const button = composerOverlayElement?.parentElement?.querySelector<HTMLElement>(
-        'button[aria-label="Jump to latest"]',
-      );
-      const clearance =
-        composerOverlayElement && mainSurface && button
-          ? resolveScrollToEndClearance({
-              overlayHeight: nextHeight,
-              mainSurfaceTop: mainSurface.getBoundingClientRect().top,
-              button: button.getBoundingClientRect(),
-              attachments: Array.from(
-                composerOverlayElement.querySelectorAll<HTMLElement>(
-                  '[data-composer-banner-surface="attached"]',
-                ),
-                (element) => element.getBoundingClientRect(),
-              ),
-            })
-          : nextHeight;
+      const clearance = composerOverlayElement
+        ? measureScrollToEndClearance(composerOverlayElement, nextHeight)
+        : nextHeight;
       setScrollToEndClearance(clearance);
     },
     [
@@ -8662,7 +8681,11 @@ function useChatViewActions(
   useLayoutEffect(() => {
     if (!composerOverlayElement) return;
 
+    // The panel's height sizes the cards above the composer (--chat-panel-height);
+    // it is published before the overlay is measured so both agree.
+    const panel = composerOverlayElement.parentElement;
     const updateHeight = () => {
+      publishChatPanelHeight(panel);
       publishComposerOverlayHeight(composerOverlayElement.getBoundingClientRect().height);
     };
 
@@ -8671,6 +8694,7 @@ function useChatViewActions(
 
     const resizeObserver = new ResizeObserver(updateHeight);
     resizeObserver.observe(composerOverlayElement);
+    if (panel) resizeObserver.observe(panel);
     return () => {
       resizeObserver.disconnect();
     };
@@ -9190,7 +9214,7 @@ function useChatViewActions(
           {presentation.canResume ? (
             <Button
               size="xs"
-              variant="ghost"
+              variant="outline"
               onClick={() => void sendStandaloneCommand("/goal resume", "Failed to resume goal.")}
             >
               Resume
@@ -9198,7 +9222,7 @@ function useChatViewActions(
           ) : null}
           <Button
             size="xs"
-            variant="ghost"
+            variant="destructive-outline"
             onClick={() => void sendStandaloneCommand("/goal clear", "Failed to clear goal.")}
           >
             Clear
@@ -9287,6 +9311,12 @@ function useChatViewActions(
       ? null
       : (threadHandoffState(handoffSnapshot, activeThread.id)?.continuedOn ?? null);
   const projectedThread = serverProjection?.thread ?? null;
+  // Bring back on a handed-off thread, on either machine (1390 AC-23).
+  const bringBack = useBringBackOffer(
+    projectedThread === null || activeThread === undefined
+      ? null
+      : { ...projectedThread, environmentId: activeThread.environmentId },
+  );
   const threadMoveBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     const banner =
       projectedThread === null || activeThread === undefined
@@ -9321,7 +9351,7 @@ function useChatViewActions(
         actions: (
           <Button
             size="xs"
-            variant="ghost"
+            variant="outline"
             onClick={() =>
               void navigate({
                 to: "/$environmentId/$threadId",
@@ -9350,14 +9380,18 @@ function useChatViewActions(
       title: banner.title,
       description: banner.description,
       actions: (
-        <Button size="xs" variant="ghost" onClick={open}>
-          {banner.actionLabel}
-        </Button>
+        <>
+          <Button size="xs" variant="outline" onClick={open}>
+            {banner.actionLabel}
+          </Button>
+          <BringBackButton offer={bringBack} />
+        </>
       ),
     };
   }, [
     activeThread,
     allProjects,
+    bringBack,
     handoffContinuedOn,
     handoffMachineName,
     navigate,
@@ -9389,7 +9423,7 @@ function useChatViewActions(
       actions: (
         <Button
           size="xs"
-          variant="ghost"
+          variant="outline"
           disabled={!canOperateThread || (isSnoozed ? isUnsnoozing : isUnsettling)}
           onClick={() =>
             void (isSnoozed ? handleUnsnoozeActiveThread() : handleUnsettleActiveThread())
@@ -9483,7 +9517,7 @@ function useChatViewActions(
     const compactAction = (
       <Button
         size="xs"
-        variant="ghost"
+        variant="outline"
         disabled={compactDisabled}
         onClick={() => {
           if (compactDisabled) return;
@@ -10118,6 +10152,7 @@ export default function ChatView(props: ChatViewProps) {
     supportsProviderSwitchingViaHandoff,
     supportsPullRequests,
     supportsQuestionAttachments,
+    specweaveOffer,
     suspendChatInput,
     systemComposerBannerItems,
     terminalFocusRequestId,
@@ -10456,12 +10491,43 @@ export default function ChatView(props: ChatViewProps) {
     stopBackgroundWork: handleStopBackgroundWork,
     continueRun: continueRefusedRun,
   });
+  // An expired sign-in: another model on it fails the same way, so the way
+  // out is signing in again on the machine that runs the thread.
+  // It names the failed run's provider, not the current pick: after a switch
+  // to another provider, the expired one is still the one to sign in to.
+  const signInExpiredInstanceId = isProviderSignInExpiredFailureCode(
+    latestFailureItem?.failure.code,
+  )
+    ? (serverProjection?.runs.find((run) => run.id === latestFailureItem?.runId)
+        ?.providerInstanceId ?? null)
+    : null;
+  const signInRecovery = useMemo(() => {
+    if (signInExpiredInstanceId === null) return undefined;
+    const entry = providerInstanceEntries.find(
+      (candidate) => candidate.instanceId === signInExpiredInstanceId,
+    );
+    const environment = environmentById.get(environmentId);
+    return {
+      provider: entry?.displayName ?? String(signInExpiredInstanceId),
+      machine: environment
+        ? machineNicknameNow(environment.environmentId, environment.label)
+        : null,
+      onSignIn: () => openProviderSetup(signInExpiredInstanceId),
+    };
+  }, [
+    signInExpiredInstanceId,
+    providerInstanceEntries,
+    environmentById,
+    environmentId,
+    openProviderSetup,
+  ]);
   const failureRecovery = useMemo(() => {
     if (!canOperateThread || !isServerThread || suspendChatInput || !composerMounted) {
       return undefined;
     }
     const failureItem = latestFailureItem;
     return {
+      signIn: signInRecovery,
       failureItemId: failureItem?.id ?? null,
       failureCode: failureItem?.failure.code ?? null,
       continueRunId: resumableRunId,
@@ -10471,6 +10537,7 @@ export default function ChatView(props: ChatViewProps) {
       backgroundWorkBlock: backgroundWorkBlockRecovery,
     };
   }, [
+    signInRecovery,
     canOperateThread,
     isServerThread,
     suspendChatInput,
@@ -11302,7 +11369,7 @@ export default function ChatView(props: ChatViewProps) {
         actions: (
           <Button
             size="xs"
-            variant="ghost"
+            variant="outline"
             disabled={!canWriteSourceControl || isRestoringThreadBranch}
             onClick={handleRestoreThreadBranch}
           >
@@ -12486,8 +12553,8 @@ export default function ChatView(props: ChatViewProps) {
     manualCodexCreditIntent?: ManualCodexCreditIntent,
   ) => {
     e?.preventDefault();
-    // `/away`, `/back`, `$away` and `$back` act on the machine, not a thread: they open the
-    // Away dialog from any draft, before a project check or thread creation.
+    // `/away`, `/back`, `$away` and `$back` act on the machine, not a thread: they open Hand off
+    // (or Bring back) from any draft, before a project check or thread creation.
     const awayCommand =
       !appCommandsOffered && !directAnnotation && !composerHasNonPromptContent
         ? parseAwayAppCommand(promptRef.current)
@@ -12496,7 +12563,7 @@ export default function ChatView(props: ChatViewProps) {
       promptRef.current = "";
       setComposerDraftPrompt(composerDraftTarget, "");
       composerRef.current?.resetCursorState();
-      requestAway(awayCommand);
+      openComposerAppDialog(awayCommand, null);
       return;
     }
     if (projectDraftSendGuard.preventSend()) return;
@@ -13824,6 +13891,11 @@ export default function ChatView(props: ChatViewProps) {
       }
     }
     const title = truncate(titleSeed);
+    // Read before the send clears the draft: whether anyone picked this model.
+    const sendModelUnnamed =
+      isLocalDraftThread &&
+      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)
+        ?.modelSelectionExplicit !== true;
     const threadCreateModelSelection = createModelSelection(
       ctxSelectedModelSelection.instanceId,
       ctxSelectedModel || activeProjectDefaultModelSelection?.model || DEFAULT_MODEL,
@@ -13913,6 +13985,8 @@ export default function ChatView(props: ChatViewProps) {
                 input: {
                   commandId: commandIdForSend,
                   threadId: threadIdForSend,
+                  // No pick in this composer: a project on Tracks chooses the model.
+                  ...(sendModelUnnamed ? { modelUnnamed: true } : {}),
                   message: {
                     messageId: messageIdForSend,
                     role: "user",
@@ -15629,9 +15703,20 @@ export default function ChatView(props: ChatViewProps) {
               rightPanelOpen={inlineRightPanelOwnsTitleBar}
               artifactsCwd={gitCwd}
               onNewThreadInProject={handleNewThreadInActiveProject}
-              {...(activeDraftLogicalProjectKey
-                ? { onOpenProjectSettings: handleOpenDraftProjectSettings }
-                : {})}
+              {...(activeProjectIsScratch
+                ? {
+                    isChat: true,
+                    onOpenProjectSettings: () =>
+                      requestChatSettings({
+                        environmentId: activeThread.environmentId,
+                        threadRef: isServerThread
+                          ? scopeThreadRef(activeThread.environmentId, activeThread.id)
+                          : null,
+                      }),
+                  }
+                : activeDraftLogicalProjectKey
+                  ? { onOpenProjectSettings: handleOpenDraftProjectSettings }
+                  : {})}
             />
           </header>
         )}
@@ -15704,6 +15789,11 @@ export default function ChatView(props: ChatViewProps) {
                     : undefined
                 }
                 onSwitchModel={failureRecovery?.onSwitchModel}
+                signInRecovery={
+                  localServerError === null && visibleThreadError === serverRuntimeError
+                    ? failureRecovery?.signIn
+                    : undefined
+                }
                 onDismiss={() => {
                   setThreadError(activeThread.id, null);
                   dismissThreadErrorBannerForSession(threadErrorBannerKey);
@@ -15764,6 +15854,12 @@ export default function ChatView(props: ChatViewProps) {
                         onLinkIncrement={threadIncrementActions?.link ?? null}
                         onUnlinkIncrement={threadIncrementActions?.unlink ?? null}
                         status={threadPlanStatus}
+                      />
+                    ) : null}
+                    {threadPlanView?.increment && activeThreadShell?.projectId ? (
+                      <NotOnBoardNote
+                        environmentId={activeThreadShell.environmentId}
+                        projectId={activeThreadShell.projectId}
                       />
                     ) : null}
                   </ThreadHeaderLine>
@@ -16151,6 +16247,7 @@ export default function ChatView(props: ChatViewProps) {
                                 onAppCommand={appCommandsOffered ? runAppCommand : undefined}
                                 environmentUnavailable={activeEnvironmentUnavailableState}
                                 accessRequestCard={pendingAccessRequestPanel}
+                                specweaveOffer={specweaveOffer}
                                 activePendingApproval={activePendingApproval}
                                 pendingApprovals={pendingApprovals}
                                 pendingUserInputs={pendingUserInputs}

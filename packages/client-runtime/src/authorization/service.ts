@@ -1,5 +1,6 @@
 import {
   type ClientConnectionMethod,
+  EnvironmentAuthInvalidError,
   EnvironmentId,
   type ExecutionEnvironmentDescriptor,
 } from "@specweave-studio/contracts";
@@ -36,6 +37,7 @@ import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as HttpClient from "effect/http/HttpClient";
@@ -129,6 +131,7 @@ function withRenewalRetryAfter(error: ConnectionAttemptError, remainingMs: numbe
     detail: error.detail,
     ...(error.traceId === undefined ? {} : { traceId: error.traceId }),
     ...(error.machineOffline === undefined ? {} : { machineOffline: error.machineOffline }),
+    ...(error.relayUnreachable === undefined ? {} : { relayUnreachable: error.relayUnreachable }),
     retryAfterMs: remainingMs,
   });
 }
@@ -141,13 +144,12 @@ function mapDpopSocketError(error: RemoteEnvironmentAuthError | ConnectionAttemp
 
 const fetchDescriptor = Effect.fn("clientRuntime.connection.remote.fetchDescriptor")(function* (
   httpBaseUrl: string,
-  connectionMethod: ClientConnectionMethod,
   timeoutMs?: number,
 ) {
   return yield* fetchRemoteEnvironmentDescriptor({
     httpBaseUrl,
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
-  }).pipe(Effect.mapError((error) => mapRemoteEnvironmentError(error, connectionMethod)));
+  }).pipe(Effect.mapError(mapRemoteEnvironmentError));
 });
 
 export const make = Effect.gen(function* () {
@@ -216,7 +218,6 @@ export const make = Effect.gen(function* () {
     function* (input: {
       readonly expectedEnvironmentId: EnvironmentId;
       readonly httpBaseUrl: string;
-      readonly connectionMethod: ClientConnectionMethod;
       readonly requestTimeoutMs?: number;
     }) {
       const now = yield* Clock.currentTimeMillis;
@@ -226,11 +227,9 @@ export const make = Effect.gen(function* () {
         cachedDescriptor.validatedAtEpochMs + BEARER_DESCRIPTOR_CACHE_TTL_MS > now;
       const descriptor = canReuseDescriptor
         ? cachedDescriptor.descriptor
-        : yield* fetchDescriptor(
-            input.httpBaseUrl,
-            input.connectionMethod,
-            input.requestTimeoutMs,
-          ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+        : yield* fetchDescriptor(input.httpBaseUrl, input.requestTimeoutMs).pipe(
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+          );
       if (descriptor.environmentId !== input.expectedEnvironmentId) {
         return yield* environmentMismatchError({
           expected: input.expectedEnvironmentId,
@@ -326,11 +325,19 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const sessionChanged = () =>
-    new ConnectionBlockedError({
+  const isWaitingForApproval = (failure: { readonly _tag: string }) =>
+    Schema.is(EnvironmentAuthInvalidError)(failure) && failure.refusal === "device_not_approved";
+
+  // Signed out here (no identity now) is fixed by signing in; a switch to
+  // another account is not, and its credentials-changed wake retries anyway.
+  const sessionChanged = Effect.fnUntraced(function* () {
+    const current = yield* cloudSession.identity;
+    return yield* new ConnectionBlockedError({
       reason: "authentication",
       detail: "Your cloud sign-in changed. Sign in again to authorize the environment.",
+      ...(Option.isNone(current) ? { connectSignInRequired: true } : {}),
     });
+  });
 
   const assertSession = Effect.fnUntraced(function* (
     identity: ClientCapabilities.CloudSessionIdentity,
@@ -444,7 +451,7 @@ export const make = Effect.gen(function* () {
     ) {
       const bootstrap = yield* obtainBootstrap(environmentId, identity);
       attempt.minted = true;
-      const descriptor = yield* fetchDescriptor(bootstrap.endpoint.httpBaseUrl, "relay").pipe(
+      const descriptor = yield* fetchDescriptor(bootstrap.endpoint.httpBaseUrl).pipe(
         Effect.provideService(HttpClient.HttpClient, httpClient),
         Effect.withSpan("environment.authorization.descriptor"),
       );
@@ -679,7 +686,6 @@ export const make = Effect.gen(function* () {
       yield* verifyDirectEndpoint({
         expectedEnvironmentId: input.expectedEnvironmentId,
         httpBaseUrl: endpoint.httpBaseUrl,
-        connectionMethod: "direct",
       });
     }
     const acceptSocketToken = (token: TokenStore.RemoteDpopAccessToken) =>
@@ -702,7 +708,11 @@ export const make = Effect.gen(function* () {
         yield* acceptSocketToken(selected.token);
         return authorized(selected.token, cachedSocket.success);
       }
-      if (cachedSocket.failure._tag === "ConnectionBlockedError") {
+      // Waiting for the owner's approval: the token is good, keep it (1327).
+      if (
+        cachedSocket.failure._tag === "ConnectionBlockedError" ||
+        isWaitingForApproval(cachedSocket.failure)
+      ) {
         return yield* mapDpopSocketError(cachedSocket.failure);
       }
       // An unreachable direct address says nothing about the token, so keep
@@ -720,8 +730,12 @@ export const make = Effect.gen(function* () {
       Effect.result,
     );
     if (Result.isFailure(socket)) {
-      // A direct address that refuses the socket says nothing about the token.
-      if (endpoint === undefined || socket.failure._tag === "ConnectionBlockedError") {
+      // A direct address that refuses the socket says nothing about the token,
+      // and neither does a machine waiting for its owner to approve this device.
+      if (
+        (endpoint === undefined || socket.failure._tag === "ConnectionBlockedError") &&
+        !isWaitingForApproval(socket.failure)
+      ) {
         const failure = socket.failure;
         yield* tokenLock.withPermits(1)(
           Effect.gen(function* () {
@@ -730,10 +744,7 @@ export const make = Effect.gen(function* () {
               failure._tag === "EnvironmentAuthInvalidError" ||
               (failure._tag === "ConnectionBlockedError" && failure.reason === "authentication")
             ) {
-              yield* recordRejectedRenewal(
-                input.expectedEnvironmentId,
-                selected.token.accessToken,
-              );
+              yield* recordRejectedRenewal(input.expectedEnvironmentId, selected.token.accessToken);
             }
           }),
         );

@@ -44,8 +44,10 @@ import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MachineLimitBlocks } from "../studio/shell/HostLimits";
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
+import { SubscriptionsView } from "./subscriptions/SubscriptionsView";
 import { environmentsNeedingChatSetup } from "./usageChatSetup";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
+import { LIMITS_VIEW_KEY } from "./usageSheetStore";
 
 const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof GaugeIcon }> = {
   ahead: { label: "Ahead of pace: spending faster than the window elapses", icon: TrendingUpIcon },
@@ -366,12 +368,12 @@ export function ResetCredits({
   );
 }
 
-type LimitsView = "machines" | "accounts";
-const LIMITS_VIEW_KEY = "specwithcode:usage-limits-view";
+type LimitsView = "machines" | "accounts" | "subscriptions";
 
 function readLimitsView(): LimitsView {
   try {
-    return localStorage.getItem(LIMITS_VIEW_KEY) === "accounts" ? "accounts" : "machines";
+    const saved = localStorage.getItem(LIMITS_VIEW_KEY);
+    return saved === "accounts" || saved === "subscriptions" ? saved : "machines";
   } catch {
     return "machines";
   }
@@ -411,7 +413,7 @@ export function UsageLimitsSection({
           value={[view]}
           onValueChange={(next) => {
             const value = next[0];
-            if (value !== "machines" && value !== "accounts") return;
+            if (value !== "machines" && value !== "accounts" && value !== "subscriptions") return;
             setView(value);
             try {
               localStorage.setItem(LIMITS_VIEW_KEY, value);
@@ -422,11 +424,14 @@ export function UsageLimitsSection({
         >
           <Toggle value="machines">By machine</Toggle>
           <Toggle value="accounts">By account</Toggle>
+          <Toggle value="subscriptions">Subscriptions</Toggle>
         </ToggleGroup>
         <p className="text-xs text-muted-foreground" data-limits-view-caption="">
           {view === "machines"
             ? "Each machine runs its own sign-ins: what is signed in where, and what is left."
-            : "Each account counted once across every machine signed in to it, with burn and run-out estimates."}
+            : view === "accounts"
+              ? "Each account counted once across every machine signed in to it, with burn and run-out estimates."
+              : "Each subscription's resets, renewal and banked resets, and what each reset left unused."}
         </p>
       </div>
       <UsageChatSetupNotice environments={needingSetup} />
@@ -435,8 +440,10 @@ export function UsageLimitsSection({
           <MachineLimitBlocks only={selectedEnvironmentIds} now={now} />
           {cursorPrompt}
         </>
-      ) : (
+      ) : view === "accounts" ? (
         <UsageLimitsPooled presentations={selected} now={now} cursorPrompt={cursorPrompt} />
+      ) : (
+        <SubscriptionsView presentations={selected} now={now} />
       )}
     </div>
   );

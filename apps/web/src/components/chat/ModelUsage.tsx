@@ -52,6 +52,7 @@ import { serverEnvironment } from "../../state/server";
 import { readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
+import { codexSignInCanSwitch } from "../onboarding/signInAccount";
 import "../studio/shell/usage.css";
 
 /** What a chat composer tells its picker about where and what is running. */
@@ -534,6 +535,7 @@ export function ModelUsageMeter({
   nextOnLimit,
   hideValueClassName,
   chip,
+  ringPart = true,
 }: {
   readonly state: ModelAvailability;
   readonly text: AvailabilityText;
@@ -543,6 +545,8 @@ export function ModelUsageMeter({
   readonly hideValueClassName?: string;
   /** The number is a part of an enclosing model chip, whose fit decides when it shows. */
   readonly chip?: boolean;
+  /** False when the chip's usage button is the ring's part, so the ring is not one twice. */
+  readonly ringPart?: boolean;
 }) {
   const parts = meterParts(state, text, { nowMs, nextOnLimit: nextOnLimit ?? null });
   if (parts === null) return null;
@@ -557,7 +561,7 @@ export function ModelUsageMeter({
       data-model-usage-meter={state.kind}
       aria-hidden
     >
-      {perToken ? null : <MeterRing {...ring} chip={chip} />}
+      {perToken ? null : <MeterRing {...ring} chip={chip === true && ringPart} />}
       {quiet ? null : (
         <span
           className={cn(
@@ -730,9 +734,16 @@ function readAgo(checkedAt: string | undefined, nowMs: number): string | null {
 export function ModelPickerUsageBand({
   entry,
   usage,
+  onSwitchAccount,
 }: {
   readonly entry: ProviderInstanceEntry;
   readonly usage: ModelPickerUsage;
+  /**
+   * Opens the place where this provider's account is changed. Codex only: its
+   * sign-in here is the command line's, which the Codex app does not share, so
+   * the account shown can differ from the one that app uses.
+   */
+  readonly onSwitchAccount?: (() => void) | undefined;
 }) {
   const tx = useTx();
   const state = usage.availability(entry.instanceId, null);
@@ -749,6 +760,8 @@ export function ModelPickerUsageBand({
     state.kind !== "switching";
   const heading = `${entry.displayName}${usage.machineLabel ? ` on ${usage.machineLabel}` : ""}`;
   const accountLine = accountEmailLine(entry.displayName, entry.snapshot);
+  const switchAccount =
+    accountLine !== null && codexSignInCanSwitch(entry.snapshot) ? onSwitchAccount : undefined;
   // The same read time the state is judged on.
   const ago = readAgo(limits?.nativeAllowanceObservedAt ?? limits?.checkedAt, usage.nowMs);
   const sentence = usage.text(entry.instanceId, state);
@@ -783,6 +796,26 @@ export function ModelPickerUsageBand({
           data-model-picker-band-account=""
         >
           {accountLine}
+          {switchAccount ? (
+            <>
+              {" · "}
+              <button
+                type="button"
+                className="rounded-sm text-foreground underline underline-offset-2 outline-none select-none hover:text-foreground/80 focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={switchAccount}
+                data-model-picker-switch-account=""
+              >
+                {tx("Switch account")}
+              </button>
+            </>
+          ) : null}
+        </p>
+      ) : null}
+      {switchAccount && isAvailabilityBlocking(state) ? (
+        <p className="mt-0.5 text-muted-foreground" data-model-picker-account-source="">
+          {tx(
+            "Using another ChatGPT account in the Codex app? It signs in separately. Switch account to use it here.",
+          )}
         </p>
       ) : null}
       {showBars ? (

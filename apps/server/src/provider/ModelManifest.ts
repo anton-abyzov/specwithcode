@@ -64,6 +64,8 @@ const ManifestProviderModel = Schema.Struct({
   subProvider: Schema.optional(TrimmedNonEmptyString),
   aliases: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   status: ManifestModelStatus,
+  /** The slug this model replaces, so a saved choice of that one follows here. */
+  succeeds: Schema.optional(TrimmedNonEmptyString),
   badge: Schema.optional(Schema.Literal("new")),
   profile: Schema.optional(TrimmedNonEmptyString),
   adapter: Schema.optional(Schema.Unknown),
@@ -92,6 +94,8 @@ const ModelManifestEnvelopeSchema = Schema.Struct({
    */
   updatedAt: Schema.optional(Schema.String),
   compatibility: Schema.optional(Schema.Array(ProviderCompatibilityPolicy)),
+  /** `false` switches every `succeeds` off, to undo a wrong successor without a release. */
+  successors: Schema.optional(Schema.Boolean),
   currentModels: Schema.Record(Schema.String, Schema.Array(Schema.String)),
   providers: Schema.optional(Schema.Record(Schema.String, ManifestProviderCatalog)),
 });
@@ -300,14 +304,31 @@ export function applyManifestDefault(
   });
 }
 
+/** `model` with the manifest's `succeeds` for it, or without one when the manifest names none. */
+function withSuccessor(
+  model: ServerProviderModel,
+  manifest: ModelManifestData,
+  driverKind: ProviderDriverKind,
+): ServerProviderModel {
+  const succeeds =
+    manifest.successors === false
+      ? undefined
+      : manifest.providers?.[driverKind]?.models.find((entry) => entry.slug === model.slug)
+          ?.succeeds;
+  if (succeeds === model.succeeds) return model;
+  const { succeeds: _succeeds, ...rest } = model;
+  return succeeds === undefined ? rest : { ...rest, succeeds };
+}
+
 /** Model-level half of `applyModelManifest`, exported for focused tests. */
 export function classifyModels(
   models: ReadonlyArray<ServerProviderModel>,
   manifest: ModelManifestData,
   driverKind: ProviderDriverKind,
 ): ReadonlyArray<ServerProviderModel> {
-  return models.map((model) => {
-    if (model.isCustom) return model;
+  return models.map((listed) => {
+    if (listed.isCustom) return listed;
+    const model = withSuccessor(listed, manifest, driverKind);
     const legacy = isLegacyModel(manifest, driverKind, model.slug);
     if (legacy === undefined) return model;
     if (legacy) {

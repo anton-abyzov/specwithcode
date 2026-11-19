@@ -216,7 +216,12 @@ export function deriveAuthClientMetadata(input: {
   const os = input.presented?.os ?? inferOs(userAgent);
   const browser = inferBrowser(userAgent);
   return {
-    ...(input.presented?.label ? { label: input.presented.label } : {}),
+    // The device's own name when it gave one (1327); else the kind of client.
+    ...(input.presented?.deviceName
+      ? { label: input.presented.deviceName }
+      : input.presented?.label
+        ? { label: input.presented.label }
+        : {}),
     ...(ipAddress ? { ipAddress } : {}),
     ...(userAgent ? { userAgent } : {}),
     deviceType: input.presented?.deviceType ?? inferDeviceType(userAgent),

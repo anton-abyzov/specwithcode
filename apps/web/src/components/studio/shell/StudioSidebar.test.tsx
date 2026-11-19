@@ -52,6 +52,9 @@ const state = vi.hoisted(() => ({
 }));
 // Attention transport is isolated; root selection and aggregation remain real.
 vi.mock("../../../studio/fleet", () => ({ projectRemoteAttentionAtom: {} }));
+vi.mock("../../settings/useReplacedMachineRecords", () => ({
+  useRetiredMachineRecords: () => new Map(),
+}));
 vi.mock("../../../studio/useProjectAttention", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../studio/useProjectAttention")>();
   const { useUnreachableHosts } = await import("../../../studio/unreachableHosts");
@@ -110,6 +113,8 @@ vi.mock("../../sidebar/SidebarPlanProgress", () => ({
   useSidebarThreadPlans: () => ({ plans: new Map(), loaders: null }),
 }));
 vi.mock("../../../env", () => ({ isElectron: false }));
+// The banner reads every machine's limits; its own test covers it.
+vi.mock("../../usage/alerts/QuotaAlertBanner", () => ({ QuotaAlerts: () => null }));
 vi.mock("../../../state/server", () => ({
   primaryServerKeybindingsAtom: {},
   primaryServerConfigAtom: {},
@@ -1329,43 +1334,42 @@ describe("cleaning up the projects list", () => {
     expect(archived?.getAttribute("href")).toBe("/settings/archived");
   });
 
-  it("folds archived projects under Archived (N) and lists them again on request", async () => {
+  it("keeps archived projects out of the sidebar; Settings > Archive lists them", async () => {
     state.groups.push(archivedSample);
     await render();
     expect(projectNames()).toEqual(["Atlas", "Borealis"]);
-    const toggle = [...container.querySelectorAll("button")].find(
-      (b) => b.textContent === "Archived (1)",
-    )!;
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    await act(async () => toggle.click());
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    expect(toggle.textContent).toBe("Hide archived");
-    const archivedList = container.querySelector('[aria-label="Archived projects"]')!;
-    expect(archivedList.textContent).toContain("Routing samples");
-    // The section says Archived; its rows carry no tag of their own.
-    expect(archivedList.querySelector(".sws-side-row-hint")).toBeNull();
-    expect(archivedList.querySelector(".sws-project-row")?.hasAttribute("data-archived")).toBe(
-      true,
-    );
+    const labels = [...container.querySelectorAll("button")].map((b) => b.textContent ?? "");
+    expect(labels.some((label) => label.startsWith("Archived ("))).toBe(false);
+    expect(container.querySelector('[aria-label="Archived projects"]')).toBeNull();
+    expect(container.textContent).not.toContain("Routing samples");
   });
 
-  it("lists an open archived project only under Archived, opened and marked current", async () => {
+  it("points to Settings > Archive when every project is set aside", async () => {
+    state.groups = [archivedSample, automatedSample] as typeof state.groups;
+    await render();
+    const link = container.querySelector("[data-set-aside-link]")!;
+    expect(link.getAttribute("href")).toBe("/settings/archived");
+    expect(container.textContent).not.toContain("No projects yet");
+  });
+
+  it("lists an open archived project alone under the projects, marked current", async () => {
     state.groups.push(archivedSample);
     state.params = { projectKey: "remote:/srv/samples" };
     await render();
     const main = [...container.querySelectorAll('[aria-label="Projects"] .sws-side-row-label')];
     expect(main.map((label) => label.textContent)).toEqual(["Atlas", "Borealis"]);
-    const archivedList = container.querySelector('[aria-label="Archived projects"]')!;
-    const row = archivedList.querySelector("a")!;
+    const open = container.querySelector('[aria-label="Open or waiting projects"]')!;
+    const row = open.querySelector("a")!;
     expect(row.textContent).toContain("Routing samples");
     expect(row.getAttribute("aria-current")).toBe("page");
+    expect(open.querySelector(".sws-project-row")?.hasAttribute("data-archived")).toBe(true);
   });
 
-  it("keeps an archived project with waiting threads under Archived, with no count", async () => {
+  it("never counts an archived project's waiting threads, even while it is open", async () => {
     // Regression: an archived project with threads waiting on the person was
-    // listed among the active projects, tagged Archived; then its rows and the
-    // Archived toggle showed waiting counts for work the person had put away.
+    // listed among the active projects with waiting counts for work put away.
     state.groups.push(archivedSample);
+    state.params = { projectKey: "remote:/srv/samples" };
     state.shells = [
       shell("archived-ask", {
         environmentId: "remote" as EnvironmentThreadShell["environmentId"],
@@ -1377,14 +1381,9 @@ describe("cleaning up the projects list", () => {
     await render();
     const main = [...container.querySelectorAll('[aria-label="Projects"] .sws-side-row-label')];
     expect(main.map((label) => label.textContent)).toEqual(["Atlas", "Borealis"]);
-    const toggle = [...container.querySelectorAll("button")].find(
-      (b) => b.textContent === "Archived (1)",
-    )!;
-    expect(toggle.querySelector(".sws-count")).toBeNull();
-    await act(async () => toggle.click());
-    const archivedList = container.querySelector('[aria-label="Archived projects"]')!;
-    expect(archivedList.textContent).toContain("Routing samples");
-    expect(archivedList.querySelector(".sws-count")).toBeNull();
+    const open = container.querySelector('[aria-label="Open or waiting projects"]')!;
+    expect(open.textContent).toContain("Routing samples");
+    expect(open.querySelector(".sws-count")).toBeNull();
   });
 
   it("gives every project row the same fixed end slot, with or without a count", async () => {
@@ -1396,11 +1395,8 @@ describe("cleaning up the projects list", () => {
         createdBy: "agent",
       } as Partial<EnvironmentThreadShell>),
     ];
+    state.params = { projectKey: "remote:/srv/samples" };
     await render();
-    const toggle = [...container.querySelectorAll("button")].find(
-      (b) => b.textContent === "Archived (1)",
-    )!;
-    await act(async () => toggle.click());
     const rows = [...container.querySelectorAll(".sws-project-row")];
     expect(rows.length).toBe(3);
     for (const row of rows) {
@@ -1447,18 +1443,19 @@ describe("cleaning up the projects list", () => {
     ],
   };
 
-  it("folds projects checks made under Automated (N) and moves one back to the person's list", async () => {
+  it("keeps automated projects out of the sidebar and moves an open one back from its menu", async () => {
     state.groups.push(automatedSample);
     await render();
     expect(projectNames()).toEqual(["Atlas", "Borealis"]);
-    const toggle = [...container.querySelectorAll("button")].find(
-      (b) => b.textContent === "Automated (1)",
-    )!;
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    await act(async () => toggle.click());
-    expect(toggle.textContent).toBe("Hide automated");
-    const list = container.querySelector('[aria-label="Automated projects"]')!;
-    expect(list.textContent).toContain("Run shell acceptance 357");
+    const labels = [...container.querySelectorAll("button")].map((b) => b.textContent ?? "");
+    expect(labels.some((label) => label.startsWith("Automated ("))).toBe(false);
+    expect(container.textContent).not.toContain("Run shell acceptance 357");
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    state.params = { projectKey: automatedSample.projectKey };
+    await render();
+    const list = container.querySelector('[aria-label="Open or waiting projects"]')!;
+    expect(list.querySelector("a")?.getAttribute("aria-current")).toBe("page");
     const trigger = list.querySelector<HTMLButtonElement>(
       '[aria-label="Actions for Run shell acceptance 357"]',
     )!;
@@ -1474,6 +1471,36 @@ describe("cleaning up the projects list", () => {
       environmentId: "host",
       input: { projectId: "run-shell", workspaceSettings: { expectedRevision: 1, origin: "user" } },
     });
+  });
+
+  it("keeps a project only guessed as made by checks in the sidebar while it waits on the person", async () => {
+    state.groups.push({
+      projectKey: "host:/Users/me/Projects/client-demo",
+      displayName: "client-demo",
+      workspaceRoot: "/Users/me/Projects/client-demo",
+      memberProjects: [
+        {
+          environmentId: "host",
+          id: "client",
+          workspaceRoot: "/Users/me/Projects/client-demo",
+          workspaceSettings: { kind: "code" as const, archived: false, revision: 1 },
+        },
+      ],
+    } as (typeof state.groups)[number]);
+    state.shells = [
+      shell("client-ask", {
+        environmentId: "host" as EnvironmentThreadShell["environmentId"],
+        projectId: "client" as EnvironmentThreadShell["projectId"],
+        hasPendingUserInput: true,
+        createdBy: "agent",
+      } as Partial<EnvironmentThreadShell>),
+    ];
+    await render();
+    const main = [...container.querySelectorAll('[aria-label="Projects"] .sws-side-row-label')];
+    expect(main.map((label) => label.textContent)).toEqual(["Atlas", "Borealis"]);
+    const list = container.querySelector('[aria-label="Open or waiting projects"]')!;
+    expect(list.textContent).toContain("client-demo");
+    expect(list.querySelector(".sws-count-waiting")).not.toBeNull();
   });
 
   it("lists an archived personal assistant only in its own entry, with no count", async () => {
@@ -1506,16 +1533,9 @@ describe("cleaning up the projects list", () => {
     ).not.toContain("Percy");
   });
 
-  it("opens Automated while one of its projects is open", async () => {
-    state.groups.push(automatedSample);
-    state.params = { projectKey: automatedSample.projectKey };
-    await render();
-    const row = container.querySelector('[aria-label="Automated projects"] a')!;
-    expect(row.getAttribute("aria-current")).toBe("page");
-  });
-
   it("archives and restores a project through its row menu", async () => {
     state.groups.push(archivedSample);
+    state.params = { projectKey: "remote:/srv/samples" };
     await render();
     const openMenu = async (name: string) => {
       const trigger = container.querySelector<HTMLButtonElement>(
@@ -1538,10 +1558,6 @@ describe("cleaning up the projects list", () => {
       environmentId: "host",
       input: { projectId: "p1", workspaceSettings: { expectedRevision: 0, archived: true } },
     });
-    const toggle = [...container.querySelectorAll("button")].find(
-      (b) => b.textContent === "Archived (1)",
-    )!;
-    await act(async () => toggle.click());
     await openMenu("Routing samples");
     await clickItem("Restore project");
     expect(state.updateProject).toHaveBeenLastCalledWith({

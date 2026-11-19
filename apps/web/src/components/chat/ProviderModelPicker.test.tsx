@@ -17,11 +17,14 @@ import type { ModelEsque } from "./providerIconUtils";
 const contentState = vi.hoisted(() => ({
   render: false,
   props: null as ComponentProps<typeof ModelPickerContent> | null,
+  popups: [] as Array<Record<string, unknown>>,
 }));
 vi.mock("../ui/popover", async (original) => ({
   ...(await original<typeof import("../ui/popover")>()),
-  PopoverPopup: ({ children }: { children: ReactNode }) =>
-    contentState.render ? <div>{children}</div> : null,
+  PopoverPopup: ({ children, ...props }: { children: ReactNode } & Record<string, unknown>) => {
+    contentState.popups.push(props);
+    return contentState.render ? <div>{children}</div> : null;
+  },
 }));
 vi.mock("./ModelPickerContent", async (original) => ({
   ...(await original<typeof import("./ModelPickerContent")>()),
@@ -33,6 +36,7 @@ vi.mock("./ModelPickerContent", async (original) => ({
 afterEach(() => {
   contentState.render = false;
   contentState.props = null;
+  contentState.popups = [];
 });
 
 function providerEntry(instanceId: string, driver: string) {
@@ -394,6 +398,90 @@ describe("model chip", () => {
   });
 });
 
+describe("model chip with usage", () => {
+  const instanceId = ProviderInstanceId.make("claudeAgent");
+  const iso = (ms: number) => new Date(ms).toISOString();
+  const withUsage = (usedPercent: number) => {
+    const base = providerEntry("claudeAgent", "claudeAgent");
+    const now = Date.now();
+    return {
+      ...base,
+      snapshot: {
+        ...base.snapshot,
+        usageLimits: {
+          checkedAt: iso(now - 60_000),
+          windows: [
+            {
+              id: "five_hour",
+              kind: "session",
+              label: "Session",
+              usedPercent,
+              resetsAt: iso(now + 2 * 3_600_000),
+              windowDurationMins: 300,
+            },
+          ],
+        },
+      } as ServerProvider,
+    };
+  };
+  const chip = (
+    usedPercent: number,
+    extra: Partial<ComponentProps<typeof ProviderModelPicker>> = {},
+    usageShown = true,
+  ) =>
+    renderToStaticMarkup(
+      <ProviderModelPicker
+        activeInstanceId={instanceId}
+        model="claude-opus-5-5"
+        lockedProvider={null}
+        instanceEntries={[withUsage(usedPercent)]}
+        modelOptionsByInstance={
+          new Map([[instanceId, [{ slug: "claude-opus-5-5", name: "Opus 5.5" }]]])
+        }
+        onInstanceModelChange={() => {}}
+        triggerParts={{ provider: "Claude", model: "Opus 5.5" }}
+        {...(usageShown
+          ? { usage: { connected: true, environmentId: "env", machineLabel: null, running: null } }
+          : {})}
+        fit="full"
+        {...extra}
+      />,
+    );
+  const buttons = (markup: string) => markup.match(/<button[^>]*>/g) ?? [];
+
+  it("makes the usage ring a button of its own beside the model", () => {
+    const markup = chip(40);
+    const [model, ring] = buttons(markup);
+    expect(buttons(markup)).toHaveLength(2);
+    expect(markup).toMatch(/<span[^>]*role="group"[^>]*data-chat-provider-model-picker="true"/);
+    expect(markup).toMatch(/<span[^>]*role="group"[^>]*data-model-chip=""/);
+    expect(model).toContain("data-model-chip-main");
+    expect(model).toMatch(/aria-label="Model: Claude · Opus 5.5[^"]*Change model"/);
+    expect(ring).toContain('data-model-chip-part="usage-ring"');
+    expect(ring).toMatch(/aria-label="Usage: [^"]+\. Show usage"/);
+    // The ring inside the button is not a chip part twice.
+    const ringBody = markup.slice(markup.indexOf("data-model-usage-button"));
+    expect(ringBody).not.toMatch(/<svg[^>]*data-model-chip-part="usage-ring"/);
+  });
+
+  it("keeps the number inside the usage button once it matters", () => {
+    const markup = chip(90);
+    const ringBody = markup.slice(markup.indexOf("data-model-usage-button"));
+    expect(ringBody).toMatch(/data-model-chip-part="usage-value"[^>]*>10%/);
+  });
+
+  it("disables both halves with the chip", () => {
+    const markup = chip(40, { disabled: true });
+    for (const control of buttons(markup)) expect(control).toContain("disabled");
+  });
+
+  it("stays one button with no usage to show", () => {
+    const markup = chip(40, {}, false);
+    expect(buttons(markup)).toHaveLength(1);
+    expect(markup).not.toContain("data-model-usage-button");
+  });
+});
+
 describe("Weave picker button", () => {
   const instanceId = ProviderInstanceId.make("codex");
   const picker = (extra: Partial<ComponentProps<typeof ProviderModelPicker>> = {}) => (
@@ -442,4 +530,21 @@ describe("Weave picker button", () => {
     renderToStaticMarkup(picker({ effort, disabled: true }));
     expect(contentState.props?.effort).toBeUndefined();
   });
+});
+
+it("keeps the model picker popup inside the window: shifted along the chip, capped by the popover", () => {
+  renderPicker({
+    instanceId: "codex",
+    driver: "codex",
+    model: "gpt-6.1-sol",
+    options: [{ slug: "gpt-6.1-sol", name: "GPT-6.1-Sol" }],
+  });
+  const popup = contentState.popups.find((props) => "data-model-picker-popup" in props)!;
+  expect(popup).toBeDefined();
+  // Flips above or below the chip and shifts sideways to stay on screen.
+  expect(popup.collisionAvoidance).toMatchObject({ side: "flip", align: "shift" });
+  // No override of the popover's 8px edge margin or its width cap (32rem, the window less 2rem).
+  expect(popup.collisionPadding).toBeUndefined();
+  expect(popup.width).toBeUndefined();
+  expect(String(popup.className)).not.toMatch(/(^|\s)(min-|max-)?w-/);
 });

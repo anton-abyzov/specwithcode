@@ -5,7 +5,9 @@ import * as Schema from "effect/Schema";
 
 import {
   assignMachineColors,
+  defaultMachineNickname,
   fitMachineNickname,
+  isAutomaticMachineNickname,
   machineNicknameHolder,
   mergeMachineNicknames,
   newerMachineNickname,
@@ -35,6 +37,140 @@ describe("machine nicknames", () => {
     expect(suggestMachineNickname("sams-mbp.local")).toBeNull();
     expect(suggestMachineNickname("Anna's Macbook Air")).toBeNull();
     expect(suggestMachineNickname("DESKTOP-M3XQ7")).toBeNull();
+  });
+
+  it("names a machine nobody named after its chip, and never over a choice", () => {
+    expect(defaultMachineNickname({}, "env-m5", "Anton M5MAX PROLED")).toEqual({
+      name: "M5",
+      updatedAt: "1970-01-01T00:00:00.000Z",
+    });
+    expect(defaultMachineNickname({}, "env-mini", "linux-mini")).toBeNull();
+    // An empty entry is a choice too: the person kept the computer name.
+    expect(
+      defaultMachineNickname({ "env-m5": at("", "2026-11-14T00:00:00.000Z") }, "env-m5", "Anton M5MAX PROLED"),
+    ).toBeNull();
+    const own = defaultMachineNickname({}, "env-m5", "Anton M5MAX PROLED")!;
+    // A rename made anywhere wins the merge, whichever side it arrives on.
+    const chosen = at("Studio", "2026-11-01T00:00:00.000Z");
+    expect(newerMachineNickname(own, chosen)?.name).toBe("Studio");
+    expect(newerMachineNickname(chosen, own)?.name).toBe("Studio");
+    expect(nextMachineNicknameStamp(own, Date.parse("2026-11-16T00:00:00.000Z"))).toBe(
+      "2026-11-16T00:00:00.000Z",
+    );
+  });
+
+  it("names itself only when the name tells it apart from the machines it knows", () => {
+    const m4 = new Map([["env-m4", "Anton's MacBook M4MAX"]]);
+    expect(defaultMachineNickname({}, "env-m5", "Anton M5MAX PROLED", m4)?.name).toBe("M5");
+    // Another machine already shows the name, in any case.
+    expect(
+      defaultMachineNickname(
+        { "env-other": at("m5", "2026-11-13T00:00:00.000Z") },
+        "env-m5",
+        "Anton M5MAX PROLED",
+        new Map([["env-other", "Studio"]]),
+      ),
+    ).toBeNull();
+    // A second M5 nobody named would name itself the same: both keep their computer names.
+    expect(
+      defaultMachineNickname({}, "env-m5", "Anton M5MAX PROLED", new Map([["env-b", "Office M5 Pro"]])),
+    ).toBeNull();
+    // One that kept its computer name on purpose shows that, not "M5".
+    expect(
+      defaultMachineNickname(
+        { "env-b": at("", "2026-11-13T00:00:00.000Z") },
+        "env-m5",
+        "Anton M5MAX PROLED",
+        new Map([["env-b", "Office M5 Pro"]]),
+      )?.name,
+    ).toBe("M5");
+    // A name left by an old registration nobody lists any more does not count.
+    expect(
+      defaultMachineNickname(
+        { "env-old": at("m5", "2026-11-13T00:00:00.000Z") },
+        "env-m5",
+        "Anton M5MAX PROLED",
+        m4,
+      )?.name,
+    ).toBe("M5");
+  });
+
+  it("counts a computer name kept on purpose as the name it shows", () => {
+    // That machine reads "M5" on screen; a second "M5" would not tell them apart.
+    expect(
+      defaultMachineNickname(
+        { "env-b": at("", "2026-11-13T00:00:00.000Z") },
+        "env-m5",
+        "Anton M5MAX PROLED",
+        new Map([["env-b", "Anton's M5"]]),
+      ),
+    ).toBeNull();
+  });
+
+  it("gives its own name back when another machine comes to show it, and takes it again once free", () => {
+    const fleet = new Map([["env-studio", "Mac Studio"]]);
+    const own = defaultMachineNickname({}, "env-m5", "Anton M5MAX PROLED", fleet)!;
+    expect(isAutomaticMachineNickname(own)).toBe(true);
+    // A rename to "m5" made on the studio arrives after this machine named itself.
+    const taken = { "env-m5": own, "env-studio": at("m5", "2026-11-16T08:00:00.000Z") };
+    const back = defaultMachineNickname(taken, "env-m5", "Anton M5MAX PROLED", fleet)!;
+    expect(back).toEqual({ name: "", updatedAt: "1970-01-01T00:00:00.001Z" });
+    expect(isAutomaticMachineNickname(back)).toBe(true);
+    // The newer automatic entry wins the sync over the older one on every machine.
+    expect(newerMachineNickname(own, back)).toBe(back);
+    expect(defaultMachineNickname({ ...taken, "env-m5": back }, "env-m5", "Anton M5MAX PROLED", fleet)).toBeNull();
+    // The studio is renamed again: the name is free, so the machine takes it back.
+    const free = { "env-m5": back, "env-studio": at("Studio", "2026-11-16T09:00:00.000Z") };
+    expect(defaultMachineNickname(free, "env-m5", "Anton M5MAX PROLED", fleet)).toEqual({
+      name: "M5",
+      updatedAt: "1970-01-01T00:00:00.002Z",
+    });
+    // A name a person chose for this machine is never touched, whatever it clashes with.
+    const chosen = { ...taken, "env-m5": at("m5", "2026-11-16T07:00:00.000Z") };
+    expect(defaultMachineNickname(chosen, "env-m5", "Anton M5MAX PROLED", fleet)).toBeNull();
+  });
+
+  it("keeps two machines that name themselves the same on their computer names", () => {
+    // Both named themselves "M5" before either knew the other.
+    const a = defaultMachineNickname({}, "env-a", "Anton M5MAX PROLED")!;
+    const b = defaultMachineNickname({}, "env-b", "Office M5 Pro")!;
+    const synced = { "env-a": a, "env-b": b };
+    const backA = defaultMachineNickname(synced, "env-a", "Anton M5MAX PROLED", new Map([["env-b", "Office M5 Pro"]]));
+    const backB = defaultMachineNickname(synced, "env-b", "Office M5 Pro", new Map([["env-a", "Anton M5MAX PROLED"]]));
+    expect(backA?.name).toBe("");
+    expect(backB?.name).toBe("");
+    // And they stay there, rather than flip back and forth.
+    const settled = { "env-a": backA!, "env-b": backB! };
+    expect(defaultMachineNickname(settled, "env-a", "Anton M5MAX PROLED", new Map([["env-b", "Office M5 Pro"]]))).toBeNull();
+    expect(defaultMachineNickname(settled, "env-b", "Office M5 Pro", new Map([["env-a", "Anton M5MAX PROLED"]]))).toBeNull();
+  });
+
+  it("settles two machines a fleet list knows only by aliases on one name", () => {
+    const hosts = { "env-a": "Anton M5MAX PROLED", "env-b": "Office M5 Pro" } as const;
+    const aliases = { "env-a": "Laptop", "env-b": "Office" } as const;
+    let nicknames: Record<string, { name: string; updatedAt: string }> = {
+      "env-a": at("M5", "1970-01-01T00:00:00.000Z"),
+      "env-b": at("M5", "1970-01-01T00:00:00.000Z"),
+    };
+    const round = () => {
+      let changed = false;
+      for (const id of ["env-a", "env-b"] as const) {
+        const other = id === "env-a" ? "env-b" : "env-a";
+        const next = defaultMachineNickname(nicknames, id, hosts[id], new Map([[other, aliases[other]]]));
+        if (next !== null) {
+          nicknames = { ...nicknames, [id]: next };
+          changed = true;
+        }
+      }
+      return changed;
+    };
+    let rounds = 0;
+    while (round()) rounds += 1;
+    expect(rounds).toBeLessThan(5);
+    // One keeps the name, the other shows its computer name, and it stays that way.
+    expect(nicknames["env-a"]?.name).toBe("M5");
+    expect(nicknames["env-b"]?.name).toBe("");
+    expect(round()).toBe(false);
   });
 
   it("finds another machine already shown under a name, ignoring case", () => {
@@ -195,6 +331,26 @@ describe("machine nicknames", () => {
       });
       expect(colors.get("a")).toBe(chosen);
       expect(colors.get("b")).not.toBe(chosen);
+    });
+
+    it("gives a named machine the same color whatever else a device knows", () => {
+      const mini = "dd2fc230-5af3-44e7-9599-b4b8471cf23c";
+      const nicknames = {
+        "4d73e481-1b03-4ee8-b4c1-87a448431538": at("m4", "2026-11-10T21:00:00.000Z"),
+        "2cd57c57-eecc-4be4-8e94-b783c2ca0d5c": at("m1", "2026-11-10T21:00:00.000Z"),
+        [mini]: at("linux-mini", "2026-11-10T21:00:00.000Z"),
+      };
+      const onMini = assignMachineColors([mini], nicknames);
+      // A machine only one device knows, whose own default is linux-mini's color and
+      // whose id sorts first: it must not push linux-mini to another color there.
+      let rival = "";
+      for (let index = 0; rival === ""; index += 1) {
+        const id = `0-unnamed-${index}`;
+        if (assignMachineColors([id], {}).get(id) === onMini.get(mini)) rival = id;
+      }
+      const onM4 = assignMachineColors([rival, ...Object.keys(nicknames)], nicknames);
+      for (const id of Object.keys(nicknames)) expect(onM4.get(id)).toBe(onMini.get(id));
+      expect(onM4.get(rival)).not.toBe(onM4.get(mini));
     });
 
     it("includes machines known only by their nickname", () => {

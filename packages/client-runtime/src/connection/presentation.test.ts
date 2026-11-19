@@ -23,7 +23,9 @@ import {
   connectionStatusTitle,
   presentEnvironmentConnection,
   presentConnectionState,
+  settlingConnectionPresentation,
 } from "./presentation.ts";
+import { machineReach, RECONNECT_GRACE_MS } from "./reach.ts";
 
 const TARGET = new BearerConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -87,6 +89,37 @@ describe("connection presentation", () => {
     );
     expect(connection.phase).toBe("error");
     expect(connection.blockedReason).toBe("authentication");
+    // A machine refusing its own credential is fixed by pairing, not by a Connect sign-in.
+    expect(connection.connectSignInRequired).toBeUndefined();
+  });
+
+  it("says when a blocked connection needs a SpecWithCode Connect sign-in", () => {
+    const connection = presentConnectionState(
+      supervisorState({
+        phase: "blocked",
+        lastFailure: new ConnectionBlockedError({
+          reason: "authentication",
+          detail: "Sign in to SpecWithCode Connect to connect this environment.",
+          connectSignInRequired: true,
+        }),
+      }),
+    );
+    expect(connection.phase).toBe("error");
+    expect(connection.connectSignInRequired).toBe(true);
+  });
+
+  it("drops the sign-in flag once the connection is retrying", () => {
+    const connection = presentConnectionState(
+      supervisorState({
+        phase: "backoff",
+        lastFailure: new ConnectionBlockedError({
+          reason: "authentication",
+          detail: "Sign in to SpecWithCode Connect to connect this environment.",
+          connectSignInRequired: true,
+        }),
+      }),
+    );
+    expect(connection.connectSignInRequired).toBeUndefined();
   });
 
   it("preserves profile display information without exposing credentials", () => {
@@ -241,6 +274,7 @@ describe("connection presentation", () => {
       phase: "reconnecting",
       error: "Socket closed.",
       traceId: "trace-previous",
+      cause: "not-answering",
     });
     expect(
       presentConnectionState(
@@ -259,6 +293,8 @@ describe("connection presentation", () => {
       phase: "reconnecting",
       error: "Disconnected.",
       traceId: "trace-1",
+      retryAt: 1,
+      cause: "not-answering",
     });
   });
 
@@ -280,6 +316,7 @@ describe("connection presentation", () => {
       phase: "reconnecting",
       error: "Relay connection timed out.",
       traceId: "trace-retry",
+      cause: "not-answering",
     });
   });
 
@@ -308,6 +345,7 @@ describe("connection presentation", () => {
       phase: "offline",
       error: null,
       traceId: null,
+      cause: "no-network",
     });
   });
 
@@ -343,6 +381,96 @@ describe("connection presentation", () => {
       error: null,
       traceId: null,
     });
+  });
+});
+
+describe("reach facts on a connection presentation", () => {
+  const silent = new ConnectionTransientError({ reason: "timeout", detail: "No answer." });
+
+  it("carries when the machine was lost, when it is tried next and why", () => {
+    expect(
+      presentConnectionState(
+        supervisorState({
+          phase: "backoff",
+          attempt: 3,
+          lastFailure: silent,
+          retryAt: 190_000,
+          lostAt: 100_000,
+          lastConnectedAt: 100_000,
+          lossFailure: silent,
+        }),
+      ),
+    ).toEqual({
+      phase: "reconnecting",
+      error: "No answer.",
+      traceId: null,
+      lostAt: 100_000,
+      lastConnectedAt: 100_000,
+      retryAt: 190_000,
+      cause: "not-answering",
+    });
+  });
+
+  it("keeps the cause through an explicit retry that has no failure of its own", () => {
+    const retrying = presentConnectionState(
+      supervisorState({
+        phase: "connecting",
+        attempt: 1,
+        lastFailure: null,
+        lostAt: 100_000,
+        lastConnectedAt: 100_000,
+        lossFailure: new ConnectionTransientError({
+          reason: "endpoint-unavailable",
+          detail: "No service.",
+          machineOffline: true,
+        }),
+      }),
+    );
+    expect(retrying).toMatchObject({ phase: "connecting", error: null, cause: "no-service" });
+    expect(machineReach(retrying, 100_000 + RECONNECT_GRACE_MS).state).toBe("offline");
+  });
+
+  it("says which relay failures leave the machine unknown", () => {
+    const cause = (failure: ConnectionTransientError) =>
+      presentConnectionState(supervisorState({ phase: "backoff", lastFailure: failure })).cause;
+    expect(
+      cause(
+        new ConnectionTransientError({
+          reason: "timeout",
+          detail: "Relay environment connection timed out.",
+          relayUnreachable: true,
+        }),
+      ),
+    ).toBe("relay-unreachable");
+    expect(cause(silent)).toBe("not-answering");
+  });
+
+  it("has no loss or cause while connected or when nobody asked to connect", () => {
+    for (const phase of ["connected", "available"] as const) {
+      const presented = presentConnectionState(
+        supervisorState({ phase, lostAt: null, lastConnectedAt: 5, lossFailure: null }),
+      );
+      expect(presented.lostAt).toBeUndefined();
+      expect(presented.cause).toBeUndefined();
+    }
+  });
+
+  it("keeps the reach facts while a dropped connection settles", () => {
+    const settled = settlingConnectionPresentation({
+      phase: "reconnecting",
+      error: null,
+      traceId: null,
+      lostAt: 100_000,
+      lastConnectedAt: 100_000,
+    });
+    expect(settled).toEqual({
+      phase: "connecting",
+      error: null,
+      traceId: null,
+      lostAt: 100_000,
+      lastConnectedAt: 100_000,
+    });
+    expect(machineReach(settled, 100_001).state).toBe("reconnecting");
   });
 });
 

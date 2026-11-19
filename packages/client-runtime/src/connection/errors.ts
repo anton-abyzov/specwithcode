@@ -1,9 +1,8 @@
-import type { ClientConnectionMethod, EnvironmentId } from "@specweave-studio/contracts";
+import type { EnvironmentId } from "@specweave-studio/contracts";
 import type { RelayProtectedError } from "@specweave-studio/contracts/relay";
 import type { ManagedRelayClientError } from "../relay/managedRelay.ts";
 import { dpopFailureMessage, relayProtectedErrorMessage } from "../relay/errorPresentation.ts";
 import type { RemoteEnvironmentAuthError } from "../authorization/remote.ts";
-import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import {
   ConnectionBlockedError,
   type ConnectionAttemptError,
@@ -37,6 +36,16 @@ export function environmentMismatchError(input: {
 function relayProtectedError(error: RelayProtectedError): ConnectionAttemptError {
   switch (error._tag) {
     case "RelayAuthInvalidError":
+      return new ConnectionBlockedError({
+        reason: "authentication",
+        detail: relayProtectedErrorMessage(error),
+        traceId: error.traceId,
+        ...(error.reason === "missing_bearer" ||
+        error.reason === "invalid_bearer" ||
+        error.reason === "device_removed"
+          ? { connectSessionRefused: true }
+          : {}),
+      });
     case "RelayEnvironmentLinkProofExpiredError":
     case "RelayAgentActivityPublishProofExpiredError":
     case "RelayAgentActivityPublishProofInvalidError":
@@ -86,15 +95,19 @@ export function mapManagedRelayError(error: ManagedRelayClientError): Connection
       if (error.relayError) {
         return relayProtectedError(error.relayError);
       }
+      // Only a request that never got an answer says nothing about the
+      // machine; a status the relay sent means the relay was reached.
       return new ConnectionTransientError({
         reason: "relay-unavailable",
         detail: error.message,
         ...(error.traceId ? { traceId: error.traceId } : {}),
+        ...(error.transportFailed === true ? { relayUnreachable: true } : {}),
       });
     case "ManagedRelayRequestTimeoutError":
       return new ConnectionTransientError({
         reason: "timeout",
         detail: error.message,
+        relayUnreachable: true,
       });
     case "ManagedRelayUrlInvalidError":
       return new ConnectionBlockedError({
@@ -116,11 +129,38 @@ export function mapManagedRelayError(error: ManagedRelayClientError): Connection
   }
 }
 
+/** How often a device waiting for approval asks again. */
+export const DEVICE_APPROVAL_RETRY_MS = 4_000;
+
+/**
+ * A machine that has not approved this device yet (1327): the credential is
+ * fine, so this is never "pair again". The supervisor keeps asking every few
+ * seconds and gets in on its own once the owner types the code.
+ */
+function waitingForApproval(error: RemoteEnvironmentAuthError): ConnectionAttemptError | null {
+  if (error._tag !== "EnvironmentAuthInvalidError" || error.refusal !== "device_not_approved")
+    return null;
+  return new ConnectionTransientError({
+    reason: "remote-unavailable",
+    detail: error.teamRulesMessage ?? "Approve this device on the machine.",
+    traceId: error.traceId,
+    retryAfterMs: DEVICE_APPROVAL_RETRY_MS,
+    ...(error.approvalCode === undefined ? {} : { deviceApprovalCode: error.approvalCode }),
+  });
+}
+
+/**
+ * Map a failed request to the machine itself. It never adds the DNS or
+ * firewall hint, whatever route the request took: the relay has already
+ * answered by the time a request goes to the machine's Connect address, and a
+ * silent or restarting service fails the same way a blocked network would.
+ * Only a relay request with no answer earns the hint (`mapManagedRelayError`).
+ */
 export function mapRemoteEnvironmentError(
   error: RemoteEnvironmentAuthError,
-  connectionMethod: ClientConnectionMethod = "direct",
 ): ConnectionAttemptError {
-  const networkHint = connectionMethod === "relay" ? ` ${NETWORK_BLOCKING_HINT}` : "";
+  const waiting = waitingForApproval(error);
+  if (waiting !== null) return waiting;
   switch (error._tag) {
     case "EnvironmentAuthInvalidError":
       return new ConnectionBlockedError({
@@ -158,12 +198,12 @@ export function mapRemoteEnvironmentError(
     case "RemoteEnvironmentAuthTimeoutError":
       return new ConnectionTransientError({
         reason: "timeout",
-        detail: `${error.message}${networkHint}`,
+        detail: error.message,
       });
     case "RemoteEnvironmentAuthFetchError":
       return new ConnectionTransientError({
         reason: "network",
-        detail: `${error.message}${networkHint}`,
+        detail: error.message,
       });
     case "EnvironmentInternalError":
       return new ConnectionTransientError({
@@ -196,6 +236,8 @@ export function mapRemoteEnvironmentError(
 export function mapRemoteDpopEnvironmentError(
   error: RemoteEnvironmentAuthError,
 ): ConnectionAttemptError {
+  const waiting = waitingForApproval(error);
+  if (waiting !== null) return waiting;
   if (error._tag === "EnvironmentAuthInvalidError" && error.reason === "invalid_credential") {
     return new ConnectionBlockedError({
       reason: "authentication",
@@ -205,5 +247,5 @@ export function mapRemoteDpopEnvironmentError(
       traceId: error.traceId,
     });
   }
-  return mapRemoteEnvironmentError(error, "relay");
+  return mapRemoteEnvironmentError(error);
 }

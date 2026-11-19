@@ -13,6 +13,7 @@ import {
 import type { ProjectOwnershipUpdate } from "../orchestration-v2/ProjectCommands.ts";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import { replacesProjectModelOverride } from "./ProjectDelegation.ts";
 import { normalizeProjectEnvironment } from "./ProjectEnvironmentPaths.ts";
 import {
   CommandId,
@@ -23,7 +24,9 @@ import {
   ProjectFolderCheckError,
   ProjectId,
   type Project,
+  type FirstFeatureGuide,
   type ProjectCreatePayload,
+  type ProjectFirstFeatureGuideMark,
   type ProjectOrigin,
   type ProjectUpdatePayload,
   type ProjectSnapshot,
@@ -64,6 +67,7 @@ import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as FirstFeatureSample from "./firstFeatureSample.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { machineAssistantOf } from "@specweave-studio/shared/personalAssistant";
 
@@ -106,6 +110,8 @@ export interface ProjectCreateInput extends ProjectCreatePayload {
   readonly initialWorkerModelSelection?: ModelSelection | null;
   /** Internal: set by the server for temporary agent sessions, never by a client payload. */
   readonly temporarySessionId?: string;
+  /** Internal: the sample the project is made as, with its guide's first facts (1398). */
+  readonly sample?: { readonly kind: string; readonly firstFeatureGuide: FirstFeatureGuide };
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
 }
@@ -116,8 +122,18 @@ export interface ProjectUpdateInput extends ProjectUpdatePayload {
   readonly ownership?: ProjectOwnershipUpdate;
   /** Internal automatic initialization, checked under the project command lock. */
   readonly onlyIfDefaultModelUnset?: boolean;
+  /**
+   * Internal, with `defaultModelSelection`: the write applies only while the
+   * project's saved model is still this one, so a save made meanwhile wins.
+   */
+  readonly expectedDefaultModelSelection?: ModelSelection | null;
   /** Internal coordinator binding, never accepted from a client settings patch. */
   readonly coordinatorThreadId?: ThreadId;
+  /** Internal: a mark on the sample's guide (1398), never accepted from a client settings patch. */
+  readonly firstFeatureGuideMark?: {
+    readonly mark: ProjectFirstFeatureGuideMark;
+    readonly at: string;
+  };
   /**
    * Internal: the approval card that asked for this change. Its own pending
    * request does not count as active work in the thread that asked.
@@ -636,10 +652,12 @@ export const make = Effect.gen(function* () {
   // also takes Settings' Use worktrees for new projects as its own switch.
   // A copy of an existing project arriving from another machine (it names its
   // logical project) keeps that project's own switch rather than this machine's default.
+  // It also starts on the model tracks (see `ThreadModelMode`).
   const seedNewProjectSettings = (
     projectId: ProjectId,
     kind: string | undefined,
     arriving: boolean,
+    namedModel: boolean,
   ) =>
     Effect.gen(function* () {
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
@@ -655,6 +673,12 @@ export const make = Effect.gen(function* () {
         !arriving &&
         entry.defaultThreadEnvMode === undefined
           ? { defaultThreadEnvMode: "worktree" as const }
+          : {}),
+        // A new project starts its threads on the tracks. One created with a
+        // model named for it, or arriving from another machine, keeps one model,
+        // as every project that existed before tracks does.
+        ...(kind !== "personal" && !arriving && !namedModel && entry.threadModelMode === undefined
+          ? { threadModelMode: "tracks" as const }
           : {}),
       };
       if (Object.keys(set).length === 0) return;
@@ -719,12 +743,17 @@ export const make = Effect.gen(function* () {
           ? {}
           : { temporarySessionId: input.temporarySessionId }),
         ...createdOrigin(input),
+        ...(input.sample === undefined
+          ? {}
+          : { sample: input.sample.kind, firstFeatureGuide: input.sample.firstFeatureGuide }),
       });
       yield* projectEnrichment.invalidate([workspaceRoot]);
       yield* seedNewProjectSettings(
         input.projectId,
         input.kind,
         input.initialLogicalProject !== undefined,
+        // Only a model someone named: an explicit null just turns the default off.
+        input.initialWorkerModelSelection != null,
       );
       const created = yield* readCommitted(input.projectId);
       if (input.initialWorkerModelSelection !== undefined || created.defaultModelSelection !== null)
@@ -896,6 +925,9 @@ export const make = Effect.gen(function* () {
         ...(input.coordinatorThreadId === undefined
           ? {}
           : { coordinatorThreadId: input.coordinatorThreadId }),
+        ...(input.firstFeatureGuideMark === undefined
+          ? {}
+          : { firstFeatureGuideMark: input.firstFeatureGuideMark }),
         ...(input.title === undefined ? {} : { title: input.title }),
         ...(workspaceRoot === previousRoot ? {} : { workspaceRoot }),
         ...(input.defaultModelSelection === undefined
@@ -904,6 +936,9 @@ export const make = Effect.gen(function* () {
         ...(input.onlyIfDefaultModelUnset === undefined
           ? {}
           : { onlyIfDefaultModelUnset: input.onlyIfDefaultModelUnset }),
+        ...(input.expectedDefaultModelSelection === undefined
+          ? {}
+          : { expectedDefaultModelSelection: input.expectedDefaultModelSelection }),
         ...(input.autoPull === undefined ? {} : { autoPull: input.autoPull }),
         ...(input.projectIcon === undefined ? {} : { projectIcon: input.projectIcon }),
         ...(input.faviconPath === undefined ? {} : { faviconPath: input.faviconPath }),
@@ -915,9 +950,56 @@ export const make = Effect.gen(function* () {
       if (workspaceRoot !== previousRoot) {
         yield* projectEnrichment.invalidate([previousRoot, workspaceRoot]);
       }
+      yield* dropProjectModelOverride(
+        input.projectId,
+        existing.value.defaultModelSelection,
+        input.defaultModelSelection,
+        input.onlyIfDefaultModelUnset,
+      );
       return yield* readCommitted(input.projectId);
     },
   );
+
+  /**
+   * The project's thread model has one answer. A Project settings override
+   * outranks the project's own field, so a model saved from the project
+   * dialog would change nothing while an older override exists: the newer
+   * save removes it. Best effort, like seeding.
+   */
+  const dropProjectModelOverride = Effect.fn("ProjectService.dropProjectModelOverride")(function* (
+    projectId: ProjectId,
+    previous: ModelSelection | null,
+    next: ModelSelection | null | undefined,
+    onlyIfUnset: boolean | undefined,
+  ) {
+    if (next === undefined) return;
+    const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+    if (Option.isNone(serverSettings)) return;
+    const settings = yield* serverSettings.value.getSettings.pipe(Effect.option);
+    if (
+      Option.isNone(settings) ||
+      !replacesProjectModelOverride({
+        settings: settings.value,
+        projectId,
+        previous,
+        next,
+        onlyIfUnset,
+      })
+    )
+      return;
+    yield* serverSettings.value
+      .updateSettings({
+        projectSettingsOverrideChanges: { [projectId]: { clear: ["defaultModelSelection"] } },
+      })
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not remove the project's older thread model override", {
+            projectId,
+            cause,
+          }),
+        ),
+      );
+  });
 
   const bootstrap: ProjectService["Service"]["bootstrap"] = Effect.fn("ProjectService.bootstrap")(
     function* (input) {
@@ -1124,6 +1206,10 @@ export const make = Effect.gen(function* () {
       yield* slot === undefined
         ? remove
         : remove.pipe(Effect.onError(() => releaseClientDelete(slot)));
+      // The sample's own review switch goes with it (1398 AC-21).
+      if (FirstFeatureSample.isFirstFeatureSample(project)) {
+        yield* FirstFeatureSample.dropSampleAutoReview(projectId);
+      }
       // Deletion cannot be undone; this line is how the next incident shows who and what.
       yield* Effect.logInfo("project.deleted", {
         projectId,

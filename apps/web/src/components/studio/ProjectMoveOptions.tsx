@@ -9,12 +9,22 @@ import {
   type ReactNode,
 } from "react";
 import type { HandoffFolderMethod } from "../../studio/folderCopy";
+import { displayFolder } from "../../lib/displayFolder";
+import { useTx } from "../../i18n";
+import {
+  existingCopyLine,
+  otherProjectNote,
+  pickedHolding,
+  sendPlan,
+  type MachineHolding,
+  type SendText,
+} from "../../studio/sendToMachine";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Input } from "../ui/input";
 import { Radio, RadioGroup } from "../ui/radio-group";
 
-/** What the person wants: the project continues there, or only its files go there. */
+/** What the dialog does: Main moves there (Git only, "Make X main"), or only files go there. */
 export type MoveIntent = "move" | "copy";
 
 /**
@@ -34,6 +44,33 @@ export interface ProjectMoveDialogContext {
   readonly machinesExtra?: ReactNode;
   /** Sync into a machine that already has the project: only files travel, nothing to hand off. */
   readonly sync?: boolean;
+  /** The machine the files come from, named by the whole-folder method. */
+  readonly sourceLabel?: string;
+  /**
+   * Add for a project with no Git remote: nothing can be downloaded, so copying the whole
+   * folder is the only way files travel.
+   */
+  readonly wholeFolderOnly?: boolean;
+  /** What the chosen machine already holds of this project, where Main is, and the plan. */
+  readonly send?: SendFacts | null;
+}
+
+/** The chosen machine's holding and the names the plan sentence needs. */
+export interface SendFacts {
+  readonly holding: MachineHolding<{ readonly id: string; readonly workspaceRoot: string }>;
+  /** The copy picked among several on that machine; null until one is. */
+  readonly picked: string | null;
+  readonly onPick: (id: string) => void;
+  /** The machine Main is on now; null when nothing in sight names it. */
+  readonly mainLabel: string | null;
+  /** Uncommitted files here; null when unknown. */
+  readonly localFiles: number | null;
+  /**
+   * Set when the chosen copy belongs to a project the source is not linked to. `main` is
+   * that project's Main machine, null when unknown. Copying then sends files only: Main
+   * never moves and the two are never linked from this dialog.
+   */
+  readonly otherProject?: { readonly main: string | null } | null;
 }
 
 export const ProjectMoveDialog = createContext<ProjectMoveDialogContext | null>(null);
@@ -43,71 +80,142 @@ export function useProjectMoveDialog() {
 }
 
 /**
- * "Where should the coordinator run?": the one difference between copying a project and
- * handing it over. Keep runs `copy-only` and links the copy as workers; Move runs
- * `copy-and-move`. A sync into a machine's own copy never moves it, so it shows nothing.
+ * Whether Main may move to the chosen copy from this dialog. Not to the copy that is Main
+ * already, and never into a project the source is not linked to: that would move this
+ * machine's Main into another project and relink its copy without anyone asking for it.
  */
-export function CoordinatorChoice({
-  value,
-  onChange,
-  canMove,
+export function moveRefusal(send: SendFacts | null | undefined): "main" | "other-project" | null {
+  if (!send) return null;
+  if (send.otherProject) return "other-project";
+  return pickedHolding(send.holding, send.picked).kind === "main" ? "main" : null;
+}
+
+/**
+ * Under the machines: what the chosen one already holds, the copy to pick among several,
+ * and the plan in one sentence. It asks nothing about Main: a copy keeps Main where it is,
+ * and `move` (Git only, or a move asked for with "Make X main") says where it goes. A source
+ * that is not linked to the destination copy's project is told so here. A sync shows nothing.
+ */
+export function SendSummary({
+  move,
   sourceLabel,
   targetLabel,
   disabled = false,
 }: {
-  readonly value: MoveIntent;
-  readonly onChange: (intent: MoveIntent) => void;
-  readonly canMove: boolean;
+  /** Main moves to the chosen machine. */
+  readonly move: boolean;
   readonly sourceLabel: string;
   readonly targetLabel: string | null;
   readonly disabled?: boolean;
 }) {
-  if (useProjectMoveDialog()?.sync) return null;
-  const there = targetLabel ?? "the other machine";
-  const options: ReadonlyArray<{
-    readonly value: MoveIntent;
-    readonly label: string;
-    readonly detail: string;
-    readonly off: boolean;
-  }> = [
-    {
-      value: "copy",
-      label: `Keep on ${sourceLabel}`,
-      detail: `${there} runs workers. You can move it later.`,
-      off: false,
-    },
-    {
-      value: "move",
-      label: `Move to ${there}`,
-      detail: `Its conversation and threads continue on ${there}; ${sourceLabel} runs workers.`,
-      off: !canMove,
-    },
-  ];
+  const tx = useTx();
+  const dialog = useProjectMoveDialog();
+  const send = targetLabel ? (dialog?.send ?? null) : null;
+  if (dialog?.sync || !send || !targetLabel) return null;
+  const holding = pickedHolding(send.holding, send.picked);
+  const other = send.otherProject ?? null;
+  const refused = move ? moveRefusal(send) : null;
+  // Git only into a copy: nothing is copied and the plan names that copy's folder, so the
+  // "only what it is missing is copied" line would contradict the screen.
+  const gitIntoCopy = move && dialog?.method === "folder" && holding.kind === "copy";
+  const line = gitIntoCopy ? null : existingCopyLine({ there: targetLabel, holding: send.holding });
+  const note = other
+    ? refused
+      ? {
+          text: "The coordinator cannot continue on {machine}: it has this repository as a separate project. Link it first.",
+          values: { source: sourceLabel, machine: targetLabel },
+        }
+      : otherProjectNote({ source: sourceLabel, there: targetLabel, main: other.main })
+    : null;
+  // A refused move has no plan. The copy picked among several that is Main says why.
+  const plan = refused
+    ? refused === "main" && send.holding.kind === "several"
+      ? existingCopyLine({ there: targetLabel, holding })
+      : null
+    : sendPlan({
+        choice: move ? "move" : "copy",
+        there: targetLabel,
+        main: other ? other.main : send.mainLabel,
+        holding,
+        way: dialog?.method === "folder" ? "git" : "copy",
+        localFiles: send.localFiles,
+      });
   return (
-    <fieldset disabled={disabled} className="min-w-0" data-slot="handoff-coordinator">
-      <legend className="mb-2 text-sm font-medium">Where should the coordinator run?</legend>
+    <div className="flex min-w-0 flex-col gap-2" data-slot="send-summary">
+      {line && (
+        <p className="text-sm text-muted-foreground" data-slot="send-existing-copy">
+          {tx(line.text, line.values)}
+        </p>
+      )}
+      {send.holding.kind === "several" && (
+        <CopyPicker
+          copies={send.holding.copies}
+          mainId={send.holding.mainId}
+          picked={send.picked}
+          onPick={send.onPick}
+          disabled={disabled}
+          machineLabel={targetLabel}
+        />
+      )}
+      {note && (
+        <p
+          role="note"
+          className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm wrap-anywhere"
+          data-slot="send-unlinked"
+        >
+          {tx(note.text, note.values)}
+        </p>
+      )}
+      {plan && (
+        <p className="rounded-lg bg-muted/40 px-3 py-2 text-sm" data-slot="send-plan">
+          {typeof plan === "string" ? plan : tx(plan.text, plan.values)}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Several copies of this project on the chosen machine: the person picks the one to send to. */
+function CopyPicker({
+  copies,
+  mainId,
+  picked,
+  onPick,
+  disabled,
+  machineLabel,
+}: {
+  readonly copies: ReadonlyArray<{ readonly id: string; readonly workspaceRoot: string }>;
+  readonly mainId: string | null;
+  readonly picked: string | null;
+  readonly onPick: (id: string) => void;
+  readonly disabled: boolean;
+  readonly machineLabel: string;
+}) {
+  const tx = useTx();
+  const legend = tx("Folder on {machine}", { machine: machineLabel });
+  return (
+    <fieldset disabled={disabled} className="min-w-0" data-slot="send-copy-picker">
+      <legend className="mb-2 text-sm font-medium">{legend}</legend>
       <RadioGroup
-        value={value}
+        value={picked ?? ""}
         onValueChange={(next) => {
-          if (next === "copy" || (next === "move" && canMove)) onChange(next);
+          if (typeof next === "string" && next) onPick(next);
         }}
         disabled={disabled}
-        aria-label="Where should the coordinator run?"
+        aria-label={legend}
       >
-        {options.map((item) => (
+        {copies.map((copy) => (
           <label
-            key={item.value}
-            className={`flex min-w-0 items-start gap-3 rounded-lg border p-2.5 text-sm has-data-checked:border-primary has-data-checked:bg-primary/4 ${item.off ? "cursor-not-allowed opacity-60" : disabled ? "cursor-default" : "cursor-pointer"}`}
+            key={copy.id}
+            className="flex min-w-0 items-center gap-3 rounded-lg border p-2.5 text-sm has-data-checked:border-primary has-data-checked:bg-primary/4"
           >
-            <span className="flex h-5 items-center">
-              <Radio value={item.value} disabled={item.off} />
+            <Radio value={copy.id} />
+            <span className="min-w-0 wrap-anywhere font-mono text-xs">
+              {displayFolder(copy.workspaceRoot)}
             </span>
-            <span className="min-w-0 leading-5">
-              <span className="block wrap-anywhere">{item.label}</span>
-              <span className="block wrap-anywhere text-xs text-muted-foreground">
-                {item.detail}
-              </span>
-            </span>
+            {copy.id === mainId && (
+              <span className="ms-auto text-xs text-muted-foreground">Coordinator</span>
+            )}
           </label>
         ))}
       </RadioGroup>
@@ -164,13 +272,14 @@ export function MoreOptions({
   readonly disabled?: boolean;
   readonly children: ReactNode;
 }) {
+  const tx = useTx();
   return (
     <Collapsible defaultOpen={defaultOpen} data-slot="handoff-more-options">
       <CollapsibleTrigger
         className="group inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
         disabled={disabled}
       >
-        Details
+        {tx("Details")}
         <ChevronDownIcon
           className="size-3.5 transition-transform group-data-panel-open:rotate-180"
           aria-hidden
@@ -183,38 +292,62 @@ export function MoreOptions({
   );
 }
 
+/** The ways files travel, in order; the default (`DEFAULT_COPY_METHOD`) first. */
 const METHODS: ReadonlyArray<{
   readonly value: HandoffFolderMethod;
-  readonly label: string;
   readonly detail: string;
 }> = [
   {
-    value: "copy",
-    label: "Copy everything",
-    detail: "Includes uncommitted and ignored files, and secrets unless you leave them out.",
-  },
-  {
     value: "clone",
-    label: "Clone clean repositories from Git",
-    detail: "Repositories with nothing uncommitted come from their remotes; the rest is copied.",
+    detail:
+      "Repositories new there download from GitHub or their Git host; one with unpushed commits or stashes is copied whole. Uncommitted and ignored files, and secrets unless you leave them out, come from this machine.",
   },
   {
-    value: "folder",
-    label: "Git only, no file copy",
+    value: "copy",
     detail:
-      "Continues in a folder already saved there, which updates from origin. Always moves the coordinator.",
+      "Also brings unpushed commits, local branches and stashes. Slower for large repositories.",
+  },
+  {
+    // Not a choice: "Continue in the folder already there" and an unfinished Git handoff open on it.
+    value: "folder",
+    detail:
+      "Continues in a folder already saved there, which updates from origin. Always moves the coordinator there.",
   },
 ];
 
-/** The plain name of a way files travel, as Details lists it. */
-export const methodLabel = (method: HandoffFolderMethod): string =>
-  METHODS.find((item) => item.value === method)?.label ?? "";
+/**
+ * The plain name of a way files travel, as Details lists it. The whole-folder copy is
+ * "Compare all files…" when it syncs into a folder the machine already has.
+ */
+export const methodLabel = (
+  method: HandoffFolderMethod,
+  context: { readonly sync?: boolean | undefined; readonly sourceLabel?: string | undefined },
+): SendText =>
+  method === "clone"
+    ? { text: "Download from GitHub (recommended)" }
+    : method === "folder"
+      ? { text: "Continue in the folder already there" }
+      : context.sync
+        ? { text: "Compare all files…" }
+        : {
+            text: "Copy the whole folder from {source}",
+            values: { source: context.sourceLabel ?? "this machine" },
+          };
 
 /** How files travel. Reads the dialog's method; renders nothing outside the dialog. */
 export function FilesTravelChoice() {
+  const tx = useTx();
   const dialog = useProjectMoveDialog();
   if (!dialog) return null;
-  const { method, onMethodChange, methodDisabled, intent } = dialog;
+  const { method, onMethodChange, methodDisabled } = dialog;
+  // "folder" moves the coordinator, so it is off where it may not move (`moveRefusal`).
+  const refused = moveRefusal(dialog.send);
+  // "folder" is listed only while it is the current way, so the person can leave it.
+  const choices = METHODS.filter(
+    (item) =>
+      item.value === method ||
+      (item.value !== "folder" && !(item.value === "clone" && dialog.wholeFolderOnly)),
+  );
   return (
     <fieldset disabled={methodDisabled} className="min-w-0" data-slot="handoff-method">
       <legend className="mb-2 text-sm font-medium">How files travel</legend>
@@ -224,9 +357,9 @@ export function FilesTravelChoice() {
         disabled={methodDisabled}
         aria-label="How files travel"
       >
-        {METHODS.map((item) => {
-          // Git carries the coordinator with the commits; it cannot keep it here.
-          const blocked = item.value === "folder" && intent === "copy";
+        {choices.map((item) => {
+          const label = methodLabel(item.value, dialog);
+          const blocked = item.value === "folder" && refused !== null;
           return (
             <label
               key={item.value}
@@ -236,9 +369,13 @@ export function FilesTravelChoice() {
                 <Radio value={item.value} disabled={blocked} />
               </span>
               <span className="min-w-0 leading-5">
-                <span className="block wrap-anywhere">{item.label}</span>
+                <span className="block wrap-anywhere">{tx(label.text, label.values)}</span>
                 <span className="block wrap-anywhere text-xs text-muted-foreground">
-                  {blocked ? "Only when the coordinator moves." : item.detail}
+                  {blocked
+                    ? refused === "main"
+                      ? tx("Not available: that machine already has the coordinator.")
+                      : tx("Not available: it would move the coordinator into a separate project.")
+                    : tx(item.detail)}
                 </span>
               </span>
             </label>

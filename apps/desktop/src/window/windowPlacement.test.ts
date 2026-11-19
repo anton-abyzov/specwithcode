@@ -135,3 +135,26 @@ describe("displayForBounds", () => {
     );
   });
 });
+
+describe("windowPositionIsReported", () => {
+  const reported = (platform: NodeJS.Platform, env: NodeJS.ProcessEnv, ozonePlatform = "") =>
+    WindowPlacement.windowPositionIsReported({ platform, env, ozonePlatform });
+
+  it("is known on macOS and Windows", () => {
+    assert.isTrue(reported("darwin", { XDG_SESSION_TYPE: "wayland" }));
+    assert.isTrue(reported("win32", {}));
+  });
+
+  it("is known on X11 and under XWayland", () => {
+    assert.isTrue(reported("linux", { XDG_SESSION_TYPE: "x11", DISPLAY: ":0" }));
+    assert.isTrue(reported("linux", { XDG_SESSION_TYPE: "wayland" }, "x11"));
+    assert.isTrue(reported("linux", { WAYLAND_DISPLAY: "wayland-0", DISPLAY: ":0" }));
+  });
+
+  it("is unknown under native Wayland", () => {
+    assert.isFalse(reported("linux", { XDG_SESSION_TYPE: "wayland" }));
+    assert.isFalse(reported("linux", { XDG_SESSION_TYPE: "wayland" }, "auto"));
+    assert.isFalse(reported("linux", { WAYLAND_DISPLAY: "wayland-0" }));
+    assert.isFalse(reported("linux", { XDG_SESSION_TYPE: "x11" }, "wayland"));
+  });
+});

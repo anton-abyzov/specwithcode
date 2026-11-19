@@ -29,7 +29,48 @@ document.documentElement.classList.toggle("dark", dark);
 applyThemePalette("studio-chat", dark ? "dark" : "light");
 document.body.style.backgroundColor = dark ? "#1f1f1f" : "#fafafa";
 
-const prompt: PendingUserInput = {
+// `?case=link`: options whose descriptions carry web links, as in the "Open increments" card of
+// November 19, 2026. `?panel=<px>` sets the thread panel height the card sizes itself against.
+const linkCase = params.get("case") === "link";
+const panelHeight = params.get("panel");
+if (panelHeight) document.documentElement.style.setProperty("--chat-panel-height", `${panelHeight}px`);
+
+const linkPrompt: PendingUserInput = {
+  requestId: RuntimeRequestId.make("ask-user:fixture-links"),
+  createdAt: "2026-11-19T06:20:00.000Z",
+  responseCapability: "message",
+  responseMode: "message",
+  dismissible: true,
+  questions: [
+    {
+      id: "q1",
+      header: "0898",
+      question:
+        "Increment 0898 (hosted private skills) is planned, and no content leaves a machine. It needs two answers before it can start: hosted on https://verified-skill.com tenants, and Cursor seats shown as \"usage not readable yet\". What do you want?",
+      multiSelect: false,
+      allowCustomAnswer: true,
+      options: [
+        {
+          label: "Start, as recommended",
+          description:
+            "Tenants live on https://verified-skill.com under each team's own name, and Cursor seats say \"usage not readable yet\" until Cursor offers a reader.",
+          recommended: true,
+        },
+        {
+          label: "Start with my own tenant host",
+          description:
+            "Tenants live on a host you name in Settings; https://verified-skill.com stays the public catalog only.",
+        },
+        {
+          label: "Hold 0898",
+          description: "Nothing starts; the increment stays planned with both questions open.",
+        },
+      ],
+    },
+  ],
+};
+
+const basePrompt: PendingUserInput = {
   requestId: RuntimeRequestId.make("ask-user:fixture"),
   createdAt: "2026-10-15T14:35:00.000Z",
   responseCapability: "message",
@@ -62,6 +103,8 @@ const prompt: PendingUserInput = {
     },
   ],
 };
+
+const prompt = linkCase ? linkPrompt : basePrompt;
 
 const at = DateTime.makeUnsafe(Date.now() - 4 * 86_400_000);
 const answered = {

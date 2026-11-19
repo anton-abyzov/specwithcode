@@ -42,6 +42,8 @@ import {
   type PinThreadInput,
   type ReorderPinnedThreadInput,
   type ReorderActiveThreadInput,
+  type SetThreadAdvisorModeInput,
+  type SetThreadReviewModeInput,
   type SetThreadAutoSettleInput,
   type SettleThreadInput,
   type SnoozeThreadInput,
@@ -81,6 +83,8 @@ import {
   pinThread,
   reorderPinnedThread,
   reorderActiveThread,
+  setThreadAdvisorMode,
+  setThreadReviewMode,
   setThreadAutoSettle,
   settleThread,
   snoozeThread,
@@ -126,6 +130,8 @@ export type {
   PinThreadInput,
   ReorderPinnedThreadInput,
   ReorderActiveThreadInput,
+  SetThreadAdvisorModeInput,
+  SetThreadReviewModeInput,
   SetThreadAutoSettleInput,
   SettleThreadInput,
   SnoozeThreadInput,
@@ -223,6 +229,18 @@ export function createThreadEnvironmentAtoms<R, E>(
     setAutoSettle: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:set-auto-settle",
       execute: (input: SetThreadAutoSettleInput) => setThreadAutoSettle(input),
+      scheduler,
+      concurrency,
+    }),
+    setAdvisorMode: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:set-advisor-mode",
+      execute: (input: SetThreadAdvisorModeInput) => setThreadAdvisorMode(input),
+      scheduler,
+      concurrency,
+    }),
+    setReviewMode: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:set-review-mode",
+      execute: (input: SetThreadReviewModeInput) => setThreadReviewMode(input),
       scheduler,
       concurrency,
     }),
@@ -483,6 +501,14 @@ export function createThreadEnvironmentAtoms<R, E>(
     setAutoSettle: optimistic.wrap(commands.setAutoSettle, (thread, input, now) => ({
       ...thread,
       autoSettleDisabledAt: input.enabled ? null : (thread.autoSettleDisabledAt ?? now),
+    })),
+    setAdvisorMode: optimistic.wrap(commands.setAdvisorMode, (thread, input) => ({
+      ...thread,
+      advisorMode: input.advisorMode,
+    })),
+    setReviewMode: optimistic.wrap(commands.setReviewMode, (thread, input) => ({
+      ...thread,
+      reviewMode: input.reviewMode,
     })),
     pin: optimistic.wrap(commands.pin, (thread, input, now) => ({
       ...thread,

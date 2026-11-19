@@ -264,6 +264,12 @@ it.effect("refuses changes to a resting copy: its runner's copy is the only one 
       Effect.gen(function* () {
         yield* service.upsert(taskInput());
         yield* service.setEnabled({ id: "routine" as never, enabled: false });
+        // The coordinator sent it to another machine, which marks it as a copy.
+        yield* (yield* service.routineCopies!()).snapshot({
+          projectId: "project-a" as ProjectId,
+          logicalProjectId: "logical-a",
+          recipient: "env-standby",
+        });
         state.role = TRANSFERRED;
         const refused = [
           yield* service.upsert(taskInput({ id: "routine" })).pipe(Effect.flip),
@@ -276,6 +282,54 @@ it.effect("refuses changes to a resting copy: its runner's copy is the only one 
         // This copy takes over: changes are made here again.
         state.role = ACTIVE;
         yield* service.setEnabled({ id: "routine" as never, enabled: true });
+      }),
+    );
+  }).pipe(Effect.provide(Sqlite.layerMemory)),
+);
+
+it.effect("a resting routine no other machine holds can be turned off and deleted here", () =>
+  Effect.gen(function* () {
+    const { state, run } = yield* harness;
+    yield* run((service) =>
+      Effect.gen(function* () {
+        // Made here while this copy was its own project, then it joined another coordinator.
+        yield* service.upsert(taskInput());
+        state.role = TRANSFERRED;
+        const refused = [
+          yield* service.upsert(taskInput({ id: "routine", title: "Edited" })).pipe(Effect.flip),
+          yield* service.runNow({ id: "routine" as never }).pipe(Effect.flip),
+        ];
+        assert.equal(refused[0]!.message, RESTING_ROUTINE_CHANGE_REFUSAL);
+        const off = yield* service.setEnabled({ id: "routine" as never, enabled: false });
+        assert.equal(off.task.enabled, false);
+        // Turning it back on would promise runs this copy cannot make.
+        const on = yield* service
+          .setEnabled({ id: "routine" as never, enabled: true })
+          .pipe(Effect.flip);
+        assert.equal(on.message, RESTING_ROUTINE_CHANGE_REFUSAL);
+        yield* service.delete({ id: "routine" as never });
+        assert.deepEqual((yield* service.list()).tasks, []);
+      }),
+    );
+  }).pipe(Effect.provide(Sqlite.layerMemory)),
+);
+
+it.effect("a mark left by an earlier shared project does not strand a resting routine", () =>
+  Effect.gen(function* () {
+    const { state, run } = yield* harness;
+    yield* run((service) =>
+      Effect.gen(function* () {
+        yield* service.upsert(taskInput());
+        // This copy coordinated another shared project once and sent the routine to its standby.
+        yield* (yield* service.routineCopies!()).snapshot({
+          projectId: "project-a" as ProjectId,
+          logicalProjectId: "logical:earlier",
+          recipient: "env-standby",
+        });
+        state.role = TRANSFERRED;
+        yield* service.setEnabled({ id: "routine" as never, enabled: false });
+        yield* service.delete({ id: "routine" as never });
+        assert.deepEqual((yield* service.list()).tasks, []);
       }),
     );
   }).pipe(Effect.provide(Sqlite.layerMemory)),

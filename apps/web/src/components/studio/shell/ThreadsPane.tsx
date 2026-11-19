@@ -72,6 +72,7 @@ import {
   threadStatusWord,
   threadTone,
   type ThreadSort,
+  threadGroupHeading,
 } from "../../../studio/shellModel";
 import {
   Menu,
@@ -86,6 +87,8 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../../ui/menu";
+import { Button } from "../../ui/button";
+import { toastManager } from "../../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
 import { ThreadModelBadge, useProviderEntriesByEnvironment } from "./ModelBadge";
 import { PlanProgressChip } from "../PlanProgressChip";
@@ -98,7 +101,13 @@ import { UnplannedThreadChip, UnplannedThreadsFilter } from "./UnplannedThreads"
 import { useUnplannedNotice } from "../../../studio/unplannedNotice";
 import { HandoffRowAction, HandoffRowBadge } from "../../handoff/HandoffBadge";
 import { designRoute } from "../../design/gallery/designLinks";
-import { useUnreachableHosts } from "../../../studio/unreachableHosts";
+import { SignedOutBanner } from "./SignedOutBanner";
+import {
+  useHostReachStates,
+  useHostDownNotes,
+  useIdentityMismatchedHosts,
+  useUnreachableHosts,
+} from "../../../studio/unreachableHosts";
 
 const SORT_STORAGE_KEY = "studio:project-threads-sort:v1";
 const SortSchema = Schema.Literals(THREAD_SORTS);
@@ -154,6 +163,12 @@ export function ThreadsPane({
   findRef: RefObject<HTMLInputElement | null>;
   onOpen: (id: ThreadId, environmentId?: EnvironmentId) => void;
   canChangeThread?: (thread: EnvironmentThreadShell) => boolean;
+  /**
+   * Why a row's Resolve or Reopen cannot run from here, or null when it can. A thread resolves
+   * on the machine that runs it, so this is not `canChangeThread`, which is about this machine.
+   * Without it the row follows `canChangeThread`, then `canChange`.
+   */
+  resolveBlockedReason?: (thread: EnvironmentThreadShell) => string | null;
   machineLabels?: ReadonlyMap<string, string>;
   onToggleResolved: (thread: EnvironmentThreadShell) => void;
   /**
@@ -218,6 +233,9 @@ export function ThreadsPane({
     Boolean(props.remoteWorkerCount) ||
     allThreads.some((thread) => thread.environmentId !== props.environmentId);
   const unreachable = useUnreachableHosts();
+  const hostReach = useHostReachStates();
+  const identityMismatched = useIdentityMismatchedHosts();
+  const hostNotes = useHostDownNotes();
   const { environments } = useEnvironments();
   const nickname = useMachineNicknames();
   const machineIdentity = useMachineIdentities();
@@ -861,6 +879,7 @@ export function ThreadsPane({
           ) : null}
         </header>
         {props.shelf}
+        <SignedOutBanner />
         {props.renderNotice?.({ machineFilter })}
         <div id="sws-threads-find">
           {findShown ? (
@@ -938,7 +957,7 @@ export function ThreadsPane({
                   onClick={openEverything ? undefined : () => setGroupFolded(group, !isFolded)}
                 >
                   {isFolded ? <ChevronRightIcon aria-hidden /> : <ChevronDownIcon aria-hidden />}
-                  {group}
+                  {threadGroupHeading(group)}
                   <span className="sws-group-count">
                     {threads.length}
                     {openEverything ? " shown" : ""}
@@ -973,6 +992,9 @@ export function ThreadsPane({
                     const settled = thread.settledOverride === "settled";
                     const archived = thread.archivedAt !== null;
                     const action = archived || settled ? "Reopen" : "Resolve";
+                    const resolveBlockedText = props.resolveBlockedReason?.(thread) ?? null;
+                    const resolveBlocked =
+                      resolveBlockedText === null ? null : say(resolveBlockedText);
                     // The group heading already says "Working" or "Needs you"; a row
                     // names only a more specific state, such as "Answer needed".
                     const statusWord =
@@ -980,7 +1002,13 @@ export function ThreadsPane({
                       (settled && subagentsWorking > 0
                         ? `${subagentsWorking} ${subagentsWorking === 1 ? "subagent" : "subagents"} working`
                         : withRunningSubagents(
-                            threadStatusWord(thread, hostOffline),
+                            threadStatusWord(
+                              thread,
+                              hostOffline,
+                              hostReach.get(thread.environmentId),
+                              identityMismatched.has(thread.environmentId),
+                              hostNotes.get(thread.environmentId) ?? null,
+                            ),
                             subagentsWorking,
                           ));
                     const rowStatus = statusWord === group ? null : statusWord;
@@ -1037,7 +1065,7 @@ export function ThreadsPane({
                                             {rowStatus}
                                           </span>
                                         );
-                                        // Blocked says on hover what the report asks of the reader.
+                                        // A report blocker's whole ask shows on hover; the row shows its first sentence.
                                         return blocker ? (
                                           <Tip label={blocker} side="top">
                                             {word}
@@ -1165,17 +1193,31 @@ export function ThreadsPane({
                               props.onOpen(threadId, environmentId)
                             }
                           />
-                          <Tip label={`${action} ${thread.title}`}>
+                          <Tip label={resolveBlocked ?? `${action} ${thread.title}`}>
                             <button
                               type="button"
                               className="sws-thread-action"
                               disabled={
-                                props.canChangeThread
-                                  ? !props.canChangeThread(thread)
-                                  : !props.canChange
+                                props.resolveBlockedReason
+                                  ? false
+                                  : props.canChangeThread
+                                    ? !props.canChangeThread(thread)
+                                    : !props.canChange
                               }
+                              // Blocked says why on hover and on click: a disabled button does neither.
+                              aria-disabled={resolveBlocked !== null || undefined}
                               aria-label={action}
                               onClick={() => {
+                                if (resolveBlocked !== null) {
+                                  toastManager.add({
+                                    // One notice per thread, however often it is clicked.
+                                    id: `thread-resolve-blocked:${thread.environmentId}:${thread.id}`,
+                                    type: "warning",
+                                    title: say(`Can't ${action.toLowerCase()} this thread`),
+                                    description: resolveBlocked,
+                                  });
+                                  return;
+                                }
                                 // Show where it went, so the same row can undo it.
                                 if (action === "Resolve") setGroupFolded("Resolved", false);
                                 props.onToggleResolved(thread);
@@ -1236,9 +1278,11 @@ export function ThreadsPane({
                 </div>
               )}
               {isFolded ? null : hidden > 0 ? (
-                <button
-                  type="button"
-                  className="sws-show-more"
+                <Button
+                  variant="outline"
+                  size="xs"
+                  className="mx-auto mt-0.5 mb-1 flex w-fit"
+                  data-thread-group-pager
                   onClick={() =>
                     setLimits((previous) => ({
                       ...previous,
@@ -1248,19 +1292,22 @@ export function ThreadsPane({
                 >
                   Show more
                   <span className="sr-only">
-                    , {Math.min(hidden, THREAD_GROUP_PAGE_STEP)} of {hidden} hidden {group} threads
+                    , {Math.min(hidden, THREAD_GROUP_PAGE_STEP)} of {hidden} hidden{" "}
+                    {threadGroupHeading(group)} threads
                   </span>
-                </button>
+                </Button>
               ) : !openEverything && threads.length > THREAD_GROUP_PAGE ? (
-                <button
-                  type="button"
-                  className="sws-show-more"
+                <Button
+                  variant="outline"
+                  size="xs"
+                  className="mx-auto mt-0.5 mb-1 flex w-fit"
+                  data-thread-group-pager
                   onClick={() =>
                     setLimits((previous) => ({ ...previous, [group]: THREAD_GROUP_PAGE }))
                   }
                 >
                   Show fewer
-                </button>
+                </Button>
               ) : null}
             </section>
           );

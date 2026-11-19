@@ -1,9 +1,11 @@
 import * as DateTime from "effect/DateTime";
 // @vitest-environment jsdom
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import { AsyncResult } from "effect/reactivity";
 import { act, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, vi } from "vite-plus/test";
@@ -18,10 +20,10 @@ const state = vi.hoisted(() => ({
   send: vi.fn<FixtureProcedure>(),
   /** Renders of the Markdown stand-in whose props changed. */
   markdownRenders: 0,
-  nativeContinue: vi.fn(async (_kind: string, _selection: unknown) => {}),
+  nativeContinue: vi.fn<FixtureProcedure>(async (_kind: string, _selection: unknown) => {}),
   nativeError: null as string | null,
-  openLink: vi.fn(async () => undefined),
-  openMenu: vi.fn(async () => undefined),
+  openLink: vi.fn<FixtureProcedure>(async () => undefined),
+  openMenu: vi.fn<FixtureProcedure>(async () => undefined),
   refresh: vi.fn<FixtureProcedure>(),
   settle: vi.fn<FixtureProcedure>(),
   navigate: vi.fn<FixtureProcedure>(),
@@ -73,7 +75,7 @@ const state = vi.hoisted(() => ({
   /** The coordinator's runtime requests; a pending user_input one with its card asks a question. */
   runtimeRequests: [] as unknown[],
   detailStatus: "live",
-  shellRefresh: vi.fn(),
+  shellRefresh: vi.fn<FixtureProcedure>(),
   coordinatorId: "coord" as string | null,
   coordinatorModel: { instanceId: "claude-native", model: "coordinator-model" } as {
     instanceId: string;
@@ -127,6 +129,16 @@ const state = vi.hoisted(() => ({
   offlineHosts: [] as string[],
   /** Other machines this device is paired with; each is connected unless offline. */
   pairedHosts: [] as string[],
+  /** Paired machines this browser may operate; a paired machine is read-only until listed. */
+  operableHosts: [] as string[],
+  /** Re-reads the archive after history is restored. */
+  archivedRefresh: vi.fn<FixtureProcedure>(),
+  /** Machines whose grant for this browser has not loaded yet. */
+  accessPendingHosts: [] as string[],
+  /** Machines whose server predates Resolve. */
+  settlementUnsupportedHosts: [] as string[],
+  /** Machines whose server details have not loaded yet. */
+  serverConfigPendingHosts: [] as string[],
   /** Paired machines that are connected but have not sent their projects since. */
   syncingHosts: [] as string[],
   /** What the project page's folder check reports, unless the real check runs. */
@@ -168,7 +180,12 @@ vi.mock("../settings/useSettingsProjectGroups", () => ({
 const noArchivedSnapshots = vi.hoisted(() => Object.freeze([]));
 vi.mock("../../lib/archivedThreadsState", () => ({
   // One list, as the atom answers: a fresh one per read would look like a new archive.
-  useArchivedThreadSnapshots: () => ({ snapshots: noArchivedSnapshots, error: null }),
+  useArchivedThreadSnapshots: () => ({
+    snapshots: noArchivedSnapshots,
+    error: null,
+    isLoading: false,
+    refresh: state.archivedRefresh,
+  }),
 }));
 vi.mock("../../state/entities", () => ({
   useAllEnvironmentShellsBootstrapped: () => state.shellsBootstrapped,
@@ -232,9 +249,38 @@ vi.mock("../../state/entities", () => ({
   useThreadHistory: () => ({ hasMoreHistory: false }),
   useThreadStatus: () => state.detailStatus,
   // The More menu reads each machine's scratch folder to leave Design off "No project".
-  useServerConfigs: () => new Map(),
+  // Resolve reads each machine's version: one that predates it cannot resolve threads.
+  useServerConfigs: () => serverConfigsByHost(),
 }));
+const keptServerConfigs = vi.hoisted(() => ({ key: "", configs: new Map<string, unknown>() }));
+/** Every machine's server details, as one list that keeps its identity while nothing changed. */
+function serverConfigsByHost() {
+  const hosts = ["host", ...state.recoveryHosts, ...state.pairedHosts].filter(
+    (host) => !state.serverConfigPendingHosts.includes(host),
+  );
+  const key = `${hosts.join("|")}#${state.settlementUnsupportedHosts.join("|")}`;
+  if (keptServerConfigs.key !== key) {
+    keptServerConfigs.key = key;
+    keptServerConfigs.configs = new Map(
+      hosts.map((host) => [
+        host,
+        {
+          environment: {
+            capabilities: state.settlementUnsupportedHosts.includes(host)
+              ? {}
+              : { threadSettlement: true },
+          },
+        },
+      ]),
+    );
+  }
+  return keptServerConfigs.configs;
+}
 const noUnreachableEnvironments = vi.hoisted(() => new Set<string>());
+// Retired machine records come from Connect and the fleet; none in these fixtures.
+vi.mock("../settings/useReplacedMachineRecords", () => ({
+  useRetiredMachineRecords: () => new Map(),
+}));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({
     isReady: true,
@@ -362,6 +408,19 @@ vi.mock("../../state/session", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/session")>()),
   readEnvironmentScope: () => state.canOperate,
   useEnvironmentsWithScope: () => new Set(state.canOperate ? ["host", ...state.recoveryHosts] : []),
+  // A paired machine's grant is denied until listed as operable; one still loading is unknown.
+  useEnvironmentsScopeAccess: (environmentIds: readonly string[]) =>
+    new Map(
+      environmentIds.map((environmentId) => [
+        environmentId,
+        state.accessPendingHosts.includes(environmentId)
+          ? "unknown"
+          : state.canOperate &&
+              ["host", ...state.recoveryHosts, ...state.operableHosts].includes(environmentId)
+            ? "granted"
+            : "denied",
+      ]),
+    ),
   useEnvironmentScope: (_environmentId: string, scope: string) =>
     scope === "source-control:write"
       ? (state.canWriteSourceControl ?? state.canOperate)
@@ -427,10 +486,24 @@ vi.mock("../../state/use-atom-query-runner", () => ({
 vi.mock("../../state/threads", () => ({
   threadEnvironment: { loadEarlierHistory: {}, updateMetadata: {}, startTurn: {} },
 }));
+/** The failure unsettleThread answers with, in the shape this file's squash mock reads. */
+function settlementUnsupportedFailure() {
+  const error = Object.assign(
+    new Error(
+      "This environment's server does not support resolving threads yet. Update the server to use Resolve.",
+    ),
+    { _tag: "ThreadSettlementUnsupportedError" },
+  );
+  return { ...AsyncResult.failure(Cause.fail(error)), _tag: "Failure" as const, error };
+}
 vi.mock("../../hooks/useThreadActions", () => ({
   useThreadActions: () => ({
     settleThread: state.settle,
-    unsettleThread: state.settle,
+    // Like the real action: a server that predates Resolve refuses before sending anything.
+    unsettleThread: (ref: { environmentId: string }) =>
+      state.settlementUnsupportedHosts.includes(ref.environmentId)
+        ? Promise.resolve(settlementUnsupportedFailure())
+        : state.settle(ref),
     unarchiveThread: state.settle,
   }),
 }));
@@ -859,6 +932,11 @@ beforeEach(() => {
   state.recoveryHosts = [];
   state.offlineHosts = [];
   state.pairedHosts = [];
+  state.operableHosts = [];
+  state.accessPendingHosts = [];
+  state.archivedRefresh.mockClear();
+  state.settlementUnsupportedHosts = [];
+  state.serverConfigPendingHosts = [];
   state.syncingHosts = [];
   state.folderHealth = "unknown";
   state.realFolderHealth = false;

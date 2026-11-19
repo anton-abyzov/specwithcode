@@ -27,6 +27,7 @@ import {
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { useEnvironments } from "../../state/environments";
+import { defaultTrackSelections } from "@specweave-studio/shared/modelTracks";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Button } from "../ui/button";
@@ -74,9 +75,15 @@ function LaneList(props: {
   const tx = useTx();
   const { lane, models, providers, onChange } = props;
   if (models.length === 0) {
+    // Nothing saved: a limited thread still continues down the built-in order.
+    const builtIn = defaultTrackSelections(lane === "complex" ? "complex" : "daily", providers);
     return (
-      <div className="text-xs text-muted-foreground italic">
-        {tx("No models configured for this lane. Workers keep their baseline model.")}
+      <div className="text-xs text-muted-foreground">
+        {builtIn.length === 0
+          ? tx("No models configured for this lane. Workers keep their baseline model.")
+          : `${tx("Built-in order for a limited thread")}: ${builtIn
+              .map((entry) => laneEntryLabel(providers, entry))
+              .join(", ")}. ${tx("Workers keep their baseline model until you add one.")}`}
       </div>
     );
   }
@@ -153,9 +160,11 @@ function LaneList(props: {
 /**
  * Model lanes: ordered lists for Complex/Creative and Routine work, plus
  * learned preferences per project. Replaces simple favorites as the primary
- * fallback and default routing lists.
+ * fallback and default routing lists. On the Models page the tracks replace
+ * the two lists, so `part` renders one remaining row: "quota" the expiring
+ * quota switch, "learned" the learned preferences.
  */
-export function ModelLanesSettings() {
+export function ModelLanesSettings({ part }: { readonly part?: "quota" | "learned" } = {}) {
   const tx = useTx();
   const { scope, target } = useSettingsScope();
   const settings = useScopedSettings();
@@ -226,212 +235,256 @@ export function ModelLanesSettings() {
 
   return (
     <>
-      <SettingsRow
-        serverScoped
-        settingKeys={["modelLanes"]}
-        mixed={mixedLanes}
-        id="model-lanes-routine"
-        title="Everyday work"
-        description={
-          isProjectScope
-            ? tx(
-                "Your models for regular, well-specified tasks in this project, best first. A new task starts on the first available one. With no fallback order, a thread that runs out continues down this list, each model on any provider that serves it, then hardest work.",
-              )
-            : tx(
-                "Your models for regular, well-specified tasks, best first. A new task starts on the first available one. With no fallback order, a thread that runs out continues down this list, each model on any provider that serves it, then hardest work. Projects can override it.",
-              )
-        }
-        resetAction={
-          routineList.length > 0 ? (
-            <SettingResetButton
-              label={tx("everyday work")}
-              onClick={() => saveLane("routine", [])}
+      {part === undefined ? (
+        <>
+          <SettingsRow
+            serverScoped
+            settingKeys={["modelLanes"]}
+            mixed={mixedLanes}
+            id="model-lanes-routine"
+            title="Everyday work"
+            description={
+              isProjectScope
+                ? tx(
+                    "Your models for regular, well-specified tasks in this project, best first. A new task starts on the first available one. With no fallback order, a thread that runs out continues down this list, each model on any provider that serves it, then hardest work.",
+                  )
+                : tx(
+                    "Your models for regular, well-specified tasks, best first. A new task starts on the first available one. With no fallback order, a thread that runs out continues down this list, each model on any provider that serves it, then hardest work. Projects can override it.",
+                  )
+            }
+            resetAction={
+              routineList.length > 0 ? (
+                <SettingResetButton
+                  label={tx("everyday work")}
+                  onClick={() => saveLane("routine", [])}
+                />
+              ) : null
+            }
+            control={
+              <div className="flex items-center gap-2">
+                {canSeedFavorites && routineList.length < MAX_LANE_MODELS ? (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    className="gap-1.5"
+                    onClick={() => seedFavoritesIntoLane("routine")}
+                  >
+                    <SparklesIcon className="size-3" />
+                    {tx("Seed from favorites")}
+                  </Button>
+                ) : null}
+                {pickerSelection ? (
+                  <ProviderModelPicker
+                    activeInstanceId={pickerSelection.instanceId}
+                    model={pickerSelection.model}
+                    lockedProvider={null}
+                    instanceEntries={entries}
+                    modelOptionsByInstance={modelOptions}
+                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                    triggerLabel={mixedLanes ? "Mixed" : "Add model"}
+                    triggerAriaLabel={tx("Add model to everyday work")}
+                    disabled={routineList.length >= MAX_LANE_MODELS}
+                    onInstanceModelChange={(instanceId, model) =>
+                      saveLane("routine", addLaneModel(routineList, instanceId, model))
+                    }
+                  />
+                ) : null}
+              </div>
+            }
+          >
+            <LaneList
+              lane="routine"
+              models={routineList}
+              providers={providers}
+              onChange={(models) => saveLane("routine", models)}
             />
-          ) : null
-        }
-        control={
-          <div className="flex items-center gap-2">
-            {canSeedFavorites && routineList.length < MAX_LANE_MODELS ? (
-              <Button
-                size="xs"
-                variant="outline"
-                className="gap-1.5"
-                onClick={() => seedFavoritesIntoLane("routine")}
-              >
-                <SparklesIcon className="size-3" />
-                {tx("Seed from favorites")}
-              </Button>
-            ) : null}
-            {pickerSelection ? (
-              <ProviderModelPicker
-                activeInstanceId={pickerSelection.instanceId}
-                model={pickerSelection.model}
-                lockedProvider={null}
-                instanceEntries={entries}
-                modelOptionsByInstance={modelOptions}
-                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                triggerLabel={mixedLanes ? "Mixed" : "Add model"}
-                triggerAriaLabel={tx("Add model to everyday work")}
-                disabled={routineList.length >= MAX_LANE_MODELS}
-                onInstanceModelChange={(instanceId, model) =>
-                  saveLane("routine", addLaneModel(routineList, instanceId, model))
+          </SettingsRow>
+
+          <SettingsRow
+            serverScoped
+            settingKeys={["modelLanes"]}
+            mixed={mixedLanes}
+            id="model-lanes-complex"
+            title="Hardest work"
+            description={
+              isProjectScope
+                ? tx(
+                    "Your best models for architecture, design, deep debugging and open-ended work in this project, best first. Hard tasks and the coordinator start on the first available one. With no fallback order, a thread that runs out continues down this list, then everyday work.",
+                  )
+                : tx(
+                    "Your best models for architecture, design, deep debugging and open-ended work, best first. Hard tasks and the coordinator start on the first available one. With no fallback order, a thread that runs out continues down this list, then everyday work. Projects can override it.",
+                  )
+            }
+            resetAction={
+              complexList.length > 0 ? (
+                <SettingResetButton
+                  label={tx("hardest work")}
+                  onClick={() => saveLane("complex", [])}
+                />
+              ) : null
+            }
+            control={
+              <div className="flex items-center gap-2">
+                {canSeedFavorites && complexList.length < MAX_LANE_MODELS ? (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    className="gap-1.5"
+                    onClick={() => seedFavoritesIntoLane("complex")}
+                  >
+                    <SparklesIcon className="size-3" />
+                    {tx("Seed from favorites")}
+                  </Button>
+                ) : null}
+                {pickerSelection ? (
+                  <ProviderModelPicker
+                    activeInstanceId={pickerSelection.instanceId}
+                    model={pickerSelection.model}
+                    lockedProvider={null}
+                    instanceEntries={entries}
+                    modelOptionsByInstance={modelOptions}
+                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                    triggerLabel={mixedLanes ? "Mixed" : "Add model"}
+                    triggerAriaLabel={tx("Add model to hardest work")}
+                    disabled={complexList.length >= MAX_LANE_MODELS}
+                    onInstanceModelChange={(instanceId, model) =>
+                      saveLane("complex", addLaneModel(complexList, instanceId, model))
+                    }
+                  />
+                ) : null}
+              </div>
+            }
+          >
+            <LaneList
+              lane="complex"
+              models={complexList}
+              providers={providers}
+              onChange={(models) => saveLane("complex", models)}
+            />
+          </SettingsRow>
+        </>
+      ) : null}
+      {part !== "learned" ? (
+        <>
+          <SettingsRow
+            serverScoped
+            settingKeys={["taskRouting"]}
+            mixed={mixedRouting}
+            id="model-lanes-expiring-quota"
+            title={tx("Use quota before it resets")}
+            description="When a model later in a lane has much of its subscription quota left and that quota resets soon (the 5-hour window within 90 minutes, the weekly within a day), the worker starts there instead, so the first model keeps its own quota. It only picks models already in the lane, and only from quota windows a subscription reports."
+            control={
+              <Switch
+                aria-label={tx("Use quota before it resets")}
+                checked={settings.taskRouting.spendExpiringQuota}
+                onCheckedChange={(spendExpiringQuota) =>
+                  updateSettings({ taskRouting: { ...settings.taskRouting, spendExpiringQuota } })
                 }
               />
-            ) : null}
-          </div>
-        }
-      >
-        <LaneList
-          lane="routine"
-          models={routineList}
-          providers={providers}
-          onChange={(models) => saveLane("routine", models)}
-        />
-      </SettingsRow>
-
-      <SettingsRow
-        serverScoped
-        settingKeys={["modelLanes"]}
-        mixed={mixedLanes}
-        id="model-lanes-complex"
-        title="Hardest work"
-        description={
-          isProjectScope
-            ? tx(
-                "Your best models for architecture, design, deep debugging and open-ended work in this project, best first. Hard tasks and the coordinator start on the first available one. With no fallback order, a thread that runs out continues down this list, then everyday work.",
-              )
-            : tx(
-                "Your best models for architecture, design, deep debugging and open-ended work, best first. Hard tasks and the coordinator start on the first available one. With no fallback order, a thread that runs out continues down this list, then everyday work. Projects can override it.",
-              )
-        }
-        resetAction={
-          complexList.length > 0 ? (
-            <SettingResetButton
-              label={tx("hardest work")}
-              onClick={() => saveLane("complex", [])}
-            />
-          ) : null
-        }
-        control={
-          <div className="flex items-center gap-2">
-            {canSeedFavorites && complexList.length < MAX_LANE_MODELS ? (
-              <Button
-                size="xs"
-                variant="outline"
-                className="gap-1.5"
-                onClick={() => seedFavoritesIntoLane("complex")}
-              >
-                <SparklesIcon className="size-3" />
-                {tx("Seed from favorites")}
-              </Button>
-            ) : null}
-            {pickerSelection ? (
-              <ProviderModelPicker
-                activeInstanceId={pickerSelection.instanceId}
-                model={pickerSelection.model}
-                lockedProvider={null}
-                instanceEntries={entries}
-                modelOptionsByInstance={modelOptions}
-                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                triggerLabel={mixedLanes ? "Mixed" : "Add model"}
-                triggerAriaLabel={tx("Add model to hardest work")}
-                disabled={complexList.length >= MAX_LANE_MODELS}
-                onInstanceModelChange={(instanceId, model) =>
-                  saveLane("complex", addLaneModel(complexList, instanceId, model))
-                }
-              />
-            ) : null}
-          </div>
-        }
-      >
-        <LaneList
-          lane="complex"
-          models={complexList}
-          providers={providers}
-          onChange={(models) => saveLane("complex", models)}
-        />
-      </SettingsRow>
-
-      <SettingsRow
-        serverScoped
-        settingKeys={["taskRouting"]}
-        mixed={mixedRouting}
-        id="model-lanes-expiring-quota"
-        title={tx("Use quota before it resets")}
-        description="When a model later in a lane has much of its subscription quota left and that quota resets soon (the 5-hour window within 90 minutes, the weekly within a day), the worker starts there instead, so the first model keeps its own quota. It only picks models already in the lane, and only from quota windows a subscription reports."
-        control={
-          <Switch
-            aria-label={tx("Use quota before it resets")}
-            checked={settings.taskRouting.spendExpiringQuota}
-            onCheckedChange={(spendExpiringQuota) =>
-              updateSettings({ taskRouting: { ...settings.taskRouting, spendExpiringQuota } })
             }
           />
-        }
-      />
-
-      <SettingsRow
-        serverScoped
-        settingKeys={["learnedModelPreferences"]}
-        mixed={mixedLearned}
-        id="learned-model-preferences"
-        title="Learned model preferences"
-        description={
-          isProjectScope
-            ? tx(
-                "Rules learned from your feedback in this project, or recorded by the coordinator. Matching prefer rules are tried first; avoid rules are skipped.",
-              )
-            : tx(
-                "Rules learned from your feedback, or recorded by the coordinator. Matching prefer rules are tried first; avoid rules are skipped.",
-              )
-        }
-        resetAction={
-          learnedList.length > 0 ? (
-            <SettingResetButton
-              label={tx("learned preferences")}
-              onClick={() => updateSettings({ learnedModelPreferences: [] })}
+          {isProjectScope ? null : (
+            <SettingsRow
+              serverScoped
+              settingKeys={["quotaAlertsEnabled"]}
+              id="quota-alerts"
+              title="Warn before quota resets unused"
+              description="Shows a banner above the project list, and one notification, when a subscription is about to lose quota: a weekly or monthly window in its last two days that your pace will leave at least 40% unused, a banked reset in its last day, a limit the provider reset early, or a reset a provider promised for today. A 5-hour window never warns. Dismissing it holds until the next reset."
+              control={
+                <Switch
+                  aria-label="Warn before quota resets unused"
+                  checked={settings.quotaAlertsEnabled}
+                  onCheckedChange={(quotaAlertsEnabled) => updateSettings({ quotaAlertsEnabled })}
+                />
+              }
             />
-          ) : null
-        }
-      >
-        {learnedList.length === 0 ? (
-          <div className="text-xs text-muted-foreground italic">
-            {tx(
-              "No learned model preferences yet. Rules are learned when you give feedback in chat, or can be recorded by the coordinator.",
+          )}
+          {isProjectScope ? null : (
+            <SettingsRow
+              serverScoped
+              settingKeys={["resetAnnouncementsEnabled"]}
+              id="reset-announcements"
+              title="Read reset announcements"
+              description="Every half hour this machine reads a public feed of posts in which a provider resets limits, grants a banked reset or promises a reset (airesets.dev). Nothing about you is sent. Off stops every request; Usage > Limits > Subscriptions keeps what was already read."
+              control={
+                <Switch
+                  aria-label="Read reset announcements"
+                  checked={settings.resetAnnouncementsEnabled}
+                  onCheckedChange={(resetAnnouncementsEnabled) =>
+                    updateSettings({ resetAnnouncementsEnabled })
+                  }
+                />
+              }
+            />
+          )}
+        </>
+      ) : null}
+      {part !== "quota" ? (
+        <>
+          <SettingsRow
+            serverScoped
+            settingKeys={["learnedModelPreferences"]}
+            mixed={mixedLearned}
+            id="learned-model-preferences"
+            title="Learned model preferences"
+            description={
+              isProjectScope
+                ? tx(
+                    "Rules learned from your feedback in this project, or recorded by the coordinator. Matching prefer rules are tried first; avoid rules are skipped.",
+                  )
+                : tx(
+                    "Rules learned from your feedback, or recorded by the coordinator. Matching prefer rules are tried first; avoid rules are skipped.",
+                  )
+            }
+            resetAction={
+              learnedList.length > 0 ? (
+                <SettingResetButton
+                  label={tx("learned preferences")}
+                  onClick={() => updateSettings({ learnedModelPreferences: [] })}
+                />
+              ) : null
+            }
+          >
+            {learnedList.length === 0 ? (
+              <div className="text-xs text-muted-foreground italic">
+                {tx(
+                  "No learned model preferences yet. Rules are learned when you give feedback in chat, or can be recorded by the coordinator.",
+                )}
+              </div>
+            ) : (
+              <ul className="flex flex-col gap-1.5" aria-label={tx("Learned model preferences")}>
+                {learnedList.map((pref) => {
+                  const text = describePreference(pref, providers);
+                  return (
+                    <li
+                      key={pref.id}
+                      className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm"
+                      data-preference-id={pref.id}
+                    >
+                      <div className="flex flex-col min-w-0">
+                        <span className="font-medium truncate">{text}</span>
+                        {pref.note ? (
+                          <span className="text-xs text-muted-foreground truncate">
+                            {renderRich(tx("Feedback: “{note}”"), { note: pref.note })}
+                          </span>
+                        ) : null}
+                      </div>
+                      <Button
+                        size="icon-xs"
+                        variant="ghost"
+                        aria-label={`Delete preference ${pref.id}`}
+                        onClick={() => deleteLearnedRule(pref.id)}
+                      >
+                        <Trash2Icon className="size-3.5 text-muted-foreground hover:text-destructive-foreground" />
+                      </Button>
+                    </li>
+                  );
+                })}
+              </ul>
             )}
-          </div>
-        ) : (
-          <ul className="flex flex-col gap-1.5" aria-label={tx("Learned model preferences")}>
-            {learnedList.map((pref) => {
-              const text = describePreference(pref, providers);
-              return (
-                <li
-                  key={pref.id}
-                  className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm"
-                  data-preference-id={pref.id}
-                >
-                  <div className="flex flex-col min-w-0">
-                    <span className="font-medium truncate">{text}</span>
-                    {pref.note ? (
-                      <span className="text-xs text-muted-foreground truncate">
-                        {renderRich(tx("Feedback: “{note}”"), { note: pref.note })}
-                      </span>
-                    ) : null}
-                  </div>
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    aria-label={`Delete preference ${pref.id}`}
-                    onClick={() => deleteLearnedRule(pref.id)}
-                  >
-                    <Trash2Icon className="size-3.5 text-muted-foreground hover:text-destructive-foreground" />
-                  </Button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </SettingsRow>
+          </SettingsRow>
+        </>
+      ) : null}
     </>
   );
 }

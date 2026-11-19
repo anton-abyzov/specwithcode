@@ -62,9 +62,13 @@ import {
   type RemoteProjectMatch,
   translateModel,
 } from "./remoteWorkerMatching.ts";
+import { readProviders } from "./remoteWorkerProbe.ts";
+
+export { readProviderUsage } from "./remoteWorkerProbe.ts";
 import { remoteRepositoryBrief } from "./remoteRepositories.ts";
 import * as ProjectWorkspaceService from "../project/ProjectWorkspaceService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
+import { afterHandoffRunEnded, owesResult } from "./handoffDelivery.ts";
 import * as RemoteWorkerStore from "./RemoteWorkerStore.ts";
 import * as WorkerEpochStore from "./WorkerEpochStore.ts";
 import {
@@ -146,12 +150,23 @@ export interface RemoteLaunchInput extends LauncherKey {
    * there, or without one starts a scratch (projectless) thread there.
    */
   readonly localProject: Project | undefined;
+  /**
+   * The project here whose page lists a scratch launch: a project thread's reviewer
+   * on a machine without that project is still the project's work.
+   */
+  readonly listedUnder?: ProjectId | undefined;
   readonly machineProjectId: ProjectId | undefined;
   readonly title: string;
   /** What the agent asked for; an unavailable model is then an error. */
   readonly explicitModelSelection: ModelSelection | undefined;
   /** What the thread would inherit here; the other machine's default replaces an unavailable one. */
   readonly inheritedModelSelection: ModelSelection | undefined;
+  /**
+   * The model this project's settings pick for an unnamed thread, tried before
+   * the inherited one. It never starts there on a sign-in that machine's grant
+   * excludes or holds back from automatic starts; the inherited model is next.
+   */
+  readonly pickedModelSelection?: ModelSelection | undefined;
   readonly runtimeMode: RuntimeMode;
   readonly requestedRuntimeMode: RuntimeMode | undefined;
   readonly interactionMode: ProviderInteractionMode;
@@ -458,72 +473,6 @@ interface Probe extends MachineProbeFacts {
   readonly projects: ReadonlyArray<Project>;
 }
 
-const ISO_TIME = /^\d{4}-\d{2}-\d{2}T[\d:.]+(?:Z|[+-]\d{2}:\d{2})$/;
-const isoOrNull = (value: unknown) =>
-  typeof value === "string" && ISO_TIME.test(value) && Number.isFinite(Date.parse(value))
-    ? value
-    : null;
-
-/**
- * The usage another machine shares for one provider, or undefined when it
- * shares none (an older version) or sends something malformed. Unknown
- * usage is never read as room.
- */
-export const readProviderUsage = (
-  value: unknown,
-): OrchestratorMcpMachineProvider["usage"] | undefined => {
-  if (!isRecord(value) || typeof value.signedIn !== "boolean") return undefined;
-  const fingerprint =
-    typeof value.accountFingerprint === "string" &&
-    /^sha256:[a-f0-9]{64}$/.test(value.accountFingerprint)
-      ? value.accountFingerprint
-      : null;
-  const used =
-    typeof value.usedPercent === "number" &&
-    Number.isFinite(value.usedPercent) &&
-    value.usedPercent >= 0 &&
-    value.usedPercent <= 100
-      ? value.usedPercent
-      : null;
-  return {
-    accountFingerprint: fingerprint,
-    usedPercent: used,
-    resetsAt: isoOrNull(value.resetsAt),
-    signedIn: value.signedIn,
-    observedAt: isoOrNull(value.observedAt),
-    ...(value.limited === true ? { limited: true } : {}),
-  } as OrchestratorMcpMachineProvider["usage"];
-};
-
-const readProviders = (capabilities: unknown): ReadonlyArray<OrchestratorMcpMachineProvider> =>
-  (isRecord(capabilities) && Array.isArray(capabilities.providers) ? capabilities.providers : [])
-    .filter(isRecord)
-    .flatMap((provider) => {
-      if (
-        typeof provider.providerInstanceId !== "string" ||
-        typeof provider.driverKind !== "string"
-      )
-        return [];
-      const usage = readProviderUsage(provider.usage);
-      const models = (Array.isArray(provider.models) ? provider.models : []).filter(isRecord);
-      const paidModels = models.flatMap((model) =>
-        typeof model.id === "string" && model.paid === true ? [model.id] : [],
-      );
-      return [
-        {
-          providerInstanceId: provider.providerInstanceId,
-          driverKind: provider.driverKind,
-          models: models.flatMap((model) => (typeof model.id === "string" ? [model.id] : [])),
-          available: Array.isArray(provider.constraints) && provider.constraints.length === 0,
-          ...(usage === undefined ? {} : { usage }),
-          ...(typeof provider.allowedByGrant === "boolean"
-            ? { allowedByGrant: provider.allowedByGrant }
-            : {}),
-          ...(paidModels.length === 0 ? {} : { paidModels }),
-        } as unknown as OrchestratorMcpMachineProvider,
-      ];
-    });
-
 const make = Effect.gen(function* () {
   const targets = yield* FleetTargets.FleetTargets;
   const grants = yield* FleetWorkerGrants.FleetWorkerGrants;
@@ -792,6 +741,10 @@ const make = Effect.gen(function* () {
             }
             row.reachable = true;
             row.providers = probed.success.providers;
+            // Whether it keeps a review thread's reviewer lock, as its descriptor said just now.
+            const said = yield* client.peerRules(machine.id).pipe(Effect.result);
+            if (said._tag === "Success" && said.success?.reviewLock === true)
+              row.handoffReviewLock = true;
             if (probed.success.platform !== undefined) row.platform = probed.success.platform;
             const scope = probed.success.projectScope;
             if (scope !== undefined) row.projectScope = scope;
@@ -924,9 +877,10 @@ const make = Effect.gen(function* () {
     machine: OrchestratorMcpMachineRef,
     selection: ModelSelection,
     remote: ReadonlyArray<OrchestratorMcpMachineProvider>,
+    picked = false,
   ) =>
     Effect.map(driverKindOf(selection.instanceId), (driverKind) =>
-      translateModel({ selection, driverKind, remote }),
+      translateModel({ selection, driverKind, remote, picked }),
     ).pipe(Effect.map((translation) => ({ machine, translation })));
 
   const modelUnavailable = (machine: OrchestratorMcpMachineRef, selection: ModelSelection) =>
@@ -1021,14 +975,16 @@ const make = Effect.gen(function* () {
         if (translation.type === "unavailable")
           return yield* modelUnavailable(machine, input.explicitModelSelection);
         modelSelection = translation.modelSelection;
-      } else if (input.inheritedModelSelection !== undefined) {
-        const { translation } = yield* translate(
-          machine,
-          input.inheritedModelSelection,
-          target.providers,
-        );
-        modelSelection =
-          translation.type === "unavailable" ? undefined : translation.modelSelection;
+      } else {
+        const unnamed = [
+          [input.pickedModelSelection, true],
+          [input.inheritedModelSelection, false],
+        ] as const;
+        for (const [selection, picked] of unnamed) {
+          if (selection === undefined || modelSelection !== undefined) continue;
+          const { translation } = yield* translate(machine, selection, target.providers, picked);
+          if (translation.type !== "unavailable") modelSelection = translation.modelSelection;
+        }
       }
 
       // The worker is told which repositories the project uses; it clones
@@ -1062,7 +1018,7 @@ const make = Effect.gen(function* () {
         id: rowId,
         callerThreadId: launcher.kind === "thread" ? launcher.threadId : "",
         launchedBy: launcher,
-        projectId: input.localProject?.id ?? "",
+        projectId: input.localProject?.id ?? input.listedUnder ?? "",
         machineId: machine.id,
         environmentId: machine.environmentId,
         remoteProjectId: target.projectId ?? null,
@@ -1397,19 +1353,22 @@ const make = Effect.gen(function* () {
       const key = input.runId ?? "no-run";
       const updatedAt = yield* isoNow;
       yield* store
-        .modify(row.id, (current) =>
-          current
-            ? {
-                ...current,
-                state: "idle",
-                lastStatus: input.status,
-                deliveredRunIds: current.deliveredRunIds.includes(key)
-                  ? current.deliveredRunIds
-                  : [...current.deliveredRunIds, key].slice(-50),
-                updatedAt,
-              }
-            : undefined,
-        )
+        .modify(row.id, (current) => {
+          if (!current) return undefined;
+          // A handed-off thread's result is still the follower's to tell: seeing a run
+          // end here, least of all one that was only stopped, does not deliver it.
+          const stillOwed = afterHandoffRunEnded(current, input.status);
+          if (stillOwed !== undefined) return { ...current, ...stillOwed, updatedAt };
+          return {
+            ...current,
+            state: "idle",
+            lastStatus: input.status,
+            deliveredRunIds: current.deliveredRunIds.includes(key)
+              ? current.deliveredRunIds
+              : [...current.deliveredRunIds, key].slice(-50),
+            updatedAt,
+          };
+        })
         .pipe(Effect.ignore);
     });
 
@@ -1435,6 +1394,8 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const rows = yield* store.list.pipe(Effect.orElseSucceed(() => []));
       const configured = yield* machines.pipe(Effect.orElseSucceed(() => []));
+      // A handed-off thread that came back runs on this machine.
+      const here = yield* environment.getDescriptor;
       const relevant = rows
         // A project's list names the thread that started each worker; a client's have none.
         .filter(
@@ -1450,7 +1411,8 @@ const make = Effect.gen(function* () {
           id: row.id,
           machineId: row.machineId,
           machineLabel:
-            configured.find((machine) => machine.id === row.machineId)?.label ?? row.machineId,
+            configured.find((machine) => machine.id === row.machineId)?.label ??
+            (row.machineId === here.environmentId ? here.label : row.machineId),
           environmentId: EnvironmentId.make(row.environmentId),
           callerThreadId: ThreadId.make(row.callerThreadId),
           remoteThreadId: row.remoteThreadId === null ? null : ThreadId.make(row.remoteThreadId),
@@ -1469,6 +1431,14 @@ const make = Effect.gen(function* () {
             : { launchedAt: row.launchStartedAt as StudioFleetRemoteWorker["updatedAt"] }),
           ...(row.runtimeMode === undefined ? {} : { runtimeMode: row.runtimeMode }),
           ...(row.loweredFrom === undefined ? {} : { loweredFrom: row.loweredFrom }),
+          ...(owesResult(row) && row.handoff.awaiting !== undefined
+            ? {
+                awaiting:
+                  row.handoff.awaiting === "continuation"
+                    ? ("handoff" as const)
+                    : ("run" as const),
+              }
+            : {}),
         })),
       );
     });

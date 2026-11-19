@@ -19,6 +19,8 @@ const {
   noteMergeComplete,
   noteMergeRows,
   noteWrites,
+  sameRepositoryLinkOffers,
+  supersededNotes,
   pendingSupersedes,
   replicaMembers,
   takeoverAvailability,
@@ -62,7 +64,12 @@ const note = (name: string, content: string, revision = 1) => ({ name, content, 
 describe("machine readiness", () => {
   it("names the one fix for each machine that cannot link", () => {
     const state = (connected: boolean, supportsLink: boolean | undefined, canWrite: boolean) =>
-      linkMachineState({ connected, supportsLink, canWrite });
+      linkMachineState({
+        connected,
+        supportsLink,
+        supportsEqualCoordinators: supportsLink,
+        canWrite,
+      });
     expect(state(true, true, true)).toBe("ready");
     expect(linkMachineProblem(state(false, true, true), "M3")).toBe("Connect M3 first.");
     // A 1.0.55 server reports no capability at all.
@@ -70,6 +77,26 @@ describe("machine readiness", () => {
       "Update SpecWithCode on M3 to link projects.",
     );
     expect(linkMachineProblem(state(true, true, false), "M3")).toContain("needs permission");
+  });
+
+  it("holds a machine from before equal coordinators back before either end is asked (EC2-04)", () => {
+    // 1.0.386 links projects, and its accept would give its coordinator up to the kept copy.
+    const old = linkMachineState({
+      connected: true,
+      supportsLink: true,
+      supportsEqualCoordinators: undefined,
+      canWrite: true,
+    });
+    expect(old).toBe("update");
+    expect(linkMachineProblem(old, "M3")).toBe("Update SpecWithCode on M3 to link projects.");
+    expect(
+      linkMachineState({
+        connected: true,
+        supportsLink: true,
+        supportsEqualCoordinators: true,
+        canWrite: true,
+      }),
+    ).toBe("ready");
   });
 });
 
@@ -123,6 +150,35 @@ describe("notes", () => {
       { name: "new.md", content: "new", expectedRevision: null },
       { name: "plan-m4-2.md", content: "joining plan", expectedRevision: null, createOnly: true },
     ]);
+  });
+
+  it("names the joining versions a choice sets aside, for the first memory sync", () => {
+    const sha = "b".repeat(64);
+    const rows = noteMergeRows(kept, [
+      { ...note("plan.md", "joining plan"), contentSha256: sha },
+      { ...note("new.md", "new"), contentSha256: "c".repeat(64) },
+    ]);
+    const set = [{ name: "plan.md", contentSha256: sha }];
+    expect(supersededNotes(rows, { "plan.md": "kept" })).toEqual(set);
+    expect(supersededNotes(rows, { "plan.md": "both" })).toEqual(set);
+    // With the kept copy's hash, the choice names the kept text it was made against.
+    const keptSha = "d".repeat(64);
+    expect(
+      supersededNotes(
+        noteMergeRows(
+          kept.map((item) =>
+            item.name === "plan.md" ? { ...item, contentSha256: keptSha } : item,
+          ),
+          [{ ...note("plan.md", "joining plan"), contentSha256: sha }],
+        ),
+        { "plan.md": "kept" },
+      ),
+    ).toEqual([{ name: "plan.md", contentSha256: sha, keptSha256: keptSha }]);
+    // Keeping the joining text writes it to the kept copy; nothing is set aside.
+    expect(supersededNotes(rows, { "plan.md": "joining" })).toEqual([]);
+    expect(supersededNotes(rows, {})).toEqual([]);
+    // A joining server that sends no hash links as before.
+    expect(supersededNotes(noteMergeRows(kept, joining), { "plan.md": "kept" })).toEqual([]);
   });
 
   it("never lands a kept-both copy on a note the user chose to keep", () => {
@@ -208,7 +264,10 @@ describe("copies of a shared project", () => {
       ["coordinator", false],
       ["workers", false],
     ]);
-    expect(copyRolesSummary([kept, joined])).toBe("M3: coordinator · M4: runs workers");
+    expect(copyRolesSummary([kept, joined])).toEqual({
+      text: "On {coordinator} (coordinator) and {last}",
+      values: { coordinator: "M3", last: "M4" },
+    });
     expect(copyRolesSummary([kept])).toBeNull();
   });
 
@@ -259,6 +318,7 @@ describe("linkCopyAsWorkers", () => {
     lastCoordinatorActivityAt: null,
     keepRefusal: null,
     joinRefusal: null,
+    equalCoordinators: true,
     ...overrides,
   });
   const ok = <A>(value: A) => Promise.resolve({ _tag: "Success" as const, value });
@@ -508,6 +568,98 @@ describe("linkCandidates", () => {
 
   it("offers only the person's own code projects on other machines", () => {
     expect(ids(linkCandidates(projects, here, scratchRootFor as never, null))).toEqual(["m3:own"]);
+  });
+
+  it("offers a link to the newest same-repository project on each other machine", () => {
+    const repo = (canonicalKey: string, rootPath: string) => ({
+      repositoryIdentity: {
+        canonicalKey,
+        rootPath,
+        locator: { remoteUrl: `https://${canonicalKey}.git` },
+      },
+    });
+    const at = (item: EnvironmentProject, updatedAt: string, key = "github.com/acme/app") =>
+      ({ ...item, updatedAt, ...repo(key, item.workspaceRoot) }) as unknown as EnvironmentProject;
+    const own = at(copy("m4", "local", undefined), "2026-11-01T00:00:00.000Z");
+    const all = [
+      own,
+      at(project("m3", "old"), "2026-10-01T00:00:00.000Z"),
+      at(project("m3", "new"), "2026-11-10T00:00:00.000Z"),
+      at(project("m5", "other"), "2026-11-10T00:00:00.000Z", "github.com/acme/other"),
+      at(project("m5", "automated", { origin: "automated" }), "2026-11-10T00:00:00.000Z"),
+      at(project("m4", "second"), "2026-11-10T00:00:00.000Z"),
+      project("m1", "no-remote"),
+    ];
+    expect(ids(sameRepositoryLinkOffers(all, own, scratchRootFor as never))).toEqual(["m3:new"]);
+    // A fork matches by its own remote, never by the repository it was forked from.
+    const fork = (item: EnvironmentProject, origin: string) =>
+      ({
+        ...item,
+        updatedAt: "2026-11-10T00:00:00.000Z",
+        repositoryIdentity: {
+          canonicalKey: "github.com/acme/app",
+          rootPath: item.workspaceRoot,
+          locator: { remoteUrl: "https://github.com/acme/app.git" },
+          origin: { canonicalKey: origin },
+        },
+      }) as unknown as EnvironmentProject;
+    const ownFork = fork(copy("m4", "fork", undefined), "github.com/me/app");
+    const forks = [
+      ownFork,
+      at(project("m3", "upstream"), "2026-11-10T00:00:00.000Z"),
+      fork(project("m5", "theirs"), "github.com/them/app"),
+      fork(project("m1", "mine"), "GitHub.com/me/app"),
+    ];
+    expect(ids(sameRepositoryLinkOffers(forks, ownFork, scratchRootFor as never))).toEqual([
+      "m1:mine",
+    ]);
+    expect(ids(sameRepositoryLinkOffers(forks, own, scratchRootFor as never))).toEqual([
+      "m3:upstream",
+    ]);
+    // Two places in one monorepo are different work, however recent the other one is.
+    const inside = (item: EnvironmentProject, place: string, updatedAt: string) =>
+      ({
+        ...at(item, updatedAt),
+        workspaceRoot: `${item.workspaceRoot}/${place}`,
+      }) as unknown as EnvironmentProject;
+    const web = inside(copy("m4", "web", undefined), "apps/web", "2026-11-01T00:00:00.000Z");
+    const mono = [
+      web,
+      inside(project("m3", "api"), "apps/api", "2026-11-12T00:00:00.000Z"),
+      inside(project("m3", "web"), "apps/web", "2026-10-01T00:00:00.000Z"),
+      at(project("m5", "root"), "2026-11-12T00:00:00.000Z"),
+    ];
+    expect(ids(sameRepositoryLinkOffers(mono, web, scratchRootFor as never))).toEqual(["m3:web"]);
+    // A repository whose root is unknown gives no place to compare.
+    const rootless = {
+      ...own,
+      repositoryIdentity: { canonicalKey: "github.com/acme/app" },
+    } as unknown as EnvironmentProject;
+    expect(sameRepositoryLinkOffers(all, rootless, scratchRootFor as never)).toEqual([]);
+    // A copy of another shared project is not offered: it has to leave that one first.
+    const elsewhere = at(
+      copy("m3", "taken", identity("other", [member("m3", "taken"), member("m9", "x")])),
+      "2026-11-20T00:00:00.000Z",
+    );
+    expect(
+      ids(sameRepositoryLinkOffers([...all, elsewhere], own, scratchRootFor as never)),
+    ).toEqual(["m3:new"]);
+    // A project with no remote has nothing to compare.
+    expect(
+      sameRepositoryLinkOffers(all, copy("m4", "local", undefined), scratchRootFor as never),
+    ).toEqual([]);
+    // Copies already in this project are not offered again.
+    const shared = identity("shared", []);
+    const listed = { ...at(copy("m3", "new", shared), "2026-11-10T00:00:00.000Z") };
+    expect(
+      ids(
+        sameRepositoryLinkOffers(
+          [listed],
+          at(copy("m4", "local", shared), "2026-11-01T00:00:00.000Z"),
+          scratchRootFor as never,
+        ),
+      ),
+    ).toEqual([]);
   });
 
   it("keeps the named copy even when it is already linked, archived or automated", () => {

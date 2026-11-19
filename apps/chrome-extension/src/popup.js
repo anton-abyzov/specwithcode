@@ -1,3 +1,4 @@
+import { replacesText, wirePairForm } from "./pair.js";
 import { timingText } from "./status.js";
 
 const PHASE_TEXT = {
@@ -15,6 +16,21 @@ function send(message) {
   return chrome.runtime.sendMessage(message);
 }
 
+const form = wirePairForm(document, {
+  onPaired: () => refresh(),
+  onRename: async (label) => {
+    const name = label.trim();
+    if (!name) return;
+    const current = (await send({ type: "status" }))?.state;
+    // Renaming reconnects, so only a paired profile with a different name is renamed.
+    if (current && current.phase !== "not_paired" && current.label !== name) {
+      const response = await send({ type: "rename", label: name });
+      $("error").textContent = response?.ok ? "" : (response?.error ?? "");
+    }
+    await refresh();
+  },
+});
+
 async function refresh() {
   const response = await send({ type: "status" });
   const state = response?.state ?? { phase: "not_paired" };
@@ -26,24 +42,19 @@ async function refresh() {
   $("timing").textContent = timingText(state);
   const paired = state.phase !== "not_paired";
   $("paired").hidden = !paired;
-  $("label-value").textContent = state.label || "Chrome";
+  $("label-value").textContent = state.label || "No name yet";
   $("machine-value").textContent = state.machine || "This computer";
   $("tabs-value").textContent = String(state.attachedTabs ?? 0);
   $("pause").textContent = state.phase === "paused" ? "Resume" : "Pause";
   $("pause").dataset.paused = state.phase === "paused" ? "true" : "false";
+  $("name-needed").hidden = !(paired && state.needsName);
+  const replaces = replacesText(state);
+  $("replaces").textContent = replaces;
+  $("replaces").hidden = !replaces;
   // A paired profile can still take a fresh code (after Reset in SpecWithCode).
-  $("pair-form").querySelector("button").textContent = paired ? "Pair again" : "Pair this profile";
-  if (!$("label").value && state.label) $("label").value = state.label;
+  $("pair-button").textContent = paired ? "Pair again" : "Pair this profile";
+  form.prefill(state);
 }
-
-$("pair-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  $("error").textContent = "";
-  const response = await send({ type: "pair", code: $("code").value, label: $("label").value });
-  if (!response?.ok) $("error").textContent = response?.error ?? "Pairing failed.";
-  else $("code").value = "";
-  await refresh();
-});
 
 $("reconnect").addEventListener("click", async () => {
   await send({ type: "reconnect" });
@@ -57,13 +68,6 @@ $("pause").addEventListener("click", async () => {
 
 $("unpair").addEventListener("click", async () => {
   await send({ type: "unpair" });
-  await refresh();
-});
-
-$("label").addEventListener("change", async () => {
-  const response = await send({ type: "status" });
-  if (response?.state?.phase !== "not_paired")
-    await send({ type: "rename", label: $("label").value });
   await refresh();
 });
 

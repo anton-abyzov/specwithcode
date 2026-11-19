@@ -92,6 +92,7 @@ import { withAskedQuestions } from "./questionAnswerText.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as ThreadWorkspaceRestore from "./ThreadWorkspaceRestore.ts";
+import { withWorktreeFolderLease } from "../git/worktreeOwnership.ts";
 import {
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
@@ -297,12 +298,19 @@ export const layer: Layer.Layer<
       // allocation of every completed message and tool output in the thread.
       // `false` means the run moved on or is gone. A failed read is an error,
       // so the caller fails the start or the run instead of skipping it.
+      // The attempt checks need one run row. The recovery projection reads every
+      // live table of the thread, so only background routing and turn
+      // ownership pay for it.
+      const readRun = projectionStore
+        .getThreadRecords(input.threadId, ["runs"], { runIds: [input.runId] })
+        .pipe(
+          Effect.map((records) => records.runs.find((candidate) => candidate.id === input.runId)),
+        );
       const isCurrentAttemptInStatus = (expectedStatus: OrchestrationV2Run["status"]) =>
-        projectionStore.getRuntimeRecoveryProjection(input.threadId).pipe(
-          Effect.map((current) => {
-            const run = current.runs.find((candidate) => candidate.id === input.runId);
-            return run?.activeAttemptId === input.attemptId && run.status === expectedStatus;
-          }),
+        readRun.pipe(
+          Effect.map(
+            (run) => run?.activeAttemptId === input.attemptId && run.status === expectedStatus,
+          ),
         );
       return {
         isCurrentAttemptInStatus,
@@ -340,14 +348,12 @@ export const layer: Layer.Layer<
                 Effect.catchCause(() => Effect.succeed("unknown" as const)),
               ),
         shouldFinalizeRun: () =>
-          projectionStore.getRuntimeRecoveryProjection(input.threadId).pipe(
-            Effect.map((current) => {
-              const run = current.runs.find((candidate) => candidate.id === input.runId);
-              return (
+          readRun.pipe(
+            Effect.map(
+              (run) =>
                 run?.activeAttemptId === input.attemptId &&
-                (run.status === "starting" || run.status === "running")
-              );
-            }),
+                (run.status === "starting" || run.status === "running"),
+            ),
           ),
         hasUnpairedRunInterruptRequest: () =>
           projectionStore
@@ -603,60 +609,68 @@ export const layer: Layer.Layer<
       // worktree add), so a folder still missing after one keeps its retries.
       let recreateAttempted = false;
       if (worktreePath !== null && branch !== null) {
-        const exists = yield* fileSystem
-          .exists(worktreePath)
-          .pipe(Effect.orElseSucceed(() => true));
-        if (!exists) {
+        const checkAndRestore = Effect.gen(function* () {
+          const exists = yield* fileSystem
+            .exists(worktreePath)
+            .pipe(Effect.orElseSucceed(() => true));
+          if (exists) return undefined;
           const project = yield* projects.getById(projection.thread.projectId).pipe(
             Effect.map(Option.getOrUndefined),
             Effect.orElseSucceed(() => undefined),
           );
-          if (project !== undefined) {
-            recreateAttempted = true;
-            yield* Effect.logWarning("provider turn start recreating missing worktree", {
-              threadId: projection.thread.id,
-              worktreePath,
-              branch,
+          if (project === undefined) return undefined;
+          recreateAttempted = true;
+          yield* Effect.logWarning("provider turn start recreating missing worktree", {
+            threadId: projection.thread.id,
+            worktreePath,
+            branch,
+          });
+          return yield* ThreadWorkspaceRestore.restoreMissingWorktree({
+            threadId: projection.thread.id,
+            worktreePath,
+            branch,
+            workspaceRoot: project.workspaceRoot,
+          }).pipe(Effect.provide(worktreeRestoreContext));
+        });
+        // The cleanup sweep removes a folder under the lease on its resolved and
+        // real path, so the check and restore wait for a removal in progress
+        // instead of starting in a folder about to vanish. The run itself holds no lease.
+        const restored = yield* withWorktreeFolderLease(worktreePath, checkAndRestore).pipe(
+          Effect.provide(worktreeRestoreContext),
+        );
+        if (restored !== undefined) {
+          // Git has neither the local branch nor a single remote branch of
+          // that name in any repository that could own the folder, so every
+          // retry and every other provider fails the same way before it
+          // opens. Settle now with what happened and how to recover instead
+          // of retrying a start that cannot succeed. Only for a folder laid
+          // out as one of those repositories' own (<worktrees>/<repo>/<branch>):
+          // a folder elsewhere may belong to a repository not found here.
+          if (restored._tag === "BranchMissing" && restored.ownedFolder) {
+            const now = yield* DateTime.now;
+            yield* settleRunBeforeStart({
+              signal: "workspace-branch-missing",
+              status: "failed",
+              now,
+              providerInstanceId: run.providerInstanceId,
+              itemProviderThreadId: providerThread.id,
+              item: {
+                type: "error",
+                title: "Thread folder was deleted",
+                failure: makeProviderFailure({
+                  class: "validation_error",
+                  code: ORCHESTRATION_V2_WORKSPACE_BRANCH_MISSING_FAILURE_CODE,
+                  retryable: false,
+                  message: missingWorktreeBranchMessage({ worktreePath, branch }),
+                }),
+              },
+              providerThreadUpdate: {
+                ...providerThread,
+                status: providerThread.nativeThreadRef === null ? "not_loaded" : "idle",
+                updatedAt: now,
+              },
             });
-            const restored = yield* ThreadWorkspaceRestore.restoreMissingWorktree({
-              threadId: projection.thread.id,
-              worktreePath,
-              branch,
-              workspaceRoot: project.workspaceRoot,
-            }).pipe(Effect.provide(worktreeRestoreContext));
-            // Git has neither the local branch nor a single remote branch of
-            // that name in any repository that could own the folder, so every
-            // retry and every other provider fails the same way before it
-            // opens. Settle now with what happened and how to recover instead
-            // of retrying a start that cannot succeed. Only for a folder laid
-            // out as one of those repositories' own (<worktrees>/<repo>/<branch>):
-            // a folder elsewhere may belong to a repository not found here.
-            if (restored._tag === "BranchMissing" && restored.ownedFolder) {
-              const now = yield* DateTime.now;
-              yield* settleRunBeforeStart({
-                signal: "workspace-branch-missing",
-                status: "failed",
-                now,
-                providerInstanceId: run.providerInstanceId,
-                itemProviderThreadId: providerThread.id,
-                item: {
-                  type: "error",
-                  title: "Thread folder was deleted",
-                  failure: makeProviderFailure({
-                    class: "validation_error",
-                    code: ORCHESTRATION_V2_WORKSPACE_BRANCH_MISSING_FAILURE_CODE,
-                    retryable: false,
-                    message: missingWorktreeBranchMessage({ worktreePath, branch }),
-                  }),
-                },
-                providerThreadUpdate: {
-                  ...providerThread,
-                  status: providerThread.nativeThreadRef === null ? "not_loaded" : "idle",
-                  updatedAt: now,
-                },
-              });
-              return;
-            }
+            return;
           }
         }
       }

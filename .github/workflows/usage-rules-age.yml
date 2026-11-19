@@ -1,0 +1,66 @@
+name: Usage window notes age
+
+# Weekly check that the usage window notes on Usage > Limits > Subscriptions
+# were read against their vendor page in the last 90 days
+# (packages/shared/src/subscriptionWindowRules.json). When one is older, it
+# comments on the open issue "Usage window notes need a re-read", or opens it.
+# Never a pull request gate.
+
+on:
+  schedule:
+    # Mondays, away from minute zero.
+    - cron: "23 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: usage-rules-age
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check usage window notes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts
+            packages/shared/src
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.20.0
+
+      - name: Test the age check
+        run: node --test scripts/check-usage-rules-age.test.mjs
+
+      - name: Report old notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          node scripts/check-usage-rules-age.mjs > body.md
+          if [ ! -s body.md ]; then
+            echo "Every note was read in the last 90 days."
+            exit 0
+          fi
+          title="Usage window notes need a re-read"
+          number="$(gh issue list --state open --search "\"$title\" in:title" --json number,title \
+            --jq "map(select(.title == \"$title\")) | .[0].number // empty")"
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body-file body.md
+          else
+            gh issue create --title "$title" --body-file body.md
+          fi

@@ -376,6 +376,8 @@ export type BuildThreadActionItemsThread = Pick<
   pullRequests?: SidebarThreadSummary["pullRequests"];
   updatedAt: string;
   latestUserMessageAt?: string | null;
+  /** The raw shell; an advisor child (purpose "advisor") is never listed. */
+  source?: { readonly purpose?: string | null | undefined } | undefined;
 };
 
 export function buildThreadActionItems<TThread extends BuildThreadActionItemsThread>(input: {
@@ -395,7 +397,9 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
   limit?: number;
 }): CommandPaletteActionItem[] {
   const sortedThreads = sortThreads(
-    input.threads.filter((thread) => thread.archivedAt === null),
+    input.threads.filter(
+      (thread) => thread.archivedAt === null && thread.source?.purpose !== "advisor",
+    ),
     input.sortOrder,
   );
   const visibleThreads =

@@ -1,6 +1,6 @@
 import { AuthProvidersManageScope, PROVIDER_DISPLAY_NAMES } from "@specweave-studio/contracts";
 import { useMemo, useRef, useState } from "react";
-import { useEnvironments } from "~/state/environments";
+import { useNamedEnvironments } from "./settings/useNamedEnvironments";
 import { readEnvironmentScope } from "~/state/session";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -198,7 +198,7 @@ export function ProviderUpdatesAction({
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 } = {}) {
-  const { environments } = useEnvironments();
+  const { environments } = useNamedEnvironments();
   const updateProvider = useAtomCommand(serverEnvironment.updateProvider, { reportFailure: false });
   const [localOpen, setLocalOpen] = useState(false);
   const [plan, setPlan] = useState<ProviderUpdatePlanRow[]>([]);
@@ -242,7 +242,7 @@ export function ProviderUpdatesAction({
   return (
     <>
       {!target && (
-        <Button size="xs" variant="ghost-muted" onClick={() => changeOpen(true)}>
+        <Button size="xs" variant="outline" onClick={() => changeOpen(true)}>
           Update CLIs…
         </Button>
       )}

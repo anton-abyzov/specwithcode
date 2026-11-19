@@ -25,7 +25,8 @@ export const LOOPBACK_SOCKET_OPEN_TIMEOUT = "30 seconds";
  * How long after the last frame from the server the session still answers
  * its own pings for it. The RPC client then gives up after its usual three
  * unanswered 5 second windows, so the socket counts as dead after about 60
- * seconds of total silence, against about 20 for a remote server.
+ * seconds of total silence, against about 30 for a remote server
+ * (`REMOTE_ANSWERED_SILENCE_MS` in `rpc/session.ts`).
  */
 export const LOOPBACK_ANSWERED_SILENCE_MS = 40_000;
 /** Traffic this recent answers a health check without waiting for a reply. */

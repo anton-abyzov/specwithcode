@@ -3,9 +3,12 @@ import { SourceTransferError, type SourceTransfers } from "./sourceService.ts";
 import {
   encodeFrames,
   FOLDER_TRANSFER_PREFIX,
-  MAX_BATCH_CHUNKS,
+  LAN_RETIRE_BYTES,
+  MAX_BATCH_CHUNKS_LARGE,
   MAX_REQUEST_BYTES,
+  SEALED_SECRET_CONTENT_TYPE,
   SHA256,
+  zstdAvailable,
 } from "./wire.ts";
 
 export interface RawRequest {
@@ -35,7 +38,9 @@ const stringList = (value: unknown, max: number): Array<string> => {
 };
 
 /** Routes a committed copy still answers with the grant its commit revoked. */
-const REPLAYABLE: ReadonlyMap<string, "commit" | "release" | "hello"> = new Map([
+const REPLAYABLE: ReadonlyMap<string, "commit" | "release" | "hello" | "retire"> = new Map([
+  // Ending a local-network generation is not a pull and never prompts a new offer.
+  ["POST lan-retire", "retire"],
   ["POST commit", "commit"],
   ["POST release", "release"],
   ["GET hello", "hello"],
@@ -52,7 +57,7 @@ export async function handleSourceRequest(
   request: RawRequest,
 ): Promise<RawResponse> {
   try {
-    const match = /^\/([a-f0-9-]{36})\/([a-z]+)$/.exec(request.path);
+    const match = /^\/([a-f0-9-]{36})\/([a-z]+(?:-[a-z]+)?)$/.exec(request.path);
     if (!match) return json(404, { error: "not_found" });
     const [, operationId, action] = match as unknown as [string, string, string];
     const loaded = await transfers.authorize(
@@ -90,13 +95,17 @@ export async function handleSourceRequest(
           : json(202, { state: result.record.state, progress: result.record.progress });
       }
       case "POST chunks": {
-        const hashes = stringList((await body()).chunks, MAX_BATCH_CHUNKS);
+        const input = await body();
+        const hashes = stringList(input.chunks, MAX_BATCH_CHUNKS_LARGE);
         if (hashes.some((hash) => !SHA256.test(hash)))
           throw new SourceTransferError(400, "invalid_request");
+        // A destination that reads zstd says so; an older one never asks and gets gzip.
+        const zstd =
+          Array.isArray(input.encodings) && input.encodings.includes("zstd") && zstdAvailable();
         return {
           status: 200,
           contentType: "application/x-swc-chunks",
-          body: encodeFrames(await transfers.chunks(loaded, hashes)),
+          body: encodeFrames(await transfers.chunks(loaded, hashes), zstd ? "zstd" : "gzip"),
         };
       }
       case "POST stat":
@@ -132,11 +141,28 @@ export async function handleSourceRequest(
       case "POST secret": {
         const input = await body();
         if (typeof input.path !== "string") throw new SourceTransferError(400, "invalid_request");
+        const served = await transfers.secretFile(loaded, input.path);
         return {
           status: 200,
-          contentType: "application/octet-stream",
-          body: await transfers.secretFile(loaded, input.path),
+          contentType: served.sealed ? SEALED_SECRET_CONTENT_TYPE : "application/octet-stream",
+          body: served.bytes,
         };
+      }
+      case "POST lan-retire": {
+        // It can only end a generation. The answer is the same whether the generation
+        // is live, long gone or was never made.
+        const bytes = await request.body();
+        if (bytes.byteLength > LAN_RETIRE_BYTES) throw new SourceTransferError(413, "too_large");
+        let generation: unknown;
+        try {
+          generation = (JSON.parse(new TextDecoder().decode(bytes)) as { generation?: unknown })
+            .generation;
+        } catch {
+          throw new SourceTransferError(400, "invalid_request");
+        }
+        if (typeof generation === "number" && Number.isSafeInteger(generation) && generation > 0)
+          transfers.lanRetire(loaded, generation);
+        return json(200, { ok: true });
       }
       case "POST commit":
         return json(200, { state: (await transfers.commit(loaded)).state });

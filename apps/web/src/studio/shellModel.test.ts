@@ -24,6 +24,7 @@ import {
   threadTone,
   waitingCount,
   threadToneShowsDot,
+  runFailureReason,
 } from "./shellModel";
 import { unreachableEnvironmentIds } from "../state/environments";
 import { threadBackgroundWait } from "@specweave-studio/client-runtime/state/projectAttention";
@@ -700,8 +701,11 @@ describe("failed runs", () => {
 describe("blocked threads", () => {
   const blocked = thread({ reportedBlocker: "Ship 1.0.20 today, or wait for the signer?" });
 
-  it("names a quiet thread whose report has a blocker Blocked, needing you", () => {
-    expect(threadStatusWord(blocked)).toBe("Blocked");
+  // November 18, 2026: "Blocked" read as broken work; the row says what to decide.
+  it("asks a quiet thread's report blocker as a reply, needing you", () => {
+    expect(threadStatusWord(blocked)).toBe(
+      "Reply needed · Ship 1.0.20 today, or wait for the signer?",
+    );
     expect(threadTone(blocked)).toBe("waiting");
   });
 
@@ -723,8 +727,29 @@ describe("blocked threads", () => {
         source: { creationSource: "mcp" },
       }) as unknown as EnvironmentThreadShell;
     expect(threadStatusWord(child("worker-1"))).toBeNull();
-    expect(threadStatusWord(child("project-coordinator:project-1"))).toBe("Blocked");
+    expect(threadStatusWord(child("project-coordinator:project-1"))).toBe(
+      "Reply needed · Ship 1.0.20 today, or wait for the signer?",
+    );
     expect(threadTone(child("project-coordinator:project-1"))).toBe("waiting");
+  });
+
+  it("names an open question card by its prompt, or alone from an older server", () => {
+    const asking = (prompt?: string) =>
+      thread({
+        hasPendingUserInput: true,
+        source: {
+          pendingRuntimeRequest: {
+            id: "ask-user:t:q1",
+            kind: "user_input",
+            createdAt: null,
+            ...(prompt === undefined ? {} : { prompt }),
+          },
+        },
+      } as unknown as Partial<EnvironmentThreadShell>);
+    expect(threadStatusWord(asking("Release: Ship now or Wait for review"))).toBe(
+      "Answer needed · Release: Ship now or Wait for review",
+    );
+    expect(threadStatusWord(asking())).toBe("Answer needed");
   });
 
   it("drops the blocker while the thread runs again or once it is resolved", () => {
@@ -738,24 +763,30 @@ describe("threads on this machine while its server catches up", () => {
   it("are never Host offline and still wait on the person", () => {
     const blocked = thread({ reportedBlocker: "Commit these changes, or discard them?" });
     const unreachable = new Set<string>(
-      unreachableEnvironmentIds([
-        {
-          environmentId: blocked.environmentId,
-          entry: {
-            target: { _tag: "PrimaryConnectionTarget", httpBaseUrl: "http://127.0.0.1:8319" },
+      unreachableEnvironmentIds(
+        [
+          {
+            environmentId: blocked.environmentId,
+            entry: {
+              target: { _tag: "PrimaryConnectionTarget", httpBaseUrl: "http://127.0.0.1:8319" },
+            },
+            connection: { phase: "reconnecting", lostAt: 0, lastConnectedAt: 0 },
           },
-          connection: { phase: "reconnecting" },
-        },
-        {
-          environmentId: "m1",
-          entry: { target: { _tag: "RelayConnectionTarget" } },
-          connection: { phase: "reconnecting" },
-        },
-      ] as never),
+          {
+            environmentId: "m1",
+            entry: { target: { _tag: "RelayConnectionTarget" } },
+            connection: { phase: "reconnecting", lostAt: 0, lastConnectedAt: 0 },
+          },
+        ] as never,
+        // Past the reconnect grace: the remote host is down, this machine is busy.
+        90_000,
+      ),
     );
     expect([...unreachable]).toEqual(["m1"]);
     const hostOffline = unreachable.has(blocked.environmentId);
-    expect(threadStatusWord(blocked, hostOffline)).toBe("Blocked");
+    expect(threadStatusWord(blocked, hostOffline)).toBe(
+      "Reply needed · Commit these changes, or discard them?",
+    );
     expect(threadTone(blocked, hostOffline)).toBe("waiting");
     expect(waitingCount([blocked], unreachable)).toBe(1);
   });
@@ -767,9 +798,13 @@ describe("threads on an unreachable host", () => {
 
   it("says the host is offline instead of Blocked and does not wait on the person", () => {
     expect(threadStatusWord(blocked, true)).toBe("Host offline");
+    expect(threadStatusWord(blocked, true, "offline")).toBe("Host offline");
+    // A busy machine is not called offline: its rows say it is not answering.
+    expect(threadStatusWord(blocked, true, "not-answering")).toBe("Not answering");
+    expect(threadStatusWord(blocked, true, "no-network")).toBe("No network");
     expect(threadTone(blocked, true)).toBe("unknown");
     expect(waitingCount([blocked], offline)).toBe(0);
-    expect(threadsSummary([blocked], 0, offline)).toBe("Some machines are offline.");
+    expect(threadsSummary([blocked], 0, offline)).toBe("Some machines can't be reached.");
   });
 
   it("lists it as idle rather than working from a stale runtime", () => {
@@ -791,10 +826,39 @@ describe("threads on an unreachable host", () => {
     expect(groups.find((g) => g.group === "Needs you")?.threads).toHaveLength(0);
   });
 
+  it("keeps a thread in its group while its machine reconnects or catches up", () => {
+    const working = thread({ id: "worker-3", runtime: running });
+    const groupsFor = (freshness: "synchronizing" | "cached" | "empty" | "offline") =>
+      buildThreadPaneGroups([blocked, working], "activity", "", undefined, new Set(), {
+        roots: [blocked, working].map((root) => ({
+          key: root.id,
+          thread: root,
+          coordinator: false,
+          freshness,
+          actions: [],
+          working: false,
+        })),
+        count: 0,
+        working: 0,
+        complete: false,
+        staleCount: 0,
+        label: "Catching up with your machines",
+      });
+    for (const freshness of ["synchronizing", "cached", "empty"] as const) {
+      const groups = groupsFor(freshness);
+      expect(groups.find((g) => g.group === "Offline")?.threads ?? []).toHaveLength(0);
+      expect(groups.find((g) => g.group === "Needs you")?.threads).toEqual([blocked]);
+      expect(groups.find((g) => g.group === "Working")?.threads).toEqual([working]);
+    }
+    expect(groupsFor("offline").find((g) => g.group === "Offline")?.threads).toHaveLength(2);
+  });
+
   it("keeps a resolved thread resolved and is unchanged once the host is back", () => {
     expect(threadTone({ ...blocked, settledOverride: "settled" }, true)).toBe("resolved");
     expect(threadStatusWord({ ...blocked, settledOverride: "settled" }, true)).toBeNull();
-    expect(threadStatusWord(blocked, false)).toBe("Blocked");
+    expect(threadStatusWord(blocked, false)).toBe(
+      "Reply needed · Commit these changes, or discard them?",
+    );
     expect(waitingCount([blocked], new Set())).toBe(1);
   });
 });
@@ -1017,5 +1081,24 @@ describe("chat list by machine", () => {
     ]);
     expect(new Set(groups.map((group) => group.key)).size).toBe(3);
     expect(groups.every((group) => group.key.startsWith("machine:"))).toBe(true);
+  });
+});
+
+describe("runFailureReason", () => {
+  it("says an expired sign-in in words and what to do", () => {
+    expect(
+      runFailureReason(
+        "Provider error after 5/5 retries: unexpected status 401 Unauthorized: Provided authentication token is expired. auth error code: token_expired",
+      ),
+    ).toBe("The provider's sign-in expired. Sign in again on that machine.");
+  });
+
+  it("keeps another error's text, short", () => {
+    expect(runFailureReason("Provider error after 5/5 retries: model not found")).toBe(
+      "model not found",
+    );
+    expect(runFailureReason("x".repeat(300))?.length).toBe(140);
+    expect(runFailureReason("  ")).toBeNull();
+    expect(runFailureReason(undefined)).toBeNull();
   });
 });

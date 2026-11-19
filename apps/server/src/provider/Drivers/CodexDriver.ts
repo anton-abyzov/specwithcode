@@ -276,6 +276,9 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
             ),
           ).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem)),
         },
+        // The command the app-server check starts, with the environment it starts
+        // in, so an install or repair in a terminal shows without a click.
+        installProbe: { command: effectiveConfig.binaryPath, environment: processEnv },
         subscriptionMemory: makeSubscriptionMemory({
           cacheDir: providerStatusCacheDir,
           instanceId,

@@ -324,7 +324,7 @@ export function AssetSetCard({
       </table>
       {count > SET_PREVIEW_ROWS ? (
         <div className="border-t border-border/50 px-3 py-1.5">
-          <Button variant="ghost" size="xs" onClick={() => setShowAll((value) => !value)}>
+          <Button variant="outline" size="xs" onClick={() => setShowAll((value) => !value)}>
             {showAll ? "Show fewer" : `Show all ${count} files`}
           </Button>
         </div>

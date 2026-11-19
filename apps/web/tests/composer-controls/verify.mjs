@@ -59,15 +59,15 @@ try {
     });
     await page.keyboard.press("Escape");
     await page.locator("[data-coordinator-machine]").click();
-    await page.getByRole("menuitem", { name: "Copy to another machine…", exact: true }).waitFor();
+    await page.getByRole("menuitem", { name: "Sync…", exact: true }).waitFor();
     assert.deepEqual(
       await page.locator('[role="menu"] [data-slot="menu-label"]').allTextContents(),
       ["View this project on", "This project", "On Build machine"],
     );
     assert.deepEqual(await page.getByRole("menuitemradio").allTextContents(), [
-      "Build machine",
-      "Laptopworkers only",
-      "Linux mini",
+      "Build machinecoordinator",
+      "Laptopcoordinator paused",
+      "Linux minicoordinator",
     ]);
     assert.ok(
       await page.evaluate(() => {

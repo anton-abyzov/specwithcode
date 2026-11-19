@@ -89,6 +89,7 @@ import type * as Statement from "effect/sql/Statement";
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
 import * as ShellSnapshotCache from "./ShellSnapshotCache.ts";
 import { cancelledForUpdate } from "./RestartQueueHold.ts";
+import { parsePendingQuestionSource, pendingRequestPrompt } from "./pendingQuestionPrompt.ts";
 import {
   isBlockingRuntimeRequest,
   type PendingRequestSummary,
@@ -385,6 +386,8 @@ export type ProjectionRecords<K extends ProjectionRecordField> = Pick<
 
 export interface ProjectionTimelinePageOptions {
   readonly afterPosition?: number;
+  /** Reads backward: the newest `limit` items before this position. */
+  readonly beforePosition?: number;
   readonly itemId?: TurnItemId;
   readonly view?: "messages" | "activity";
   readonly limit: number;
@@ -393,7 +396,33 @@ export interface ProjectionTimelinePage {
   readonly items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
   readonly totalItems: number;
   readonly hasMore: boolean;
+  /** A backward read left older matching items before the page. */
+  readonly hasEarlier?: boolean;
 }
+
+/** One page of a thread's visible items, forward from afterPosition or backward from beforePosition. */
+export const selectTimelinePage = <Row extends { readonly position: number }>(
+  matching: ReadonlyArray<Row>,
+  options: ProjectionTimelinePageOptions,
+): {
+  readonly page: ReadonlyArray<Row>;
+  readonly hasMore: boolean;
+  readonly hasEarlier: boolean;
+} => {
+  if (options.beforePosition === undefined) {
+    const page = matching.slice(0, options.limit);
+    return { page, hasMore: matching.length > page.length, hasEarlier: false };
+  }
+  const before = options.beforePosition;
+  const older = matching.filter((row) => row.position < before);
+  const page = older.slice(Math.max(0, older.length - options.limit));
+  const last = page.at(-1)?.position ?? before - 1;
+  return {
+    page,
+    hasMore: matching.some((row) => row.position > last),
+    hasEarlier: older.length > page.length,
+  };
+};
 
 export interface ProjectionStoreV2Shape {
   readonly getThreadAttachmentIds: (
@@ -1176,6 +1205,7 @@ type ShellThreadRow = {
   readonly native_subagent_status: OrchestrationV2Subagent["status"] | null;
   readonly native_subagent_completed_at: string | null;
   readonly pending_request_payload_json: string | null;
+  readonly pending_question_json: string | null;
   readonly pending_secret_request_payload_json: string | null;
   readonly latest_user_message_at: string | null;
   readonly latest_user_authored_message_at: string | null;
@@ -1843,6 +1873,13 @@ export function threadShellFromProjection(
             ...(pendingRuntimeRequest.access === undefined
               ? {}
               : { access: pendingRuntimeRequest.access }),
+            ...pendingRequestPrompt(
+              pendingRuntimeRequest,
+              projection.turnItems.find(
+                (item) =>
+                  item.type === "user_input_request" && item.requestId === pendingRuntimeRequest.id,
+              ),
+            ),
           },
     // Thread detail owns message bodies. Keeping them out of shell rows makes
     // initial hydration and streaming updates independent of transcript size.
@@ -1895,6 +1932,11 @@ export function threadShellFromProjection(
     pinnedAt: projection.thread.pinnedAt ?? null,
 
     autoSettleDisabledAt: projection.thread.autoSettleDisabledAt ?? null,
+    ...(projection.thread.advisorMode == null
+      ? {}
+      : { advisorMode: projection.thread.advisorMode }),
+    ...(projection.thread.reviewMode == null ? {} : { reviewMode: projection.thread.reviewMode }),
+    ...(projection.thread.purpose === undefined ? {} : { purpose: projection.thread.purpose }),
     pinOrderKey: projection.thread.pinOrderKey ?? null,
     lastVisitedAt: projection.thread.lastVisitedAt,
     titleRegeneration: projection.thread.titleRegeneration ?? null,
@@ -1985,6 +2027,8 @@ type ShellThreadState = {
   readonly lastErrorClass: OrchestrationV2ThreadShell["lastErrorClass"];
   readonly usageLimitResetAt: OrchestrationV2ThreadShell["usageLimitResetAt"];
   readonly pendingRuntimeRequest: OrchestrationV2ThreadProjection["runtimeRequests"][number] | null;
+  /** The open question card in a row's words; see pendingRequestPrompt. */
+  readonly pendingQuestionPrompt?: string | undefined;
   readonly latestUserMessageAt: DateTime.Utc | null;
   readonly latestUserAuthoredMessageAt: DateTime.Utc | null;
   readonly hasActionableProposedPlan: boolean;
@@ -2227,6 +2271,9 @@ function shellFromState(input: {
             ...(input.state.pendingRuntimeRequest.access === undefined
               ? {}
               : { access: input.state.pendingRuntimeRequest.access }),
+            ...(input.state.pendingQuestionPrompt === undefined
+              ? {}
+              : { prompt: input.state.pendingQuestionPrompt }),
           },
     latestVisibleMessage: null,
     latestUserMessageAt: input.state.latestUserMessageAt,
@@ -2254,6 +2301,11 @@ function shellFromState(input: {
     pinnedAt: input.state.thread.pinnedAt ?? null,
 
     autoSettleDisabledAt: input.state.thread.autoSettleDisabledAt ?? null,
+    ...(input.state.thread.advisorMode == null
+      ? {}
+      : { advisorMode: input.state.thread.advisorMode }),
+    ...(input.state.thread.reviewMode == null ? {} : { reviewMode: input.state.thread.reviewMode }),
+    ...(input.state.thread.purpose === undefined ? {} : { purpose: input.state.thread.purpose }),
     pinOrderKey: input.state.thread.pinOrderKey ?? null,
     lastVisitedAt: input.state.thread.lastVisitedAt,
     titleRegeneration: input.state.thread.titleRegeneration ?? null,
@@ -4711,7 +4763,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           SELECT payload_json FROM orchestration_v2_projection_turn_items
           WHERE thread_id = ${threadId}
             AND type IN ('user_message','assistant_message','command_execution','error',
-              'run_interrupt_result','file_change','proposed_plan')
+              'run_interrupt_result','file_change','proposed_plan','thread_created','subagent',
+              'dynamic_tool','user_input_request')
             AND ${runIds === undefined ? sql`1` : sql`run_id IN ${sql.in(runIds)}`}
           ORDER BY ordinal ASC, turn_item_id ASC
         `;
@@ -5719,7 +5772,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       ))
                   : row.sourceItemId === options.itemId,
               );
-            const page = matching.slice(0, options.limit);
+            const { page, hasMore, hasEarlier } = selectTimelinePage(matching, options);
             const items = yield* Effect.forEach(page, (row) =>
               Effect.gen(function* () {
                 if (row.synthetic !== undefined)
@@ -5755,7 +5808,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             return {
               items,
               totalItems: index.visible.length,
-              hasMore: matching.length > page.length,
+              hasMore,
+              ...(options.beforePosition === undefined ? {} : { hasEarlier }),
             };
           }),
         )
@@ -6119,6 +6173,30 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ORDER BY request.created_at DESC, request.runtime_request_id DESC
                 LIMIT 1
               ) AS pending_request_payload_json,
+              (
+                -- The newest open ask_user or update-reopened card's questions,
+                -- for the row's words. Used only when its requestId is the
+                -- pending request above. Such a card has a node of its own, so
+                -- the node lookup reads one item, never a run's history.
+                SELECT json_object(
+                  'requestId', json_extract(question.payload_json, '$.requestId'),
+                  'questions', json(json_extract(question.payload_json, '$.questions'))
+                )
+                FROM orchestration_v2_projection_runtime_requests request
+                CROSS JOIN orchestration_v2_projection_turn_items question
+                  INDEXED BY orchestration_v2_projection_turn_items_node_ordinal_idx
+                  ON question.node_id = request.node_id
+                WHERE request.thread_id = t.thread_id
+                  AND request.status = 'pending'
+                  AND request.kind = 'user_input'
+                  AND (request.runtime_request_id LIKE 'ask-user:%'
+                    OR request.runtime_request_id LIKE 'update-reopen%')
+                  AND question.thread_id = t.thread_id
+                  AND question.type = 'user_input_request'
+                  AND json_extract(question.payload_json, '$.requestId') = request.runtime_request_id
+                ORDER BY request.created_at DESC, request.runtime_request_id DESC
+                LIMIT 1
+              ) AS pending_question_json,
               (
                 SELECT secret.payload_json
                 -- Keep runs outermost so completed history is never scanned for a pending secret.
@@ -6709,6 +6787,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             latestRunStatus,
           ),
           pendingRuntimeRequest,
+          pendingQuestionPrompt: pendingRequestPrompt(
+            pendingRuntimeRequest,
+            parsePendingQuestionSource(row.pending_question_json),
+          ).prompt,
           latestUserMessageAt:
             row.latest_user_message_at === null
               ? null
@@ -7650,6 +7732,10 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                     "run_interrupt_result",
                     "file_change",
                     "proposed_plan",
+                    "thread_created",
+                    "subagent",
+                    "dynamic_tool",
+                    "user_input_request",
                   ].includes(item.type) &&
                   (runIds === undefined || (item.runId !== null && runIds.includes(item.runId))),
               ),
@@ -7678,10 +7764,12 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                     ["user_message", "assistant_message", "proposed_plan"].includes(row.item.type))
                 : row.sourceItemId === options.itemId,
             );
+            const { page, hasMore, hasEarlier } = selectTimelinePage(matching, options);
             return {
-              items: matching.slice(0, options.limit),
+              items: page,
               totalItems: projection.visibleTurnItems.length,
-              hasMore: matching.length > options.limit,
+              hasMore,
+              ...(options.beforePosition === undefined ? {} : { hasEarlier }),
             };
           }),
         ),

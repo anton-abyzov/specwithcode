@@ -103,8 +103,15 @@ export function useCoordinatorAttachments(input: {
   canUpload: boolean;
   /** The largest file the host takes, or null when it takes images only. */
   maxFileBytes: number | null;
+  /**
+   * False while the host is out of reach (busy, restarting, offline). Files are
+   * still taken then and upload once it is back; only a connected host that
+   * refuses this window's sends turns them away.
+   */
+  hostReachable?: boolean;
 }) {
   const { environmentId, draft, uploadsSupported, canUpload, maxFileBytes } = input;
+  const waitsForHost = input.hostReachable === false;
   const { attachments, preparing, problem } = useSyncExternalStore(
     draft.subscribe,
     draft.getSnapshot,
@@ -122,10 +129,11 @@ export function useCoordinatorAttachments(input: {
   const attach = useCallback(
     (added: ReadonlyArray<CoordinatorAttachment>) => {
       if (added.length === 0) return;
-      for (const image of added) startAttachmentUpload({ environmentId, image });
+      // Out of reach, an upload would only fail; the effect above starts it on reconnect.
+      if (canUpload) for (const image of added) startAttachmentUpload({ environmentId, image });
       setAttachments((current) => [...current, ...added]);
     },
-    [environmentId, setAttachments],
+    [canUpload, environmentId, setAttachments],
   );
 
   /**
@@ -186,8 +194,8 @@ export function useCoordinatorAttachments(input: {
         setProblem("This host does not accept attachments.");
         return;
       }
-      if (!canUpload) {
-        setProblem("Reconnect to this host with permission to send before attaching files.");
+      if (!canUpload && !waitsForHost) {
+        setProblem("This window may not send to this host, so it cannot attach files here.");
         return;
       }
       const accepted: CoordinatorAttachment[] = [];
@@ -259,7 +267,17 @@ export function useCoordinatorAttachments(input: {
       setPreparing((current) => [...current, ...jobs.map(({ id, name }) => ({ id, name }))]);
       void convert(jobs);
     },
-    [attach, canUpload, convert, draft, maxFileBytes, setPreparing, setProblem, uploadsSupported],
+    [
+      attach,
+      canUpload,
+      convert,
+      draft,
+      maxFileBytes,
+      setPreparing,
+      setProblem,
+      uploadsSupported,
+      waitsForHost,
+    ],
   );
 
   const remove = useCallback(

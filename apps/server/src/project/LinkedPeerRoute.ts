@@ -454,6 +454,8 @@ export const make = Effect.gen(function* () {
             from: request.from,
             fromEpoch: request.fromEpoch,
             members: request.members,
+            ...(request.removed === undefined ? {} : { removed: request.removed }),
+            ...(request.relinked === undefined ? {} : { relinked: request.relinked }),
           })
           .pipe(Effect.mapError(fromLinkError));
       }),

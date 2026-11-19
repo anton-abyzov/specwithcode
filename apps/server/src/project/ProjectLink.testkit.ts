@@ -37,6 +37,8 @@ import {
   type CoordinatorStandbyRecord,
   CoordinatorStandbyStore,
 } from "./CoordinatorStandbyStore.ts";
+import * as LinkedMemoryHistory from "./LinkedMemoryHistory.ts";
+import { emptyMemoryHistory, type MemoryHistoryState } from "./linkedMemoryMerge.ts";
 import * as ProjectLink from "./ProjectLink.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as ProjectWorkspaceService from "./ProjectWorkspaceService.ts";
@@ -90,6 +92,10 @@ export function machine(environment: string) {
   const epochs = new Map<string, WorkerEpochStore.WorkerEpochRecord>();
   /** Routine copies this machine was asked to keep, by its project. */
   const keptRoutines = new Map<string, { logicalProjectId: string; ids: string[] }>();
+  /** Routines each project owns here, as the link preview names them. */
+  const ownedRoutines = new Map<string, Array<{ id: string; title: string }>>();
+  /** Memory version histories by project (LinkedMemoryHistory). */
+  const memoryHistory = new Map<string, MemoryHistoryState>();
   const toRow = (project: Project): ProjectRow =>
     ({
       projectId: project.id,
@@ -257,6 +263,7 @@ export function machine(environment: string) {
           RoutineCopies,
           RoutineCopies.of({
             snapshot: () => Effect.die("not used by the project link"),
+            owned: (projectId) => Effect.sync(() => ownedRoutines.get(projectId) ?? []),
             replace: ({ projectId, logicalProjectId, routines }) =>
               Effect.sync(
                 () =>
@@ -267,6 +274,19 @@ export function machine(environment: string) {
               ),
           }),
         ),
+        Layer.succeed(LinkedMemoryHistory.LinkedMemoryHistory, {
+          read: (projectId: ProjectId) =>
+            Effect.sync(() => memoryHistory.get(projectId) ?? emptyMemoryHistory),
+          modify: (
+            projectId: ProjectId,
+            update: (state: MemoryHistoryState) => MemoryHistoryState,
+          ) =>
+            Effect.sync(() => {
+              const next = update(memoryHistory.get(projectId) ?? emptyMemoryHistory);
+              memoryHistory.set(projectId, next);
+              return next;
+            }),
+        } as unknown as LinkedMemoryHistory.LinkedMemoryHistory["Service"]),
         Layer.succeed(
           CoordinatorReplicas.CoordinatorReplicas,
           CoordinatorReplicas.CoordinatorReplicas.of({
@@ -299,17 +319,31 @@ export function machine(environment: string) {
       ),
     ),
   );
-  const run = <A>(
-    use: (link: ProjectLink.ProjectLink["Service"]) => Effect.Effect<A, ProjectLinkError>,
-  ) =>
-    Effect.runPromiseExit(
-      Effect.gen(function* () {
-        return yield* use(yield* ProjectLink.ProjectLink);
-      }).pipe(Effect.provide(layer)),
-    ).then((exit) => {
-      if (Exit.isSuccess(exit)) return exit.value;
-      throw Cause.squash(exit.cause);
-    });
+  const runWith =
+    (checked: boolean) =>
+    <A>(use: (link: ProjectLink.ProjectLink["Service"]) => Effect.Effect<A, ProjectLinkError>) =>
+      Effect.runPromiseExit(
+        Effect.gen(function* () {
+          const link = yield* ProjectLink.ProjectLink;
+          return yield* use(
+            checked
+              ? {
+                  ...link,
+                  prepare: (input) => link.prepare({ equalCoordinators: true, ...input }),
+                  accept: (input, options) =>
+                    link.accept({ equalCoordinators: true, ...input }, options),
+                }
+              : link,
+          );
+        }).pipe(Effect.provide(layer)),
+      ).then((exit) => {
+        if (Exit.isSuccess(exit)) return exit.value;
+        throw Cause.squash(exit.cause);
+      });
+  /** As a caller that checked both machines run equal coordinators, which a link needs. */
+  const run = runWith(true);
+  /** As a caller from before equal coordinators: it says nothing of the other machine. */
+  const runUnchecked = runWith(false);
   const fails = async (effect: Promise<unknown>) => {
     const error = await effect.then(
       () => null,
@@ -352,6 +386,8 @@ export function machine(environment: string) {
     runs,
     replicas,
     keptRoutines,
+    ownedRoutines,
+    memoryHistory,
     standby,
     rearm: rearm.entries,
     rearmStore: rearm.service,
@@ -359,6 +395,7 @@ export function machine(environment: string) {
     layer,
     capabilities,
     run,
+    runUnchecked,
     fails,
     add,
     member,
@@ -417,6 +454,13 @@ export const link = async (pair: ReturnType<typeof legacyPair>) => {
   );
   return { prepared, accepted, committed };
 };
+
+/** A member as both ends list it once linked: named by its link, counted by its own copy. */
+export const linkedAs = (
+  member: LogicalProjectMember,
+  linkId: string = operationId,
+  generation = 1,
+): LogicalProjectMember => ({ ...member, linkId, generation });
 
 export const thirdLinkId = "33333333-3333-4333-8333-333333333333";
 

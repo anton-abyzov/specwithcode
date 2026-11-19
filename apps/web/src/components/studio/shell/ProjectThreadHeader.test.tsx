@@ -84,6 +84,7 @@ const render = (expanded = false, overrides: Partial<EnvironmentThreadShell> = {
         projectCwd="/scratch/atlas"
         canChange
         renameBlockedReason={null}
+        resolveBlockedReason={null}
         expanded={expanded}
         {...handlers}
       />,
@@ -156,6 +157,7 @@ describe("an open thread's header", () => {
           projectCwd="/scratch/atlas"
           canChange
           renameBlockedReason={null}
+          resolveBlockedReason={null}
           expanded={false}
           toolsSlotRef={(node) => {
             slot = node;
@@ -255,6 +257,7 @@ describe("an open thread's header", () => {
           projectCwd="/scratch/atlas"
           canChange={false}
           renameBlockedReason="Ministorm isn't connected right now."
+          resolveBlockedReason={null}
           expanded={false}
           {...handlers}
         />,
@@ -269,6 +272,76 @@ describe("an open thread's header", () => {
     );
   });
 
+  it("resolves another machine's thread: Resolve does not follow this machine's access", async () => {
+    await act(() =>
+      root.render(
+        <ProjectThreadHeader
+          thread={{
+            ...thread,
+            environmentId: "ministorm" as EnvironmentThreadShell["environmentId"],
+          }}
+          subagents={[]}
+          onPeekSubagent={vi.fn()}
+          providerEntry={null}
+          projectCwd="/scratch/atlas"
+          // What the project passes for a thread that runs on another machine.
+          canChange={false}
+          renameBlockedReason={null}
+          resolveBlockedReason={null}
+          expanded={false}
+          {...handlers}
+        />,
+      ),
+    );
+    const resolve = button("Resolve thread");
+    expect(resolve.disabled).toBe(false);
+    expect(resolve.getAttribute("aria-disabled")).toBeNull();
+    await act(async () => resolve.click());
+    expect(handlers.onToggleResolved).toHaveBeenCalledOnce();
+  });
+  it.each([
+    [{}, "Can't resolve this thread"],
+    [{ settledOverride: "settled" }, "Can't reopen this thread"],
+  ] as const)(
+    "says why instead of resolving when the thread's machine is out of reach",
+    async (lifecycle, title) => {
+      const add = vi.spyOn(toastManager, "add");
+      const reason = "Ministorm isn't connected right now, so this thread can't be resolved.";
+      await act(() =>
+        root.render(
+          <ProjectThreadHeader
+            thread={{ ...thread, ...lifecycle } as EnvironmentThreadShell}
+            subagents={[]}
+            onPeekSubagent={vi.fn()}
+            providerEntry={null}
+            projectCwd="/scratch/atlas"
+            canChange
+            renameBlockedReason={null}
+            resolveBlockedReason={reason}
+            expanded={false}
+            {...handlers}
+          />,
+        ),
+      );
+      const resolve = container.querySelector<HTMLButtonElement>(".sws-thread-resolve")!;
+      // Not natively disabled: a disabled button shows no tip and takes no click.
+      expect(resolve.disabled).toBe(false);
+      expect(resolve.getAttribute("aria-disabled")).toBe("true");
+      await act(async () => resolve.click());
+      expect(handlers.onToggleResolved).not.toHaveBeenCalled();
+      expect(add).toHaveBeenCalledWith({
+        id: "thread-resolve-blocked:host:worker",
+        type: "warning",
+        title,
+        description: reason,
+      });
+      // A second click replaces that notice: the same id, never a second toast beside it.
+      await act(async () => resolve.click());
+      expect(new Set(add.mock.calls.map(([toast]) => toast.id))).toEqual(
+        new Set(["thread-resolve-blocked:host:worker"]),
+      );
+    },
+  );
   it("renames while Resolve is off, as on another machine's thread", async () => {
     await act(() =>
       root.render(
@@ -280,6 +353,7 @@ describe("an open thread's header", () => {
           projectCwd="/scratch/atlas"
           canChange={false}
           renameBlockedReason={null}
+          resolveBlockedReason="Ministorm runs an older version that can't resolve threads. Update it first."
           expanded={false}
           {...handlers}
         />,
@@ -302,6 +376,7 @@ describe("an open thread's header", () => {
           projectCwd="/scratch/atlas"
           canChange
           renameBlockedReason={null}
+          resolveBlockedReason={null}
           expanded={false}
           toolsSlotRef={(node) => {
             slot = node;
@@ -363,6 +438,7 @@ it.each([
         projectCwd="/scratch/atlas"
         canChange
         renameBlockedReason={null}
+        resolveBlockedReason={null}
         expanded={false}
         {...handlers}
       />,
@@ -395,6 +471,7 @@ describe("an open topic's header in the personal assistant", () => {
           projectCwd="/scratch/atlas"
           canChange
           renameBlockedReason={null}
+          resolveBlockedReason={null}
           expanded={false}
           {...handlers}
         />,
@@ -426,6 +503,7 @@ describe("an open topic's header in the personal assistant", () => {
           projectCwd="/scratch/atlas"
           canChange={false}
           renameBlockedReason="Ministorm isn't connected right now."
+          resolveBlockedReason={null}
           expanded={false}
           {...handlers}
         />,
@@ -435,5 +513,33 @@ describe("an open topic's header in the personal assistant", () => {
       container.querySelector("h2")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })),
     );
     expect(add).toHaveBeenCalledWith(expect.objectContaining({ title: "Can't rename this topic" }));
+  });
+
+  it("says topic in the blocked Resolve toast", async () => {
+    const add = vi.spyOn(toastManager, "add");
+    await act(() =>
+      root.render(
+        <ProjectThreadHeader
+          personal
+          thread={thread}
+          subagents={[]}
+          onPeekSubagent={vi.fn()}
+          providerEntry={null}
+          projectCwd="/scratch/atlas"
+          canChange
+          renameBlockedReason={null}
+          resolveBlockedReason="Ministorm isn't connected right now, so this thread can't be resolved."
+          expanded={false}
+          {...handlers}
+        />,
+      ),
+    );
+    await act(async () => button("Resolve topic").click());
+    expect(add).toHaveBeenCalledWith({
+      id: "thread-resolve-blocked:host:worker",
+      type: "warning",
+      title: "Can't resolve this topic",
+      description: "Ministorm isn't connected right now, so this topic can't be resolved.",
+    });
   });
 });

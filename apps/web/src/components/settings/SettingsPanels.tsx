@@ -186,6 +186,7 @@ import {
   TIMELINE_DETAIL_LEVELS,
 } from "../../timelineDetail";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { ArchivedProjectsSections } from "./ArchivedProjectsSections";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 import { LanguageSettingRow } from "./LanguageSettingRow";
 import { SendFeedbackButton } from "../github/SendFeedback";
@@ -3468,6 +3469,40 @@ export function GeneralSettingsPanel() {
               />
             }
           />
+          {/* Hidden only when every connected machine runs Windows, which has no block. */}
+          {!(
+            connectedEnvironments.length > 0 &&
+            connectedEnvironments.every(
+              (target) => target.serverConfig?.environment.platform.os === "windows",
+            )
+          ) ? (
+          <SettingsRow
+            serverScoped
+            settingKeys={["terminalCommands"]}
+            {...searchableSetting("terminal-commands")}
+            description="Lets a new Terminal window run claude, codex, specweave and the tools SpecWithCode installed, through one marked block in your shell startup file. Your own installs stay first. Off removes the block. macOS and Linux."
+            resetAction={
+              settings.terminalCommands !== DEFAULT_UNIFIED_SETTINGS.terminalCommands ? (
+                <SettingResetButton
+                  label={tx("Terminal commands")}
+                  onClick={() =>
+                    updateSettings({ terminalCommands: DEFAULT_UNIFIED_SETTINGS.terminalCommands })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <ScopedSwitch
+                settingKeys={["terminalCommands"]}
+                checked={settings.terminalCommands}
+                onCheckedChange={(checked) =>
+                  updateSettings({ terminalCommands: Boolean(checked) })
+                }
+                aria-label={tx("Use these commands in Terminal")}
+              />
+            }
+          />
+          ) : null}
 
           <SettingsRow
             {...searchableSetting("continue-threads-after-server-update")}
@@ -3709,7 +3744,10 @@ export function ArchivedThreadsPanel() {
       ),
     );
     const threads = archivedSnapshots.flatMap(({ environmentId, snapshot }) =>
-      snapshot.threads.map((thread) => presentThreadShell(environmentId, thread)),
+      snapshot.threads
+        // An advisor's own thread is archived once its advice is read; it is never a thread to restore.
+        .filter((thread) => thread.purpose !== "advisor")
+        .map((thread) => presentThreadShell(environmentId, thread)),
     );
 
     const archivedProjects = Array.from(projectsByEnvironmentAndId.values());
@@ -3795,6 +3833,7 @@ export function ArchivedThreadsPanel() {
 
   return (
     <SettingsPageContainer>
+      <ArchivedProjectsSections />
       {archivedGroups.length === 0 ? (
         <SettingsSection
           id={isLoadingArchive ? undefined : searchableSetting("archive").id}

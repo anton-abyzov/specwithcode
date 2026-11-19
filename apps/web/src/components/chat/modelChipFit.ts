@@ -136,17 +136,36 @@ export function measureFitParts<Part extends string>(
   let always = rendered;
   const costs = new Map<Part, number>();
   const least = new Map<Part, number>();
-  for (const part of parts) {
-    const name = part.dataset[key] as Part;
+  // A part inside another part (the chip's usage number inside its usage button) is
+  // already in the outer part's box: the outer part costs only what is its own.
+  const list = [...parts];
+  const outerOf = new Map<Element, Element>();
+  for (const part of list) {
+    for (let node = part.parentElement; node && node !== root; node = node.parentElement) {
+      if (list.includes(node as HTMLElement)) {
+        outerOf.set(part, node);
+        break;
+      }
+    }
+  }
+  const measured = list.map((part) => {
     const style = getComputedStyle(part);
     const inFlow = style.position !== "absolute" && style.display !== "none";
     const box = part.getBoundingClientRect().width;
     const parent = layoutParent(part);
     const gap = parent ? Number.parseFloat(getComputedStyle(parent).columnGap) || 0 : 0;
-    const margins = inlineMargins(style);
+    return { part, style, inFlow, box, gap, margins: inlineMargins(style) };
+  });
+  const inner = new Map<Element, number>();
+  for (const { part, inFlow, box, gap, margins } of measured) {
+    const outer = outerOf.get(part);
+    if (outer && inFlow) inner.set(outer, (inner.get(outer) ?? 0) + box + margins + gap);
+  }
+  for (const { part, style, inFlow, box, gap, margins } of measured) {
+    const name = part.dataset[key] as Part;
     // A safety truncation never hides the real width from the next decision.
-    const natural = Math.max(box, part.scrollWidth || 0);
-    if (inFlow) always -= box + margins + gap;
+    const natural = Math.max(box, part.scrollWidth || 0) - (inner.get(part) ?? 0);
+    if (inFlow && !outerOf.has(part)) always -= box + margins + gap;
     costs.set(name, (costs.get(name) ?? 0) + natural + margins + gap);
     const first = (Number.parseFloat(style.fontSize) || 12) * MODEL_NAME_MIN_EM;
     least.set(

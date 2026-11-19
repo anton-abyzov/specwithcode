@@ -1,17 +1,21 @@
 // Stand-ins for the modules vite.config.ts redirects here: synthetic data, no server.
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import { createContext, useContext, type ReactNode } from "react";
+import { FirstFeatureOfferCard } from "../../src/components/studio/firstFeature/FirstFeatureOfferCard";
 
 const now = Date.now();
 const ago = (minutes: number) => new Date(now - minutes * 60_000).toISOString();
 const M4 = "m4",
   M1 = "m1",
   MINI = "ministorm",
-  MBP = "mbp";
+  MBP = "mbp",
+  // A saved connection to a laptop that is switched off: it never answers.
+  OLD = "old-mbp";
 
 const projects = [
   { id: "sw-m4", environmentId: M4, title: "specweave" },
   { id: "sw-m1", environmentId: M1, title: "specweave" },
+  { id: "sw-mini", environmentId: MINI, title: "specweave" },
   { id: "oly", environmentId: MBP, title: "oly" },
   { id: "ec-m4", environmentId: M4, title: "EasyChamp" },
   { id: "ec-m1", environmentId: M1, title: "EasyChamp" },
@@ -21,7 +25,7 @@ const projects = [
   { id: "aide-m4", environmentId: M4, title: "Percy", workspaceSettings: { kind: "personal" } },
 ];
 const groups = [
-  ["specweave", ["sw-m4", "sw-m1"]],
+  ["specweave", ["sw-m4", "sw-m1", "sw-mini"]],
   ["oly", ["oly"]],
   ["EasyChamp", ["ec-m4", "ec-m1"]],
   ["sketchmate_project", ["sketch"]],
@@ -84,6 +88,24 @@ const shells: EnvironmentThreadShell[] = [
   shell("a9", "Release notes for 1.0.206", "sw-m1", 1500, ask),
   shell("a10", "Copilot availability probe", "sw-m1", 1600, ask),
   shell("w1", "Overview page design review", "swc", 0, running),
+  // Running steps: the chip says what kind, never the command line.
+  shell("w2", "Release pipeline retries a failed Windows/Linux build", "sw-m4", 0, {
+    ...running,
+    activeWork: {
+      label: "cd /Users/anton/Projects/specwithcode && pnpm test",
+      kind: "command",
+      startedAt: ago(3.5),
+    },
+  } as Partial<EnvironmentThreadShell>),
+  shell("w3", "Request and verify app releases", "sw-m1", 1, {
+    ...running,
+    activeWork: { label: "Review the release notes", kind: "subagent", startedAt: ago(2.5) },
+  } as Partial<EnvironmentThreadShell>),
+  // A machine on an older version sends no kind: still words, the command in the tooltip.
+  shell("w4", "Sheets, whiteboard, data, slides and meetings", "sw-mini", 7, {
+    ...running,
+    activeWork: { label: "W=/Users/anton/work; cd $W && vp build", startedAt: ago(7.5) },
+  } as Partial<EnvironmentThreadShell>),
   shell("r1", "EasyChamp hourly New Releases", "ec-m1", 60),
   shell("r2", "Move M1 release runner to Ministorm", "sw-m1", 120),
   shell("r3", "Media rule: global files only", "sw-m1", 180),
@@ -97,18 +119,23 @@ const shells: EnvironmentThreadShell[] = [
   shell("d2", "Multiply 3 by 7", "sw-m4", 2100, done),
 ];
 
-const environments = [
-  [M4, "M4 Max", "connected"],
-  [M1, "M1 Max", "connected"],
-  [MINI, "ministorm", "reconnecting"],
-  [MBP, "Anton's MacBook Pro", "connected"],
-].map(([environmentId, label, phase]) => ({
+// Host labels as each machine reports them; the nicknames are what the person named them.
+const MACHINES = [
+  [M4, "Anton's MacBook M4MAX", "m4", "rose", "laptop", "connected", "1.0.304"],
+  [M1, "Anton's MacBook Pro M1Max", "m1", "orange", "laptop", "connected", "1.0.306"],
+  [MINI, "ministorm", "linux-mini", "blue", "linux", "connected", "1.0.304"],
+  [MBP, "Anton's MacBook Pro M5", "m5", "teal", "laptop", "connected", "1.0.306"],
+  [OLD, "Anton's MacBook Pro", null, "slate", "laptop", "reconnecting", null],
+] as const;
+const environments = MACHINES.map(([environmentId, label, , , , phase, serverVersion]) => ({
   environmentId,
   label,
-  connection: { phase, error: null, traceId: null },
-  serverConfig: {
-    environment: { serverVersion: environmentId === MINI ? "1.0.202" : "1.0.205" },
+  connection: {
+    phase,
+    error: phase === "connected" ? null : "No answer from this machine (timed out)",
+    traceId: null,
   },
+  serverConfig: serverVersion === null ? null : { environment: { serverVersion } },
 }));
 
 const empty = new URLSearchParams(location.search).get("data") === "empty";
@@ -134,6 +161,25 @@ export const useProjects = () => (empty ? [] : projects);
 export const useThreadShells = () => (empty ? [] : shells);
 export const useServerConfigs = () => new Map();
 export const useAllEnvironmentShellsBootstrapped = () => true;
+export const useEnvironmentShellLive = () => true;
+// studio/machineIdentity: nickname, color and icon, as Settings > Machines saves them.
+export const useMachineIdentities =
+  () => (environmentId: string, fallbackLabel?: string | null) => {
+    const machine = MACHINES.find(([id]) => id === environmentId);
+    const label = machine?.[1] ?? fallbackLabel ?? environmentId;
+    // Without a nickname the owner's name is dropped: "Anton's MacBook Pro" reads "MacBook Pro".
+    const name = machine?.[2] ?? label.replace(/^[^\s'’]+['’]s\s+/u, "");
+    return {
+      environmentId,
+      name,
+      color: machine?.[3] ?? "slate",
+      icon: machine?.[4] ?? "server",
+      short: name.slice(0, 2).toUpperCase(),
+      derivedShort: name.slice(0, 2).toUpperCase(),
+    };
+  };
+export const machineColorProps = (identity: { color: string } | null | undefined) =>
+  identity ? { "data-machine-color": identity.color } : {};
 // state/environments
 export const useEnvironments = () => ({ environments, isReady: true, networkStatus: "online" });
 export const usePrimaryEnvironmentId = () => M4;
@@ -155,6 +201,10 @@ export const useComposerDraftStore = { getState: () => ({ setModelSelection: () 
 export const isElectron = false;
 // components/studio/WhatYouCanDo, CapacityFleet
 export const WhatYouCanDo = () => null;
+// The real offer card (1398 AC-11), offering the sample as on a machine with an agent signed in.
+export const FirstFeatureOffer = () => (
+  <FirstFeatureOfferCard offer={{ kind: "start" }} onStart={() => {}} onDismiss={() => {}} />
+);
 export const CapacityFleet = () => null;
 // components/ProjectFavicon
 export const ProjectFavicon = (props: {

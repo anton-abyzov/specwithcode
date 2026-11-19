@@ -47,12 +47,18 @@ import {
   ProviderOptionSelections,
 } from "./model.ts";
 import { ModelSelection } from "./modelSelection.ts";
-import { LearnedModelPreferences, ModelLanes, TaskRoutingSettings } from "./taskRouting.ts";
+import {
+  LearnedModelPreferences,
+  ModelLanes,
+  ModelLanesOverride,
+  TaskRoutingSettings,
+} from "./taskRouting.ts";
 import {
   AdversarialReviewSettings,
   AdversarialReviewSettingsPatch,
   ProviderModelTiers,
 } from "./adversarialReview.ts";
+import { AdvisorSettings, AdvisorSettingsPatch } from "./advisor.ts";
 import { ProjectScript } from "./project.ts";
 import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
 import { TeamRulesRefusal } from "./teamRules.ts";
@@ -375,6 +381,85 @@ export type MachineNickname = typeof MachineNickname.Type;
 /** environmentId to nickname, for every machine in the fleet, not only this one. */
 export const MachineNicknames = Schema.Record(TrimmedNonEmptyString, MachineNickname);
 export type MachineNicknames = typeof MachineNicknames.Type;
+
+/**
+ * The day of the month each subscription renews, keyed by the account key the
+ * usage views use, for providers that report no renewal date. Set by the
+ * person; this machine only.
+ */
+export const SubscriptionRenewalDays = Schema.Record(
+  TrimmedNonEmptyString,
+  Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 31 })),
+);
+export type SubscriptionRenewalDays = typeof SubscriptionRenewalDays.Type;
+
+/**
+ * The share of a subscription a person plans to use, by account key: 100
+ * unless set. A spare kept at 30% that is used 30% meets its plan, so it does
+ * not lower the efficiency score.
+ */
+export const SubscriptionTargets = Schema.Record(
+  TrimmedNonEmptyString,
+  Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
+);
+export type SubscriptionTargets = typeof SubscriptionTargets.Type;
+
+/**
+ * Dismissed use-it-or-lose-it alerts: per alert key, the end (epoch ms) of the
+ * period that was dismissed. A later period alerts again. Each key holds one
+ * value, so the map grows only with the accounts and windows ever warned
+ * about, not with time.
+ */
+export const QuotaAlertDismissals = Schema.Record(
+  TrimmedNonEmptyString,
+  Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 8.64e15 })),
+);
+export type QuotaAlertDismissals = typeof QuotaAlertDismissals.Type;
+
+/**
+ * "Use it until it resets": for a while, new worker threads of the named
+ * projects start on one subscription's model, because its quota is about to
+ * reset unused. A time-boxed override: no saved default is rewritten, so
+ * nothing has to be restored when it ends. See `quotaBoost` in shared.
+ */
+export const QuotaBoost = Schema.Struct({
+  accountKey: TrimmedNonEmptyString,
+  instanceId: ProviderInstanceId,
+  model: TrimmedNonEmptyString,
+  /** The projects it covers; empty means every project. */
+  projectIds: Schema.Array(TrimmedNonEmptyString),
+  /** How the banner names it, for example "Codex Pro". */
+  label: TrimmedNonEmptyString,
+  /** The window whose reset ends it. */
+  windowId: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Epoch ms: the reset that ends it, and when it began. */
+  until: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 8.64e15 })),
+  /**
+   * The window's reset as read at the start, when `until` is not that reset: a
+   * boost started from an expected reset ends a day after the post, and the
+   * window moving past this is the reset arriving.
+   */
+  resetsAtStart: Schema.optionalKey(
+    Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 8.64e15 })),
+  ),
+  startedAt: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 8.64e15 })),
+});
+export type QuotaBoost = typeof QuotaBoost.Type;
+/**
+ * Boosts by account key, so two clients writing at once merge instead of one
+ * erasing the other. Null marks one that ended: a patch can only add or
+ * replace a key, so ending is written as null. One value per account keeps
+ * the map bounded.
+ */
+export const QuotaBoosts = Schema.Record(TrimmedNonEmptyString, Schema.NullOr(QuotaBoost));
+export type QuotaBoosts = typeof QuotaBoosts.Type;
+
+/** What a subscription costs a month, by account key; only weighs the efficiency score. */
+export const SubscriptionPrices = Schema.Record(
+  TrimmedNonEmptyString,
+  Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100_000 })),
+);
+export type SubscriptionPrices = typeof SubscriptionPrices.Type;
 
 export const LoadBalancingWeights = Schema.Record(
   TrimmedNonEmptyString,
@@ -1621,6 +1706,14 @@ export const ProviderLimitTargetOrder = Schema.Literals([
 ]);
 export type ProviderLimitTargetOrder = typeof ProviderLimitTargetOrder.Type;
 
+/**
+ * What a project's new threads start on when no model is named: the first
+ * available entry of the track for the task ("tracks"), or the one model the
+ * project saved ("model"). Absent means "model", as projects ran before tracks.
+ */
+export const ThreadModelMode = Schema.Literals(["tracks", "model"]);
+export type ThreadModelMode = typeof ThreadModelMode.Type;
+
 export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "agentInstructions",
   "claudeWorkflowMode",
@@ -1629,6 +1722,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "worktreeLocationMode",
   "worktreesDirectory",
   "defaultModelSelection",
+  "threadModelMode",
   "defaultModelProviders",
   "defaultRuntimeMode",
   "defaultThreadEnvMode",
@@ -1670,6 +1764,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "modelLanes",
   "modelTiers",
   "adversarialReview",
+  "advisor",
   "learnedModelPreferences",
   "keepActiveThreadsPerProject",
 ] as const;
@@ -1688,6 +1783,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   worktreeLocationMode: Schema.optionalKey(WorktreeLocationMode),
   worktreesDirectory: Schema.optionalKey(TrimmedString),
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  threadModelMode: Schema.optionalKey(ThreadModelMode),
   defaultModelProviders: Schema.optionalKey(DefaultModelProviders),
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
@@ -1727,9 +1823,13 @@ export const ProjectSettingsOverrides = Schema.Struct({
   providerLimitTargetOrder: Schema.optionalKey(ProviderLimitTargetOrder),
   providerLimitUnknownUsageEligible: Schema.optionalKey(Schema.Boolean),
   taskRouting: Schema.optionalKey(TaskRoutingSettings),
-  modelLanes: Schema.optionalKey(ModelLanes),
+  modelLanes: Schema.optionalKey(ModelLanesOverride),
   modelTiers: Schema.optionalKey(ProviderModelTiers),
-  adversarialReview: Schema.optionalKey(AdversarialReviewSettings),
+  // Only the fields the project changed: the rest follow the machine. An
+  // empty reviewer list is the built-in order.
+  adversarialReview: Schema.optionalKey(AdversarialReviewSettingsPatch),
+  // Only the fields the project changed, like `adversarialReview`.
+  advisor: Schema.optionalKey(AdvisorSettingsPatch),
   learnedModelPreferences: Schema.optionalKey(LearnedModelPreferences),
   keepActiveThreadsPerProject: Schema.optionalKey(KeepActiveThreadsPerProject),
 } satisfies Record<ProjectScopedServerSettingKey, unknown>);
@@ -1789,6 +1889,12 @@ export const ServerSettings = Schema.Struct({
    * `STUDIO_CRASH_REPORTS=false` turns them off regardless of this setting.
    */
   crashReportsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
+   * "Copy over the local network when both machines are on it" (1390 T-17). Off by
+   * default on every machine. It takes effect only where the review gate is open
+   * (`folderCopyLanGateOpen`), and both machines of a copy must have it on.
+   */
+  folderCopyOverLan: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   worktreeCleanup: WorktreeCleanup.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   storageCleanup: StorageCleanupSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed(Schema.decodeSync(StorageCleanupSettings)({}))),
@@ -1830,6 +1936,13 @@ export const ServerSettings = Schema.Struct({
    */
   pauseWorkForUpdates: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /**
+   * "Use these commands in Terminal": keep claude, codex, specweave and the tools the app
+   * installs on a new Terminal's PATH through one marked block in the login shell's startup
+   * file (macOS and Linux). On by default; off removes the block, and a block the person
+   * deletes turns it off. Per machine, never copied to another.
+   */
+  terminalCommands: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
    * Whether agents may drive the in-app preview browser. Turning this off
    * withholds the MCP credential, so the `studio-code` server (and with it every
    * `preview_*` tool) is never attached to a provider session, and the prompt
@@ -1868,6 +1981,10 @@ export const ServerSettings = Schema.Struct({
   ),
   defaultModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /** See `ThreadModelMode`. A project sets it; "model" keeps how threads started before tracks. */
+  threadModelMode: ThreadModelMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("model" as const)),
   ),
   /**
    * Other providers that serve the default model, in the order a thread
@@ -1922,6 +2039,14 @@ export const ServerSettings = Schema.Struct({
    * of asking the user to pick an unnamed browser. Off keeps Claude in Chrome.
    */
   preferSpecWithCodeBrowser: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
+   * Developer switch: the Chrome relay also admits a copy of the SpecWithCode
+   * Browser extension loaded by hand (any extension id). Off, only the Chrome
+   * Web Store copy may connect. The pairing token is still required either way.
+   */
+  allowHandLoadedBrowserExtension: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   /** A machine-wide choice with no project override; see `ProviderSessionIdleMinutes`. */
   providerSessionIdleMinutes: ProviderSessionIdleMinutes.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_SESSION_IDLE_MINUTES)),
@@ -2054,6 +2179,11 @@ export const ServerSettings = Schema.Struct({
    * `@specweave-studio/shared/adversarialReview`). Automatic review is off by default.
    */
   adversarialReview: AdversarialReviewSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /**
+   * A stronger model a running thread can consult and keep working (see
+   * `@specweave-studio/shared/advisor`). Off by default.
+   */
+  advisor: AdvisorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /** What a project learned from its user about which model suits which work. */
   learnedModelPreferences: LearnedModelPreferences.pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
@@ -2102,6 +2232,21 @@ export const ServerSettings = Schema.Struct({
    * entry for each machine, so every device shows the same name.
    */
   machineNicknames: MachineNicknames.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /** Renewal day per account, where the provider reports none; see `SubscriptionRenewalDays`. */
+  subscriptionRenewalDays: SubscriptionRenewalDays.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  /** Planned share per account; see `SubscriptionTargets`. */
+  subscriptionTargets: SubscriptionTargets.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /** Monthly price per account; see `SubscriptionPrices`. */
+  subscriptionPrices: SubscriptionPrices.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /** Warn when subscription quota is about to reset unused; see `quotaAlerts` in shared. */
+  quotaAlertsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  quotaAlertDismissals: QuotaAlertDismissals.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /** Read the public feed of reset announcements; off stops every request to it. */
+  resetAnnouncementsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Running "use it until it resets" overrides; see `QuotaBoost`. */
+  quotaBoosts: QuotaBoosts.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /**
    * Retired environment tier for the new-thread workspace, which is now each
    * project's own choice (its override, then its specweave-studio.json, then
@@ -2405,6 +2550,7 @@ const OpenCodeSettingsPatch = Schema.Struct({
 export const ServerSettingsPatch = Schema.Struct({
   agentInstructions: Schema.optionalKey(AgentInstructions),
   crashReportsEnabled: Schema.optionalKey(Schema.Boolean),
+  folderCopyOverLan: Schema.optionalKey(Schema.Boolean),
   claudeWorkflowMode: Schema.optionalKey(ClaudeWorkflowMode),
   responseStyle: Schema.optionalKey(ResponseStyle),
   worktreeCleanup: Schema.optionalKey(
@@ -2433,6 +2579,7 @@ export const ServerSettingsPatch = Schema.Struct({
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   pauseWorkForUpdates: Schema.optionalKey(Schema.Boolean),
+  terminalCommands: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   agentBrowserProfileId: Schema.optionalKey(Schema.NullOr(BrowserProfileId)),
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
@@ -2447,6 +2594,7 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  threadModelMode: Schema.optionalKey(ThreadModelMode),
   defaultModelProviders: Schema.optionalKey(DefaultModelProviders),
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
   /**
@@ -2470,6 +2618,7 @@ export const ServerSettingsPatch = Schema.Struct({
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
   enableAgentComputerAccess: Schema.optionalKey(Schema.Boolean),
   preferSpecWithCodeBrowser: Schema.optionalKey(Schema.Boolean),
+  allowHandLoadedBrowserExtension: Schema.optionalKey(Schema.Boolean),
   providerSessionIdleMinutes: Schema.optionalKey(ProviderSessionIdleMinutes),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
   aideEnabled: Schema.optionalKey(Schema.Boolean),
@@ -2503,6 +2652,8 @@ export const ServerSettingsPatch = Schema.Struct({
   modelTiers: Schema.optionalKey(ProviderModelTiers),
   /** Changes only the fields it names; a list replaces the whole list. */
   adversarialReview: Schema.optionalKey(AdversarialReviewSettingsPatch),
+  /** Changes only the fields it names. */
+  advisor: Schema.optionalKey(AdvisorSettingsPatch),
   /** Replaces the whole list. */
   learnedModelPreferences: Schema.optionalKey(LearnedModelPreferences),
   backgroundActivity: Schema.optionalKey(
@@ -2519,6 +2670,17 @@ export const ServerSettingsPatch = Schema.Struct({
   environmentIcon: Schema.optionalKey(Schema.NullOr(EnvironmentMachineKind)),
   /** Merged per machine, newest stamp wins; never replaces the whole map. */
   machineNicknames: Schema.optionalKey(MachineNicknames),
+  /** Merged by account key; an entry left out keeps its day. */
+  subscriptionRenewalDays: Schema.optionalKey(SubscriptionRenewalDays),
+  /** Merged by account key, like the renewal days. */
+  subscriptionTargets: Schema.optionalKey(SubscriptionTargets),
+  subscriptionPrices: Schema.optionalKey(SubscriptionPrices),
+  quotaAlertsEnabled: Schema.optionalKey(Schema.Boolean),
+  /** Merged by alert key. */
+  quotaAlertDismissals: Schema.optionalKey(QuotaAlertDismissals),
+  resetAnnouncementsEnabled: Schema.optionalKey(Schema.Boolean),
+  /** Merged by account key; null ends one. */
+  quotaBoosts: Schema.optionalKey(QuotaBoosts),
   defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
   newProjectThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),

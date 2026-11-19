@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import * as NodeZlib from "node:zlib";
 
 import { canonicalOrigin } from "../handoffGitTypes.ts";
+import { type ContentBudget, refineClassByContent } from "./secretContent.ts";
 import {
   classifyFile,
   FILE_CLASSES,
@@ -13,7 +14,13 @@ import {
   type FileClass,
 } from "./classify.ts";
 import { FolderGitError, gitList, runGit } from "./git.ts";
-import { isSafeRelativePath, linkTargetOnWire } from "./paths.ts";
+import {
+  destinationPathKey,
+  isSafeDestinationPath,
+  isSafeRelativePath,
+  linkTargetOnWire,
+  MAX_RELATIVE_PATH,
+} from "./paths.ts";
 
 /** Fixed chunk size: large files move and resume in 8 MiB pieces. */
 export const CHUNK_SIZE = 8 * 1024 * 1024;
@@ -50,6 +57,12 @@ export interface ManifestEntry {
   readonly portableGit?: boolean;
 }
 
+/**
+ * Refs a clone from origin recreates, remote caches (remote-tracking and `git maintenance`
+ * prefetch refs), or the stash the plan already counts.
+ */
+const CLONE_CARRIED_REF = /^refs\/(?:heads\/|tags\/|remotes\/|prefetch\/|stash$)/u;
+
 export interface RepositoryInfo {
   readonly path: string;
   /** main: has a `.git` folder; linked: a linked worktree; gitfile: another `.git` file (submodule). */
@@ -59,6 +72,12 @@ export interface RepositoryInfo {
   readonly branches: Readonly<Record<string, string>>;
   readonly stash: string | null;
   readonly stashCount: number;
+  /**
+   * Commits on HEAD, local branches or tags that no origin remote-tracking branch has, as of
+   * the last fetch, plus one for refs a clone drops (notes, custom refs) or an unborn HEAD:
+   * work a clone from origin would leave behind. Absent from older sources.
+   */
+  readonly localOnlyCommits?: number;
   /** Canonical origin without credentials, or null without one. */
   readonly identity: string | null;
   /** The origin URL with any user name or password removed, for "clone from origin". */
@@ -237,6 +256,32 @@ async function readRepository(
   const origin = await runGit(absolute, ["config", "--get", "remote.origin.url"], {
     allowFailure: true,
   });
+  // Only origin counts: a clone fetches nothing from other remotes. Skipped without an origin.
+  // An unborn HEAD makes rev-list fail, which counts as local work like any unreadable answer.
+  const localOnly =
+    kind === "main" && origin.code === 0
+      ? await runGit(
+          absolute,
+          ["rev-list", "--count", "HEAD", "--branches", "--tags", "--not", "--remotes=origin"],
+          { allowFailure: true },
+        )
+      : null;
+  // Refs a clone never brings (notes, custom refs, filter-branch backups) are local work too.
+  const otherRefs =
+    localOnly === null
+      ? null
+      : await runGit(absolute, ["for-each-ref", "--format=%(refname)"], { allowFailure: true });
+  const keepsOtherRefs =
+    otherRefs !== null &&
+    (otherRefs.code !== 0 ||
+      otherRefs.stdout.split("\n").some((ref) => ref.length > 0 && !CLONE_CARRIED_REF.test(ref)));
+  // Unreadable counts as local work: such a repository is copied, never cloned.
+  const localOnlyCommits =
+    localOnly === null
+      ? 0
+      : localOnly.code === 0
+        ? (Number(localOnly.stdout.trim()) || 0) + (keepsOtherRefs ? 1 : 0)
+        : 1;
   const identity = origin.code === 0 ? canonicalOrigin(origin.stdout.trim()) : null;
   const originUrl = identity ? withoutCredentials(origin.stdout.trim()) : null;
   const status = (
@@ -299,6 +344,7 @@ async function readRepository(
       branches,
       stash,
       stashCount,
+      localOnlyCommits,
       identity,
       origin: originUrl,
       status,
@@ -531,6 +577,7 @@ export async function scanFolder(root: string, options: ScanOptions = {}): Promi
   const skippedWorktrees: Array<string> = [];
   const skippedGitDirs: Array<string> = [];
   let rebuildableFolders = 0;
+  const contentBudget: ContentBudget = { probes: 0 };
   let files = 0;
   let bytes = 0;
   let lastReport = Date.now();
@@ -581,6 +628,8 @@ export async function scanFolder(root: string, options: ScanOptions = {}): Promi
     }
     children.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     let scope = repos;
+    // A `.git` Git cannot read is never copied as plain files: its config and hooks would run unchecked.
+    let skipGitEntry = false;
     if (!insideGitData) {
       const gitChild = children.find((child) => child.name === ".git");
       // A linked worktree of a repository inside the root is not walked or read
@@ -596,7 +645,13 @@ export async function scanFolder(root: string, options: ScanOptions = {}): Promi
       if (gitChild) {
         try {
           const stat = await NodeFSP.lstat(NodePath.join(absolute, ".git"));
-          if (stat.isDirectory() || stat.isFile()) {
+          if (stat.isSymbolicLink()) {
+            // A linked `.git` would carry its target's config and hooks as plain files.
+            skipGitEntry = true;
+            warnings.push(
+              `${relativeOf(realRoot, absolute)} has a .git link; its Git data is not copied. Its other files are.`,
+            );
+          } else if (stat.isDirectory() || stat.isFile()) {
             const read = await readRepository(realRoot, absolute, stat);
             const inside = read.info.worktrees.filter((tree) => tree.path !== null);
             if (!options.keepLinkedWorktrees)
@@ -622,8 +677,9 @@ export async function scanFolder(root: string, options: ScanOptions = {}): Promi
           }
         } catch (cause) {
           if (!(cause instanceof FolderGitError)) throw cause;
+          skipGitEntry = true;
           warnings.push(
-            `${relativeOf(realRoot, absolute)} has a .git entry Git cannot read; it is copied as plain files.`,
+            `${relativeOf(realRoot, absolute)} has a .git entry Git cannot read; its Git data is not copied. Its other files are.`,
           );
         }
       }
@@ -638,6 +694,15 @@ export async function scanFolder(root: string, options: ScanOptions = {}): Promi
       stats[index] = await NodeFSP.lstat(NodePath.join(absolute, child.name)).catch(() => null);
     });
     for (const [index, child] of children.entries()) {
+      if (skipGitEntry && child.name === ".git") continue;
+      // `.GIT` and other spellings are `.git` on a case-insensitive disk, where
+      // they would arrive as unchecked Git data.
+      if (child.name !== ".git" && child.name.toLowerCase() === ".git") {
+        warnings.push(
+          `${relativeOf(realRoot, absolute)} has a ${child.name} entry; it is not copied, since some disks read it as .git.`,
+        );
+        continue;
+      }
       const location = NodePath.join(absolute, child.name);
       const relative = relativeOf(realRoot, location);
       if (!safe[index]) {
@@ -659,12 +724,21 @@ export async function scanFolder(root: string, options: ScanOptions = {}): Promi
         : innermost && inner !== null
           ? gitStateIn(innermost, inner)
           : "outside";
-      const fileClass = classifyFile({
+      let fileClass = classifyFile({
         relative,
         insideGitData: gitData,
         gitState,
         secretPattern: options.secretPattern,
       });
+      if (!gitData && stat.isFile() && !options.secretPattern?.(relative))
+        fileClass = await refineClassByContent({
+          absolute: location,
+          relative,
+          size: stat.size,
+          fileClass,
+          gitState,
+          budget: contentBudget,
+        });
       const base = {
         path: relative,
         mode: stat.mode & 0o7777,
@@ -1008,6 +1082,102 @@ export interface ManifestHeader {
 export interface Manifest {
   readonly header: ManifestHeader;
   readonly entries: ReadonlyArray<ManifestEntry>;
+}
+
+export interface ManifestRefusal {
+  readonly path: string;
+  readonly reason:
+    | "unsafe-path"
+    | "alias"
+    | "not-a-folder"
+    | "link-in-path"
+    | "unsafe-link"
+    | "bad-size";
+}
+
+/**
+ * What a destination refuses in a received manifest, before it asks for a chunk:
+ * a path that leaves the folder or that this system maps to another name, two
+ * entries that land on one name under the volume's rules, an entry below a file
+ * or a link, a link whose target is not path text, a size that is not a whole
+ * number. One bad entry refuses the whole manifest; null means none was found.
+ */
+export function validateManifestEntries(
+  entries: ReadonlyArray<ManifestEntry>,
+  volume: { readonly platform: NodeJS.Platform; readonly caseInsensitive: boolean },
+): ManifestRefusal | null {
+  /** The one spelling seen for each name on the volume, entries and their folders alike. */
+  const spellings = new Map<string, string>();
+  const kinds = new Map<string, EntryType>();
+  for (const entry of entries) {
+    const path = entry?.path;
+    if (typeof path !== "string" || !isSafeDestinationPath(path, volume.platform))
+      return { path: String(path), reason: "unsafe-path" };
+    if (!Number.isSafeInteger(entry.size) || entry.size < 0) return { path, reason: "bad-size" };
+    if (entry.type === "symlink") {
+      const target = entry.target;
+      if (
+        typeof target !== "string" ||
+        target.length === 0 ||
+        target.length > MAX_RELATIVE_PATH ||
+        // eslint-disable-next-line no-control-regex -- Control bytes are never valid in a link target.
+        /[\u0000-\u001f\u007f]/.test(target)
+      )
+        return { path, reason: "unsafe-link" };
+    }
+    if (kinds.has(path)) return { path, reason: "alias" };
+    kinds.set(path, entry.type);
+    let prefix = "";
+    for (const part of path.split("/")) {
+      prefix = prefix ? `${prefix}/${part}` : part;
+      const key = destinationPathKey(prefix, volume);
+      const seen = spellings.get(key);
+      if (seen === undefined) spellings.set(key, prefix);
+      else if (seen !== prefix) return { path, reason: "alias" };
+    }
+  }
+  // Nothing is written through a file or a link, whichever order the entries came in.
+  const folders = new Set<string>();
+  for (const entry of entries) {
+    const parts = entry.path.split("/");
+    for (let index = parts.length - 1; index > 0; index -= 1) {
+      const ancestor = parts.slice(0, index).join("/");
+      if (folders.has(ancestor)) break;
+      const kind = kinds.get(ancestor);
+      if (kind === "symlink") return { path: entry.path, reason: "link-in-path" };
+      if (kind === "file") return { path: entry.path, reason: "not-a-folder" };
+      folders.add(ancestor);
+    }
+  }
+  return null;
+}
+
+/**
+ * The repository paths of a manifest header, held to the rule of entry paths:
+ * the root (`.`) or a path inside the copy that this system takes as written.
+ * Apply runs Git in these folders and repairs worktree pointers between them,
+ * so one that leaves the copy refuses the manifest before anything is staged.
+ */
+export function validateManifestRepositories(
+  repositories: ReadonlyArray<{
+    readonly path: string;
+    readonly mainRepository?: string | null;
+    readonly worktrees?: ReadonlyArray<{ readonly path: string | null }>;
+  }>,
+  platform: NodeJS.Platform,
+): ManifestRefusal | null {
+  const inside = (path: unknown) =>
+    path === "." || (typeof path === "string" && isSafeDestinationPath(path, platform));
+  for (const repository of repositories) {
+    if (!inside(repository?.path)) return { path: String(repository?.path), reason: "unsafe-path" };
+    const main = repository.mainRepository;
+    if (main !== null && main !== undefined && !inside(main))
+      return { path: String(main), reason: "unsafe-path" };
+    for (const worktree of repository.worktrees ?? [])
+      if (worktree?.path !== null && worktree?.path !== undefined && !inside(worktree.path))
+        return { path: String(worktree.path), reason: "unsafe-path" };
+  }
+  return null;
 }
 
 /** Entries the destination receives: selected classes, plus the folders that hold them. */

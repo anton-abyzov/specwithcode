@@ -8,6 +8,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { createModelSelection } from "./model.ts";
 import {
   hasProjectSettingsOverrides,
+  projectThreadModel,
   resolveProjectFileBackedSetting,
   resolveProjectSettings,
   resolveWorktreeCleanup,
@@ -46,6 +47,52 @@ describe("resolveProjectSettings", () => {
         projectSettingsOverrides: { [projectId]: { defaultRuntimeMode: undefined } as never },
       }),
     ).toBe(false);
+  });
+
+  it("lets a project change one track and inherit the machine's other tracks", () => {
+    const pick = (instance: string, model: string) =>
+      createModelSelection(ProviderInstanceId.make(instance), model);
+    const sol = pick("codex", "gpt-6.1-sol");
+    const fable = pick("claudeAgent", "claude-fable-5-2");
+    const opus = pick("claudeAgent", "claude-opus-5-5");
+    const resolved = resolveProjectSettings(
+      {
+        ...DEFAULT_SERVER_SETTINGS,
+        modelLanes: { complex: [fable], routine: [sol] },
+        adversarialReview: { ...DEFAULT_SERVER_SETTINGS.adversarialReview, reviewers: [sol] },
+        projectSettingsOverrides: {
+          [projectId]: {
+            modelLanes: { routine: [opus] },
+            adversarialReview: { autoOnFeatureComplete: true },
+          },
+        },
+      },
+      projectId,
+    ).settings;
+    expect(resolved.modelLanes).toEqual({ complex: [fable], routine: [opus] });
+    expect(resolved.adversarialReview).toEqual({
+      autoOnFeatureComplete: true,
+      reviewers: [sol],
+      tier: "regular",
+    });
+    // An empty list the project saved is its choice of the built-in order, and a
+    // whole object stored by an older version still applies as it was.
+    const builtIn = resolveProjectSettings(
+      {
+        ...DEFAULT_SERVER_SETTINGS,
+        modelLanes: { complex: [fable], routine: [sol] },
+        adversarialReview: { ...DEFAULT_SERVER_SETTINGS.adversarialReview, reviewers: [sol] },
+        projectSettingsOverrides: {
+          [projectId]: {
+            modelLanes: { complex: [], routine: [opus] },
+            adversarialReview: { reviewers: [] },
+          },
+        },
+      },
+      projectId,
+    ).settings;
+    expect(builtIn.modelLanes).toEqual({ complex: [], routine: [opus] });
+    expect(builtIn.adversarialReview.reviewers).toEqual([]);
   });
 
   it("treats a null project like an absent one before the shell snapshot arrives", () => {
@@ -445,4 +492,52 @@ it("inherits branch naming defaults and applies project overrides independently"
     projectSettingsOverrideChanges: { [projectId]: { clear: ["branchNamingMode"] } },
   });
   expect(resolveProjectSettings(cleared, projectId).settings.branchNamingMode).toBe("static");
+});
+
+describe("projectThreadModel", () => {
+  const saved = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.5");
+  const enabled = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+    providers: { codex: { enabled: true } },
+  });
+
+  it("keeps the project's saved model after the install folded its fields", () => {
+    // Regression: the project dialog showed "Choose model" for every project with a
+    // saved thread model, because the folded resolver no longer reads that field.
+    const folded = { ...enabled, projectSettingsFolded: true };
+    expect(
+      resolveProjectSettings(folded, projectId, { defaultModelSelection: saved }).settings
+        .defaultModelSelection,
+    ).toBeNull();
+    expect(projectThreadModel(folded, projectId, { defaultModelSelection: saved })).toEqual(saved);
+  });
+
+  it("prefers a Project settings override over the saved field", () => {
+    const override = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4");
+    const settings = {
+      ...enabled,
+      projectSettingsFolded: true,
+      projectSettingsOverrides: { [projectId]: { defaultModelSelection: override } },
+    };
+    expect(projectThreadModel(settings, projectId, { defaultModelSelection: saved })).toEqual(
+      override,
+    );
+  });
+
+  it("names no single model for a project on Tracks", () => {
+    const onTracks = {
+      ...enabled,
+      projectSettingsOverrides: { [projectId]: { threadModelMode: "tracks" as const } },
+    };
+    expect(projectThreadModel(onTracks, projectId, { defaultModelSelection: saved })).toBeNull();
+  });
+
+  it("is null when only the machine default applies or the provider is off", () => {
+    const machine = { ...enabled, defaultModelSelection: saved, projectSettingsFolded: true };
+    expect(projectThreadModel(machine, projectId, { defaultModelSelection: null })).toBeNull();
+    const off = applyServerSettingsPatch(
+      { ...DEFAULT_SERVER_SETTINGS, projectSettingsFolded: true },
+      { providers: { codex: { enabled: false } } },
+    );
+    expect(projectThreadModel(off, projectId, { defaultModelSelection: saved })).toBeNull();
+  });
 });

@@ -185,7 +185,9 @@ const setup = (
             ),
     proxy: (input) =>
       Effect.suspend((): Effect.Effect<Record<string, unknown>, OrchestratorMcpFailure> => {
-        calls.push({ tool: input.tool, arguments: input.arguments });
+        // What the machine says of itself is asked before a link, and is no step of the work.
+        if (input.tool !== "orchestrator_capabilities")
+          calls.push({ tool: input.tool, arguments: input.arguments });
         if (input.tool === "studio_project_list")
           return options.listFails
             ? Effect.fail(
@@ -260,9 +262,8 @@ const setup = (
             logicalProject: { ...logicalProject, members: [kept, joined] },
             coordinatorBinding: {
               epoch: 0,
-              state: "transferred",
+              state: "active",
               operationId: input.arguments.operationId,
-              successor: kept,
             },
             replayed: false,
           });
@@ -293,9 +294,8 @@ const setup = (
                 logicalProject: { ...logicalProject, members: [kept, joined] },
                 coordinatorBinding: {
                   epoch: 0,
-                  state: "transferred",
+                  state: "active",
                   operationId: step.link?.operationId,
-                  successor: kept,
                 },
                 replayed: false,
               },
@@ -306,6 +306,9 @@ const setup = (
             projectFolder: "/home/example/Projects/widgets",
           });
         }
+        // The other machine says it keeps its coordinator when a copy there joins a project.
+        if (input.tool === "orchestrator_capabilities")
+          return Effect.succeed({ features: { equalCoordinators: true } });
         return Effect.die(`unexpected tool ${input.tool}`);
       }),
   };
@@ -487,6 +490,7 @@ describe("studio_project_add_to_machine", () => {
           input: {
             operationId,
             projectId,
+            equalCoordinators: true,
             joining: {
               environmentId: M1.environmentId,
               projectId: "remote-widgets",

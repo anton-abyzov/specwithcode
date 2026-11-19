@@ -14,10 +14,14 @@ import {
   persistScopedSettingsPatch,
   planProjectOverrideEdits,
   planProjectOverridesClear,
+  planScopedSettingFieldClear,
   planScopedSettingsClear,
   planScopedSettingsPatch,
+  projectOverrideFieldClearChange,
   resolveScopedSettingsTargets,
   restrictPlanToEnvironments,
+  scopedSettingFieldMixed,
+  scopedSettingFieldSource,
   scopedSettingsAreMixed,
   scopedSettingsSource,
   selectScopedSettingsEnvironments,
@@ -748,6 +752,330 @@ describe("partial object patches at project scope", () => {
         },
       },
     });
+  });
+
+  it("stores only the track a project changed, so the others keep following the machine", () => {
+    const projectId = ProjectId.make("fleet");
+    const laptop = EnvironmentId.make("laptop");
+    const server = EnvironmentId.make("server");
+    const pick = (instanceId: string, model: string) => ({ instanceId, model });
+    const sol = pick("codex", "gpt-6.1-sol");
+    const fable = pick("claudeAgent", "claude-fable-5-2");
+    const astra = pick("codex", "gpt-6-astra");
+    const opus = pick("claudeAgent", "claude-opus-5-5");
+    const machine = (
+      environmentId: EnvironmentId,
+      complex: unknown,
+      over: { partial?: boolean; own?: Record<string, unknown> } = {},
+    ) =>
+      ({
+        environmentId,
+        label: environmentId,
+        connection: { phase: "connected" },
+        serverConfig: {
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            modelLanes: { complex: [complex], routine: [sol] },
+            ...(over.own ? { projectSettingsOverrides: { [projectId]: over.own } } : {}),
+          },
+          environment: {
+            capabilities: {
+              projectSettingsOverrides: true,
+              projectTrackOverrides: over.partial !== false,
+            },
+          },
+        },
+      }) as never;
+    const scope = (ids: EnvironmentId[]) =>
+      ({
+        kind: "project",
+        group: {} as never,
+        environmentId: null,
+        label: "fleet",
+        members: ids.map((environmentId) => ({ id: projectId, environmentId }) as never),
+        environmentIds: ids,
+      }) as never;
+    const written = (plan: ReturnType<typeof planScopedSettingsPatch>, at = 0) =>
+      (plan.serverWrites[at]?.patch as { projectSettingsOverrides: Record<string, unknown> })
+        .projectSettingsOverrides[projectId];
+    const daily = { modelLanes: { routine: [opus, sol] } as never };
+
+    // The page sends the one lane it edited.
+    expect(
+      written(planScopedSettingsPatch(scope([laptop]), [machine(laptop, fable)], daily)),
+    ).toEqual({ modelLanes: { routine: [opus, sol] } });
+    // Two machines with different Complex orders: neither gets the other's.
+    const both = planScopedSettingsPatch(
+      scope([laptop, server]),
+      [machine(laptop, fable), machine(server, astra)],
+      daily,
+    );
+    expect(written(both, 0)).toEqual({ modelLanes: { routine: [opus, sol] } });
+    expect(written(both, 1)).toEqual({ modelLanes: { routine: [opus, sol] } });
+    // A member's own override keeps its other lane.
+    expect(
+      written(
+        planScopedSettingsPatch(
+          scope([laptop]),
+          [machine(laptop, fable, { own: { modelLanes: { complex: [astra] } } })],
+          daily,
+        ),
+      ),
+    ).toEqual({ modelLanes: { complex: [astra], routine: [opus, sol] } });
+    // "Use the built-in order" is a choice of its own: the empty list is stored.
+    expect(
+      written(
+        planScopedSettingsPatch(scope([laptop]), [machine(laptop, fable)], {
+          modelLanes: { complex: [] } as never,
+        }),
+      ),
+    ).toEqual({ modelLanes: { complex: [] } });
+    // One review field never freezes the others.
+    expect(
+      written(
+        planScopedSettingsPatch(scope([laptop]), [machine(laptop, fable)], {
+          adversarialReview: { tier: "frontier" },
+        }),
+      ),
+    ).toEqual({ adversarialReview: { tier: "frontier" } });
+    // An older server would fill a partial value with defaults: it gets the whole object.
+    expect(
+      written(
+        planScopedSettingsPatch(
+          scope([laptop]),
+          [machine(laptop, fable, { partial: false })],
+          daily,
+        ),
+      ),
+    ).toEqual({ modelLanes: { complex: [fable], routine: [opus, sol] } });
+  });
+
+  it("stores only the advisor fields a project changed, and resets only the advisor", () => {
+    const projectId = ProjectId.make("fleet");
+    const laptop = EnvironmentId.make("laptop");
+    const machine = (
+      over: { advisor?: boolean; own?: Record<string, unknown>; settings?: object } = {},
+    ) =>
+      ({
+        environmentId: laptop,
+        label: "laptop",
+        connection: { phase: "connected" },
+        serverConfig: {
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            ...over.settings,
+            projectSettingsOverrides: {
+              [projectId]: { defaultAutoPull: false, ...over.own },
+            },
+          },
+          environment: {
+            capabilities: {
+              projectSettingsOverrides: true,
+              projectSettingsOverrideChanges: true,
+              advisor: over.advisor !== false,
+            },
+          },
+        },
+      }) as never;
+    const scope = {
+      kind: "project",
+      group: {} as never,
+      environmentId: null,
+      label: "fleet",
+      members: [{ id: projectId, environmentId: laptop } as never],
+      environmentIds: [laptop],
+    } as never;
+    // Each write names the project's change: what it sets and what it clears.
+    const changeOf = (plan: { readonly serverWrites: readonly { readonly patch: unknown }[] }) =>
+      (
+        plan.serverWrites[0]?.patch as {
+          projectSettingsOverrideChanges: Record<string, { set?: unknown; clear?: unknown }>;
+        }
+      ).projectSettingsOverrideChanges[projectId];
+    const set = (plan: ReturnType<typeof planScopedSettingsPatch>) => changeOf(plan)?.set;
+
+    // Turning it on stores the switch alone; every limit keeps following the machine.
+    const enable = planScopedSettingsPatch(scope, [machine()], { advisor: { enabled: true } });
+    expect(set(enable)).toEqual({ advisor: { enabled: true } });
+    // A second field joins the project's own fields.
+    expect(
+      set(
+        planScopedSettingsPatch(scope, [machine({ own: { advisor: { enabled: true } } })], {
+          advisor: { maxConsultsPerRun: 5 },
+        }),
+      ),
+    ).toEqual({ advisor: { enabled: true, maxConsultsPerRun: 5 } });
+    // A server without the advisor gets the whole value, as other objects do.
+    expect(
+      set(
+        planScopedSettingsPatch(scope, [machine({ advisor: false })], {
+          advisor: { enabled: true },
+        }),
+      ),
+    ).toEqual({ advisor: { ...DEFAULT_SERVER_SETTINGS.advisor, enabled: true } });
+
+    // Inherited first, overridden once saved.
+    const before = resolveScopedSettingsTargets(scope, [machine()]);
+    expect(scopedSettingsSource(before, ["advisor"])).toBe("environment");
+    const after = resolveScopedSettingsTargets(scope, [
+      machine({
+        own: { advisor: { enabled: true } },
+        settings: { advisor: { ...DEFAULT_SERVER_SETTINGS.advisor, maxConsultsPerRun: 7 } },
+      }),
+    ]);
+    expect(scopedSettingsSource(after, ["advisor"])).toBe("project");
+    // Field-wise: the project's switch wins, the machine's limit still shows through.
+    expect(after[0]?.settings.advisor).toMatchObject({ enabled: true, maxConsultsPerRun: 7 });
+
+    // The reset clears the advisor override and leaves the project's other overrides.
+    const reset = planScopedSettingsClear(
+      scope,
+      [machine({ own: { advisor: { enabled: true } } })],
+      ["advisor"],
+    );
+    expect(changeOf(reset)).toEqual({ clear: ["advisor"] });
+  });
+
+  it("shows and resets one advisor field of a project override at a time", () => {
+    const projectId = ProjectId.make("fleet");
+    const laptop = EnvironmentId.make("laptop");
+    const machine = (
+      own: Record<string, unknown> | undefined,
+      perKey = true,
+      settings: object = {},
+    ) =>
+      ({
+        environmentId: laptop,
+        label: "laptop",
+        connection: { phase: "connected" },
+        serverConfig: {
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            ...settings,
+            projectSettingsOverrides: {
+              [projectId]: { defaultAutoPull: false, ...(own ? { advisor: own } : {}) },
+            },
+          },
+          environment: {
+            capabilities: {
+              projectSettingsOverrides: true,
+              projectSettingsOverrideChanges: perKey,
+              advisor: true,
+            },
+          },
+        },
+      }) as never;
+    const scope = {
+      kind: "project",
+      group: {} as never,
+      environmentId: null,
+      label: "fleet",
+      members: [{ id: projectId, environmentId: laptop } as never],
+      environmentIds: [laptop],
+    } as never;
+    // What the server holds after the plan: the field gone, nothing inherited written.
+    const stored = (
+      env: ReturnType<typeof machine>,
+      plan: { readonly serverWrites: readonly { readonly patch: unknown }[] },
+    ) => {
+      const settings = (env as { serverConfig: { settings: ServerSettings } }).serverConfig
+        .settings;
+      return plan.serverWrites.reduce(
+        (current, write) =>
+          applyServerSettingsPatch(
+            current,
+            write.patch as Parameters<typeof applyServerSettingsPatch>[1],
+          ),
+        settings,
+      ).projectSettingsOverrides[projectId];
+    };
+
+    // One field overridden: only that row reads "Overridden for this project".
+    const one = resolveScopedSettingsTargets(scope, [machine({ maxConsultsPerRun: 5 })]);
+    expect(scopedSettingFieldSource(one, "advisor", "maxConsultsPerRun")).toBe("project");
+    for (const field of ["enabled", "model", "claudeBuiltIn", "briefTokenBudget"])
+      expect(scopedSettingFieldSource(one, "advisor", field), field).toBe("environment");
+    // A saved null (the default order) is the project's own value too.
+    const nullModel = resolveScopedSettingsTargets(scope, [machine({ model: null })]);
+    expect(scopedSettingFieldSource(nullModel, "advisor", "model")).toBe("project");
+    // No override at all: every field is inherited.
+    const none = resolveScopedSettingsTargets(scope, [machine(undefined)]);
+    expect(scopedSettingFieldSource(none, "advisor", "enabled")).toBe("environment");
+
+    // Resetting one of two overridden fields keeps the other, and writes no
+    // inherited value for the field it removed.
+    const two = machine({ enabled: true, maxConsultsPerRun: 5 }, true, {
+      advisor: { ...DEFAULT_SERVER_SETTINGS.advisor, briefTokenBudget: 32_000 },
+    });
+    const resetOne = planScopedSettingFieldClear(scope, [two], "advisor", "maxConsultsPerRun");
+    expect(resetOne.unavailableReason).toBeNull();
+    expect(stored(two, resetOne)).toEqual({ defaultAutoPull: false, advisor: { enabled: true } });
+    // The same on a server that only replaces whole entries.
+    const twoOld = machine({ enabled: true, maxConsultsPerRun: 5 }, false);
+    expect(
+      stored(twoOld, planScopedSettingFieldClear(scope, [twoOld], "advisor", "maxConsultsPerRun")),
+    ).toEqual({ defaultAutoPull: false, advisor: { enabled: true } });
+
+    // Resetting the last field clears the key and keeps the project's other overrides.
+    const last = machine({ enabled: true });
+    const resetLast = planScopedSettingFieldClear(scope, [last], "advisor", "enabled");
+    expect(stored(last, resetLast)).toEqual({ defaultAutoPull: false });
+
+    // A field the override does not hold writes nothing and is not an error.
+    const untouched = planScopedSettingFieldClear(scope, [last], "advisor", "briefTokenBudget");
+    expect(untouched.serverWrites).toEqual([]);
+    expect(untouched.unavailableReason).toBeNull();
+    expect(projectOverrideFieldClearChange(undefined, "advisor", "enabled")).toBeNull();
+
+    // Two machines, one overriding the field: the row reads mixed.
+    const split = [
+      { sources: { advisor: "project" }, overrides: { advisor: { enabled: true } } },
+      { sources: { advisor: "environment" }, overrides: {} },
+    ] as never;
+    expect(scopedSettingFieldSource(split, "advisor", "enabled")).toBe("mixed");
+    // Per-field mixed values: a differing limit does not mark the switch mixed.
+    const targets = [
+      { settings: { advisor: { ...DEFAULT_SERVER_SETTINGS.advisor, maxConsultsPerRun: 5 } } },
+      { settings: { advisor: DEFAULT_SERVER_SETTINGS.advisor } },
+    ] as never;
+    expect(scopedSettingFieldMixed(targets, "advisor", "maxConsultsPerRun")).toBe(true);
+    expect(scopedSettingFieldMixed(targets, "advisor", "enabled")).toBe(false);
+  });
+
+  it("keeps the other advisor fields when a machine saves one", () => {
+    const model = { instanceId: "codex", model: "gpt-6.1-sol" };
+    const saved = {
+      ...DEFAULT_SERVER_SETTINGS,
+      advisor: { ...DEFAULT_SERVER_SETTINGS.advisor, enabled: true, model },
+    } as ServerSettings;
+    const m4 = environment("M4", { settings: saved });
+    const plan = planScopedSettingsPatch(resolveSettingsScope({}, [], [m4]), [m4], {
+      advisor: { maxConsultsPerRun: 5 },
+    });
+    expect(plan.serverWrites[0]?.patch).toEqual({ advisor: { maxConsultsPerRun: 5 } });
+    const after = applyServerSettingsPatch(saved, plan.serverWrites[0]!.patch);
+    expect(after.advisor).toMatchObject({ enabled: true, model, maxConsultsPerRun: 5 });
+    // The way back to the default order clears the saved model.
+    expect(applyServerSettingsPatch(after, { advisor: { model: null } }).advisor.model).toBeNull();
+  });
+
+  it("completes a one-lane save from each machine's own lanes at machine scope", () => {
+    const sol = { instanceId: "codex", model: "gpt-6.1-sol" };
+    const settingsWith = (complex: string) => ({
+      ...DEFAULT_SERVER_SETTINGS,
+      modelLanes: { complex: [{ instanceId: "codex", model: complex }], routine: [] },
+    });
+    const m4 = environment("M4", { settings: settingsWith("m4-complex") as never });
+    const m1 = environment("M1", { settings: settingsWith("m1-complex") as never });
+    const plan = planScopedSettingsPatch(resolveSettingsScope({}, [], [m4, m1]), [m4, m1], {
+      modelLanes: { routine: [sol] } as never,
+    });
+    expect(
+      plan.serverWrites.map((write) => (write.patch as { modelLanes?: unknown }).modelLanes),
+    ).toEqual([
+      { complex: [{ instanceId: "codex", model: "m4-complex" }], routine: [sol] },
+      { complex: [{ instanceId: "codex", model: "m1-complex" }], routine: [sol] },
+    ]);
   });
 });
 

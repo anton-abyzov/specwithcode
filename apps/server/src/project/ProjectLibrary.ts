@@ -10,6 +10,8 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
+import { OFFICE_ARTIFACTS_DIR } from "@specweave-studio/shared/officeSheet";
+
 import {
   PROJECT_HUB_PATH,
   PROJECT_LIBRARY_FOLDERS,
@@ -235,6 +237,8 @@ export async function readProjectOutputs(root: string): Promise<ProjectLibraryOu
   if (!(await lstatWithin(realRoot, ".specweave"))?.isDirectory()) return [];
   const folders: OutputFolder[] = [];
   await collectFolders(realRoot, ".specweave/reports", null, OUTPUT_DEPTH, folders);
+  // Sheets and other Office artifacts: data files the app opens in its own viewer.
+  await collectFolders(realRoot, OFFICE_ARTIFACTS_DIR, null, 1, folders);
   if ((await lstatWithin(realRoot, ".specweave/increments"))?.isDirectory()) {
     for (const entry of await listEntries(realRoot, ".specweave/increments")) {
       if (!entry.isDirectory() || entry.name.startsWith(".")) continue;

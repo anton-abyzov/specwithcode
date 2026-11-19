@@ -114,6 +114,8 @@ export const ServerProviderModel = Schema.Struct({
   isCustom: Schema.Boolean,
   isDefault: Schema.optional(Schema.Boolean),
   isLegacy: Schema.optional(Schema.Boolean),
+  /** The model this one replaces, from the model manifest; a track entry on that model follows here. */
+  succeeds: Schema.optional(TrimmedNonEmptyString),
   capabilities: Schema.NullOr(ModelCapabilities),
   /**
    * What the provider's own model data proves; absent means not reported.
@@ -189,6 +191,11 @@ export const ServerProviderWorkspaceSnapshot = Schema.Struct({
   /** Skills are available, but command discovery still needs a retry. */
   slashCommandsPending: Schema.optional(Schema.Boolean),
   skills: Schema.Array(ServerProviderSkill),
+  /**
+   * A skill folder or its SKILL.md is there but could not be read, so a skill
+   * missing from `skills` may still be installed. Absent when every folder read.
+   */
+  skillsIncomplete: Schema.optionalKey(Schema.Boolean),
 });
 export type ServerProviderWorkspaceSnapshot = typeof ServerProviderWorkspaceSnapshot.Type;
 
@@ -211,6 +218,20 @@ export type ServerProviderWorkspaceSnapshot = typeof ServerProviderWorkspaceSnap
  */
 export const ServerProviderAvailability = Schema.Literals(["available", "unavailable"]);
 export type ServerProviderAvailability = typeof ServerProviderAvailability.Type;
+
+/**
+ * Why a command-line agent that is on cannot run, as the machine's own search
+ * for its command found it. "missing": no file by that name in any folder the
+ * machine looks in. "broken": the file is there and did not start.
+ */
+export const ServerProviderCli = Schema.Struct({
+  state: Schema.Literals(["missing", "broken"]),
+  /** The command as the machine runs it: a saved path, or a bare name. */
+  command: TrimmedNonEmptyString.check(Schema.isMaxLength(4_096)),
+  /** Where that command was found, when it was. */
+  path: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(4_096))),
+});
+export type ServerProviderCli = typeof ServerProviderCli.Type;
 
 export const ServerProviderContinuation = Schema.Struct({
   groupKey: TrimmedNonEmptyString,
@@ -343,11 +364,18 @@ export const ServerProvider = Schema.Struct({
   // Human-readable reason populated when `availability === "unavailable"`.
   // Surfaces in the UI alongside the missing-driver affordance.
   unavailableReason: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Set while the agent is on and its command-line program is not installed
+   * or does not start. Absent from older machines, and once it runs.
+   */
+  cli: ForwardCompatibleOptional(ServerProviderCli),
   models: Schema.Array(ServerProviderModel),
   slashCommands: Schema.Array(ServerProviderSlashCommand).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** As on a workspace snapshot: the machine-wide skill list missed folders it could not read. */
+  skillsIncomplete: Schema.optionalKey(Schema.Boolean),
   workspaceSnapshots: Schema.optionalKey(Schema.Array(ServerProviderWorkspaceSnapshot)),
   // Absent when the driver has no notion of subscription usage.
   usageLimits: Schema.optional(ServerProviderUsageLimits),
@@ -853,6 +881,18 @@ export const ServerConfig = Schema.Struct({
    * exists. Older servers drop the field silently, so clients hide the option.
    */
   specweaveSetUp: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Whether projects.createNew accepts `sample: "first-feature"` and
+   * projects.firstFeatureGuide exists (1398). Without it clients show no first
+   * feature offer and never send `sample`.
+   */
+  firstFeatureSample: Schema.optionalKey(Schema.Boolean),
+  /**
+   * A first feature guide on this machine ended `finished` (1398 AC-21), in a
+   * project that may since have been removed. The offer is then gone for good;
+   * the command palette can still make a new sample. Absent means not known.
+   */
+  firstFeatureFinished: Schema.optionalKey(Schema.Boolean),
   /** Whether thread reads accept the reasoningMessages opt-in. */
   reasoningMessages: Schema.optionalKey(Schema.Boolean),
   /**

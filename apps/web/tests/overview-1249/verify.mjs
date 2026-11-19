@@ -40,9 +40,9 @@ const browser = await chromium.launch({
     : {}),
 });
 const receipt = { headless: true, checks: [], screenshots: [] };
+// Every check is recorded and the run fails once at the end, so one run reports every miss.
 const check = (name, ok, detail = "") => {
-  receipt.checks.push({ name, ok, detail });
-  NodeAssert.ok(ok, `${name} ${detail}`);
+  receipt.checks.push({ name, ok: Boolean(ok), detail });
 };
 try {
   // 580 is the content beside the sidebar in the desktop app's 840 px minimum window.
@@ -58,6 +58,25 @@ try {
       await page.locator("#studio-heading").waitFor();
       const label = `${theme} ${width}`;
       check(`${label}: no page errors`, errors.length === 0, errors.join("; "));
+      // 1398 AC-11: the Overview offers the first feature in one card with one action.
+      const offer = await page.evaluate(() => {
+        const cards = [...document.querySelectorAll("[data-first-feature-offer]")];
+        return {
+          cards: cards.length,
+          title: cards[0]?.querySelector("h2")?.textContent ?? null,
+          actions: [...(cards[0]?.querySelectorAll("[data-first-feature-offer-action]") ?? [])].map(
+            (action) => action.textContent?.trim(),
+          ),
+        };
+      });
+      check(
+        `${label}: the first feature card, its title and its one action`,
+        offer.cards === 1 &&
+          offer.title === "Build a first feature" &&
+          offer.actions.length === 1 &&
+          offer.actions[0] === "Try a first feature",
+        JSON.stringify(offer),
+      );
       const overflow = await page.evaluate(() => {
         const scroller = document.querySelector(".studio-scroll");
         const wide = [...document.querySelectorAll(".studio-content *")].filter(
@@ -89,7 +108,7 @@ try {
         unnamed.length === 0,
         unnamed.join(" | "),
       );
-      // Percy is its own entry above Projects, out of the project cards and counts.
+      // Percy is its own section after Projects and before Machines, out of the project cards.
       const rail = await page.evaluate(() => {
         const entry = document.querySelector('[aria-labelledby="studio-assistant-title"]');
         const projects = document.querySelector('[aria-labelledby="studio-projects-title"]');
@@ -97,10 +116,13 @@ try {
           entryRows: [...(entry?.querySelectorAll(".studio-project .studio-row-title") ?? [])].map(
             (title) => title.textContent,
           ),
-          entryFirst: Boolean(
+          entryPlaced: Boolean(
             entry &&
             projects &&
-            entry.compareDocumentPosition(projects) & Node.DOCUMENT_POSITION_FOLLOWING,
+            projects.compareDocumentPosition(entry) & Node.DOCUMENT_POSITION_FOLLOWING &&
+            entry.compareDocumentPosition(
+              document.querySelector('[aria-labelledby="studio-machines-title"]'),
+            ) & Node.DOCUMENT_POSITION_FOLLOWING,
           ),
           projectTitles: [...(projects?.querySelectorAll(".studio-row-title") ?? [])].map(
             (title) => title.textContent,
@@ -109,8 +131,8 @@ try {
         };
       });
       check(
-        `${label}: Percy has its own entry above Projects`,
-        JSON.stringify(rail.entryRows) === '["Percy"]' && rail.entryFirst,
+        `${label}: Percy has its own section between Projects and Machines`,
+        JSON.stringify(rail.entryRows) === '["Percy"]' && rail.entryPlaced,
         JSON.stringify(rail),
       );
       check(
@@ -144,6 +166,59 @@ try {
           JSON.stringify(started),
         );
       }
+      // Machines by nickname and color, chips in words, an unreachable machine explained.
+      const names = await page.evaluate(() => ({
+        text: document.querySelector(".studio-content").textContent,
+        marks: [...document.querySelectorAll(".studio-session-item .studio-machine-mark")].map(
+          (mark) => [
+            mark.textContent,
+            mark.getAttribute("data-machine-color"),
+            mark.getAttribute("data-hint"),
+          ],
+        ),
+        chips: [
+          ...document.querySelectorAll(
+            '[aria-labelledby="studio-working-title"] .studio-session-item',
+          ),
+        ].map((row) => {
+          const pill = row.querySelector(".studio-pill");
+          return [pill?.textContent ?? null, pill?.getAttribute("data-hint") ?? null];
+        }),
+        machines: [...document.querySelectorAll(".studio-machine")].map(
+          (row) => row.querySelector(".studio-row-main").textContent,
+        ),
+      }));
+      check(
+        `${label}: no host label or command line is printed`,
+        !/MacBook M4MAX|M1Max|ministorm|\/Users\/anton/.test(names.text),
+        names.text.match(/MacBook M4MAX|M1Max|ministorm|\/Users\/anton/)?.[0] ?? "",
+      );
+      check(
+        `${label}: chat rows name the machine in its color, host label on hover`,
+        names.marks.some(
+          ([name, color, title]) =>
+            name === "linux-mini" && color === "blue" && title === "ministorm",
+        ) && names.marks.every(([, color]) => Boolean(color)),
+        JSON.stringify(names.marks.slice(0, 4)),
+      );
+      check(
+        `${label}: Working chips say the step in words`,
+        JSON.stringify(names.chips.map(([text]) => text?.replace(/ · .*/, "") ?? null)) ===
+          JSON.stringify([null, "Running a command", "Waiting on a subagent", "Running a step"]) &&
+          names.chips[1][1].startsWith("cd /Users/anton"),
+        JSON.stringify(names.chips),
+      );
+      check(
+        `${label}: machines say state, version and work`,
+        names.machines.some((row) =>
+          /^m4 · this machineOnline · 2 working · 3 projects1\.0\.304 · update available$/.test(
+            row,
+          ),
+        ) &&
+          names.machines.some((row) => /^m1Online · .* projects1\.0\.306 · current$/.test(row)) &&
+          names.machines.includes("MacBook ProNot answeringChats and projects not counted"),
+        JSON.stringify(names.machines),
+      );
       const file = NodePath.join(output, `overview-${theme}-${width}.png`);
       await page.screenshot({ path: file, fullPage: true });
       receipt.screenshots.push(file);
@@ -157,9 +232,9 @@ try {
           .locator(".studio-rail")
           .screenshot({ path: NodePath.join(output, "overview-rail-aide.png") });
         // A machine narrows every list to it.
-        await page.getByRole("button", { name: /^M1 Max/ }).click();
+        await page.locator(".studio-machine button", { hasText: /^m1/ }).click();
         const scope = await page.locator(".studio-scope").textContent();
-        check("machine filter names the machine", scope.includes("M1 Max"), scope);
+        check("machine filter names the machine", scope.includes("on m1"), scope);
         const rows = await page.locator(".studio-attention-item").count();
         check("machine filter keeps only its chats", rows === 3, String(rows));
         await page.screenshot({
@@ -197,4 +272,7 @@ try {
   server.close();
   await NodeFSP.writeFile(NodePath.join(output, "receipt.json"), JSON.stringify(receipt, null, 2));
 }
+const failed = receipt.checks.filter((entry) => !entry.ok);
+for (const entry of failed) console.error(`FAIL ${entry.name} ${entry.detail}`);
+NodeAssert.equal(failed.length, 0, `${failed.length} of ${receipt.checks.length} checks failed`);
 console.log(`${receipt.checks.length} checks passed; evidence in ${output}`);

@@ -155,6 +155,10 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 .sws-dot[data-tone="resolved"] {
   background: var(--shell-done);
 }
+/* Connected, inside a machine chip: the machine's own color. */
+.sws-dot[data-tone="machine"] {
+  background: var(--machine, var(--shell-done));
+}
 
 .sws-kbd {
   flex: none;
@@ -379,6 +383,10 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 }
 /* The provider mark keeps its own flex box, so the icon and its ring sit as before. */
 [data-model-chip] [data-model-chip-part="mark"] {
+  display: flex;
+}
+/* A split chip's usage ring is a button of its own; it keeps its flex row. */
+[data-model-chip] [data-model-usage-button] {
   display: flex;
 }
 /* The ring and the number sit in the chip's row as parts of their own. */
@@ -690,15 +698,15 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 .sws-side-row > .sws-model-mark {
   width: 18px;
 }
-/* A column every chat row shares, so machines scan top to bottom. */
+/* The machine a row runs on, as wide as its name and against the row's end: a short
+   name never keeps room made for a longer one in another row. */
 .sws-row-machine {
   flex: none;
-  /* Capped, because every character here comes off the chat's title. "ch" is a digit's
+  /* Capped, because every character here comes off the row's name. "ch" is a digit's
      width, wider than most letters, so "→ ministorm" still fits. */
-  width: min(var(--sws-chat-machine-col, 6ch), 9.5ch);
+  max-width: 9.5ch;
   display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
   gap: 3px;
   font-size: var(--text-xs);
   color: var(--sidebar-muted-foreground);
@@ -720,18 +728,22 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   height: 13px;
   color: var(--warning-foreground, var(--sidebar-muted-foreground));
 }
-/* A narrow sidebar keeps the name's first letters; the tooltip has the rest. */
+/* A narrow sidebar keeps the machine's colored square and gives the name's room to the
+   chat; the tooltip has the name. A machine with no color keeps its first letters. */
 @container sidechats (width < 224px) {
-  .sws-row-machine {
-    width: 3ch;
+  .sws-row-machine[data-machine-color] > :is(.sws-row-machine-name, .sws-row-machine-arrow) {
+    display: none;
   }
-  .sws-row-machine:has(svg[data-offline]) {
-    width: calc(3ch + 15px);
+  .sws-row-machine:not([data-machine-color]) {
+    max-width: 3ch;
   }
-  .sws-row-machine-name {
+  .sws-row-machine:not([data-machine-color]):has(svg[data-offline]) {
+    max-width: calc(3ch + 15px);
+  }
+  .sws-row-machine:not([data-machine-color]) > .sws-row-machine-name {
     text-overflow: clip;
   }
-  .sws-row-machine-arrow {
+  .sws-row-machine:not([data-machine-color]) > .sws-row-machine-arrow {
     display: none;
   }
 }
@@ -747,6 +759,46 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* A chat's name and its plan count share the room before the marks. The name comes
+   first: a count that does not fit beside the name's floor wraps whole onto the hidden
+   line and the name takes its room. */
+.sws-side-row-main {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  align-content: flex-start;
+}
+/* Keeps the first line as tall as the row, so the name stays centered once the count wraps. */
+.sws-side-row-main::before {
+  content: "";
+  flex: 0 0 0;
+  height: 100%;
+}
+.sws-side-row-main > .sws-side-row-label {
+  flex: 1 1 min(12ch, 55cqi);
+}
+/* The actions button pads the row by 22px (8px to 30px). Drop the name's floor by
+   that much while the button has the room, or the count wraps off at the default
+   sidebar width. A touch screen shows the button on every row. */
+@media (hover: hover) {
+  .sws-chat-row:is(:hover, :has(.sws-chat-menu:is(:focus-visible, [data-popup-open])))
+    .sws-side-row-main
+    > .sws-side-row-label {
+    flex-basis: max(0px, calc(min(12ch, 55cqi) - 22px));
+  }
+}
+@media (hover: none) {
+  .sws-chat-row .sws-side-row-main > .sws-side-row-label {
+    flex-basis: max(0px, calc(min(12ch, 55cqi) - 22px));
+  }
+}
+.sws-side-row-main > .sws-thread-plan {
+  margin-inline-start: 8px;
 }
 /* An offer, not a project yet: quieter than the rows above it. */
 .sws-side-row-quiet {
@@ -930,11 +982,21 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 }
 /* The same repository on another machine, not linked yet: a link offer. */
 .sws-side-row > .sws-side-row-link-suggestion {
+  flex: none;
   display: inline-flex;
-  width: 14px;
-  height: 14px;
+  align-items: center;
+  gap: 3px;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--primary) 45%, transparent);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-2xs);
+  line-height: 1;
   cursor: pointer;
   color: var(--primary);
+}
+.sws-side-row > .sws-side-row-link-suggestion:hover {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
 }
 .sws-side-row > .sws-side-row-link-suggestion > svg {
   width: 12px;
@@ -1154,12 +1216,8 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   height: 1px;
   background: var(--border);
 }
-/* The main machine of a project with no copy here, sized to its name; "+N" for the
-   others only where the sidebar has room. */
-.sws-project-row .sws-row-machine.sws-project-elsewhere[data-machine-color] {
-  width: auto;
-  max-width: calc(9.5ch + 10px);
-}
+/* A project with no copy here names its main machine; "+N" for the others only where
+   the sidebar has room. */
 .sws-row-machine-more {
   flex: none;
 }
@@ -2064,6 +2122,18 @@ html.dark[data-theme-id]:not([data-theme-id=""])
 .sws-composer .sws-composer-card textarea::placeholder {
   color: var(--muted-foreground);
 }
+/* A copy whose main is elsewhere: the box is off, and its placeholder says where to write. */
+/* It drops the machine's tint too: nothing here goes to a machine. */
+.sws-composer .sws-composer-card[data-inert],
+.sws-composer .sws-composer-card[data-inert]:focus-within {
+  border-color: var(--input);
+  border-style: dashed;
+  background: color-mix(in srgb, var(--muted-foreground) 7%, var(--card));
+  box-shadow: none;
+}
+.sws-composer .sws-composer-card[data-inert] textarea {
+  cursor: not-allowed;
+}
 /* Images waiting to go out with the message. */
 .sws-attachments {
   flex: 0 0 100%;
@@ -2241,13 +2311,13 @@ html.dark[data-theme-id]:not([data-theme-id=""])
   height: 28px;
   margin-left: -6px;
 }
-/* One row while it fits; the model and effort drop to their own row when it does not. */
+/* One row while it fits, from the top: when the model's controls wrap, the machine stays on their first row. */
 .sws-composer .sws-composer-foot {
   margin: 0;
   padding: 6px 2px 0 8px;
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 2px 10px;
 }
@@ -3146,10 +3216,16 @@ html.dark[data-theme-id]:not([data-theme-id=""])
   .sws-thread-machine:not([data-execution="unknown"]) svg {
     display: none;
   }
+  /* No room for a shared column either: the machine is as wide as its name, as in the
+     sidebar, so a short name leaves its room to the thread's title. */
+  .sws-thread-machine {
+    width: auto;
+    max-width: calc(var(--sws-machine-col, 6ch) + 1ch + 16px);
+  }
 }
 @container threadlist (width < 360px) {
   .sws-thread-machine {
-    width: calc(min(var(--sws-machine-col, 6ch), 6ch) + 1ch);
+    max-width: 7ch;
   }
   .sws-thread-machine-arrow {
     display: none;
@@ -3203,9 +3279,13 @@ html.dark[data-theme-id]:not([data-theme-id=""])
 .sws-thread-action:hover {
   border-color: var(--input);
 }
-.sws-thread-action:disabled {
+.sws-thread-action:disabled,
+.sws-thread-action[aria-disabled="true"] {
   cursor: not-allowed;
   color: var(--muted-foreground);
+}
+.sws-thread-action[aria-disabled="true"]:hover {
+  border-color: var(--border);
 }
 /* Resolve takes the age's place; the title and meta end before it, not under it. On
    hover the meta line's end is kept clear by a spacer inside the line, so the line's
@@ -3709,7 +3789,27 @@ html.dark[data-theme-id]:not([data-theme-id=""])
   width: 0;
   border-radius: inherit;
   background: var(--primary);
-  transition: width 400ms ease;
+  transition: width 600ms var(--ease-out-quint);
+}
+/* The row's line shows the copy's three phases, as the dialog, banner and toast do. */
+.sws-copy-progress:not([data-inline]):not([data-waiting]) {
+  --seg-gap: 1.5px;
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    #000 0 calc(33.333% - var(--seg-gap)),
+    transparent 0 calc(33.333% + var(--seg-gap)),
+    #000 0 calc(66.667% - var(--seg-gap)),
+    transparent 0 calc(66.667% + var(--seg-gap)),
+    #000 0
+  );
+  mask-image: linear-gradient(
+    90deg,
+    #000 0 calc(33.333% - var(--seg-gap)),
+    transparent 0 calc(33.333% + var(--seg-gap)),
+    #000 0 calc(66.667% - var(--seg-gap)),
+    transparent 0 calc(66.667% + var(--seg-gap)),
+    #000 0
+  );
 }
 .sws-copy-progress[data-waiting] .sws-copy-progress-fill {
   width: 100%;
@@ -3728,6 +3828,9 @@ html.dark[data-theme-id]:not([data-theme-id=""])
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  .sws-copy-progress-fill {
+    transition: none;
+  }
   .sws-copy-progress[data-indeterminate] .sws-copy-progress-fill {
     width: 100%;
     opacity: 0.5;
@@ -3751,6 +3854,26 @@ html.dark[data-theme-id]:not([data-theme-id=""])
 }
 .sws-copy-review:hover {
   background: color-mix(in srgb, var(--shell-waiting) 32%, transparent);
+}
+/* A copy phase that cannot say how far it is: a slow sweep inside its own segment. */
+.copy-phase-sweep {
+  left: 0;
+  animation: copy-phase-sweep 1.6s ease-in-out infinite;
+}
+@keyframes copy-phase-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .copy-phase-sweep {
+    width: 100%;
+    opacity: 0.35;
+    animation: none;
+  }
 }
 /* The same bar, full width in the project's copy banner. */
 .sws-copy-progress[data-inline] {
@@ -3835,4 +3958,30 @@ html.dark[data-theme-id]:not([data-theme-id=""])
   flex: 0 1 auto;
   width: auto;
   max-width: 15rem;
+}
+/* With no machine menu to offer (Percy, a single-machine project) the chip is a plain
+   span, not the xs Button the menu chip is. It takes that Button's shape, so the tint
+   reads as the same rounded chip on every machine, not a square box. */
+.sws-host.sws-execution-control.machine-chip {
+  box-sizing: border-box;
+  height: calc(var(--spacing) * 7);
+  padding-inline: calc(var(--spacing) * 2 - 1px);
+  gap: var(--spacing);
+  border-width: 1px;
+  border-style: solid;
+  border-radius: var(--control-radius);
+  font-size: var(--text-sm);
+  line-height: var(--text-sm--line-height);
+  font-weight: 500;
+}
+/* No machine color: no box, as the menu chip's ghost Button. */
+.sws-host.sws-execution-control.machine-chip:not([data-machine-color]) {
+  border-color: transparent;
+}
+@media (width >= 40rem) {
+  .sws-host.sws-execution-control.machine-chip {
+    height: calc(var(--spacing) * 6);
+    font-size: var(--text-xs);
+    line-height: var(--text-xs--line-height);
+  }
 }

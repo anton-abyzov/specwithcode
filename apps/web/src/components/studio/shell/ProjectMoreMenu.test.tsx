@@ -22,6 +22,7 @@ describe("ProjectMoreMenu", () => {
   let container: HTMLDivElement;
   const onOpenPlan = vi.fn();
   const onOpenSettingsTab = vi.fn();
+  const onOpenBoard = vi.fn();
 
   beforeEach(() => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -39,7 +40,12 @@ describe("ProjectMoreMenu", () => {
     vi.unstubAllGlobals();
   });
 
-  async function openMenu(workspaceRoot: string, designHere?: boolean) {
+  async function openMenu(
+    workspaceRoot: string,
+    designHere?: boolean,
+    board = false,
+    onOpenFirstFeatureGuide?: () => void,
+  ) {
     await act(async () =>
       root.render(
         <ProjectMoreMenu
@@ -48,6 +54,8 @@ describe("ProjectMoreMenu", () => {
           projectTitle="Atlas web"
           onOpenPlan={onOpenPlan}
           onOpenSettingsTab={onOpenSettingsTab}
+          onOpenBoard={board ? onOpenBoard : undefined}
+          onOpenFirstFeatureGuide={onOpenFirstFeatureGuide}
           {...(designHere === undefined ? {} : { designHere })}
         />,
       ),
@@ -83,6 +91,21 @@ describe("ProjectMoreMenu", () => {
     await openMenu("/work/atlas-web");
     await act(async () => item("Routines").click());
     expect(onOpenSettingsTab).toHaveBeenCalledWith("routines");
+  });
+
+  it("opens the Board tab from Board when the project uses SpecWeave", async () => {
+    await openMenu("/work/atlas-web", undefined, true);
+    expect(items()).toEqual(["Plan", "Board", "Design", "Usage", "Routines", "Open in new window"]);
+    await act(async () => item("Board").click());
+    expect(onOpenBoard).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the first feature guide again only when the sample's guide was left or closed", async () => {
+    // Without it the menu has no such item: the first test lists every item.
+    const reopen = vi.fn();
+    await openMenu("/work/atlas-web", undefined, false, reopen);
+    await act(async () => item("First feature guide").click());
+    expect(reopen).toHaveBeenCalledTimes(1);
   });
 
   it("has no Design item for a machine's No project folder", async () => {

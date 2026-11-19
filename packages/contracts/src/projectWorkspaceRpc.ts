@@ -54,6 +54,10 @@ import {
   ProjectSpecweaveSetUpInput,
   ProjectSpecweaveSetUpResult,
   ProjectSpecweaveSetUpError,
+  ProjectSpecweaveAnswerInput,
+  ProjectSpecweaveAnswerResult,
+  ProjectFirstFeatureGuideInput,
+  ProjectFirstFeatureGuideResult,
   ProjectMemoryReadInput,
   ProjectMemoryFile,
   ProjectMemoryWriteInput,
@@ -80,6 +84,12 @@ import {
   ProjectThreadReportsInput,
   ProjectThreadReportsSnapshot,
 } from "./projectLibrary.ts";
+import {
+  ProjectBoardIncrementInput,
+  ProjectBoardIncrementResult,
+  ProjectBoardInput,
+  ProjectBoardResult,
+} from "./projectBoard.ts";
 import {
   ProjectStarterSuggestionsInput,
   ProjectStarterSuggestionsResult,
@@ -113,6 +123,20 @@ import {
   ProjectSkillsVersions,
   ProjectSkillsVersionsInput,
 } from "./projectSkills.ts";
+import {
+  ProjectSkillReposInput,
+  ProjectSkillReposResult,
+  ProjectSkillsSearchInput,
+  ProjectSkillsSearchResult,
+  ProjectSkillsUpdateInput,
+  ProjectSkillsUpdateResult,
+} from "./projectSkillRepos.ts";
+import {
+  ProjectSkillsAdoptInput,
+  ProjectSkillsAdoptResult,
+  ProjectSkillsRolloutKeepInput,
+  ProjectSkillsRolloutKeepResult,
+} from "./projectSkillRollout.ts";
 export const PROJECT_WORKSPACE_RPC_METHODS = {
   projectsEnvironmentRead: "projects.environmentRead",
   projectsEnvironmentPrepare: "projects.environmentPrepare",
@@ -141,8 +165,15 @@ export const PROJECT_WORKSPACE_RPC_METHODS = {
   projectsSkillsFleetPush: "projects.skillsFleetPush",
   projectsSkillAuthoring: "projects.skillAuthoring",
   projectsSkillsStudioLink: "projects.skillsStudioLink",
+  projectsSkillRepos: "projects.skillRepos",
+  projectsSkillsSearch: "projects.skillsSearch",
+  projectsSkillsUpdate: "projects.skillsUpdate",
+  projectsSkillsRolloutKeep: "projects.skillsRolloutKeep",
+  projectsSkillsAdopt: "projects.skillsAdopt",
   projectsWorkspaceRead: "projects.workspaceRead",
   projectsSpecweaveSetUp: "projects.specweaveSetUp",
+  projectsSpecweaveAnswer: "projects.specweaveAnswer",
+  projectsFirstFeatureGuide: "projects.firstFeatureGuide",
   projectsStarterSuggestions: "projects.starterSuggestions",
   projectsMemoryRead: "projects.memoryRead",
   projectsMemoryWrite: "projects.memoryWrite",
@@ -158,6 +189,8 @@ export const PROJECT_WORKSPACE_RPC_METHODS = {
   projectsThreadReportSave: "projects.threadReportSave",
   projectsThreadIncrementProgressRead: "projects.threadIncrementProgressRead",
   projectsIncrementsList: "projects.incrementsList",
+  projectsBoard: "projects.board",
+  projectsBoardIncrement: "projects.boardIncrement",
   projectsThreadIncrementLink: "projects.threadIncrementLink",
 } as const;
 const error = Schema.Union([ProjectWorkspaceError, EnvironmentAuthorizationError]);
@@ -273,6 +306,11 @@ export const projectWorkspaceRpcs = [
     success: ProjectSpecweaveSetUpResult,
     error: Schema.Union([ProjectSpecweaveSetUpError, EnvironmentAuthorizationError]),
   }),
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsSpecweaveAnswer, {
+    payload: ProjectSpecweaveAnswerInput,
+    success: ProjectSpecweaveAnswerResult,
+    error,
+  }),
   Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsStarterSuggestions, {
     payload: ProjectStarterSuggestionsInput,
     success: ProjectStarterSuggestionsResult,
@@ -374,9 +412,25 @@ export const projectPlanningRpcs = [
     success: ProjectIncrementsListResult,
     error,
   }),
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsBoard, {
+    payload: ProjectBoardInput,
+    success: ProjectBoardResult,
+    error,
+  }),
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsBoardIncrement, {
+    payload: ProjectBoardIncrementInput,
+    success: ProjectBoardIncrementResult,
+    error,
+  }),
   Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsThreadIncrementLink, {
     payload: ThreadIncrementLinkInput,
     success: ThreadIncrementLinkResult,
+    error,
+  }),
+  // The first feature guide's marks (1398): the core group is at the depth limit.
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsFirstFeatureGuide, {
+    payload: ProjectFirstFeatureGuideInput,
+    success: ProjectFirstFeatureGuideResult,
     error,
   }),
 ] as const;
@@ -438,6 +492,31 @@ export const projectSkillsActionRpcs = [
   Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsSkillsStudioLink, {
     payload: ProjectSkillsStudioLinkInput,
     success: ProjectSkillsStudioLink,
+    error: skillsActionError,
+  }),
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsSkillRepos, {
+    payload: ProjectSkillReposInput,
+    success: ProjectSkillReposResult,
+    error: skillsActionError,
+  }),
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsSkillsSearch, {
+    payload: ProjectSkillsSearchInput,
+    success: ProjectSkillsSearchResult,
+    error: skillsActionError,
+  }),
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsSkillsUpdate, {
+    payload: ProjectSkillsUpdateInput,
+    success: ProjectSkillsUpdateResult,
+    error: skillsActionError,
+  }),
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsSkillsRolloutKeep, {
+    payload: ProjectSkillsRolloutKeepInput,
+    success: ProjectSkillsRolloutKeepResult,
+    error: skillsActionError,
+  }),
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsSkillsAdopt, {
+    payload: ProjectSkillsAdoptInput,
+    success: ProjectSkillsAdoptResult,
     error: skillsActionError,
   }),
 ] as const;

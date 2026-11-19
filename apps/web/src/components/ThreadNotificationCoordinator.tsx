@@ -1,7 +1,9 @@
 import { observeNotificationEpisode } from "../notificationEpisodes";
 import {
+  attentionLeadThreadId,
   attentionOwnerMachine,
   observeProjectThread,
+  subagentQuestionWait,
 } from "@specweave-studio/client-runtime/state/projectAttention";
 import {
   classifyProjectActions,
@@ -24,7 +26,7 @@ import {
   MessageCircleQuestionIcon,
   ShieldQuestionIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useOpenChat } from "../hooks/useOpenChat";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
@@ -64,6 +66,7 @@ import {
   interactedRecentlyHere,
 } from "../lib/backgroundActivityReporter";
 import { toastManager } from "./ui/toast";
+import { HandoffNotices } from "./handoff/HandoffNotices";
 import { isAccessWait } from "../studio/accessWait";
 import { paneWords } from "../studio/assistantTerms";
 import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
@@ -95,6 +98,27 @@ export function isStaleExecutionCopy(
 
 /** Records a shown notification, or forgets it with `posted` false when the system declined it. */
 type OnNotification = (tag: string, shown: ShownNotification, posted?: boolean) => void;
+
+/**
+ * Whether a thread's open question is its lead's to settle (see
+ * subagentQuestionWait), so it alerts nobody, as Needs you counts it.
+ */
+function questionGoesToLeadIn(
+  environmentId: EnvironmentId,
+  thread: ReturnType<typeof presentThreadShell>,
+  threadById: (id: string) => OrchestrationV2ThreadShell | undefined,
+  coordinatorThreadId: string | null,
+): boolean {
+  const leadId = attentionLeadThreadId(thread);
+  const leadRaw = leadId === null ? undefined : threadById(leadId);
+  return (
+    subagentQuestionWait(
+      thread,
+      leadRaw === undefined ? undefined : presentThreadShell(environmentId, leadRaw),
+      coordinatorThreadId,
+    ) !== null
+  );
+}
 
 export function ThreadNotificationCoordinator() {
   const environmentIds = useEnvironmentIds();
@@ -189,12 +213,15 @@ export function ThreadNotificationCoordinator() {
   if (mode === "off" && !inAppNotificationsEnabled && !inputNeededAlertsEnabled) return null;
 
   return environmentIds.map((environmentId) => (
-    <EnvironmentNotifications
-      key={environmentId}
-      environmentId={environmentId}
-      onNotification={onNotification}
-      onWithdraw={onWithdraw}
-    />
+    <Fragment key={environmentId}>
+      <EnvironmentNotifications
+        environmentId={environmentId}
+        onNotification={onNotification}
+        onWithdraw={onWithdraw}
+      />
+      {/* An automatic hand off, on the source and the destination (1390 AC-28). */}
+      <HandoffNotices environmentId={environmentId} />
+    </Fragment>
   ));
 }
 
@@ -243,8 +270,17 @@ function EnvironmentNotifications({
   const levels = useRef(new Map<ProjectId, ProjectNotificationLevel>());
   // Percy's threads are topics, so its alerts say topic.
   const assistantIds = useRef(new Set<ProjectId>());
+  // A coordinator under a custom id still has workers that ask the person.
+  const coordinatorIds = useRef(new Map<ProjectId, string>());
   useLayoutEffect(() => {
     const here = projects.filter((project) => project.environmentId === environmentId);
+    coordinatorIds.current = new Map(
+      here.flatMap((project) =>
+        project.workspaceSettings?.coordinatorThreadId
+          ? [[project.id, project.workspaceSettings.coordinatorThreadId] as const]
+          : [],
+      ),
+    );
     levels.current = new Map(
       here.map((project) => [project.id, projectNotificationLevel(project)]),
     );
@@ -296,6 +332,9 @@ function EnvironmentNotifications({
       return;
     }
     const next = new Map<ThreadId, NotificationState>();
+    const threadById = new Map<string, (typeof threads)[number]>(
+      threads.map((rawThread) => [rawThread.id, rawThread]),
+    );
     for (const rawThread of threads) {
       // A provider's own subagents are part of their parent's turn. A worker a
       // coordinator delegated is its own thread: its status and this alert
@@ -308,7 +347,16 @@ function EnvironmentNotifications({
       const thread = presentThreadShell(environmentId, rawThread);
       let status = resolveThreadAlertStatus(thread);
       if (status === "ready" && thread.latestRun?.status === "failed") status = "failed";
-      const observation = observeProjectThread(thread, "live");
+      const observation = observeProjectThread(
+        thread,
+        "live",
+        questionGoesToLeadIn(
+          environmentId,
+          thread,
+          (id) => threadById.get(id),
+          coordinatorIds.current.get(thread.projectId) ?? null,
+        ),
+      );
       const observedActions = classifyProjectActions(observation);
       // Baseline absence must end persisted episodes too, including after every client restarted.
       for (const reason of ["plan", "held"] as const) {
@@ -476,9 +524,22 @@ function EnvironmentNotifications({
                   currentRaw.pendingRuntimeRequest?.id !== rawThread.pendingRuntimeRequest?.id)
               )
                 return null;
+              // The lead may have taken the question over since it was seen.
               if (
                 action &&
-                !projectActionIsCurrent(action, observeProjectThread(currentThread, "live"))
+                !projectActionIsCurrent(
+                  action,
+                  observeProjectThread(
+                    currentThread,
+                    "live",
+                    questionGoesToLeadIn(
+                      environmentId,
+                      currentThread,
+                      (id) => latest.current.threads?.find((candidate) => candidate.id === id),
+                      coordinatorIds.current.get(currentThread.projectId) ?? null,
+                    ),
+                  ),
+                )
               )
                 return null;
               if (

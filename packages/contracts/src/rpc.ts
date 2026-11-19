@@ -12,11 +12,17 @@ import { PROJECT_LINK_RPC_METHODS, projectLinkRpcs } from "./projectLinkRpc.ts";
 import { LINKED_MEMORY_RPC_METHODS, linkedMemoryRpcs } from "./linkedMemoryRpc.ts";
 import { HANDOFF_MODE_RPC_METHODS, handoffModeRpcs } from "./handoffModeRpc.ts";
 import { AWAY_RPC_METHODS, awayRpcs } from "./awayRpc.ts";
+import { HANDOFF_BATCH_RPC_METHODS, handoffBatchRpcs } from "./handoffBatchRpc.ts";
+import { projectSyncRpcs } from "./projectSync.ts";
 import { PROJECT_PLAN_LINK_RPC_METHODS, projectPlanLinkRpcs } from "./projectPlanLinkRpc.ts";
 import { LIMIT_HANDOFF_RPC_METHODS, limitHandoffRpcs } from "./limitHandoff.ts";
 import { USAGE_LIMIT_HISTORY_RPC_METHODS, usageLimitHistoryRpcs } from "./usageLimitHistory.ts";
+import { TEAM_USAGE_RPC_METHODS, teamUsageRpcs } from "./teamUsage.ts";
+import { USAGE_RESET_LEDGER_RPC_METHODS, usageResetLedgerRpcs } from "./usageResetLedger.ts";
+import { RESET_ANNOUNCEMENT_RPC_METHODS, resetAnnouncementRpcs } from "./resetAnnouncements.ts";
 import { provisionRpcs } from "./provision.ts";
 import { machineToolsRpcs } from "./machineTools.ts";
+import { projectCredentialsRpcs } from "./projectCredentials.ts";
 import { GITHUB_SIGN_IN_RPC_METHODS, gitHubSignInRpcs } from "./gitHubSignIn.ts";
 import { GITHUB_CREDENTIAL_RPC_METHODS, gitHubCredentialRpcs } from "./gitHubCredentialCopy.ts";
 import { BROWSER_BRIDGE_RPC_METHODS, browserBridgeRpcs } from "./browserBridge.ts";
@@ -55,6 +61,7 @@ import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import { TeamRulesSummary } from "./teamRules.ts";
+import { StorageCleanupPlan, StorageCleanupRunResult } from "./storageCleanupPlan.ts";
 import { NonNegativeInt, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   CodexAuthCallbackInput,
@@ -449,9 +456,13 @@ export const WS_METHODS = {
   ...LINKED_MEMORY_RPC_METHODS,
   ...HANDOFF_MODE_RPC_METHODS,
   ...AWAY_RPC_METHODS,
+  ...HANDOFF_BATCH_RPC_METHODS,
   ...PROJECT_PLAN_LINK_RPC_METHODS,
   ...LIMIT_HANDOFF_RPC_METHODS,
   ...USAGE_LIMIT_HISTORY_RPC_METHODS,
+  ...TEAM_USAGE_RPC_METHODS,
+  ...USAGE_RESET_LEDGER_RPC_METHODS,
+  ...RESET_ANNOUNCEMENT_RPC_METHODS,
   ...MANAGED_UPDATES_RPC_METHODS,
   ...PROJECT_CONNECTION_RPC_METHODS,
   ...BROWSER_BRIDGE_RPC_METHODS,
@@ -644,6 +655,8 @@ export const WS_METHODS = {
   personalDataStatus: "personalData.status",
   personalDataSetAccess: "personalData.setAccess",
   serverCleanOldAppVersions: "server.cleanOldAppVersions",
+  serverGetStorageCleanupPlan: "server.getStorageCleanupPlan",
+  serverRunStorageCleanup: "server.runStorageCleanup",
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
 
@@ -744,8 +757,11 @@ const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProviders, 
      */
     instanceId: Schema.optional(ProviderInstanceId),
     cwd: Schema.optional(TrimmedNonEmptyString),
-    /** With `instanceId` and `cwd`: rescan the workspace's skills and slash
-     * commands even when a snapshot for that cwd already exists. */
+    /** A person asked: read past the cached account and status probes (of
+     * `instanceId`, or of every instance when it is omitted), so a sign-in to
+     * another account in a terminal shows. With `instanceId` and `cwd`, also
+     * rescan the workspace's skills and slash commands even when a snapshot
+     * for that cwd already exists. */
     fresh: Schema.optional(Schema.Boolean),
     /** Explicit user request: bypass Studio-owned caches and rediscover models.
      * Background status refreshes must not open agent sessions. */
@@ -2089,6 +2105,20 @@ const WsServerCleanOldAppVersionsRpc = Rpc.make(WS_METHODS.serverCleanOldAppVers
   error: EnvironmentAuthorizationError,
 });
 
+/** What the storage cleanup would remove and keep right now, and why. Removes nothing. */
+const WsServerGetStorageCleanupPlanRpc = Rpc.make(WS_METHODS.serverGetStorageCleanupPlan, {
+  payload: Schema.Struct({}),
+  success: StorageCleanupPlan,
+  error: EnvironmentAuthorizationError,
+});
+
+/** Runs one storage cleanup sweep now ("Clean up now") and returns what it removed. */
+const WsServerRunStorageCleanupRpc = Rpc.make(WS_METHODS.serverRunStorageCleanup, {
+  payload: Schema.Struct({}),
+  success: StorageCleanupRunResult,
+  error: EnvironmentAuthorizationError,
+});
+
 const WsScheduledTasksListWebhookDeliveriesRpc = Rpc.make(
   WS_METHODS.scheduledTasksListWebhookDeliveries,
   {
@@ -2409,6 +2439,21 @@ export const WsUsageLimitHistoryRpcGroup = RpcGroup.make(...usageLimitHistoryRpc
   RpcScopeAuthorization,
 );
 
+/** Team usage opt-in and preview (0898); its own group for the same depth reason. */
+export const WsTeamUsageRpcGroup = RpcGroup.make(...teamUsageRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
+/** Closed quota periods per account; its own group for the same depth reason. */
+export const WsUsageResetLedgerRpcGroup = RpcGroup.make(...usageResetLedgerRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
+/** Reset announcements read from the public feed; its own group for the same depth reason. */
+export const WsResetAnnouncementRpcGroup = RpcGroup.make(...resetAnnouncementRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
 /** Folder copy between machines; its own group for the same depth reason. */
 export const WsFolderCopyRpcGroup = RpcGroup.make(...folderCopyRpcs).middleware(
   RpcScopeAuthorization,
@@ -2448,8 +2493,18 @@ export const WsHandoffModeRpcGroup = RpcGroup.make(...handoffModeRpcs).middlewar
   RpcScopeAuthorization,
 );
 
-/** Away mode preflight and access requests; its own group for the same depth reason. */
-export const WsAwayRpcGroup = RpcGroup.make(...awayRpcs).middleware(RpcScopeAuthorization);
+/**
+ * Away mode preflight and access requests, and the hand off batch's two calls;
+ * its own group for the same depth reason.
+ */
+export const WsAwayRpcGroup = RpcGroup.make(...awayRpcs, ...handoffBatchRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
+/** Project sync between machines (`projectSync.ts`); its own group for the same depth reason. */
+export const WsProjectSyncRpcGroup = RpcGroup.make(...projectSyncRpcs).middleware(
+  RpcScopeAuthorization,
+);
 
 /** Provisioning a fleet machine's packages and service; its own group for the same depth reason. */
 export const WsProvisionRpcGroup = RpcGroup.make(...provisionRpcs).middleware(
@@ -2458,6 +2513,11 @@ export const WsProvisionRpcGroup = RpcGroup.make(...provisionRpcs).middleware(
 
 /** Checking and installing a machine's basics (Git, Node.js, gh); its own group for the same depth reason. */
 export const WsMachineToolsRpcGroup = RpcGroup.make(...machineToolsRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
+/** The sign-ins a project uses and whether a machine has them; its own group for the same depth reason. */
+export const WsProjectCredentialsRpcGroup = RpcGroup.make(...projectCredentialsRpcs).middleware(
   RpcScopeAuthorization,
 );
 
@@ -2478,6 +2538,12 @@ export const WsAppVersionsRpcGroup = RpcGroup.make(WsServerCleanOldAppVersionsRp
   RpcScopeAuthorization,
 );
 
+/** The storage cleanup plan and "Clean up now"; its own group for the same depth reason. */
+export const WsStorageCleanupRpcGroup = RpcGroup.make(
+  WsServerGetStorageCleanupPlanRpc,
+  WsServerRunStorageCleanupRpc,
+).middleware(RpcScopeAuthorization);
+
 export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsNativeConnectionsRpcGroup)
   .merge(WsStatusPageRpcGroup)
@@ -2489,17 +2555,23 @@ export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsProjectPlanLinkRpcGroup)
   .merge(WsLimitHandoffRpcGroup)
   .merge(WsUsageLimitHistoryRpcGroup)
+  .merge(WsTeamUsageRpcGroup)
+  .merge(WsUsageResetLedgerRpcGroup)
+  .merge(WsResetAnnouncementRpcGroup)
   .merge(WsFolderCopyRpcGroup)
   .merge(WsProjectKnowledgeRpcGroup)
   .merge(WsProjectPlanningRpcGroup)
   .merge(WsProjectSkillsActionsRpcGroup)
   .merge(WsHandoffModeRpcGroup)
   .merge(WsAwayRpcGroup)
+  .merge(WsProjectSyncRpcGroup)
   .merge(WsCloneDestinationRpcGroup)
   .merge(WsProvisionRpcGroup)
   .merge(WsMachineToolsRpcGroup)
+  .merge(WsProjectCredentialsRpcGroup)
   .merge(WsGitHubSignInRpcGroup)
   .merge(WsDesignRpcGroup)
   .merge(WsDesignSystemImportRpcGroup)
   .merge(WsPersonalDataRpcGroup)
-  .merge(WsAppVersionsRpcGroup);
+  .merge(WsAppVersionsRpcGroup)
+  .merge(WsStorageCleanupRpcGroup);

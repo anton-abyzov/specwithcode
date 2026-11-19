@@ -1,3 +1,5 @@
+import { useSyncExternalStore } from "react";
+
 // A small, fixed disk per machine. m1 is a remote Mac whose projects folder
 // does not exist yet; m4 is this device.
 const HOMES: Record<string, string> = { m4: "/Users/you", m1: "/Users/remote" };
@@ -61,9 +63,25 @@ export const useAtomCommand = () => async (value: any) => {
   for (const listener of listeners) listener();
   return { _tag: "Success", value: { path: `${parentPath}/${name}` } };
 };
+// `slow=1`: the server's answer for a folder asked about under a project name
+// waits for window.answerFolderChecks(), as a slow machine's would.
+let checksAnswered = new URLSearchParams(location.search).get("slow") !== "1";
+(window as any).answerFolderChecks = () => {
+  checksAnswered = true;
+  version += 1;
+  for (const listener of listeners) listener();
+};
+const subscribe = (listener: () => void) => {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+};
 export const useEnvironmentQuery = (value: any) => {
+  useSyncExternalStore(subscribe, () => version);
   const refresh = () => {};
   if (!value) return { data: null, error: null, isPending: false, refresh };
+  if (!checksAnswered && value.input.projectName !== undefined) {
+    return { data: null, error: null, isPending: true, refresh };
+  }
   (window as any).browsedMachine = value.environmentId;
   const home = HOMES[value.environmentId]!;
   const path = value.input.partialPath.replace(/^~/, home).replace(/\/$/, "") || "/";
@@ -76,6 +94,18 @@ export const useEnvironmentQuery = (value: any) => {
       error: `The folder '${path}' does not exist on this machine.`,
     };
   }
+  // The server's decision for a folder asked about under its own name, as
+  // first-run setup does: used as it is, and empty or not.
+  const slug = (name: string) => name.trim().toLowerCase().replace(/\s+/g, "-");
+  const asked = value.input.projectName as string | undefined;
+  const outcome =
+    asked !== undefined && slug(path.split("/").pop() ?? "") === slug(asked)
+      ? {
+          kind: "uses",
+          path,
+          because: entries.length === 0 ? "empty_named_like_project" : "named_like_project",
+        }
+      : undefined;
   return {
     error: null,
     isPending: false,
@@ -84,6 +114,7 @@ export const useEnvironmentQuery = (value: any) => {
       parentPath: path,
       homePath: home,
       version,
+      ...(outcome === undefined ? {} : { outcome }),
       ...(UNREADABLE.has(path) ? { unreadable: true } : {}),
       entries: entries
         .toSorted((left, right) => left.name.localeCompare(right.name))

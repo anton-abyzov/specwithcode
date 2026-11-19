@@ -8,6 +8,7 @@ import * as Clock from "effect/Clock";
 import * as Random from "effect/Random";
 import * as Semaphore from "effect/Semaphore";
 import * as StorageCleanup from "./storageCleanup.ts";
+import * as StorageCleanupRpc from "./storageCleanupRpc.ts";
 import * as StorageMaintenance from "./persistence/StorageMaintenance.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchReactor.ts";
@@ -42,6 +43,7 @@ import * as ServerHttp from "./http.ts";
 import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { fixPath } from "./os-jank.ts";
+import { noteServerPathRead } from "./serverPath.ts";
 import * as ReadinessSweep from "./machineTools/readinessSweep.ts";
 import { seedManagedToolPath } from "./machineTools/runtime.ts";
 import {
@@ -124,13 +126,18 @@ import * as StudioCapacity from "./studio/Capacity.ts";
 import * as StudioNativeRoute from "./studio/NativeRoute.ts";
 import * as StudioHttp from "./studio/http.ts";
 import * as StudioFleetHttp from "./studioFleetHttp.ts";
-import * as FleetSkills from "./fleet/fleetSkills.ts";
+import * as FleetSkills from "./fleet/fleetSkillsGithubLive.ts";
 import * as FleetWorkers from "./fleet/fleetDiskRoom.ts";
 import * as RemoteWorkers from "./fleet/RemoteWorkers.ts";
+import * as SealedSecretsPeer from "./fleet/folderTransfer/sealedSecretsPeer.ts";
 import * as MachineLimitHandoff from "./orchestration-v2/MachineLimitHandoff.ts";
 import * as DeviceSignInHttp from "./auth/deviceSignInHttp.ts";
+import * as ConnectDevicesHttp from "./auth/connectDevicesHttp.ts";
 import * as ProviderUsageLimitsIngestion from "./provider/ProviderUsageLimitsIngestion.ts";
 import * as UsageLimitHistory from "./usage/UsageLimitHistory.ts";
+import * as TeamUsageReporter from "./teamUsage/TeamUsageReporter.ts";
+import * as ResetAnnouncementMonitor from "./resetAnnouncements/ResetAnnouncementMonitor.ts";
+import * as UsageResetLedger from "./usage/UsageResetLedger.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as StudioProjectFileLoader from "./project/StudioProjectFileLoader.ts";
@@ -168,6 +175,7 @@ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as WebhookRoute from "./scheduledTasks/webhookRoute.ts";
 import * as FolderTransferRoute from "./fleet/folderTransferRoute.ts";
 import * as FleetTargets from "./fleet/FleetTargets.ts";
+import * as MachineDefaultName from "./fleet/MachineDefaultName.ts";
 import * as MachineNicknameSync from "./fleet/MachineNicknameSync.ts";
 import * as GitHubCredentialRoute from "./sourceControl/gitHubCredentialRoute.ts";
 import * as GitHubSpawnEnvironmentSync from "./sourceControl/gitHubSpawnEnvironmentSync.ts";
@@ -214,6 +222,8 @@ import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as DesktopAppUpdate from "./desktopUpdate/DesktopAppUpdate.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
+import * as AgentMemoryLimit from "./resourceTelemetry/AgentMemoryLimit.ts";
+import * as AgentMemoryNotice from "./resourceTelemetry/AgentMemoryNotice.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as MemoryGuard from "./resourceTelemetry/MemoryGuard.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
@@ -238,8 +248,7 @@ import * as PromptSuggestionReactor from "./orchestration-v2/PromptSuggestionRea
 import * as AdversarialReviewReactor from "./review/AdversarialReviewReactor.ts";
 import * as PromptSuggestions from "./orchestration-v2/PromptSuggestions.ts";
 import * as CoordinatorLease from "./project/CoordinatorLease.ts";
-import * as CoordinatorStandbyLoop from "./project/CoordinatorStandbyLoop.ts";
-import * as CoordinatorStandbyRearm from "./project/CoordinatorStandbyRearm.ts";
+import * as EqualCoordinatorMigration from "./project/EqualCoordinatorMigration.ts";
 import * as CoordinatorStandbyStore from "./project/CoordinatorStandbyStore.ts";
 import * as CoordinatorSuspendRoute from "./project/CoordinatorSuspendRoute.ts";
 import * as SubagentLaunchCheckpoints from "./orchestration-v2/SubagentLaunchCheckpoints.ts";
@@ -247,9 +256,15 @@ import * as ScheduledTaskRunReactor from "./scheduledTasks/ScheduledTaskRunReact
 import * as AideBriefingSetup from "./project/AideBriefingSetup.ts";
 import * as LaunchedWorkerWake from "./project/LaunchedWorkerWake.ts";
 import * as ImportedThreadTitleRepair from "./project/ImportedThreadTitleRepair.ts";
+import * as HandoffBatch from "./handoff/HandoffBatch.ts";
 import * as HandoffMoves from "./handoff/HandoffMoves.ts";
 import * as HandoffPeers from "./handoff/handoffPeers.ts";
 import * as HandoffReceiver from "./handoff/HandoffReceiver.ts";
+import * as HandoffTransferStore from "./handoff/HandoffTransferStore.ts";
+import * as ExtrasReceiver from "./handoff/ExtrasReceiver.ts";
+import * as ProjectSync from "./fleet/ProjectSync.ts";
+import * as ProjectSyncExtras from "./fleet/ProjectSyncExtras.ts";
+import * as ProjectSyncRpc from "./fleet/ProjectSyncRpc.ts";
 import * as LinkedMemoryPeers from "./project/LinkedMemoryPeers.ts";
 import * as LinkedPeerRoute from "./project/LinkedPeerRoute.ts";
 import * as LinkedPeerSync from "./project/LinkedPeerSync.ts";
@@ -354,6 +369,7 @@ const layerUsage = UsageService.layer.pipe(Layer.provide(layerServerSettings));
 const layerResourceDiagnostics = Layer.mergeAll(
   HostResources.layer,
   MemoryGuard.layer,
+  AgentMemoryLimit.layer,
   layerResourceTelemetry,
   ProcessDiagnostics.layer.pipe(Layer.provide(layerResourceTelemetry)),
   ProcessResourceMonitor.layer.pipe(Layer.provide(layerResourceTelemetry)),
@@ -705,14 +721,19 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // Limit handoff reads the machines above; they are built on the runtime it lives in.
   // Its moves are handoff mode's (without the adapter nothing would ever move).
   MachineLimitHandoff.layerFleet.pipe(
-    Layer.provide(RemoteWorkers.layerFleetWorkers),
     Layer.provide(LimitHandoffAdapter.layer),
+    // The adapter asks a machine what it would run a track's thread on.
+    Layer.provide(HandoffPeers.layer),
+    // Last: the peers above reach the machines through the same fleet workers.
+    Layer.provide(RemoteWorkers.layerFleetWorkers),
   ),
   MachineLimitHandoff.layerRpcHandlers,
   // Interrupts the work of a machine revoked here once its grace has passed.
   WorkGrantRevokeSweeper.layer,
   // Keeps machine nicknames the same on every paired machine.
   MachineNicknameSync.layer.pipe(Layer.provide(FleetTargets.layer)),
+  // A machine nobody named yet takes the chip in its computer name ("M5").
+  MachineDefaultName.layer.pipe(Layer.provide(FleetTargets.layer)),
   // Asks Studio Connect to deliver webhooks it held while this environment was offline.
   HeldHooksWaker.layer,
   InactiveThreadArchive.layerStart.pipe(
@@ -736,14 +757,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.provide(layerCoordinatorLease),
   ),
   layerCoordinatorLease,
-  // Automatic coordinator takeover, standby side: watches the armed projects'
-  // leases, takes over when they stop, then claims the epoch on the worker
-  // machines and takes on the replaced coordinator's workers. The store is the
-  // runtime's (one layer value, so one lock over the file). Beside it, re-arming.
-  Layer.merge(CoordinatorStandbyLoop.layer, CoordinatorStandbyRearm.layer).pipe(
-    Layer.provide([CoordinatorStandbyStore.layer, HandoffPeers.layer]),
-    Layer.provide(RemoteWorkers.layerFleetWorkers),
-  ),
+  // Every machine runs its own coordinator: bindings from before become active, once, at start.
+  EqualCoordinatorMigration.layer.pipe(Layer.provide(CoordinatorStandbyStore.layer)),
   // Suggested next prompts: Claude's own (same offers layer as the adapters') or generated.
   Layer.effectDiscard(PromptSuggestionReactor.start).pipe(Layer.provide(PromptSuggestions.layer)),
   // Reviews a finished feature on another model family, when the project turns that on.
@@ -752,6 +767,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.effectDiscard(ScheduledTaskRunReactor.start),
   // Wakes the thread that launched a worker on this machine when the worker's run ends.
   Layer.effectDiscard(LaunchedWorkerWake.start),
+  // Tells a thread when its command was ended for passing the agent memory limit.
+  Layer.effectDiscard(AgentMemoryNotice.start),
   // Starts the background checks of whether iOS Simulators and Xcode builds run here, which machines report to each other.
   Layer.effectDiscard(
     Effect.map(HostProcessPlatform, (platform) => {
@@ -761,8 +778,28 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // Handoff moves between machines; the receiver also serves the peer route.
   HandoffMoves.layerFleet.pipe(
     Layer.provideMerge(HandoffReceiver.layer),
+    // A hand off batch sends project folder work with Sync's own extras.
+    Layer.provide(
+      HandoffBatch.folderWorkLayer.pipe(
+        Layer.provide(ProjectSyncExtras.layer.pipe(Layer.provideMerge(ProjectSync.layer))),
+        Layer.provide(HandoffPeers.layer),
+        Layer.provide(RemoteWorkers.layerFleetWorkers),
+      ),
+    ),
+    // One store for both: the moves' records and the receiver's verdicts share a file.
+    Layer.provide(HandoffTransferStore.layer),
     Layer.provide(Layer.merge(RemoteWorkers.layerFleetWorkers, ProjectionStoreV2.layer)),
   ),
+  // Project sync (1390): its handlers, and the receiver the peer route lands extras with.
+  ProjectSyncRpc.layerRpcHandlers.pipe(
+    Layer.provideMerge(ExtrasReceiver.layer),
+    Layer.provideMerge(HandoffBatch.folderWorkReceiverLayer),
+    Layer.provide(ProjectSyncExtras.layer.pipe(Layer.provideMerge(ProjectSync.layer))),
+    Layer.provide(HandoffPeers.layer),
+    Layer.provide(RemoteWorkers.layerFleetWorkers),
+  ),
+  // Folder copy: the source's line to a copy's destination machine, for secrets sent sealed.
+  SealedSecretsPeer.layer.pipe(Layer.provide(RemoteWorkers.layerFleetWorkers)),
   // Away mode: the read-only preflight, and access requests between machines.
   // Its RPC handlers live here for the reason the computer-use ones do (see below).
   AwayRpc.layerRpcHandlers.pipe(
@@ -771,9 +808,10 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.provideMerge(ScheduledTaskTransfer.layer),
     Layer.provideMerge(AwayPlanner.layer),
     Layer.provideMerge(AwayAccess.layer.pipe(Layer.provide(FleetTargets.layer))),
-    // The same layers as the intents loop below, so one of each.
+    // The same layers as the intents loop below and the moves' receiver, so one of each.
     Layer.provide(
       Layer.merge(AwayIntents.layer, CoordinatorPlannedHandover.layer).pipe(
+        Layer.provide(HandoffReceiver.layer),
         Layer.provide([CoordinatorStandbyStore.layer, HandoffPeers.layer, layerCoordinatorLease]),
         Layer.provide(RemoteWorkers.layerFleetWorkers),
       ),
@@ -789,6 +827,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     // The lid-close trigger: the desktop main process reports sleep and wake here.
     Layer.provideMerge(AwaySleepRoute.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
     Layer.provideMerge(CoordinatorPlannedHandover.layer),
+    Layer.provide(HandoffReceiver.layer),
     Layer.provide([CoordinatorStandbyStore.layer, HandoffPeers.layer, layerCoordinatorLease]),
     Layer.provide(Layer.merge(RemoteWorkers.layerFleetWorkers, ProjectionStoreV2.layer)),
     Layer.provide(AwaySleepBridge.layer),
@@ -835,7 +874,10 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.effectDiscard(
     TemporaryProjects.make.pipe(Effect.flatMap((sweeper) => sweeper.start())),
   ).pipe(Layer.provide(Layer.merge(ProjectionStoreV2.layer, AuthSessions.layer))),
-  Layer.effectDiscard(StorageCleanup.make.pipe(Effect.flatMap((service) => service.start()))).pipe(
+  // Settings > Storage's plan and "Clean up now" read the same cleanup service the
+  // sweeps run on, so a button press never starts a second, parallel sweeper.
+  StorageCleanupRpc.layerRpcHandlers.pipe(
+    Layer.provideMerge(StorageCleanup.layerStart),
     Layer.provide(ProjectionStoreV2.layer),
   ),
   // After an app update, installs missing machine tools once the machine is quiet.
@@ -901,8 +943,18 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // Subscribes to `account.rate-limits.updated` so usage bars track live
   // telemetry instead of waiting for the next status probe.
   ProviderUsageLimitsIngestion.layer,
-  // Quota over time for burn rates and run-out estimates on the pooled limits view.
-  UsageLimitHistory.layer,
+  // Quota over time for burn rates and run-out estimates on the pooled limits view,
+  // and the opt-in team summary (0898) that reads it. Its RPC handlers are
+  // registered here, not in ws.ts, which sits at TypeScript's instantiation limit;
+  // connections read handlers from the request context.
+  TeamUsageReporter.layerRpcHandlers.pipe(
+    Layer.provideMerge(TeamUsageReporter.layer),
+    Layer.provideMerge(UsageLimitHistory.layer),
+  ),
+  // What each subscription window had used when it reset, kept for a year.
+  UsageResetLedger.layer,
+  // Posts announcing a limits reset, read from the public feed every half hour.
+  ResetAnnouncementMonitor.layerStart.pipe(Layer.provideMerge(ResetAnnouncementMonitor.layer)),
   layerProviderInstallationRefresh,
   // Looks for installed agents once at start, and turns on the signed-in ones nobody decided on.
   ProviderDiscovery.layer,
@@ -1068,11 +1120,12 @@ const layerMakeRoutes = Layer.mergeAll(
           StudioHttp.layer,
           StudioFleetHttp.layer.pipe(
             Layer.provide(FleetWorkers.workerLayer.pipe(Layer.provide(ProcessRunner.layer))),
-            Layer.provide(FleetSkills.layer.pipe(Layer.provide(ProcessRunner.layer))),
+            Layer.provide(FleetSkills.fleetSkillsLayer.pipe(Layer.provide(ProcessRunner.layer))),
           ),
         ),
       ),
       Layer.provide(DeviceSignInHttp.layer),
+      Layer.provide(ConnectDevicesHttp.layer),
       Layer.provide(WebhookRoute.layer.pipe(Layer.provide(RelayDeliveryProof.layer))),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
     ),
@@ -1147,6 +1200,8 @@ const layerMakeServer = Layer.unwrap(
     const layerLauncher = ServiceLauncherClient.layer;
 
     yield* fixPath();
+    // What fixPath just read is the baseline a later change in the shell's startup files is measured from.
+    yield* noteServerPathRead;
     // After fixPath, so tools the app installed come after the person's own.
     yield* seedManagedToolPath(config.baseDir);
     // After fixPath, so the shim wraps the git the user's shell finds.

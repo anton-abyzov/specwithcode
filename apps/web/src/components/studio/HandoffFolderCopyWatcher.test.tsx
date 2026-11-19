@@ -3,14 +3,28 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { currentCopyActivities, resetCopyActivityForTests } from "../../studio/folderCopyActivity";
+import { resetSealedRoutes } from "../../studio/copySecretsRoute";
 import { HandoffFolderCopyWatcher } from "./HandoffFolderCopyWatcher";
 
 const state = vi.hoisted(() => ({
   handlers: {} as Record<string, (input: unknown) => unknown>,
   toasts: [] as unknown[],
+  /** This window's access:write on the source, as the session reports it. */
+  sourceAccess: "unknown" as "granted" | "denied" | "unknown",
+  /** The link a finished copy-only copy gets; a test replaces it to watch or refuse it. */
+  link: null as unknown as (...args: unknown[]) => Promise<unknown>,
+}));
+vi.mock("../../state/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/session")>()),
+  useEnvironmentScopeAccess: () => state.sourceAccess,
+  readEnvironmentScopeAccess: () => state.sourceAccess,
 }));
 vi.mock("../../studio/machineHandoff", () => ({
   machineHandoff: new Proxy({}, { get: (_target, name) => name }),
+}));
+vi.mock("../../studio/projectLink", () => ({
+  projectLink: new Proxy({}, { get: (_target, name) => `link:${String(name)}` }),
+  linkCopyAsWorkers: (...args: unknown[]) => state.link(...args),
 }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (name: string) => async (request: unknown) => {
@@ -57,6 +71,14 @@ const copyStatus = (state: string, mode = "copy-only") => ({
   unstable: [],
 });
 
+/** The done toast's finished three-phase track. */
+const finishedTrack = {
+  progress: 1,
+  progressSegments: 3,
+  progressTone: "success",
+  progressLabel: "Copy progress",
+};
+
 let root: Root;
 let container: HTMLDivElement;
 beforeEach(() => {
@@ -64,6 +86,8 @@ beforeEach(() => {
   localStorage.clear();
   state.toasts = [];
   state.handlers = {};
+  state.sourceAccess = "unknown";
+  state.link = vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({ status: "linked" }));
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -123,7 +147,9 @@ it("tells a person who closed the dialog when measuring or the copy is ready", a
     expect(state.toasts).toEqual([]);
     copied = true;
     await act(async () => vi.advanceTimersByTimeAsync(2000));
-    expect(state.toasts).toEqual([{ type: "success", title: "Copy to M3 is ready to review." }]);
+    expect(state.toasts).toEqual([
+      { type: "success", title: "Copy to M3 is ready to review.", timeout: 0 },
+    ]);
   } finally {
     vi.useRealTimers();
   }
@@ -138,6 +164,8 @@ const pointer = (extra: Record<string, unknown> = {}) =>
       mode: "copy-only",
       targetFolder: "/target",
       projectId: null,
+      // What the dialog saves with every copy; an older version's pointer had no choice.
+      secrets: { included: false, out: [] },
       ...extra,
     }),
   );
@@ -184,6 +212,7 @@ it("asks to reopen the dialog to finish linking a copy-only copy", async () => {
       {
         type: "success",
         title: "Copy to M3 is done. Open Move Project to finish setting it up.",
+        data: finishedTrack,
       },
     ]);
   } finally {
@@ -296,6 +325,7 @@ it("carries a one-click copy from measured through approval while the dialog is 
       {
         type: "success",
         title: "Copy to M3 is done. Open Move Project to finish setting it up.",
+        data: finishedTrack,
       },
     ]);
   } finally {
@@ -326,10 +356,11 @@ it("never approves a one-click copy that would replace files; it asks for review
     };
     await renderWatcher();
     await act(async () => vi.advanceTimersByTimeAsync(2000));
-    expect(state.toasts).toEqual([
+    expect(state.toasts).toMatchObject([
       {
         type: "success",
         title: "Copy to M3 would replace 1 file. Open Move Project to review.",
+        timeout: 0,
       },
     ]);
   } finally {
@@ -355,6 +386,7 @@ const renderWatcherFrom = (sourceLabel: string) =>
 it("approves a Replace all left running once the re-compare has nothing open, and says what stayed", async () => {
   vi.useFakeTimers();
   try {
+    state.sourceAccess = "granted";
     pointer({ replaceAll: true });
     const calls: string[] = [];
     let destination: "comparing" | "previewed" | "applied" = "comparing";
@@ -385,6 +417,8 @@ it("approves a Replace all left running once the re-compare has nothing open, an
       destination = "applied";
       return copyStatus("approved");
     };
+    // The choice left secrets on the source: the watcher says so to the source first.
+    state.handlers.copySecrets = () => ({ state: "ready" });
     await renderWatcherFrom("M4");
     await act(async () => vi.advanceTimersByTimeAsync(2000));
     expect(calls).toEqual([]);
@@ -396,8 +430,9 @@ it("approves a Replace all left running once the re-compare has nothing open, an
       {
         type: "success",
         title: "Copy to M3 is done. Open Move Project to finish setting it up.",
+        data: finishedTrack,
         description:
-          "2 worktrees with uncommitted changes stayed on M4. 1 secret-like file (.env and similar) stayed on M4. Copy them yourself, or run the copy again with “Let me choose file types first” to send them.",
+          "2 worktrees with uncommitted changes stayed on M4. 1 secret-like file (.env and similar) stayed on M4. To send them, copy again with Secrets ticked.",
       },
     ]);
   } finally {
@@ -417,10 +452,11 @@ it("drops a pending Replace all whose re-compare still needs a choice and asks f
     await renderWatcher();
     await act(async () => vi.advanceTimersByTimeAsync(2000));
     expect(readPointer()).not.toHaveProperty("replaceAll");
-    expect(state.toasts).toEqual([
+    expect(state.toasts).toMatchObject([
       {
         type: "success",
         title: "Copy to M3 would replace 1 repository. Open Move Project to review.",
+        timeout: 0,
       },
     ]);
   } finally {
@@ -471,11 +507,117 @@ it("approves a one-click copy with secret-like files and keeps watching an appro
   }
 });
 
-it("keeps secrets on the source for a one-click copy saved before the choice existed", async () => {
+// The secret files a real copy detected and left behind (an umbrella with nested repositories).
+const REAL_RUN = [
+  ".env",
+  ".env.bak-20260715",
+  ".env.cloudflare",
+  "repositories/anton-abyzov/specwithcode/.env",
+  "repositories/anton-abyzov/vskill-platform/.dev.vars",
+  "repositories/anton-abyzov/vskill-platform/.env",
+  "repositories/anton-abyzov/vskill-platform/.env.local",
+  "repositories/anton-abyzov/vskill-platform/crawl-worker/.env",
+  "repositories/anton-abyzov/vskill-platform/scanner-worker/.env",
+  "scripts/.cf-monitor.env",
+];
+const detected = (paths: ReadonlyArray<string>) => ({
+  state: "ready",
+  summary: { ...summary, secretFiles: paths.map((path) => ({ path, size: 1 })) },
+  progress: null,
+  error: null,
+});
+/** Records what the watcher sends to the source and how it approves. */
+const recordSecrets = () => {
+  const seen = { sent: [] as string[][], approvals: [] as unknown[] };
+  state.handlers.copySecrets = (request) => {
+    expect(seen.approvals).toEqual([]);
+    seen.sent.push((request as { input: { paths: string[] } }).input.paths);
+    return { state: "ready" };
+  };
+  state.handlers.copyApprove = (request) => {
+    seen.approvals.push((request as { input: unknown }).input);
+    return copyStatus("approved");
+  };
+  return seen;
+};
+
+it.each([
+  { how: "a one-click copy", saved: { auto: true } },
+  { how: "a Replace all left running", saved: { replaceAll: true } },
+])(
+  "with the dialog closed, sends every detected secret file of $how and approves with all of them",
+  async ({ saved }) => {
+    vi.useFakeTimers();
+    try {
+      state.sourceAccess = "granted";
+      // The default choice: Secrets included, nothing unticked.
+      pointer({ ...saved, secrets: { included: true, out: [] } });
+      state.handlers.copyStatus = () =>
+        previewed([
+          saved.replaceAll
+            ? row({ status: "diverged", choices: ["take-theirs"], decision: "take-theirs" })
+            : row(),
+        ]);
+      state.handlers.copySourceStatus = () => detected(REAL_RUN);
+      const seen = recordSecrets();
+      await renderWatcher();
+      await act(async () => vi.advanceTimersByTimeAsync(2000));
+      expect(seen.sent).toEqual([REAL_RUN]);
+      // The destination finishes only once every one of them is in place.
+      expect(seen.approvals).toEqual([
+        { operationId: "00000000-0000-4000-8000-000000000009", expectedSecrets: REAL_RUN },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+
+it.each([
+  { takes: true as const, does: "sends a secret file under ~/ when that machine takes them" },
+  { takes: false as const, does: "leaves a secret file under ~/ when that machine cannot take it" },
+  { takes: null, does: "waits for the person while it is unknown whether ~/ files can go" },
+])("with the dialog closed, $does", async ({ takes }) => {
   vi.useFakeTimers();
   try {
-    // Saved by an older version, which left secrets out unless the person ticked them.
-    pointer({ auto: true });
+    state.sourceAccess = "granted";
+    pointer({ auto: true, secrets: { included: true, out: [] } });
+    state.handlers.copyStatus = () => previewed([row()]);
+    state.handlers.copySourceStatus = () => detected([".env", "~/.npmrc"]);
+    const seen = recordSecrets();
+    await act(async () =>
+      root.render(
+        <HandoffFolderCopyWatcher
+          environmentId={"m4" as never}
+          projectId="source"
+          projectName="Project"
+          machineLabel={() => "M3"}
+          homeSecrets={() => takes}
+        />,
+      ),
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    if (takes === null) {
+      // Never approved on a guess that would leave the file behind unseen.
+      expect(seen.sent).toEqual([]);
+      expect(seen.approvals).toEqual([]);
+      expect(state.toasts).toMatchObject([{ title: "Copy to M3 is ready to review." }]);
+      return;
+    }
+    const sent = takes ? [".env", "~/.npmrc"] : [".env"];
+    expect(seen.sent).toEqual([sent]);
+    expect(seen.approvals).toMatchObject([{ expectedSecrets: sent }]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("stops at the review for a one-click copy saved before the secrets choice existed", async () => {
+  vi.useFakeTimers();
+  try {
+    // Saved by an older version: nothing says whether the person wanted the secrets, so
+    // the copy is not approved without them unseen.
+    pointer({ auto: true, secrets: undefined });
     state.handlers.copyStatus = () => previewed([row()]);
     state.handlers.copySourceStatus = () => ({
       state: "ready",
@@ -495,8 +637,9 @@ it("keeps secrets on the source for a one-click copy saved before the choice exi
     };
     await renderWatcher();
     await act(async () => vi.advanceTimersByTimeAsync(2000));
-    expect(sent).toEqual([[]]);
-    expect(approvals).toBe(1);
+    expect(sent).toEqual([]);
+    expect(approvals).toBe(0);
+    expect(state.toasts).toMatchObject([{ title: "Copy to M3 is ready to review." }]);
   } finally {
     vi.useRealTimers();
   }
@@ -621,6 +764,197 @@ it("waits for the person when the secrets choice cannot be sent", async () => {
   }
 });
 
+it("sends the secrets sealed before a one-click approval from a window without access:write", async () => {
+  vi.useFakeTimers();
+  try {
+    resetSealedRoutes();
+    state.sourceAccess = "denied";
+    pointer({ auto: true, secrets: { included: true, out: [] } });
+    let destination: "previewed" | "approved" = "previewed";
+    state.handlers.copyStatus = () =>
+      destination === "previewed" ? previewed([row()]) : copyStatus(destination);
+    state.handlers.copySourceStatus = () => ({
+      state: "ready",
+      summary: { ...summary, secretFiles: REAL_RUN.map((path) => ({ path, size: 1 })) },
+      progress: null,
+      error: null,
+    });
+    const asked: unknown[] = [];
+    state.handlers.copySecretsRoute = (request) => {
+      asked.push(request);
+      return { sealed: true };
+    };
+    const plain: unknown[] = [];
+    state.handlers.copySecrets = (request) => {
+      plain.push(request);
+      throw new Error("This connection requires access:write.");
+    };
+    const sealed: unknown[] = [];
+    state.handlers.copySealedSecrets = (request) => {
+      sealed.push((request as { input: { paths: string[] } }).input.paths);
+      expect(approved).toEqual([]);
+      return { state: "ready" };
+    };
+    const approved: unknown[] = [];
+    state.handlers.copyApprove = (request) => {
+      approved.push((request as { input: unknown }).input);
+      destination = "approved";
+      return copyStatus("approved");
+    };
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    // The source was asked about this copy's machine, sealed every file, and nothing went plain.
+    expect(asked[0]).toEqual({ environmentId: "m4", input: { destinationEnvironmentId: "m3" } });
+    expect(sealed).toEqual([REAL_RUN]);
+    expect(plain).toEqual([]);
+    expect(approved).toEqual([{ operationId: expect.any(String), expectedSecrets: REAL_RUN }]);
+    expect(state.toasts).toEqual([]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("stops at the review when a one-click copy promised secrets and the source has no sealed way", async () => {
+  vi.useFakeTimers();
+  try {
+    resetSealedRoutes();
+    state.sourceAccess = "denied";
+    pointer({ auto: true, secrets: { included: true, out: [] } });
+    state.handlers.copyStatus = () => previewed([row()]);
+    state.handlers.copySourceStatus = () => ({
+      state: "ready",
+      summary: { ...summary, secretFiles: [{ path: ".env", size: 1 }] },
+      progress: null,
+      error: null,
+    });
+    state.handlers.copySecretsRoute = () => ({ sealed: false, reason: "not_allowed" });
+    let approvals = 0;
+    state.handlers.copyApprove = () => {
+      approvals += 1;
+      return copyStatus("approved");
+    };
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(approvals).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  { staged: true, does: "takes staged ones off" },
+  { staged: false, does: "sends nothing" },
+])("from a window that may not send secrets, $does before approving", async ({ staged }) => {
+  vi.useFakeTimers();
+  try {
+    state.sourceAccess = "denied";
+    pointer({ auto: true });
+    state.handlers.copyStatus = () => previewed([row()]);
+    state.handlers.copySourceStatus = () => ({
+      state: "ready",
+      summary: { ...summary, secretFiles: [{ path: ".env", size: 1 }] },
+      progress: null,
+      error: null,
+      secrets: staged
+        ? { files: [{ path: ".env", size: 1 }], approvedAt: 1, destinationLabel: "M3" }
+        : null,
+    });
+    const sent: unknown[] = [];
+    state.handlers.copySecrets = (request) => {
+      sent.push((request as { input: { paths: string[] } }).input.paths);
+      return { state: "ready" };
+    };
+    let approvals = 0;
+    state.handlers.copyApprove = () => {
+      approvals += 1;
+      return copyStatus("approved");
+    };
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(sent).toEqual(staged ? [[]] : []);
+    expect(approvals).toBe(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  { access: "granted" as const, how: "with the secrets choice" },
+  { access: "denied" as const, how: "without secrets from a window that may not send them" },
+])("approves a Replace all left running $how", async ({ access }) => {
+  vi.useFakeTimers();
+  try {
+    state.sourceAccess = access;
+    // The review showed the denied window's warning when Replace all was clicked.
+    pointer({
+      replaceAll: true,
+      secrets: { included: true, out: [] },
+      ...(access === "denied" ? { secretsStay: true } : {}),
+    });
+    state.handlers.copyStatus = () =>
+      previewed([row({ status: "diverged", choices: ["take-theirs"], decision: "take-theirs" })]);
+    // The click staged .env on the source while a permitted window had the dialog.
+    state.handlers.copySourceStatus = () => ({
+      state: "ready",
+      summary: { ...summary, secretFiles: [{ path: ".env", size: 1 }] },
+      progress: null,
+      error: null,
+      secrets: { files: [{ path: ".env", size: 1 }], approvedAt: 1, destinationLabel: "M3" },
+    });
+    const sent: unknown[] = [];
+    state.handlers.copySecrets = (request) => {
+      sent.push((request as { input: { paths: string[] } }).input.paths);
+      return { state: "ready" };
+    };
+    const inputs: unknown[] = [];
+    state.handlers.copyApprove = (request) => {
+      inputs.push((request as { input: unknown }).input);
+      return copyStatus("approved");
+    };
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    // A blocked window takes them off first: an older destination ignores withoutSecrets.
+    // A permitted one sends the choice again, so the approval can name every file.
+    expect(sent).toEqual(access === "denied" ? [[]] : [[".env"]]);
+    expect(inputs[0]).toEqual(
+      access === "denied"
+        ? { operationId: expect.any(String), withoutSecrets: true }
+        : { operationId: expect.any(String), expectedSecrets: [".env"] },
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("waits for the person when staged secrets cannot be taken off from that window", async () => {
+  vi.useFakeTimers();
+  try {
+    state.sourceAccess = "denied";
+    pointer({ auto: true });
+    state.handlers.copyStatus = () => previewed([row()]);
+    state.handlers.copySourceStatus = () => ({
+      state: "ready",
+      summary: { ...summary, secretFiles: [{ path: ".env", size: 1 }] },
+      progress: null,
+      error: null,
+      secrets: { files: [{ path: ".env", size: 1 }], approvedAt: 1, destinationLabel: "M3" },
+    });
+    state.handlers.copySecrets = () => {
+      throw new Error("This connection requires access:write.");
+    };
+    let approvals = 0;
+    state.handlers.copyApprove = () => {
+      approvals += 1;
+      return copyStatus("approved");
+    };
+    await renderWatcher();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(approvals).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("leaves secrets and the approval to a reopened dialog while the source summary is in flight", async () => {
   vi.useFakeTimers();
   try {
@@ -681,10 +1015,11 @@ it("never approves a one-click copy whose unchanged folder would overwrite files
     };
     await renderWatcher();
     await act(async () => vi.advanceTimersByTimeAsync(2000));
-    expect(state.toasts).toEqual([
+    expect(state.toasts).toMatchObject([
       {
         type: "success",
         title: "Copy to M3 would replace 2 files. Open Move Project to review.",
+        timeout: 0,
       },
     ]);
   } finally {
@@ -781,11 +1116,13 @@ it("shows a background copy's progress app wide and clears it once the copy is d
       ),
     );
     await act(async () => vi.advanceTimersByTimeAsync(2000));
-    expect(currentCopyActivities().get("m4:source")).toEqual({
+    expect(currentCopyActivities().get("m4:source")).toMatchObject({
       machine: "ministorm",
       label: "Copying files",
       fraction: 0.25,
       waiting: false,
+      // The same phase view the dialog shows, for the banner's track and numbers.
+      progress: { phase: "send", step: "Sending files to ministorm", fraction: 0.25 },
     });
     phase = "done";
     await act(async () => vi.advanceTimersByTimeAsync(2000));
@@ -820,6 +1157,113 @@ it("never announces again a copy that finished before a reload", async () => {
     expect(state.toasts).toEqual([]);
     expect(done).toBe(1);
     expect(currentCopyActivities().size).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("only shows a copy closed at its review as waiting: no approval, no toast", async () => {
+  vi.useFakeTimers();
+  try {
+    resetCopyActivityForTests();
+    // A one-click copy that replaces nothing would be approved by a running watch.
+    pointer({ auto: true });
+    const calls: string[] = [];
+    state.handlers.copyStatus = () => previewed([row()]);
+    state.handlers.copyApprove = () => {
+      calls.push("copyApprove");
+      return copyStatus("approved");
+    };
+    let done = 0;
+    await act(async () =>
+      root.render(
+        <HandoffFolderCopyWatcher
+          environmentId={"m4" as never}
+          projectId="source"
+          projectName="Project"
+          machineLabel={() => "M3"}
+          reviewOnly
+          onDone={() => (done += 1)}
+        />,
+      ),
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(6000));
+    expect(calls).toEqual([]);
+    expect(state.toasts).toEqual([]);
+    expect(done).toBe(1);
+    // The sidebar, banner and Needs you read this and offer Review.
+    expect(currentCopyActivities().get("m4:source")).toMatchObject({ waiting: true });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("announces a copy closed at its review that finished elsewhere", async () => {
+  vi.useFakeTimers();
+  try {
+    pointer();
+    state.handlers.copyStatus = () => copyStatus("applied");
+    await act(async () =>
+      root.render(
+        <HandoffFolderCopyWatcher
+          environmentId={"m4" as never}
+          projectId="source"
+          projectName="Project"
+          machineLabel={() => "M3"}
+          reviewOnly
+        />,
+      ),
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(state.toasts).toHaveLength(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("never starts a new comparison for a copy closed at its review", async () => {
+  vi.useFakeTimers();
+  try {
+    pointer({ auto: true });
+    const calls: string[] = [];
+    state.handlers.copyStatus = notFound;
+    state.handlers.copySourceStatus = () => ({
+      state: "scanned",
+      summary,
+      progress: null,
+      error: null,
+    });
+    state.handlers.copyOffer = () => {
+      calls.push("copyOffer");
+      return {
+        operationId: "00000000-0000-4000-8000-000000000009",
+        sourceEnvironmentId: "m4",
+        sourceProjectId: "source",
+        sourceUrl: "https://m4",
+        sourceMachine: "M4",
+        token: "fresh",
+        title: "Project",
+        mode: "copy-only",
+        status: { state: "scanned", summary, error: null },
+      };
+    };
+    state.handlers.copyStart = () => {
+      calls.push("copyStart");
+      return copyStatus("scanning");
+    };
+    await act(async () =>
+      root.render(
+        <HandoffFolderCopyWatcher
+          environmentId={"m4" as never}
+          projectId="source"
+          projectName="Project"
+          machineLabel={() => "M3"}
+          reviewOnly
+        />,
+      ),
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(6000));
+    expect(calls).toEqual([]);
   } finally {
     vi.useRealTimers();
   }
@@ -900,6 +1344,75 @@ it("forgets a copy closed on the machine, so its banner stays gone after a resta
     await act(async () => vi.advanceTimersByTimeAsync(2000));
     expect(localStorage.getItem(key)).toBeNull();
     expect(state.toasts).toEqual([]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("keeps a failed copy's toast until closed, with the reason and a Retry", async () => {
+  vi.useFakeTimers();
+  try {
+    pointer();
+    state.handlers.copyStatus = () => ({
+      ...copyStatus("failed"),
+      error: { code: "source_unreachable", message: "m4 did not answer for 2 minutes" },
+    });
+    const opened = vi.fn();
+    await act(async () =>
+      root.render(
+        <HandoffFolderCopyWatcher
+          environmentId={"m4" as never}
+          projectId="source"
+          projectName="Project"
+          machineLabel={() => "M3"}
+          onOpenDialog={opened}
+        />,
+      ),
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(state.toasts).toEqual([
+      expect.objectContaining({
+        type: "error",
+        title: "Copy to M3 stopped",
+        description:
+          "m4 did not answer for 2 minutes. Open it to retry; files already copied are kept.",
+        timeout: 0,
+        actionProps: expect.objectContaining({ children: "Retry" }),
+      }),
+    ]);
+    (state.toasts[0] as { actionProps: { onClick: () => void } }).actionProps.onClick();
+    expect(opened).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("puts the next step on the Open button when the dialog can open", async () => {
+  vi.useFakeTimers();
+  try {
+    pointer();
+    state.handlers.copyStatus = () => copyStatus("applied");
+    const opened = vi.fn();
+    await act(async () =>
+      root.render(
+        <HandoffFolderCopyWatcher
+          environmentId={"m4" as never}
+          projectId="source"
+          projectName="Project"
+          machineLabel={() => "M3"}
+          onOpenDialog={opened}
+        />,
+      ),
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(state.toasts).toEqual([
+      expect.objectContaining({
+        type: "success",
+        title: "Copy to M3 is done",
+        description: "Open it to finish setting it up.",
+        actionProps: expect.objectContaining({ children: "Open" }),
+      }),
+    ]);
   } finally {
     vi.useRealTimers();
   }

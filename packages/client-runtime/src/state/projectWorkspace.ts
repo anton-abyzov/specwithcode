@@ -207,6 +207,41 @@ export function createProjectWorkspaceAtoms<R, E>(
       label: "project-workspace:skill-studio-link",
       tag: WS_METHODS.projectsSkillsStudioLink,
     }),
+    /** This machine's connected skill repos and what each offers; reads GitHub, so on demand. */
+    skillRepos: createEnvironmentGuardedRpcQueryAtomFamily(runtime, {
+      label: "project-workspace:skill-repos",
+      tag: WS_METHODS.projectsSkillRepos,
+      staleTimeMs: 60_000,
+      idleTtlMs: 60_000,
+    }),
+    skillReposChange: createEnvironmentRpcCommand(runtime, {
+      label: "project-workspace:skill-repos-change",
+      tag: WS_METHODS.projectsSkillRepos,
+    }),
+    skillsSearch: createEnvironmentRpcCommand(runtime, {
+      label: "project-workspace:skills-search",
+      tag: WS_METHODS.projectsSkillsSearch,
+    }),
+    /** Installed against latest for every tracked skill; reads each source, so on demand. */
+    skillSources: createEnvironmentGuardedRpcQueryAtomFamily(runtime, {
+      label: "project-workspace:skill-sources",
+      tag: WS_METHODS.projectsSkillsUpdate,
+      staleTimeMs: 60_000,
+      idleTtlMs: 60_000,
+    }),
+    skillsUpdate: createEnvironmentRpcCommand(runtime, {
+      label: "project-workspace:skills-update",
+      tag: WS_METHODS.projectsSkillsUpdate,
+    }),
+    /** "Keep updated on these machines" records, kept on this machine only. */
+    skillsRolloutKeep: createEnvironmentRpcCommand(runtime, {
+      label: "project-workspace:skills-rollout-keep",
+      tag: WS_METHODS.projectsSkillsRolloutKeep,
+    }),
+    skillsAdopt: createEnvironmentRpcCommand(runtime, {
+      label: "project-workspace:skills-adopt",
+      tag: WS_METHODS.projectsSkillsAdopt,
+    }),
     library: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "project-workspace:library",
       tag: WS_METHODS.projectsLibraryRead,
@@ -235,6 +270,16 @@ export function createProjectWorkspaceAtoms<R, E>(
       label: "project-workspace:specweave-set-up",
       tag: WS_METHODS.projectsSpecweaveSetUp,
     }),
+    /** "Plan without it", "Not now" and the line above the composer (1396). */
+    specweaveAnswer: createEnvironmentRpcCommand(runtime, {
+      label: "project-workspace:specweave-answer",
+      tag: WS_METHODS.projectsSpecweaveAnswer,
+    }),
+    /** The first feature guide's marks: started again, left, finished (1398). */
+    firstFeatureGuide: createEnvironmentRpcCommand(runtime, {
+      label: "project-workspace:first-feature-guide",
+      tag: WS_METHODS.projectsFirstFeatureGuide,
+    }),
     threadReports: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "project-workspace:thread-reports",
       tag: WS_METHODS.projectsThreadReportsRead,
@@ -250,6 +295,18 @@ export function createProjectWorkspaceAtoms<R, E>(
     incrementsList: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "project-workspace:increments-list",
       tag: WS_METHODS.projectsIncrementsList,
+      staleTimeMs: 5_000,
+      idleTtlMs: 30_000,
+    }),
+    board: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "project-workspace:board",
+      tag: WS_METHODS.projectsBoard,
+      staleTimeMs: 5_000,
+      idleTtlMs: 30_000,
+    }),
+    boardIncrement: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "project-workspace:board-increment",
+      tag: WS_METHODS.projectsBoardIncrement,
       staleTimeMs: 5_000,
       idleTtlMs: 30_000,
     }),

@@ -12,6 +12,7 @@
  */
 import type {
   ModelSelection,
+  ProviderInstanceId,
   ProviderModelTier,
   ProviderModelTiers,
   ServerProvider,
@@ -38,6 +39,7 @@ export interface ReviewDelegationInput {
   readonly tier: ProviderModelTier;
   readonly tiers?: ProviderModelTiers | undefined;
   readonly excludedModels?: ReadonlyArray<ExcludedFallbackModel> | undefined;
+  readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | undefined;
   readonly policy: IncrementReviewPolicy | null;
   readonly nowMs: number;
   readonly limitedInstanceIds?: ReadonlySet<string> | undefined;
@@ -134,6 +136,7 @@ export function reviewDelegationTarget(input: ReviewDelegationInput): ReviewDele
     reviewers: input.reviewers,
     tier: input.tier,
     tiers: input.tiers,
+    sourceOrder: input.sourceOrder,
   });
   if (policy?.model !== undefined) {
     const pinned = policyModelSelections(input.providers, policy.model);
@@ -169,9 +172,13 @@ export function reviewDelegationTarget(input: ReviewDelegationInput): ReviewDele
     providers: input.providers,
     author: input.author,
     reviewers: order,
+    // The order is already expanded; only accounts the person listed are consent to unknown
+    // billing or Gemini spend. A policy names a model, never an account to pay through.
+    consented: input.reviewers,
     tier: input.tier,
     tiers: input.tiers,
     excludedModels: input.excludedModels,
+    sourceOrder: input.sourceOrder,
     nowMs: input.nowMs,
     limitedInstanceIds: input.limitedInstanceIds,
   });

@@ -115,7 +115,32 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     activeTurnId: null,
     status: "idle",
     providerId: "meta",
+    // Only a host serving the committed permission state reports it.
+    ...(process.env.MUSE_TEST_PERMISSION_STATE
+      ? { permissionState: JSON.parse(process.env.MUSE_TEST_PERMISSION_STATE) }
+      : {}),
   };
+  // A host whose catalog does not admit the picked profile rejects the open, as Muse 1.4.23 does.
+  if (
+    process.env.MUSE_TEST_REFUSE_PROFILE &&
+    (method === "session/start" || method === "session/resume") &&
+    p.permissionProfile !== undefined
+  ) {
+    send({
+      id,
+      error: {
+        code: -32030,
+        message: `command ${p.commandId} rejected: no profile ${p.permissionProfile} in the host catalog`,
+        data: {
+          kind: "commandRejected",
+          retryable: false,
+          commandId: p.commandId,
+          reason: process.env.MUSE_TEST_REFUSE_PROFILE,
+        },
+      },
+    });
+    return;
+  }
   let result = {};
   switch (method) {
     case "initialize":
@@ -139,6 +164,14 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       };
       break;
     case "model/list":
+      // A host with no catalog on disk lists nothing, signed in or not.
+      if (
+        process.env.MUSE_TEST_CATALOG_FILE &&
+        !fs.existsSync(process.env.MUSE_TEST_CATALOG_FILE)
+      ) {
+        result = { source: "bundledCatalog", providerId: "meta", models: [] };
+        break;
+      }
       result = {
         source: "providerCatalog",
         providerId: "meta",
@@ -159,6 +192,11 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       };
       break;
     case "usage/read":
+      // A host started for a check has observed no usage yet.
+      if (process.env.MUSE_TEST_COLD_USAGE) {
+        result = {};
+        break;
+      }
       result = {
         usage: {
           observedAtMs: Date.now(),

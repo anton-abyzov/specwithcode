@@ -122,7 +122,7 @@ extension LiveEngine {
     }
     if sourceOnline && !source.canOperate { notices.append("This phone has read-only access to the source machine.") }
     if sourceOnline && members.subtracting([thread.environmentId]).isEmpty {
-      notices.append("This project is not linked to another machine. Link it from the desktop app before handing off.")
+      notices.append("This project is on no other machine yet. Add it to one from the desktop app, then hand off.")
     }
     for entry in machines.values.sorted(by: { $0.environmentId < $1.environmentId }) where entry.environmentId != thread.environmentId {
       guard entry.isOnline else {

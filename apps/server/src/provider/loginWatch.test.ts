@@ -7,11 +7,15 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 
 import {
+  anthropicProfileDirectory,
+  anthropicProfileMark,
   claudeLoginIdentity,
   codexLoginIdentity,
   loginFileMark,
   museLoginIdentity,
+  readLoginIdentity,
   watchLoginChanges,
+  watchMarkChanges,
 } from "./loginWatch.ts";
 
 function claudeConfig(account: { accountUuid: string; emailAddress: string } | null, startups = 1) {
@@ -184,6 +188,126 @@ describe("watchLoginChanges", () => {
           onChange: Effect.die("must not run"),
         });
         yield* Effect.sleep("50 millis");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("Anthropic profile folder", () => {
+  it.effect(
+    "is ANTHROPIC_CONFIG_DIR, else XDG_CONFIG_HOME/anthropic, else ~/.config/anthropic",
+    () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        assert.strictEqual(
+          yield* anthropicProfileDirectory({ ANTHROPIC_CONFIG_DIR: "/p", XDG_CONFIG_HOME: "/x" }),
+          path.resolve("/p"),
+        );
+        assert.strictEqual(
+          yield* anthropicProfileDirectory({ XDG_CONFIG_HOME: "/x", HOME: "/h" }),
+          path.join("/x", "anthropic"),
+        );
+        assert.strictEqual(
+          yield* anthropicProfileDirectory({ HOME: "/h" }),
+          path.join("/h", ".config", "anthropic"),
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("marks a Console sign-in, a switch and a sign-out without reading a file", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = path.join(yield* fs.makeTempDirectoryScoped(), "anthropic");
+      assert.strictEqual(yield* anthropicProfileMark(dir), "none");
+
+      yield* fs.makeDirectory(path.join(dir, "configs"), { recursive: true });
+      const empty = yield* anthropicProfileMark(dir);
+      assert.strictEqual(yield* anthropicProfileMark(dir), empty);
+
+      yield* fs.writeFileString(path.join(dir, "configs", "default.json"), '{"org":"one"}');
+      yield* fs.writeFileString(path.join(dir, "active_config"), "default");
+      const signedIn = yield* anthropicProfileMark(dir);
+      assert.notStrictEqual(signedIn, empty);
+      // A short count and hash: no name, address or token can be read from it.
+      assert.match(signedIn, /^\d+:[0-9a-f]{1,14}$/);
+
+      yield* fs.writeFileString(path.join(dir, "configs", "work.json"), '{"org":"two"}');
+      const switched = yield* anthropicProfileMark(dir);
+      assert.notStrictEqual(switched, signedIn);
+
+      yield* fs.remove(dir, { recursive: true });
+      assert.strictEqual(yield* anthropicProfileMark(dir), "none");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("watchMarkChanges", () => {
+  it.live("sees a switch in any watched folder, also when another folder is missing", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped();
+        const accountFile = path.join(home, ".claude.json");
+        // Not there yet: a first Console sign-in creates it.
+        const profiles = path.join(home, ".config", "anthropic");
+        yield* fs.writeFileString(
+          accountFile,
+          claudeConfig({ accountUuid: "a", emailAddress: "a@x.dev" }),
+        );
+        const readMark = Effect.all([
+          readLoginIdentity(accountFile, claudeLoginIdentity),
+          anthropicProfileMark(profiles),
+        ]).pipe(
+          Effect.map((parts) => JSON.stringify(parts)),
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+        );
+        const changes = yield* Queue.unbounded<void>();
+        yield* watchMarkChanges({
+          watches: [
+            { directory: home, fileName: ".claude.json" },
+            { directory: profiles },
+            { directory: path.join(profiles, "configs") },
+          ],
+          readMark,
+          onChange: Queue.offer(changes, undefined).pipe(Effect.asVoid),
+          debounce: "30 millis",
+        });
+        yield* Effect.sleep("100 millis");
+
+        // Bookkeeping for the same account and unrelated files in the home folder.
+        yield* fs.writeFileString(
+          accountFile,
+          claudeConfig({ accountUuid: "a", emailAddress: "a@x.dev" }, 9),
+        );
+        yield* fs.writeFileString(path.join(home, ".zsh_history"), "ls");
+        yield* Effect.sleep("200 millis");
+        assert.strictEqual(yield* Queue.size(changes), 0);
+
+        // A Console sign-in creates the profile folder; `.claude.json` is untouched.
+        yield* fs.makeDirectory(path.join(profiles, "configs"), { recursive: true });
+        yield* fs.writeFileString(path.join(profiles, "configs", "default.json"), "{}");
+        yield* fs.writeFileString(path.join(profiles, "active_config"), "default");
+        yield* Queue.take(changes).pipe(Effect.timeout("3 seconds"));
+        yield* Effect.sleep("200 millis");
+        yield* Queue.clear(changes);
+
+        // Its sign-out, in the folder that did not exist when the watch began.
+        yield* fs.remove(path.join(profiles, "active_config"));
+        yield* Queue.take(changes).pipe(Effect.timeout("3 seconds"));
+
+        // Then `/login` to another claude.ai account, by an atomic rename.
+        const staged = path.join(home, ".claude.json.tmp");
+        yield* fs.writeFileString(
+          staged,
+          claudeConfig({ accountUuid: "b", emailAddress: "b@x.dev" }),
+        );
+        yield* fs.rename(staged, accountFile);
+        yield* Queue.take(changes).pipe(Effect.timeout("3 seconds"));
+        yield* Effect.sleep("200 millis");
+        assert.strictEqual(yield* Queue.size(changes), 0);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );

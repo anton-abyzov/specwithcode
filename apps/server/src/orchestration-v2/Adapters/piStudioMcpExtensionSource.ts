@@ -8,7 +8,7 @@
  * Do not import studio modules from the string body. The Pi process resolves
  * `@earendil-works/pi-coding-agent` and `typebox` from the user's pi install.
  */
-import { STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/StudioOrchestrationInstructions.ts";
+import { studioOrchestrationInstructionsForRole } from "../../provider/StudioOrchestrationInstructions.ts";
 import {
   STUDIO_CONCISE_RESPONSE_STYLE_INSTRUCTIONS,
   STUDIO_DETAILED_RESPONSE_STYLE_INSTRUCTIONS,
@@ -23,6 +23,14 @@ export const STUDIO_MCP_BEARER_ENV = "STUDIO_MCP_BEARER_TOKEN";
 export const STUDIO_PI_RUNTIME_MODE_ENV = "STUDIO_PI_RUNTIME_MODE";
 /** The response style chosen for this session: "concise" (default) or "detailed". */
 export const STUDIO_PI_RESPONSE_STYLE_ENV = "STUDIO_PI_RESPONSE_STYLE";
+/**
+ * When to consult the advisor (`runtimePolicy.advisorGuidance`). Set only while
+ * the thread's advisor is on and the studio-code server is wired; the
+ * extension adds it to the system prompt only when the endpoint is present.
+ */
+export const STUDIO_PI_ADVISOR_GUIDANCE_ENV = "STUDIO_PI_ADVISOR_GUIDANCE";
+/** "1" when this session is its project's coordinator and must route work to workers. */
+export const STUDIO_PI_COORDINATOR_ENV = "STUDIO_PI_COORDINATOR";
 
 /**
  * Pi tools whose confirmations the bridge raises as file-change approvals.
@@ -32,13 +40,17 @@ export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
 
 export const PI_STUDIO_MCP_EXTENSION_SOURCE = `\
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import * as NodeCrypto from "node:crypto";
 import { Type } from "typebox";
 
 const URL_ENV = ${JSON.stringify(STUDIO_MCP_URL_ENV)};
 const TOKEN_ENV = ${JSON.stringify(STUDIO_MCP_BEARER_ENV)};
 const RUNTIME_MODE_ENV = ${JSON.stringify(STUDIO_PI_RUNTIME_MODE_ENV)};
-const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.trim())};
+const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(studioOrchestrationInstructionsForRole(false).trim())};
+const COORDINATOR_ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(studioOrchestrationInstructionsForRole(true).trim())};
+const COORDINATOR_ENV = ${JSON.stringify(STUDIO_PI_COORDINATOR_ENV)};
 const RESPONSE_STYLE_ENV = ${JSON.stringify(STUDIO_PI_RESPONSE_STYLE_ENV)};
+const ADVISOR_GUIDANCE_ENV = ${JSON.stringify(STUDIO_PI_ADVISOR_GUIDANCE_ENV)};
 const CONCISE_RESPONSE_STYLE = ${JSON.stringify(STUDIO_CONCISE_RESPONSE_STYLE_INSTRUCTIONS)};
 const DETAILED_RESPONSE_STYLE = ${JSON.stringify(STUDIO_DETAILED_RESPONSE_STYLE_INSTRUCTIONS)};
 const HEADLESS_INSTRUCTIONS = ${JSON.stringify(STUDIO_HEADLESS_INSTRUCTIONS)};
@@ -76,16 +88,28 @@ function runtimeMode(): RuntimeMode {
     : "full-access";
 }
 
+function advisorInstructions(): Array<string> {
+  const guidance = env(ADVISOR_GUIDANCE_ENV)?.trim() ?? "";
+  return guidance.length === 0 ? [] : ["<advisor>\\n" + guidance + "\\n</advisor>"];
+}
+
 function responseStyleInstructions(): string {
   return env(RESPONSE_STYLE_ENV) === "detailed" ? DETAILED_RESPONSE_STYLE : CONCISE_RESPONSE_STYLE;
 }
 
+// SpecWithCode keys "Always allow this session" on this text, so a cut summary ends
+// with the full input's hash: calls that differ only past the cut get separate grants.
 function toolInputSummary(input: unknown): string {
+  let text: string;
   try {
-    return JSON.stringify(input, null, 2).slice(0, 4_000);
+    text = JSON.stringify(input, null, 2) ?? String(input);
   } catch {
-    return String(input).slice(0, 4_000);
+    text = String(input);
   }
+  if (text.length <= 4_000) return text;
+  const hash = NodeCrypto.createHash("sha256").update(text, "utf8").digest("hex");
+  return text.slice(0, 4_000) + "\\n... " + (text.length - 4_000) +
+    " more characters not shown (sha256 " + hash + ")";
 }
 
 function parseSseOrJson(body: string, contentType: string): JsonRpcResponse {
@@ -280,7 +304,12 @@ export default async function studioMcpExtension(pi: ExtensionAPI) {
       responseStyleInstructions(),
       MEDIA_INSTRUCTIONS,
       HEADLESS_INSTRUCTIONS,
-      ...(hasStudioMcp ? [ORCHESTRATION_INSTRUCTIONS] : []),
+      ...(hasStudioMcp
+        ? [
+            env(COORDINATOR_ENV) === "1" ? COORDINATOR_ORCHESTRATION_INSTRUCTIONS : ORCHESTRATION_INSTRUCTIONS,
+            ...advisorInstructions(),
+          ]
+        : []),
     ].join("\\n\\n"),
   }));
 

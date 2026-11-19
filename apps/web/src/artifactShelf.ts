@@ -177,6 +177,7 @@ export const ARTIFACT_KIND_LABEL: Record<ThreadArtifactKind, string> = {
   file: "File",
   link: "Link",
   native: "Artifact",
+  sheet: "Sheet",
 };
 
 export function shelfKindLabel(artifact: ThreadArtifact): string {

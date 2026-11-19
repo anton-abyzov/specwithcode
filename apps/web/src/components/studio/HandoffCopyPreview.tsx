@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
   AlertTriangleIcon,
   CheckIcon,
@@ -25,12 +25,11 @@ import {
   FILE_CLASS_TEXT,
   formatBytes,
   isExactCopy,
-  copyTimingText,
-  progressFraction,
-  progressText,
   ROW_STATUS_TEXT,
   selectedTotals,
 } from "../../studio/folderCopy";
+import { statusProgressView } from "../../studio/copyProgress";
+import { CopyProgressPanel } from "./CopyProgressPanel";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -173,7 +172,7 @@ function CollapsedList({
     <>
       <ul className="space-y-2">{shown.map(render)}</ul>
       {items.length > shown.length && (
-        <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>
+        <Button size="xs" variant="outline" onClick={() => setOpen(true)}>
           Show {(items.length - shown.length).toLocaleString()} more
         </Button>
       )}
@@ -295,12 +294,13 @@ export function CopyPlanPreview({
     <div className="space-y-3 text-sm" data-slot="copy-preview">
       {sections && repositoryControls && adjustable > 0 ? (
         <Collapsible data-slot="copy-adjust-repositories">
-          <CollapsibleTrigger className="group inline-flex items-center gap-1 text-sm font-medium">
+          <CollapsibleTrigger render={<Button variant="outline" size="sm" className="group" />}>
             <ChevronRightIcon
               className="size-4 transition-transform group-data-panel-open:rotate-90"
               aria-hidden
             />
-            Adjust repositories ({adjustable})
+            Repositories ({repositoryCount(status.rows)}):{" "}
+            {repositorySummary(status.rows, current, machines)}
           </CollapsibleTrigger>
           <CollapsiblePanel keepMounted>
             <div className="space-y-2 pt-2">
@@ -372,6 +372,33 @@ export function CopyPlanPreview({
   );
 }
 
+/** Repositories in the copy, the project's own included; ones only on the destination are not. */
+const travelling = (rows: ReadonlyArray<FolderCopyRow>) =>
+  rows.filter((row) => row.kind === "repository" && row.status !== "only-here");
+
+function repositoryCount(rows: ReadonlyArray<FolderCopyRow>): number {
+  return travelling(rows).length;
+}
+
+/** "6 copied from m4 · 1 downloaded from GitHub · 1 left out". */
+function repositorySummary(
+  rows: ReadonlyArray<FolderCopyRow>,
+  current: RepositoryChoices,
+  machines: ChoiceMachines | undefined,
+): string {
+  const all = travelling(rows);
+  const included = all.filter((row) => !current.skip.includes(row.id));
+  const downloaded = included.filter(
+    (row) => row.cloneAvailable && current.clone.includes(row.id),
+  ).length;
+  const left = all.length - included.length;
+  return [
+    `${included.length - downloaded} copied from ${machines?.source ?? "this machine"}`,
+    `${downloaded} downloaded from GitHub`,
+    ...(left > 0 ? [`${left} left out`] : []),
+  ].join(" · ");
+}
+
 function ToolbarButton({
   disabled,
   onClick,
@@ -382,14 +409,9 @@ function ToolbarButton({
   readonly children: ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      disabled={disabled}
-      className="rounded border px-2 py-1 hover:bg-accent/40 disabled:opacity-50"
-      onClick={onClick}
-    >
+    <Button variant="outline" size="xs" disabled={disabled} onClick={onClick}>
       {children}
-    </button>
+    </Button>
   );
 }
 
@@ -416,6 +438,7 @@ function RepositoryControls({
   if (repositories.length === 0 && cloneable.length === 0) return null;
   const copied = repositories.filter((row) => !current.skip.includes(row.id)).length;
   const cloned = cloneable.filter((row) => current.clone.includes(row.id)).length;
+  const root = rows.some((row) => row.kind === "repository" && row.path === ".");
   const target = machines?.here ?? "the other machine";
   const source = machines?.source ?? "this machine";
   const ids = (list: ReadonlyArray<FolderCopyRow>) => new Set(list.map((row) => row.id));
@@ -424,13 +447,10 @@ function RepositoryControls({
   return (
     <div className="space-y-2 rounded-lg border p-3 text-xs" data-slot="copy-repositories">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="text-sm font-medium">Repositories</span>
-        {repositories.length > 0 && (
-          <span className="text-muted-foreground" data-slot="copy-repositories-count">
-            {copied} of {repositories.length} copied
-            {cloneable.length > 0 && `, ${cloned} cloned from origin`}
-          </span>
-        )}
+        <span className="text-sm font-medium">How repositories travel</span>
+        <span className="text-muted-foreground" data-slot="copy-repositories-count">
+          {repositorySummary(rows, current, machines)}
+        </span>
         <span role="status" aria-live="polite" className="ml-auto text-muted-foreground">
           {replanning ? "Updating sizes…" : ""}
         </span>
@@ -444,7 +464,7 @@ function RepositoryControls({
                 onChange({ ...current, skip: current.skip.filter((id) => !repositoryIds.has(id)) })
               }
             >
-              Copy all
+              Include all
             </ToolbarButton>
             <ToolbarButton
               disabled={disabled || copied === 0}
@@ -452,7 +472,7 @@ function RepositoryControls({
                 onChange({ ...current, skip: [...new Set([...current.skip, ...repositoryIds])] })
               }
             >
-              Copy none
+              Leave all out
             </ToolbarButton>
           </>
         )}
@@ -464,7 +484,7 @@ function RepositoryControls({
                 onChange({ ...current, clone: [...new Set([...current.clone, ...cloneableIds])] })
               }
             >
-              Clone all from origin
+              Download all from GitHub
             </ToolbarButton>
             <ToolbarButton
               disabled={disabled || cloned === 0}
@@ -475,24 +495,34 @@ function RepositoryControls({
                 })
               }
             >
-              Copy all whole
+              Copy all from {source}
             </ToolbarButton>
           </>
         )}
       </div>
       {cloneable.length > 0 && (
-        <p className="text-muted-foreground" data-slot="copy-clone-explained">
-          Cloning from origin makes {target} download the committed files from the
-          repository&rsquo;s remote (such as GitHub) instead of receiving them from {source}, so
-          much less crosses between the machines and large repositories arrive sooner. Uncommitted
-          changes and untracked files are still copied. Commits not pushed to origin, local-only
-          branches and stashes stay on {source}; push them first, or copy that repository whole.
-        </p>
+        <div className="space-y-1 text-muted-foreground" data-slot="copy-clone-explained">
+          <p>
+            <span className="font-medium text-foreground">Download from GitHub</span>: {target}{" "}
+            downloads the committed files from the repository&rsquo;s remote (GitHub or another Git
+            host), and {source} sends only uncommitted, untracked and ignored files and the secrets
+            you include. Less crosses between the machines, so large repositories arrive sooner. A
+            repository with unpushed commits or stashes is always copied from {source}. Recommended
+            for a machine that does not have the project yet.
+          </p>
+          <p>
+            <span className="font-medium text-foreground">Copy from {source}</span>: every file,
+            commit, branch and stash comes from {source}. Use it to bring unpushed commits,
+            local-only branches and stashes, which Download from GitHub leaves on {source}.
+          </p>
+        </div>
       )}
       {repositories.length > 0 && (
         <p className="text-muted-foreground">
-          Untick a repository to leave it out. Nothing of it is copied, and whatever {target}{" "}
-          already has there stays as it is.
+          {root
+            ? `The project's own repository is always included; untick any of the other ${repositories.length} to leave it out.`
+            : "Untick a repository to leave it out."}{" "}
+          Nothing of it is copied, and whatever {target} already has there stays as it is.
         </p>
       )}
     </div>
@@ -609,16 +639,30 @@ function CopyRow({
           <CheckIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
         )}
       </div>
-      {row.cloneAvailable && !left && (
-        <label className="flex cursor-pointer items-center gap-2 text-xs" data-slot="copy-clone">
-          <Checkbox
-            checked={cloned}
+      {row.kind === "repository" &&
+        !left &&
+        (row.cloneAvailable ? (
+          <RadioGroup
+            aria-label={`How ${title} travels`}
+            value={cloned ? "download" : "copy"}
+            onValueChange={(value) => onClone(row.id, value === "download")}
             disabled={disabled}
-            onCheckedChange={(checked) => onClone(row.id, checked === true)}
-          />
-          Clone tracked files from origin and copy only local changes
-        </label>
-      )}
+            data-slot="copy-clone"
+          >
+            <label className="flex cursor-pointer items-center gap-1.5 text-xs">
+              <Radio value="copy" />
+              Copy from {machines?.source ?? "this machine"}
+            </label>
+            <label className="flex cursor-pointer items-center gap-1.5 text-xs">
+              <Radio value="download" />
+              Download from GitHub, local changes from {machines?.source ?? "this machine"}
+            </label>
+          </RadioGroup>
+        ) : (
+          <p className="text-xs text-muted-foreground" data-slot="copy-clone">
+            Copied from {machines?.source ?? "this machine"}; it has no remote to download from.
+          </p>
+        ))}
       {row.needsDecision && row.choices.length > 0 && (
         <RadioGroup
           aria-label={`Choice for ${title}`}
@@ -647,15 +691,15 @@ function CopyRow({
           {shared.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-2" data-slot="copy-conflicts-all">
               {shared.map((choice) => (
-                <button
+                <Button
                   key={choice}
-                  type="button"
+                  variant="outline"
+                  size="xs"
                   disabled={disabled}
-                  className="rounded border px-2 py-1 hover:bg-accent/40 disabled:opacity-50"
                   onClick={() => onDecide({ [folderCopyAllConflictsKey(row.id)]: choice })}
                 >
                   All: {choiceText(choice, machines)}
-                </button>
+                </Button>
               ))}
             </div>
           )}
@@ -701,70 +745,25 @@ function CopyRow({
   );
 }
 
-const STEP_TEXT: Partial<Record<FolderCopyStatus["state"], string>> = {
-  approved: "Starting the copy…",
-  transferring: "Copying files…",
-  verifying: "Checking copied files…",
-  applying: "Applying to the folder…",
-  applied: "Registering the folder…",
-};
-
-/**
- * The copy's one progress line, with a bar. `line` is Copying {size}… (or what applying is
- * doing); the live counts sit muted under it.
- */
+/** A destination's copy as the shared progress panel; nothing while it waits for review. */
 export function CopyProgress({
   status,
-  line,
+  sourceLabel,
+  targetLabel,
 }: {
   readonly status: FolderCopyStatus;
-  /** Without one, the live counts are the line. */
-  readonly line?: string;
+  readonly sourceLabel: string;
+  readonly targetLabel: string;
 }) {
-  const counts = progressText(status);
-  const fraction = progressFraction(status);
-  const detail = line ? counts : null;
-  const timing = useCopyTiming(status);
-  line ??= counts ?? STEP_TEXT[status.state] ?? "Working…";
-  return (
-    <div className="space-y-2 text-sm" role="status" aria-live="polite" data-slot="copy-progress">
-      <p>
-        {line}
-        {detail && (
-          <span className="block text-xs text-muted-foreground" data-slot="copy-progress-detail">
-            {detail}
-          </span>
-        )}
-        {timing && (
-          <span
-            className="block text-xs text-muted-foreground tabular-nums"
-            aria-live="off"
-            data-slot="copy-progress-timing"
-          >
-            {timing}
-          </span>
-        )}
-      </p>
-      <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-        <div
-          className={`h-full bg-primary transition-[width] ${fraction === null ? "w-1/3 animate-pulse" : ""}`}
-          style={fraction === null ? undefined : { width: `${Math.round(fraction * 100)}%` }}
-        />
-      </div>
-    </div>
-  );
-}
-
-/** The running copy's elapsed time and estimate, ticking once a second while it runs. */
-function useCopyTiming(status: FolderCopyStatus): string | null {
-  const [now, setNow] = useState(() => Date.now());
-  const running = copyTimingText(status, now) !== null;
-  useEffect(() => {
-    if (!running) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
-    return () => window.clearInterval(timer);
-  }, [running]);
-  return copyTimingText(status, now);
+  const view = statusProgressView(status, sourceLabel, targetLabel);
+  return view ? (
+    <CopyProgressPanel
+      view={view}
+      sourceLabel={sourceLabel}
+      targetLabel={targetLabel}
+      startedAt={status.startedAt ?? null}
+    />
+  ) : null;
 }
 
 /** What Undo would restore, and which files changed after Apply. */

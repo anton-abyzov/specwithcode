@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  type HandoffBatchInput,
   HandoffModeError,
   type HandoffModeSnapshot,
   type OrchestrationV2ThreadShell,
@@ -131,45 +132,37 @@ const setup = (
             ? { kind: "fenced", message: "Mac mini continues this thread; this copy is fenced." }
             : { kind: "unleased" },
         ),
-      handOff: (input) =>
+      handOffBatch: (input: HandoffBatchInput) =>
         Effect.suspend(() => {
-          calls.push({ method: "handOff", input });
+          calls.push({ method: "handOffBatch", input });
           return failOr({
-            environmentId: MINI.environmentId,
-            machineLabel: MINI.label,
-            threadId: ThreadId.make(`${input.threadId}-mini`),
-            modelSelection: null,
-            notice: "Continues on Mac mini.",
-          });
-        }),
-      handOffMachine: (input) =>
-        Effect.suspend(() => {
-          calls.push({ method: "handOffMachine", input });
-          return failOr({
-            destinationEnvironmentId: MINI.environmentId,
-            destinationLabel: MINI.label,
-            reason: input.reason === "sleep" ? "sleep" : "manual",
+            batchId: "batch-1",
+            start: input.start,
+            trigger: { kind: "manual" as const },
+            destination: { environmentId: MINI.environmentId, label: MINI.label },
             startedAt: "2026-10-20T00:00:00.000Z",
             finishedAt: "2026-10-20T00:00:05.000Z",
-            results: (input.threadIds ?? []).map((threadId, index) =>
-              index === 0
+            rows: input.threads.map(({ threadId }, index) => ({
+              kind: "thread" as const,
+              id: threadId,
+              title: `Thread ${threadId}`,
+              projectId,
+              operationId: `op-${threadId}`,
+              context: null,
+              ...(index === 0
                 ? {
-                    threadId,
-                    title: `Thread ${threadId}`,
-                    outcome: "moved" as const,
-                    detail: null,
+                    disposition: "resume" as const,
+                    state: "resumed" as const,
+                    detail: "Resumed on Mac mini",
                     continuedThreadId: ThreadId.make(`${threadId}-mini`),
-                    resumed: true,
                   }
                 : {
-                    threadId,
-                    title: `Thread ${threadId}`,
-                    outcome: "stayed" as const,
+                    disposition: null,
+                    state: "stayed" as const,
                     detail: "Mac mini has no checkout of this repository.",
                     continuedThreadId: null,
-                    resumed: false,
-                  },
-            ),
+                  }),
+            })),
           });
         }),
     }),
@@ -219,11 +212,11 @@ const setup = (
       Effect.map((results) => results.at(-1)?.result as unknown as Record<string, unknown>),
     );
   const handoffCalls = () =>
-    calls.filter((entry) => entry.method === "handOff" || entry.method === "handOffMachine");
+    calls.filter((entry) => entry.method === "handOffBatch");
   return { call, calls, handoffCalls };
 };
 
-it.effect("moves one thread with handOff to the machine the launch resolver names", () => {
+it.effect("moves one thread with a batch to the machine the launch resolver names", () => {
   const { call, handoffCalls } = setup();
   return Effect.gen(function* () {
     const moved = yield* call({
@@ -233,11 +226,11 @@ it.effect("moves one thread with handOff to the machine the launch resolver name
     });
     expect(handoffCalls()).toEqual([
       {
-        method: "handOff",
+        method: "handOffBatch",
         input: {
-          threadId: "w1",
           destinationEnvironmentId: MINI.environmentId,
-          modelSelection: { instanceId: "codex", model: "gpt-5.5" },
+          start: "manual",
+          threads: [{ threadId: "w1", modelSelection: { instanceId: "codex", model: "gpt-5.5" } }],
         },
       },
     ]);
@@ -248,7 +241,7 @@ it.effect("moves one thread with handOff to the machine the launch resolver name
         {
           threadId: "w1",
           outcome: "moved",
-          detail: "Continues on Mac mini.",
+          detail: "Resumed on Mac mini",
           continuedThreadId: "w1-mini",
         },
       ],
@@ -257,17 +250,17 @@ it.effect("moves one thread with handOff to the machine the launch resolver name
   });
 });
 
-it.effect("moves several threads with handOffMachine and returns each thread's result", () => {
+it.effect("moves several threads with one batch and returns each thread's result", () => {
   const { call, handoffCalls } = setup();
   return Effect.gen(function* () {
     const run = yield* call({ machine: "mini", threadIds: ["w1", "w2", "w1"] });
     expect(handoffCalls()).toEqual([
       {
-        method: "handOffMachine",
+        method: "handOffBatch",
         input: {
           destinationEnvironmentId: MINI.environmentId,
-          reason: "manual",
-          threadIds: ["w1", "w2"],
+          start: "manual",
+          threads: [{ threadId: "w1" }, { threadId: "w2" }],
         },
       },
     ]);
@@ -296,11 +289,11 @@ it.effect(
       expect(calls).toEqual([
         { method: "listProjectThreads", input: { projectId, includeSubagents: false } },
         {
-          method: "handOffMachine",
+          method: "handOffBatch",
           input: {
             destinationEnvironmentId: MINI.environmentId,
-            reason: "manual",
-            threadIds: ["w1", "w2"],
+            start: "manual",
+            threads: [{ threadId: "w1" }, { threadId: "w2" }],
           },
         },
       ]);

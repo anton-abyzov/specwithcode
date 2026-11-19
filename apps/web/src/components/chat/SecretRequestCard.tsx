@@ -134,10 +134,9 @@ function PendingSecretRequestForm(props: {
         <div className="min-w-0 flex-1">
           <Input
             id={inputId}
-            // Masked text rather than a password field: browsers offer to
-            // save any submitted password, and this is not a login.
-            type="text"
-            className="[-webkit-text-security:disc]"
+            // A real password field: a text field masked with CSS still
+            // exposes its value to screen readers.
+            type="password"
             autoComplete="off"
             autoCorrect="off"
             autoCapitalize="off"
@@ -174,7 +173,7 @@ function PendingSecretRequestForm(props: {
         <Button
           type="button"
           size="xs"
-          variant="ghost-muted"
+          variant="outline"
           disabled={submitting}
           onClick={() => void send({ type: "decline" })}
         >

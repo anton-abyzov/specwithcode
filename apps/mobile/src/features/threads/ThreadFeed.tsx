@@ -49,6 +49,7 @@ import {
   firstUnembeddedMedia,
   markdownImageSourceFragment,
 } from "@specweave-studio/client-runtime/markdown-images";
+import { markdownImageResource } from "@specweave-studio/client-runtime/media-source";
 import { resolveViewedImageAsset } from "@specweave-studio/client-runtime/work-log/presentation";
 import {
   renderCodexFileCitationsAsMarkdown,
@@ -2440,11 +2441,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       return (
         <ThreadMarkdownImage
           environmentId={props.environmentId}
-          resource={{
-            _tag: "media-file",
-            threadId: props.threadId,
-            path: imageSource.path,
-          }}
+          resource={markdownImageResource(props.threadId, imageSource)}
           alt={image.alt}
           srcFragment={markdownImageSourceFragment(image.href)}
           actionsSource={media?.source.actionsSource}

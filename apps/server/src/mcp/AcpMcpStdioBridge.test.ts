@@ -542,6 +542,49 @@ describe("AcpMcpStdioBridge", () => {
     }),
   );
 
+  it.effect("answers server requests that arrive before the tool result on its SSE stream", () =>
+    Effect.gen(function* () {
+      const sent: Array<{ id?: unknown; method?: string; result?: unknown; error?: unknown }> = [];
+      const result = yield* callAcpMcpTool({
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer bridge-test",
+        tool: "orchestrator_capabilities",
+        arguments: {},
+        fetchImplementation: async (_url, init) => {
+          const message = JSON.parse(String(init?.body)) as (typeof sent)[number];
+          sent.push(message);
+          if (message.method === "initialize") {
+            return Response.json(
+              { jsonrpc: "2.0", id: message.id, result: { protocolVersion: "2025-06-18" } },
+              { headers: { "mcp-session-id": "session-42" } },
+            );
+          }
+          if (message.method !== "tools/call") return new Response(null, { status: 202 });
+          const ping = { jsonrpc: "2.0", id: "server-ping", method: "ping" };
+          const elicit = {
+            jsonrpc: "2.0",
+            id: "server-elicit",
+            method: "elicitation/create",
+            params: { message: "Pick one", requestedSchema: { type: "object", properties: {} } },
+          };
+          const reply = { jsonrpc: "2.0", id: message.id, result: { content: [] } };
+          return new Response(
+            `data: ${JSON.stringify(ping)}\n\ndata: ${JSON.stringify(elicit)}\n\ndata: ${JSON.stringify(reply)}\n\n`,
+            { headers: { "content-type": "text/event-stream" } },
+          );
+        },
+      });
+
+      expect(result).toEqual({ content: [] });
+      expect(sent).toContainEqual({ jsonrpc: "2.0", id: "server-ping", result: {} });
+      expect(sent).toContainEqual({
+        jsonrpc: "2.0",
+        id: "server-elicit",
+        error: { code: -32601, message: "Method not found" },
+      });
+    }),
+  );
+
   it.effect("restarts a terminal tool call once with refreshed credentials", () =>
     Effect.gen(function* () {
       const seen: Array<string | null> = [];

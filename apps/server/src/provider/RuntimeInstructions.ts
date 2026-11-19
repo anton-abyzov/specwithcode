@@ -193,10 +193,18 @@ export const STUDIO_REPORTS_INSTRUCTIONS = `<reports>
 Documents you make or cite live in SpecWithCode: save each as a report with studio_report_save (or as Markdown in the increment's reports/ folder) and link the saved file. Never publish to or link a provider-hosted page (claude.ai artifacts or docs, ChatGPT canvases or shares); import a document another tool made first, with its source and original link.
 </reports>`;
 
-/** Shared by both styles: the app reads `**Blockers:**` to mark a thread Blocked. */
+/**
+ * Shared by both styles: the app reads `**Blockers:**` to mark a thread Blocked.
+ * Every thread and subagent pays for this on every turn, so it holds only what a
+ * worker acts on. The goal owner's closure protocol lives in the
+ * studio_thread_record_delivery description (the coordinator role repeats the
+ * parent-obligation and no-polling lines); RuntimeInstructions.test.ts caps
+ * the block.
+ */
 const REPORT_RULES =
-  "A blocker is a decision only the user can make or a step only they can take outside the app. Anything an agent can settle (another session's run, CI, a merge, a retry, a safe default) is not one: settle it or name it as the next step. When you are blocked, end with a paragraph opening **Blockers:** that asks the one question, with the options and your recommendation. Put long inventories, tables and logs in a file and give its full path. Never shorten errors, failing tests, security warnings or confirmations before destructive actions; quote errors exactly." +
-  " Use thread tools and never ask the user to carry internal messages or handoff receipts. An answered destination decision stays answered and does not release a live owner's work. Give external-session limits an owner and next step. Preserve permissions and Stop. A finite worker can finish when the owner accepts its output or explicitly takes its remaining work. Keep the overall user goal open through verified activation, cleanup and acceptance. Record independently verified delivery and goal obligations with studio_thread_record_delivery. At closeout, give your scope and evidence to the existing independent completion owner for verification after your final turn. Keep parent obligations separate. Completing an increment or merging source never discharges them. Route actionable changes to their owner and avoid acknowledgment-only turns, unrelated fanout and repeated checks. Required CI and readiness gates remain required. Reuse one event-driven observer for a real dependency.";
+  "A blocker is a decision only the user can make or a step only they can take outside the app; settle anything an agent can (another session's run, CI, a merge, a retry, a safe default) or name it as the next step. When you are blocked, end with a paragraph opening **Blockers:** that asks the one question, with the options and your recommendation.\n" +
+  "- Put long inventories, tables and logs in a file and give its full path. Never shorten errors, failing tests, security warnings or confirmations before destructive actions; quote errors exactly.\n" +
+  "- Your work is finished when its owner accepts it or takes what remains: hand over your scope and evidence and never vouch for your own delivery. Required CI and readiness gates remain required.";
 
 /**
  * How every SpecWithCode agent writes, whatever its provider: the user's reply,
@@ -250,8 +258,16 @@ export function buildRuntimeInstructions(runtime: {
    * receives them through its own system-prompt append, so it leaves this out.
    */
   readonly agentInstructions?: string | undefined;
+  /**
+   * When to consult the advisor (`runtimePolicy.advisorGuidance`). Pass it
+   * only for a thread that has the studio-code tools; absent adds nothing.
+   */
+  readonly advisorGuidance?: string | undefined;
 }): string {
   const agentInstructions = runtime.agentInstructions?.trim() ?? "";
+  const advisorGuidance = runtime.advisorGuidance?.trim() ?? "";
+  const advisorBlock =
+    advisorGuidance.length === 0 ? "" : `\n\n<advisor>\n${advisorGuidance}\n</advisor>`;
   const harness = toSingleLine(runtime.harness);
   const model = toSingleLine(runtime.model ?? "");
   const modelName = toSingleLine(runtime.modelName ?? "");
@@ -264,7 +280,7 @@ export function buildRuntimeInstructions(runtime: {
     agentInstructions.length === 0
       ? ""
       : `<agent_instructions>\n${agentInstructions}\n</agent_instructions>\n\n`;
-  return `${agentBlock}<runtime_info>You are running in SpecWithCode through the ${harness} harness${modelInfo}${effortInfo}; mention it only if asked. ${STUDIO_MEDIA_INSTRUCTIONS}</runtime_info>\n\n${responseStyleInstructions(runtime.responseStyle)}\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}\n\n${STUDIO_HEADLESS_INSTRUCTIONS}\n\n${STUDIO_HEAVY_CHECKS_INSTRUCTIONS}`;
+  return `${agentBlock}<runtime_info>You are running in SpecWithCode through the ${harness} harness${modelInfo}${effortInfo}; mention it only if asked. ${STUDIO_MEDIA_INSTRUCTIONS}</runtime_info>\n\n${responseStyleInstructions(runtime.responseStyle)}\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}\n\n${STUDIO_HEADLESS_INSTRUCTIONS}\n\n${STUDIO_HEAVY_CHECKS_INSTRUCTIONS}${advisorBlock}`;
 }
 
 function toSingleLine(value: string): string {

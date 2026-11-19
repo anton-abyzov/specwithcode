@@ -10,6 +10,7 @@ const mocks = NodePath.resolve(fixture, "mocks.tsx");
 const MOCKED = new Set(
   [
     "components/studio/WhatYouCanDo",
+    "components/studio/firstFeature/FirstFeatureOffer",
     "studio/useProjectAttention",
     "components/settings/useSettingsProjectGroups",
     "components/ProjectFavicon",
@@ -26,6 +27,7 @@ const MOCKED = new Set(
     "components/studio/CapacityFleet",
     "components/studio/shell/ModelBadge",
     "studio/useThreadIncrementProgress",
+    "studio/machineIdentity",
     "studio/projectPaneThreads",
     "components/ui/select",
   ].map((path) => NodePath.resolve(appSource, path)),

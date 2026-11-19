@@ -27,6 +27,7 @@ import * as ProjectWorkspaceService from "../project/ProjectWorkspaceService.ts"
 import * as ProjectKnowledge from "../project/knowledge/ProjectKnowledge.ts";
 import * as ProjectStarterSuggestions from "../project/ProjectStarterSuggestions.ts";
 import * as ProjectCoordinatorService from "../project/ProjectCoordinatorService.ts";
+import * as OfficeArtifactService from "../project/OfficeArtifactService.ts";
 import * as ThreadReportService from "../project/ThreadReportService.ts";
 import * as ThreadIncrementProgressService from "../project/ThreadIncrementProgressService.ts";
 import * as AdversarialReviewService from "../review/AdversarialReviewService.ts";
@@ -233,6 +234,9 @@ const layerProjectWorkspaceProvided = ProjectWorkspaceService.layer.pipe(
   ),
 );
 const layerThreadReportsProvided = ThreadReportService.layer.pipe(
+  Layer.provide(Layer.merge(ProjectStore.layer, ProjectionStore.layer)),
+);
+const layerOfficeArtifactsProvided = OfficeArtifactService.layer.pipe(
   Layer.provide(Layer.merge(ProjectStore.layer, ProjectionStore.layer)),
 );
 const layerThreadIncrementProgressProvided = ThreadIncrementProgressService.layer.pipe(
@@ -521,6 +525,8 @@ const layerProjectLinkProvided = ProjectLink.layer.pipe(
       layerCoordinatorRoleProvided,
       // The standby keeps the routines its coordinator sends.
       layerRoutineCopiesProvided,
+      // A link records the note versions its review set aside, for the first memory merge.
+      LinkedMemoryHistory.layer,
     ),
   ),
 );
@@ -592,6 +598,7 @@ export const layerProduction = Layer.mergeAll(
   layerProjectKnowledgeProvided,
   layerProjectStarterSuggestionsProvided,
   layerThreadReportsProvided,
+  layerOfficeArtifactsProvided,
   layerThreadIncrementProgressProvided,
   layerProjectCoordinatorProvided,
   layer.pipe(Layer.provide(layerProjectService)),

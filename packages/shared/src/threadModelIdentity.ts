@@ -209,8 +209,8 @@ export function threadModelIdentity(input: {
   preswitched?: boolean;
 }) {
   const current = input.running ?? input.thread;
-  const same = (a: RunSelection, b: RunSelection) =>
-    a.instanceId === b.instanceId && a.model === b.model;
+  // A context suffix (`[1m]`) is the same model, as the limit pairing reads it.
+  const same = sameRunModel;
   const preferred =
     input.fallbackFrom && !same(current, input.fallbackFrom)
       ? input.fallbackFrom

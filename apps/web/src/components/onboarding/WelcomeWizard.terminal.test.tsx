@@ -4,6 +4,7 @@ import {
   PrimaryConnectionTarget,
 } from "@specweave-studio/client-runtime/connection";
 import {
+  AuthEnvironmentMaintainScope,
   AuthProvidersManageScope,
   AuthTerminalOperateScope,
   DEFAULT_SERVER_SETTINGS,
@@ -59,6 +60,18 @@ const state = vi.hoisted(() => ({
 }));
 
 // The machine choice and its invitation have their own tests.
+// The Chrome and Mac apps rows read live machine state; their own tests cover them.
+vi.mock("./ChromeAccessRow", () => ({
+  ChromeAccessRow: () => <li data-access-row="browser" />,
+}));
+vi.mock("./MacAppsRow", () => ({
+  MacAppsRow: () => <li data-access-row="mac-apps" />,
+}));
+// The Full Disk Access row and first-run item have their own test.
+vi.mock("../access/FullDiskAccess", () => ({
+  FullDiskAccessRow: () => null,
+  FirstRunFullDiskAccess: () => null,
+}));
 vi.mock("./ProjectsFolderChoice", () => ({ ProjectsFolderChoice: () => null }));
 vi.mock("../../hooks/useProjectFolderChoice", () => ({ rememberRecentFolder: () => {} }));
 vi.mock("../../studio/machineNickname", () => ({
@@ -670,6 +683,22 @@ describe("the agents step: Git", () => {
 });
 
 describe("the agents step: sign-in", () => {
+  it("keeps Continue pressable during a sign-in, but not as the step's neutral action", async () => {
+    await enterRemoteAgents();
+    const neutrals = () =>
+      renderer!.root.findAll(
+        (node) => typeof node.type === "string" && node.props["data-wizard-neutral"] !== undefined,
+      );
+    expect(neutrals()).toHaveLength(1);
+    await click("Sign in");
+    expect(hasViewport()).toBe(true);
+    expect(neutrals()).toHaveLength(0);
+    const primary = renderer!.root.find(
+      (node) => typeof node.type === "string" && node.props["data-wizard-primary"] !== undefined,
+    );
+    expect(primary.props.disabled).not.toBe(true);
+  });
+
   it("runs the agent's own sign-in in the panel, with nothing to type", async () => {
     setAccess(primaryId, false);
     await enterRemoteAgents();
@@ -889,6 +918,34 @@ describe("the agents step: found agents", () => {
   });
 });
 
+describe("the agents step: Terminal commands", () => {
+  const line = () => renderer!.root.findAllByProps({ "data-agents-terminal-commands": true });
+
+  it("offers a ticked line to people who may maintain the machine, and saves an untick", async () => {
+    state.registry!.set(
+      state.sessions.get(remoteId)!,
+      AsyncResult.success(
+        session([AuthProvidersManageScope, AuthTerminalOperateScope, AuthEnvironmentMaintainScope]),
+      ),
+    );
+    await enterRemoteAgents();
+    expect(line()).toHaveLength(1);
+    expect(text(line()[0]!)).toContain("Use claude, codex and specweave in Terminal too.");
+    const box = line()[0]!.findByProps({ checked: true });
+    await act(async () => box.props.onCheckedChange(false));
+    expect(state.updateSettings).toHaveBeenCalledOnce();
+    expect(state.updateSettings.mock.calls[0]![0]).toMatchObject({
+      environmentId: remoteId,
+      input: { patch: { terminalCommands: false } },
+    });
+  });
+
+  it("is not shown to someone who may not maintain the machine", async () => {
+    await enterRemoteAgents();
+    expect(line()).toHaveLength(0);
+  });
+});
+
 describe("the agents step: readiness", () => {
   it("says chats will not start until an agent is ready, then names the ready agent", async () => {
     await enterRemoteAgents();
@@ -928,7 +985,10 @@ describe("the agents step: readiness", () => {
     await enterRemoteAgents();
     state.refresh.mockClear();
     await click("Check again");
-    expect(state.refresh).toHaveBeenCalledExactlyOnceWith({ environmentId: remoteId, input: {} });
+    expect(state.refresh).toHaveBeenCalledExactlyOnceWith({
+      environmentId: remoteId,
+      input: { fresh: true },
+    });
     expect(state.find).toHaveBeenCalledOnce();
   });
 });

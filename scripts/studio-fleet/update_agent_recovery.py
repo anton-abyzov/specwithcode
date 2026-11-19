@@ -380,6 +380,18 @@ def refused_before_restart(agent, receipt, version):
             and not any(key in value for key in ('restartStartedAt', 'rollbackError', 'stateBackup')))
 
 
+def refused_unchanged(ua, value, identity):
+    """A helper receipt that refused before it moved any pointer, for a retryable reason, and says
+    nothing else. Preflight is the only real helper phase with no pointer writes or rollback; an
+    explicit future refused_before_restart phase must carry the same proof."""
+    allowed = {'identity', 'phase', 'result', 'error', 'pointers'}
+    return (isinstance(value, dict) and not set(value) - allowed and value.get('identity') == identity
+            and value.get('phase') in ('preflight', 'refused_before_restart')
+            and value.get('result') == 'update-failed' and value.get('pointers') == 'unchanged'
+            and isinstance(value.get('error'), str)
+            and any(value['error'].startswith('AssertionError: ' + reason) for reason in ua.RETRYABLE_REFUSALS))
+
+
 def refusal_proof(agent, receipt, before):
     ua = _ua(agent)
     try:
@@ -388,16 +400,7 @@ def refusal_proof(agent, receipt, before):
             return None
         data = ua.read_owned(path, agent.home, ua.LIMITS['json'])
         value = json.loads(data)
-        # Preflight is the only real helper phase with no pointer writes or rollback.
-        # An explicit future refused_before_restart phase must carry the same proof.
-        allowed = {'identity', 'phase', 'result', 'error', 'pointers'}
-        if (not isinstance(value, dict) or set(value) - allowed or value.get('identity') != agent.identity
-                or value.get('phase') not in ('preflight', 'refused_before_restart')
-                or value.get('result') != 'update-failed' or value.get('pointers') != 'unchanged'
-                or not isinstance(value.get('error'), str)
-                or not any(value['error'].startswith('AssertionError: ' + reason)
-                           for reason in ua.RETRYABLE_REFUSALS)
-                or before is None or installation_fingerprint(agent) != before):
+        if not refused_unchanged(ua, value, agent.identity) or before is None or installation_fingerprint(agent) != before:
             return None
         return ua.sha256_bytes(data)
     except (ua.AgentError, OSError, ValueError, TypeError):
@@ -486,7 +489,10 @@ def newer_release_after_rollback(agent, verified):
     byte-exact settings.json check after a one-time settings migration), so it gets one
     automatic attempt; if that fails too, the hold moves to it. Only after a complete
     rollback: the helper receipt shows the previous release's pointers (and state) restored
-    and no rollback error, and the installation is the one that attempt started from."""
+    and no rollback error, and the installation is the one that attempt started from. Or after
+    a refusal that changed nothing (refused_unchanged): on M4, November 18, 2026, a routine that
+    rewrote its row during the 1.0.344 snapshot refused it in preflight, its bounded retry was
+    voided by a cancel two minutes later, and 1.0.345 to 1.0.356 were all held for a day."""
     ua = _ua(agent)
     last = agent.state.get('lastInstall') or {}
     try:
@@ -501,10 +507,13 @@ def newer_release_after_rollback(agent, verified):
         value = ua.read_json(path, agent.home, ua.LIMITS['receipt'])
         if not isinstance(value, dict):
             return False
-        # Preflight refusals (a busy service) keep their own bounded budget; see record_refusal.
-        return (value.get('identity') == agent.identity and value.get('result') == 'update-failed'
-                and value.get('pointers') == 'previous-release' and value.get('rollback') in CLEAN_ROLLBACKS
-                and 'rollbackError' not in value and installation_fingerprint(agent) is not None)
+        # A preflight refusal keeps its own bounded budget for its version (record_refusal); a
+        # newer release gets one attempt here once that budget is spent or void.
+        rolled_back = (value.get('identity') == agent.identity and value.get('result') == 'update-failed'
+                       and value.get('pointers') == 'previous-release' and value.get('rollback') in CLEAN_ROLLBACKS
+                       and 'rollbackError' not in value)
+        return ((rolled_back or refused_unchanged(ua, value, agent.identity))
+                and installation_fingerprint(agent) is not None)
     except (ua.AgentError, OSError, ValueError, KeyError, TypeError, AttributeError):
         return False
 

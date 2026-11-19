@@ -29,7 +29,9 @@ import {
   type RuntimeMode,
   type RuntimeRequestId,
   type ThreadId,
+  type ThreadAdvisorMode,
   type ThreadEnvMode,
+  type ThreadReviewMode,
   type UploadChatAttachment,
 } from "@specweave-studio/contracts";
 import { modelSelectionCommandType } from "@specweave-studio/shared/model";
@@ -201,6 +203,8 @@ export interface StartThreadTurnInput extends ThreadCommandInput {
     readonly context?: import("@specweave-studio/contracts").OrchestrationMessageContext;
   };
   readonly modelSelection?: ModelSelection;
+  /** The model is the composer's default, not a pick: a project on Tracks may choose it. */
+  readonly modelUnnamed?: boolean;
   readonly titleSeed?: string;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
@@ -550,6 +554,36 @@ export const setThreadAutoSettle = Effect.fn("EnvironmentCommands.setThreadAutoS
   });
 });
 
+export interface SetThreadAdvisorModeInput extends ThreadCommandInput {
+  /** The thread's own choice; null follows the project again. */
+  readonly advisorMode: ThreadAdvisorMode | null;
+}
+export const setThreadAdvisorMode = Effect.fn("EnvironmentCommands.setThreadAdvisorMode")(
+  function* (input: SetThreadAdvisorModeInput) {
+    return yield* dispatch({
+      type: "thread.advisor-mode.set",
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+      advisorMode: input.advisorMode,
+    });
+  },
+);
+
+export interface SetThreadReviewModeInput extends ThreadCommandInput {
+  /** The thread's own adversarial review choice; null follows the project again. */
+  readonly reviewMode: ThreadReviewMode | null;
+}
+export const setThreadReviewMode = Effect.fn("EnvironmentCommands.setThreadReviewMode")(function* (
+  input: SetThreadReviewModeInput,
+) {
+  return yield* dispatch({
+    type: "thread.review-mode.set",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    reviewMode: input.reviewMode,
+  });
+});
+
 export const reorderPinnedThread = Effect.fn("EnvironmentCommands.reorderPinnedThread")(function* (
   input: ReorderPinnedThreadInput,
 ) {
@@ -786,6 +820,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       title: input.titleSeed ?? thread.title,
       generateTitle: input.titleSeed !== undefined,
       modelSelection: input.modelSelection ?? thread.modelSelection,
+      ...(bootstrap !== undefined && input.modelUnnamed === true ? { modelUnnamed: true } : {}),
       runtimeMode: input.runtimeMode,
       interactionMode: input.interactionMode,
       workspaceStrategy,

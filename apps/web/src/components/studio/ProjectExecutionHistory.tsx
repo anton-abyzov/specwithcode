@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { requestConnectionRetry } from "../../connection/retryRequests";
 import { paneWords } from "../../studio/assistantTerms";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
@@ -8,9 +9,25 @@ import { useThreadHistory, useThreadProjection } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { threadEnvironment } from "../../state/threads";
 import { useMachineStillChecking } from "../../studio/machineChecking";
+import {
+  hostReachOr,
+  useHostReachStates,
+  useHostDownNotes,
+  useIdentityMismatchedHosts,
+} from "../../studio/unreachableHosts";
+import { useClockWhile } from "../../hooks/useClockWhile";
+import { useTx } from "../../i18n";
+import { machineLastSeenAt, useMachineLastSeenVersion } from "../../lib/machineLastSeen";
+import {
+  identityMismatchShown,
+  machineReachDetail,
+  machineReachWords,
+} from "../../lib/machineStatus";
+import { isMachineReachDown } from "@specweave-studio/client-runtime/connection";
 import { useMachineNickname, useMachineNicknames } from "../../studio/machineNickname";
 import { routedThreadReplyDisplayText } from "@specweave-studio/shared/routedMessage";
 import { requestExecutionLabel, type ProjectExecutionScope } from "../../studio/projectDomain";
+import { Button } from "../ui/button";
 import { ProjectMessageBody } from "./ProjectMessageBody";
 import { useProviderEntries } from "./shell/ModelBadge";
 
@@ -106,7 +123,8 @@ function RetainedMessages({ scope, label }: { scope: ProjectExecutionScope; labe
   return (
     <div aria-label={`Retained coordinator messages on ${label}`}>
       {history.hasMoreHistory && (
-        <button
+        <Button
+          variant="outline"
           disabled={history.loading}
           onClick={() =>
             void load({
@@ -116,7 +134,7 @@ function RetainedMessages({ scope, label }: { scope: ProjectExecutionScope; labe
           }
         >
           Load earlier messages
-        </button>
+        </Button>
       )}
       {history.error && <p role="alert">{history.error}</p>}
       {thread.projection.messages.map((message) => {
@@ -142,6 +160,35 @@ function RetainedMessages({ scope, label }: { scope: ProjectExecutionScope; labe
 
 const RAW_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-/i;
 
+/** How often a shown offline notice asks its machine's connection to try again. */
+export const OFFLINE_RETRY_MS = 30_000;
+
+/**
+ * Tries the machine again now, and every 30 s while the notice shows. The
+ * connection itself retries at most 60 s apart for 30 minutes after it last
+ * answered; after that its own wait grows to as much as 10 minutes.
+ */
+function OfflineRetry() {
+  useEffect(() => {
+    requestConnectionRetry();
+    const timer = window.setInterval(requestConnectionRetry, OFFLINE_RETRY_MS);
+    return () => window.clearInterval(timer);
+  }, []);
+  return (
+    <>
+      {" "}
+      <button
+        type="button"
+        className="underline underline-offset-2"
+        data-slot="offline-retry"
+        onClick={requestConnectionRetry}
+      >
+        Try again
+      </button>
+    </>
+  );
+}
+
 /** Also names declared hosts absent from the local catalog, so missing rows are never silently complete. */
 export function ProjectThreadAvailability({
   scopes,
@@ -155,6 +202,17 @@ export function ProjectThreadAvailability({
   const { environments } = useNamedEnvironments();
   const nickname = useMachineNicknames();
   const stillChecking = useMachineStillChecking();
+  const reach = useHostReachStates();
+  const identityMismatched = useIdentityMismatchedHosts();
+  const notes = useHostDownNotes();
+  const tx = useTx();
+  useMachineLastSeenVersion();
+  const down = [...new Set(scopes.map((scope) => scope.environmentId))].some((environmentId) => {
+    const state = reach.get(environmentId);
+    return state !== undefined && isMachineReachDown(state);
+  });
+  // "Last answered 5m ago" ages while the notice shows.
+  const now = useClockWhile(down);
   return (
     <>
       {[...new Set(scopes.map((scope) => scope.environmentId))].map((environmentId) => {
@@ -164,7 +222,10 @@ export function ProjectThreadAvailability({
         const name =
           environment?.label ??
           (known === environmentId && RAW_ID.test(known) ? "another machine" : known);
-        if (environment?.connection.phase === "connected") return null;
+        const state = environment
+          ? hostReachOr(reach.get(environmentId), environment.connection)
+          : undefined;
+        if (state === "connected") return null;
         // While the page is still finding out, it says so instead of "not connected".
         if (stillChecking(environmentId))
           return (
@@ -177,15 +238,53 @@ export function ProjectThreadAvailability({
               Checking {name}…
             </p>
           );
+        const mismatched = identityMismatchShown(state, identityMismatched.has(environmentId));
+        const words =
+          environment && state
+            ? machineReachWords(
+                state,
+                environment.connection.phase,
+                mismatched,
+                notes.get(environmentId) ?? null,
+              )
+            : null;
+        // Reconnecting, connecting and catching up are calm: the threads below
+        // keep their groups, and nothing is wrong yet.
+        if (words !== null && state !== undefined && !isMachineReachDown(state))
+          return (
+            <p
+              key={environmentId}
+              className="project-notice"
+              role="status"
+              data-reach-state={state}
+              data-settling-thread-host={environmentId}
+            >
+              {tx(words.headline, { machine: name })}
+            </p>
+          );
+        const detail =
+          words === null
+            ? null
+            : machineReachDetail(
+                words,
+                environment?.connection.lastConnectedAt ?? machineLastSeenAt(environmentId),
+                now,
+                tx,
+              );
         return (
           <p
             key={environmentId}
             className="project-notice"
             role="status"
+            data-reach-state={state}
             data-unavailable-thread-host={environmentId}
           >
-            {environment ? `${name} is offline` : `This app is not connected to ${name}`} —{" "}
-            {say("the thread list may be incomplete. Cached threads may be out of date.")}
+            {words ? tx(words.headline, { machine: name }) : `This app is not connected to ${name}`}{" "}
+            — {say("the thread list may be incomplete. Cached threads may be out of date.")}
+            {detail ? ` ${detail}.` : null}
+            {words?.hint ? ` ${tx(words.hint)}` : null}
+            {/* Retrying never reaches a machine whose address answers as another one. */}
+            {environment && !mismatched ? <OfflineRetry /> : null}
           </p>
         );
       })}

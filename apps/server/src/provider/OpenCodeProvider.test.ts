@@ -79,6 +79,8 @@ it.effect("reads Go limits with the instance's XDG credentials and preserves res
       Effect.provide(NodeServices.layer),
     );
     NodeAssert.equal(limits.unavailable, undefined);
+    // The monthly reset is when a new paid period starts: Go's renewal date.
+    NodeAssert.equal(limits.renewsAt, resetsAt);
     NodeAssert.equal(
       limits.credentialFingerprint,
       // SHA-256 of "opencode-go\0instance-key".

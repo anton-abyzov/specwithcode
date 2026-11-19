@@ -171,3 +171,44 @@ it("refuses a capture without room as a refused volume, so a moving copy can fal
   await expect(refused).rejects.toBeInstanceOf(CaptureFilesystemRefused);
   await expect(refused).rejects.toThrow(/needs \d+ bytes free on the source/);
 });
+
+it("never waits on folders above the copy root changing, which on a busy machine is constant", async () => {
+  for (let index = 0; index < 40; index++)
+    await FSP.writeFile(Path.join(source, `note-${index}.txt`), `note ${index}`);
+  const scan = await scanFolder(source);
+  const entries = selectEntries(scan.entries, new Set(DEFAULT_SELECTION));
+  // Files come and go beside the project (in its parent), as in a home folder.
+  let churning = true;
+  const churn = (async () => {
+    for (let index = 0; churning; index++) {
+      const name = Path.join(base, `.home-churn-${index}`);
+      await FSP.writeFile(name, "x");
+      await FSP.unlink(name);
+    }
+  })();
+  let waits = 0;
+  try {
+    const { captured } = await capture({ entries, retryWait: async () => void waits++ });
+    expect(Object.keys(await loadCapturedIndex(root, captured))).toHaveLength(41);
+    expect(waits).toBe(0);
+  } finally {
+    churning = false;
+    await churn;
+  }
+});
+
+it("captures many files at once with each one's bytes at its own place in the pack", async () => {
+  const big = Buffer.alloc(9 * 1024 * 1024 + 7, 3);
+  await FSP.writeFile(Path.join(source, "big.bin"), big);
+  for (let index = 0; index < 150; index++)
+    await FSP.writeFile(Path.join(source, `f-${index}.txt`), `file ${index} `.repeat(index + 1));
+  const { entries, captured } = await capture();
+  const index = await loadCapturedIndex(root, captured);
+  for (const entry of entries.filter((item) => item.type === "file" && item.class !== "secret")) {
+    const bytes = await FSP.readFile(Path.join(source, entry.path));
+    const read = await capturedRange(root, index, entry.path, 0, bytes.length);
+    expect(read.equals(bytes)).toBe(true);
+    expect(entry.sha256).toBe(sha256Hex(bytes));
+  }
+  expect(entries.find((entry) => entry.path === "big.bin")?.chunks).toHaveLength(2);
+});

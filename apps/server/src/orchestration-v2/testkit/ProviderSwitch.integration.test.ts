@@ -8,6 +8,8 @@ import {
   EventId,
   MessageId,
   type ModelSelection,
+  NodeId,
+  RuntimeRequestId,
   type OrchestrationV2Command,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
@@ -42,6 +44,7 @@ import {
 } from "../Adapters/CodexAdapterV2.ts";
 import { AcpProviderCapabilitiesV2 } from "../Adapters/AcpAdapterV2.ts";
 import { CursorProviderCapabilitiesV2 } from "../Adapters/CursorAdapterV2.ts";
+import * as SpecweaveCheckpoint from "../SpecweaveCheckpoint.ts";
 import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
 import * as LegacyV1ThreadImporter from "../legacy/LegacyV1ThreadImporter.ts";
@@ -736,7 +739,7 @@ describe("orchestration v2 provider switching", () => {
             assert.equal((yield* Ref.get(capturedTurns)).at(-1)!.driver, CLAUDE_DRIVER);
             if (scenario.includes("small")) {
               const delivered = yield* encodeJson(yield* Ref.get(injectedHistory));
-              assert.include(delivered, "Selected 0 intact items");
+              assert.include(delivered, "Selected 0 history entries");
               assert.include(delivered, "studio_thread_read");
             }
             return;
@@ -905,7 +908,12 @@ describe("orchestration v2 provider switching", () => {
       }),
     ),
   );
-  it.live.each(["turn-start", "injection", "large-missed-request"] as const)(
+  it.live.each([
+    "turn-start",
+    "injection",
+    "large-missed-request",
+    "interrupted-tool-only",
+  ] as const)(
     "recovers %s failure without duplicating history in the same native thread",
     (failure) =>
       Effect.scoped(
@@ -1002,6 +1010,51 @@ describe("orchestration v2 provider switching", () => {
               failedHandoff.delivery?.status,
               failure !== "injection" ? "injected" : "pending",
             );
+            let checkpointRead: ReturnType<typeof vi.spyOn> | undefined;
+            if (failure === "interrupted-tool-only") {
+              // A recovered interrupted run can have only tool activity in the
+              // retained projection. Replace its message item with that shape.
+              const prior = failed.turnItems.find(
+                (item) => item.runId === failed.runs.at(-1)!.id && item.type === "user_message",
+              )!;
+              if (prior.type !== "user_message") throw new Error("Expected retained user message");
+              const sink = yield* EventSink.EventSinkV2;
+              yield* sink.write({
+                events: [
+                  {
+                    id: EventId.make("retry:tool-only"),
+                    type: "turn-item.updated",
+                    threadId,
+                    runId: failed.runs.at(-1)!.id,
+                    occurredAt: yield* DateTime.now,
+                    payload: {
+                      ...prior,
+                      type: "dynamic_tool",
+                      toolName: "inspect_worker",
+                      input: {},
+                      output: { result: "foreign tool result must not be replayed" },
+                    },
+                  },
+                ],
+              });
+              const missed = failed.runs.at(-1)!;
+              yield* sink.write({
+                events: [
+                  {
+                    id: EventId.make("retry:interrupted-source"),
+                    type: "run.updated",
+                    threadId,
+                    runId: missed.id,
+                    occurredAt: yield* DateTime.now,
+                    payload: { ...missed, status: "interrupted" },
+                  },
+                ],
+              });
+              checkpointRead = vi
+                .spyOn(SpecweaveCheckpoint, "readSpecweaveCheckpointPreface")
+                .mockReturnValue(Effect.succeed("Checkpoint for tool-only recovery"));
+              yield* Effect.addFinalizer(() => Effect.sync(() => checkpointRead?.mockRestore()));
+            }
             const historyBeforeRetry = (yield* Ref.get(injectedHistory)).length;
             const retryText =
               failure === "large-missed-request" ? "y".repeat(10_000) : "Retry target request";
@@ -1022,6 +1075,12 @@ describe("orchestration v2 provider switching", () => {
                 const delivery = retried.contextHandoffs.at(-1)!.delivery!;
                 assert.include(delivery.omittedItemIds ?? [], missedRequest.id);
                 assert.notInclude(delivery.itemIds, missedRequest.id);
+              } else if (failure === "interrupted-tool-only") {
+                assert.include(delta, "Historical tool inspect_worker");
+                assert.include(delta, "Checkpoint for tool-only recovery");
+                assert.notInclude(delta, "foreign tool result must not be replayed");
+                assert.notInclude(delta, "First target request");
+                assert.equal(checkpointRead?.mock.calls.length, 1);
               } else assert.include(delta, "First target request");
               assert.notInclude(delta, "Original request with constraints");
               assert.notInclude(delta, "Original partial work");
@@ -1067,6 +1126,109 @@ describe("orchestration v2 provider switching", () => {
           );
         }),
       ),
+  );
+
+  it.live("delivers a missed run and a later detour in chronological order", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("handoff-chronology");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
+        const failStartOnce = yield* Ref.make(false);
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: { 1: "Claude first answer" },
+            capturedTurns,
+            injectedHistory,
+            failStartOnce,
+          }),
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: { 3: "Codex detour answer" },
+            capturedTurns,
+          }),
+        ]);
+        const delivered = yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const send = (ordinal: number, text: string, selection: ModelSelection) =>
+            orchestrator
+              .dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`chronology:${ordinal}`),
+                threadId,
+                messageId: MessageId.make(`chronology:${ordinal}`),
+                createdBy: "user",
+                creationSource: "web",
+                text,
+                attachments: [],
+                modelSelection: selection,
+                dispatchMode: { type: "start_immediately" },
+              })
+              .pipe(Effect.andThen(waitForIdle(threadId)), Effect.andThen(worker.drain()));
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("chronology:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Handoff chronology",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          yield* send(1, "Claude first request", CLAUDE_MODEL_SELECTION);
+          // Run 2 never reaches Claude: its start fails after the prompt is built.
+          yield* Ref.set(failStartOnce, true);
+          yield* send(2, "Missed Claude request", CLAUDE_MODEL_SELECTION);
+          yield* send(3, "Codex detour request", CODEX_MODEL_SELECTION);
+          const beforeReturn = (yield* Ref.get(injectedHistory)).length;
+          yield* send(4, "Back on Claude", CLAUDE_MODEL_SELECTION);
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          return {
+            runs: projection.runs.map((run) => [run.ordinal, run.status]),
+            history: yield* encodeJson((yield* Ref.get(injectedHistory)).slice(beforeReturn)),
+          };
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "handoff-chronology",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: { type: "readOnly" },
+                },
+              },
+              layerRegistry,
+              { databaseLayer: fixtureProjectDatabase([projectId]) },
+            ),
+          ),
+        );
+        assert.deepEqual(delivered.runs, [
+          [1, "completed"],
+          [2, "failed"],
+          [3, "completed"],
+          [4, "completed"],
+        ]);
+        const missed = delivered.history.indexOf("Missed Claude request");
+        const detour = delivered.history.indexOf("Codex detour request");
+        assert.notEqual(missed, -1);
+        assert.notEqual(detour, -1);
+        // Run 2 came before the detour, so the receiving model reads it first.
+        assert.isBelow(missed, detour);
+      }),
+    ),
   );
 
   it.live.each(["native", "legacy"] as const)(
@@ -3632,6 +3794,181 @@ describe("orchestration v2 provider switching", () => {
         );
       }),
     ),
+  );
+
+  // The direct selection command detaches the old session. A message started
+  // at once on another provider does not: the old session keeps running and
+  // its callback stays live until its idle release settles the approval.
+  it.live.each(["selection"] as const)(
+    "cancels a pending Claude approval when a %s switches the thread to Codex",
+    (via) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const cwd = yield* checkpointWorkspace(`switch-cancels-approval-${via}`);
+          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+            makeTestAdapter({
+              instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+              driver: CLAUDE_DRIVER,
+              capabilities: ClaudeProviderCapabilitiesV2,
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              responseByRunOrdinal: { 1: "claude asked to run a command" },
+              capturedTurns,
+            }),
+            makeTestAdapter({
+              instanceId: CODEX_MODEL_SELECTION.instanceId,
+              driver: CODEX_DRIVER,
+              capabilities: CodexProviderCapabilitiesV2,
+              modelSelection: CODEX_MODEL_SELECTION,
+              responseByRunOrdinal: { 2: "codex took over" },
+              capturedTurns,
+            }),
+          ]);
+          const requestId = RuntimeRequestId.make("runtime-request:switch-cancels-approval");
+          const nodeId = NodeId.make("node:switch-cancels-approval");
+          const result = yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            const send = (key: string, text: string, modelSelection: ModelSelection) =>
+              orchestrator
+                .dispatch({
+                  type: "message.dispatch",
+                  commandId: CommandId.make(`command:switch-approval:${key}`),
+                  threadId,
+                  messageId: MessageId.make(`message:switch-approval:${key}`),
+                  createdBy: "user",
+                  creationSource: "web",
+                  text,
+                  attachments: [],
+                  modelSelection,
+                  dispatchMode: { type: "start_immediately" },
+                })
+                .pipe(Effect.andThen(waitForIdle(threadId)), Effect.andThen(worker.drain()));
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make("command:switch-approval:create"),
+              threadId,
+              projectId,
+              createdBy: "user",
+              creationSource: "web",
+              title: "Switch with a pending approval",
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+            });
+            yield* send("claude", "Run the migration", CLAUDE_MODEL_SELECTION);
+            const afterClaude = yield* orchestrator.getThreadProjection(threadId);
+            const claudeSession = afterClaude.providerSessions.find(
+              (session) => session.driver === CLAUDE_DRIVER && session.status === "ready",
+            );
+            const claudeThread = afterClaude.providerThreads.find(
+              (providerThread) => providerThread.driver === CLAUDE_DRIVER,
+            );
+            if (claudeSession === undefined || claudeThread === undefined) {
+              return yield* Effect.die("Expected a live Claude session after the first turn.");
+            }
+            // The Claude session holds an approval its live callback answers.
+            const now = yield* DateTime.now;
+            yield* (yield* EventSink.EventSinkV2).write({
+              events: [
+                {
+                  id: EventId.make("event:switch-approval:node"),
+                  type: "node.updated",
+                  threadId,
+                  nodeId,
+                  driver: CLAUDE_DRIVER,
+                  occurredAt: now,
+                  payload: {
+                    id: nodeId,
+                    threadId,
+                    runId: null,
+                    parentNodeId: null,
+                    rootNodeId: nodeId,
+                    kind: "approval_request",
+                    status: "waiting",
+                    countsForRun: false,
+                    providerThreadId: claudeThread.id,
+                    providerTurnId: null,
+                    nativeItemRef: null,
+                    runtimeRequestId: requestId,
+                    checkpointScopeId: null,
+                    startedAt: now,
+                    completedAt: null,
+                  },
+                },
+                {
+                  id: EventId.make("event:switch-approval:request"),
+                  type: "runtime-request.updated",
+                  threadId,
+                  nodeId,
+                  driver: CLAUDE_DRIVER,
+                  occurredAt: now,
+                  payload: {
+                    id: requestId,
+                    nodeId,
+                    providerTurnId: null,
+                    nativeRequestRef: {
+                      driver: CLAUDE_DRIVER,
+                      nativeId: "pending-approval",
+                      strength: "strong",
+                    },
+                    kind: "command",
+                    status: "pending",
+                    responseCapability: { type: "live", providerSessionId: claudeSession.id },
+                    createdAt: now,
+                    resolvedAt: null,
+                  },
+                },
+              ],
+            });
+            const before = (yield* orchestrator.getThreadProjection(threadId)).runtimeRequests.find(
+              (request) => request.id === requestId,
+            );
+            // The direct selection command, as the model picker sends it.
+            yield* orchestrator.dispatch({
+              type: "thread.model-selection.set",
+              commandId: CommandId.make("command:switch-approval:select"),
+              threadId,
+              modelSelection: CODEX_MODEL_SELECTION,
+            });
+            yield* worker.drain();
+            const after = yield* orchestrator.getThreadProjection(threadId);
+            return {
+              before,
+              after: after.runtimeRequests.find((request) => request.id === requestId),
+              claudeSessionId: claudeSession.id,
+              runs: after.runs.map((run) => [run.ordinal, run.status]),
+            };
+          }).pipe(
+            Effect.provide(
+              ProviderReplayHarness.layerWithRegistry(
+                {
+                  name: `switch-cancels-approval-${via}`,
+                  runtimePolicyOverride: {
+                    cwd,
+                    approvalPolicy: "never",
+                    sandboxPolicy: {
+                      type: "readOnly",
+                      access: { type: "fullAccess" },
+                      networkAccess: false,
+                    },
+                  },
+                },
+                layerRegistry,
+                { databaseLayer: fixtureProjectDatabase([projectId]) },
+              ),
+            ),
+          );
+          assert.deepEqual(result.runs, [[1, "completed"]]);
+          // Live before the switch, so the switch's detach is what settles it.
+          assert.equal(result.before?.status, "pending");
+          assert.equal(result.before?.responseCapability.type, "live");
+          assert.notEqual(result.after?.status, "pending");
+          assert.equal(result.after?.responseCapability.type, "not_resumable");
+        }),
+      ),
   );
 
   it.live("returns to the same Claude session after an account switch and a Codex detour", () =>

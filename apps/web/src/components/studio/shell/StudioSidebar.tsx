@@ -45,8 +45,6 @@ import {
 import { Link, useLocation, useParams, useSearch } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import {
-  ArchiveIcon,
-  BotIcon,
   ChevronRightIcon,
   ConciergeBellIcon,
   LaptopIcon,
@@ -57,12 +55,13 @@ import {
   SquarePenIcon,
   WifiOffIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { isCommandPaletteOpen, openCommandPalette } from "../../../commandPaletteBus";
 import { isElectron } from "../../../env";
 import { useComposerDraftStore } from "../../../composerDraftStore";
 import { useScratchProject } from "../../../hooks/useScratchProject";
+import { requestChatSettings } from "../../../studio/chatSettingsRequest";
 import { useLocalStorage } from "../../../hooks/useLocalStorage";
 import { useNowMinute } from "../../../hooks/useNowMinute";
 import { useOpenChat } from "../../../hooks/useOpenChat";
@@ -94,7 +93,6 @@ import { projectEnvironment } from "../../../state/projects";
 import { ChatFilterMenu } from "./ChatFilterMenu";
 import { threadLocation } from "../../../studio/threadLocation";
 import {
-  chatMachineColumnCh,
   chatMachineNote,
   chatsShowMachineColumn,
   machineColumnLabel,
@@ -143,7 +141,11 @@ import {
 } from "../../../studio/projectPaneThreads";
 import { checkProjectName, renameTargets, type NamedProject } from "../../../studio/projectRename";
 import { useUnreachableHosts } from "../../../studio/unreachableHosts";
-import { asStandaloneChat, standaloneChatKeys } from "../../../studio/standaloneChats";
+import {
+  asStandaloneChat,
+  requesterProject,
+  standaloneChatKeys,
+} from "../../../studio/standaloneChats";
 import { requestThreadMove } from "../../ThreadMoveDialog";
 import { threadMoveBlockedReason } from "../../threadMove.logic";
 import { useProjectPaneThreadParam } from "../../../studio/useProjectPaneThreadParam";
@@ -160,6 +162,7 @@ import {
   modelLabel,
   nowFromMinute,
   parseChatListOptions,
+  runFailureReason,
   THREAD_TONE_LABELS,
   threadTone,
   threadToneShowsDot,
@@ -168,15 +171,17 @@ import { resolveThreadRouteTarget } from "../../../threadRoutes";
 import { stackedThreadToast, toastManager } from "../../ui/toast";
 import { useSettingsProjectGroups } from "../../settings/useSettingsProjectGroups";
 import { SidebarChromeFooter, SidebarChromeHeader } from "../../sidebar/SidebarChrome";
+import { InlineButton } from "../../ui/button";
 import { MenuItem, MenuSeparator } from "../../ui/menu";
 import { SidebarContent, useSidebar } from "../../ui/sidebar";
 import { Tip } from "./Tip";
 import { PlanProgressChip } from "../PlanProgressChip";
 import { useSidebarThreadPlans } from "../../sidebar/SidebarPlanProgress";
-import { describeThreadPlan } from "../../../studio/threadPlanProgress";
+import { chatRowPlan, describeThreadPlan } from "../../../studio/threadPlanProgress";
 import { canRenameChat, checkChatTitle } from "../../../studio/threadTitles";
 import { ModelBadgeMark, useProviderEntriesByEnvironment } from "./ModelBadge";
 import { fallbackReason } from "../../chat/ModelStateTag";
+import { QuotaAlerts } from "../../usage/alerts/QuotaAlertBanner";
 import { SidebarChatRow } from "./SidebarChatRow";
 import {
   designsProjectId,
@@ -280,10 +285,6 @@ export default function StudioSidebar() {
   const saveProjectOrder = (next: SidebarProjectOrder) =>
     saveOrder(rememberPinnedMembers(next, projectGroups));
   const [showAllProjects, setShowAllProjects] = useState(false);
-  // Null follows the open project: the list opens while an archived project is open.
-  const [showArchived, setShowArchived] = useState<boolean | null>(null);
-  // Null follows the open project too: Automated opens while one of its projects is open.
-  const [showAutomated, setShowAutomated] = useState<boolean | null>(null);
   const serverConfigs = useServerConfigs();
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
@@ -442,22 +443,40 @@ export default function StudioSidebar() {
   const listedProjects = partition.listed;
   const automatedProjects = partition.automated.filter((group) => !isPersonalGroup(group));
   const archivedProjects = partition.archived.filter((group) => !isPersonalGroup(group));
-  const archivedOpen =
-    showArchived ?? archivedProjects.some((group) => group.projectKey === activeProjectKey);
-  const automatedOpen =
-    showAutomated ?? automatedProjects.some((group) => group.projectKey === activeProjectKey);
+  // The open project when it is archived or automated: listed alone under the projects.
+  const openSetAside = (() => {
+    const archived = archivedProjects.find((group) => group.projectKey === activeProjectKey);
+    if (archived) return { group: archived, archived: true };
+    const automated = automatedProjects.find((group) => group.projectKey === activeProjectKey);
+    return automated ? { group: automated, archived: false } : null;
+  })();
+  // A chat another machine's project thread asked for groups with that project.
+  const requestedBy = useCallback(
+    (thread: EnvironmentThreadShell) =>
+      isStandaloneChat(thread)
+        ? requesterProject(thread, {
+            thread: (key) => threadByKey.get(key),
+            project: (requester) =>
+              isStandaloneChat(requester)
+                ? undefined
+                : projectByMember.get(`${requester.environmentId}:${requester.projectId}`),
+          })
+        : undefined,
+    [isStandaloneChat, projectByMember, threadByKey],
+  );
   const chatGroupInput = useMemo(
     () => ({
       now,
       projectLabel: (thread: EnvironmentThreadShell) =>
-        projectByMember.get(`${thread.environmentId}:${thread.projectId}`)?.displayName ??
-        "No project",
+        (requestedBy(thread) ?? projectByMember.get(`${thread.environmentId}:${thread.projectId}`))
+          ?.displayName ?? "No project",
       machine: (thread: EnvironmentThreadShell) => {
         const location = locateChat(thread);
         return { id: location.executionMachineId, label: location.label.split(" → ").at(-1)! };
       },
       // Threads a project started open from its project row, not from the chat list.
       isProjectThread: (thread: EnvironmentThreadShell) => {
+        if (requestedBy(thread) !== undefined) return true;
         const group = projectByMember.get(`${thread.environmentId}:${thread.projectId}`);
         return isProjectOwnedChat(thread, group, {
           displayedCheckout: group ? displayedCheckouts.get(group.projectKey) : undefined,
@@ -465,7 +484,7 @@ export default function StudioSidebar() {
         });
       },
     }),
-    [displayedCheckouts, locateChat, now, projectByMember, threadByKey],
+    [displayedCheckouts, locateChat, now, projectByMember, requestedBy, threadByKey],
   );
   // Every chat the list could show whatever its status and activity filters say, so the
   // column and the machine choices hold still while those filters change.
@@ -546,23 +565,6 @@ export default function StudioSidebar() {
       primaryEnvironmentId,
       anyMoved: chatsAnyState.some((thread) => locateChat(thread).moved),
     });
-  // Sized by what the rows show, so "→ Minis" fits as well as "M4".
-  const machineCh = useMemo(
-    () =>
-      chatMachineColumnCh(
-        chatsAnyState.map((thread) => {
-          const location = locateChat(thread);
-          return {
-            name: location.label.split(" → ").at(-1)!,
-            moved: location.moved,
-            offline:
-              location.executionMachineId !== primaryEnvironmentId &&
-              unreachable.has(location.executionMachineId),
-          };
-        }),
-      ),
-    [chatsAnyState, locateChat, primaryEnvironmentId, unreachable],
-  );
   const chatTotal = chatGroups.reduce((sum, group) => sum + group.threads.length, 0);
   // Only worked out for an empty list: whether project threads are all that is left out.
   const hiddenProjectThreads = useMemo(
@@ -889,6 +891,11 @@ export default function StudioSidebar() {
   );
   const arranged = { pinned: ordered.pinned, unpinned: localCopiesFirst(ordered.unpinned) };
   const codeProjects = [...arranged.pinned, ...arranged.unpinned];
+  // What "use it until it resets" can cover: each listed project, on every machine.
+  const boostProjects = codeProjects.map((group) => ({
+    name: displayNameOf(group, displayedCheckouts.get(group.projectKey)),
+    ids: [...new Set([group.id, ...(group.memberProjectRefs ?? []).map((ref) => ref.projectId)])],
+  }));
   const nameHints = sameNameHints(codeProjects, (group) =>
     displayNameOf(group, displayedCheckouts.get(group.projectKey)),
   );
@@ -938,13 +945,20 @@ export default function StudioSidebar() {
         .filter((member) => member.workspaceSettings?.kind === "personal"),
       ownEnvironmentId: primaryEnvironmentId,
     });
-  const automatedWaiting = automatedProjects.reduce(
-    (sum, group) =>
-      projectShowsWaitingCount(notificationsFor(group))
-        ? sum + (waitingByProject.get(group.projectKey) ?? 0)
-        : sum,
-    0,
-  );
+  // Set-aside projects the sidebar still lists: the open one, and any project checks
+  // made that waits on the person (a folder-name guess may be real work), so its count
+  // is never hidden. Archived ones never ask for anything here.
+  const setAsideRows = [
+    ...(openSetAside ? [openSetAside] : []),
+    ...automatedProjects
+      .filter(
+        (group) =>
+          group.projectKey !== activeProjectKey &&
+          projectShowsWaitingCount(notificationsFor(group)) &&
+          (waitingByProject.get(group.projectKey) ?? 0) > 0,
+      )
+      .map((group) => ({ group, archived: false })),
+  ];
   const newChatShortcut = shortcutLabelForCommand(keybindings, "chat.new");
   const searchShortcut = shortcutLabelForCommand(keybindings, "commandPalette.toggle");
 
@@ -1041,6 +1055,8 @@ export default function StudioSidebar() {
             </Link>
           </div>
 
+          <QuotaAlerts onOpen={closeMobile} projects={boostProjects} />
+
           <div className="sws-side-section" role="group" aria-labelledby="sws-side-projects">
             <div className="sws-side-heading">
               <h2 id="sws-side-projects">{tx("Projects")}</h2>
@@ -1058,11 +1074,20 @@ export default function StudioSidebar() {
                 </button>
               </Tip>
             </div>
-            {codeProjects.length === 0 &&
-            automatedProjects.length === 0 &&
-            archivedProjects.length === 0 ? (
+            {codeProjects.length === 0 && setAsideRows.length === 0 ? (
               <p className="sws-side-empty">
-                {tx("No projects yet. Create one or open a folder.")}
+                {automatedProjects.length + archivedProjects.length > 0 ? (
+                  <InlineButton
+                    tone="muted"
+                    className="[--inline-button-text-align:start] [--inline-button-white-space:normal]"
+                    data-set-aside-link=""
+                    render={<Link to="/settings/archived" onClick={closeMobile} />}
+                  >
+                    {tx("Your projects are archived. Open them in Settings > Archive.")}
+                  </InlineButton>
+                ) : (
+                  tx("No projects yet. Create one or open a folder.")
+                )}
               </p>
             ) : (
               <SidebarProjectList
@@ -1087,7 +1112,12 @@ export default function StudioSidebar() {
                 onOpen={closeMobile}
                 onMove={moveProjectTo}
                 onStep={(projectKey, direction) => {
-                  const target = stepProjectInSection(listedKeys, elsewhereKeys, projectKey, direction);
+                  const target = stepProjectInSection(
+                    listedKeys,
+                    elsewhereKeys,
+                    projectKey,
+                    direction,
+                  );
                   if (target) moveProjectTo(projectKey, target);
                 }}
                 canStep={(projectKey, direction) =>
@@ -1116,103 +1146,37 @@ export default function StudioSidebar() {
                   : tx("Show {count} more", { count: hiddenProjects })}
               </button>
             ) : null}
-            {automatedProjects.length > 0 ? (
-              <>
-                <Tip
-                  side="right"
-                  label={tx(
-                    "Projects that checks and agents made for themselves. Move one to your projects from its menu.",
-                  )}
-                >
-                  <button
-                    type="button"
-                    className="sws-side-more"
-                    aria-expanded={automatedOpen}
-                    aria-controls="sws-side-automated"
-                    onClick={() => setShowAutomated(!automatedOpen)}
-                  >
-                    <BotIcon aria-hidden className="sws-side-more-icon" />
-                    {automatedOpen
-                      ? tx("Hide automated")
-                      : tx("Automated ({count})", { count: automatedProjects.length })}
-                    {!automatedOpen && automatedWaiting > 0 ? (
-                      <span className="sws-count sws-count-waiting">
-                        {automatedWaiting}
-                        <span className="sr-only">
-                          {" "}
-                          {t("sidebar.needYou", { count: automatedWaiting })}
-                        </span>
-                      </span>
-                    ) : null}
-                  </button>
-                </Tip>
-                {automatedOpen ? (
-                  <ul
-                    id="sws-side-automated"
-                    className="sws-side-list"
-                    aria-label={tx("Automated projects")}
-                  >
-                    {automatedProjects.map((group) => (
-                      <ProjectRow
-                        key={group.projectKey}
-                        group={group}
-                        displayedProject={displayedCheckouts.get(group.projectKey)}
-                        archived={isArchivedGroup(group, scratchRootFor)}
-                        automated
-                        waiting={waitingByProject.get(group.projectKey) ?? 0}
-                        attentionLabel={attentionByProject.get(group.projectKey)?.label}
-                        attentionComplete={attentionByProject.get(group.projectKey)?.complete}
-                        current={group.projectKey === activeProjectKey}
-                        onOpen={closeMobile}
-                        onArchive={(archived) => void setGroupArchived(group, archived)}
-                        onOriginChange={(origin) => void setGroupOrigin(group, origin)}
-                        notifications={notificationsFor(group)}
-                        onNotificationsChange={(level) => void setGroupNotifications(group, level)}
-                        rename={renameFor(group)}
-                        designsProjectId={designsFor(group)}
-                      />
-                    ))}
-                  </ul>
-                ) : null}
-              </>
-            ) : null}
-            {archivedProjects.length > 0 ? (
-              <>
-                <button
-                  type="button"
-                  className="sws-side-more"
-                  aria-expanded={archivedOpen}
-                  aria-controls="sws-side-archived"
-                  onClick={() => setShowArchived(!archivedOpen)}
-                >
-                  <ArchiveIcon aria-hidden className="sws-side-more-icon" />
-                  {archivedOpen
-                    ? tx("Hide archived")
-                    : tx("Archived ({count})", { count: archivedProjects.length })}
-                </button>
-                {archivedOpen ? (
-                  <ul
-                    id="sws-side-archived"
-                    className="sws-side-list"
-                    aria-label={tx("Archived projects")}
-                  >
-                    {archivedProjects.map((group) => (
-                      <ProjectRow
-                        key={group.projectKey}
-                        group={group}
-                        displayedProject={displayedCheckouts.get(group.projectKey)}
-                        archived
-                        waiting={0}
-                        current={group.projectKey === activeProjectKey}
-                        onOpen={closeMobile}
-                        onArchive={(archived) => void setGroupArchived(group, archived)}
-                        rename={renameFor(group)}
-                        designsProjectId={designsFor(group)}
-                      />
-                    ))}
-                  </ul>
-                ) : null}
-              </>
+            {/* Archived and automated projects live in Settings > Archive. The one open
+                now stays here, so the page's project is never missing from the list. */}
+            {setAsideRows.length > 0 ? (
+              <ul className="sws-side-list" aria-label={tx("Open or waiting projects")}>
+                {setAsideRows.map(({ group, archived }) => (
+                  <ProjectRow
+                    key={group.projectKey}
+                    group={group}
+                    displayedProject={displayedCheckouts.get(group.projectKey)}
+                    archived={archived}
+                    automated={!archived}
+                    waiting={archived ? 0 : (waitingByProject.get(group.projectKey) ?? 0)}
+                    attentionLabel={
+                      archived ? undefined : attentionByProject.get(group.projectKey)?.label
+                    }
+                    attentionComplete={
+                      archived ? undefined : attentionByProject.get(group.projectKey)?.complete
+                    }
+                    current={group.projectKey === activeProjectKey}
+                    onOpen={closeMobile}
+                    onArchive={(next) => void setGroupArchived(group, next)}
+                    onOriginChange={
+                      archived ? undefined : (origin) => void setGroupOrigin(group, origin)
+                    }
+                    notifications={notificationsFor(group)}
+                    onNotificationsChange={(level) => void setGroupNotifications(group, level)}
+                    rename={renameFor(group)}
+                    designsProjectId={designsFor(group)}
+                  />
+                ))}
+              </ul>
             ) : null}
           </div>
 
@@ -1220,7 +1184,6 @@ export default function StudioSidebar() {
             className="sws-side-section sws-side-chats"
             role="group"
             aria-labelledby="sws-side-chats"
-            style={{ "--sws-chat-machine-col": `${machineCh}ch` } as CSSProperties}
           >
             {/* Mounted once, apart from the groups: a choice that regroups the list must
                 not take the open menu and the keyboard with it. */}
@@ -1374,13 +1337,16 @@ export default function StudioSidebar() {
                           `${thread.environmentId}:${thread.projectId}`,
                         );
                         const plan = chatPlans.get(key) ?? null;
+                        const rowPlan = chatRowPlan(plan, tone);
+                        const failure =
+                          tone === "failed" ? runFailureReason(thread.runtime?.lastError) : null;
                         const ref = scopeThreadRef(thread.environmentId, thread.id);
                         return (
                           <SidebarChatRow
                             key={key}
                             title={thread.title}
                             tone={tone}
-                            tip={`${title} · ${label.full}${stateDescription}${project ? ` · ${project.displayName}` : ""}${machineNote ? ` · ${machineNote}` : ""} · ${compactAge(sessionStateSince(thread), now)}${plan ? ` · ${describeThreadPlan(plan)}` : ""}`}
+                            tip={`${title}${failure ? ` · ${tx("Run failed")}: ${failure}` : ""} · ${label.full}${stateDescription}${project ? ` · ${project.displayName}` : ""}${machineNote ? ` · ${machineNote}` : ""} · ${compactAge(sessionStateSince(thread), now)}${plan ? ` · ${describeThreadPlan(plan)}` : ""}`}
                             current={currentChatKey === key}
                             icon={
                               <ModelBadgeMark
@@ -1388,6 +1354,11 @@ export default function StudioSidebar() {
                                 instanceId={currentModel.instanceId}
                                 provider={label.provider}
                               />
+                            }
+                            plan={
+                              rowPlan ? (
+                                <PlanProgressChip plan={rowPlan} tip={false} compact />
+                              ) : null
                             }
                             onOpen={() => openChat(thread)}
                             rename={chatRenameFor(thread)}
@@ -1427,6 +1398,18 @@ export default function StudioSidebar() {
                                     {tx("Resolve")}
                                   </MenuItem>
                                 )}
+                                {isStandaloneChat(thread) ? (
+                                  <MenuItem
+                                    onClick={() =>
+                                      requestChatSettings({
+                                        environmentId: thread.environmentId,
+                                        threadRef: ref,
+                                      })
+                                    }
+                                  >
+                                    {tx("Chat settings")}
+                                  </MenuItem>
+                                ) : null}
                                 <MenuSeparator />
                                 <MenuItem
                                   disabled={!threadRuntimeCanArchive(thread.runtime)}
@@ -1442,9 +1425,6 @@ export default function StudioSidebar() {
                               </>
                             }
                           >
-                            {plan ? (
-                              <PlanProgressChip plan={plan} tip={false} showCriteria={false} />
-                            ) : null}
                             <span className="sr-only">
                               , {label.full}
                               {stateDescription}, {tx(THREAD_TONE_LABELS[tone])}
@@ -1454,7 +1434,7 @@ export default function StudioSidebar() {
                               <span className="sws-dot" data-tone={tone} aria-hidden />
                             ) : null}
                             {showMachineColumn ? (
-                              // After the dot, so a dot appearing never moves the column.
+                              // Last, so every row's machine ends at the same edge.
                               <span
                                 className="sws-row-machine machine-mark"
                                 data-machine-color={

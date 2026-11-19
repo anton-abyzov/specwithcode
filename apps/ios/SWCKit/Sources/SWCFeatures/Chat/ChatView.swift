@@ -36,6 +36,7 @@ private struct ChatScreen: View {
   @Environment(AppRouter.self) private var router
   @Environment(StackNavigator.self) private var nav
   @Environment(\.dismiss) private var dismiss
+  @Environment(\.scenePhase) private var scenePhase
   @Environment(\.isNavigationSidebarVisible) private var sidebarVisible
   @Environment(\.isWideLayout) private var wide
   @Environment(\.layoutClass) private var layoutClass
@@ -138,6 +139,12 @@ private struct ChatScreen: View {
         composerFocused = false
         dictation.stop()
         model.closeSession(session)
+        // A sent model only bridges the queue while this chat watches it;
+        // reopened, the thread's own selection is the truth.
+        router.sentModels[target] = nil
+      }
+      .onChange(of: scenePhase) { _, phase in
+        if phase == .background { router.sentModels[target] = nil }
       }
       .task(id: router.pendingComposerFocus) {
         guard router.pendingComposerFocus == target else { return }
@@ -268,6 +275,10 @@ private struct ChatScreen: View {
       if isNearBottom, distance > 200 { isNearBottom = false }
       else if !isNearBottom, distance < 80 { isNearBottom = true }
     }
+    .onChange(of: threadSummary?.modelSelection) {
+      // The thread's model changed: a sent model is now either applied or overruled.
+      router.sentModels[target] = nil
+    }
     .onChange(of: tailSignature) {
       guard isNearBottom else { return }
       withAnimation(.easeOut(duration: 0.2)) { position.scrollTo(edge: .bottom) }
@@ -339,7 +350,9 @@ private struct ChatScreen: View {
   @ViewBuilder private var offlineTranscript: some View {
     let machineId = target.environmentId
     if let machine = model.machine(machineId) {
-      if let other = reachableOrchestrator, !machine.isDisconnected {
+      if let code = machine.deviceApprovalCode, !machine.isDisconnected {
+        approvalTranscript(machine, code: code)
+      } else if let other = reachableOrchestrator, !machine.isDisconnected {
         transcriptPlaceholder(
           title: machine.recoveryTitle,
           message: "This machine is unavailable. \(other.machineLabel)'s coordinator for this project is available now.",
@@ -356,11 +369,126 @@ private struct ChatScreen: View {
             : machine.canRetryConnection ? { model.engine.reconnect(machineId: machineId) } : nil
         )
       }
-      recoveryButton
+      if machine.deviceApprovalCode == nil || machine.isDisconnected { recoveryButton }
     } else {
       transcriptPlaceholder(title: "Machine unavailable", message: "Choose a machine or pair again.")
       WeaveButton("Machines", kind: .secondary) { nav.push(.machines) }
     }
+  }
+
+  /// One steady view while machines wait for their owner to allow this phone:
+  /// a row per waiting machine with its latest code, and no Reconnect, since
+  /// the phone keeps asking by itself (1408; the list and phone line are 1406).
+  private func approvalTranscript(_ machine: MachineSummary, code: String) -> some View {
+    let waiting = model.machinesAwaitingApproval(first: machine.id)
+    return VStack(spacing: WeaveSpacing.s3) {
+      Text(machine.approvalTitle)
+        .weaveFont(.title)
+        .foregroundStyle(Color.weave.ink)
+        .multilineTextAlignment(.center)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityAddTraits(.isHeader)
+      approvalRow(machine, code: code)
+      let others = waiting.filter { $0.id != machine.id }
+      if !others.isEmpty { approvalOthers(others) }
+      HStack(spacing: WeaveSpacing.s2) {
+        ProgressView().controlSize(.small)
+        Text(machine.approvalProgress)
+          .weaveFont(.caption)
+          .foregroundStyle(Color.weave.muted)
+          .multilineTextAlignment(.center)
+      }
+      if let line = model.thisPhoneLine {
+        Text(line)
+          .weaveFont(.caption)
+          .foregroundStyle(Color.weave.muted)
+          .accessibilityIdentifier("chat.approval-this-phone")
+      }
+      if let other = reachableOrchestrator {
+        WeaveButton("View on \(other.machineLabel)", kind: .secondary) { showOrchestrator(other.ref) }
+          .padding(.top, WeaveSpacing.s2)
+      }
+      recoveryButton
+    }
+    .frame(maxWidth: .infinity)
+    .padding(.horizontal, WeaveSpacing.s6)
+    .padding(.top, WeaveSpacing.s8 * 3)
+    .accessibilityIdentifier("chat.approval-wait")
+  }
+
+  /// Other machines waiting for this phone, smaller than this chat's code so
+  /// it is clear which code goes where: "linux-mini  BWQ35F" per row (1406).
+  private func approvalOthers(_ others: [MachineSummary]) -> some View {
+    VStack(spacing: 0) {
+      Text(MachineSummary.approvalOthersHeader)
+        .weaveFont(.caption)
+        .foregroundStyle(Color.weave.muted)
+        .multilineTextAlignment(.center)
+        .fixedSize(horizontal: false, vertical: true)
+      ForEach(others) { other in
+        if let code = other.deviceApprovalCode {
+          Button { WeaveClipboard.copyAnnounced(code) } label: {
+            VStack(spacing: 2) {
+              HStack(spacing: WeaveSpacing.s2) {
+                Text(other.displayName)
+                  .weaveFont(.callout)
+                  .foregroundStyle(Color.weave.muted)
+                Text(code)
+                  .font(Font.weave(.headline).monospaced())
+                  .tracking(2)
+                  .foregroundStyle(other.approvalReachable ? Color.weave.ink : Color.weave.muted)
+                Image(systemName: "doc.on.doc")
+                  .font(.weave(.caption))
+                  .foregroundStyle(Color.weave.muted)
+                  .accessibilityHidden(true)
+              }
+              if !other.approvalReachable {
+                Text(other.approvalUnreachableNote)
+                  .weaveFont(.footnote)
+                  .foregroundStyle(Color.weave.muted)
+              }
+            }
+            .frame(maxWidth: .infinity, minHeight: WeaveSize.minTap)
+            .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .accessibilityLabel("\(other.displayName) code \(code.map(String.init).joined(separator: " ")). Copy\(other.approvalReachable ? "" : ". \(other.approvalUnreachableNote)")")
+          .accessibilityIdentifier("chat.approval-code.\(other.id)")
+        }
+      }
+    }
+    .padding(.top, WeaveSpacing.s2)
+  }
+
+  /// "Open SpecWithCode on m1 and type this code:" over the code, which copies on tap.
+  private func approvalRow(_ machine: MachineSummary, code: String) -> some View {
+    VStack(spacing: WeaveSpacing.s1) {
+      Text(machine.approvalInstruction)
+        .weaveFont(.callout)
+        .foregroundStyle(Color.weave.muted)
+        .multilineTextAlignment(.center)
+        .fixedSize(horizontal: false, vertical: true)
+      Button { WeaveClipboard.copyAnnounced(code) } label: {
+        HStack(spacing: WeaveSpacing.s2) {
+          Text(code)
+            .font(Font.weave(.display).monospaced())
+            .tracking(4)
+            .foregroundStyle(Color.weave.ink)
+          Image(systemName: "doc.on.doc")
+            .foregroundStyle(Color.weave.muted)
+            .accessibilityHidden(true)
+        }
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel("\(machine.displayName) code \(code.map(String.init).joined(separator: " ")). Copy")
+      .accessibilityIdentifier("chat.approval-code.\(machine.id)")
+      if !machine.approvalReachable {
+        Text(machine.approvalUnreachableNote)
+          .weaveFont(.caption)
+          .foregroundStyle(Color.weave.muted)
+      }
+    }
+    .padding(.vertical, WeaveSpacing.s1)
   }
 
   private var recoveryButton: some View {
@@ -369,6 +497,12 @@ private struct ChatScreen: View {
     }
     .frame(maxWidth: .infinity)
     .accessibilityIdentifier("chat.connection-options-body")
+  }
+
+  /// This chat's machine while it waits for its owner to allow this phone.
+  private var approvalMachine: MachineSummary? {
+    guard let machine = model.machine(target.environmentId), machine.deviceApprovalCode != nil, !machine.isDisconnected, !machine.status.isOnline else { return nil }
+    return machine
   }
 
   /// Another machine's copy of this project whose orchestrator is reachable.
@@ -838,11 +972,14 @@ private struct ChatScreen: View {
           }
           if showsModelOptions, let thread = threadSummary {
             ModelOptionsMenu(
-              model: thread.identity.model,
+              model: chosenModelName ?? thread.identity.model,
               traits: chosenTraits,
               runtimeMode: thread.runtimeMode,
-              hasPendingChanges: !(router.optionDrafts[target] ?? []).isEmpty,
+              models: thread.modelChoices,
+              selectedModelId: chosenModelId,
+              hasPendingChanges: !(router.optionDrafts[target] ?? []).isEmpty || router.modelDrafts[target] != nil,
               onSet: setOption,
+              onModel: setModel,
               onAccess: setAccess
             )
             .layoutPriority(-1)
@@ -887,7 +1024,7 @@ private struct ChatScreen: View {
         text: draft,
         isRunning: session.isRunning && !session.isStale,
         placeholder: session.isRunning ? nil : placeholder,
-        blockedReason: session.machineOnline ? (session.sendBlockedReason ?? (photosPending ? "Preparing photos…" : nil)) : session.machineSettling ? "Connecting…" : "Machine unavailable. Your draft is kept.",
+        blockedReason: session.machineOnline ? (session.sendBlockedReason ?? (photosPending ? "Preparing photos…" : nil)) : session.machineSettling ? "Connecting…" : approvalMachine?.approvalComposerLine ?? "Machine unavailable. Your draft is kept.",
         hasAttachments: !pendingImages.isEmpty,
         // Set only from a thread's runs, so chats without runs offer none.
         suggestion: session.isStale ? nil : session.promptSuggestion,
@@ -965,6 +1102,14 @@ private struct ChatScreen: View {
     if !session.machineOnline {
       // The transcript itself says the machine is offline and offers Reconnect.
       if showsOfflineTranscript { return nil }
+      if let machine = approvalMachine, let code = machine.deviceApprovalCode {
+        // One action fits the banner: the way to keep working wins; the
+        // toolbar's laptop button still opens Connection options.
+        if let other = reachableOrchestrator {
+          return ConnectionNotice(message: "\(machine.approvalBanner(code: code)) \(other.machineLabel)'s coordinator is available.", kind: .info, actionTitle: "View on \(other.machineLabel)", action: { showOrchestrator(other.ref) })
+        }
+        return ConnectionNotice(message: machine.approvalBanner(code: code), kind: .info, actionTitle: "Connection options", action: { nav.push(.machine(machineId)) })
+      }
       if let machine = model.machine(machineId), machine.isDisconnected || !machine.canRetryConnection {
         return ConnectionNotice(message: machine.recoveryTitle, kind: .info, actionTitle: "Connection options", action: { nav.push(.machine(machineId)) })
       }
@@ -1072,21 +1217,84 @@ private struct ChatScreen: View {
   /// Threads only: a coordinator's messages go through its own send, which takes no model.
   private var showsModelOptions: Bool {
     guard let thread = threadSummary, session.sendBlockedReason == nil else { return false }
-    return thread.traits?.isEmpty == false || thread.runtimeMode != nil
+    return thread.traits?.isEmpty == false || thread.runtimeMode != nil || thread.modelChoices.count > 1
   }
 
-  /// The thread's options with the ones chosen here laid over them.
+  /// A model sent from here that the thread does not run on yet: a queued
+  /// message switches the thread only when its run starts. Later messages keep
+  /// naming it until the thread's own selection catches up.
+  private var sentModel: ModelSelection? {
+    guard let sent = router.sentModels[target],
+          ModelChoice.sameSelection(threadSummary?.modelSelection, sent.threadWas),
+          !Self.runStarted(threadSummary?.latestRunStartedAt, after: sent.runStartedBefore)
+    else { return nil }
+    return sent.selection
+  }
+
+  /// A run started after the send. A queued run counts as latest before it
+  /// starts, with no start time, so only a later start time spends it.
+  static func runStarted(_ latest: Date?, after before: Date?) -> Bool {
+    guard let latest else { return false }
+    guard let before else { return true }
+    return latest > before
+  }
+
+  /// The selection the next message builds on, without this composer's
+  /// unsent pick: a sent model still on its way, else the thread's own.
+  private var baseSelection: ModelSelection? { sentModel ?? threadSummary?.modelSelection }
+
+  /// The model the next message runs on: the unsent pick, else the base.
+  private var nextSelection: ModelSelection? { router.modelDrafts[target] ?? baseSelection }
+
+  private func choice(for selection: ModelSelection?) -> ModelChoice? {
+    guard let selection else { return nil }
+    return threadSummary?.modelChoices.first { $0.matches(selection) }
+  }
+
+  /// The options of the model the next message runs on. A picked or sent
+  /// model shows its own (from its defaults); the thread's model shows the
+  /// thread's values.
+  private var baseTraits: ModelTraits? {
+    if router.modelDrafts[target] == nil, sentModel == nil { return threadSummary?.traits }
+    guard let selection = nextSelection else { return nil }
+    return choice(for: selection)?.traits(for: selection)
+  }
+
+  /// Those options with the ones chosen here laid over them.
   private var chosenTraits: ModelTraits? {
-    guard let traits = threadSummary?.traits else { return nil }
+    guard let traits = baseTraits else { return nil }
     return (router.optionDrafts[target] ?? []).reduce(traits) { $0.setting($1.id, to: $1.value) }
   }
+
+  /// The model the chip names: the one the next message runs on. The
+  /// thread's identity is the fallback; it may name a running fallback model.
+  private var chosenModelName: String? {
+    choice(for: nextSelection)?.name ?? threadSummary?.identity.model
+  }
+
+  /// The choice the menu checks.
+  private var chosenModelId: String? { choice(for: nextSelection)?.id }
 
   private func setOption(_ id: String, _ value: ModelOption.Value) {
     var chosen = router.optionDrafts[target] ?? []
     chosen.removeAll { $0.id == id }
-    // Back to the thread's own value: nothing left to send.
-    if threadSummary?.traits?.selection.option(id) != value { chosen.append(ModelOption(id: id, value: value)) }
+    // Back to the model's own value: nothing left to send.
+    if baseTraits?.selection.option(id) != value { chosen.append(ModelOption(id: id, value: value)) }
     router.optionDrafts[target] = chosen.isEmpty ? nil : chosen
+  }
+
+  private func setModel(_ choice: ModelChoice) {
+    guard choice.id != chosenModelId else { return }
+    // Options belong to a model; a different model starts from its own.
+    router.optionDrafts[target] = nil
+    if let base = baseSelection, choice.matches(base) {
+      router.modelDrafts[target] = nil
+    } else if let own = threadSummary?.modelSelection, choice.matches(own) {
+      // Back to the thread's own model while a sent one is on its way: keep its options.
+      router.modelDrafts[target] = own
+    } else {
+      router.modelDrafts[target] = choice.selection
+    }
   }
 
   private func setAccess(_ mode: RuntimeModeChoice) {
@@ -1110,8 +1318,26 @@ private struct ChatScreen: View {
     router.drafts[target] = ""
     router.attachmentDrafts[target] = nil
     let chosen = router.optionDrafts[target] ?? []
-    let selection = chosen.isEmpty ? nil : threadSummary?.traits.map { ModelTraits.merging($0.selection, with: chosen) }
+    let picked = router.modelDrafts[target]
+    // A pick or a sent model still on its way is sent whole, whether or not
+    // the catalog lists it right now; otherwise only changed options go.
+    let modelBase = picked ?? sentModel
+    let selection: ModelSelection? = if let modelBase {
+      ModelTraits.merging(modelBase, with: chosen)
+    } else {
+      chosen.isEmpty ? nil : threadSummary?.traits.map { ModelTraits.merging($0.selection, with: chosen) }
+    }
+    if sentModel == nil { router.sentModels[target] = nil }
+    let previousSent = router.sentModels[target]
+    var sent: SentModel?
+    if modelBase != nil, let selection {
+      sent = SentModel(selection: selection, threadWas: threadSummary?.modelSelection, runStartedBefore: threadSummary?.latestRunStartedAt)
+      router.sentModels[target] = sent
+    }
     router.optionDrafts[target] = nil
+    router.modelDrafts[target] = nil
+    let sendId = UUID()
+    router.lastSendIds[target] = sendId
     session.lastError = nil
     isNearBottom = true
     let target = target
@@ -1119,7 +1345,13 @@ private struct ChatScreen: View {
       do {
         try await model.engine.send(text, images: images, modelSelection: selection, to: target)
       } catch {
-        if !chosen.isEmpty, router.optionDrafts[target] == nil { router.optionDrafts[target] = chosen }
+        // Only this send's own record is undone; a later send's stays.
+        if let sent, router.sentModels[target]?.id == sent.id { router.sentModels[target] = previousSent }
+        // A pick or options made while the send ran, or a later send, win over the failed ones.
+        if router.lastSendIds[target] == sendId {
+          if router.modelDrafts[target] == nil { router.modelDrafts[target] = picked }
+          if router.optionDrafts[target] == nil, !chosen.isEmpty, router.modelDrafts[target] == picked { router.optionDrafts[target] = chosen }
+        }
         // Whatever was added while the upload ran stays, after what failed to send.
         let added = router.drafts[target] ?? ""
         router.drafts[target] = added.isEmpty ? original : "\(original)\n\(added)"

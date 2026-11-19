@@ -38,7 +38,20 @@ export interface RestartToUpdateOptions {
   readonly serviceRequestedVersion?: string | null;
   /** The app also installs a downloaded update when it quits. */
   readonly installOnQuit?: boolean;
+  /**
+   * This desktop app's "Install automatically" switch, once read. False means
+   * the update agent keeps a downloaded service release on disk and never
+   * installs it on its own; null or absent means not known.
+   */
+  readonly installAutomatically?: boolean | null;
 }
+
+/** Fired on `window` after Settings saves the update switches, so open views read them again. */
+export const UPDATE_PREFERENCES_CHANGED = "specwithcode:update-preferences-changed";
+
+/** Said beside "Update now" when nothing but that button will install the downloaded service update. */
+export const SERVICE_UPDATE_WAITS_FOR_BUTTON =
+  "Install automatically is off on this machine, so it stays downloaded until you press Update now.";
 
 /**
  * The app has a downloaded update. A background check keeps the download
@@ -160,6 +173,36 @@ export function isServiceRequestExpired(message: string | null | undefined): boo
 }
 
 /**
+ * The agent's words for a failed install, as update_agent.py (complete_install)
+ * writes them for the pass that failed, and as update_agent_recovery.py
+ * (automatic_retry) writes them on every later pass: from then on it installs
+ * no release on its own until a person asks. An install request gets past that
+ * hold. Update now asks for one with the service's work held, so nothing (a
+ * routine, say) rewrites the rows the helper compares while it installs.
+ */
+const FAILED_INSTALL_HELD =
+  /^SpecWithCode (\S+) did not install automatically; choose Install now to retry\.$/;
+const FAILED_INSTALL =
+  /^SpecWithCode \S+ did not install; SpecWithCode stayed on \S+\. See the update receipt\.$/;
+
+/** The agent failed to install a release and waits for a person to ask again. */
+export function isFailedInstallHeld(message: string | null | undefined): boolean {
+  return (
+    typeof message === "string" &&
+    (FAILED_INSTALL_HELD.test(message) || FAILED_INSTALL.test(message))
+  );
+}
+
+/**
+ * The held failure as the sidebar shows it beside Update now: the agent's
+ * "choose Install now to retry" names the button Settings shows, not this one.
+ */
+function failedInstallText(message: string): string {
+  const held = FAILED_INSTALL_HELD.exec(message);
+  return held === null ? message : `SpecWithCode ${held[1]} did not install automatically.`;
+}
+
+/**
  * The error is the desktop's own: it could not start the update agent (or
  * save the request), and the agent has written nothing since. The desktop
  * this renderer ships with flags every state; one without the flag is none.
@@ -171,9 +214,10 @@ export function isAgentStartFailure(state: StudioServiceUpdateState): boolean {
 /**
  * The agent's last pass was refused for a fault that an Update now request
  * gets past (see RESTART_NEEDED_REFUSALS), or let a request lapse before it
- * could start (its message says to choose Update now again), and the agent has
- * a release newer than the service runs verified on disk: "Update now"
- * installs it, with the agent's words shown beside it. Any other failure
+ * could start (its message says to choose Update now again), or failed an
+ * install and holds later ones until asked (isFailedInstallHeld), and the
+ * agent has a release newer than the service runs verified on disk: "Update
+ * now" installs it, with the agent's words shown beside it. Any other failure
  * offers only a check: one a forced request cannot get past (a failed check, a
  * rejected download, which the agent does not fetch again before its next
  * check, or the desktop's own failure to start the agent), and one with
@@ -186,7 +230,9 @@ export function isServiceErrorWithRelease(
   return (
     state?.status === "error" &&
     !isAgentStartFailure(state) &&
-    (RESTART_NEEDED_REFUSALS.has(message) || isServiceRequestExpired(message)) &&
+    (RESTART_NEEDED_REFUSALS.has(message) ||
+      isServiceRequestExpired(message) ||
+      isFailedInstallHeld(message)) &&
     isOlderRelease(state.installedVersion, state.downloadedVersion)
   );
 }
@@ -308,7 +354,7 @@ export function getRestartToUpdateView(
   // The agent's own words for the failure Update now gets past stay beside the action.
   const serviceFailure =
     service && isServiceErrorWithRelease(serviceState)
-      ? serviceRefusalText(serviceState.message).replace(/\.?$/, ".")
+      ? failedInstallText(serviceRefusalText(serviceState.message)).replace(/\.?$/, ".")
       : null;
   // Nothing is on disk yet when only the running app is ahead: say what runs.
   const what =
@@ -316,11 +362,20 @@ export function getRestartToUpdateView(
       ? `SpecWithCode ${version ?? "update"} is downloaded.`
       : `The SpecWithCode service on this machine still runs ${serviceState.installedVersion}; this installs ${version ?? "the update"}.`;
 
+  // The agent stops at "downloaded" only while automatic installs are off;
+  // a release it is waiting to install says "waiting-for-quiet" instead.
+  const waitsForButton =
+    service &&
+    ready &&
+    serviceState?.status === "downloaded" &&
+    options.installAutomatically === false;
+
   const parts = service
     ? [
         failure ? `The last install failed: ${failure}` : null,
         serviceFailure,
         what,
+        waitsForButton ? SERVICE_UPDATE_WAITS_FOR_BUTTON : null,
         SERVICE_UPDATE_NOW_DESCRIPTION,
         app ? "The service updates first, then the app restarts on its own." : null,
       ]
@@ -341,6 +396,38 @@ export function getRestartToUpdateView(
     label: service ? "Update now" : installFailed ? "Retry update" : "Restart to update",
     description: parts.filter(Boolean).join(" "),
   };
+}
+
+/**
+ * Why the app's install waits for the service, from what main's activation
+ * gate read of the service's agent: what the agent is doing, or the reason it
+ * cannot update, rather than a promise that the service will catch up.
+ */
+function describeServiceBehind(state: DesktopUpdateActionResult["state"]): string {
+  const gate = state.swapGate;
+  const target = gate?.targetVersion ?? state.downloadedVersion ?? "the update";
+  const runs = gate?.serviceVersion ? ` It runs ${gate.serviceVersion} now.` : "";
+  const message = gate?.serviceMessage?.trim() || null;
+  const status = gate?.serviceStatus ?? null;
+  const next =
+    (status === "error" || status === "manual-required") && message !== null
+      ? `It cannot update yet: ${failedInstallText(serviceRefusalText(message)).replace(/\.?$/, ".")} Settings > General shows what it needs.`
+      : status === "waiting-for-quiet"
+        ? "It installs once running work finishes."
+        : status === "installing"
+          ? "It is installing now."
+          : status === "available" || status === "downloading" || status === "starting"
+            ? "It is downloading the update."
+            : status === "downloaded"
+              ? "It has the update and installs it when you press Update now."
+              : null;
+  return [
+    `SpecWithCode ${target} installs after the SpecWithCode service on this machine updates to it.${runs}`,
+    next,
+    "You can keep working on the current version.",
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 /**
@@ -365,7 +452,7 @@ export function describeInstallOutcome(
     case "disabled":
       return "Updates are off in this build.";
     case "service-behind":
-      return `SpecWithCode ${result.state.swapGate?.targetVersion ?? result.state.downloadedVersion ?? "the update"} installs after the SpecWithCode service on this machine updates to it. You can keep working on the current version.`;
+      return describeServiceBehind(result.state);
     default:
       return result.state.status === "downloading"
         ? `SpecWithCode is still downloading ${result.state.availableVersion ?? "the update"}${result.state.downloadPercent === null ? "" : ` (${Math.round(result.state.downloadPercent)}%)`}. Restart to update once it finishes.`

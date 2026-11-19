@@ -16,8 +16,10 @@ import {
   projectSkillProviderBadges,
   projectSkillSourceLinks,
   projectSkillStatusBadge,
+  projectSkillTierLabel,
   projectSkillVersions,
   pickSkillsMember,
+  withSelectedFacetOptions,
 } from "./ProjectSkillsSettings.logic";
 
 function presence(
@@ -211,6 +213,45 @@ describe("agent, level and tier filters", () => {
       ["No tier", 1],
       ["Not from vskill", 2],
     ]);
+  });
+
+  it("keeps a selected value no row has as a selected chip with count 0", () => {
+    const codexOnly = projectSkillFacets([mixed[1]!]);
+    const agents = withSelectedFacetOptions(codexOnly.providers, ["claudeAgent"], (value) =>
+      value === "claudeAgent" ? "Claude" : value,
+    );
+    expect(agents.map((option) => [option.value, option.label, option.count])).toEqual([
+      ["codex", "Codex", 1],
+      ["claudeAgent", "Claude", 0],
+    ]);
+    // A value with no known label shows as itself; a value already offered is not repeated.
+    expect(
+      withSelectedFacetOptions(codexOnly.providers, ["codex", "mystery"], (value) => value).map(
+        (option) => [option.label, option.count],
+      ),
+    ).toEqual([
+      ["Codex", 1],
+      ["mystery", 0],
+    ]);
+    expect(
+      withSelectedFacetOptions(codexOnly.levels, ["plugin"], projectSkillLevelLabel).map(
+        (option) => [option.label, option.count],
+      ),
+    ).toEqual([
+      ["Project", 1],
+      ["Plugin", 0],
+    ]);
+    expect(
+      withSelectedFacetOptions(codexOnly.tiers, ["VERIFIED"], projectSkillTierLabel).map(
+        (option) => [option.label, option.count],
+      ),
+    ).toEqual([
+      ["Not from vskill", 1],
+      ["Verified", 0],
+    ]);
+    expect(withSelectedFacetOptions(codexOnly.tiers, [], projectSkillTierLabel)).toBe(
+      codexOnly.tiers,
+    );
   });
 });
 

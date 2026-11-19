@@ -32,6 +32,7 @@ import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import { repointShellLaunchersAfterServiceUpdate } from "./cli/shellLauncherRepoint.ts";
 import { withPinnedRuntimeInstallLock } from "./cloud/pinnedRuntime.ts";
 import { pruneRuntimeVersionsLogged } from "./cloud/runtimeVersionRetention.ts";
+import { keepTerminalCommandsReachable } from "./machineTools/terminalPathRuntime.ts";
 import { flushCompileCache } from "./compileCache.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -835,6 +836,13 @@ const make = (options?: StartupOptions) =>
             reason: updateOutcome?.status === "committed" ? "after-update" : "startup",
           }),
         ).pipe(Effect.forkScoped);
+      }
+      // The tools this machine runs agents with also work in a new Terminal window.
+      if (serverConfig.mode === "desktop" || launcher.managed) {
+        yield* keepTerminalCommandsReachable(serverConfig.baseDir).pipe(
+          Effect.provideService(ServerSettings.ServerSettingsService, serverSettings),
+          Effect.forkScoped,
+        );
       }
 
       yield* Effect.logDebug("startup phase: publishing welcome event", {

@@ -25,12 +25,14 @@ import {
 import {
   ScheduledTaskBrief,
   ScheduledTaskCheck,
+  ScheduledTaskDefinitionHash,
   ScheduledTaskRunStatus,
   ScheduledTaskSchedule,
   ScheduledTaskUpsertSchedule,
 } from "./scheduledTask.ts";
 import { HandoffMachineThreadOutcome } from "./handoffMode.ts";
 import { ProviderModelTier } from "./adversarialReview.ts";
+import { AdvisorConsultInput, AdvisorConsultResult } from "./advisor.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import {
   LearnedModelPreference,
@@ -363,7 +365,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   ),
   timeoutMs: Schema.optional(Schema.Finite).annotate({
     description:
-      "Wait budget for mode=wait only. Default 10 minutes. Elapsing it returns waitTimedOut=true on that call and does not cancel the child.",
+      "Wait budget for mode=wait only. Default 4 minutes. Elapsing it returns waitTimedOut=true on that call and does not cancel the child.",
   }),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
   runtimeMode: Schema.optional(OrchestratorMcpRuntimeMode),
@@ -377,6 +379,12 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   increment: Schema.optional(OrchestratorMcpIncrementRef),
 });
 export type OrchestratorMcpDelegateTaskInput = typeof OrchestratorMcpDelegateTaskInput.Type;
+
+/** The `advisor` tool: a stronger model reviews the calling thread's work so far. */
+export const OrchestratorMcpAdvisorInput = AdvisorConsultInput;
+export type OrchestratorMcpAdvisorInput = typeof OrchestratorMcpAdvisorInput.Type;
+export const OrchestratorMcpAdvisorResult = AdvisorConsultResult;
+export type OrchestratorMcpAdvisorResult = typeof OrchestratorMcpAdvisorResult.Type;
 
 const OrchestratorMcpThreadLink = Schema.String.annotate({
   description:
@@ -448,6 +456,18 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   ),
   summary: Schema.NullOr(Schema.String),
   resultContextTransferId: Schema.NullOr(ContextTransferId),
+  openQuestions: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        requestId: RuntimeRequestId,
+        header: Schema.String,
+        question: Schema.String,
+      }),
+    ).annotate({
+      description:
+        "Questions your subagent asked with ask_user that are still open. They are yours to settle, not the user's: the app stops showing them as waiting on the user once you finish a turn after the child ended. Answer one with studio_pending_request_respond (or studio_thread_send with answersRequestIds), or put a decision only the user can make in your own report's Blockers. Omitted when none are open, and always for a project coordinator: its workers' questions are the user's.",
+    }),
+  ),
   waitTimedOut: Schema.Boolean.annotate({
     description:
       "True only on that mode=wait call when timeoutMs elapsed. The timeout does not cancel the child. Later task_status reads return false and use status for liveness.",
@@ -671,7 +691,10 @@ export const OrchestratorMcpThreadReadInput = Schema.Struct({
   itemId: Schema.optional(TurnItemId),
   textOffset: Schema.optional(NonNegativeInt),
   view: Schema.optional(Schema.Literals(["messages", "activity"])),
-  afterPosition: Schema.optional(NonNegativeInt),
+  /** Reads forward from after this position; -1 starts at the oldest item. */
+  afterPosition: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(-1))),
+  /** Reads back: the newest items before this position (a result's earlierPosition). Without either cursor a read ends at the newest item. */
+  beforePosition: Schema.optional(NonNegativeInt),
   limit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(100))),
   runLimit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(50))),
   maxCharsPerItem: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(50_000))),
@@ -759,6 +782,10 @@ export const OrchestratorMcpThreadReadResult = Schema.Struct({
   items: Schema.Array(OrchestratorMcpThreadTimelineItem),
   nextPosition: Schema.NullOr(NonNegativeInt),
   hasMore: Schema.Boolean,
+  /** A backward read's older items left out to fit the result size limit; earlierPosition reaches them. A forward read reports them through hasMore instead. */
+  omittedItems: Schema.optional(PositiveInt),
+  /** A backward read continues with beforePosition set to this; null or omitted when nothing is older. */
+  earlierPosition: Schema.optional(Schema.NullOr(NonNegativeInt)),
 });
 export type OrchestratorMcpThreadReadResult = typeof OrchestratorMcpThreadReadResult.Type;
 
@@ -1031,6 +1058,11 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
        * Bedrock, Gemini/Vertex). Older machines omit it.
        */
       paid: Schema.optional(Schema.Boolean),
+      /**
+       * True when this machine never starts the model unasked: it is billed per
+       * token, or nothing says how its sign-in is billed. Older machines omit it.
+       */
+      held: Schema.optional(Schema.Boolean),
     }),
   ),
   canRunChildTask: Schema.Boolean,
@@ -1040,8 +1072,20 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
   usage: Schema.optional(OrchestratorMcpProviderUsage),
   /** Whether the caller's work grant lets it run this provider. Omitted without a grant. */
   allowedByGrant: Schema.optional(Schema.Boolean),
+  /** Every model this instance has, when models lists fewer to fit the result size limit. */
+  modelCount: Schema.optional(NonNegativeInt),
 });
 export type OrchestratorMcpProviderCapability = typeof OrchestratorMcpProviderCapability.Type;
+
+export const OrchestratorMcpCapabilitiesInput = Schema.Struct({
+  providerInstanceId: Schema.optional(
+    ProviderInstanceId.annotate({ description: "One instance in full, with model options." }),
+  ),
+  modelOffset: Schema.optional(
+    NonNegativeInt.annotate({ description: "With providerInstanceId: nextModelOffset." }),
+  ),
+});
+export type OrchestratorMcpCapabilitiesInput = typeof OrchestratorMcpCapabilitiesInput.Type;
 
 export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   /** The calling thread, or null when the caller is not a Studio thread. */
@@ -1068,12 +1112,28 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
     scheduledTasks: Schema.Boolean,
     /** studio_project_create takes parentPath and github. Older machines omit it. */
     projectCreateOptions: Schema.optional(Schema.Boolean),
+    /** studio_project_create takes specweave (1396). Older machines omit it. */
+    projectCreateSpecweave: Schema.optional(Schema.Boolean),
+    /** A link leaves both coordinators active (1390). Older machines omit it. */
+    equalCoordinators: Schema.optional(Schema.Boolean),
     maxBatchThreads: Schema.Number,
     /** Most unfinished delegate_task children one parent run may hold at once. */
     maxLiveChildTasks: Schema.optional(Schema.Number),
     /** Most delegate_task levels below the thread that started the chain. */
     maxDelegationDepth: Schema.optional(Schema.Number),
   }),
+  /**
+   * What this result left out to fit the result size limit: "compact" lists
+   * model ids without options, "instance" is one instance in full. Older
+   * machines omit it and list everything.
+   */
+  detail: Schema.optional(
+    Schema.Struct({
+      view: Schema.Literals(["compact", "instance"]),
+      note: Schema.optional(Schema.String),
+      nextModelOffset: Schema.optional(Schema.NullOr(NonNegativeInt)),
+    }),
+  ),
 });
 export type OrchestratorMcpCapabilitiesResult = typeof OrchestratorMcpCapabilitiesResult.Type;
 
@@ -1112,6 +1172,8 @@ export const OrchestratorMcpMachineProvider = Schema.Struct({
   allowedByGrant: Schema.optional(Schema.Boolean),
   /** Models billed per token (by their router, API or the instance's sign-in); never a limit handoff target. */
   paidModels: Schema.optional(Schema.Array(Schema.String)),
+  /** Models that machine never starts unasked: billed per token, or billing unknown. */
+  heldModels: Schema.optional(Schema.Array(Schema.String)),
 });
 export type OrchestratorMcpMachineProvider = typeof OrchestratorMcpMachineProvider.Type;
 
@@ -1133,6 +1195,8 @@ export const OrchestratorMcpMachine = Schema.Struct({
   reachable: Schema.optional(Schema.Boolean),
   /** Why this machine's Team rules refuse working with that one. */
   teamRulesRefused: Schema.optional(Schema.String),
+  /** It keeps a review thread's reviewer lock when one is handed to it; absent when it did not say so. */
+  handoffReviewLock: Schema.optional(Schema.Boolean),
   /** Its operating system and iOS Simulator support, when it answered and reported them. */
   platform: Schema.optional(OrchestratorMcpMachinePlatform),
 });
@@ -1247,6 +1311,10 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   ownThread: Schema.optional(Schema.Boolean),
   /** Present only when runs are pinned to one model instead of following the thread. */
   pinnedModel: Schema.optional(ModelSelection),
+  definitionHash: Schema.optional(ScheduledTaskDefinitionHash).annotate({
+    description:
+      "Present when another machine runs this routine. Pass it back to update_scheduled_task or delete_scheduled_task: a change made on a definition that has changed since is refused.",
+  }),
 });
 export type OrchestratorMcpScheduledTask = typeof OrchestratorMcpScheduledTask.Type;
 
@@ -1287,6 +1355,10 @@ export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
   modelSelection: Schema.optional(Schema.NullOr(ModelSelection)).annotate({
     description:
       "Pin runs to this model, or null to unpin so runs follow the thread's next-turn model.",
+  }),
+  definitionHash: Schema.optional(ScheduledTaskDefinitionHash).annotate({
+    description:
+      "The routine's definitionHash as you last read it. Required when the routine has one: another machine runs it and makes the change only on that definition.",
   }),
 });
 export type OrchestratorMcpUpdateScheduledTaskInput =
@@ -1358,6 +1430,10 @@ export const OrchestratorMcpRequestAccessInput = Schema.Struct({
       Schema.isMaxLength(4),
     ),
   ).annotate({ description: "Simulators or emulators to drive with the device_* tools." }),
+  permission: Schema.optional(Schema.Literals(["full-disk-access"])).annotate({
+    description:
+      "A macOS privacy permission, asked for alone: 'full-disk-access' when a read of another app's data (Chrome or Safari profiles, Mail, Messages, ~/Library/Containers) failed with 'Operation not permitted'. The card tells the user what it unlocks and that every agent on this machine gets it; it resolves allowed once System Settings grants it.",
+  }),
   timeoutMs: Schema.optional(
     Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 60 * 60 * 1_000 })),
   ).annotate({ description: "How long to wait for the user. Default 10 minutes." }),
@@ -1369,9 +1445,15 @@ export const OrchestratorMcpRequestAccessInput = Schema.Struct({
 export type OrchestratorMcpRequestAccessInput = typeof OrchestratorMcpRequestAccessInput.Type;
 
 export const OrchestratorMcpRequestAccessResult = Schema.Struct({
-  status: Schema.Literals(["allowed", "denied", "cancelled", "timed_out"]).annotate({
+  status: Schema.Literals([
+    "allowed",
+    "denied",
+    "cancelled",
+    "timed_out",
+    "not_applicable",
+  ]).annotate({
     description:
-      "allowed: use what you asked for. denied: the user said no; do not ask again for the same thing in this turn. cancelled: the request ended with the run. timed_out: the user did not answer in time.",
+      "allowed: use what you asked for. denied: the user said no; do not ask again for the same thing in this turn. cancelled: the request ended with the run. timed_out: the user did not answer in time. not_applicable: nothing to grant on this machine (a permission off macOS); the failure has another cause.",
   }),
   scope: Schema.optional(Schema.Literals(["thread", "machine"])).annotate({
     description: "How long an Allow lasts: this thread, or every thread on this machine.",
@@ -1434,6 +1516,10 @@ export type OrchestratorMcpAskUserResult = typeof OrchestratorMcpAskUserResult.T
 
 export const OrchestratorMcpDeleteScheduledTaskInput = Schema.Struct({
   scheduledTaskId: ScheduledTaskId,
+  definitionHash: Schema.optional(ScheduledTaskDefinitionHash).annotate({
+    description:
+      "The routine's definitionHash as you last read it. Required when the routine has one: another machine runs it and makes the change only on that definition.",
+  }),
 });
 export type OrchestratorMcpDeleteScheduledTaskInput =
   typeof OrchestratorMcpDeleteScheduledTaskInput.Type;

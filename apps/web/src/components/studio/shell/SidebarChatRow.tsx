@@ -19,7 +19,9 @@ export function SidebarChatRow(props: {
   current: boolean;
   /** The model mark, shown again in front of the name while renaming. */
   icon: ReactNode;
-  /** What follows the name: plan chip, machine icon, screen-reader text, status dot. */
+  /** The plan count beside the name; it gives way before the name is cut shorter. */
+  plan?: ReactNode;
+  /** What follows the name: screen-reader text, status dot, machine. */
   children?: ReactNode;
   /** The row menu's items after Open and Rename. */
   menuItems: ReactNode;
@@ -83,7 +85,10 @@ export function SidebarChatRow(props: {
             }}
           >
             {props.icon}
-            <span className="sws-side-row-label">{label}</span>
+            <span className="sws-side-row-main">
+              <span className="sws-side-row-label">{label}</span>
+              {props.plan}
+            </span>
             {props.children}
           </button>
         </Tip>

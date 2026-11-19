@@ -9,11 +9,15 @@
  * @module adversarialReview
  */
 import type {
+  AdversarialReviewSettings,
   ModelSelection,
+  ProviderInstanceId,
   ProviderModelTier,
   ProviderModelTiers,
   ServerProvider,
+  ThreadReviewMode,
 } from "@specweave-studio/contracts";
+import { defaultTrackSelections, providersForModel } from "./modelTracks.ts";
 import { type ModelFamily, modelFamily } from "./fallbackOptions.ts";
 import { describeModel, isSameModel, sameModelOn } from "./modelIdentity.ts";
 import { fallbackSelectionKey, tierModelFor } from "./modelTiers.ts";
@@ -21,6 +25,7 @@ import {
   describeFallbackOrder,
   type ExcludedFallbackModel,
   type FallbackOrderUnavailable,
+  isGeminiSpendProvider,
   isUnknownBillingAgent,
 } from "./providerFallback.ts";
 
@@ -61,13 +66,16 @@ export function selectionFamily(
 }
 
 /**
- * The default reviewer order: each enabled provider's tier model, grouped by
- * family in `REVIEWER_FAMILY_ORDER`, keeping provider order within a family.
+ * The default reviewer order: the built-in Review track fitted to this
+ * machine, then each enabled provider's tier model, grouped by family in
+ * `REVIEWER_FAMILY_ORDER`, keeping provider order within a family.
  */
 export function defaultReviewerChain(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly tier: ProviderModelTier;
   readonly tiers?: ProviderModelTiers | undefined;
+  /** The saved Sources order (`defaultModelProviders`): which source of a model is tried first. */
+  readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | undefined;
 }): ReadonlyArray<ModelSelection> {
   const picks = input.providers
     .filter((provider) => provider.enabled)
@@ -77,10 +85,20 @@ export function defaultReviewerChain(input: {
     });
   const rank = (selection: ModelSelection) =>
     REVIEWER_FAMILY_ORDER.indexOf(selectionFamily(input.providers, selection));
-  return picks
+  const byFamily = picks
     .map((selection, index) => ({ selection, index }))
     .sort((a, b) => rank(a.selection) - rank(b.selection) || a.index - b.index)
     .map((entry) => entry.selection);
+  const seen = new Set<string>();
+  // The track names everyday reviewers; a frontier review keeps each provider's frontier model.
+  const track =
+    input.tier === "regular"
+      ? defaultTrackSelections("review", input.providers, input.sourceOrder)
+      : [];
+  return [...track, ...byFamily].filter((entry) => {
+    const key = fallbackSelectionKey(entry);
+    return seen.has(key) ? false : (seen.add(key), true);
+  });
 }
 
 /** One step of the reviewer order: a model, then the same model on other providers. */
@@ -101,6 +119,8 @@ export function reviewerOrderGroups(input: {
   readonly reviewers: ReadonlyArray<ModelSelection>;
   readonly tier: ProviderModelTier;
   readonly tiers?: ProviderModelTiers | undefined;
+  /** The saved Sources order (`defaultModelProviders`): which source of a model is tried first. */
+  readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | undefined;
 }): ReadonlyArray<ReviewerOrderGroup> {
   const base = input.reviewers.length > 0 ? input.reviewers : defaultReviewerChain(input);
   // Only a person's own list pins places; the default order groups freely.
@@ -120,11 +140,23 @@ export function reviewerOrderGroups(input: {
       entry.model,
     );
     const alternates: ModelSelection[] = [];
-    for (const provider of input.providers) {
-      if (provider.instanceId === entry.instanceId || !provider.enabled) continue;
-      const slug = sameModelOn(provider, names);
-      if (slug === undefined) continue;
-      const alternate = { instanceId: provider.instanceId, model: slug };
+    // The same ranking the Models page shows: the saved Sources order, then the maker's harness.
+    for (const { provider, slug } of providersForModel({
+      providers: input.providers,
+      model: names,
+      order: input.sourceOrder,
+    })) {
+      if (provider.instanceId === entry.instanceId) continue;
+      // The entry's effort goes with it to another account of the same driver, whose options match.
+      const sameDriver =
+        entry.options !== undefined &&
+        input.providers.find((source) => source.instanceId === entry.instanceId)?.driver ===
+          provider.driver;
+      const alternate = {
+        instanceId: provider.instanceId,
+        model: slug,
+        ...(sameDriver ? { options: entry.options } : {}),
+      };
       if (listed.has(fallbackSelectionKey(alternate))) continue;
       if (claim(alternate)) alternates.push(alternate);
     }
@@ -139,6 +171,8 @@ export function reviewerChain(input: {
   readonly reviewers: ReadonlyArray<ModelSelection>;
   readonly tier: ProviderModelTier;
   readonly tiers?: ProviderModelTiers | undefined;
+  /** The saved Sources order (`defaultModelProviders`): which source of a model is tried first. */
+  readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | undefined;
 }): ReadonlyArray<ModelSelection> {
   return reviewerOrderGroups(input).flatMap((group) => [group.primary, ...group.alternates]);
 }
@@ -179,6 +213,8 @@ export function describeReviewerOrder(input: {
   readonly reviewers: ReadonlyArray<ModelSelection>;
   readonly tier: ProviderModelTier;
   readonly tiers?: ProviderModelTiers | undefined;
+  /** The saved Sources order (`defaultModelProviders`): which source of a model is tried first. */
+  readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | undefined;
   readonly excludedModels?: ReadonlyArray<ExcludedFallbackModel> | undefined;
   readonly nowMs: number;
 }): ReviewerOrderView {
@@ -203,12 +239,16 @@ export function describeReviewerOrder(input: {
     const unavailable: FallbackOrderUnavailable | null =
       entry === undefined ? (provider === undefined ? "missing" : "not-ready") : entry.unavailable;
     const unconsented = !named.has(key) && isUnknownBillingAgent(provider, selection.model);
+    // As `resolveReviewer` reads it: a Gemini or Vertex account nobody named never reviews.
+    const unnamedSpend = !named.has(key) && isGeminiSpendProvider(provider);
     const status: ReviewerStepStatus =
-      unconsented && (unavailable === null || unavailable === "unverified")
-        ? "unknown-billing"
-        : unavailable === null || unavailable === "current"
-          ? "ready"
-          : unavailable;
+      unnamedSpend && (unavailable === null || unavailable === "unverified")
+        ? "per-token"
+        : unconsented && (unavailable === null || unavailable === "unverified")
+          ? "unknown-billing"
+          : unavailable === null || unavailable === "current"
+            ? "ready"
+            : unavailable;
     return {
       selection,
       family: selectionFamily(input.providers, selection),
@@ -228,8 +268,10 @@ export function describeReviewerOrder(input: {
 
 /**
  * The first entry of the reviewer order that can run now and is not in the
- * author's family. An entry with room wins; else the first whose usage is
- * unknown ("unverified"), which the fallback walker also lets a person pick.
+ * author's family. An entry whose usage was never read keeps its place: the
+ * order is the person's ranking, and a later model with known room never jumps
+ * ahead of it (Muse reports no percent, so it lost to GPT-6.1 Sol). A stale or
+ * denied reading ("unverified") still yields to an entry with room.
  */
 export function resolveReviewer(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
@@ -237,9 +279,17 @@ export function resolveReviewer(input: {
   readonly reviewers: ReadonlyArray<ModelSelection>;
   readonly tier: ProviderModelTier;
   readonly tiers?: ProviderModelTiers | undefined;
+  /** The saved Sources order (`defaultModelProviders`): which source of a model is tried first. */
+  readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | undefined;
   readonly excludedModels?: ReadonlyArray<ExcludedFallbackModel> | undefined;
   readonly nowMs: number;
   readonly limitedInstanceIds?: ReadonlySet<string> | undefined;
+  /**
+   * The models a person chose, when `reviewers` is an order already expanded
+   * from them (review delegation). Only these are consent to unknown billing
+   * or Gemini spend; without it, `reviewers` is the person's own list.
+   */
+  readonly consented?: ReadonlyArray<ModelSelection> | undefined;
 }): ReviewerResolution {
   const authorFamily = selectionFamily(input.providers, input.author);
   const chain = reviewerChain(input);
@@ -262,7 +312,7 @@ export function resolveReviewer(input: {
   // Only models a person put in the reviewer order count as consented to;
   // the default order and Copilot-style expansions never pick an agent whose
   // billing is unknown.
-  const named = new Set(input.reviewers.map(fallbackSelectionKey));
+  const named = new Set((input.consented ?? input.reviewers).map(fallbackSelectionKey));
   for (const entry of entries) {
     const provider = providerOf(entry.selection);
     // The family check comes first: a same-family entry is never a reviewer,
@@ -275,14 +325,23 @@ export function resolveReviewer(input: {
     const unconsented =
       !named.has(fallbackSelectionKey(entry.selection)) &&
       isUnknownBillingAgent(provider, entry.selection.model);
+    // Naming a Gemini or Vertex model is consent to its spend; the default
+    // order, the built-in Review track included, never is.
+    const unnamedSpend =
+      !named.has(fallbackSelectionKey(entry.selection)) && isGeminiSpendProvider(provider);
     // A harder reason from the fallback walker stays; unknown billing only
     // replaces "has room" and "usage unknown".
     const reason: ReviewerSkipReason | null = sameFamily
       ? "same-family"
-      : unconsented && (entry.unavailable === null || entry.unavailable === "unverified")
-        ? "unknown-billing"
-        : entry.unavailable;
-    if (reason === null) return { reviewer: entry.selection, skipped, authorFamily };
+      : unnamedSpend
+        ? "per-token"
+        : unconsented && (entry.unavailable === null || entry.unavailable === "unverified")
+          ? "unknown-billing"
+          : entry.unavailable;
+    // Usage never read here keeps the entry's place; a stale reading or one a
+    // later denial overtook does not, since the account may be at its limit.
+    if (reason === null || (reason === "unverified" && usageNeverRead(provider)))
+      return { reviewer: entry.selection, skipped, authorFamily };
     if (reason === "unverified" && unverified === null) unverified = entry.selection;
     skipped.push({ selection: entry.selection, reason });
   }
@@ -293,6 +352,21 @@ export function resolveReviewer(input: {
     return { reviewer: unverified, skipped: skipped.slice(0, index), authorFamily };
   }
   return { reviewer: null, skipped, authorFamily };
+}
+
+/**
+ * Whether this account's usage has never been read: its only reading is a
+ * failed or unsupported probe, with no windows and no limit denial seen.
+ * Muse reports this way; it says nothing about the account being full.
+ */
+export function usageNeverRead(provider: ServerProvider | undefined): boolean {
+  const limits = provider?.usageLimits;
+  return (
+    limits !== undefined &&
+    limits.unavailable !== undefined &&
+    limits.windows.length === 0 &&
+    limits.nativeDenialObservedAt === undefined
+  );
 }
 
 /** Short words for a skip reason, for notices. */
@@ -310,3 +384,36 @@ export const REVIEWER_SKIP_NOTES: Record<ReviewerSkipReason, string> = {
   excluded: "kept out of automatic use",
   "unknown-billing": "billing unknown; add it to the reviewer order to use it",
 };
+
+// ── Is review on for this thread ─────────────────────────────────────
+
+/**
+ * Every review thread's title starts with this. It is how a review thread is
+ * told apart later (the thread record has no kind): the reactor never reviews
+ * a review, and a review thread has no review choice of its own.
+ */
+export const ADVERSARIAL_REVIEW_TITLE_PREFIX = "Adversarial review:";
+
+/** Whether a thread is an adversarial review thread, by its title. */
+export function isAdversarialReviewThreadTitle(title: string): boolean {
+  return title.startsWith(ADVERSARIAL_REVIEW_TITLE_PREFIX);
+}
+
+export interface ThreadReviewState {
+  readonly enabled: boolean;
+  /** Whose choice it is: the thread's own, or the project and machine setting. */
+  readonly source: "thread" | "settings";
+}
+
+/**
+ * Whether a finished feature on this thread gets an automatic review: the
+ * thread's own choice when it made one, else the project's setting (already
+ * merged over the machine's). The same rule as `threadAdvisorState`.
+ */
+export function threadReviewState(
+  mode: ThreadReviewMode | null | undefined,
+  settings: Pick<AdversarialReviewSettings, "autoOnFeatureComplete">,
+): ThreadReviewState {
+  if (mode === "on" || mode === "off") return { enabled: mode === "on", source: "thread" };
+  return { enabled: settings.autoOnFeatureComplete, source: "settings" };
+}

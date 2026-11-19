@@ -111,7 +111,7 @@ function ChecksBody({
       </ScrollArea>
       {canCollapse ? (
         <Button
-          variant="ghost"
+          variant="outline"
           size="xs"
           aria-expanded={showAll}
           onClick={() => setShowAll(!showAll)}

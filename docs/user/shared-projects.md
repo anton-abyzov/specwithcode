@@ -14,11 +14,11 @@ Every copy of a shared project has one role. The sidebar shows the project once;
 hover its row to see each machine and what its copy does, for example
 `M4: coordinator · M3: runs workers`.
 
-| Role            | What it means                                                                                                                    |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| Coordinator     | Plans the work, keeps the project's notes, goal and instructions, and can start workers in every copy.                           |
-| Runs workers    | Ordinary threads and workers run here as before. This copy's own coordinator is kept as read-only history and takes no messages. |
-| Handoff pending | A coordinator handoff has started and not finished. Reconnect both machines to finish it.                                        |
+| Role            | What it means                                                                                                                                                                                                                                                               |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Coordinator     | One runs, on the machine you kept. The other machine's coordinator conversation becomes read-only history: the kept coordinator does not take it over, so carry over anything it was in the middle of. That copy runs workers once **Allow workers** is on for its machine. |
+| Runs workers    | Ordinary threads and workers run here as before. This copy's own coordinator is kept as read-only history and takes no messages.                                                                                                                                            |
+| Handoff pending | A coordinator handoff has started and not finished. Reconnect both machines to finish it.                                                                                                                                                                                   |
 
 **Settings > Project > Machines** lists every copy with its machine, folder and
 role.
@@ -32,14 +32,30 @@ example an EasyChamp folder on the M4 and another on the M3.
    settings and run work (**Settings > Machines**). Both must run a version
    of SpecWithCode that can link projects; an older one shows "Update
    SpecWithCode on <machine> to link projects."
-2. Open **Settings > Project > Machines** for one of the two projects and choose
-   **Link…** next to **Link with a project on another machine**.
+2. Start the link from any of these, on either machine:
+   - **The sidebar.** A project that is the same repository as a project on
+     another machine shows **Link** on its row. Point at it to read which
+     project and machine it means, and click it. The row's menu (also reachable
+     by keyboard) has the same action, **Link with <project> on <machine>…**,
+     and **Not the same project**, which stops the offer.
+   - **The machine menu** under the message box (the chip with the machine's
+     name). A machine whose copy is not linked is listed as "not linked", and
+     **This project** offers **Link <machine> to this project…** for each
+     other machine that has a project for exactly the same repository. That
+     machine's project joins this one as a copy: you confirm what it gives up
+     (its own goal and instructions are no longer used, and its own coordinator
+     stops, with that conversation kept there as history). Linking never
+     changes which machine is main.
+   - **Settings > Project > Machines**, opened from the project's settings:
+     **Link…** next to **Link with a project on another machine**.
 3. Pick the other copy. Projects on your other machines are listed, the likely
    copies first, with how their repositories compare, for example "Same root
    repository; 28 of 36 repositories match, 8 missing here." Nothing links until
    you pick one and confirm.
 4. Choose **Review link**, then choose which coordinator stays. The default is
-   the copy whose coordinator was used most recently.
+   the copy whose coordinator was used most recently. Check it names the
+   machine you want before you confirm: that copy's goal, instructions and
+   routines are the ones that stay in force.
 5. Review the notes:
    - Notes only the other copy has are copied to the copy that keeps its
      coordinator.
@@ -49,7 +65,23 @@ example an EasyChamp folder on the M4 and another on the M3.
      every such note has a choice.
    - The kept copy keeps its own goal and instructions. The other copy's text is
      shown so you can copy anything you need into them.
-6. Confirm and choose **Link, keep coordinator on <machine>**.
+   - Routines the other copy runs are listed, because they stop running:
+     a project's routines run only on the coordinator's machine.
+6. Confirm and choose **Link, keep coordinator on <machine>**. The dialog ends on
+   **Projects linked**; choose **Done**.
+
+### What becomes one, and what stays where it is
+
+| Part                  | After linking                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The project           | One row in the sidebar, with both machines in its machine menu. Each machine keeps its own folder.                                                                                                                                                                                                                                                                                                                                       |
+| Coordinator           | One runs, on the machine you kept. The other machine's coordinator conversation becomes read-only history, and that copy runs workers.                                                                                                                                                                                                                                                                                                   |
+| Threads               | Not moved. Each thread stays on the machine that ran it and keeps running there; the project lists them together.                                                                                                                                                                                                                                                                                                                        |
+| Project memory        | Merged both ways. Notes only one copy had go to the other. For a note both had with different text, both machines end up with what you chose: the kept machine's text, the other machine's text, or both (the second as `<name>-<machine>.md`). If the review says the other copy has more notes than one link can carry, the notes it did not list are merged afterwards by the regular sync, which keeps both texts where they differ. |
+| Goal and instructions | The kept copy's stay in force. The other copy's text is not merged; it is shown in the review so you can copy from it, and stays stored on that machine, where it applies again if that copy ever takes the coordinator over.                                                                                                                                                                                                            |
+| Routines              | The kept copy's keep running. The other copy's stop: they stay listed on that machine, where you can turn them off or delete them, and are not moved. Create the ones you still need on the coordinator's machine.                                                                                                                                                                                                                       |
+| Settings              | Each machine keeps its own project settings (folder, models, access). Nothing is overwritten.                                                                                                                                                                                                                                                                                                                                            |
+| Files                 | Not copied or changed. To bring an older folder up to date, use **Copy to another machine…** and pick the existing folder: it shows what differs and asks before touching uncommitted changes. If you keep what is there, the newer commits arrive on a branch named `swc/from-<machine>/<branch>` for you to merge; your branch, edits and untracked files are left as they are.                                                        |
 
 After linking, the coordinator that stayed can start workers in the other copy
 once **Allow workers** is on for that machine ([Add a machine](./add-a-machine.md)).

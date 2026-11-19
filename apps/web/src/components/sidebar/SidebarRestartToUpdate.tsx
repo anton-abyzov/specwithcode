@@ -40,6 +40,7 @@ import {
 } from "../serviceUpdateRunView";
 import { getDesktopUpdateReleaseUrl } from "../desktopUpdate.logic";
 import { openDesktopUpdateReleaseNotes } from "../desktopUpdate.toast";
+import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -71,6 +72,7 @@ import {
   SERVICE_UPDATE_NOW_DESCRIPTION,
   serviceInstallTarget,
   serviceUpdateButtonLabel,
+  UPDATE_PREFERENCES_CHANGED,
 } from "./SidebarRestartToUpdate.logic";
 
 // An accepted install quits the app; if it is still open after this long,
@@ -124,6 +126,8 @@ function SidebarRestartToUpdateButton() {
   const service = useServiceUpdateFlow(serviceState);
   const [pending, setPending] = useState(false);
   const [installOnQuit, setInstallOnQuit] = useState(false);
+  // Null until read: only a known "off" is said beside Update now.
+  const [installAutomatically, setInstallAutomatically] = useState<boolean | null>(null);
   const [downloadsInBackground, setDownloadsInBackground] = useState(false);
   // The user chose to let running work finish: restart once nothing runs, or
   // once the hold window from Settings has passed, whichever comes first.
@@ -147,7 +151,10 @@ function SidebarRestartToUpdateButton() {
   const navigate = useNavigate();
   const environmentId = usePrimaryEnvironmentId();
   const watchdog = useRef<number | null>(null);
-  const view = getRestartToUpdateView(appState, serviceState, { installOnQuit });
+  const view = getRestartToUpdateView(appState, serviceState, {
+    installOnQuit,
+    installAutomatically,
+  });
   // An update of the app or the service waits here; the wait for quiet covers both.
   const hasUpdate = Boolean(view?.app || view?.service);
   // An Update now run (0988): this window only follows it, in one toast.
@@ -230,19 +237,25 @@ function SidebarRestartToUpdateButton() {
 
   useEffect(() => {
     let active = true;
-    void window.desktopBridge
-      ?.getUpdatePreferences?.()
-      .then((preferences) => {
-        if (active) {
-          const allowed = preferences.automaticUpdatesAllowed !== false;
-          setInstallOnQuit(preferences.installAutomatically && allowed);
-          setDownloadsInBackground(preferences.downloadAutomatically && allowed);
-          setHoldMinutes(forceInstallAfterMinutes(preferences));
-        }
-      })
-      .catch(() => undefined);
+    const read = () =>
+      void window.desktopBridge
+        ?.getUpdatePreferences?.()
+        .then((preferences) => {
+          if (active) {
+            const allowed = preferences.automaticUpdatesAllowed !== false;
+            setInstallOnQuit(preferences.installAutomatically && allowed);
+            setInstallAutomatically(preferences.installAutomatically);
+            setDownloadsInBackground(preferences.downloadAutomatically && allowed);
+            setHoldMinutes(forceInstallAfterMinutes(preferences));
+          }
+        })
+        .catch(() => undefined);
+    read();
+    // Settings saved the switches: what is said beside the button follows at once.
+    window.addEventListener(UPDATE_PREFERENCES_CHANGED, read);
     return () => {
       active = false;
+      window.removeEventListener(UPDATE_PREFERENCES_CHANGED, read);
     };
   }, []);
 
@@ -853,8 +866,6 @@ function SidebarRestartToUpdateButton() {
     // install waits on, lead; the pause time follows them.
     const questionLine = automaticWaitHint.pauseLine === undefined ? null : automaticWaitHint.line;
     const canPostpone = typeof window.desktopBridge?.postponeAutomaticServiceUpdate === "function";
-    const actionClass =
-      "cursor-pointer rounded px-1 text-2xs font-medium text-foreground outline-hidden ring-ring hover:bg-sidebar-row-hover focus-visible:ring-2 disabled:cursor-progress disabled:opacity-60";
     return (
       <div className="flex shrink-0 flex-col gap-1 self-start">
         {content}
@@ -884,25 +895,25 @@ function SidebarRestartToUpdateButton() {
           </TooltipPopup>
         </Tooltip>
         <div className="flex items-center gap-1">
-          <button
-            type="button"
+          <Button
+            variant="outline"
+            size="micro"
             data-testid="sidebar-update-pause-install-now"
             disabled={busy}
-            className={actionClass}
             onClick={() => void restart({})}
           >
             Install now
-          </button>
+          </Button>
           {canPostpone ? (
-            <button
-              type="button"
+            <Button
+              variant="outline"
+              size="micro"
               data-testid="sidebar-update-pause-later"
               disabled={busy || postponing}
-              className={actionClass}
               onClick={postpone}
             >
               Later
-            </button>
+            </Button>
           ) : null}
         </div>
       </div>

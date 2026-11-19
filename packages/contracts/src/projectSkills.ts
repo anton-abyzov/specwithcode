@@ -12,6 +12,10 @@ import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import {
   StudioFleetMachineId,
   StudioFleetSkillName,
+  StudioFleetSkillPrevious,
+  StudioFleetSkillReplaces,
+  StudioFleetSkillSource,
+  StudioFleetSkillVia,
   StudioFleetUpdateVersion,
 } from "./studioFleet.ts";
 
@@ -154,6 +158,11 @@ export const ProjectSkillsProviderState = Schema.Struct({
   state: Schema.Literals(["ok", "cached", "timeout", "error", "unsupported"]),
   skills: NonNegativeInt,
   message: Schema.optional(Schema.String),
+  /**
+   * Some skill folders were there but could not be read: a skill this agent
+   * does not list is unknown here, never missing. Absent from older machines.
+   */
+  incomplete: Schema.optional(Schema.Boolean),
 });
 export type ProjectSkillsProviderState = typeof ProjectSkillsProviderState.Type;
 
@@ -445,6 +454,16 @@ export const ProjectSkillsFleetPushInput = Schema.Struct({
     Schema.isMinLength(1),
     Schema.isMaxLength(32),
   ),
+  /**
+   * "Also add on" (increment 1399): the skill from a GitHub repo connected here,
+   * at one commit, instead of a registry version. `contentHash` is that commit's
+   * SKILL.md hash; this machine reads it again before anything is sent.
+   */
+  github: Schema.optional(StudioFleetSkillSource),
+  /** Undo of a new install: remove the copy `github` installed there. */
+  action: Schema.optional(Schema.Literal("remove")),
+  /** Undo only: the copy the rollout installed there, which this Undo replaces. */
+  replaces: Schema.optional(StudioFleetSkillReplaces),
 });
 export type ProjectSkillsFleetPushInput = typeof ProjectSkillsFleetPushInput.Type;
 
@@ -462,6 +481,11 @@ export const ProjectSkillsFleetPushResult = Schema.Struct({
       message: Schema.optional(Schema.String),
       installedVersion: Schema.optional(Schema.NullOr(Schema.String)),
       pinnedVersion: Schema.optional(Schema.NullOr(Schema.String)),
+      /** GitHub sources: the files a preview would write, how vskill ran and the copy replaced. */
+      files: Schema.optional(Schema.Array(Schema.String)),
+      via: Schema.optional(StudioFleetSkillVia),
+      previous: Schema.optional(Schema.NullOr(StudioFleetSkillPrevious)),
+      removed: Schema.optional(Schema.Boolean),
     }),
   ),
 });
@@ -566,4 +590,27 @@ export function isListableSkillPath(skillPath: string): boolean {
   return segments
     .slice(skillsIndex + 1, -1)
     .every((segment) => !segment.startsWith(".") || segment === ".system");
+}
+
+/**
+ * The scope of a skill Claude Code loads from claude.ai sync
+ * (`<config dir>/skills/synced/<id>/<name>/SKILL.md`). The folder is rewritten
+ * by the sync, so the skill is managed on claude.ai: it is listed, never
+ * switched or edited here.
+ */
+export const CLAUDE_AI_SKILL_SCOPE = "claude.ai";
+
+/** The namespace Claude Code publishes claude.ai-synced skills under. */
+export const CLAUDE_AI_SKILL_NAMESPACE = "anthropic-skills";
+
+/**
+ * A copy that ships with the agent or its account: claude.ai-synced skills and
+ * Codex's own `.system` skills. Never installable, switchable or editable.
+ */
+export function isBuiltInAgentSkill(skill: {
+  readonly scope?: string | null | undefined;
+  readonly path: string;
+}): boolean {
+  if (skill.scope === CLAUDE_AI_SKILL_SCOPE || skill.scope === "system") return true;
+  return /[\\/]skills[\\/]\.system[\\/]/.test(skill.path);
 }

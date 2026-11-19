@@ -1,4 +1,4 @@
-// Headless check of the Chats list's machine column and filter, wide and narrow.
+// Headless check of the Chats list's machine marks and filter, wide and narrow.
 // Usage: node apps/web/tests/sidebar-stable-order/chat-machines.mjs <evidence-dir> [--site DIR] [--capture-only]
 // Build first: vp build --config apps/web/tests/sidebar-stable-order/vite.config.ts
 import * as NodeAssert from "node:assert/strict";
@@ -85,7 +85,8 @@ try {
     }
     const row = (title) => page.locator(".sws-chat-row", { hasText: title });
     const cell = (title) => row(title).locator(".sws-row-machine");
-    // Every row names a machine, and the column's left and right edges line up.
+    // Every row names a machine. Each is as wide as its own name, so they end at one
+    // edge and a short name keeps no room made for a longer one.
     const boxes = await page.locator(".sws-chat-row .sws-row-machine").evaluateAll((cells) =>
       cells.map((c) => {
         const box = c.getBoundingClientRect();
@@ -93,13 +94,13 @@ try {
       }),
     );
     assert.equal(boxes.length, await page.locator(".sws-chat-row").count());
-    if (name === "wide")
-      assert.equal(
-        new Set(boxes.map((b) => b.left)).size,
-        1,
-        `left edges ${JSON.stringify(boxes)}`,
-      );
     assert.equal(new Set(boxes.map((b) => b.right)).size, 1);
+    if (name === "wide") {
+      const width = async (title) => (await cell(title).boundingBox()).width;
+      const short = await width("Chrome extension");
+      assert.ok(short <= 32, `m4 is ${short}px wide`);
+      assert.ok(short < (await width("Disk audit")), `m4 as wide as ministorm: ${short}`);
+    }
     assert.equal((await cell("Chrome extension").textContent()).trim(), "m4");
     assert.equal((await cell("Disk audit").textContent()).trim(), "ministorm");
     assert.match(await cell("the Linux box").textContent(), /ministorm$/);

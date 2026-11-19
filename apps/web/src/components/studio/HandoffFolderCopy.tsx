@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTx } from "../../i18n";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import {
@@ -25,6 +26,7 @@ import {
 } from "../../studio/folderCopy";
 import { randomUUID } from "../../lib/utils";
 import { useCopyScope } from "./HandoffCopyScope";
+import { useSyncOffer } from "./useSyncOffer";
 import { useCopyDestination } from "./useCopyDestination";
 import { handoffErrorMarksStep } from "./handoffErrors";
 import {
@@ -44,10 +46,13 @@ import {
   type PendingCopy,
   ALL_SECRETS,
   pendingSecrets,
+  secretsPromised,
   type SecretsChoice,
 } from "./handoffFolderCopyPending";
 import type { CopyMachine } from "./HandoffCopySetup";
 import { copyHeld } from "./HandoffCopyDone";
+import { approveInput, secretsBlockedNow, secretsSourceOnlyText } from "./useSecretsGate";
+import { useCopySecrets } from "./useCopySecrets";
 import { messageOf } from "./useCoordinatorTransfer";
 import { useCoordinatorMove } from "./useCoordinatorMove";
 import {
@@ -67,16 +72,14 @@ import {
   replacementText,
   replacesNothing,
   replacingCount,
-  secretsLeft,
-  secretsLeftText,
 } from "./handoffCopyAuto";
 import { copyNoticeWarnings, copyProblem, groupCopyNotices } from "./handoffCopyNotices";
 import { copyNeedsComparison, decideCopyClones } from "./handoffCopySnapshot";
 import {
   CopyCheckingStep,
-  CopyChoicesSummary,
   CopyResumeNote,
   CopyStepLine,
+  RunningCopyChoices,
 } from "./HandoffCopyGuide";
 import { useCopyStepView } from "./useCopyStepView";
 import { useCopyDraft } from "./useCopyDraft";
@@ -101,13 +104,7 @@ import {
 import { useCopyLink } from "./useCopyLink";
 import { HandoffCopyFooter } from "./HandoffCopyFooter";
 import { HandoffWorkspaceSummary, type HandoffWorkspaceContext } from "./HandoffWorkspaceSummary";
-import {
-  planRepositoryChoices,
-  reviewedSecrets,
-  sendableSecrets,
-  travellingSecrets,
-  type RepositoryChoices,
-} from "./handoffCopySecrets";
+import { reviewedSecrets, type RepositoryChoices } from "./handoffCopySecrets";
 
 export { folderCopyStorageKey, isFolderCopyNotFound, readPendingCopy };
 export type { CopyMachine };
@@ -130,10 +127,12 @@ export function HandoffFolderCopy({
   savedProject,
   preferredMachine = null,
   machineRequested = false,
+  addOnly = false,
   defaultMode,
   onChoicesChange,
   canMove,
   uncommittedFiles = null,
+  chooseCopyFirst = false,
   onBusyChange,
   onCloseLockChange,
   onOpenProject,
@@ -153,6 +152,7 @@ export function HandoffFolderCopy({
   readonly preferredMachine?: EnvironmentId | null;
   /** True when the dialog was opened for that machine (Move coordinator to X): a draft keeps it. */
   readonly machineRequested?: boolean;
+  readonly addOnly?: boolean; // Add: an unfinished copy saved for another machine stays unopened.
   /** Move or copy, as the dialog was opened; it wins over a draft, a resumed copy keeps its own. */
   readonly defaultMode?: FolderCopyMode;
   /** The live choices and stage, so the dialog can title itself and remember the machine. */
@@ -160,10 +160,15 @@ export function HandoffFolderCopy({
     readonly mode: FolderCopyMode;
     readonly machine: EnvironmentId | null;
     readonly done: boolean;
+    readonly review?: boolean;
+    readonly doneAt?: string | null;
+    readonly projectId?: string | null;
   }) => void;
   readonly canMove: boolean;
   /** Uncommitted files in the source, named in What comes along; null when unknown. */
   readonly uncommittedFiles?: number | null;
+  /** The machine holds several copies and none is picked yet: the copy cannot start. */
+  readonly chooseCopyFirst?: boolean;
   readonly onBusyChange: (busy: boolean) => void;
   /** True only while closing the dialog would interrupt a step that must finish here. */
   readonly onCloseLockChange?: (locked: boolean) => void;
@@ -175,7 +180,7 @@ export function HandoffFolderCopy({
 }) {
   const scope = useCopyScope(project);
   const capabilities = useAtomCommand(machineHandoff.copyCapabilities, { reportFailure: false });
-  const offerCopy = useAtomCommand(machineHandoff.copyOffer, { reportFailure: false });
+  const offerCopy = useSyncOffer();
   const sourceStatus = useAtomCommand(machineHandoff.copySourceStatus, { reportFailure: false });
   const sourceCancel = useAtomCommand(machineHandoff.copySourceCancel, { reportFailure: false });
   const release = useAtomCommand(machineHandoff.copyRelease, { reportFailure: false });
@@ -186,11 +191,11 @@ export function HandoffFolderCopy({
   const retry = useAtomCommand(machineHandoff.copyRetry, { reportFailure: false });
   const cancel = useAtomCommand(machineHandoff.copyCancel, { reportFailure: false });
   const undo = useAtomCommand(machineHandoff.copyUndo, { reportFailure: false });
-  const sendSecrets = useAtomCommand(machineHandoff.copySecrets, { reportFailure: false });
 
   const storageKey = folderCopyStorageKey(project.environmentId, project.id);
   const { machine, setMachine, folderDraft, setFolderDraft, folder, setFolder, findingHome } =
     useCopyDestination({ machines, preferredMachine, savedFolder, scope });
+  const tx = useTx();
   const [mode, setMode] = useState<FolderCopyMode>(
     canMove ? (defaultMode ?? "copy-only") : "copy-only",
   );
@@ -206,9 +211,6 @@ export function HandoffFolderCopy({
   const [selection, setSelection] =
     useState<ReadonlyArray<FolderCopyFileClass>>(DEFAULT_COPY_SELECTION);
   const [copy, setCopy, copyNow] = useLiveState<FolderCopyStatus | null>(null);
-  // Secrets travel by default; files the person unticked stay out through a new measure or
-  // a reopen. What comes along and the review show the choice and change it.
-  const [secretsChoice, setSecretsChoice] = useState<SecretsChoice>(ALL_SECRETS);
   const [pending, setPending] = useState<PendingCopy | null>(null);
   const [undoPreview, setUndoPreview] = useState<FolderCopyUndoResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -255,6 +257,27 @@ export function HandoffFolderCopy({
 
   const target = machines.find((entry) => entry.id === machine) ?? null;
   const targetLabel = target?.label ?? "the other machine";
+  const secrets = useCopySecrets({
+    source: project.environmentId,
+    sourceLabel,
+    targetLabel,
+    machine,
+    machines,
+    summary,
+    copy,
+    summaryNow,
+    copyNow,
+    repositoryChoices,
+    repositoryDraft,
+    latestPending,
+    done: stage === "done",
+    keep: (choice) => {
+      const saved = latestPending.current;
+      if (saved) remember({ ...withoutReplaceAll(saved), secrets: choice }); // its staged list is stale
+      else draft.keepDraft({ secrets: choice });
+    },
+    readSummary: (saved) => readSummary(saved),
+  });
   const { busy, closeLocked } = useCopyReporting({
     environmentId: project.environmentId,
     projectId: project.id,
@@ -266,6 +289,7 @@ export function HandoffFolderCopy({
     existingDestination: pending?.existingDestination,
     scanStatus,
     machineName: targetLabel,
+    sourceName: sourceLabel,
     onBusyChange,
     onChoicesChange,
     onCloseLockChange,
@@ -377,11 +401,9 @@ export function HandoffFolderCopy({
     }
   };
 
-  /**
-   * Follows the source measuring the folder, with live counts. Cancel abandons the
-   * operation; closing the dialog only stops watching, and reopening resumes here.
-   * Returns the measured offer, or null when the person cancelled.
-   */
+  // Follows the source measuring the folder, with live counts. Cancel abandons the
+  // operation; closing the dialog only stops watching, and reopening resumes here.
+  // Returns the measured offer, or null when the person cancelled.
   const followMeasure = async (
     saved: PendingCopy,
     offerStep: () => Promise<FolderCopyOffer>,
@@ -439,10 +461,8 @@ export function HandoffFolderCopy({
     }
   };
 
-  /**
-   * Tells the source to drop an operation and, for a move, to release any fence. A strict
-   * call keeps the pointer and says so when the source did not; gone counts as dropped.
-   */
+  // Tells the source to drop an operation and, for a move, to release any fence. A strict
+  // call keeps the pointer and says so when the source did not; gone counts as dropped.
   const abandonSource = async (
     saved: PendingCopy,
     reason: string,
@@ -472,10 +492,8 @@ export function HandoffFolderCopy({
 
   const show = (next: FolderCopyStatus) => setStage(stageForStatus(next));
 
-  /**
-   * The source's measured summary, so a reopened copy shows its secrets step, skipped
-   * worktrees and the secret files that stayed behind.
-   */
+  // The source's measured summary, so a reopened copy shows its secrets step, skipped
+  // worktrees and the secret files that stayed behind.
   const readSummary = async (saved: PendingCopy) => {
     try {
       const measured = unwrap(
@@ -589,7 +607,7 @@ export function HandoffFolderCopy({
     // Secret files and worktrees shown must be this copy's, never an earlier copy's.
     if (latestPending.current?.operationId !== saved.operationId) setSummary(null);
     // The secrets choice made for this copy, as it was before the dialog closed.
-    setSecretsChoice(pendingSecrets(saved));
+    secrets.setChosen(pendingSecrets(saved));
     latestPending.current = saved;
     setPending(saved);
     // A copy linked before the dialog closed is not linked again.
@@ -616,8 +634,7 @@ export function HandoffFolderCopy({
       } catch (cause) {
         // An unreachable destination keeps the pointer; only a copy it never started is dropped.
         if (!isFolderCopyNotFound(cause)) throw cause;
-        // The destination has not started it yet: the source may still be measuring,
-        // or have measured and be waiting for the choice of what to copy.
+        // Not started there yet: the source may be measuring or waiting for the choice.
         let measuring: FolderCopySourceStatus | null = null;
         try {
           measuring = unwrap(
@@ -660,8 +677,7 @@ export function HandoffFolderCopy({
         return;
       }
       await summaryRead;
-      // Closed while comparing: the clone method's choice, one-click approval and a
-      // pending Replace all still apply.
+      // Closed while comparing: clone method, one-click approval and Replace all still apply.
       const compared = await cloneDecide(saved, next);
       await settlePreview(compared.next, compared.saved);
       // An undo or cancel that did not reach the source left this pointer: tell it again.
@@ -689,16 +705,15 @@ export function HandoffFolderCopy({
   const draft = useCopyDraft({
     project,
     machines,
-    canMove,
-    explicit: { mode: defaultMode !== undefined, machine: machineRequested },
-    form: { machine, folderDraft, mode, chooseFirst, secrets: secretsChoice },
+    explicit: { machine: machineRequested, fresh: addOnly },
+    showFinished: !machineRequested && defaultMode !== "copy-and-move",
+    form: { machine, folderDraft, mode, chooseFirst, secrets: secrets.chosen },
     latestPending,
     setForm: {
       machine: setMachine,
       folder: setFolder,
-      mode: setMode,
       chooseFirst: setChooseFirst,
-      secrets: setSecretsChoice,
+      secrets: secrets.setChosen,
     },
     onResume: resume,
   });
@@ -749,7 +764,8 @@ export function HandoffFolderCopy({
       projectRelativePath,
       projectId,
       selection,
-      secrets: secretsChoice,
+      secrets: choices.secrets ?? secrets.chosen,
+      ...(secrets.gate.blocked ? { secretsStay: true as const } : {}),
       method: choices.method,
       ...(choices.auto ? { auto: true } : {}),
       ...(existing ? { existingDestination: true } : {}),
@@ -813,7 +829,7 @@ export function HandoffFolderCopy({
     run(async () => {
       if (!offer || !pending) return;
       if (sourceChanged)
-        throw new Error("Measure and compare again before previewing this changed source.");
+        throw new Error(tx("Compare again before previewing this changed source."));
       await planNow(offer, pending, selection);
     });
 
@@ -835,10 +851,8 @@ export function HandoffFolderCopy({
       show(await pollCopy(machine, pending.operationId));
     });
 
-  /**
-   * Clone and skip clicks show at once and wait briefly, so several clicks re-compare
-   * once. The preview stays on screen while the destination compares; Copy waits for it.
-   */
+  // Clone and skip clicks show at once and wait briefly, so several clicks re-compare
+  // once. The preview stays on screen while the destination compares; Copy waits for it.
   const changeRepositories = (next: RepositoryChoices) => {
     repositoryDraft.current = next;
     setRepositoryChoices(next);
@@ -883,47 +897,30 @@ export function HandoffFolderCopy({
     }
   };
 
-  const { candidates: secretCandidates, paths: secretPaths } = travellingSecrets({
-    summary,
-    copy,
-    skip: copy ? (repositoryChoices ?? planRepositoryChoices(copy.rows)).skip : [],
-    homeSupported: target?.homeSecretFiles === true,
-    choice: secretsChoice,
-  });
-  const machinesNow = useRef(machines);
-  machinesNow.current = machines;
-  const chooseSecrets = (choice: SecretsChoice) => {
-    setSecretsChoice(choice);
-    const saved = latestPending.current;
-    if (saved) remember({ ...withoutReplaceAll(saved), secrets: choice }); // its staged list is stale
-    else draft.keepDraft({ secrets: choice });
-  };
-  /** The copy's secrets choice goes to the source before every approval (see sendableSecrets). */
-  const sendTickedSecrets = async (operationId: string) => {
-    const saved = latestPending.current;
-    const there = machinesNow.current.find(({ id }) => id === (saved?.environmentId ?? machine));
-    const paths = sendableSecrets({
-      summary: summaryNow.current,
-      plan: copyNow.current,
-      repositories: repositoryDraft.current,
-      machine: there,
-      choice: saved ? pendingSecrets(saved) : secretsChoice,
-    });
-    if (!paths) return;
-    const input = { operationId, paths, destinationLabel: there?.label ?? targetLabel };
-    unwrap(await sendSecrets({ environmentId: project.environmentId, input }));
-  };
-
   /** Approves, then checks a failed answer once in case the approval landed anyway. */
   const applyNow = async (saved: PendingCopy, secretsSent = false) => {
     const environmentId = saved.environmentId as EnvironmentId;
     const operationId = saved.operationId;
-    if (sourceChanged)
-      throw new Error("The source changed. Measure and compare again before copying.");
-    if (!secretsSent) await sendTickedSecrets(operationId);
+    if (sourceChanged) throw new Error(tx("The source changed. Compare again before copying."));
+    await secrets.refreshRoute(saved);
+    if (secretsBlockedNow(project.environmentId, environmentId) && secretsPromised(saved)) {
+      // The form said included: the review says why not, and the person approves it there.
+      setStage("preview");
+      withoutReplaceAll(saved);
+      throw new Error(secrets.gate.note ?? secretsSourceOnlyText(sourceLabel));
+    }
+    if (!secretsSent || secretsBlockedNow(project.environmentId, environmentId))
+      await secrets.sendTicked(operationId);
     setStage("copying");
     try {
-      setCopy(unwrap(await approve({ environmentId, input: { operationId } })));
+      const input = approveInput(
+        operationId,
+        project.environmentId,
+        pendingSecrets(saved).included,
+        secrets.sentFor(operationId),
+        environmentId,
+      );
+      setCopy(unwrap(await approve({ environmentId, input })));
     } catch (cause) {
       let current: FolderCopyStatus | null = null;
       try {
@@ -956,21 +953,25 @@ export function HandoffFolderCopy({
   const apply = () =>
     run(async () => {
       if (!machine || !pending) return;
-      await applyNow(pending);
+      const saved = secrets.told(pending);
+      if (saved !== pending) remember(saved);
+      await applyNow(saved);
     });
 
-  /**
-   * Takes the source version of everything still open, then copies. The pointer records
-   * the click, so closing the dialog while the destination re-compares still approves.
-   */
+  // Takes the source version of everything still open, then copies. The pointer records
+  // the click, so closing the dialog while the destination re-compares still approves.
   const replaceAll = () =>
     run(async () => {
       if (!pending || !copy) return;
       const environmentId = pending.environmentId as EnvironmentId;
       // Ticked secret files go first: an approval after the dialog closed cannot send them.
-      await sendTickedSecrets(pending.operationId);
+      await secrets.sendTicked(pending.operationId);
       const outcome = replaceAllOutcome(copy.rows);
-      const saved: PendingCopy = { ...pending, replaceAll: true, replaceAllOutcome: outcome };
+      const saved: PendingCopy = {
+        ...secrets.told(pending),
+        replaceAll: true,
+        replaceAllOutcome: outcome,
+      };
       remember(saved);
       setRecompare(recompareFor(outcome));
       setStage("planning");
@@ -1012,6 +1013,9 @@ export function HandoffFolderCopy({
         await moveCoordinator(operationId, machine, copy.projectId, copy, anyway);
         return;
       }
+      // Stopped for secret files the source no longer offered: this window offers them again.
+      if (copy?.failedStep === "applied" && copy.error?.code === "refused" && !secrets.gate.blocked)
+        await secrets.sendTicked(operationId).catch(() => undefined);
       setStage("copying");
       try {
         setCopy(unwrap(await retry({ environmentId: machine, input: { operationId } })));
@@ -1027,11 +1031,9 @@ export function HandoffFolderCopy({
     });
   };
 
-  /**
-   * Cancels a copy that has not applied anything: the destination drops its compare, the
-   * source its snapshot, and a move releases its fence. Machine, folder, mode and the
-   * chosen classes stay in the form.
-   */
+  // Cancels a copy that has not applied anything: the destination drops its compare, the
+  // source its snapshot, and a move releases its fence. Machine, folder, mode and the
+  // chosen classes stay in the form.
   const cancelBeforeApply = async () => {
     if (!pending) {
       setStage("setup");
@@ -1135,10 +1137,8 @@ export function HandoffFolderCopy({
       setSourceDropped(true);
     });
 
-  /**
-   * Clears this copy so another can start. Copy again keeps the file classes and the
-   * ticked secret files; a new copy starts from the defaults.
-   */
+  // Clears this copy so another can start. Copy again keeps the file classes and the
+  // ticked secret files; a new copy starts from the defaults.
   const startOver = async (keepChoices = false) => {
     // A reload may have lost the publish result. The source must confirm that
     // abandoning this operation cannot orphan a fenced coordinator.
@@ -1194,7 +1194,7 @@ export function HandoffFolderCopy({
     setCancelledFor(null);
     if (!keepChoices) {
       setSelection(DEFAULT_COPY_SELECTION);
-      setSecretsChoice(ALL_SECRETS);
+      secrets.setChosen(ALL_SECRETS);
     }
     setStage("setup");
   };
@@ -1202,7 +1202,7 @@ export function HandoffFolderCopy({
   const fresh = () => run(() => startOver());
 
   /** A fresh copy of the same folder, machine and choices; only changed files move. */
-  const copyAgainNow = (retried = false) =>
+  const copyAgainNow = (retried = false, withSecrets?: SecretsChoice) =>
     run(async () => {
       const last = latestPending.current;
       if (!last || !copy) return;
@@ -1218,6 +1218,7 @@ export function HandoffFolderCopy({
           copy.projectRelativePath ??
           last.projectRelativePath ??
           scope.selected.projectRelativePath,
+        ...(withSecrets ? { secrets: withSecrets } : {}),
       };
       if (failedBeforeApply)
         // The source may still hold the old operation and its snapshot if the destination
@@ -1230,6 +1231,7 @@ export function HandoffFolderCopy({
       if (retried) stepView.restarted();
       setChooseFirst(!again.auto);
       setSelection(again.selection);
+      if (withSecrets) secrets.setChosen(withSecrets);
       await measureNow(again);
     });
 
@@ -1249,10 +1251,6 @@ export function HandoffFolderCopy({
   const offerCopyAgain = (copyAgain || (copyProblems && !movingAnyway)) && pending !== null;
   // Newer destinations count the files the plan replaces or moves to the backup.
   const replacingFiles = stage === "preview" && copy ? replacingCount(copy) : null;
-  const secretsNote =
-    stage === "done"
-      ? secretsLeftText(secretsLeft(summary?.secretFiles, copy?.secrets), sourceLabel)
-      : null;
   const next = nextStepText({
     stage,
     auto,
@@ -1303,6 +1301,7 @@ export function HandoffFolderCopy({
           folder={pending?.targetFolder ?? folder}
           targetLabel={targetLabel}
           error={error}
+          finished={pending?.reopened === true}
           onCheckAgain={() => pending && resume(pending)}
           onStartNew={
             pending?.reopened
@@ -1346,11 +1345,6 @@ export function HandoffFolderCopy({
             }}
             findingHome={findingHome}
             mode={mode}
-            onModeChange={(next) => {
-              setMode(next);
-              draft.keepDraft({ mode: next });
-            }}
-            canMove={canMove}
             chooseFirst={chooseFirst}
             onChooseFirstChange={(next) => {
               setChooseFirst(next);
@@ -1367,13 +1361,13 @@ export function HandoffFolderCopy({
             repositoryChoices={repositoryChoices}
             onRepositories={changeRepositories}
             replanning={replanning}
-            secretPaths={secretPaths}
-            includeSecrets={secretsChoice.included}
+            secretPaths={secrets.paths}
+            includeSecrets={secrets.choice.included}
             onSecretsChange={(included, paths) =>
-              chooseSecrets(reviewedSecrets(secretsChoice, secretCandidates, included, paths))
+              secrets.choose(reviewedSecrets(secrets.choice, secrets.candidates, included, paths))
             }
             onIncludeSecretsChange={(included) =>
-              chooseSecrets({ included, out: included ? [] : secretsChoice.out })
+              secrets.choose({ included, out: included ? [] : secrets.choice.out })
             }
             uncommittedFiles={uncommittedFiles}
             details={
@@ -1396,7 +1390,14 @@ export function HandoffFolderCopy({
             sourceReview={sourceReview}
             leftOnSource={leftOnSource}
             keptHere={keptHere}
-            secretsNote={secretsNote}
+            secretsNote={secrets.leftNote}
+            onSendSecrets={
+              secrets.canSendLeft && pending && !transferRecovery
+                ? () => void copyAgainNow(false, ALL_SECRETS)
+                : null
+            }
+            secretsLocked={secrets.gate.note}
+            secretsVia={secrets.gate.via}
             link={link}
             linkDialog={linkDialog}
             onLinkDialogClose={() => setLinkDialog(false)}
@@ -1408,29 +1409,21 @@ export function HandoffFolderCopy({
             notices={notices}
             next={next}
             working={workingLine({ stage, targetLabel, measured, copy, recompare })}
+            recompare={recompare}
             choices={
-              // Not on Review (its footer has Change setup) or after Apply: nothing to change.
-              pending &&
-              stage !== "setup" &&
-              stage !== "preview" &&
-              stage !== "done" &&
-              stage !== "undone" &&
-              (stage !== "failed" || failedBeforeApply) ? (
-                <CopyChoicesSummary
-                  pending={pending}
-                  copy={copy}
-                  sourceRoot={offer?.copyRoot ?? project.workspaceRoot}
-                  targetLabel={targetLabel}
-                  method={pending.method ?? method}
-                  // Before Apply only.
-                  onChange={
-                    (stage !== "copying" || !APPLYING.has(copy?.state ?? "")) && stage !== "moving"
-                      ? changeWhere
-                      : null
-                  }
-                  changeDisabled={closeLocked || (working && stage !== "scanning")}
-                />
-              ) : null
+              <RunningCopyChoices
+                pending={pending}
+                stage={stage}
+                failedBeforeApply={failedBeforeApply}
+                applying={APPLYING.has(copy?.state ?? "")}
+                copy={copy}
+                sourceRoot={offer?.copyRoot ?? project.workspaceRoot}
+                targetLabel={targetLabel}
+                sourceLabel={sourceLabel}
+                method={pending?.method ?? method}
+                onChangeWhere={changeWhere}
+                changeDisabled={closeLocked || (working && stage !== "scanning")}
+              />
             }
             lastCopy={draft.lastCopy}
             onViewLast={draft.viewLastCopy}
@@ -1439,7 +1432,9 @@ export function HandoffFolderCopy({
             <HandoffCopyScanFreshness
               capturedAt={copy?.capturedAt}
               status={scanStatus}
-              sourceChanged={sourceChanged}
+              // The footer offers Compare again only on Review; on What the
+              // freshness line holds it, or a changed source would leave no way forward.
+              sourceChanged={stage === "preview" && sourceChanged}
               busy={busy}
               onRefresh={() => void refreshScan()}
               onCompareAgain={rechoose}
@@ -1461,7 +1456,13 @@ export function HandoffFolderCopy({
             auto={auto}
             chooseFirst={chooseFirst}
             selection={selection}
-            setupBlocked={scope.loading || !machine || !!target?.unavailable || !folder.trim()}
+            setupBlocked={
+              scope.loading ||
+              !machine ||
+              !!target?.unavailable ||
+              !folder.trim() ||
+              chooseCopyFirst
+            }
             replaced={replaced}
             approveLabel={approveLabel}
             failedBeforeApply={failedBeforeApply}

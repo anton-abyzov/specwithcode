@@ -56,6 +56,102 @@ export function suggestMachineNickname(hostLabel: string): string | null {
 }
 
 /**
+ * The stamp of a name a machine gives itself: older than any name a person
+ * chooses, so a rename made anywhere, before or after, always wins the merge.
+ */
+export const DEFAULT_MACHINE_NICKNAME_STAMP = "1970-01-01T00:00:00.000Z";
+
+/** Stamps within the first day after the epoch belong to names a machine gave itself. */
+const AUTOMATIC_STAMP_LIMIT = 86_400_000;
+
+/** True for a name a machine gave itself, false for one a person chose. */
+export function isAutomaticMachineNickname(entry: MachineNickname): boolean {
+  return stamp(entry) < AUTOMATIC_STAMP_LIMIT;
+}
+
+const foldShown = (value: string) => value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+
+/** The computer name as it shows with no nickname: "Anton's MacBook M4MAX" reads "MacBook M4MAX". */
+const computerNameShown = (label: string) => {
+  const trimmed = label.trim();
+  const rest = trimmed.replace(/^[^\s'’]+['’]s\s+/u, "");
+  return rest === "" ? trimmed : rest;
+};
+
+/**
+ * The chip name a machine may give itself, or null when its computer name
+ * holds no chip or the name would not tell it apart from another machine it
+ * knows (`others`, id to computer name, such as its fleet list). A machine
+ * clashes when a person named it that, kept a computer name that reads that,
+ * or it has no name of its own choosing and its computer name holds the same
+ * chip (it would name itself the same, so both keep their computer names). Two
+ * that already named themselves the same settle on the lower id keeping it. A
+ * name left by a machine that is not in `others` (an old registration) does
+ * not count.
+ */
+function freeChipName(
+  nicknames: MachineNicknames,
+  environmentId: string,
+  hostLabel: string,
+  others: ReadonlyMap<string, string>,
+): string | null {
+  const name = suggestMachineNickname(hostLabel);
+  if (name === null) return null;
+  const wanted = foldShown(name);
+  for (const [id, label] of others) {
+    if (id === environmentId) continue;
+    const entry = nicknames[id];
+    if (entry === undefined || isAutomaticMachineNickname(entry)) {
+      // Both named themselves the same: the lower id keeps it, so the pair
+      // settles even when neither list shows the other's chip (a fleet alias).
+      // Known limit: when only the lower id lists the other, the higher never
+      // sees it and both keep the name until a person renames one. Yielding to
+      // claims from ids off the list would fix that, but a dead registration
+      // looks the same there, and a Mac that joined again would then yield to
+      // its own old record.
+      const claimed = entry === undefined ? "" : normalizeMachineNickname(entry.name);
+      if (claimed !== "" && foldShown(claimed) === wanted && id < environmentId) return null;
+      if (suggestMachineNickname(label) === name) return null;
+      continue;
+    }
+    const chosen = normalizeMachineNickname(entry.name);
+    const shown = chosen !== "" ? [chosen] : [label, computerNameShown(label)];
+    if (shown.some((value) => foldShown(value) === wanted)) return null;
+  }
+  return name;
+}
+
+/**
+ * The entry a machine writes for its own name, or null when nothing changes.
+ * A machine nobody named takes the chip in its computer name ("Anton M5MAX
+ * PROLED" becomes "M5"), stamped older than any choice. A name a person chose,
+ * the computer name kept on purpose included, is never touched. A name the
+ * machine gave itself follows what it knows: when another machine comes to
+ * show the same name, it goes back to its computer name (an empty name with
+ * the next automatic stamp, which syncs over the older one), and takes the
+ * chip again once the name is free.
+ */
+export function defaultMachineNickname(
+  nicknames: MachineNicknames,
+  environmentId: string,
+  hostLabel: string,
+  others: ReadonlyMap<string, string> = new Map(),
+): MachineNickname | null {
+  const own = nicknames[environmentId];
+  if (own !== undefined && !isAutomaticMachineNickname(own)) return null;
+  const name = freeChipName(nicknames, environmentId, hostLabel, others) ?? "";
+  if (own === undefined) {
+    return name === "" ? null : { name, updatedAt: DEFAULT_MACHINE_NICKNAME_STAMP };
+  }
+  if (normalizeMachineNickname(own.name) === name) return null;
+  return {
+    ...own,
+    name,
+    updatedAt: DateTime.formatIso(DateTime.makeUnsafe(stamp(own) + 1)),
+  };
+}
+
+/**
  * The id of another machine already shown under this name, compared without
  * case, or null. `names` maps each known machine id to the name it shows.
  */
@@ -164,25 +260,27 @@ function hashMachineId(environmentId: string): number {
 
 /**
  * The color of every known machine: the one chosen for it, else a default from
- * its id, stepping past colors already taken so no two known machines share one
- * while fewer than eight are known. Ids are settled in sorted order, so every
- * device that knows the same machines gives them the same colors.
+ * its id, stepping past colors already taken so no two machines share one while
+ * there are colors left. Machines in the nickname map settle first, from that
+ * map alone, which is synced across the fleet: a device's other known machines
+ * never move them, so every device shows a named machine in the same color.
  */
 export function assignMachineColors(
   environmentIds: Iterable<string>,
   nicknames: MachineNicknames,
 ): ReadonlyMap<string, MachineColorId> {
-  const ids = [...new Set([...environmentIds, ...Object.keys(nicknames)])].sort();
+  const named = Object.keys(nicknames).sort();
+  const others = [...new Set(environmentIds)].filter((id) => !(id in nicknames)).sort();
   const colors = new Map<string, MachineColorId>();
   const taken = new Set<MachineColorId>();
-  for (const id of ids) {
+  for (const id of named) {
     const chosen = nicknames[id]?.color;
     if (chosen === undefined) continue;
     colors.set(id, chosen);
     taken.add(chosen);
   }
   const count = MACHINE_COLOR_IDS.length;
-  for (const id of ids) {
+  for (const id of [...named, ...others]) {
     if (colors.has(id)) continue;
     const start = hashMachineId(id) % count;
     let color = MACHINE_COLOR_IDS[start]!;

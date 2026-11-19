@@ -5,6 +5,7 @@ import * as DesktopIpc from "./DesktopIpc.ts";
 import { installNotificationBadge } from "./methods/notificationBadge.ts";
 import { installThreadNotifications } from "./methods/threadNotifications.ts";
 import { installKeepAwake } from "./methods/keepAwake.ts";
+import { commandLineTool } from "./methods/commandLineTool.ts";
 import { installComputerUse } from "./methods/computerUse.ts";
 import { installServiceUpdates } from "./methods/serviceUpdates.ts";
 import { requestManagedUpdateConsent } from "./methods/managedUpdates.ts";
@@ -55,6 +56,7 @@ import {
   openExternal,
   openSystemSettings,
   checkSystemPermission,
+  closeSystemSettingsHelper,
   pasteAsText,
   probeRemoteEditors,
   pickFolder,
@@ -78,7 +80,11 @@ import {
   setSnapShotShortcutSuppressed,
 } from "./methods/snapShot.ts";
 import * as PreviewIpc from "./methods/preview.ts";
-import { listExternalBrowsers, openInExternalBrowser } from "./methods/externalBrowser.ts";
+import {
+  clearClipboardIfText,
+  listExternalBrowsers,
+  openInExternalBrowser,
+} from "./methods/externalBrowser.ts";
 import * as AppActivationIpc from "./methods/appActivation.ts";
 import {
   completeLegacyLocalStorage,
@@ -94,6 +100,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* installNotificationBadge();
   yield* installThreadNotifications();
   yield* installKeepAwake();
+  yield* ipc.handle(commandLineTool);
   yield* installComputerUse();
   yield* installVoice();
   yield* installServiceUpdates();
@@ -161,10 +168,12 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(openExternal);
   yield* ipc.handle(listExternalBrowsers);
   yield* ipc.handle(openInExternalBrowser);
+  yield* ipc.handle(clearClipboardIfText);
   yield* ipc.handle(receiveProviderAuthCallback);
   yield* ipc.handle(cancelProviderAuthCallback);
   yield* ipc.handle(openSystemSettings);
   yield* ipc.handle(checkSystemPermission);
+  yield* ipc.handle(closeSystemSettingsHelper);
   yield* ipc.handle(pasteAsText);
   yield* ipc.handle(openProjectWindow);
   yield* ipc.handle(startFileDrag);

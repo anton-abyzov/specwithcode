@@ -25,6 +25,7 @@ const sourceRepo = (path: string, patch: Partial<RepositoryInfo> = {}): Reposito
   branches: { main: A },
   stash: null,
   stashCount: 0,
+  localOnlyCommits: 0,
   identity: `github.com/acme/${path === "." ? "umbrella" : path.split("/").at(-1)}`,
   origin: `https://github.com/acme/${path === "." ? "umbrella" : path.split("/").at(-1)}.git`,
   status: [],
@@ -311,6 +312,34 @@ describe("repository matrix", () => {
     expect(result.actions.map((action) => action.path)).toEqual(["svc/notes.md"]);
   });
 
+  it("a repository with commits or stashes not on origin is copied whole, never cloned", () => {
+    const { localOnlyCommits: _counted, ...olderSource } = sourceRepo("older");
+    const result = plan({
+      repositories: [
+        sourceRepo("."),
+        sourceRepo("ahead", { localOnlyCommits: 2 }),
+        sourceRepo("stashed", { stash: B, stashCount: 1 }),
+        sourceRepo("pushed", { localOnlyCommits: 0 }),
+        // An older source does not count its commits: copied whole.
+        olderSource,
+      ],
+      entries: [
+        file("ahead/src/a.ts", "a", { repo: "ahead" }),
+        file("stashed/src/b.ts", "b", { repo: "stashed" }),
+        file("pushed/src/c.ts", "c", { repo: "pushed" }),
+        file("older/src/d.ts", "d", { repo: "older" }),
+      ],
+      clone: [repoRowId("ahead"), repoRowId("stashed"), repoRowId("pushed"), repoRowId("older")],
+    });
+    for (const path of ["ahead", "stashed", "older"]) {
+      expect(row(result, repoRowId(path))).toMatchObject({ clone: false, cloneAvailable: false });
+      expect(row(result, repoRowId(path)).detail).toContain("not on origin");
+      expect(step(result, path).kind).toBe("copy");
+    }
+    expect(row(result, repoRowId("pushed"))).toMatchObject({ clone: true, cloneAvailable: true });
+    expect(step(result, "pushed").kind).toBe("clone");
+  });
+
   it("a clone this machine cannot read is copied whole, and a readable one uses that address", () => {
     const result = plan({
       repositories: [sourceRepo("."), sourceRepo("svc"), sourceRepo("web")],
@@ -583,4 +612,50 @@ it("zero actions for an occupied nested path mean an unanswered repository choic
   const keep = plan({ ...input, decisions: { [repoRowId("repos/app")]: "keep-mine" } });
   expect(keep.actions).toEqual([]);
   expect(row(keep, repoRowId("repos/app")).decision).toBe("keep-mine");
+});
+
+it("never clones over files already at the path: taking theirs replaces it whole, identical files included", () => {
+  const input = {
+    repositories: [sourceRepo("."), sourceRepo("repos/app")],
+    entries: [
+      file("repos/app/.git/HEAD", "h", { class: "repository", repo: "repos/app" }),
+      file("repos/app/scratch.txt", "same", { repo: "repos/app", class: "untracked" }),
+    ],
+    destination: {
+      files: [here("repos/app/scratch.txt", "same", { repo: null, class: "untracked" })],
+      repositories: [destinationRepo(".")],
+    },
+    clone: [repoRowId("repos/app")],
+    cloneOrigins: { [repoRowId("repos/app")]: "https://github.com/acme/app.git" },
+  };
+  const take = plan({ ...input, decisions: { [repoRowId("repos/app")]: "take-theirs" } });
+  expect(row(take, repoRowId("repos/app"))).toMatchObject({ cloneAvailable: false, clone: false });
+  expect(step(take, "repos/app").kind).toBe("replace");
+  expect(take.actions.map((action) => action.path).sort()).toEqual([
+    "repos/app/.git/HEAD",
+    "repos/app/scratch.txt",
+  ]);
+});
+
+it("never clones the root into a folder that already holds files", () => {
+  const input = {
+    repositories: [sourceRepo(".")],
+    entries: [
+      file(".git/HEAD", "h", { class: "repository", repo: "." }),
+      file("README.md", "r", { repo: "." }),
+    ],
+    destination: { files: [], repositories: [] },
+    clone: [repoRowId(".")],
+    cloneOrigins: { [repoRowId(".")]: "https://github.com/acme/umbrella.git" },
+  };
+  expect(step(plan(input), ".").kind).toBe("clone");
+  const occupied = plan({
+    ...input,
+    destination: {
+      files: [here("notes.txt", "mine", { repo: null, class: "untracked" })],
+      repositories: [],
+    },
+  });
+  expect(row(occupied, repoRowId("."))).toMatchObject({ cloneAvailable: false, clone: false });
+  expect(step(occupied, ".").kind).toBe("copy");
 });

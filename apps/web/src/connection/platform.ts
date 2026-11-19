@@ -23,6 +23,7 @@ import { fetchRemoteEnvironmentDescriptor } from "@specweave-studio/client-runti
 import {
   managedRelayAccountChanges,
   managedRelaySessionAtom,
+  type ManagedRelaySession,
 } from "@specweave-studio/client-runtime/relay";
 import { EnvironmentRpcRequestObserver } from "@specweave-studio/client-runtime/rpc";
 import {
@@ -54,6 +55,7 @@ import { clearComposerDraftsEnvironment } from "../composerDraftStore";
 import { isHostedStaticApp } from "../hostedPairing";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { currentOwnMachineName } from "./ownMachineName";
 import { acknowledgeRpcRequest, trackRpcRequestSent } from "../rpc/requestLatencyState";
 import {
   desktopLocalConnectionId,
@@ -63,6 +65,7 @@ import {
 import * as ConnectionStorage from "./storage";
 import { clientPresentationMetadata } from "./clientMetadata";
 import { createApplicationActiveGate } from "./applicationActiveGate";
+import { onConnectionRetryRequest } from "./retryRequests";
 
 let nextObservedRpcRequestId = 0;
 
@@ -186,12 +189,19 @@ export const layerWakeups = Wakeups.layer({
             };
             document.addEventListener("visibilitychange", listener);
             window.addEventListener("focus", focus);
-            return { listener, focus };
+            // A page showing a machine offline asks for a retry while the window stays put.
+            const stopRequests = onConnectionRetryRequest(() => {
+              if (document.visibilityState === "visible" && gate.hinted()) {
+                Queue.offerUnsafe(queue, "retry-hint");
+              }
+            });
+            return { listener, focus, stopRequests };
           }),
-          ({ listener, focus }) =>
+          ({ listener, focus, stopRequests }) =>
             Effect.sync(() => {
               document.removeEventListener("visibilitychange", listener);
               window.removeEventListener("focus", focus);
+              stopRequests();
             }),
         ).pipe(Effect.asVoid),
       ),
@@ -215,6 +225,7 @@ function clientMetadata() {
       maxTouchPoints: navigator.maxTouchPoints,
     },
     desktopBridge: window.desktopBridge,
+    machineName: window.desktopBridge === undefined ? undefined : currentOwnMachineName(),
   });
 }
 
@@ -275,40 +286,57 @@ export const provisionDesktopSshEnvironment = Effect.fn(
   };
 });
 
+/**
+ * The Connect token a relay route sends (1417, AC-14). Only a missing
+ * session or a session with no token is a sign-out. A failed read (offline,
+ * a slow Clerk refresh) is a network retry, so a short outage never shows
+ * "Sign in" or reaches the session guard.
+ */
+export const readConnectClerkToken = (
+  session: ManagedRelaySession | null,
+): Effect.Effect<string, ConnectionBlockedError | ConnectionTransientError> =>
+  Effect.gen(function* () {
+    if (session === null) {
+      return yield* new ConnectionBlockedError({
+        reason: "authentication",
+        detail: "Sign in to SpecWithCode Connect to connect this environment.",
+        connectSignInRequired: true,
+      });
+    }
+    const token = yield* session.readClerkToken().pipe(
+      Effect.mapError(
+        (error) =>
+          new ConnectionTransientError({
+            reason: "network",
+            detail: error.message,
+          }),
+      ),
+    );
+    if (token === null) {
+      return yield* new ConnectionBlockedError({
+        reason: "authentication",
+        detail: "The SpecWithCode Connect session is unavailable.",
+        connectSignInRequired: true,
+      });
+    }
+    return token;
+  });
+
 const layerCapabilities = Layer.effectContext(
   Effect.sync(() => {
     const presentation = ClientCapabilities.ClientPresentation.of({
-      metadata: clientMetadata(),
+      // Read at each connection: the machine name arrives after this layer starts.
+      get metadata() {
+        return clientMetadata();
+      },
     });
     const cloudSession = ClientCapabilities.CloudSession.of({
       identity: Effect.sync(() =>
         Option.fromNullishOr(appAtomRegistry.get(managedRelaySessionAtom)),
       ),
-      clerkToken: Effect.gen(function* () {
-        const session = appAtomRegistry.get(managedRelaySessionAtom);
-        if (session === null) {
-          return yield* new ConnectionBlockedError({
-            reason: "authentication",
-            detail: "Sign in to SpecWithCode Connect to connect this environment.",
-          });
-        }
-        const token = yield* session.readClerkToken().pipe(
-          Effect.mapError(
-            (error) =>
-              new ConnectionTransientError({
-                reason: "network",
-                detail: error.message,
-              }),
-          ),
-        );
-        if (token === null) {
-          return yield* new ConnectionBlockedError({
-            reason: "authentication",
-            detail: "The SpecWithCode Connect session is unavailable.",
-          });
-        }
-        return token;
-      }),
+      clerkToken: Effect.suspend(() =>
+        readConnectClerkToken(appAtomRegistry.get(managedRelaySessionAtom)),
+      ),
     });
     const identity = ClientCapabilities.RelayDeviceIdentity.of({
       deviceId: Effect.succeedNone,
@@ -810,7 +838,7 @@ const layerRpcRequestObserver = Layer.succeed(
       Effect.sync(() => {
         nextObservedRpcRequestId += 1;
         const requestId = `${environmentId}:${nextObservedRpcRequestId}`;
-        trackRpcRequestSent(requestId, method, `${method} · ${environmentId}`);
+        trackRpcRequestSent(requestId, method, method, environmentId);
         return Effect.sync(() => {
           acknowledgeRpcRequest(requestId);
         });

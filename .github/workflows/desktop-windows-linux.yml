@@ -21,8 +21,11 @@ name: Desktop Windows and Linux
 # desktop app, whose AppImage and .deb come from the release.
 #
 # A pull request runs it only when it changes the desktop app, the packaging
-# and end-to-end scripts, or the first-run setup the end-to-end test clicks
-# through (the onboarding components and the English labels it matches). A new
+# and end-to-end scripts, or the first-run setup the end-to-end test walks
+# through: the onboarding components and logic, the Access step's computer-use
+# and browser-extension parts, and the shared walker
+# (scripts/studio-verify/first-run-walk.mjs), which presses each step's
+# data-wizard-neutral control and matches no label. A new
 # first-run step that the test cannot pass otherwise surfaces only at release
 # time, about 24 minutes into the macOS run. Other server, web and shared
 # package changes are covered by the daily run on main, so a regression they
@@ -45,6 +48,14 @@ on:
       - "scripts/desktop-e2e/**"
       - "scripts/release/verify-built-app.mjs"
       - "apps/web/src/components/onboarding/**"
+      - "apps/web/src/onboarding/**"
+      - "apps/web/src/components/computerUse/**"
+      - "apps/web/src/components/settings/BrowserExtension*.tsx"
+      - "apps/server/src/browserExtension/**"
+      - "packages/contracts/src/browserExtension.ts"
+      - "apps/desktop/src/preview/ExternalBrowsers.ts"
+      - "scripts/studio-verify/first-run-walk.mjs"
+      - "scripts/studio-fleet/test-startup.mjs"
       - "apps/web/src/i18n/messages/en.ts"
   schedule:
     # 06:53 UTC daily on main, beside the daily platform tests.
@@ -188,6 +199,14 @@ jobs:
           echo "DEB_PACKAGE=$package" >> "$GITHUB_ENV"
           dpkg -L "$package" | grep -E '/specweave-studio-desktop$'
 
+      # "Install command-line tool" with the app's own code against the installed .deb, in a
+      # throwaway home: install, a new login shell runs specwithcode --version, launch repair, Remove.
+      - name: Command-line tool from the installed .deb app
+        run: |
+          exe="$(readlink -f /usr/bin/specweave-studio-desktop)"
+          node scripts/desktop-e2e/command-line-tool.mjs --resources "$(dirname "$exe")/resources" \
+            --app-version auto --result "$RUNNER_TEMP/linux-deb-command-line.json"
+
       - name: Launch the installed .deb app
         run: |
           exe="$(readlink -f /usr/bin/specweave-studio-desktop)"
@@ -250,6 +269,17 @@ jobs:
           chmod +x "$appimage"
           APPIMAGE_EXTRACT_AND_RUN=1 STUDIO_SMOKE_EXECUTABLE="$PWD/$appimage" STUDIO_SMOKE_RESULT="$RUNNER_TEMP/linux-appimage.json" \
             xvfb-run -a node apps/desktop/scripts/smoke-test.mjs
+
+      # The shim inside the AppImage runs on its own, and the per-user launcher mounts the
+      # AppImage and runs it (FUSE, as running the AppImage itself needs).
+      - name: Command-line tool from the AppImage
+        if: ${{ success() || failure() }}
+        run: |
+          appimage="$PWD/$(ls release/*.AppImage | head -1)"
+          (cd "$RUNNER_TEMP" && "$appimage" --appimage-extract >/dev/null)
+          "$RUNNER_TEMP/squashfs-root/resources/cli/specwithcode" --version
+          node scripts/desktop-e2e/command-line-tool.mjs --resources "$RUNNER_TEMP/squashfs-root/resources" \
+            --app-image "$appimage" --app-version auto --result "$RUNNER_TEMP/linux-appimage-command-line.json"
 
       # The same end-to-end check on the AppImage's own payload: what
       # APPIMAGE_EXTRACT_AND_RUN or the FUSE mount runs.
@@ -430,6 +460,14 @@ jobs:
           ditto -x -k "$(ls release/SpecWithCode-*-arm64.zip | head -1)" "$dir"
           STUDIO_SMOKE_EXECUTABLE="$dir/SpecWithCode.app/Contents/MacOS/SpecWithCode" STUDIO_SMOKE_RESULT="$RUNNER_TEMP/macos-zip.json" \
             node apps/desktop/scripts/smoke-test.mjs
+
+      # "Install command-line tool" against the unpacked app in a throwaway home: the link in
+      # ~/.local/bin, the PATH line in .zprofile, a new login zsh, launch repair, Remove.
+      - name: Command-line tool from the unpacked app
+        if: ${{ success() || failure() }}
+        run: |
+          node scripts/desktop-e2e/command-line-tool.mjs --resources "$RUNNER_TEMP/macos-app/SpecWithCode.app/Contents/Resources" \
+            --app-version auto --result "$RUNNER_TEMP/macos-command-line.json"
 
       # The release's verify stage in its fresh mode (scripts/release/verify-built-app.mjs):
       # the bundled server reports the version, and a thread and the project coordinator are
@@ -615,6 +653,15 @@ jobs:
           if ($proc.ExitCode -ne 0) { Write-Error "In-place update exited with $($proc.ExitCode)"; exit 1 }
           if (-not (Test-Path $env:STUDIO_INSTALLED_EXE)) { Write-Error "In-place update removed $env:STUDIO_INSTALLED_EXE"; exit 1 }
           Assert-Shortcuts "after in-place update"
+
+      # "Install command-line tool" against the installed app: the launcher in LOCALAPPDATA, the
+      # user PATH in HKCU, a new PowerShell runs specwithcode --version, launch repair, Remove.
+      - name: Command-line tool from the installed app
+        shell: pwsh
+        run: |
+          $resources = Join-Path (Split-Path $env:STUDIO_INSTALLED_EXE) "resources"
+          node scripts/desktop-e2e/command-line-tool.mjs --resources $resources --app-version auto --result "$env:RUNNER_TEMP\windows-command-line.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Launch the installed app
         shell: pwsh

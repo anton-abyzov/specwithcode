@@ -1,5 +1,6 @@
 import {
   isLocalWorkerMachine,
+  type ModelLane,
   type ModelSelection,
   type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   OrchestratorMcpFailure,
@@ -9,6 +10,7 @@ import {
   projectWorkerMachineOrder,
   type ProviderInteractionMode,
   type RuntimeMode,
+  type TaskClass,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -29,6 +31,7 @@ import { currentTeamRules, teamRulesForFolder } from "../../../teamRules/TeamRul
 import type { Caller } from "../../threadAccess.ts";
 import { fleetPrincipalOf } from "../orchestrator/remote.ts";
 import { addToMachineHint, type ExistingCopyOutcome, linkExistingCopy } from "./addToMachine.ts";
+import { remotePickedModel } from "./remoteLaunchModel.ts";
 import { workGrantOf } from "../../workGrantAccess.ts";
 
 export interface LaunchTargetInput {
@@ -47,6 +50,9 @@ export interface LaunchTargetInput {
   readonly increment?: string | undefined;
   /** What the work needs from its machine, such as an iOS Simulator. */
   readonly needs?: ReadonlyArray<OrchestratorMcpLaunchNeed> | undefined;
+  /** The caller's hints for the model pick when it names no model. */
+  readonly taskClass?: TaskClass | undefined;
+  readonly taskLane?: ModelLane | undefined;
 }
 
 const invalid = (message: string) =>
@@ -261,6 +267,16 @@ export const noWorkerMachineFailure = (skipped: ReadonlyArray<SkippedMachine>, b
 };
 
 /**
+ * The unnamed model already picked for a launch request. Placement calls
+ * `launchRemote` once per candidate machine with the same params, and the pick
+ * (which may ask the decision model) does not depend on the machine.
+ */
+const pickedModels = new WeakMap<
+  LaunchTargetInput,
+  { readonly selection: ModelSelection | undefined }
+>();
+
+/**
  * Starts the thread on another machine. A thread caller's worker is followed
  * and reports back to it; an outside MCP client's is not (it reads and waits
  * on the thread instead), and runs within the lower of the client's approved
@@ -350,6 +366,25 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
         new Map([...(yield* remote.machineLabels), [context.scope.environmentId, "this machine"]]),
       ),
     });
+  // Picked once per request: a retry in a copy linked a moment ago, and each
+  // machine placement tries, is the same project and task.
+  const picked = pickedModels.get(params);
+  const pickedModelSelection =
+    params.modelSelection !== undefined
+      ? undefined
+      : picked !== undefined
+        ? picked.selection
+        : yield* remotePickedModel({
+            project,
+            callerModel: caller?.modelSelection ?? undefined,
+            isCoordinator,
+            title: params.title,
+            message: params.message,
+            taskClass: params.taskClass,
+            taskLane: params.taskLane,
+            grantAccounts: (yield* workGrantOf(context))?.grant.accounts,
+          });
+  pickedModels.set(params, { selection: pickedModelSelection });
   const launch = (localProject: Project | undefined = project) =>
     remote.launch({
       machine: input.machine.machine,
@@ -357,13 +392,20 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
       ...(caller === undefined ? {} : { callerThreadId: caller.id }),
       launchedBy: principal.launchedBy,
       localProject,
+      // A scratch launch from a project thread stays on that project's page here.
+      ...(localProject === undefined && caller !== undefined
+        ? { listedUnder: caller.projectId }
+        : {}),
       machineProjectId: params.scratch === true ? undefined : params.machineProjectId,
       title: params.title,
       explicitModelSelection: params.modelSelection,
+      // What the caller itself runs on: the model a thread there started on
+      // before the project's models picked one, and still the one after them.
       inheritedModelSelection:
         (isCoordinator
           ? project?.defaultModelSelection
           : (caller?.modelSelection ?? project?.defaultModelSelection)) ?? undefined,
+      pickedModelSelection,
       runtimeMode: input.runtimeMode,
       requestedRuntimeMode: params.runtimeMode,
       interactionMode: input.interactionMode,
@@ -405,7 +447,7 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
         if (listedThere)
           return yield* hinted(
             error,
-            `This project already names a copy on ${machine.label}, and it cannot be used now: that machine may be briefly out, or the copy was moved or unlinked there. Do not add another copy. Check studio_machine_list, try again later, or ask the user to relink it (its sidebar menu > Link…).`,
+            `This project is already on ${machine.label}, and it cannot be used now: that machine may be briefly out, or the project was moved or unlinked there. Do not add it again. Check studio_machine_list, try again later, or ask the user to relink it (its sidebar menu > Link…).`,
           );
         // A machineProjectId naming an unlinked copy of this repository is linked too,
         // and only that one: launching in it is refused until it is.
@@ -449,12 +491,12 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
         if (existing.kind === "unlinked")
           return yield* hinted(
             error,
-            `${machine.label} has this repository as a separate project, ${existing.copy.title} (${existing.copy.id}), not linked to this one. ${existing.problem} Do not call studio_project_add_to_machine for it: that finds this same copy.`,
+            `${machine.label} has this repository as a separate project, ${existing.copy.title} (${existing.copy.id}), not linked to this one. ${existing.problem} Do not call studio_project_add_to_machine for it: that finds this same project.`,
           );
         if (named !== undefined)
           return yield* hinted(
             error,
-            `${named} on ${machine.label} is not a copy of this project's repository that can be linked. studio_machine_list shows this project's copy there, if it has one. ${addToMachineHint(machine, project.id)}`,
+            `${named} on ${machine.label} is not this project's repository, so it cannot be linked. studio_machine_list shows this project on ${machine.label}, if it has it. ${addToMachineHint(machine, project.id)}`,
           );
         // A project that is not there yet can be put there over MCP.
         return yield* hinted(error, addToMachineHint(machine, project.id));

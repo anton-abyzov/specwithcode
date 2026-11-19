@@ -46,6 +46,7 @@ import {
 } from "./ProjectSkillsActionsCommon.ts";
 import { makeStudioLink, pushSkillToFleet } from "./ProjectSkillsFleet.ts";
 import * as SkillAuthoringService from "./SkillAuthoringService.ts";
+import { makeSkillManagementHandlers } from "./SkillUpdateRpc.ts";
 import * as ProjectSkillsService from "./ProjectSkillsService.ts";
 
 const CODEX_START_TIMEOUT = "20 seconds";
@@ -167,6 +168,20 @@ const layerSkillsActionsRpcHandlers = WsProjectSkillsActionsRpcGroup.middleware(
 
       const copies = yield* makeProjectSkillCopies(deps);
 
+      // Skill repos, search and updates on this machine (see SkillUpdateRpc).
+      const management = yield* makeSkillManagementHandlers({
+        home,
+        environment: hostEnvironment,
+        platform,
+        stateDir: config.stateDir,
+        skills,
+        registry,
+        machineName: environment.getDescriptor.pipe(Effect.map((descriptor) => descriptor.label)),
+      }).pipe(
+        Effect.provide(ProcessRunner.layer),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+
       const studio = yield* makeStudioLink({
         home,
         resolveCwd: (input: ProjectSkillsStudioLinkInput) =>
@@ -247,6 +262,7 @@ const layerSkillsActionsRpcHandlers = WsProjectSkillsActionsRpcGroup.middleware(
           ),
         coordinatorEnvironmentId: environment.getEnvironmentId,
         runInstalls: runFleetSkillInstalls,
+        verifyGithubSource: management.verifyGithubSource,
         registryVersions: actions.registryVersions,
         lockedVersions: (projectId: SkillTarget["projectId"]) =>
           skills.read({ projectId }).pipe(
@@ -273,8 +289,11 @@ const layerSkillsActionsRpcHandlers = WsProjectSkillsActionsRpcGroup.middleware(
         [WS_METHODS.projectsSkillsVersions]: actions.versions,
         [WS_METHODS.projectsSkillsAction]: actions.action,
         [WS_METHODS.projectsSkillsFleetPush]: (input: ProjectSkillsFleetPushInput) =>
-          pushSkillToFleet(fleet, input),
+          pushSkillToFleet(fleet, input).pipe(
+            Effect.tap((result) => management.afterPush(input, result).pipe(Effect.forkDetach)),
+          ),
         [WS_METHODS.projectsSkillsStudioLink]: studio.link,
+        ...management.handlers,
       };
     }),
   )

@@ -35,6 +35,7 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import * as McpProviderSession from "./McpProviderSession.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
+import { launchedOrThrow } from "./toolkits/orchestrator/requestSpecweaveSetup.ts";
 
 const projectId = ProjectId.make("project:mcp-between-turns");
 const instanceId = ProviderInstanceId.make("codex");
@@ -194,12 +195,14 @@ it.effect(
       const scope = scopeOf(threadId);
       attach(scope);
 
-      const delegated = yield* service.delegateTask(scope, {
-        task: "Run the release checklist.",
-        target,
-        mode: "async",
-        clientRequestId: "between-turns-delegate",
-      });
+      const delegated = launchedOrThrow(
+        yield* service.delegateTask(scope, {
+          task: "Run the release checklist.",
+          target,
+          mode: "async",
+          clientRequestId: "between-turns-delegate",
+        }),
+      );
       const parent = yield* orchestrator.getThreadProjection(threadId);
       const task = parent.subagents.find((candidate) => candidate.id === delegated.taskId);
       // The task belongs to the turn that ended, whose result wakes the thread.
@@ -208,10 +211,12 @@ it.effect(
       const child = yield* orchestrator.getThreadProjection(delegated.childThreadId);
       assert.lengthOf(child.runs, 1);
 
-      const launched = yield* service.createThreads(scope, {
-        threads: [{ title: "Release notes", prompt: "Draft the release notes.", target }],
-        clientRequestId: "between-turns-launch",
-      });
+      const launched = launchedOrThrow(
+        yield* service.createThreads(scope, {
+          threads: [{ title: "Release notes", prompt: "Draft the release notes.", target }],
+          clientRequestId: "between-turns-launch",
+        }),
+      );
       assert.lengthOf(launched.threads, 1);
       const recorded = (yield* orchestrator.getThreadProjection(threadId)).turnItems.find(
         (item) => item.type === "thread_created",

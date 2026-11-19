@@ -21,6 +21,7 @@ const runtime = vi.hoisted(() => ({
   nicknames: new Map<string, string>(),
   colors: new Map<string, string>(),
   dialogs: {} as Record<string, any>,
+  noScratch: new Set<string>(),
 }));
 vi.mock("~/studio/machineNickname", () => ({
   useMachineNicknames: () => (id: string, label?: string | null) =>
@@ -87,6 +88,7 @@ vi.mock("~/hooks/useScratchProject", () => ({
   useScratchProject: () => ({
     openScratchProject: runtime.scratch,
     scratchWorkspaceRootFor: (id: string) =>
+      !runtime.noScratch.has(id) &&
       runtime.environments.find(
         (item) => item.environmentId === id && item.connection.phase === "connected",
       )
@@ -165,6 +167,7 @@ beforeEach(() => {
   runtime.nicknames = new Map();
   runtime.colors = new Map();
   runtime.dialogs = {};
+  runtime.noScratch = new Set();
   onPendingChange.mockClear();
   sendInFlightRef.current = false;
 });
@@ -184,6 +187,57 @@ it("shows a single primary non-Git machine and a connection path with one host s
   await open();
   expect(document.querySelector('a[href="/settings/connections"]')).not.toBeNull();
   expect(runtime.scratch).not.toHaveBeenCalled();
+});
+
+it("keeps a chat a chat on another machine, without asking for a project", async () => {
+  const chatProject = ProjectId.make("scratch-m4");
+  useComposerDraftStore.setState(useComposerDraftStore.getInitialState(), true);
+  useComposerDraftStore
+    .getState()
+    .setLogicalProjectDraftThreadId("/scratch/m4", scopeProjectRef(m4, chatProject), draftId, {});
+  runtime.projects = [
+    { id: chatProject, environmentId: m4, title: "No project", workspaceRoot: "/scratch/m4" },
+    { id: projectId, environmentId: m1, title: "data", workspaceRoot: "/m1/data" },
+  ];
+  runtime.scratch.mockResolvedValue({
+    id: ProjectId.make("scratch-m1"),
+    environmentId: m1,
+    title: "No project",
+    workspaceRoot: "/scratch/m1",
+  });
+  await render();
+  await open();
+  await click("M1Connected");
+  expect(runtime.scratch).toHaveBeenCalledExactlyOnceWith(m1, "Could not switch machine");
+  expect(document.body.textContent).not.toContain("Project on");
+  expect(useComposerDraftStore.getState().getDraftSession(draftId)).toMatchObject({
+    environmentId: m1,
+    projectId: ProjectId.make("scratch-m1"),
+    envMode: "local",
+    worktreePath: null,
+  });
+  expect(runtime.coordinator).not.toHaveBeenCalled();
+});
+
+it("never offers projects to a chat when the other machine cannot hold chats", async () => {
+  const chatProject = ProjectId.make("scratch-m4");
+  useComposerDraftStore.setState(useComposerDraftStore.getInitialState(), true);
+  useComposerDraftStore
+    .getState()
+    .setLogicalProjectDraftThreadId("/scratch/m4", scopeProjectRef(m4, chatProject), draftId, {});
+  runtime.projects = [
+    { id: chatProject, environmentId: m4, title: "No project", workspaceRoot: "/scratch/m4" },
+    { id: projectId, environmentId: m1, title: "data", workspaceRoot: "/m1/data" },
+  ];
+  runtime.noScratch = new Set([m1]);
+  await render();
+  await open();
+  await click("M1Connected");
+  expect(runtime.scratch).not.toHaveBeenCalled();
+  expect(document.body.textContent).not.toContain("Project on");
+  expect(document.body.textContent).toContain("M1 cannot hold a chat without a project right now.");
+  expect(useComposerDraftStore.getState().getDraftSession(draftId)?.environmentId).toBe(m4);
+  expect(runtime.coordinator).not.toHaveBeenCalled();
 });
 
 it("requires an explicit No project choice when the destination lacks a matching project", async () => {
@@ -552,12 +606,12 @@ it("says why a machine is unreachable and retries it instead of selecting it", a
   };
   await render();
   await openOther();
-  const m1Row = button("M1Can't reach");
+  const m1Row = button("M1Not answering");
   expect(m1Row.textContent).toContain("M1 could not establish a WebSocket connection.");
   expect(m1Row.textContent).toContain("Retry");
   expect(m1Row.hasAttribute("data-disabled")).toBe(false);
   expect(button("M3Connecting…").hasAttribute("data-disabled")).toBe(true);
-  await click("M1Can't reach");
+  await click("M1Not answering");
   expect(runtime.retry).toHaveBeenCalledExactlyOnceWith(m1);
   expect(useComposerDraftStore.getState().getDraftSession(draftId)?.environmentId).toBe(m4);
   expect(runtime.scratch).not.toHaveBeenCalled();
@@ -573,7 +627,7 @@ it("shows on the closed picker when the chosen machine can't be reached", async 
   const control = document.querySelector('button[data-composer-shortcut="composer.host"]')!;
   expect(control.getAttribute("aria-label")).toBe("Run on: M4, Connection failed");
   expect(control.querySelector("[data-draft-machine-unreachable]")?.textContent).toBe(
-    "Can't reach",
+    "Connection failed",
   );
 });
 
@@ -683,8 +737,9 @@ it("opens the folder copy review for a project with no Git remote, never a clone
 });
 
 it("offers Link, never Clone, when the machine has an unlinked checkout of the same remote", async () => {
+  // A copy matches by repository and place in it: both checkouts sit at their repository root.
   const identity = { canonicalKey: "github.com/acme/data", locator: { kind: "remote" } };
-  runtime.projects[0].repositoryIdentity = identity;
+  runtime.projects[0].repositoryIdentity = { ...identity, rootPath: "/m4/data" };
   runtime.projects.push(
     {
       id: ProjectId.make("same-name-m3"),
@@ -697,7 +752,7 @@ it("offers Link, never Clone, when the machine has an unlinked checkout of the s
       environmentId: m1,
       title: "data checkout",
       workspaceRoot: "/m1/code/data",
-      repositoryIdentity: identity,
+      repositoryIdentity: { ...identity, rootPath: "/m1/code/data" },
     },
   );
   await render();

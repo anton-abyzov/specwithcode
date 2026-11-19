@@ -1173,6 +1173,18 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.usageLimitsHistory,
       concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
     }),
+    /** Closed quota periods per account: what each window had used when it reset. */
+    usageResetLedger: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:usage-limits:resets",
+      tag: WS_METHODS.usageLimitsResets,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
+    /** Posts announcing a limits reset, as the environment last read them. */
+    resetAnnouncements: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:reset-announcements:list",
+      tag: WS_METHODS.resetAnnouncementsList,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
     /** CLIProxyAPI installs on the host's own machine; the reply never carries a key. */
     detectLocalUsageHubs: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:detect-local-usage-hubs",
@@ -1457,6 +1469,16 @@ export function createServerEnvironmentAtoms<R, E>(
     cleanOldAppVersions: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:clean-old-app-versions",
       tag: WS_METHODS.serverCleanOldAppVersions,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
+    getStorageCleanupPlan: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:get-storage-cleanup-plan",
+      tag: WS_METHODS.serverGetStorageCleanupPlan,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
+    runStorageCleanup: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:run-storage-cleanup",
+      tag: WS_METHODS.serverRunStorageCleanup,
       concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
     }),
     retryResourceTelemetry: createEnvironmentRpcCommand(runtime, {

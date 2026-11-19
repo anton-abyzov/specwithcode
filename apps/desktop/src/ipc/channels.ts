@@ -5,10 +5,13 @@ export const VOICE_PREVIEW_LOCAL_CHANNEL = "desktop:voice-preview-local";
 export const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 export const SET_NOTIFICATION_BADGE_CHANNEL = "desktop:set-notification-badge";
 export const SET_KEEP_AWAKE_CHANNEL = "desktop:set-keep-awake";
+export const COMMAND_LINE_TOOL_CHANNEL = "desktop:command-line-tool";
 export const RUN_COMPUTER_USE_ACTION_CHANNEL = "desktop:run-computer-use-action";
 export const GET_COMPUTER_USE_PERMISSIONS_CHANNEL = "desktop:get-computer-use-permissions";
 export const REQUEST_COMPUTER_USE_PERMISSION_CHANNEL = "desktop:request-computer-use-permission";
 export const RELAUNCH_FOR_COMPUTER_USE_CHANNEL = "desktop:relaunch-for-computer-use";
+export const SAVE_FIRST_RUN_RESUME_CHANNEL = "desktop:save-first-run-resume";
+export const TAKE_FIRST_RUN_RESUME_CHANNEL = "desktop:take-first-run-resume";
 export const RESET_COMPUTER_USE_PERMISSION_CHANNEL = "desktop:reset-computer-use-permission";
 export const VOICE_GET_STATUS_CHANNEL = "desktop:voice-get-status";
 export const VOICE_REQUEST_ACCESS_CHANNEL = "desktop:voice-request-access";
@@ -28,11 +31,14 @@ export const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 export const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 export const LIST_EXTERNAL_BROWSERS_CHANNEL = "desktop:list-external-browsers";
 export const OPEN_IN_EXTERNAL_BROWSER_CHANNEL = "desktop:open-in-external-browser";
+export const CLEAR_CLIPBOARD_IF_TEXT_CHANNEL = "desktop:clear-clipboard-if-text";
 export const OPEN_SYSTEM_SETTINGS_CHANNEL = "desktop:open-system-settings";
 export const PROBE_REMOTE_EDITORS_CHANNEL = "desktop:probe-remote-editors";
 export const MENU_ACTION_CHANNEL = "desktop:menu-action";
 // The local backend answers again, as after a restart: windows reconnect at once.
 export const BACKEND_READY_CHANNEL = "desktop:backend-ready";
+// A Connect sign-in through another site changed state; sent to the window that asked.
+export const CONNECT_SIGN_IN_STATE_CHANNEL = "desktop:connect-sign-in-state";
 export const PASTE_AS_TEXT_CHANNEL = "desktop:paste-as-text";
 export const SNAP_SHOT_EVENT_CHANNEL = "desktop:snap-shot-event";
 export const QUIT_SHORTCUT_CHANNEL = "desktop:quit-shortcut";
@@ -151,6 +157,8 @@ export const PREVIEW_POINTER_EVENT_CHANNEL = "desktop:preview-pointer-event";
 export const MAC_PERMISSION_HELPER_CHANNEL = "desktop:mac-permission-helper";
 
 export const CHECK_SYSTEM_PERMISSION_CHANNEL = "desktop:check-system-permission";
+
+export const CLOSE_SYSTEM_SETTINGS_HELPER_CHANNEL = "desktop:close-system-settings-helper";
 
 export const PREVIEW_RECORDING_INPUT_CHANNEL = "desktop:preview-recording-input";
 

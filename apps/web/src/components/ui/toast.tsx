@@ -30,6 +30,7 @@ import {
   shouldRenderThreadScopedToast,
 } from "./toast.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./tooltip";
+import { ToastProgress } from "./toastProgress";
 
 export type ThreadToastData = {
   threadRef?: ScopedThreadRef | null;
@@ -39,8 +40,21 @@ export type ThreadToastData = {
   onClose?: (() => void) | undefined;
   dismissAfterVisibleMs?: number;
   hideCopyButton?: boolean;
+  /**
+   * Lifts the toasts above the hosted sign-in dialog while this toast shows.
+   * That dialog is fixed at z-index 10000 with a dimming backdrop.
+   */
+  aboveSignInDialog?: boolean;
   /** 0 to 1: one progress bar under the description. */
   progress?: number;
+  /** Draws the bar as this many equal phases, like the copy's track. */
+  progressSegments?: number;
+  /** Work is moving: the running segment carries a sheen. */
+  progressLive?: boolean;
+  /** "success": the finished bar turns to success, segment by segment. */
+  progressTone?: "success";
+  /** The bar's accessible name; "Update progress" when unset. */
+  progressLabel?: string;
   additionalActions?: ReadonlyArray<{
     id: string;
     props: ComponentPropsWithoutRef<"button">;
@@ -196,22 +210,7 @@ function ToastDescriptionAndExpandable({
     return (
       <>
         <Toast.Description className={descriptionClassName} data-slot="toast-description" />
-        {toastData?.progress === undefined ? null : (
-          <div
-            aria-label="Update progress"
-            aria-valuemax={100}
-            aria-valuemin={0}
-            aria-valuenow={Math.round(toastData.progress * 100)}
-            className="mt-2 h-1 w-full overflow-hidden rounded-full bg-muted"
-            data-slot="toast-progress"
-            role="progressbar"
-          >
-            <div
-              className="h-full rounded-full bg-primary transition-[width] duration-700 ease-out motion-reduce:transition-none"
-              style={{ width: `${Math.round(toastData.progress * 100)}%` }}
-            />
-          </div>
-        )}
+        {toastData?.progress === undefined ? null : <ToastProgress data={toastData} />}
       </>
     );
   }
@@ -539,9 +538,17 @@ function ThreadToastVisibleAutoDismiss({
   return null;
 }
 
-function ToastProvider({ children, position = "top-right", ...props }: ToastProviderProps) {
+/** Long enough to read a two-line toast; progress and failures pass 0 and stay until closed. */
+export const DEFAULT_TOAST_TIMEOUT_MS = 10_000;
+
+function ToastProvider({
+  children,
+  position = "top-right",
+  timeout = DEFAULT_TOAST_TIMEOUT_MS,
+  ...props
+}: ToastProviderProps) {
   return (
-    <Toast.Provider toastManager={toastManager} {...props}>
+    <Toast.Provider toastManager={toastManager} timeout={timeout} {...props}>
       {children}
       <Toasts position={position} />
     </Toast.Provider>
@@ -556,6 +563,7 @@ function Toasts({ position }: { position: ToastPosition }) {
     shouldRenderThreadScopedToast(toast.data, activeThreadRef),
   );
   const visibleToastLayout = buildVisibleToastLayout(visibleToasts);
+  const aboveSignInDialog = visibleToasts.some((toast) => toast.data?.aboveSignInDialog === true);
 
   useEffect(() => {
     const activeToastIds = new Set(toasts.map((toast) => toast.id));
@@ -570,7 +578,9 @@ function Toasts({ position }: { position: ToastPosition }) {
     <Toast.Portal data-slot="toast-portal">
       <Toast.Viewport
         className={cn(
-          "fixed z-100 mx-auto flex w-[calc(100%-var(--toast-inset)*2)] max-w-90 [--toast-header-offset:var(--workspace-topbar-height)] [--toast-inset:--spacing(4)] sm:[--toast-inset:--spacing(8)]",
+          "fixed mx-auto flex w-[calc(100%-var(--toast-inset)*2)] max-w-90 [--toast-header-offset:var(--workspace-topbar-height)] [--toast-inset:--spacing(4)] sm:[--toast-inset:--spacing(8)]",
+          // Above the sign-in dialog (10000), below its menus (11000).
+          aboveSignInDialog ? "z-[10500]" : "z-100",
           // Vertical positioning
           "data-[position*=top]:top-[calc(var(--toast-inset)+var(--toast-header-offset))]",
           "data-[position*=bottom]:bottom-(--toast-inset)",

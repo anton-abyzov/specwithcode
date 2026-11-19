@@ -126,12 +126,64 @@ export function threadDependencyWait(thread: EnvironmentThreadShell): string | n
   return thread.reportedWait ?? reportWaitReason(thread.reportedBlocker ?? "");
 }
 
+/** How the app names a question card asked through its own ask_user tool. */
+const ASK_USER_REQUEST = /(^|:)ask-user:/u;
+
+/**
+ * Who an open question card on a worker's own subagent waits on. Such a
+ * child reports to its lead, and its result (which names the question) wakes
+ * the lead, so the question is the lead's to settle: the lead answers the card
+ * or relays a decision only the person can make in its own report, the way a
+ * child's report blocker already goes to the lead. "lead" while the asker or
+ * its lead still works; "settled" once the lead has completed a turn that
+ * started after the asker's last run ended (the turn the asker's result woke),
+ * and the card no longer counts. Null when the person must answer: the thread
+ * asks the person directly, the request is not an ask_user question (a
+ * secret, a sign-in or an approval), the lead is the project's coordinator
+ * (under any id: its workers ask the person), the lead is gone or archived, or
+ * its turn since the asker ended failed or was stopped, or it has not run since.
+ */
+export function subagentQuestionWait(
+  asker: EnvironmentThreadShell,
+  lead: EnvironmentThreadShell | undefined,
+  coordinatorThreadId: string | null = null,
+): "lead" | "settled" | null {
+  const pending = asker.source?.pendingRuntimeRequest;
+  if (!pending || !ASK_USER_REQUEST.test(pending.id) || !reportsToParentAgent(asker)) return null;
+  if (threadAwaitingPerson(asker)?.kind !== "answer") return null;
+  if (lead === undefined || lead.archivedAt != null || lead.deletedAt != null) return null;
+  if (coordinatorThreadId !== null && lead.id === coordinatorThreadId) return null;
+  if (threadRuntimeIsActive(asker.runtime) || threadRuntimeIsActive(lead.runtime)) return "lead";
+  const askerEnded = millis(asker.latestRun?.completedAt);
+  const leadRun = lead.latestRun;
+  const leadStarted = millis(leadRun?.startedAt ?? leadRun?.requestedAt);
+  return askerEnded !== null &&
+    leadStarted !== null &&
+    leadStarted > askerEnded &&
+    leadRun?.status === "completed"
+    ? "settled"
+    : null;
+}
+
+/** The thread an attention row's thread reports to, as `aggregateProjectAttention` reads it. */
+export function attentionLeadThreadId(thread: EnvironmentThreadShell): string | null {
+  return (
+    thread.lineage?.parentThreadId ??
+    (thread.forkedFrom?.type === "run" ? thread.forkedFrom.threadId : null)
+  );
+}
+
+/** The words a root goes by while a subagent's question waits on its lead. */
+export const SUBAGENT_QUESTION_WAIT = "Waiting for subagents";
+
 export function observeProjectThread(
   thread: EnvironmentThreadShell,
   freshness: AttentionFreshness = "live",
+  /** The verdict of subagentQuestionWait: a question its lead settles is not the person's. */
+  questionGoesToLead = false,
 ): AttentionObservation {
   const pending = thread.source?.pendingRuntimeRequest;
-  const person = pending === null ? null : threadAwaitingPerson(thread);
+  const person = pending === null || questionGoesToLead ? null : threadAwaitingPerson(thread);
   const generation = thread.runtime?.activeRunId ?? thread.latestRun?.runId ?? "legacy";
   const requests: AttentionObservation["requests"][number][] = [];
   if (person)
@@ -203,6 +255,11 @@ function inheritRootSettlement(
         : rootSettledAt,
   };
 }
+/** The attention label while a machine cannot be reached at all. */
+export const MACHINES_UNREACHABLE_LABEL = "Some machines can't be reached";
+/** The attention label while every machine is reachable and one is still reading its list. */
+export const MACHINES_CATCHING_UP_LABEL = "Catching up with your machines";
+
 export interface AttentionMember {
   readonly environmentId: string;
   readonly projectId: string;
@@ -251,9 +308,7 @@ const threadKeys = new WeakMap<EnvironmentThreadShell, AttentionThreadKeys>();
 function keysOf(thread: EnvironmentThreadShell): AttentionThreadKeys {
   let keys = threadKeys.get(thread);
   if (keys === undefined) {
-    const parentId =
-      thread.lineage?.parentThreadId ??
-      (thread.forkedFrom?.type === "run" ? thread.forkedFrom.threadId : null);
+    const parentId = attentionLeadThreadId(thread);
     keys = {
       identity: attentionIdentity({
         environmentId: thread.environmentId,
@@ -372,8 +427,15 @@ export function aggregateProjectAttention(input: {
       continue;
     representedThreads.add(keysOf(thread).environmentThread);
     const member = members.get(keysOf(root.thread).member)!;
+    const leadKey = keysOf(thread).parent;
+    const leads = leadKey ? (byEnvironmentThread.get(leadKey) ?? []) : [];
+    const question = subagentQuestionWait(
+      thread,
+      leads.length === 1 ? leads[0] : undefined,
+      member.coordinatorThreadId,
+    );
     const observation = inheritRootSettlement(
-      observeProjectThread(thread, member.freshness),
+      observeProjectThread(thread, member.freshness, question !== null),
       root.thread,
     );
     const actions = classifyProjectActions(observation);
@@ -383,7 +445,9 @@ export function aggregateProjectAttention(input: {
       const wait =
         observation.settled || root.thread.runtime?.status === "failed"
           ? null
-          : threadDependencyWait(thread);
+          : question === "lead"
+            ? SUBAGENT_QUESTION_WAIT
+            : threadDependencyWait(thread);
       if (wait && !root.waits.includes(wait)) root.waits.push(wait);
       const executionActive =
         thread.lineage?.relationshipToParent !== "subagent" ||
@@ -418,6 +482,11 @@ export function aggregateProjectAttention(input: {
     return { ...root, ownerMachineId, raised: input.raises(root.thread, ownerMachineId) };
   });
   const everyMemberLive = input.members.every((m) => m.freshness === "live");
+  // A machine that is connected and still reading its list is catching up; only
+  // one the app cannot reach, or may not read, is named as such.
+  const someMemberDown = input.members.some(
+    (m) => m.freshness === "offline" || m.freshness === "unauthorized",
+  );
   const needing = result.filter((root) => root.actions.length > 0);
   const count = needing.filter((root) => root.raised !== false).length;
   return {
@@ -434,6 +503,8 @@ export function aggregateProjectAttention(input: {
         ? `${needsYouLabel(count)} · partial`
         : everyMemberLive && input.members.length > 0
           ? "Some threads could not be read"
-          : "Some machines are offline",
+          : someMemberDown || input.members.length === 0
+            ? MACHINES_UNREACHABLE_LABEL
+            : MACHINES_CATCHING_UP_LABEL,
   };
 }

@@ -21,6 +21,10 @@ import {
   structuredEditResultPatch,
 } from "@specweave-studio/shared/structuredPatch";
 import { formatPatch, OMIT_HEADERS, structuredPatch, type StructuredPatchHunk } from "diff";
+import {
+  subscriptionChangedSince,
+  type SubscriptionRead,
+} from "../../provider/subscriptionIdentity.ts";
 import { normalizeClaudeTurnTokenUsage } from "../../provider/ClaudeTurnTokenUsage.ts";
 import { withMainThreadPromptCache } from "../../provider/ClaudePromptCache.ts";
 import {
@@ -47,6 +51,7 @@ import type {
   AskUserQuestionInput,
   WebSearchOutput,
 } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
+import type { AdvisorRoute } from "@specweave-studio/shared/advisor";
 import { parseCliArgs } from "@specweave-studio/shared/cliArgs";
 import { isApiCreditExhaustedMessage } from "@specweave-studio/shared/providerFallback";
 import { HostProcessEnvironment } from "@specweave-studio/shared/hostProcess";
@@ -87,6 +92,7 @@ import {
   type ProviderThreadId,
   type ThreadId,
   type ResponseStyle,
+  CLAUDE_AI_SKILL_SCOPE,
 } from "@specweave-studio/contracts";
 
 import { teamRulesToolRefusal } from "@specweave-studio/shared/teamRules";
@@ -116,9 +122,11 @@ import { encodeClaudeProjectDir } from "../../usage/projectFolderSessions.ts";
 import { planClaudeSkillDispatch } from "../../provider/Drivers/ClaudeSkillDispatch.ts";
 import { discoverClaudeSkills } from "../../provider/Drivers/ClaudeSkills.ts";
 import {
+  type ClaudeSessionAdvisorOutcome,
   compileClaudeModelSelection,
   describeBackgroundWork,
   describeDeferredClaudeSelection,
+  resolveClaudeSessionAdvisor,
 } from "../../claudeModelOptions.ts";
 import * as ServerConfig from "../../config.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
@@ -155,7 +163,7 @@ import {
   readClaudeSubagentPromptFile,
   type ClaudeWorkflowMode,
 } from "../../provider/ClaudeWorkflowPolicy.ts";
-import { STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/StudioOrchestrationInstructions.ts";
+import { studioOrchestrationInstructionsForRole } from "../../provider/StudioOrchestrationInstructions.ts";
 import {
   BROWSER_EXTENSION_DIR,
   isPaired,
@@ -986,6 +994,14 @@ export function makeClaudeQueryOptions(input: {
   readonly sdkSettings?: string | ClaudeSdkSettings;
   readonly agentInstructions?: string | undefined;
   readonly claudeWorkflowMode?: ClaudeWorkflowMode | undefined;
+  readonly isCoordinator?: boolean | undefined;
+  /**
+   * A worker or subagent thread: its system prompt leaves out the per-session
+   * sections (working directory, auto memory path, git status), which Claude
+   * Code then sends as the first user message. Sibling workers with the same
+   * configuration can then share one cached system prompt.
+   */
+  readonly sharedSystemPromptCache?: boolean | undefined;
   readonly responseStyle?: ResponseStyle | undefined;
   readonly subagentPromptFileContents?: string | undefined;
   /** Ask the SDK for a suggested next prompt after each reply. */
@@ -1017,8 +1033,19 @@ export function makeClaudeQueryOptions(input: {
    * mode: Claude Code checks deny rules before the mode, bypass included.
    */
   readonly agentSecretDeny?: ClaudeAgentSecretDeny;
+  /**
+   * Claude's own advisor for this session, from `resolveClaudeSessionAdvisor`.
+   * Absent passes nothing, so the person's own Claude setting applies.
+   */
+  readonly claudeAdvisor?: ClaudeSessionAdvisorOutcome | undefined;
+  /** When to consult the advisor (`runtimePolicy.advisorGuidance`). */
+  readonly advisorGuidance?: string | undefined;
 }): ClaudeAgentSdkQueryOptions {
-  const compiledSelection = compileClaudeModelSelection(input.modelSelection, input.modelCatalog);
+  const compiledSelection = compileClaudeModelSelection(
+    input.modelSelection,
+    input.modelCatalog,
+    input.claudeAdvisor,
+  );
   const {
     "permission-mode": launchArgPermissionMode,
     "dangerously-skip-permissions": launchArgSkipPermissions,
@@ -1069,12 +1096,20 @@ export function makeClaudeQueryOptions(input: {
         } as ClaudeSdkSettings);
   const workflowPolicy = compileClaudeWorkflowPolicy({
     mode: input.claudeWorkflowMode,
+    coordinator: input.isCoordinator,
     ultracode: compiledSelection.settings.ultracode,
     agentInstructions: input.agentInstructions,
     responseStyle: input.responseStyle,
+    advisorGuidance: claudeSessionAdvisorGuidance({
+      advisorGuidance: input.advisorGuidance,
+      hasStudioTools: input.mcpServers !== undefined,
+      claudeAdvisor: input.claudeAdvisor,
+    }),
     subagentPromptFileContents: input.subagentPromptFileContents,
     orchestrationInstructions:
-      input.mcpServers === undefined ? undefined : STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
+      input.mcpServers === undefined
+        ? undefined
+        : studioOrchestrationInstructionsForRole(input.isCoordinator),
     extraArgs,
     allowedTools: input.allowedTools,
     disallowedTools: input.disallowedTools,
@@ -1136,6 +1171,7 @@ export function makeClaudeQueryOptions(input: {
           withInheritedSubagentModel(workflowPolicy.environment, compiledSelection.apiModelId),
         ),
       ),
+      ...compiledSelection.environment,
       ...input.mcpEnvironment,
     },
     ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
@@ -1145,6 +1181,7 @@ export function makeClaudeQueryOptions(input: {
       // A resumed native session must render the current effective instructions.
       snapshot: false,
       append: workflowPolicy.instructions,
+      ...(input.sharedSystemPromptCache === true ? { excludeDynamicSections: true } : {}),
     },
     extraArgs: workflowPolicy.extraArgs,
   };
@@ -1156,6 +1193,20 @@ export function makeClaudeQueryOptions(input: {
   const withDirectories =
     additionalDirectories.length === 0 ? options : { ...options, additionalDirectories };
   return input.cwd === null ? withDirectories : { ...withDirectories, cwd: input.cwd };
+}
+
+/**
+ * The advisor guidance a Claude session gets: only when the thread has an
+ * advisor to call, the studio-code tools or Claude's own.
+ */
+export function claudeSessionAdvisorGuidance(input: {
+  readonly advisorGuidance: string | undefined;
+  readonly hasStudioTools: boolean;
+  readonly claudeAdvisor: ClaudeSessionAdvisorOutcome | undefined;
+}): string | undefined {
+  const guidance = input.advisorGuidance?.trim();
+  if (guidance === undefined || guidance.length === 0) return undefined;
+  return input.hasStudioTools || input.claudeAdvisor?.kind === "model" ? guidance : undefined;
 }
 
 /**
@@ -1903,10 +1954,20 @@ export function claudeEffectiveQueryPolicyKey(
     readonly subagentPromptFileContents?: string | undefined;
     /** The git shim is in the process environment, so turning Use worktrees on reopens it. */
     readonly manualWorktreesBlocked?: boolean | string | undefined;
+    /** The advisor guidance the session's instructions carry, after its gate. */
+    readonly advisorGuidance?: string | undefined;
+    /**
+     * The coordinator role sets the system prompt and the tool bans when the
+     * process opens, so a thread that gains or loses the role needs a new one.
+     */
+    readonly isCoordinator?: boolean | undefined;
   },
 ): string {
   return stringifyJson({
     agentInstructions: context?.agentInstructions,
+    advisorGuidance: context?.advisorGuidance,
+    // Only present when true, so worker keys stay what they were.
+    ...(context?.isCoordinator === true ? { isCoordinator: true } : {}),
     manualWorktreesBlocked: context?.manualWorktreesBlocked ?? false,
     claudeWorkflowMode: context?.claudeWorkflowMode ?? "on-request",
     responseStyle: context?.responseStyle ?? "concise",
@@ -2568,6 +2629,66 @@ function summarizeClaudeToolRequest(toolName: string, input: ClaudeNativeToolInp
     : `${toolName}: ${serialized.slice(0, 397)}...`;
 }
 
+/** The name Claude Code gives its own advisor tool (a server tool, not MCP). */
+export const CLAUDE_ADVISOR_TOOL_NAME = "advisor";
+
+/**
+ * The title of a consult of Claude's own advisor, naming its model when known,
+ * and saying so when Claude Code's own settings chose it (the app passed none).
+ */
+export function claudeAdvisorItemTitle(
+  model: string | undefined,
+  fromClaudeSettings = false,
+): string {
+  if (model === undefined) return "Asked the advisor";
+  return fromClaudeSettings
+    ? `Asked the advisor (${model}) from Claude's settings`
+    : `Asked the advisor (${model})`;
+}
+
+/**
+ * The model that answered Claude's own advisor in one API message, read from
+ * the `advisor_message` entry Claude reports in `usage.iterations`. It is the
+ * model that really answered, also when Claude's own settings chose it.
+ */
+export function claudeAdvisorModelFromUsage(usage: unknown): string | undefined {
+  if (typeof usage !== "object" || usage === null) return undefined;
+  const iterations = Reflect.get(usage, "iterations");
+  if (!Array.isArray(iterations)) return undefined;
+  for (let index = iterations.length - 1; index >= 0; index -= 1) {
+    const entry: unknown = iterations[index];
+    if (typeof entry !== "object" || entry === null) continue;
+    if (Reflect.get(entry, "type") !== "advisor_message") continue;
+    const model = Reflect.get(entry, "model");
+    if (typeof model === "string" && model.trim().length > 0) return model.trim();
+  }
+  return undefined;
+}
+
+/**
+ * What the timeline shows for a result of Claude's own advisor: the advice
+ * itself, a fixed line when Claude hides it, and the error code when the
+ * advisor could not answer. Never the raw block.
+ */
+export function claudeAdvisorResultText(content: unknown): string {
+  if (typeof content !== "object" || content === null) return "The advisor answered.";
+  switch (Reflect.get(content, "type")) {
+    case "advisor_result": {
+      const text = Reflect.get(content, "text");
+      const advice = typeof text === "string" ? text.trim() : "";
+      return advice.length === 0 ? "The advisor answered without text." : advice;
+    }
+    case "advisor_redacted_result":
+      return "Advice applied (hidden by Claude)";
+    case "advisor_tool_result_error": {
+      const code = Reflect.get(content, "error_code");
+      return `Advisor unavailable (${typeof code === "string" && code.length > 0 ? code : "unknown"})`;
+    }
+    default:
+      return "The advisor answered.";
+  }
+}
+
 function outputFromClaudeToolResult(
   toolResult: ClaudeToolResultContentBlock,
 ): ClaudeToolResultOutput | undefined {
@@ -2576,9 +2697,10 @@ function outputFromClaudeToolResult(
       return toolResult.content;
     case "mcp_tool_result":
       return toolResult.content;
+    case "advisor_tool_result":
+      return claudeAdvisorResultText(toolResult.content);
     case "bash_code_execution_tool_result":
     case "code_execution_tool_result":
-    case "advisor_tool_result":
     case "text_editor_code_execution_tool_result":
     case "tool_search_tool_result":
     case "web_fetch_tool_result":
@@ -2595,6 +2717,7 @@ function isClaudeTypedToolResultErrorContent(content: ClaudeTypedToolResultConte
   }
 
   switch (content.type) {
+    case "advisor_tool_result_error":
     case "bash_code_execution_tool_result_error":
     case "code_execution_tool_result_error":
     case "text_editor_code_execution_tool_result_error":
@@ -2613,9 +2736,9 @@ function isClaudeToolResultError(toolResult: ClaudeToolResultContentBlock): bool
       return toolResult.is_error === true;
     case "mcp_tool_result":
       return toolResult.is_error;
+    case "advisor_tool_result":
     case "bash_code_execution_tool_result":
     case "code_execution_tool_result":
-    case "advisor_tool_result":
     case "text_editor_code_execution_tool_result":
     case "tool_search_tool_result":
     case "web_fetch_tool_result":
@@ -2633,7 +2756,7 @@ function toolNameFromClaudeToolResult(toolResult: ClaudeToolResultContentBlock):
     case "code_execution_tool_result":
       return "code_execution";
     case "advisor_tool_result":
-      return "advisor";
+      return CLAUDE_ADVISOR_TOOL_NAME;
     case "mcp_tool_result":
       return "mcp_tool";
     case "text_editor_code_execution_tool_result":
@@ -3604,6 +3727,9 @@ export function claudeProposedPlan(input: unknown): string | null {
   return typeof plan === "string" && plan.trim().length > 0 ? plan.trim() : null;
 }
 
+export const CLAUDE_SUBSCRIPTION_CHANGED_REASON =
+  "Claude Code was signed in to another account outside SpecWithCode; its process is replaced before the next turn.";
+
 export interface ClaudeAdapterV2Options {
   readonly modelCatalog?: () => ClaudeModelCatalog;
   readonly instanceId: ProviderInstanceId;
@@ -3625,6 +3751,12 @@ export interface ClaudeAdapterV2Options {
   readonly queryRunner: ClaudeAgentSdkQueryRunnerShape;
   readonly scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>;
   readonly onUsageLimits?: ServerProviderShape["applyUsageLimits"];
+  /**
+   * The subscription the instance's last status read names. A `claude`
+   * process keeps the sign-in it started with, so one opened before a
+   * terminal `/login` to another account is replaced before its next turn.
+   */
+  readonly subscription?: Effect.Effect<SubscriptionRead>;
   /** Sink for wake-turn continuation requests; defaults to dropping them. */
   readonly continuationRequests?: {
     readonly offer: (
@@ -3653,6 +3785,11 @@ export function makeClaudeAdapterV2(
   const subagentLaunchHooks = makeSubagentLaunchHooks(
     adapterOptions.launchCheckpoints?.checkpoint ?? (() => Effect.void),
   );
+  // Claude's own advisor: the route each thread's live process took, and the
+  // latest context size each provider thread reported. Both start unknown
+  // after a restart, and an unknown size keeps the previous route.
+  const advisorRoutes = new Map<string, AdvisorRoute>();
+  const latestContextTokens = new Map<string, number>();
 
   // Re-scan on every send: skills are added and switched off mid-session, and
   // the scan is a few directory reads. A skill switched off via skillOverrides,
@@ -3668,7 +3805,14 @@ export function makeClaudeAdapterV2(
         (skills) =>
           new Set(
             skills
-              .filter((skill) => skill.enabled && skill.userInvocable !== false)
+              // claude.ai-synced skills stay prose: which sync bucket a session
+              // loads is not on disk, so a `/name` could answer "Unknown command".
+              .filter(
+                (skill) =>
+                  skill.enabled &&
+                  skill.userInvocable !== false &&
+                  skill.scope !== CLAUDE_AI_SKILL_SCOPE,
+              )
               .map((skill) => skill.name),
           ),
       ),
@@ -3685,6 +3829,12 @@ export function makeClaudeAdapterV2(
       function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
         const sessionScope = yield* Effect.scope;
         const now = yield* DateTime.now;
+        // The subscription this process starts on, as the last status read named it.
+        const openedSubscription =
+          adapterOptions.subscription === undefined
+            ? undefined
+            : yield* adapterOptions.subscription;
+        const openedAtMs = yield* Clock.currentTimeMillis;
         const session = providerSession({
           providerSessionId: input.providerSessionId,
           providerInstanceId: adapterOptions.instanceId,
@@ -3703,6 +3853,12 @@ export function makeClaudeAdapterV2(
         // that arrives without `resetsAt` reuses it, so the stop keeps a reset.
         const knownLimitResets = new Map<string, number>();
         const queryContext = yield* Ref.make<ClaudeLiveQueryContext | null>(null);
+        // The model Claude's own advisor runs on in the live process, when
+        // this session passed one; it names the model on advisor items.
+        let liveAdvisorModel: string | undefined;
+        // The model Claude reported for the latest advisor answer; it wins
+        // over `liveAdvisorModel`, and is the only name in pass-through.
+        let answeredAdvisorModel: string | undefined;
         const workflowTools = yield* Ref.make<
           ReadonlyMap<string, { observedAt: string; tools: readonly string[] }>
         >(new Map());
@@ -4637,12 +4793,17 @@ export function makeClaudeAdapterV2(
             ordinal: input.ordinal,
             status: input.status,
             title:
-              readPath !== undefined
-                ? formatReadToolLabel(readPath)
-                : (searchTitle ??
-                  dynamicToolTitle(input.toolName, nativeToolInput) ??
-                  input.presentation?.title ??
-                  null),
+              input.toolName === CLAUDE_ADVISOR_TOOL_NAME
+                ? claudeAdvisorItemTitle(
+                    answeredAdvisorModel ?? liveAdvisorModel,
+                    liveAdvisorModel === undefined,
+                  )
+                : readPath !== undefined
+                  ? formatReadToolLabel(readPath)
+                  : (searchTitle ??
+                    dynamicToolTitle(input.toolName, nativeToolInput) ??
+                    input.presentation?.title ??
+                    null),
             startedAt: input.startedAt,
             completedAt,
             updatedAt: input.updatedAt,
@@ -6649,6 +6810,7 @@ export function makeClaudeAdapterV2(
                 ? Math.round(postTokens)
                 : undefined;
             if (afterTokenCount !== undefined) {
+              latestContextTokens.set(context.input.providerThread.id, afterTokenCount);
               yield* emitProviderEvent({
                 type: "provider_turn.updated",
                 driver: CLAUDE_PROVIDER,
@@ -6803,7 +6965,19 @@ export function makeClaudeAdapterV2(
           if (message.type === "assistant" && input.replayed !== true) {
             const now = yield* DateTime.now;
             yield* completeProviderRetry(context, now);
+            // A subagent's reply names its own advisor too; each message's entry
+            // is read before that message's items are titled.
+            answeredAdvisorModel =
+              claudeAdvisorModelFromUsage(message.message.usage) ?? answeredAdvisorModel;
             if (message.parent_tool_use_id === null && message.message.usage !== undefined) {
+              const tokenUsage = claudeProviderTurnTokenUsage(
+                message.message.usage,
+                context.input.modelSelection,
+                DateTime.formatIso(now),
+                adapterOptions.modelCatalog?.(),
+                adapterOptions,
+              );
+              latestContextTokens.set(context.input.providerThread.id, tokenUsage.usedTokens);
               yield* emitProviderEvent({
                 type: "provider_turn.updated",
                 driver: CLAUDE_PROVIDER,
@@ -6822,13 +6996,7 @@ export function makeClaudeAdapterV2(
                   status: "running",
                   startedAt: context.startedAt,
                   completedAt: null,
-                  tokenUsage: claudeProviderTurnTokenUsage(
-                    message.message.usage,
-                    context.input.modelSelection,
-                    DateTime.formatIso(now),
-                    adapterOptions.modelCatalog?.(),
-                    adapterOptions,
-                  ),
+                  tokenUsage,
                 },
               });
             }
@@ -8228,11 +8396,31 @@ export function makeClaudeAdapterV2(
                   .pipe(Effect.orElseSucceed(() => null)),
               ));
           const catalog = adapterOptions.modelCatalog?.() ?? BUNDLED_CLAUDE_MODEL_CATALOG;
-          const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection, catalog);
+          // Resolved once per open: the same outcome keys the process and
+          // reaches the CLI, so an unchanged value never restarts it.
+          const advisorContextTokens =
+            latestContextTokens.get(turnInput.providerThread.id) ??
+            turnInput.providerThread.contextUsage?.usedTokens ??
+            null;
+          const sessionAdvisor = resolveClaudeSessionAdvisor({
+            claudeAdvisor: turnInput.runtimePolicy.claudeAdvisor,
+            contextTokens: advisorContextTokens,
+            previousRoute: advisorRoutes.get(turnInput.threadId) ?? null,
+          });
+          const compiledSelection = compileClaudeModelSelection(
+            turnInput.modelSelection,
+            catalog,
+            sessionAdvisor.outcome,
+          );
           const queryPolicyKey = stringifyJson([
             claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides, {
               ...turnInput.runtimePolicy,
               subagentPromptFileContents,
+              advisorGuidance: claudeSessionAdvisorGuidance({
+                advisorGuidance: turnInput.runtimePolicy.advisorGuidance,
+                hasStudioTools: mcpOverrides.mcpServers !== undefined,
+                claudeAdvisor: sessionAdvisor.outcome,
+              }),
             }),
             // The thread's Ultracode toggle is launch context with the workflow
             // mode: a running background workflow keeps the value it started with.
@@ -8246,11 +8434,15 @@ export function makeClaudeAdapterV2(
             claudeInChromeRefused,
           ]);
           const projectAdditionalDirectories = turnInput.projectAdditionalDirectories ?? [];
+          // The coordinator role is a tool change, not launch context: a
+          // process running background work is refused rather than reused
+          // when the thread gains or loses the role.
+          const roleContext = { isCoordinator: turnInput.runtimePolicy.isCoordinator };
           const queryCoreBaseKey = stringifyJson(
-            claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides),
+            claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides, roleContext),
           );
           const queryCoreKey = stringifyJson([
-            claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides),
+            claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides, roleContext),
             projectAdditionalDirectories,
           ]);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
@@ -8403,6 +8595,9 @@ export function makeClaudeAdapterV2(
               : { projectAdditionalDirectories: turnInput.projectAdditionalDirectories }),
             agentInstructions: turnInput.runtimePolicy.agentInstructions,
             claudeWorkflowMode: turnInput.runtimePolicy.claudeWorkflowMode,
+            isCoordinator: turnInput.runtimePolicy.isCoordinator,
+            sharedSystemPromptCache:
+              turnInput.appThread.lineage.relationshipToParent === "subagent",
             responseStyle: turnInput.runtimePolicy.responseStyle,
             subagentPromptFileContents,
             promptSuggestions: yield* (
@@ -8437,6 +8632,8 @@ export function makeClaudeAdapterV2(
             canUseTool,
             onUserDialog,
             supportedDialogKinds: ["resume_return"],
+            claudeAdvisor: sessionAdvisor.outcome,
+            advisorGuidance: turnInput.runtimePolicy.advisorGuidance,
           });
           const querySession = yield* queryRunner
             .open({
@@ -8470,6 +8667,24 @@ export function makeClaudeAdapterV2(
           // Marked only after a successful open: a failed create must not
           // leave the runtime believing the native session exists, or the
           // retry would resume a session that was never created.
+          // The route is the live process's: recorded only once it opened.
+          if (sessionAdvisor.route === null) advisorRoutes.delete(turnInput.threadId);
+          else advisorRoutes.set(turnInput.threadId, sessionAdvisor.route);
+          liveAdvisorModel =
+            sessionAdvisor.outcome?.kind === "model" ? sessionAdvisor.outcome.model : undefined;
+          answeredAdvisorModel = undefined;
+          if (sessionAdvisor.outcome !== undefined) {
+            yield* Effect.logDebug("claude.advisor", {
+              threadId: turnInput.threadId,
+              kind: sessionAdvisor.outcome.kind,
+              model:
+                turnInput.runtimePolicy.claudeAdvisor?.kind === "model"
+                  ? turnInput.runtimePolicy.claudeAdvisor.model
+                  : null,
+              route: sessionAdvisor.route,
+              contextTokens: advisorContextTokens,
+            });
+          }
           yield* Ref.update(openedNativeThreads, (current) => {
             if (current.has(nativeThreadId)) {
               return current;
@@ -9094,6 +9309,17 @@ export function makeClaudeAdapterV2(
             ),
           events: Stream.fromEffectRepeat(Queue.take(events)),
           workflowExecutionPath: workflowExecutionPathOf(adapterOptions.environment),
+          ...(adapterOptions.subscription === undefined || openedSubscription === undefined
+            ? {}
+            : {
+                replaceWhenIdle: adapterOptions.subscription.pipe(
+                  Effect.map((current) =>
+                    subscriptionChangedSince(openedSubscription, openedAtMs, current)
+                      ? CLAUDE_SUBSCRIPTION_CHANGED_REASON
+                      : null,
+                  ),
+                ),
+              }),
           inspectWorkflowTools: (inspection) =>
             Effect.gen(function* () {
               const nativeId = yield* getNativeThreadId(inspection.providerThread);
@@ -9480,7 +9706,10 @@ export type ClaudeAdapterV2DriverEnv =
 export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
   function* (
     input: ProviderAdapterDriverCreateInput<ClaudeSettings>,
-    hooks: Pick<ClaudeAdapterV2Options, "scopedLimitNames" | "onUsageLimits" | "modelCatalog"> = {},
+    hooks: Pick<
+      ClaudeAdapterV2Options,
+      "scopedLimitNames" | "onUsageLimits" | "modelCatalog" | "subscription"
+    > = {},
   ) {
     const { instanceId, environment, enabled, config } = input;
     const fileSystem = yield* FileSystem.FileSystem;

@@ -120,6 +120,22 @@ struct ToleranceTests {
     #expect(notice.message == "Hi")
   }
 
+  /// A server with the advisor sends new thread fields, a settings key and a capability.
+  @Test func advisorFields() throws {
+    var thread = try Fixture.json("threadShell.min.json").objectValue ?? [:]
+    #expect(try JSONValue.object(thread).decode(ThreadShell.self).purpose == nil)
+    thread["advisorMode"] = .string("on")
+    thread["purpose"] = .string("advisor")
+    let shell = try JSONValue.object(thread).decode(ThreadShell.self)
+    #expect(shell.isAdvisorThread)
+    thread["advisorMode"] = .null
+    thread["purpose"] = .number(7)
+    #expect(try !JSONValue.object(thread).decode(ThreadShell.self).isAdvisorThread)
+
+    let settings = try decodeJSON(ServerSettings.self, #"{"defaultRuntimeMode":"auto","advisor":{"enabled":true,"model":null,"claudeBuiltIn":true,"builtInContextLimit":200000,"maxConsultsPerRun":3,"briefTokenBudget":24000}}"#)
+    #expect(settings.defaultRuntimeMode == .auto)
+  }
+
   @Test func legacyModelSelection() throws {
     let legacy = try decodeJSON(ModelSelection.self, #"{"provider":"codex","model":"gpt-6","options":{"reasoningEffort":" high ","fastMode":true,"empty":""}}"#)
     #expect(legacy.instanceId == "codex")

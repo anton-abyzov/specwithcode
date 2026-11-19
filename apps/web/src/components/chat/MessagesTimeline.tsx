@@ -97,6 +97,7 @@ import { routedThreadReplyDisplayText } from "@specweave-studio/shared/routedMes
 import { useMachineNicknames } from "../../studio/machineNickname";
 import {
   filesChangedOutsideEditItems,
+  isAdvisorConsultItem,
   resolveWorkEntryToolPresentation,
   resolveViewedImageAsset,
   subagentDiffTarget,
@@ -177,9 +178,7 @@ import {
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown, { ChatMarkdownAssetImage } from "../ChatMarkdown";
 import { ThreadRoutineRun } from "./ThreadRoutineRun";
-import ReactMarkdown from "react-markdown";
-import { CHAT_REMARK_GFM } from "../../markdown-gfm";
-import type { Root, RootContent } from "mdast";
+import { ReasoningPreviewMarkdown } from "./reasoningPreview";
 import { StudioWordmark } from "../StudioWordmark";
 import { ThreadContextChip } from "../ThreadContextChip";
 import {
@@ -353,8 +352,11 @@ import { chatMarkdownClipboardPayload } from "../../markdown-clipboard";
 import { ContextChip, ContextChipLabel, type ContextChipKind } from "../ContextChip";
 import { createContextPresentationRegistry } from "../contextPresentationRegistry";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
+import { AdvisorConsultRow } from "./AdvisorConsultRow";
 import { ChromeConnectCard } from "./ChromeConnectCard";
 import { UseWorktreesCard } from "./UseWorktreesCard";
+import { SpecweaveSetupCard } from "./SpecweaveSetupCard";
+import { lastUserMessageAt, specweaveSnapshotToolKey } from "../studio/specweaveSetup.logic";
 import { RunOnDeviceCardProvider, RunOnDeviceCardSlot } from "./RunOnDeviceCard";
 import { ComputerUsePermissionCard } from "../computerUse/ComputerUsePermissions";
 import { useClientSettings } from "~/hooks/useSettings";
@@ -601,12 +603,22 @@ const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FADE_HEADER = (
   <div className="h-[var(--workspace-titlebar-scroll-fade-height)]" />
 );
-function TimelineListFooter({ composerInset }: { readonly composerInset: number }) {
+function TimelineListFooter({
+  composerInset,
+  card,
+}: {
+  readonly composerInset: number;
+  /** The project's "Set up SpecWeave" card, under the conversation (1396). */
+  readonly card?: ReactNode;
+}) {
   return (
-    <div aria-hidden>
-      <div style={{ height: composerInset }} />
-      <div className="h-3 sm:h-4" />
-    </div>
+    <>
+      {card ? <div className="mx-auto w-full max-w-3xl px-1 pt-2">{card}</div> : null}
+      <div aria-hidden>
+        <div style={{ height: composerInset }} />
+        <div className="h-3 sm:h-4" />
+      </div>
+    </>
   );
 }
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
@@ -1392,9 +1404,48 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }),
     [shouldRestoreVisibleContentPosition],
   );
+  // The card answers from the snapshot; a tool that may have raised it reads it again.
+  const specweaveToolKey = useMemo(
+    () => specweaveSnapshotToolKey(timelineEntries),
+    [timelineEntries],
+  );
+  const specweaveLastUserAt = useMemo(() => lastUserMessageAt(timelineEntries), [timelineEntries]);
+  const followSpecweaveCard = useCallback(() => {
+    const list = listRef.current;
+    if (liveFollowEnabled && resolveTimelineIsAtEnd(list?.getState()) !== false)
+      requestAnimationFrame(() => void list?.scrollToEnd({ animated: true }));
+  }, [listRef, liveFollowEnabled]);
+  const specweaveEnvironmentId = timelineShell?.environmentId ?? null;
+  const specweaveProjectId = timelineShell?.projectId ?? null;
+  const specweaveCard = useMemo(
+    () =>
+      specweaveEnvironmentId && specweaveProjectId && timelineThreadId ? (
+        <SpecweaveSetupCard
+          environmentId={specweaveEnvironmentId}
+          projectId={specweaveProjectId}
+          threadId={timelineThreadId}
+          toolKey={specweaveToolKey}
+          lastUserMessageAt={specweaveLastUserAt}
+          onShown={followSpecweaveCard}
+        />
+      ) : null,
+    [
+      followSpecweaveCard,
+      specweaveEnvironmentId,
+      specweaveLastUserAt,
+      specweaveProjectId,
+      specweaveToolKey,
+      timelineThreadId,
+    ],
+  );
   const timelineListFooter = useMemo(
-    () => <TimelineListFooter composerInset={anchoredEndSpace ? 0 : contentInsetEndAdjustment} />,
-    [anchoredEndSpace, contentInsetEndAdjustment],
+    () => (
+      <TimelineListFooter
+        composerInset={anchoredEndSpace ? 0 : contentInsetEndAdjustment}
+        card={specweaveCard}
+      />
+    ),
+    [anchoredEndSpace, contentInsetEndAdjustment, specweaveCard],
   );
 
   const measureContentOverflow = useCallback(
@@ -1898,15 +1949,16 @@ function TimelineHistoryControl(props: MessagesTimelineHistoryControls) {
     <div className="messages-timeline-row-frame">
       <div className="chat-content-lane flex flex-col gap-1.5 pb-2">
         {props.hasMoreHistory ? (
-          <button
-            type="button"
+          <Button
+            variant="outline"
+            size="xs"
             disabled={props.loading}
             aria-label={tx("Load earlier turns")}
             onClick={props.onLoadEarlier}
-            className="w-full py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:cursor-default"
+            className="w-full"
           >
             {props.loading ? tx("Loading earlier turns…") : tx("Load earlier turns")}
-          </button>
+          </Button>
         ) : null}
         {props.error !== null ? (
           <p role="status" className="text-center text-muted-foreground text-xs">
@@ -3157,8 +3209,9 @@ function HistoryGapTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "his
 
   return (
     <div className="flex flex-col gap-1.5">
-      <button
-        type="button"
+      <Button
+        variant="outline"
+        size="xs"
         disabled={row.loading}
         aria-label={tx("Load earlier steps")}
         data-scroll-anchor-ignore
@@ -3167,10 +3220,10 @@ function HistoryGapTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "his
           if (row.expandsFoldRunId !== null) ctx.onToggleTurnFold(row.expandsFoldRunId);
           ctx.onLoadEarlierHistory();
         }}
-        className="w-full py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:cursor-default"
+        className="w-full"
       >
         {row.loading ? tx("Loading earlier steps…") : tx("Load earlier steps")}
-      </button>
+      </Button>
       {row.error !== null ? (
         <p role="status" className="text-center text-muted-foreground text-xs">
           {row.error}
@@ -4616,7 +4669,7 @@ function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnap
       <PopoverTrigger
         render={
           <Button
-            variant="ghost-muted"
+            variant="outline"
             size="micro"
             className="ml-auto min-w-0 shrink-0"
             aria-label={`${scriptName} is still running. Show setup progress.`}
@@ -4906,17 +4959,10 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
               </span>
             </span>
           ) : row.entry.itemType === "reasoning" ? (
-            <ReactMarkdown
-              remarkPlugins={[
-                CHAT_REMARK_GFM,
-                [
-                  remarkThoughtPreview,
-                  row.active ? "Thinking" : thoughtLabel(row.entry.structuredPayload),
-                ],
-              ]}
-            >
-              {row.entry.detail ?? label}
-            </ReactMarkdown>
+            <ReasoningPreviewMarkdown
+              text={row.entry.detail ?? label}
+              fallback={row.active ? "Thinking" : thoughtLabel(row.entry.structuredPayload)}
+            />
           ) : (
             label
           )
@@ -6519,28 +6565,6 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
 
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
-function remarkThoughtPreview(fallback: string) {
-  return (tree: Root) => {
-    const plainText = (node: Root | RootContent): string => {
-      if (node.type === "html" || node.type === "definition") return "";
-      if ("alt" in node) return node.alt ?? "";
-      if ("value" in node) return node.value;
-      if ("children" in node) {
-        const separator = ["root", "blockquote", "list", "listItem", "table", "tableRow"].includes(
-          node.type,
-        )
-          ? " "
-          : "";
-        return node.children.map(plainText).join(separator);
-      }
-      return node.type === "break" ? " " : "";
-    };
-    tree.children = [
-      { type: "text", value: plainText(tree).replace(/\s+/g, " ").trim() || fallback },
-    ];
-  };
-}
-
 function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<TimelineWorkEntry> }) {
   const ctx = use(TimelineRowCtx);
   const { isWorking, latestRunId } = use(TimelineRowActivityCtx);
@@ -6681,6 +6705,9 @@ function WorktreesOffCard() {
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowProps) {
   const ctx = use(TimelineRowCtx);
   const item = props.workEntry.projectedItem?.item;
+  if (props.workEntry.projectedItem && isAdvisorConsultItem(item)) {
+    return <AdvisorWorkEntryRow {...props} />;
+  }
   const childThreadId =
     item?.type === "notification" ? notificationChildThreadId(item.source) : undefined;
   if (item?.type !== "notification" || childThreadId === undefined) {
@@ -6727,6 +6754,51 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowP
     />
   );
 });
+
+/**
+ * An advisor consult in the work log. Its open state lives in the work-group
+ * view state like its sibling rows, so it stays open across a remount.
+ */
+function AdvisorWorkEntryRow(props: WorkEntryRowProps) {
+  const ctx = use(TimelineRowCtx);
+  const groupView = use(WorkGroupViewCtx);
+  const { workEntry } = props;
+  const remembered = groupView?.state ?? ctx.workGroupViewState;
+  const opensByDefault = ctx.timelineDetail === "verbose";
+  const [toggleState, setToggleState] = useState(() => ({
+    opensByDefault,
+    toggled: remembered.expandedEntries.has(workEntry.id),
+  }));
+  if (toggleState.opensByDefault !== opensByDefault) {
+    setToggleState({ opensByDefault, toggled: false });
+  }
+  const expanded = toggleState.toggled !== opensByDefault;
+  if (!workEntry.projectedItem) return null;
+  return (
+    <AdvisorConsultRow
+      projectedItem={workEntry.projectedItem}
+      environmentId={ctx.activeThreadEnvironmentId}
+      cwd={ctx.markdownCwd}
+      threadRef={ctx.threadRef}
+      providers={ctx.providerStatuses}
+      expanded={expanded}
+      onExpandedChange={(next) => {
+        const toggled = next !== opensByDefault;
+        if (groupView) groupView.onToggleEntry(!next);
+        else props.onToggleEntry?.(!next);
+        if (toggled) remembered.expandedEntries.add(workEntry.id);
+        else remembered.expandedEntries.delete(workEntry.id);
+        setToggleState({ opensByDefault, toggled });
+      }}
+      trailing={
+        <TimelineRowTimestamp
+          createdAt={workEntry.createdAt}
+          timestampFormat={ctx.timestampFormat}
+        />
+      }
+    />
+  );
+}
 
 function WorkEntryLogRow(props: WorkEntryRowProps) {
   const tx = useTx();
@@ -7148,19 +7220,14 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                   ) : null}
                 </>
               ) : isReasoning && !expanded ? (
-                <ReactMarkdown
-                  remarkPlugins={[
-                    CHAT_REMARK_GFM,
-                    [
-                      remarkThoughtPreview,
-                      workEntry.toolLifecycleStatus === "inProgress"
-                        ? "Thinking"
-                        : thoughtLabel(workEntry.structuredPayload),
-                    ],
-                  ]}
-                >
-                  {workEntry.detail ?? previewText}
-                </ReactMarkdown>
+                <ReasoningPreviewMarkdown
+                  text={workEntry.detail ?? previewText}
+                  fallback={
+                    workEntry.toolLifecycleStatus === "inProgress"
+                      ? "Thinking"
+                      : thoughtLabel(workEntry.structuredPayload)
+                  }
+                />
               ) : (
                 previewText
               )}

@@ -265,7 +265,7 @@ export function AcpRegistrySearchStep({
                 onClick={onManualConfiguration}
                 size="sm"
                 type="button"
-                variant="ghost-muted"
+                variant="outline"
               >
                 {tx("Enter manually")}
               </Button>

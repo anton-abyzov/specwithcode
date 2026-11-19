@@ -27,11 +27,16 @@ There is no Intel Mac build.
 
 ### Windows
 
-Download `SpecWithCode-<version>-x64.exe` (or `-arm64.exe` for Windows on Arm) from the
-[latest release](https://github.com/anton-abyzov/specwithcode/releases/latest) and run it. It
+Download [SpecWithCode-x64.exe](https://github.com/anton-abyzov/specwithcode/releases/latest/download/SpecWithCode-x64.exe)
+(or [SpecWithCode-arm64.exe](https://github.com/anton-abyzov/specwithcode/releases/latest/download/SpecWithCode-arm64.exe)
+for Windows on Arm), the latest release, and run it. Older releases have only the versioned
+`SpecWithCode-<version>-x64.exe` on the [releases page](https://github.com/anton-abyzov/specwithcode/releases). It
 installs for your user only, so it needs no administrator, into
 `%LOCALAPPDATA%\Programs\studio`, and adds Start menu and desktop shortcuts. It runs on
 64-bit Windows 10 and 11. For a silent install, run it with `/S`.
+Until the 1.1 release train, a new release gets its Windows and Linux files about twenty minutes after
+the Mac ones; if a link answers 404 in that window, take the file from the previous release on the
+[releases page](https://github.com/anton-abyzov/specwithcode/releases).
 
 Releases are signed by **EasyChamp, Inc.** with Azure Trusted Signing: the installer's
 **Properties** > **Digital Signatures** tab names the publisher, and later updates must carry the
@@ -39,14 +44,19 @@ same one. To check a download, see [Verify a download](#verify-a-download).
 
 ### Linux
 
-Download one of these from the [latest release](https://github.com/anton-abyzov/specwithcode/releases/latest)
-(x64 or arm64, glibc 2.35 or newer):
+Download one of these from the latest release (x64 or arm64, glibc 2.35 or newer). Each link
+always fetches the newest one; the [releases page](https://github.com/anton-abyzov/specwithcode/releases)
+also has them under their versioned names (`SpecWithCode-<version>-amd64.deb`).
 
-- `SpecWithCode-<version>-amd64.deb` (or `-arm64.deb`) for Debian and Ubuntu:
-  `sudo apt install ./SpecWithCode-<version>-amd64.deb`. The app goes to `/opt/SpecWithCode`
-  with a menu entry; the package is named `studio`, so remove it with `sudo apt remove studio`.
-- `SpecWithCode-<version>-x86_64.AppImage` (or `-arm64.AppImage`) for other distributions:
-  `chmod +x` it and run it. AppImages need FUSE 2 (`libfuse2`, or `libfuse2t64` on Ubuntu 24.04).
+- [SpecWithCode-amd64.deb](https://github.com/anton-abyzov/specwithcode/releases/latest/download/SpecWithCode-amd64.deb)
+  (or [SpecWithCode-arm64.deb](https://github.com/anton-abyzov/specwithcode/releases/latest/download/SpecWithCode-arm64.deb))
+  for Debian and Ubuntu: `sudo apt install ./SpecWithCode-amd64.deb`. The app goes to
+  `/opt/SpecWithCode` with a menu entry; the package is named `studio`, so remove it with
+  `sudo apt remove studio`.
+- [SpecWithCode-x86_64.AppImage](https://github.com/anton-abyzov/specwithcode/releases/latest/download/SpecWithCode-x86_64.AppImage)
+  (or [SpecWithCode-arm64.AppImage](https://github.com/anton-abyzov/specwithcode/releases/latest/download/SpecWithCode-arm64.AppImage))
+  for other distributions: `chmod +x` it and run it. AppImages need FUSE 2 (`libfuse2`, or
+  `libfuse2t64` on Ubuntu 24.04).
 
 The glibc 2.35 floor applies to releases built after 1.0.132. Releases up to and including 1.0.132
 were built on Ubuntu 24.04 and need glibc 2.39 (Ubuntu 24.04, Debian 13 or later). Even on newer
@@ -67,11 +77,14 @@ spctl -a -vv /Applications/SpecWithCode.app   # source=Notarized Developer ID
 shasum -a 256 SpecWithCode-arm64.dmg          # compare with SHA256SUMS
 ```
 
+Newer releases also carry a detached signature of `SHA256SUMS`, `SHA256SUMS.asc`, made with the same
+release key as the Linux files below: `gpg --verify SHA256SUMS.asc SHA256SUMS`.
+
 Windows (PowerShell): the status must be `Valid` and the signer `EasyChamp, Inc.`.
 
 ```powershell
-Get-AuthenticodeSignature .\SpecWithCode-<version>-x64.exe | Format-List Status, SignerCertificate
-Get-FileHash .\SpecWithCode-<version>-x64.exe   # compare with SHA256SUMS-windows-linux
+Get-AuthenticodeSignature .\SpecWithCode-x64.exe | Format-List Status, SignerCertificate
+Get-FileHash .\SpecWithCode-x64.exe   # compare with SHA256SUMS-windows-linux
 ```
 
 Linux: each AppImage and `.deb`, and `SHA256SUMS-windows-linux`, has a detached GPG signature
@@ -106,7 +119,9 @@ terminal and source control work as on macOS. These do not:
 - The background service is a scheduled task for your user on Windows and a systemd user service
   on Linux ([Running in the background](./background-service.md)). The tray keeps it running when
   you close the window.
-- Windows has no `install.sh` one-liner; use the desktop app, or [npm](#npm) for the command line.
+- Windows installs the command line with its own PowerShell one-liner:
+  `irm https://github.com/anton-abyzov/specwithcode/releases/latest/download/install.ps1 | iex`.
+  It installs the CLI only, not the service; see [Command line](#command-line).
 
 To use this computer as a worker for a main machine you already have, see
 [Add a machine](./add-a-machine.md). From 1.0.44 the first screen offers **Join my existing
@@ -129,7 +144,21 @@ in `~/.local/bin` and tells you if that folder is not on your `PATH`. Your proje
 settings are not touched, and it leaves a Mac alone that already runs the desktop app or a managed
 service. Run the same line again to move to a newer release. Add `-s -- --dry-run` after `bash`
 to see what it would do, or `-s -- --no-service` to skip the service. Releases up to 1.0.43 do not
-carry `install.sh`; for those use [npm](#npm) or the desktop app. On Windows, use the desktop app or npm.
+carry `install.sh`; for those use [npm](#npm) or the desktop app.
+
+An interrupted download is resumed once from where it stopped, and the archive is checked against
+`SHA256SUMS` afterwards. If the installer fails, it prints a "Report this failure" link that opens a
+new GitHub issue with the error filled in; nothing is sent unless you submit it.
+
+On Windows, install the command line in PowerShell:
+
+```powershell
+irm https://github.com/anton-abyzov/specwithcode/releases/latest/download/install.ps1 | iex
+```
+
+It reads the newest stable release, checks the archive against `SHA256SUMS-windows-linux` and puts
+`specweave-studio` in `~\.local\bin`. Set `STUDIO_VERSION` for an exact version. It does not install the
+background service.
 
 ### Join your existing machines from the terminal
 
@@ -174,8 +203,9 @@ Terminal or restart, run `specwithcode service install` (1.0.46 and later): the 
 copy of the installed package under `~/.specwithcode/runtime/versions/<version>` and runs it with
 the Node.js that ran the install.
 
-Once `specwithcode` is on your `PATH` (from the installer, npm, or built from source; the desktop
-app does not add it), these commands cover the basics.
+Once `specwithcode` is on your `PATH` (from the installer, npm, built from source, or the desktop
+app's **Settings > Machines > Command line > Install command-line tool**; see
+[The command line](./command-line.md)), these commands cover the basics.
 The same tool is also installed under its original name, `specweave-studio`, so older scripts keep working.
 
 | Task                                                      | Command                                                             |
@@ -315,6 +345,13 @@ sign-in on another computer, or on your phone, does not carry over.
 
 Provider CLIs must be on the server's `PATH`. If SpecWithCode cannot find one, set its
 **Binary path** in provider settings, especially when using a version manager.
+
+A CLI you install after the app started is picked up by itself within a few seconds while
+the app window is in front, with no restart. For a provider that is not installed,
+**Settings → Providers** shows its install command with **Copy** and **Run in terminal**,
+which runs it on that provider's machine. **Check again** also reads your login shell's
+`PATH` again, for an installer that added a new folder to it.
+
 Cursor runs through its SDK as a local agent, so it needs no CLI. Install the
 [Cursor CLI](https://cursor.com/cli) and run `agent login` with the same account only if you
 want Cursor history and limits on **Usage**. Codex connected through ChatGPT and Antigravity can use their

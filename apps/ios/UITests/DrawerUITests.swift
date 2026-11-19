@@ -43,6 +43,25 @@ final class DrawerUITests: SWCUITestCase {
     attachScreenshot("Drawer, machines")
   }
 
+  /// Each machine keeps its own Percy; the drawer lists every one, and the
+  /// build box's opens on the build box.
+  func testDrawerListsEachMachinesPercyAndOpensIt() throws {
+    launch()
+    waitForHome()
+    openDrawer()
+    let office = app.buttons["drawer.percy.env-studio-mac"]
+    let buildBox = app.buttons["drawer.percy.env-build-box"]
+    waitFor(office, "The drawer should list the Office Mac's Percy")
+    waitFor(buildBox, "The drawer should list the build box's Percy")
+    attachScreenshot("Percy on each machine")
+
+    tap(buildBox)
+    let capsule = button(startingWith: "Percy, Coordinator")
+    waitForHittable(capsule, "The build box's Percy should open")
+    XCTAssertTrue(capsule.label.contains("Build box"), "The capsule should name the build box: \(capsule.label)")
+    attachScreenshot("Build box Percy")
+  }
+
   func testDrawerHidesAideWhileItsSwitchIsOff() throws {
     launch(aide: false)
     waitForHome()

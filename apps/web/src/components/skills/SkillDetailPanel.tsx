@@ -189,7 +189,7 @@ export function SkillDetailPanel({
           <>
             <Button
               size="xs"
-              variant="ghost"
+              variant="outline"
               onClick={() => setExpanded(!expanded)}
               aria-expanded={expanded}
             >

@@ -647,7 +647,7 @@ function CopyableCode({ value, label }: { readonly value: string; readonly label
       <Button
         type="button"
         size="xs"
-        variant="ghost-muted"
+        variant="secondary"
         aria-label={`Copy ${label}`}
         onClick={() => copyToClipboard(value, undefined)}
       >
@@ -869,7 +869,7 @@ export function StudioFleetRoster({
       headerAction={
         <Button
           size="xs"
-          variant="ghost-muted"
+          variant="outline"
           onClick={onRefresh}
           disabled={loading || pending !== null}
         >

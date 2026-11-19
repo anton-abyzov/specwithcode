@@ -65,9 +65,13 @@ import {
   type AcpMcpOverAcpBridge,
 } from "../../mcp/AcpMcpOverAcpBridge.ts";
 import {
+  acpSessionUsageIncrease,
   addAcpTurnUsage,
+  normalizeAcpPromptUsage,
   normalizeAcpTurnTokenUsage,
   readAcpPromptUsage,
+  readAcpRawPromptUsage,
+  type AcpRawPromptUsage,
   type AcpTurnUsageCounts,
 } from "../../provider/AcpTurnTokenUsage.ts";
 import { mcpToolPresentation } from "../../provider/McpToolPresentation.ts";
@@ -261,6 +265,11 @@ export interface AcpAdapterV2Flavor {
   readonly driver: ProviderDriverKind;
   /** SpecWeave's tool slug for SPECWEAVE_TOOL; the driver kind when omitted. */
   readonly specweaveTool?: string;
+  /**
+   * The agent's `session/prompt` usage is the running total of its live
+   * session (GitHub Copilot), so each turn stores the increase instead.
+   */
+  readonly promptUsageIsSessionTotal?: boolean;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
   readonly clientCapabilitiesMeta?: Record<string, boolean>;
   readonly normalizeSessionUpdate?: (
@@ -1322,13 +1331,14 @@ function selectPermissionOptionId(
   request: EffectAcpSchema.RequestPermissionRequest,
   decision: Exclude<ProviderApprovalDecision, "cancel">,
 ): string | undefined {
-  const kind =
-    decision === "acceptForSession"
-      ? "allow_always"
-      : decision === "accept"
-        ? "allow_once"
-        : "reject_once";
-  return request.options.find((option) => option.kind === kind)?.optionId.trim() || undefined;
+  const optionIdOfKind = (kind: EffectAcpSchema.PermissionOption["kind"]) =>
+    request.options.find((option) => option.kind === kind)?.optionId.trim() || undefined;
+  if (decision === "acceptForSession") {
+    // An agent may offer only allow-once; answering "cancelled" would stop the
+    // turn the person approved, so approve this request once instead.
+    return optionIdOfKind("allow_always") ?? optionIdOfKind("allow_once");
+  }
+  return optionIdOfKind(decision === "accept" ? "allow_once" : "reject_once");
 }
 
 /**
@@ -1462,6 +1472,11 @@ interface ActiveAcpTurn {
   promptSettledStatus: "completed" | "interrupted" | "failed" | "cancelled" | null;
   /** What the prompts of this turn reported consuming; absent when the agent says nothing. */
   promptUsage?: AcpTurnUsageCounts;
+  /**
+   * For an agent that reports session totals: the usage may include an
+   * earlier prompt that reported nothing, or miss a count, so it is partial.
+   */
+  promptUsageUncertain?: boolean;
   /**
    * Completed the moment `runtime.prompt` resolves on the wire, before the
    * completion callback requests `runtimeCallbackPermit`. Failure does not
@@ -1980,6 +1995,19 @@ export function makeAcpAdapterV2(
         const promptInstructionStates = yield* Ref.make(
           new Map<string, StudioAcpInstructionState>(),
         );
+        // Last session totals per live runtime and session, for an agent whose
+        // prompt usage is a session total. Keyed by the runtime object, so a
+        // new or replacement process, whose counters start again, has none.
+        // `open` is set while a prompt is out and `unreported` once one ended
+        // without totals (failed, or no usage), so the next increase also
+        // covers it and is stored as partial.
+        const sessionUsageTotals = new WeakMap<
+          object,
+          Map<
+            string,
+            { totals: AcpRawPromptUsage | undefined; open: boolean; unreported: boolean }
+          >
+        >();
         const runtimeRestartRequired = yield* Ref.make(false);
         // Native sessions whose restored history the model rejected (for
         // example a missing Gemini thought signature). Loading one again
@@ -6860,6 +6888,7 @@ export function makeAcpAdapterV2(
                   context.promptUsage,
                   context.subagents.size > 0,
                   status,
+                  context.promptUsageUncertain !== true,
                 ),
               }),
         });
@@ -7157,6 +7186,7 @@ export function makeAcpAdapterV2(
           const instructionState = {
             interactionMode: turnInput.runtimePolicy.interactionMode,
             hasStudioMcp: acpMcpServers(turnInput.threadId, self).length > 0,
+            isCoordinator: turnInput.runtimePolicy.isCoordinator,
           } satisfies StudioAcpInstructionState;
           const previousInstructionState = (yield* Ref.get(promptInstructionStates)).get(sessionId);
           const messageText = providerMessageTextWithAttachmentPaths({
@@ -7245,6 +7275,11 @@ export function makeAcpAdapterV2(
               model: turnInput.modelSelection.model,
               responseStyle: turnInput.runtimePolicy.responseStyle,
               agentInstructions: turnInput.runtimePolicy.agentInstructions,
+              // The guidance names the studio-code `advisor` tool, so only a
+              // session that has those tools is told to consult.
+              advisorGuidance: instructionState.hasStudioMcp
+                ? turnInput.runtimePolicy.advisorGuidance
+                : undefined,
             }),
           });
           return { prompt, instructionState: text === messageText ? undefined : instructionState };
@@ -7563,6 +7598,25 @@ export function makeAcpAdapterV2(
               projectAdditionalDirectories === undefined
                 ? undefined
                 : { projectAdditionalDirectories };
+            const promptRuntime = runtime;
+            const promptSessionId = (yield* Ref.get(activeSessionId)) ?? requestedSessionId;
+            const sessionTotals = (() => {
+              if (flavor.promptUsageIsSessionTotal !== true) return undefined;
+              let sessions = sessionUsageTotals.get(promptRuntime);
+              if (sessions === undefined) {
+                sessions = new Map();
+                sessionUsageTotals.set(promptRuntime, sessions);
+              }
+              let entry = sessions.get(promptSessionId);
+              if (entry === undefined) {
+                entry = { totals: undefined, open: false, unreported: false };
+                sessions.set(promptSessionId, entry);
+              }
+              // The previous prompt never came back with usage (it failed).
+              if (entry.open) entry.unreported = true;
+              entry.open = true;
+              return entry;
+            })();
             yield* runtime.prompt({ prompt: promptParts!.prompt }, promptOptions).pipe(
               Effect.tap(() =>
                 Ref.update(promptInstructionStates, (current) => {
@@ -7582,10 +7636,52 @@ export function makeAcpAdapterV2(
                 runRuntimeCallbackAtGeneration(
                   promptGeneration,
                   Effect.gen(function* () {
+                    let promptUsage: AcpTurnUsageCounts | undefined;
+                    let promptUsageUncertain = false;
+                    if (sessionTotals === undefined) {
+                      promptUsage = readAcpPromptUsage(result);
+                    } else {
+                      sessionTotals.open = false;
+                      const totals = readAcpRawPromptUsage(result);
+                      if (totals === undefined) {
+                        sessionTotals.unreported = true;
+                      } else {
+                        const increase = acpSessionUsageIncrease(sessionTotals.totals, totals);
+                        promptUsage = normalizeAcpPromptUsage(increase.usage);
+                        promptUsageUncertain = sessionTotals.unreported || !increase.complete;
+                        sessionTotals.totals = totals;
+                        sessionTotals.unreported = false;
+                      }
+                    }
+                    // The totals advance even when the turn already ended, so
+                    // the next turn's increase never counts this prompt again.
                     if (context.finalized) return;
-                    const promptUsage = readAcpPromptUsage(result);
                     if (promptUsage !== undefined) {
                       context.promptUsage = addAcpTurnUsage(context.promptUsage, promptUsage);
+                      if (promptUsageUncertain) context.promptUsageUncertain = true;
+                    }
+                    // A refusal or a limit stop ended the turn without finishing it,
+                    // so it settles failed with the reason instead of completed.
+                    const unfinishedMessage = context.interrupted
+                      ? undefined
+                      : result.stopReason === "refusal"
+                        ? "The agent refused this request. Its next turn won't include this message or its reply."
+                        : result.stopReason === "max_tokens"
+                          ? "The agent stopped because its reply reached the output token limit."
+                          : result.stopReason === "max_turn_requests"
+                            ? "The agent stopped because it reached its request limit for this turn."
+                            : undefined;
+                    if (unfinishedMessage !== undefined) {
+                      yield* finalizeTurn(
+                        context,
+                        "failed",
+                        makeProviderFailure({
+                          message: unfinishedMessage,
+                          code: result.stopReason,
+                          class: "provider_error",
+                        }),
+                      );
+                      return;
                     }
                     const status =
                       result.stopReason === "cancelled"

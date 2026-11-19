@@ -2160,7 +2160,7 @@ function PullRequestsRouteView() {
             {detailOpen ? (
               <Button
                 size="xs"
-                variant="ghost-muted"
+                variant="outline"
                 className="md:hidden [-webkit-app-region:no-drag]"
                 onClick={toggleRightPanel}
               >

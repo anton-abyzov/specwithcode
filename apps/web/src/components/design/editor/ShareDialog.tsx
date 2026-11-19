@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { ProjectFavicon } from "~/components/ProjectFavicon";
-import { Button } from "~/components/ui/button";
+import { Button, InlineButton } from "~/components/ui/button";
 import {
   Dialog,
   DialogDescription,
@@ -233,17 +233,15 @@ export function ShareDialog({
                       <>
                         Bound to{" "}
                         {onOpenThread ? (
-                          <button
-                            type="button"
-                            className="inline-flex items-center gap-0.5 rounded-sm font-medium text-foreground/80 italic outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                          <InlineButton
                             onClick={() => {
                               onOpenChange(false);
                               onOpenThread();
                             }}
                           >
-                            {threadTitle ?? "the design thread"}
+                            <span className="italic">{threadTitle ?? "the design thread"}</span>
                             <ArrowUpRightIcon aria-hidden className="size-3" />
-                          </button>
+                          </InlineButton>
                         ) : (
                           <em>{threadTitle ?? "the design thread"}</em>
                         )}
@@ -357,7 +355,9 @@ function AccessRow({
       </span>
       <span className="flex min-w-0 flex-col gap-0.5 pt-0.5">
         <span className="text-sm leading-5 text-pretty">{title}</span>
-        <span className="line-clamp-2 text-xs leading-4 text-muted-foreground">{detail}</span>
+        <span className="line-clamp-2 text-xs leading-4 text-muted-foreground [--inline-button-white-space:normal]">
+          {detail}
+        </span>
       </span>
       <span className="pt-0.5">{children}</span>
     </li>

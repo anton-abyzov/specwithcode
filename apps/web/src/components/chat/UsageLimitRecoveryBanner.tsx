@@ -295,7 +295,6 @@ function RecoveryActions({
   snoozedUntil,
   fallback,
   fallbackChoices,
-  waiting,
   device,
   machines,
   onChange,
@@ -422,7 +421,7 @@ function RecoveryActions({
           {fallback ? (
             <Button
               size="xs"
-              variant={waiting ? "ghost" : "outline"}
+              variant="outline"
               disabled={pending}
               title={tr("limit.fallback.hint", { label: fallback.label, model: fallback.model })}
               aria-label={tr("limit.fallback.continueWith", {
@@ -445,7 +444,7 @@ function RecoveryActions({
               <MenuTrigger
                 disabled={pending}
                 render={
-                  <Button size="xs" variant="ghost" aria-label={tr("limit.otherModelsAria")} />
+                  <Button size="xs" variant="outline" aria-label={tr("limit.otherModelsAria")} />
                 }
               >
                 {fallback ? tr("limit.otherModels") : tr("limit.chooseModel")}
@@ -475,7 +474,7 @@ function RecoveryActions({
           {device ? (
             <Button
               size="xs"
-              variant={waiting ? "ghost" : "outline"}
+              variant="outline"
               disabled={pending}
               title={tr("limit.device.hint", { label: device.label, model: device.model })}
               onClick={() => void continueElsewhere(device)}
@@ -498,7 +497,7 @@ function RecoveryActions({
       {canCheck ? (
         <Button
           size="xs"
-          variant="ghost"
+          variant="outline"
           disabled={pending || recovery?.checkNow === true}
           onClick={() => void toggle("check")}
         >
@@ -508,7 +507,7 @@ function RecoveryActions({
       {!snoozed && resetAt !== null ? (
         <Button
           size="xs"
-          variant="ghost"
+          variant="outline"
           disabled={pending || Date.parse(resetAt!) <= nowMs}
           onClick={() => void toggle("snooze")}
         >

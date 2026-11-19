@@ -1,5 +1,6 @@
 import type {
   OrchestrationV2ContextHandoff,
+  OrchestrationV2HistoricalMessage,
   OrchestrationV2ProviderThread,
 } from "@specweave-studio/contracts";
 import type { ProviderAdapterV2HistoricalContext } from "./ProviderAdapter.ts";
@@ -21,6 +22,84 @@ export function isPromptlessContinuation(message: {
   readonly creationSource: string;
 }): boolean {
   return message.createdBy === "agent" && message.creationSource === "provider";
+}
+
+/**
+ * Merges pending histories into one chronological list, leaving out delivered
+ * items. Each history is in order, so its sequence is the base constraint and
+ * an item shared by two histories keeps both orders: `[later]` and
+ * `[earlier, later]` merge to `[earlier, later]`. Delivered items still carry
+ * order between the others. Between items no history orders, the turn-item
+ * ordinal decides when both come from the same thread, otherwise first
+ * appearance does. Ordinals of different threads (a fork's source) are never
+ * compared.
+ */
+export function mergePendingHistories(
+  histories: ReadonlyArray<ReadonlyArray<OrchestrationV2HistoricalMessage>>,
+  skip: ReadonlySet<string>,
+): ReadonlyArray<OrchestrationV2HistoricalMessage> {
+  interface Node {
+    readonly message: OrchestrationV2HistoricalMessage;
+    readonly seen: number;
+    readonly next: Set<Node>;
+    waiting: number;
+    done: boolean;
+  }
+  const nodes = new Map<string, Node>();
+  for (const history of histories) {
+    let previous: Node | undefined;
+    for (const message of history) {
+      let node = nodes.get(message.itemId);
+      if (node === undefined) {
+        node = { message, seen: nodes.size, next: new Set(), waiting: 0, done: false };
+        nodes.set(message.itemId, node);
+      }
+      if (previous !== undefined && previous !== node && !previous.next.has(node)) {
+        previous.next.add(node);
+        node.waiting += 1;
+      }
+      previous = node;
+    }
+  }
+  const order = [...nodes.values()];
+  const emit = (node: Node) => !skip.has(node.message.itemId);
+  if (histories.length <= 1) return order.filter(emit).map((node) => node.message);
+  let ready = order.filter((node) => node.waiting === 0);
+  let cursor = 0;
+  let placed = 0;
+  const merged: Array<OrchestrationV2HistoricalMessage> = [];
+  while (placed < order.length) {
+    if (ready.length === 0) {
+      // Histories that disagree form a cycle: the earliest seen item breaks it.
+      while (order[cursor]!.done) cursor += 1;
+      ready = [order[cursor]!];
+    }
+    // The lowest ordinal of each thread among ready items; a ready item with
+    // a higher one waits for it.
+    const lowest = new Map<string, number>();
+    for (const node of ready) {
+      const ordinal = node.message.ordinal;
+      if (ordinal === undefined) continue;
+      const current = lowest.get(node.message.threadId);
+      if (current === undefined || ordinal < current) lowest.set(node.message.threadId, ordinal);
+    }
+    let pick: Node | undefined;
+    for (const node of ready) {
+      const ordinal = node.message.ordinal;
+      if (ordinal !== undefined && ordinal > lowest.get(node.message.threadId)!) continue;
+      if (pick === undefined || node.seen < pick.seen) pick = node;
+    }
+    const chosen = pick!;
+    ready = ready.filter((node) => node !== chosen);
+    chosen.done = true;
+    placed += 1;
+    if (emit(chosen)) merged.push(chosen.message);
+    for (const next of chosen.next) {
+      next.waiting -= 1;
+      if (next.waiting === 0 && !next.done) ready.push(next);
+    }
+  }
+  return merged;
 }
 
 /**
@@ -74,12 +153,12 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
         (handoff) =>
           `Context handoff (${handoff.strategy === "fork_delta_summary" ? "merge_back / fork_delta_summary" : handoff.strategy}):\n${
             handoff.history?.coverage ??
-            `From thread ${handoff.threadId}, runs ${handoff.coveredRunOrdinals.from}-${handoff.coveredRunOrdinals.to}. Recover history with studio_thread_read, view=activity; paginate with afterPosition, and use itemId/textOffset for long items.`
+            `From thread ${handoff.threadId}, runs ${handoff.coveredRunOrdinals.from}-${handoff.coveredRunOrdinals.to}. Recover history with studio_thread_read, view=activity: it returns the newest items, beforePosition=earlierPosition reads older ones, and itemId/textOffset reads long items.`
           }`,
       )
       .join("\n");
     const strategies = Array.from(new Set(pending.map((handoff) => handoff.strategy)));
-    const compactCoverage = `Context handoff (${strategies.join(", ")}). ${pending.length} handoff records; detailed coverage references omitted. Recover history with studio_thread_read({threadId:"${input.providerThread.appThreadId ?? pending[0]!.threadId}",view:"activity",limit:20,maxCharsPerItem:4000}); paginate with afterPosition=nextPosition. Follow fork/handoff source references in activity. For long items use itemId and textOffset=nextTextOffset until null.`;
+    const compactCoverage = `Context handoff (${strategies.join(", ")}). ${pending.length} handoff records; detailed coverage references omitted. Recover history with studio_thread_read({threadId:"${input.providerThread.appThreadId ?? pending[0]!.threadId}",view:"activity",limit:20,maxCharsPerItem:4000}); it returns the newest items; read older ones with beforePosition=earlierPosition until it is null. Follow fork/handoff source references in activity. For long items use itemId and textOffset=nextTextOffset until null.`;
     // Repeated failures can accumulate many recovery markers. Keep a single
     // thread-level entry point when detailed coverage would crowd out history;
     // its activity includes the original handoff/fork source references.
@@ -95,14 +174,10 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     ) {
       coverage = `${input.preface}\n\n${coverage}`;
     }
-    const seen = new Set(input.alreadyDeliveredItemIds);
-    const messages = pending
-      .flatMap((handoff) => handoff.history?.messages ?? [])
-      .filter((message) => {
-        if (seen.has(message.itemId)) return false;
-        seen.add(message.itemId);
-        return true;
-      });
+    const messages = mergePendingHistories(
+      pending.map((handoff) => handoff.history?.messages ?? []),
+      input.alreadyDeliveredItemIds,
+    );
     // Old preview handoffs remain readable. Their preformatted context is included
     // as a whole when it fits, otherwise the coverage marker points to retrieval.
     const oldContext = pending
@@ -117,10 +192,15 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       (sum, handoff) => sum + (handoff.history?.omittedItems ?? 0),
       0,
     );
+    const omittedWorkersBefore = pending.reduce(
+      (sum, handoff) => sum + (handoff.history?.omittedWorkers ?? 0),
+      0,
+    );
     let selected = selectHistory({
       messages,
       coverage: fullCoverage,
       omittedItems: omittedBefore,
+      omittedWorkers: omittedWorkersBefore,
       budget,
     });
     if (historyCost(selected.messages, selected.context) > budget) {
@@ -133,6 +213,13 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
         messages: [],
         coverage: withSessions(compactCoverage),
         omittedItems: omittedBefore + messages.length,
+        omittedWorkers:
+          omittedWorkersBefore +
+          new Set(
+            messages
+              .filter((message) => message.kind === "subagent" || message.kind === "thread_created")
+              .map((message) => message.worker?.key ?? message.itemId),
+          ).size,
         budget,
       });
       if (historyCost([], pointer.context) > Math.max(budget, POINTER_HANDOFF_FLOOR)) {

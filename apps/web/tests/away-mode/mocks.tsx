@@ -25,3 +25,9 @@ export const environmentSession = () => null;
 export const readEnvironmentScope = () => null;
 export const useEnvironments = () => ({ environments: [] });
 export const usePreparedConnection = () => null;
+// Added since 1.0.345: thread and environment reads the Away views now import.
+export const useThreadShell = () => null;
+export const useThreadVisibleTurnItems = () => [];
+export const useEnvironment = () => null;
+export const awaitEnvironmentScope = async () => null;
+export const readEnvironmentScopeAccess = () => "unknown";

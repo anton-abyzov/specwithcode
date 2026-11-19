@@ -1,5 +1,6 @@
 import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
+import { mediaFileReference } from "@specweave-studio/client-runtime/media-reference";
 import { executeAtomQuery } from "@specweave-studio/client-runtime/state/runtime";
 import { turnItemDetailRevision } from "@specweave-studio/client-runtime/work-log/item-detail";
 import type {
@@ -30,6 +31,7 @@ import {
   LinkIcon,
   PanelRightOpenIcon,
   ShapesIcon,
+  TableIcon,
 } from "lucide-react";
 import { type ReactNode, type Ref, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -100,6 +102,7 @@ import {
   useArtifactShelfState,
 } from "./useArtifactShelfState";
 import { useArtifactFileChecks } from "./useMissingArtifactFiles";
+import { SheetFileView } from "../office/SheetFileView";
 import { ViewerFileActions } from "./ViewerFileActions";
 import { ViewerImageStage } from "./ViewerImageStage";
 import type { ZoomableImageHandle } from "./ZoomableImage";
@@ -118,6 +121,7 @@ const KIND_ICON: Record<ThreadArtifactKind, typeof FileIcon> = {
   file: FileIcon,
   link: LinkIcon,
   native: GlobeIcon,
+  sheet: TableIcon,
 };
 
 /** What an artifact is, in the overlay header's words. */
@@ -716,6 +720,7 @@ function useShelfEntries(
 function artifactResource(
   threadRef: ScopedThreadRef,
   artifact: ViewableArtifact,
+  cwd?: string,
 ): AssetResource | null {
   if (artifact.kind === "html" && "attachmentId" in artifact) {
     return {
@@ -727,6 +732,14 @@ function artifactResource(
     };
   }
   if (!("meta" in artifact)) return null;
+  // A page inside the project loads its siblings. One outside is a host file.
+  if (
+    artifact.kind === "html" &&
+    cwd !== undefined &&
+    mediaFileReference(artifact.meta.filePath, cwd).relativePath !== undefined
+  ) {
+    return { _tag: "workspace-file", threadId: threadRef.threadId, path: artifact.meta.filePath };
+  }
   // Host media streams through the server, with ranges for seeking, so it
   // plays the same in the desktop app, a browser and on a remote host.
   return ["image", "video", "audio", "html", "pdf"].includes(artifact.kind)
@@ -828,9 +841,15 @@ export function ArtifactViewer(props: {
     "meta" in artifact &&
     (fileState?.state === "missing" || (fileState?.state === "unreachable" && fileState.offline));
   const resource = useMemo(
-    () => (unavailable ? null : artifactResource(props.threadRef, artifact)),
-    [artifact, props.threadRef, unavailable],
+    () => (unavailable ? null : artifactResource(props.threadRef, artifact, props.cwd)),
+    [artifact, props.cwd, props.threadRef, unavailable],
   );
+  const lineReveal = props.reveal?.key === artifact.key ? props.reveal.line : undefined;
+  const [htmlSource, setHtmlSource] = useState<{ key: string; source: boolean } | null>(null);
+  const showingHtmlSource =
+    artifact.kind === "html" &&
+    !("attachmentId" in artifact) &&
+    (htmlSource?.key === artifact.key ? htmlSource.source : lineReveal !== undefined);
   const asset = useAssetUrlState(props.threadRef.environmentId, resource);
   const url = asset._tag === "Success" ? asset.url : null;
   const path = "meta" in artifact ? artifact.meta.filePath : null;
@@ -864,6 +883,17 @@ export function ArtifactViewer(props: {
   if (slots === null) return null;
   const actions = (
     <>
+      {artifact.kind === "html" && !("attachmentId" in artifact) ? (
+        <Button
+          type="button"
+          size="xs"
+          variant="outline"
+          data-html-source-switch=""
+          onClick={() => setHtmlSource({ key: artifact.key, source: !showingHtmlSource })}
+        >
+          {showingHtmlSource ? tx("Preview") : tx("View source")}
+        </Button>
+      ) : null}
       {count > 1 ? (
         <>
           <span
@@ -957,7 +987,8 @@ export function ArtifactViewer(props: {
             cwd={props.cwd}
             url={url}
             failed={asset._tag === "Failure"}
-            revealLine={props.reveal?.key === artifact.key ? props.reveal.line : undefined}
+            revealLine={lineReveal}
+            showHtmlSource={showingHtmlSource}
             imageRef={imageRef}
             fileState={fileState}
           />
@@ -1014,6 +1045,7 @@ function ArtifactBody(props: {
   readonly url: string | null;
   readonly failed: boolean;
   readonly revealLine?: number | undefined;
+  readonly showHtmlSource?: boolean;
   readonly imageRef: Ref<ZoomableImageHandle>;
   readonly fileState?: ViewerFileState | null | undefined;
 }): ReactNode {
@@ -1054,6 +1086,9 @@ function ArtifactBody(props: {
         reason={noPreviewReason(artifact.name)}
       />
     );
+  }
+  if (artifact.kind === "sheet" && path !== null) {
+    return <SheetFileView environmentId={props.environmentId} cwd={props.cwd ?? ""} path={path} />;
   }
   switch (artifact.kind) {
     case "markdown":
@@ -1100,13 +1135,33 @@ function ArtifactBody(props: {
     case "audio":
       return <AudioPreview src={url} name={artifact.name} />;
     case "html":
+      if (props.showHtmlSource && "meta" in artifact) {
+        return (
+          <ArtifactText
+            environmentId={props.environmentId}
+            threadRef={props.threadRef}
+            cwd={props.cwd}
+            revealLine={props.revealLine}
+            artifact={artifact}
+          />
+        );
+      }
+      return (
+        <BrowserDocumentFrame
+          src={url}
+          title={artifact.name}
+          pdf={false}
+          htmlRender={"attachmentId" in artifact}
+          lockedFile={!("attachmentId" in artifact)}
+        />
+      );
     case "pdf":
       return (
         <BrowserDocumentFrame
           src={url}
           title={artifact.name}
-          pdf={artifact.kind === "pdf"}
-          htmlRender={"attachmentId" in artifact}
+          pdf
+          htmlRender={false}
         />
       );
     default:
@@ -1213,6 +1268,7 @@ const CARD_KINDS = new Set<ThreadArtifactKind>([
   "html",
   "pdf",
   "markdown",
+  "sheet",
 ]);
 
 /**

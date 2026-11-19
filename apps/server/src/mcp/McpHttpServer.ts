@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off -- the bounded reader resumes and destroys the Node IncomingMessage so a refused body still gets 413.
+import * as NodeHttp from "node:http";
+
+import * as NodeStream from "@effect/platform-node/NodeStream";
 import { ProjectConnectionsToolkit } from "./toolkits/projectConnections/tools.ts";
 import { GoogleToolkit } from "./toolkits/google/tools.ts";
 import { TEAM_RULES_REFUSED_HEADER } from "@specweave-studio/contracts";
@@ -17,6 +21,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 import type * as Types from "effect/Types";
 import { AiError, McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
@@ -40,6 +45,7 @@ import { DesignSystemsToolkit } from "./toolkits/designSystems/tools.ts";
 import * as DesignSystemsHandlers from "./toolkits/designSystems/handlers.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { advertisedJsonSchema, compactJsonSchema } from "./advertisedJsonSchema.ts";
+import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
@@ -51,8 +57,12 @@ import { ProjectMemoryToolkit } from "./toolkits/projectMemory/tools.ts";
 import * as ProjectMemoryHandlers from "./toolkits/projectMemory/handlers.ts";
 import { ProjectKnowledgeToolkit } from "./toolkits/projectKnowledge/tools.ts";
 import * as ProjectKnowledgeHandlers from "./toolkits/projectKnowledge/handlers.ts";
+import { OfficeToolkit } from "./toolkits/office/tools.ts";
+import * as OfficeHandlers from "./toolkits/office/handlers.ts";
 import { ReportToolkit } from "./toolkits/report/tools.ts";
 import * as ReportHandlers from "./toolkits/report/handlers.ts";
+import { ResetAnnouncementToolkit } from "./toolkits/resetAnnouncements/tools.ts";
+import * as ResetAnnouncementHandlers from "./toolkits/resetAnnouncements/handlers.ts";
 import { MachinesToolkit } from "./toolkits/machines/tools.ts";
 import * as FileTransferHandlers from "./toolkits/fileTransfer/handlers.ts";
 import { FileTransferToolkit } from "./toolkits/fileTransfer/tools.ts";
@@ -169,6 +179,105 @@ const tooManyRequests = (retryAfterSeconds: number) =>
   );
 
 /**
+ * The most one MCP request may carry. The largest legitimate request is one
+ * 2 MiB file chunk as base64 (about 2.8 MB); the ACP bridge allows the same
+ * 8 MiB per MCP message (AcpMcpOverAcpBridge.ts).
+ */
+export const MCP_MAX_REQUEST_BYTES = 8 * 1024 * 1024;
+
+const requestTooLarge = () =>
+  HttpServerResponse.jsonUnsafe(
+    {
+      error: "request_too_large",
+      message: `An MCP request may carry at most ${String(MCP_MAX_REQUEST_BYTES)} bytes.`,
+    },
+    { status: 413, headers: { "cache-control": "no-store" } },
+  );
+
+const bodyUnreadable = () =>
+  HttpServerResponse.jsonUnsafe(
+    { error: "invalid_request", message: "The request body could not be read." },
+    { status: 400, headers: { "cache-control": "no-store" } },
+  );
+
+/**
+ * Throws away the rest of a refused body. A client that is still sending
+ * when the socket closes fails with a reset and never sees the 413, so the
+ * server reads on without keeping anything, up to one more limit's worth;
+ * past that it drops the connection.
+ */
+const discardRestOfBody = (source: NodeHttp.IncomingMessage) => {
+  let discarded = 0;
+  const onData = (chunk: Uint8Array) => {
+    discarded += chunk.byteLength;
+    if (discarded <= MCP_MAX_REQUEST_BYTES) return;
+    source.off("data", onData);
+    source.destroy();
+  };
+  source.on("data", onData);
+  source.once("end", () => source.off("data", onData));
+  source.resume();
+};
+
+/** The same request with its body already in memory, so nothing reads the socket again. */
+const withBufferedBody = (
+  request: HttpServerRequest.HttpServerRequest,
+  body: Uint8Array<ArrayBuffer>,
+): HttpServerRequest.HttpServerRequest =>
+  Object.create(request, {
+    arrayBuffer: { value: Effect.succeed(body.buffer) },
+    // Keeps a byte order mark, as the platform's own text reader does.
+    text: { value: Effect.succeed(new TextDecoder("utf-8", { ignoreBOM: true }).decode(body)) },
+    stream: { value: Stream.succeed(body) },
+  });
+
+/**
+ * Reads a POST body once, refusing it past the limit. The platform's capped
+ * reader destroys the socket on overflow, so the client would see a reset
+ * instead of the 413; this one stops keeping bytes and answers instead.
+ */
+const readBoundedBody = Effect.fnUntraced(function* (request: HttpServerRequest.HttpServerRequest) {
+  const source = request.source;
+  const nodeSource = source instanceof NodeHttp.IncomingMessage ? source : undefined;
+  const refuse = () => {
+    if (nodeSource !== undefined) discardRestOfBody(nodeSource);
+    return requestTooLarge();
+  };
+  const declared = request.headers["content-length"];
+  if (declared !== undefined) {
+    const length = Number(declared);
+    if (!Number.isFinite(length) || length > MCP_MAX_REQUEST_BYTES) return refuse();
+  }
+  const body: Stream.Stream<Uint8Array, unknown> =
+    nodeSource === undefined
+      ? request.stream
+      : NodeStream.fromReadable({ evaluate: () => nodeSource, closeOnDone: false });
+  const chunks: Array<Uint8Array> = [];
+  let bytes = 0;
+  const read = yield* body.pipe(
+    Stream.runForEachWhile((chunk) =>
+      Effect.sync(() => {
+        bytes += chunk.byteLength;
+        if (bytes > MCP_MAX_REQUEST_BYTES) return false;
+        chunks.push(chunk);
+        return true;
+      }),
+    ),
+    Effect.as(true),
+    Effect.catch(() => Effect.succeed(false)),
+  );
+  if (bytes > MCP_MAX_REQUEST_BYTES) return refuse();
+  if (!read) return bodyUnreadable();
+  const joined = new Uint8Array(bytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return withBufferedBody(request, joined);
+});
+
+/**
  * Resolves a bearer token that is not a provider-session token: an OAuth
  * client signed in from outside Studio. Undefined when the token is not one.
  */
@@ -236,8 +345,9 @@ const looksLikeProviderToken = (token: string) => token.length > 0 && !token.inc
 const makeMcpAuthMiddleware = Effect.gen(function* () {
   const registry = yield* McpSessionRegistry.McpSessionRegistry;
   const clients = yield* Effect.serviceOption(McpClientAuthenticator);
-  return Effect.fn("McpHttpServer.authenticateRequest")(function* (httpEffect) {
-    const request = yield* HttpServerRequest.HttpServerRequest;
+  const authenticateRequest = Effect.fn("McpHttpServer.authenticateRequest")(function* (
+    request: HttpServerRequest.HttpServerRequest,
+  ) {
     const authorization = request.headers.authorization;
     const token =
       authorization?.startsWith("Bearer ") === true
@@ -299,8 +409,23 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
           Option.isSome(clients) && (dpopToken.length > 0 || !looksLikeProviderToken(token)),
       });
     }
+    return invocation;
+  });
+  // Untraced: a span here would wrap the tool call, and the toolkit annotates
+  // the current span with the raw arguments. The HTTP server span covers it.
+  return Effect.fnUntraced(function* (httpEffect) {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const admitted = yield* authenticateRequest(request);
+    if (HttpServerResponse.isHttpServerResponse(admitted)) return admitted;
+    // Only after sign-in, so an unknown caller never makes this server buffer
+    // a byte. GET (the event stream) and DELETE carry no body.
+    const bounded = request.method === "POST" ? yield* readBoundedBody(request) : request;
+    if (HttpServerResponse.isHttpServerResponse(bounded)) return bounded;
     return yield* httpEffect.pipe(
-      Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+      Effect.provideService(HttpServerRequest.HttpServerRequest, bounded),
+      Effect.provideService(McpInvocationContext.McpInvocationContext, admitted),
+      // The device a client acts for; tools also read it off the invocation (1327).
+      Effect.provideService(ConnectDeviceTrust.RequestDevice, admitted.client?.deviceKey ?? null),
       Effect.map(normalizeMcpHttpResponse),
     );
   }) satisfies McpAuthMiddleware;
@@ -1015,6 +1140,46 @@ const withAdvertisedSchemas = <A, E, R>(registration: Effect.Effect<A, E, R>) =>
     return yield* registration.pipe(Effect.provideService(McpServer.McpServer, advertisingServer));
   });
 
+/** Each tool call gets a span named for its tool; arguments stay out, as they carry prompts and IDs. */
+const withToolSpans = <A, E, R>(registration: Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const tracingServer = McpServer.McpServer.of({
+      ...server,
+      addTool: (options) => {
+        const name = options.tool.name;
+        return server.addTool({
+          ...options,
+          // The toolkit annotates the current span with the raw arguments, so
+          // the handler runs under an external reference to the tool span:
+          // its spans still nest there, and that annotation lands nowhere.
+          handle: (payload) =>
+            Effect.useSpan(
+              `mcp.tool.${name}`,
+              {
+                attributes: {
+                  "rpc.system": "mcp",
+                  "rpc.method": "tools/call",
+                  "mcp.tool.name": name,
+                },
+              },
+              (span) =>
+                options.handle(payload).pipe(
+                  Effect.withParentSpan(
+                    Tracer.externalSpan({
+                      spanId: span.spanId,
+                      traceId: span.traceId,
+                      sampled: span.sampled,
+                    }),
+                  ),
+                ),
+            ),
+        });
+      },
+    });
+    return yield* registration.pipe(Effect.provideService(McpServer.McpServer, tracingServer));
+  });
+
 /**
  * `McpServer.toolkit` for handlers that declared their access (see
  * `McpToolAccess`). Every toolkit on `/mcp` registers through this.
@@ -1025,8 +1190,10 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
   inputDecoding: "json" | "schema" = "json",
 ) =>
   Layer.effectDiscard(
-    withAdvertisedSchemas(
-      McpServer.registerToolkit(inputDecoding === "json" ? decodeAsAdvertised(toolkit) : toolkit),
+    withToolSpans(
+      withAdvertisedSchemas(
+        McpServer.registerToolkit(inputDecoding === "json" ? decodeAsAdvertised(toolkit) : toolkit),
+      ),
     ),
   ).pipe(
     Layer.provide(McpServer.McpServer.layer),
@@ -1037,7 +1204,10 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
 const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, EX, RX>(
   register: Effect.Effect<A, E, R>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
-) => Layer.effectDiscard(register).pipe(Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)));
+) =>
+  Layer.effectDiscard(withToolSpans(register)).pipe(
+    Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
+  );
 
 export const layerDesignToolkit = Layer.mergeAll(
   toolkitRegistration(DesignToolkit, DesignHandlers.layer),
@@ -1154,6 +1324,8 @@ export const layer = Layer.mergeAll(
   toolkitRegistration(DecisionToolkit, DecisionHandlers.layer),
   layerProjectMemoryRegistration,
   toolkitRegistration(ReportToolkit, ReportHandlers.layer),
+  toolkitRegistration(ResetAnnouncementToolkit, ResetAnnouncementHandlers.layer),
+  toolkitRegistration(OfficeToolkit, OfficeHandlers.layer),
   toolkitRegistration(ProjectPlanToolkit, ProjectPlanHandlers.layer),
   toolkitRegistration(ProjectConnectionsToolkit, ProjectConnectionsHandlers.layer),
   toolkitRegistration(GoogleToolkit, GoogleHandlers.layer),

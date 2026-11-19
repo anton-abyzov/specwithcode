@@ -7,6 +7,7 @@ import type {
   MachineHandoffSourceChanges,
 } from "@specweave-studio/contracts";
 import { useId } from "react";
+import { useTx } from "../../i18n";
 import type { CopyLinkOutcome } from "../../studio/projectLink";
 import { Button } from "../ui/button";
 import { HandoffCopyActions } from "./HandoffCopyActions";
@@ -15,7 +16,7 @@ import { HandoffCopyDoneActions, HandoffCopyFailedActions } from "./HandoffCopyD
 import { HandoffSourceChangesActions } from "./HandoffSourceChanges";
 import type { CopyStage } from "./handoffCopySteps";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { useProjectMoveDialog } from "./ProjectMoveOptions";
+import { moveRefusal, useProjectMoveDialog } from "./ProjectMoveOptions";
 import { plainHandoffError } from "./handoffErrors";
 
 /** Screen 1: Cancel closes the dialog, the primary starts (and with file types, stops to choose). */
@@ -55,7 +56,20 @@ function SetupActions({
   );
 }
 
-/** The leading ghost while a copy works or waits: stops it before anything is applied. */
+/**
+ * Closes the dialog while the machines keep working: the copy runs on the source and the
+ * destination, and a progress toast, the sidebar row and the project banner follow it.
+ */
+function RunInBackgroundButton() {
+  const close = useProjectMoveDialog()?.close ?? null;
+  return close ? (
+    <Button variant="outline" data-slot="copy-run-in-background" onClick={close}>
+      Run in background
+    </Button>
+  ) : null;
+}
+
+/** The leading button while a copy works or waits: stops it before anything is applied. */
 function StopCopyButton({
   disabled,
   move,
@@ -67,7 +81,7 @@ function StopCopyButton({
   readonly onStop: () => void;
 }) {
   return (
-    <Button variant="ghost" data-leading disabled={disabled} onClick={onStop}>
+    <Button variant="destructive-outline" data-leading disabled={disabled} onClick={onStop}>
       {move ? "Stop handoff" : "Stop copy"}
     </Button>
   );
@@ -170,9 +184,14 @@ export function HandoffCopyFooter({
   readonly onChangeSetup: () => void;
 }) {
   const availabilityId = useId();
+  const tx = useTx();
+  // A move never starts into the copy that is Main, nor into a project this copy is not
+  // linked to; the setup screen says which.
+  const send = useProjectMoveDialog()?.send;
+  const moveRefused = mode === "copy-and-move" && moveRefusal(send) !== null;
   const blockers = [
     ...(busy ? ["Wait for the current check to finish."] : []),
-    ...(sourceChanged ? ["The source changed. Measure and compare again."] : []),
+    ...(sourceChanged ? [tx("The source changed. Compare again.")] : []),
     ...(copy?.disk ? ["The destination needs more disk space before copying."] : []),
   ];
   const decisions = copy?.totals?.decisionsNeeded;
@@ -204,6 +223,9 @@ export function HandoffCopyFooter({
       {stage === "scanning" && (
         <StopCopyButton disabled={false} move={mode === "copy-and-move"} onStop={onCancelMeasure} />
       )}
+      {(stage === "scanning" || stage === "planning" || stage === "copying") && (
+        <RunInBackgroundButton />
+      )}
       {stage === "setup" &&
         (pending ? (
           <Button disabled={busy} onClick={() => onResume(pending)}>
@@ -211,7 +233,7 @@ export function HandoffCopyFooter({
           </Button>
         ) : (
           <SetupActions
-            disabled={busy || setupBlocked}
+            disabled={busy || setupBlocked || moveRefused}
             hint={machine ? null : "Choose a machine above."}
             label={`${mode === "copy-and-move" ? "Copy and move" : "Copy"}${machine ? ` to ${targetLabel}` : ""}`}
             onStart={onMeasure}
@@ -241,7 +263,7 @@ export function HandoffCopyFooter({
           </p>
           {sourceChanged && onCompareAgain && (
             <Button disabled={busy} onClick={onCompareAgain}>
-              Measure and compare again
+              {tx("Compare again")}
             </Button>
           )}
           <Button
@@ -267,7 +289,7 @@ export function HandoffCopyFooter({
             <TooltipTrigger
               render={
                 <Button
-                  variant="ghost"
+                  variant="outline"
                   data-leading
                   aria-description="Stops this copy and goes back"
                   disabled={busy}
@@ -288,6 +310,7 @@ export function HandoffCopyFooter({
         <HandoffCopyFailedActions
           copy={copy}
           busy={busy}
+          targetLabel={targetLabel}
           failedBeforeApply={failedBeforeApply}
           undoPreview={undoPreview}
           onCopyAgain={onCopyAgain}
@@ -340,7 +363,7 @@ export function HandoffCopyFooter({
       )}
       {stage === "undone" && (
         <Button variant="outline" onClick={onStartNew}>
-          Start a new copy
+          {tx("Add to another machine")}
         </Button>
       )}
     </HandoffCopyActions>

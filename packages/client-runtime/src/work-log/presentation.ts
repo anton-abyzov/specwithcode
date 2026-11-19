@@ -29,6 +29,7 @@ import { classifyToolActivity } from "@specweave-studio/shared/toolActivity";
 import { toolOutputIndicatesFailure } from "@specweave-studio/shared/toolOutput";
 
 import {
+  readAdvisorConsultResult,
   summarizeStudioToolCalls,
   studioToolResultIndicatesFailure,
   type StudioToolSummaryCall,
@@ -219,6 +220,94 @@ export function resolveWorkEntryToolPresentation(
   );
 }
 
+/** Where one advisor consult stands, for the timeline row that shows it. */
+export type AdvisorConsultState =
+  | "running"
+  | "advice"
+  | "working"
+  | "refused"
+  | "failed"
+  | "hidden"
+  | "unavailable";
+
+export interface AdvisorConsultView {
+  readonly state: AdvisorConsultState;
+  /** The advising model, as the result or Claude's item title names it. */
+  readonly advisor: string | null;
+  /** Markdown advice, or the sentence that says why there is none. */
+  readonly detail: string | null;
+  /** The error code of Claude's own advisor when it could not answer. */
+  readonly code: string | null;
+  readonly consultsRemaining: number | null;
+  /** Claude's own advisor, not the studio-code tool. */
+  readonly builtIn: boolean;
+  /** Claude's own advisor answered from Claude Code's settings: the app passed no advisor. */
+  readonly fromClaudeSettings?: true;
+}
+
+const ADVISOR_HIDDEN_TEXT = "Advice applied (hidden by Claude)";
+const ADVISOR_UNAVAILABLE = /^Advisor unavailable(?: \((?<code>[^)]*)\))?$/;
+const ADVISOR_TITLE_MODEL =
+  /^Asked the advisor \((?<model>[^()]+)\)(?<settings> from Claude's settings)?$/;
+
+/** True for a consult of the advisor: the studio-code tool or Claude's own. */
+export function isAdvisorConsultItem(item: OrchestrationV2TurnItem | undefined): boolean {
+  return (
+    item?.type === "dynamic_tool" &&
+    resolveStudioMcpToolDefinition(item.toolName)?.summaryAction === "advisor"
+  );
+}
+
+/**
+ * What an advisor consult shows, from its item with the output loaded. A
+ * studio-code result carries its status; Claude's own advisor stores plain
+ * text: the advice, a fixed line when Claude hides it, or the error code.
+ */
+export function advisorConsultView(item: OrchestrationV2TurnItem): AdvisorConsultView | null {
+  if (item.type !== "dynamic_tool" || !isAdvisorConsultItem(item)) return null;
+  const live = isOrchestrationV2WorkActive(item.status);
+  const titleMatch = item.title ? ADVISOR_TITLE_MODEL.exec(item.title.trim()) : null;
+  const titleModel = titleMatch?.groups?.model ?? null;
+  const consult = readAdvisorConsultResult(item.output);
+  if (consult !== null) {
+    return {
+      state: consult.status,
+      advisor: consult.advisor ?? titleModel,
+      detail: consult.status === "advice" ? (consult.advice ?? consult.message) : consult.message,
+      code: null,
+      consultsRemaining: consult.consultsRemaining,
+      builtIn: false,
+    };
+  }
+  // Only Claude's own advisor, named bare, stores plain text. Text from the
+  // studio-code tool is its result cut short, never advice to show as is.
+  const builtIn = item.toolName?.trim() === "advisor";
+  const textOutput = builtIn && typeof item.output === "string" ? item.output.trim() : "";
+  const base = {
+    advisor: titleModel,
+    consultsRemaining: null,
+    builtIn,
+    ...(builtIn && titleMatch?.groups?.settings !== undefined
+      ? { fromClaudeSettings: true as const }
+      : {}),
+  } as const;
+  if (live && textOutput === "") return { ...base, state: "running", detail: null, code: null };
+  const unavailable = ADVISOR_UNAVAILABLE.exec(textOutput);
+  if (unavailable) {
+    return { ...base, state: "unavailable", detail: null, code: unavailable.groups?.code ?? null };
+  }
+  if (textOutput === ADVISOR_HIDDEN_TEXT) {
+    return { ...base, state: "hidden", detail: ADVISOR_HIDDEN_TEXT, code: null };
+  }
+  if (item.status === "failed" || item.status === "cancelled" || item.status === "interrupted") {
+    // Builtin failures name a code; anything else failed without saying why.
+    return builtIn && textOutput === ""
+      ? { ...base, state: "unavailable", detail: null, code: null }
+      : { ...base, state: "failed", detail: textOutput || null, code: null };
+  }
+  return { ...base, state: "advice", detail: textOutput || null, code: null };
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -402,14 +491,41 @@ function workEntryIndicatesToolFailureFromOutput(
   return output.length > 0 && toolOutputIndicatesFailure(output);
 }
 
+/**
+ * Per-entry results of the row checks below. The timeline re-derives every row
+ * on each update, while an entry object is kept as long as its item has not
+ * changed; entries are readonly, so each check runs once per entry object.
+ * Keyed by object identity, so a replaced entry is derived again.
+ */
+interface WorkEntryDerived {
+  failure?: boolean;
+  displayFailure?: boolean;
+  failureKind?: WorkEntryFailureKind | null;
+  action?: ToolGroupAction;
+}
+
+const workEntryDerived = new WeakMap<WorkLogPresentationEntry, WorkEntryDerived>();
+
+function derivedFor(entry: WorkLogPresentationEntry): WorkEntryDerived {
+  let derived = workEntryDerived.get(entry);
+  if (derived === undefined) {
+    derived = {};
+    workEntryDerived.set(entry, derived);
+  }
+  return derived;
+}
+
 /** Includes legacy activities that stored error output in the command field. */
 export function workEntryIndicatesToolFailure(entry: WorkLogPresentationEntry): boolean {
-  return workEntryIndicatesToolFailureFromOutput(entry, true);
+  return (derivedFor(entry).failure ??= workEntryIndicatesToolFailureFromOutput(entry, true));
 }
 
 /** Checks rendered output without treating the user's command as an error. */
 export function workEntryDisplayIndicatesToolFailure(entry: WorkLogPresentationEntry): boolean {
-  return workEntryIndicatesToolFailureFromOutput(entry, false);
+  return (derivedFor(entry).displayFailure ??= workEntryIndicatesToolFailureFromOutput(
+    entry,
+    false,
+  ));
 }
 
 export type WorkEntryFailureKind = "failed" | "possible" | "declined" | "stopped";
@@ -422,6 +538,12 @@ export type WorkEntryFailureKind = "failed" | "possible" | "declined" | "stopped
  * cancelled, which no count includes.
  */
 export function workEntryFailureKind(entry: WorkLogPresentationEntry): WorkEntryFailureKind | null {
+  const derived = derivedFor(entry);
+  if (derived.failureKind === undefined) derived.failureKind = computeWorkEntryFailureKind(entry);
+  return derived.failureKind;
+}
+
+function computeWorkEntryFailureKind(entry: WorkLogPresentationEntry): WorkEntryFailureKind | null {
   const item = entry.structuredPayload;
   const declined =
     (item?.type === "command_execution" || item?.type === "file_change") && item.declined === true;
@@ -515,6 +637,10 @@ function workLogEntryIsLocalCodeSearch(entry: WorkLogPresentationEntry): boolean
 }
 
 export function toolGroupAction(entry: WorkLogPresentationEntry): ToolGroupAction {
+  return (derivedFor(entry).action ??= computeToolGroupAction(entry));
+}
+
+function computeToolGroupAction(entry: WorkLogPresentationEntry): ToolGroupAction {
   if (entry.itemType === "thread_created") return "thread-create";
   const presentation = resolveWorkEntryToolPresentation(entry);
   if (presentation?.action !== undefined) return presentation.action;
@@ -609,6 +735,7 @@ export function resolveViewedImageAsset(
     threadId: input.threadId,
     workspaceRoot: input.workspaceRoot,
     resolvedFilePath,
+    resolvedFileRelative: imageSource.relative === true,
   });
   if (media === null || media.access !== "environment") return null;
   return { resource: media.resource, alt: media.name, srcFragment: media.srcFragment };

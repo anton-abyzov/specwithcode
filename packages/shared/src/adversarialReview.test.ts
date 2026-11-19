@@ -10,8 +10,10 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   defaultReviewerChain,
   describeReviewerOrder,
+  isAdversarialReviewThreadTitle,
   resolveReviewer,
   reviewerChain,
+  threadReviewState,
 } from "./adversarialReview.ts";
 import { newestOfFamily, tierModelFor } from "./modelTiers.ts";
 
@@ -85,6 +87,20 @@ describe("tierModelFor", () => {
     expect(tierModelFor(muse, "frontier")).toBe("muse-wonder-full-1.0");
   });
 
+  it("keeps a borrowed tier off a newer release billed per use or unknown", () => {
+    const reseller = (billing: "api" | "unknown") => {
+      const base = provider("copilot", "acpRegistry", ["claude-fable-5-2", "claude-fable-6"], null);
+      return {
+        ...base,
+        models: base.models.map((model) =>
+          model.slug === "claude-fable-6" ? { ...model, billing } : model,
+        ),
+      };
+    };
+    expect(tierModelFor(reseller("api"), "frontier")).toBe("claude-fable-5-2");
+    expect(tierModelFor(reseller("unknown"), "frontier")).toBe("claude-fable-5-2");
+  });
+
   it("follows a built-in default to the newest listed release of its family", () => {
     const newer = provider(
       "claudeAgent",
@@ -139,11 +155,11 @@ describe("tierModelFor", () => {
 });
 
 describe("reviewerChain", () => {
-  it("puts other families first and the author's family last", () => {
+  it("starts with the built-in Review track, then the other providers by family", () => {
     expect(defaultReviewerChain({ providers, tier: "regular" })).toEqual([
+      sel("muse", "muse-wonder-1.0"),
       sel("codex", "gpt-6.1-sol"),
       sel("copilot", "gpt-6.1-sol"),
-      sel("muse", "muse-wonder-1.0"),
       sel("claudeAgent", "claude-opus-5-5"),
     ]);
   });
@@ -156,7 +172,7 @@ describe("reviewerChain", () => {
 });
 
 describe("resolveReviewer", () => {
-  it("picks Codex Sol for work Claude did", () => {
+  it("picks Muse Wonder for work Claude did, the top of the built-in Review track", () => {
     const result = resolveReviewer({
       providers,
       author,
@@ -164,9 +180,75 @@ describe("resolveReviewer", () => {
       tier: "regular",
       nowMs: now,
     });
-    expect(result.reviewer).toEqual(sel("codex", "gpt-6.1-sol"));
+    expect(result.reviewer).toEqual(sel("muse", "muse-wonder-1.0"));
     expect(result.authorFamily).toBe("claude");
     expect(result.skipped).toEqual([]);
+  });
+
+  it("keeps a saved first reviewer whose usage is unread ahead of a later one with room", () => {
+    // Muse reports no percent; Sol on Codex has known room. The saved order wins.
+    const unread: ServerProvider = {
+      ...muse,
+      usageLimits: {
+        checkedAt: fresh,
+        windows: [],
+        unavailable: { reason: "probeFailed", message: "Usage could not be read." },
+      },
+    };
+    const result = resolveReviewer({
+      providers: [claude, codex, copilot, unread],
+      author,
+      reviewers: [sel("muse", "muse-wonder-full-1.0"), sel("codex", "gpt-6.1-sol")],
+      tier: "regular",
+      nowMs: now,
+    });
+    expect(result.reviewer).toEqual(sel("muse", "muse-wonder-full-1.0"));
+    expect(result.skipped).toEqual([]);
+  });
+
+  it("lets a stale or denied reading yield to a later reviewer with room", () => {
+    const stale: ServerProvider = {
+      ...muse,
+      usageLimits: {
+        checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now - 10 * 60_000)),
+        windows: [
+          {
+            id: "seven_day",
+            kind: "weekly",
+            label: "Weekly",
+            usedPercent: 10,
+            resetsAt: "2026-11-06T00:00:00.000Z",
+          },
+        ],
+      },
+    };
+    const result = resolveReviewer({
+      providers: [claude, codex, stale],
+      author,
+      reviewers: [sel("muse", "muse-wonder-1.0"), sel("codex", "gpt-6.1-sol")],
+      tier: "regular",
+      nowMs: now,
+    });
+    expect(result.reviewer).toEqual(sel("codex", "gpt-6.1-sol"));
+  });
+
+  it("gives a reviewer's alternate on the same driver the entry's effort", () => {
+    const second = provider("codex2", "codex", ["gpt-6.1-sol"], 5);
+    const effortful = {
+      ...sel("codex", "gpt-6.1-sol"),
+      options: [{ id: "reasoningEffort", value: "xhigh" }],
+    };
+    expect(
+      reviewerChain({
+        providers: [codex, second, copilot],
+        reviewers: [effortful],
+        tier: "regular",
+      }),
+    ).toEqual([
+      effortful,
+      { ...sel("codex2", "gpt-6.1-sol"), options: effortful.options },
+      sel("copilot", "gpt-6.1-sol"),
+    ]);
   });
 
   it("falls through to Sol on Copilot when Codex is limited", () => {
@@ -241,7 +323,8 @@ describe("resolveReviewer", () => {
       nowMs: now,
     });
     expect(byDefault.reviewer).toEqual(sel("muse", "muse-wonder-1.0"));
-    expect(byDefault.skipped).toEqual([{ selection: listed, reason: "unknown-billing" }]);
+    // The built-in order never names it, so there is nothing to pass over.
+    expect(byDefault.skipped).toEqual([]);
     const named = resolveReviewer({
       providers: [claude, unknown, muse],
       author,
@@ -300,11 +383,11 @@ describe("describeReviewerOrder", () => {
         alternates: group.alternates.map((step) => [step.selection.instanceId, step.status]),
       })),
     ).toEqual([
-      { primary: ["codex", "full", "openai"], alternates: [["copilot", "ready"]] },
       { primary: ["muse", "ready", "meta"], alternates: [] },
+      { primary: ["codex", "full", "openai"], alternates: [["copilot", "ready"]] },
       { primary: ["claudeAgent", "ready", "claude"], alternates: [["copilot", "ready"]] },
     ]);
-    expect(view.groups[0]!.primary.resetAt).toBe(Date.parse("2026-11-06T00:00:00.000Z"));
+    expect(view.groups[1]!.primary.resetAt).toBe(Date.parse("2026-11-06T00:00:00.000Z"));
   });
 
   it("marks unknown billing unless listed, and keeps a set order as written", () => {
@@ -343,6 +426,16 @@ describe("describeReviewerOrder", () => {
     ]);
   });
 
+  it("shows an unnamed Gemini account as billed per token, as the resolver skips it", () => {
+    const gemini = provider("gemini", "acpRegistry", ["gemini-4-carbon"], null);
+    const step = (reviewers: ReadonlyArray<ModelSelection>) =>
+      describeReviewerOrder({ providers: [claude, gemini], reviewers, tier: "regular", nowMs: now })
+        .groups.flatMap((group) => [group.primary, ...group.alternates])
+        .find((entry) => entry.selection.instanceId === "gemini");
+    expect(step([])?.status ?? "per-token").toBe("per-token");
+    expect(step([sel("gemini", "gemini-4-carbon")])?.status).toBe("ready");
+  });
+
   it("says when a listed provider is gone from this machine", () => {
     const view = describeReviewerOrder({
       providers: [claude],
@@ -376,5 +469,38 @@ describe("reviewerOrderGroups", () => {
       ["copilot/gpt-6.1-sol", []],
       ["claudeAgent/claude-opus-5-5", ["copilot/claude-opus-5.5"]],
     ]);
+  });
+});
+
+describe("threadReviewState", () => {
+  it("follows the project setting until the thread chooses", () => {
+    for (const mode of [null, undefined]) {
+      expect(threadReviewState(mode, { autoOnFeatureComplete: false })).toEqual({
+        enabled: false,
+        source: "settings",
+      });
+      expect(threadReviewState(mode, { autoOnFeatureComplete: true })).toEqual({
+        enabled: true,
+        source: "settings",
+      });
+    }
+  });
+
+  it("lets the thread's own choice win either way", () => {
+    expect(threadReviewState("on", { autoOnFeatureComplete: false })).toEqual({
+      enabled: true,
+      source: "thread",
+    });
+    expect(threadReviewState("off", { autoOnFeatureComplete: true })).toEqual({
+      enabled: false,
+      source: "thread",
+    });
+  });
+});
+
+describe("isAdversarialReviewThreadTitle", () => {
+  it("tells a review thread by its title", () => {
+    expect(isAdversarialReviewThreadTitle("Adversarial review: Sign in")).toBe(true);
+    expect(isAdversarialReviewThreadTitle("Sign in with passkeys")).toBe(false);
   });
 });

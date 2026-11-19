@@ -1,7 +1,14 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
-import { type SlowRpcAckRequest, useSlowRpcAckRequests } from "../rpc/requestLatencyState";
+import {
+  groupSlowRpcAckRequests,
+  type SlowRpcAckRequest,
+  useSlowRpcAckRequests,
+} from "../rpc/requestLatencyState";
+import { useNamedEnvironments } from "./settings/useNamedEnvironments";
 import { toastManager } from "./ui/toast";
+
+type ToastId = ReturnType<typeof toastManager.add>;
 
 function describeSlowRequests(requests: ReadonlyArray<SlowRpcAckRequest>): string {
   const count = requests.length;
@@ -11,6 +18,14 @@ function describeSlowRequests(requests: ReadonlyArray<SlowRpcAckRequest>): strin
   );
 
   return `${count} request${count === 1 ? "" : "s"} waiting longer than ${thresholdSeconds}s.`;
+}
+
+/**
+ * The warning names the machine that is slow, so a window that waits on
+ * another machine does not read as a problem with its own connection.
+ */
+export function slowMachineTitle(label: string | null): string {
+  return label ? `${label} is slow to answer` : "A machine is slow to answer";
 }
 
 function SlowRequestDetails({ requests }: { requests: ReadonlyArray<SlowRpcAckRequest> }) {
@@ -31,43 +46,92 @@ function SlowRequestDetails({ requests }: { requests: ReadonlyArray<SlowRpcAckRe
   );
 }
 
+/**
+ * One warning per machine this window is waiting on. Each window tracks only
+ * the requests it sent, so a machine shows up here only in windows that are
+ * actually waiting on it.
+ */
 export function SlowRpcRequestToastCoordinator() {
   const slowRequests = useSlowRpcAckRequests();
-  const toastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
+  // Named as the sidebar names them ("m4"), not by host label.
+  const { environments } = useNamedEnvironments();
+  const labels = useMemo(
+    () =>
+      new Map<string, string>(
+        environments.map((environment) => [environment.environmentId, environment.label]),
+      ),
+    [environments],
+  );
+  /** The warning on screen for each machine, and the requests it lists. */
+  const shownRef = useRef(
+    new Map<string | null, { id: ToastId; requestIds: ReadonlySet<string> }>(),
+  );
+  /**
+   * Requests the user already dismissed a machine's warning for. The warning
+   * stays away until that machine has a slow request the user has not seen.
+   */
+  const dismissedRef = useRef(new Map<string | null, ReadonlySet<string>>());
 
   useEffect(() => {
-    if (slowRequests.length === 0) {
-      if (toastIdRef.current !== null) {
-        toastManager.close(toastIdRef.current);
-        toastIdRef.current = null;
+    const shown = shownRef.current;
+    const dismissed = dismissedRef.current;
+    const groups = groupSlowRpcAckRequests(slowRequests);
+    const live = new Set(groups.map((group) => group.environmentId));
+
+    for (const [environmentId, toast] of shown) {
+      if (live.has(environmentId)) continue;
+      // Forget it first, so its removal does not read as a dismissal.
+      shown.delete(environmentId);
+      toastManager.close(toast.id);
+    }
+    for (const environmentId of dismissed.keys()) {
+      if (!live.has(environmentId)) dismissed.delete(environmentId);
+    }
+
+    for (const group of groups) {
+      const environmentId = group.environmentId;
+      const requestIds = new Set(group.requests.map((request) => request.requestId));
+      const seen = dismissed.get(environmentId);
+      if (seen && [...requestIds].every((requestId) => seen.has(requestId))) continue;
+      dismissed.delete(environmentId);
+
+      const label = environmentId === null ? null : (labels.get(environmentId) ?? environmentId);
+      const nextToast = {
+        data: {
+          expandableContent: <SlowRequestDetails requests={group.requests} />,
+          expandableDescriptionTrigger: true,
+          expandableLabels: { collapse: "Hide requests", expand: "Show requests" },
+        },
+        description: describeSlowRequests(group.requests),
+        timeout: 0,
+        title: slowMachineTitle(label),
+        type: "warning" as const,
+      };
+      const existing = shown.get(environmentId);
+      if (existing) {
+        toastManager.update(existing.id, nextToast);
+        shown.set(environmentId, { id: existing.id, requestIds });
+        continue;
       }
-      return;
+      const id: ToastId = toastManager.add({
+        ...nextToast,
+        onClose: () => {
+          const current = shown.get(environmentId);
+          if (current?.id !== id) return;
+          // Still shown when it went away: the user dismissed it.
+          shown.delete(environmentId);
+          dismissed.set(environmentId, current.requestIds);
+        },
+      });
+      shown.set(environmentId, { id, requestIds });
     }
-
-    const nextToast = {
-      data: {
-        expandableContent: <SlowRequestDetails requests={slowRequests} />,
-        expandableDescriptionTrigger: true,
-        expandableLabels: { collapse: "Hide requests", expand: "Show requests" },
-      },
-      description: describeSlowRequests(slowRequests),
-      timeout: 0,
-      title: "Some requests are slow",
-      type: "warning" as const,
-    };
-
-    if (toastIdRef.current === null) {
-      toastIdRef.current = toastManager.add(nextToast);
-    } else {
-      toastManager.update(toastIdRef.current, nextToast);
-    }
-  }, [slowRequests]);
+  }, [slowRequests, labels]);
 
   useEffect(
     () => () => {
-      if (toastIdRef.current !== null) {
-        toastManager.close(toastIdRef.current);
-      }
+      const toasts = [...shownRef.current.values()];
+      shownRef.current.clear();
+      for (const toast of toasts) toastManager.close(toast.id);
     },
     [],
   );

@@ -66,6 +66,7 @@ import { Radio, RadioGroup } from "../ui/radio-group";
 import { RemoteFolderBrowser } from "../studio/RemoteFolderBrowser";
 import { DestinationReadiness } from "../machineTools/DestinationReadiness";
 import { AddToMachineConsolidate } from "./AddToMachineConsolidate";
+import { useSecretsGate } from "../studio/useSecretsGate";
 
 const INSPECT_DEBOUNCE_MS = 300;
 
@@ -262,6 +263,7 @@ function AddToMachineBody({
       destinationEnvironmentId: destination,
       operationId,
       signal: controller.signal,
+      wholeFolder: true,
     }).then(
       ({ offer, summary }) => {
         if (!controller.signal.aborted) setScan({ state: "ready", offer, summary });
@@ -302,7 +304,10 @@ function AddToMachineBody({
     secretFiles,
     capabilities?.homeSecretFiles === true,
   ).map((file) => file.path);
-  const secrets = includeSecrets
+  // A window on another machine may not send secrets from the source: they stay there.
+  const secretsGate = useSecretsGate(source.environmentId, sourceName);
+  const secretsIncluded = includeSecrets && !secretsGate.blocked;
+  const secrets = secretsIncluded
     ? secretCandidates.filter((path) => !secretsOut.includes(path))
     : [];
   const locked = busy || stage.kind !== "setup";
@@ -312,7 +317,10 @@ function AddToMachineBody({
     : !checksSupported
       ? `${destName} needs a newer SpecWithCode to add projects. Update SpecWithCode on ${destName}, then try again.`
       : !urls
-        ? `This project has no Git remote, so ${destName} has nothing to clone from. Copy its folder there instead: the project's menu > Add to another machine… > Review files to transfer.`
+        ? tx(
+            "This project has no Git remote, so {machine} has nothing to clone from. Copy its folder there instead: the machine menu > Add to another machine… > Copy the whole folder.",
+            { machine: destName },
+          )
         : null;
 
   const run = async (work: (signal: AbortSignal | undefined) => Promise<void>) => {
@@ -453,8 +461,13 @@ function AddToMachineBody({
       </Button>
     ) : (
       <Button
+        // Started before the scan answers, the clone would carry none of the secret files.
         disabled={
-          locked || !ready || plan?.kind !== "clone" || capabilities?.projectCloneTracking !== true
+          locked ||
+          !ready ||
+          plan?.kind !== "clone" ||
+          capabilities?.projectCloneTracking !== true ||
+          scan.state === "scanning"
         }
         onClick={() => void clone()}
       >
@@ -527,7 +540,8 @@ function AddToMachineBody({
               files={secretFiles}
               hints={scan.state === "ready" ? scan.summary.secretHints : undefined}
               selected={secrets}
-              included={includeSecrets}
+              included={secretsIncluded}
+              locked={secretsGate.note}
               sourceLabel={sourceName}
               targetLabel={destName}
               homeSupported={capabilities?.homeSecretFiles === true}

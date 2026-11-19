@@ -50,20 +50,6 @@ export function machineColumnLabel(location: {
 }
 
 /**
- * The Chats column's width: a row's arrow and offline mark take room from its name, which
- * matters most when every name is short and the column would otherwise be at its minimum.
- */
-export function chatMachineColumnCh(
-  rows: readonly { readonly name: string; readonly moved: boolean; readonly offline: boolean }[],
-): number {
-  return machineColumnCh(
-    rows.map((row) =>
-      "x".repeat([...row.name].length + (row.moved ? 3 : 0) + (row.offline ? 3 : 0)),
-    ),
-  );
-}
-
-/**
  * Whether the Chats list names a machine on each row: not while everything runs on
  * this machine, because then a name on every row would say nothing.
  */

@@ -9,6 +9,7 @@ import { desktopWslStateAtom } from "~/state/desktopWslState";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope } from "~/state/session";
+import { advisorSettingsAvailable } from "./AdvisorSettings";
 import { isWslSettingsRowVisible } from "./ConnectionsSettings.logic";
 import { isProviderSettingsEnvironmentAvailable } from "./ProviderSettingsPanel.logic";
 import type { SettingsScopeSearch } from "./settingsScope";
@@ -61,6 +62,16 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
         hasThreadAutoSettlement:
           getThreadAutoSettlementSearchAvailability(environments).eligibleEnvironmentIds.length > 0,
         managedTunnelActive,
+        // The same test the Advisor section applies to the machines it shows.
+        hasAdvisor: advisorSettingsAvailable(
+          environments.filter(
+            (environment) =>
+              (scopeSearch.machine === undefined ||
+                environment.environmentId === scopeSearch.machine) &&
+              environment.connection.phase === "connected" &&
+              environment.serverConfig !== null,
+          ),
+        ),
       }),
     [
       managedTunnelActive,

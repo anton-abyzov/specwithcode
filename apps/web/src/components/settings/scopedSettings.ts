@@ -35,6 +35,8 @@ interface ScopedSettingsEnvironment {
       readonly capabilities: {
         readonly projectSettingsOverrides?: boolean | undefined;
         readonly projectSettingsOverrideChanges?: boolean | undefined;
+        readonly projectTrackOverrides?: boolean | undefined;
+        readonly advisor?: boolean | undefined;
       };
     };
   } | null;
@@ -85,6 +87,8 @@ export interface ScopedSettingsTarget {
   readonly projectId: ProjectId | null;
   readonly settings: ServerSettings;
   readonly sources: Readonly<Record<ProjectScopedServerSettingKey, ProjectSettingSource>>;
+  /** The project's raw override entry, for rows that show one field of a key. */
+  readonly overrides?: ProjectSettingsOverrides;
 }
 
 /** Effective settings per connected target: members at project scope, environments otherwise. */
@@ -114,6 +118,7 @@ export function resolveScopedSettingsTargets(
           projectId: member.id,
           settings: resolved.settings,
           sources: resolved.sources,
+          overrides: resolved.overrides,
         },
       ];
     });
@@ -155,7 +160,27 @@ export function scopedSettingsSource(
 ): ScopedSettingSource {
   const scoped = keys.filter(isProjectScopedSettingKey);
   if (scoped.length === 0 || targets.length === 0) return "environment";
-  const sources = new Set(targets.flatMap((target) => scoped.map((key) => target.sources[key])));
+  return combineSources(
+    new Set(targets.flatMap((target) => scoped.map((key) => target.sources[key]))),
+  );
+}
+
+/**
+ * Keys a project overrides field by field: the override stores only the
+ * fields the project changed, and every other field follows the machine.
+ */
+export const PROJECT_FIELD_SETTING_KEYS = ["advisor"] as const;
+export type ProjectFieldSettingKey = (typeof PROJECT_FIELD_SETTING_KEYS)[number];
+
+export function isProjectFieldSettingKey(key: string): key is ProjectFieldSettingKey {
+  return (PROJECT_FIELD_SETTING_KEYS as readonly string[]).includes(key);
+}
+
+function ownsField(override: unknown, field: string): boolean {
+  return isPlainObject(override) && Object.hasOwn(override, field) && override[field] !== undefined;
+}
+
+function combineSources(sources: ReadonlySet<ScopedSettingSource>): ScopedSettingSource {
   return sources.size > 1
     ? "mixed"
     : sources.has("project")
@@ -163,6 +188,66 @@ export function scopedSettingsSource(
       : sources.has("specweave-studio.json")
         ? "specweave-studio.json"
         : "environment";
+}
+
+/**
+ * Like `scopedSettingsSource` for one field of a field-wise key: a target
+ * counts as overridden only when its project override holds that field.
+ */
+export function scopedSettingFieldSource(
+  targets: readonly Pick<ScopedSettingsTarget, "sources" | "overrides">[],
+  key: ProjectFieldSettingKey,
+  field: string,
+): ScopedSettingSource {
+  if (targets.length === 0) return "environment";
+  return combineSources(
+    new Set(
+      targets.map((target) => {
+        const source = target.sources[key];
+        // Without the raw entry the key-level answer is the safe one.
+        if (source !== "project" || target.overrides === undefined) return source;
+        return ownsField(target.overrides[key], field) ? "project" : "environment";
+      }),
+    ),
+  );
+}
+
+/** Whether one field of a key differs between the selected targets. */
+export function scopedSettingFieldMixed(
+  targets: readonly Pick<ScopedSettingsTarget, "settings">[],
+  key: ProjectFieldSettingKey,
+  field: string,
+): boolean {
+  const fieldOf = (target: Pick<ScopedSettingsTarget, "settings">) => {
+    const value: unknown = target.settings[key];
+    return isPlainObject(value) ? value[field] : undefined;
+  };
+  const first = targets[0];
+  return (
+    first !== undefined &&
+    targets.some((candidate) => !Equal.equals(fieldOf(first), fieldOf(candidate)))
+  );
+}
+
+/**
+ * The change that drops one field from a project's override of `key`: the
+ * remaining fields are written back as the whole value (a set replaces the
+ * key), and the key is cleared when that field was the last one. Null when
+ * the override does not hold the field, so nothing is written.
+ */
+export function projectOverrideFieldClearChange(
+  entry: ProjectSettingsOverrides | undefined,
+  key: ProjectFieldSettingKey,
+  field: string,
+): ProjectSettingsOverrideChange | null {
+  const own: unknown = entry?.[key];
+  if (!isPlainObject(own) || !ownsField(own, field)) return null;
+  const rest = Object.fromEntries(
+    Object.entries(own).filter(([name, value]) => name !== field && value !== undefined),
+  );
+  return Object.keys(rest).length === 0
+    ? { clear: [key] }
+    : { set: { [key]: rest } as ProjectSettingsOverrides };
 }
 
 interface ScopedServerWrite {
@@ -182,15 +267,18 @@ function projectOverrideChangeWrites(
     settings: ServerSettings,
     projectId: ProjectId,
     environmentId: EnvironmentId,
-  ) => ProjectSettingsOverrideChange,
+    // Null: this entry has nothing to change, so its machine gets no write for it.
+  ) => ProjectSettingsOverrideChange | null,
 ): ScopedServerWrite[] {
   const byId = new Map(environments.map((environment) => [environment.environmentId, environment]));
   const changes = new Map<EnvironmentId, Record<ProjectId, ProjectSettingsOverrideChange>>();
   for (const { environmentId, projectId } of targets) {
     const settings = byId.get(environmentId)?.serverConfig?.settings;
     if (!settings) continue;
+    const next = change(settings, projectId, environmentId);
+    if (next === null) continue;
     const entries = changes.get(environmentId) ?? {};
-    entries[projectId] = change(settings, projectId, environmentId);
+    entries[projectId] = next;
     changes.set(environmentId, entries);
   }
   return [...changes].flatMap(([environmentId, entries]) => {
@@ -214,7 +302,15 @@ function projectOverrideChangeWrites(
 function projectOverrideWrites(
   scope: Extract<ResolvedSettingsScope, { kind: "project" | "checkout" }>,
   environments: readonly ScopedSettingsEnvironment[],
-  change: (settings: ServerSettings, projectId: ProjectId) => ProjectSettingsOverrideChange,
+  change: (
+    settings: ServerSettings,
+    projectId: ProjectId,
+    capabilities:
+      | NonNullable<
+          NonNullable<ScopedSettingsEnvironment["serverConfig"]>["environment"]
+        >["capabilities"]
+      | undefined,
+  ) => ProjectSettingsOverrideChange | null,
 ): ScopedServerWrite[] {
   const byId = new Map(environments.map((environment) => [environment.environmentId, environment]));
   const targets = scope.members.flatMap((member) => {
@@ -225,7 +321,9 @@ function projectOverrideWrites(
       ? [{ environmentId: member.environmentId, projectId: member.id }]
       : [];
   });
-  return projectOverrideChangeWrites(environments, targets, change);
+  return projectOverrideChangeWrites(environments, targets, (settings, projectId, environmentId) =>
+    change(settings, projectId, byId.get(environmentId)?.serverConfig?.environment?.capabilities),
+  );
 }
 
 /**
@@ -256,7 +354,7 @@ export function planScopedSettingsPatch(
       : isProjectScope
         ? unscopableKeys.length > 0
           ? []
-          : projectOverrideWrites(scope, environments, (settings, projectId) => {
+          : projectOverrideWrites(scope, environments, (settings, projectId, capabilities) => {
               // Object-valued keys arrive as partial patches (the writing style
               // rows send one field); an override entry stores the whole value,
               // so complete the patch from the target's effective value.
@@ -285,6 +383,24 @@ export function planScopedSettingsPatch(
                   continue;
                 }
                 const base = effective[key as keyof ServerSettings];
+                // Tracks, the review policy and the advisor store only what the
+                // project changed; every other field keeps following this
+                // machine. An older server fills a partial track or review
+                // value with defaults, so it gets the whole object, as before;
+                // every server that reads the advisor merges it field-wise.
+                if (
+                  (((key === "modelLanes" || key === "adversarialReview") &&
+                    capabilities?.projectTrackOverrides === true) ||
+                    (key === "advisor" && capabilities?.advisor === true)) &&
+                  isPlainObject(value) &&
+                  isPlainObject(base)
+                ) {
+                  const own = settings.projectSettingsOverrides[projectId]?.[key];
+                  const changed = changedFields(value, base);
+                  if (own !== undefined || Object.keys(changed).length > 0)
+                    set[key] = { ...own, ...changed };
+                  continue;
+                }
                 set[key] =
                   isPlainObject(value) && isPlainObject(base) ? { ...base, ...value } : value;
               }
@@ -315,7 +431,16 @@ export function planScopedSettingsPatch(
                         },
                       },
                     }
-                  : serverPatch,
+                  : serverPatch.modelLanes !== undefined && environment.serverConfig
+                    ? {
+                        // A track save names one lane; each machine keeps its other lane.
+                        ...serverPatch,
+                        modelLanes: {
+                          ...environment.serverConfig.settings.modelLanes,
+                          ...serverPatch.modelLanes,
+                        },
+                      }
+                    : serverPatch,
             }))
           : [];
   const hasClientWrite = Object.keys(clientPatch).length > 0;
@@ -349,6 +474,45 @@ export function planScopedSettingsClear(
     serverWrites,
     unavailableReason:
       serverWrites.length > 0
+        ? null
+        : "Connect the selected checkouts, or update their environments, to reset this override.",
+  };
+}
+
+/**
+ * Remove one field of a field-wise key from each member's project override,
+ * so that field follows the machine again and the project's other fields stay.
+ * Members whose override does not hold the field are left alone.
+ */
+export function planScopedSettingFieldClear(
+  scope: ResolvedSettingsScope,
+  environments: readonly ScopedSettingsEnvironment[],
+  key: ProjectFieldSettingKey,
+  field: string,
+) {
+  const serverWrites =
+    scope.kind === "project" || scope.kind === "checkout"
+      ? projectOverrideWrites(scope, environments, (settings, projectId) =>
+          projectOverrideFieldClearChange(settings.projectSettingsOverrides[projectId], key, field),
+        )
+      : [];
+  const writable =
+    (scope.kind === "project" || scope.kind === "checkout") &&
+    scope.members.some((member) =>
+      environments.some(
+        (environment) =>
+          environment.environmentId === member.environmentId &&
+          environment.connection.phase === "connected" &&
+          environment.serverConfig?.environment?.capabilities.projectSettingsOverrides === true,
+      ),
+    );
+  return {
+    clientPatch: {} as ClientSettingsPatch,
+    hasClientWrite: false,
+    serverWrites,
+    // Nothing to remove is not an error; only an unreachable project is.
+    unavailableReason:
+      serverWrites.length > 0 || writable
         ? null
         : "Connect the selected checkouts, or update their environments, to reset this override.",
   };
@@ -491,4 +655,17 @@ export async function persistScopedSettingsPatch(
     failedEnvironments,
     savedEnvironmentCount: plan.serverWrites.length - failedEnvironments.length,
   };
+}
+
+/** The fields of `patch` whose value differs from what the target resolves to now. */
+function changedFields(
+  patch: Record<string, unknown>,
+  effective: Record<string, unknown>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(patch).filter(
+      ([field, value]) =>
+        value !== undefined && JSON.stringify(value) !== JSON.stringify(effective[field]),
+    ),
+  );
 }
