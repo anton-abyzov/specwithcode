@@ -996,23 +996,30 @@ describe("handoff between two machines", () => {
     }),
   );
 
-  it.effect("hands running threads off when the machine goes to sleep and resumes them", () =>
+  it.effect("moves nothing because the machine goes to sleep (1390 AC-36)", () =>
     Effect.gen(function* () {
       const { source, destination, moves, fixture, destinationRoot } = yield* scenario();
       NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
       fixture.activeRunId = "run-1";
+      const refused = yield* moves
+        .handOffMachine({ destinationEnvironmentId: minis, reason: "sleep" })
+        .pipe(Effect.flip);
+      expect(refused).toMatchObject({ code: "invalid" });
+      // The run keeps going here, and the other machine starts nothing.
+      expect(source.dispatched).toEqual([]);
+      expect(source.document.threads[threadId]?.fencedBy ?? null).toBeNull();
+      expect(source.document.machineRun).toBeNull();
+      expect(destination.launches).toEqual([]);
+      // The same move asked for by hand still goes through.
       const run = yield* moves.handOffMachine({
         destinationEnvironmentId: minis,
-        reason: "sleep",
+        reason: "manual",
       });
       expect(run.results).toEqual([
         expect.objectContaining({ threadId, outcome: "moved", resumed: true }),
       ]);
-      expect(source.dispatched[0]).toMatchObject({ type: "run.interrupt", threadId });
-      expect(source.document.threads[threadId]?.fencedBy).toBe("sleep");
-      expect(findIncoming(destination.document, m4, threadId)?.checkpoint.runEnding).toBe("sleep");
       expect(destination.launches).toHaveLength(1);
-      expect(source.document.machineRun?.reason).toBe("sleep");
+      expect(source.document.machineRun?.reason).toBe("manual");
     }),
   );
 
@@ -1454,7 +1461,10 @@ describe("handoff between two machines", () => {
         message: "Minis: this machine lets M4 use only these sign-ins: codex.",
         uncertain: false,
       });
-      const run = yield* moves.handOffMachine({ destinationEnvironmentId: minis, reason: "sleep" });
+      const run = yield* moves.handOffMachine({
+        destinationEnvironmentId: minis,
+        reason: "manual",
+      });
       expect(run.results).toEqual([
         expect.objectContaining({
           threadId,

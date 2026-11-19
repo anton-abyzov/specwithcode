@@ -111,7 +111,11 @@ describe("sleep and silence start nothing (1390 AC-36)", () => {
   // Class names hold "disabled:" variants; only attributes count here.
   const withSnapshot = (
     config: Partial<typeof DEFAULT_HANDOFF_CONFIG>,
-    pendingDisarm?: ReadonlyArray<{ environmentId: string; machineLabel: string; since: string }>,
+    pendingDisarm?: ReadonlyArray<{
+      environmentId: EnvironmentId;
+      machineLabel: string;
+      since: string;
+    }>,
   ) =>
     render({
       snapshot: {
@@ -124,7 +128,7 @@ describe("sleep and silence start nothing (1390 AC-36)", () => {
         pausedSince: null,
         machineRun: null,
         ...(pendingDisarm === undefined ? {} : { pendingDisarm }),
-      } as Parameters<typeof HandoffModeSettingsView>[0]["snapshot"],
+      },
     }).replace(/ class="[^"]*"/g, "");
 
   it("offers no lid-close or silence start, whatever an earlier version saved", () => {
@@ -153,8 +157,16 @@ describe("sleep and silence start nothing (1390 AC-36)", () => {
     expect(withSnapshot({})).not.toContain("to confirm that silence no longer moves threads");
     expect(withSnapshot({}, [])).not.toContain("to confirm that silence no longer moves threads");
     const html = withSnapshot({}, [
-      { environmentId: "env-m3", machineLabel: "M3", since: "2026-11-19T10:00:00.000Z" },
-      { environmentId: "env-m5", machineLabel: "M5", since: "2026-11-19T10:00:00.000Z" },
+      {
+        environmentId: EnvironmentId.make("env-m3"),
+        machineLabel: "M3",
+        since: "2026-11-19T10:00:00.000Z",
+      },
+      {
+        environmentId: EnvironmentId.make("env-m5"),
+        machineLabel: "M5",
+        since: "2026-11-19T10:00:00.000Z",
+      },
     ]);
     for (const machine of ["M3", "M5"]) {
       expect(html).toContain(

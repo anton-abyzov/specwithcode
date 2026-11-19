@@ -67,7 +67,12 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { queuedRunsInDeliveryOrder } from "../orchestration-v2/QueuedRunOrder.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import { heartbeatLeases, makeAutoContinueLoops, noteAnswered } from "./HandoffAutoContinue.ts";
+import {
+  SLEEP_MOVES_NOTHING,
+  heartbeatLeases,
+  makeAutoContinueLoops,
+  noteAnswered,
+} from "./HandoffAutoContinue.ts";
 import { createBundle, negotiationCandidates, repositoryPathFor } from "./bundleGit.ts";
 import { keepFencedChanges } from "./checkpointGit.ts";
 import { HandoffConnectivity, layer as HandoffConnectivityLayer } from "./handoffConnectivity.ts";
@@ -888,6 +893,8 @@ export const make = Effect.gen(function* () {
       if (destination === self) {
         return yield* failed("invalid", "Pick another machine to hand this machine's threads to.");
       }
+      // Sleep starts nothing (1390 AC-36), whoever asks.
+      if (input.reason === "sleep") return yield* failed("invalid", SLEEP_MOVES_NOTHING);
       const label = yield* peerLabel(destination);
       const startedAt = yield* nowIso;
       const document = yield* handoff.document;

@@ -12,6 +12,7 @@
  */
 import {
   type EnvironmentId,
+  type HandoffModeError,
   type OrchestrationV2ThreadShell,
   type ThreadId,
   isResumableHandoffEnding,
@@ -31,6 +32,10 @@ import type {
  * minute for clocks and slow ticks (the same margin as the coordinator fence).
  */
 export const AUTO_CONTINUE_FENCE_MARGIN_MS = 2 * 30_000 + 10_000 + 60_000;
+/** What a request to move threads because this machine sleeps is told. */
+export const SLEEP_MOVES_NOTHING =
+  "Threads move only when you hand them off. This machine going to sleep moves nothing.";
+
 /**
  * The leases each heartbeat carries, by the machine it goes to: every thread
  * held here, for each machine holding its copy. No lease names a delay, since
@@ -149,7 +154,7 @@ export function autoFenceRefusal(record: Pick<HandoffThreadRecord, "autoFence">)
 
 export interface AutoContinueDeps {
   readonly self: EnvironmentId;
-  readonly document: Effect.Effect<HandoffDocument, unknown>;
+  readonly document: Effect.Effect<HandoffDocument, HandoffModeError>;
   readonly updateRecord: (
     threadId: ThreadId,
     change: (record: HandoffThreadRecord) => HandoffThreadRecord,

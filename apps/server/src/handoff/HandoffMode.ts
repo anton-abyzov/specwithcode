@@ -63,6 +63,7 @@ import {
   handoffTranscript,
   type NoteMessage,
 } from "./handoffNote.ts";
+import { SLEEP_MOVES_NOTHING } from "./HandoffAutoContinue.ts";
 import * as HandoffModeStore from "./HandoffModeStore.ts";
 import {
   acquireLease,
@@ -848,13 +849,7 @@ export const make = Effect.gen(function* () {
     // 'suspend', and gets a definite refusal before anything is planned or sent.
     handOffMachine: (input) =>
       input.reason === "sleep"
-        ? Effect.fail(
-            new HandoffModeError({
-              code: "invalid",
-              message:
-                "Threads move only when you hand them off. This machine going to sleep moves nothing.",
-            }),
-          )
+        ? Effect.fail(new HandoffModeError({ code: "invalid", message: SLEEP_MOVES_NOTHING }))
         : viaMoves((port) => port.handOffMachine(input)),
     continueHere: (input, options) => viaMoves((port) => port.continueHere(input, options)),
     resumeFenced: viaMoves((port) => port.resumeFenced),
