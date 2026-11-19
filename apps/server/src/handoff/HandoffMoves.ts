@@ -1217,10 +1217,11 @@ export const make = Effect.gen(function* () {
         if (record.pendingTakeover?.destinationEnvironmentId !== peer) continue;
         // The destination answers again but never continued it: send the takeover again,
         // unless sleep started it (1390 AC-36). That one is dropped and the thread stays here.
-        const again =
-          record.pendingTakeover.request.reason === "sleep"
-            ? updateRecord(sourceThreadId, Drain.dropSleepTakeover)
-            : resendPending(sourceThreadId);
+        const bySleep = record.pendingTakeover.request.reason === "sleep";
+        const again = Effect.gen(function* () {
+          if (bySleep) yield* updateRecord(sourceThreadId, Drain.dropSleepTakeover);
+          else yield* resendPending(sourceThreadId);
+        });
         yield* locks.withLock(sourceThreadId, again).pipe(
           Effect.catchCause((cause) =>
             Effect.logInfo("Handoff re-sent a takeover that is still open", {
