@@ -30,7 +30,7 @@ const account = (overrides: Partial<LimitAccount> & Pick<LimitAccount, "limits">
   ...overrides,
 });
 
-export const renderAccount = (
+const renderAccount = (
   overrides: Partial<LimitAccount> & Pick<LimitAccount, "limits">,
   renewalDays: Record<string, number> = {},
 ) => {
@@ -72,5 +72,42 @@ describe("SubscriptionRow windows and notes", () => {
       },
     });
     expect(html).not.toContain("data-subscription-note");
+  });
+});
+
+describe("SubscriptionRow renewal", () => {
+  const windows = [{ id: "includedPool", kind: "weekly" as const, label: "Included usage", usedPercent: 10 }];
+
+  it("shows the day the person set as theirs, with Change", () => {
+    const html = renderAccount(
+      { limits: { checkedAt: iso(now), windows, renewsAt: iso(now + 20 * DAY) } },
+      { "cursor:me@example.com": 17 },
+    );
+    expect(html).toContain("Renews Nov 17 (set by you)");
+    expect(html).toContain("Change");
+    expect(html).not.toContain("reported by");
+  });
+
+  it("shows a reported date as the vendor's and still offers Set day", () => {
+    const html = renderAccount({
+      limits: {
+        checkedAt: iso(now),
+        windows: [{ id: "autoPercentUsed", kind: "monthly", label: "Cursor Models", usedPercent: 10 }],
+        renewsAt: iso(new Date(2026, 11, 2, 12).getTime()),
+      },
+    });
+    expect(html).toContain("Renews Dec 2 (reported by Cursor)");
+    expect(html).toContain("Set day");
+    expect(html).toContain("Usage resets monthly with your billing cycle.");
+  });
+
+  it("says a reading with nothing to key a day by cannot hold one", () => {
+    const html = renderAccount({
+      driver: ProviderDriverKind.make("acpRegistry"),
+      email: undefined,
+      limits: { checkedAt: iso(now), windows },
+    });
+    expect(html).toContain("No renewal day: this account reports nothing to save it under.");
+    expect(html).not.toContain("Set day");
   });
 });

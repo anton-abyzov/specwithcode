@@ -170,8 +170,9 @@ export function SubscriptionsView({
     return account?.accentColor ?? (account ? barColor(account.driver) : "var(--foreground)");
   };
   // Settings patches merge, so one entry is enough and the others stay.
-  const setDay = (accountKey: string, day: number) => {
-    updateSettings({ subscriptionRenewalDays: { [accountKey]: day } });
+  // Saved under the row's renewal key: the account key, else the subscription Copilot names.
+  const setDay = (renewalKey: string, day: number) => {
+    updateSettings({ subscriptionRenewalDays: { [renewalKey]: day } });
   };
 
   const machinesOf = (accountKey: string) =>

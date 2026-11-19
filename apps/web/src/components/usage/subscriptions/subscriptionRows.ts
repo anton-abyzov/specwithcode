@@ -53,10 +53,12 @@ export interface SubscriptionWindow {
 
 export interface SubscriptionRenewal {
   readonly at: number;
-  /** Reported by the provider, or worked out from the day the person set. */
+  /** Worked out from the day the person set, which wins, or reported by the provider. */
   readonly source: "provider" | "set";
   /** The day of the month the person set; a short month shows an earlier date, the day is kept. */
   readonly day?: number;
+  /** Who reported it, for "reported by Cursor". */
+  readonly vendor?: string;
 }
 
 export interface SubscriptionLoss {
@@ -70,8 +72,14 @@ export interface SubscriptionLoss {
 
 export interface SubscriptionRow {
   readonly key: string;
-  /** The key the ledger and the renewal setting use; null when the account has no identity. */
+  /** The key the ledger, prices and history use; null when the account has no identity. */
   readonly accountKey: string | null;
+  /**
+   * The key the renewal day is saved under: the account key, else the
+   * subscription the provider names (Copilot's login and plan). Null when the
+   * reading has neither, and then no day can be set.
+   */
+  readonly renewalKey: string | null;
   readonly driver: ServerProvider["driver"];
   readonly displayName: string | null;
   readonly plan: string | null;
@@ -182,6 +190,24 @@ function windowsOf(account: LimitAccount, now: number): SubscriptionWindow[] {
 const lengthOf = (window: Pick<SubscriptionWindow, "kind" | "durationMs">) =>
   window.durationMs ?? (window.kind === "session" ? 5 * 60 * 60_000 : Number.POSITIVE_INFINITY);
 
+const VENDORS: Readonly<Record<string, string>> = {
+  claudeAgent: "Anthropic",
+  codex: "OpenAI",
+  cursor: "Cursor",
+  grok: "xAI",
+  opencode: "OpenCode",
+};
+
+/** The account key, else `<driver>:subscription:<subscriptionKey>`; null with neither. */
+export function renewalKeyOf(
+  driver: LimitAccount["driver"],
+  accountKey: string | null,
+  limits: Pick<LimitAccount["limits"], "subscriptionKey">,
+): string | null {
+  if (accountKey !== null) return accountKey;
+  return limits.subscriptionKey ? `${driver}:subscription:${limits.subscriptionKey}` : null;
+}
+
 function noteProvider(account: LimitAccount): SubscriptionNoteProvider | null {
   const driver = String(account.driver);
   if (driver === "cursor" || driver === "grok" || driver === "codex") return driver;
@@ -243,11 +269,13 @@ export function subscriptionRows(
     const accountKey = limitAccountKey(account.driver, account.email, account.limits);
     const windows = windowsOf(account, now);
     const reported = parseTime(account.limits.renewsAt);
-    const setDay = accountKey === null ? undefined : renewalDays[accountKey];
+    const renewalKey = renewalKeyOf(account.driver, accountKey, account.limits);
+    const setDay = renewalKey === null ? undefined : renewalDays[renewalKey];
     const credits = account.limits.resetCredits;
     return {
       key: account.key,
       accountKey,
+      renewalKey,
       driver: account.driver,
       displayName: account.displayName,
       plan: account.limits.planLabel?.trim() || account.plan?.trim() || null,
@@ -261,11 +289,16 @@ export function subscriptionRows(
       offline: account.offline,
       checkedAt: parseTime(account.limits.checkedAt),
       windows,
+      // The day the person set wins; a reported date shows only without one, and only ahead.
       renewal:
-        reported !== null && reported > now
-          ? { at: reported, source: "provider" }
-          : setDay !== undefined
-            ? { at: nextRenewalOn(setDay, now), source: "set", day: setDay }
+        setDay !== undefined
+          ? { at: nextRenewalOn(setDay, now), source: "set", day: setDay }
+          : reported !== null && reported > now
+            ? {
+                at: reported,
+                source: "provider",
+                vendor: VENDORS[String(account.driver)] ?? account.displayName ?? String(account.driver),
+              }
             : null,
       credits:
         credits && credits.availableCount > 0

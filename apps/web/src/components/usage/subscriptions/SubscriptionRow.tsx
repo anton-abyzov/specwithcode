@@ -68,15 +68,14 @@ function RenewalDay({
   onSetDay,
 }: {
   readonly row: Row;
-  readonly onSetDay: (accountKey: string, day: number) => void;
+  readonly onSetDay: (renewalKey: string, day: number) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState("");
-  const accountKey = row.accountKey;
-  if (row.renewal?.source === "provider") {
-    return <span>Renews {formatDay(row.renewal.at)}</span>;
+  const renewalKey = row.renewalKey;
+  if (renewalKey === null) {
+    return <span>No renewal day: this account reports nothing to save it under.</span>;
   }
-  if (accountKey === null) return <span>Renewal: Not reported</span>;
   if (editing) {
     const day = Number(value);
     const valid = Number.isInteger(day) && day >= 1 && day <= 31;
@@ -86,7 +85,7 @@ function RenewalDay({
         onSubmit={(event) => {
           event.preventDefault();
           if (!valid) return;
-          onSetDay(accountKey, day);
+          onSetDay(renewalKey, day);
           setEditing(false);
         }}
       >
@@ -113,20 +112,25 @@ function RenewalDay({
       </form>
     );
   }
+  const renewal = row.renewal;
+  const text =
+    renewal === null
+      ? "Renewal: Not reported"
+      : renewal.source === "set"
+        ? `Renews ${formatDay(renewal.at)} (set by you)`
+        : `Renews ${formatDay(renewal.at)} (reported by ${renewal.vendor ?? "the provider"})`;
   return (
-    <span className="flex flex-wrap items-center gap-x-1.5">
-      {row.renewal ? `Renews ${formatDay(row.renewal.at)}` : "Renewal: Not reported"}
+    <span className="flex flex-wrap items-center gap-x-1.5" data-renewal={renewal?.source ?? "none"}>
+      {text}
       <button
         type="button"
         className="rounded-sm text-foreground underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-ring"
         onClick={() => {
-          setValue(
-            row.renewal ? String(row.renewal.day ?? new Date(row.renewal.at).getDate()) : "",
-          );
+          setValue(renewal?.source === "set" ? String(renewal.day ?? new Date(renewal.at).getDate()) : "");
           setEditing(true);
         }}
       >
-        {row.renewal ? "Change" : "Set day"}
+        {renewal?.source === "set" ? "Change" : "Set day"}
       </button>
     </span>
   );
@@ -145,7 +149,7 @@ export function SubscriptionRow({
   readonly row: Row;
   readonly color: string;
   readonly now: number;
-  readonly onSetDay: (accountKey: string, day: number) => void;
+  readonly onSetDay: (renewalKey: string, day: number) => void;
 }) {
   const label = row.displayName ?? getDriverOption(row.driver)?.label ?? String(row.driver);
   const loss = row.lastLoss;

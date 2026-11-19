@@ -142,7 +142,7 @@ describe("subscriptionRows", () => {
       { "codex:b@x.dev": 17 },
       now,
     );
-    expect(rows[0]?.renewal).toEqual({ at: now + 18 * DAY, source: "provider" });
+    expect(rows[0]?.renewal).toEqual({ at: now + 18 * DAY, source: "provider", vendor: "OpenAI" });
     expect(rows[0]?.plan).toBe("Business");
     expect(rows[1]?.renewal).toEqual({ at: new Date(2026, 10, 17).getTime(), source: "set", day: 17 });
     expect(rows[2]?.renewal).toBeNull();
@@ -212,6 +212,61 @@ describe("subscriptionRows", () => {
     expect(rows[0]?.offline).toBe(true);
     expect(rows[0]?.checkedAt).toBe(now - 5 * 60_000);
     expect(rows[0]?.windows.map((window) => window.id)).toEqual(["monthly"]);
+  });
+});
+
+describe("renewal", () => {
+  const acp = ProviderDriverKind.make("acpRegistry");
+  const copilotKey = `copilot:sha256:${"b".repeat(64)}`;
+  const copilot = (checkedAt: number, usedPercent: number) =>
+    account(
+      "env-m4:copilot",
+      acp,
+      undefined,
+      "m4",
+      {
+        checkedAt: iso(checkedAt),
+        subscriptionKey: copilotKey,
+        windows: [{ ...weekly(usedPercent, 9 * DAY), id: "premium_interactions", kind: "monthly" }],
+      },
+      { displayName: "Copilot" },
+    );
+
+  it("lets the day the person set win over a reported date, and ignores a reported date that has passed", () => {
+    const rows = subscriptionRows(
+      [
+        account("a", codex, "a@x.dev", "m4", { windows: [weekly(10, DAY)], renewsAt: iso(now + 18 * DAY) }),
+        account("b", codex, "b@x.dev", "m4", { windows: [weekly(10, 2 * DAY)], renewsAt: iso(now - DAY) }),
+      ],
+      [],
+      { "codex:a@x.dev": 3 },
+      now,
+    );
+    expect(rows[0]?.renewal).toEqual({ at: new Date(2026, 11, 3).getTime(), source: "set", day: 3 });
+    expect(rows[1]?.renewal).toBeNull();
+  });
+
+  it("keys Copilot's day by its subscription and finds it after a sign-out, a sign-in and a new reading", () => {
+    const [first] = subscriptionRows([copilot(now - DAY, 10)], [], {}, now);
+    expect(first?.accountKey).toBeNull();
+    expect(first?.renewalKey).toBe(`acpRegistry:subscription:${copilotKey}`);
+    const saved = { [first!.renewalKey!]: 9 };
+    // Signed out: no reading, so no row; the saved day stays in settings.
+    expect(subscriptionRows([], [], saved, now)).toEqual([]);
+    // Signed in again as the same login and plan, read anew.
+    const [again] = subscriptionRows([copilot(now, 55)], [], saved, now);
+    expect(again?.renewalKey).toBe(first?.renewalKey);
+    expect(again?.renewal).toEqual({ at: new Date(2026, 11, 9).getTime(), source: "set", day: 9 });
+  });
+
+  it("has no renewal key for a reading with neither an account key nor a subscription", () => {
+    const [row] = subscriptionRows(
+      [account("z", acp, undefined, "m4", { windows: [weekly(10, DAY)] })],
+      [],
+      {},
+      now,
+    );
+    expect(row?.renewalKey).toBeNull();
   });
 });
 

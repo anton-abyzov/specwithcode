@@ -93,8 +93,8 @@ describe("SubscriptionRow", () => {
       },
       [lost(now - 4 * DAY, 41, 9 * HOUR)],
     );
-    expect(html).toContain("Renews Dec 2");
-    expect(html).not.toContain("Set day");
+    expect(html).toContain("Renews Dec 2 (reported by OpenAI)");
+    expect(html).toContain("Set day");
     expect(html).toContain("up to 41%");
   });
 
