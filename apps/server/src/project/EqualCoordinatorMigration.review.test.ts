@@ -162,6 +162,75 @@ describe("the window's handoff call (AC-35)", () => {
 });
 
 describe("unlinking one of three machines (AC-35)", () => {
+  it("a re-link outlives the old unlink a returning machine still remembers", async () => {
+    const trio = await legacyTrio();
+    const keyOf = (member: { environmentId: string; projectId: string }) =>
+      `${member.environmentId}:${member.projectId}`;
+    const bindingOn = (target: Machine, projectId: string) =>
+      settingsOf(target, projectId)?.coordinatorBinding;
+    /** One copy reads the other's list, with whom that copy unlinked and linked again. */
+    const reads = (
+      reader: { machine: Machine; member: typeof trio.kept },
+      other: { machine: Machine; member: typeof trio.kept },
+    ) =>
+      reader.machine.run((service) =>
+        service.adoptMembers({
+          projectId: reader.member.projectId,
+          logicalProjectId: trio.logicalProjectId,
+          from: other.member,
+          fromEpoch: 0,
+          members: trio.membersOn(other.machine, other.member.projectId),
+          removed: bindingOn(other.machine, other.member.projectId)?.removedMembers ?? [],
+          relinked: bindingOn(other.machine, other.member.projectId)?.relinkedMembers ?? [],
+        }),
+      );
+    const m4 = { machine: trio.m4, member: trio.kept };
+    const m1 = { machine: trio.m1, member: trio.third };
+    const listed = (copy: typeof m4) =>
+      trio.membersOn(copy.machine, copy.member.projectId).map(keyOf);
+    const unlinkOnM4 = (id: string) =>
+      trio.m4.run((service) =>
+        service.unlink({
+          side: "coordinator",
+          operationId: id,
+          projectId: trio.kept.projectId,
+          member: trio.joining,
+        }),
+      );
+    await reads(m1, m4);
+    // 1. The M4 unlinks the M3, and the M1 records that.
+    await unlinkOnM4(unlinkId);
+    await reads(m1, m4);
+    expect(listed(m1)).not.toContain(keyOf(trio.joining));
+    expect(bindingOn(trio.m1, trio.third.projectId)?.removedMembers?.map(keyOf)).toEqual([
+      keyOf(trio.joining),
+    ]);
+    // 2. The M3 is linked again on the M4 while the M1 is away.
+    await trio.m4.run((service) =>
+      service.commit({
+        operationId: "33333333-3333-4333-8333-333333333333",
+        projectId: trio.kept.projectId,
+        joining: trio.joining,
+        notes: [],
+      }),
+    );
+    expect(listed(m4)).toContain(keyOf(trio.joining));
+    // 3. The M1 comes back still advertising the old unlink: the M4 keeps the new link.
+    await reads(m4, m1);
+    expect(listed(m4)).toContain(keyOf(trio.joining));
+    // And the M1 takes the M3 back from the M4, whose link is newer than that unlink.
+    await reads(m1, m4);
+    expect(listed(m1)).toContain(keyOf(trio.joining));
+    await reads(m4, m1);
+    expect(listed(m4)).toContain(keyOf(trio.joining));
+    // An unlink after the re-link still removes it everywhere.
+    await unlinkOnM4("44444444-4444-4444-8444-444444444444");
+    await reads(m1, m4);
+    expect(listed(m1)).not.toContain(keyOf(trio.joining));
+    await reads(m4, m1);
+    expect(listed(m4)).not.toContain(keyOf(trio.joining));
+  });
+
   it("the third machine drops the unlinked one when it reconnects", async () => {
     const trio = await legacyTrio();
     const keyOf = (member: { environmentId: string; projectId: string }) =>
