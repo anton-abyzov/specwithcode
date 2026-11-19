@@ -58,7 +58,15 @@ export function useQuestionOptionsLayout(
     const root = viewportOf(cardRef.current)?.parentElement ?? null;
     if (!root) return;
     let timer: number | null = null;
+    // A folded card's scroll area is detached or empty: nothing to compare.
+    const measurable = () => root.isConnected && root.clientWidth > 0;
     const recheck = () => {
+      if (!measurable()) return;
+      // Mid fold or unfold: pick once the panel has settled at its height.
+      if (folding(root)) {
+        settle();
+        return;
+      }
       const space = spaceOf(root);
       setMeasured((current) =>
         current && !current.stale && current.space !== space
@@ -84,7 +92,7 @@ export function useQuestionOptionsLayout(
     let live = true;
     if (typeof document !== "undefined" && document.fonts?.status === "loading") {
       void document.fonts.ready.then(() => {
-        if (!live) return;
+        if (!live || !measurable()) return;
         setMeasured((current) => (current && !current.stale ? { ...current, stale: true } : current));
       });
     }
@@ -106,4 +114,14 @@ function viewportOf(element: HTMLElement | null): HTMLElement | null {
 
 function spaceOf(root: HTMLElement | null): string {
   return root ? `${Math.round(root.clientWidth)}x${getComputedStyle(root).maxHeight}` : "";
+}
+
+function folding(root: HTMLElement): boolean {
+  const panel = root.closest<HTMLElement>("[data-slot='collapsible-panel']");
+  if (!panel) return false;
+  if (panel.matches("[data-starting-style],[data-ending-style]")) return true;
+  return (
+    typeof panel.getAnimations === "function" &&
+    panel.getAnimations().some((animation) => animation.playState === "running")
+  );
 }
