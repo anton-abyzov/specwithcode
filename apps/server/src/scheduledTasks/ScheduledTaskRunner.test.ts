@@ -6,6 +6,7 @@
 import { assert, it } from "@effect/vitest";
 import type { ScheduledTask } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -911,5 +912,31 @@ it.effect("a delete refused by one unreachable copy never leaves two machines fi
     yield* everyoneLooks;
     assert.equal(fires(), 1);
     assert.equal(gamma.fires(), 0);
+  }),
+);
+
+it.effect("a screen hears the new revision of a change it just saved", () =>
+  Effect.gen(function* () {
+    yield* start;
+    const { machines } = yield* fleet(["alpha", "beta"]);
+    const [alpha, beta] = machines as [Machine, Machine];
+    yield* alpha.seed();
+    yield* beta.seed();
+    yield* settle(alpha);
+    const revisions: Array<number | undefined> = [];
+    const watching = yield* alpha.service.subscribeList().pipe(
+      Stream.map((list) => list.tasks.find((t) => t.id === ROUTINE)?.revision),
+      Stream.tap((revision) => Effect.sync(() => void revisions.push(revision))),
+      Stream.takeUntil((revision) => revision === 1),
+      Stream.runDrain,
+      Effect.forkScoped,
+    );
+    // The first list arrives once the subscription is open.
+    while (revisions.length === 0) yield* Effect.yieldNow;
+    yield* alpha.service.upsert(
+      taskInput({ id: ROUTINE, projectId: alpha.projectId, title: "Saved", expectedRevision: 0 }),
+    );
+    yield* Fiber.join(watching);
+    assert.equal(revisions.at(-1), 1);
   }),
 );

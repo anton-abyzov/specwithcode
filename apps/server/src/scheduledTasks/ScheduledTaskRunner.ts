@@ -803,6 +803,8 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
             edit,
           })
           .pipe(Effect.result);
+        const restsFor = (now: RoutineRunnerRecord) =>
+          now.state === "disarmed" && now.runnerEnvironmentId === record.runnerEnvironmentId;
         /** What the runner holds, written only while this is still its resting copy. */
         const keep = (
           copy: CoordinatorRoutineCopy | null | undefined,
@@ -811,11 +813,9 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
           writing(
             Effect.gen(function* () {
               const now = yield* records.read(existing.id);
-              if (
-                now?.state !== "disarmed" ||
-                now.runnerEnvironmentId !== record.runnerEnvironmentId
-              )
-                return;
+              // Still this runner's resting copy, and not an answer older than one already kept.
+              if (now === null || !restsFor(now)) return;
+              if (revision !== undefined && revision < now.revision) return;
               if (copy != null) yield* keepCopy(existing, copy);
               if (revision !== undefined)
                 yield* records.write({ ...now, revision }).pipe(Effect.ignore);
@@ -823,28 +823,18 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
           );
         const gone = writing(
           Effect.gen(function* () {
+            const now = yield* records.read(existing.id);
+            if (now !== null && !restsFor(now)) return;
             yield* deps.remove({ id: existing.id }).pipe(Effect.ignore);
             yield* records.remove(existing.id).pipe(Effect.ignore);
             yield* records.dropRevision(existing.id).pipe(Effect.ignore);
           }),
         );
-        if (answered._tag === "Failure") {
-          const failure = answered.failure;
-          // The runner no longer has it: an earlier delete was made there and its
-          // answer was lost. This copy goes, or it would rest here for good.
-          if (
-            edit.kind === "delete" &&
-            failure.refused &&
-            !failure.uncertain &&
-            failure.status === 404
-          ) {
-            yield* gone;
-            return null;
-          }
-          return yield* taskError(runsElsewhereRefusal(record.runnerLabel, failure.message), {
-            taskId: existing.id,
-          });
-        }
+        if (answered._tag === "Failure")
+          return yield* taskError(
+            runsElsewhereRefusal(record.runnerLabel, answered.failure.message),
+            { taskId: existing.id },
+          );
         const answer = answered.success;
         if (affirmsRunner(answer) && answer.stale === true) {
           // Not made. This copy now shows what the runner holds, and its revision,
@@ -957,6 +947,9 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
           if (input.before !== undefined) yield* input.before;
           const result = yield* input.change;
           for (const id of bumped) yield* bump(id);
+          // The change told the screens before its count moved: told again, or a
+          // list would show the old count and the next save would be refused as stale.
+          if (bumped.length > 0) yield* deps.notifyChanged;
           return result;
         }),
       );
@@ -1245,8 +1238,12 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
         const task = yield* deps
           .findTask(request.routineId)
           .pipe(Effect.mapError(() => refuseTransfer(409, "That routine could not be read here.")));
-        if (task === null)
+        if (task === null) {
+          // Deleted here already: a delete asked again after its answer was lost is done.
+          if (request.edit.kind === "delete")
+            return { ...base, revision: 0, copy: null } satisfies RoutineRunnerResponse;
           return yield* refuseTransfer(404, "That routine is not on this machine.");
+        }
         const record = yield* records.read(task.id);
         if (record === null || !runsHere(record))
           return yield* refuseTransfer(409, "This machine does not run that routine.");
@@ -1348,6 +1345,7 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
           }
         }
         yield* bump(task.id).pipe(Effect.mapError(failed));
+        yield* deps.notifyChanged;
         const after = yield* deps.findTask(task.id).pipe(Effect.orElseSucceed(() => null));
         return {
           ...base,
