@@ -599,6 +599,8 @@ describe("a chat that finished though nobody resolved it", () => {
         NOW,
       ),
     ).toMatchObject({ action: "keep" });
+    // And beside a merged member.
+    expect(set({ headInDefault: true, pullRequest: closed })).toMatchObject({ action: "keep" });
     // A member done only because its pull request closed waits six quiet hours.
     expect(set({ pullRequest: closed })).toMatchObject({ action: "keep" });
     expect(set({ pullRequest: { state: "open", contentIntegrated: false } })).toMatchObject({

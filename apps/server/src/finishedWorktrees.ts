@@ -433,17 +433,14 @@ export function decideFinishedWorktree(
     );
     const merged = gits.some(({ git }) => state(git) === "merged");
     // A closed pull request can be reopened by the person still in the chat:
-    // a member done only because its pull request closed waits, whatever
-    // another member's merge says.
-    const closedOnly = gits.some(
-      ({ git }) =>
-        git.headInDefault !== true &&
-        !(state(git) === "merged" && integrated(git)) &&
-        state(git) === "closed",
-    );
-    // Only a merge goes at once: a closed pull request waits, even when its
-    // commits are already on the default branch.
-    if (finished && everyDone && ((merged && !closedOnly) || headsClosed || quietLongEnough)) {
+    // any member's closed pull request waits for the chats to be resolved or
+    // quiet, whatever another member's merge says and wherever its commits are.
+    const anyClosed = gits.some(({ git }) => state(git) === "closed");
+    if (
+      finished &&
+      everyDone &&
+      ((merged && !anyClosed) || headsClosed || quietLongEnough)
+    ) {
       applied = {
         reason: merged ? "merged" : "closed",
         detail: merged

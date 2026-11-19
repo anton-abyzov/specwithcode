@@ -324,7 +324,9 @@ const cleanupFixture = Effect.gen(function* () {
             if (cwd === hooks.watched) hooks.watchedReads += 1;
           }).pipe(Effect.andThen(git.statusDetailsLocal(cwd))),
         removeWorktree: (input) =>
-          Effect.sync(() => removed.push(input.path)).pipe(
+          Effect.sync(() =>
+            removed.push(input.path.replace(/\/\.([^/]+)\.retiring-\d{8}-\d{6}$/, "/$1")),
+          ).pipe(
             Effect.andThen(git.removeWorktree(input)),
           ),
       }),

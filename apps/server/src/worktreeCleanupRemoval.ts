@@ -166,13 +166,16 @@ export function makeRemoval(deps: {
       state: MemberState,
       /** Walk untracked and ignored folders for a repository; slow, so only once. */
       walkNested: boolean,
+      /** Where it is now, once moved aside for removal; its own path otherwise. */
+      at: string = state.path,
     ) {
       if (
+        at === state.path &&
         state.member.relativePath !== "" &&
         !(yield* memberStaysInside(assessment.group.folder, state.path))
       )
         return false;
-      const registration = yield* checkWorktreeRegistration(state.path);
+      const registration = yield* checkWorktreeRegistration(at);
       if (!registration.ok || registration.locked) return false;
       // The same repository the assessment found, by the same rule.
       const inSet = state.member.repository !== "";
@@ -182,13 +185,14 @@ export function makeRemoval(deps: {
       } else if (registration.repository !== state.repository) return false;
       // A volume mounted at the folder itself has the same real path and other files.
       if (state.member.relativePath === "") {
-        const real = yield* realOrNull(state.path);
+        const real = yield* realOrNull(at);
         if (real === null) return false;
         const [own, parent] = yield* Effect.all([fs.stat(real), fs.stat(path.dirname(real))]);
         if (own.dev !== parent.dev) return false;
       }
       const again: MemberState = {
         ...state,
+        path: at,
         head: null,
         base: null,
         media: [],
@@ -200,7 +204,12 @@ export function makeRemoval(deps: {
         assessment.chatBranch,
         assessment.members.length > 1 || state.member.repository !== "",
       );
-      if (again.fingerprint !== state.fingerprint) return false;
+      // The fingerprint starts with the member's path; compare the rest.
+      const seen =
+        at === state.path
+          ? again.fingerprint
+          : again.fingerprint.replace(encodeJson(at), encodeJson(state.path));
+      if (seen !== state.fingerprint) return false;
       if (!walkNested) return true;
       yield* readNested(again);
       return again.git?.nestedRepository === false;
@@ -235,11 +244,80 @@ export function makeRemoval(deps: {
         !(yield* memberUnchanged(assessment, state, false))
       )
         return { stopped: "changed" as const, member: "", gone, failure: null };
+      // Moved aside first (`git worktree move`, never forced, a rename on the
+      // same volume), then read again where it now is: a process that saves a
+      // file by the old path from outside the folder writes beside it, not
+      // into what Git removes. A member that cannot be moved stays.
+      const target = path.join(
+        path.dirname(state.path),
+        `.${path.basename(state.path)}.retiring-${evidenceStamp(DateTime.toEpochMillis(yield* DateTime.now))}`,
+      );
+      if (yield* fs.exists(target).pipe(Effect.orElseSucceed(() => true)))
+        return { stopped: "changed" as const, member: "", gone, failure: null };
+      yield* git
+        .execute({
+          operation: "WorktreeCleanupSweep.moveAside",
+          cwd: state.repository,
+          args: ["worktree", "move", state.path, target],
+          maxOutputBytes: 64 * 1024,
+          allowNonZeroExit: true,
+          timeoutMs: 60_000,
+        })
+        .pipe(Effect.ignore);
+      const movedAside =
+        (yield* fs.exists(target).pipe(Effect.orElseSucceed(() => false))) &&
+        !(yield* fs.exists(state.path).pipe(Effect.orElseSucceed(() => true)));
+      if (!movedAside) {
+        if (yield* fs.exists(target).pipe(Effect.orElseSucceed(() => true)))
+          return {
+            stopped: "refused" as const,
+            member: target,
+            gone,
+            failure: {
+              folder: assessment.group.folder,
+              member: state.member.relativePath === "" ? "the folder" : state.member.relativePath,
+              at: DateTime.formatIso(yield* DateTime.now),
+              what: `Git left it half moved to ${target} while setting it aside for removal`,
+              holders: null,
+              removedBefore: gone,
+            } satisfies WorktreeRemovalFailure,
+          };
+        return { stopped: "changed" as const, member: "", gone, failure: null };
+      }
+      if (!(yield* memberUnchanged(assessment, state, true, target))) {
+        const back = yield* git
+          .execute({
+            operation: "WorktreeCleanupSweep.moveBack",
+            cwd: state.repository,
+            args: ["worktree", "move", target, state.path],
+            maxOutputBytes: 64 * 1024,
+            allowNonZeroExit: true,
+            timeoutMs: 60_000,
+          })
+          .pipe(
+            Effect.map((result) => result.exitCode === 0),
+            Effect.orElseSucceed(() => false),
+          );
+        if (back) return { stopped: "changed" as const, member: "", gone, failure: null };
+        return {
+          stopped: "refused" as const,
+          member: target,
+          gone,
+          failure: {
+            folder: assessment.group.folder,
+            member: state.member.relativePath === "" ? "the folder" : state.member.relativePath,
+            at: DateTime.formatIso(yield* DateTime.now),
+            what: `It changed after it was set aside at ${target}, and Git could not move it back`,
+            holders: null,
+            removedBefore: gone,
+          } satisfies WorktreeRemovalFailure,
+        };
+      }
       // Files Git leaves behind were checked by nobody: they stay, and so does the rest.
       const removal = yield* git
         .removeWorktree({
           cwd: state.repository,
-          path: state.path,
+          path: target,
           force: false,
           keepLeftBehind: true,
         })
@@ -253,21 +331,21 @@ export function makeRemoval(deps: {
         });
         // Nothing more is deleted here, by any means: what Git left was checked
         // by nobody. Only what happened is read, for the person who will look.
-        const registration = yield* checkWorktreeRegistration(state.path).pipe(
+        const registration = yield* checkWorktreeRegistration(target).pipe(
           Effect.map((checked) => checked.ok),
           Effect.orElseSucceed(() => false),
         );
-        const stillThere = yield* fs.exists(state.path).pipe(Effect.orElseSucceed(() => true));
+        const stillThere = yield* fs.exists(target).pipe(Effect.orElseSucceed(() => true));
         const failure: WorktreeRemovalFailure = {
           folder: assessment.group.folder,
           member: state.member.relativePath === "" ? "the folder" : state.member.relativePath,
           at: DateTime.formatIso(yield* DateTime.now),
           what: describeRemovalFailure({
             stillRegistered: registration,
-            left: stillThere ? leftBehind(state.path) : [],
+            left: stillThere ? leftBehind(target) : [],
           }),
           holders: stillThere
-            ? yield* Effect.promise(() => openFileHolders(state.path, deps.platform))
+            ? yield* Effect.promise(() => openFileHolders(target, deps.platform))
             : [],
           removedBefore: gone,
         };

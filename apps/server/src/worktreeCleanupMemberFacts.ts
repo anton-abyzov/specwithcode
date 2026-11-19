@@ -218,6 +218,14 @@ export function makeMemberFacts(deps: {
     );
     // status.showUntrackedFiles=no hides new files from the status check.
     const untracked = yield* listOthers(state, ["--exclude-standard"], 64 * 1024);
+    const ignored = yield* listOthers(state, ["--ignored", "--exclude-standard"], 1024 * 1024);
+    const classified =
+      ignored === null
+        ? null
+        : yield* Effect.tryPromise(() => classifyIgnored(state.path, ignored.entries)).pipe(
+            Effect.orElseSucceed(() => null),
+          );
+    state.media = classified?.media ?? [];
     const hidden = yield* hiddenTrackedChangeReason(git, state.path).pipe(
       Effect.map((reason) => reason !== null),
       Effect.orElseSucceed(() => null),
@@ -236,8 +244,8 @@ export function makeMemberFacts(deps: {
               Effect.map((result) => result.exitCode === 0),
               Effect.orElseSucceed(() => null),
             );
-    // History before ignored files: the ignored listing is the last reading
-    // the removal rests on, as close to Git's removal as it can be.
+    // History last: a branch deleted elsewhere while the ignored folders are
+    // walked makes a commit reflog-only, and this reading still sees it.
     const stash = yield* stashOnBranch(state.path, branch);
     const reflogOnly = yield* reflogOnlyCommits(git, state.path).pipe(
       Effect.orElseSucceed(() => null),
@@ -249,14 +257,6 @@ export function makeMemberFacts(deps: {
       "--not",
       "--remotes",
     ]);
-    const ignored = yield* listOthers(state, ["--ignored", "--exclude-standard"], 1024 * 1024);
-    const classified =
-      ignored === null
-        ? null
-        : yield* Effect.tryPromise(() => classifyIgnored(state.path, ignored.entries)).pipe(
-            Effect.orElseSucceed(() => null),
-          );
-    state.media = classified?.media ?? [];
     const facts: FinishedMemberGit = {
       branch,
       changes: statusRead === null ? null : statusRead.hasWorkingTreeChanges,
