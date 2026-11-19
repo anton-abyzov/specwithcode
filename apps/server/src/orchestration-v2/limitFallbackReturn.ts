@@ -10,6 +10,7 @@ import {
   type ServerProvider,
 } from "@specweave-studio/contracts";
 import {
+  canTakeTurn,
   isClaudeApiKeyProvider,
   type ProviderFallbackRule,
   providerUsedPercent,
@@ -399,9 +400,11 @@ export function preswitchReturnCommand(
  * shows the pick below the switch threshold (below its limit when the rule is
  * not `switch`), the idle thread goes back to it with no turn of its own, so
  * its next turn runs on the pick. Never while the thread works, waits on a
- * person, hosts background work or holds a failed turn, and never on a pick
- * that reports no usage: nothing shows it has room, so it goes back by hand.
- * A pick by hand clears the origin at write time, so it is never reversed.
+ * person, hosts background work or holds a failed turn. A pick that reports
+ * no usage (Muse, Copilot) has no read to show room, so it goes back once it
+ * can take a turn again and nothing holds it (`held`: a limit stop no read
+ * shows, or a session that would not open), the reasons a launch passes it
+ * over. A pick by hand clears the origin at write time, so it is never reversed.
  */
 export function launchReturnCommand(
   thread: FallbackThread,
@@ -413,6 +416,8 @@ export function launchReturnCommand(
   >,
   nowMs: number,
   attempt = 0,
+  /** Instances held now: stopped on a limit no read shows, or could not open. */
+  held: ReadonlySet<string> = new Set(),
 ): Extract<OrchestrationV2ServerCommand, { type: "thread.model-selection.set" }> | null {
   if (!threadIsFree(thread)) return null;
   if (thread.settledOverride === "settled" || thread.status === "failed") return null;
@@ -422,6 +427,7 @@ export function launchReturnCommand(
     thread.modelSelection.model === home.model
   )
     return null;
+  if (held.has(home.instanceId)) return null;
   const provider = providers.find((entry) => entry.instanceId === home.instanceId);
   if (
     provider === undefined ||
@@ -433,13 +439,16 @@ export function launchReturnCommand(
   )
     return null;
   const limits = provider.usageLimits;
+  const read =
+    limits !== undefined &&
+    limits.unavailable === undefined &&
+    providerUsedPercent(provider, nowMs, home.model) !== null;
+  if (!read && !canTakeTurn(provider, home.model)) return null;
   if (
-    limits === undefined ||
-    limits.unavailable !== undefined ||
-    providerUsedPercent(provider, nowMs, home.model) === null ||
+    (read && reachedLimitWindow(provider, nowMs, home.model) !== null) ||
     usageDeniesTurn(provider, home.model) ||
-    reachedLimitWindow(provider, nowMs, home.model) !== null ||
-    (rule.providerLimitAction === "switch" &&
+    (read &&
+      rule.providerLimitAction === "switch" &&
       usageAtThreshold({ provider, model: home.model, rule, nowMs }))
   )
     return null;
