@@ -147,6 +147,7 @@ const takeover = (overrides: Partial<TakeoverRequest> = {}): TakeoverRequest => 
   sequence: 3,
   reason: "machine-handoff",
   modelSelection: null,
+  operationId: "0a1b2c3d-1111-4222-8333-444455556666",
   ...overrides,
 });
 

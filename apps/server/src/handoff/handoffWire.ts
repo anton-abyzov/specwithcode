@@ -11,11 +11,16 @@ import {
   CoordinatorRoutineCopies,
   CoordinatorStandbyAfterMinutes,
   EnvironmentId,
+  HANDOFF_V2_CAPABILITY,
+  HandoffCapabilities,
   HandoffCheckpoint,
   HandoffLease,
   HandoffModeErrorCode,
   HandoffPreflightCheck,
   HandoffPreflightFailure,
+  HandoffTransferOperationId,
+  HandoffTransferTrigger,
+  hasHandoffV2,
   IsoDateTime,
   LogicalProjectMember,
   ModelSelection,
@@ -64,6 +69,27 @@ export function versionFailure(input: {
   return {
     check: "version",
     message: `${input.peerLabel} runs SpecWithCode ${peerVersion} and ${input.selfLabel} runs ${HANDOFF_APP_VERSION}; they cannot hand off between these versions. Update ${mention} first.`,
+  };
+}
+/**
+ * What this machine's handoff does beyond the numbered protocol. `handoff.v2`
+ * is the transfer record alone; the protocol version says nothing about it.
+ */
+export const HANDOFF_CAPABILITIES: ReadonlyArray<string> = [HANDOFF_V2_CAPABILITY];
+
+/**
+ * The check a handoff fails when the other machine does not keep transfer
+ * records. It is refused before anything is held, and nothing falls back to
+ * the older exchange.
+ */
+export function capabilityFailure(input: {
+  readonly peerLabel: string;
+  readonly capabilities: ReadonlyArray<string> | undefined;
+}): HandoffPreflightFailure | null {
+  if (hasHandoffV2(input.capabilities)) return null;
+  return {
+    check: "version",
+    message: `Needs update: ${input.peerLabel} runs a SpecWithCode from before handoff transfer records, so no thread moves between it and this machine. Update SpecWithCode on ${input.peerLabel} first.`,
   };
 }
 export const HANDOFF_FRAME_META_MAX_BYTES = 4 * 1024 * 1024;
@@ -181,6 +207,8 @@ export const PeerPreflightRequest = Schema.Struct({
   sourceEnvironmentId: EnvironmentId,
   protocolVersion: Schema.optional(NonNegativeInt),
   appVersion: Schema.optional(text(40)),
+  /** Absent from a machine that keeps no transfer records. */
+  capabilities: Schema.optional(HandoffCapabilities),
   threads: Schema.Array(
     Schema.Struct({
       sourceThreadId: ThreadId,
@@ -197,6 +225,7 @@ export const PeerPreflightResponse = Schema.Struct({
   machineLabel: text(120),
   protocolVersion: Schema.optional(NonNegativeInt),
   appVersion: Schema.optional(text(40)),
+  capabilities: Schema.optional(HandoffCapabilities),
   results: Schema.Array(
     Schema.Struct({
       sourceThreadId: ThreadId,
@@ -225,8 +254,13 @@ export const TakeoverRequest = Schema.Struct({
   modelSelection: Schema.NullOr(ModelSelection),
   /** Set while a thread waits for the result. Older receivers ignore it. */
   launcher: Schema.optional(HandoffLauncher),
-  /** The thread is a review: it is taken over only through `review-takeover`. */
-  review: Schema.optional(Schema.Boolean),
+  /**
+   * The source's transfer record for this move. The destination writes its
+   * verdict under it before it launches, and answers every repeat the same.
+   * Absent from a machine that keeps no transfer records.
+   */
+  operationId: Schema.optional(HandoffTransferOperationId),
+  trigger: Schema.optional(HandoffTransferTrigger),
 });
 export type TakeoverRequest = typeof TakeoverRequest.Type;
 export const TakeoverResponse = Schema.Struct({
@@ -240,14 +274,38 @@ export const TakeoverResponse = Schema.Struct({
 });
 export type TakeoverResponse = typeof TakeoverResponse.Type;
 
-/** The most leases, and operations to settle, one heartbeat carries. */
-export const HEARTBEAT_PAGE_MAX = 500;
-/** One takeover of a source thread, by the epoch it would continue at. */
-export const HeartbeatOperation = Schema.Struct({
+/**
+ * A source asks what became of a takeover it has no answer for. The
+ * destination answers "accepted" with its receipt, or writes "not accepted"
+ * and answers that: a takeover for the same lineage arriving later is refused.
+ */
+export const TransferStatusRequest = Schema.Struct({
+  sourceEnvironmentId: EnvironmentId,
   sourceThreadId: ThreadId,
   epoch: NonNegativeInt,
+  /** Null for a hold made before transfer records existed. */
+  operationId: Schema.NullOr(HandoffTransferOperationId),
 });
-export type HeartbeatOperation = typeof HeartbeatOperation.Type;
+export type TransferStatusRequest = typeof TransferStatusRequest.Type;
+export const TransferStatusResponse = Schema.Struct({
+  machineLabel: text(120),
+  status: Schema.Literals(["accepted", "not-accepted"]),
+  receipt: Schema.NullOr(TakeoverResponse),
+});
+export type TransferStatusResponse = typeof TransferStatusResponse.Type;
+
+/**
+ * "Continue here" asked on a machine that holds a copy. It never takes the
+ * thread itself: it asks the machine that runs it to hand the thread over,
+ * which is the same move, under the same record, as a handoff started there.
+ * `sourceEnvironmentId` is the asking machine, as in every request.
+ */
+export const TransferPullRequest = Schema.Struct({
+  sourceEnvironmentId: EnvironmentId,
+  threadId: ThreadId,
+  modelSelection: Schema.NullOr(ModelSelection),
+});
+export type TransferPullRequest = typeof TransferPullRequest.Type;
 
 export const HeartbeatRequest = Schema.Struct({
   sourceEnvironmentId: EnvironmentId,
@@ -402,8 +460,8 @@ export type PeerPath =
   | "plan-merge"
   | "extras-negotiate"
   | "extras-replicate"
-  | "review-replicate"
-  | "review-takeover";
+  | "transfer-status"
+  | "transfer-pull";
 export const PEER_PATHS: ReadonlySet<string> = new Set<PeerPath>([
   "negotiate",
   "replicate",
@@ -423,8 +481,8 @@ export const PEER_PATHS: ReadonlySet<string> = new Set<PeerPath>([
   "plan-merge",
   "extras-negotiate",
   "extras-replicate",
-  "review-replicate",
-  "review-takeover",
+  "transfer-status",
+  "transfer-pull",
 ]);
 
 /**

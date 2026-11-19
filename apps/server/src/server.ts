@@ -260,6 +260,7 @@ import * as ImportedThreadTitleRepair from "./project/ImportedThreadTitleRepair.
 import * as HandoffMoves from "./handoff/HandoffMoves.ts";
 import * as HandoffPeers from "./handoff/handoffPeers.ts";
 import * as HandoffReceiver from "./handoff/HandoffReceiver.ts";
+import * as HandoffTransferStore from "./handoff/HandoffTransferStore.ts";
 import * as ExtrasReceiver from "./handoff/ExtrasReceiver.ts";
 import * as ProjectSync from "./fleet/ProjectSync.ts";
 import * as ProjectSyncExtras from "./fleet/ProjectSyncExtras.ts";
@@ -780,6 +781,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // Handoff moves between machines; the receiver also serves the peer route.
   HandoffMoves.layerFleet.pipe(
     Layer.provideMerge(HandoffReceiver.layer),
+    // One store for both: the moves' records and the receiver's verdicts share a file.
+    Layer.provide(HandoffTransferStore.layer),
     Layer.provide(Layer.merge(RemoteWorkers.layerFleetWorkers, ProjectionStoreV2.layer)),
   ),
   // Project sync (1390): its handlers, and the receiver the peer route lands extras with.

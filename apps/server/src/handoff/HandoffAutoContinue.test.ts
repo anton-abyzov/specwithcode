@@ -491,6 +491,7 @@ const rig = (document: HandoffDocument, self: EnvironmentId) =>
             notice: null,
           };
         }),
+      attachPull: () => Effect.void,
     } as unknown as HandoffReceiver["Service"]);
     const shell = () => ({
       id: thread,
