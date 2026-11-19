@@ -20,6 +20,7 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  confirmTarget,
   HANDOFF_PLAN_CAPABILITY,
   PeerCheckRequest,
   type PeerCheckEvidence,
@@ -128,6 +129,52 @@ const state = (
 
 describe("the track a thread is on", () => {
   const spent = [source(claude, "claudeAgent", "a@example.test", [OPUS, SONNET, FABLE], 100)];
+
+  it("is not read for a review told only by its title: it stays with its reviewer", () => {
+    // No routing marker, and Opus is on the Daily track alone.
+    const only = {
+      ...tracks,
+      modelLanes: { routine: [{ instanceId: claude, model: OPUS }], complex: [] },
+    };
+    expect(state(spent, { title: "Adversarial review: Sign in" }, only)).toMatchObject({
+      kind: "held",
+    });
+    expect(state(spent, { title: "Sign in with passkeys" }, only)).toMatchObject({
+      kind: "track",
+      track: "daily",
+    });
+  });
+
+  it("starts nothing when the track ran out on more account pools than a check can name", () => {
+    const ids = Array.from({ length: 17 }, (_, index) =>
+      ProviderInstanceId.make(`claudeAgent-${index}`),
+    );
+    const many = ids.map((id, index) =>
+      source(id, "claudeAgent", `account-${index}@example.test`, [OPUS], 100),
+    );
+    const rule = {
+      ...tracks,
+      modelLanes: { routine: ids.map((instanceId) => ({ instanceId, model: OPUS })), complex: [] },
+    };
+    const on = (count: number) =>
+      limitHandoffTrackState({
+        thread: thread({
+          providerInstanceId: ids[0],
+          modelSelection: { instanceId: ids[0]!, model: OPUS },
+          ...routed("routine"),
+        }),
+        rule: {
+          ...rule,
+          modelLanes: { routine: rule.modelLanes.routine.slice(0, count), complex: [] },
+        } as Parameters<typeof limitHandoffTrackState>[0]["rule"],
+        providers: many.slice(0, count),
+        nowMs: now,
+      });
+    // Sixteen pools fit in one check; a seventeenth would go unnamed, so nothing starts.
+    expect(on(16)).toMatchObject({ kind: "track", outHere: true });
+    expect(new Set((on(16) as { fingerprints: ReadonlyArray<string> }).fingerprints).size).toBe(16);
+    expect(on(17)).toMatchObject({ kind: "held" });
+  });
 
   it("is none in a project that is not on tracks: its saved order decides as before", () => {
     expect(state(spent, routed("routine"), { ...tracks, threadModelMode: "model" })).toEqual({
@@ -290,6 +337,56 @@ const judged = (
 ) => judgeTrackMachine({ environmentId, machineLabel, threadId: t1, answer });
 
 describe("what a machine's answer means for the track (AC-38)", () => {
+  it("a machine whose project runs on one model has no room for a track, whatever is signed in", () => {
+    // The receiver's own answer for a project that is not on tracks there.
+    const confirmed = confirmTarget({
+      machineLabel: "Minis",
+      sourceLabel: "M4",
+      start: "automatic",
+      thresholdPercent: 99,
+      nowMs: now,
+      project: { title: "App", inGrant: true },
+      otherHolder: null,
+      thread: {
+        modelSelection: { instanceId: claude, model: OPUS },
+        track: "daily",
+        driverKind: "claudeAgent",
+        accountFingerprints: [`sha256:${"a".repeat(64)}`],
+      },
+      trackEntries: null,
+      signIns: [
+        {
+          provider: {
+            instanceId: claude,
+            driver: "claudeAgent",
+            displayName: "Claude",
+            enabled: true,
+            installed: true,
+            authStatus: "authenticated",
+            models: [{ slug: OPUS }],
+          },
+          usage: {
+            accountFingerprint: `sha256:${"b".repeat(64)}`,
+            usedPercent: 10,
+            resetsAt: iso(now + 60 * 60_000),
+            signedIn: true,
+            observedAt: iso(now - 60_000),
+          },
+        },
+      ],
+      accountRefusal: () => null,
+    });
+    const judged = judgeTrackMachine({
+      environmentId: EnvironmentId.make("env-minis"),
+      machineLabel: "Minis",
+      threadId: t1,
+      answer: answered(confirmed),
+    });
+    expect(judged.state).toBe("out");
+    expect(judged.evidence).toBeNull();
+    expect(judged.line).toContain("does not use the Daily track here");
+  });
+
   it("is a target on a sign-in of the track with a fresh reading below the threshold", () => {
     const sonnet = { instanceId: claudeTwo, model: SONNET };
     const result = judged(answered({ evidence: evidence({ modelSelection: sonnet }) }));

@@ -426,6 +426,7 @@ describe("the automatic track start through the adapter (1390 T-13)", () => {
         track: "daily",
         sourceSummary: "Daily track out of tokens on M4",
         usageWindowKey: "2026-10-20T18:00:00.000Z",
+        runId: "r1",
       });
       expect(calls[0]?.trigger).toEqual({
         kind: "automatic",
@@ -433,6 +434,9 @@ describe("the automatic track start through the adapter (1390 T-13)", () => {
         key: "limit-handoff:t1:r1",
         reason: "Daily track out of tokens on M4",
         usageWindowKey: "2026-10-20T18:00:00.000Z",
+        // The run and the disposition the move was admitted for: the runner checks both.
+        runId: "r1",
+        disposition: "resume",
       });
       // The line on the source thread says why it left (AC-28).
       expect(notes[0]?.note).toBe("Daily track out of tokens on M4 · continued on Minis with opus");
@@ -509,6 +513,30 @@ describe("the automatic track start through the adapter (1390 T-13)", () => {
       expect(yield* optedOut(withRecord({ mode: "on" }))).toBe(false);
       expect(yield* optedOut(withRecord({ mode: "inherit" }))).toBe(false);
       expect(yield* optedOut(EMPTY_HANDOFF_DOCUMENT)).toBe(false);
+    }),
+  );
+
+  it.effect("a preference that cannot be read opts out, and Off is refused at the send", () =>
+    Effect.gen(function* () {
+      const unreadable = makeLimitHandoffPort({
+        environmentId: m4,
+        document: Effect.fail(new HandoffModeError({ code: "failed", message: "disk" })),
+        handOff: () => Effect.die("never asked"),
+      });
+      expect(yield* unreadable.optedOut!(threadId)).toBe(true);
+
+      const off = harness({ document: withRecord({ mode: "off" }), answer: moved });
+      const outcome = yield* off.port.handOff({ ...request, resume: false });
+      expect(off.calls).toEqual([]);
+      expect(outcome).toMatchObject({
+        type: "refused",
+        message: "Hand off automatically is off for this thread.",
+        retryable: true,
+      });
+      // An idle move is admitted as ready.
+      const idle = harness({ answer: moved });
+      yield* idle.port.handOff({ ...request, resume: false, runId: "r1" });
+      expect(idle.calls[0]?.trigger).toMatchObject({ runId: "r1", disposition: "ready" });
     }),
   );
 });
