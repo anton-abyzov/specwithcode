@@ -156,7 +156,9 @@ try {
         });
         await page.mouse.move(2, 2);
         await page.waitForTimeout(100);
-        // Keyboard focus expands too, without picking the option.
+        // Keyboard focus expands too, without picking the option. With every
+        // description open it leaves the card as it was.
+        const beforeFocus = await measure(page);
         await page.locator('[data-question-option="C"]').focus();
         await page
           .locator('[data-question-option="C"][data-expanded="true"]')
@@ -171,6 +173,11 @@ try {
           assert.equal(await page.locator("[data-fixture-result]").innerText(), "waiting");
         } else {
           assert.equal(await page.locator("[data-question-option-details]").count(), 0);
+          assert.deepEqual(
+            (await measure(page)).optionHeights,
+            beforeFocus.optionHeights,
+            "focus leaves an open card still",
+          );
         }
 
         // Collapse to one line; the thread remembers it across a reload.

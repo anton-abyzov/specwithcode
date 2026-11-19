@@ -99,7 +99,10 @@ try {
       const icons = await page.evaluate(() =>
         [
           ...document.querySelectorAll(
-            "[data-question-option] img, [data-question-option] svg, [data-question-details] img",
+            // A link's icon: the favicon box, or (before it was marked) any image in a row.
+            document.querySelector("[data-link-favicon]")
+              ? "[data-question-option] [data-link-favicon] > *"
+              : "[data-question-option] a img, [data-question-option] a svg",
           ),
         ].map((el) => {
           const r = el.getBoundingClientRect();
@@ -111,6 +114,10 @@ try {
       await page.locator("[data-question-option]").nth(1).hover();
       await page.waitForTimeout(600);
       const hovered = await page.evaluate(layoutOf);
+      const hoveredOpen = await page
+        .locator("[data-question-option]")
+        .nth(1)
+        .getAttribute("data-expanded");
       await card.screenshot({ path: path.join(output, `${id}-hover.png`) });
       const largest = icons.reduce((m, i) => Math.max(m, i.w, i.h), 0);
       const moved =
@@ -119,8 +126,9 @@ try {
         rest.options.some(
           (o, i) => Math.abs(o.y - hovered.options[i].y) > 1 || o.h !== hovered.options[i].h,
         );
-      results.push({ id, largestIcon: largest, rest, hovered, moved });
+      results.push({ id, icons: icons.length, largestIcon: largest, rest, hovered, moved, hoveredOpen });
       if (!before) {
+        check(icons.length >= 2, `${id}: ${icons.length} link icons in the options, expected 2`);
         check(largest <= ICON_MAX, `${id}: an option icon is ${largest} px, over ${ICON_MAX}`);
         if (panel.room) {
           check(rest.mode === "all", `${id}: options layout ${rest.mode}, expected all`);
@@ -128,7 +136,7 @@ try {
           check(!moved, `${id}: the card moved on hover ${JSON.stringify({ rest, hovered })}`);
         } else {
           check(rest.mode === "compact", `${id}: options layout ${rest.mode}, expected compact`);
-          check(moved, `${id}: hover did not open the option's description on a short panel`);
+          check(hoveredOpen === "true", `${id}: hover did not open the option's description on a short panel`);
         }
       }
       await page.close();

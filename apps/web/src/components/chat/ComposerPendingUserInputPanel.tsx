@@ -176,10 +176,10 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   const cardRef = useRef<HTMLDivElement | null>(null);
   const optionsLayout = useQuestionOptionsLayout(
     cardRef,
+    isCollapsed,
     [
       prompt.requestId,
       activeQuestion?.id ?? "",
-      isCollapsed ? "folded" : "open",
       activeQuestion?.question ?? "",
       ...(activeQuestion?.options ?? []).map(
         (option) => `${option.label}\u0001${option.description ?? ""}`,
@@ -681,8 +681,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                             expanded
                               ? "basis-full"
                               : // One line: the markdown's blocks flow inline and clip.
-                                // Only block elements: a link's icon box keeps its size.
-                                "min-w-0 flex-1 truncate [&_:is(p,div,ul,ol,li,blockquote,pre,h1,h2,h3,h4,h5,h6,table,thead,tbody,tr,th,td)]:inline",
+                                // A link's icon keeps its box, or it grows to the line's width.
+                                "min-w-0 flex-1 truncate [&_:not([data-link-favicon],[data-link-favicon]_*)]:inline",
                           )}
                         >
                           {renderText(presented.description, "description")}
