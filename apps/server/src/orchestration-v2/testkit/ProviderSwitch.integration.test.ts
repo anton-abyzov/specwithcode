@@ -1126,6 +1126,109 @@ describe("orchestration v2 provider switching", () => {
       ),
   );
 
+  it.live("delivers a missed run and a later detour in chronological order", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("handoff-chronology");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
+        const failStartOnce = yield* Ref.make(false);
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: { 1: "Claude first answer" },
+            capturedTurns,
+            injectedHistory,
+            failStartOnce,
+          }),
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: { 3: "Codex detour answer" },
+            capturedTurns,
+          }),
+        ]);
+        const delivered = yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const send = (ordinal: number, text: string, selection: ModelSelection) =>
+            orchestrator
+              .dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`chronology:${ordinal}`),
+                threadId,
+                messageId: MessageId.make(`chronology:${ordinal}`),
+                createdBy: "user",
+                creationSource: "web",
+                text,
+                attachments: [],
+                modelSelection: selection,
+                dispatchMode: { type: "start_immediately" },
+              })
+              .pipe(Effect.andThen(waitForIdle(threadId)), Effect.andThen(worker.drain()));
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("chronology:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Handoff chronology",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          yield* send(1, "Claude first request", CLAUDE_MODEL_SELECTION);
+          // Run 2 never reaches Claude: its start fails after the prompt is built.
+          yield* Ref.set(failStartOnce, true);
+          yield* send(2, "Missed Claude request", CLAUDE_MODEL_SELECTION);
+          yield* send(3, "Codex detour request", CODEX_MODEL_SELECTION);
+          const beforeReturn = (yield* Ref.get(injectedHistory)).length;
+          yield* send(4, "Back on Claude", CLAUDE_MODEL_SELECTION);
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          return {
+            runs: projection.runs.map((run) => [run.ordinal, run.status]),
+            history: yield* encodeJson((yield* Ref.get(injectedHistory)).slice(beforeReturn)),
+          };
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "handoff-chronology",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: { type: "readOnly" },
+                },
+              },
+              layerRegistry,
+              { databaseLayer: fixtureProjectDatabase([projectId]) },
+            ),
+          ),
+        );
+        assert.deepEqual(delivered.runs, [
+          [1, "completed"],
+          [2, "failed"],
+          [3, "completed"],
+          [4, "completed"],
+        ]);
+        const missed = delivered.history.indexOf("Missed Claude request");
+        const detour = delivered.history.indexOf("Codex detour request");
+        assert.notEqual(missed, -1);
+        assert.notEqual(detour, -1);
+        // Run 2 came before the detour, so the receiving model reads it first.
+        assert.isBelow(missed, detour);
+      }),
+    ),
+  );
+
   it.live.each(["native", "legacy"] as const)(
     "starts a replacement native thread as new after the resume fallback with %s attempts",
     (attempts) =>

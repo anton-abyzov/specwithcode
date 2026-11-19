@@ -1169,6 +1169,8 @@ export const OrchestrationV2HistoricalMessage = Schema.Struct({
   providerThreadId: Schema.NullOr(ProviderThreadId),
   status: Schema.String,
   kind: Schema.String,
+  /** The turn item's ordinal in its thread; absent on older handoffs. */
+  ordinal: Schema.optional(NonNegativeInt),
   /** Compact identity for bounded worker selection; absent on older handoffs. */
   worker: Schema.optional(
     Schema.Struct({
