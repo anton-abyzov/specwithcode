@@ -1,4 +1,7 @@
 import type { CoordinatorReplySource } from "@specweave-studio/shared/coordinatorReplySources";
+import { useContext } from "react";
+
+import { ConversationMachineContext, sourceMachine } from "../../studio/conversationMachine";
 
 /** Structured turn provenance, independent of model-written text. */
 export function CoordinatorReplySources({
@@ -14,6 +17,8 @@ export function CoordinatorReplySources({
   inline?: boolean;
   canOpenThread?: (environmentId: string) => boolean;
 }) {
+  // A source thread on another machine than the coordinator's names it (1427 AC-06).
+  const coordinatorMachine = useContext(ConversationMachineContext);
   if (sources.length === 0) return null;
   return (
     <span className="sws-reply-sources" data-reply-sources="" aria-label="Reply sources">
@@ -24,13 +29,14 @@ export function CoordinatorReplySources({
             resolveTitle?.(source.threadId, source.environmentId)?.trim() ||
             source.title?.trim() ||
             "Source thread";
+          const machine = sourceMachine(coordinatorMachine, source.environmentId);
           return (
             <button
               type="button"
               className="sws-reply-source"
               key={`${source.environmentId}:${source.threadId}`}
               disabled={canOpenThread?.(source.environmentId) === false}
-              aria-label={`Open source thread ${title}`}
+              aria-label={`Open source thread ${title}${machine ? ` on ${machine}` : ""}`}
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
@@ -39,6 +45,7 @@ export function CoordinatorReplySources({
             >
               {prefix}
               {title}
+              {machine ? <span data-reply-source-machine="">{` · ${machine}`}</span> : null}
               {canOpenThread?.(source.environmentId) === false ? " · unavailable" : ""}
               <span aria-hidden="true"> ↗</span>
             </button>

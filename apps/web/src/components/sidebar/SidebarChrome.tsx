@@ -27,6 +27,7 @@ import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarRestartToUpdate } from "./SidebarRestartToUpdate";
 import { SidebarServerUpdate } from "./SidebarServerUpdate";
+import { SidebarWindowMachine, useWindowMachineName } from "./SidebarWindowMachine";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 import { ModStatusItems } from "../../mods/ModPanes";
 import { DesktopUpdateDownloadedToast } from "../desktopUpdate.toast";
@@ -76,6 +77,8 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
           </div>
         ) : null}
       </div>
+      {/* The window's own machine, always named: pages may show another machine's work. */}
+      <SidebarWindowMachine />
     </div>
   );
 });
@@ -104,8 +107,10 @@ export function SidebarBrandWidthProbe({
       className="pointer-events-none invisible fixed top-0 left-0 flex w-max border-r border-transparent pr-3"
       ref={observeWidth}
     >
-      <div className="ml-[var(--workspace-titlebar-content-left)] flex">
+      {/* The window's machine sits beside the brand, so the minimum width keeps it whole. */}
+      <div className="ml-[var(--workspace-titlebar-content-left)] flex items-center gap-2">
         <SidebarBrandMark onBackdrop={false} />
+        <SidebarWindowMachine />
       </div>
     </div>
   );
@@ -171,6 +176,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
 });
 
 export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
+  const windowMachine = useWindowMachineName();
   return (
     <SidebarFooter>
       <SidebarThreadUndoNotice />
@@ -179,7 +185,7 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
       <SidebarServerUpdate />
       <SidebarUpdateArchitectureWarning />
       <ModStatusItems />
-      <SidebarRestartToUpdate />
+      <SidebarRestartToUpdate machine={windowMachine} />
       <DesktopUpdateDownloadedToast />
       <SidebarUtilityMenu />
     </SidebarFooter>

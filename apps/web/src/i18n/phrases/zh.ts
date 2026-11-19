@@ -2,12 +2,14 @@ import type { PhraseCatalog } from "../phrases";
 import { syncZh } from "./sync/zh";
 import { handoffZh } from "./handoff/zh";
 import { iphoneZh } from "./iphone/zh";
+import { machineLabelsZh } from "./machineLabels/zh";
 
 /** Simplified Chinese Settings titles and labels. "会话" for thread, as in the message catalog. */
 export const zh: PhraseCatalog = {
   ...syncZh,
   ...handoffZh,
   ...iphoneZh,
+  ...machineLabelsZh,
   About: "关于",
   "Accent color": "强调色",
   Account: "账户",
@@ -5303,13 +5305,7 @@ export const zh: PhraseCatalog = {
   "Preparing the machine that keeps its coordinator…": "正在准备保留协调者的电脑…",
   "Joining the other machine…": "正在加入另一台电脑…",
   "Copying notes and listing both machines…": "正在复制笔记并列出两台电脑…",
-  "{machine} joins {project}. The coordinator stays on {main}: linking does not move it.":
-    "{machine} 加入 {project}。协调者仍在 {main}：关联不会移动它。",
   "Reading both machines…": "正在读取两台电脑…",
-  "The coordinator stays on {main}. To continue it on {machine}, use Continue here after linking.":
-    "协调者仍在 {main}。若要在 {machine} 上继续，请在关联后使用“在这里继续”。",
-  "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if the coordinator continues there. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. The coordinator stays on {main}. Files are not copied.":
-    "将 {machine} 关联到此项目。{machine} 放弃自己的目标和指令：今后遵循此项目的目标和指令，如果协调者在那里继续，它自己的会被替换。它自己的协调者会停止，那段对话作为历史留在 {machine} 上。它的 worker 继续运行。协调者仍在 {main}。不会复制文件。",
   "The coordinator cannot continue on {machine}: it has this repository as a separate project. Link it first.":
     "协调者无法在 {machine} 上继续：它把此仓库作为独立项目添加。请先关联它。",
   "Continues in a folder already saved there, which updates from origin. Always moves the coordinator there.":

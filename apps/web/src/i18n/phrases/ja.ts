@@ -2,12 +2,14 @@ import type { PhraseCatalog } from "../phrases";
 import { syncJa } from "./sync/ja";
 import { handoffJa } from "./handoff/ja";
 import { iphoneJa } from "./iphone/ja";
+import { machineLabelsJa } from "./machineLabels/ja";
 
 /** Japanese Settings titles and labels. "スレッド" for thread, as in the message catalog. */
 export const ja: PhraseCatalog = {
   ...syncJa,
   ...handoffJa,
   ...iphoneJa,
+  ...machineLabelsJa,
   About: "このアプリについて",
   "Accent color": "アクセントカラー",
   Account: "アカウント",
@@ -5531,13 +5533,7 @@ export const ja: PhraseCatalog = {
     "コーディネーターを保持するマシンを準備しています…",
   "Joining the other machine…": "もう一方のマシンを参加させています…",
   "Copying notes and listing both machines…": "ノートをコピーし、両方のマシンを登録しています…",
-  "{machine} joins {project}. The coordinator stays on {main}: linking does not move it.":
-    "{machine} は {project} に参加します。コーディネーターは {main} のままで、リンクしても移動しません。",
   "Reading both machines…": "両方のマシンを読み取っています…",
-  "The coordinator stays on {main}. To continue it on {machine}, use Continue here after linking.":
-    "コーディネーターは {main} のままです。{machine} で続行するには、リンク後に「ここで続行」を使ってください。",
-  "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if the coordinator continues there. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. The coordinator stays on {main}. Files are not copied.":
-    "{machine} をこのプロジェクトにリンクします。{machine} は独自の目標と指示を手放し、今後はこのプロジェクトのものに従います。コーディネーターがそこで続行する場合、独自のものは置き換えられます。{machine} 独自のコーディネーターは停止し、その会話は履歴として {machine} に残ります。ワーカーは動き続けます。コーディネーターは {main} のままです。ファイルはコピーされません。",
   "The coordinator cannot continue on {machine}: it has this repository as a separate project. Link it first.":
     "コーディネーターは {machine} で続行できません。そこではこのリポジトリが別プロジェクトになっています。先にリンクしてください。",
   "Continues in a folder already saved there, which updates from origin. Always moves the coordinator there.":

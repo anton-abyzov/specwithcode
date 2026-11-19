@@ -102,6 +102,7 @@ import { useUnplannedNotice } from "../../../studio/unplannedNotice";
 import { HandoffRowAction, HandoffRowBadge } from "../../handoff/HandoffBadge";
 import { designRoute } from "../../design/gallery/designLinks";
 import { SignedOutBanner } from "./SignedOutBanner";
+import { useTx } from "../../../i18n";
 import {
   useHostReachStates,
   useHostDownNotes,
@@ -206,6 +207,7 @@ export function ThreadsPane({
   const entriesByEnvironment = useProviderEntriesByEnvironment();
   const router = useRouter();
   const say = paneWords(props.personal);
+  const tx = useTx();
   const now = nowFromMinute(useNowMinute());
   const [sortBy, setSortBy] = useLocalStorage<ThreadSort, ThreadSort>(
     SORT_STORAGE_KEY,
@@ -749,13 +751,17 @@ export function ThreadsPane({
                     return (
                       <Tip
                         key={choice.machineId}
-                        label={choice.current ? `${choice.label} · this machine` : choice.label}
+                        label={
+                          choice.current
+                            ? tx("{machine} · this window", { machine: choice.label })
+                            : choice.label
+                        }
                       >
                         <button
                           type="button"
                           className="sws-filter-choice"
                           aria-pressed={machineFilter === choice.machineId}
-                          aria-label={`${choice.label}${choice.current ? ", this machine" : ""}, ${choice.count} open ${say(choice.count === 1 ? "thread" : "threads")}${waiting > 0 ? `, ${waiting} ${waiting === 1 ? "needs" : "need"} you` : ""}`}
+                          aria-label={`${choice.label}${choice.current ? ", this window" : ""}, ${choice.count} open ${say(choice.count === 1 ? "thread" : "threads")}${waiting > 0 ? `, ${waiting} ${waiting === 1 ? "needs" : "need"} you` : ""}`}
                           data-machine-choice={choice.machineId}
                           data-current={choice.current || undefined}
                           onClick={() =>

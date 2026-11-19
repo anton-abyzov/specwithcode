@@ -17,7 +17,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTx } from "../../i18n";
 import { useProjects, useServerConfigs } from "../../state/entities";
-import { useEnvironments } from "../../state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { machineLastSeenAt, useMachineLastSeenVersion } from "../../lib/machineLastSeen";
 import { formatAgo } from "../../studio/hostLimitsModel";
 import { sameRepositoryLinkOffers } from "../../studio/projectLink";
@@ -149,8 +149,11 @@ export function OrchestratorSwitcher({
   onLink = null,
   onLeave = null,
   identity = null,
+  windowEnvironmentId = null,
 }: {
   identity?: MachineIdentity | null;
+  /** The machine this window is served by: its row says "this window" (1427). */
+  windowEnvironmentId?: string | null;
   /** The name of the machine shown: its nickname, else its short host label. */
   label: string;
   /** Its full host label for the tooltip; defaults to `label`. */
@@ -275,6 +278,9 @@ export function OrchestratorSwitcher({
           lastSeen: reach.lastSeen ?? null,
           sync: copy.key === current ? null : files.sync,
           needsUpdate: files.needsUpdate ?? null,
+          window:
+            windowEnvironmentId !== null &&
+            checkoutKeyEnvironmentId(copy.key) === windowEnvironmentId,
         }),
         hint:
           copy.role === "independent"
@@ -390,6 +396,14 @@ export function OrchestratorSwitcher({
                                 data-row-pill=""
                               >
                                 {tx(row.state.label.text, row.state.label.values)}
+                              </span>
+                            ) : null}
+                            {row.state.window ? (
+                              <span
+                                className="shrink-0 rounded-full border border-border px-1.5 text-xs text-muted-foreground"
+                                data-row-window=""
+                              >
+                                {tx("this window")}
                               </span>
                             ) : null}
                             {row.state.sync ? (
@@ -608,6 +622,7 @@ export function ProjectOrchestratorSwitcher({
   // What this window can show of each listed machine: an offline one opens what was last
   // saved, and one that refuses this window is greyed.
   const { environments } = useEnvironments();
+  const windowEnvironmentId = usePrimaryEnvironmentId();
   useMachineLastSeenVersion();
   const [now] = useState(Date.now);
   const reachOf = (key: string): MachineRowReach => {
@@ -649,6 +664,7 @@ export function ProjectOrchestratorSwitcher({
     <>
       <OrchestratorSwitcher
         identity={identity}
+        windowEnvironmentId={windowEnvironmentId}
         label={name}
         hostLabel={label}
         projectTitle={projectTitle}

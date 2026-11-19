@@ -2,12 +2,14 @@ import type { PhraseCatalog } from "../phrases";
 import { syncPt } from "./sync/pt";
 import { handoffPt } from "./handoff/pt";
 import { iphonePt } from "./iphone/pt";
+import { machineLabelsPt } from "./machineLabels/pt";
 
 /** Brazilian Portuguese Settings titles and labels, "você", as in the message catalog. */
 export const pt: PhraseCatalog = {
   ...syncPt,
   ...handoffPt,
   ...iphonePt,
+  ...machineLabelsPt,
   About: "Sobre",
   "Accent color": "Cor de destaque",
   Account: "Conta",
@@ -5528,13 +5530,7 @@ export const pt: PhraseCatalog = {
     "Preparando a máquina que mantém o coordenador…",
   "Joining the other machine…": "Incluindo a outra máquina…",
   "Copying notes and listing both machines…": "Copiando as notas e listando as duas máquinas…",
-  "{machine} joins {project}. The coordinator stays on {main}: linking does not move it.":
-    "{machine} entra em {project}. O coordenador fica em {main}: vincular não o move.",
   "Reading both machines…": "Lendo as duas máquinas…",
-  "The coordinator stays on {main}. To continue it on {machine}, use Continue here after linking.":
-    "O coordenador fica em {main}. Para continuá-lo em {machine}, use Continuar aqui depois de vincular.",
-  "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if the coordinator continues there. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. The coordinator stays on {main}. Files are not copied.":
-    "Vincular {machine} a este projeto. {machine} abre mão do próprio objetivo e das próprias instruções: passa a seguir os deste projeto, e os dela são substituídos se o coordenador continuar lá. O coordenador dela para, e essa conversa fica em {machine} como histórico. Os workers dela continuam em execução. O coordenador fica em {main}. Os arquivos não são copiados.",
   "The coordinator cannot continue on {machine}: it has this repository as a separate project. Link it first.":
     "O coordenador não pode continuar em {machine}: ela tem este repositório como um projeto separado. Vincule-a primeiro.",
   "Continues in a folder already saved there, which updates from origin. Always moves the coordinator there.":
