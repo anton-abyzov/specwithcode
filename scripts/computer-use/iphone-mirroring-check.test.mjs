@@ -7,8 +7,8 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   anchorIn,
   CLICK_TARGET,
-  findTab,
   jaccard,
+  locateTabs,
   main,
   mcpClient,
   pageSignature,
@@ -16,9 +16,12 @@ import {
   regionToScreenshot,
   runCheck,
   scrolled,
+  showsSuggestion,
   simulatedPhone,
+  startsWithTyped,
   tabAnchors,
   TYPE_SAMPLES,
+  typedTail,
   windowInScreenshot,
 } from "./iphone-mirroring-check.mjs";
 
@@ -54,6 +57,60 @@ describe("dry run", () => {
     expect(
       phone.state.calls.every((tool) => tool === "request_access" || tool.startsWith("computer_")),
     ).toBe(true);
+  });
+
+  it("passes when Spotlight's inline suggestion takes the first press of each key call", async () => {
+    for (const phone of [
+      simulatedPhone({ suggestion: true }),
+      simulatedPhone({ suggestion: true, keepsQuery: true }),
+    ]) {
+      const result = await runCheck(phone.deps);
+      expect(result.lines.find((entry) => entry.includes("key repeat"))).toMatch(
+        /^PASS key repeat: .*one backspace removed 0, backspace repeat 3 removed 2, 2 more, so every press arrived; inline suggestion before each: yes, yes/,
+      );
+      expect(result.pass).toBe(true);
+    }
+  });
+
+  it("fails the key repeat check when a repeat loses a press, and still counts the taps", async () => {
+    for (const suggestion of [false, true]) {
+      const result = await runCheck(simulatedPhone({ dropRepeat: true, suggestion }).deps);
+      expect(result.pass).toBe(false);
+      expect(result.lines.find((entry) => entry.includes("key repeat"))).toMatch(
+        suggestion
+          ? /^FAIL key repeat: .*one backspace removed 0, backspace repeat 3 removed 1/
+          : /^FAIL key repeat: .*one backspace removed 1, backspace repeat 3 removed 2/,
+      );
+      // Every step starts from an emptied field, so a lost press spoils nothing after it.
+      for (const sample of TYPE_SAMPLES) {
+        expect(result.lines.some((entry) => entry.startsWith(`PASS type "${sample}"`))).toBe(true);
+      }
+      expect(result.lines).toContain("Clicks landed: all 20, but another check failed");
+      expect(result.lines.at(-1)).toMatch(/first failure: key repeat/);
+    }
+  });
+
+  it("taps tabs shown in a row on top", async () => {
+    const result = await runCheck(simulatedPhone({ tabsOnTop: true }).deps);
+    expect(result.lines.find((entry) => entry.startsWith("PASS tabs"))).toMatch(
+      /in a row at y 150/,
+    );
+    expect(result.pass).toBe(true);
+  });
+
+  it("starts text recognition before the timed steps, and is invalid when it cannot", async () => {
+    const phone = simulatedPhone();
+    const warmed = await runCheck({ ...phone.deps, warmUp: async () => 66_400 });
+    expect(warmed.lines).toContain("SETUP text recognition ready in 66.4 s");
+    expect(warmed.pass).toBe(true);
+    const cold = await runCheck({
+      ...simulatedPhone().deps,
+      warmUp: async () => {
+        throw new Error("spawnSync /usr/bin/osascript ETIMEDOUT");
+      },
+    });
+    expect(cold.invalid).toBe(true);
+    expect(cold.lines.at(-1)).toMatch(/text recognition did not start: .*ETIMEDOUT/);
   });
 
   it("says 20 of 20 only on the total line", async () => {
@@ -270,6 +327,7 @@ describe("options", () => {
       ["lap", "start"],
     ]);
     expect(parseArgs(["--out", "x", "--ios", "26.1"])).toMatchObject({ out: "x", ios: "26.1" });
+    expect(() => parseArgs(["--out", "x", "--ios", " "])).toThrow(/needs the iOS version/);
   });
 
   it("refuses a live run outside a thread's shell", async () => {
@@ -290,14 +348,83 @@ describe("judging the screen", () => {
     });
   });
 
-  it("finds a tab label in the bottom of the window, not a title above", () => {
-    const lines = [
-      line("Stopwatch", 620, 150),
+  it("finds the two tabs where they line up as a tab bar, not a page title", () => {
+    const bottom = [
+      line("World Clock", 620, 150),
+      line("World Clock", 640, 820),
       line("Stopwatch", 840, 820),
-      line("Alarms", 700, 820),
+      line("Alarms", 740, 820),
     ];
-    expect(findTab(lines, window, "stopwatch")).toEqual(lines[1]);
-    expect(findTab(lines, window, "Timers")).toBeUndefined();
+    const found = locateTabs(bottom, ["World Clock", "Stopwatch"]);
+    expect(found.tabs["World Clock"]).toEqual(bottom[1]);
+    expect(found.bar).toMatchObject({ axis: "row", at: 830 });
+    // A wider layout: the tabs in a row on top, the page title below them.
+    const top = [
+      line("World Clock", 640, 140),
+      line("Stopwatch", 840, 140),
+      line("World Clock", 620, 200),
+    ];
+    expect(locateTabs(top, ["World Clock", "Stopwatch"]).tabs["World Clock"]).toEqual(top[0]);
+    // A sidebar: one above the other, left-aligned.
+    const side = [
+      line("World Clock", 610, 300),
+      line("Stopwatch", 610, 380),
+      line("Lap", 800, 300),
+    ];
+    const column = locateTabs(side, ["World Clock", "Stopwatch"]);
+    expect(column.bar.axis).toBe("column");
+    expect(pageSignature(side, window, column.bar)).toEqual(["lap"]);
+    // A title alone, with the other tab nowhere in line with it.
+    expect(
+      locateTabs(
+        [line("World Clock", 620, 150), line("Stopwatch", 900, 820)],
+        ["World Clock", "Stopwatch"],
+      ),
+    ).toBeUndefined();
+    expect(locateTabs(bottom, ["World Clock", "Timers"])).toBeUndefined();
+  });
+
+  it("leaves a tab bar on top out of every page's words", () => {
+    const lines = [
+      line("World Clock", 640, 140),
+      line("Stopwatch", 840, 140),
+      line("Lap", 620, 400),
+    ];
+    const { bar } = locateTabs(lines, ["World Clock", "Stopwatch"]);
+    expect(pageSignature(lines, window, bar)).toEqual(["lap"]);
+    expect(anchorIn(pageSignature(lines, window, bar), ["world clock"])).toBeUndefined();
+  });
+
+  it("reads typed text only at the start of the field, tolerating what no key types", () => {
+    expect(startsWithTyped("hbdt- Ask Siri", "hbdt")).toBe(true);
+    expect(startsWithTyped("hbdt|", "hbdt")).toBe(true);
+    expect(startsWithTyped("hbdt", "hbdt")).toBe(true);
+    // Leftovers before the text, or more typed text after it, do not count.
+    expect(startsWithTyped("zQ4207- Ask Siri", "4207")).toBe(false);
+    expect(startsWithTyped("42075", "4207")).toBe(false);
+    // Case only where the shapes are the same; accents and Cyrillic lookalikes are reading noise.
+    expect(startsWithTyped("X@y#Z", "x@y#z")).toBe(true);
+    expect(startsWithTyped("x@Y#z", "x@y#z")).toBe(false);
+    expect(startsWithTyped("QНBR", "QHBR")).toBe(true);
+    expect(startsWithTyped("hbdť", "hbdt")).toBe(true);
+    // A neighbouring key never passes: q read as "ą" stays an a.
+    expect(startsWithTyped("ząxv", "zqxv")).toBe(false);
+    expect(startsWithTyped("x@y3z", "x@y#z")).toBe(false);
+    expect(typedTail("QHBR4207- Ask Siri", "QHBR", true)).toBe(4);
+    expect(typedTail("QHBR42", "QHBR", true)).toBe(2);
+    expect(typedTail("zQHBR42", "QHBR", true)).toBeUndefined();
+    expect(showsSuggestion("QHBR4207- Ask Siri", "QHBR")).toBe(true);
+    expect(showsSuggestion("QHBR4207", "QHBR")).toBe(false);
+    expect(showsSuggestion("QHBR4207|", "QHBR")).toBe(false);
+  });
+
+  it("types samples that text recognition reads in one way only", () => {
+    for (const sample of TYPE_SAMPLES) {
+      const letters = sample.includes("@") ? "" : sample.replace(/[^A-Za-z]/g, "");
+      expect(letters).not.toMatch(/[cosvwxzqCOSVWXZ]/);
+      expect(sample).not.toMatch(/[!il1|]/);
+    }
+    expect(TYPE_SAMPLES.some((sample) => /(.)\1/.test(sample))).toBe(true);
   });
 
   it("tells pages apart by their words, leaving clock readings out", () => {
