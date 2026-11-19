@@ -226,3 +226,72 @@ describe("nextRenewalOn", () => {
     expect(nextRenewalOn(31, february)).toBe(new Date(2027, 1, 28).getTime());
   });
 });
+
+describe("subscriptionsSummary", () => {
+  const session = (usedPercent: number, resetsIn: number): ServerProviderUsageWindow => ({
+    id: "primary",
+    kind: "session",
+    label: "5-hour",
+    windowDurationMins: 300,
+    usedPercent,
+    resetsAt: iso(now + resetsIn),
+  });
+  const rows = (accounts: LimitAccount[]) => subscriptionRows(accounts, [], {}, now);
+
+  it("counts a spent account window as a limit, and names when the spent window frees it", () => {
+    const list = rows([
+      account("a", codex, "a@x.dev", "m4", { windows: [session(100, 2 * HOUR), weekly(40, 3 * DAY)] }),
+      account("b", claude, "b@x.dev", "m4", { windows: [session(10, HOUR)] }),
+    ]);
+    expect(list.map((row) => [row.key, row.atLimit])).toEqual([
+      ["b", false],
+      ["a", true],
+    ]);
+    expect(subscriptionsSummary(list, 2, now)).toEqual({
+      subscriptions: 2,
+      atLimit: 1,
+      nextResetAt: now + 2 * HOUR,
+      withoutReading: 2,
+    });
+    expect(subscriptionsSummaryText(subscriptionsSummary(list, 2, now), now)).toBe(
+      "2 subscriptions · 1 at a limit · next reset in 2h 0m · 2 without a reading",
+    );
+  });
+
+  it("does not count Copilot at a limit when spent premium requests still run", () => {
+    const monthly = { ...weekly(100, 9 * DAY), id: "premium_interactions", kind: "monthly" as const };
+    const [row] = rows([
+      account("c", ProviderDriverKind.make("acpRegistry"), undefined, "m4", {
+        windows: [monthly],
+        ordinaryUsageAllowed: true,
+      }),
+    ]);
+    expect(row?.atLimit).toBe(false);
+  });
+
+  it("counts a stop or a spend control as a limit even with room left, and falls back to its soonest reset", () => {
+    const list = rows([
+      account("d", codex, "d@x.dev", "m4", {
+        windows: [weekly(20, 4 * DAY)],
+        ordinaryUsageAllowed: false,
+      }),
+      account("e", codex, "e@x.dev", "m4", { windows: [weekly(5, DAY)], spendControlReached: true }),
+      account("f", codex, "f@x.dev", "m4", { windows: [weekly(5, HOUR)] }),
+    ]);
+    expect(subscriptionsSummary(list, 0, now)).toMatchObject({ atLimit: 2, nextResetAt: now + DAY });
+  });
+
+  it("ignores scoped windows and Cursor's Overall, and leaves the reset out when none is known", () => {
+    const list = rows([
+      account("g", claude, "g@x.dev", "m4", {
+        windows: [{ ...weekly(100, HOUR), id: "seven_day_fable", label: "Weekly · Fable", modelScope: "Fable" }],
+      }),
+      account("h", ProviderDriverKind.make("cursor"), "h@x.dev", "m4", {
+        windows: [{ ...weekly(100, HOUR), id: "totalPercentUsed", kind: "monthly", label: "Overall" }],
+      }),
+    ]);
+    const summary = subscriptionsSummary(list, 0, now);
+    expect(summary).toEqual({ subscriptions: 2, atLimit: 0, nextResetAt: null, withoutReading: 0 });
+    expect(subscriptionsSummaryText(summary, now)).toBe("2 subscriptions · 0 at a limit");
+  });
+});

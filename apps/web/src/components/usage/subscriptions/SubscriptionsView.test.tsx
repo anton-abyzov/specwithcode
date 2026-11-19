@@ -172,3 +172,15 @@ describe("SubscriptionsDashboard", () => {
     expect(empty).not.toMatch(/\b0%/);
   });
 });
+
+describe("the Subscriptions header line", () => {
+  it("counts one subscription in the singular and leaves out what is not there", async () => {
+    const { subscriptionsSummaryText } = await import("./subscriptionRows");
+    expect(
+      subscriptionsSummaryText(
+        { subscriptions: 1, atLimit: 0, nextResetAt: now - HOUR, withoutReading: 0 },
+        now,
+      ),
+    ).toBe("1 subscription · 0 at a limit");
+  });
+});
