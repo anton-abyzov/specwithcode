@@ -18,7 +18,7 @@
  *   2. closed (completed, or dropped) before open;
  *   3. the longer ledger in bytes: the ledger is append-only;
  *   4. the later metadata time;
- *   5. the project folder, then worktrees by path, then the remote branch.
+ *   5. the project folder, then the remote branch, then worktrees by path.
  * A copy with a `spec.md` is taken before any copy without one. One whole
  * copy is shown; files are never mixed across copies.
  *
@@ -823,10 +823,12 @@ export async function chooseCopy(
     const only = project ?? remote;
     if (only !== null && isClosed(only.meta)) return only;
   }
+  // The order is the rule's last step: a worktree that merely holds what the
+  // remote branch holds does not stand in for it.
   const candidates = [
     ...(project === null ? [] : [project]),
-    ...(await worktreeCopiesOf(copies, id)),
     ...(remote === null ? [] : [remote]),
+    ...(await worktreeCopiesOf(copies, id)),
   ];
   if (candidates.length <= 1) return candidates[0] ?? null;
   const ranked = await Promise.all(

@@ -15,12 +15,15 @@ import {
   readBoardCard,
   readProjectBoard,
 } from "./ProjectBoard.ts";
+import { commitAll, repository, setRemote, worktree } from "./incrementCopies.testkit.ts";
 
 const roots: string[] = [];
 const NOW = Date.parse("2026-11-14T12:00:00Z");
 
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) => NodeFSP.rm(root, { recursive: true })));
+  await Promise.all(
+    roots.splice(0).map((root) => NodeFSP.rm(root, { recursive: true, force: true })),
+  );
 });
 
 const cardAt = async (root: string, id: string, now: number) =>
@@ -315,6 +318,55 @@ describe("readProjectBoard", () => {
     expect(coldMs).toBeLessThan(1_000);
     expect(warmMs).toBeLessThan(150);
   }, 30_000);
+
+  it("keeps that bound with worktrees and a remote branch in play", async () => {
+    const root = await repository("project-board-copies-", roots);
+    const ledger = [event("T-01", "done", { evidence: "abc1234" }), event("T-02", "claim")];
+    const name = (index: number) => `${String(index).padStart(4, "0")}-bulk-increment`;
+    for (let start = 1; start <= 1_500; start += 100) {
+      await Promise.all(
+        Array.from({ length: 100 }, (_, offset) => {
+          const index = start + offset;
+          return increment(root, name(index), {
+            status: index % 10 === 0 ? "active" : "completed",
+            tasks: 4,
+            ledger,
+          });
+        }),
+      );
+    }
+    const merged = commitAll(root, "all");
+    setRemote(root, merged);
+    // Four thread worktrees, each holding every increment; one is ahead on an open one.
+    const lanes = [];
+    for (const lane of ["lane-a", "lane-b", "lane-c", "lane-d"]) {
+      lanes.push(await worktree(root, lane, merged, roots));
+    }
+    await NodeFSP.appendFile(
+      NodePath.join(lanes[2]!, ".specweave", "increments", name(10), "ledger.jsonl"),
+      `${event("T-02", "done", { evidence: "abc1234" })}\n`,
+    );
+    const cacheDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "project-board-cache-"));
+    roots.push(cacheDir);
+
+    const startedCold = performance.now();
+    const cold = await readProjectBoard(root, { now: NOW, cacheDir });
+    const coldMs = performance.now() - startedCold;
+    const startedWarm = performance.now();
+    const warm = await readProjectBoard(root, { now: NOW, cacheDir });
+    const warmMs = performance.now() - startedWarm;
+
+    expect(cold.counts).toEqual({ planned: 0, active: 150, review: 0, done: 1_350 });
+    expect(cold.notDone).toBe(150);
+    expect(cold.cards).toHaveLength(180);
+    expect(cold.cards.filter((card) => card.source !== undefined)).toMatchObject([
+      { incrementId: name(10), tasks: { done: 2 }, source: { kind: "worktree", name: "lane-c" } },
+    ]);
+    expect(cold.behind).toMatchObject({ ref: "origin/main", count: 0 });
+    expect(warm).toEqual(cold);
+    expect(coldMs).toBeLessThan(1_000);
+    expect(warmMs).toBeLessThan(150);
+  }, 120_000);
 
   const at = (iso: string) => ({ at: iso });
   const cardOf = async (root: string, id: string, now = NOW) =>
