@@ -158,7 +158,7 @@ try {
   const index = JSON.parse(await page.locator("#cases").textContent());
   // The source parse must keep finding the runner's reasons: a refactor that hides them fails.
   const reasonNames = index.stays.map((reason) => reason.name);
-  for (const name of [
+  const STAYS_NAMES = [
     "TURN_DID_NOT_STOP",
     "UNSENT_TOO_OLD",
     "RESUMED_HERE",
@@ -172,14 +172,21 @@ try {
     "LEGACY_HOLD_WAITS",
     "FOLLOW_NOT_RECORDED",
     "UNSETTLED_CHILD_REFUSAL",
-  ])
+  ];
+  for (const name of STAYS_NAMES)
     NodeAssert.ok(reasonNames.includes(name), `Stays reason ${name} is not read from the server`);
-  const staysCase = index.cases.find((entry) => entry.key === "stays");
-  NodeAssert.deepEqual(
-    staysCase.rows.map((row) => row.reason).sort(),
-    index.stays.map((reason) => reason.text).sort(),
-    "the stays case has one row per reason",
-  );
+  // The rendered stays case has exactly one row per literal name above, by its title.
+  await page.goto(`${origin}/?view=handoff-progress&case=stays`);
+  await page.locator('[data-slot="hand-off-progress"]').waitFor({ timeout: 10_000 });
+  for (const name of STAYS_NAMES)
+    NodeAssert.equal(
+      await page
+        .locator("li[data-row-state]")
+        .filter({ has: page.getByText(`Stays: ${name}`, { exact: true }) })
+        .count(),
+      1,
+      `the stays case renders one row for ${name}`,
+    );
   const progressResults = [];
   for (const entry of index.cases) {
     for (const theme of ["light", "dark"]) {
