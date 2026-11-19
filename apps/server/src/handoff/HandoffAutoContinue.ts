@@ -37,6 +37,22 @@ export const SLEEP_MOVES_NOTHING =
   "Threads move only when you hand them off. This machine going to sleep moves nothing.";
 
 /**
+ * Gives a thread back to this machine when the takeover still unanswered for it
+ * was started by a sleep on an earlier release. Used once the destination has
+ * answered a heartbeat without having continued it, so nothing moved.
+ */
+export function dropSleepTakeover(record: HandoffThreadRecord): HandoffThreadRecord {
+  if (record.lease?.state !== "handing-off" || record.pendingTakeover?.request.reason !== "sleep")
+    return record;
+  return {
+    ...record,
+    lease: { ...record.lease, state: "active" },
+    pendingTakeover: null,
+    lastError: null,
+  };
+}
+
+/**
  * The leases each heartbeat carries, by the machine it goes to: every thread
  * held here, for each machine holding its copy. No lease names a delay, since
  * silence starts nothing. A machine an earlier release armed gets a heartbeat

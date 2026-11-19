@@ -68,12 +68,7 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { queuedRunsInDeliveryOrder } from "../orchestration-v2/QueuedRunOrder.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import {
-  SLEEP_MOVES_NOTHING,
-  heartbeatLeases,
-  makeAutoContinueLoops,
-  noteAnswered,
-} from "./HandoffAutoContinue.ts";
+import * as Drain from "./HandoffAutoContinue.ts";
 import { createBundle, negotiationCandidates, repositoryPathFor } from "./bundleGit.ts";
 import { keepFencedChanges } from "./checkpointGit.ts";
 import { HandoffConnectivity, layer as HandoffConnectivityLayer } from "./handoffConnectivity.ts";
@@ -964,8 +959,7 @@ export const make = Effect.gen(function* () {
       if (destination === self) {
         return yield* failed("invalid", "Pick another machine to hand this machine's threads to.");
       }
-      // Sleep starts nothing (1390 AC-36), whoever asks.
-      if (input.reason === "sleep") return yield* failed("invalid", SLEEP_MOVES_NOTHING);
+      if (input.reason === "sleep") return yield* failed("invalid", Drain.SLEEP_MOVES_NOTHING);
       const label = yield* peerLabel(destination);
       const startedAt = yield* nowIso;
       const document = yield* handoff.document;
@@ -1236,7 +1230,7 @@ export const make = Effect.gen(function* () {
     return yield* handoff.snapshot;
   });
 
-  const autoContinue = makeAutoContinueLoops({
+  const autoContinue = Drain.makeAutoContinueLoops({
     self,
     document: handoff.document,
     updateRecord: (threadId, change) => updateRecord(threadId, change).pipe(Effect.ignore),
@@ -1257,7 +1251,7 @@ export const make = Effect.gen(function* () {
   const heartbeatOnce = Effect.gen(function* () {
     const document = yield* handoff.document;
     const now = yield* Clock.currentTimeMillis;
-    const byPeer = heartbeatLeases(document, self);
+    const byPeer = Drain.heartbeatLeases(document, self);
     // One silent peer must not hold up the others' heartbeats.
     const answers = yield* Effect.forEach(
       [...byPeer],
@@ -1279,7 +1273,7 @@ export const make = Effect.gen(function* () {
       lastAnswer.set(peer, now);
       yield* handoff.updateDocument((current) => {
         const before = current.autoContinuePeers ?? {};
-        const after = noteAnswered(before, peer);
+        const after = Drain.noteAnswered(before, peer);
         return [undefined, after === before ? current : { ...current, autoContinuePeers: after }];
       });
       const continuedIds = new Set(answer.value.continued.map((entry) => entry.sourceThreadId));
@@ -1288,8 +1282,13 @@ export const make = Effect.gen(function* () {
         if (continuedIds.has(sourceThreadId)) continue;
         if (record?.lease?.state !== "handing-off") continue;
         if (record.pendingTakeover?.destinationEnvironmentId !== peer) continue;
-        // The destination answers again but never continued it: send the takeover again.
-        yield* locks.withLock(sourceThreadId, resendPending(sourceThreadId)).pipe(
+        // The destination answers again but never continued it: send the takeover again,
+        // unless sleep started it (1390 AC-36). That one is dropped and the thread stays here.
+        const again =
+          record.pendingTakeover.request.reason === "sleep"
+            ? updateRecord(sourceThreadId, Drain.dropSleepTakeover)
+            : resendPending(sourceThreadId);
+        yield* locks.withLock(sourceThreadId, again).pipe(
           Effect.catchCause((cause) =>
             Effect.logInfo("Handoff re-sent a takeover that is still open", {
               threadId: sourceThreadId,
