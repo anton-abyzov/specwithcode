@@ -1824,6 +1824,12 @@ export const makeSweep = Effect.gen(function* () {
     // Shared with the coordinator's turn selection and new workers' launch.
     yield* (yield* UnopenableHolds).set(unopenableHeldNow);
     yield* (yield* UsageLimitHolds).set(held);
+    /** The holds that are current at `at`: the sweep's own, minus those that ended since. */
+    const limitedAt = (at: number): ReadonlySet<string> =>
+      new Set([
+        ...unreportedLimitStops(held, [], providers, at).keys(),
+        ...unopenableHolds(unopenableHeldNow, [], providers, at).keys(),
+      ]);
     const limited: ReadonlySet<string> = new Set([...held.keys(), ...unopenableHeldNow.keys()]);
     const reads: Reads = new Map();
     const rereadProviders = Effect.map(registry.getProviders, (read) => {
@@ -2055,6 +2061,7 @@ export const makeSweep = Effect.gen(function* () {
         rule: ServerSettingsValue,
         localStep: string | null,
         at: number,
+        limitedNow: ReadonlySet<string> = options.limited,
       ) => {
         const provider = own.find((entry) => entry.instanceId === current.providerInstanceId);
         const model = current.modelSelection?.model ?? null;
@@ -2079,7 +2086,7 @@ export const makeSweep = Effect.gen(function* () {
             rule,
             providers: own,
             nowMs: at,
-            limited: options.limited,
+            limited: limitedNow,
           }),
         });
       };
@@ -2098,8 +2105,13 @@ export const makeSweep = Effect.gen(function* () {
             yield* teamRulesForFolder(current.worktreePath ?? currentProject.workspaceRoot),
             providersFor(current, currentProject),
           );
-          const local = providerLimitStep(current, own, rule, at, options)?.type ?? null;
-          const fresh = triggerFor(current, own, rule, local, at);
+          // So are the holds: one that ended while a machine answered no longer
+          // counts its sign-in as limited.
+          const limitedNow = limitedAt(at);
+          const local =
+            providerLimitStep(current, own, rule, at, { ...options, limited: limitedNow })?.type ??
+            null;
+          const fresh = triggerFor(current, own, rule, local, at, limitedNow);
           // The same stop, and the same track still out here: a move is for both.
           return (
             fresh !== null &&

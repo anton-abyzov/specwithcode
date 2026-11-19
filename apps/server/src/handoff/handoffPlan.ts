@@ -289,8 +289,12 @@ export function confirmTarget(input: {
     (input.start === "manual" ? read.find((entry) => entry.byHand) : undefined);
   if (confirmed !== undefined) return { failures: base, evidence: wire(confirmed) };
   // No sign-in has room: the one that resets first says when the track is back (AC-39).
+  // Only one confirmed full: a reset read beside unknown or stale usage is not evidence.
   const resetOf = (entry: (typeof read)[number]) => {
-    const at = entry.resetsAt === null ? Number.NaN : Date.parse(entry.resetsAt);
+    const at =
+      entry.resetsAt === null || entry.kind !== "different-account"
+        ? Number.NaN
+        : Date.parse(entry.resetsAt);
     return Number.isFinite(at) && at > input.nowMs ? at : Number.POSITIVE_INFINITY;
   };
   const first = read.reduce<(typeof read)[number] | undefined>(

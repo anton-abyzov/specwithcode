@@ -284,7 +284,7 @@ export function run(scenario: Scenario, sweeps = 1) {
   const providers = () => [
     claudeSpent(stoppedAt, scenario.localResetsAt),
     scenario.localUnreported
-      ? { ...provider(codexId, "codex", stoppedAt), usageLimits: undefined }
+      ? { ...codex(stoppedAt, 0), usageLimits: undefined }
       : codex(
           stoppedAt,
           scenario.localSpent && !world.localReset ? 100 : 20,
@@ -331,7 +331,25 @@ export function run(scenario: Scenario, sweeps = 1) {
                   : [],
               } as never;
             })
-          : Effect.fail(new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId })),
+          : scenario.localUnreported && filter?.runIds !== undefined
+            ? // The run each thread stopped on: what a hold on an unreported sign-in is learned from.
+              Effect.sync(() => {
+                const owner = threads().find((entry) => entry.id === threadId) ?? thread;
+                return {
+                  thread: owner,
+                  runs: [
+                    {
+                      id: owner.latestRunId,
+                      providerInstanceId: owner.providerInstanceId,
+                      modelSelection: owner.modelSelection,
+                      status: "failed",
+                      startedAt: DateTime.makeUnsafe(stoppedAt - 60_000),
+                      completedAt: DateTime.makeUnsafe(stoppedAt),
+                    },
+                  ],
+                } as never;
+              })
+            : Effect.fail(new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId })),
     }),
     Layer.mock(ThreadManagement.ThreadManagementService)({
       dispatch: (command) =>
