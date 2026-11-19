@@ -117,7 +117,7 @@ export function PreviewClarity() {
           onDecide={setLastChoice}
           onClone={() => {}}
           disabled={false}
-          machines={{ here: "ministorm", source: "MacBook M4" }}
+          machines={{ here: "linux-mini", source: "MacBook M4" }}
           rootLabel="Umbrella root"
         />
         {availabilityCase && (
@@ -130,13 +130,13 @@ export function PreviewClarity() {
             copy={footerCopy}
             machine={"linux" as never}
             mode="copy-only"
-            targetLabel="ministorm"
+            targetLabel="linux-mini"
             auto={false}
             chooseFirst={false}
             selection={[]}
             setupBlocked={false}
             replaced="Some files"
-            approveLabel="Copy to ministorm"
+            approveLabel="Copy to linux-mini"
             secretsUnconfirmed={availabilityCase === "secrets"}
             failedBeforeApply={false}
             undoPreview={null}

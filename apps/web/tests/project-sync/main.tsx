@@ -13,11 +13,15 @@
                 inventory-failed  m5 could not list its extras
                 run-refused     Git refuses one step on m5 and m5's run fails on another
                 extras-failed   m4 could not send its extras
-                offline | read-only | needs-update | not-found | not-git | failed
+                long            the November 18 state of a busy machine: 179 uncommitted
+                                files and 11 branches that exist only on m4
+                offline | read-only | needs-update | not-found | not-git | failed | unreadable
                                 why m5 could not take part in the check
               `&hold=run` keeps the run from answering, for the running screen
      menu     the machine menu on m4's page with each sync fact, "Sync…" and
-              "Add to another machine…"; `&blocked=1` greys "Sync…" with its reason
+              "Add to another machine…"; `&blocked=1` greys "Sync…" with its reason;
+              `&window=read-only` is a window that can only read: the real menu hook, fed
+              each machine's status, shows the facts and greys "Sync…"
    `?theme=dark`, `?lang=` the interface language. */
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -41,16 +45,21 @@ import {
   type MachineRowReach,
 } from "../../src/components/studio/OrchestratorSwitcher";
 import { ProjectSyncDialog, type SyncTarget } from "../../src/components/studio/ProjectSyncDialog";
-import { syncBlockedOn, syncRowFact } from "../../src/components/studio/useProjectSyncMenu";
+import {
+  syncBlockedOn,
+  syncRowFact,
+  useProjectSyncMenu,
+} from "../../src/components/studio/useProjectSyncMenu";
 import { TooltipProvider } from "../../src/components/ui/tooltip";
 import { ToastProvider, AnchoredToastProvider } from "../../src/components/ui/toast";
 import { isLocale, setLocalePreference } from "../../src/i18n";
 import { orchestratorCopies } from "../../src/studio/projectCoordinatorMachine";
-import type {
-  ProjectSyncApi,
-  SyncMachine,
-  SyncOutcome,
-  SyncStatusRead,
+import {
+  refreshSyncStatus,
+  type ProjectSyncApi,
+  type SyncMachine,
+  type SyncOutcome,
+  type SyncStatusRead,
 } from "../../src/studio/projectSync";
 import { applyThemePalette } from "../../src/themePalette";
 import "./fixture.css";
@@ -196,6 +205,7 @@ const FETCHED: Record<string, Record<string, ProjectSyncFetchResult>> = {
       ],
     },
   },
+  long: { m4: LEVEL, m5: LEVEL },
   "scan-limited": {
     m4: LEVEL,
     m5: { scanLimited: true, repositories: [facts(".", { behind: 2 })] },
@@ -239,6 +249,39 @@ const ONLY_ON_M4: ProjectSyncInventoryResult = {
     },
   ],
 };
+/** A machine in the middle of work: 179 uncommitted files and 11 branches only there. */
+const LONG_ON_M4: ProjectSyncInventoryResult = {
+  scanLimited: false,
+  repositories: [
+    {
+      path: ".",
+      notPushed: [{ branch: "fix/menu", head: sha("b"), commits: 10 }],
+      onlyHere: [
+        "spike/cache",
+        "spike/sidebar-order",
+        "try/menu-facts",
+        "try/sync-dialog-table",
+        "wip/release-notes",
+        "wip/onboarding-copy",
+        "review/access-lines",
+        "review/provider-accounts-second-pass",
+        "backup/before-rebase",
+        "experiment/long-branch-name-for-a-layout-check",
+        "tmp/one-more",
+      ].map((branch, at) => ({ branch, head: sha("e"), commits: at + 1 })),
+      branchesNotListed: 0,
+      changedFiles: 131,
+      untrackedFiles: 48,
+      stashes: 3,
+      leftOut: [
+        { path: ".env.local", reason: "name", kind: null, modifiedAtMs: NOW },
+        { path: "notes/keys.txt", reason: "content", kind: "GitHub token", modifiedAtMs: NOW },
+        { path: "media/walkthrough.mov", reason: "not-checked", kind: null, modifiedAtMs: NOW },
+      ],
+      leftOutNotListed: 0,
+    },
+  ],
+};
 const ONLY_ON_M5: ProjectSyncInventoryResult = {
   scanLimited: false,
   repositories: [
@@ -271,6 +314,8 @@ const CAUSES: Record<string, unknown> = {
     code: "failed",
     reason: "The project folder is on a drive that is not connected",
   },
+  // An answer with a value this version does not know fails to decode as a whole.
+  unreadable: { _tag: "SchemaError", message: 'Expected "behind" | "missing", got "held"' },
 };
 
 const never = <A,>() => new Promise<SyncOutcome<A>>(() => {});
@@ -317,6 +362,7 @@ const api: ProjectSyncApi = {
     record(`inventory:${on.label}`);
     if (state === "inventory-failed" && on.label === "m5")
       return { ok: false, cause: CAUSES.offline };
+    if (state === "long") return answer(on.label === "m4" ? LONG_ON_M4 : EMPTY);
     if (FETCHED[state] && state !== "plan") return answer(EMPTY);
     return answer(on.label === "m4" ? ONLY_ON_M4 : ONLY_ON_M5);
   },
@@ -611,6 +657,8 @@ function MenuPage() {
             shownName: "m4",
             offline: offline(key),
             version: VERSIONS[id] ?? null,
+            // Read a moment ago: only the offline machine's fact carries its time.
+            now: NOW - 25 * 60_000 + 1_000,
           });
         }}
         onOpenChange={(next) => record(`menu:${next ? "open" : "closed"}`)}
@@ -622,13 +670,95 @@ function MenuPage() {
   );
 }
 
+/**
+ * A window that can only read: the real hook decides what the menu shows. Each machine's
+ * status was read through the hook's own store a moment ago, linux-mini's 25 minutes ago.
+ */
+const SEEDS: Record<string, SyncStatusRead | undefined> = { ...READS, m2: status(HEADS) };
+const seedReads = () =>
+  Promise.all(
+    ROSTER.map((id) =>
+      refreshSyncStatus(
+        [machine(id)],
+        {
+          status: async () => {
+            const read = SEEDS[id];
+            return read?.kind === "status"
+              ? answer(read.status)
+              : { ok: false, cause: "Unknown request tag: projectSync.status" };
+          },
+        },
+        () => Date.now() - (id === "linux-mini" ? 25 * 60_000 : 0),
+      ),
+    ),
+  );
+
+function ReadOnlyMenuPage() {
+  const files = useProjectSyncMenu({
+    project: records[0]!,
+    label: "m4",
+    current: "m4:p",
+    copies,
+    unknown: [],
+    environments: ROSTER.map((id) => ({ environmentId: id as never })),
+    projects: records,
+    reachOf: (key) => reachOf(key).reach,
+    versionOf: (environmentId) => VERSIONS[environmentId] ?? null,
+    // The window may not operate the project, and the project is not personal.
+    ask: null,
+    readOnly: true,
+  });
+  return (
+    <div className="fixture-page">
+      <OrchestratorSwitcher
+        identity={{ color: "teal" } as never}
+        label="m4"
+        projectTitle={PROJECT}
+        connected
+        statusDetail=""
+        current="m4:p"
+        copies={copies}
+        unknown={[]}
+        savedMachineMissing={false}
+        reachOf={reachOf}
+        onView={(key) => record(`view:${key}`)}
+        mainOffers={[]}
+        onMakeMain={() => {}}
+        onFix={() => {}}
+        onAllowWorkers={() => {}}
+        onMigrate={() => record("migrate")}
+        onSync={files.onSync ? () => (record("sync"), files.onSync?.()) : null}
+        syncBlocked={files.syncBlocked}
+        onAdd={files.onAdd}
+        syncOf={files.syncOf}
+        onOpenChange={(next) => record(`menu:${next ? "open" : "closed"}`)}
+        onLeave={null}
+        links={[]}
+        onLink={null}
+      />
+      <span data-sync-dialog-open={files.dialog ? "yes" : "no"} />
+    </div>
+  );
+}
+
+const readOnlyWindow = view === "menu" && params.get("window") === "read-only";
+if (readOnlyWindow) await seedReads();
+
 const router = createRouter({
   history: createMemoryHistory(),
   routeTree: createRootRoute({
     component: () => (
       <ToastProvider>
         <AnchoredToastProvider>
-          <TooltipProvider>{view === "menu" ? <MenuPage /> : <DialogPage />}</TooltipProvider>
+          <TooltipProvider>
+            {readOnlyWindow ? (
+              <ReadOnlyMenuPage />
+            ) : view === "menu" ? (
+              <MenuPage />
+            ) : (
+              <DialogPage />
+            )}
+          </TooltipProvider>
         </AnchoredToastProvider>
       </ToastProvider>
     ),
