@@ -240,7 +240,8 @@ export function ClaudeSignIn({
   const check = async () => {
     if (checking) return;
     setChecking(true);
-    await refresh({ environmentId, input: { instanceId } });
+    // Pressed: read the account past the server's probe cache.
+    await refresh({ environmentId, input: { instanceId, fresh: true } });
     setChecking(false);
   };
 

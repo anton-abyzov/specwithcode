@@ -21,6 +21,10 @@ import {
   structuredEditResultPatch,
 } from "@specweave-studio/shared/structuredPatch";
 import { formatPatch, OMIT_HEADERS, structuredPatch, type StructuredPatchHunk } from "diff";
+import {
+  subscriptionChangedSince,
+  type SubscriptionRead,
+} from "../../provider/subscriptionIdentity.ts";
 import { normalizeClaudeTurnTokenUsage } from "../../provider/ClaudeTurnTokenUsage.ts";
 import { withMainThreadPromptCache } from "../../provider/ClaudePromptCache.ts";
 import {
@@ -3723,6 +3727,9 @@ export function claudeProposedPlan(input: unknown): string | null {
   return typeof plan === "string" && plan.trim().length > 0 ? plan.trim() : null;
 }
 
+export const CLAUDE_SUBSCRIPTION_CHANGED_REASON =
+  "Claude Code was signed in to another account outside SpecWithCode; its process is replaced before the next turn.";
+
 export interface ClaudeAdapterV2Options {
   readonly modelCatalog?: () => ClaudeModelCatalog;
   readonly instanceId: ProviderInstanceId;
@@ -3744,6 +3751,12 @@ export interface ClaudeAdapterV2Options {
   readonly queryRunner: ClaudeAgentSdkQueryRunnerShape;
   readonly scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>;
   readonly onUsageLimits?: ServerProviderShape["applyUsageLimits"];
+  /**
+   * The subscription the instance's last status read names. A `claude`
+   * process keeps the sign-in it started with, so one opened before a
+   * terminal `/login` to another account is replaced before its next turn.
+   */
+  readonly subscription?: Effect.Effect<SubscriptionRead>;
   /** Sink for wake-turn continuation requests; defaults to dropping them. */
   readonly continuationRequests?: {
     readonly offer: (
@@ -3816,6 +3829,12 @@ export function makeClaudeAdapterV2(
       function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
         const sessionScope = yield* Effect.scope;
         const now = yield* DateTime.now;
+        // The subscription this process starts on, as the last status read named it.
+        const openedSubscription =
+          adapterOptions.subscription === undefined
+            ? undefined
+            : yield* adapterOptions.subscription;
+        const openedAtMs = yield* Clock.currentTimeMillis;
         const session = providerSession({
           providerSessionId: input.providerSessionId,
           providerInstanceId: adapterOptions.instanceId,
@@ -9290,6 +9309,17 @@ export function makeClaudeAdapterV2(
             ),
           events: Stream.fromEffectRepeat(Queue.take(events)),
           workflowExecutionPath: workflowExecutionPathOf(adapterOptions.environment),
+          ...(adapterOptions.subscription === undefined || openedSubscription === undefined
+            ? {}
+            : {
+                replaceWhenIdle: adapterOptions.subscription.pipe(
+                  Effect.map((current) =>
+                    subscriptionChangedSince(openedSubscription, openedAtMs, current)
+                      ? CLAUDE_SUBSCRIPTION_CHANGED_REASON
+                      : null,
+                  ),
+                ),
+              }),
           inspectWorkflowTools: (inspection) =>
             Effect.gen(function* () {
               const nativeId = yield* getNativeThreadId(inspection.providerThread);
@@ -9676,7 +9706,10 @@ export type ClaudeAdapterV2DriverEnv =
 export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
   function* (
     input: ProviderAdapterDriverCreateInput<ClaudeSettings>,
-    hooks: Pick<ClaudeAdapterV2Options, "scopedLimitNames" | "onUsageLimits" | "modelCatalog"> = {},
+    hooks: Pick<
+      ClaudeAdapterV2Options,
+      "scopedLimitNames" | "onUsageLimits" | "modelCatalog" | "subscription"
+    > = {},
   ) {
     const { instanceId, environment, enabled, config } = input;
     const fileSystem = yield* FileSystem.FileSystem;

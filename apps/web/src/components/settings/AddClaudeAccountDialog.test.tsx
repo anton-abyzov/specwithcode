@@ -200,7 +200,7 @@ describe("AddClaudeAccountDialog", () => {
     await act(async () => button("Check sign-in")!.click());
     expect(state.refresh).toHaveBeenCalledWith({
       environmentId: "m4",
-      input: { instanceId: "claudeAgent_marketing" },
+      input: { instanceId: "claudeAgent_marketing", fresh: true },
     });
   });
 

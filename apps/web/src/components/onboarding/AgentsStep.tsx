@@ -356,7 +356,8 @@ function ConnectedAgentsStep({
     if (ended.purpose === "install") {
       setSignInAfterTurnOn((current) => (current === ended.agent ? null : current));
     }
-    void refreshProviders({ environmentId, input: {} });
+    // A sign-in may have just ended in that terminal: read the account past the cache.
+    void refreshProviders({ environmentId, input: { fresh: true } });
     find();
   };
 
@@ -528,9 +529,9 @@ function ConnectedAgentsStep({
             setRechecking(true);
             panel.stopChecking();
             find();
-            void Promise.resolve(refreshProviders({ environmentId, input: {} })).finally(() =>
-              setRechecking(false),
-            );
+            void Promise.resolve(
+              refreshProviders({ environmentId, input: { fresh: true } }),
+            ).finally(() => setRechecking(false));
           }}
         >
           {rechecking ? tx("Checking…") : tx("Check again")}
