@@ -133,6 +133,12 @@ export interface RigThread {
   readonly title: string;
   activeRunId: string | null;
   worktreePath: string | null;
+  /** A question, approval or sign-in the thread waits on; absent means none. */
+  pendingRuntimeRequest?: {
+    readonly id: string;
+    readonly kind: string;
+    readonly createdAt: string;
+  } | null;
 }
 
 export interface RigMachine {
@@ -383,6 +389,7 @@ export const makeRig = (
             worktreePath: thread.worktreePath,
             activeRunId: thread.activeRunId,
             latestRunId: null,
+            pendingRuntimeRequest: thread.pendingRuntimeRequest ?? null,
             modelSelection,
             runtimeMode: "full-access",
             interactionMode: "default",
