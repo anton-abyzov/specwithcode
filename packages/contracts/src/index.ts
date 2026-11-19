@@ -117,6 +117,7 @@ export * from "./threadIncrementProgress.ts";
 export * from "./machineHandoff.ts";
 export * from "./handoffMode.ts";
 export * from "./handoffModeRpc.ts";
+export * from "./handoffTransfer.ts";
 export * from "./away.ts";
 export * from "./awayRpc.ts";
 export * from "./threadExecution.ts";
