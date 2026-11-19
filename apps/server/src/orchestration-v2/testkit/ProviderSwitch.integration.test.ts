@@ -1221,10 +1221,6 @@ describe("orchestration v2 provider switching", () => {
         ]);
         const missed = delivered.history.indexOf("Missed Claude request");
         const detour = delivered.history.indexOf("Codex detour request");
-        console.info(
-          "CHRONOLOGY_DELIVERED",
-          JSON.stringify({ missed, detour, inOrder: missed !== -1 && missed < detour }),
-        );
         assert.notEqual(missed, -1);
         assert.notEqual(detour, -1);
         // Run 2 came before the detour, so the receiving model reads it first.
