@@ -32,7 +32,7 @@ import { isUnknownSyncCall } from "../components/studio/projectSyncDialog.logic"
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 
-export const projectSync = {
+const projectSync = {
   status: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "project-sync:status",
     tag: M.projectSyncStatus,

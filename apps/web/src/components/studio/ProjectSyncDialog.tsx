@@ -1,4 +1,4 @@
-import { CheckIcon, MinusIcon } from "lucide-react";
+import { CheckIcon, ChevronRightIcon, MinusIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { useTx } from "../../i18n";
@@ -733,6 +733,7 @@ export function ProjectSyncDialog({
                         </span>
                       ) : null}
                     </span>
+                    {item.blocked ? null : <ChevronRightIcon aria-hidden className="ms-auto" />}
                   </Button>
                 );
               })}
