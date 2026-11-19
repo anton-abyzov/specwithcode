@@ -13,10 +13,12 @@
  * that points elsewhere is neither read further nor removed.
  *
  * Removal runs under the workspace lease, after every fact that can change
- * quickly is read again; any change keeps the folder. Ignored media is copied
- * to `<baseDir>/evidence/removed-worktrees/` first. Members go deepest
- * first, never forced; branches and the worktree-set manifest stay, so a chat
- * that resumes gets its folder back.
+ * quickly is read again; any change keeps the folder. Ignored media, reports
+ * and SpecWeave state are copied to `<baseDir>/evidence/removed-worktrees/`
+ * first. Members go deepest first, never forced; branches and the
+ * worktree-set manifest stay, so a chat that resumes gets its folder back. A
+ * removal Git could not finish leaves the folder untouched and on record
+ * (worktreeRemovalFailures.ts).
  *
  * @module worktreeCleanupSweep
  */
