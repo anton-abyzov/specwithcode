@@ -2782,9 +2782,7 @@ const make = Effect.gen(function* () {
         const resolution = resolveAdvisor({
           providers: runnable,
           model: effective.advisor.model,
-          reviewers: effective.adversarialReview.reviewers,
-          tier: effective.adversarialReview.tier,
-          tiers: effective.modelTiers,
+          lanes: effective.modelLanes,
           sourceOrder: effective.defaultModelProviders,
           excludedModels: effective.providerLimitExcludedModels,
           thread: parent.thread.modelSelection,

@@ -302,7 +302,7 @@ describe("AdvisorSettings", () => {
     withAdvisor({ enabled: true });
     render();
     expect(byLabel("Advisor model").props["data-trigger-label"]).toBe(
-      "Fable 5.2, then the Review track",
+      "The Complex track",
     );
     act(() => byLabel("Advisor model").props.onClick());
     expect(state.update).toHaveBeenLastCalledWith({

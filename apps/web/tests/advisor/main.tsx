@@ -2,7 +2,8 @@
 //   ?view=app       Settings > Models: the Advisor section, on with its defaults
 //   ?view=project   the project dialog's Advisor section, one field overridden
 //   ?view=composer  the composer's options menu with the thread's Advisor row, and the
-//                   real options picker on a model with no options of its own
+//                   real options picker on a model with no options of its own;
+//                   &thread=fable|opus|passthrough picks the thread's model (mocks.tsx)
 //   ?view=timeline  a turn with one consult that gave advice and one that could not
 //   ?theme=light|dark
 import type { OrchestrationV2ProjectedTurnItem } from "@specweave-studio/contracts";
@@ -24,7 +25,13 @@ import {
   MenuTrigger,
 } from "~/components/ui/menu";
 import { TooltipProvider } from "~/components/ui/tooltip";
-import { ENVIRONMENT_ID, ENVIRONMENT_LABEL, fixtureState, providers } from "./mocks";
+import {
+  ENVIRONMENT_ID,
+  ENVIRONMENT_LABEL,
+  fixtureState,
+  fixtureThread,
+  providers,
+} from "./mocks";
 import "./fixture.css";
 
 const params = new URLSearchParams(location.search);
@@ -70,7 +77,7 @@ function Composer() {
       <div className="w-full max-w-2xl rounded-2xl border border-border bg-card p-3 shadow-sm">
         <p className="px-1 pb-8 text-sm text-muted-foreground">Ask for a change, a fix or a plan</p>
         <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-          <span className="px-1">GPT-6.1 Sol</span>
+          <span className="px-1">{fixtureThread.label}</span>
           <span aria-hidden className="h-4 w-px bg-border" />
           <Menu>
             <MenuTrigger

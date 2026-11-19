@@ -5136,7 +5136,12 @@ export const de: PhraseCatalog = {
     "Ein Thread wird nie von seinem eigenen Modell beraten; stattdessen antwortet das nächste Modell der Reihenfolge.",
   "advisor model": "Beratermodell",
   "Use the default advisor order": "Standardreihenfolge der Berater verwenden",
-  "Fable 5.2, then the Review track": "Fable 5.2, dann der Review-Track",
+  "The Complex track": "Der Complex-Track",
+  "Advisor: {model}": "Advisor: {model}",
+  "Advisor: {model}, same model as this thread": "Advisor: {model}, dasselbe Modell wie dieser Thread",
+  "Past {limit} tokens: {model}": "Ab {limit} Tokens: {model}",
+  "No model can advise this thread right now.": "Gerade kann kein Modell diesen Thread beraten.",
+  "Claude's own advisor setting answered here: {model}": "Hier hat Claudes eigene Advisor-Einstellung geantwortet: {model}",
   "On Claude threads, Claude's built-in advisor reads the whole conversation on each consult. A Fable advisor is billed to Claude usage credits.":
     "In Claude-Threads liest Claudes eingebauter Berater bei jeder Konsultation die ganze Unterhaltung. Ein Fable-Berater wird über Claude-Nutzungsguthaben abgerechnet.",
   "Claude's own advisor": "Claudes eigener Berater",

@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
   shell: null as null | {
     projectId: string;
     title?: string;
+    modelSelection?: { instanceId: string; model: string };
     source: {
       advisorMode?: "on" | "off" | null;
       reviewMode?: "on" | "off" | null;
@@ -22,6 +23,17 @@ const state = vi.hoisted(() => ({
   enabled: false,
   reviewEnabled: false,
   sent: [] as Array<unknown>,
+  items: [] as Array<unknown>,
+  preview: { advisor: null, sameModel: false, pastLimit: null } as {
+    advisor: { instanceId: string; model: string } | null;
+    sameModel: boolean;
+    pastLimit: { instanceId: string; model: string } | null;
+  },
+}));
+
+vi.mock("@specweave-studio/shared/advisor", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@specweave-studio/shared/advisor")>()),
+  threadAdvisorPreview: () => state.preview,
 }));
 
 vi.mock("../ui/menu", async () => {
@@ -59,11 +71,29 @@ vi.mock("../ui/tooltip", () => ({
 }));
 vi.mock("../../state/entities", () => ({
   useThreadShell: () =>
-    state.shell === null ? null : { title: "Sign in with passkeys", ...state.shell },
+    state.shell === null
+      ? null
+      : {
+          title: "Sign in with passkeys",
+          modelSelection: { instanceId: "claudeAgent", model: "claude-fable-5-2" },
+          ...state.shell,
+        },
+  useThreadVisibleTurnItems: () => state.items,
 }));
 vi.mock("../../state/environments", () => ({
   useEnvironment: () => ({
     serverConfig: {
+      providers: [
+        {
+          instanceId: "claudeAgent",
+          driver: "claudeAgent",
+          models: [
+            { slug: "claude-fable-5-2", name: "Fable 5.2" },
+            { slug: "claude-opus-5-5", name: "Opus 5.5" },
+          ],
+        },
+        { instanceId: "codex", driver: "codex", models: [{ slug: "gpt-6-astra", name: "GPT-6 Astra" }] },
+      ],
       environment: {
         capabilities: {
           ...(state.capability === undefined ? {} : { advisor: state.capability }),
@@ -131,6 +161,83 @@ beforeEach(() => {
   state.enabled = false;
   state.reviewEnabled = false;
   state.sent = [];
+  state.items = [];
+  state.preview = { advisor: null, sameModel: false, pastLimit: null };
+});
+
+const fable = { instanceId: "claudeAgent", model: "claude-fable-5-2" };
+const astra = { instanceId: "codex", model: "gpt-6-astra" };
+const builtInConsult = {
+  sourceThreadId: "thread-1",
+  sourceItemId: "item-1",
+  item: {
+    type: "dynamic_tool",
+    toolName: "advisor",
+    title: "Asked the advisor (claude-fable-5-2) from Claude's settings",
+    status: "completed",
+    output: "Check the migration first.",
+  },
+};
+
+function note(renderer: ReturnType<typeof create>) {
+  const found = renderer.root.findAll(
+    (node) => node.type === "div" && node.props["data-thread-advisor-note"] !== undefined,
+  );
+  return found.length === 0
+    ? null
+    : { kind: found[0]!.props["data-thread-advisor-note"], text: found[0]!.children.map((line) => text(line as never)) };
+}
+
+describe("the Advisor row's note", () => {
+  it("names the advisor, says when it is the thread's own model, and who answers past the limit", () => {
+    state.enabled = true;
+    state.preview = { advisor: fable, sameModel: true, pastLimit: astra };
+    expect(note(render())).toEqual({
+      kind: "advisor",
+      text: ["Advisor: Fable 5.2, same model as this thread", "Past 200,000 tokens: GPT-6 Astra"],
+    });
+  });
+
+  it("names Fable alone for an Opus thread", () => {
+    state.enabled = true;
+    state.shell = {
+      projectId: "project-1",
+      source: {},
+      modelSelection: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
+    };
+    state.preview = { advisor: fable, sameModel: false, pastLimit: null };
+    expect(note(render())).toEqual({ kind: "advisor", text: ["Advisor: Fable 5.2"] });
+  });
+
+  it("says so when no model can advise", () => {
+    state.enabled = true;
+    expect(note(render())).toEqual({
+      kind: "none",
+      text: ["No model can advise this thread right now."],
+    });
+  });
+
+  it("in pass-through, names the model Claude's own setting answered with", () => {
+    state.items = [builtInConsult];
+    expect(note(render())).toEqual({
+      kind: "pass-through",
+      text: ["Claude's own advisor setting answered here: Fable 5.2"],
+    });
+  });
+
+  it("never credits Claude's settings with an answer the app passed the advisor for", () => {
+    state.items = [
+      { ...builtInConsult, item: { ...builtInConsult.item, title: "Asked the advisor (claude-fable-5-2)" } },
+    ];
+    expect(note(render())).toBeNull();
+  });
+
+  it("says nothing in pass-through before Claude's own advisor answered, or for Off", () => {
+    expect(note(render())).toBeNull();
+    state.items = [builtInConsult];
+    state.shell = { projectId: "project-1", source: { advisorMode: "off" } };
+    expect(note(render())).toBeNull();
+  });
 });
 
 describe("threadAdvisorMenuState", () => {
