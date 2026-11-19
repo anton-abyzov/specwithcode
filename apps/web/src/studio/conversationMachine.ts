@@ -35,7 +35,7 @@ export function sourceMachine(
   return threadMachineSuffix({ environmentId }, coordinatorEnvironmentId, knownName);
 }
 
-/** "PS5 OBS · M5": a relayed message's sender, with its machine when not the coordinator's. */
+/** "Release notes · M5": a relayed message's sender, with its machine when not the coordinator's. */
 export function senderWithMachine(
   thread: (Parameters<typeof threadMachineSuffix>[0] & { readonly title: string }) | undefined,
   coordinatorEnvironmentId: string,

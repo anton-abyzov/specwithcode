@@ -111,7 +111,7 @@ try {
       const sources = (await at("conversation", ".sws-reply-source").allTextContents()).map((t) =>
         t.replace(/\s+/g, " ").trim(),
       );
-      NodeAssert.deepEqual(sources, ["re: PS5 OBS · M5 ↗", "re: Codex token_expired on M5 ↗"]);
+      NodeAssert.deepEqual(sources, ["re: Release notes · M5 ↗", "re: Sign-in check ↗"]);
       await assertShown(
         page,
         at("conversation", "[data-reply-source-machine]"),
@@ -122,11 +122,11 @@ try {
       // A thread chip and a relayed note name the worker's machine.
       NodeAssert.match(
         (await at("conversation", "[data-thread-chip]").textContent()).replace(/\s+/g, " "),
-        /PS5 OBS · M5/,
+        /Release notes · M5/,
       );
       NodeAssert.equal(
         (await at("conversation", "[data-relayed-from]").textContent()).trim(),
-        "Message from PS5 OBS · M5",
+        "Message from Release notes · M5",
       );
       let file = NodePath.join(output, `coordinator-menu-remote-${theme}-${width}.png`);
       await page.screenshot({ path: file, fullPage: true });

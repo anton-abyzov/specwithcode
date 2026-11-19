@@ -47,9 +47,9 @@ const RUNS = [{ id: "run-1", modelSelection: { instanceId: "claudeAgent", model:
 /** A worker of linux-mini's coordinator that runs on M5. */
 const worker = {
   environmentId: WINDOW,
-  id: "thread-ps5",
+  id: "thread-release",
   projectId: "atlas",
-  title: "PS5 OBS",
+  title: "Release notes",
   latestRun: { status: "running" },
   runtime: null,
   hasPendingApprovals: false,
@@ -102,8 +102,8 @@ function Page() {
             <h3>Coordinator</h3>
             <CoordinatorReplySources
               sources={[
-                { kind: "thread", threadId: "thread-ps5", environmentId: WINDOW, title: "PS5 OBS" } as never,
-                { kind: "thread", threadId: "thread-local", environmentId: SHOWN, title: "Codex token_expired on M5" } as never,
+                { kind: "thread", threadId: "thread-release", environmentId: WINDOW, title: "Release notes" } as never,
+                { kind: "thread", threadId: "thread-local", environmentId: SHOWN, title: "Sign-in check" } as never,
               ]}
               onOpenThread={() => {}}
             />
@@ -112,7 +112,7 @@ function Page() {
             </p>
             <p>
               On M5: sign in to Codex again, then continue{" "}
-              <ThreadLinkChipButton thread={worker} label="PS5 OBS" onOpen={() => {}} />.
+              <ThreadLinkChipButton thread={worker} label="Release notes" onOpen={() => {}} />.
             </p>
           </article>
           <article className="project-message project-message-relay">
