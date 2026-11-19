@@ -1,9 +1,11 @@
 import type { PhraseCatalog } from "../phrases";
 import { syncKo } from "./sync/ko";
+import { handoffKo } from "./handoff/ko";
 
 /** Korean Settings titles and labels. "스레드" for thread, as in the message catalog. */
 export const ko: PhraseCatalog = {
   ...syncKo,
+  ...handoffKo,
   About: "정보",
   "Accent color": "강조 색상",
   Account: "계정",

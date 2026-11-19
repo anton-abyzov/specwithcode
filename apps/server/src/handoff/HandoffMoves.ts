@@ -87,6 +87,9 @@ import {
   makeHandoffBatch,
   PROJECT_NOT_READ,
 } from "./HandoffBatch.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import { makeHandoffPlanRead } from "./handoffPlanRead.ts";
 import { makeTransferRunner } from "./HandoffTransferRunner.ts";
 import * as HandoffTransferStore from "./HandoffTransferStore.ts";
 import {
@@ -805,6 +808,60 @@ export const make = Effect.gen(function* () {
       ),
   });
 
+  const providerRegistry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
+  const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+  const readPlan = makeHandoffPlanRead({
+    self,
+    selfLabel,
+    shells: Effect.suspend(() => projections.getShellSnapshot({ unsettledOnly: false })).pipe(
+      Effect.map((snapshot) => snapshot.threads),
+      Effect.mapError(() => failed("failed", "Could not read threads.")),
+    ),
+    document: handoff.document,
+    project: (projectId) =>
+      projects.getById(projectId).pipe(
+        Effect.map(Option.getOrNull),
+        Effect.mapError(() => failed("failed", PROJECT_NOT_READ)),
+      ),
+    projectIds: Effect.suspend(() => projects.snapshot).pipe(
+      Effect.map((snapshot) =>
+        snapshot.projects
+          .filter((project) => project.deletedAt == null)
+          .map((project) => project.id),
+      ),
+      Effect.orElseSucceed(() => []),
+    ),
+    peerLabel,
+    check: (destination, request) =>
+      peers
+        .check(destination, request)
+        .pipe(
+          Effect.mapError((error) => ({ message: error.message, needsUpdate: error.needsUpdate })),
+        ),
+    known: (destination, input) =>
+      peers
+        .negotiate(destination, {
+          sourceEnvironmentId: self,
+          sourceProjectId: input.shell.projectId,
+          sourceThreadId: input.shell.id,
+          repositoryPath: input.repositoryPath,
+          candidates: [...input.candidates],
+        })
+        .pipe(Effect.map((answer) => answer.known)),
+    providers: Option.isNone(providerRegistry)
+      ? Effect.succeed([])
+      : providerRegistry.value.getProviders.pipe(Effect.orElseSucceed(() => [])),
+    settings: Option.isNone(serverSettings)
+      ? Effect.succeed(null)
+      : serverSettings.value.getSettings.pipe(Effect.orElseSucceed(() => null)),
+    inventory: Option.isNone(folder) ? null : (projectId) => folder.value.inventory({ projectId }),
+    wire: {
+      protocolVersion: HANDOFF_PROTOCOL_VERSION,
+      appVersion: HANDOFF_APP_VERSION,
+      capabilities: HANDOFF_CAPABILITIES,
+    },
+  });
+
   /** The machine handoff older callers ask for: the same batch, saved as the last machine run. */
   const handOffMachine = (input: HandOffMachineInput) =>
     Effect.gen(function* () {
@@ -1290,6 +1347,7 @@ export const make = Effect.gen(function* () {
     handOffMachine,
     handOffBatch: batch.run,
     readBatches: batch.read,
+    readPlan,
     continueHere,
     resumeFenced,
     resumeThread,

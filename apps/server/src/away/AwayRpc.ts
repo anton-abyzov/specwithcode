@@ -40,6 +40,7 @@ export const layerRpcHandlers = WsAwayRpcGroup.middleware(RpcInstrumentation).to
       // The hand off batch (1390): the server runs it; a window only starts and reads it.
       [WS_METHODS.handoffBatchStart]: (input) => handoff.handOffBatch(input),
       [WS_METHODS.handoffBatchRead]: (input) => handoff.readBatches(input),
+      [WS_METHODS.handoffBatchPlan]: (input) => handoff.readPlan(input),
     };
   }),
 );

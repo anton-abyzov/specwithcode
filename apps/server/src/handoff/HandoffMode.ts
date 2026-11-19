@@ -17,6 +17,8 @@ import {
   type HandoffBatchInput,
   type HandoffBatchReadInput,
   type HandoffBatchRun,
+  type HandoffPlanReadInput,
+  type HandoffPlanView,
   type HandoffCheckpoint,
   type HandoffChildDisposition,
   type HandoffCheckpointReason,
@@ -130,6 +132,10 @@ export interface HandoffMovesPort {
   readonly readBatches: (
     input: HandoffBatchReadInput,
   ) => Effect.Effect<ReadonlyArray<HandoffBatchRun>, HandoffModeError>;
+  /** The Hand off dialog's rows and one machine's usage lines; nothing is held or sent. */
+  readonly readPlan: (
+    input: HandoffPlanReadInput,
+  ) => Effect.Effect<HandoffPlanView, HandoffModeError>;
   readonly continueHere: (
     input: HandoffContinueHereInput,
     options?: HandoffContinueHereOptions,
@@ -206,6 +212,9 @@ export class HandoffMode extends Context.Service<
     readonly readBatches: (
       input: HandoffBatchReadInput,
     ) => Effect.Effect<ReadonlyArray<HandoffBatchRun>, HandoffModeError>;
+    readonly readPlan: (
+      input: HandoffPlanReadInput,
+    ) => Effect.Effect<HandoffPlanView, HandoffModeError>;
     readonly continueHere: (
       input: HandoffContinueHereInput,
       options?: HandoffContinueHereOptions,
@@ -929,6 +938,7 @@ export const make = Effect.gen(function* () {
         : viaMoves((port) => port.handOffMachine(input)),
     handOffBatch: (input) => viaMoves((port) => port.handOffBatch(input)),
     readBatches: (input) => viaMoves((port) => port.readBatches(input)),
+    readPlan: (input) => viaMoves((port) => port.readPlan(input)),
     continueHere: (input, options) => viaMoves((port) => port.continueHere(input, options)),
     resumeFenced: viaMoves((port) => port.resumeFenced),
     resumeThread: (threadId, operationId) =>

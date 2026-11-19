@@ -968,6 +968,7 @@ describe("the batch's window calls (AC-33)", () => {
               return [];
             }),
           ),
+          group.toLayerHandler(WS_METHODS.handoffBatchPlan, () => Effect.never),
           RpcAuthorization.layer(scopes),
         ),
       ),

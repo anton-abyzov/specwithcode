@@ -14,6 +14,11 @@ export const handoffBatch = {
     label: "handoff-batch:read",
     tag: WS_METHODS.handoffBatchRead,
   }),
+  /** The Hand off dialog's rows and a machine's usage lines, read on the source. */
+  plan: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "handoff-batch:plan",
+    tag: WS_METHODS.handoffBatchPlan,
+  }),
 };
 
 export interface HandoffBatchGate {
@@ -21,6 +26,8 @@ export interface HandoffBatchGate {
   readonly canRead: boolean;
   /** The window may start a batch there. */
   readonly canStart: boolean;
+  /** The window may ask that machine for the dialog's plan (the start's scope). */
+  readonly canPlan: boolean;
   /** Shown under the greyed check and "Hand off"; null when nothing is greyed. */
   readonly blocked: {
     readonly text: string;
@@ -43,6 +50,7 @@ export function handoffBatchGate(input: {
   return {
     canRead: input.read === "granted",
     canStart,
+    canPlan: canStart,
     blocked: canStart
       ? null
       : { text: "This window can only read {machine}", values: { machine: input.machine } },

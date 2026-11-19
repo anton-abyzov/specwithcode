@@ -14,12 +14,25 @@ describe("the hand off batch from a window (1390 AC-33)", () => {
       AuthOrchestrationOperateScope,
     );
     expect(CLIENT_GUARDED_RPC_SCOPES[WS_METHODS.handoffBatchRead]).toBe(AuthFilesystemReadScope);
+    expect(CLIENT_GUARDED_RPC_SCOPES[WS_METHODS.handoffBatchPlan]).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
+  it("asks for the plan only where the window may start a batch", () => {
+    expect(
+      handoffBatchGate({ machine: "Rack F", operate: "granted", read: "denied" }).canPlan,
+    ).toBe(true);
+    expect(
+      handoffBatchGate({ machine: "Rack F", operate: "denied", read: "granted" }).canPlan,
+    ).toBe(false);
   });
 
   it("lets a window with full access start a batch", () => {
     expect(handoffBatchGate({ machine: "Rack F", operate: "granted", read: "granted" })).toEqual({
       canRead: true,
       canStart: true,
+      canPlan: true,
       blocked: null,
     });
   });
@@ -28,6 +41,7 @@ describe("the hand off batch from a window (1390 AC-33)", () => {
     expect(handoffBatchGate({ machine: "Rack F", operate: "denied", read: "granted" })).toEqual({
       canRead: true,
       canStart: false,
+      canPlan: false,
       blocked: { text: "This window can only read {machine}", values: { machine: "Rack F" } },
     });
   });

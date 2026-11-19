@@ -1,9 +1,11 @@
 import type { PhraseCatalog } from "../phrases";
 import { syncZh } from "./sync/zh";
+import { handoffZh } from "./handoff/zh";
 
 /** Simplified Chinese Settings titles and labels. "会话" for thread, as in the message catalog. */
 export const zh: PhraseCatalog = {
   ...syncZh,
+  ...handoffZh,
   About: "关于",
   "Accent color": "强调色",
   Account: "账户",

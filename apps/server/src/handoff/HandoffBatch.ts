@@ -1047,6 +1047,9 @@ export function makeHandoffBatch(deps: HandoffBatchDeps) {
         destinationEnvironmentId: input.destinationEnvironmentId,
         start: "manual",
         threads: input.threadIds.map((threadId) => ({ threadId })),
+        ...(input.folderWork === undefined || input.folderWork.length === 0
+          ? {}
+          : { folderWork: input.folderWork }),
       },
       {
         ...options,

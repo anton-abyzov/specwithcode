@@ -12,18 +12,28 @@ import {
 import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 
 /**
- * The dialog's groups, in AC-17's order. Queued is not one yet: a hand off by
- * hand leaves held messages behind, so an idle thread with some stays.
+ * The dialog's groups, in AC-17's order. A queued row is listed but cannot be
+ * ticked yet: a hand off by hand leaves held messages behind.
  */
-export type HandoffMachineGroup = "running" | "waiting" | "stays";
+export type HandoffMachineGroup =
+  | "running"
+  | "queued"
+  | "waiting"
+  | "unsaved"
+  | "folder-work"
+  | "stays";
 
 export interface HandoffMachineThreadRow {
   readonly threadId: ThreadId;
   readonly title: string;
   /** Absent reads as Running, as older fixtures write rows. */
   readonly group?: HandoffMachineGroup;
-  /** Why a row in Stays cannot go. */
+  /** Why a row in Stays cannot go, why it cannot be ticked, or what it carries. */
   readonly reason?: string | null;
+  /** A project's folder work rather than a thread; its id is `folderWorkRowId`. */
+  readonly kind?: "thread" | "folder-work";
+  /** False for a row that is listed but cannot be ticked; absent reads as true outside Stays. */
+  readonly canTick?: boolean;
 }
 
 export interface HandoffMachineProject {
@@ -51,7 +61,14 @@ export const ASSISTANT_STAYS = "The personal assistant stays on this machine.";
 /** A hand off by hand moves the thread, not the messages held behind it. */
 export const QUEUE_STAYS = "Its queued messages do not travel in a hand off by hand yet.";
 
-const ORDER: Record<HandoffMachineGroup, number> = { running: 0, waiting: 1, stays: 2 };
+const ORDER: Record<HandoffMachineGroup, number> = {
+  running: 0,
+  queued: 1,
+  waiting: 2,
+  unsaved: 3,
+  "folder-work": 4,
+  stays: 5,
+};
 
 /**
  * What the thread is doing, as the server's `handoffActivity` reads it: null
@@ -127,7 +144,9 @@ export function handoffMachineRows(facts: HandoffMachineRowFacts): HandoffMachin
 
 /** The ids ticked when the dialog opens: every row that can go. */
 export function tickableHandoffRows(rows: ReadonlyArray<HandoffMachineThreadRow>): Set<ThreadId> {
-  return new Set(rows.filter((row) => row.group !== "stays").map((row) => row.threadId));
+  return new Set(
+    rows.filter((row) => row.group !== "stays" && row.canTick !== false).map((row) => row.threadId),
+  );
 }
 
 /** The most thread ids one check or one hand off takes (the server's schema). */

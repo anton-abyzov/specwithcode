@@ -68,6 +68,7 @@ describe("hand off batch scopes (1390 AC-33)", () => {
   const expected = {
     [HANDOFF_BATCH_RPC_METHODS.handoffBatchStart]: AuthOrchestrationOperateScope,
     [HANDOFF_BATCH_RPC_METHODS.handoffBatchRead]: AuthFilesystemReadScope,
+    [HANDOFF_BATCH_RPC_METHODS.handoffBatchPlan]: AuthOrchestrationOperateScope,
   };
 
   it("gives each call a window can make exactly one scope from the existing set", () => {
@@ -83,7 +84,7 @@ describe("hand off batch scopes (1390 AC-33)", () => {
     );
     expect(
       Object.keys(CLIENT_GUARDED_RPC_SCOPES).filter((method) => method.startsWith("handoffBatch.")),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
   });
 
   it("starts a batch at the scope of the calls it replaces, and reads one at a read scope", () => {
