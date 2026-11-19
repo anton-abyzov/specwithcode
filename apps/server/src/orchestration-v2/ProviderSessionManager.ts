@@ -279,6 +279,12 @@ export class ProviderSessionManagerV2 extends Context.Service<
 interface LiveSessionEntry {
   readonly runtimeMode: ProviderAdapterV2RuntimePolicy["runtimeMode"];
   readonly attachedThreadIds: ReadonlySet<ThreadId>;
+  /**
+   * Threads whose detach left this exclusive session without attachments.
+   * Their requests still wait on this session's callbacks, so whichever
+   * release ends the session settles them too.
+   */
+  readonly detachedThreadIds?: ReadonlySet<ThreadId>;
   readonly loadedProviderThreadKeyByThread: ReadonlyMap<ThreadId, string>;
   /**
    * MCP credential session id issued for each attached thread. Revocation on
@@ -846,11 +852,6 @@ export const layerWithOptions = (
         readonly reason: ProviderSessionReleaseReason;
         /** Requests created later belong to a replacement session with the same id. */
         readonly releasedAt: DateTime.Utc;
-        /**
-         * A thread whose detach released this session. It already left the
-         * attachments, but its requests still wait on this session's callbacks.
-         */
-        readonly detachedThreadId?: ThreadId;
       }) =>
         Effect.gen(function* () {
           const providerSessionId = input.entry.runtime.providerSessionId;
@@ -861,10 +862,10 @@ export const layerWithOptions = (
               ? "Provider session failed before this runtime request was resolved."
               : "Provider session was closed before this runtime request was resolved.";
 
-          const threadIds = new Set(input.entry.attachedThreadIds);
-          if (input.detachedThreadId !== undefined) {
-            threadIds.add(input.detachedThreadId);
-          }
+          const threadIds = new Set([
+            ...input.entry.attachedThreadIds,
+            ...(input.entry.detachedThreadIds ?? []),
+          ]);
           const events: Array<OrchestrationV2DomainEvent> = [];
           for (const threadId of threadIds) {
             const projection = yield* projectionStore.getThreadRecords(
@@ -966,7 +967,6 @@ export const layerWithOptions = (
         readonly detail?: string;
         readonly releasedAt: DateTime.Utc;
         readonly replaced: boolean;
-        readonly detachedThreadId?: ThreadId;
       }) =>
         Effect.all(
           [
@@ -1042,11 +1042,15 @@ export const layerWithOptions = (
       const removeLiveEntry = (input: {
         readonly providerSessionId: ProviderSessionId;
         readonly onlyIfIdleGeneration?: number;
+        readonly onlyIfRuntime?: ProviderAdapterV2SessionRuntime;
       }): Effect.Effect<readonly [Option.Option<LiveSessionEntry>, DateTime.Utc]> =>
         Effect.gen(function* () {
           const key = sessionKey(input.providerSessionId);
           const candidate = (yield* Ref.get(sessions)).get(key);
-          if (candidate === undefined) {
+          if (
+            candidate === undefined ||
+            (input.onlyIfRuntime !== undefined && candidate.runtime !== input.onlyIfRuntime)
+          ) {
             return [Option.none<LiveSessionEntry>(), yield* DateTime.now] as const;
           }
           const removed = yield* Effect.zip(
@@ -1125,8 +1129,8 @@ export const layerWithOptions = (
         readonly gracefulSubscribers?: boolean;
         /** Keep MCP credentials, as a server shutdown does (service update). */
         readonly keepMcpCredentials?: boolean;
-        /** The thread whose detach left this session without attachments. */
-        readonly detachedThreadId?: ThreadId;
+        /** Release only this runtime, never a replacement under the same id. */
+        readonly onlyIfRuntime?: ProviderAdapterV2SessionRuntime;
       }) =>
         Effect.acquireUseRelease(
           removeLiveEntry(input),
@@ -1156,9 +1160,6 @@ export const layerWithOptions = (
                     entry,
                     reason: input.reason,
                     ...(input.detail === undefined ? {} : { detail: input.detail }),
-                    ...(input.detachedThreadId === undefined
-                      ? {}
-                      : { detachedThreadId: input.detachedThreadId }),
                     releasedAt,
                   };
                   const recorded = yield* Effect.exit(
@@ -1490,6 +1491,13 @@ export const layerWithOptions = (
             updated.set(sessionKey(input.providerSessionId), {
               ...entry,
               attachedThreadIds: new Set([...entry.attachedThreadIds, input.threadId]),
+              ...(entry.detachedThreadIds?.has(input.threadId) === true
+                ? {
+                    detachedThreadIds: new Set(
+                      [...entry.detachedThreadIds].filter((id) => id !== input.threadId),
+                    ),
+                  }
+                : {}),
             });
             return [entry.runtime, updated] as const;
           }),
@@ -2860,6 +2868,17 @@ export const layerWithOptions = (
               const updatedEntry = {
                 ...entry,
                 attachedThreadIds,
+                // Recorded with the detach itself, so a release that wins the
+                // race to this now-unused session still settles this thread's
+                // approvals.
+                ...(attachedThreadIds.size === 0 && !entry.supportsMultipleProviderThreads
+                  ? {
+                      detachedThreadIds: new Set([
+                        ...(entry.detachedThreadIds ?? []),
+                        input.threadId,
+                      ]),
+                    }
+                  : {}),
                 loadedProviderThreadKeyByThread,
                 mcpCredentialIdByThread,
               };
@@ -2899,13 +2918,13 @@ export const layerWithOptions = (
               detached.value.attachedThreadIds.size === 0 &&
               !detached.value.supportsMultipleProviderThreads
             ) {
-              // The detached thread's approvals wait on this session's
-              // callbacks, which the release ends, so they are settled too.
+              // Only the runtime this detach emptied: a replacement that
+              // opened under the same id after another release stays up.
               yield* releaseEntry({
                 providerSessionId: input.providerSessionId,
                 reason: "manual_shutdown",
                 ...(input.detail === undefined ? {} : { detail: input.detail }),
-                detachedThreadId: input.threadId,
+                onlyIfRuntime: detached.value.runtime,
               });
               return;
             }
