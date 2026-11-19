@@ -101,9 +101,7 @@ try {
     if (name !== "several" && name !== "none")
       NodeAssert.match(
         await page.locator('input[aria-label="Folder on rackF"]').inputValue(),
-        name === "several-main"
-          ? /^\/Users\/you\/work\/atlas$/
-          : /^\/Users\/you\/projects\/atlas$/,
+        name === "several-main" ? /^\/Users\/you\/work\/atlas$/ : /^\/Users\/you\/projects\/atlas$/,
       );
     if (name === "move") {
       await page.getByRole("button", { name: "Copy and move to rackF", exact: true }).waitFor();
@@ -149,7 +147,10 @@ try {
       NodeAssert.match(await text(page, "send-plan"), /The coordinator stays on rackF\.$/);
     }
     if (name === "several") {
-      NodeAssert.match(await text(page, "send-existing-copy"), /rackF has this project in 2 folders/);
+      NodeAssert.match(
+        await text(page, "send-existing-copy"),
+        /rackF has this project in 2 folders/,
+      );
       NodeAssert.equal(await text(page, "send-plan"), null);
       NodeAssert.equal(
         await page.getByRole("button", { name: "Copy to rackF", exact: true }).isDisabled(),

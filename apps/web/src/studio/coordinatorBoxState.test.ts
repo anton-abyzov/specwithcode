@@ -29,7 +29,11 @@ const offers = {
     { kind: "blocked", main, reason: "waiting", waitMs: 3.5 * 60_000 },
     names,
   )!,
-  unloaded: mainOffer("rackF:p", { kind: "unloaded", mainEnvironmentId: "laptopE" as never }, names)!,
+  unloaded: mainOffer(
+    "rackF:p",
+    { kind: "unloaded", mainEnvironmentId: "laptopE" as never },
+    names,
+  )!,
   notReady: mainOffer(
     "rackF:p",
     { kind: "blocked", main, reason: "copy-not-ready", waitMs: 0 },

@@ -140,7 +140,10 @@ try {
       // A key file: set up a new one there, never sent.
       const ssh = section.locator('[data-credential="ssh"]');
       await ssh.locator('[data-slot="copy-credential-sign-in"]').click();
-      NodeAssert.match(await ssh.textContent(), /Private keys stay on laptopE and are never copied/);
+      NodeAssert.match(
+        await ssh.textContent(),
+        /Private keys stay on laptopE and are never copied/,
+      );
       // The places the project connects to, each with a check that runs as written.
       NodeAssert.deepEqual(
         await ssh

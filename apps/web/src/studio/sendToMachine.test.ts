@@ -104,12 +104,16 @@ describe("a source that is not linked to the destination's project", () => {
   const deskB = project("deskB", "p1");
 
   it("finds the destination project's own Main, never the source", () => {
-    expect(otherProjectOf({ source: deskB, copy: rackF, projects: [deskB, laptopE, shelfG, rackF] })).toEqual({
+    expect(
+      otherProjectOf({ source: deskB, copy: rackF, projects: [deskB, laptopE, shelfG, rackF] }),
+    ).toEqual({
       mainEnvironmentId: "laptopE",
     });
     // A source linked to another project is just as unlinked from this one.
     const elsewhere = project("deskB", "p1", { logical: "K" });
-    expect(otherProjectOf({ source: elsewhere, copy: rackF, projects: [elsewhere, laptopE, rackF] })).toEqual({
+    expect(
+      otherProjectOf({ source: elsewhere, copy: rackF, projects: [elsewhere, laptopE, rackF] }),
+    ).toEqual({
       mainEnvironmentId: "laptopE",
     });
   });
@@ -141,7 +145,11 @@ describe("a source that is not linked to the destination's project", () => {
     const own = machineHoldings({ source: deskB, machineIds: ["rackF"], projects: [deskB, rackF] });
     expect(own.mainEnvironmentId).toBe("deskB");
     expect(own.byMachine.get("rackF")?.kind).toBe("copy");
-    const linked = machineHoldings({ source: shelfG, machineIds: ["rackF"], projects: [shelfG, rackF] });
+    const linked = machineHoldings({
+      source: shelfG,
+      machineIds: ["rackF"],
+      projects: [shelfG, rackF],
+    });
     // Main (laptopE) is not in sight and no successor names it: unknown, not the source.
     expect(linked.mainEnvironmentId).toBeNull();
   });
@@ -227,7 +235,9 @@ describe("the dialog's words", () => {
       "Push this machine's commits, then continue the coordinator in ~/specweave on deskB. The coordinator continues on deskB. 3 uncommitted files stay here.",
     );
     // A machine holding Main is never moved to: the plan is a copy, and Main stays there.
-    expect(sendPlan({ ...base, there: "laptopE", choice: "move", holding: main, localFiles: 0 })).toBe(
+    expect(
+      sendPlan({ ...base, there: "laptopE", choice: "move", holding: main, localFiles: 0 }),
+    ).toBe(
       "Compare with ~/specweave on laptopE and copy what it is missing. The coordinator stays on laptopE.",
     );
     // Main unknown here: the plan does not invent a machine.

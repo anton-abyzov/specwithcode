@@ -392,7 +392,8 @@ const api: ProjectSyncApi = {
   run: async (on, plan) => {
     record(`run:${on.label}:${JSON.stringify(plan)}`);
     if (hold === "run") return never();
-    if (state === "run-refused" && on.label === "laptopE") return { ok: false, cause: CAUSES.offline };
+    if (state === "run-refused" && on.label === "laptopE")
+      return { ok: false, cause: CAUSES.offline };
     // The branch went from origin after the fetch, origin could not be asked, and a clone
     // that was stopped left a folder Sync could not remove.
     if (state === "upstream")
@@ -735,6 +736,7 @@ function ReadOnlyMenuPage() {
     unknown: [],
     environments: ROSTER.map((id) => ({ environmentId: id as never })),
     projects: records,
+    nameOf: (environmentId) => environmentId,
     reachOf: (key) => reachOf(key).reach,
     versionOf: (environmentId) => VERSIONS[environmentId] ?? null,
     // The window may not operate the project, and the project is not personal.

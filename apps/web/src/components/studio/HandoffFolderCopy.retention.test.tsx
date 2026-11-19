@@ -180,7 +180,12 @@ it("names the machines the chats were written on after an earlier summarized han
       ...retention,
       machines: [
         { environmentId: "laptopE", totalThreads: 0, omittedThreads: 0, omittedMessages: 0 },
-        { environmentId: "kioskD", totalThreads: 1628, omittedThreads: 1428, omittedMessages: 9418 },
+        {
+          environmentId: "kioskD",
+          totalThreads: 1628,
+          omittedThreads: 1428,
+          omittedMessages: 9418,
+        },
       ],
     },
   );

@@ -152,7 +152,11 @@ it("offers Add by the dialog's rule, and Sync with a dialog, to a window that ca
 
 it("offers Sync between linked machines only, and lists a separate project greyed", async () => {
   const ask = vi.fn<SyncAsk>();
-  const copies = [copy("laptopE:p", "laptopE"), copy("rackF:p", "rackF"), copy("deskB:q", "deskB", "independent")];
+  const copies = [
+    copy("laptopE:p", "laptopE"),
+    copy("rackF:p", "rackF"),
+    copy("deskB:q", "deskB", "independent"),
+  ];
   await render({ ask, readOnly: false, copies });
   await act(async () => menu.onSync?.());
   expect(

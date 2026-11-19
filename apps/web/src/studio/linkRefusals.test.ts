@@ -65,9 +65,14 @@ describe("reasons this window composes", () => {
     });
     expect(copyProblemWords({ unstable: [], checks: [] } as never, "laptopE")).toBeNull();
     // The English a place not translated yet shows is the same sentence, filled in.
-    expect(LINK_REFUSAL_TEXT.paused("rackF")).toBe("The project on rackF is paused. Resume it first.");
+    expect(LINK_REFUSAL_TEXT.paused("rackF")).toBe(
+      "The project on rackF is paused. Resume it first.",
+    );
     expect(
-      linkReasonEnglish({ text: "Project notes differ on {machine}.", values: { machine: "rackF" } }),
+      linkReasonEnglish({
+        text: "Project notes differ on {machine}.",
+        values: { machine: "rackF" },
+      }),
     ).toBe("Project notes differ on rackF.");
   });
 

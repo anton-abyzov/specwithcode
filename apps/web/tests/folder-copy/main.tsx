@@ -201,8 +201,7 @@ function Fixture() {
                 id: "source",
                 environmentId: "laptopE",
                 title: "SpecWeave",
-                workspaceRoot:
-                  "/Users/you/projects/atlas/repositories/acme/specweave",
+                workspaceRoot: "/Users/you/projects/atlas/repositories/acme/specweave",
               } as never
             }
             coordinatorId={"coordinator" as never}

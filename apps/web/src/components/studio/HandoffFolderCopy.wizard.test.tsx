@@ -274,7 +274,9 @@ it("pins the machine it picked: one that connects later never retargets the butt
   );
   expect(touched.some((call) => call?.environmentId === "deskB")).toBe(true);
   expect(touched.some((call) => call?.environmentId === "kioskD")).toBe(false);
-  expect(touched.some((call) => call?.input?.["destinationEnvironmentId"] === "kioskD")).toBe(false);
+  expect(touched.some((call) => call?.input?.["destinationEnvironmentId"] === "kioskD")).toBe(
+    false,
+  );
 });
 
 it("waits visibly for a machine, then picks the first that becomes ready", async () => {

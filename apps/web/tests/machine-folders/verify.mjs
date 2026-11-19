@@ -87,9 +87,7 @@ try {
     await page.getByText("2 uncommitted files stay on Laptop E:", { exact: false }).waitFor();
     assert.equal(await page.getByRole("checkbox", { name: /Remember/ }).count(), 0);
     assert.equal(
-      await page
-        .getByRole("button", { name: "Continue the coordinator on Kiosk D" })
-        .isDisabled(),
+      await page.getByRole("button", { name: "Continue the coordinator on Kiosk D" }).isDisabled(),
       true,
     );
     await page.screenshot({ path: join(output, `${width}-${theme}-choose.png`), fullPage: true });
@@ -102,10 +100,7 @@ try {
       .getByRole("navigation", { name: "Current folder" })
       .getByRole("button", { name: "Projects", exact: true })
       .click();
-    assert.equal(
-      await page.getByLabel("Folder on Kiosk D").inputValue(),
-      "/Users/you/Projects",
-    );
+    assert.equal(await page.getByLabel("Folder on Kiosk D").inputValue(), "/Users/you/Projects");
     await page.getByRole("option", { name: "another-project", exact: true }).click();
     await page.screenshot({ path: join(output, `${width}-${theme}-browse.png`), fullPage: true });
     await page.getByRole("button", { name: "Use this folder", exact: true }).click();
@@ -133,7 +128,14 @@ try {
     assert.equal(overflow, false);
     assert.deepEqual(errors, []);
     await page.screenshot({ path: join(output, `${width}-${theme}-review.png`), fullPage: true });
-    receipt.cases.push({ width, height, theme, passed: true, remoteEnvironment: "kioskD", overflow });
+    receipt.cases.push({
+      width,
+      height,
+      theme,
+      passed: true,
+      remoteEnvironment: "kioskD",
+      overflow,
+    });
     await page.close();
   }
   await writeFile(join(output, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");

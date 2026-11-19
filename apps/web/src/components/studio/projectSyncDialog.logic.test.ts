@@ -606,7 +606,11 @@ describe("extras", () => {
     expect(
       extras.leftOut.map((file) => [file.file, readSyncText(file.label), file.sendAnyway]),
     ).toEqual([
-      [".env.local", "A secret by its name. It stays on Laptop E: Sync does not send secrets.", false],
+      [
+        ".env.local",
+        "A secret by its name. It stays on Laptop E: Sync does not send secrets.",
+        false,
+      ],
       ["notes/keys.txt", "Looks like a GitHub token", true],
       ["data/big.bin", "Not checked", true],
     ]);
@@ -685,7 +689,9 @@ describe("extraResultLine", () => {
       "On Rack F as branch swc/from-laptop-e/fix/menu. To use it there, check it out or merge it.",
     );
     expect(extraResultLine(sent(), names).size).toBe("4.1 MB");
-    expect(read({ landed: "unchanged" })).toBe("Rack F already has it as branch swc/from-laptop-e/fix/menu.");
+    expect(read({ landed: "unchanged" })).toBe(
+      "Rack F already has it as branch swc/from-laptop-e/fix/menu.",
+    );
     // The answer does not say which branch is checked out there: only the receipt's ref is named.
     expect(read({ landed: "checked-out", arrivedAs: "swc/from-laptop-e/fix/menu-a3f9c1" })).toBe(
       "The branch it would arrive as is checked out on Rack F, so this arrived beside it as swc/from-laptop-e/fix/menu-a3f9c1. To use it there, check it out or merge it.",

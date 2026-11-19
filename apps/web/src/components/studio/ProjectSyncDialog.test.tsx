@@ -291,7 +291,12 @@ it("fetches on both machines, shows what Sync does per repository, then runs it"
   await render(api);
   expect(stage()).toBe("plan");
   expect(document.querySelector("h2")?.textContent).toBe("Sync Atlas: Laptop E and Rack F");
-  expect(calls).toEqual(["fetch Laptop E", "fetch Rack F", "inventory Laptop E", "inventory Rack F"]);
+  expect(calls).toEqual([
+    "fetch Laptop E",
+    "fetch Rack F",
+    "inventory Laptop E",
+    "inventory Rack F",
+  ]);
   expect(cell("apps/site", "a")).toBe("Laptop EmainMoves forward 99 commits");
   expect(cell("apps/site", "b")).toBe("Rack FmainUp to date");
   // Level with its upstream, with uncommitted files and a thread at work: never bare.
@@ -306,7 +311,9 @@ it("fetches on both machines, shows what Sync does per repository, then runs it"
   expect(cell("apps/site", "a")).toBe("Laptop EmainMoved forward 99 commits");
   expect(cell(".", "b")).toBe("Rack FmainUp to date2 uncommitted filesIn use by Docs lint");
   // Rack F still has uncommitted files and a thread at work: finished, never "in sync".
-  expect(document.querySelector("h2")?.textContent).toBe("Sync finished for Atlas: Laptop E and Rack F");
+  expect(document.querySelector("h2")?.textContent).toBe(
+    "Sync finished for Atlas: Laptop E and Rack F",
+  );
   // The result is said once in the region that stays, and the title takes the focus.
   expect(document.querySelector("[data-sync-live]")?.textContent).toBe(
     "Sync finished for Atlas: Laptop E and Rack F",
@@ -314,7 +321,12 @@ it("fetches on both machines, shows what Sync does per repository, then runs it"
   expect(document.activeElement).toBe(document.querySelector("h2 span"));
 
   await click("[data-sync-again]");
-  expect(calls.slice(5)).toEqual(["fetch Laptop E", "fetch Rack F", "inventory Laptop E", "inventory Rack F"]);
+  expect(calls.slice(5)).toEqual([
+    "fetch Laptop E",
+    "fetch Rack F",
+    "inventory Laptop E",
+    "inventory Rack F",
+  ]);
 });
 
 it("says in sync only when nothing is left on either machine", async () => {
@@ -338,11 +350,15 @@ it("keeps the weaker title while work is listed under a machine", async () => {
   });
   await render(api);
   await click("[data-sync-run]");
-  expect(document.querySelector("h2")?.textContent).toBe("Sync finished for Atlas: Laptop E and Rack F");
+  expect(document.querySelector("h2")?.textContent).toBe(
+    "Sync finished for Atlas: Laptop E and Rack F",
+  );
 });
 
 it("ends its check under StrictMode, which mounts every effect twice", async () => {
-  const { api } = scripted({ fetch: { "Laptop E": fetched(facts(".")), "Rack F": fetched(facts(".")) } });
+  const { api } = scripted({
+    fetch: { "Laptop E": fetched(facts(".")), "Rack F": fetched(facts(".")) },
+  });
   await act(async () =>
     root.render(
       <StrictMode>
@@ -535,7 +551,9 @@ it("sends nothing more once the dialog is closed during a send", async () => {
 });
 
 it("asks for no inventory after a check whose dialog was closed", async () => {
-  const { api } = scripted({ fetch: { "Laptop E": fetched(facts(".")), "Rack F": fetched(facts(".")) } });
+  const { api } = scripted({
+    fetch: { "Laptop E": fetched(facts(".")), "Rack F": fetched(facts(".")) },
+  });
   const fetchOf = api.fetch;
   let release = () => {};
   const held = new Promise<void>((resolve) => {
@@ -631,7 +649,9 @@ it("never says in sync when neither machine read a repository the result shows",
   await click("[data-sync-run]");
   expect(stage()).toBe("result");
   expect(document.querySelector('[data-sync-row="tools/cli"]')).not.toBeNull();
-  expect(document.querySelector("h2")?.textContent).toBe("Sync finished for Atlas: Laptop E and Rack F");
+  expect(document.querySelector("h2")?.textContent).toBe(
+    "Sync finished for Atlas: Laptop E and Rack F",
+  );
 });
 
 it("never says in sync when one machine lists a repository twice", async () => {
@@ -647,7 +667,9 @@ it("never says in sync when one machine lists a repository twice", async () => {
   });
   await render(api);
   await click("[data-sync-run]");
-  expect(document.querySelector("h2")?.textContent).toBe("Sync finished for Atlas: Laptop E and Rack F");
+  expect(document.querySelector("h2")?.textContent).toBe(
+    "Sync finished for Atlas: Laptop E and Rack F",
+  );
 });
 
 it("leaves no Sync to press once the pair is blocked, and a late press moves nothing", async () => {
@@ -669,7 +691,10 @@ it("leaves no Sync to press once the pair is blocked, and a late press moves not
 it("never says in sync for a clone that landed on another branch", async () => {
   const { api } = scripted({
     fetch: {
-      "Laptop E": fetched(facts("."), facts("tools/cli", { branch: "release", head: "b".repeat(40) })),
+      "Laptop E": fetched(
+        facts("."),
+        facts("tools/cli", { branch: "release", head: "b".repeat(40) }),
+      ),
       "Rack F": fetched(facts(".")),
     },
     status: {
@@ -696,7 +721,9 @@ it("never says in sync for a clone that landed on another branch", async () => {
   await click("[data-sync-run]");
   expect(stage()).toBe("result");
   expect(cell("tools/cli", "b")).toContain("main");
-  expect(document.querySelector("h2")?.textContent).toBe("Sync finished for Atlas: Laptop E and Rack F");
+  expect(document.querySelector("h2")?.textContent).toBe(
+    "Sync finished for Atlas: Laptop E and Rack F",
+  );
 });
 
 it("never says in sync for two machines that moved forward on different upstreams", async () => {
@@ -713,7 +740,9 @@ it("never says in sync for two machines that moved forward on different upstream
   await render(api);
   await click("[data-sync-run]");
   expect(stage()).toBe("result");
-  expect(document.querySelector("h2")?.textContent).toBe("Sync finished for Atlas: Laptop E and Rack F");
+  expect(document.querySelector("h2")?.textContent).toBe(
+    "Sync finished for Atlas: Laptop E and Rack F",
+  );
 });
 
 it("never says in sync when a machine did not say where it is after the run", async () => {
@@ -723,7 +752,9 @@ it("never says in sync when a machine did not say where it is after the run", as
   });
   await render(api);
   await click("[data-sync-run]");
-  expect(document.querySelector("h2")?.textContent).toBe("Sync finished for Atlas: Laptop E and Rack F");
+  expect(document.querySelector("h2")?.textContent).toBe(
+    "Sync finished for Atlas: Laptop E and Rack F",
+  );
 });
 
 it("shows the branch the answer names, also when it names none", async () => {
