@@ -82,6 +82,7 @@ import * as HandoffFollow from "./handoffFollow.ts";
 import { type HandoffContinueHereOptions, HandoffMode } from "./HandoffMode.ts";
 import { HandoffPeerError, HandoffPeers, layer as HandoffPeersLayer } from "./handoffPeers.ts";
 import { shouldResume } from "./handoffPreflight.ts";
+import { outgoingReviewLock } from "./handoffReviewLock.ts";
 import * as Resume from "./handoffResume.ts";
 import { HandoffReceiver, type HandoffRefusal, type ReceiverCaller } from "./HandoffReceiver.ts";
 import {
@@ -351,6 +352,7 @@ export const make = Effect.gen(function* () {
         appVersion: HANDOFF_APP_VERSION,
         ...(carried === undefined ? {} : { carried }),
         ...(record?.launcher == null ? {} : { launcher: record.launcher }),
+        reviewLock: yield* outgoingReviewLock(shell, destination === self),
       };
       const now = yield* nowIso;
       const label = yield* peerLabel(destination);

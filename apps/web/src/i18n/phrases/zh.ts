@@ -5688,4 +5688,8 @@ export const zh: PhraseCatalog = {
   "This is the newest copy of the increment. The project folder's copy is older or missing.":
     "这是该增量的最新副本。项目文件夹中的副本较旧或不存在。",
   "This copy's files could not be read on this machine.": "无法在这台机器上读取此副本的文件。",
+  "Review stays here: no permitted reviewer on {machine}":
+    "审查留在此处：{machine} 上没有允许的审查模型",
+  "Review stays here: update SpecWithCode on {machine}":
+    "审查留在此处：请更新 {machine} 上的 SpecWithCode",
 };

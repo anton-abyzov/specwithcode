@@ -476,3 +476,46 @@ export function reviewConstrainedRule<
     providerLimitExcludedModels: [...(rule.providerLimitExcludedModels ?? []), ...excluded],
   };
 }
+
+/**
+ * A reviewer lock: the families a review may run on and, when its policy pins
+ * one, the model. A handoff carries it, so the machine that continues the
+ * review picks inside it, first and at every later fallback.
+ */
+export interface ReviewerLock {
+  readonly families: ReadonlyArray<ReviewFamily>;
+  readonly model?: string | undefined;
+}
+
+/** Whether a model may review under the lock. A model of no known family never may. */
+export function reviewerLockPermits(lock: ReviewerLock, model: string): boolean {
+  const family = familyOfModelId(model);
+  if (family === "other" || !lock.families.includes(family)) return false;
+  return lock.model === undefined || sameReviewModel(model, lock.model);
+}
+
+/**
+ * The reviewer a machine continues a locked review on: the requested model
+ * when the lock permits it and the machine offers it, else the first offered
+ * model the lock permits, in the order given. Null when it offers none.
+ */
+export function lockedReviewerPick<I extends string>(
+  lock: ReviewerLock,
+  requested: { readonly instanceId: I; readonly model: string } | null,
+  offered: ReadonlyArray<{ readonly instanceId: I; readonly models: ReadonlyArray<string> }>,
+): { readonly instanceId: I; readonly model: string } | null {
+  if (
+    requested !== null &&
+    reviewerLockPermits(lock, requested.model) &&
+    offered.some(
+      (source) =>
+        source.instanceId === requested.instanceId && source.models.includes(requested.model),
+    )
+  )
+    return { instanceId: requested.instanceId, model: requested.model };
+  for (const source of offered) {
+    const model = source.models.find((slug) => reviewerLockPermits(lock, slug));
+    if (model !== undefined) return { instanceId: source.instanceId, model };
+  }
+  return null;
+}

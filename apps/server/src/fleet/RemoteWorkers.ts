@@ -741,6 +741,10 @@ const make = Effect.gen(function* () {
             }
             row.reachable = true;
             row.providers = probed.success.providers;
+            // Whether it keeps a review thread's reviewer lock, as its descriptor said just now.
+            const said = yield* client.peerRules(machine.id).pipe(Effect.result);
+            if (said._tag === "Success" && said.success?.reviewLock === true)
+              row.handoffReviewLock = true;
             if (probed.success.platform !== undefined) row.platform = probed.success.platform;
             const scope = probed.success.projectScope;
             if (scope !== undefined) row.projectScope = scope;

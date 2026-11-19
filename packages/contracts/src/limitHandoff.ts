@@ -49,6 +49,12 @@ export const LimitHandoffCandidate = Schema.Struct({
   reason: LimitHandoffCandidateReason,
   /** "Minis: same Claude account as M4". */
   text: Schema.String,
+  /**
+   * Set when a review thread stays because of this machine: it offers no
+   * reviewer the lock permits, or its SpecWithCode is too old to keep the
+   * lock. `reason` stays one an older client reads.
+   */
+  review: Schema.optional(Schema.Literals(["no_reviewer", "update_needed"])),
   usedPercent: Schema.NullOr(Schema.Number),
   resetsAt: Schema.NullOr(IsoDateTime),
 });

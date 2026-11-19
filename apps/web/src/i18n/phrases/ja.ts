@@ -5945,4 +5945,8 @@ export const ja: PhraseCatalog = {
     "これはインクリメントの最新のコピーです。プロジェクトフォルダーのコピーは古いか、ありません。",
   "This copy's files could not be read on this machine.":
     "このコピーのファイルはこのマシンでは読み取れませんでした。",
+  "Review stays here: no permitted reviewer on {machine}":
+    "レビューはここに残ります: {machine} に許可されたレビュアーがありません",
+  "Review stays here: update SpecWithCode on {machine}":
+    "レビューはここに残ります: {machine} の SpecWithCode を更新してください",
 };

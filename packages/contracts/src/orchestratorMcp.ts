@@ -1192,6 +1192,8 @@ export const OrchestratorMcpMachine = Schema.Struct({
   reachable: Schema.optional(Schema.Boolean),
   /** Why this machine's Team rules refuse working with that one. */
   teamRulesRefused: Schema.optional(Schema.String),
+  /** It keeps a review thread's reviewer lock when one is handed to it; absent when it did not say so. */
+  handoffReviewLock: Schema.optional(Schema.Boolean),
   /** Its operating system and iOS Simulator support, when it answered and reported them. */
   platform: Schema.optional(OrchestratorMcpMachinePlatform),
 });
