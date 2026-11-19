@@ -182,6 +182,15 @@ const make = Effect.gen(function* () {
         // A restore is not receipted, so knowledge comes as the catalog.
         Effect.andThen(workspace.contextSnapshot(projectId, threadId, true, false)),
         Effect.map((snapshot) => projectContextDelta(projectId, snapshot, null)),
+        // The restore may reach the model after a later prompt's receipt (Codex
+        // runs it without waiting), so no receipt can tell what the model last
+        // saw. Retire them: the accepted one no longer matches any epoch and a
+        // pending one can no longer be accepted, so the next prompt sends the
+        // full snapshot, never a line diff against a value the model replaced.
+        Effect.tap(() =>
+          sql`UPDATE project_context_deliveries SET accepted_epoch = accepted_epoch || ':restored', pending_epoch = pending_epoch || ':restored', updated_at=${DateTime.formatIso(DateTime.nowUnsafe())}
+      WHERE project_id=${projectId} AND thread_id=${threadId}`.pipe(failure(projectId)),
+        ),
       ),
   });
 });

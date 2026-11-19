@@ -354,6 +354,51 @@ it.layer(layer)("Project context durable delivery", (it) => {
       assert.equal((yield* service.prepare({ ...input, runId: "index-same" })).text, "");
     }),
   );
+  it.effect("sends the full snapshot after a restore, even one that lands after a receipt", () =>
+    Effect.gen(function* () {
+      const input = yield* seed("late-restore");
+      const service = yield* Delivery.ProjectContextDelivery;
+      const memory = yield* Workspace.ProjectWorkspaceService;
+      const lines = Array.from({ length: 40 }, (_, n) => `- fact ${n}`);
+      yield* memory.writeMemory({
+        projectId: input.projectId,
+        name: "MEMORY.md",
+        content: lines.join("\n"),
+        expectedRevision: null,
+      });
+      // B is acknowledged.
+      yield* (yield* service.prepare(input)).accepted;
+      // Another thread adds a line, then a late restore delivers that state (C)
+      // to the model without any receipt.
+      lines.push("- fact added elsewhere");
+      yield* memory.writeMemory({
+        projectId: input.projectId,
+        name: "MEMORY.md",
+        content: lines.join("\n"),
+        expectedRevision: 1,
+      });
+      const restored = yield* service.restore(input.projectId, input.threadId);
+      assert.include(restored, "fact added elsewhere");
+      // Comparing against B would send the added line again as a diff.
+      const next = yield* service.prepare({ ...input, runId: "after-restore" });
+      assert.include(next.text, "current snapshot");
+      assert.notInclude(next.text, "line changes to the previous");
+      yield* next.accepted;
+      assert.equal((yield* service.prepare({ ...input, runId: "settled" })).text, "");
+    }),
+  );
+  it.effect("never acknowledges a prompt prepared before a restore", () =>
+    Effect.gen(function* () {
+      const input = yield* seed("restore-pending");
+      const service = yield* Delivery.ProjectContextDelivery;
+      yield* (yield* service.prepare(input)).accepted;
+      const pending = yield* service.prepare({ ...input, runId: "before-restore" });
+      yield* service.restore(input.projectId, input.threadId);
+      yield* pending.accepted;
+      const next = yield* service.prepare({ ...input, runId: "after-restore" });
+      assert.include(next.text, "current snapshot");
+    }),
+  );
   it.effect("restores the whole index and role after a compaction, not a diff", () =>
     Effect.gen(function* () {
       const input = yield* seed("index-compaction");
