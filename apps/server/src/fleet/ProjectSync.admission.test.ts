@@ -5,6 +5,7 @@
  * a read that failed is said as, and what a write that did not go as planned
  * says. Real Git in temporary repositories only.
  */
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -210,12 +211,97 @@ describe("a partial clone on a Git that could fetch behind Sync's back (R5-02)",
     ).toEqual([]);
   });
 
-  it("Git 2.45 and newer: a partial clone moves (Git fetches nothing it is not asked to)", async () => {
+  it("Git 2.45 and newer: a partial clone is declined too, and its fetch still runs (R6-01)", async () => {
     const f = behind();
     partial(f.b);
-    const { step } = await fetchThenRun(f, { git: versioned("2.45.0") });
+    const { facts, step } = await fetchThenRun(f, { git: versioned("2.45.0") });
+    expect(facts).toMatchObject({ fetch: "ok" });
+    expect(git(f.b, "rev-parse", "refs/heads/main")).toBe(f.was);
+    expect(step).toMatchObject({ moved: 0, detail: PROJECT_SYNC_PARTIAL_CLONE_DETAIL });
+  });
+
+  it("a filter alone (remote.origin.partialclonefilter) is a partial clone (R6-01)", async () => {
+    const f = behind();
+    git(f.b, "config", "remote.origin.partialclonefilter", "blob:none");
+    const { step } = await fetchThenRun(f);
+    expect(git(f.b, "rev-parse", "refs/heads/main")).toBe(f.was);
+    expect(step).toMatchObject({ moved: 0, detail: PROJECT_SYNC_PARTIAL_CLONE_DETAIL });
+  });
+
+  it("a blob-filtered clone missing the target's blob: declined, and Git asks origin for nothing (R6-01)", async () => {
+    const f = twoMachines();
+    git(f.remote, "config", "uploadpack.allowFilter", "true");
+    const c = NodePath.join(f.base, "c");
+    git(f.base, "clone", "-q", "--filter=blob:none", `file://${f.remote}`, c);
+    const was = git(c, "rev-parse", "HEAD");
+    write(f.a, "app.ts", "export const a = 'a blob c does not have';\n");
+    git(f.a, "commit", "-q", "-am", "published");
+    git(f.a, "push", "-q", "origin", "main");
+    const blob = git(f.a, "rev-parse", "HEAD:app.ts");
+    const missing = () =>
+      NodeChildProcess.spawnSync("git", ["-C", c, "cat-file", "-e", blob], {
+        env: { ...process.env, GIT_NO_LAZY_FETCH: "1" },
+      }).status !== 0;
+    const record = newFetchRecord("project-admission");
+    const [facts] = await ProjectSync.fetchAll(
+      { git: real, inUse: async () => null, fetched: record },
+      [{ path: ".", cwd: c }],
+    );
+    keepFetch(record);
+    expect(facts).toMatchObject({ fetch: "ok", behind: 1 });
+    expect(missing()).toBe(true);
+    // From here on every Git child traces its transport to this file.
+    const trace = NodePath.join(f.base, "packet.trace");
+    setEnv("GIT_TRACE_PACKET", trace);
+    const step = await ProjectSync.fastForwardRepository(
+      {
+        git: real,
+        inUse: async () => null,
+        record: () => keptFetch("project-admission", record.id),
+      },
+      { path: ".", cwd: c },
+      null,
+    );
+    expect(NodeFS.existsSync(trace) ? NodeFS.readFileSync(trace, "utf8") : "").toBe("");
+    expect(missing()).toBe(true);
+    expect(git(c, "rev-parse", "refs/heads/main")).toBe(was);
+    expect(step).toMatchObject({ moved: 0, detail: PROJECT_SYNC_PARTIAL_CLONE_DETAIL });
+  });
+});
+
+describe("the Git folder is read as Git prints it (R6-02)", () => {
+  it("moves the Git folder whose name ends in a space, never its sibling without one", async () => {
+    const f = behind();
+    const named = NodePath.join(f.base, "b-git ");
+    const sibling = NodePath.join(f.base, "b-git");
+    NodeFS.renameSync(NodePath.join(f.b, ".git"), named);
+    NodeFS.writeFileSync(NodePath.join(f.b, ".git"), `gitdir: ${named}\n`);
+    const record = newFetchRecord("project-admission");
+    await ProjectSync.fetchAll({ git: real, inUse: async () => null, fetched: record }, [
+      { path: ".", cwd: f.b },
+    ]);
+    keepFetch(record);
+    // A copy with the same branch, commit, upstream, target and index beside it.
+    NodeFS.cpSync(named, sibling, { recursive: true });
+    const of = (gitDir: string, ...args: Array<string>) =>
+      git(f.base, `--git-dir=${gitDir}`, `--work-tree=${f.b}`, ...args);
+    const siblingIndex = of(sibling, "ls-files", "-s");
+    const step = await ProjectSync.fastForwardRepository(
+      {
+        git: real,
+        inUse: async () => null,
+        record: () => keptFetch("project-admission", record.id),
+      },
+      { path: ".", cwd: f.b },
+      null,
+    );
+    expect(of(sibling, "rev-parse", "refs/heads/main")).toBe(f.was);
+    expect(of(sibling, "ls-files", "-s")).toBe(siblingIndex);
+    // The repository that fetched is the one that moved, with its index and files.
+    expect(of(named, "rev-parse", "refs/heads/main")).toBe(f.head);
+    expect(of(named, "diff-index", "--cached", "--name-only", "HEAD")).toBe("");
     expect(step).toMatchObject({ action: "fast-forward", moved: 1 });
-    expect(git(f.b, "rev-parse", "refs/heads/main")).toBe(f.head);
+    expect(NodeFS.readFileSync(NodePath.join(f.b, "app.ts"), "utf8")).toBe("export const a = 2;\n");
   });
 });
 
