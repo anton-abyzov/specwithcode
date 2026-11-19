@@ -288,7 +288,8 @@ export function MachineHandoffDialog({
               {/* A finished copy says where the project is and when it got there. */}
               {copying && copyDoneOn
                 ? sync
-                  ? tx("{project} is in sync on {source} and {machine}", {
+                  ? // The copy ended; whether the folders match is said below, by its checks.
+                    tx("Sync finished for {project}: {source} and {machine}", {
                       project: projectTitle,
                       source: sourceLabel,
                       machine: copyDoneOn,
