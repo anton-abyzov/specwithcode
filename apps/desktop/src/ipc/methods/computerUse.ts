@@ -25,6 +25,8 @@ import type { MacPermission } from "../../permissions/MacPermission.ts";
 import * as MacPermissions from "../../permissions/MacPermissions.ts";
 import {
   GET_COMPUTER_USE_PERMISSIONS_CHANNEL,
+  GET_IPHONE_MIRRORING_CHANNEL,
+  OPEN_IPHONE_MIRRORING_CHANNEL,
   RELAUNCH_FOR_COMPUTER_USE_CHANNEL,
   REQUEST_COMPUTER_USE_PERMISSION_CHANNEL,
   RESET_COMPUTER_USE_PERMISSION_CHANNEL,
@@ -111,6 +113,51 @@ export const takeFirstRunResume = Effect.fn("desktop.firstRunResume.take")(funct
   if (marker === null) return null;
   const age = now - marker.at;
   return age >= 0 && age <= FIRST_RUN_RESUME_MAX_AGE_MS ? marker : null;
+});
+
+/** Apple's iPhone Mirroring app; the only app the open call can start. */
+export const IPHONE_MIRRORING_APP = "/System/Applications/iPhone Mirroring.app";
+
+export const IphoneMirroringFact = Schema.Literals(["present", "absent", "unknown"]);
+
+/** Whether macOS has iPhone Mirroring; a failed check is `unknown`, which hides the setup row. */
+export const iphoneMirroringFact = Effect.fn("desktop.iphoneMirroring.fact")(function* (
+  app: string = IPHONE_MIRRORING_APP,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.exists(app).pipe(
+    Effect.map((exists): typeof IphoneMirroringFact.Type => (exists ? "present" : "absent")),
+    Effect.orElseSucceed((): typeof IphoneMirroringFact.Type => "unknown"),
+  );
+});
+
+/**
+ * The iPhone row's two calls. Open takes no argument and opens the fixed app
+ * path, so a renderer cannot use it to open anything else. `openPath` is
+ * Electron's: an empty string means it opened.
+ */
+export const makeIphoneMirroringMethods = (
+  openPath: (path: string) => Promise<string>,
+  app: string = IPHONE_MIRRORING_APP,
+) => ({
+  fact: DesktopIpc.makeIpcMethod({
+    channel: GET_IPHONE_MIRRORING_CHANNEL,
+    payload: Schema.Undefined,
+    result: IphoneMirroringFact,
+    handler: () => iphoneMirroringFact(app),
+  }),
+  open: DesktopIpc.makeIpcMethod({
+    channel: OPEN_IPHONE_MIRRORING_CHANNEL,
+    payload: Schema.Undefined,
+    result: Schema.Boolean,
+    handler: () =>
+      Effect.promise(() =>
+        openPath(app).then(
+          (error) => error === "",
+          () => false,
+        ),
+      ),
+  }),
 });
 
 /**
@@ -230,6 +277,9 @@ export const installComputerUse = Effect.fn("desktop.ipc.installComputerUse")(fu
         ),
     }),
   );
+  const iphone = makeIphoneMirroringMethods((path) => Electron.shell.openPath(path));
+  yield* ipc.handle(iphone.fact);
+  yield* ipc.handle(iphone.open);
   yield* ipc.handle(
     DesktopIpc.makeIpcMethod({
       channel: RELAUNCH_FOR_COMPUTER_USE_CHANNEL,

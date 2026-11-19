@@ -14,7 +14,8 @@ import {
   type AcceptedFullAccess,
 } from "../../onboarding/accessRecommendation";
 import { shouldRecommendFullAccess } from "../../onboarding/accessRecommendation.logic";
-import { accessRows } from "../../onboarding/accessRows.logic";
+import { accessRows, type IphoneMirroringFact } from "../../onboarding/accessRows.logic";
+import { IPHONE_PROVEN_EXAMPLES } from "../../onboarding/iphoneExamples";
 import {
   firstRunResumeApplies,
   saveFirstRunResume,
@@ -23,6 +24,7 @@ import {
 import { teamRulesFromSummary } from "../../teamRules/teamRulesView";
 import { AccessStep } from "./AccessStep";
 import { ChromeAccessRow } from "./ChromeAccessRow";
+import { IPhoneRow } from "./IPhoneRow";
 import { MacAppsRow } from "./MacAppsRow";
 import { StepPicture } from "./StepPicture";
 import { SignInFirstStep } from "./SignInFirstStep";
@@ -169,6 +171,21 @@ export function WelcomeWizard({
   const ownSetUp =
     primaryEnvironmentId !== null &&
     (setupIds.length === 0 || setupIds.includes(primaryEnvironmentId));
+  // Whether this Mac has iPhone Mirroring, read once from the desktop app (1395).
+  const [iphoneMirroring, setIphoneMirroring] = useState<IphoneMirroringFact>("unknown");
+  useEffect(() => {
+    const read = typeof window === "undefined" ? undefined : window.desktopBridge?.getIphoneMirroring;
+    if (read === undefined) return;
+    let live = true;
+    void read()
+      .catch((): IphoneMirroringFact => "unknown")
+      .then((fact) => {
+        if (live) setIphoneMirroring(fact);
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
   // `useComputerUsePermissionsAreLocal` for this window's own machine: the desktop app can read them.
   const computerUseLocal =
     typeof window !== "undefined" && window.desktopBridge?.getComputerUsePermissions != null;
@@ -179,6 +196,7 @@ export function WelcomeWizard({
     window.desktopBridge?.openSystemSettings !== undefined;
   const rows = accessRows({
     desktopApp,
+    provenIphoneExamples: IPHONE_PROVEN_EXAMPLES.length,
     machines: accessMachineIds.map((id, index) => {
       const own = ownSetUp && id === primaryEnvironmentId;
       return {
@@ -191,6 +209,7 @@ export function WelcomeWizard({
           (fullAccess.hydrated && resumedFilesIds.includes(id)),
         computerUseLocal: own && computerUseLocal,
         fullDiskAccessLocal: own && fullDiskAccessLocal,
+        ...(own ? { iphoneMirroring } : {}),
       };
     }),
   });
@@ -477,6 +496,8 @@ export function WelcomeWizard({
                   )
                 }
               />
+            ) : id === "iphone" ? (
+              <IPhoneRow {...open} />
             ) : null
           }
           files={{
