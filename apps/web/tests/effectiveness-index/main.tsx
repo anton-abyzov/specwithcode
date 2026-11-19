@@ -50,6 +50,7 @@ const row = (
 ): SubscriptionRow => ({
   key: `${driver}`,
   accountKey: `${driver}:one@example.com`,
+  renewalKey: `${driver}:one@example.com`,
   driver,
   displayName: null,
   plan: null,
@@ -67,11 +68,17 @@ const row = (
       long: true,
       scoped: false,
       durationMs: 7 * DAY,
+      kind: "weekly",
+      accountWide: true,
+      spent: false,
+      amounts: null,
     },
   ],
   renewal: null,
   credits: null,
   lastLoss: null,
+  atLimit: false,
+  note: null,
 });
 
 const index = effectivenessIndex(
