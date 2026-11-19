@@ -49,6 +49,7 @@ import { planProjectSyncRepository } from "@specweave-studio/contracts";
 import {
   boundGit,
   commitOf,
+  configCount,
   FETCH_MS,
   gitReason,
   headBranch,
@@ -281,6 +282,9 @@ export async function fastForwardRepository(
     shortBranch(otherBranch) !== shortBranch(row.branch)
   )
     return stepOf(planned, { action: "fetch", reason: "other-branch", downgraded: true });
+  // Settings handed to Git in a form it may read another way than Sync: the move's own
+  // setting is never added to such a list, and the list is never rewritten.
+  if (configCount(process.env) === null) return decline(PROJECT_SYNC_STATE_UNREAD_DETAIL);
   const linked = repository.path === "." ? false : await isLinkedWorktree(git, repository.cwd);
   if (linked === null) return decline(PROJECT_SYNC_STATE_UNREAD_DETAIL);
   if (linked) return decline("A thread's worktree is never moved by Sync.");

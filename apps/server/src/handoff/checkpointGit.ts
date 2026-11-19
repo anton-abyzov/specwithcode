@@ -120,12 +120,15 @@ export async function writeCheckpoint(input: {
    */
   readonly exclusive?: boolean;
   /**
-   * The Git folder `ref` is written in (and an earlier one read from), when
-   * not the checkout's own: a private repository that reads the checkout's
-   * objects through its alternates. The snapshot's objects are always written
-   * in the checkout's object store.
+   * A private repository the snapshot goes into instead of the checkout's own:
+   * its new objects are written in `objectDirectory` (whose alternates name the
+   * checkout's object store), and `ref` is written, and an earlier one read, with
+   * `refEnv`. Nothing of the snapshot is then written in the checkout's repository.
    */
-  readonly refGitDir?: string;
+  readonly privateStore?: {
+    readonly objectDirectory: string;
+    readonly refEnv: Readonly<Record<string, string | undefined>>;
+  };
   /**
    * Also check untracked files by content (`snapshotSecrets.ts`) and leave out
    * what it flags, except the files named in `sendAnyway`. Off unless asked
@@ -141,7 +144,12 @@ export async function writeCheckpoint(input: {
 }): Promise<CheckpointCommit> {
   const root = await repositoryRoot(input.cwd);
   const ref = input.ref ?? handoffRef(input.threadId);
-  const refEnv = input.refGitDir === undefined ? {} : { env: { GIT_DIR: input.refGitDir } };
+  const refEnv = input.privateStore === undefined ? {} : { env: input.privateStore.refEnv };
+  // Where the snapshot's objects are written, and read back from.
+  const objects =
+    input.privateStore === undefined
+      ? {}
+      : { GIT_OBJECT_DIRECTORY: input.privateStore.objectDirectory };
   const head = await runGit(root, ["rev-parse", "--verify", "-q", "HEAD^{commit}"], {
     allowFailure: true,
   });
@@ -159,7 +167,7 @@ export async function writeCheckpoint(input: {
 
   const scratch = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "swc-handoff-"));
   try {
-    const env = { GIT_INDEX_FILE: NodePath.join(scratch, "index") };
+    const env = { GIT_INDEX_FILE: NodePath.join(scratch, "index"), ...objects };
     await runGit(root, ["read-tree", baseCommit], { env });
     const [untracked, changed, ignored] = await Promise.all([
       runGit(root, ["ls-files", "-z", "--others", "--exclude-standard"], { env }),
@@ -266,6 +274,7 @@ export async function writeCheckpoint(input: {
         allow: new Set(input.contentCheck.sendAnyway ?? []),
         maxFileBytes: HANDOFF_MAX_SNAPSHOT_FILE_BYTES,
         maxChangedFiles: HANDOFF_MAX_SNAPSHOT_FILES,
+        env: objects,
       });
       if (staged.tooLarge !== null) skip({ ...staged.tooLarge, reason: "too-large" });
       if (staged.tooMany !== null)
@@ -346,7 +355,7 @@ export async function writeCheckpoint(input: {
           "-m",
           input.message ?? `SpecWithCode handoff checkpoint for ${input.threadId}`,
         ],
-        { env: CHECKPOINT_IDENTITY },
+        { env: { ...CHECKPOINT_IDENTITY, ...objects } },
       )
     ).stdout.trim();
     await runGit(

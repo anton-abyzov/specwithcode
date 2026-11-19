@@ -107,10 +107,10 @@ export async function createBundle(input: {
   readonly commit: string;
   readonly exclude: ReadonlyArray<string>;
   readonly maxBytes?: number;
-  /** The Git folder `ref` is in, when not the one `root` opens. */
-  readonly gitDir?: string;
+  /** The environment that opens the repository `ref` is in, when not the one `root` opens. */
+  readonly env?: Readonly<Record<string, string | undefined>>;
 }): Promise<BundleFile> {
-  const env = input.gitDir === undefined ? {} : { env: { GIT_DIR: input.gitDir } };
+  const env = input.env === undefined ? {} : { env: input.env };
   const tip = await runGit(input.root, ["rev-parse", "--verify", "-q", `${input.ref}^{commit}`], {
     allowFailure: true,
     ...env,

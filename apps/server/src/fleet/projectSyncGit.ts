@@ -56,9 +56,9 @@ export function moveEnv(
   inherited: Readonly<Record<string, string | undefined>> = {},
 ): Record<string, string | undefined> {
   const env = { ...process.env, ...inherited };
-  const raw = env.GIT_CONFIG_COUNT;
-  // Git reads an empty count as none; one that is not a count would make Git refuse to run.
-  const count = raw !== undefined && /^\d{1,4}$/.test(raw) ? Number(raw) : 0;
+  const count = configCount(env);
+  // A move declines such a count before its first Git child (`fastForwardRepository`).
+  if (count === null) throw new Error("GIT_CONFIG_COUNT is not a plain count.");
   const last = count - 1;
   const added =
     count > 0 &&
@@ -76,6 +76,19 @@ export function moveEnv(
           [`GIT_CONFIG_VALUE_${count}`]: "never",
         }),
   };
+}
+
+/**
+ * How many `GIT_CONFIG_KEY_n` entries an environment hands Git: 0 when no
+ * count is set, null when the count is not plain decimal (`01`, `+1`, ` 1`).
+ * Git reads some of those as a count, so the list is never rewritten around one.
+ */
+export function configCount(env: Readonly<Record<string, string | undefined>>): number | null {
+  const raw = env.GIT_CONFIG_COUNT;
+  if (raw === undefined) return 0;
+  if (!/^(0|[1-9][0-9]*)$/.test(raw)) return null;
+  const count = Number(raw);
+  return Number.isSafeInteger(count) ? count : null;
 }
 
 /** A runner whose every command runs with `moveEnv`, after the caller's environment. */

@@ -6,15 +6,18 @@
  * peer route a thread hand off uses, one bundle per branch, never through the
  * remote and never through the folder copy. Uncommitted work travels as one
  * snapshot commit built with a private index, so the branch, the index and the
- * working tree here stay as they are. No ref of the repository is written or
- * removed: a send writes its objects (a snapshot's commit and tree) in the
- * repository's object store, and its one temporary ref in a private bare
- * repository of its own, in a new folder of the system's temporary folder,
- * that reads those objects through `objects/info/alternates`. The bundle is
- * made there, and removing that folder is the whole cleanup. No send runs
- * `gc` or `prune`, so the snapshot's objects stay through Git's prune grace
- * period like any other new object.
+ * working tree here stay as they are. Nothing is written in the repository:
+ * a send works in a private bare repository of its own, in a new folder of
+ * Sync's marked staging folder (`swc-sync-staging` in the system's temporary
+ * folder), that reads the repository's objects through
+ * `objects/info/alternates`. A snapshot's new objects and the send's one
+ * temporary ref are written there, the bundle is made there, and removing
+ * that folder, while its marker still holds the token this send wrote, is the
+ * whole cleanup. A program that replaces that folder during a send is out of
+ * scope (AC-11 exclusion 5); a folder whose marker is not the send's is left
+ * and said. No send runs `gc` or `prune`.
  */
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -434,7 +437,7 @@ export async function sendExtra(input: {
     try {
       const refs = await privateRefs(root, pinned);
       own = refs;
-      const inOwn = { env: { GIT_DIR: refs.gitDir } };
+      const inOwn = { env: refs.env };
       let commit: string;
       let leaf: string;
       let exclude: ReadonlyArray<string>;
@@ -467,12 +470,16 @@ export async function sendExtra(input: {
         }
       } else {
         await stillHere();
-        // The snapshot's objects go in the checkout's object store, its ref in the send's own.
+        // The snapshot's objects and its ref go in the send's own repository from the start:
+        // a prune in the checkout's repository cannot take them.
         const snapshot = await writeCheckpoint({
           cwd: root,
           threadId: `sync-${input.operationId}`,
           ref: hidden,
-          refGitDir: refs.gitDir,
+          privateStore: {
+            objectDirectory: NodePath.join(refs.gitDir, "objects"),
+            refEnv: refs.env,
+          },
           exclusive: true,
           message: `SpecWithCode: uncommitted work on ${input.sourceLabel}`,
           contentCheck: { pastLimit: "leave-out", sendAnyway: item.sendAnyway },
@@ -508,8 +515,8 @@ export async function sendExtra(input: {
               );
         }
         const [own, parent] = await Promise.all([
-          runGit(root, ["rev-parse", `${snapshot.commit}^{tree}`]),
-          runGit(root, ["rev-parse", `${snapshot.baseCommit}^{tree}`]),
+          runGit(refs.folder, ["rev-parse", `${snapshot.commit}^{tree}`], inOwn),
+          runGit(refs.folder, ["rev-parse", `${snapshot.baseCommit}^{tree}`], inOwn),
         ]);
         if (own.stdout.trim() === parent.stdout.trim()) return stays("nothing-to-send", null, more);
         commit = snapshot.commit;
@@ -553,7 +560,7 @@ export async function sendExtra(input: {
       if (!exclude.includes(commit)) {
         const bundle = await createBundle({
           root: refs.folder,
-          gitDir: refs.gitDir,
+          env: refs.env,
           ref: hidden,
           commit,
           exclude,
@@ -587,27 +594,67 @@ export async function sendExtra(input: {
   // The temporary ref was only ever in the send's own repository: removing it is all.
   const left = own as PrivateRefs | null;
   if (left === null || (await left.dispose())) return outcome;
-  const note = `A temporary folder of the send, ${left.folder}, could not be removed.`;
+  const note = `A temporary folder of the send, ${left.folder}, was left: its marker is not the send's, or it could not be removed.`;
   return {
     ...outcome,
     detail: (outcome.detail === null ? note : `${outcome.detail} ${note}`).slice(0, 1900),
   };
 }
 
-/** A send's private repository: its folder, its Git folder, and how it is removed. */
+/** A send's private repository: its folder, its Git folder, how it is opened and removed. */
 interface PrivateRefs {
   readonly folder: string;
   readonly gitDir: string;
-  /** Removes the folder; false when it is still there. */
+  /** The environment of every command in it: its Git folder, and no inherited location. */
+  readonly env: Readonly<Record<string, string | undefined>>;
+  /** Removes the folder while its marker is this send's; false when it is still there. */
   readonly dispose: () => Promise<boolean>;
 }
 
+/** Sync's own staging folder, and the marker each send's folder in it carries. */
+const SYNC_STAGING = "swc-sync-staging";
+const SEND_MARKER = "swc-sync-send";
+const STAGING_TEXT =
+  "SpecWithCode keeps the temporary repositories of a Sync send in this folder, one folder per send.\n" +
+  "A folder no Sync is using can be deleted.\n";
+
+/** Sync's staging folder: a real folder (no link) this user owns, carrying its mark. */
+async function stagingRoot(): Promise<string> {
+  const root = NodePath.join(NodeOS.tmpdir(), SYNC_STAGING);
+  await NodeFSP.mkdir(root, { recursive: true, mode: 0o700 });
+  const stat = await NodeFSP.lstat(root);
+  if (!stat.isDirectory() || (process.getuid !== undefined && stat.uid !== process.getuid()))
+    throw new Error("Sync's staging folder could not be used.");
+  await NodeFSP.writeFile(NodePath.join(root, "README"), STAGING_TEXT, { flag: "wx" }).catch(
+    (cause) => {
+      if ((cause as { readonly code?: unknown }).code !== "EEXIST") throw cause;
+    },
+  );
+  return root;
+}
+
 /**
- * A private bare repository for one send's temporary ref, in a new folder of
- * the system's temporary folder that only this call knows. It reads the
- * objects of the repository `env` pins through `objects/info/alternates`, and
- * that repository's `shallow` list when it has one, so a bundle made here
- * holds what one made in the repository would. It never writes there.
+ * The environment of a command in a private repository: its Git folder, and
+ * none of the repository locations this process may have inherited, so the
+ * command opens that repository alone (its refs, settings and objects).
+ */
+const privateEnv = (gitDir: string) => ({
+  GIT_DIR: gitDir,
+  GIT_COMMON_DIR: undefined,
+  GIT_WORK_TREE: undefined,
+  GIT_INDEX_FILE: undefined,
+  GIT_OBJECT_DIRECTORY: undefined,
+  GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
+  GIT_NAMESPACE: undefined,
+});
+
+/**
+ * A private bare repository for one send, in a new folder of Sync's staging
+ * folder. The folder's marker holds a random token only this call knows. The
+ * repository reads the objects of the repository `env` pins through
+ * `objects/info/alternates`, and that repository's `shallow` list when it has
+ * one, so a bundle made here holds what one made there would. It has the same
+ * object format, named explicitly. Nothing is written in the pinned repository.
  */
 async function privateRefs(
   root: string,
@@ -622,28 +669,34 @@ async function privateRefs(
   ]);
   if (objects === null || shallow === null || format === null)
     throw new Error("The checkout's Git folder could not be read.");
+  if (format[0] !== "sha1" && format[0] !== "sha256")
+    throw new Error("The checkout's object format could not be read.");
   const store = objects[0]!;
   // One line of the alternates file, read as written: a quote would start a quoted name.
   if (!NodePath.isAbsolute(store) || store.startsWith('"') || /[\r\n]/.test(store))
     throw new Error("The checkout's object folder cannot be named to Git.");
-  const folder = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "swc-sync-send-"));
+  const folder = await NodeFSP.mkdtemp(NodePath.join(await stagingRoot(), "send-"));
+  const marker = NodePath.join(folder, SEND_MARKER);
+  const mark = `${STAGING_TEXT}token ${NodeCrypto.randomBytes(16).toString("hex")}\n`;
+  // Removed only while the marker is the one written here: a folder put in its place is
+  // another program's, and stays.
   const dispose = async () => {
-    await NodeFSP.rm(folder, { recursive: true, force: true }).catch(() => undefined);
+    const stat = await NodeFSP.lstat(marker).catch(() => null);
+    const text =
+      stat !== null && stat.isFile() && stat.size <= 4096
+        ? await NodeFSP.readFile(marker, "utf8").catch(() => null)
+        : null;
+    if (text === mark)
+      await NodeFSP.rm(folder, { recursive: true, force: true }).catch(() => undefined);
     return (await NodeFSP.lstat(folder).catch(() => null)) === null;
   };
   try {
+    await NodeFSP.writeFile(marker, mark, { flag: "wx", mode: 0o600 });
     const gitDir = NodePath.join(folder, "refs.git");
-    await runGit(
-      folder,
-      [
-        "init",
-        "--bare",
-        "-q",
-        "--template=",
-        ...(format[0] === "sha1" ? [] : [`--object-format=${format[0]}`]),
-      ],
-      { env: { GIT_DIR: gitDir } },
-    );
+    const own = privateEnv(gitDir);
+    await runGit(folder, ["init", "--bare", "-q", "--template=", `--object-format=${format[0]}`], {
+      env: own,
+    });
     await NodeFSP.mkdir(NodePath.join(gitDir, "objects", "info"), { recursive: true });
     await NodeFSP.writeFile(NodePath.join(gitDir, "objects", "info", "alternates"), `${store}\n`, {
       flag: "wx",
@@ -651,7 +704,7 @@ async function privateRefs(
     await NodeFSP.copyFile(shallow[0]!, NodePath.join(gitDir, "shallow")).catch((cause) => {
       if ((cause as { readonly code?: unknown }).code !== "ENOENT") throw cause;
     });
-    return { folder, gitDir, dispose };
+    return { folder, gitDir, env: own, dispose };
   } catch (cause) {
     await dispose();
     throw cause;
@@ -665,7 +718,7 @@ async function privateRefs(
  */
 async function refState(
   root: string,
-  env: Readonly<Record<string, string>>,
+  env: Readonly<Record<string, string | undefined>>,
   ref: string,
 ): Promise<
   { readonly kind: "direct"; readonly oid: string } | { readonly kind: "absent" | "other" }
