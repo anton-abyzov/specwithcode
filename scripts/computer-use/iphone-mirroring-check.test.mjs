@@ -445,6 +445,25 @@ describe("dry run", () => {
     expect(phone.state.calls.includes("computer_type")).toBe(false);
   });
 
+  it("is invalid when the window shows a paused connection, never typing into it", async () => {
+    // The run of November 19 at 3:06 PM read "Connectic Paused" and "Resume".
+    for (const shown of [
+      [line("Connectic Paused", 620, 300), line("Resume", 620, 360)],
+      [line("Connection Paused", 620, 300)],
+      [line("Resume", 620, 360)],
+    ]) {
+      const phone = simulatedPhone();
+      phone.deps.ocr = async () => shown;
+      const result = await runCheck(phone.deps);
+      invalidResult(result);
+      expect(result.lines.at(-1)).toContain(
+        `not connected and showing the phone: it shows "${shown[0].text}"`,
+      );
+      expect(phone.state.calls.includes("computer_type")).toBe(false);
+      expect(phone.state.calls.includes("computer_key")).toBe(false);
+    }
+  });
+
   it("is invalid when the window is not on the main display", async () => {
     const phone = simulatedPhone();
     phone.deps.window = async () => ({ window, onMainDisplay: false });

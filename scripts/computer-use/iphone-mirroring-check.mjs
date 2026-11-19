@@ -113,6 +113,12 @@ const NOT_CONNECTED = [
   "iphone changed",
   "microphone in use",
 ];
+/**
+ * Whole lines that mean the same: a paused connection ("Connection Paused",
+ * which text recognition may cut to "Connectic Paused") and its lone "Resume"
+ * button.
+ */
+const NOT_CONNECTED_LINES = [/^connect\S* paused$/, /^paused$/, /^resume$/];
 
 // Reading the screen is in iphone-mirroring-judge.mjs.
 export * from "./iphone-mirroring-judge.mjs";
@@ -412,8 +418,10 @@ export async function runCheck(deps, options = {}) {
   setup(
     `window at (${seen.window.x}, ${seen.window.y}) ${seen.window.width}x${seen.window.height}; ${front()}`,
   );
-  const blocked = seen.lines.find((line) =>
-    NOT_CONNECTED.some((phrase) => normalize(line.text).includes(phrase)),
+  const blocked = seen.lines.find(
+    (line) =>
+      NOT_CONNECTED.some((phrase) => normalize(line.text).includes(phrase)) ||
+      NOT_CONNECTED_LINES.some((pattern) => pattern.test(normalize(line.text))),
   );
   if (blocked !== undefined) {
     return invalid(
