@@ -199,6 +199,41 @@ export function showsSuggestion(reading, base) {
 /** Clock readings change between screenshots, so they never decide a match. */
 const isReading = (text) => /^[\d\s:.,]+(am|pm)?$/i.test(text.trim());
 
+/** How often a typing step opens Spotlight again when the phone showed no Spotlight after typing. */
+export const SPOTLIGHT_TRIES = 3;
+/** A time of day, which changes between screenshots. */
+const isTime = (text) => /^\d{1,2}:\d{2}$/.test(text);
+const texts = (lines) =>
+  lines.map((line) => normalize(line.text)).filter((text) => text !== "" && !isTime(text));
+/** What a reading shows that the home screen reading did not; only times of day are left out. */
+export const newTexts = (lines, home) => {
+  const before = new Set(texts(home));
+  return texts(lines).filter((text) => !before.has(text));
+};
+/** Home screen labels: words, not numbers or specks, which read the same on every screenshot. */
+const labels = (lines) => texts(lines).filter((text) => text.length > 2 && !isReading(text));
+/** The share of home screen labels a reading must show again to be the home screen; text recognition misses a few. */
+export const HOME_SHARE = 0.6;
+/**
+ * Whether a reading after typing is the home screen with no search field. Most
+ * home labels must show again. New text (numbers and single characters too) is
+ * the home screen's own only when `again`, a reading taken after going home
+ * once more, still shows it: what a search field showed is gone from there, so
+ * a field with any wrong text is judged, never taken for the home screen.
+ * Without `again`, any new text keeps the reading from being the home screen.
+ */
+export function showsNoSpotlight(lines, home, again) {
+  const before = labels(home);
+  if (before.length === 0) return false;
+  const now = new Set(labels(lines));
+  if (before.filter((text) => now.has(text)).length < HOME_SHARE * before.length) return false;
+  const extra = newTexts(lines, home);
+  if (extra.length === 0) return true;
+  if (again === undefined) return false;
+  const stays = new Set(texts(again));
+  return extra.every((text) => stays.has(text));
+}
+
 export const center = (line) => ({
   x: Math.round(line.x + line.width / 2),
   y: Math.round(line.y + line.height / 2),
@@ -726,21 +761,60 @@ export async function runCheck(deps, options = {}) {
   // 3. Typing into Spotlight on the phone -----------------------------------------
   // Each step starts from a fresh, emptied search field, so what one step left
   // there never decides the next.
+  // It returns a reading of the home screen and one taken after Spotlight was asked to open.
   const freshSearch = async () => {
     await call("computer_key", { keys: "cmd+1" });
     await deps.sleep(config.settleMs);
+    const home = await look();
     await call("computer_key", { keys: "cmd+3" });
     await deps.sleep(config.settleMs);
     await call("computer_key", { keys: "backspace", repeat: CLEAR_PRESSES });
     await deps.sleep(300);
+    const opened = await look();
+    return { home, opened };
   };
+  // Types into a fresh search. When the phone then shows only what its home screen
+  // showed, no search field took the text: that judges nothing, so Spotlight is
+  // opened again, up to SPOTLIGHT_TRIES times. Returns what the last try saw when
+  // every try ended that way; `seen` holds the reading after typing. A reading
+  // where `shown` finds the field is judged at once.
+  const typeInSpotlight = async (text, name, waitMs, shown) => {
+    for (let tries = 1; ; tries++) {
+      const { home, opened } = await freshSearch();
+      await call("computer_type", { text });
+      await deps.sleep(waitMs);
+      seen = await look();
+      if (shown(seen)) return undefined;
+      const after = seen;
+      let gone = showsNoSpotlight(after.lines, home.lines);
+      if (!gone && showsNoSpotlight(after.lines, home.lines, after.lines)) {
+        // The home screen with new text: home once more tells the screen's own
+        // text from a search field's, which closes.
+        await call("computer_key", { keys: "cmd+1" });
+        await deps.sleep(config.settleMs);
+        const again = await look();
+        gone = showsNoSpotlight(after.lines, home.lines, again.lines);
+        seen = after;
+      }
+      if (!gone) return undefined;
+      const extra = newTexts(opened.lines, home.lines);
+      const detail = `after typing "${text}" the phone showed only its home screen, no search field (try ${tries} of ${SPOTLIGHT_TRIES}); before typing, after cmd+3, it showed ${extra.length === 0 ? "nothing beyond the home screen" : `new text ${extra.map((entry) => JSON.stringify(entry)).join(", ")}`}; home screen read ${describeLines(home.lines.slice(0, 6))}`;
+      note(`${stamp()} ${name}: ${detail}`);
+      if (tries >= SPOTLIGHT_TRIES) return detail;
+    }
+  };
+  const noSpotlight = (detail) =>
+    `the phone showed no Spotlight after typing on ${SPOTLIGHT_TRIES} tries, so the typing could not be judged; last try: ${detail}`;
   for (const sample of TYPE_SAMPLES) {
     try {
       await step(`type "${sample}"`, async () => {
-        await freshSearch();
-        await call("computer_type", { text: sample });
-        await deps.sleep(config.settleMs);
-        seen = await look();
+        const gone = await typeInSpotlight(sample, `type "${sample}"`, config.settleMs, (reading) =>
+          reading.lines.some((line) => readField(line.text, sample)?.count === 0),
+        );
+        if (gone !== undefined) {
+          unsure(`type "${sample}"`, noSpotlight(gone));
+          return;
+        }
         const fields = seen.lines
           .map((line) => ({ line, field: readField(line.text, sample) }))
           .filter((entry) => entry.field !== undefined && entry.field.count === 0);
@@ -774,12 +848,18 @@ export async function runCheck(deps, options = {}) {
   // that removed one fewer than asked while a suggestion showed is UNSURE.
   try {
     await step("key repeat", async () => {
-      await freshSearch();
-      await call("computer_type", { text: REPEAT_BASE + REPEAT_TAIL });
+      const gone = await typeInSpotlight(
+        REPEAT_BASE + REPEAT_TAIL,
+        "key repeat",
+        config.suggestMs,
+        (reading) => reading.lines.some((line) => readField(line.text, REPEAT_BASE, true)),
+      );
+      if (gone !== undefined) {
+        unsure("key repeat", noSpotlight(gone));
+        return;
+      }
       const reads = [];
-      const read = async (waitMs = config.suggestMs) => {
-        await deps.sleep(waitMs);
-        seen = await look();
+      const parse = () => {
         const line = seen.lines.find((entry) => readField(entry.text, REPEAT_BASE, true));
         reads.push(line?.text);
         const field = line === undefined ? undefined : readField(line.text, REPEAT_BASE, true);
@@ -791,7 +871,12 @@ export async function runCheck(deps, options = {}) {
               other: field.after === "other",
             };
       };
-      const typed = await read();
+      const read = async (waitMs = config.suggestMs) => {
+        await deps.sleep(waitMs);
+        seen = await look();
+        return parse();
+      };
+      const typed = parse();
       await call("computer_key", { keys: "backspace" });
       // Read soon, before Spotlight could search again.
       const afterOne = await read(config.settleMs);
@@ -857,15 +942,74 @@ export async function runCheck(deps, options = {}) {
   }
 
   // 4. Taps on the Clock app's tabs ------------------------------------------------
+  const barLabels = options.tabs === undefined ? config.barLabels : config.tabs;
+  // The search field: the topmost line that reads the typed name, alone or with a suggestion.
+  const searchField = (reading, name) =>
+    reading.lines
+      .filter((line) => {
+        const field = readField(line.text, name);
+        return field !== undefined && field.count === 0 && field.after !== "other";
+      })
+      .sort((a, b) => a.y - b.y)[0];
+  // Return opens Spotlight's top hit once it shows ("Clock - Open"), so the key
+  // waits for it. When Spotlight still shows after Return, the app's result is
+  // tapped instead, and the log says so.
   const openApp = async (name) => {
     await freshSearch();
     await call("computer_type", { text: name });
-    await deps.sleep(config.settleMs);
+    let suggested;
+    for (let waited = 0; suggested === undefined && waited < config.suggestMs;) {
+      await deps.sleep(config.settleMs);
+      waited += config.settleMs;
+      seen = await look();
+      suggested = seen.lines.find((line) => readField(line.text, name)?.after === "suggestion");
+    }
     await call("computer_key", { keys: "return" });
     await deps.sleep(config.openMs);
-    return look();
+    seen = await look();
+    const field = searchField(seen, name);
+    const below =
+      field === undefined
+        ? []
+        : seen.lines
+            .filter((line) => center(line).y > center(field).y + field.height)
+            .sort((a, b) => a.y - b.y);
+    const first = below.find((line) => normalize(line.text) === normalize(name));
+    // The app's own result is the first row under the field. Text between them
+    // (a heading such as "Google" over another source's "Clock") means the
+    // app's caption was missed, and nothing is tapped.
+    const sameRow = (a, b) =>
+      Math.abs(center(a).y - center(b).y) <= Math.max(a.height, b.height) / 2;
+    const result =
+      first !== undefined &&
+      !below.some((line) => center(line).y < center(first).y && !sameRow(line, first))
+        ? first
+        : undefined;
+    // Spotlight is still up only when its field shows a suggestion or the name
+    // shows under it: an opened app's own title (Settings) is neither.
+    const searching =
+      field !== undefined &&
+      (readField(field.text, name).after === "suggestion" || first !== undefined);
+    if (!searching || locateTabs(seen.lines, [tabA, tabB], barLabels) !== undefined) return seen;
+    const before =
+      suggested === undefined
+        ? `with no suggestion read after ${config.suggestMs / 1000} s`
+        : `while ${JSON.stringify(suggested.text)} showed`;
+    if (result === undefined) {
+      note(
+        `${stamp()} Return did not open ${name} ${before}, and ${first === undefined ? `no "${name}" result showed to tap` : `the first "${name}" under the field is not in the first row of results, so it is another source's and was not tapped`}`,
+      );
+      return seen;
+    }
+    const point = center(result);
+    await call("computer_click", point);
+    await deps.sleep(config.openMs);
+    seen = await look();
+    note(
+      `${stamp()} Return did not open ${name} ${before}; tapped the "${name}" result at (${point.x}, ${point.y}): ${searchField(seen, name) === undefined ? "Spotlight closed" : "Spotlight still showed"} (not one of the ${CLICK_TARGET} counted clicks)`,
+    );
+    return seen;
   };
-  const barLabels = options.tabs === undefined ? config.barLabels : config.tabs;
   let located;
   try {
     located = await step(`opening ${config.clockApp}`, async () => {
@@ -1044,208 +1188,9 @@ export async function runCheck(deps, options = {}) {
   return finish();
 }
 
-// A simulated phone for --dry-run -------------------------------------------------
-
-/**
- * A phone behind a Mirroring window that answers the tools the way the real one
- * should. suggestion: Spotlight shows an inline suggestion after new text, which
- * the next key call's first press removes. dropRepeat: a key repeat of N reaches
- * the phone as N - 1 presses. keepsQuery: Spotlight reopens with its last text.
- * tabsOnTop: Clock shows its tabs in a row at the top, under the status bar.
- */
-export function simulatedPhone({
-  missClick,
-  pages: pageOverride,
-  deadClicks = false,
-  load = 3,
-  mirroringPath = true,
-  suggestion = false,
-  dropRepeat = false,
-  keepsQuery = false,
-  tabsOnTop = false,
-  // Called with the number of each input call: "refuse" puts SpecWithCode in
-  // front first (the product refuses, nothing sent); "partway" sends it, then
-  // reports that iPhone Mirroring left the front.
-  stealFront,
-} = {}) {
-  const window = { x: 600, y: 100, width: 360, height: 760 };
-  const display = { width: 1512, height: 982 };
-  const tabY = tabsOnTop ? 140 : 820;
-  const tabs = {
-    "World Clock": { x: 640, y: tabY, width: 90, height: 20 },
-    Alarms: { x: 740, y: tabY, width: 60, height: 20 },
-    Stopwatch: { x: 840, y: tabY, width: 80, height: 20 },
-    Timers: { x: 900, y: tabY, width: 50, height: 20 },
-  };
-  const pages = pageOverride ?? {
-    "World Clock": ["World Clock", "Edit", "Cupertino", "Today, +0HRS", "10:42"],
-    Stopwatch: ["00:00,00", "Lap", "Start"],
-  };
-  const rows = [
-    "General",
-    "Accessibility",
-    "Action Button",
-    "Camera",
-    "Control Center",
-    "Display & Brightness",
-    "Home Screen & App Library",
-    "Search",
-    "Siri",
-    "StandBy",
-    "Wallpaper",
-    "Notifications",
-    "Sounds & Haptics",
-    "Focus",
-    "Screen Time",
-  ];
-  const state = {
-    front: "SpecWithCode",
-    app: "home",
-    query: "",
-    // An inline suggestion shows after the text in the search field.
-    inline: false,
-    tab: "Stopwatch",
-    scroll: 0,
-    clicks: 0,
-    calls: [],
-  };
-  const line = (text, x, y, width = 120, height = 20) => ({ text, x, y, width, height });
-
-  const ocr = () => {
-    if (state.app === "home") return [line("Clock", 640, 300), line("Settings", 760, 300)];
-    if (state.app === "spotlight") {
-      if (state.query === "") return [line("Search", 640, 160)];
-      return [line(`${state.query}${state.inline ? "- Ask Siri" : ""}`, 640, 160)];
-    }
-    if (state.app === "Clock") {
-      const top = tabsOnTop ? 200 : 150;
-      return [
-        ...pages[state.tab].map((text, index) => line(text, 620, top + index * 60)),
-        ...Object.entries(tabs).map(([text, box]) =>
-          line(text, box.x, box.y, box.width, box.height),
-        ),
-      ];
-    }
-    if (state.app === "Settings") {
-      return rows
-        .map((text, index) => line(text, 620, 200 + index * 50 - state.scroll))
-        .filter((entry) => entry.y > window.y && entry.y < window.y + window.height - 20);
-    }
-    return [];
-  };
-
-  let inputs = 0;
-  const call = async (tool, args) => {
-    state.calls.push(tool);
-    if (
-      tool !== "computer_open" &&
-      tool.startsWith("computer_") &&
-      tool !== "computer_screenshot"
-    ) {
-      const steal = stealFront?.(++inputs);
-      if (steal === "refuse") state.front = "SpecWithCode";
-      if (state.front !== MIRRORING_APP) {
-        throw new Error(
-          "Agents cannot click or type in SpecWithCode itself, so they cannot answer their own access requests.",
-        );
-      }
-      if (steal === "partway") {
-        await act(tool, args);
-        state.front = "SpecWithCode";
-        throw new Error(
-          "iPhone Mirroring stopped being the app in front partway through, so the rest was not sent.",
-        );
-      }
-    }
-    return act(tool, args);
-  };
-  const act = async (tool, args) => {
-    const done = (data = {}) => ({ data: { display, frontmostApplication: state.front, ...data } });
-    switch (tool) {
-      case "request_access":
-        return { data: { status: "allowed", allowed: [MIRRORING_APP] } };
-      case "computer_open":
-        state.front = MIRRORING_APP;
-        return done();
-      case "computer_screenshot":
-        return { ...done(), image: "simulated" };
-      case "computer_key": {
-        if (args.keys === "cmd+1") state.app = "home";
-        else if (args.keys === "cmd+3") {
-          state.app = "spotlight";
-          if (!keepsQuery) state.query = "";
-          state.inline = false;
-        } else if (args.keys === "backspace") {
-          let presses = args.repeat ?? 1;
-          if (dropRepeat && presses > 1) presses--;
-          if (state.inline && presses > 0) {
-            state.inline = false;
-            presses--;
-          }
-          if (presses > 0)
-            state.query = state.query.slice(0, Math.max(0, state.query.length - presses));
-        } else if (args.keys === "return" && state.app === "spotlight") {
-          state.app = state.query;
-          state.scroll = 0;
-        }
-        return done();
-      }
-      case "computer_type":
-        // The iPhone Mirroring path refuses what a US keyboard cannot type; an older app pastes it.
-        if (mirroringPath && /[^\x20-\x7e\n\t]/.test(args.text)) {
-          throw new Error(
-            `iPhone Mirroring ${PATH_REFUSAL} to the phone, so "${args.text}" cannot be typed there and nothing was typed.`,
-          );
-        }
-        if (state.app === "spotlight") {
-          state.query += args.text;
-          state.inline = suggestion;
-        }
-        return done();
-      case "computer_click": {
-        state.clicks++;
-        // The first click is the uncounted setup tap.
-        const counted = state.clicks - 1;
-        const hit = Object.entries(tabs).find(
-          ([, box]) =>
-            args.x >= box.x &&
-            args.x < box.x + box.width &&
-            args.y >= box.y &&
-            args.y < box.y + box.height,
-        );
-        if (state.app === "Clock" && hit !== undefined && counted !== missClick && !deadClicks) {
-          state.tab = hit[0];
-        }
-        return done();
-      }
-      case "computer_scroll":
-        if (state.app === "Settings") {
-          state.scroll = Math.max(
-            0,
-            state.scroll + (args.direction === "down" ? 1 : -1) * args.amount * 20,
-          );
-        }
-        return done();
-      case "computer_drag":
-        return done();
-      default:
-        throw new Error(`the simulated phone has no ${tool}`);
-    }
-  };
-
-  return {
-    state,
-    deps: {
-      call,
-      window: async () => ({ window, onMainDisplay: true }),
-      ocr: async () => ocr(),
-      frontmost: async () => state.front,
-      loadavg: () => load,
-      desktopApps: async () => [{ version: "simulated", path: "simulated" }],
-      sleep: async () => {},
-    },
-  };
-}
+// The simulated phone for --dry-run is in iphone-mirroring-simulated.mjs.
+export { simulatedPhone } from "./iphone-mirroring-simulated.mjs";
+import { simulatedPhone } from "./iphone-mirroring-simulated.mjs";
 
 // Live dependencies are in iphone-mirroring-live.mjs.
 export {
