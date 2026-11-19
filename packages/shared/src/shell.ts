@@ -106,6 +106,57 @@ export type SpawnExecutableResolver = (
   env: NodeJS.ProcessEnv,
 ) => string | undefined;
 
+/**
+ * A PATH folder that lives only as long as one terminal: fnm puts a per-shell
+ * symlink folder (`.../fnm_multishells/<pid>_<time>/bin`) first on PATH, and
+ * it vanishes when that shell ends. A command found there works now and is
+ * gone after the next restart, so it is looked up last and never kept.
+ */
+export function isVolatilePathEntry(entry: string): boolean {
+  return /[\\/]fnm_multishells[\\/]/i.test(entry);
+}
+
+/** The same folders, every lasting one before every per-shell one, each group in its own order. */
+export function lastingPathEntriesFirst<T extends string>(entries: ReadonlyArray<T>): T[] {
+  return [
+    ...entries.filter((entry) => !isVolatilePathEntry(entry)),
+    ...entries.filter((entry) => isVolatilePathEntry(entry)),
+  ];
+}
+
+function withoutVolatilePathEntries(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): NodeJS.ProcessEnv {
+  const delimiter = pathDelimiterForPlatform(platform);
+  const value = readEnvPath(env) ?? "";
+  const kept = value.split(delimiter).filter((entry) => !isVolatilePathEntry(entry));
+  const key = Object.keys(env).find((name) => name.toUpperCase() === "PATH") ?? "PATH";
+  return { ...env, [key]: kept.join(delimiter) };
+}
+
+/**
+ * For a saved command path that is gone, or that sits in a per-shell folder,
+ * the same command from a lasting PATH folder. Undefined when the saved path
+ * is fine as it is, or when nothing else can stand in for it.
+ */
+export function lastingReplacementForCommand(
+  command: string,
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+  resolveExecutable: SpawnExecutableResolver = resolveSpawnExecutableWithNode,
+): string | undefined {
+  if (!command.includes("/") && !command.includes("\\")) return undefined;
+  const volatile = isVolatilePathEntry(command);
+  const present = resolveExecutable(command, platform, env) !== undefined;
+  if (present && !volatile) return undefined;
+  const path = platform === "win32" ? NodePath.win32 : NodePath.posix;
+  const name = path.basename(command);
+  if (name.length === 0) return undefined;
+  const found = resolveExecutable(name, platform, withoutVolatilePathEntries(env, platform));
+  return found !== undefined && found !== command ? found : undefined;
+}
+
 function resolveSpawnExecutableWithNode(
   command: string,
   platform: NodeJS.Platform,
@@ -135,7 +186,9 @@ function resolveSpawnExecutableWithNode(
     return candidates.find(isExecutable);
   }
 
-  for (const pathEntry of (readEnvPath(env) ?? "").split(pathDelimiterForPlatform(platform))) {
+  for (const pathEntry of lastingPathEntriesFirst(
+    (readEnvPath(env) ?? "").split(pathDelimiterForPlatform(platform)),
+  )) {
     const normalizedPathEntry = stripWrappingQuotes(pathEntry.trim());
     if (normalizedPathEntry.length === 0) continue;
     for (const candidate of candidates) {
@@ -234,7 +287,8 @@ export function mergePathEntries(
     }
   }
 
-  return merged.length > 0 ? merged.join(delimiter) : undefined;
+  // A per-shell fnm folder may lead the login shell's PATH; it goes after every lasting one.
+  return merged.length > 0 ? lastingPathEntriesFirst(merged).join(delimiter) : undefined;
 }
 
 function envCaptureStart(name: string): string {
@@ -501,7 +555,8 @@ export function mergePathValues(
     }
   }
 
-  return merged.length > 0 ? merged.join(delimiter) : undefined;
+  // A per-shell fnm folder may lead the login shell's PATH; it goes after every lasting one.
+  return merged.length > 0 ? lastingPathEntriesFirst(merged).join(delimiter) : undefined;
 }
 
 /** PATH as Windows also spells it (`Path`, `path`) in copied environments. */
@@ -698,9 +753,29 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
   );
 
   if (command.includes("/") || command.includes("\\")) {
-    for (const candidate of commandCandidates) {
-      if (yield* isExecutableFile(candidate, platform, windowsPathExtensions)) {
-        return candidate;
+    const volatile = isVolatilePathEntry(command);
+    if (!volatile) {
+      for (const candidate of commandCandidates) {
+        if (yield* isExecutableFile(candidate, platform, windowsPathExtensions)) {
+          return candidate;
+        }
+      }
+    }
+    // A saved path that is gone, or that lives in a per-shell folder, is looked up again by name.
+    const name = (platform === "win32" ? NodePath.win32 : NodePath.posix).basename(command);
+    const lasting =
+      name.length > 0
+        ? yield* resolveCommandPathForPlatform(name, {
+            ...options,
+            env: withoutVolatilePathEntries(env, platform),
+          }).pipe(Effect.option)
+        : Option.none<string>();
+    if (Option.isSome(lasting)) return lasting.value;
+    if (volatile) {
+      for (const candidate of commandCandidates) {
+        if (yield* isExecutableFile(candidate, platform, windowsPathExtensions)) {
+          return candidate;
+        }
       }
     }
     return yield* new CommandResolutionError({ command, reason: "not-found" });
@@ -717,7 +792,13 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
   const cache = yield* CommandResolutionCache;
   const nowNanos = yield* Clock.monotonicTimeNanos;
   const cached = cache.get(cacheKey);
-  if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
+  // A remembered path is checked again: its folder may have gone with its shell.
+  if (
+    cached !== undefined &&
+    cached.expiresAtNanos > nowNanos &&
+    (cached.resolvedPath === null ||
+      (yield* isExecutableFile(cached.resolvedPath, platform, windowsPathExtensions)))
+  ) {
     if (cached.resolvedPath === null) {
       return yield* new CommandResolutionError({ command, reason: "not-found" });
     }
@@ -736,7 +817,7 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
   }
 
   const listings = yield* PathDirectoryListings;
-  for (const pathEntry of pathEntries) {
+  for (const pathEntry of lastingPathEntriesFirst(pathEntries)) {
     let listing = listings && (yield* Cache.get(listings, pathEntry));
     if (listings && listing?.names && listing.modified !== (yield* directoryMtime(pathEntry))) {
       yield* Cache.invalidate(listings, pathEntry);
@@ -777,7 +858,22 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
 ): Effect.fn.Return<ResolvedSpawnCommand> {
   const platform = yield* HostProcessPlatform;
   if (platform !== "win32") {
-    return { command, args: [...args], shell: false };
+    // A saved path that is gone or per-shell runs the same command from a lasting folder.
+    if (!command.includes("/")) return { command, args: [...args], shell: false };
+    const hostEnvironment = yield* HostProcessEnvironment;
+    const env =
+      options.env === undefined
+        ? hostEnvironment
+        : options.extendEnv
+          ? { ...hostEnvironment, ...options.env }
+          : options.env;
+    const replacement = lastingReplacementForCommand(
+      command,
+      platform,
+      env,
+      yield* SpawnExecutableResolution,
+    );
+    return { command: replacement ?? command, args: [...args], shell: false };
   }
 
   const hostEnvironment = yield* HostProcessEnvironment;
@@ -909,8 +1005,14 @@ export function resolveKnownPosixCliDirs(
         .sort(compareNodeVersionsDescending)
         .map((entry) => `${nvmDir}/versions/node/${entry}/bin`)
     : [];
+  // fnm's default alias folder holds the same commands as its per-shell folders, and lasts.
+  const dataHome = set("XDG_DATA_HOME");
+  const fnmDir =
+    set("FNM_DIR") ??
+    (dataHome ? `${dataHome}/fnm` : home ? `${home}/.local/share/fnm` : undefined);
   const dirs = [
     home && `${home}/.local/bin`,
+    fnmDir && `${fnmDir}/aliases/default/bin`,
     npmPrefix && `${npmPrefix}/bin`,
     home && `${home}/.npm-global/bin`,
     ...nodeBins,

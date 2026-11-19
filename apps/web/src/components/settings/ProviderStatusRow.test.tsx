@@ -94,7 +94,7 @@ vi.mock("./RedactedSensitiveText", () => ({
   RedactedSensitiveText: ({ value }: { value: string }) => <span data-redacted>{value}</span>,
 }));
 
-import { ProviderStatusRow } from "./ProviderStatusRow";
+import { CHECK_AGAIN_MIN_MS, ProviderStatusRow } from "./ProviderStatusRow";
 
 const environmentId = EnvironmentId.make("this-computer");
 const agent = (driver: string, patch: Partial<ServerProvider> = {}): ServerProvider => ({
@@ -773,12 +773,90 @@ describe("the selected agent's status row", () => {
     expect(row().dataset.agentState).toBe("noAnswer");
     expect(text()).toContain("Could not check Grok: no answer in 15 seconds.");
     expect(text()).toContain("Last time it was signed in as ada@example.com.");
-    await press("Check again");
-    expect(container.querySelector('[role="status"]')?.textContent).toBe("Checking…");
-    expect(row().dataset.agentState).toBe("checking");
-    expect(buttons()).toEqual([]);
-    await act(async () => answer({ _tag: "Success", value: undefined }));
-    expect(button("Check again")).toBeDefined();
+    vi.useFakeTimers();
+    try {
+      await press("Check again");
+      expect(container.querySelector('[role="status"]')?.textContent).toBe("Checking…");
+      expect(row().dataset.agentState).toBe("checking");
+      // The button stays, busy, so the press is seen to do something.
+      const busy = container.querySelector<HTMLButtonElement>("[data-agent-check-again]")!;
+      expect(busy.disabled).toBe(true);
+      expect(busy.getAttribute("aria-busy")).toBe("true");
+      expect(busy.textContent).toBe("Checking…");
+      expect(container.querySelector("[data-agent-repair-actions]")).toBeNull();
+      // A fast answer still reads as checking for the minimum time.
+      await act(async () => answer({ _tag: "Success", value: undefined }));
+      expect(row().dataset.agentState).toBe("checking");
+      await act(async () => vi.advanceTimersByTimeAsync(CHECK_AGAIN_MIN_MS));
+      expect(button("Check again")).toBeDefined();
+      expect(container.querySelector("[data-agent-last-checked]")?.textContent).toMatch(
+        /^Checked at .+\. Still not working\.$/,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("offers every way out of a failed check, the likely one first", async () => {
+    mocks.serverConfig = {
+      cwd: "/work",
+      keybindings: [],
+      environment: { platform: { os: "linux" } },
+      settings: { providerInstances: {}, providers: {} },
+    };
+    await show(
+      agent("codex", {
+        status: "error",
+        auth: { status: "unknown" },
+        message:
+          "Codex stopped as it started (exit code 1): Error: Missing optional dependency @openai/codex-linux-x64. Reinstall Codex: npm install -g @openai/codex@latest.",
+      }),
+      { name: "Codex" },
+    );
+    expect(row().dataset.agentState).toBe("attention");
+    expect(text()).toContain("Missing optional dependency @openai/codex-linux-x64");
+    expect(text()).toContain("The install looks broken. Reinstall or update it, then check again.");
+    const repairs = [...container.querySelectorAll<HTMLElement>("[data-agent-repair]")];
+    expect(repairs.map((element) => element.dataset.agentRepair)).toEqual([
+      "reinstall",
+      "signIn",
+      "pickBinary",
+    ]);
+    await press("Reinstall or update");
+    expect(mocks.panel.open).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: "codex", purpose: "install" }),
+    );
+    await press("Sign in or switch account");
+    expect(mocks.panel.open).toHaveBeenLastCalledWith(
+      expect.objectContaining({ agent: "codex", purpose: "signIn", command: "codex login" }),
+    );
+  });
+
+  it("opens the Runtime section for Pick command", async () => {
+    const onPickBinary = vi.fn();
+    await show(
+      agent("codex", {
+        status: "error",
+        auth: { status: "unknown" },
+        message: "spawn codex ENOENT",
+      }),
+      { name: "Codex", onPickBinary },
+    );
+    expect(container.querySelector<HTMLElement>("[data-agent-repair]")?.dataset.agentRepair).toBe(
+      "pickBinary",
+    );
+    await press("Pick command");
+    expect(onPickBinary).toHaveBeenCalledOnce();
+  });
+
+  it("warns that a per-shell command folder will not last", async () => {
+    mocks.foundPath = "/run/user/1000/fnm_multishells/665561_1795096049920/bin/codex";
+    await show(agent("codex"), { name: "Codex" });
+    expect(facts().Command).toContain("fnm_multishells");
+    expect(container.querySelector("[data-agent-command-volatile]")).not.toBeNull();
+    mocks.foundPath = "/home/me/.local/share/fnm/aliases/default/bin/codex";
+    await show(agent("codex"), { name: "Codex" });
+    expect(container.querySelector("[data-agent-command-volatile]")).toBeNull();
   });
 
   it("opens a sign-in page the agent asks for and tells the caller", async () => {
