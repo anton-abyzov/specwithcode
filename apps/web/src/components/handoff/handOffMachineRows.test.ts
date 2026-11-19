@@ -11,8 +11,11 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   HANDOFF_BATCH_LIMIT,
   handoffMachineRows,
-  selectedHandoffRows,
+  handoffCheckRequest,
+  initialHandoffTicks,
+  sentHandoffRows,
   tickableHandoffRows,
+  toggleHandoffTick,
   type HandoffMachineProject,
   type HandoffMachineRowFacts,
 } from "./handOffMachineRows";
@@ -185,8 +188,8 @@ describe("handoffMachineRows (AC-17)", () => {
     expect([...tickableHandoffRows(rows)]).toEqual(["t-run", "t-idle"]);
   });
 
-  it("ticks at most as many threads as one hand off takes, the newest first", () => {
-    const rows = handoffMachineRows(
+  const many = () =>
+    handoffMachineRows(
       facts({
         shells: Array.from({ length: HANDOFF_BATCH_LIMIT + 5 }, (_, index) =>
           shell(`t-${String(index).padStart(3, "0")}`, {
@@ -195,25 +198,55 @@ describe("handoffMachineRows (AC-17)", () => {
         ),
       }),
     );
+
+  it("ticks the first 100 when the dialog opens, the newest first", () => {
+    const rows = many();
     expect(HANDOFF_BATCH_LIMIT).toBe(100);
-    const picked = selectedHandoffRows(rows, new Map());
-    expect(picked.ids.size).toBe(100);
-    expect(picked.ids.has("t-104" as ThreadId)).toBe(true);
-    expect(picked.ids.has("t-004" as ThreadId)).toBe(false);
-    expect(picked.overLimit).toBe(true);
-    // Unticking one makes room for the next; ticking past the limit adds nothing.
-    const next = selectedHandoffRows(
-      rows,
-      new Map([
-        ["t-104" as ThreadId, false],
-        ["t-000" as ThreadId, true],
-      ]),
-    );
-    expect(next.ids.has("t-104" as ThreadId)).toBe(false);
-    expect(next.ids.size).toBe(100);
-    expect(next.overLimit).toBe(true);
-    const few = selectedHandoffRows(rows.slice(0, 3), new Map([[rows[0]!.threadId, false]]));
-    expect([...few.ids]).toEqual([rows[1]!.threadId, rows[2]!.threadId]);
+    const opened = initialHandoffTicks(rows);
+    expect(opened.ticks.size).toBe(100);
+    expect(opened.ticks.has("t-104" as ThreadId)).toBe(true);
+    expect(opened.ticks.has("t-004" as ThreadId)).toBe(false);
+    expect(opened.overLimit).toBe(true);
+    const few = initialHandoffTicks(rows.slice(0, 3));
+    expect(few.ticks.size).toBe(3);
     expect(few.overLimit).toBe(false);
+  });
+
+  it("leaves a freed slot empty: only the person's own ticks change the set", () => {
+    const rows = many();
+    const opened = initialHandoffTicks(rows).ticks;
+    const freed = toggleHandoffTick(opened, "t-104" as ThreadId, false);
+    expect(freed.refused).toBe(false);
+    expect(freed.ticks.size).toBe(99);
+    // Row 101 was never ticked by the person, so it is never sent.
+    expect(freed.ticks.has("t-004" as ThreadId)).toBe(false);
+    expect(sentHandoffRows(rows, freed.ticks).has("t-004" as ThreadId)).toBe(false);
+    expect(sentHandoffRows(rows, freed.ticks).size).toBe(99);
+    // The person may tick it into the freed slot.
+    const own = toggleHandoffTick(freed.ticks, "t-004" as ThreadId, true);
+    expect(own.ticks.has("t-004" as ThreadId)).toBe(true);
+    expect(own.ticks.size).toBe(100);
+    // Past the limit a tick is refused and changes nothing.
+    const past = toggleHandoffTick(own.ticks, "t-003" as ThreadId, true);
+    expect(past.refused).toBe(true);
+    expect(past.ticks.has("t-003" as ThreadId)).toBe(false);
+    expect(past.ticks.size).toBe(100);
+  });
+
+  it("never sends a ticked row that left the list or now stays", () => {
+    const rows = handoffMachineRows(facts({ shells: [shell("t-a"), shell("t-b")] }));
+    const ticks = initialHandoffTicks(rows).ticks;
+    const later = handoffMachineRows(
+      facts({ shells: [shell("t-a", { hasPendingUserInput: true }), shell("t-c")] }),
+    );
+    expect([...sentHandoffRows(later, ticks)]).toEqual([]);
+  });
+
+  it("checks the ticked ids as they are, whatever characters they hold", () => {
+    const request = handoffCheckRequest(new Set(["t-b,2", "t-a"] as ThreadId[]));
+    expect(request.threadIds).toEqual(["t-a", "t-b,2"]);
+    expect(handoffCheckRequest(new Set(["t-a", "t-b,2"] as ThreadId[])).key).toBe(request.key);
+    expect(handoffCheckRequest(new Set(["t-a,t-b"] as ThreadId[])).key).not.toBe(request.key);
+    expect(handoffCheckRequest(new Set()).threadIds).toEqual([]);
   });
 });
