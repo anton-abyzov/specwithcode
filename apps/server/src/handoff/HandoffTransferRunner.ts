@@ -281,9 +281,12 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       const neverLeft =
         first && error?._tag === "HandoffPeerError" && error.local === true && !error.uncertain;
       let open = error !== null && !neverLeft && (inDoubt(error) || !destinationRefused(error));
-      if (error !== null && !open && !neverLeft && error.code === "fenced") {
-        // The destination holds a newer epoch of this thread. It says which:
-        // it continued the thread, or this operation is not accepted for good.
+      if (error !== null && !open && !neverLeft && (error.code === "fenced" || !first)) {
+        // The destination holds a newer epoch of this thread, or it refuses a
+        // repeat: it may have accepted the first send, and a refusal given
+        // before its records were read (it is updating, the grant was withdrawn)
+        // says nothing about that. It says which: it continued the thread, or
+        // this operation is not accepted for good.
         const status = yield* deps
           .transferStatus(destination, {
             sourceEnvironmentId: self,

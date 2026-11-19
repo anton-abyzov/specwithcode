@@ -1024,6 +1024,7 @@ export const make = Effect.gen(function* () {
           return [next, noteContinuation(saved, receiptKey, receipt(false))] as const;
         });
         // From here a thread may exist, whatever the launch answers.
+        const cutBefore = standing;
         standing = true;
         yield* launches
           .launch({
@@ -1058,7 +1059,18 @@ export const make = Effect.gen(function* () {
                   },
                 }),
           })
-          .pipe(Effect.mapError((error) => refuse(500, "failed", at(error.message))));
+          .pipe(
+            Effect.mapError((error) => {
+              // Refused before the thread was asked for (a paused or missing project, an
+              // unknown repository): nothing exists here, so this is a "no" and the
+              // acceptance goes. Not after an earlier launch that was cut.
+              const before =
+                error.threadId === undefined &&
+                (error.operation === "resolve-project" || error.operation === "resolve-repository");
+              if (before && !cutBefore) standing = false;
+              return refuse(before && !cutBefore ? 409 : 500, "failed", at(error.message));
+            }),
+          );
       }).pipe(
         // A failed move leaves no origin behind: the same id may later be continued
         // here by this machine's own user.
