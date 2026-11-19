@@ -2987,7 +2987,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   const makeWakeHarnessWithOptions = (options?: {
     readonly settings?: ClaudeSettings;
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
-    readonly interrupt?: Effect.Effect<void>;
+    readonly interrupt?: Effect.Effect<void, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
     readonly environment?: NodeJS.ProcessEnv;
     readonly browserExtensionPairingFile?: string;
   }) =>
@@ -8022,15 +8022,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             attachments: [],
           }),
         );
-        const tree = [{ pid: 4242, ppid: 1, command: "bash -c npm test" }];
+        const tree = [{ pid: 4242, ppid: 1, started: "1", command: "bash -c npm test" }];
         const calls: string[] = [];
         yield* harness.runtime
           .interruptTurn({ providerThread: harness.providerThread, providerTurnId })
           .pipe(
             Effect.provideService(MarkedProcessTree, {
-              snapshot: (marker) =>
+              snapshot: (flags) =>
                 Effect.sync(() => {
-                  calls.push(`snapshot ${marker}`);
+                  calls.push(`snapshot ${flags.join(" ")}`);
                   return tree;
                 }),
               endSurvivors: (snapshot) =>
@@ -8041,9 +8041,61 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             }),
           );
         assert.deepEqual(calls, [
-          `snapshot ${harness.providerThread.nativeThreadRef?.nativeId}`,
+          `snapshot --session-id=${harness.providerThread.nativeThreadRef?.nativeId} --resume=${harness.providerThread.nativeThreadRef?.nativeId}`,
           "end 4242",
         ]);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("still closes the CLI and ends its tools when it rejects the interrupt", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const closes: string[] = [];
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: (sdkMessages) =>
+            Effect.sync(() => closes.push("close")).pipe(
+              Effect.andThen(Queue.shutdown(sdkMessages)),
+            ),
+          interrupt: Effect.fail(
+            new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+              method: "interrupt",
+              cause: "interrupt rejected",
+            }),
+          ),
+        });
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const now = yield* DateTime.now;
+        const attemptId = RunAttemptId.make("attempt-claude-stop-rejected");
+        const providerTurnId = idAllocator.derive.providerTurn({
+          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+          nativeTurnId: `turn:${attemptId}`,
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId,
+            text: "Run the tests.",
+            attachments: [],
+          }),
+        );
+        const ended: number[] = [];
+        yield* harness.runtime
+          .interruptTurn({ providerThread: harness.providerThread, providerTurnId })
+          .pipe(
+            Effect.provideService(MarkedProcessTree, {
+              snapshot: () => Effect.succeed([{ pid: 77, ppid: 1, started: "1", command: "x" }]),
+              endSurvivors: (snapshot) =>
+                Effect.sync(() => {
+                  ended.push(...snapshot.map((entry) => entry.pid));
+                  return snapshot.length;
+                }),
+            }),
+          );
+        assert.deepEqual(closes, ["close"]);
+        assert.deepEqual(ended, [77]);
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );

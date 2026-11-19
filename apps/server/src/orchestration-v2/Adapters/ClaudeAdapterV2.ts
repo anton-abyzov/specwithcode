@@ -192,7 +192,11 @@ import {
   type ProviderAdapterDriverCreateInput,
 } from "../ProviderAdapterDriver.ts";
 import { type BackgroundWorkReport, backgroundWorkNotification } from "../Notification.ts";
-import { MarkedProcessTree, type ProcessEntry } from "../../process/markedProcessTree.ts";
+import {
+  MarkedProcessTree,
+  type ProcessEntry,
+  claudeSessionFlags,
+} from "../../process/markedProcessTree.ts";
 import * as ProviderContinuationRequests from "../ProviderContinuationRequests.ts";
 import * as PromptSuggestions from "../PromptSuggestions.ts";
 import * as SubagentLaunchCheckpoints from "../SubagentLaunchCheckpoints.ts";
@@ -9105,7 +9109,7 @@ export function makeClaudeAdapterV2(
               // ends it alone) is ended from the tree read before the close.
               const processTree = yield* MarkedProcessTree;
               const treeSnapshot = yield* processTree
-                .snapshot(nativeThreadId)
+                .snapshot(claudeSessionFlags(nativeThreadId))
                 .pipe(
                   Effect.timeoutOption(CLAUDE_INTERRUPT_ACK_TIMEOUT),
                   Effect.map(Option.getOrElse((): ReadonlyArray<ProcessEntry> => [])),
@@ -9149,9 +9153,20 @@ export function makeClaudeAdapterV2(
             const processTree = yield* MarkedProcessTree;
             const [acknowledged, treeSnapshot] = yield* Effect.all(
               [
-                existing.query.interrupt.pipe(Effect.timeoutOption(CLAUDE_INTERRUPT_ACK_TIMEOUT)),
+                // A rejected interrupt still closes the query below: Stop ends the
+                // CLI either way, instead of leaving it running for a retry.
+                existing.query.interrupt.pipe(
+                  Effect.timeoutOption(CLAUDE_INTERRUPT_ACK_TIMEOUT),
+                  Effect.catch((cause) =>
+                    Effect.logWarning("orchestration-v2.claude-query-interrupt-rejected", {
+                      providerSessionId: input.providerSessionId,
+                      providerTurnId: turnInput.providerTurnId,
+                      cause,
+                    }).pipe(Effect.as(Option.none<void>())),
+                  ),
+                ),
                 processTree
-                  .snapshot(existing.nativeThreadId)
+                  .snapshot(claudeSessionFlags(existing.nativeThreadId))
                   .pipe(
                     Effect.timeoutOption(CLAUDE_INTERRUPT_ACK_TIMEOUT),
                     Effect.map(Option.getOrElse((): ReadonlyArray<ProcessEntry> => [])),

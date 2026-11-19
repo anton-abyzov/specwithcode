@@ -210,6 +210,27 @@ export function workspaceRecommendationLine(
 export const STOP_WAIT_MS = 60_000;
 /** Pause between checks while Stop takes effect. */
 export const STOP_POLL_MS = 2_000;
+/** How often Stop is sent again to a thread that is still running while the flow waits. */
+export const STOP_RESEND_MS = 10_000;
+
+const TIMED_OUT = Symbol("timed out");
+
+/** The promise's value, or TIMED_OUT once `ms` have passed; the promise itself runs on. */
+function within<T>(promise: Promise<T>, ms: number): Promise<T | typeof TIMED_OUT> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(TIMED_OUT), ms);
+    void promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(TIMED_OUT);
+      },
+    );
+  });
+}
 
 function quotedTitles(threads: ReadonlyArray<{ readonly title: string }>) {
   return threads.map((thread) => `"${thread.title}"`).join(", ");
@@ -380,23 +401,37 @@ export function ProjectFolderChange({
     setError(null);
     setDone(null);
     setStopped(null);
-    const results = await Promise.all(
-      stopping.map((thread) =>
-        interrupt({ environmentId: project.environmentId, input: { threadId: thread.id } }),
-      ),
-    );
-    const failure = results.find((result) => result._tag === "Failure");
+    // The wait is bounded from the press, every call included, so a slow machine cannot
+    // keep the flow locked past it.
     const deadline = Date.now() + STOP_WAIT_MS;
+    const remaining = () => Math.max(0, deadline - Date.now());
+    let failure: Parameters<typeof squashAtomCommandFailure>[0] | undefined;
+    const sendStops = (threads: ProjectFolderCheck["activeThreads"]) =>
+      Promise.all(
+        threads.map((thread) =>
+          interrupt({ environmentId: project.environmentId, input: { threadId: thread.id } }).then(
+            (result) => {
+              if (result._tag === "Failure") failure = result;
+            },
+          ),
+        ),
+      );
+    await within(sendStops(stopping), remaining());
+    let lastSent = Date.now();
     let latest: ProjectFolderCheck | null = null;
     let checkFailure: Parameters<typeof squashAtomCommandFailure>[0] | null = null;
-    for (;;) {
-      await new Promise((resolve) => setTimeout(resolve, STOP_POLL_MS));
+    while (remaining() > 0) {
+      await new Promise((resolve) => setTimeout(resolve, Math.min(STOP_POLL_MS, remaining())));
       if (run !== generation.current) return;
-      const result = await runCheck({
-        environmentId: project.environmentId,
-        input: { projectId: project.id, workspaceRoot: targetRoot },
-      });
+      const result = await within(
+        runCheck({
+          environmentId: project.environmentId,
+          input: { projectId: project.id, workspaceRoot: targetRoot },
+        }),
+        remaining(),
+      );
       if (run !== generation.current) return;
+      if (result === TIMED_OUT) break;
       if (result._tag === "Failure") {
         checkFailure = result;
         break;
@@ -404,8 +439,14 @@ export function ProjectFolderChange({
       latest = result.value;
       setCheck(latest);
       const still = latest.activeThreads.filter((thread) => stoppingIds.has(thread.id));
-      if (still.length === 0 || Date.now() >= deadline) break;
+      if (still.length === 0) break;
+      // A queued message that started meanwhile is a new run: Stop reaches it too.
+      if (Date.now() - lastSent >= STOP_RESEND_MS) {
+        lastSent = Date.now();
+        void sendStops(still);
+      }
     }
+    if (run !== generation.current) return;
     setBusy(false);
     setPhase("idle");
     if (checkFailure !== null) {
@@ -413,12 +454,12 @@ export function ProjectFolderChange({
       failed(checkFailure, "The folder could not be checked after Stop. Check it again.");
       return;
     }
-    const still = (latest?.activeThreads ?? []).filter((thread) => stoppingIds.has(thread.id));
+    const still =
+      latest === null
+        ? stopping
+        : latest.activeThreads.filter((thread) => stoppingIds.has(thread.id));
     if (still.length === 0) {
-      const others = latest?.activeThreads.length ?? 0;
-      setStopped(
-        `Stopped ${quotedTitles(stopping)}.${others === 0 ? " Nothing blocks the change now." : ""}`,
-      );
+      setStopped(`Stopped ${quotedTitles(stopping)}.`);
       return;
     }
     const reason =
@@ -429,7 +470,9 @@ export function ProjectFolderChange({
             return cause instanceof Error ? cause.message : null;
           })();
     setError(
-      `${quotedTitles(still)} ${still.length === 1 ? "is" : "are"} still running ${Math.round(STOP_WAIT_MS / 1000)} seconds after Stop.${reason ? ` ${reason}` : ""} Open ${still.length === 1 ? "the thread" : "each thread"} to see what it is doing, or press Stop again.`,
+      latest === null
+        ? `The app could not confirm within ${Math.round(STOP_WAIT_MS / 1000)} seconds that ${quotedTitles(still)} stopped.${reason ? ` ${reason}` : ""} Check the folder again, or open the thread.`
+        : `${quotedTitles(still)} ${still.length === 1 ? "is" : "are"} still running ${Math.round(STOP_WAIT_MS / 1000)} seconds after Stop.${reason ? ` ${reason}` : ""} Open ${still.length === 1 ? "the thread" : "each thread"} to see what it is doing, or press Stop again.`,
     );
   }
 
@@ -488,6 +531,16 @@ export function ProjectFolderChange({
     check.conflictingProject !== null ||
     check.activeThreads.length > 0 ||
     (!check.sameRepository && !confirmRepository);
+
+  // What is left once Stop worked: the change itself, or the confirmation it still needs.
+  const stoppedNext =
+    check === null || check.activeThreads.length > 0
+      ? null
+      : !blocked
+        ? "Nothing blocks the change now."
+        : (!check.sameRepository && !confirmRepository) || (planning !== null && !confirmPlanning)
+          ? "Confirm the folder above, then press Change folder."
+          : null;
 
   const Wrapper = embedded ? "div" : "section";
   return (
@@ -575,7 +628,10 @@ export function ProjectFolderChange({
         {done ? <CheckLine tone="ok">{done}</CheckLine> : null}
         {stopped ? (
           <CheckLine tone="ok">
-            <span data-folder-stopped>{stopped}</span>
+            <span data-folder-stopped>
+              {stopped}
+              {stoppedNext ? ` ${stoppedNext}` : ""}
+            </span>
           </CheckLine>
         ) : null}
         {check ? (
