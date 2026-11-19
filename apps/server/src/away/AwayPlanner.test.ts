@@ -3,6 +3,7 @@ import { EnvironmentId, ProjectId, ThreadId } from "@specweave-studio/contracts"
 
 import { WORKTREE_SET_HANDOFF_MESSAGE } from "../handoff/HandoffMoves.ts";
 import {
+  handoffActivity,
   type AwayPlanFacts,
   type AwayProjectFact,
   type AwayThreadFact,
@@ -422,5 +423,46 @@ describe("an in-doubt handover in the next plan (N1)", () => {
         target,
       ),
     ).toBe(false);
+  });
+});
+
+describe("handoffActivity: every thread a hand off can list (1390)", () => {
+  const shell = {
+    status: "idle" as const,
+    activityRunStatus: null,
+    activeRunId: null,
+    archivedAt: null,
+    deletedAt: null,
+    lineage: { relationshipToParent: null } as never,
+    heldQueuedCount: 0,
+    executionMachineId: undefined,
+    settledAt: null,
+    settledOverride: null,
+  };
+
+  it("tells running, queued, waiting and settled threads apart", () => {
+    expect(handoffActivity({ ...shell, activeRunId: "run-1" as never }, M4)).toBe("running");
+    expect(handoffActivity({ ...shell, heldQueuedCount: 2 }, M4)).toBe("queued");
+    expect(handoffActivity(shell, M4)).toBe("waiting");
+    expect(handoffActivity({ ...shell, settledAt: new Date() as never }, M4)).toBe("settled");
+    expect(handoffActivity({ ...shell, settledOverride: "settled" }, M4)).toBe("settled");
+    // A turn that started again after it was settled is running.
+    expect(
+      handoffActivity({ ...shell, settledAt: new Date() as never, activeRunId: "r" as never }, M4),
+    ).toBe("running");
+  });
+
+  it("lists an idle thread, which the leave plan never did", () => {
+    expect(isAwayCandidate(shell, M4)).toBeNull();
+    expect(handoffActivity(shell, M4)).toBe("waiting");
+  });
+
+  it("leaves out subagents, archived threads and threads another machine runs", () => {
+    expect(
+      handoffActivity({ ...shell, lineage: { relationshipToParent: "subagent" } as never }, M4),
+    ).toBeNull();
+    expect(handoffActivity({ ...shell, archivedAt: new Date() as never }, M4)).toBeNull();
+    expect(handoffActivity({ ...shell, deletedAt: new Date() as never }, M4)).toBeNull();
+    expect(handoffActivity({ ...shell, executionMachineId: MINI }, M4)).toBeNull();
   });
 });
