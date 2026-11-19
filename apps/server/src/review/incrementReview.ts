@@ -193,7 +193,27 @@ async function readReviewRecords(
       Number(b.numbered) - Number(a.numbered) ||
       b.path.localeCompare(a.path, undefined, { numeric: true }),
   );
-  return records;
+  // The same record kept in two copies of the increment counts once.
+  const seen = new Set<string>();
+  return records.filter((record) => {
+    const key = [record.model, record.family, record.head, record.verdict, record.at].join(
+      "\u0000",
+    );
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** Review files of an increment folder and of other copies of it, newest first. */
+async function listReviewFilesOf(
+  incrementPath: string,
+  alsoFrom: ReadonlyArray<string>,
+): Promise<ReviewFile[]> {
+  const lists = await Promise.all([incrementPath, ...alsoFrom].map(listReviewFiles));
+  return lists
+    .flat()
+    .sort((a, b) => b.mtimeMs - a.mtimeMs || Number(b.numbered) - Number(a.numbered));
 }
 
 /**
@@ -207,12 +227,20 @@ export async function readIncrementReview(input: {
   readonly ledger: string | null;
   /** A legacy tasks.md; when present it holds the tasks, as in SpecWeave. */
   readonly tasks?: string | null;
+  /**
+   * Other copies of the same increment whose review records count too, such
+   * as the project folder's while the spec is read from a worktree.
+   */
+  readonly alsoFrom?: ReadonlyArray<string>;
 }): Promise<ThreadIncrementReview | null> {
   const config = await readProjectConfig(input.incrementPath);
   const policy = resolveIncrementReviewPolicy({ spec: input.spec, config: reviewLayer(config) });
   const projectRoot = NodePath.resolve(input.incrementPath, "..", "..", "..");
   const author = ledgerAuthorFamily(input.ledger);
-  const records = await readReviewRecords(await listReviewFiles(input.incrementPath), author);
+  const records = await readReviewRecords(
+    await listReviewFilesOf(input.incrementPath, input.alsoFrom ?? []),
+    author,
+  );
   const latest = records[0] ?? null;
   if (latest === null && policy === null) return null;
   const satisfied =
@@ -276,17 +304,27 @@ const canonicalOr = (family: string) => canonicalReviewFamily(family) ?? family;
 export async function readIncrementReviews(
   incrementPath: string,
   ledgerAuthor: string | null,
+  /** Other copies of the same increment whose records count too (readIncrementReview's `alsoFrom`). */
+  alsoFrom: ReadonlyArray<string> = [],
 ): Promise<ReadonlyArray<ProjectBoardCardReview>> {
-  const reportsPath = NodePath.join(incrementPath, "reports");
-  const reports = await NodeFSP.stat(reportsPath).catch(() => null);
-  if (reports === null || !reports.isDirectory()) return [];
-  const runs = await NodeFSP.stat(NodePath.join(reportsPath, "reviews")).catch(() => null);
-  const folders = `${reports.mtimeMs}:${runs?.isDirectory() === true ? runs.mtimeMs : "-"}`;
-  const cached = reviewListCache.get(incrementPath);
+  const paths = [incrementPath, ...alsoFrom];
+  const stamps = await Promise.all(
+    paths.map(async (path) => {
+      const reportsPath = NodePath.join(path, "reports");
+      const reports = await NodeFSP.stat(reportsPath).catch(() => null);
+      if (reports === null || !reports.isDirectory()) return null;
+      const runs = await NodeFSP.stat(NodePath.join(reportsPath, "reviews")).catch(() => null);
+      return `${reports.mtimeMs}:${runs?.isDirectory() === true ? runs.mtimeMs : "-"}`;
+    }),
+  );
+  if (stamps.every((stamp) => stamp === null)) return [];
+  const key = paths.join("\u0000");
+  const folders = stamps.map((stamp) => stamp ?? "-").join("|");
+  const cached = reviewListCache.get(key);
   if (cached !== undefined && cached.value.length === 0 && cached.signature === folders) return [];
-  const files = await listReviewFiles(incrementPath);
+  const files = await listReviewFilesOf(incrementPath, alsoFrom);
   if (files.length === 0) {
-    rememberReviews(incrementPath, folders, []);
+    rememberReviews(key, folders, []);
     return [];
   }
   const signature = [
@@ -295,16 +333,16 @@ export async function readIncrementReviews(
   ].join("|");
   if (cached?.signature === signature) return cached.value;
   const records = await readReviewRecords(files, ledgerAuthor);
-  const value = records.slice(0, PROJECT_BOARD_CARD_REVIEWS).map(
-    (record): ProjectBoardCardReview => ({
+  const value = records
+    .slice(0, PROJECT_BOARD_CARD_REVIEWS)
+    .map((record): ProjectBoardCardReview => ({
       model: record.model ?? null,
       family: canonicalOr(record.family),
       author: record.author === null ? null : canonicalOr(record.author),
       verdict: record.verdict ?? null,
       at: record.at,
-    }),
-  );
-  rememberReviews(incrementPath, signature, value);
+    }));
+  rememberReviews(key, signature, value);
   return value;
 }
 

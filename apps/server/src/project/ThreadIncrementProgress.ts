@@ -694,6 +694,8 @@ export async function readIncrementProgress(input: {
   readonly incrementId: string;
   readonly threadId: string;
   readonly now: number;
+  /** Other copies of the increment whose review records count too. */
+  readonly reviewAlsoFrom?: ReadonlyArray<string>;
 }): Promise<Omit<ThreadIncrementProgress, "binding" | "boundTaskId"> | null> {
   const folder = NodePath.join(input.root, INCREMENTS_DIR, input.incrementId);
   if (!inside(input.root, folder) || !(await isDirectory(folder))) return null;
@@ -759,7 +761,13 @@ export async function readIncrementProgress(input: {
       acceptedSkips: ledgerFold?.acceptedSkips ?? [],
     }),
     verify,
-    review: await readIncrementReview({ incrementPath: folder, spec, ledger, tasks: tasksFile }),
+    review: await readIncrementReview({
+      incrementPath: folder,
+      spec,
+      ledger,
+      tasks: tasksFile,
+      ...(input.reviewAlsoFrom === undefined ? {} : { alsoFrom: input.reviewAlsoFrom }),
+    }),
   };
 }
 

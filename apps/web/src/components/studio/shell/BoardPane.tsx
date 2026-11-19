@@ -567,7 +567,7 @@ function BoardCards({
               />
             </label>
           </div>
-          {board !== null && !boardIsEmpty(board) ? (
+          {board !== null ? (
             <BoardSummary notDone={boardNotDone(board)} behind={board.behind} now={now} />
           ) : null}
           <BoardMachineLegend

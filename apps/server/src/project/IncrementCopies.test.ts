@@ -347,6 +347,112 @@ describe("the newest copy of an increment", () => {
     );
   });
 
+  it("never lets a closed project stub hide a worktree's spec", async () => {
+    const id = "0001-stub-over-worktree";
+    const root = await repository("board-copies-project-", roots);
+    const base = commitAll(root, "base");
+    const lane = await worktree(root, "lane", base, roots);
+    await writeIncrement(lane, id, {
+      tasks: 3,
+      ledger: [eventOf("T-01", "done", { evidence: "abc1234" })],
+      metadata: { status: "active" },
+    });
+    // What a stale install's lazy init leaves behind: status, no spec.
+    await writeIncrement(root, id, { metadata: { status: "completed" } });
+    const cacheDir = await cache();
+    const board = await readProjectBoard(root, { now: NOW, cacheDir });
+    expect(board.cards.find((card) => card.incrementId === id)).toMatchObject({
+      status: "active",
+      tasks: { total: 3, done: 1 },
+      source: { kind: "worktree", name: "lane" },
+    });
+    expect(board.notDone).toBe(1);
+    // A search finds it by the title the card shows.
+    const searched = await readProjectBoard(root, { now: NOW, cacheDir, query: "stub-over" });
+    expect(searched.cards.map((card) => card.incrementId)).toEqual([id]);
+  });
+
+  it("keeps an increment dropped on the remote branch off the board over a completed folder", async () => {
+    const id = "0001-dropped-there";
+    const { root, cacheDir } = await behindProject(
+      async (at) => {
+        await writeIncrement(at, id, { tasks: 1, metadata: { status: "abandoned" } });
+      },
+      async (at) => {
+        await writeIncrement(at, id, {
+          tasks: 1,
+          ledger: doneLedger(1),
+          metadata: { status: "completed" },
+        });
+      },
+    );
+    const board = await readProjectBoard(root, { now: NOW, cacheDir });
+    expect(board.cards).toEqual([]);
+    expect(board.counts.done).toBe(0);
+    expect(board.notDone).toBe(0);
+  });
+
+  it("lists review records from the shown copy and the project folder, newest first", async () => {
+    const id = "0001-reviewed-twice";
+    const { root, cacheDir } = await behindProject(
+      async (at) => {
+        await writeIncrement(at, id, {
+          tasks: 1,
+          ledger: doneLedger(1),
+          metadata: { status: "active" },
+        });
+        await record(
+          folderOf(at, id),
+          "review-gpt-6.1-sol-1.md",
+          "model=gpt-6.1-sol family=openai author=claude at=2026-11-13T10:00:00Z",
+          "fix first",
+        );
+      },
+      async (at) => {
+        await writeIncrement(at, id, { metadata: { status: "planned" } });
+        await record(
+          folderOf(at, id),
+          "review-gpt-6.1-sol-2.md",
+          "model=gpt-6.1-sol family=openai author=claude at=2026-11-13T12:00:00Z",
+          "ship",
+        );
+      },
+    );
+    const card = await cardOf(root, id, cacheDir);
+    expect(card?.source).toMatchObject({ kind: "remote" });
+    expect(card?.reviews?.map((review) => review.verdict)).toEqual(["ship", "fix first"]);
+    const view = await readProjectBoardIncrement(root, { incrementId: id, now: NOW, cacheDir });
+    expect(view).toMatchObject({ review: { latest: { verdict: "ship" } } });
+  });
+
+  it("shows status alone when a remote copy's ledger is too big to copy whole", async () => {
+    const id = "0001-huge-ledger";
+    const { root, cacheDir } = await behindProject(async (at) => {
+      const line = eventOf("T-01", "claim");
+      await writeIncrement(at, id, {
+        tasks: 2,
+        ledger: Array.from({ length: Math.ceil((9 * 1_048_576) / line.length) }, () => line),
+        metadata: { status: "active", title: "Huge ledger" },
+      });
+    });
+    const card = await cardOf(root, id, cacheDir);
+    // Not "0 of 2 done": its files are not read at all.
+    expect(card).toMatchObject({ title: "Huge ledger", status: "active", specPath: null });
+    expect(card?.tasks.total).toBe(0);
+    expect(card?.source).toMatchObject({ kind: "remote" });
+  });
+
+  it("falls back to origin/main when origin/HEAD names a branch that is gone", async () => {
+    const id = "0001-on-main";
+    const { root, cacheDir } = await behindProject(async (at) => {
+      await writeIncrement(at, id, { tasks: 1, ledger: [] });
+    });
+    git(root, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/renamed");
+    expect(await cardOf(root, id, cacheDir)).toMatchObject({
+      source: { kind: "remote", name: "origin/main" },
+    });
+  });
+
   it("answers from the folders alone when Git fails, and runs Git only when the remote commit changes", async () => {
     const { root, cacheDir } = await behindProject(
       async (at) => {
@@ -364,6 +470,7 @@ describe("the newest copy of an increment", () => {
     // A second repository, so the failed read above is not what is remembered.
     const again = await behindProject(async (at) => {
       await writeIncrement(at, "0005-counted", { tasks: 1, ledger: [] });
+      await writeIncrement(at, "0006-counted", { tasks: 2, ledger: [] });
     });
     const calls: string[] = [];
     const { execFileSync } = await import("node:child_process");
@@ -382,8 +489,10 @@ describe("the newest copy of an increment", () => {
     const read = () =>
       readProjectBoard(again.root, { now: NOW, cacheDir: again.cacheDir, git: counting });
     const firstRead = await read();
-    expect(firstRead.cards[0]).toMatchObject({ source: { kind: "remote" } });
-    // The listing, the metadata blobs, how far behind, and the one shown copy.
+    expect(firstRead.cards).toHaveLength(2);
+    expect(firstRead.cards.every((card) => card.source?.kind === "remote")).toBe(true);
+    expect(firstRead.cards.every((card) => card.specPath !== null)).toBe(true);
+    // The listing, the metadata blobs, how far behind, and both shown copies at once.
     expect(calls.toSorted()).toEqual(["cat-file", "cat-file", "ls-tree", "rev-list"]);
     calls.length = 0;
     expect(await read()).toEqual(firstRead);

@@ -292,9 +292,16 @@ export async function readProjectBoardIncrement(
   const ownReal =
     root === copies.root || own === null ? null : await NodeFSP.realpath(own).catch(() => null);
   const listed =
-    own === null || ownReal === null ? [] : await listEntries(NodePath.join(own, "reports"), ownReal);
+    own === null || ownReal === null
+      ? []
+      : await listEntries(NodePath.join(own, "reports"), ownReal);
   const projectReports = listed === "outside" ? [] : listed;
-  const signature = `${signed.signature}|${listingStamp(projectReports)}`;
+  const listedReviews =
+    own === null || ownReal === null
+      ? []
+      : await listEntries(NodePath.join(own, "reports", "reviews"), ownReal);
+  const projectReviews = listedReviews === "outside" ? [] : listedReviews;
+  const signature = `${signed.signature}|${listingStamp(projectReports)}|${listingStamp(projectReviews)}`;
   const cached = cache.get(key);
   if (cached !== undefined && cached.signature === signature && input.now <= cached.expiresAt) {
     // The card is read on every call: its reviews and source have their own caches.
@@ -304,7 +311,14 @@ export async function readProjectBoardIncrement(
   }
 
   const [progress, spec, metadataText] = await Promise.all([
-    readIncrementProgress({ root, incrementId: input.incrementId, threadId: "", now: input.now }),
+    readIncrementProgress({
+      root,
+      incrementId: input.incrementId,
+      threadId: "",
+      now: input.now,
+      // The project folder's review records count with the copy's own.
+      ...(root === copies.root || own === null ? {} : { reviewAlsoFrom: [own] }),
+    }),
     readBounded(root, NodePath.join(folder, "spec.md"), SPEC_BYTES),
     readBounded(root, NodePath.join(folder, "metadata.json"), SMALL_BYTES),
   ]);

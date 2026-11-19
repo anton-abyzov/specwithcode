@@ -334,6 +334,17 @@ describe("BoardPane", () => {
     expect(article("0001-plan").querySelector(".sws-board-card-source")).toBeNull();
   });
 
+  it("keeps the not-done count when nothing is listed", async () => {
+    // A search that matches nothing: the project still has work open.
+    runtime.reply = { ...board([], { done: 0 }), notDone: 7 };
+    await render();
+    expect(container.querySelector(".sws-board-not-done")?.textContent).toBe("7 not done");
+    // An empty project says so too.
+    runtime.reply = { ...board([], { done: 0 }), notDone: 0 };
+    await render();
+    expect(container.querySelector(".sws-board-not-done")?.textContent).toBe("0 not done");
+  });
+
   it("adds up the columns for an older server, with no behind line", async () => {
     runtime.reply = board([card("0001-plan", "planned"), card("0002-build", "active")], {
       review: 3,

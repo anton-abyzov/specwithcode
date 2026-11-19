@@ -45,9 +45,9 @@ import {
   chooseCopy,
   copyIds,
   copyRoot,
-  copyWithSpec,
   inBatches,
   openBoardCopies,
+  prepareRemoteCopies,
   readCopyMeta,
   type BoardCopies,
   type BoardCopyOptions,
@@ -278,15 +278,21 @@ const NO_DETAIL: Detail = {
   leaseEndsAt: null,
 };
 
-const isClosed = (meta: CopyMeta) => {
-  const meaning = boardStatus(meta.status);
-  return meaning === "completed" || meaning === "dropped";
-};
-
 /** A card and the root its copy was read from (null when its files could not be read). */
 export interface BuiltCard {
   readonly card: ProjectBoardCard;
   readonly root: string | null;
+}
+
+/** The project folder's copy of an increment shown from another copy, or null. */
+export function projectReviewFolder(
+  copies: BoardCopies,
+  id: string,
+  copy: IncrementCopy,
+): string | null {
+  return copy.kind !== "project" && copies.projectIds.has(id)
+    ? NodePath.join(copies.root, INCREMENTS_DIR, id)
+    : null;
 }
 
 /**
@@ -304,34 +310,23 @@ async function buildCard(
     root === null
       ? Promise.resolve(NO_DETAIL)
       : readDetail(root, NodePath.join(root, INCREMENTS_DIR, id), now);
-  let copy = chosen;
-  let root = await copyRoot(copies, id, copy);
-  let detail = await detailOf(root);
-  if (!detail.hasSpec) {
-    // A stub must not hide a spec. Only a copy that leaves the increment on
-    // the same side of done, so the column counts made before this still hold.
-    const other = await copyWithSpec(copies, id, copy);
-    const otherRoot =
-      other === null || isClosed(other.meta) !== isClosed(copy.meta)
-        ? null
-        : await copyRoot(copies, id, other);
-    if (other !== null && otherRoot !== null) {
-      copy = other;
-      root = otherRoot;
-      detail = await detailOf(root);
-    }
-  }
+  const copy = chosen;
+  const root = await copyRoot(copies, id, copy);
+  const detail = await detailOf(root);
   const meta = copy.meta;
   const folder = root === null ? null : NodePath.join(root, INCREMENTS_DIR, id);
+  // Review records are often written to the project folder while the spec
+  // lives elsewhere: both copies' records count, newest first.
+  const projectFolder = projectReviewFolder(copies, id, copy);
+  const reviewFolders = [
+    ...(folder === null ? [] : [folder]),
+    ...(projectFolder === null ? [] : [projectFolder]),
+  ];
   // After the detail: its ledger author stands in for review records that name none.
-  let reviews = folder === null ? [] : await readIncrementReviews(folder, detail.authorFamily);
-  if (reviews.length === 0 && copy.kind !== "project" && copies.projectIds.has(id)) {
-    // Review records are often written to the project folder while the spec lives elsewhere.
-    reviews = await readIncrementReviews(
-      NodePath.join(copies.root, INCREMENTS_DIR, id),
-      detail.authorFamily,
-    );
-  }
+  const reviews =
+    reviewFolders.length === 0
+      ? []
+      : await readIncrementReviews(reviewFolders[0]!, detail.authorFamily, reviewFolders.slice(1));
   const meaning = boardStatus(meta.status);
   const closed = meaning === "completed" || meaning === "dropped";
   const paused = !closed && meaning === "paused";
@@ -452,8 +447,14 @@ export async function readProjectBoard(
         right.id.localeCompare(left.id, undefined, { numeric: true }),
     )
     .slice(0, doneLimit);
+  const shown = [...open, ...shownClosed];
+  // Every remote copy the board shows is written with one Git call.
+  await prepareRemoteCopies(
+    copies,
+    shown.filter(({ copy }) => copy.kind === "remote").map(({ id }) => id),
+  );
   const cards = (
-    await inBatches([...open, ...shownClosed], ({ id, copy }) => buildCard(copies, id, copy, input.now))
+    await inBatches(shown, ({ id, copy }) => buildCard(copies, id, copy, input.now))
   ).map((built) => built.card);
   const counts = { planned: 0, active: 0, review: 0, done: closed.length };
   for (const card of cards) if (card.column !== "done") counts[card.column] += 1;
