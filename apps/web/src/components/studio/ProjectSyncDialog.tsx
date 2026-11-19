@@ -1,5 +1,5 @@
 import { CheckIcon, ChevronRightIcon, MinusIcon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import { useTx } from "../../i18n";
 import { cn, randomUUID } from "../../lib/utils";
@@ -26,6 +26,7 @@ import { Spinner } from "../ui/spinner";
 import {
   extraItems,
   extraResultLine,
+  extrasRemain,
   otherSide,
   runHasWork,
   syncExtras,
@@ -33,6 +34,7 @@ import {
   syncPlan,
   syncLeftovers,
   syncResultRows,
+  syncResultTitle,
   syncRunInput,
   type ExtraResultLine,
   type StepLine,
@@ -143,7 +145,12 @@ function Cell({
 }) {
   const tx = useTx();
   return (
-    <div className="flex min-w-0 flex-col gap-0.5" data-sync-cell={side} data-tone={line.tone}>
+    <div
+      role="cell"
+      className="flex min-w-0 flex-col gap-0.5"
+      data-sync-cell={side}
+      data-tone={line.tone}
+    >
       {/* Narrow windows stack the two machines, so each cell names its own. */}
       <span className="font-medium text-xs sm:hidden">{machine}</span>
       {present ? (
@@ -200,21 +207,35 @@ function Repositories({
 }) {
   const tx = useTx();
   return (
-    <div className="rounded-lg border border-border" data-sync-repositories="">
+    <div
+      role="table"
+      aria-label={tx("Repositories")}
+      className="rounded-lg border border-border"
+      data-sync-repositories=""
+    >
+      {/* Narrow windows hide this row; each cell then names its machine itself. */}
       <div
+        role="row"
         className={`${GRID} hidden border-border border-b px-3 py-2 font-medium text-muted-foreground text-xs sm:grid`}
       >
-        <span>{tx("Repository")}</span>
-        <span className="truncate">{names.a}</span>
-        <span className="truncate">{names.b}</span>
+        <span role="columnheader">{tx("Repository")}</span>
+        <span role="columnheader" className="truncate">
+          {names.a}
+        </span>
+        <span role="columnheader" className="truncate">
+          {names.b}
+        </span>
       </div>
       {rows.map((row) => (
         <div
           key={row.path}
+          role="row"
           className={`${GRID} border-border border-b px-3 py-2 last:border-b-0`}
           data-sync-row={row.path}
         >
-          <span className="min-w-0 font-medium text-sm wrap-anywhere">{row.name}</span>
+          <span role="rowheader" className="min-w-0 font-medium text-sm wrap-anywhere">
+            {row.name}
+          </span>
           {SIDES.map((side) => {
             const cell = row[side];
             return (
@@ -238,13 +259,16 @@ function Repositories({
 function Notice({
   children,
   tone = "warning",
+  role = "status",
 }: {
   children: ReactNode;
   tone?: "warning" | "plain";
+  /** "alert" where the stage failed; omitted inside a region that already announces. */
+  role?: "status" | "alert";
 }) {
   return (
     <p
-      role="status"
+      role={role}
       className={
         tone === "warning"
           ? "rounded-md border border-warning/40 bg-warning/10 p-3 text-sm"
@@ -295,6 +319,21 @@ function Extras({
     return null;
   // "Send anyway" belongs to the uncommitted files of a repository: off until those are ticked.
   const snapshotTicked = (path: string) => ticked.has(`${side}:uncommitted:${path}`);
+  const noteId = useId();
+  // Uncommitted files are checked before they are sent, so the note stands wherever they can be.
+  const canSendFiles = extras.lines.some((line) => line.kind === "uncommitted" && line.tickable);
+  const anySendAnyway = extras.leftOut.some((file) => file.sendAnyway);
+  const checkNote = (
+    <p className="text-muted-foreground text-xs" id={noteId} data-sync-check-note="">
+      {tx(
+        "Checked by file name, and untracked files by their first 64 KB. Look through the list before you send.",
+      )}{" "}
+      {anySendAnyway
+        ? tx("Send anyway only applies once that repository's uncommitted files are ticked.")
+        : null}
+    </p>
+  );
+  const leftOutShown = extras.leftOut.length > 0 || extras.leftOutNotListed > 0;
   return (
     <section className="flex flex-col gap-2" data-sync-extras={side}>
       {extras.lines.length > 0 ? (
@@ -350,7 +389,7 @@ function Extras({
           </ul>
         </>
       ) : null}
-      {extras.leftOut.length > 0 || extras.leftOutNotListed > 0 ? (
+      {leftOutShown ? (
         <>
           <h3 className="font-medium text-sm">
             {tx("Secrets and files left out on {machine}", { machine })}
@@ -358,7 +397,9 @@ function Extras({
           <ul className="flex flex-col gap-1.5">
             {extras.leftOut.map((file) => {
               const id = `${side}:${file.id}`;
-              const on = anyway.has(id);
+              // Chosen and its repository's uncommitted files ticked: only then is it sent.
+              const counts = snapshotTicked(file.path);
+              const on = anyway.has(id) && counts;
               return (
                 <li
                   key={file.id}
@@ -378,7 +419,16 @@ function Extras({
                       size="xs"
                       variant="outline"
                       aria-pressed={on}
-                      disabled={busy || !snapshotTicked(file.path)}
+                      disabled={busy || !counts}
+                      // Off until then, and the note below says why.
+                      aria-describedby={counts ? undefined : noteId}
+                      title={
+                        counts
+                          ? undefined
+                          : tx("Tick the uncommitted files of {repository} first.", {
+                              repository: file.repository,
+                            })
+                      }
                       data-sync-send-anyway=""
                       onClick={() => onAnyway(id, !on)}
                     >
@@ -398,16 +448,9 @@ function Extras({
                   })}
             </p>
           ) : null}
-          <p className="text-muted-foreground text-xs" data-sync-check-note="">
-            {tx(
-              "Checked by file name, and untracked files by their first 64 KB. Look through the list before you send.",
-            )}{" "}
-            {extras.leftOut.some((file) => file.sendAnyway)
-              ? tx("Send anyway counts once the uncommitted files of that repository are ticked.")
-              : null}
-          </p>
         </>
       ) : null}
+      {leftOutShown || canSendFiles ? checkNote : null}
     </section>
   );
 }
@@ -429,7 +472,9 @@ function ExtraResults({
       <h3 className="font-medium text-sm">{tx("Extras from {machine}", { machine })}</h3>
       {result.extrasFailure ? (
         <Notice>
-          {tx("The extras from {machine} were not sent.", { machine })}{" "}
+          {result.extras.length > 0
+            ? tx("The rest of the extras from {machine} were not sent.", { machine })
+            : tx("The extras from {machine} were not sent.", { machine })}{" "}
           <Words text={result.extrasFailure.line} />
         </Notice>
       ) : null}
@@ -513,7 +558,15 @@ export function ProjectSyncDialog({
   const [anyway, setAnyway] = useState<ReadonlySet<string>>(new Set());
   // A later check or a closed dialog makes an earlier answer stale.
   const run = useRef(0);
-  useEffect(() => () => void (run.current += 1), []);
+  // Closed, nothing is shown any more. A development build mounts twice: the check the first
+  // mount started is still the one to show, so the count is left alone.
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
 
   const names = { a: shown.label, b: target?.label ?? "" };
   const machineOf = useCallback(
@@ -537,7 +590,7 @@ export function ProjectSyncDialog({
           return { fetched: fetched.value, inventory, machine };
         }),
       );
-      if (id !== run.current) return;
+      if (id !== run.current || !alive.current) return;
       const [a, b] = read;
       if (!a || !b || "failure" in a || "failure" in b) {
         setStage({
@@ -598,7 +651,7 @@ export function ProjectSyncDialog({
           : { results: null, failure: syncFailure(result.cause, machine.label) };
       }),
     );
-    if (id !== run.current) return;
+    if (id !== run.current || !alive.current) return;
     // Extras go after Git has moved, one machine at a time, each sent by the machine that has them.
     setStage({ kind: "running", checked, step: "extras" });
     const sent: Record<SyncSide, { extras: ExtraResultLine[]; failure: SyncFailure | null }> = {
@@ -634,7 +687,7 @@ export function ProjectSyncDialog({
         );
       }
     }
-    if (id !== run.current) return;
+    if (id !== run.current || !alive.current) return;
     // The rows of both machines changed: the menu reads them again when it next opens.
     forgetSyncStatus([syncMachineKey(shown), syncMachineKey(other)]);
     const [a, b] = ran;
@@ -662,15 +715,60 @@ export function ProjectSyncDialog({
       });
   const checked = "checked" in stage ? stage.checked : null;
   const anyTicked = ticked.size > 0;
-  const inSync =
-    stage.kind === "result" &&
-    stage.rows.every((row) => row.a.done && row.b.done) &&
-    SIDES.every(
-      (side) =>
-        !stage.sides[side].failure &&
-        !stage.sides[side].extrasFailure &&
-        stage.sides[side].extras.every((line) => line.sent),
-    );
+  const sideTicked = (side: SyncSide) =>
+    new Set([...ticked].filter((id) => id.startsWith(`${side}:`)).map((id) => id.slice(2)));
+  // What the title may claim: "in sync" only when nothing is known to differ any more.
+  const outcome =
+    stage.kind === "result"
+      ? syncResultTitle({
+          rows: stage.rows,
+          scanLimited: stage.checked.plan.scanLimited.length > 0,
+          failed:
+            stage.leftovers.length > 0 ||
+            SIDES.some(
+              (side) =>
+                stage.sides[side].failure !== null ||
+                stage.sides[side].extrasFailure !== null ||
+                stage.sides[side].extras.some((line) => !line.sent),
+            ),
+          workRemains: SIDES.some(
+            (side) =>
+              stage.checked.sides[side].inventoryFailure !== null ||
+              extrasRemain(
+                stage.checked.sides[side].extras,
+                sideTicked(side),
+                stage.sides[side].extrasFailure === null,
+              ),
+          ),
+        })
+      : null;
+  const pair = { project: projectTitle, source: names.a, machine: names.b };
+  const title = !target
+    ? tx("Sync {project}", { project: projectTitle })
+    : outcome === "in-sync"
+      ? tx("{project} is in sync on {source} and {machine}", pair)
+      : outcome === "finished"
+        ? tx("Sync finished for {project}: {source} and {machine}", pair)
+        : tx("Sync {project}: {source} and {machine}", pair);
+  // One region that stays, so a screen reader hears each stage and the result once.
+  const said =
+    stage.kind === "checking"
+      ? tx("Fetching on {source} and {machine}…", { source: names.a, machine: names.b })
+      : stage.kind === "running"
+        ? stage.step === "git"
+          ? tx("Syncing {source} and {machine}…", { source: names.a, machine: names.b })
+          : tx("Sending the ticked extras…")
+        : outcome === "open"
+          ? tx("Sync ended, and not everything was moved or sent. Each repository says why.")
+          : outcome
+            ? title
+            : "";
+  // The result and a failure replace what had focus: the title takes it.
+  const titleRef = useRef<HTMLSpanElement>(null);
+  const ended = stage.kind === "result" || stage.kind === "failed";
+  useEffect(() => {
+    if (ended) titleRef.current?.focus();
+  }, [ended]);
   const compare =
     onCompare && target ? (
       <Button
@@ -696,19 +794,10 @@ export function ProjectSyncDialog({
       >
         <DialogHeader>
           <DialogTitle>
-            {!target
-              ? tx("Sync {project}", { project: projectTitle })
-              : inSync
-                ? tx("{project} is in sync on {source} and {machine}", {
-                    project: projectTitle,
-                    source: names.a,
-                    machine: names.b,
-                  })
-                : tx("Sync {project}: {source} and {machine}", {
-                    project: projectTitle,
-                    source: names.a,
-                    machine: names.b,
-                  })}
+            {/* Focused when the run ends; the words are the title, so no ring is drawn. */}
+            <span ref={titleRef} tabIndex={-1} className="outline-none">
+              {title}
+            </span>
           </DialogTitle>
           <DialogDescription>
             {tx(
@@ -717,6 +806,9 @@ export function ProjectSyncDialog({
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
+          <p className="sr-only" role="status" aria-live="polite" data-sync-live="">
+            {said}
+          </p>
           {stage.kind === "pick" ? (
             <div className="flex flex-col gap-2" role="group" aria-labelledby="project-sync-pick">
               <p className="font-medium text-sm" id="project-sync-pick">
@@ -753,7 +845,7 @@ export function ProjectSyncDialog({
             </div>
           ) : null}
           {stage.kind === "checking" ? (
-            <p className="flex items-center gap-2 text-muted-foreground text-sm" role="status">
+            <p className="flex items-center gap-2 text-muted-foreground text-sm">
               <Spinner size="sm" tone="muted" />
               {tx("Fetching on {source} and {machine}…", { source: names.a, machine: names.b })}
             </p>
@@ -761,19 +853,19 @@ export function ProjectSyncDialog({
           {stage.kind === "failed" ? (
             <div className="flex flex-col gap-2" data-sync-failures="">
               {stage.failures.map((failure) => (
-                <Notice key={failure.line.text + (failure.line.values?.machine ?? "")}>
+                <Notice key={failure.line.text + (failure.line.values?.machine ?? "")} role="alert">
                   <span data-sync-failure={failure.kind}>
                     <Words text={failure.line} />
                   </span>
                 </Notice>
               ))}
-              <Notice tone="plain">{tx("Nothing was changed on either machine.")}</Notice>
+              <Notice tone="plain">{tx("Nothing was moved or sent.")}</Notice>
             </div>
           ) : null}
           {checked && target ? (
             <>
               {stage.kind === "running" ? (
-                <p className="flex items-center gap-2 text-sm" role="status" data-sync-progress="">
+                <p className="flex items-center gap-2 text-sm" data-sync-progress="">
                   <Spinner size="sm" tone="muted" />
                   {stage.step === "git"
                     ? tx("Syncing {source} and {machine}…", { source: names.a, machine: names.b })
@@ -784,7 +876,9 @@ export function ProjectSyncDialog({
                 ? SIDES.map((side) =>
                     stage.sides[side].failure ? (
                       <Notice key={side}>
-                        {tx("{machine} did not run its part.", { machine: names[side] })}{" "}
+                        {tx("{machine} did not finish its part of the sync.", {
+                          machine: names[side],
+                        })}{" "}
                         <Words text={stage.sides[side].failure.line} />
                       </Notice>
                     ) : null,

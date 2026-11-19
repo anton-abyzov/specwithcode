@@ -54,6 +54,7 @@ export type SyncFailureKind =
   | "not-found"
   | "personal"
   | "not-git"
+  | "unreadable"
   | "failed";
 
 export interface SyncFailure {
@@ -88,6 +89,15 @@ export function syncFailure(cause: unknown, machine: string): SyncFailure {
       },
     };
   const tag = tagOf(cause);
+  // An answer with a value this version's contract does not list fails to decode as a whole.
+  if (tag === "SchemaError")
+    return {
+      kind: "unreadable",
+      line: {
+        text: "{machine} answered in a way this version does not read. Update SpecWithCode on this machine, then check again.",
+        values: { machine },
+      },
+    };
   if (tag === "EnvironmentRpcUnavailableError")
     return {
       kind: "offline",
@@ -130,7 +140,7 @@ export function syncFailure(cause: unknown, machine: string): SyncFailure {
     kind: "failed",
     line: reason
       ? {
-          text: "{machine} could not do it: {reason}.",
+          text: "{machine} could not sync: {reason}.",
           values: { machine, reason },
         }
       : {
@@ -188,7 +198,8 @@ export function stepLine(
   upstream: UpstreamFacts | null = null,
 ): StepLine {
   const facts: SyncText[] = [];
-  if (ran?.downgraded) facts.push({ text: "Changed since the plan" });
+  // A refusal says its own reason: Git refusing a merge or a clone is no change of the plan.
+  if (ran?.downgraded && step.reason !== "refused") facts.push({ text: "Changed since the plan" });
   if (step.uncommitted > 0 && step.reason !== "uncommitted")
     facts.push(uncommittedFact(step.uncommitted));
   if (step.inUseBy !== null && step.reason !== "in-use")
@@ -205,15 +216,20 @@ export function stepLine(
       // A result names what moved; a plan names what the fetch found.
       const n = phase === "result" ? (ran?.moved ?? 0) : step.behind;
       return phase === "result"
-        ? line("done", count(n, "Moved forward 1 commit", "Moved forward {n} commits"))
-        : line("moves", count(n, "Moves forward 1 commit", "Moves forward {n} commits"));
+        ? line("done", count(n, "Moved forward 1 commit", "Moved forward {n} commits"), step.detail)
+        : line(
+            "moves",
+            count(n, "Moves forward 1 commit", "Moves forward {n} commits"),
+            step.detail,
+          );
     }
     case "missing":
       return phase === "result"
-        ? line("done", { text: "Cloned from {remote}", values: { remote } })
-        : line("moves", { text: "Clones it from {remote}", values: { remote } });
+        ? line("done", { text: "Cloned from {remote}", values: { remote } }, step.detail)
+        : line("moves", { text: "Clones it from {remote}", values: { remote } }, step.detail);
     case "up-to-date":
-      return line("done", { text: "Up to date" });
+      // What a machine adds to a step that went well is shown under it, as sent.
+      return line("done", { text: "Up to date" }, step.detail);
     case "not-pushed":
       return line(
         "held",
@@ -408,6 +424,36 @@ export function syncPlan(
     ),
   };
 }
+
+/**
+ * What the result's title may claim. "in-sync": every repository ended as a synced one and
+ * nothing else is known to differ. "finished": Git is level, yet a checkout has uncommitted
+ * files or a thread at work, a folder was not scanned in full, or work Git does not carry
+ * is still on one machine. "open": something was not moved, not sent or not answered.
+ */
+export type SyncResultTitle = "in-sync" | "finished" | "open";
+
+export function syncResultTitle(input: {
+  readonly rows: readonly SyncResultRow[];
+  readonly scanLimited: boolean;
+  /** A machine did not run its part, an extra stayed or was not sent, or a folder was left. */
+  readonly failed: boolean;
+  /** Work is still listed under "Only on {machine}", or a machine's list could not be read. */
+  readonly workRemains: boolean;
+}): SyncResultTitle {
+  const cells = input.rows.flatMap((row) => [row.a, row.b]);
+  if (input.failed || cells.some((cell) => !cell.done)) return "open";
+  return input.scanLimited || input.workRemains || cells.some((cell) => cell.line.facts.length > 0)
+    ? "finished"
+    : "in-sync";
+}
+
+/** Whether a machine still has work Git does not carry after its ticked extras were sent. */
+export const extrasRemain = (
+  extras: SyncExtras,
+  ticked: ReadonlySet<string>,
+  allSent: boolean,
+): boolean => extras.lines.some((line) => !(line.tickable && ticked.has(line.id) && allSent));
 
 /** A folder a machine reports that is no repository of the plan, such as a stopped clone's. */
 export interface SyncLeftover {
@@ -753,7 +799,10 @@ export function syncResultRows(
         branch: planned.branch,
         line: {
           tone: "failed",
-          sentence: { text: "Not done: the machine gave no answer for this repository" },
+          // The call failed or timed out; a repository asked before it may have moved.
+          sentence: {
+            text: 'No answer came for this repository, and it may have moved. "Check again" shows where it stands',
+          },
           facts: [],
           detail: null,
         },
@@ -785,10 +834,24 @@ export interface ExtraResultLine {
   readonly size: string | null;
 }
 
+const KNOWN_STAYS = new Set([
+  "nothing-to-send",
+  "missing-branch",
+  "file-too-large",
+  "too-many-files",
+  "bundle-too-large",
+  "needs-update",
+  "unreachable",
+  "refused",
+  "failed",
+]);
+
 const megabytes = (bytes: number) =>
-  bytes >= 1024 * 1024
-    ? `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-    : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  bytes <= 0
+    ? null
+    : bytes >= 1024 * 1024
+      ? `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+      : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 
 /** One sent extra: the branch it arrived as and the next step, or why it stays. */
 export function extraResultLine(
@@ -800,6 +863,9 @@ export function extraResultLine(
   const name = result.arrivedAs ?? "";
   const facts: SyncText[] = [];
   const base = { branch: result.branch, repository };
+  // Files the snapshot left out are named whether it arrived or stayed.
+  const leftOut = result.leftOut.length + result.leftOutNotListed;
+  const leftOutFact = leftOut > 0 ? [count(leftOut, "1 file left out", "{n} files left out")] : [];
   if (result.status === "sent") {
     if (result.includedCommits > 0)
       facts.push({
@@ -811,8 +877,18 @@ export function extraResultLine(
         ),
         code: ["branch"],
       });
-    const leftOut = result.leftOut.length + result.leftOutNotListed;
-    if (leftOut > 0) facts.push(count(leftOut, "1 file left out", "{n} files left out"));
+    facts.push(...leftOutFact);
+    // No branch name came with it: say it was sent, with what the machine said, never "branch .".
+    if (name === "")
+      return {
+        ...base,
+        sent: true,
+        sentence: result.landed
+          ? { text: "Sent to {target}: {reason}.", values: { target, reason: result.landed } }
+          : { text: "Sent to {target}.", values: { target } },
+        facts,
+        size: megabytes(result.bytes),
+      };
     const sentence: SyncText =
       result.landed === "unchanged"
         ? {
@@ -839,7 +915,11 @@ export function extraResultLine(
               };
     return { ...base, sent: true, sentence, facts, size: megabytes(result.bytes) };
   }
-  const detail = reasonSlot(result.detail);
+  facts.push(...leftOutFact);
+  // A reason this version does not know is shown as the machine sent it.
+  const detail =
+    reasonSlot(result.detail) ||
+    (KNOWN_STAYS.has(String(result.stays)) ? "" : String(result.stays ?? ""));
   const stays = (text: string, values: Record<string, string> = {}): ExtraResultLine => ({
     ...base,
     sent: false,

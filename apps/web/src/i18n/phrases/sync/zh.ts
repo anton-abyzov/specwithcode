@@ -12,7 +12,6 @@ export const syncZh: PhraseCatalog = {
   "A personal project is not synced between machines.": "个人项目不会在电脑之间同步。",
   'The project folder on {machine} is not a Git repository. Use "Compare all files…".':
     "{machine} 上的项目文件夹不是 Git 仓库。请使用“比较所有文件…”。",
-  "{machine} could not do it: {reason}.": "{machine} 无法完成：{reason}。",
   "{machine} did not answer. Check the connection, then check again.":
     "{machine} 没有响应。请检查连接，然后重新检查。",
   "1 uncommitted file": "1 个未提交的文件",
@@ -75,7 +74,6 @@ export const syncZh: PhraseCatalog = {
     "按名称判断为机密。它留在 {source} 上：同步不会发送机密。",
   "Looks like a {kind}": "看起来像{kind}",
   "Looks like a secret": "看起来像机密",
-  "Not done: the machine gave no answer for this repository": "未完成：该电脑没有回复此仓库的结果",
   "Includes 1 commit not pushed on {branch}": "包含 {branch} 上 1 个未推送的提交",
   "Includes {n} commits not pushed on {branch}": "包含 {branch} 上 {n} 个未推送的提交",
   "1 file left out": "1 个文件被排除",
@@ -113,8 +111,6 @@ export const syncZh: PhraseCatalog = {
   "{n} more files are left out and not listed.": "还有 {n} 个文件被排除，未列出。",
   "Checked by file name, and untracked files by their first 64 KB. Look through the list before you send.":
     "按文件名检查，未跟踪的文件还会检查前 64 KB。发送前请先看一遍列表。",
-  "Send anyway counts once the uncommitted files of that repository are ticked.":
-    "勾选该仓库的未提交文件后，“仍然发送”才会生效。",
   "Extras from {machine}": "来自 {machine} 的附加项",
   "The extras from {machine} were not sent.": "来自 {machine} 的附加项未发送。",
   "Uncommitted files in {repository}": "{repository} 中未提交的文件",
@@ -126,10 +122,8 @@ export const syncZh: PhraseCatalog = {
     "先用 Git。每台电脑从远程 fetch 并前进，仅限快进。不会覆盖任何内容，也不会推送任何内容。协调者保持原位。",
   "Sync {machine} with": "将 {machine} 同步到",
   "Fetching on {source} and {machine}…": "正在 {source} 和 {machine} 上 fetch…",
-  "Nothing was changed on either machine.": "两台电脑上都没有更改任何内容。",
   "Syncing {source} and {machine}…": "正在同步 {source} 和 {machine}…",
   "Sending the ticked extras…": "正在发送勾选的附加项…",
-  "{machine} did not run its part.": "{machine} 没有执行它的部分。",
   "Only the top repository of {machine} is listed: its folder is past the scan limits, so the repositories inside it are skipped.":
     "只列出了 {machine} 的顶层仓库：它的文件夹超出了扫描限制，因此跳过其中的仓库。",
   "Nothing to move forward or clone. Tick an extra to send it.":
@@ -168,12 +162,10 @@ export const syncZh: PhraseCatalog = {
   "Sync again": "重新同步",
   "Sync again…": "重新同步…",
   "Run the same sync again": "再次运行相同的同步",
-  "Sync again with secrets": "包含机密重新同步",
+  "Sync again with secrets": "连同机密重新同步",
   "Sync again before handing off the coordinator.": "交接协调者之前请重新同步。",
   "Sync again brings over what changed; it compares first and moves only changed files. Continue on {target} anyway moves the coordinator with these differences. Undo puts {target}'s folder back.":
     "“重新同步”会带来已更改的内容；它先比较，只移动已更改的文件。“仍在 {target} 上继续”会带着这些差异迁移协调者。“撤销”会把 {target} 的文件夹恢复原样。",
-  "Sync again brings {source}'s version over. Move without them keeps {source}'s changes there and the copy on {target} as it is. Keep the coordinator on {source} to go on working there; the copy on {target} stays.":
-    "“重新同步”会带来 {source} 的版本。“不带它们迁移”会把 {source} 的更改留在那里，{target} 上的副本保持原样。“将协调者留在 {source}”可在那里继续工作；{target} 上的副本保留。",
   "This copy was not captured, so you can't move without them. Sync again brings them over. Or keep the coordinator on {source}; the copy on {target} stays.":
     "这次复制没有被捕获，因此无法不带它们迁移。“重新同步”会带来它们。或者将协调者留在 {source}；{target} 上的副本保留。",
   "Add this project to another machine": "将此项目添加到另一台电脑",
@@ -201,4 +193,49 @@ export const syncZh: PhraseCatalog = {
     "{there} 已有此项目，位于 {folder}。同步会将它更新到最新。",
   "{there} has this project in {n} folders. Pick one.":
     "{there} 上有 {n} 个文件夹包含此项目。请选择一个。",
+  "Sync finished for {project}: {source} and {machine}":
+    "{project} 同步已结束：{source} 和 {machine}",
+  "Sync ended, and not everything was moved or sent. Each repository says why.":
+    "同步已结束，但并非所有内容都已移动或发送。每个仓库都写明了原因。",
+  'No answer came for this repository, and it may have moved. "Check again" shows where it stands':
+    "没有收到此仓库的回复，它可能已经移动。“重新检查”可查看它的现状",
+  "{machine} answered in a way this version does not read. Update SpecWithCode on this machine, then check again.":
+    "{machine} 的回复此版本无法读取。请在这台电脑上更新 SpecWithCode，然后重新检查。",
+  "Nothing was moved or sent.": "没有移动或发送任何内容。",
+  "The rest of the extras from {machine} were not sent.": "{machine} 的其余附加项未发送。",
+  "Sent to {target}: {reason}.": "已发送到 {target}：{reason}。",
+  "Sent to {target}.": "已发送到 {target}。",
+  "Tick the uncommitted files of {repository} first.": "请先勾选 {repository} 的未提交文件。",
+  "Send anyway only applies once that repository's uncommitted files are ticked.":
+    "只有勾选该仓库的未提交文件后，“仍然发送”才适用。",
+  "{machine}: Needs update · {version}": "{machine}：需要更新 · {version}",
+  "{machine}: Needs update": "{machine}：需要更新",
+  "{machine} could not sync: {reason}.": "{machine} 无法同步：{reason}。",
+  "{machine} did not finish its part of the sync.": "{machine} 没有完成它的同步部分。",
+  Repositories: "仓库",
+  "Sync again brings {source}'s version over. Moving without these paths keeps {source}'s changes there and leaves the copy on {target} as it is. Keep the coordinator on {source} to go on working there; the copy on {target} stays.":
+    "“重新同步”会带来 {source} 的版本。不带这些路径迁移会把 {source} 的更改留在那里，{target} 上的副本保持原样。将协调者留在 {source} 可在那里继续工作；{target} 上的副本保留。",
+  "Keep the coordinator on {source}": "将协调者留在 {source}",
+  "Move without this path": "不带此路径迁移",
+  "Move without these {n} paths": "不带这 {n} 个路径迁移",
+  "The files are on {target}, but {problem}.": "文件已在 {target} 上，但{problem}。",
+  "The coordinator stays on {source}. The copied files stay on {target}.":
+    "协调者留在 {source}。已复制的文件留在 {target}。",
+  "The coordinator stays here until you choose below.": "在你于下方选择之前，协调者留在这里。",
+  "Files are copied. Hand off the coordinator once work here is idle.":
+    "文件已复制。这里的工作空闲后再交接协调者。",
+  "Linking {target}…": "正在关联 {target}…",
+  "Linked: {source} can start work on {target}.": "已关联：{source} 可以在 {target} 上启动工作。",
+  "Linked: {source} can start work on {target}, in {folder}.":
+    "已关联：{source} 可以在 {target} 的 {folder} 中启动工作。",
+  "Not linked yet. {reason}": "尚未关联。{reason}",
+  "No uncommitted changes on {source}.": "{source} 上没有未提交的更改。",
+  "Repositories new there download from GitHub or their Git host; one with unpushed commits or stashes is copied whole. Uncommitted and ignored files, and secrets unless you leave them out, come from this machine.":
+    "那里没有的仓库会从 GitHub 或其 Git 托管处下载；有未推送提交或储藏的仓库会整体复制。未提交和被忽略的文件，以及未被你排除的机密，来自这台电脑。",
+  "Also brings unpushed commits, local branches and stashes. Slower for large repositories.":
+    "还会带上未推送的提交、本地分支和储藏。大仓库会更慢。",
+  "Continues in a folder already saved there, which updates from origin. Always moves the coordinator there.":
+    "在那里已保存的文件夹中继续，该文件夹从 origin 更新。始终把协调者移到那里。",
+  "Compare again before previewing this changed source.": "预览这个已更改的来源之前，请重新比较。",
+  "The source changed. Compare again before copying.": "来源已更改。复制前请重新比较。",
 };

@@ -4,7 +4,7 @@ import type {
   ProjectSyncInventoryResult,
   ProjectSyncRepositoryFacts,
 } from "@specweave-studio/contracts";
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
@@ -220,10 +220,108 @@ it("fetches on both machines, shows what Sync does per repository, then runs it"
   ]);
   expect(cell("apps/site", "a")).toBe("M4mainMoved forward 99 commits");
   expect(cell(".", "b")).toBe("M5mainUp to date2 uncommitted filesIn use by Docs lint");
-  expect(document.querySelector("h2")?.textContent).toBe("Atlas is in sync on M4 and M5");
+  // M5 still has uncommitted files and a thread at work: finished, never "in sync".
+  expect(document.querySelector("h2")?.textContent).toBe("Sync finished for Atlas: M4 and M5");
+  // The result is said once in the region that stays, and the title takes the focus.
+  expect(document.querySelector("[data-sync-live]")?.textContent).toBe(
+    "Sync finished for Atlas: M4 and M5",
+  );
+  expect(document.activeElement).toBe(document.querySelector("h2 span"));
 
   await click("[data-sync-again]");
   expect(calls.slice(5)).toEqual(["fetch M4", "fetch M5", "inventory M4", "inventory M5"]);
+});
+
+it("says in sync only when nothing is left on either machine", async () => {
+  const { api } = scripted({
+    fetch: { M4: fetched(facts(".", { behind: 3 })), M5: fetched(facts(".")) },
+  });
+  await render(api);
+  await click("[data-sync-run]");
+  expect(document.querySelector("h2")?.textContent).toBe("Atlas is in sync on M4 and M5");
+  // The repositories are a table: a cell is heard with its machine's column.
+  expect(document.querySelector('[role="table"]')?.getAttribute("aria-label")).toBe("Repositories");
+  expect(
+    [...document.querySelectorAll('[role="columnheader"]')].map((item) => item.textContent),
+  ).toEqual(["Repository", "M4", "M5"]);
+});
+
+it("keeps the weaker title while work is listed under a machine", async () => {
+  const { api } = scripted({
+    fetch: { M4: fetched(facts(".", { behind: 3 })), M5: fetched(facts(".")) },
+    inventory: { M4: WORK },
+  });
+  await render(api);
+  await click("[data-sync-run]");
+  expect(document.querySelector("h2")?.textContent).toBe("Sync finished for Atlas: M4 and M5");
+});
+
+it("ends its check under StrictMode, which mounts every effect twice", async () => {
+  const { api } = scripted({ fetch: { M4: fetched(facts(".")), M5: fetched(facts(".")) } });
+  await act(async () =>
+    root.render(
+      <StrictMode>
+        <ProjectSyncDialog
+          projectTitle="Atlas"
+          shown={M4}
+          targets={[target(M5)]}
+          onClose={vi.fn()}
+          onCompare={vi.fn()}
+          api={api}
+        />
+      </StrictMode>,
+    ),
+  );
+  expect(stage()).toBe("plan");
+});
+
+it("says the rest was not sent when a later send fails, and that an answer could not be read", async () => {
+  // Two repositories with 150 branches each: more than one call carries.
+  const two: ProjectSyncInventoryResult = {
+    scanLimited: false,
+    repositories: [".", "apps/site"].map((path) => ({
+      ...WORK.repositories[0]!,
+      path,
+      notPushed: [],
+      onlyHere: Array.from({ length: 150 }, (_, at) => ({
+        branch: `try/${at}`,
+        head: "c".repeat(40),
+        commits: 1,
+      })),
+      leftOut: [],
+      stashes: 0,
+    })),
+  };
+  const { api } = scripted({
+    fetch: {
+      M4: fetched(facts("."), facts("apps/site")),
+      M5: fetched(facts("."), facts("apps/site")),
+    },
+    inventory: { M4: two },
+  });
+  const send = api.sendExtras;
+  let sends = 0;
+  api.sendExtras = vi.fn<ProjectSyncApi["sendExtras"]>(async (...args) => {
+    sends += 1;
+    return sends === 1
+      ? send(...args)
+      : { ok: false as const, cause: { _tag: "SchemaError", message: "Expected one of…" } };
+  });
+  await render(api);
+  for (const box of document.querySelectorAll<HTMLElement>(
+    '[data-sync-extra="only-here"] [data-slot="checkbox"]',
+  ))
+    await act(async () => box.click());
+  await click("[data-sync-run]");
+  const results = document.querySelector('[data-sync-extra-results="a"]')?.textContent ?? "";
+  expect(sends).toBe(2);
+  expect(results).toContain("The rest of the extras from M4 were not sent.");
+  expect(results).toContain("M4 answered in a way this version does not read.");
+  expect(results).not.toContain("Expected one of");
+  expect(document.querySelector("h2")?.textContent).toBe("Sync Atlas: M4 and M5");
+  expect(document.querySelector("[data-sync-live]")?.textContent).toBe(
+    "Sync ended, and not everything was moved or sent. Each repository says why.",
+  );
 });
 
 it("lists extras unticked and sends only what is ticked, from the machine that has it", async () => {
@@ -250,11 +348,26 @@ it("lists extras unticked and sends only what is ticked, from the machine that h
   expect(document.querySelector('[data-sync-left-out="name"] [data-sync-send-anyway]')).toBeNull();
   const anyway = '[data-sync-left-out="content"] [data-sync-send-anyway]';
   expect(button(anyway).disabled).toBe(true);
+  // A button that is off says why, in its title and in the note it points at.
+  expect(button(anyway).title).toBe("Tick the uncommitted files of Atlas first.");
+  const note = document.querySelector("[data-sync-check-note]")!;
+  expect(button(anyway).getAttribute("aria-describedby")).toBe(note.id);
+  expect(note.textContent).toContain("Checked by file name, and untracked files by their first");
+  expect(note.textContent).toContain(
+    "Send anyway only applies once that repository's uncommitted files are ticked.",
+  );
 
   await tick("not-pushed");
   await tick("uncommitted");
   expect(button(anyway).disabled).toBe(false);
   await click(anyway);
+  expect(button(anyway).textContent).toBe("Will be sent");
+  // Unticking the files takes the promise back: nothing of them is sent.
+  await tick("uncommitted");
+  expect(button(anyway).textContent).toBe("Send anyway");
+  expect(button(anyway).disabled).toBe(true);
+  await tick("uncommitted");
+  expect(button(anyway).textContent).toBe("Will be sent");
   await click("[data-sync-run]");
   expect(stage()).toBe("result");
   expect(calls.slice(4)).toEqual([
@@ -300,6 +413,12 @@ it("says why a machine could not take part, changes nothing, and offers the slow
     'Update SpecWithCode on M5 to sync with Git. "Compare all files…" works now.',
   );
   expect(api.run).not.toHaveBeenCalled();
+  // M4's fetch ran, so the dialog does not say nothing changed: nothing was moved or sent.
+  expect(document.querySelector("[data-project-sync]")?.textContent).toContain(
+    "Nothing was moved or sent.",
+  );
+  expect(document.querySelector('[role="alert"]')).not.toBeNull();
+  expect(document.activeElement).toBe(document.querySelector("h2 span"));
   await click("[data-sync-compare]");
   expect(onCompare).toHaveBeenCalledWith(M5);
   expect(onClose).toHaveBeenCalledTimes(1);

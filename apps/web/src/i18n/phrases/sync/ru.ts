@@ -13,7 +13,6 @@ export const syncRu: PhraseCatalog = {
     "Личный проект не синхронизируется между машинами.",
   'The project folder on {machine} is not a Git repository. Use "Compare all files…".':
     "Папка проекта на {machine} не является Git-репозиторием. Используйте «Сравнить все файлы…».",
-  "{machine} could not do it: {reason}.": "На {machine} не получилось: {reason}.",
   "{machine} did not answer. Check the connection, then check again.":
     "Нет ответа от {machine}. Проверьте подключение и проверьте снова.",
   "1 uncommitted file": "1 незакоммиченный файл",
@@ -82,8 +81,6 @@ export const syncRu: PhraseCatalog = {
     "Секрет по имени. Остаётся на {source}: синхронизация не отправляет секреты.",
   "Looks like a {kind}": "Похоже на {kind}",
   "Looks like a secret": "Похоже на секрет",
-  "Not done: the machine gave no answer for this repository":
-    "Не выполнено: машина не ответила по этому репозиторию",
   "Includes 1 commit not pushed on {branch}": "Включает 1 неотправленный коммит в {branch}",
   "Includes {n} commits not pushed on {branch}": "Включает неотправленные коммиты в {branch}: {n}",
   "1 file left out": "1 файл пропущен",
@@ -122,9 +119,7 @@ export const syncRu: PhraseCatalog = {
   "1 more file is left out and not listed.": "Ещё 1 файл пропущен и не показан.",
   "{n} more files are left out and not listed.": "Ещё пропущено и не показано файлов: {n}.",
   "Checked by file name, and untracked files by their first 64 KB. Look through the list before you send.":
-    "Проверено по имени файла, а неотслеживаемые файлы и по первым 64 KB. Просмотрите список перед отправкой.",
-  "Send anyway counts once the uncommitted files of that repository are ticked.":
-    "«Всё равно отправить» действует, когда отмечены незакоммиченные файлы этого репозитория.",
+    "Проверено по имени файла; неотслеживаемые файлы проверяются ещё и по первым 64 KB. Просмотрите список перед отправкой.",
   "Extras from {machine}": "Дополнения с {machine}",
   "The extras from {machine} were not sent.": "Дополнения с {machine} не отправлены.",
   "Uncommitted files in {repository}": "Незакоммиченные файлы в {repository}",
@@ -137,10 +132,8 @@ export const syncRu: PhraseCatalog = {
     "Сначала Git. Каждая машина делает fetch из удалённого репозитория и продвигается вперёд, только fast-forward. Ничего не перезаписывается и ничего не отправляется. Координатор остаётся на месте.",
   "Sync {machine} with": "Синхронизировать {machine} с",
   "Fetching on {source} and {machine}…": "Выполняется fetch на {source} и {machine}…",
-  "Nothing was changed on either machine.": "Ни на одной из машин ничего не изменилось.",
   "Syncing {source} and {machine}…": "Синхронизация {source} и {machine}…",
   "Sending the ticked extras…": "Отправка отмеченных дополнений…",
-  "{machine} did not run its part.": "Часть работы на {machine} не выполнена.",
   "Only the top repository of {machine} is listed: its folder is past the scan limits, so the repositories inside it are skipped.":
     "Показан только верхний репозиторий на {machine}: его папка превышает лимиты сканирования, поэтому вложенные репозитории пропущены.",
   "Nothing to move forward or clone. Tick an extra to send it.":
@@ -150,10 +143,10 @@ export const syncRu: PhraseCatalog = {
   "Syncing…": "Синхронизация…",
   Sync: "Синхронизировать",
   "Same as {shown}": "Совпадает с {shown}",
-  "Same as {shown} · as of {time}": "Совпадает с {shown} · на {time}",
+  "Same as {shown} · as of {time}": "Совпадает с {shown} · по состоянию на {time}",
   "{k} of {n} repositories differ": "Различаются {k} из {n} репозиториев",
   "{k} of {n} repositories differ · as of {time}":
-    "Различаются {k} из {n} репозиториев · на {time}",
+    "Различаются {k} из {n} репозиториев · по состоянию на {time}",
   "Not checked yet": "Ещё не проверено",
   "Sync…": "Синхронизировать…",
   "1 uncommitted file stays on {source}: Git carries commits only. Commit them, or choose Copy the whole folder under Details.":
@@ -186,8 +179,6 @@ export const syncRu: PhraseCatalog = {
     "Синхронизируйте снова, прежде чем передавать координатора.",
   "Sync again brings over what changed; it compares first and moves only changed files. Continue on {target} anyway moves the coordinator with these differences. Undo puts {target}'s folder back.":
     "«Синхронизировать снова» переносит изменения: сначала сравнивает и перемещает только изменённые файлы. «Всё равно продолжить на {target}» переносит координатора с этими различиями. «Отменить» возвращает папку на {target} в прежнее состояние.",
-  "Sync again brings {source}'s version over. Move without them keeps {source}'s changes there and the copy on {target} as it is. Keep the coordinator on {source} to go on working there; the copy on {target} stays.":
-    "«Синхронизировать снова» переносит версию с {source}. «Перенести без них» оставляет изменения на {source}, а копию на {target} как есть. «Оставить координатора на {source}», чтобы продолжить работу там; копия на {target} остаётся.",
   "This copy was not captured, so you can't move without them. Sync again brings them over. Or keep the coordinator on {source}; the copy on {target} stays.":
     "Состояние этой копии не сохранено, поэтому перенести без них нельзя. «Синхронизировать снова» перенесёт их. Или оставьте координатора на {source}; копия на {target} остаётся.",
   "Add this project to another machine": "Добавить этот проект на другую машину",
@@ -217,4 +208,56 @@ export const syncRu: PhraseCatalog = {
     "На {there} этот проект уже есть, в {folder}. Синхронизация обновит его.",
   "{there} has this project in {n} folders. Pick one.":
     "Папок с этим проектом на {there}: {n}. Выберите одну.",
+  "Sync finished for {project}: {source} and {machine}":
+    "Синхронизация {project} завершена: {source} и {machine}",
+  "Sync ended, and not everything was moved or sent. Each repository says why.":
+    "Синхронизация завершена, но не всё продвинуто или отправлено. Причина указана у каждого репозитория.",
+  'No answer came for this repository, and it may have moved. "Check again" shows where it stands':
+    "По этому репозиторию ответ не пришёл, и он мог продвинуться. «Проверить снова» покажет, в каком он состоянии",
+  "{machine} answered in a way this version does not read. Update SpecWithCode on this machine, then check again.":
+    "{machine} ответила так, что эта версия не может прочитать ответ. Обновите SpecWithCode на этой машине и проверьте снова.",
+  "Nothing was moved or sent.": "Ничего не продвинуто и не отправлено.",
+  "The rest of the extras from {machine} were not sent.":
+    "Остальные дополнения с {machine} не отправлены.",
+  "Sent to {target}: {reason}.": "Отправлено на {target}: {reason}.",
+  "Sent to {target}.": "Отправлено на {target}.",
+  "Tick the uncommitted files of {repository} first.":
+    "Сначала отметьте незакоммиченные файлы в {repository}.",
+  "Send anyway only applies once that repository's uncommitted files are ticked.":
+    "«Всё равно отправить» действует, только когда отмечены незакоммиченные файлы этого репозитория.",
+  "{machine}: Needs update · {version}": "{machine}: Нужно обновление · {version}",
+  "{machine}: Needs update": "{machine}: Нужно обновление",
+  "{machine} could not sync: {reason}.": "На {machine} не удалось синхронизировать: {reason}.",
+  "{machine} did not finish its part of the sync.":
+    "{machine} не завершила свою часть синхронизации.",
+  Repositories: "Репозитории",
+  "Sync again brings {source}'s version over. Moving without these paths keeps {source}'s changes there and leaves the copy on {target} as it is. Keep the coordinator on {source} to go on working there; the copy on {target} stays.":
+    "«Синхронизировать снова» переносит версию с {source}. Перенос без этих путей оставляет изменения на {source}, а копию на {target} как есть. Оставьте координатора на {source}, чтобы продолжить работу там; копия на {target} остаётся.",
+  "Keep the coordinator on {source}": "Оставить координатора на {source}",
+  "Move without this path": "Перенести без этого пути",
+  "Move without these {n} paths": "Перенести без этих путей: {n}",
+  "The files are on {target}, but {problem}.": "Файлы на {target}, но {problem}.",
+  "The coordinator stays on {source}. The copied files stay on {target}.":
+    "Координатор остаётся на {source}. Скопированные файлы остаются на {target}.",
+  "The coordinator stays here until you choose below.":
+    "Координатор остаётся здесь, пока вы не выберете ниже.",
+  "Files are copied. Hand off the coordinator once work here is idle.":
+    "Файлы скопированы. Передайте координатора, когда работа здесь остановится.",
+  "Linking {target}…": "Связываем {target}…",
+  "Linked: {source} can start work on {target}.":
+    "Связано: {source} может запускать работу на {target}.",
+  "Linked: {source} can start work on {target}, in {folder}.":
+    "Связано: {source} может запускать работу на {target}, в {folder}.",
+  "Not linked yet. {reason}": "Пока не связано. {reason}",
+  "No uncommitted changes on {source}.": "На {source} нет незакоммиченных изменений.",
+  "Repositories new there download from GitHub or their Git host; one with unpushed commits or stashes is copied whole. Uncommitted and ignored files, and secrets unless you leave them out, come from this machine.":
+    "Репозитории, которых там нет, скачиваются с GitHub или их Git-хостинга; репозиторий с неотправленными коммитами или stash копируется целиком. Незакоммиченные и игнорируемые файлы, а также секреты, если вы их не исключите, берутся с этой машины.",
+  "Also brings unpushed commits, local branches and stashes. Slower for large repositories.":
+    "Переносит также неотправленные коммиты, локальные ветки и stash. Медленнее для больших репозиториев.",
+  "Continues in a folder already saved there, which updates from origin. Always moves the coordinator there.":
+    "Продолжает в папке, уже сохранённой там; она обновляется из origin. Всегда переносит координатора туда.",
+  "Compare again before previewing this changed source.":
+    "Сравните снова, прежде чем открывать предпросмотр этого изменившегося источника.",
+  "The source changed. Compare again before copying.":
+    "Источник изменился. Сравните снова перед копированием.",
 };
