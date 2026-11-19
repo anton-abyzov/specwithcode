@@ -497,8 +497,72 @@ describe("a batch on file always ends (AC-23, AC-43)", () => {
   );
 });
 
-describe("a repeat never goes to a machine that stopped taking batches (EC2-04)", () => {
-  it.effect("a send that never arrived is asked about, not sent again", () =>
+/**
+ * The destination comes back on a build from before batches: it names no batch
+ * capability, and what it kept of an acceptance has no batch fields, since
+ * that build never knew them. Its status answer finishes a launch that was cut
+ * from the checkpoint alone, so asking it can start a run.
+ */
+const downgrade = (machine: RigMachine) => {
+  machine.capabilities = BEFORE_BATCHES;
+  machine.transfers.document = {
+    ...machine.transfers.document,
+    acceptances: Object.fromEntries(
+      Object.entries(machine.transfers.document.acceptances).map(([key, acceptance]) => {
+        const { batch: _batch, ...kept } = acceptance as typeof acceptance & { batch?: unknown };
+        return [key, kept];
+      }),
+    ),
+  } as HandoffTransferDocument;
+};
+const statusCalls = (rig: Rig) => rig.callsOf("transfer-status");
+
+describe("a machine that stopped taking batches is not asked and not sent to (EC2-04)", () => {
+  it.effect(
+    "accepted and not launched yet: nothing starts there, and the thread stays held until it takes batches again",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* makeRig(temporary);
+        const [a, b] = two(rig);
+        rig.addThread(a, t1);
+        // The checkpoint alone would continue this run on arrival.
+        a.runEnding = "usage-limit";
+        const launching = yield* Deferred.make<void>();
+        b.onLaunch = () => signal(launching).pipe(Effect.andThen(Effect.never));
+        const window = yield* a.moves.handOffBatch(ready(b)).pipe(Effect.forkChild);
+        yield* Deferred.await(launching);
+        expect(b.launches).toHaveLength(0);
+
+        // Both servers stop. The destination starts again on the older build.
+        b.onLaunch = null;
+        downgrade(b);
+        yield* rig.restart(b);
+        yield* rig.restart(a);
+        yield* Fiber.interrupt(window);
+        yield* a.moves.tick;
+        yield* a.moves.tick;
+
+        expect(b.launches).toHaveLength(0);
+        expect(statusCalls(rig)).toHaveLength(0);
+        expect(takeovers(rig)).toHaveLength(1);
+        expect(leaseOf(a, t1)?.state).toBe("handing-off");
+        expect(recordOf(a)?.state).toBe("unknown");
+        expect(recordOf(a)?.detail).toContain("Needs update");
+
+        // Updated again: the same operation goes out again and arrives Ready.
+        b.capabilities = null;
+        yield* a.moves.tick;
+
+        const sent = takeovers(rig);
+        expect(sent).toHaveLength(2);
+        expect(sent[1]?.batch).toEqual(sent[0]?.batch);
+        expect(b.launches).toHaveLength(1);
+        expect(b.launches[0]?.initialMessage).toBeUndefined();
+        expect(recordOf(a)).toMatchObject({ state: "ready", disposition: "ready" });
+      }),
+  );
+
+  it.effect("a send that never arrived stays held, and goes again once it takes batches", () =>
     Effect.gen(function* () {
       const rig = yield* makeRig(temporary);
       const [a, b] = two(rig);
@@ -508,22 +572,28 @@ describe("a repeat never goes to a machine that stopped taking batches (EC2-04)"
       yield* a.moves.handOffBatch(ready(b));
       expect(leaseOf(a, t1)?.state).toBe("handing-off");
 
-      // The destination comes back on a build from before batches.
       rig.network.rule = null;
-      b.capabilities = BEFORE_BATCHES;
+      downgrade(b);
       yield* rig.restart(a);
       yield* a.moves.tick;
 
+      expect(statusCalls(rig)).toHaveLength(0);
       expect(takeovers(rig)).toHaveLength(1);
       expect(b.launches).toHaveLength(0);
-      expect(rig.callsOf("transfer-status").length).toBeGreaterThan(0);
-      // It said, in writing, that it never accepted: only then does the thread run here again.
-      expect(recordOf(a)?.state).toBe("failed");
-      expect(leaseOf(a, t1)).toMatchObject({ state: "active", epoch: 2 });
+      expect(leaseOf(a, t1)?.state).toBe("handing-off");
+      expect(recordOf(a)?.state).toBe("unknown");
+
+      b.capabilities = null;
+      yield* a.moves.tick;
+
+      expect(takeovers(rig)).toHaveLength(2);
+      expect(b.launches).toHaveLength(1);
+      expect(b.launches[0]?.initialMessage).toBeUndefined();
+      expect(recordOf(a)).toMatchObject({ state: "ready", disposition: "ready" });
     }),
   );
 
-  it.effect("a send that arrived is confirmed by its status, not by a second takeover", () =>
+  it.effect("a send that arrived is not asked about, and never starts a second thread", () =>
     Effect.gen(function* () {
       const rig = yield* makeRig(temporary);
       const [a, b] = two(rig);
@@ -534,15 +604,21 @@ describe("a repeat never goes to a machine that stopped taking batches (EC2-04)"
       expect(b.launches).toHaveLength(1);
 
       rig.network.rule = null;
-      b.capabilities = BEFORE_BATCHES;
+      downgrade(b);
       yield* rig.restart(a);
       yield* a.moves.tick;
 
+      expect(statusCalls(rig)).toHaveLength(0);
       expect(takeovers(rig)).toHaveLength(1);
+      expect(b.launches).toHaveLength(1);
+      expect(leaseOf(a, t1)?.state).not.toBe("active");
+
+      b.capabilities = null;
+      yield* a.moves.tick;
+
       expect(b.launches).toHaveLength(1);
       expect(b.launches[0]?.initialMessage).toBeUndefined();
       expect(recordOf(a)).toMatchObject({ state: "ready", disposition: "ready" });
-      expect(leaseOf(a, t1)?.state).not.toBe("active");
     }),
   );
 
@@ -570,6 +646,198 @@ describe("a repeat never goes to a machine that stopped taking batches (EC2-04)"
       expect(b.launches).toHaveLength(0);
       expect(recordOf(a)?.state).toBe("stayed");
       expect(leaseOf(a, t1)?.state).toBe("active");
+    }),
+  );
+});
+
+describe("folder work after a restart is the work that was first sent (AC-20, EC2-04)", () => {
+  const FEATURE = { kind: "branch", path: "", branch: "feature" };
+  /** A source whose folder now holds later work than the batch first read. */
+  const source = (a: RigMachine, calls: { inventory: number; sent: Array<unknown> }) => {
+    a.folderSource = {
+      inventory: () =>
+        Effect.sync(() => {
+          calls.inventory += 1;
+          return {
+            scanLimited: false,
+            repositories: [
+              {
+                path: "",
+                notPushed: [],
+                onlyHere: [{ branch: "later", head: "b".repeat(40), commits: 1 }],
+                branchesNotListed: 0,
+                changedFiles: 0,
+                untrackedFiles: 0,
+                stashes: 0,
+                leftOut: [],
+                leftOutNotListed: 0,
+              },
+            ],
+          };
+        }),
+      sendExtras: (input: { readonly items: ReadonlyArray<{ readonly branch?: string }> }) =>
+        Effect.sync(() => {
+          calls.sent.push(input.items);
+          return {
+            items: input.items.map((item) => ({
+              kind: "branch",
+              path: "",
+              branch: item.branch ?? null,
+              status: "sent",
+              arrivedAs: `swc/from-a/${item.branch}`,
+              stays: null,
+              detail: null,
+            })),
+          };
+        }),
+      repositories: () => Effect.succeed([""]),
+    } as never;
+  };
+  const stored = (a: RigMachine, b: RigMachine, folderWork: unknown) => {
+    a.transfers.document = {
+      ...a.transfers.document,
+      batches: {
+        [BATCH_ID]: {
+          batchId: BATCH_ID,
+          targetEnvironmentId: b.environmentId,
+          trigger: { kind: "manual" },
+          operationIds: [],
+          createdAt: "2026-11-19T14:00:00.000Z",
+          start: "manual",
+          targetLabel: "B",
+          rows: [
+            {
+              kind: "folder-work",
+              id: a.projectId,
+              title: "App",
+              projectId: a.projectId,
+              operationId: null,
+              disposition: "ready",
+              state: "pending",
+              detail: null,
+              ...(folderWork === undefined ? {} : { folderWork }),
+            },
+          ],
+          finishedAt: null,
+        },
+      },
+    } as HandoffTransferDocument;
+  };
+  const folderRow = (a: RigMachine) =>
+    a.transfers.document.batches[BATCH_ID]?.rows?.find((row) => row.kind === "folder-work") as
+      | (Record<string, unknown> & { readonly state: string; readonly detail: string | null })
+      | undefined;
+
+  it.effect("is not sent to a machine that stopped taking batches", () =>
+    Effect.gen(function* () {
+      const rig = yield* makeRig(temporary);
+      const [a, b] = two(rig);
+      const calls = { inventory: 0, sent: [] as Array<unknown> };
+      source(a, calls);
+      stored(a, b, undefined);
+      b.capabilities = BEFORE_BATCHES;
+      yield* rig.restart(a);
+
+      yield* a.moves.tick;
+
+      expect(calls.sent).toEqual([]);
+      expect(folderRow(a)?.state).toBe("stayed");
+      expect(folderRow(a)?.detail).toContain("Needs update");
+    }),
+  );
+
+  it.effect("waits, and sends nothing, while the destination does not answer", () =>
+    Effect.gen(function* () {
+      const rig = yield* makeRig(temporary);
+      const [a, b] = two(rig);
+      const calls = { inventory: 0, sent: [] as Array<unknown> };
+      source(a, calls);
+      stored(a, b, undefined);
+      rig.network.rule = () => "lose-request";
+      yield* rig.restart(a);
+
+      yield* a.moves.tick;
+
+      expect(calls.sent).toEqual([]);
+      expect(folderRow(a)?.state).toBe("pending");
+    }),
+  );
+
+  it.effect("keeps what it is about to send on file before it sends, and what arrived after", () =>
+    Effect.gen(function* () {
+      const rig = yield* makeRig(temporary);
+      const [a, b] = two(rig);
+      const calls = { inventory: 0, sent: [] as Array<unknown> };
+      source(a, calls);
+      const onFile: Array<unknown> = [];
+      const fake = a.folderSource!;
+      a.folderSource = {
+        ...fake,
+        sendExtras: (input: never) =>
+          Effect.suspend(() => {
+            const row = Object.values(a.transfers.document.batches)[0]?.rows?.[0];
+            onFile.push((row as { folderWork?: unknown } | undefined)?.folderWork);
+            return fake.sendExtras(input);
+          }),
+      } as never;
+      yield* rig.restart(a);
+
+      const run = yield* a.moves.handOffBatch({
+        destinationEnvironmentId: b.environmentId,
+        start: "manual",
+        threads: [],
+        folderWork: [a.projectId],
+      });
+
+      expect(rowOf(run, a.projectId)?.state).toBe("ready");
+      const LATER = { kind: "branch", path: "", branch: "later" };
+      expect(onFile).toEqual([{ items: [LATER], receipt: null }]);
+      const row = Object.values(a.transfers.document.batches)[0]?.rows?.[0];
+      expect((row as { folderWork?: unknown } | undefined)?.folderWork).toEqual({
+        items: [LATER],
+        receipt: [{ ...LATER, arrivedAs: "swc/from-a/later", note: null }],
+      });
+    }),
+  );
+
+  it.effect("with its receipt on file: nothing is read or sent again, and the row says where it is", () =>
+    Effect.gen(function* () {
+      const rig = yield* makeRig(temporary);
+      const [a, b] = two(rig);
+      const calls = { inventory: 0, sent: [] as Array<unknown> };
+      source(a, calls);
+      stored(a, b, {
+        items: [FEATURE],
+        receipt: [{ ...FEATURE, arrivedAs: "swc/from-a/feature", note: null }],
+      });
+      yield* rig.restart(a);
+
+      yield* a.moves.tick;
+
+      expect(calls).toEqual({ inventory: 0, sent: [] });
+      expect(folderRow(a)?.state).toBe("ready");
+      expect(folderRow(a)?.detail).toContain("On B as branch swc/from-a/feature.");
+      expect(folderRow(a)?.detail).not.toContain("later");
+    }),
+  );
+
+  it.effect("stopped while it was sending: nothing is sent again, and the row does not say nothing moved", () =>
+    Effect.gen(function* () {
+      const rig = yield* makeRig(temporary);
+      const [a, b] = two(rig);
+      const calls = { inventory: 0, sent: [] as Array<unknown> };
+      source(a, calls);
+      stored(a, b, { items: [FEATURE], receipt: null });
+      yield* rig.restart(a);
+
+      yield* a.moves.tick;
+
+      expect(calls).toEqual({ inventory: 0, sent: [] });
+      expect(folderRow(a)?.state).toBe("failed");
+      expect(folderRow(a)?.detail).toContain("stopped while it was sending");
+      expect(folderRow(a)?.detail).toContain("branch feature");
+      const [read] = yield* a.moves.readBatches({ batchId: BATCH_ID });
+      expect(read?.finishedAt).not.toBeNull();
     }),
   );
 });
