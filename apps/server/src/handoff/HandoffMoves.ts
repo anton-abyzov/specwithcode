@@ -59,6 +59,7 @@ import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
@@ -703,7 +704,7 @@ export const make = Effect.gen(function* () {
       });
     });
 
-  const handOffMachine = (input: HandOffMachineInput) =>
+  const handOffMachineOwned = (input: HandOffMachineInput) =>
     Effect.gen(function* () {
       const destination = input.destinationEnvironmentId;
       if (destination === self) {
@@ -719,6 +720,7 @@ export const make = Effect.gen(function* () {
       // Every thread's record is written before the first of them is held.
       const planned = yield* transfers.planBatch(threadIds, destination, reason);
       const results: Array<HandoffMachineThreadResult> = [];
+      yield* Effect.addFinalizer(() => transfers.endBatch(planned));
       for (const threadId of threadIds) {
         const shell = yield* shellOf(threadId).pipe(Effect.option);
         const title = Option.isSome(shell) ? shell.value.title.slice(0, 500) : String(threadId);
@@ -772,7 +774,11 @@ export const make = Effect.gen(function* () {
         (current) => [undefined, { ...current, machineRun: run }] as const,
       );
       return run;
-    });
+    }).pipe(Effect.scoped);
+
+  /** The batch runs in a fiber of this server: a window that closes stops waiting, not the moves. */
+  const handOffMachine = (input: HandOffMachineInput) =>
+    handOffMachineOwned(input).pipe(Effect.forkDetach, Effect.flatMap(Fiber.join));
 
   const preflight = (input: HandoffPreflightInput) =>
     Effect.gen(function* () {

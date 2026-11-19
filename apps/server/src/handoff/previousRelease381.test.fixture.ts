@@ -18,6 +18,7 @@
  */
 import {
   EnvironmentId,
+  type HandoffIncomingReplica,
   HandoffModeErrorCode,
   HandoffPreflightCheck,
   HandoffPreflightFailure,
@@ -32,7 +33,6 @@ import * as Schema from "effect/Schema";
 import {
   type HandoffDocument,
   type HandoffIncomingDetail,
-  type HandoffIncomingReplica,
   findIncoming,
   incomingKey,
 } from "./handoffState.ts";
@@ -391,6 +391,15 @@ export function previousReadAnswer<A>(
     ? { kind: "ok", value: decoded.value }
     : { kind: "unreachable", uncertain: true };
 }
+
+/** A body as it arrives: what JSON carries, and nothing else. */
+export const overTheWire = (value: unknown): unknown => structuredClone(value);
+
+export const encodePreviousPreflightRequest = Schema.encodeSync(PreviousPeerPreflightRequest);
+export const encodePreviousPreflightResponse = Schema.encodeSync(PreviousPeerPreflightResponse);
+export const encodePreviousTakeoverRequest = Schema.encodeSync(PreviousTakeoverRequest);
+export const encodePreviousTakeoverResponse = Schema.encodeSync(PreviousTakeoverResponse);
+export const encodePreviousHeartbeatResponse = Schema.encodeSync(PreviousHeartbeatResponse);
 
 /** The previous release's route for a path it does not know. */
 export const PREVIOUS_UNKNOWN_PATH = {

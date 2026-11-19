@@ -57,11 +57,12 @@ import {
   PREVIOUS_PEER_PATHS,
   PREVIOUS_PROTOCOL_VERSION,
   PreviousHeartbeatRequest,
-  PreviousHeartbeatResponse,
   PreviousPeerPreflightRequest,
-  PreviousPeerPreflightResponse,
   PreviousTakeoverRequest,
-  PreviousTakeoverResponse,
+  encodePreviousHeartbeatResponse,
+  encodePreviousPreflightResponse,
+  encodePreviousTakeoverResponse,
+  overTheWire,
   previousHeartbeatContinued,
   previousMarkContinued,
   previousTakeoverVerdict,
@@ -142,7 +143,9 @@ export interface RigMachine {
   onDispatch: ((command: { readonly type: string }) => Effect.Effect<void>) | null;
   /** Runs before a continuation is launched; a failure fails the launch. */
   onLaunch:
-    | ((input: ThreadLaunchService.ThreadLaunchInput) => Effect.Effect<void, Error>)
+    | ((
+        input: ThreadLaunchService.ThreadLaunchInput,
+      ) => Effect.Effect<void, { readonly message: string }>)
     | null;
   /** Runs after each change to the handoff document, with the document as written. */
   onDocument: ((document: HandoffDocument) => Effect.Effect<void>) | null;
@@ -184,7 +187,7 @@ const refused = (refusal: HandoffReceiver.HandoffRefusal) =>
     code: refusal.code,
     message: refusal.message,
     check: refusal.check,
-    uncertain: false,
+    uncertain: refusal.uncertain === true,
   });
 
 /** What this build's peer client makes of the previous release's 404 for a path it does not know. */
@@ -378,11 +381,13 @@ export const makeRig = (
                   const strategy = input.workspaceStrategy as
                     | { readonly type: string; readonly worktreePath?: string }
                     | undefined;
-                  target.threads.set(input.threadId, {
-                    title: input.title ?? "Continued",
-                    activeRunId: null,
-                    worktreePath: strategy?.worktreePath ?? null,
-                  });
+                  if (input.threadId !== undefined) {
+                    target.threads.set(input.threadId, {
+                      title: input.title ?? "Continued",
+                      activeRunId: null,
+                      worktreePath: strategy?.worktreePath ?? null,
+                    });
+                  }
                   return { threadId: input.threadId, projection: {}, resumed: false };
                 }),
               ),
@@ -427,7 +432,7 @@ export const makeRig = (
         }
         const caller = { sourceEnvironmentId: from.environmentId, grant: unscopedGrant(from.environmentId) };
         // The route decodes a body with no parse options: fields it does not know are dropped.
-        const json = JSON.parse(JSON.stringify(request)) as unknown;
+        const json = overTheWire(request);
         const invalid = new HandoffReceiver.HandoffRefusal({
           status: 400,
           code: "invalid",
@@ -437,7 +442,7 @@ export const makeRig = (
         if (path === "preflight") {
           const decoded = Schema.decodeUnknownOption(PreviousPeerPreflightRequest)(json);
           if (Option.isNone(decoded)) return yield* invalid;
-          return Schema.encodeSync(PreviousPeerPreflightResponse)({
+          return encodePreviousPreflightResponse({
             machineLabel: to.label,
             protocolVersion: PREVIOUS_PROTOCOL_VERSION,
             appVersion: "1.0.381",
@@ -456,7 +461,7 @@ export const makeRig = (
             "2026-11-19T14:00:00.000Z",
           );
           to.document = next;
-          return Schema.encodeSync(PreviousHeartbeatResponse)({ machineLabel: to.label, continued });
+          return encodePreviousHeartbeatResponse({ machineLabel: to.label, continued });
         }
         const decoded = Schema.decodeUnknownOption(PreviousTakeoverRequest)(json);
         if (Option.isNone(decoded)) return yield* invalid;
@@ -470,7 +475,7 @@ export const makeRig = (
             check: verdict.check,
           });
         }
-        const response = Schema.encodeSync(PreviousTakeoverResponse)({
+        const response = encodePreviousTakeoverResponse({
           threadId: HandoffReceiver.continuationThreadId(
             decoded.value.sourceEnvironmentId,
             decoded.value.sourceThreadId,
@@ -586,7 +591,7 @@ export const makeRig = (
         planMerge: unused,
         extrasNegotiate: unused,
         extrasReplicate: unused,
-      } as never);
+      });
     };
 
     const restart = (machine: RigMachine) =>
