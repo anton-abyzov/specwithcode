@@ -177,7 +177,7 @@ function modelsFromDiscovery(
                 ? capabilities
                 : createModelCapabilities({ optionDescriptors }),
           };
-        }));
+        });
   return providerModelsFromSettings(builtInModels, customModels, capabilities);
 }
 
