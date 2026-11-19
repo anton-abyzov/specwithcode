@@ -10,14 +10,14 @@
  * @module firstFeatureSample
  */
 import {
+  activeFirstFeatureSample,
   CommandId,
-  FIRST_FEATURE_SAMPLE,
   firstFeatureGuideAfterMark,
   firstFeatureGuideEnd,
+  firstFeatureGuideFinishedIn,
+  isFirstFeatureSample,
   ProjectWorkspaceError,
   sameFirstFeatureGuide,
-  type FirstFeatureGuide,
-  type Project,
   type ProjectFirstFeatureGuideInput,
   type ProjectFirstFeatureGuideMark,
   type ProjectId,
@@ -153,36 +153,12 @@ export function firstFeatureSampleName(takenTitles: Iterable<string>): string {
   return `${FIRST_FEATURE_SAMPLE_NAME} ${MAX_SAMPLE_NAMES + 1}`;
 }
 
-type SampleCandidate = Pick<Project, "id" | "workspaceRoot" | "workspaceSettings"> & {
-  readonly deletedAt?: string | null;
-};
-
-/** Whether the project was made as the first feature sample. Renaming it changes nothing. */
-export const isFirstFeatureSample = (project: {
-  readonly workspaceSettings?: { readonly sample?: string | undefined } | null | undefined;
-}): boolean => project.workspaceSettings?.sample === FIRST_FEATURE_SAMPLE;
-
 /**
- * "The sample" on this machine (AC-12): a live project made as the sample
- * whose guide has not ended, the most recently started first. Undefined when
- * there is none, so a new one may be made.
+ * "The sample" on this machine (AC-12) and whether it is one: the rules live in
+ * contracts so the window reads the same. `firstFeatureGuideFinishedIn` is
+ * what `serverConfig.firstFeatureFinished` says over every project row.
  */
-export function activeFirstFeatureSample<P extends SampleCandidate>(
-  projects: ReadonlyArray<P>,
-): P | undefined {
-  return projects
-    .filter(
-      (project) =>
-        (project.deletedAt ?? null) === null &&
-        isFirstFeatureSample(project) &&
-        firstFeatureGuideEnd(project.workspaceSettings?.firstFeatureGuide) === undefined,
-    )
-    .toSorted((left, right) =>
-      (right.workspaceSettings?.firstFeatureGuide?.started ?? "").localeCompare(
-        left.workspaceSettings?.firstFeatureGuide?.started ?? "",
-      ),
-    )[0];
-}
+export { activeFirstFeatureSample, firstFeatureGuideFinishedIn, isFirstFeatureSample };
 
 /** Planned against the stored facts when the mark commits; see the contract. */
 export { firstFeatureGuideAfterMark, firstFeatureGuideEnd };

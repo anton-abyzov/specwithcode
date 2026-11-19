@@ -14,6 +14,15 @@ export interface RecordedGit {
 const recorded: Array<RecordedGit> = [];
 export const recordedGit = (): ReadonlyArray<RecordedGit> => recorded;
 
+/**
+ * Lets a test act at an exact point of the code under test: `before` runs (and
+ * is awaited) ahead of a command, `after` once it has ended. Cleared by `cleanUp`.
+ */
+export const gitHooks: {
+  before: ((command: RecordedGit) => Promise<void> | void) | null;
+  after: ((command: RecordedGit) => void) | null;
+} = { before: null, after: null };
+
 type GitModule = typeof import("../fleet/folderTransfer/git.ts");
 /**
  * `folderTransfer/git.ts` with every command noted before it runs. A test file
@@ -21,13 +30,19 @@ type GitModule = typeof import("../fleet/folderTransfer/git.ts");
  * sender, the receiver, the bundle and checkpoint helpers) is recorded.
  */
 export function recordingGit(actual: GitModule): GitModule {
-  const runGit: GitModule["runGit"] = (cwd, args, options) => {
-    recorded.push({
+  const runGit: GitModule["runGit"] = async (cwd, args, options) => {
+    const command: RecordedGit = {
       cwd,
       args: [...args],
       privateIndex: options?.env?.GIT_INDEX_FILE !== undefined,
-    });
-    return actual.runGit(cwd, args, options);
+    };
+    recorded.push(command);
+    await gitHooks.before?.(command);
+    try {
+      return await actual.runGit(cwd, args, options);
+    } finally {
+      gitHooks.after?.(command);
+    }
   };
   return {
     ...actual,
@@ -62,8 +77,8 @@ const ARRIVAL = /^refs\/heads\/swc\/from-/;
  * Allowed: reads; a snapshot built on a private index; hidden refs under
  * `refs/specwithcode/extras/` and `extras-incoming/` written and removed; a
  * bundle created, verified and fetched into a hidden ref; and an arrival
- * branch `swc/from-…` created only where none exists, or moved by
- * `git branch -f`. Nothing else: no reset, rebase, stash, checkout, switch,
+ * branch `swc/from-…` created only where none exists, or moved forward by
+ * a fetch from a hidden ref of the same repository. Nothing else: no reset, rebase, stash, checkout, switch,
  * merge, push, commit, pull, clean, restore or tag.
  */
 export function gitCommandsNotAllowed(): Array<string> {
@@ -87,21 +102,26 @@ export function gitCommandsNotAllowed(): Array<string> {
                     ? ["create", "verify", "list-heads"].includes(rest[0] ?? "")
                     : verb === "update-ref"
                       ? rest[0] === "-d"
-                        ? rest.length === 2 && HIDDEN.test(rest[1] ?? "")
+                        ? // With the commit it was listed at, or without: only ever a hidden ref.
+                          (rest.length === 2 || rest.length === 3) && HIDDEN.test(rest[1] ?? "")
                         : HIDDEN.test(rest[0] ?? "") ||
                           // An arrival branch is created only where no ref of that name exists.
                           (ARRIVAL.test(rest[0] ?? "") && rest.length === 3 && rest[2] === "")
-                      : verb === "branch"
-                        ? rest.length === 5 &&
-                          rest.slice(0, 3).join(" ") === "--no-track -f --" &&
-                          (rest[3] ?? "").startsWith("swc/from-")
-                        : verb === "fetch"
-                          ? rest.length === 5 &&
+                      : verb === "fetch"
+                        ? (rest.length === 5 &&
                             rest.slice(0, 3).join(" ") ===
                               "--quiet --no-tags --no-write-fetch-head" &&
                             /^(\/|[A-Za-z]:[\\/])/.test(rest[3] ?? "") &&
-                            /:refs\/specwithcode\/extras-incoming\//.test(rest[4] ?? "")
-                          : false;
+                            /:refs\/specwithcode\/extras-incoming\//.test(rest[4] ?? "")) ||
+                          // An arrival branch is moved forward from a hidden ref of this very
+                          // repository, with no `+`: Git refuses anything but a fast-forward.
+                          (rest.length === 8 &&
+                            rest.slice(0, 7).join(" ") ===
+                              "--quiet --no-tags --no-prune --no-recurse-submodules --no-write-fetch-head --refmap= ." &&
+                            /^refs\/specwithcode\/extras-incoming\/[^:+]+:refs\/heads\/swc\/from-[^:]+$/.test(
+                              rest[7] ?? "",
+                            ))
+                        : false;
     if (!ok) out.push(args.join(" ").slice(0, 300));
   }
   return out;
@@ -152,6 +172,8 @@ export const fakeKeyHeader = () => ["-----BEGIN ", "PRIVATE KEY-----"].join("");
 
 const temporary: Array<string> = [];
 export function cleanUp(): void {
+  gitHooks.before = null;
+  gitHooks.after = null;
   for (const folder of temporary.splice(0)) NodeFS.rmSync(folder, { recursive: true, force: true });
 }
 

@@ -380,7 +380,7 @@ describe("hidden refs of dead operations (P2-08)", () => {
     git(f.a, "update-ref", "refs/specwithcode/extras/live-op/0", head);
     git(f.a, "update-ref", "refs/specwithcode/handoff/keep", head);
     const before = snapshot(f.a);
-    await sweepStaleExtraRefs(f.a, new Set(["live-op"]));
+    await sweepStaleExtraRefs(f.a, (operation) => operation === "live-op");
     const refs = allRefs(f.a);
     expect(refs).not.toContain("refs/specwithcode/extras/dead-op/");
     expect(refs).toContain("refs/specwithcode/extras/live-op/0");

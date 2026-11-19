@@ -2,7 +2,11 @@ import { TeamRulesCarried } from "./teamRules.ts";
 import { LifecycleReceipt, LifecycleReceiptReport } from "./threadLifecycleEvidence.ts";
 import { ThreadRuntimeModeSetCommand } from "./threadRuntimeModeCommand.ts";
 import { ManualCodexCreditIntent } from "./manualCodexCredits.ts";
-import { StartAdversarialReviewInput, StartAdversarialReviewResult } from "./adversarialReview.ts";
+import {
+  StartAdversarialReviewInput,
+  StartAdversarialReviewResult,
+  ThreadReviewMode,
+} from "./adversarialReview.ts";
 import { AdvisorTaskPurpose, ThreadAdvisorMode } from "./advisor.ts";
 export {
   ManualCodexCreditIntent,
@@ -513,6 +517,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   /** The thread's own advisor choice; absent or null follows the project. */
   advisorMode: Schema.optional(Schema.NullOr(ThreadAdvisorMode)),
+  /** The thread's own adversarial review choice; absent or null follows the project. */
+  reviewMode: Schema.optional(Schema.NullOr(ThreadReviewMode)),
   /** Set on a child that exists only to advise its parent; never changed. */
   purpose: Schema.optional(AdvisorTaskPurpose),
   // Fractional-index slot in the user-arranged pinned order. Optional so
@@ -2480,6 +2486,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   /** The thread's own advisor choice; absent or null follows the project. */
   advisorMode: Schema.optional(Schema.NullOr(ThreadAdvisorMode)),
+  /** The thread's own adversarial review choice; absent or null follows the project. */
+  reviewMode: Schema.optional(Schema.NullOr(ThreadReviewMode)),
   /** Set on a child that exists only to advise its parent; never changed. */
   purpose: Schema.optional(AdvisorTaskPurpose),
   /** Slot in the user-arranged pinned order; omitted by pre-reorder servers. */
@@ -3455,6 +3463,13 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     /** null follows the project again. */
     advisorMode: Schema.NullOr(ThreadAdvisorMode),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.review-mode.set"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    /** null follows the project again. */
+    reviewMode: Schema.NullOr(ThreadReviewMode),
   }),
   Schema.Struct({
     type: Schema.Literal("provider-session.detach"),

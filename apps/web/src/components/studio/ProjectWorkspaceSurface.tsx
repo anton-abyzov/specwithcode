@@ -198,6 +198,8 @@ import { useDictationShortcut } from "./dictationShortcut";
 import { useVoiceDictation, VoiceDictationBar } from "./VoiceDictation";
 import { ProjectIconButton } from "./ProjectIconEditor";
 import { ProjectMoreMenu } from "./shell/ProjectMoreMenu";
+import { FirstFeatureGuide, useFirstFeatureReopen } from "./firstFeature/FirstFeatureGuide";
+import { specweaveStateOf } from "./specweaveSetup.logic";
 import { randomUUID } from "../../lib/utils";
 
 import { CoordinatorConversation } from "./CoordinatorConversation";
@@ -1773,6 +1775,21 @@ export function ProjectWorkspaceSurface({
       field.setSelectionRange(field.value.length, field.value.length);
     });
   };
+  const reopenFirstFeature = useFirstFeatureReopen(project);
+  // A request for the person to send, from the Board or the first feature guide.
+  const draftRequest =
+    canOperate && connected
+      ? (text: string) => {
+          // The composer sits behind an expanded panel, and on a phone
+          // behind the panel itself.
+          setPaneExpanded(false);
+          if (phone) {
+            setSelected(null);
+            setOverviewOpen(false);
+          }
+          draftForCoordinator(text);
+        }
+      : undefined;
   const quickStarts = (
     <CoordinatorQuickStarts
       // Hidden sends can't be appended to: a chip waits while a message is on its way.
@@ -1937,6 +1954,7 @@ export function ProjectWorkspaceSurface({
                       : undefined
                   }
                   onOpenSettingsTab={setTab}
+                  onOpenFirstFeatureGuide={reopenFirstFeature}
                   designHere={project.environmentId === primaryEnvironmentId}
                 />
               </div>
@@ -1944,6 +1962,22 @@ export function ProjectWorkspaceSurface({
             {machinePrivate ? null : (
               <FolderCopyBanner environmentId={project.environmentId} projectId={project.id} />
             )}
+            {/* The sample project's first feature guide (1398); nothing for any other project. */}
+            <FirstFeatureGuide
+              project={project}
+              specweave={specweaveStateOf(snapshot)}
+              specweaveWaiting={snapshot?.specweaveSetupFailure !== undefined}
+              askWaiting={coordinatorFailure !== null || Boolean(coordinator?.limitRecovery)}
+              author={model ?? null}
+              canOperate={canOperate && connected}
+              onShowBoard={showBoardTab}
+              onOpenIncrement={(incrementId) => {
+                showBoardTab();
+                boardIncrement.open(incrementId);
+              }}
+              onAsk={draftRequest}
+              onOpenThread={showCoordinator}
+            />
             {machinePrivate &&
             primaryEnvironmentId !== null &&
             project.environmentId !== primaryEnvironmentId ? (
@@ -2418,20 +2452,7 @@ export function ProjectWorkspaceSurface({
                   onOpenThread={(thread) => openThread(thread.id, thread.environmentId)}
                   openIncrement={boardIncrement.incrementId}
                   onOpenIncrement={boardIncrement.open}
-                  onAsk={
-                    canOperate && connected
-                      ? (text) => {
-                          // The composer sits behind an expanded panel, and on a phone
-                          // behind the panel itself.
-                          setPaneExpanded(false);
-                          if (phone) {
-                            setSelected(null);
-                            setOverviewOpen(false);
-                          }
-                          draftForCoordinator(text);
-                        }
-                      : undefined
-                  }
+                  onAsk={draftRequest}
                 />
               ) : paneTab === "designs" ? (
                 <ProjectDesignsPane

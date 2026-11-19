@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - disposable real Git fixtures only.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "@effect/vitest";
@@ -18,7 +19,7 @@ import {
   twoMachines,
   write,
 } from "./extrasTestKit.ts";
-import { checkSnapshotContent, readFileHead } from "./snapshotSecrets.ts";
+import { checkSnapshotContent, checkStagedContent, readFileHead } from "./snapshotSecrets.ts";
 
 beforeAll(isolateGit);
 afterAll(restoreGit);
@@ -292,6 +293,95 @@ describe("a snapshot with the content check (1390 AC-14, AC-31)", () => {
     expect(written.excludedSecretCount).toBe(written.excludedSecretPaths.length);
     NodeFS.rmSync(NodePath.join(a, "swap.txt"), { recursive: true });
   });
+
+  /** Stages everything in a throwaway repository and returns the tree and its base commit. */
+  const stagedTree = (folder: string) => {
+    git(folder, "add", "-A");
+    return { baseCommit: git(folder, "rev-parse", "HEAD"), tree: git(folder, "write-tree") };
+  };
+  const stagedCheck = (folder: string, limits: { maxFiles?: number; maxChangedFiles?: number }) =>
+    checkStagedContent({
+      root: folder,
+      ...stagedTree(folder),
+      secretName: (path) => path.endsWith(".env"),
+      maxFileBytes: 10 * 1024 * 1024,
+      maxChangedFiles: limits.maxChangedFiles ?? 20_000,
+      ...(limits.maxFiles === undefined ? {} : { maxFiles: limits.maxFiles }),
+    });
+
+  it("reports staged files past the read limit as not checked, never as fine (P2-12)", async () => {
+    const { a } = twoMachines();
+    write(a, "new/a.txt", "fine\n");
+    write(a, "new/b.txt", `token=${fakeToken()}\n`);
+    write(a, "new/c.txt", "fine\n");
+    write(a, "new/d.txt", `token=${fakeToken()}\n`);
+    const staged = await stagedCheck(a, { maxFiles: 2 });
+    // The first two are read; the other two are named as not checked, whatever they hold.
+    expect(staged.flagged).toEqual([
+      { path: "new/b.txt", reason: "content", kind: "GitHub token" },
+      { path: "new/c.txt", reason: "not-checked", kind: null },
+      { path: "new/d.txt", reason: "not-checked", kind: null },
+    ]);
+    // Within the limit nothing is reported as not checked.
+    expect((await stagedCheck(a, {})).flagged.map((file) => file.reason)).toEqual([
+      "content",
+      "content",
+    ]);
+  });
+
+  it("names the first changed file past the file limit, secrets by name aside (tooMany)", async () => {
+    const { a } = twoMachines();
+    write(a, "app.ts", "export const a = 'changed';\n");
+    write(a, "b.txt", "fine\n");
+    write(a, "c.txt", "fine\n");
+    write(a, "a.env", "KEY=1\n");
+    const tree = stagedTree(a);
+    const check = (maxChangedFiles: number) =>
+      checkStagedContent({
+        root: a,
+        ...tree,
+        secretName: (path) => path.endsWith(".env"),
+        maxFileBytes: 10 * 1024 * 1024,
+        maxChangedFiles,
+      });
+    // Three files travel (a changed one and two new ones); the secret by name is not counted.
+    expect((await check(3)).tooMany).toBeNull();
+    expect((await check(2)).tooMany).toEqual({ path: "c.txt" });
+    expect((await check(1)).tooMany).toEqual({ path: "b.txt" });
+    expect((await check(2)).secretNames).toEqual(["a.env"]);
+  });
+
+  it.skipIf(NodePath.sep !== "/")(
+    "does not wait on a pipe put where a listed file was (P2-17)",
+    async () => {
+      const { a } = twoMachines();
+      write(a, "fine.txt", `token=${fakeToken()}\n`);
+      const pipe = NodePath.join(a, "pipe.txt");
+      NodeChildProcess.execFileSync("mkfifo", [pipe]);
+      try {
+        // Nothing of its own to read, like a link or a folder; and the check goes on.
+        expect(await readFileHead(pipe)).toBeNull();
+        const checked = await checkSnapshotContent({
+          root: a,
+          untracked: ["pipe.txt", "fine.txt"],
+          pastLimit: "leave-out",
+        });
+        expect(checked.leftOut).toEqual([
+          { path: "fine.txt", reason: "content", kind: "GitHub token" },
+        ]);
+      } finally {
+        // A reader still waiting on the pipe (the defect) is let go, so the run can end.
+        try {
+          NodeFS.closeSync(
+            NodeFS.openSync(pipe, NodeFS.constants.O_WRONLY | NodeFS.constants.O_NONBLOCK),
+          );
+        } catch {
+          // No reader is waiting.
+        }
+      }
+    },
+    10_000,
+  );
 
   it("leaves a thread's checkpoint as it is today: no content check unless asked for", async () => {
     const a = dirtyRepository();

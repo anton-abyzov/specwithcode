@@ -167,7 +167,7 @@ const rowIds = () =>
   );
 const filesRow = () => document.querySelector<HTMLElement>('[data-access-row="files"]');
 
-it("shows Access as a list after Agents and before Projects, with Continue the only filled button", async () => {
+it("shows Access as a list after Agents and before Projects, with Continue the only filled footer or row button", async () => {
   await openAccess();
   const bar = [...document.querySelectorAll('[aria-label="Setup progress"] li [aria-label]')];
   expect(bar.map((stage) => stage.getAttribute("aria-label")?.split(",")[0])).toEqual([

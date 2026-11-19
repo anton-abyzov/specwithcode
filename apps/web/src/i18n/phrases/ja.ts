@@ -5136,6 +5136,8 @@ export const ja: PhraseCatalog = {
   "Follow project (off)": "プロジェクトに従う (オフ)",
   "Lets this thread ask a stronger model to check its work.":
     "このスレッドが、より強力なモデルに作業の確認を頼めるようにします。",
+  "Has a model from another family review this thread's work when its feature is finished.":
+    "このスレッドの機能が完成したら、別系統のモデルに作業をレビューさせます。",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "チャットが解決済みまたはアーカイブ済みで、この日数のあいだ非アクティブなワークツリーを削除します。ブランチとチャットの履歴は残ります。",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
@@ -5769,6 +5771,7 @@ export const ja: PhraseCatalog = {
   "Anyone with this code can pair a browser with this computer.":
     "このコードを持つ人は誰でも、ブラウザをこのコンピュータとペアリングできます。",
   "Chrome profile": "Chrome プロファイル",
+  "Pick a profile above first.": "先に上でプロファイルを選んでください。",
   "Opens the store page in {profile}.": "{profile} でストアのページを開きます。",
   "Opens the store page in Chrome.": "Chrome でストアのページを開きます。",
   "Paste it in the extension's page, or click its icon in Chrome's toolbar and paste it there.":
@@ -5829,14 +5832,93 @@ export const ja: PhraseCatalog = {
   "Sign in again to reach your machines through SpecWithCode Connect.":
     "SpecWithCode Connect 経由でマシンにアクセスするには、もう一度サインインしてください。",
   "Sign in again": "もう一度サインイン",
-  "first": "最初",
-  "None of the ready agents runs a model on this list.": "準備できたエージェントのどれも、このリストのモデルを使っていません。",
+  first: "最初",
+  "None of the ready agents runs a model on this list.":
+    "準備できたエージェントのどれも、このリストのモデルを使っていません。",
   "No reviewer yet.": "レビュー担当はまだいません。",
-  "A review needs a model from a second family, such as {first} or {second}.": "レビューには、{first} や {second} など別系統のモデルが必要です。",
+  "A review needs a model from a second family, such as {first} or {second}.":
+    "レビューには、{first} や {second} など別系統のモデルが必要です。",
   "Add one": "追加する",
   "+{n} more": "ほか {n} 件",
   "Ready once an agent is signed in.": "エージェントがサインインすると使えます。",
+  // 1398: the first feature guide and its offer.
+  "Your first feature": "最初の機能",
+  "Turn SpecWeave on": "SpecWeave をオンにする",
+  "Ask for it whole": "まとめて依頼する",
+  "Read the review": "レビューを読む",
+  "This project has no plans or board yet. Turn SpecWeave on.":
+    "このプロジェクトにはまだ計画もボードもありません。SpecWeave をオンにしてください。",
+  "Show me": "場所を見る",
+  "Ask for the whole feature in one request. Your agents plan it, build it, review it and close it.":
+    "機能全体を 1 回の依頼で頼みます。エージェントが計画、実装、レビュー、完了まで行います。",
+  "Ask for the whole feature in one request. Your agents plan it, build it and close it.":
+    "機能全体を 1 回の依頼で頼みます。エージェントが計画、実装、完了まで行います。",
+  "Write it for me": "代わりに書く",
+  "Open the thread": "スレッドを開く",
+  Planning: "計画中",
+  "Working: {done} of {total} tasks": "作業中: {total} 件中 {done} 件のタスク",
+  "In review": "レビュー中",
+  "Fixing what the review found": "レビューの指摘を修正中",
+  "When the card is in Done, open it and read what the review found.":
+    "カードが完了に移ったら、開いてレビューの内容を読んでください。",
+  "Open the review": "レビューを開く",
+  Ship: "出荷可",
+  "Fix first": "先に修正",
+  "No verdict": "判定なし",
+  "A reviewer": "レビュー担当",
+  "Reviewed by {model}, the same family that built it.":
+    "{model} がレビューしました。作った側と同じファミリーです。",
+  "No review ran. A review needs a model from a second family, such as {codex} or {muse}.":
+    "レビューは行われていません。レビューには {codex} や {muse} など、別のファミリーのモデルが必要です。",
+  "No review is recorded for this feature.": "この機能のレビュー記録はありません。",
+  "Skip this step": "このステップを飛ばす",
+  "Leave the guide": "ガイドを閉じる",
+  "Waiting on this step. The Board tab says what went wrong.":
+    "このステップで止まっています。原因はボードタブに表示されています。",
+  "Waiting on this step. The coordinator's last message says why.":
+    "このステップで止まっています。理由はコーディネーターの最後のメッセージにあります。",
+  "That is the loop: plan, board, work, review, done.":
+    "これが一連の流れです: 計画、ボード、作業、レビュー、完了。",
+  "Review finished features in all projects on this Mac":
+    "この Mac のすべてのプロジェクトで完成した機能をレビューする",
+  "Each review uses the reviewer's plan.": "レビューごとにレビュー担当のプランを使います。",
+  "On for all projects on this Mac. Each review uses the reviewer's plan.":
+    "この Mac のすべてのプロジェクトでオンになりました。レビューごとにレビュー担当のプランを使います。",
+  "Remove the sample project": "サンプルプロジェクトを削除",
+  "Remove {name} from SpecWithCode? Its folder and files stay on disk.":
+    "{name} を SpecWithCode から削除しますか？フォルダーとファイルはディスクに残ります。",
+  "Build a first feature": "最初の機能を作る",
+  "Your agents plan and build one small feature and another model reviews it, on your own plans.":
+    "エージェントが小さな機能を 1 つ計画して作り、別のモデルがレビューします。あなた自身のプランで動きます。",
+  "Try a first feature": "試してみる",
+  "Sign in an agent first": "先にエージェントにサインイン",
+  "Continue your first feature": "最初の機能を続ける",
+  "Your sample project is where you left it.":
+    "サンプルプロジェクトは中断したところから続けられます。",
+  "Open it": "開く",
+  "Dismiss Build a first feature": "「最初の機能を作る」を閉じる",
+  "First feature guide": "最初の機能ガイド",
+  "Automatic review is still on for the sample": "サンプルの自動レビューがオンのままです",
+  done: "完了",
+  skipped: "スキップ",
+  Reviews: "レビュー",
+  "Removed {name}": "{name} を削除しました",
+  "Its folder and files stay on disk.": "フォルダーとファイルはディスクに残ります。",
+  "The guide could not be updated. Try again.":
+    "ガイドを更新できませんでした。もう一度お試しください。",
+  "The setting was not saved. Try again.": "設定は保存されませんでした。もう一度お試しください。",
+  "The sample project was not removed. Try again.":
+    "サンプルプロジェクトは削除されませんでした。もう一度お試しください。",
+  "Could not make the sample project": "サンプルプロジェクトを作成できませんでした",
+  "The sample project has no first commit": "サンプルプロジェクトに最初のコミットがありません",
+  "The sample project is ready": "サンプルプロジェクトの準備ができました",
+  "It appears in the sidebar once this window catches up.":
+    "このウィンドウが更新されるとサイドバーに表示されます。",
+  "This connection cannot change the settings of this Mac.":
+    "この接続では、この Mac の設定を変更できません。",
   "How much longer work takes with {setting}": "「{setting}」で作業がどれだけ長くなるか",
-  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.": "作業の完了までの時間が大幅に延びることがあります。計測では、レビューした作業はレビュー前の同じ作業と比べて中央値で 2.6 倍の時間がかかりました（半数の実行は 1.6〜3.6 倍）。レビューの各ラウンドと修正に時間がかかるためです。",
-  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.": "作業時間が延びることがあります。相談 1 回あたり約 2 分かかります。計測では、相談したスレッドは約 1.1 倍の時間がかかり、10 件に 1 件は 1.4 倍以上でした。",
+  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.":
+    "作業の完了までの時間が大幅に延びることがあります。計測では、レビューした作業はレビュー前の同じ作業と比べて中央値で 2.6 倍の時間がかかりました（半数の実行は 1.6〜3.6 倍）。レビューの各ラウンドと修正に時間がかかるためです。",
+  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.":
+    "作業時間が延びることがあります。相談 1 回あたり約 2 分かかります。計測では、相談したスレッドは約 1.1 倍の時間がかかり、10 件に 1 件は 1.4 倍以上でした。",
 };

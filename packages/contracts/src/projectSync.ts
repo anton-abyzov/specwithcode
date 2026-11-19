@@ -35,7 +35,7 @@ export type ProjectSyncAction = typeof ProjectSyncAction.Type;
 
 /** Why a repository got its action: one value per state Sync tells apart. */
 export const ProjectSyncReason = Schema.Literals([
-  /** Clean, behind its upstream, no commits of its own: moved forward `behind` commits. */
+  /** Clean, behind its upstream on `origin`, no commits of its own: moved forward `behind` commits. */
   "behind",
   "up-to-date",
   /** Clean, has `ahead` commits its upstream lacks, not behind. They are listed as an extra. */
@@ -49,6 +49,10 @@ export const ProjectSyncReason = Schema.Literals([
   /** On another branch than the other machine. Nothing is checked out. */
   "other-branch",
   "detached",
+  /**
+   * The branch has no upstream on `origin`. When it follows a local branch or a branch of
+   * another remote instead, or its branch is gone from `origin`, `detail` says so.
+   */
   "no-upstream",
   /** The fetch failed; `detail` is Git's reason. The other repositories continue. */
   "fetch-failed",
@@ -98,8 +102,25 @@ export const ProjectSyncRepositoryFacts = Schema.Struct({
   path: repositoryPath,
   branch: Schema.NullOr(branchName),
   head: Schema.NullOr(sha),
-  /** The branch's upstream, such as `origin/main`; null without one or off a branch. */
+  /**
+   * The branch's upstream when it is a branch of `origin`, such as `origin/main`; null
+   * without one, off a branch, or when the upstream is not `origin`'s (see `otherUpstream`).
+   */
   upstream: Schema.NullOr(bounded(512)),
+  /**
+   * The branch's upstream when it is not a branch of `origin`: a local branch (`base`) or a
+   * branch of another remote (`second/main`). Sync fetches `origin` only, so such a checkout
+   * is planned as having no upstream and is never moved. Absent from a machine on an older
+   * version.
+   */
+  otherUpstream: Schema.optional(Schema.NullOr(bounded(512))),
+  /**
+   * True when this machine's fetch found the upstream's branch gone from `origin`. The fetch
+   * never prunes, so `upstream` and `behind` still read as they last did; such a checkout is
+   * planned as having no upstream and is never moved. Absent when the branch is there, when
+   * nothing was behind, and from a machine on an older version.
+   */
+  upstreamGone: Schema.optional(Schema.Boolean),
   ahead: NonNegativeInt,
   behind: NonNegativeInt,
   /** Changed and untracked files, as `git status` counts them. */
@@ -151,6 +172,10 @@ export const ProjectSyncStep = Schema.Struct({
 });
 export type ProjectSyncStep = typeof ProjectSyncStep.Type;
 
+/** The `detail` of a step whose upstream branch is gone from `origin`. */
+export const projectSyncUpstreamGoneDetail = (upstream: string) =>
+  `The branch ${upstream} is no longer on origin.`;
+
 /**
  * The one action for a repository that exists on this machine. States overlap,
  * so the first that matches wins: a failed fetch, no remote, not on a branch,
@@ -185,7 +210,16 @@ export function planProjectSyncRepository(
   if (facts.branch === null) return step("fetch", "detached");
   if (other !== null && other.branch !== null && other.branch !== facts.branch)
     return step("fetch", "other-branch");
-  if (facts.upstream === null) return step("none", "no-upstream");
+  if (facts.upstream === null)
+    return step(
+      "none",
+      "no-upstream",
+      facts.otherUpstream == null
+        ? null
+        : `The branch follows ${facts.otherUpstream}, which is not a branch of origin.`,
+    );
+  if (facts.upstreamGone === true)
+    return step("none", "no-upstream", projectSyncUpstreamGoneDetail(facts.upstream));
   if (facts.behind === 0) return step("none", facts.ahead > 0 ? "not-pushed" : "up-to-date");
   if (facts.ahead > 0) return step("fetch", "diverged");
   if (facts.uncommitted > 0) return step("fetch", "uncommitted");

@@ -201,6 +201,13 @@ for (const theme of ["light", "dark"]) {
     // Where the desktop app lists Chrome's profiles, the store opens in the one picked.
     await ready("chrome=not-set-up&profiles=3");
     await page.getByRole("button", { name: "Set up", exact: true }).click();
+    // With several profiles none starts picked, and Add to Chrome waits for a pick (D-15).
+    await page.getByText("Pick a profile above first.").waitFor();
+    if (await page.getByRole("radio", { checked: true }).count())
+      fail(`chrome profiles ${at}`, "a profile started picked");
+    if (!(await page.getByRole("button", { name: "Add to Chrome" }).isDisabled()))
+      fail(`chrome profiles ${at}`, "Add to Chrome works before a profile is picked");
+    await rowShot("browser", "chrome-setup-profiles-none-picked");
     await page.getByRole("radio", { name: "Work" }).click();
     await page.getByRole("button", { name: "Add to Chrome" }).click();
     const added = await page.evaluate(() =>

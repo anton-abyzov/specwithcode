@@ -52,9 +52,15 @@ export async function readFileHead(
 ): Promise<Buffer | "unreadable" | null> {
   let handle: NodeFSP.FileHandle | null = null;
   try {
+    // Looked at before it is opened: opening a pipe waits for its other end, and Git
+    // stages nothing for a pipe, a socket or a device.
+    if (!(await NodeFSP.lstat(absolute)).isFile()) return null;
     handle = await NodeFSP.open(
       absolute,
-      NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NOFOLLOW ?? 0),
+      NodeFS.constants.O_RDONLY |
+        (NodeFS.constants.O_NOFOLLOW ?? 0) |
+        // Should a pipe take the file's place after the look above, the open still returns.
+        (NodeFS.constants.O_NONBLOCK ?? 0),
     );
     const stat = await handle.stat();
     if (!stat.isFile()) return null;
@@ -133,7 +139,8 @@ const STAGED_PARALLEL = 8;
  * is what travels. Of the tree's entries that differ from the base commit,
  * every file the base does not have (an untracked file, also one that appeared
  * in a folder swapped in for a checked file) is checked by name and read for
- * tokens (first 64 KB of the blob), and every changed file is measured against
+ * tokens (first 64 KB of the blob; past the files one snapshot reads, a file is
+ * reported as not checked), and every changed file is measured against
  * the per-file limit and counted against the file limit.
  */
 export async function checkStagedContent(input: {
@@ -198,7 +205,7 @@ export async function checkStagedContent(input: {
       break;
     }
   }
-  const toRead = changed
+  const unread = changed
     .filter(
       ({ path, added }) =>
         added &&
@@ -206,8 +213,13 @@ export async function checkStagedContent(input: {
         input.allow?.has(path) !== true &&
         (sizes.get(path) ?? 0) <= input.maxFileBytes,
     )
-    .slice(0, input.maxFiles ?? PROJECT_SYNC_CONTENT_CHECK_FILES);
-  const flagged: Array<SnapshotContentFinding> = [];
+    .toSorted((a, b) => a.path.localeCompare(b.path));
+  // Past the files one snapshot reads, a file is not checked and says so, as in the check
+  // before staging: it never travels unread.
+  const flagged: Array<SnapshotContentFinding> = unread
+    .splice(input.maxFiles ?? PROJECT_SYNC_CONTENT_CHECK_FILES)
+    .map(({ path }) => ({ path, reason: "not-checked", kind: null }));
+  const toRead = unread;
   let next = 0;
   await Promise.all(
     Array.from({ length: Math.min(STAGED_PARALLEL, toRead.length) }, async () => {
@@ -218,7 +230,10 @@ export async function checkStagedContent(input: {
           flagged.push({ path, reason: "not-checked", kind: null });
           continue;
         }
-        const kind = tokenKindInHead(blob.stdout.slice(0, PROJECT_SYNC_CONTENT_CHECK_BYTES));
+        // The first 64 KB of the blob, counted in bytes as for a file on disk.
+        const kind = tokenKindInHead(
+          Buffer.from(blob.stdout, "utf8").subarray(0, PROJECT_SYNC_CONTENT_CHECK_BYTES),
+        );
         if (kind !== null) flagged.push({ path, reason: "content", kind });
       }
     }),

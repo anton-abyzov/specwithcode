@@ -1,6 +1,7 @@
 // Stand-ins for the modules vite.config.ts redirects here: synthetic data, no server.
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import { createContext, useContext, type ReactNode } from "react";
+import { FirstFeatureOfferCard } from "../../src/components/studio/firstFeature/FirstFeatureOfferCard";
 
 const now = Date.now();
 const ago = (minutes: number) => new Date(now - minutes * 60_000).toISOString();
@@ -200,6 +201,10 @@ export const useComposerDraftStore = { getState: () => ({ setModelSelection: () 
 export const isElectron = false;
 // components/studio/WhatYouCanDo, CapacityFleet
 export const WhatYouCanDo = () => null;
+// The real offer card (1398 AC-11), offering the sample as on a machine with an agent signed in.
+export const FirstFeatureOffer = () => (
+  <FirstFeatureOfferCard offer={{ kind: "start" }} onStart={() => {}} onDismiss={() => {}} />
+);
 export const CapacityFleet = () => null;
 // components/ProjectFavicon
 export const ProjectFavicon = (props: {
