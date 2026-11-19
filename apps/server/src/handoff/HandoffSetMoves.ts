@@ -984,6 +984,28 @@ async function checkoutTree(path: string, except: ReadonlyArray<string>): Promis
 }
 
 /**
+ * Where a file the build copied is in the checkout now, read without ever
+ * following a link. "absent": the file, or a folder above it, is not there,
+ * so nothing of it can be lost. "other": something is there that is not the
+ * plain file the build wrote (a link at any step, a folder or a device in
+ * its place, a path that cannot be looked at), which proves nothing.
+ */
+async function copiedFile(
+  root: string,
+  segments: ReadonlyArray<string>,
+): Promise<string | "absent" | "other"> {
+  let at = root;
+  for (const [index, segment] of segments.entries()) {
+    at = NodePath.join(at, segment);
+    const stat = await NodeFSP.lstat(at).catch((error: NodeJS.ErrnoException) => error);
+    if (stat instanceof Error) return stat.code === "ENOENT" ? "absent" : "other";
+    const leaf = index === segments.length - 1;
+    if (stat.isSymbolicLink() || (leaf ? !stat.isFile() : !stat.isDirectory())) return "other";
+  }
+  return at;
+}
+
+/**
  * True when the checkout holds nothing but what this build put there. Its
  * index and its files must be one of the three states a build passes through:
  * both at the base, both at the checkpoint, or the index at the base under the
@@ -1005,12 +1027,10 @@ async function asBuilt(
 ): Promise<boolean> {
   // A copied file is this build's only while it is still the file that was
   // copied. Compared by digest: what either one holds is never read out.
-  // Only a file that is not there proves nothing was lost. One that cannot be
-  // read, or a path that cannot be placed inside the checkout, is not proof.
   const digest = (file: string) =>
     NodeFSP.readFile(file).then(
       (bytes) => NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
-      (error: NodeJS.ErrnoException) => (error.code === "ENOENT" ? "absent" : "unreadable"),
+      () => null,
     );
   for (const secret of expected.secrets) {
     const segments = secret.split("/").filter((each) => each.length > 0 && each !== ".");
@@ -1022,10 +1042,12 @@ async function asBuilt(
     ) {
       return false;
     }
-    const here = await digest(NodePath.join(path, ...segments));
-    if (here === "absent") continue;
-    if (here === "unreadable") return false;
-    if (here !== (await digest(NodePath.join(expected.copiedFrom, ...segments)))) return false;
+    const held = await copiedFile(path, segments);
+    if (held === "absent") continue;
+    if (held === "other") return false;
+    const here = await digest(held);
+    const there = await digest(NodePath.join(expected.copiedFrom, ...segments));
+    if (here === null || there === null || here !== there) return false;
   }
   const staged = await runGit(path, ["write-tree"], { allowFailure: true });
   if (staged.code !== 0) return false;
