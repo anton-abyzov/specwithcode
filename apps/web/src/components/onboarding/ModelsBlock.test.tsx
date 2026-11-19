@@ -171,7 +171,7 @@ describe("ModelsBlock", () => {
     show([signedOut(claude), signedOut(codex)]);
     expect(host.querySelector("dl")).toBeNull();
     show([claude, signedOut(codex)]);
-    expect(named("daily")).toEqual(["Claude Opus 5.5"]);
+    expect(named("daily")).toEqual(["Claude Opus 5.5", "Claude Sonnet 5.5"]);
     show([claude, codex]);
     expect(named("review")).toEqual(["GPT-6.1 Sol"]);
   });

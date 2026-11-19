@@ -234,7 +234,7 @@ describe("firstRunModels", () => {
       adversarialReview: { reviewers: [sel("codex", "gpt-6.1-sol")] },
     };
     const result = firstRunModels({ settings: saved, providers: [claude, signedOut(codex)] });
-    expect(names(lineOf(result, "daily"))).toEqual(["Claude Opus 5.5", "Claude Sonnet 5.5"]);
+    expect(names(lineOf(result, "daily"))).toEqual(["Claude Opus 5.5"]);
     expect(lineOf(result, "review")?.kind).toBe("no-reviewer");
     // Copilot is ready and runs the same model, so the saved Codex entry stays, by its name.
     const viaCopilot = firstRunModels({
