@@ -45,10 +45,11 @@ describe("retired interface phrases", () => {
   });
 
   it("has no phrase that calls a machine Main or a Copy of it", () => {
-    const [catalog] = Object.values(PHRASE_CATALOGS);
-    const role = Object.keys(catalog ?? {}).filter((phrase) =>
-      BANNED.some((pattern) => pattern.test(phrase)),
-    );
-    expect(role).toEqual([]);
+    // The keys are the same in every language; each catalog is read all the same.
+    for (const [language, catalog] of Object.entries(PHRASE_CATALOGS))
+      expect(
+        Object.keys(catalog).filter((phrase) => BANNED.some((pattern) => pattern.test(phrase))),
+        language,
+      ).toEqual([]);
   });
 });

@@ -45,7 +45,7 @@ export function useMachinesSettling(
   return settling && opening !== null && expired !== opening;
 }
 
-/** Why "Move project" is off, said where the person can see it. */
+/** Why the hand-off button is off, said where the person can see it. */
 export function moveBlockedReason(input: {
   readonly connected: boolean;
   readonly coordinator: boolean;

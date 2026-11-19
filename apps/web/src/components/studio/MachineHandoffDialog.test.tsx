@@ -633,9 +633,7 @@ describe("handoff file method and intent", () => {
       sync: { machine: "m5", folder: "/Users/sam/atlas" },
       copyDoneOn: "m5",
     });
-    expect(document.querySelector("h2")?.textContent).toBe(
-      "Product is in sync on MacBook and m5",
-    );
+    expect(document.querySelector("h2")?.textContent).toBe("Product is in sync on MacBook and m5");
   });
 
   it("says the copy there fast-forwards to the commits this machine pushes", async () => {
@@ -728,27 +726,27 @@ describe("handoff file method and intent", () => {
   });
 
   it("titles a finished copy with where the project is and when it got there", async () => {
-    await handoff({ method: "copy", intent: "copy", copyFlow, copyDoneOn: "ministorm" });
-    expect(document.querySelector("h2")?.textContent).toBe("Product is on ministorm");
+    await handoff({ method: "copy", intent: "copy", copyFlow, copyDoneOn: "linux-mini" });
+    expect(document.querySelector("h2")?.textContent).toBe("Product is on linux-mini");
     const copyDoneAt = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
     await handoff({
       method: "copy",
       intent: "copy",
       copyFlow,
-      copyDoneOn: "ministorm",
+      copyDoneOn: "linux-mini",
       copyDoneAt,
     });
     expect(document.querySelector("h2")?.textContent).toBe(
-      "Product is on ministorm (added 2h ago)",
+      "Product is on linux-mini (added 2h ago)",
     );
     await handoff({
       method: "copy",
       intent: "move",
       copyFlow,
-      copyDoneOn: "ministorm",
+      copyDoneOn: "linux-mini",
       copyDoneAt,
     });
-    expect(document.querySelector("h2")?.textContent).toBe("Product is on ministorm");
+    expect(document.querySelector("h2")?.textContent).toBe("Product is on linux-mini");
   });
 
   describe("Send: no Copy or move, the real Main, and the plan", () => {

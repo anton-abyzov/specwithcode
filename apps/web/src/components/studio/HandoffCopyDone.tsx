@@ -134,7 +134,7 @@ export function HandoffCopyDone({
                   "The files are on {target}, but {problem}. Sync again: it compares first and moves only what changed.",
                   { target: targetLabel, problem },
                 )
-              : `The files are on ${targetLabel}, but ${problem}.`}
+              : tx("The files are on {target}, but {problem}.", { target: targetLabel, problem })}
         </CopyProblems>
       )}
       <div className="space-y-1" data-slot="copy-done-body">
@@ -143,12 +143,15 @@ export function HandoffCopyDone({
             ? tx("The coordinator continues on {target}.", { target: targetLabel })
             : mode === "copy-and-move"
               ? keptHere
-                ? `The coordinator stays on ${sourceLabel}. The copied files stay on ${targetLabel}.`
+                ? tx("The coordinator stays on {source}. The copied files stay on {target}.", {
+                    source: sourceLabel,
+                    target: targetLabel,
+                  })
                 : sourceReview && copyAgain
-                  ? "The coordinator stays here until you choose below."
+                  ? tx("The coordinator stays here until you choose below.")
                   : copyAgain
                     ? tx("The coordinator stays here until you sync again.")
-                    : "Files are copied. Hand off the coordinator once work here is idle."
+                    : tx("Files are copied. Hand off the coordinator once work here is idle.")
               : main
                 ? tx("{project} is on {machine}. The coordinator stays on {main}.", {
                     project: project.title,
@@ -239,10 +242,13 @@ export function HandoffCopyDone({
           data-slot="copy-link"
         >
           {link.status === "linking"
-            ? `Linking ${targetLabel}…`
+            ? tx("Linking {target}…", { target: targetLabel })
             : link.status === "linked"
-              ? `Linked: ${sourceLabel} can start work on ${targetLabel}.`
-              : `Not linked yet. ${link.reason}`}
+              ? tx("Linked: {source} can start work on {target}.", {
+                  source: sourceLabel,
+                  target: targetLabel,
+                })
+              : tx("Not linked yet. {reason}", { reason: link.reason })}
         </p>
       )}
       {copy.secrets && copy.secrets.length > 0 && (
