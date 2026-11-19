@@ -37,6 +37,7 @@ import {
 } from "@specweave-studio/contracts";
 
 import {
+  HandoffLauncher,
   PeerTranscriptMessage,
   type ReplicateMeta,
   TakeoverRequest,
@@ -112,6 +113,12 @@ export const HandoffThreadRecord = Schema.Struct({
       }),
     ),
   ),
+  /**
+   * For a continuation that arrived here: the machine where a thread waits for
+   * its result and the machines that one can ask. This machine hands the work
+   * on only within them. Absent when nobody waits.
+   */
+  launcher: Schema.optionalKey(Schema.NullOr(HandoffLauncher)),
 });
 export type HandoffThreadRecord = typeof HandoffThreadRecord.Type;
 
@@ -132,6 +139,8 @@ export const HandoffIncomingDetail = Schema.Struct({
   /** The handoff version the source ran when it sent this copy; absent before the check existed. */
   sourceProtocolVersion: Schema.optional(NonNegativeInt),
   sourceAppVersion: Schema.optional(Schema.String),
+  /** Who waits for the result, when the copy is of a continuation that arrived on the source. */
+  launcher: Schema.optional(HandoffLauncher),
   /**
    * The delay after which this machine continues the copy on its own, as the
    * source's latest heartbeat named it; null when the source named another
@@ -604,6 +613,7 @@ export function upsertIncoming(
     autoContinueMinutes: (document.incomingDetails ?? {})[key]?.autoContinueMinutes ?? null,
     ...(meta.protocolVersion === undefined ? {} : { sourceProtocolVersion: meta.protocolVersion }),
     ...(meta.appVersion === undefined ? {} : { sourceAppVersion: meta.appVersion }),
+    ...(meta.launcher === undefined ? {} : { launcher: meta.launcher }),
   };
   const next = replaceIncoming(document, replica);
   return {

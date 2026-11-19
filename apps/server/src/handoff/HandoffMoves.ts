@@ -350,6 +350,7 @@ export const make = Effect.gen(function* () {
         protocolVersion: HANDOFF_PROTOCOL_VERSION,
         appVersion: HANDOFF_APP_VERSION,
         ...(carried === undefined ? {} : { carried }),
+        ...(record?.launcher == null ? {} : { launcher: record.launcher }),
       };
       const now = yield* nowIso;
       const label = yield* peerLabel(destination);
@@ -709,6 +710,8 @@ export const make = Effect.gen(function* () {
         );
       }
       const modelSelection = input.modelSelection ?? null;
+      const declined = HandoffFollow.onwardDeclined(current?.launcher, destination, self);
+      if (declined !== null) return yield* failed("unreachable", declined);
 
       // 1. Replicate and preflight: every refusal comes before the hold, so no turn stops for it.
       const first = yield* prepare(input.threadId, destination);
@@ -767,6 +770,14 @@ export const make = Effect.gen(function* () {
       }
 
       // 3. The destination takes over at the next epoch.
+      const followed = yield* follow.register({ shell: first.shell, destination, epoch }).pipe(
+        Effect.mapError(() => failed("failed", HandoffFollow.FOLLOW_NOT_RECORDED)),
+        Effect.tapError((error) =>
+          releaseHold(input.threadId, error.message).pipe(Effect.andThen(resume)),
+        ),
+      );
+      const here = { self, selfLabel, targets: yield* peers.targets };
+      const waits = HandoffFollow.launcherFor(current?.launcher, followed === "following", here);
       const request: TakeoverRequest = {
         sourceEnvironmentId: self,
         sourceThreadId: input.threadId,
@@ -774,13 +785,8 @@ export const make = Effect.gen(function* () {
         sequence: checkpoint.sequence,
         reason,
         modelSelection,
+        ...(waits === undefined ? {} : { launcher: waits }),
       };
-      yield* follow.register({ shell: first.shell, destination, epoch }).pipe(
-        Effect.mapError(() => failed("failed", HandoffFollow.FOLLOW_NOT_RECORDED)),
-        Effect.tapError((error) =>
-          releaseHold(input.threadId, error.message).pipe(Effect.andThen(resume)),
-        ),
-      );
       const response = yield* sendTakeover(destination, request).pipe(
         Effect.tapError((error) =>
           error._tag === "HandoffPeerError" && error.uncertain
@@ -1126,6 +1132,9 @@ export const make = Effect.gen(function* () {
           `This machine could not ask ${replica.sourceLabel} whether it still runs this thread; ask the user whether to continue it here (Continue here in the app).`,
         );
       }
+      const waits = detail?.launcher;
+      const declined = HandoffFollow.onwardDeclined(waits, self, input.sourceEnvironmentId);
+      if (declined !== null) return yield* failed("unreachable", declined);
       const response = yield* receiver
         .takeover(
           // Continuing here runs on this machine's own sign-ins: no access ceiling applies.
@@ -1137,6 +1146,7 @@ export const make = Effect.gen(function* () {
             sequence: replica.checkpoint.sequence,
             reason,
             modelSelection: input.modelSelection ?? null,
+            ...(waits === undefined ? {} : { launcher: waits }),
           },
         )
         .pipe(Effect.mapError(fromPeer));
@@ -1433,6 +1443,8 @@ export const make = Effect.gen(function* () {
       for (const replica of record.replicas) members.add(replica.environmentId);
       const destinations = [...members].filter((environmentId) => {
         if (environmentId === self || !paired.has(environmentId)) return false;
+        // A copy is what lets a machine continue the work: none leaves the launcher's reach.
+        if (HandoffFollow.onwardDeclined(record.launcher, environmentId, self)) return false;
         const replica = record.replicas.find((entry) => entry.environmentId === environmentId);
         if (replica !== undefined && (replica.sequence ?? -1) >= checkpoint.sequence) return false;
         const backoff = replicateBackoff.get(backoffKey(id as ThreadId, environmentId));

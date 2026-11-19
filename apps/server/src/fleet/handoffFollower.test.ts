@@ -1,107 +1,32 @@
-// @effect-diagnostics nodeBuiltinImport:off - a folder that outlives one server life.
 /**
  * A thread handed off to another machine, as the follower on the machine it
  * left sees it. The other machine answers as a released peer does
  * (releasedPeer.testkit.ts), a restart is a second server over the same
  * folder, and the launcher's messages are counted as its thread keeps them.
+ * The stage is handoffFollower.testkit.ts.
  */
-import * as NodeFS from "node:fs";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import { ProjectId, ThreadId } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 
 import { continuationThreadId } from "../handoff/HandoffReceiver.ts";
-import { releasedPeer } from "./releasedPeer.testkit.ts";
-import * as RemoteWorkerFollower from "./RemoteWorkerFollower.ts";
-import * as RemoteWorkers from "./RemoteWorkers.ts";
-import * as RemoteWorkerStore from "./RemoteWorkerStore.ts";
 import {
-  allow,
-  type KeptMessage,
-  machine,
-  makeSignal,
-  quiet,
-  ROLES,
-  rows,
-  settled,
-  setup,
-} from "./remoteWorkers.testkit.ts";
+  follow,
+  handedOff,
+  keptCount,
+  LAUNCHER,
+  LIVE,
+  removeStages,
+  ROW,
+  seed,
+  stage,
+  THREAD,
+  WAKE,
+} from "./handoffFollower.testkit.ts";
+import * as RemoteWorkers from "./RemoteWorkers.ts";
+import { allow, quiet, ROLES, rows, settled } from "./remoteWorkers.testkit.ts";
 
-const temporary: Array<string> = [];
-afterEach(() => {
-  for (const path of temporary.splice(0)) NodeFS.rmSync(path, { recursive: true, force: true });
-});
-
-const LAUNCHER = "coordinator";
-const THREAD = "handoff:1";
-const ROW = "handoff-follow:1";
-const wakeOf = (runId: string) => `remote-worker-wake:${ROW}:${runId}`;
-const LIVE = { timeout: 20_000 };
-
-/** The row the source writes before it sends the takeover. */
-const handedOff = (
-  overrides: Partial<RemoteWorkerStore.RemoteWorkerRecord> = {},
-): RemoteWorkerStore.RemoteWorkerRecord => ({
-  id: ROW,
-  callerThreadId: LAUNCHER,
-  projectId: "local-project",
-  machineId: ROLES.target.id,
-  environmentId: ROLES.target.environmentId,
-  remoteProjectId: null,
-  remoteThreadId: THREAD,
-  title: "Fix the flaky test",
-  launchStartedAt: "2026-10-12T00:00:00.000Z",
-  followedRunId: null,
-  reportBack: true,
-  state: "following",
-  lastStatus: null,
-  deliveredRunIds: [],
-  lostContactNotified: false,
-  lastError: null,
-  updatedAt: "2026-10-12T00:00:00.000Z",
-  handoff: { sourceThreadId: "thread-1", epoch: 2, awaiting: "continuation" },
-  ...overrides,
-});
-
-/**
- * The source's folder, the messages its threads keep, and the machines it can
- * ask. `boot` is one life of the source's server over them: what the first
- * life wrote is all the next one has.
- */
-const stage = (timings: Partial<RemoteWorkerFollower.RemoteWorkerFollowerTimingsShape> = {}) => {
-  const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "swc-handoff-follower-"));
-  temporary.push(baseDir);
-  const target = releasedPeer(ROLES.target.environmentId);
-  const onward = releasedPeer(machine("onward").environmentId);
-  const kept: Array<KeptMessage> = [];
-  const changed = makeSignal();
-  const boot = (options: { readonly knowsOnward?: boolean } = {}) =>
-    setup(target.tools, timings, {
-      roles: {
-        ...ROLES,
-        more: options.knowsOnward === false ? [] : [{ target: machine("onward"), tools: onward.tools }],
-      },
-      baseDir,
-      kept,
-      changed,
-    });
-  return { target, onward, kept, changed, boot };
-};
-
-const seed = (row: RemoteWorkerStore.RemoteWorkerRecord) =>
-  Effect.flatMap(RemoteWorkerStore.RemoteWorkerStore, (store) => store.modify(row.id, () => row));
-
-const follow = (row: RemoteWorkerStore.RemoteWorkerRecord) =>
-  Effect.gen(function* () {
-    yield* allow("auto", ROLES.target.id);
-    yield* seed(row);
-    const follower = yield* RemoteWorkerFollower.RemoteWorkerFollower;
-    yield* follower.follow(row.id);
-  });
-
-const keptCount = (kept: ReadonlyArray<KeptMessage>) => Effect.sync(() => kept.length);
+afterEach(removeStages);
 
 describe("the follower of a handed-off thread", () => {
   it.live(
@@ -125,7 +50,7 @@ describe("the follower of a handed-off thread", () => {
         expect(kept).toEqual([]);
         target.set(THREAD, run.id, "completed");
         yield* settled(world, rows, (current) => current[0]?.state === "idle");
-        expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: wakeOf(run.id) }]);
+        expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: WAKE }]);
       }).pipe(Effect.provide(layer));
     },
     LIVE,
@@ -159,7 +84,7 @@ describe("the follower of a handed-off thread", () => {
           const run = target.start(THREAD);
           target.set(THREAD, run.id, "completed");
           yield* settled(second.world, keptCount(kept), (count) => count === 1);
-          expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: wakeOf(run.id) }]);
+          expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: WAKE }]);
         }).pipe(Effect.provide(second.layer));
       });
     },
@@ -187,7 +112,7 @@ describe("the follower of a handed-off thread", () => {
         target.set(THREAD, followUp.id, "cancelled");
         yield* settled(world, keptCount(kept), (count) => count >= 1);
         yield* settled(world, rows, (current) => current[0]?.state === "idle");
-        expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: wakeOf(job.id) }]);
+        expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: WAKE }]);
         expect(kept[0]?.text).toContain("finished: completed");
       }).pipe(Effect.provide(layer));
     },
@@ -210,7 +135,7 @@ describe("the follower of a handed-off thread", () => {
       return Effect.gen(function* () {
         yield* follow(handedOff());
         yield* settled(world, rows, (current) => current[0]?.state === "idle");
-        expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: wakeOf(job.id) }]);
+        expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: WAKE }]);
       }).pipe(Effect.provide(layer));
     },
     LIVE,
@@ -229,7 +154,7 @@ describe("the follower of a handed-off thread", () => {
       return Effect.gen(function* () {
         yield* follow(handedOff());
         yield* settled(world, rows, (current) => current[0]?.state === "idle");
-        expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: wakeOf(job.id) }]);
+        expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: WAKE }]);
         expect(kept[0]?.text).toContain("finished: failed");
       }).pipe(Effect.provide(layer));
     },
@@ -252,7 +177,7 @@ describe("the follower of a handed-off thread", () => {
       return Effect.gen(function* () {
         yield* follow(handedOff());
         yield* settled(world, rows, (current) => current[0]?.state === "idle");
-        expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: wakeOf(job.id) }]);
+        expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: WAKE }]);
         expect(kept[0]?.text).toContain("finished: failed");
       }).pipe(Effect.provide(layer));
     },
@@ -283,7 +208,7 @@ describe("the follower of a handed-off thread", () => {
         expect(kept).toEqual([]);
         target.set(THREAD, fallback.id, "interrupted");
         yield* settled(world, rows, (current) => current[0]?.state === "idle");
-        expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: wakeOf(job.id) }]);
+        expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: WAKE }]);
         expect(kept[0]?.text).toContain("finished: failed");
       }).pipe(Effect.provide(layer));
     },
@@ -308,7 +233,7 @@ describe("the follower of a handed-off thread", () => {
         );
         yield* settled(world, keptCount(kept), (count) => count >= 1);
         yield* settled(world, rows, (current) => current[0]?.state === "idle");
-        expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: wakeOf(run.id) }]);
+        expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: WAKE }]);
         expect((yield* rows)[0]?.lastError).toBeNull();
       }).pipe(Effect.provide(layer));
     },
@@ -358,7 +283,7 @@ describe("the follower of a handed-off thread", () => {
         target.set(THREAD, run.id, "completed");
         yield* settled(world, keptCount(kept), (count) => count >= 1);
         yield* settled(world, rows, (current) => current[0]?.state === "idle");
-        expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: wakeOf(run.id) }]);
+        expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: WAKE }]);
       }).pipe(Effect.provide(layer));
     },
     LIVE,
@@ -378,7 +303,7 @@ describe("the follower of a handed-off thread", () => {
           Effect.andThen(settled(first.world, rows, (current) => current[0]?.state === "idle")),
           Effect.provide(first.layer),
         );
-        expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: wakeOf(job.id) }]);
+        expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: WAKE }]);
         // Later someone sends that thread a message of their own, and it completes.
         const own = target.start(THREAD, { creationSource: "web" });
         target.set(THREAD, own.id, "completed");
@@ -395,42 +320,9 @@ describe("the follower of a handed-off thread", () => {
           expect(yield* rows).toMatchObject([{ state: "idle", deliveredRunIds: [job.id] }]);
           // Every send was the one wake, to the launcher.
           expect(new Set(second.world.wakes.map((wake) => wake.commandId))).toEqual(
-            new Set([wakeOf(job.id)]),
+            new Set([WAKE]),
           );
         }).pipe(Effect.provide(second.layer));
-      });
-    },
-    LIVE,
-  );
-
-  it.live(
-    "follows the target's own continuation of a failure it already reported",
-    () => {
-      const { target, kept, boot } = stage({ fallbackGraceMs: 1 });
-      target.create(THREAD);
-      const job = target.start(THREAD);
-      target.set(THREAD, job.id, "failed");
-      const first = boot();
-      const second = boot();
-      return Effect.gen(function* () {
-        yield* follow(handedOff()).pipe(
-          Effect.andThen(settled(first.world, rows, (current) => current[0]?.state === "idle")),
-          Effect.provide(first.layer),
-        );
-        expect(kept).toHaveLength(1);
-        // The target's fallback sweep continues the failed run on another model.
-        const fallback = target.start(THREAD, {
-          creationSource: "server",
-          messageId: `limit-fallback:${THREAD}:${job.id}`,
-        });
-        target.set(THREAD, fallback.id, "completed");
-        yield* settled(second.world, keptCount(kept), (count) => count === 2).pipe(
-          Effect.provide(second.layer),
-        );
-        expect(kept.map((message) => message.commandId)).toEqual([
-          wakeOf(job.id),
-          wakeOf(fallback.id),
-        ]);
       });
     },
     LIVE,
@@ -478,7 +370,7 @@ describe("the follower of a handed-off thread", () => {
             lastStatus: "completed",
           });
         }).pipe(Effect.provide(second.layer));
-        expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: wakeOf(run.id) }]);
+        expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: WAKE }]);
         expect(kept[0]?.text).toContain("on Onward finished: completed");
         // A later restart re-sends that wake at most; the launcher keeps one message.
         yield* Effect.gen(function* () {
@@ -512,7 +404,7 @@ describe("the follower of a handed-off thread", () => {
         yield* settled(world, keptCount(kept), (count) => count >= 1);
         const [row] = yield* settled(world, rows, (current) => current[0]?.state === "idle");
         expect(row).toMatchObject({ machineId: "onward", remoteThreadId: next });
-        expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: wakeOf(run.id) }]);
+        expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: WAKE }]);
       }).pipe(Effect.provide(layer));
     },
     LIVE,
@@ -540,7 +432,7 @@ describe("the follower of a handed-off thread", () => {
         yield* settled(world, keptCount(kept), (count) => count >= 1);
         const [row] = yield* settled(world, rows, (current) => current[0]?.state === "idle");
         expect(row).toMatchObject({ machineId: "onward", remoteThreadId: next });
-        expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: wakeOf(run.id) }]);
+        expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: WAKE }]);
       }).pipe(Effect.provide(layer));
     },
     LIVE,

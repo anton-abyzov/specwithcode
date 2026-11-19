@@ -1390,6 +1390,8 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const rows = yield* store.list.pipe(Effect.orElseSucceed(() => []));
       const configured = yield* machines.pipe(Effect.orElseSucceed(() => []));
+      // A handed-off thread that came back runs on this machine.
+      const here = yield* environment.getDescriptor;
       const relevant = rows
         // A project's list names the thread that started each worker; a client's have none.
         .filter(
@@ -1405,7 +1407,8 @@ const make = Effect.gen(function* () {
           id: row.id,
           machineId: row.machineId,
           machineLabel:
-            configured.find((machine) => machine.id === row.machineId)?.label ?? row.machineId,
+            configured.find((machine) => machine.id === row.machineId)?.label ??
+            (row.machineId === here.environmentId ? here.label : row.machineId),
           environmentId: EnvironmentId.make(row.environmentId),
           callerThreadId: ThreadId.make(row.callerThreadId),
           remoteThreadId: row.remoteThreadId === null ? null : ThreadId.make(row.remoteThreadId),

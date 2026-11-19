@@ -336,6 +336,7 @@ export const setup = (
           startedAt: at(run.startedAt),
           completedAt: at(run.completedAt),
         })),
+        runtimeRequests: [],
         messages: thread.runs.map((run) => ({
           id: run.message.id,
           runId: run.id,

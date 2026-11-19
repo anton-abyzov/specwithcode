@@ -23,6 +23,7 @@ import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { continuationThreadId } from "../handoff/HandoffReceiver.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -33,6 +34,7 @@ import {
   afterHandoffRunEnded,
   closedWith,
   endedWithoutResult,
+  firstRunId,
   type HandoffFollowState,
   type ListedMessage,
   type ListedRun,
@@ -42,6 +44,7 @@ import {
   nextHandoffStep,
   owesResult,
 } from "./handoffDelivery.ts";
+import * as HandoffLocalThread from "./handoffLocalThread.ts";
 import { ownerMachineNames } from "./machineNames.ts";
 import * as RemoteStudioMcpClient from "./RemoteStudioMcpClient.ts";
 import {
@@ -182,9 +185,20 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const HANDOFF_RUN_PAGE = 50;
 const HANDOFF_ITEM_PAGE = 100;
 
+/** The longest pause between looks for a continuation of a reported failure. */
+const FALLBACK_WATCH_MAX_MS = 15 * 60_000;
+
 /** Why a row stopped: its work was handed on to a machine this one has no way to ask. */
 export const HANDED_ON_OUT_OF_REACH =
   "This thread was handed on to a machine this one cannot follow it on.";
+
+/** Shown while a copy reads as handed on but does not yet say under which move. */
+export const HANDED_ON_NOT_SAID =
+  "This thread was handed on, and the machine it left has not yet said where its work continues. Asking again.";
+
+/** Shown while the owed run was stopped and several runs may have started next. */
+export const RESULT_RUN_UNSURE =
+  "The run this handoff waited for was stopped, and more than one run started after it. Which came first cannot be told from here, so none is reported.";
 
 /** The handoff state that outlives a step: what the row is, not what it was waiting for. */
 const handoffBase = (handoff: HandoffFollowState): HandoffFollowState => ({
@@ -192,6 +206,8 @@ const handoffBase = (handoff: HandoffFollowState): HandoffFollowState => ({
   epoch: handoff.epoch,
   ...(handoff.hops === undefined ? {} : { hops: handoff.hops }),
   ...(handoff.scanFrom === undefined ? {} : { scanFrom: handoff.scanFrom }),
+  ...(handoff.runId === undefined ? {} : { runId: handoff.runId }),
+  ...(handoff.woke === undefined ? {} : { woke: handoff.woke }),
 });
 
 const make = Effect.gen(function* () {
@@ -204,6 +220,10 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
   const timings = yield* RemoteWorkerFollowerTimings;
+  // Absent where a caller builds the follower without it: nothing is then local.
+  const environment = yield* Effect.serviceOption(ServerEnvironment.ServerEnvironment);
+  const self = Option.isSome(environment) ? yield* environment.value.getEnvironmentId : undefined;
+  const here = HandoffLocalThread.make(threads);
   const scope = yield* Effect.scope;
   const active = yield* Ref.make<ReadonlySet<string>>(new Set());
   /** Launches this process is still carrying out; the stale sweep leaves them alone. */
@@ -248,13 +268,35 @@ const make = Effect.gen(function* () {
         );
     });
 
+  /**
+   * Asks about the row's thread where it runs: on its machine, or here once a
+   * handed-off thread came back to the machine it was launched from.
+   */
+  const ask = (
+    row: RemoteWorkerStore.RemoteWorkerRecord,
+    input: {
+      readonly tool: "studio_thread_read" | "studio_thread_wait";
+      readonly arguments: Record<string, unknown>;
+      readonly timeoutMs?: number;
+    },
+  ) =>
+    row.handoff !== undefined && row.environmentId === self
+      ? here.call(input)
+      : client.call({ machineId: row.machineId, ...input });
+
   const setReachable = (machineId: string, value: boolean) =>
     Ref.update(reachability, (current) => new Map(current).set(machineId, value));
 
   // The owner's name first: an agent reads this name in a wake and may ask for it next.
   const machineLabel = (machineId: string) =>
-    Effect.all([targets.load, ownerMachineNames(settings)]).pipe(
-      Effect.map(([config, names]) => {
+    Effect.all([
+      targets.load,
+      ownerMachineNames(settings),
+      Option.isSome(environment) ? environment.value.getDescriptor : Effect.succeed(undefined),
+    ]).pipe(
+      Effect.map(([config, names, own]) => {
+        if (own !== undefined && machineId === own.environmentId)
+          return names.get(own.environmentId) ?? own.label;
         const machine = config?.machines.find((row) => row.id === machineId);
         if (machine === undefined) return machineId;
         return names.get(machine.environmentId) ?? machine.label;
@@ -322,8 +364,16 @@ const make = Effect.gen(function* () {
         );
     });
 
+  /**
+   * One id per run for a launched worker. A handoff tells its launcher once,
+   * whichever run turns out to be its result, so while it owes that result,
+   * and when that message is sent again, the id is the row's alone. Runs the
+   * launcher starts there afterwards are a worker's runs again.
+   */
   const wakeId = (row: RemoteWorkerStore.RemoteWorkerRecord, key: string) =>
-    `remote-worker-wake:${row.id}:${key}`;
+    owesResult(row) || (row.handoff !== undefined && row.handoff.woke?.key === key)
+      ? `remote-worker-wake:${row.id}`
+      : `remote-worker-wake:${row.id}:${key}`;
 
   /** Rows whose last poll saw a pending request. */
   const pendingSeen = new Set<string>();
@@ -338,8 +388,7 @@ const make = Effect.gen(function* () {
       const semaphore = yield* permitFor(row.machineId);
       const read = yield* semaphore
         .withPermits(1)(
-          client.call({
-            machineId: row.machineId,
+          ask(row, {
             tool: "studio_thread_read",
             arguments: { threadId: row.remoteThreadId, limit: 1, runLimit: 1 },
           }),
@@ -462,6 +511,16 @@ const make = Effect.gen(function* () {
       ? row.deliveredRunIds
       : [...row.deliveredRunIds, key].slice(-50);
 
+  /** Marks a handoff's one message as sent; a later run's message leaves the mark as it is. */
+  const told = <A extends { readonly handoff?: HandoffFollowState }>(
+    change: A,
+    at: string,
+    key: string,
+  ): A =>
+    change.handoff === undefined || change.handoff.woke !== undefined
+      ? change
+      : { ...change, handoff: { ...change.handoff, woke: { at, key } } };
+
   /**
    * Tells the caller a finished run's status once, whatever happens to this
    * server meanwhile. Returns whether the row moved on to a newer run.
@@ -482,14 +541,21 @@ const make = Effect.gen(function* () {
         deliveredRunIds: delivered(current, key),
         ...closing(current, runId),
       });
-      if (row.deliveredRunIds.includes(key) || !row.reportBack || row.remoteThreadId === null) {
+      if (
+        row.deliveredRunIds.includes(key) ||
+        !row.reportBack ||
+        row.remoteThreadId === null ||
+        // Told once already: what a continuation of that failure ends as is only shown.
+        (owesResult(row) && row.handoff.woke !== undefined)
+      ) {
         const next = yield* update(row.id, settled);
         return next?.state === "following";
       }
       const outcome = yield* wake(row, wakeId(row, key), yield* wakeMessage(row, status));
       if (outcome === "sent") {
+        const at = yield* isoNow;
         const next = yield* update(row.id, (current) => ({
-          ...settled(current),
+          ...told(settled(current), at, key),
           lastError: null,
           lastWakeRunId: key,
         }));
@@ -536,13 +602,17 @@ const make = Effect.gen(function* () {
             yield* wakeMessage(row, row.lastStatus ?? "finished"),
           );
           if (outcome === "sent") {
+            const at = yield* isoNow;
             yield* update(rowId, (current) => ({
               state: "idle",
               lastError: null,
               lastWakeRunId: key,
               deliveredRunIds: delivered(current, key),
-              ...closing(current, runId),
+              ...told(closing(current, runId), at, key),
             }));
+            // A failure told late is watched like one told at once.
+            if (row.handoff !== undefined && row.lastStatus === "failed")
+              yield* watchFallback(rowId);
             return;
           }
           if (outcome === "disposed") {
@@ -599,8 +669,7 @@ const make = Effect.gen(function* () {
       while (true) {
         const read = yield* semaphore
           .withPermits(1)(
-            client.call({
-              machineId: row.machineId,
+            ask(row, {
               tool: "studio_thread_read",
               arguments: {
                 threadId: row.remoteThreadId,
@@ -631,8 +700,7 @@ const make = Effect.gen(function* () {
         if (listed.has(message.runId)) continue;
         const waited = yield* semaphore
           .withPermits(1)(
-            client.call({
-              machineId: row.machineId,
+            ask(row, {
               tool: "studio_thread_wait",
               arguments: { threadId: row.remoteThreadId, runId: message.runId, timeoutMs: 1 },
             }),
@@ -649,14 +717,15 @@ const make = Effect.gen(function* () {
         const status = isRecord(waited.success) ? waited.success.status : undefined;
         if (typeof status !== "string") return undefined;
         statusOf.set(message.runId, status);
-        // Older than every listed run, in the order their messages were sent; one
-        // still queued has not run, and comes after every run that has.
+        // Only its status is known. The ordinal is a place among the unlisted runs
+        // for a stable sort, and says nothing about when it ran.
         runs.push({
           runId: message.runId,
           ordinal: runs.length - messages.length,
           status,
-          startedAt: status === "queued" ? null : "",
+          startedAt: null,
           completedAt: null,
+          unlisted: true,
         });
       }
       // The next look starts after the runs at the head of the thread that were
@@ -669,6 +738,27 @@ const make = Effect.gen(function* () {
         scannedTo = Math.max(scannedTo, message.position);
       }
       return { runs, messages, scannedTo };
+    });
+
+  /**
+   * How a run that no listing shows stands now. A run the thread does not have
+   * reads as cancelled: it has no result to give. Undefined when it could not be asked.
+   */
+  const statusOfRun = (row: RemoteWorkerStore.RemoteWorkerRecord, runId: string) =>
+    Effect.gen(function* () {
+      const semaphore = yield* permitFor(row.machineId);
+      const waited = yield* semaphore
+        .withPermits(1)(
+          ask(row, {
+            tool: "studio_thread_wait",
+            arguments: { threadId: row.remoteThreadId, runId, timeoutMs: 1 },
+          }),
+        )
+        .pipe(Effect.result);
+      if (waited._tag === "Failure")
+        return waited.failure.remoteCode === "run_not_found" ? "cancelled" : undefined;
+      const status = isRecord(waited.success) ? waited.success.status : undefined;
+      return typeof status === "string" ? status : undefined;
     });
 
   /**
@@ -691,11 +781,26 @@ const make = Effect.gen(function* () {
         runCount > page.length ||
         page.some((run) => !shown.some((message) => message.runId === run.runId));
       const older = partial ? yield* olderRuns(row, owed, page) : null;
-      if (older === undefined) return "later";
-      const step = nextHandoffStep(
-        [...(older?.runs ?? []), ...page],
-        [...(older?.messages ?? []), ...shown],
-      );
+      if (older === undefined || row.remoteThreadId === null) return "later";
+      const runs: Array<ListedRun> = [...(older?.runs ?? []), ...page];
+      // The run whose result is owed, by its id: the one pinned, or the thread's first.
+      const from =
+        owed.runId ??
+        page.find((run) => run.ordinal === 1)?.runId ??
+        firstRunId(row.remoteThreadId);
+      if (runCount > 0 && !runs.some((run) => run.runId === from)) {
+        const status = yield* statusOfRun(row, from);
+        if (status === undefined) return "later";
+        runs.push({
+          runId: from,
+          ordinal: 0,
+          status,
+          startedAt: null,
+          completedAt: null,
+          unlisted: true,
+        });
+      }
+      const step = nextHandoffStep(runs, [...(older?.messages ?? []), ...shown], from);
       // Handed on from there: a run still queued on that copy never starts, and a
       // failure there is the next machine's to continue. Only a result stays.
       const moved = handedOn(answer, row.environmentId);
@@ -709,15 +814,25 @@ const make = Effect.gen(function* () {
           update(row.id, () => change),
           (kept) => kept !== undefined,
         );
+      /** Says on the row why it waits, once; the thread is asked again either way. */
+      const waiting = (reason: string) =>
+        row.lastError === reason && owed.awaiting === "run"
+          ? Effect.succeed(true)
+          : keep({ lastError: reason, handoff: { ...base, awaiting: "run" } });
+      const noted = row.lastError === HANDED_ON_NOT_SAID || row.lastError === RESULT_RUN_UNSURE;
+      const cleared = noted ? { lastError: null } : {};
       if (step.kind === "report") {
         // Its run is kept before the wake, so the wake's key survives a restart.
         const pinned = yield* keep({
           followedRunId: step.runId,
           lastStatus: step.status,
           handoff: base,
+          ...cleared,
         });
         if (!pinned) return "later";
-        return (yield* deliver(row, step.runId, step.status)) ? "again" : "done";
+        if (yield* deliver(row, step.runId, step.status)) return "again";
+        if (step.status === "failed") yield* watchFallback(row.id);
+        return "done";
       }
       if (step.kind === "follow" && moved === undefined) {
         return (yield* keep({
@@ -725,37 +840,55 @@ const make = Effect.gen(function* () {
           lastStatus: step.status,
           handoff: {
             ...base,
+            runId: step.pin,
             ...(step.failedRunId === undefined ? {} : { failedRunId: step.failedRunId }),
           },
+          ...cleared,
         }))
           ? "again"
           : "later";
       }
       if (moved !== undefined) {
         // Handed on before it finished: the result comes from the machine that runs it now.
-        if (moved.epoch === undefined || row.remoteThreadId === null) return "later";
-        const config = yield* targets.load.pipe(Effect.orElseSucceed(() => undefined));
-        const machine = config?.machines.find((entry) => entry.environmentId === moved.environmentId);
-        if (machine === undefined) {
+        if (moved.epoch === undefined) {
+          yield* waiting(HANDED_ON_NOT_SAID);
+          return "later";
+        }
+        let machineId: string | undefined = moved.environmentId === self ? self : undefined;
+        if (machineId === undefined) {
+          const config = yield* targets.load.pipe(Effect.result);
+          // A fleet that could not be read says nothing about who is in it.
+          if (config._tag === "Failure") return "later";
+          machineId = config.success?.machines.find(
+            (entry) => entry.environmentId === moved.environmentId,
+          )?.id;
+        }
+        if (machineId === undefined) {
           yield* update(row.id, () => ({ state: "stopped", lastError: HANDED_ON_OUT_OF_REACH }));
           return "done";
         }
         return (yield* keep({
-          machineId: machine.id,
+          machineId,
           environmentId: moved.environmentId,
           remoteProjectId: null,
           remoteThreadId: continuationThreadId(row.environmentId, row.remoteThreadId, moved.epoch),
           followedRunId: null,
           lastStatus: null,
+          lastError: null,
           handoff: {
             sourceThreadId: owed.sourceThreadId,
             epoch: owed.epoch,
             awaiting: "continuation",
             hops: (owed.hops ?? 0) + 1,
+            ...(owed.woke === undefined ? {} : { woke: owed.woke }),
           },
         }))
           ? "again"
           : "later";
+      }
+      if (step.kind === "unsure") {
+        yield* waiting(RESULT_RUN_UNSURE);
+        return "later";
       }
       if (step.kind === "hold") {
         // The other machine's fallback sweep may still continue the failed run.
@@ -765,19 +898,24 @@ const make = Effect.gen(function* () {
           const pinned = yield* keep({
             followedRunId: step.runId,
             lastStatus: "failed",
-            handoff: base,
+            handoff: { ...base, runId: step.pin },
+            ...cleared,
           });
           if (!pinned) return "later";
-          return (yield* deliver(row, step.runId, "failed")) ? "again" : "done";
+          if (yield* deliver(row, step.runId, "failed")) return "again";
+          yield* watchFallback(row.id);
+          return "done";
         }
         if (held === undefined)
           yield* keep({
             lastStatus: "failed",
             handoff: {
               ...base,
+              runId: step.pin,
               awaiting: "run",
               held: { runId: step.runId, since: yield* isoNow },
             },
+            ...cleared,
           });
         return "soon";
       }
@@ -787,9 +925,10 @@ const make = Effect.gen(function* () {
         owed.awaiting !== "run" ||
         owed.held !== undefined ||
         row.lastStatus !== lastStatus ||
-        owed.scanFrom !== base.scanFrom
+        owed.scanFrom !== base.scanFrom ||
+        noted
       )
-        yield* keep({ lastStatus, handoff: { ...base, awaiting: "run" } });
+        yield* keep({ lastStatus, handoff: { ...base, awaiting: "run" }, ...cleared });
       return "later";
     });
 
@@ -808,10 +947,10 @@ const make = Effect.gen(function* () {
         const semaphore = yield* permitFor(row.machineId);
         const result = yield* semaphore
           .withPermits(1)(
-            client.call(
+            ask(
+              row,
               awaiting === undefined
                 ? {
-                    machineId: row.machineId,
                     tool: "studio_thread_wait",
                     arguments: {
                       threadId: row.remoteThreadId,
@@ -822,7 +961,6 @@ const make = Effect.gen(function* () {
                   }
                 : {
                     // No run to wait on yet: its runs and their messages say what to do.
-                    machineId: row.machineId,
                     tool: "studio_thread_read",
                     arguments: {
                       threadId: row.remoteThreadId,
@@ -861,8 +999,7 @@ const make = Effect.gen(function* () {
             // A queued run on a copy that was handed on never starts: look where it runs now.
             const look = yield* semaphore
               .withPermits(1)(
-                client.call({
-                  machineId: row.machineId,
+                ask(row, {
                   tool: "studio_thread_read",
                   arguments: {
                     threadId: row.remoteThreadId,
@@ -1001,7 +1138,7 @@ const make = Effect.gen(function* () {
         const row = yield* findRow(rowId);
         if (!row || row.state !== "idle" || row.lastStatus !== "failed") return;
         if (row.handoff !== undefined) {
-          yield* reopenForFallback(row, row.handoff);
+          yield* watchFallback(rowId);
           return;
         }
         const next = yield* newerRun(row, row.followedRunId, 0);
@@ -1027,9 +1164,7 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const failedRunId = handoff.resultRunId;
       if (failedRunId === undefined || row.remoteThreadId === null) return;
-      const read = yield* client
-        .call({
-          machineId: row.machineId,
+      const read = yield* ask(row, {
           tool: "studio_thread_read",
           arguments: {
             threadId: row.remoteThreadId,
@@ -1038,16 +1173,12 @@ const make = Effect.gen(function* () {
             runLimit: HANDOFF_RUN_PAGE,
             maxCharsPerItem: 1,
           },
-        })
-        .pipe(Effect.result);
+        }).pipe(Effect.result);
       if (read._tag === "Failure") return;
       const runs = listedRuns(read.success);
       const failed = runs.find((run) => run.runId === failedRunId);
       if (failed === undefined || failed.status !== "failed") return;
-      const step = nextHandoffStep(
-        runs.filter((run) => run.ordinal >= failed.ordinal),
-        listedMessages(read.success),
-      );
+      const step = nextHandoffStep(runs, listedMessages(read.success), failedRunId);
       const continued =
         (step.kind === "follow" && step.failedRunId !== undefined) ||
         (step.kind === "report" && step.runId !== failedRunId);
@@ -1057,12 +1188,43 @@ const make = Effect.gen(function* () {
           ? {
               state: "following",
               followedRunId: null,
-              handoff: { ...handoffBase(current.handoff), awaiting: "run" },
+              // Still owed how it ends, for the card; its one message was sent, by
+              // this release or by one that kept no mark of it.
+              handoff: {
+                ...handoffBase(current.handoff),
+                runId: failedRunId,
+                awaiting: "run",
+                woke: current.handoff.woke ?? { at: current.updatedAt, key: failedRunId },
+              },
             }
           : {},
       );
       if (moved?.state === "following") yield* follow(row.id);
     });
+
+  /**
+   * After a handoff's failure was reported: looks, for as long as failed rows
+   * are checked again, whether the other machine itself continued that run, so
+   * the card shows how the work ended. It sends nothing: the launcher was told.
+   */
+  const watchFallback = (rowId: string): Effect.Effect<void> =>
+    exclusive(
+      `fallback:${rowId}`,
+      Effect.gen(function* () {
+        // Asked less often as time passes: a continuation comes soon or not at all.
+        let pause = timings.waitMs;
+        while (true) {
+          const row = yield* findRow(rowId);
+          if (!row || row.state !== "idle" || row.lastStatus !== "failed") return;
+          if (row.handoff === undefined) return;
+          const since = Date.parse(row.handoff.woke?.at ?? row.updatedAt);
+          if ((yield* now) - since >= timings.recheckFailedWithinMs) return;
+          yield* reopenForFallback(row, row.handoff);
+          yield* Effect.sleep(Duration.millis(pause));
+          pause = Math.min(pause * 2, FALLBACK_WATCH_MAX_MS);
+        }
+      }),
+    );
 
   /**
    * The threads on the row's machine that carry its launch's fingerprint, created after it

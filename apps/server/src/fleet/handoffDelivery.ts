@@ -2,11 +2,13 @@
  * What a handed-off worker owes the thread that launched it: one result.
  *
  * These are the rules both readers of the other machine share, the follower
- * and the launcher's own wait, so they cannot disagree about what counts:
- * the first run, in the order runs ran, that completed or failed is the
- * result. A run that was only stopped (interrupted, cancelled, rolled back)
- * reports nothing and the work's result is still to come. A failed run is
- * replaced only by a run the other machine itself started to continue it.
+ * and the launcher's own wait, so they cannot disagree about what counts.
+ * The result is the result of one run, known by its id: the continuation's
+ * first run, which is the run the handoff resumed or, for a thread that
+ * arrived idle, the run that carried the handoff note. A run that was only
+ * stopped (interrupted, cancelled, rolled back) reports nothing and the next
+ * run to start takes its place. A failed run is replaced only by a run the
+ * other machine itself started to continue it.
  */
 import type * as RemoteWorkerStore from "./RemoteWorkerStore.ts";
 
@@ -18,6 +20,11 @@ export interface ListedRun {
   readonly status: string;
   readonly startedAt: string | null;
   readonly completedAt: string | null;
+  /**
+   * Not in the other machine's run list, so only its status is known: when it
+   * started is not. Its place among other runs is never worked out from that.
+   */
+  readonly unlisted?: true;
 }
 
 /** A user message that started a run, as a thread read lists it. */
@@ -79,18 +86,13 @@ export const endedWithoutResult = (status: string) =>
   status === "interrupted" || status === "cancelled" || status === "rolled_back";
 
 /**
- * The order runs ran in. Ordinals are given when a message is queued, and a
- * queued message can be moved ahead, so a run's start says more than its
- * ordinal; a run that has not started comes after every run that has.
+ * The id every release gives a thread's first run (orchestration-v2
+ * IdAllocator, `derive.run`). A continuation's first run is the handoff's
+ * own: the turn it resumed, or the first message of a thread that arrived
+ * idle, which is the one message that carries the handoff note.
  */
-export const inRunOrder = (runs: ReadonlyArray<ListedRun>): ReadonlyArray<ListedRun> => {
-  const at = (run: ListedRun) =>
-    run.startedAt ?? (run.status === "queued" ? "￿" : (run.completedAt ?? "￿"));
-  return runs.toSorted((left, right) => {
-    const [a, b] = [at(left), at(right)];
-    return a === b ? left.ordinal - right.ordinal : a < b ? -1 : 1;
-  });
-};
+export const firstRunId = (threadId: string) =>
+  `run:thread:${encodeURIComponent(threadId)}:ordinal:1`;
 
 /**
  * Whether `message` is the message the other machine itself sent to continue
@@ -114,62 +116,108 @@ export const continuesFailedRun = (
 export type HandoffStep =
   /** This run is the result: tell the launcher. */
   | { readonly kind: "report"; readonly runId: string; readonly status: string }
-  /** This run is going or queued: wait for it. `failedRunId` is the run it continues. */
+  /**
+   * This run is going or queued: wait for it. `failedRunId` is the run it
+   * continues, and `pin` the run whose result is owed.
+   */
   | {
       readonly kind: "follow";
       readonly runId: string;
       readonly status: string;
+      readonly pin: string;
       readonly failedRunId?: string;
     }
   /** This run failed last: the other machine may still continue it. */
-  | { readonly kind: "hold"; readonly runId: string; readonly completedAt: string | null }
+  | {
+      readonly kind: "hold";
+      readonly runId: string;
+      readonly pin: string;
+      readonly completedAt: string | null;
+    }
   /** No run to report or wait for. */
-  | { readonly kind: "nothing" };
+  | { readonly kind: "nothing" }
+  /** The owed run was stopped and more than one run may have started next: not told apart. */
+  | { readonly kind: "unsure" };
+
+const notStarted = (run: ListedRun) =>
+  run.status === "queued" || (run.unlisted !== true && run.startedAt === null);
 
 /**
- * What to do about a handed-off thread, from its runs and the messages that
- * started them. `runs` must be every run not yet ruled out.
+ * The run that takes the place of one that was only stopped: the next run to
+ * start. Told from start times the other machine listed, or because only one
+ * run has started; never from where a run sits in a page.
+ */
+const successor = (runs: ReadonlyArray<ListedRun>): ListedRun | "unsure" | undefined => {
+  const started = runs.filter((run) => !endedWithoutResult(run.status) && !notStarted(run));
+  if (started.length <= 1) return started[0];
+  if (started.some((run) => run.unlisted === true || run.startedAt === null)) return "unsure";
+  return started.toSorted((left, right) =>
+    left.startedAt === right.startedAt
+      ? left.ordinal - right.ordinal
+      : (left.startedAt ?? "") < (right.startedAt ?? "")
+        ? -1
+        : 1,
+  )[0];
+};
+
+/**
+ * What to do about a handed-off thread. `from` is the run whose result is
+ * owed: the one pinned in the row, or the thread's first run. `runs` must hold
+ * that run and every run not yet ruled out, with the messages that started them.
  */
 export function nextHandoffStep(
   runs: ReadonlyArray<ListedRun>,
   messages: ReadonlyArray<ListedMessage>,
+  from: string,
 ): HandoffStep {
   const startedBy = (run: ListedRun) => messages.find((message) => message.runId === run.runId);
-  /** The failed runs the next run may continue: the first of them and the latest. */
-  let failed: ReadonlyArray<ListedRun> = [];
-  for (const run of inRunOrder(runs)) {
-    const last = failed.at(-1);
-    if (last !== undefined) {
-      const continues = continuesFailedRun(
-        startedBy(run),
-        failed.map((entry) => entry.runId),
-      );
-      // Someone's own later message, or a continuation that was only stopped:
-      // the failure stands as the result.
-      if (!continues || endedWithoutResult(run.status))
-        return { kind: "report", runId: last.runId, status: "failed" };
-      if (run.status === "completed") return { kind: "report", runId: run.runId, status: "completed" };
-      if (run.status === "failed") {
-        failed = [failed[0] ?? run, run];
-        continue;
-      }
-      return { kind: "follow", runId: run.runId, status: run.status, failedRunId: last.runId };
-    }
-    if (endedWithoutResult(run.status)) continue;
-    if (run.status === "completed") return { kind: "report", runId: run.runId, status: "completed" };
-    if (run.status === "failed") {
-      failed = [run];
-      continue;
-    }
-    return { kind: "follow", runId: run.runId, status: run.status };
+  let owed = runs.find((run) => run.runId === from);
+  if (owed !== undefined && endedWithoutResult(owed.status)) {
+    const next = successor(runs);
+    if (next === "unsure") return { kind: "unsure" };
+    owed = next;
   }
-  const last = failed.at(-1);
-  return last === undefined
-    ? { kind: "nothing" }
-    : { kind: "hold", runId: last.runId, completedAt: last.completedAt };
+  if (owed === undefined) return { kind: "nothing" };
+  const pin = owed.runId;
+  if (owed.status === "completed") return { kind: "report", runId: pin, status: "completed" };
+  if (owed.status !== "failed")
+    return { kind: "follow", runId: pin, status: owed.status, pin };
+  // A failure is the result unless the other machine itself continues it; the
+  // continuation names the failed run in its message id, so no order is needed.
+  const chain = [owed];
+  const inOrdinal = runs.toSorted((left, right) => left.ordinal - right.ordinal);
+  while (true) {
+    const last = chain[chain.length - 1] as ListedRun;
+    const next = inOrdinal.find(
+      (run) => !chain.includes(run) && continuesFailedRun(startedBy(run), [pin, last.runId]),
+    );
+    if (next === undefined)
+      return { kind: "hold", runId: last.runId, pin, completedAt: last.completedAt };
+    // A continuation that was only stopped leaves the failure as the result.
+    if (endedWithoutResult(next.status))
+      return { kind: "report", runId: last.runId, status: "failed" };
+    if (next.status === "completed")
+      return { kind: "report", runId: next.runId, status: "completed" };
+    if (next.status !== "failed")
+      return {
+        kind: "follow",
+        runId: next.runId,
+        status: next.status,
+        pin,
+        failedRunId: last.runId,
+      };
+    chain.push(next);
+  }
 }
 
-/** Where a thread read says the thread runs now, when that is not the machine that was asked. */
+/**
+ * Where a thread read says the thread runs now, when that is not the machine
+ * that was asked. The epoch of that move is taken only from the stretch that
+ * is open now and is that machine's: the move and its history entry are two
+ * writes, and between them the history still ends on the machine asked, with
+ * any earlier visit to the new machine further back. Undefined epoch means
+ * "not said yet": the route is kept and the thread is asked again.
+ */
 export function movedOn(
   answer: unknown,
   askedEnvironmentId: string,
@@ -179,10 +227,13 @@ export function movedOn(
   const environmentId = thread.executionMachineId;
   if (typeof environmentId !== "string" || environmentId === askedEnvironmentId) return undefined;
   const history = Array.isArray(thread.executionHistory) ? thread.executionHistory : [];
-  const stretch = history
-    .filter(isRecord)
-    .findLast((entry) => entry.machine === environmentId && typeof entry.epoch === "number");
-  return { environmentId, epoch: stretch === undefined ? undefined : (stretch.epoch as number) };
+  const current = history.filter(isRecord).at(-1);
+  const open =
+    current !== undefined &&
+    current.machine === environmentId &&
+    (current.to === null || current.to === undefined) &&
+    typeof current.epoch === "number";
+  return { environmentId, epoch: open ? (current.epoch as number) : undefined };
 }
 
 /** Whether the row still owes its launcher the handed-off work's result. */
@@ -214,5 +265,6 @@ export const closedWith = (handoff: HandoffFollowState, runId: string): HandoffF
   sourceThreadId: handoff.sourceThreadId,
   epoch: handoff.epoch,
   ...(handoff.hops === undefined ? {} : { hops: handoff.hops }),
+  ...(handoff.woke === undefined ? {} : { woke: handoff.woke }),
   resultRunId: runId,
 });

@@ -36,6 +36,7 @@ import type * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { firstMessageSender, launchedByAgent } from "../project/LaunchedWorkerWake.ts";
 import type { HandoffPeerError, HandoffPeers } from "./handoffPeers.ts";
 import { continuationThreadId } from "./HandoffReceiver.ts";
+import type { HandoffLauncher } from "./handoffWire.ts";
 
 /** Why a retired row stopped: the takeover it was written for never happened. */
 export const HANDOFF_NOT_TAKEN = "The other machine did not take this thread.";
@@ -97,6 +98,51 @@ export interface HandoffFollowShape {
     readonly epoch: number;
   }) => Effect.Effect<void>;
 }
+
+/**
+ * Why a continuation that arrived here may not be handed to `destination`,
+ * or null when it may. The machine where a thread waits for the result pulls
+ * it, so the work stays where that machine can ask: declined here, before
+ * anything about the thread changes, rather than moved out of its reach.
+ */
+export const onwardDeclined = (
+  launcher: HandoffLauncher | null | undefined,
+  destination: string,
+  self: string,
+): string | null =>
+  launcher == null ||
+  launcher.environmentId === self ||
+  destination === self ||
+  destination === launcher.environmentId ||
+  launcher.reachable.includes(destination as EnvironmentId)
+    ? null
+    : `Not moved: a thread on ${launcher.label} waits for this work's result, and ${launcher.label} cannot ask that machine for it. Hand it to a machine ${launcher.label} can reach, or back to ${launcher.label}.`;
+
+/**
+ * What a takeover says about who waits for the result: what this machine was
+ * told when the work arrived, or this machine and its own fleet when the
+ * thread waiting is here. Undefined when nobody waits.
+ */
+export const launcherFor = (
+  arrivedWith: HandoffLauncher | null | undefined,
+  following: boolean,
+  here: {
+    readonly self: EnvironmentId;
+    readonly selfLabel: string;
+    readonly targets: ReadonlyArray<{ readonly environmentId: EnvironmentId }>;
+  },
+): HandoffLauncher | undefined =>
+  arrivedWith != null && arrivedWith.environmentId !== here.self
+    ? arrivedWith
+    : following || arrivedWith != null
+      ? {
+          environmentId: here.self,
+          label: here.selfLabel.slice(0, 120),
+          reachable: here.targets
+            .map((target) => target.environmentId)
+            .filter((environmentId) => environmentId !== here.self),
+        }
+      : undefined;
 
 /** Where remote workers are not followed (no fleet): a handoff follows nothing. */
 export const none: HandoffFollowShape = {

@@ -60,7 +60,7 @@ describe("a handed-off worker's delivery", () => {
             (current) => current[0]?.state === "idle",
           );
           expect(s.kept).toMatchObject([
-            { threadId: launcher, commandId: `remote-worker-wake:${row?.id}:${run.id}` },
+            { threadId: launcher, commandId: `remote-worker-wake:${row?.id}` },
           ]);
           // The same handoff asked again, and later heartbeats, add nothing.
           expect((yield* handOff).threadId).toBe(again.threadId);
@@ -211,7 +211,7 @@ describe("a handed-off worker's delivery", () => {
           yield* moves.tick;
           yield* quiet(life.world);
           expect(s.kept.map((message) => message.commandId)).toEqual([
-            `remote-worker-wake:${row?.id}:${s.lastRun().run.id}`,
+            `remote-worker-wake:${row?.id}`,
           ]);
         }).pipe(Effect.provide(life.layer));
       });

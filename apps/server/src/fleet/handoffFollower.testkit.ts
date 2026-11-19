@@ -30,7 +30,8 @@ export const removeStages = () => {
 export const LAUNCHER = "coordinator";
 export const THREAD = "handoff:1";
 export const ROW = "handoff-follow:1";
-export const wakeOf = (runId: string) => `remote-worker-wake:${ROW}:${runId}`;
+/** The one message a handoff sends its launcher, whichever run is its result. */
+export const WAKE = `remote-worker-wake:${ROW}`;
 export const LIVE = { timeout: 20_000 };
 
 /** The row the source writes before it sends the takeover. */

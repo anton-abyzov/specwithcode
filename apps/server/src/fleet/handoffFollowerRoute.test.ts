@@ -15,9 +15,11 @@ import {
   LAUNCHER,
   removeStages,
   ROW,
+  seed,
   stage,
   THREAD,
 } from "./handoffFollower.testkit.ts";
+import * as RemoteWorkerFollower from "./RemoteWorkerFollower.ts";
 import { allow, quiet, ROLES, rows, settled } from "./remoteWorkers.testkit.ts";
 
 afterEach(removeStages);
@@ -370,6 +372,32 @@ describe("one handoff, one message", () => {
         const sends = [...first.world.wakes, ...second.world.wakes];
         expect(new Set(sends.map((send) => send.commandId)).size).toBe(1);
       });
+    },
+    LIVE,
+  );
+
+  it.live(
+    "still tells the launcher about a run it starts there after the result, as for any worker",
+    () => {
+      const { target, kept, boot } = stage();
+      target.create(THREAD);
+      const job = target.start(THREAD);
+      target.set(THREAD, job.id, "completed");
+      const { world, layer } = boot();
+      return Effect.gen(function* () {
+        yield* follow(handedOff());
+        const [done] = yield* settled(world, rows, (current) => current[0]?.state === "idle");
+        expect(kept).toHaveLength(1);
+        if (done === undefined) return;
+        // The launcher sends the worker another message; its send notes the new run.
+        const more = target.start(THREAD);
+        target.set(THREAD, more.id, "completed");
+        yield* seed({ ...done, state: "following", followedRunId: more.id });
+        const follower = yield* RemoteWorkerFollower.RemoteWorkerFollower;
+        yield* follower.follow(ROW);
+        yield* settled(world, keptCount(kept), (count) => count >= 2);
+        expect(new Set(kept.map((message) => message.commandId)).size).toBe(2);
+      }).pipe(Effect.provide(layer));
     },
     LIVE,
   );

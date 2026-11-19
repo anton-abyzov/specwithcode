@@ -38,7 +38,8 @@ const askedAgain = (world: World, peer: Stage["peer"], more = 2) =>
     );
   });
 
-const wakeOf = (rowId: string | undefined, runId: string) => `remote-worker-wake:${rowId}:${runId}`;
+/** One message per handoff, whichever run is its result: the id is the row's. */
+const wakeOf = (rowId: string | undefined, _runId: string) => `remote-worker-wake:${rowId}`;
 
 describe("a handed-off worker's result", () => {
   it.live(

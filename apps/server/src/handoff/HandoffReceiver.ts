@@ -769,6 +769,8 @@ export const make = Effect.gen(function* () {
             resumeTurnKey: checkpoint.turnKey,
             // An idle continuation starts no run; its first turn carries the note and transcript.
             pendingSeed: resume ? null : idleSeed(seed),
+            // Who waits for the result, so a later move from here stays in its reach.
+            ...(request.launcher === undefined ? {} : { launcher: request.launcher }),
           };
           return [next, { ...current, threads: { ...current.threads, [threadId]: next } }] as const;
         });

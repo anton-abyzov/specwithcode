@@ -98,6 +98,13 @@ export const RemoteWorkerRecord = Schema.Struct({
        * arrived idle, or its last run was stopped). Absent while a run is followed.
        */
       awaiting: Schema.optionalKey(Schema.Literals(["continuation", "run"])),
+      /**
+       * The run whose result is owed, by its id: the continuation's first run,
+       * or the run that took its place after it was only stopped. Set once it is
+       * seen; only its result, or that of the other machine's own continuation
+       * of its failure, is delivered.
+       */
+      runId: Schema.optionalKey(Schema.String),
       /** A failed run whose continuation by the other machine is followed. */
       failedRunId: Schema.optionalKey(Schema.String),
       /** A failed run held back since then, in case the other machine continues it. */
@@ -114,6 +121,13 @@ export const RemoteWorkerRecord = Schema.Struct({
        * then owes nothing: a later run there is someone's own message.
        */
       resultRunId: Schema.optionalKey(Schema.String),
+      /**
+       * The launcher was told the result: when, and under which run's key. One
+       * handoff tells it once, under an id that is the row's: what the other
+       * machine's continuation of a reported failure ends as is shown on the
+       * card and sends no second message.
+       */
+      woke: Schema.optionalKey(Schema.Struct({ at: Schema.String, key: Schema.String })),
     }),
   ),
   /** The mode it was started with; rows written before this have none. */
