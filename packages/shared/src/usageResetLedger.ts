@@ -147,8 +147,9 @@ export const SAME_RESET_MS = 15 * MINUTE;
 /**
  * Whether two records of one window are the same reset: their spans from last
  * read to end overlap (both reads bracket it), or one was closed by a read just
- * past its announced time (its span is a single instant) and they end within
- * `SAME_RESET_MS`. Two early resets minutes apart each span a read gap and
+ * past its announced time (its span is a single instant) and the other ended
+ * at or up to `SAME_RESET_MS` before that read. Two early resets minutes apart
+ * each span a read gap, and a reset after the late read is a later one: both
  * stay apart.
  */
 export function sameResetRecord(
@@ -156,8 +157,23 @@ export function sameResetRecord(
   right: Pick<ResetPeriod, "lastReadAt" | "endedAt">,
 ): boolean {
   if (left.lastReadAt < right.endedAt && right.lastReadAt < left.endedAt) return true;
-  const closedAtLateRead = left.lastReadAt === left.endedAt || right.lastReadAt === right.endedAt;
-  return closedAtLateRead && Math.abs(left.endedAt - right.endedAt) <= SAME_RESET_MS;
+  return lateReadOf(left, right) || lateReadOf(right, left);
+}
+
+/**
+ * `late` was closed at a read just past the announced reset, and `other` ended
+ * at or shortly before that read: the same reset, seen from an earlier read.
+ * A record ending after the late read is a later reset, however close.
+ */
+function lateReadOf(
+  late: Pick<ResetPeriod, "lastReadAt" | "endedAt">,
+  other: Pick<ResetPeriod, "lastReadAt" | "endedAt">,
+): boolean {
+  return (
+    late.lastReadAt === late.endedAt &&
+    other.endedAt <= late.endedAt &&
+    late.endedAt - other.endedAt <= SAME_RESET_MS
+  );
 }
 
 /**
