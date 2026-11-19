@@ -165,6 +165,10 @@ type ResetIdentity = Pick<ResetPeriod, "lastReadAt" | "endedAt" | "announcedAt">
  * a single instant) and the other ended at or up to `SAME_RESET_MS` before it.
  * Two such records of one reset that neither overlap nor include a late read
  * stay apart: the known limit of records without an announced time.
+ *
+ * The other known limit: two resets less than five minutes apart (an early
+ * reset of a window opened under five minutes before) announce times within
+ * the rounding and read as one.
  */
 export function sameResetRecord(left: ResetIdentity, right: ResetIdentity): boolean {
   const leftAnnounced = left.announcedAt ?? null;
@@ -233,8 +237,13 @@ export function mergeResetPeriods<Period extends ResetPeriod>(
         startedAt: period.startedAt ?? kept.startedAt,
         announcedAt: period.announcedAt ?? kept.announcedAt,
       };
-    } else if (kept.startedAt === null && period.startedAt !== null) {
-      merged[index] = { ...kept, startedAt: period.startedAt };
+    } else {
+      // Keep the latest read's spend, but what an earlier record knows still names the reset.
+      merged[index] = {
+        ...kept,
+        startedAt: kept.startedAt ?? period.startedAt,
+        announcedAt: kept.announcedAt ?? period.announcedAt,
+      };
     }
   }
   return merged.toSorted((left, right) => left.endedAt - right.endedAt);

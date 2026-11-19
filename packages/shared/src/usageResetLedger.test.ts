@@ -342,6 +342,20 @@ describe("mergeResetPeriods", () => {
     expect(mergeResetPeriods([[withTime], [late]])).toHaveLength(1);
   });
 
+  it("keeps the announced time of a record an older build's record absorbed", () => {
+    const reads = (before: number, after: number) =>
+      resetPeriods(
+        "codex:a@x.dev",
+        "weekly",
+        [read(t0 + before, 90, reset1), read(t0 + after, 1, reset1 + WEEK)],
+        WEEK,
+      );
+    const legacy = { ...reads(0.5 * MINUTE, 1.5 * MINUTE)[0]!, announcedAt: null };
+    const first = reads(0, 2 * MINUTE);
+    const delayed = reads(2.5 * MINUTE, 3 * MINUTE);
+    expect(mergeResetPeriods([[legacy], first, delayed])).toHaveLength(1);
+  });
+
   it("keeps different accounts and windows apart", () => {
     const other = { ...period(reset1, reset1 - HOUR, 10, null), windowId: "seven_day_opus" };
     expect(mergeResetPeriods([[period(reset1, reset1 - HOUR, 59, null)], [other]])).toHaveLength(2);
