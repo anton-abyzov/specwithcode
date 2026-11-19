@@ -160,6 +160,8 @@ export interface RigMachine {
   boots: number;
   /** Where this machine keeps what must outlive a restart. */
   readonly stateDir: string;
+  /** Asked at each read of this machine's projects; false reads as the project unlinked. */
+  linked: () => boolean;
   receiver: HandoffReceiver.HandoffReceiver["Service"];
   moves: Effect.Success<typeof HandoffMoves.make>;
 }
@@ -254,6 +256,7 @@ export const makeRig = (
         threadLookupFails: false,
         boots: 0,
         stateDir: NodeFS.mkdtempSync(NodePath.join(base, "state-")),
+        linked: () => true,
         receiver: undefined as never,
         moves: undefined as never,
       };
@@ -375,7 +378,7 @@ export const makeRig = (
             Effect.succeed(
               id === target.projectId ? Option.some(projectOf(target)) : Option.none(),
             ),
-          snapshot: Effect.succeed({ projects: [projectOf(target)] }),
+          snapshot: Effect.sync(() => ({ projects: target.linked() ? [projectOf(target)] : [] })),
         } as never),
         Layer.succeed(ProviderRegistry.ProviderRegistry, {
           getProviders: Effect.succeed([

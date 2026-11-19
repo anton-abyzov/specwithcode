@@ -536,6 +536,35 @@ describe("a thread in a worktree set", () => {
     }),
   );
 
+  it.effect("takes the refs back when the project is unlinked while the set lands", () =>
+    Effect.gen(function* () {
+      const rig = yield* makeRig(temporary);
+      const [a, b] = rig.machines as [RigMachine, RigMachine];
+      withSet(rig, t1, { running: true });
+      // From the thread's own frame on, the other machine's project reads as
+      // linked once, when the frame is taken, and as unlinked after that: the
+      // link went away while the members' refs were being written.
+      let reads: number | null = null;
+      rig.network.rule = (call) => {
+        if (call.path === "replicate" && (call.request as ReplicateMeta).set !== undefined) {
+          reads = 0;
+        }
+        return undefined;
+      };
+      b.linked = () => reads === null || (reads += 1) < 2;
+
+      const row = yield* batchOf(a, b, t1);
+
+      expect(reads).toBeGreaterThanOrEqual(2);
+      expect(row.outcome).toBe("stayed");
+      expect(appRefs(b.root)).toBe("");
+      expect(appRefs(NodePath.join(b.root, LIB))).toBe("");
+      expect(b.document.incoming).toHaveLength(0);
+      expect(b.launches).toHaveLength(0);
+      expect(leaseOf(a, t1)?.state).toBe("active");
+    }),
+  );
+
   it.effect("sends frames a one-repository receiver cannot place, whatever it answered", () =>
     Effect.gen(function* () {
       const rig = yield* makeRig(temporary);
