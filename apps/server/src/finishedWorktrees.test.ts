@@ -6,6 +6,7 @@ import {
   type FinishedMember,
   type FinishedMemberGit,
   type FinishedWorktreeRules,
+  isEvidenceFile,
   isMediaFile,
   MEDIA_LIMIT_BYTES,
 } from "./finishedWorktrees.ts";
@@ -437,4 +438,177 @@ describe("finished worktree decision", () => {
     expect(["clip.MP4", "shot.png", "report.pdf", "voice.m4a"].every(isMediaFile)).toBe(true);
     expect([".env", "notes.md", "png", "data.json"].some(isMediaFile)).toBe(false);
   });
+});
+
+describe("a chat that finished though nobody resolved it", () => {
+  const finishedChat = (activityAgoMs: number, pullRequestFinished = false) => ({
+    heads: [{ title: "Worker", state: "finished" as const }],
+    notQuiet: null,
+    newestActivityAt: NOW - activityAgoMs,
+    pullRequestFinished,
+  });
+  const none = { state: "none" as const, contentIntegrated: false };
+
+  it("loses its folder at once when its pull request merged and its content is on the default branch", () => {
+    expect(
+      decideFinishedWorktree(
+        folder({ chats: finishedChat(60_000, true), members: [member({ pullRequest: merged })] }),
+        rules({ removeResolvedWorktrees: false }),
+        NOW,
+      ),
+    ).toMatchObject({ action: "remove", reason: "merged" });
+  });
+
+  it("asks for the default branch, then the pull request, before answering", () => {
+    const chats = finishedChat(60_000, true);
+    expect(
+      decideFinishedWorktree(
+        folder({ chats, members: [member({ headInDefault: undefined, pullRequest: undefined })] }),
+        rules(),
+        NOW,
+      ),
+    ).toMatchObject({ action: "keep", needs: "default-branch" });
+    expect(
+      decideFinishedWorktree(
+        folder({ chats, members: [member({ pullRequest: undefined })] }),
+        rules(),
+        NOW,
+      ),
+    ).toMatchObject({ action: "keep", needs: "pull-request" });
+  });
+
+  it("keeps its folder while its work is not merged, whatever the resolved rule says", () => {
+    const decision = decideFinishedWorktree(
+      folder({ chats: finishedChat(DAY) }),
+      rules({ removeResolvedWorktrees: true }),
+      NOW,
+    );
+    expect(decision).toMatchObject({ action: "keep" });
+    expect(decision.detail).toContain("is finished, but its work is not merged.");
+  });
+
+  it("keeps its folder for a commit on no remote, even after the merge", () => {
+    expect(
+      decideFinishedWorktree(
+        folder({
+          chats: finishedChat(DAY, true),
+          members: [
+            member({
+              unpushedCommits: 1,
+              pullRequest: { state: "merged", contentIntegrated: false },
+            }),
+          ],
+        }),
+        rules(),
+        NOW,
+      ),
+    ).toMatchObject({ action: "keep", reason: "unpushed" });
+  });
+
+  it("keeps a closed pull request's folder until the chat has been quiet for six hours", () => {
+    const closedMember = [member({ pullRequest: closed })];
+    expect(
+      decideFinishedWorktree(
+        folder({ chats: finishedChat(HOUR, true), members: closedMember }),
+        rules(),
+        NOW,
+      ),
+    ).toMatchObject({ action: "keep" });
+    expect(
+      decideFinishedWorktree(
+        folder({ chats: finishedChat(6 * HOUR, true), members: closedMember }),
+        rules(),
+        NOW,
+      ),
+    ).toMatchObject({ action: "remove", reason: "closed" });
+  });
+
+  it("with nothing of its own, goes after six quiet hours and asks the host nothing", () => {
+    const onDefault = [member({ headInDefault: true, pullRequest: undefined })];
+    const early = decideFinishedWorktree(
+      folder({ chats: finishedChat(HOUR), members: onDefault }),
+      rules(),
+      NOW,
+    );
+    expect(early).toMatchObject({ action: "keep" });
+    expect("needs" in early).toBe(false);
+    expect(
+      decideFinishedWorktree(
+        folder({ chats: finishedChat(6 * HOUR), members: onDefault }),
+        rules(),
+        NOW,
+      ),
+    ).toMatchObject({
+      action: "remove",
+      reason: "unchanged",
+      detail: "Everything in it is on the default branch.",
+    });
+  });
+
+  it("is kept when deleting merged worktrees is off", () => {
+    const decision = decideFinishedWorktree(
+      folder({ chats: finishedChat(DAY, true), members: [member({ pullRequest: merged })] }),
+      rules({ worktreeOnMerge: false }),
+      NOW,
+    );
+    expect(decision).toMatchObject({ action: "keep", reason: "no-rule" });
+    expect("needs" in decision).toBe(false);
+  });
+
+  it("does not finish a folder another chat still has open", () => {
+    expect(
+      decideFinishedWorktree(
+        folder({
+          chats: {
+            ...finishedChat(60_000, true),
+            heads: [
+              { title: "Worker", state: "finished" },
+              { title: "Second", state: "open" },
+            ],
+          },
+          members: [member({ pullRequest: merged })],
+        }),
+        rules(),
+        NOW,
+      ),
+    ).toMatchObject({ action: "keep", reason: "recent" });
+  });
+
+  it("needs every repository of a set merged or untouched", () => {
+    const set = (second: Parameters<typeof member>[0]) =>
+      decideFinishedWorktree(
+        folder({
+          chats: finishedChat(60_000, true),
+          members: [
+            member({ pullRequest: merged }),
+            member({ branch: "feature", ...second }, "repositories/a/b"),
+          ],
+        }),
+        rules(),
+        NOW,
+      );
+    expect(set({ headInDefault: true, pullRequest: none })).toMatchObject({ action: "remove" });
+    expect(set({ pullRequest: { state: "open", contentIntegrated: false } })).toMatchObject({
+      action: "keep",
+    });
+  });
+});
+
+describe("ignored files copied to evidence", () => {
+  it.each([
+    "shot.png",
+    "reports/review.md",
+    ".specweave/increments/0001-a/reports/run.log",
+    ".specweave/state/.gc-last",
+    "apps/web/reports/out.json",
+  ])("copies %s", (relative) => {
+    expect(isEvidenceFile(relative)).toBe(true);
+  });
+
+  it.each([".env", "notes.md", "reports", "src/reports.ts", "apps/.specweave/state.json"])(
+    "does not copy %s",
+    (relative) => {
+      expect(isEvidenceFile(relative)).toBe(false);
+    },
+  );
 });
