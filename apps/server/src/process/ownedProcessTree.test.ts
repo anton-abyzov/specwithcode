@@ -1171,6 +1171,56 @@ describe("OwnedProcessTree.end after a lost parent", () => {
     expect(f.kills).not.toContain(203);
   });
 
+  it("keeps doubt on what a doubtful process started once its pid names another", async () => {
+    const f = fake("win32");
+    const server = windowsRow(100, 1, 1000);
+    const cli = windowsRow(200, 100, 2000);
+    const original = windowsRow(201, 200, 3000);
+    const sibling = windowsRow(202, 200, 3200);
+    const doubtful = windowsRow(203, 201, 4000);
+    const worker = windowsRow(204, 203, 4500);
+    const replacement = windowsRow(203, 202, 5000);
+    f.setTable([server, cli, original, sibling]);
+    expect(await f.tree.remember(15000, true)).toBe(true);
+    f.exitRootAt(3600);
+    f.setTable([server, sibling, doubtful]);
+    // 203 is in doubt: a child of the known 201, which exited.
+    expect((await f.tree.end(400)).unknown).toBe(true);
+    // The doubtful 203 started 204 and exited; 202 started another process given pid 203.
+    f.setTable([server, sibling, replacement, worker]);
+    expect((await f.tree.end(400)).unknown).toBe(true);
+    expect(f.kills).not.toContain(204);
+  });
+
+  it("keeps a POSIX Stop unconfirmed after meeting a group it may not signal", async () => {
+    const original = processRow(201);
+    const worker = processRow(202);
+    const tables = [[original], [worker], [{ ...worker, pgid: worker.pid }]];
+    let reads = 0;
+    let clock = 0;
+    const host: TreeHost = {
+      platform: "darwin",
+      selfPid: 100,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+      readProcessList: async () => tables[Math.min(reads++, tables.length - 1)]!,
+      signal: () => {
+        if (reads === 1) return;
+        throw Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+      },
+      killVerified: async () => {
+        throw new Error("no Windows kill on POSIX");
+      },
+    };
+    const tree = new OwnedProcessTree({ pid: rootPid, spawnedAt: 0, alive: () => false }, host);
+    // 201 starts 202 in the group on SIGTERM and exits; 202 cannot be signalled.
+    expect((await tree.end()).unknown).toBe(true);
+    // 202 then moves to a group of its own.
+    expect((await tree.end()).unknown).toBe(true);
+  });
+
   it("keeps a POSIX Stop unconfirmed on retry after its first reading failed", async () => {
     const f = fake("darwin");
     const member = processRow(201);

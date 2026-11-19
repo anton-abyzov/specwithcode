@@ -204,20 +204,19 @@ export function unidentifiedChildren(
   tree: ReadonlyArray<Known>,
   /** Each pid's identities attributed by earlier readings, oldest first. */
   remembered: ReadonlyMap<number, ReadonlyArray<Known>> = new Map(),
-  /** Pids already in doubt: what they started is in doubt too. */
-  doubtful: ReadonlySet<number> = new Set(),
-): number[] {
+  /** Processes already in doubt, by pid and start: what they started is in doubt too. */
+  doubtful: ReadonlyMap<number, string> = new Map(),
+): Map<number, string> {
   const parents = new Set(tree.map((known) => known.entry.pid));
   const live = new Set(table.map((entry) => `${entry.pid}:${entry.started}`));
   const byPid = new Map(table.map((entry) => [entry.pid, entry]));
-  const startOf = (entry: ProcessEntry) =>
-    /^\d+$/u.test(entry.started) ? BigInt(entry.started) : null;
-  const doubt = new Set<number>();
+  const startOf = (started: string) => (/^\d+$/u.test(started) ? BigInt(started) : null);
+  const doubt = new Map<number, string>();
   for (const entry of table) {
     if (parents.has(entry.pid)) continue;
-    const start = startOf(entry);
+    const start = startOf(entry.started);
     if (parents.has(entry.ppid) && start === null) {
-      doubt.add(entry.pid);
+      doubt.set(entry.pid, entry.started);
       continue;
     }
     // An earlier owner of the parent pid that no longer runs, created before this row:
@@ -227,27 +226,36 @@ export function unidentifiedChildren(
         !live.has(`${parent.entry.pid}:${parent.entry.started}`) &&
         (start === null || start >= parent.created),
     );
-    if (exitedOwner) doubt.add(entry.pid);
+    if (exitedOwner) doubt.set(entry.pid, entry.started);
   }
-  // Doubt passes down: a process started by one in doubt may be the tree's as well. A pid
-  // in doubt since an earlier reading passes it to its children, live or exited.
-  for (const pid of doubtful) if (byPid.has(pid) && !parents.has(pid)) doubt.add(pid);
-  const queue = [...doubt, ...[...doubtful].filter((pid) => !byPid.has(pid))];
-  const seeds = new Set(queue);
+  // Doubt passes down: a process started by one in doubt may be the tree's as well. One in
+  // doubt since an earlier reading passes it on whether it still runs or exited, even
+  // when its pid now names another process.
+  const queue: Array<{ readonly pid: number; readonly start: bigint | null }> = [];
+  for (const [pid, entry] of doubt) queue.push({ pid, start: startOf(entry) });
+  for (const [pid, started] of doubtful) {
+    const row = byPid.get(pid);
+    if (row !== undefined && row.started === started && !parents.has(pid)) {
+      doubt.set(pid, started);
+    }
+    queue.push({ pid, start: startOf(started) });
+  }
+  const walked = new Set<string>();
   while (queue.length > 0) {
-    const pid = queue.shift()!;
-    const parent = byPid.get(pid);
-    const parentStart = parent === undefined ? null : startOf(parent);
+    const parent = queue.shift()!;
+    const key = `${parent.pid}:${parent.start}`;
+    if (walked.has(key)) continue;
+    walked.add(key);
     for (const entry of table) {
-      if (entry.ppid !== pid || entry.pid === pid || parents.has(entry.pid)) continue;
-      if (doubt.has(entry.pid) || seeds.has(entry.pid)) continue;
-      const start = startOf(entry);
-      if (parentStart !== null && start !== null && start < parentStart) continue;
-      doubt.add(entry.pid);
-      queue.push(entry.pid);
+      if (entry.ppid !== parent.pid || entry.pid === parent.pid || parents.has(entry.pid)) continue;
+      if (doubt.has(entry.pid)) continue;
+      const start = startOf(entry.started);
+      if (parent.start !== null && start !== null && start < parent.start) continue;
+      doubt.set(entry.pid, entry.started);
+      queue.push({ pid: entry.pid, start });
     }
   }
-  return [...doubt];
+  return doubt;
 }
 
 /**
@@ -369,7 +377,7 @@ export class OwnedProcessTree {
    * Windows children of the tree seen without a creation time. Each stays a doubt until a
    * reading attributes it or no longer lists its pid (it exited).
    */
-  private readonly unidentified = new Set<number>();
+  private readonly unidentified = new Map<number, string>();
   private ending: Promise<TreeEndResult> | null = null;
   readonly root: OwnedRoot;
   private readonly host: TreeHost;
@@ -415,14 +423,11 @@ export class OwnedProcessTree {
   }
 
   private noteUnidentified(table: ReadonlyArray<ProcessEntry>, tree: ReadonlyArray<Known>) {
-    const before = new Set(this.unidentified);
-    const listed = new Set(table.map((entry) => entry.pid));
-    const attributed = new Set(tree.map((known) => known.entry.pid));
-    for (const pid of this.unidentified) {
-      if (!listed.has(pid) || attributed.has(pid)) this.unidentified.delete(pid);
-    }
-    for (const pid of unidentifiedChildren(table, tree, this.history, before)) {
-      this.unidentified.add(pid);
+    const before = new Map(this.unidentified);
+    // Each doubt is checked again from this reading, starting from those already held.
+    this.unidentified.clear();
+    for (const [pid, started] of unidentifiedChildren(table, tree, this.history, before)) {
+      this.unidentified.set(pid, started);
     }
   }
 
@@ -542,8 +547,11 @@ export class OwnedProcessTree {
       if (!groupUsable || this.groupRetired) return false;
       const state = this.groupState();
       if (state === "alive") return true;
-      if (state === "denied") unknown = true;
-      else this.groupRetired = true;
+      if (state === "denied") {
+        // Members it may not signal may leave the group before a later end can look.
+        unknown = true;
+        this.coverageLost = true;
+      } else this.groupRetired = true;
       return false;
     };
     if (table !== undefined) {
