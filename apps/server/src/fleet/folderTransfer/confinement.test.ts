@@ -179,23 +179,62 @@ describe("Windows owner and DACL", () => {
     expect(read(`O:${USER_SID}D:(A;OICIIO;GA;;;CO)(A;OICIIO;FR;;;BU)(A;OICI;FA;;;SY)`)).toBe(false);
   });
 
-  it("the built-in administrator account is written LA, and is the user when the user is it", async () => {
-    const { windowsAccess } = await readers();
+  it("the alias LA is the user only when Windows resolves it to the user's own SID", async () => {
+    const windowsAccess = (await readers()).windowsAccess as unknown as (
+      sddl: string,
+      userSid: string,
+      elevated?: boolean,
+      localAdministrator?: string | null,
+    ) => ReturnType<Readers["windowsAccess"]>;
     const builtIn = "S-1-5-21-1111111111-2222222222-3333333333-500";
     const sddl = "O:LAG:DUD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;LA)";
-    expect(windowsAccess(sddl, builtIn)).toEqual({
+    const open = {
+      owner: "other",
+      othersMayWrite: true,
+      othersMayReplace: true,
+      childrenOpen: true,
+    };
+    // A SID that merely ends in -500 is not this machine's administrator.
+    expect(windowsAccess(sddl, builtIn)).toEqual(open);
+    expect(windowsAccess(sddl, builtIn, false, OTHER_SID)).toEqual(open);
+    expect(windowsAccess(sddl, builtIn, false, builtIn)).toEqual({
       owner: "user",
       othersMayWrite: false,
       othersMayReplace: false,
       childrenOpen: false,
     });
-    // For anyone else that account is another principal.
-    expect(windowsAccess(sddl, USER_SID)).toEqual({
-      owner: "other",
-      othersMayWrite: true,
-      othersMayReplace: true,
-      childrenOpen: true,
-    });
+  });
+
+  it("an elevated owner is still refused for another principal's grant", async () => {
+    const windowsAccess = (await readers()).windowsAccess as unknown as (
+      sddl: string,
+      userSid: string,
+      elevated?: boolean,
+    ) => ReturnType<Readers["windowsAccess"]>;
+    expect(
+      windowsAccess(`O:BAD:(A;OICI;FA;;;BA)(A;;FW;;;${OTHER_SID})`, USER_SID, true),
+    ).toMatchObject({ owner: "user", othersMayWrite: true });
+  });
+
+  it.each(["KA", "CC", "ZZ"])(
+    "an unknown or unlisted right code %s counts as full access",
+    async (code) => {
+      const { windowsAccess } = await readers();
+      expect(windowsAccess(`O:${USER_SID}D:(A;;${code};;;${OTHER_SID})`, USER_SID)).toEqual({
+        owner: "user",
+        othersMayWrite: true,
+        othersMayReplace: true,
+        childrenOpen: false,
+      });
+    },
+  );
+
+  it("read codes it knows grant nothing", async () => {
+    const { windowsAccess } = await readers();
+    for (const code of ["FR", "FX", "GR", "GX", "RC", "GRGX"])
+      expect(windowsAccess(`O:${USER_SID}D:(A;OICI;${code};;;BU)`, USER_SID).othersMayWrite).toBe(
+        false,
+      );
   });
 
   it("what an elevated administrator makes is owned by Administrators, and is that user's", async () => {

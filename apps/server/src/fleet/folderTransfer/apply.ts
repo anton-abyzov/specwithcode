@@ -24,12 +24,17 @@ import {
   gitCheckedOut,
   gitDirtyPaths,
   gitTouchedPaths,
+  CHECK_ATTR_PATHS,
+  currentRef,
+  filteredPaths,
+  isAncestor,
+  trackedChanges,
 } from "./gitConfinement.ts";
 import { hashFile, type RepositoryInfo } from "./manifest.ts";
 import { isSafeRelativePath, linkTargetOnWire } from "./paths.ts";
 import { stagedPath } from "./pullWorker.ts";
 import { repairWorktree, type Gate } from "./worktreeRepair.ts";
-import type { FileAction, GitStep, Plan } from "./reconcile.ts";
+import type { FileAction, GitStep, Plan, ReviewedEntry } from "./reconcile.ts";
 
 /**
  * One journal line per step, written before the step changes anything (intent)
@@ -369,25 +374,6 @@ const INTENT_BATCH_BYTES = 64 * 1024 * 1024;
 const backupLocation = (backupRoot: string, relative: string) =>
   NodePath.join(backupRoot, "files", ...relative.split("/"));
 
-async function currentRef(cwd: string, ref: string): Promise<string | null> {
-  const result = await runGit(cwd, ["rev-parse", "--verify", "-q", ref], { allowFailure: true });
-  return result.code === 0 ? result.stdout.trim() : null;
-}
-
-async function isAncestor(cwd: string, older: string, newer: string) {
-  return (
-    (await runGit(cwd, ["merge-base", "--is-ancestor", older, newer], { allowFailure: true }))
-      .code === 0
-  );
-}
-
-async function trackedChanges(cwd: string) {
-  return (
-    (await runGit(cwd, ["status", "--porcelain=v1", "--untracked-files=no"])).stdout.trim().length >
-    0
-  );
-}
-
 /**
  * Applies an approved plan. Safe to run again after a crash: steps the journal
  * shows as finished are skipped, and a half-finished write is completed or
@@ -552,23 +538,64 @@ export async function applyPlan(input: ApplyInput): Promise<ApplyResult> {
         : `${step.repo}/x`;
 
   /**
-   * Moves what is at `location` into the backup, recording that first. False when
-   * the backup already holds the original, so what is here is a partial earlier write.
+   * What the preview approved replacing at an action's path. Null for an action
+   * that replaces nothing: what is there is this copy's own write or Git's
+   * checkout, which the caller has already checked.
    */
-  const backUp = async (target: string, location: string) => {
+  const reviewedFor = (action: FileAction) => (action.replaces ? action.reviewed : null);
+  /** True when what is at `location` is still what the preview saw there. */
+  const asReviewed = async (location: string, reviewed: ReviewedEntry | null | undefined) => {
+    if (reviewed === null) return true;
+    const present = await lstatOrNull(location);
+    if (!present || !reviewed) return false;
+    if (reviewed.type === "directory") return present.isDirectory();
+    if (reviewed.type === "symlink")
+      return (
+        present.isSymbolicLink() &&
+        linkTargetOnWire(await NodeFSP.readlink(location)) === reviewed.target
+      );
+    return (
+      present.isFile() &&
+      present.size === reviewed.size &&
+      reviewed.sha256 !== null &&
+      (await hashFile(location, false)).sha256 === reviewed.sha256
+    );
+  };
+  /**
+   * Moves what is at `location` into the backup, recording that first, only while
+   * it is what the preview saw (`reviewed`). False when the backup already holds
+   * the original, so what is here is a partial earlier write.
+   */
+  const backUp = async (
+    target: string,
+    location: string,
+    reviewed: ReviewedEntry | null | undefined,
+  ) => {
     let backup = backups.get(target);
+    if (backup !== undefined && (await exists(backup))) return false;
+    // Without a backup on disk the recorded move never happened: this is still the original.
+    if (!(await asReviewed(location, reviewed)))
+      throw new ApplyRefusedError(
+        "changed-since-preview",
+        target,
+        `${target} changed after the preview and was left as it is; review the copy again.`,
+      );
     if (backup === undefined) {
       backup = backupLocation(input.backupRoot, target);
       await journal.append({ t: "backup", path: target, backup }, true);
       backups.set(target, backup);
-    } else if (await exists(backup)) return false;
-    // Without a backup on disk the recorded move never happened: this is still the original.
+    }
     await moveEntry(location, backup, input.journalFile);
     return true;
   };
   /** Clears a destination path for a write: backed up once, a partial write removed. */
-  const clear = async (target: string, location: string, present: NodeFS.Stats) => {
-    if (!(await backUp(target, location))) {
+  const clear = async (
+    target: string,
+    location: string,
+    present: NodeFS.Stats,
+    reviewed: ReviewedEntry | null | undefined,
+  ) => {
+    if (!(await backUp(target, location, reviewed))) {
       // The original is already in the backup, so nothing here may be deleted
       // unless its bytes are known to be kept: only a second copy of that original.
       const backup = backups.get(target)!;
@@ -680,7 +707,9 @@ export async function applyPlan(input: ApplyInput): Promise<ApplyResult> {
       if (step.kind === "replace") {
         const location = absoluteIn(root, step.repo);
         if (await lstatOrNull(location))
-          await guarded(step.repo, () => backUp(step.repo, location));
+          await guarded(step.repo, () =>
+            backUp(step.repo, location, { type: "directory", size: 0, sha256: null }),
+          );
       }
       if (step.kind === "clone") {
         if (!previous.some((entry) => entry.t === "cloned" && entry.path === step.repo)) {
@@ -789,7 +818,7 @@ export async function applyPlan(input: ApplyInput): Promise<ApplyResult> {
         );
       if (action.kind === "mkdir") {
         if (!present?.isDirectory()) {
-          if (present) await clear(target, location, present);
+          if (present) await clear(target, location, present, reviewedFor(action));
           if (!folders.created.has(target))
             await journal.append({ t: "mkdir", path: target }, true);
           folders.created.add(target);
@@ -820,7 +849,7 @@ export async function applyPlan(input: ApplyInput): Promise<ApplyResult> {
           return;
         }
       }
-      if (present) await clear(target, location, present);
+      if (present) await clear(target, location, present, reviewedFor(action));
       // Done marks need no sync of their own: a replay re-checks an intent against the file.
       if (action.kind === "remove") {
         await journal.append({ t: "write-done", path: target });
@@ -1241,29 +1270,6 @@ const isLeftBehind = (leftBehind: ReadonlySet<string>, path: string) =>
   [...leftBehind].some(
     (left) => left === path || left.startsWith(`${path}/`) || path.startsWith(`${left}/`),
   );
-
-/** Paths per `git check-attr` call, short enough for any command line. */
-const CHECK_ATTR_PATHS = 200;
-
-/** Paths whose `filter` attribute is set (Git LFS and the like): their checkout is not plain bytes. */
-async function filteredPaths(cwd: string, paths: ReadonlyArray<string>) {
-  const result = new Set<string>();
-  for (let start = 0; start < paths.length; start += CHECK_ATTR_PATHS) {
-    const fields = (
-      await runGit(cwd, [
-        "check-attr",
-        "-z",
-        "filter",
-        "--",
-        ...paths.slice(start, start + CHECK_ATTR_PATHS),
-      ])
-    ).stdout.split("\0");
-    for (let index = 0; index + 2 < fields.length; index += 3)
-      if (fields[index + 2] !== "unspecified" && fields[index + 2] !== "unset")
-        result.add(fields[index]!);
-  }
-  return result;
-}
 
 /**
  * A copied repository's Git data is the snapshot taken when copying started,

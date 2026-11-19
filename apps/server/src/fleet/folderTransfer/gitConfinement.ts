@@ -15,6 +15,14 @@ import { runGit } from "./git.ts";
 const posix = (path: string) => path.split(NodePath.sep).join("/");
 
 /**
+ * Git prints names as bytes; a name that is not UTF-8 decodes to another name,
+ * and the folder checked would not be the one Git writes into. Such a list is
+ * refused whole.
+ */
+const exactPaths = (paths: Array<string>): Array<string> | null =>
+  paths.some((path) => path.includes("\uFFFD")) ? null : paths;
+
+/**
  * Every folder of the Git data a command in `repo` may write: the repository's
  * own Git folder and the shared one of a linked worktree, with all folders
  * below them, relative to `root`, and the first file among them (objects aside)
@@ -84,7 +92,7 @@ export async function gitTouchedPaths(
       : ["diff", "--name-only", "--no-renames", "-z", from, to],
     { allowFailure: true },
   );
-  return result.code === 0 ? result.stdout.split("\0").filter(Boolean) : null;
+  return result.code === 0 ? exactPaths(result.stdout.split("\0").filter(Boolean)) : null;
 }
 
 /** Paths a stash of everything would take out of the working tree: changed and untracked files. */
@@ -95,10 +103,12 @@ export async function gitDirtyPaths(cwd: string): Promise<Array<string> | null> 
     { allowFailure: true },
   );
   if (result.code !== 0) return null;
-  return result.stdout
-    .split("\0")
-    .filter((field) => field.length > 3)
-    .map((field) => field.slice(3));
+  return exactPaths(
+    result.stdout
+      .split("\0")
+      .filter((field) => field.length > 3)
+      .map((field) => field.slice(3)),
+  );
 }
 
 /** True when `relative` is a tracked file exactly as Git checked it out: Git put it there, nobody else. */
@@ -120,4 +130,48 @@ export function cloneFailureReason(stderr: string): string {
     .map((item) => item.replace(/^(?:fatal|error|remote): /, "").trim())
     .find((item) => item.length > 0 && !/https?:\/\//.test(item));
   return line ? ` (${line.slice(0, 160)})` : "";
+}
+
+/* Small Git readers Apply uses. */
+
+export async function currentRef(cwd: string, ref: string): Promise<string | null> {
+  const result = await runGit(cwd, ["rev-parse", "--verify", "-q", ref], { allowFailure: true });
+  return result.code === 0 ? result.stdout.trim() : null;
+}
+
+export async function isAncestor(cwd: string, older: string, newer: string) {
+  return (
+    (await runGit(cwd, ["merge-base", "--is-ancestor", older, newer], { allowFailure: true }))
+      .code === 0
+  );
+}
+
+export async function trackedChanges(cwd: string) {
+  return (
+    (await runGit(cwd, ["status", "--porcelain=v1", "--untracked-files=no"])).stdout.trim().length >
+    0
+  );
+}
+
+/** Paths per `git check-attr` call, short enough for any command line. */
+export const CHECK_ATTR_PATHS = 200;
+
+/** Paths whose `filter` attribute is set (Git LFS and the like): their checkout is not plain bytes. */
+export async function filteredPaths(cwd: string, paths: ReadonlyArray<string>) {
+  const result = new Set<string>();
+  for (let start = 0; start < paths.length; start += CHECK_ATTR_PATHS) {
+    const fields = (
+      await runGit(cwd, [
+        "check-attr",
+        "-z",
+        "filter",
+        "--",
+        ...paths.slice(start, start + CHECK_ATTR_PATHS),
+      ])
+    ).stdout.split("\0");
+    for (let index = 0; index + 2 < fields.length; index += 3)
+      if (fields[index + 2] !== "unspecified" && fields[index + 2] !== "unset")
+        result.add(fields[index]!);
+  }
+  return result;
 }

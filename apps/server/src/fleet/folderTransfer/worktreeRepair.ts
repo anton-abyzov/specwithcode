@@ -19,10 +19,10 @@ export interface Gate {
 
 /**
  * A copied linked worktree's `.git` file names its main repository by absolute
- * path, and the main repository's record names the worktree the same way. Both
- * are pointed at the copy, and nothing else is written: only those two names,
- * only inside the target, and only when the record is this worktree's own.
- * False when the pointer was left as copied.
+ * path, and the main repository's record names the worktree the same way. The
+ * pointer is pointed at the copy only when the record already names exactly
+ * this worktree's `.git` here; the record itself is never written. Anything
+ * else is left as copied, with a warning. False when the pointer was left.
  */
 export async function repairWorktree(
   root: string,
@@ -62,24 +62,16 @@ export async function repairWorktree(
     );
     return false;
   }
-  // The main repository's record is written too: its folders must be the user's alone.
+  // The main repository's record is trusted to name the worktree: its folders must be the user's alone.
   const admin = below(info.mainRepository, `.git/worktrees/${name}/gitdir`);
   const recordBefore = isSafeDestinationPath(admin) ? await gate.enter(admin) : null;
   if (!recordBefore) return left();
-  // The record must be this worktree's: as copied it names the worktree's `.git`
-  // at the same place below the source's folder, and the pointer names this
-  // record the same way. Another worktree's record of the same name is not touched.
-  const slashes = (path: string) => path.trim().replaceAll("\\", "/");
+  // The record must name exactly this worktree's `.git`, here. Git writes it with `/` on Windows.
   const recordFile = NodePath.join(adminDir, "gitdir");
   const recorded = (await lstatOrNull(recordFile))?.isFile()
     ? await NodeFSP.readFile(recordFile, "utf8").catch(() => null)
     : null;
-  if (
-    recorded === null ||
-    !slashes(recorded).endsWith(`/${pointer}`) ||
-    !slashes(match[1]!).endsWith(`/${below(info.mainRepository, `.git/worktrees/${name}`)}`)
-  )
-    return left();
+  if (recorded === null || NodePath.resolve(recorded.trim()) !== gitFile) return left();
   // Each pointer is put in place as a new private file, by name. The copied
   // file is never written: it may share its bytes with a file somewhere else.
   const replace = async (file: string, content: string) => {
@@ -102,19 +94,15 @@ export async function repairWorktree(
   const pointerStat = await lstatOrNull(gitFile);
   if (NodePath.resolve(match[1]!) !== adminDir || pointerStat?.nlink !== 1)
     await replace(gitFile, `gitdir: ${adminDir}\n`);
-  await replace(recordFile, `${gitFile}\n`);
-  // Both now say what Git's own repair would write. It is not run: it may write more than these two names.
+  // It now says what Git's own repair would write. That is not run: it may write more than this name.
   await gate.leave(pointer, before);
-  await gate.leave(admin, recordBefore);
-  // Both pointers now name this machine's paths; record them so Undo does not mistake them for edits.
-  for (const file of [gitFile, recordFile]) {
-    const hashed = await hashFile(file, false).catch(() => null);
-    if (hashed)
-      await record({
-        t: "rewritten",
-        path: NodePath.relative(root, file).split(NodePath.sep).join("/"),
-        sha256: hashed.sha256,
-      });
-  }
+  // The pointer now names this machine's path; record it so Undo does not mistake it for an edit.
+  const hashed = await hashFile(gitFile, false).catch(() => null);
+  if (hashed)
+    await record({
+      t: "rewritten",
+      path: NodePath.relative(root, gitFile).split(NodePath.sep).join("/"),
+      sha256: hashed.sha256,
+    });
   return true;
 }

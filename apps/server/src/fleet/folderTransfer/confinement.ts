@@ -159,6 +159,12 @@ const SDDL_RIGHTS: Record<string, bigint> = {
   DC: 0x2n,
   LC: 0x4n,
   DT: 0x40n,
+  // Read and execute only.
+  FR: 0x120089n,
+  FX: 0x1200a0n,
+  GR: 0x80000000n,
+  GX: 0x20000000n,
+  RC: 0x20000n,
 };
 /** Delete child, delete, change permissions, take ownership, generic all: enough to swap an entry. */
 const WINDOWS_REPLACE_MASK = 0x40n | 0x10000n | 0x40000n | 0x80000n | 0x10000000n;
@@ -167,16 +173,17 @@ const WINDOWS_WRITE_MASK = WINDOWS_REPLACE_MASK | 0x2n | 0x4n | 0x40000000n;
 
 function sddlMask(rights: string): bigint {
   if (/^0x[0-9a-f]+$/i.test(rights)) return BigInt(rights);
+  // Codes come in pairs; a stray letter is not a code this can read.
+  if (rights.length % 2 !== 0) return SDDL_RIGHTS.GA!;
   let mask = 0n;
   for (let index = 0; index + 1 < rights.length; index += 2)
-    mask |= SDDL_RIGHTS[rights.slice(index, index + 2)] ?? 0n;
+    // A code not listed here may grant anything: it counts as full control.
+    mask |= SDDL_RIGHTS[rights.slice(index, index + 2)] ?? SDDL_RIGHTS.GA!;
   return mask;
 }
 
 /** The Administrators group, by alias and by SID. */
 const WINDOWS_ADMINISTRATORS = new Set(["BA", "S-1-5-32-544"]);
-/** A machine's or domain's built-in administrator account: relative id 500. */
-const WINDOWS_BUILT_IN_ADMINISTRATOR = /^S-1-5-21(?:-\d+)+-500$/;
 
 const SDDL_SID = "(?:S-[\\d-]+|[A-Z]{2})";
 /** Owner, group, then the DACL's flags and entries; the SACL after it grants nothing. */
@@ -189,8 +196,9 @@ const SDDL_SHAPE = new RegExp(
  * No DACL at all (a null DACL) lets everyone do everything; a DACL with no
  * entries lets nobody do anything. A descriptor this cannot read counts as open.
  *
- * Windows writes the built-in administrator account as `LA`: that is the user
- * only when the user is that account. What an elevated administrator makes is
+ * Windows writes this machine's administrator account as `LA`: that is the user
+ * only when Windows itself resolves `LA` (`localAdministrator`) to the user's
+ * SID. What an elevated administrator makes is
  * owned by the Administrators group, so for that user (`elevated`) the group's
  * ownership is their own.
  */
@@ -198,6 +206,7 @@ export function windowsAccess(
   sddl: string,
   userSid: string,
   elevated = false,
+  localAdministrator: string | null = null,
 ): {
   readonly owner: "user" | "trusted" | "other";
   readonly othersMayWrite: boolean;
@@ -208,7 +217,7 @@ export function windowsAccess(
   if (!shape)
     return { owner: "other", othersMayWrite: true, othersMayReplace: true, childrenOpen: true };
   const isUser = (sid: string) =>
-    sid === userSid || (sid === "LA" && WINDOWS_BUILT_IN_ADMINISTRATOR.test(userSid));
+    sid === userSid || (sid === "LA" && localAdministrator === userSid);
   const ownerSid = shape[1]!;
   const owner =
     isUser(ownerSid) || (elevated && WINDOWS_ADMINISTRATORS.has(ownerSid))
@@ -326,12 +335,13 @@ const WINDOWS_SCRIPT = [
   "$sid=$me.User.Value",
   "$role=[System.Security.Principal.WindowsBuiltInRole]::Administrator",
   "$up=[int]([System.Security.Principal.WindowsPrincipal]$me).IsInRole($role)",
+  "$la='';try{$la=(New-Object System.Security.Principal.SecurityIdentifier('LA')).Value}catch{}",
   "[Console]::InputEncoding=[Text.Encoding]::UTF8",
   "[Console]::OutputEncoding=[Text.Encoding]::UTF8",
   "while(($p=[Console]::In.ReadLine()) -ne $null){",
   "try{$i=Get-Item -LiteralPath $p -Force -ErrorAction Stop;",
   "$s=(Get-Acl -LiteralPath $p -ErrorAction Stop).Sddl;",
-  '[Console]::Out.WriteLine("ok`t$sid`t$up`t$([int]$i.Attributes)`t$s")}',
+  '[Console]::Out.WriteLine("ok`t$sid`t$up`t$la`t$([int]$i.Attributes)`t$s")}',
   'catch{[Console]::Out.WriteLine("fail")}}',
 ].join("\n");
 const FILE_ATTRIBUTE_REPARSE_POINT = 0x400;
@@ -423,10 +433,10 @@ async function windowsAccessOf(paths: ReadonlyArray<string>): Promise<Map<string
   windowsReading = reading.catch(() => undefined);
   const lines = await reading.catch(() => asked.map(() => null));
   asked.forEach((path, index) => {
-    const [state, sid, elevated, attributes, sddl] = (lines[index] ?? "").split("\t");
+    const [state, sid, elevated, local, attributes, sddl] = (lines[index] ?? "").split("\t");
     if (state !== "ok" || !sid || !sddl) return;
     result.set(path, {
-      ...windowsAccess(sddl, sid, elevated === "1"),
+      ...windowsAccess(sddl, sid, elevated === "1", local || null),
       reparsePoint: (Number(attributes) & FILE_ATTRIBUTE_REPARSE_POINT) !== 0,
     });
   });

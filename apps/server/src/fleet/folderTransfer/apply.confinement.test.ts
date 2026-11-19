@@ -704,6 +704,22 @@ describe.skipIf(!posix)("repairing a copied worktree's pointer", () => {
     expect(NodeFS.lstatSync(NodePath.join(target, "wt", ".git")).nlink).toBe(1);
   });
 
+  it("is left alone when the record names the worktree only by the same place below another folder", async () => {
+    const { input, target, outside, admin } = copied((record) =>
+      NodeFS.writeFileSync(
+        NodePath.join(record, "gitdir"),
+        `${NodePath.join(base, "source-machine", "wt", ".git")}\n`,
+      ),
+    );
+    const before = bytes(outside);
+    const record = NodeFS.readFileSync(NodePath.join(admin, "gitdir"), "utf8");
+    const result = await run(input);
+    expect(bytes(outside)).toEqual(before);
+    expect(NodeFS.readFileSync(NodePath.join(admin, "gitdir"), "utf8")).toBe(record);
+    expect(NodeFS.lstatSync(NodePath.join(target, "wt", ".git")).nlink).toBe(2);
+    expect(result.warnings.some((line) => line.includes("git worktree repair"))).toBe(true);
+  });
+
   it("is left alone when the main repository's record for it is open to a group", async () => {
     const { input, target, outside } = copied((admin) => NodeFS.chmodSync(admin, 0o770));
     const before = bytes(outside);
@@ -908,5 +924,49 @@ describe.skipIf(!posix)("Windows rights a new entry would inherit, through the s
       { path: "new/a.txt", folder: ".", reason: "acl-entry" },
     ]);
     expect(NodeFS.existsSync(NodePath.join(target, "new"))).toBe(false);
+  });
+});
+
+describe.skipIf(!posix)("a replaced entry that changed after the preview", () => {
+  const replacing = (reviewed: string) => ({
+    ...fileAction("a.txt", "copied\n"),
+    replaces: true,
+    reviewed: { type: "file" as const, size: Buffer.byteLength(reviewed), sha256: sha(reviewed) },
+  });
+
+  it("is backed up and replaced while it is what the preview saw", async () => {
+    const { input, target } = scenario(
+      (root) => NodeFS.writeFileSync(NodePath.join(root, "a.txt"), "reviewed\n"),
+      { "a.txt": "copied\n" },
+    );
+    (input.plan.actions as Array<FileAction>)[0] = replacing("reviewed\n");
+    await run(input);
+    expect(NodeFS.readFileSync(NodePath.join(target, "a.txt"), "utf8")).toBe("copied\n");
+  });
+
+  it("is never moved when its bytes differ: the copy stops and the file stays", async () => {
+    const { input, target } = scenario(
+      (root) => NodeFS.writeFileSync(NodePath.join(root, "a.txt"), "edited after the review\n"),
+      { "a.txt": "copied\n" },
+    );
+    (input.plan.actions as Array<FileAction>)[0] = replacing("reviewed\n");
+    await expect(run(input)).rejects.toMatchObject({ reason: "changed-since-preview" });
+    expect(NodeFS.readFileSync(NodePath.join(target, "a.txt"), "utf8")).toBe(
+      "edited after the review\n",
+    );
+    expect(NodeFS.existsSync(NodePath.join(input.backupRoot, "files", "a.txt"))).toBe(false);
+  });
+
+  it("is never moved when the preview recorded nothing to compare with", async () => {
+    const { input, target } = scenario(
+      (root) => NodeFS.writeFileSync(NodePath.join(root, "a.txt"), "reviewed\n"),
+      { "a.txt": "copied\n" },
+    );
+    (input.plan.actions as Array<FileAction>)[0] = {
+      ...fileAction("a.txt", "copied\n"),
+      replaces: true,
+    };
+    await expect(run(input)).rejects.toMatchObject({ reason: "changed-since-preview" });
+    expect(NodeFS.readFileSync(NodePath.join(target, "a.txt"), "utf8")).toBe("reviewed\n");
   });
 });
