@@ -1,9 +1,11 @@
 /**
- * The handoff mode shapes of release 1.0.383 (tag `v1.0.383`), the last one
- * before transfer records, copied field for field from that tag's
+ * The handoff mode shapes at tag `v1.0.383`, a release from before transfer
+ * records, with the field lists of that tag's
  * `packages/contracts/src/handoffMode.ts`. Tests decode with these to show what
  * a window or a machine of that release does with today's payloads. The field
- * schemas are today's: none of them changed since that tag.
+ * schemas are today's exports: since that tag `handoffMode.ts` has only gained
+ * fields (`git diff v1.0.383 -- packages/contracts/src/handoffMode.ts` removes
+ * no line), so the ones used here read as they did then.
  */
 import {
   EnvironmentId,
@@ -19,7 +21,7 @@ import * as Schema from "effect/Schema";
 
 export const HandoffModeSnapshot383 = Schema.Struct({
   environmentId: EnvironmentId,
-  machineLabel: Schema.String,
+  machineLabel: Schema.String.check(Schema.isMaxLength(120)),
   config: HandoffConfig,
   projectModes: Schema.Record(Schema.String, HandoffModeSetting),
   threads: Schema.Array(HandoffThreadState),

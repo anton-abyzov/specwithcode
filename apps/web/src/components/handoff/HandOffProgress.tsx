@@ -31,7 +31,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import {
-  automaticGroupToOpen,
+  automaticProgressStep,
   progressGroups,
   progressNotes,
   progressReason,
@@ -504,15 +504,15 @@ function HandOffAutomaticProgress({ environmentId }: { environmentId: Environmen
   const { snapshot } = useHandoffModeSnapshot(environmentId);
   const groups = useHandOffProgressGroups(environmentId);
   const seen = useRef<ReadonlySet<string> | null>(null);
-  const loaded = snapshot !== null && snapshot !== undefined;
+  // A snapshot without records is a machine that could not read them, not one with none.
+  const readable = snapshot?.transfers !== undefined;
   useEffect(() => {
-    if (!loaded) return;
-    const key = automaticGroupToOpen(seen.current, groups);
-    seen.current = new Set(groups.flatMap((group) => group.rows.map((row) => row.operationId)));
+    const step = automaticProgressStep(seen.current, readable ? groups : null);
+    seen.current = step.seen;
     // A view a person has open is never replaced.
-    if (key !== null && useRequest.getState().request === null)
-      requestHandOffProgress(environmentId, { groupKey: key });
-  }, [environmentId, groups, loaded]);
+    if (step.open !== null && useRequest.getState().request === null)
+      requestHandOffProgress(environmentId, { groupKey: step.open });
+  }, [environmentId, groups, readable]);
   return null;
 }
 
@@ -525,7 +525,9 @@ export function HandOffProgressDialogHost({
   const request = useRequest((state) => state.request);
   return (
     <>
-      {environmentId ? <HandOffAutomaticProgress environmentId={environmentId} /> : null}
+      {environmentId ? (
+        <HandOffAutomaticProgress key={environmentId} environmentId={environmentId} />
+      ) : null}
       {request?.kind === "group" ? <HandOffProgressDialog request={request} /> : null}
       {request?.kind === "no-move" ? <HandOffNoMoveDialog request={request} /> : null}
     </>

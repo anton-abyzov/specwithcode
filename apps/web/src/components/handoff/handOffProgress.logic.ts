@@ -251,6 +251,21 @@ export function automaticGroupToOpen(
   return null;
 }
 
+/**
+ * One read of the machine's records, for the view that opens by itself. A read
+ * that carried no records (`groups` null) changes nothing, and a record once
+ * seen stays seen, so an old hand off never opens after a gap.
+ */
+export function automaticProgressStep(
+  seen: ReadonlySet<string> | null,
+  groups: ReadonlyArray<HandOffProgressGroup> | null,
+): { readonly seen: ReadonlySet<string> | null; readonly open: string | null } {
+  if (groups === null) return { seen, open: null };
+  const next = new Set(seen ?? []);
+  for (const group of groups) for (const row of group.rows) next.add(row.operationId);
+  return { seen: next, open: automaticGroupToOpen(seen, groups) };
+}
+
 /** The newest move of one thread from this machine, or null when it has none. */
 export function threadTransfer(
   transfers: ReadonlyArray<HandoffTransferRecord> | undefined,
