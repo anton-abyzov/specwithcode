@@ -35,7 +35,6 @@ import {
 
 import {
   foldSpecweaveLedger,
-  parseIncrementMetadata,
   parseSpecweaveSpec,
   type SpecweaveTaskHolder,
 } from "../mods/SpecweaveProgress.ts";

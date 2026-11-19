@@ -157,6 +157,20 @@ describe("ledgerPullRequests", () => {
   });
 });
 
+describe("ledgerLastAt", () => {
+  it("reads the time of the last line that has one, past blank and torn lines", () => {
+    const first = event("T-01", "claim", { at: "2026-11-14T09:00:00.000Z" });
+    const last = event("T-01", "done", { at: "2026-11-14T11:30:00+01:00" });
+    expect(ledgerLastAt(`${first}\n${last}\n`)).toBe("2026-11-14T10:30:00.000Z");
+    expect(ledgerLastAt(`${first}\n${last}\n\n{"t":"T-02","e":"cla`)).toBe(
+      "2026-11-14T10:30:00.000Z",
+    );
+    expect(ledgerLastAt(`${first}\n{"t":"T-02","e":"note"}\n`)).toBe("2026-11-14T09:00:00.000Z");
+    expect(ledgerLastAt("")).toBeNull();
+    expect(ledgerLastAt("not json\n")).toBeNull();
+  });
+});
+
 describe("readProjectBoard", () => {
   it("returns one card per increment in the column its files put it in", async () => {
     const root = await project();
