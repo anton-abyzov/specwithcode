@@ -428,6 +428,7 @@ export const scenario = (
       },
       replicate: (_, meta, bundle) =>
         viaNetwork(wire.destination.replicate(asSource, meta, bundle)),
+      check: () => Effect.die("unused"),
       preflight: (_, request) =>
         viaNetwork(wire.destination.preflight(asSource, request)).pipe(
           // A destination from before the version check sends no versions.
