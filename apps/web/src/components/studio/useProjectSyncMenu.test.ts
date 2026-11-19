@@ -57,10 +57,19 @@ describe("syncBlockedOn", () => {
         version: "1.0.360",
         access: "granted",
       }),
-    ).toEqual({ text: "Needs update · {version}", values: { version: "1.0.360" } });
+    ).toEqual({
+      text: "{machine}: Needs update · {version}",
+      values: { machine: "M5", version: "1.0.360" },
+    });
     expect(
       syncBlockedOn({ ...base, read: { kind: "needs-update", at: 1 }, access: "granted" }),
-    ).toEqual({ text: "Needs update" });
+    ).toEqual({ text: "{machine}: Needs update", values: { machine: "M5" } });
+    // Only a machine that is offline is called offline.
+    for (const reach of ["never-opened", "refused"] as const)
+      expect(syncBlockedOn({ ...base, reach, access: "granted" })).toEqual({
+        text: "This window cannot open {machine}",
+        values: { machine: "M5" },
+      });
     expect(syncBlockedOn({ ...base, access: "denied" })).toEqual({
       text: "This window can only read {machine}",
       values: { machine: "M5" },
@@ -69,7 +78,7 @@ describe("syncBlockedOn", () => {
 });
 
 describe("syncRowFact", () => {
-  const base = { shownName: "M5", offline: false, version: null } as const;
+  const base = { shownName: "M5", offline: false, version: null, now: 1_000 } as const;
 
   it("compares the two machines' last statuses", () => {
     expect(syncRowFact({ ...base, shown: read(), other: read() }).sync).toMatchObject({
@@ -108,6 +117,22 @@ describe("syncRowFact", () => {
     expect(fact.sync?.text).toBe("Same as {shown} · as of {time}");
     expect(fact.sync?.values?.time).toBeTruthy();
   });
+
+  it("says the time of a status older than a minute, or one the machine did not confirm", () => {
+    const old = syncRowFact({
+      ...base,
+      shown: read(),
+      other: read(),
+      now: 1_000 + SYNC_STATUS_FRESH_MS,
+    });
+    expect(old.sync?.text).toBe("Same as {shown} · as of {time}");
+    const unconfirmed = syncRowFact({
+      ...base,
+      shown: read(),
+      other: { ...read(status("b".repeat(40))), stale: true },
+    });
+    expect(unconfirmed.sync?.text).toBe("{k} of {n} repositories differ · as of {time}");
+  });
 });
 
 describe("refreshSyncStatus", () => {
@@ -138,7 +163,13 @@ describe("refreshSyncStatus", () => {
     await refreshSyncStatus([machine("m4")], api, () => now);
     now += SYNC_STATUS_FRESH_MS;
     await refreshSyncStatus([machine("m4"), machine("m5")], api, () => now);
-    expect(syncStatusRead("m4:p")).toEqual({ kind: "status", status: status(), at: 0 });
+    // What it said before stays, marked as not confirmed since.
+    expect(syncStatusRead("m4:p")).toEqual({
+      kind: "status",
+      status: status(),
+      at: 0,
+      stale: true,
+    });
     expect(syncStatusRead("m5:p")).toBeUndefined();
   });
 

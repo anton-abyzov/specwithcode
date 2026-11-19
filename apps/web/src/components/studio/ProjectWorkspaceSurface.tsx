@@ -2250,8 +2250,8 @@ export function ProjectWorkspaceSurface({
                       // Continuing the coordinator here is its own confirmed action.
                       mainOffers={mainSwitch.offers}
                       onMakeMain={mainSwitch.run}
-                      // Sync and Add in the machine menu ask the folder dialog through this.
                       onCopy={canOperate && !machinePrivate ? requestHandoff : null}
+                      syncReadOnly={!canOperate && !machinePrivate}
                     />
                     {/* After the model, at the row's end: voice and the run state are icons,
                         so the machine and the model keep the room. */}

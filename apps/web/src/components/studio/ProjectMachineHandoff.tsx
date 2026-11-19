@@ -52,11 +52,10 @@ import { Tip } from "./shell/Tip";
 import { HandoffFolderPicker } from "./HandoffFolderPicker";
 import { toastManager } from "../ui/toast";
 import { HandoffFolderCopy, folderCopyStorageKey } from "./HandoffFolderCopy";
-import { repositoryKeyOf } from "@specweave-studio/shared/existingCopy";
 import { useRetiredMachineRecords } from "../settings/useReplacedMachineRecords";
 import { machineHoldings, otherProjectOf, pickedHolding } from "../../studio/sendToMachine";
 import { addToMachineRoute } from "../../studio/addToMachine";
-import { linkedMachineIds } from "../../studio/linkedMachines";
+import { addableMachineIds, projectFoldersElsewhere } from "../../studio/addableMachines";
 import { useTx } from "../../i18n";
 import { moveRefusal } from "./ProjectMoveOptions";
 import type { MainSwitch } from "./useMakeMain";
@@ -71,8 +70,6 @@ import {
   DEFAULT_COPY_METHOD,
   type HandoffFolderMethod,
 } from "../../studio/folderCopy";
-import { isProjectFolder } from "../../studio/projectMachineFolders";
-import { isArchivedMember } from "../../studio/projectListVisibility";
 import { useStudioFleet } from "../../studio/fleet";
 import {
   handoffMachinePreferenceKey,
@@ -290,25 +287,11 @@ export function ProjectMachineHandoff({
     unpublished.current = operationId;
     setUnpublishedOperation(operationId);
   };
-  // One repository key for every check here, compared without case as existingCopyOn does.
-  const repositoryKey = repositoryKeyOf(project);
   // Sidebar grouping is presentation only. Shell projects omit deleted registrations;
   // transfers still require a known matching repository on another environment.
-  const logicalId = project.workspaceSettings?.logicalProject?.id ?? null;
   // A linked copy of this project is a destination even when its repository reads differently
   // there (or not yet); the destination still verifies the repository before anything moves.
-  const candidates = useMemo(
-    () =>
-      projects.filter(
-        (item) =>
-          item.environmentId !== project.environmentId &&
-          !isArchivedMember(item) &&
-          isProjectFolder(item.workspaceRoot, item.id) &&
-          ((logicalId !== null && item.workspaceSettings?.logicalProject?.id === logicalId) ||
-            (repositoryKey !== null && repositoryKeyOf(item) === repositoryKey)),
-      ),
-    [projects, project.environmentId, repositoryKey, logicalId],
-  );
+  const candidates = useMemo(() => projectFoldersElsewhere(project, projects), [projects, project]);
   const destinations = candidates.map((item) => {
     const environment = environments.find((entry) => entry.environmentId === item.environmentId);
     return {
@@ -940,13 +923,13 @@ export function ProjectMachineHandoff({
   // Add offers machines without the project: no saved folder, no copy found there, and not a
   // member this window never opened. The machine the copy flow chose stays, so a finished Add
   // still names it.
-  const linkedIds = linkedMachineIds([project]);
-  const addable = machines.filter(
-    (item) =>
-      !item.hasProjectFolder &&
-      (holdings.byMachine.get(item.id)?.kind ?? "none") === "none" &&
-      !linkedIds.has(item.id),
-  );
+  const addableIds = addableMachineIds({
+    project,
+    machineIds: machines.map((item) => item.id),
+    projects,
+    retired,
+  });
+  const addable = machines.filter((item) => addableIds.includes(item.id));
   const offered = addOnly
     ? machines.filter((item) => item.id === copyMachine || addable.includes(item))
     : machines;

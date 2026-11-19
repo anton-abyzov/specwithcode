@@ -141,8 +141,18 @@ export const SYNC_STATUS_FRESH_MS = 60_000;
  * that it does not know Sync. Nothing is kept past a restart of the window.
  */
 export type SyncStatusRead =
-  | { readonly kind: "status"; readonly status: ProjectSyncStatusResult; readonly at: number }
+  | {
+      readonly kind: "status";
+      readonly status: ProjectSyncStatusResult;
+      readonly at: number;
+      /** The machine was asked again since and did not answer: this is what it said at `at`. */
+      readonly stale?: boolean;
+    }
   | { readonly kind: "needs-update"; readonly at: number };
+
+/** Whether a read is shown with its time: older than a minute, or not confirmed since. */
+export const syncReadIsOld = (read: SyncStatusRead, now: number): boolean =>
+  (read.kind === "status" && read.stale === true) || now - read.at >= SYNC_STATUS_FRESH_MS;
 
 const reads = new Map<string, SyncStatusRead>();
 const pending = new Set<string>();
@@ -179,6 +189,7 @@ export async function refreshSyncStatus(
         if (result.ok) reads.set(key, { kind: "status", status: result.value, at: now() });
         else if (isUnknownSyncCall(result.cause))
           reads.set(key, { kind: "needs-update", at: now() });
+        else if (last?.kind === "status" && !last.stale) reads.set(key, { ...last, stale: true });
         else return;
         changed();
       } finally {
