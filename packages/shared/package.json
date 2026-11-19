@@ -4,6 +4,10 @@
   "license": "MIT",
   "type": "module",
   "exports": {
+    "./maskEmail": {
+      "types": "./src/maskEmail.ts",
+      "import": "./src/maskEmail.ts"
+    },
     "./reservedDeviceNames": {
       "types": "./src/reservedDeviceNames.ts",
       "import": "./src/reservedDeviceNames.ts"

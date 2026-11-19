@@ -75,7 +75,7 @@ describe("usage gauge tooltip", () => {
     const [chipTip, ringTip] = tooltips({ status: "authenticated", email: "pat@example.com" });
     expect(ringTip).toContain("Click for usage and resets");
     for (const tip of [chipTip, ringTip]) {
-      expect(tip).toMatch(/data-model-chip-account="">Signed in as pat@example.com</);
+      expect(tip).toMatch(/data-model-chip-account="">Signed in as p••••t@example.com</);
     }
   });
 

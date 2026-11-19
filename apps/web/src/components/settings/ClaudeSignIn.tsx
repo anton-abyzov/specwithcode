@@ -1,3 +1,4 @@
+import { maskEmail } from "@specweave-studio/shared/maskEmail";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -254,7 +255,7 @@ export function ClaudeSignIn({
         : failed !== null
           ? "failed"
           : "idle";
-  const account = provider?.auth.email?.trim() || provider?.auth.login?.trim();
+  const account = maskEmail(provider?.auth.email) || provider?.auth.login?.trim();
   const description = done
     ? [
         account ? tx("Signed in as {account}.", { account }) : tx("Signed in."),

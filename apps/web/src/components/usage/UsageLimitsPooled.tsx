@@ -47,6 +47,7 @@ import {
 } from "./UsageLimits";
 import { blockedLabel, usageToneTextClass } from "../../studio/usageIndicatorModel";
 import { instanceLabel, limitAccountLabel } from "./usageAccountLabel";
+import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { AccountCards, AccountChip, accountCensus } from "./UsageLimitsAccounts";
 import { PoolForecastPanel } from "./UsageLimitsPoolForecast";
 import { useUsageLimitHistory } from "./usageLimitHistoryState";
@@ -130,7 +131,13 @@ function SegmentPopover({
       <div className="flex flex-col gap-1 border-t border-border/60 pt-2.5">
         {account.email ? (
           <Row label="Account">
-            <span className="break-all select-text">{account.email}</span>
+            <RedactedSensitiveText
+              value={account.email}
+              ariaLabel="Toggle account email visibility"
+              revealTooltip="Click to reveal email"
+              hideTooltip="Click to hide email"
+              className="break-all font-sans text-xs text-foreground"
+            />
           </Row>
         ) : identity.accountKind === "name" && identity.account ? (
           <Row label="Account">{identity.account}</Row>
