@@ -484,7 +484,7 @@ describe("a cancelled call and the project's lock (P2-09)", () => {
         // A clone that is still running keeps its folder when leftovers are swept.
         expect(
           yield* Effect.promise(() => ProjectSync.sweepCloneLeftovers(f.a, [staging])),
-        ).toEqual([]);
+        ).toEqual({ failed: [], live: [] });
         expect(NodeFS.existsSync(NodePath.join(f.a, staging, "clone", ".git"))).toBe(true);
         // A second call waits for the lock the clone holds.
         const seen: Array<boolean> = [];
@@ -621,8 +621,13 @@ describe("extras through the peer messages to the real receiver (1390 AC-13)", (
             "export const a = 'uncommitted';",
           );
           expect(filesOf(f.b, sent.items[1]!.arrivedAs!)).toContain("app.ts");
-          for (const repository of [f.a, f.nested, f.b, nestedB])
+          for (const repository of [f.a, f.b])
             expect(git(repository, "for-each-ref", "refs/specwithcode")).toBe("");
+          // A send removes only its own refs: one it did not write stays, at its commit (R5-06).
+          expect(
+            git(f.nested, "for-each-ref", "--format=%(refname) %(objectname)", "refs/specwithcode"),
+          ).toBe(`refs/specwithcode/extras/dead-op/0 ${libTip}`);
+          expect(git(nestedB, "for-each-ref", "refs/specwithcode/extras-incoming")).toBe("");
           // Nothing arrived in a working folder, and the source is as it was.
           expect(snapshot(f.b)).toEqual(before.root);
           expect(snapshot(nestedB)).toEqual(before.nested);
@@ -674,72 +679,52 @@ describe("extras through the peer messages to the real receiver (1390 AC-13)", (
   });
 
   it.effect(
-    "keeps the hidden ref of a send that began while another send was sweeping (P2-14)",
+    "keeps the hidden ref of a send under way while another send runs (P2-14, R5-06)",
     () => {
       const f = twoMachines();
       const tip = commit(f.a, "app.ts", "export const a = 2;\n");
       const OTHER = "1b2c3d4e-1111-4222-8333-444455556666";
-      const hiddenRefs = "refs/specwithcode/extras/";
-      const gate = <A = void>() => {
-        let open: (value: A) => void = () => {};
-        const opened = new Promise<A>((resolve) => (open = resolve));
-        return { open, opened };
+      let arrivals = 0;
+      let held = () => {};
+      const holding = new Promise<void>((resolve) => (held = resolve));
+      let release = () => {};
+      const released = new Promise<void>((resolve) => (release = resolve));
+      // The first send waits at the other machine with its hidden ref written; a second send
+      // runs to its end meanwhile.
+      const onArrival = async () => {
+        arrivals += 1;
+        if (arrivals !== 1) return;
+        held();
+        await released;
       };
-      const listing = gate();
-      const otherRef = gate();
-      const sweepOver = gate();
-      let listingCommand: unknown = null;
-      let listingEnded = false;
-      let otherHeld = false;
-      let otherCreated = false;
-      // The first send lists the hidden refs only once the second send has made its own;
-      // the second send then waits until the first one's sweep is over.
-      gitHooks.before = async (command) => {
-        if (command.cwd !== f.a) return;
-        const [verb, ...rest] = command.args;
-        if (listingCommand === null && verb === "for-each-ref" && rest.includes(hiddenRefs)) {
-          listingCommand = command;
-          listing.open();
-          await otherRef.opened;
-          return;
-        }
-        if (!otherCreated || (verb === "update-ref" && rest[0] === "-d")) return;
-        if (!otherHeld) {
-          otherHeld = true;
-          await sweepOver.opened;
-        } else if (listingEnded) sweepOver.open();
-      };
-      gitHooks.after = (command) => {
-        if (command === listingCommand) listingEnded = true;
-        if (
-          command.args[0] === "update-ref" &&
-          command.args[1]?.startsWith(`${hiddenRefs}${OTHER}/`)
-        ) {
-          otherCreated = true;
-          otherRef.open();
-        }
-      };
-      return withMachines(f, unscopedGrant(m4), (extras) =>
-        Effect.gen(function* () {
-          const send = (operationId: string) =>
-            extras.sendExtras({
-              projectId: projectA,
-              targetEnvironmentId: m5,
-              operationId,
-              items: [{ kind: "branch", path: ".", branch: "main" }],
-            });
-          const first = yield* Effect.forkChild(send(OPERATION));
-          yield* Effect.promise(() => listing.opened);
-          const second = yield* send(OTHER);
-          const firstSent = yield* Fiber.join(first);
-          expect(otherHeld && listingEnded).toBe(true);
-          // The second send's ref was listed by the first one's sweep and is not a dead one.
-          expect(second.items[0]).toMatchObject({ status: "sent", stays: null });
-          expect(firstSent.items[0]).toMatchObject({ status: "sent", stays: null });
-          expect(git(f.b, "rev-parse", "refs/heads/swc/from-M4/main")).toBe(tip);
-          for (const repository of [f.a, f.b])
-            expect(git(repository, "for-each-ref", "refs/specwithcode")).toBe("");
-        }),
+      return withMachines(
+        f,
+        unscopedGrant(m4),
+        (extras) =>
+          Effect.gen(function* () {
+            const send = (operationId: string) =>
+              extras.sendExtras({
+                projectId: projectA,
+                targetEnvironmentId: m5,
+                operationId,
+                items: [{ kind: "branch", path: ".", branch: "main" }],
+              });
+            const first = yield* Effect.forkChild(send(OPERATION));
+            yield* Effect.promise(() => holding);
+            const own = `refs/specwithcode/extras/${OPERATION}/0`;
+            expect(git(f.a, "for-each-ref", "--format=%(objectname)", own)).toBe(tip);
+            const second = yield* send(OTHER);
+            expect(second.items[0]).toMatchObject({ status: "sent", stays: null });
+            // The second send removed only its own ref.
+            expect(git(f.a, "for-each-ref", "--format=%(objectname)", own)).toBe(tip);
+            release();
+            const firstSent = yield* Fiber.join(first);
+            expect(firstSent.items[0]).toMatchObject({ status: "sent", stays: null });
+            expect(git(f.b, "rev-parse", "refs/heads/swc/from-M4/main")).toBe(tip);
+            for (const repository of [f.a, f.b])
+              expect(git(repository, "for-each-ref", "refs/specwithcode")).toBe("");
+          }),
+        onArrival,
       );
     },
   );

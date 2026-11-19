@@ -41,8 +41,10 @@ import {
   CLONE_STAGING_CLONE,
   CLONE_STAGING_PREFIX,
   cloneStagingIn,
+  cloneStagingOwner,
   markCloneStaging,
   namedLikeCloneStaging,
+  ownerState,
 } from "./cloneStaging.ts";
 import { runGit } from "./folderTransfer/git.ts";
 import * as HandoffGit from "./handoffGit.ts";
@@ -85,21 +87,23 @@ const liveCloneStaging = new Set<string>();
 /**
  * Removes the staging folders that clones which never finished left behind
  * (the server stopped mid-way). `paths` are relative to the project folder; of
- * each, the staging folder it names or lies in is removed, unless a clone of
- * this server is filling it. Nothing else is touched: not a folder without the
- * clone step's mark (whatever its name), not a file, nothing reached through a
- * link or outside the project.
- * Returns the folders that could not be removed.
+ * each, the staging folder it names or lies in is removed once the process its
+ * mark names is provably gone. A clone of this server that is filling it keeps
+ * it; one whose owner may still be running keeps it too, and is said so
+ * (`live`). Nothing else is touched: not a folder without the clone step's mark
+ * (whatever its name), not a file, nothing reached through a link or outside
+ * the project. `failed` are the folders that could not be removed.
  */
 export async function sweepCloneLeftovers(
   root: string,
   paths: ReadonlyArray<string>,
-): Promise<Array<string>> {
+): Promise<{ readonly failed: Array<string>; readonly live: Array<string> }> {
+  const failed: Array<string> = [];
+  const live: Array<string> = [];
   const realRoot = await NodeFSP.realpath(root).catch(() => null);
-  if (realRoot === null) return [];
+  if (realRoot === null) return { failed, live };
   const staging = cloneStagingIn(realRoot);
   const seen = new Set<string>();
-  const failed: Array<string> = [];
   for (const path of paths) {
     if (!safeRelativePath(path)) continue;
     // Only a folder that carries the mark this server's clone step writes: a folder a
@@ -111,10 +115,17 @@ export async function sweepCloneLeftovers(
     if (liveCloneStaging.has(folder)) continue;
     // Only a real folder at that very place: nothing behind a link.
     if ((await NodeFSP.realpath(folder).catch(() => null)) !== folder) continue;
+    const owner = await cloneStagingOwner(folder);
+    if (owner === null) continue;
+    // Another server process may be filling it: never removed on a guess.
+    if (ownerState(owner) === "maybe-running") {
+      live.push(top);
+      continue;
+    }
     await NodeFSP.rm(folder, { recursive: true, force: true }).catch(() => undefined);
     if ((await NodeFSP.lstat(folder).catch(() => null)) !== null) failed.push(top);
   }
-  return failed;
+  return { failed, live };
 }
 
 /** Staging folders beside the places `clonePaths` name, relative to the project folder. */
@@ -506,7 +517,7 @@ const failedStep = (
 
 // Replacement objects never stand in for the commits Sync compares and moves to.
 const defaultGit: SyncGit = (cwd, args, options) =>
-  runGit(cwd, args, { ...options, env: SYNC_ENV });
+  runGit(cwd, args, { ...options, env: { ...SYNC_ENV, ...options?.env } });
 
 export class ProjectSync extends Context.Service<
   ProjectSync,
@@ -641,12 +652,13 @@ const make = Effect.gen(function* () {
 
   /**
    * Which running thread works in a checkout, read from the database each time
-   * it is asked: before a plan, and again immediately before a merge. A list
-   * that cannot be read counts as in use, so nothing moves on a guess.
+   * it is asked: before a plan, and again immediately before the write. A list
+   * that cannot be read is said as unread (undefined), so nothing moves on a guess
+   * and no thread is made up.
    */
   const inUse: SyncContext["inUse"] = async (checkout) => {
     const rows = await Effect.runPromise(runningThreads).catch(() => null);
-    if (rows === null) return "a thread (the list of running threads could not be read)";
+    if (rows === null) return undefined;
     for (const row of rows) {
       const folder = row.worktreePath ?? row.workspaceRoot;
       const real = await NodeFSP.realpath(folder).catch(() => NodePath.resolve(folder));
@@ -730,7 +742,7 @@ const make = Effect.gen(function* () {
           const record = () => keptFetch(input.projectId, input.fetchId);
           // What a clone that never finished left behind goes first, under the lock: no
           // clone of this project is under way now. A folder that stays is said so.
-          const kept = yield* attempt(async () =>
+          const { failed: kept, live } = yield* attempt(async () =>
             sweepCloneLeftovers(found.root, [
               ...found.cloneStaging,
               ...(await cloneStagingBeside(
@@ -753,6 +765,23 @@ const make = Effect.gen(function* () {
               remote: null,
               detail:
                 "A clone that was stopped left this folder behind, and it could not be removed.",
+              moved: 0,
+              downgraded: false,
+            });
+          for (const path of live)
+            out.push({
+              path: path.slice(0, 1024),
+              action: "none",
+              reason: "refused",
+              branch: null,
+              otherBranch: null,
+              ahead: 0,
+              behind: 0,
+              uncommitted: 0,
+              inUseBy: null,
+              remote: null,
+              detail:
+                "Another SpecWithCode process may still be cloning into this folder, so it was left alone.",
               moved: 0,
               downgraded: false,
             });

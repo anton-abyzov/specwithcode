@@ -8,7 +8,6 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 import {
   PROJECT_SYNC_CHANGED_BRANCH_DETAIL,
-  PROJECT_SYNC_NO_FETCH_DETAIL,
   planProjectSync,
   projectSyncInTheWayDetail,
   type ProjectSyncStep,
@@ -762,13 +761,8 @@ describe("project sync: the fetch never follows the repository's own settings (P
       fastForward: [{ path: ".", otherBranch: "scratch" }],
       clone: [],
     });
-    // Its fetch wrote no row: nothing of it moves.
-    expect(results[0]).toMatchObject({
-      action: "none",
-      reason: "refused",
-      detail: PROJECT_SYNC_NO_FETCH_DETAIL,
-      moved: 0,
-    });
+    // Its row says why it was not fetched, and nothing of it moves.
+    expect(results[0]).toMatchObject({ action: "none", reason: "fetch-config", moved: 0 });
     expect(commands.some((args) => args[0] === "fetch" || args[0] === "read-tree")).toBe(false);
     expect({ refs: refs(f.a), state: snapshot(f.a) }).toEqual(before);
   });
@@ -1164,7 +1158,7 @@ describe("project sync: review round 3 follow-ups", () => {
     NodeFS.mkdirSync(NodePath.join(f.a, "kept", "swc-clone-lib"));
     NodeFS.chmodSync(NodePath.join(f.a, "locked"), 0o555);
     try {
-      const failed = await sweepCloneLeftovers(f.a, [
+      const { failed, live } = await sweepCloneLeftovers(f.a, [
         ".swc-clone-lib-Ab12Cd",
         "locked/.swc-clone-ui-Zz99Zz",
         // Never anything that is not a staging folder inside the project, whatever is asked.
@@ -1178,6 +1172,7 @@ describe("project sync: review round 3 follow-ups", () => {
       // Where this process may write into any folder (an administrator), nothing is left to report.
       if (NodeFS.existsSync(NodePath.join(f.a, "locked", ".swc-clone-ui-Zz99Zz")))
         expect(failed).toEqual(["locked/.swc-clone-ui-Zz99Zz"]);
+      expect(live).toEqual([]);
     } finally {
       NodeFS.chmodSync(NodePath.join(f.a, "locked"), 0o755);
     }
@@ -1269,7 +1264,7 @@ describe("project sync: review round 4 follow-ups", () => {
     ]);
     expect(
       await sweepCloneLeftovers(f.a, [".swc-clone-mine-Ab12Cd", ".swc-clone-mine-Ab12Cd/clone"]),
-    ).toEqual([]);
+    ).toEqual({ failed: [], live: [] });
     expect(NodeFS.existsSync(NodePath.join(mine, "clone", "half.ts"))).toBe(true);
     // It is work of the repository above it, like any other untracked folder.
     f.publish();
@@ -1278,7 +1273,10 @@ describe("project sync: review round 4 follow-ups", () => {
     expect(result).toMatchObject({ moved: 0 });
     // A mark that is not this module's own text does not make it one either.
     NodeFS.writeFileSync(NodePath.join(mine, "swc-clone-staging"), "mine\n");
-    expect(await sweepCloneLeftovers(f.a, [".swc-clone-mine-Ab12Cd"])).toEqual([]);
+    expect(await sweepCloneLeftovers(f.a, [".swc-clone-mine-Ab12Cd"])).toEqual({
+      failed: [],
+      live: [],
+    });
     expect(NodeFS.existsSync(NodePath.join(mine, "clone", "half.ts"))).toBe(true);
   });
 });

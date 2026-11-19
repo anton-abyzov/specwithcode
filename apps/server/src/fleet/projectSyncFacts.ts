@@ -7,6 +7,7 @@ import {
   PROJECT_SYNC_FETCHED_UNREAD_DETAIL,
   PROJECT_SYNC_GIT_TOO_OLD_DETAIL,
   PROJECT_SYNC_STATE_UNREAD_DETAIL,
+  PROJECT_SYNC_THREADS_UNREAD_DETAIL,
   projectSyncUpstreamMappingDetail,
   type ProjectSyncRepositoryFacts,
   type ProjectSyncRepositoryStatus,
@@ -206,16 +207,17 @@ export async function readRepositoryFacts(
       fetchError: gitReason(fetched.reason),
       heads: null,
     });
-  // The fetch went through. Without a readable record of what it wrote nothing moves.
+  // The fetch went through. Without a readable record of what it wrote nothing moves; the
+  // checkout's row says it is unread, so a run by this fetch says that too.
   if (fetched.heads === null)
-    return {
+    return unreadRow(context, path, where, {
       ...unreadFacts(
         path,
-        fetched.porcelain ? PROJECT_SYNC_FETCHED_UNREAD_DETAIL : PROJECT_SYNC_GIT_TOO_OLD_DETAIL,
+        fetched.tooOld ? PROJECT_SYNC_GIT_TOO_OLD_DETAIL : PROJECT_SYNC_FETCHED_UNREAD_DETAIL,
       ),
       remote,
       fetch: "ok",
-    };
+    });
   try {
     return await checkoutFacts(context, repository, where, {
       remote,
@@ -225,8 +227,36 @@ export async function readRepositoryFacts(
     });
   } catch {
     // The read after the fetch failed: said as that, with nothing to move by.
-    return { ...unreadFacts(path, PROJECT_SYNC_FETCHED_UNREAD_DETAIL), remote, fetch: "ok" };
+    return unreadRow(context, path, where, {
+      ...unreadFacts(path, PROJECT_SYNC_FETCHED_UNREAD_DETAIL),
+      remote,
+      fetch: "ok",
+    });
   }
+}
+
+/** Writes the row of a checkout that could not be read, which moves nothing; returns `facts`. */
+function unreadRow(
+  context: SyncContext,
+  path: string,
+  where: { readonly cwd: string; readonly gitDir: string },
+  facts: ProjectSyncRepositoryFacts,
+): ProjectSyncRepositoryFacts {
+  context.fetched?.rows.set(path, {
+    path,
+    cwd: where.cwd,
+    gitDir: where.gitDir,
+    readable: false,
+    branch: null,
+    head: null,
+    upstream: null,
+    target: null,
+    originHeads: new Map(),
+    ahead: 0,
+    behind: 0,
+    planned: planProjectSyncRepository(facts, null),
+  });
+  return facts;
 }
 
 /** The checkout's real path and Git folder, or null when either could not be read. */
@@ -322,8 +352,10 @@ async function checkoutFacts(
   } else if (origin !== null) upstreamName = origin.name.slice(0, 512);
   const uncommitted = await uncommittedCount(git, cwd);
   if (uncommitted === null) unread = true;
-  // Read last, after the status read above.
-  const inUseBy = await context.inUse(cwd);
+  // Read last, after the status read above. A list that could not be read is no thread.
+  const thread = await context.inUse(cwd);
+  const threadsUnread = thread === undefined;
+  const inUseBy = thread ?? null;
   const facts: ProjectSyncRepositoryFacts = {
     path,
     branch: branch === null ? null : shortBranch(branch),
@@ -338,13 +370,14 @@ async function checkoutFacts(
     ahead,
     behind,
     uncommitted: uncommitted ?? 0,
-    ...(unread
+    ...(unread || threadsUnread
       ? {
           stateUnread: true,
-          unreadDetail:
-            known.fetch === "ok"
+          unreadDetail: unread
+            ? known.fetch === "ok"
               ? PROJECT_SYNC_FETCHED_UNREAD_DETAIL
-              : PROJECT_SYNC_STATE_UNREAD_DETAIL,
+              : PROJECT_SYNC_STATE_UNREAD_DETAIL
+            : PROJECT_SYNC_THREADS_UNREAD_DETAIL,
         }
       : {}),
     inUseBy,
@@ -352,17 +385,19 @@ async function checkoutFacts(
     fetch: known.fetch,
     fetchError: known.fetchError,
   };
-  if (heads !== null) {
+  {
+    // Every checkout the fetch read has its row; only a readable one with the fetch's own
+    // record of origin's branches can move.
     const row: Row = {
       path,
       cwd: where.cwd,
       gitDir: where.gitDir,
-      readable: !unread,
+      readable: !unread && !threadsUnread && heads !== null,
       branch,
       head,
       upstream: upstream === null || upstream === undefined ? null : upstream.tuple,
       target: target ?? null,
-      originHeads: heads,
+      originHeads: heads ?? new Map(),
       ahead,
       behind,
       planned: planProjectSyncRepository(facts, null),

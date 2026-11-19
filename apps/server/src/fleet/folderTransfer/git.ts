@@ -24,7 +24,22 @@ export interface GitResult {
   readonly code: number;
   readonly stdout: string;
   readonly stderr: string;
+  /**
+   * Git's output was not valid UTF-8 (a file name made of other bytes): `stdout` holds
+   * replacement characters, so no path read from it names the file Git meant.
+   */
+  readonly invalidUtf8?: true;
 }
+
+const strictUtf8 = new TextDecoder("utf-8", { fatal: true });
+/** The text of Git's output, and whether any of it was not UTF-8. */
+const decoded = (bytes: Buffer): { readonly text: string; readonly invalid: boolean } => {
+  try {
+    return { text: strictUtf8.decode(bytes), invalid: false };
+  } catch {
+    return { text: bytes.toString("utf8"), invalid: true };
+  }
+};
 
 export const SAFE_CONFIG = [
   "-c",
@@ -99,10 +114,12 @@ export function runGit(
             : error
               ? null
               : 0;
-        const result = {
+        const out = decoded(Buffer.from(stdout));
+        const result: GitResult = {
           code: code ?? -1,
-          stdout: Buffer.from(stdout).toString("utf8"),
+          stdout: out.text,
           stderr: Buffer.from(stderr).toString("utf8"),
+          ...(out.invalid ? { invalidUtf8: true as const } : {}),
         };
         if (code === 0 || (options.allowFailure && code !== null)) resolve(result);
         else reject(new FolderGitError(args, code, result.stderr.slice(0, 2000)));

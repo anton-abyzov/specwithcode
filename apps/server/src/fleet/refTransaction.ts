@@ -8,8 +8,10 @@
  * stopped) is aborted by Git itself.
  *
  * One owner: the caller sends `commit` or `abort` once whatever it ran under
- * the locks has ended. A time limit applies to `prepare` only, before anything
- * else is written; after it, nothing here ever stops the process.
+ * the locks has ended. `prepare` has a time limit, and so does the answer to
+ * `commit`: one that never comes stops the process (Git removes its own locks
+ * on the way out; nothing here touches a lock file) and the commit is lost,
+ * neither confirmed nor refused.
  */
 import * as NodeChildProcess from "node:child_process";
 
@@ -28,18 +30,30 @@ export interface RefTransaction {
   readonly abort: () => Promise<void>;
 }
 
-export type RefTransactionFactory = (cwd: string, message: string) => RefTransaction;
+export interface RefTransactionOptions {
+  /** On top of the runner's environment: the move passes its Git folder and checkout. */
+  readonly env?: Readonly<Record<string, string>>;
+  /** How long the answer to `commit` may take; tests shorten it. */
+  readonly commitMs?: number;
+}
+
+export type RefTransactionFactory = (
+  cwd: string,
+  message: string,
+  options?: RefTransactionOptions,
+) => RefTransaction;
 
 const PREPARE_MS = 30_000;
+const COMMIT_MS = 60_000;
 
 /** A real transaction in `cwd`, with the same safe settings as every other Git call of Sync. */
-export const refTransaction: RefTransactionFactory = (cwd, message) => {
+export const refTransaction: RefTransactionFactory = (cwd, message, options = {}) => {
   const child = NodeChildProcess.spawn(
     "git",
     // Not `--no-deref`: an update of HEAD goes through the branch HEAD names, read by Git
     // under HEAD's lock.
     gitArguments(cwd, ["update-ref", "-m", message, "--stdin"]),
-    { cwd, env: gitEnvironment(), stdio: ["pipe", "pipe", "pipe"] },
+    { cwd, env: gitEnvironment(options.env), stdio: ["pipe", "pipe", "pipe"] },
   );
   let stdout = "";
   let stderr = "";
@@ -76,6 +90,7 @@ export const refTransaction: RefTransactionFactory = (cwd, message) => {
   const answer = (word: string, limitMs?: number) =>
     new Promise<TransactionAnswer | "lost">((resolve) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
+      let stopped = false;
       const check = () => {
         if (stdout.split("\n").includes(`${word}: ok`)) {
           if (timer !== undefined) clearTimeout(timer);
@@ -87,14 +102,18 @@ export const refTransaction: RefTransactionFactory = (cwd, message) => {
             .trim()
             .replace(/^(fatal|error):\s*/gmu, "")
             .trim();
-          return resolve(reason.length > 0 ? { ok: false, reason } : "lost");
+          // A process stopped for want of an answer gave none, whatever it printed.
+          return resolve(reason.length > 0 && !stopped ? { ok: false, reason } : "lost");
         }
         waiters.push(check);
       };
       if (limitMs !== undefined)
         timer = setTimeout(() => {
-          // Only before anything is written: the process is stopped, which releases its locks.
+          stopped = true;
+          // The process is stopped, which releases its locks; what it wrote stays written.
           child.kill("SIGTERM");
+          // One that does not stop is killed.
+          setTimeout(() => exited || child.kill("SIGKILL"), 5_000).unref();
         }, limitMs);
       check();
     });
@@ -119,7 +138,7 @@ export const refTransaction: RefTransactionFactory = (cwd, message) => {
     },
     commit: async () => {
       child.stdin.write("commit\n");
-      const committed = await answer("commit");
+      const committed = await answer("commit", options.commitMs ?? COMMIT_MS);
       await close();
       if (committed === "lost") throw new Error("Git ended without answering the commit.");
       return committed;

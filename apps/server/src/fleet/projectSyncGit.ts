@@ -24,24 +24,37 @@ export type SyncGit = (
     readonly signal?: AbortSignal;
     /** Written to Git's standard input. */
     readonly input?: string;
+    /** On top of `SYNC_ENV`: a move binds every command to one Git folder and checkout. */
+    readonly env?: Readonly<Record<string, string>>;
   },
 ) => Promise<GitResult>;
 
 /**
- * Settings and environment every Sync read and write runs with: replacement objects
- * are not used (`git replace` could make a fetched commit look related to a local one),
- * and nothing is fetched behind Sync's back (the runner sets `GIT_NO_LAZY_FETCH`).
+ * Settings and environment every Sync read and write runs with: neither replacement
+ * objects nor a graft file are used (either could make a fetched commit look related to
+ * a local one, wherever the graft file is named), and nothing is fetched behind Sync's
+ * back (the runner sets `GIT_NO_LAZY_FETCH`).
  */
-export const SYNC_ENV = { GIT_NO_REPLACE_OBJECTS: "1" } as const;
+export const SYNC_ENV = { GIT_NO_REPLACE_OBJECTS: "1", GIT_GRAFT_FILE: "/dev/null" } as const;
+
+/** A runner whose every command opens `gitDir` with `workTree` as its checkout. */
+export const boundGit =
+  (git: SyncGit, gitDir: string, workTree: string): SyncGit =>
+  (cwd, args, options) =>
+    git(cwd, args, {
+      ...options,
+      env: { ...options?.env, GIT_DIR: gitDir, GIT_WORK_TREE: workTree },
+    });
 
 export interface SyncContext {
   readonly git: SyncGit;
   /**
-   * The title of a running thread that works in this very checkout, or null.
+   * The title of a running thread that works in this very checkout, null when
+   * none does, or undefined when the list of running threads could not be read.
    * Asked each time it matters, never remembered: a thread may start between
    * two reads.
    */
-  readonly inUse: (checkout: string) => Promise<string | null>;
+  readonly inUse: (checkout: string) => Promise<string | null | undefined>;
   /** Stops a fetch or a clone that is under way when the call is cancelled. A merge is never stopped. */
   readonly signal?: AbortSignal;
   /**
@@ -174,7 +187,7 @@ async function countUncommitted(git: SyncGit, cwd: string): Promise<number | nul
     ["status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignore-submodules=none"],
     { allowFailure: true, timeoutMs: LOCAL_MS },
   );
-  if (status.code !== 0) return null;
+  if (status.code !== 0 || status.invalidUtf8 === true) return null;
   const fields = status.stdout.split("\0");
   const entries: Array<string> = [];
   for (let index = 0; index < fields.length; index += 1) {
@@ -184,7 +197,9 @@ async function countUncommitted(git: SyncGit, cwd: string): Promise<number | nul
     // A rename or a copy, in either column, is followed by the name it came from.
     if (/[RC]/.test(entry.slice(0, 2))) index += 1;
   }
-  const files = (await withoutCloneStaging(git, cwd, entries)).length;
+  const kept = await withoutCloneStaging(git, cwd, entries);
+  if (kept === null) return null;
+  const files = kept.length;
   // An unfinished merge, rebase, cherry-pick, revert or bisect is not clean, also with no
   // file changed; one that could not be read is no count at all.
   if (files > 0) return files;
@@ -197,13 +212,14 @@ async function countUncommitted(git: SyncGit, cwd: string): Promise<number | nul
  * carries the clone step's mark): the folder itself, and an untracked folder
  * that holds nothing else. Such a folder is
  * not this repository's work, while a clone runs and after one that never
- * finished. Nothing is written to the repository's ignore files.
+ * finished. Nothing is written to the repository's ignore files. Null when the
+ * folders could not be listed.
  */
 async function withoutCloneStaging(
   git: SyncGit,
   cwd: string,
   entries: ReadonlyArray<string>,
-): Promise<Array<string>> {
+): Promise<Array<string> | null> {
   const staging = cloneStagingIn(cwd);
   const untracked = (entry: string) => entry.startsWith("?? ");
   const kept: Array<string> = [];
@@ -220,7 +236,7 @@ async function withoutCloneStaging(
     ["ls-files", "-z", "--others", "--exclude-standard", "--", ...folders],
     { allowFailure: true, timeoutMs: LOCAL_MS },
   );
-  if (listed.code !== 0) return kept;
+  if (listed.code !== 0 || listed.invalidUtf8 === true) return null;
   const files = listed.stdout.split("\0").filter((file) => file.length > 0);
   const onlyStaging = new Set<string>();
   for (const folder of folders) {

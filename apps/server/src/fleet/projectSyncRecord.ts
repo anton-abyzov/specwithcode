@@ -189,20 +189,32 @@ export const sameTuple = (a: UpstreamTuple | null, b: UpstreamTuple | null) =>
     : a.tracking === b.tracking && a.remote === b.remote && a.source === b.source;
 
 export type Fetched =
-  /** The fetch went through. `heads` is null when its output could not be read as proof. */
-  | { readonly ok: true; readonly heads: Map<string, string> | null; readonly porcelain: boolean }
+  /**
+   * The fetch went through. `heads` is null when its output could not be read as proof;
+   * `tooOld` says that was because this Git, read as older than 2.41, has no porcelain.
+   */
+  | { readonly ok: true; readonly heads: Map<string, string> | null; readonly tooOld: boolean }
   | { readonly ok: false; readonly reason: string };
 
-/** Whether the Git that fetches here has `fetch --porcelain` (2.41 and newer). Asked per fetch. */
-export async function gitHasFetchPorcelain(git: Git, cwd: string): Promise<boolean> {
+/** The version of the Git that runs here, or null when it could not be read. Asked each time. */
+export async function gitVersion(
+  git: Git,
+  cwd: string,
+): Promise<{ readonly major: number; readonly minor: number } | null> {
   const version = await git(cwd, ["version"], { allowFailure: true, timeoutMs: LOCAL_MS }).catch(
     () => null,
   );
-  const found = /git version (\d+)\.(\d+)/.exec(version?.stdout ?? "");
-  if (version === null || version.code !== 0 || found === null) return false;
-  const [major, minor] = [Number(found[1]), Number(found[2])];
-  return major > 2 || (major === 2 && minor >= 41);
+  const found = /^git version (\d+)\.(\d+)/.exec(version?.stdout ?? "");
+  if (version === null || version.code !== 0 || found === null) return null;
+  return { major: Number(found[1]), minor: Number(found[2]) };
 }
+
+/** Whether `version` is `major.minor` or newer. */
+export const gitAtLeast = (
+  version: { readonly major: number; readonly minor: number },
+  major: number,
+  minor: number,
+) => version.major > major || (version.major === major && version.minor >= minor);
 
 /**
  * Reads `fetch --porcelain -v` output: one line per ref the refspec matched,
@@ -246,12 +258,15 @@ export async function fetchOrigin(
   cwd: string,
   options: { readonly signal?: AbortSignal } = {},
 ): Promise<Fetched> {
-  const porcelain = await gitHasFetchPorcelain(git, cwd);
+  // `fetch --porcelain` is Git 2.41 and newer. A version that could not be read is no
+  // proof either way: the plain fetch runs, and what it brought is unread.
+  const version = await gitVersion(git, cwd);
+  const porcelain = version !== null && gitAtLeast(version, 2, 41);
   const fetched = await git(cwd, fetchArgs(porcelain), {
     allowFailure: true,
     timeoutMs: FETCH_MS,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
-  }).catch((cause: unknown) => ({
+  }).catch((cause: unknown): GitResult => ({
     code: -1,
     stdout: "",
     stderr: cause instanceof Error ? cause.message : "The fetch did not finish.",
@@ -259,8 +274,8 @@ export async function fetchOrigin(
   if (fetched.code !== 0) return { ok: false, reason: fetched.stderr };
   return {
     ok: true,
-    porcelain,
-    heads: porcelain ? parseFetchPorcelain(fetched.stdout) : null,
+    tooOld: version !== null && !porcelain,
+    heads: porcelain && fetched.invalidUtf8 !== true ? parseFetchPorcelain(fetched.stdout) : null,
   };
 }
 

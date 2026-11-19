@@ -7,10 +7,14 @@
  * `clone` Git fills. The name alone proves nothing: a person may name a folder
  * of their own that way. Only a folder that carries the mark is treated as a
  * staging folder, which means it is no repository of the project, no work of
- * the repository above it, never part of a snapshot, and removed when the
- * clone that made it is gone. A folder with the name and without the mark is
- * left alone and counted like any other folder.
+ * the repository above it, and never part of a snapshot. A folder with the
+ * name and without the mark is left alone and counted like any other folder.
+ *
+ * The mark names its owner: the server process (its id and when it started)
+ * and a random token of the clone. A staging folder is removed only once that
+ * process is provably gone; one whose owner may still be running is left.
  */
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -24,24 +28,87 @@ export const CLONE_STAGING_CLONE = "clone";
 const MARK_TEXT =
   "SpecWithCode is cloning a repository into this folder and moves it into place when it is whole.\n" +
   "If no Sync is running, the clone was stopped and this folder can be deleted.\n";
+const OWNER_PREFIX = "owner ";
+const MARK_MAX_BYTES = 4096;
+
+/** The process that writes a mark: its id, when it started, and the clone's own token. */
+export interface CloneStagingOwner {
+  readonly pid: number;
+  readonly started: number;
+  readonly token: string;
+}
+
+// @effect-diagnostics-next-line globalDate:off - a process's start, as wall-clock time, read once.
+const STARTED = Math.round(Date.now() - process.uptime() * 1000);
+
+/** The text of a mark for `owner`. */
+export const cloneStagingMarkText = (owner: CloneStagingOwner) =>
+  `${MARK_TEXT}${OWNER_PREFIX}${JSON.stringify(owner)}\n`;
+
+/** The owner a mark's text names, or null when it is not a mark this module writes. */
+const ownerOf = (text: string): CloneStagingOwner | null => {
+  if (!text.startsWith(MARK_TEXT) || !text.endsWith("\n")) return null;
+  const line = text.slice(MARK_TEXT.length, -1);
+  if (!line.startsWith(OWNER_PREFIX) || line.includes("\n")) return null;
+  try {
+    const owner = JSON.parse(line.slice(OWNER_PREFIX.length)) as Partial<CloneStagingOwner>;
+    return Number.isSafeInteger(owner.pid) &&
+      owner.pid! > 0 &&
+      Number.isSafeInteger(owner.started) &&
+      typeof owner.token === "string" &&
+      /^[0-9a-f]{32}$/.test(owner.token)
+      ? { pid: owner.pid!, started: owner.started!, token: owner.token }
+      : null;
+  } catch {
+    return null;
+  }
+};
 
 /** Whether a folder or file name is shaped like a staging folder's. It may still be a person's own. */
 export const namedLikeCloneStaging = (name: string) => CLONE_STAGING_NAME.test(name);
 
-/** Writes the mark into a staging folder this call just made. */
-export async function markCloneStaging(folder: string): Promise<void> {
-  await NodeFSP.writeFile(NodePath.join(folder, CLONE_STAGING_MARK), MARK_TEXT, { flag: "wx" });
+/** Writes the mark, owned by this process, into a staging folder this call just made. */
+export async function markCloneStaging(folder: string): Promise<CloneStagingOwner> {
+  const owner = {
+    pid: process.pid,
+    started: STARTED,
+    token: NodeCrypto.randomBytes(16).toString("hex"),
+  };
+  await NodeFSP.writeFile(NodePath.join(folder, CLONE_STAGING_MARK), cloneStagingMarkText(owner), {
+    flag: "wx",
+  });
+  return owner;
+}
+
+/** The owner of a real folder (no link) with a staging folder's name that carries the mark. */
+export async function cloneStagingOwner(folder: string): Promise<CloneStagingOwner | null> {
+  if (!namedLikeCloneStaging(NodePath.basename(folder))) return null;
+  const stat = await NodeFSP.lstat(folder).catch(() => null);
+  if (stat === null || !stat.isDirectory()) return null;
+  const file = NodePath.join(folder, CLONE_STAGING_MARK);
+  const mark = await NodeFSP.lstat(file).catch(() => null);
+  if (mark === null || !mark.isFile() || mark.size > MARK_MAX_BYTES) return null;
+  return ownerOf(await NodeFSP.readFile(file, "utf8").catch(() => ""));
 }
 
 /** A real folder (no link) with a staging folder's name that carries the mark. */
 export async function isMarkedCloneStaging(folder: string): Promise<boolean> {
-  if (!namedLikeCloneStaging(NodePath.basename(folder))) return false;
-  const stat = await NodeFSP.lstat(folder).catch(() => null);
-  if (stat === null || !stat.isDirectory()) return false;
-  const file = NodePath.join(folder, CLONE_STAGING_MARK);
-  const mark = await NodeFSP.lstat(file).catch(() => null);
-  if (mark === null || !mark.isFile() || mark.size !== Buffer.byteLength(MARK_TEXT)) return false;
-  return (await NodeFSP.readFile(file, "utf8").catch(() => "")) === MARK_TEXT;
+  return (await cloneStagingOwner(folder)) !== null;
+}
+
+/**
+ * Who a mark's owner is now: this very process, another that may still be
+ * running (its id is in use, by it or by another program), or gone (no process
+ * has that id, or this process has it and started at another time).
+ */
+export function ownerState(owner: CloneStagingOwner): "this-process" | "maybe-running" | "gone" {
+  if (owner.pid === process.pid) return owner.started === STARTED ? "this-process" : "gone";
+  try {
+    process.kill(owner.pid, 0);
+    return "maybe-running";
+  } catch (cause) {
+    return (cause as { readonly code?: unknown }).code === "ESRCH" ? "gone" : "maybe-running";
+  }
 }
 
 /**

@@ -7,7 +7,9 @@
  * remote and never through the folder copy. Uncommitted work travels as one
  * snapshot commit built with a private index, so the branch, the index and the
  * working tree here stay as they are. On this machine only hidden refs under
- * `refs/specwithcode/extras/` are written, and they are removed afterwards.
+ * `refs/specwithcode/extras/` are written: each send creates its own only
+ * where none of that name exists, and removes only what it created, at the
+ * commit it wrote. A ref this call did not write is never removed.
  */
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -60,12 +62,15 @@ import {
 import { runGit } from "./folderTransfer/git.ts";
 import { cloneStagingIn } from "./cloneStaging.ts";
 import * as ProjectSync from "./ProjectSync.ts";
+import { gitFolders } from "./projectSyncFacts.ts";
+import { commitOf, type SyncGit } from "./projectSyncGit.ts";
 import { keptFetch, type Row } from "./projectSyncRecord.ts";
 
 const EXTRAS_REF_PREFIX = "refs/specwithcode/extras/";
 /** Branches that arrived from another machine are that machine's work, not this one's. */
 const ARRIVED_PREFIX = "swc/from-";
 
+const syncGit: SyncGit = (cwd, args, options) => runGit(cwd, args, options);
 const lines = (text: string) => text.split("\n").filter((line) => line.length > 0);
 const count = async (root: string, args: ReadonlyArray<string>, input?: string) => {
   const result = await runGit(root, ["rev-list", "--count", ...args], {
@@ -91,14 +96,25 @@ const capped = <A>(items: ReadonlyArray<A>) => ({
 /**
  * What a snapshot of the uncommitted work would leave out, without writing
  * one: changed and untracked files that are secrets by name, and untracked
- * files the content check flags or does not reach.
+ * files the content check flags or does not reach. Null when Git could not
+ * list the files: never an empty list.
  */
-export async function snapshotLeftOut(root: string): Promise<Array<ProjectSyncLeftOutFile>> {
-  const [untracked, changed, ignored] = await Promise.all([
-    runGit(root, ["ls-files", "-z", "--others", "--exclude-standard"]),
-    runGit(root, ["diff", "--name-only", "-z", "--no-renames", "HEAD"], { allowFailure: true }),
-    runGit(root, ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"]),
-  ]);
+export async function snapshotLeftOut(root: string): Promise<Array<ProjectSyncLeftOutFile> | null> {
+  const listed = await Promise.all(
+    [
+      ["ls-files", "-z", "--others", "--exclude-standard"],
+      ["diff", "--name-only", "-z", "--no-renames", "HEAD"],
+      ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"],
+    ].map((args) => runGit(root, args, { allowFailure: true }).catch(() => null)),
+  );
+  const [untracked, changed, ignored] = listed;
+  if (
+    untracked == null ||
+    changed == null ||
+    ignored == null ||
+    listed.some((result) => result?.code !== 0)
+  )
+    return null;
   // A folder a clone is being made in (it carries the clone step's mark) is no work of
   // this repository.
   const staging = cloneStagingIn(root);
@@ -133,72 +149,78 @@ export async function snapshotLeftOut(root: string): Promise<Array<ProjectSyncLe
 }
 
 /**
- * Removes the hidden refs of sends that never finished (the server stopped
- * mid-way): every ref under `refs/specwithcode/extras/` whose operation is not
- * a send under way in this server. `isActive` is asked for each ref at the
- * moment it would be removed, never from a list made earlier: a send that
- * began after the refs were listed keeps its ref. A ref is removed only while
- * it still holds the commit it was listed with.
- */
-export async function sweepStaleExtraRefs(
-  root: string,
-  isActive: (operation: string) => boolean,
-): Promise<void> {
-  const listed = await runGit(
-    root,
-    ["for-each-ref", "--format=%(refname) %(objectname)", EXTRAS_REF_PREFIX],
-    { allowFailure: true },
-  );
-  if (listed.code !== 0) return;
-  for (const line of listed.stdout.split("\n")) {
-    const [ref, commit] = line.split(" ");
-    if (ref === undefined || commit === undefined || !ref.startsWith(EXTRAS_REF_PREFIX)) continue;
-    const operation = ref.slice(EXTRAS_REF_PREFIX.length).split("/")[0] ?? "";
-    if (isActive(operation)) continue;
-    await runGit(root, ["update-ref", "-d", ref, commit], { allowFailure: true });
-  }
-}
-
-/**
  * The work in one repository that Git does not carry. Reads only. `row` is
  * what the fetch the window names showed for this checkout: which branches
  * `origin` had then, and at which commits. A branch is on origin when origin's
  * branch of its upstream (or, without an upstream, of its own name) is in that
  * fetch, whatever their commits; it is counted against the commit the fetch
- * brought. A branch whose origin branch is not in that fetch exists only here,
- * also with no commit of its own. Without such a fetch, membership is unknown
- * (`onlyHereUnknown`) and no branch is said to exist only here. A count Git
- * could not make makes the whole repository unread: never a zero.
+ * brought. A branch whose own name origin did not have in that fetch exists
+ * only here, also with no commit of its own, whatever its upstream. Without
+ * such a fetch, or with a row that is no proof for this checkout (unread, or
+ * read in other folders), membership is unknown (`onlyHereUnknown`) and no
+ * branch is said to exist only here. A read Git could not make makes the whole
+ * repository unread: never a zero, never an empty list.
  */
 export async function inventoryRepository(
   repository: ProjectSync.SyncRepository,
   row?: Row,
 ): Promise<ProjectSyncRepositoryExtras> {
-  const unread = (): ProjectSyncRepositoryExtras => ({
-    path: repository.path,
-    notPushed: [],
-    onlyHere: [],
-    branchesNotListed: 0,
-    changedFiles: 0,
-    untrackedFiles: 0,
-    stashes: 0,
-    leftOut: [],
-    leftOutNotListed: 0,
-    unreadDetail: PROJECT_SYNC_EXTRAS_UNREAD_DETAIL,
-  });
+  return readInventory(repository, row).catch(() => unreadExtras(repository.path));
+}
+
+/**
+ * Each repository's extras, one at a time, with the row `rowOf` gives for it
+ * at that moment. A repository Git could not read is unread; the rest still are read.
+ */
+export async function inventoryAll(
+  repositories: ReadonlyArray<ProjectSync.SyncRepository>,
+  rowOf: (path: string) => Row | undefined,
+): Promise<Array<ProjectSyncRepositoryExtras>> {
+  const out: Array<ProjectSyncRepositoryExtras> = [];
+  for (const repository of repositories)
+    out.push(await inventoryRepository(repository, rowOf(repository.path)));
+  return out;
+}
+
+const unreadExtras = (path: string): ProjectSyncRepositoryExtras => ({
+  path,
+  notPushed: [],
+  onlyHere: [],
+  branchesNotListed: 0,
+  changedFiles: 0,
+  untrackedFiles: 0,
+  stashes: 0,
+  leftOut: [],
+  leftOutNotListed: 0,
+  unreadDetail: PROJECT_SYNC_EXTRAS_UNREAD_DETAIL,
+});
+
+/** Whether a fetch's row speaks for this checkout: read whole, in the folders it is in now. */
+async function rowApplies(row: Row, cwd: string): Promise<boolean> {
+  if (!row.readable) return false;
+  const where = await gitFolders(syncGit, cwd);
+  return where !== null && where.cwd === row.cwd && where.gitDir === row.gitDir;
+}
+
+async function readInventory(
+  repository: ProjectSync.SyncRepository,
+  row: Row | undefined,
+): Promise<ProjectSyncRepositoryExtras> {
+  const unread = () => unreadExtras(repository.path);
   if (repository.unread === true) return unread();
   const root = repository.cwd;
   const refs = await runGit(
     root,
     [
       "for-each-ref",
-      "--format=%(refname:short)%09%(objectname)%09%(upstream)%09%(upstream:remotename)%09%(upstream:remoteref)",
+      "--format=%(refname)%09%(objectname)%09%(upstream)%09%(upstream:remotename)%09%(upstream:remoteref)",
       "refs/heads",
     ],
     { allowFailure: true },
   ).catch(() => null);
   if (refs === null || refs.code !== 0) return unread();
-  const heads = row?.originHeads ?? null;
+  // The fetch's row is proof only for the checkout it was read in, and only when read whole.
+  const heads = row !== undefined && (await rowApplies(row, root)) ? row.originHeads : null;
   // Passed to Git on its standard input: however many branches origin has.
   const live =
     heads === null ? "" : [...new Set(heads.values())].map((oid) => `^${oid}\n`).join("");
@@ -212,8 +234,11 @@ export async function inventoryRepository(
     return value ?? 0;
   };
   for (const line of lines(refs.stdout)) {
-    const [branch, head, upstream, remote, source] = line.split("\t");
-    if (branch === undefined || head === undefined || !isCommitSha(head)) continue;
+    const [ref, head, upstream, remote, source] = line.split("\t");
+    if (ref === undefined || !ref.startsWith("refs/heads/")) continue;
+    // The branch's own name in full, as Git keeps it: never a shortened, ambiguous one.
+    const branch = ref.slice("refs/heads/".length);
+    if (head === undefined || !isCommitSha(head)) continue;
     if (branch.startsWith(ARRIVED_PREFIX) || branch.length > 255) continue;
     const against = upstream !== undefined && upstream.length > 0 ? upstream : null;
     // The branch of origin this one goes with, as Git names it: the remote and the branch
@@ -236,17 +261,22 @@ export async function inventoryRepository(
       // keeps it; a branch with no upstream against origin's branch of its name as this
       // checkout last fetched it, when there is one. A count, never a claim of membership.
       const local = against ?? `refs/remotes/origin/${branch}`;
-      if (against === null && (await refCommit(root, local).catch(() => null)) === null) continue;
+      if (against === null) {
+        const tracked = await commitOf(syncGit, root, local);
+        if (tracked.kind === "unread") return unread();
+        if (tracked.kind === "absent") continue;
+      }
       const commits = await counted([head, `^${local}`]);
       if (commits === 0) continue;
       if (notPushed.length >= PROJECT_SYNC_MAX_LISTED) branchesNotListed += 1;
       else notPushed.push({ branch, head, commits });
       continue;
     }
-    const tip = heads.get(onOrigin);
-    if (tip === undefined) {
-      // Not on origin as of that fetch: its own commits are those no branch origin had then
-      // holds. A commit origin listed that is not here is passed over.
+    const own = heads.get(ref);
+    if (own === undefined) {
+      // Origin had no branch of this name in that fetch: it exists only here, whatever its
+      // upstream says. Its own commits are those no branch origin had then holds. A commit
+      // origin listed that is not here is passed over.
       if (onlyHere.length >= PROJECT_SYNC_MAX_LISTED) branchesNotListed += 1;
       else
         onlyHere.push({
@@ -256,6 +286,9 @@ export async function inventoryRepository(
         });
       continue;
     }
+    // Counted against origin's branch of its upstream when that fetch had it, else against
+    // origin's branch of its own name.
+    const tip = heads.get(onOrigin) ?? own;
     const commits = await counted(["--ignore-missing", "--stdin"], `${head}\n^${tip}\n`);
     if (commits === 0) continue;
     if (notPushed.length >= PROJECT_SYNC_MAX_LISTED) branchesNotListed += 1;
@@ -280,7 +313,9 @@ export async function inventoryRepository(
   const untrackedFiles = entries.filter((entry) => entry.startsWith("??")).length;
   const stashes = await runGit(root, ["stash", "list"], { allowFailure: true }).catch(() => null);
   if (stashes === null || stashes.code !== 0) return unread();
-  const leftOut = capped(await snapshotLeftOut(root));
+  const leftOutAll = await snapshotLeftOut(root);
+  if (leftOutAll === null) return unread();
+  const leftOut = capped(leftOutAll);
   return {
     path: repository.path,
     notPushed,
@@ -378,6 +413,8 @@ export async function sendExtra(input: {
     detail: detail === null ? null : detail.slice(0, 1900),
   });
   const hidden = `${EXTRAS_REF_PREFIX}${refComponent(input.operationId)}/${input.index}`;
+  // The commit this call wrote the hidden ref at, once Git created it; null while it has not.
+  let created: string | null = null;
   try {
     let commit: string;
     let leaf: string;
@@ -386,8 +423,10 @@ export async function sendExtra(input: {
     if (item.kind === "branch") {
       const tip = await refCommit(root, `refs/heads/${item.branch}`);
       if (tip === null) return stays("missing-branch");
-      // The branch may move while this runs: the hidden ref holds what is sent.
-      await runGit(root, ["update-ref", hidden, tip]);
+      // The branch may move while this runs: the hidden ref holds what is sent. Created only
+      // where none of that name exists: a ref another process holds is never taken over.
+      await runGit(root, ["update-ref", hidden, tip, ""]);
+      created = tip;
       commit = tip;
       leaf = item.branch;
       exclude = await peer.negotiate(await negotiationCandidates(root, tip));
@@ -414,9 +453,11 @@ export async function sendExtra(input: {
         cwd: root,
         threadId: `sync-${input.operationId}`,
         ref: hidden,
+        exclusive: true,
         message: `SpecWithCode: uncommitted work on ${input.sourceLabel}`,
         contentCheck: { pastLimit: "leave-out", sendAnyway: item.sendAnyway },
       });
+      created = snapshot.commit;
       const leftOutAll: Array<ProjectSyncLeftOutFile> = await Promise.all(
         [
           ...snapshot.excludedSecretPaths.map((path) => ({
@@ -472,10 +513,13 @@ export async function sendExtra(input: {
             `${(measured.files + snapshot.includedFileCount).toLocaleString("en-US")} files, over the limit of ${maxFiles.toLocaleString("en-US")}.`,
             more,
           );
+        const included = await count(root, [snapshot.baseCommit, "--not", "--remotes=origin"]);
+        // A count Git could not make is said to be unknown: never a zero.
         more = {
           ...more,
-          includedCommits:
-            (await count(root, [snapshot.baseCommit, "--not", "--remotes=origin"])) ?? 0,
+          ...(included === null
+            ? { includedCommits: 0, includedCommitsUnknown: true }
+            : { includedCommits: included }),
           includedBranch: snapshot.branch,
         };
       }
@@ -498,7 +542,7 @@ export async function sendExtra(input: {
       }
     }
     const arrived = await peer.replicate({ leaf, commit }, payload);
-    return {
+    const sent: ProjectSyncExtraResult = {
       ...base,
       ...more,
       status: "sent",
@@ -506,13 +550,16 @@ export async function sendExtra(input: {
       landed: arrived.landed,
       bytes,
     };
+    return sent;
   } catch (cause) {
     if (cause instanceof ExtrasPeerFailure) return stays(cause.stays, cause.message);
     if (cause instanceof BundleError && cause.code === "too_large")
       return stays("bundle-too-large", cause.message);
     return stays("failed", cause instanceof Error ? cause.message : "Git did not finish.");
   } finally {
-    await runGit(root, ["update-ref", "-d", hidden], { allowFailure: true });
+    // Only the ref this call created, and only while it is still at the commit written.
+    if (created !== null)
+      await runGit(root, ["update-ref", "-d", hidden, created], { allowFailure: true });
   }
 }
 
@@ -541,25 +588,6 @@ const make = Effect.gen(function* () {
       catch: (cause) =>
         failed(cause instanceof Error ? cause.message.slice(0, 1900) : "Git did not finish."),
     });
-  /** The sends under way in this server, by the name their hidden refs carry. */
-  const activeOperations = new Map<string, number>();
-  const withActiveOperation = <A, E>(
-    effect: Effect.Effect<A, E>,
-    input: ProjectSyncSendExtrasInput,
-  ) => {
-    const key = refComponent(input.operationId);
-    return Effect.acquireUseRelease(
-      Effect.sync(() => activeOperations.set(key, (activeOperations.get(key) ?? 0) + 1)),
-      () => effect,
-      () =>
-        Effect.sync(() => {
-          const left = (activeOperations.get(key) ?? 1) - 1;
-          if (left <= 0) activeOperations.delete(key);
-          else activeOperations.set(key, left);
-        }),
-    );
-  };
-
   /** A refusal or a silence from the other machine, as the reason an extra stays. */
   const peerFailure = (error: HandoffPeers.HandoffPeerError) =>
     new ExtrasPeerFailure(
@@ -625,13 +653,13 @@ const make = Effect.gen(function* () {
   return ProjectSyncExtras.of({
     inventory: Effect.fn("ProjectSyncExtras.inventory")(function* (input) {
       const found = yield* sync.repositories(input.projectId);
-      const repositories: Array<ProjectSyncRepositoryExtras> = [];
-      // Origin's branches as the fetch the window names showed them, and only that fetch.
-      const record = keptFetch(input.projectId, input.fetchId);
-      for (const repository of found.repositories)
-        repositories.push(
-          yield* attempt(() => inventoryRepository(repository, record?.rows.get(repository.path))),
-        );
+      // Origin's branches as the fetch the window names showed them, and only that fetch,
+      // looked up again for each repository: a fetch that expired meanwhile proves nothing.
+      const repositories = yield* attempt(() =>
+        inventoryAll(found.repositories, (path) =>
+          keptFetch(input.projectId, input.fetchId)?.rows.get(path),
+        ),
+      );
       return { repositories, scanLimited: found.scanLimited };
     }),
     sendExtras: Effect.fn("ProjectSyncExtras.sendExtras")(function* (input) {
@@ -645,7 +673,6 @@ const make = Effect.gen(function* () {
       const now = DateTime.toDate(yield* DateTime.now);
       const context = yield* Effect.context<never>();
       const items: Array<ProjectSyncExtraResult> = [];
-      const swept = new Set<string>();
       for (const [index, item] of input.items.entries()) {
         const repository = known.get(item.path);
         if (repository === undefined) {
@@ -684,12 +711,6 @@ const make = Effect.gen(function* () {
           });
           continue;
         }
-        if (!swept.has(repository.cwd)) {
-          swept.add(repository.cwd);
-          yield* attempt(() =>
-            sweepStaleExtraRefs(repository.cwd, (operation) => activeOperations.has(operation)),
-          ).pipe(Effect.uninterruptible);
-        }
         items.push(
           yield* attempt(
             () =>
@@ -714,7 +735,7 @@ const make = Effect.gen(function* () {
         );
       }
       return { items };
-    }, withActiveOperation),
+    }),
   });
 });
 

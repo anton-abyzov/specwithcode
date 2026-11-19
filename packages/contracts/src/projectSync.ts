@@ -275,6 +275,15 @@ export const PROJECT_SYNC_GRAFTS_DETAIL =
 /** The `unreadDetail` of a fetch that went through on a Git too old to say what it brought. */
 export const PROJECT_SYNC_GIT_TOO_OLD_DETAIL =
   "Fetched, but this machine's Git is older than 2.41 and cannot show what the fetch brought, so it was not moved. Update Git.";
+/**
+ * The `detail` of a fast-forward declined in a partial clone on a Git older than 2.45,
+ * which could fetch a missing file from origin in the middle of the move.
+ */
+export const PROJECT_SYNC_PARTIAL_CLONE_DETAIL =
+  "This is a partial clone, and this machine's Git is older than 2.45, so moving it could fetch from origin. It was not moved. Update Git.";
+/** The `unreadDetail` of a checkout for which the list of running threads could not be read. */
+export const PROJECT_SYNC_THREADS_UNREAD_DETAIL =
+  "The list of running threads could not be read, so it was not moved.";
 /** The `detail` of a fast-forward Git's lock kept from starting (another Git program, or a lock left behind). */
 export const projectSyncLockedDetail = (reason: string) =>
   `Git is busy in this checkout (${reason}), so it was not moved. Sync again.`.slice(0, 1900);
@@ -323,7 +332,26 @@ export const projectSyncPartialDetail = (branch: string, count: number, first: s
  * commit Sync moved it to: Sync claims no move and no count.
  */
 export const projectSyncObservedDetail = (branch: string, head: string) =>
-  `${branch} is at ${head.slice(0, 12)} now, not at the commit Sync moved it to, so Sync claims no move. Check the checkout before working in it.`.slice(
+  `${branch} is at ${head.slice(0, 12)} now, not at the commit this Sync fetched, so Sync claims no move. Check the checkout before working in it.`.slice(
+    0,
+    1900,
+  );
+/**
+ * The `detail` of a fast-forward Git confirmed, after which the checkout is on another
+ * branch (`now`, or null for a detached HEAD): the branch is at the commit Sync fetched,
+ * the checkout is not on it. Sync claims no move and no count.
+ */
+export const projectSyncSwitchedAwayDetail = (branch: string, now: string | null) =>
+  `Git moved ${branch} to the commit this Sync fetched, but the checkout is now on ${now ?? "a detached commit"}, so Sync claims no move here. Check the checkout before working in it.`.slice(
+    0,
+    1900,
+  );
+/**
+ * The `detail` of a fast-forward Sync abandoned before asking Git to commit it, after
+ * which the branch is somewhere else: another program moved it, not Sync.
+ */
+export const projectSyncMovedByOtherDetail = (branch: string, head: string) =>
+  `Sync did not move ${branch}, and ${branch} is at ${head.slice(0, 12)} now: another program moved it. Check the checkout before working in it.`.slice(
     0,
     1900,
   );
@@ -367,9 +395,16 @@ export function planProjectSyncRepository(
     remote: facts.remote,
     detail,
   });
-  if (facts.fetch === "unusual-config") return step("none", "fetch-config", facts.fetchError);
-  if (facts.fetch === "failed") return step("none", "fetch-failed", facts.fetchError);
-  if (facts.fetch === "no-remote") return step("none", "no-remote");
+  // A checkout that is also unread keeps both: the fetch's reason, and what was not read.
+  const unread =
+    facts.unreadDetail != null || facts.stateUnread === true
+      ? (facts.unreadDetail ?? PROJECT_SYNC_STATE_UNREAD_DETAIL)
+      : null;
+  const both = (reason: string | null) =>
+    unread === null ? reason : reason === null ? unread : `${reason} ${unread}`.slice(0, 1900);
+  if (facts.fetch === "unusual-config") return step("none", "fetch-config", both(facts.fetchError));
+  if (facts.fetch === "failed") return step("none", "fetch-failed", both(facts.fetchError));
+  if (facts.fetch === "no-remote") return step("none", "no-remote", unread);
   // Something of the checkout could not be read: it is held, and said so first, whatever
   // else reads level or empty. An unread checkout is never up to date and never a count.
   if (facts.unreadDetail != null || facts.stateUnread === true)
@@ -623,8 +658,13 @@ export const ProjectSyncExtraResult = Schema.Struct({
   detail: Schema.NullOr(bounded(2000)),
   /** Size of the bundle that travelled. */
   bytes: NonNegativeInt,
-  /** Commits not pushed that travelled with uncommitted work, and the branch they are on. */
+  /**
+   * Commits not pushed that travelled with uncommitted work, and the branch they are on.
+   * When Git could not count them it is 0 and `includedCommitsUnknown` is true: no
+   * number is shown for it.
+   */
   includedCommits: NonNegativeInt,
+  includedCommitsUnknown: Schema.optional(Schema.Boolean),
   includedBranch: Schema.NullOr(branchName),
   /** Files the snapshot left out. */
   leftOut: Schema.Array(ProjectSyncLeftOutFile).check(Schema.isMaxLength(PROJECT_SYNC_MAX_LISTED)),

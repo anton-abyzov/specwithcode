@@ -114,6 +114,12 @@ export async function writeCheckpoint(input: {
   /** Another ref to write the snapshot to; defaults to the thread's hidden handoff ref. */
   readonly ref?: string;
   /**
+   * Create `ref` only where no ref of that name exists (Git checks under its
+   * lock): a ref someone else holds is never reused or overwritten, and the
+   * call fails instead.
+   */
+  readonly exclusive?: boolean;
+  /**
    * Also check untracked files by content (`snapshotSecrets.ts`) and leave out
    * what it flags, except the files named in `sendAnyway`. Off unless asked
    * for: a thread's checkpoint keeps today's name check alone until the thread
@@ -290,10 +296,13 @@ export async function writeCheckpoint(input: {
       .toSorted()
       .slice(0, REQUIRED_SECRET_PATHS_MAX);
 
-    const previous = await runGit(root, ["rev-parse", "--verify", "-q", `${ref}^{commit}`], {
-      allowFailure: true,
-    });
-    if (previous.code === 0) {
+    const previous =
+      input.exclusive === true
+        ? null
+        : await runGit(root, ["rev-parse", "--verify", "-q", `${ref}^{commit}`], {
+            allowFailure: true,
+          });
+    if (previous !== null && previous.code === 0) {
       const previousCommit = previous.stdout.trim();
       const [previousTree, previousParent] = await Promise.all([
         gitText(root, ["rev-parse", `${previousCommit}^{tree}`]),
@@ -331,7 +340,7 @@ export async function writeCheckpoint(input: {
         { env: CHECKPOINT_IDENTITY },
       )
     ).stdout.trim();
-    await runGit(root, ["update-ref", ref, commit]);
+    await runGit(root, ["update-ref", ref, commit, ...(input.exclusive === true ? [""] : [])]);
     return {
       root,
       commit,

@@ -34,7 +34,6 @@ import {
   inventoryRepository,
   sendExtra,
   snapshotLeaf,
-  sweepStaleExtraRefs,
 } from "./ProjectSyncExtras.ts";
 import type { Row } from "./projectSyncRecord.ts";
 
@@ -466,21 +465,21 @@ describe("limits on uncommitted work (1390 AC-34)", () => {
   });
 });
 
-describe("hidden refs of dead operations (P2-08)", () => {
-  it("sweeps the refs a dead send left behind, and keeps those of a send under way", async () => {
+describe("hidden refs a send did not write (P2-08, R5-06)", () => {
+  it("leaves every other ref alone: a dead send's, a live one's and any other", async () => {
     const f = twoMachines();
     const head = git(f.a, "rev-parse", "HEAD");
     git(f.a, "update-ref", "refs/specwithcode/extras/dead-op/0", head);
-    git(f.a, "update-ref", "refs/specwithcode/extras/dead-op/1", head);
     git(f.a, "update-ref", "refs/specwithcode/extras/live-op/0", head);
     git(f.a, "update-ref", "refs/specwithcode/handoff/keep", head);
-    const before = snapshot(f.a);
-    await sweepStaleExtraRefs(f.a, (operation) => operation === "live-op");
+    commit(f.a, "app.ts", "export const a = 2;\n");
     const refs = allRefs(f.a);
-    expect(refs).not.toContain("refs/specwithcode/extras/dead-op/");
-    expect(refs).toContain("refs/specwithcode/extras/live-op/0");
-    expect(refs).toContain("refs/specwithcode/handoff/keep");
-    expect(snapshot(f.a)).toEqual(before);
+    const { peer } = peerOn(f.b);
+    expect(await send(f.a, { kind: "branch", path: ".", branch: "main" }, peer)).toMatchObject({
+      status: "sent",
+    });
+    // Whose a ref is cannot be told from its name: none but the send's own goes.
+    expect(allRefs(f.a)).toBe(refs);
   });
 });
 

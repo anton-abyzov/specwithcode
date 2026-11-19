@@ -5,6 +5,11 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { CLONE_STAGING_MARK, cloneStagingMarkText } from "../fleet/cloneStaging.ts";
+
+/** The id of a process that has ended. */
+const endedPid = () => NodeChildProcess.spawnSync("true").pid ?? 999_999;
+
 /** One Git command the code under test ran: where, its arguments, and whether on a private index. */
 export interface RecordedGit {
   readonly cwd: string;
@@ -173,7 +178,7 @@ export const fakeKeyHeader = () => ["-----BEGIN ", "PRIVATE KEY-----"].join("");
 const temporary: Array<string> = [];
 /**
  * A clone's staging folder as a server that stopped mid-clone leaves it: the
- * mark, and the half-made clone. `mark: false` makes a person's own folder
+ * mark (its owner gone), and the half-made clone. `mark: false` makes a person's own folder
  * that merely has such a name; `repository: false` leaves the clone without
  * its `.git` (stopped before Git made it, or half removed).
  */
@@ -187,9 +192,9 @@ export function stagingFolder(
   NodeFS.mkdirSync(clone, { recursive: true });
   if (options.mark !== false)
     NodeFS.writeFileSync(
-      NodePath.join(folder, "swc-clone-staging"),
-      "SpecWithCode is cloning a repository into this folder and moves it into place when it is whole.\n" +
-        "If no Sync is running, the clone was stopped and this folder can be deleted.\n",
+      NodePath.join(folder, CLONE_STAGING_MARK),
+      // Owned by a server process that has ended.
+      cloneStagingMarkText({ pid: endedPid(), started: 1, token: "0".repeat(32) }),
     );
   if (options.repository !== false) git(root, "init", "-q", clone);
   NodeFS.writeFileSync(NodePath.join(clone, "half.ts"), "export const half = 1;\n");

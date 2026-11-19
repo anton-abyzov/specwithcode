@@ -120,12 +120,9 @@ const fetchAndMove = (
     Effect.gen(function* () {
       const fetched = yield* sync.fetch(one);
       // The first command after the transaction is prepared is the admission point's
-      // read of the Git folders: the second such read of the run.
-      let folders = 0;
+      // index refresh.
       gitHooks.before = (command) => {
-        if (command.cwd !== f.b || !command.args.includes("--path-format=absolute")) return;
-        folders += 1;
-        if (folders === 2) options.admitted?.();
+        if (command.cwd === f.b && command.args.includes("--refresh")) options.admitted?.();
       };
       const run = yield* sync.run({
         ...one,
@@ -762,8 +759,9 @@ describe("what the fetch's own output proves (P3-04, P3-08)", () => {
       stateUnread: true,
       unreadDetail: PROJECT_SYNC_FETCHED_UNREAD_DETAIL,
     });
-    expect(rows).toBe(0);
-    expect(step).toMatchObject({ moved: 0, detail: PROJECT_SYNC_NO_FETCH_DETAIL });
+    // The row is kept, unread: a run by this fetch says what was not read.
+    expect(rows).toBe(1);
+    expect(step).toMatchObject({ moved: 0, detail: PROJECT_SYNC_FETCHED_UNREAD_DETAIL });
     expect(git(f.b, "rev-parse", "HEAD")).toBe(f.was);
   });
 
@@ -777,8 +775,8 @@ describe("what the fetch's own output proves (P3-04, P3-08)", () => {
       stateUnread: true,
       unreadDetail: PROJECT_SYNC_GIT_TOO_OLD_DETAIL,
     });
-    expect(rows).toBe(0);
-    expect(step).toMatchObject({ moved: 0 });
+    expect(rows).toBe(1);
+    expect(step).toMatchObject({ moved: 0, detail: PROJECT_SYNC_GIT_TOO_OLD_DETAIL });
     expect(git(f.b, "rev-parse", "refs/remotes/origin/main")).toBe(f.head);
     expect(git(f.b, "rev-parse", "HEAD")).toBe(f.was);
   });

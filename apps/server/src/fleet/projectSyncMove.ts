@@ -22,19 +22,23 @@ import {
   PROJECT_SYNC_CHANGED_UPSTREAM_DETAIL,
   PROJECT_SYNC_GRAFTS_DETAIL,
   PROJECT_SYNC_NO_FETCH_DETAIL,
+  PROJECT_SYNC_PARTIAL_CLONE_DETAIL,
   PROJECT_SYNC_PATH_UNREAD_DETAIL,
   PROJECT_SYNC_STATE_UNREAD_DETAIL,
   PROJECT_SYNC_TARGET_MISSING_DETAIL,
   PROJECT_SYNC_TARGET_UNRELATED_DETAIL,
+  PROJECT_SYNC_THREADS_UNREAD_DETAIL,
   PROJECT_SYNC_UNVERIFIED_DETAIL,
   projectSyncFilesDifferDetail,
   projectSyncFilterDetail,
   projectSyncHeldElsewhereDetail,
   projectSyncInTheWayDetail,
   projectSyncLockedDetail,
+  projectSyncMovedByOtherDetail,
   projectSyncObservedDetail,
   projectSyncPartialDetail,
   projectSyncSubmoduleDetail,
+  projectSyncSwitchedAwayDetail,
   type ProjectSyncStep,
   type ProjectSyncStepResult,
 } from "@specweave-studio/contracts";
@@ -43,6 +47,7 @@ import * as NodeFSP from "node:fs/promises";
 import { gitFolders, unreadFacts } from "./projectSyncFacts.ts";
 import { planProjectSyncRepository } from "@specweave-studio/contracts";
 import {
+  boundGit,
   commitOf,
   FETCH_MS,
   gitReason,
@@ -51,13 +56,14 @@ import {
   LOCAL_MS,
   present,
   shortBranch,
+  SYNC_ENV,
   type SyncContext,
   type SyncGit,
   type SyncRepository,
   uncommittedCount,
 } from "./projectSyncGit.ts";
-import { type Row, sameTuple, upstreamOf } from "./projectSyncRecord.ts";
-import { type RefTransaction, refTransaction } from "./refTransaction.ts";
+import { gitAtLeast, gitVersion, type Row, sameTuple, upstreamOf } from "./projectSyncRecord.ts";
+import { type RefTransaction, refTransaction, type TransactionAnswer } from "./refTransaction.ts";
 
 const stepOf = (
   planned: ProjectSyncStep,
@@ -99,7 +105,8 @@ async function changesOf(
     ["diff-tree", "-r", "-z", "--no-renames", "--no-commit-id", "--raw", from, to],
     { allowFailure: true, timeoutMs: LOCAL_MS },
   ).catch(() => null);
-  if (listed === null || listed.code !== 0) return null;
+  // A path that is not UTF-8 could not be named back to the file system: unread.
+  if (listed === null || listed.code !== 0 || listed.invalidUtf8 === true) return null;
   const fields = listed.stdout.split("\0");
   const out: Array<Change> = [];
   for (let index = 0; index + 1 < fields.length; index += 2) {
@@ -154,7 +161,7 @@ async function filtered(
       timeoutMs: LOCAL_MS,
       input: paths.map((path) => `${path}\0`).join(""),
     }).catch(() => null);
-    if (checked === null || checked.code !== 0) return undefined;
+    if (checked === null || checked.code !== 0 || checked.invalidUtf8 === true) return undefined;
     const fields = checked.stdout.split("\0");
     for (let index = 0; index + 2 < fields.length; index += 3) {
       const value = fields[index + 2]!;
@@ -165,26 +172,49 @@ async function filtered(
   return null;
 }
 
-/** Another worktree of the repository that has `branch` checked out; undefined when unread. */
+/**
+ * Another worktree of the repository that has `branch` checked out; undefined
+ * when unread. Git names the main worktree of a repository whose Git folder is
+ * kept elsewhere by that Git folder: when it is this checkout's, it is this one.
+ */
 async function heldElsewhere(
   git: SyncGit,
   cwd: string,
+  gitDir: string,
   branch: string,
 ): Promise<string | null | undefined> {
   const listed = await git(cwd, ["worktree", "list", "--porcelain", "-z"], {
     allowFailure: true,
     timeoutMs: LOCAL_MS,
   }).catch(() => null);
-  if (listed === null || listed.code !== 0) return undefined;
+  if (listed === null || listed.code !== 0 || listed.invalidUtf8 === true) return undefined;
   let folder: string | null = null;
   for (const field of listed.stdout.split("\0")) {
     if (field.startsWith("worktree ")) folder = field.slice("worktree ".length);
     else if (field === `branch ${branch}` && folder !== null) {
       const real = await NodeFSP.realpath(folder).catch(() => NodePath.resolve(folder!));
-      if (real !== cwd) return folder;
+      if (real !== cwd && real !== gitDir) return folder;
     }
   }
   return null;
+}
+
+/**
+ * Whether a move here can run without Git fetching anything: always on Git 2.45
+ * and newer (Sync's runner sets `GIT_NO_LAZY_FETCH`), and on an older Git only
+ * in a repository that is no partial clone. Undefined when unread.
+ */
+async function offlineCapable(git: SyncGit, cwd: string): Promise<boolean | undefined> {
+  const version = await gitVersion(git, cwd);
+  if (version === null) return undefined;
+  if (gitAtLeast(version, 2, 45)) return true;
+  const partial = await git(
+    cwd,
+    ["config", "--get-regexp", "^(remote\\..+\\.promisor|extensions\\.partialclone)$"],
+    { allowFailure: true, timeoutMs: LOCAL_MS },
+  ).catch(() => null);
+  if (partial === null || (partial.code !== 0 && partial.code !== 1)) return undefined;
+  return partial.code === 1;
 }
 
 /** The commit graph this move goes by: local grafts would rewrite it (replacements are off). */
@@ -256,34 +286,46 @@ export async function fastForwardRepository(
   if (where.cwd !== row.cwd || where.gitDir !== row.gitDir)
     return decline(PROJECT_SYNC_CHANGED_FOLDER_DETAIL);
   const cwd = row.cwd;
-  const asFetched = await checkAsFetched(context, cwd, row);
+  // Every command from here on opens the recorded Git folder with the recorded checkout,
+  // whatever `.git` says meanwhile; the binding is read again right before the write.
+  const bound: SyncContext = { ...context, git: boundGit(git, row.gitDir, cwd) };
+  const asFetched = await checkAsFetched(bound, cwd, row);
   if (asFetched !== null) return decline(asFetched);
+  // A Git that could fetch a missing file in the middle of the move does not move a
+  // partial clone; nothing below reads the target's objects before this.
+  const offline = await offlineCapable(bound.git, cwd);
+  if (offline === undefined) return decline(PROJECT_SYNC_STATE_UNREAD_DETAIL);
+  if (!offline) return decline(PROJECT_SYNC_PARTIAL_CLONE_DETAIL);
   // The target is in this checkout, and follows from the recorded commit.
-  const objects = await git(cwd, ["cat-file", "--batch-check=%(objecttype)"], {
-    allowFailure: true,
-    timeoutMs: LOCAL_MS,
-    input: `${target}\n`,
-  }).catch(() => null);
+  const objects = await bound
+    .git(cwd, ["cat-file", "--batch-check=%(objecttype)"], {
+      allowFailure: true,
+      timeoutMs: LOCAL_MS,
+      input: `${target}\n`,
+    })
+    .catch(() => null);
   if (objects === null || objects.code !== 0) return decline(PROJECT_SYNC_STATE_UNREAD_DETAIL);
   if (objects.stdout.trim() !== "commit") return decline(PROJECT_SYNC_TARGET_MISSING_DETAIL);
   const grafts = await graftsSet(row.gitDir);
   if (grafts === null) return decline(PROJECT_SYNC_STATE_UNREAD_DETAIL);
   if (grafts) return decline(PROJECT_SYNC_GRAFTS_DETAIL);
-  const ancestor = await git(cwd, ["merge-base", "--is-ancestor", head, target], {
-    allowFailure: true,
-    timeoutMs: LOCAL_MS,
-  }).catch(() => null);
+  const ancestor = await bound
+    .git(cwd, ["merge-base", "--is-ancestor", head, target], {
+      allowFailure: true,
+      timeoutMs: LOCAL_MS,
+    })
+    .catch(() => null);
   if (ancestor === null || (ancestor.code !== 0 && ancestor.code !== 1))
     return decline(PROJECT_SYNC_STATE_UNREAD_DETAIL);
   if (ancestor.code === 1) return decline(PROJECT_SYNC_TARGET_UNRELATED_DETAIL);
-  const changes = await changesOf(git, cwd, head, target);
+  const changes = await changesOf(bound.git, cwd, head, target);
   if (changes === null) return decline(PROJECT_SYNC_STATE_UNREAD_DETAIL);
   const gitlink = changes.find(
     (change) => change.oldMode === "160000" || change.newMode === "160000",
   );
   if (gitlink !== undefined) return decline(projectSyncSubmoduleDetail(gitlink.path));
   const filter = await filtered(
-    git,
+    bound.git,
     cwd,
     target,
     changes.map((change) => change.path),
@@ -291,33 +333,37 @@ export async function fastForwardRepository(
   if (filter === undefined) return decline(PROJECT_SYNC_STATE_UNREAD_DETAIL);
   if (filter !== null) return decline(projectSyncFilterDetail(filter.path, filter.filter));
   // Quick refusals before the lock; every one is read again under it.
-  const ready = await readyToWrite(context, cwd, row, changes);
+  const ready = await readyToWrite(bound, cwd, row, changes);
   if (ready !== null) return decline(...ready);
 
-  const transaction = (context.transaction ?? refTransaction)(cwd, "sync: fast-forward");
-  const prepared = await transaction.prepare([`update HEAD ${target} ${head}`]);
-  if (!prepared.ok) {
-    await transaction.abort();
-    const reason = gitReason(prepared.reason);
-    // The old tip check is part of `prepare`: the branch moved since the fetch.
-    return decline(
-      /is at [0-9a-f]+ but expected/.test(reason)
-        ? PROJECT_SYNC_CHANGED_HEAD_DETAIL
-        : projectSyncLockedDetail(reason),
-    );
-  }
-  // From here on the transaction is open: whatever happens, it is closed before this
-  // returns (an `abort` after a `commit` or an `abort` does nothing).
+  const transaction = (context.transaction ?? refTransaction)(cwd, "sync: fast-forward", {
+    env: { ...SYNC_ENV, GIT_DIR: row.gitDir, GIT_WORK_TREE: cwd },
+  });
+  // From its start the transaction is this call's: whatever happens, also a `prepare` that
+  // throws, it is closed before this returns (an `abort` after a `commit` or an `abort`
+  // does nothing).
   try {
-    return await underTheLock(context, lookup, transaction, cwd, row, changes, planned, decline);
+    const prepared = await transaction.prepare([`update HEAD ${target} ${head}`]);
+    if (!prepared.ok) {
+      await transaction.abort();
+      const reason = gitReason(prepared.reason);
+      // The old tip check is part of `prepare`: the branch moved since the fetch.
+      return decline(
+        /is at [0-9a-f]+ but expected/.test(reason)
+          ? PROJECT_SYNC_CHANGED_HEAD_DETAIL
+          : projectSyncLockedDetail(reason),
+      );
+    }
+    return await underTheLock(bound, git, lookup, transaction, cwd, row, changes, planned, decline);
   } finally {
     await transaction.abort();
   }
 }
 
-/** Everything between `prepare: ok` and the transaction's end. */
+/** Everything between `prepare: ok` and the transaction's end. `context` is bound to the row's Git folder. */
 async function underTheLock(
   context: SyncContext,
+  unbound: SyncGit,
   lookup: () => ReturnType<NonNullable<SyncContext["record"]>>,
   transaction: RefTransaction,
   cwd: string,
@@ -331,7 +377,7 @@ async function underTheLock(
   const target = row.target!;
   // The admission point. HEAD and the branch it names are locked now and cannot change;
   // everything else is read for the last time before the write. A read that throws is unread.
-  const admitted = await admit(context, lookup, cwd, row, changes).catch((): Declined => [
+  const admitted = await admit(context, unbound, lookup, cwd, row, changes).catch((): Declined => [
     PROJECT_SYNC_STATE_UNREAD_DETAIL,
     "none",
     "refused",
@@ -371,7 +417,7 @@ async function underTheLock(
       }),
     );
   }
-  const committed = await transaction.commit().catch(() => null);
+  const committed = await transaction.commit().catch(() => "lost" as const);
   return readBack(context, cwd, row, changes, planned, committed).catch(() =>
     stepOf(planned, {
       detail: PROJECT_SYNC_UNVERIFIED_DETAIL,
@@ -423,7 +469,7 @@ async function readyToWrite(
   const blocked = await inTheWay(cwd, changes);
   if (blocked === undefined) return [PROJECT_SYNC_STATE_UNREAD_DETAIL, "none", "refused", {}];
   if (blocked !== null) return [projectSyncInTheWayDetail(blocked), "none", "refused", {}];
-  const holder = await heldElsewhere(git, cwd, row.branch!);
+  const holder = await heldElsewhere(git, cwd, row.gitDir, row.branch!);
   if (holder === undefined) return [PROJECT_SYNC_STATE_UNREAD_DETAIL, "none", "refused", {}];
   if (holder !== null)
     return [
@@ -433,40 +479,50 @@ async function readyToWrite(
       {},
     ];
   const thread = await context.inUse(cwd);
+  if (thread === undefined) return [PROJECT_SYNC_THREADS_UNREAD_DETAIL, "none", "refused", {}];
   if (thread !== null) return [`In use by ${thread}.`, "fetch", "in-use", { inUseBy: thread }];
   return null;
 }
 
 /**
- * The admission point, under Git's lock on HEAD and the branch: HEAD still
- * names the recorded branch in the same Git folder, the named fetch is still
- * kept with this very row, the upstream is the recorded one, the index is
- * refreshed and the checkout clean, nothing is in the way, and no thread
- * started. Upstream, files and threads are observations, not locks.
+ * The admission point, under Git's lock on HEAD and the branch. The slow reads
+ * go first: the index is refreshed, the checkout is clean, nothing is in the
+ * way, no other worktree holds the branch and no thread started. Then the
+ * last observations: `.git` still opens the recorded Git folder, HEAD names the
+ * recorded branch at the recorded commit with the recorded upstream. Last, with
+ * nothing awaited after it, the named fetch is still kept with this very row.
+ * Upstream, files and threads are observations, not locks.
  */
 async function admit(
   context: SyncContext,
+  unbound: SyncGit,
   lookup: () => ReturnType<NonNullable<SyncContext["record"]>>,
   cwd: string,
   row: Row,
   changes: ReadonlyArray<Change>,
 ): Promise<Declined | null> {
   const { git } = context;
-  const where = await gitFolders(git, cwd);
-  if (where === null) return [PROJECT_SYNC_STATE_UNREAD_DETAIL, "none", "refused", {}];
-  if (where.cwd !== row.cwd || where.gitDir !== row.gitDir)
-    return [PROJECT_SYNC_CHANGED_FOLDER_DETAIL, "none", "refused", {}];
-  if (lookup()?.rows.get(row.path) !== row)
-    return [PROJECT_SYNC_NO_FETCH_DETAIL, "none", "refused", {}];
-  const changed = await checkAsFetched(context, cwd, row);
-  if (changed !== null) return [changed, "none", "refused", {}];
-  // Stat data only: a file touched but not changed is not "uncommitted".
+  // Stat data only: a file touched but not changed is not "uncommitted". Exit 1 is Git's
+  // "some files need an update"; anything else is a refresh that did not happen.
   const refreshed = await git(cwd, ["update-index", "-q", "--refresh"], {
     allowFailure: true,
     timeoutMs: LOCAL_MS,
   }).catch(() => null);
-  if (refreshed === null) return [PROJECT_SYNC_STATE_UNREAD_DETAIL, "none", "refused", {}];
-  return readyToWrite(context, cwd, row, changes);
+  if (refreshed === null || (refreshed.code !== 0 && refreshed.code !== 1))
+    return [PROJECT_SYNC_STATE_UNREAD_DETAIL, "none", "refused", {}];
+  const ready = await readyToWrite(context, cwd, row, changes);
+  if (ready !== null) return ready;
+  // What `.git` opens now, read without the binding: another Git folder is declined.
+  const where = await gitFolders(unbound, cwd);
+  if (where === null) return [PROJECT_SYNC_STATE_UNREAD_DETAIL, "none", "refused", {}];
+  if (where.cwd !== row.cwd || where.gitDir !== row.gitDir)
+    return [PROJECT_SYNC_CHANGED_FOLDER_DETAIL, "none", "refused", {}];
+  const changed = await checkAsFetched(context, cwd, row);
+  if (changed !== null) return [changed, "none", "refused", {}];
+  // Synchronous, right before the write: the fetch has not expired or been dropped.
+  if (lookup()?.rows.get(row.path) !== row)
+    return [PROJECT_SYNC_NO_FETCH_DETAIL, "none", "refused", {}];
+  return null;
 }
 
 /** The files of the move that differ from `commit` here, the index included; null when unread. */
@@ -487,7 +543,7 @@ async function differing(
     const listed = await git(cwd, args, { allowFailure: true, timeoutMs: LOCAL_MS }).catch(
       () => null,
     );
-    if (listed === null || listed.code !== 0) return null;
+    if (listed === null || listed.code !== 0 || listed.invalidUtf8 === true) return null;
     for (const path of listed.stdout.split("\0")) if (path.length > 0) out.add(path);
   }
   // A file the commit does not have that is still here (Git could not remove it, or it came
@@ -520,10 +576,10 @@ async function afterFailedTree(
       movedUnverified: true,
       downgraded: true,
     });
+  // Sync never asked Git to commit: a branch somewhere else was moved by another program.
   if (at.value !== row.head)
     return stepOf(planned, {
-      detail: projectSyncObservedDetail(shortBranch(row.branch!), at.value),
-      movedUnverified: true,
+      detail: projectSyncMovedByOtherDetail(shortBranch(row.branch!), at.value),
       downgraded: true,
     });
   if (touched.length === 0)
@@ -537,7 +593,9 @@ async function afterFailedTree(
 /**
  * After the commit was sent. A move, and its count, is claimed only when Git
  * answered `commit: ok`, HEAD still names the recorded branch and that branch
- * is at the target. Files that differ from the target are a second fact.
+ * is at the target. The branch's commit, the branch the checkout is on and
+ * Git's answer are said as separate facts. Files that differ from the target
+ * are a second fact.
  */
 async function readBack(
   context: SyncContext,
@@ -545,7 +603,7 @@ async function readBack(
   row: Row,
   changes: ReadonlyArray<Change>,
   planned: ProjectSyncStep,
-  committed: { readonly ok: boolean; readonly reason?: string } | null,
+  committed: TransactionAnswer | "lost",
 ): Promise<ProjectSyncStepResult> {
   const { git } = context;
   const branch = shortBranch(row.branch!);
@@ -554,23 +612,38 @@ async function readBack(
   const unverified = (detail: string = PROJECT_SYNC_UNVERIFIED_DETAIL) =>
     stepOf(planned, { detail, movedUnverified: true, downgraded: true });
   if (at.kind !== "value" || named.kind === "unread") return unverified();
-  if (committed === null || !committed.ok) {
-    if (at.value === target) return unverified();
-    if (at.value !== row.head) return unverified(projectSyncObservedDetail(branch, at.value));
+  // No answer: Git may or may not have moved the branch.
+  if (committed === "lost")
+    return unverified(
+      at.value === target ? undefined : projectSyncObservedDetail(branch, at.value),
+    );
+  if (!committed.ok) {
+    // Git refused: the branch is not Sync's move, wherever it is.
+    if (at.value !== row.head)
+      return stepOf(planned, {
+        detail: projectSyncMovedByOtherDetail(branch, at.value),
+        downgraded: true,
+      });
     // The branch stayed; the files had already moved.
     const touched = await differing(git, cwd, row.head!, changes, false);
     if (touched === null) return unverified();
     return stepOf(planned, {
       detail:
         touched.length === 0
-          ? gitReason(committed?.reason ?? "")
+          ? gitReason(committed.reason)
           : projectSyncPartialDetail(branch, touched.length, touched[0]!),
       ...(touched.length === 0 ? { action: "none", reason: "refused" } : {}),
       downgraded: true,
     });
   }
-  if (at.value !== target || named.kind !== "value" || named.value !== row.branch)
-    return unverified(projectSyncObservedDetail(branch, at.value));
+  if (at.value !== target) return unverified(projectSyncObservedDetail(branch, at.value));
+  if (named.kind !== "value" || named.value !== row.branch)
+    return unverified(
+      projectSyncSwitchedAwayDetail(
+        branch,
+        named.kind === "value" ? shortBranch(named.value) : null,
+      ),
+    );
   const differ = await differing(git, cwd, target, changes, true);
   if (differ === null)
     return stepOf(planned, {
