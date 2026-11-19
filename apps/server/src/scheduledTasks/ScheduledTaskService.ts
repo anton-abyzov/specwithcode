@@ -63,12 +63,10 @@ import { CoordinatorWakeGate } from "../project/CoordinatorWakeGate.ts";
 import * as WorkGrants from "../fleet/WorkGrants.ts";
 import { makeRoutineCopies, RoutineCopies } from "./ScheduledTaskCopies.ts";
 import { makeRunSkips } from "./ScheduledTaskSkips.ts";
-import {
-  HANDOFF_ROUTINE_WAIT,
-  HANDOVER_ROUTINE_CHANGE_REFUSAL,
-  makeRoutineCoordinatorGate,
-  RESTING_ROUTINE_CHANGE_REFUSAL,
-} from "./ScheduledTaskCoordinatorGate.ts";
+import { makeRoutineCoordinatorGate } from "./ScheduledTaskCoordinatorGate.ts";
+import { makeRoutineRunner, type RoutineRunner } from "./ScheduledTaskRunner.ts";
+import { HandoffTurnGate } from "../handoff/HandoffTurnGate.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import {
   makeRoutineGrantGate,
   readRoutineGrant,
@@ -218,6 +216,8 @@ export class ScheduledTaskService extends Context.Service<
     ) => Effect.Effect<ScheduledTaskGrantedBy | undefined, ScheduledTaskError>;
     /** The routines a coordinator sends its standby, and the standby keeps (ScheduledTaskCopies). */
     readonly routineCopies?: () => Effect.Effect<RoutineCopies["Service"]>;
+    /** Each routine's one runner: its record, its gate and its move (ScheduledTaskRunner). */
+    readonly runner?: () => Effect.Effect<RoutineRunner>;
     /**
      * Verifies, logs and dispatches one webhook request. Returns as soon as the
      * delivery is logged; the run itself continues in the background so senders
@@ -269,11 +269,17 @@ export const layer = Layer.effect(
     const role = Option.getOrUndefined(
       yield* Effect.serviceOption(CoordinatorRole.CoordinatorRole),
     );
-    const coordinatorHold = makeRoutineCoordinatorGate({
+    const legacyHold = makeRoutineCoordinatorGate({
       role,
       wakeGate: yield* CoordinatorWakeGate,
       projects,
     });
+    // Each routine's one runner decides where it fires (ScheduledTaskRunner); a
+    // routine with none recorded yet follows the coordinator gate above. Built
+    // below, once the scheduler's own writes exist.
+    const runnerRef: { current: RoutineRunner | null } = { current: null };
+    const coordinatorHold: RoutineRunner["hold"] = (task) =>
+      runnerRef.current === null ? legacyHold(task) : runnerRef.current.hold(task);
     // A routine made under another machine's grant runs only within that grant.
     const workGrants = yield* WorkGrants.WorkGrants;
     const grantHold = makeRoutineGrantGate({ sql, grants: workGrants, projects });
@@ -1937,6 +1943,13 @@ export const layer = Layer.effect(
       findTask,
       upsert,
       remove: (id) => deleteTask({ id }),
+      // A routine this machine runs, or is moving, is never rewritten by a replica.
+      heldByRunner: (id) =>
+        runnerRef.current === null
+          ? Effect.succeed(false)
+          : runnerRef.current.records
+              .read(id)
+              .pipe(Effect.map((record) => record !== null && record.state !== "disarmed")),
     }).pipe(Effect.provideService(SqlClient.SqlClient, sql));
 
     const webhooks = yield* makeWebhookTrigger({
@@ -1944,89 +1957,68 @@ export const layer = Layer.effect(
       runTask: (task, webhook) => runTask(task, "webhook", webhook),
     });
 
+    const environment = Option.getOrUndefined(
+      yield* Effect.serviceOption(ServerEnvironment.ServerEnvironment),
+    );
+    const turnGate = yield* HandoffTurnGate;
     /**
-     * A resting copy of a coordinator-owned routine is changed on its runner,
-     * never here (1267 D-12): the runner's next replica would replace the
-     * change, and its copy is the only one written. While the coordinator is
-     * being handed over nothing changes either: the change could miss the
-     * copy that travels. Every target is judged: the stored row and, for a
-     * save, the routine it would become. Only the public methods check;
-     * replicas and Away write through the internal ones.
-     *
-     * `ownRemovable`: turning off and deleting stay possible for a resting
-     * routine that is this copy's own, not a copy from the coordinator (no
-     * `copiedFrom` mark). It has no runner to change it on: it was made here
-     * before this copy joined another project's coordinator. No replica holds
-     * it, so nothing replaces the change.
+     * Where each routine runs and where it is changed (1390 AC-45). Only the
+     * public methods below go through it; replicas, Away and the runner's own
+     * steps write through the internal ones.
      */
-    const isCoordinatorCopy = (id: ScheduledTaskId, logicalProjectId: string | null | undefined) =>
-      sql<{ readonly copied: string | null }>`
-        SELECT json_extract(run_policy_json, '$.copiedFrom') AS copied
-        FROM scheduled_tasks WHERE task_id = ${id}
-      `.pipe(
-        // A mark left by an earlier shared project is not this coordinator's copy.
-        Effect.map((rows) => {
-          const copied = rows[0]?.copied ?? null;
-          return copied !== null && (logicalProjectId == null || copied === logicalProjectId);
-        }),
-        // Unknown counts as a copy: the refusal stands.
-        Effect.orElseSucceed(() => true),
-      );
-    const onRunner = <A>(
-      targets: ReadonlyArray<
-        | { readonly id: ScheduledTaskId }
-        | Pick<ScheduledTask, "projectId" | "ownThread" | "schedule">
-      >,
-      change: Effect.Effect<A, ScheduledTaskError>,
-      options?: { readonly ownRemovable: boolean },
-    ) =>
-      Effect.gen(function* () {
-        for (const target of targets) {
-          const task = "id" in target ? yield* findTask(target.id) : target;
-          const hold = task === null ? null : yield* coordinatorHold(task);
-          if (
-            hold?.kind === "rest" &&
-            options?.ownRemovable === true &&
-            "id" in target &&
-            !(yield* isCoordinatorCopy(target.id, hold.logicalProjectId))
-          )
-            continue;
-          const refusal =
-            hold?.kind === "rest"
-              ? RESTING_ROUTINE_CHANGE_REFUSAL
-              : hold?.kind === "wait" && hold.reason === HANDOFF_ROUTINE_WAIT
-                ? HANDOVER_ROUTINE_CHANGE_REFUSAL
-                : null;
-          if (refusal !== null)
-            return yield* taskError(refusal, {
-              ...("id" in target ? { taskId: target.id } : {}),
+    const runner = yield* makeRoutineRunner({
+      sql,
+      legacyHold,
+      projects,
+      roleActive: (projectId) =>
+        Effect.gen(function* () {
+          if (role !== undefined)
+            return Option.match(yield* role.roleOf(projectId), {
+              onNone: () => false,
+              onSome: (status) => status.active,
             });
-        }
-        return yield* change;
-      });
+          const row = yield* projects
+            .get(projectId)
+            .pipe(Effect.orElseSucceed(() => Option.none<ProjectStore.ProjectRow>()));
+          return Option.isSome(row)
+            ? CoordinatorRole.coordinatorRoleOf({
+                id: row.value.projectId,
+                workspaceSettings: row.value.workspaceSettings ?? undefined,
+              }).active
+            : false;
+        }),
+      selfEnvironmentId:
+        environment === undefined ? Effect.succeed(null) : environment.getEnvironmentId,
+      threadMovedTo: (threadId) =>
+        turnGate.continuedOn === undefined
+          ? Effect.succeed(null)
+          : turnGate.continuedOn(ThreadId.make(threadId)),
+      findTask,
+      listTasks: listRows().pipe(
+        Effect.mapError((cause) => taskError("Could not list schedule tasks.", { cause })),
+      ),
+      upsert,
+      setEnabled,
+      remove: deleteTask,
+      readGrant: (id) =>
+        readRoutineGrant(id).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql),
+          Effect.mapError((cause) =>
+            taskError("Could not read the routine's work grant.", { taskId: id, cause }),
+          ),
+        ),
+      notifyChanged,
+      newId: crypto.randomUUIDv4.pipe(Effect.orDie),
+    });
+    runnerRef.current = runner;
+    yield* scheduler.register("routine-runners", runner.tick);
 
     return ScheduledTaskService.of({
-      list,
+      list: () => list().pipe(Effect.flatMap(runner.decorate)),
       subscribeList,
-      upsert: (input, options) =>
-        onRunner(
-          [
-            ...(input.id === undefined ? [] : [{ id: input.id }]),
-            {
-              projectId: input.projectId,
-              // An unbound routine runs in a thread of its own (asOwnThreadRoutine). A
-              // webhook routine never travels, so it is never held: only the kind matters.
-              ownThread:
-                (input.ownThread === true || input.threadId == null) &&
-                input.schedule.type !== "webhook",
-              schedule: { type: "manual" },
-            },
-          ],
-          upsert(input, options),
-        ),
-      setEnabled: (input) =>
-        onRunner([{ id: input.id }], setEnabled(input), { ownRemovable: !input.enabled }),
-      delete: (input) => onRunner([{ id: input.id }], deleteTask(input), { ownRemovable: true }),
+      upsert: (input, options) => runner.guardUpsert(input, upsert(input, options)),
+      setEnabled: (input) => runner.guardSetEnabled(input, setEnabled(input)),
+      delete: (input) => runner.guardDelete(input, deleteTask(input)),
       runNow,
       rotateWebhookToken,
       listWebhookDeliveries: webhooks.listWebhookDeliveries,
@@ -2041,6 +2033,7 @@ export const layer = Layer.effect(
           ),
         ),
       routineCopies: () => Effect.succeed(routineCopies),
+      runner: () => Effect.succeed(runner),
     });
   }),
 ).pipe(Layer.provide(ProjectAdmission.layer));

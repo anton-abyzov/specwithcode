@@ -132,6 +132,8 @@ export type WorkspaceMode = "root" | "worktree" | "existing_worktree";
 
 export interface DraftState {
   readonly editingId: string | null;
+  /** The revision the routine had when the form opened; null from a server that sends none. */
+  readonly baseRevision: number | null;
   readonly title: string;
   readonly prompt: string;
   readonly enabled: boolean;
@@ -275,6 +277,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
       : new Set([0, 1, 2, 3, 4, 5, 6]);
   return {
     editingId: task.id,
+    baseRevision: task.revision ?? task.runner?.revision ?? null,
     title: task.title,
     prompt: task.prompt,
     enabled: task.enabled,

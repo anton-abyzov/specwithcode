@@ -216,9 +216,10 @@ export const harness = (
           }),
       // The poll is run by hand so each fire is observed after it finished.
       Layer.mock(Scheduler.Scheduler)({
-        register: (_name, runDueWork) =>
+        register: (name, runDueWork) =>
           Effect.map(Effect.context(), (context) => {
-            state.poll = Effect.orDie(Effect.provideContext(runDueWork, context));
+            if (name === "scheduled-tasks")
+              state.poll = Effect.orDie(Effect.provideContext(runDueWork, context));
           }),
         heldMsBetween: () => Effect.succeed(0),
       }),

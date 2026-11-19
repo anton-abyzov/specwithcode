@@ -152,8 +152,9 @@ const harness = Effect.gen(function* () {
         nextTurnModel: () => Effect.sync(() => state.nextTurnModel as never),
       }),
       Layer.mock(Scheduler.Scheduler)({
-        register: <E, R>(_name: string, work: Effect.Effect<void, E, R>) =>
+        register: <E, R>(name: string, work: Effect.Effect<void, E, R>) =>
           Effect.gen(function* () {
+            if (name !== "scheduled-tasks") return;
             const context = yield* Effect.context<R>();
             state.due = work.pipe(Effect.provideContext(context), Effect.orDie);
           }),

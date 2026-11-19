@@ -531,6 +531,13 @@ export const readRunStates = (projectId: ProjectId, ids: ReadonlyArray<string>) 
 export const writeRunStates = (projectId: ProjectId, states: ReadonlyArray<RoutineRunState>) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    // A routine this machine runs itself keeps its own run state (ScheduledTaskRunner):
+    // the source's copy only rested, so its slot may be one this machine already fired.
+    const notRunHere = sql`NOT EXISTS (
+      SELECT 1 FROM scheduled_task_runners
+      WHERE scheduled_task_runners.task_id = scheduled_tasks.task_id
+        AND scheduled_task_runners.state <> 'disarmed'
+    )`;
     yield* Effect.forEach(
       states,
       (state) =>
@@ -542,6 +549,7 @@ export const writeRunStates = (projectId: ProjectId, states: ReadonlyArray<Routi
                 run_policy_json = json_set(COALESCE(run_policy_json, '{}'), '$.onceGeneration', ${state.onceGeneration})
               WHERE task_id = ${state.id} AND project_id = ${projectId}
                 AND last_run_status <> 'running'
+                AND ${notRunHere}
             `
           : sql`
               UPDATE scheduled_tasks
@@ -549,6 +557,7 @@ export const writeRunStates = (projectId: ProjectId, states: ReadonlyArray<Routi
                 run_count = ${state.runCount}
               WHERE task_id = ${state.id} AND project_id = ${projectId}
                 AND last_run_status <> 'running'
+                AND ${notRunHere}
             `,
       { concurrency: 1, discard: true },
     );

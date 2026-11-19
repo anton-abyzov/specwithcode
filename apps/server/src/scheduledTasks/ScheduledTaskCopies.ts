@@ -158,6 +158,12 @@ export interface RoutineCopiesDeps {
     options: { readonly grantedBy: ScheduledTaskGrantedBy | null },
   ) => Effect.Effect<unknown, ScheduledTaskError>;
   readonly remove: (id: ScheduledTaskId) => Effect.Effect<unknown, ScheduledTaskError>;
+  /**
+   * Whether this machine runs the routine itself, or is moving it
+   * (ScheduledTaskRunner). A coordinator's replica never rewrites, turns on
+   * or removes such a routine: its runner's row is the one that counts.
+   */
+  readonly heldByRunner?: (id: ScheduledTaskId) => Effect.Effect<boolean>;
 }
 
 const decodeUpsert = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);
@@ -251,6 +257,7 @@ export const makeRoutineCopies = (deps: RoutineCopiesDeps) =>
       grants: ReadonlyMap<string, ScheduledTaskGrantedBy>,
     ) =>
       Effect.gen(function* () {
+        if (deps.heldByRunner !== undefined && (yield* deps.heldByRunner(copy.id))) return;
         const held = yield* deps.findTask(copy.id);
         // An id this machine uses for another project's routine is never taken over.
         if (held !== null && held.projectId !== projectId) {
@@ -313,7 +320,12 @@ export const makeRoutineCopies = (deps: RoutineCopiesDeps) =>
         `.pipe(Effect.mapError(failed("Could not list routine copies.")));
         yield* Effect.forEach(
           held.filter((row) => !sent.has(row.task_id)),
-          (row) => deps.remove(ScheduledTaskId.make(row.task_id)),
+          (row) =>
+            Effect.gen(function* () {
+              const id = ScheduledTaskId.make(row.task_id);
+              if (deps.heldByRunner !== undefined && (yield* deps.heldByRunner(id))) return;
+              yield* deps.remove(id);
+            }),
           { concurrency: 1, discard: true },
         );
       });

@@ -327,6 +327,28 @@ const ScheduledTaskModelPinned = Schema.Boolean.annotate({
     "Run every time on modelSelection. Off by default: a run in a bound thread uses the model that thread's next turn would use, and never moves it to another provider.",
 });
 
+/**
+ * The one machine that runs a routine, and the revision of its definition
+ * there. Independent of which machine coordinates the project: a coordinator
+ * change, or a thread handoff, never moves it. `here` is whether the machine
+ * that answered is that runner. Absent while no runner is recorded: then the
+ * routine runs where it always did.
+ */
+export const ScheduledTaskRunnerInfo = Schema.Struct({
+  environmentId: Schema.String.check(Schema.isMaxLength(256)),
+  label: Schema.optional(Schema.NullOr(Schema.String.check(Schema.isMaxLength(256)))),
+  revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  here: Schema.Boolean,
+});
+export type ScheduledTaskRunnerInfo = typeof ScheduledTaskRunnerInfo.Type;
+
+/**
+ * The runner revision an edit was made against. The runner refuses the edit
+ * when its routine has moved on since, so the later of two edits made from the
+ * same view never silently replaces the earlier. Omitted, the edit is not checked.
+ */
+const ScheduledTaskExpectedRevision = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+
 export const ScheduledTask = Schema.Struct({
   id: ScheduledTaskId,
   title: TrimmedNonEmptyString,
@@ -353,6 +375,9 @@ export const ScheduledTask = Schema.Struct({
   check: Schema.optional(Schema.NullOr(ScheduledTaskCheck)),
   brief: Schema.optional(Schema.NullOr(ScheduledTaskBrief)),
   ownThread: Schema.optional(ScheduledTaskOwnThread),
+  runner: Schema.optional(ScheduledTaskRunnerInfo),
+  /** How many times the routine changed where it is changed; a save names the one it was made against. */
+  revision: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
 });
 export type ScheduledTask = typeof ScheduledTask.Type;
 
@@ -437,6 +462,7 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   check: Schema.optional(Schema.NullOr(ScheduledTaskCheck)),
   brief: Schema.optional(Schema.NullOr(ScheduledTaskBrief)),
   ownThread: Schema.optional(ScheduledTaskOwnThread),
+  expectedRevision: Schema.optional(ScheduledTaskExpectedRevision),
 });
 export type ScheduledTaskUpsertInput = typeof ScheduledTaskUpsertInput.Type;
 
@@ -444,11 +470,13 @@ export type ScheduledTaskUpsertInput = typeof ScheduledTaskUpsertInput.Type;
 export const ScheduledTaskSetEnabledInput = Schema.Struct({
   id: ScheduledTaskId,
   enabled: Schema.Boolean,
+  expectedRevision: Schema.optional(ScheduledTaskExpectedRevision),
 });
 export type ScheduledTaskSetEnabledInput = typeof ScheduledTaskSetEnabledInput.Type;
 
 export const ScheduledTaskDeleteInput = Schema.Struct({
   id: ScheduledTaskId,
+  expectedRevision: Schema.optional(ScheduledTaskExpectedRevision),
 });
 export type ScheduledTaskDeleteInput = typeof ScheduledTaskDeleteInput.Type;
 
