@@ -7141,6 +7141,14 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                                 Effect.catchTags({
                                   CodexAppServerProcessExitedError: () => Effect.succeed(true),
                                   CodexAppServerInputStreamEndedError: () => Effect.succeed(true),
+                                  // The native turn has ended (its command with it), or the
+                                  // thread was unloaded, which ends its work too.
+                                  CodexAppServerRequestError: (error) =>
+                                    Effect.succeed(
+                                      error.code === -32600 &&
+                                        (error.errorMessage.startsWith("no active turn") ||
+                                          error.errorMessage.startsWith("thread not found:")),
+                                    ),
                                 }),
                                 Effect.orElseSucceed(() => false),
                               ),

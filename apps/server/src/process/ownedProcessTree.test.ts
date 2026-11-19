@@ -433,6 +433,47 @@ describe("OwnedProcessTree.end", () => {
     expect(fake.calls).toEqual(["kill 201"]);
   });
 
+  it("keeps the first Windows reading that caught the CLI, though it exited before it returned", async () => {
+    const spawned = 1_800_000_000_000;
+    const created = BigInt(filetimeFromEpochMs(spawned)) + 10n;
+    const cli = win(200, 100, created, "claude.exe");
+    const tool = win(201, 200, created + 10n, "npm run build");
+    let exitedAt: number | null = null;
+    const fake = fakeHost("win32", [[cli, tool], [tool], []]);
+    const read = fake.host.readProcessList;
+    const tree = new OwnedProcessTree(
+      { pid: 200, spawnedAt: 0, alive: () => exitedAt === null, exitedAtEpochMs: () => exitedAt },
+      fake.host,
+    );
+    // No earlier reading knew the CLI; it exits as this one comes back.
+    Object.assign(fake.host, {
+      readProcessList: async (ms: number) => {
+        const table = await read(ms);
+        exitedAt = spawned + 5_000;
+        return table;
+      },
+    });
+    expect(await tree.remember(1_000, true)).toBe(true);
+    Object.assign(fake.host, { readProcessList: read });
+    expect(await tree.end()).toEqual({ found: 1, survivors: 0, unknown: false });
+    expect(fake.calls).toEqual(["kill 201"]);
+  });
+
+  it("never takes a process created after the CLI exited for the CLI", async () => {
+    const exitedAt = 1_800_000_000_000;
+    // pid 200 belongs to a newer process, created after the CLI exited.
+    const later = win(200, 1, BigInt(filetimeFromEpochMs(exitedAt + 50)), "newer");
+    const child = win(201, 200, BigInt(filetimeFromEpochMs(exitedAt + 60)), "its child");
+    const fake = fakeHost("win32", [[later, child]]);
+    const tree = new OwnedProcessTree(
+      { pid: 200, spawnedAt: 0, alive: () => false, exitedAtEpochMs: () => exitedAt },
+      fake.host,
+    );
+    expect(await tree.remember(1_000, true)).toBe(false);
+    expect((await tree.end()).found).toBe(0);
+    expect(fake.calls).toEqual([]);
+  });
+
   it("stays unconfirmed when a Windows child of the tree is listed without its start", async () => {
     const t = (n: number) => 1_000_000n + BigInt(n) * 10n;
     const cli = win(200, 100, t(10), "claude.exe");

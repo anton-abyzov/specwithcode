@@ -104,6 +104,25 @@ export interface OwnedRoot {
   readonly spawnedAt: number;
   /** Whether the CLI has not exited yet; while it has not, its pid is still its own. */
   readonly alive: () => boolean;
+  /**
+   * Wall-clock time (epoch ms) this server saw the CLI exit, or null while it runs. A row
+   * with the CLI's pid created before then is the CLI: nothing else could hold its pid from
+   * the spawn until its exit, and a process holding it before the spawn would have kept it.
+   */
+  readonly exitedAtEpochMs?: () => number | null;
+}
+
+/**
+ * Whether `row` (with the root's pid) is the CLI: while the CLI runs, as the identity an
+ * earlier reading recorded, or created before the CLI's exit (the reading caught the CLI
+ * itself, though it exited before the rows came back).
+ */
+function rowIsRoot(row: ProcessEntry, root: OwnedRoot, known: Known | undefined): boolean {
+  if (!/^\d+$/u.test(row.started)) return false;
+  if (known !== undefined) return known.entry.started === row.started;
+  if (root.alive()) return true;
+  const exitedAt = root.exitedAtEpochMs?.() ?? null;
+  return exitedAt !== null && BigInt(row.started) <= BigInt(filetimeFromEpochMs(exitedAt + 1));
 }
 
 interface Known {
@@ -148,11 +167,7 @@ export function windowsTree(
   // identified (same pid and creation time): the reading caught it alive, so what it lists
   // as its children are, even if the CLI exited before the reading came back.
   const rootKnown = remembered.get(root.pid);
-  if (
-    rootRow !== undefined &&
-    rootRow.started.length > 0 &&
-    (root.alive() || rootKnown?.entry.started === rootRow.started)
-  ) {
+  if (rootRow !== undefined && rowIsRoot(rootRow, root, rootKnown)) {
     add(
       rootRow,
       rootKnown?.entry.started === rootRow.started ? rootKnown.created : BigInt(rootRow.started),
@@ -345,9 +360,7 @@ export class OwnedProcessTree {
    */
   private listsRoot(table: ReadonlyArray<ProcessEntry>): boolean {
     const row = table.find((entry) => entry.pid === this.root.pid);
-    if (row === undefined) return false;
-    const known = this.remembered.get(this.root.pid);
-    return known === undefined ? this.root.alive() : known.entry.started === row.started;
+    return row !== undefined && rowIsRoot(row, this.root, this.remembered.get(this.root.pid));
   }
 
   end(deadlineMs = 8_000): Promise<TreeEndResult> {
@@ -738,14 +751,17 @@ export function spawnOwnedProcess(
     // The CLI's stderr closed with it; nothing to keep.
   });
   let exited = false;
+  let exitedAtEpochMs: number | null = null;
   child.once("exit", () => {
     exited = true;
+    exitedAtEpochMs = Date.now();
   });
   const tree = new OwnedProcessTree(
     {
       pid: child.pid ?? 0,
       spawnedAt,
       alive: () => !exited && child.pid !== undefined && child.exitCode === null,
+      exitedAtEpochMs: () => exitedAtEpochMs,
     },
     host,
   );
