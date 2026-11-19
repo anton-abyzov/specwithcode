@@ -150,7 +150,7 @@ for (const theme of ["light", "dark"]) {
     await page.getByText("Let threads ask a stronger model", { exact: true }).waitFor();
     await expectText(page, `app ${at}`, [
       ...SECTION_ROWS,
-      "Fable 5.2, then the Review track",
+      "The Complex track",
       "This machine: Build Mac",
     ]);
     for (const [label, value] of [

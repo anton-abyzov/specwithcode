@@ -1,25 +1,35 @@
 /**
  * The thread's own rows in the composer's options menu, each with Follow
  * project (the project's setting shown beside it), On and Off:
- * - Advisor: whether this thread may consult a stronger model;
+ * - Advisor: whether this thread may consult a stronger model, and which
+ *   model would answer it;
  * - Adversarial review: whether a finished feature on this thread gets a
  *   review by a model from another family.
  * Each row has an info button with what it costs in time.
  */
+import { advisorConsultView } from "@specweave-studio/client-runtime/work-log/presentation";
 import type {
   AdversarialReviewSettings,
   AdvisorSettings,
+  ModelSelection,
+  OrchestrationV2ProjectedTurnItem,
   ScopedThreadRef,
+  ServerProvider,
   ThreadAdvisorMode,
   ThreadReviewMode,
 } from "@specweave-studio/contracts";
 import { threadReviewState } from "@specweave-studio/shared/adversarialReview";
-import { threadAdvisorState } from "@specweave-studio/shared/advisor";
+import {
+  threadAdvisorPreview,
+  threadAdvisorState,
+  type ThreadAdvisorPreview,
+} from "@specweave-studio/shared/advisor";
+import { resolveSelectableModel } from "@specweave-studio/shared/model";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import { InfoIcon } from "lucide-react";
 
 import { useTx } from "../../i18n";
-import { useThreadShell } from "../../state/entities";
+import { useThreadShell, useThreadVisibleTurnItems } from "../../state/entities";
 import { useEnvironment } from "../../state/environments";
 import { threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
@@ -68,6 +78,103 @@ export function threadAdvisorMenuState(
     enabled: threadAdvisorState(mode, projectSettings).enabled,
     projectEnabled: projectSettings.enabled,
   };
+}
+
+/** What the Advisor row says under its choices about who answers. */
+export type ThreadAdvisorNote =
+  | {
+      readonly kind: "advisor";
+      readonly model: string;
+      readonly sameModel: boolean;
+      /** Who answers a thread past `limit` tokens, when that is another model. */
+      readonly pastLimit: string | null;
+      readonly limit: number;
+    }
+  | { readonly kind: "none" }
+  /** The app passed no advisor, and Claude's own setting answered with `model`. */
+  | { readonly kind: "pass-through"; readonly model: string };
+
+function selectionName(
+  selection: ModelSelection,
+  providers: ReadonlyArray<ServerProvider>,
+): string {
+  const provider = providers.find((entry) => entry.instanceId === selection.instanceId);
+  return provider?.models.find((model) => model.slug === selection.model)?.name ?? selection.model;
+}
+
+/** The model that last answered as Claude's own advisor on this thread, by its display name. */
+export function latestBuiltInAdvisor(
+  items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  providers: ReadonlyArray<ServerProvider>,
+): string | null {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const view = advisorConsultView(items[index]!.item);
+    if (view === null || !view.builtIn || view.advisor === null) continue;
+    // Named by its slug, as the timeline's consult row looks it up.
+    const slug = view.advisor;
+    for (const provider of [
+      ...providers.filter((entry) => entry.driver === "claudeAgent"),
+      ...providers.filter((entry) => entry.driver !== "claudeAgent"),
+    ]) {
+      const resolved = resolveSelectableModel(provider.driver, slug, provider.models);
+      const name = provider.models.find((model) => model.slug === resolved)?.name;
+      if (name !== undefined) return name;
+    }
+    return slug;
+  }
+  return null;
+}
+
+/**
+ * The Advisor row's note: the model that would answer the next consult when
+ * the advisor is on, and in pass-through the model Claude's own setting
+ * answered with. Off says nothing: the thread consults no one.
+ */
+export function threadAdvisorNote(input: {
+  readonly state: ThreadAdvisorMenuState;
+  readonly preview: ThreadAdvisorPreview;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly limit: number;
+  readonly passThroughModel: string | null;
+}): ThreadAdvisorNote | null {
+  if (input.state.enabled) {
+    const { advisor, sameModel, pastLimit } = input.preview;
+    if (advisor === null) return { kind: "none" };
+    return {
+      kind: "advisor",
+      model: selectionName(advisor, input.providers),
+      sameModel,
+      pastLimit: pastLimit === null ? null : selectionName(pastLimit, input.providers),
+      limit: input.limit,
+    };
+  }
+  if (input.state.choice === "off" || input.passThroughModel === null) return null;
+  return { kind: "pass-through", model: input.passThroughModel };
+}
+
+function ThreadAdvisorNoteLines(props: { readonly note: ThreadAdvisorNote }) {
+  const tx = useTx();
+  const { note } = props;
+  const lines =
+    note.kind === "none"
+      ? [tx("No model can advise this thread right now.")]
+      : note.kind === "pass-through"
+        ? [tx("Claude's own advisor setting answered here: {model}", { model: note.model })]
+        : [
+            note.sameModel
+              ? tx("Advisor: {model}, same model as this thread", { model: note.model })
+              : tx("Advisor: {model}", { model: note.model }),
+            ...(note.pastLimit === null
+              ? []
+              : [tx("Past {limit} tokens: {model}", { limit: note.limit, model: note.pastLimit })]),
+          ];
+  return (
+    <div className="px-2 pt-0.5 pb-1.5 text-muted-foreground text-xs" data-thread-advisor-note={note.kind}>
+      {lines.map((line) => (
+        <div key={line}>{line}</div>
+      ))}
+    </div>
+  );
 }
 
 export interface ThreadReviewMenuState {
@@ -166,6 +273,7 @@ function ThreadChoiceItems(props: {
 /** The Advisor group's three choices, for a thread whose state is already read. */
 export function ThreadAdvisorMenuItems(props: {
   readonly state: ThreadAdvisorMenuState;
+  readonly note?: ThreadAdvisorNote | null;
   readonly separated: boolean;
   readonly onChoose: (mode: ThreadAdvisorMode | null) => void;
 }) {
@@ -180,6 +288,7 @@ export function ThreadAdvisorMenuItems(props: {
           description={tx("Lets this thread ask a stronger model to check its work.")}
         />
         <ThreadChoiceItems kind="advisor" state={props.state} onChoose={props.onChoose} />
+        {props.note ? <ThreadAdvisorNoteLines note={props.note} /> : null}
       </MenuGroup>
     </div>
   );
@@ -219,6 +328,7 @@ export function ThreadAdvisorMenu(props: {
   readonly separated: boolean;
 }) {
   const shell = useThreadShell(props.threadRef);
+  const turnItems = useThreadVisibleTurnItems(props.threadRef);
   const environment = useEnvironment(props.threadRef.environmentId);
   const setAdvisorMode = useOrchestrationCommand(threadEnvironment.setAdvisorMode);
   const setReviewMode = useOrchestrationCommand(threadEnvironment.setReviewMode);
@@ -237,11 +347,37 @@ export function ThreadAdvisorMenu(props: {
   });
   if (!showAdvisor && !showReview) return null;
   const projectSettings = resolveProjectSettings(settings, shell.projectId).settings;
+  const advisorState = threadAdvisorMenuState(shell.source.advisorMode, projectSettings.advisor);
+  const providers = config?.providers ?? [];
+  // The same rule the session uses, read when the menu opens; the context
+  // size is not read, so a long thread's model shows as its own line.
+  const note =
+    showAdvisor && shell.modelSelection != null
+      ? threadAdvisorNote({
+          state: advisorState,
+          preview: advisorState.enabled
+            ? threadAdvisorPreview({
+                providers,
+                model: projectSettings.advisor.model ?? null,
+                lanes: projectSettings.modelLanes,
+                sourceOrder: projectSettings.defaultModelProviders,
+                excludedModels: projectSettings.providerLimitExcludedModels,
+                thread: shell.modelSelection,
+                claudeBuiltIn: projectSettings.advisor.claudeBuiltIn,
+                nowMs: Date.now(),
+              })
+            : { advisor: null, sameModel: false, pastLimit: null },
+          providers,
+          limit: projectSettings.advisor.builtInContextLimit,
+          passThroughModel: advisorState.enabled ? null : latestBuiltInAdvisor(turnItems, providers),
+        })
+      : null;
   return (
     <>
       {showAdvisor ? (
         <ThreadAdvisorMenuItems
-          state={threadAdvisorMenuState(shell.source.advisorMode, projectSettings.advisor)}
+          state={advisorState}
+          note={note}
           separated={props.separated}
           onChoose={(advisorMode) => {
             void setAdvisorMode({

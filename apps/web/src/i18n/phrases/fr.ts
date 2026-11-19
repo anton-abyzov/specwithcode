@@ -5148,7 +5148,12 @@ export const fr: PhraseCatalog = {
     "Un fil n'est jamais conseillé par son propre modèle ; le modèle suivant dans l'ordre répond à sa place.",
   "advisor model": "modèle conseiller",
   "Use the default advisor order": "Utiliser l'ordre des conseillers par défaut",
-  "Fable 5.2, then the Review track": "Fable 5.2, puis la piste Review",
+  "The Complex track": "La piste Complex",
+  "Advisor: {model}": "Advisor : {model}",
+  "Advisor: {model}, same model as this thread": "Advisor : {model}, le même modèle que ce fil",
+  "Past {limit} tokens: {model}": "Au-delà de {limit} tokens : {model}",
+  "No model can advise this thread right now.": "Aucun modèle ne peut conseiller ce fil pour le moment.",
+  "Claude's own advisor setting answered here: {model}": "Ici, le réglage d’advisor propre à Claude a répondu : {model}",
   "On Claude threads, Claude's built-in advisor reads the whole conversation on each consult. A Fable advisor is billed to Claude usage credits.":
     "Dans les fils Claude, le conseiller intégré de Claude relit toute la conversation à chaque consultation. Un conseiller Fable est facturé sur les crédits d'usage Claude.",
   "Claude's own advisor": "conseiller propre à Claude",

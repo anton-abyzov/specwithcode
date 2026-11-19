@@ -44,7 +44,7 @@ import { ADVISOR_TIME_NOTE, SLOWER_WORK_NOTE_LABEL } from "./slowerWorkNotes";
 import { useRunScopedPlan, useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
 /** What an unset advisor model resolves to: the built-in order. */
-export const ADVISOR_DEFAULT_MODEL_LABEL = "Fable 5.2, then the Review track";
+export const ADVISOR_DEFAULT_MODEL_LABEL = "The Complex track";
 
 /**
  * The unset picker shows a label and no provider mark, so it gets the bordered

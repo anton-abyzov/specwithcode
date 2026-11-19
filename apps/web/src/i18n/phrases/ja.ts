@@ -5103,7 +5103,12 @@ export const ja: PhraseCatalog = {
     "スレッドが自分と同じモデルから助言を受けることはありません。代わりに順序の次のモデルが答えます。",
   "advisor model": "アドバイザーモデル",
   "Use the default advisor order": "既定のアドバイザー順序を使う",
-  "Fable 5.2, then the Review track": "Fable 5.2、次に Review トラック",
+  "The Complex track": "Complex トラック",
+  "Advisor: {model}": "Advisor: {model}",
+  "Advisor: {model}, same model as this thread": "Advisor: {model}（このスレッドと同じモデル）",
+  "Past {limit} tokens: {model}": "{limit} トークン超: {model}",
+  "No model can advise this thread right now.": "今このスレッドに助言できるモデルはありません。",
+  "Claude's own advisor setting answered here: {model}": "ここでは Claude 自身の advisor 設定が回答しました: {model}",
   "On Claude threads, Claude's built-in advisor reads the whole conversation on each consult. A Fable advisor is billed to Claude usage credits.":
     "Claude のスレッドでは、Claude に組み込まれたアドバイザーが相談のたびに会話全体を読み直します。Fable のアドバイザーは Claude の使用クレジットに請求されます。",
   "Claude's own advisor": "Claude 自身のアドバイザー",
