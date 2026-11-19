@@ -881,3 +881,16 @@ describe("calm picker search", () => {
     expect(container.querySelector("[data-model-row][data-effort]")).toBeNull();
   });
 });
+
+describe("model picker width", () => {
+  it("takes the popup's width instead of a wider cap of its own", async () => {
+    await mount();
+    const picker = container.querySelector<HTMLElement>("[data-model-picker-content]")!;
+    const classes = [...picker.classList];
+    // Asks for the window and lets the popover's cap (32rem, the window less 2rem) decide;
+    // a rem or vw cap here could exceed the popup and be clipped under its frame.
+    expect(classes).toContain("w-screen");
+    expect(classes).toContain("max-w-full");
+    expect(classes.filter((name) => /^max-w-\[|^w-\[|^min-w-\[/.test(name))).toEqual([]);
+  });
+});

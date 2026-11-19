@@ -655,10 +655,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             >
               {isUsageOpen ? (
                 showingAllLimits && props.secondaryView ? (
-                  <div
-                    className="w-screen max-w-[min(26rem,calc(100vw-1.5rem))] p-3"
-                    data-sws-picker=""
-                  >
+                  <div className="w-screen max-w-[min(26rem,100%)] p-3" data-sws-picker="">
                     {props.secondaryView.render({
                       back: () => {
                         setIsUsageOpen(false);
@@ -670,10 +667,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                   </div>
                 ) : usage && triggerEntry ? (
                   // This session's account first: its windows and when each resets.
-                  <div
-                    className="w-screen max-w-[min(22rem,calc(100vw-1.5rem))]"
-                    data-sws-picker=""
-                  >
+                  <div className="w-screen max-w-[min(22rem,100%)]" data-sws-picker="">
                     <ModelPickerUsageBand entry={triggerEntry} usage={usage} />
                     {props.secondaryView ? (
                       <button
@@ -737,7 +731,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           })
         ) : showingSecondary && props.secondaryView ? (
           <div
-            className="w-screen max-w-[min(26rem,calc(100vw-1.5rem))] p-3"
+            className="w-screen max-w-[min(26rem,100%)] p-3"
             data-model-picker-secondary=""
             data-sws-picker=""
           >
