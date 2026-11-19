@@ -186,6 +186,36 @@ it("shows a single primary non-Git machine and a connection path with one host s
   expect(runtime.scratch).not.toHaveBeenCalled();
 });
 
+it("keeps a chat a chat on another machine, without asking for a project", async () => {
+  const chatProject = ProjectId.make("scratch-m4");
+  useComposerDraftStore.setState(useComposerDraftStore.getInitialState(), true);
+  useComposerDraftStore
+    .getState()
+    .setLogicalProjectDraftThreadId("/scratch/m4", scopeProjectRef(m4, chatProject), draftId, {});
+  runtime.projects = [
+    { id: chatProject, environmentId: m4, title: "No project", workspaceRoot: "/scratch/m4" },
+    { id: projectId, environmentId: m1, title: "data", workspaceRoot: "/m1/data" },
+  ];
+  runtime.scratch.mockResolvedValue({
+    id: ProjectId.make("scratch-m1"),
+    environmentId: m1,
+    title: "No project",
+    workspaceRoot: "/scratch/m1",
+  });
+  await render();
+  await open();
+  await click("M1Connected");
+  expect(runtime.scratch).toHaveBeenCalledExactlyOnceWith(m1, "Could not switch machine");
+  expect(document.body.textContent).not.toContain("Project on");
+  expect(useComposerDraftStore.getState().getDraftSession(draftId)).toMatchObject({
+    environmentId: m1,
+    projectId: ProjectId.make("scratch-m1"),
+    envMode: "local",
+    worktreePath: null,
+  });
+  expect(runtime.coordinator).not.toHaveBeenCalled();
+});
+
 it("requires an explicit No project choice when the destination lacks a matching project", async () => {
   useComposerDraftStore.getState().setDraftThreadContext(draftId, {
     envMode: "worktree",
