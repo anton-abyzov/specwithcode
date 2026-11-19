@@ -5400,8 +5400,8 @@ export const fr: PhraseCatalog = {
   "{label} joined": "{label} a rejoint",
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine} n’accepte plus cet appareil. Approuvez-le à nouveau dans SpecWithCode sur {machine}.",
-  "Allow lets it use terminals, files, settings and sign-ins on {machine} and start work there, as this app can.":
-    "Autoriser lui permet d’utiliser les terminaux, les fichiers, les réglages et les connexions sur {machine} et d’y lancer du travail, comme cette app.",
+  "Allow lets that device's SpecWithCode app open {machine} and do what this app can here: chats, terminals, files, settings and sign-ins. Letting another machine's agents run work here is a separate choice.":
+    "Autoriser permet à l’app SpecWithCode de cet appareil d’ouvrir {machine} et d’y faire ce que cette app peut faire : chats, terminaux, fichiers, réglages et connexions. Laisser les agents d’une autre machine travailler ici est un choix à part.",
   "Asked at {time}": "Demandé à {time}",
   "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.":
     "Le nom est celui que l’appareil se donne. Seul le code prouve que c’est l’appareil devant vous, alors n’autorisez qu’un code que vous lisez dessus.",

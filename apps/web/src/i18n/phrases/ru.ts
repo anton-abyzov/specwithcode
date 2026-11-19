@@ -5353,8 +5353,8 @@ export const ru: PhraseCatalog = {
   "{label} joined": "Подключено: {label}",
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine} больше не пускает это устройство. Одобрите его снова в SpecWithCode на {machine}.",
-  "Allow lets it use terminals, files, settings and sign-ins on {machine} and start work there, as this app can.":
-    "«Разрешить» даёт ему терминалы, файлы, настройки и входы в аккаунты на {machine}, а также запуск работы там, так же как это приложение.",
+  "Allow lets that device's SpecWithCode app open {machine} and do what this app can here: chats, terminals, files, settings and sign-ins. Letting another machine's agents run work here is a separate choice.":
+    "«Разрешить» даёт приложению SpecWithCode на этом устройстве открыть {machine} и делать здесь то же, что это приложение: чаты, терминалы, файлы, настройки и входы в аккаунты. Пускать ли сюда агентов другой машины, решается отдельно.",
   "Asked at {time}": "Запрос в {time}",
   "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.":
     "Имя устройство выбирает само. Доказывает, что это устройство перед вами, только код, поэтому разрешайте лишь код, который видите на нём.",

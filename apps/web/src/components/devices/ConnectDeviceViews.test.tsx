@@ -220,6 +220,13 @@ describe("the approval pop-up with several devices (1406)", () => {
     );
   });
 
+  it("says what Allow opens, apart from another machine's agents (1422)", async () => {
+    await open([first]);
+    expect(prompt()!.querySelector("[data-device-approval-grants]")!.textContent).toBe(
+      "Allow lets that device's SpecWithCode app open m4 and do what this app can here: chats, terminals, files, settings and sign-ins. Letting another machine's agents run work here is a separate choice.",
+    );
+  });
+
   it("renders a machine that sends no ID yet without one", async () => {
     await open([phone("request-old", undefined, first.askedAt)]);
     expect(rows()[0]!.text).not.toContain("ID");
