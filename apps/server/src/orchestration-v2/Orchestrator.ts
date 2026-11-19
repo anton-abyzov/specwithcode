@@ -1894,7 +1894,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       } as const;
     });
 
-  const startNextQueuedRun = (threadId: ThreadId, options?: { readonly failedRunId?: RunId }) =>
+  const startNextQueuedRun = (
+    threadId: ThreadId,
+    options?: {
+      readonly failedRunId?: RunId;
+      /** A person's Resume: the next run starts once even after a failed-run streak. */
+      readonly personResumed?: boolean;
+    },
+  ) =>
     Effect.gen(function* () {
       // An update hold keeps the queue where it is; the drain cancels it. A
       // queue left after the hold ends starts then.
@@ -2008,10 +2015,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         failedRun.userMessageId.startsWith(`${CONTEXT_COMPACT_MESSAGE_PREFIX}${threadId}:`);
       // A routine fire or provider retry queued before the streak began would
       // start as the thread's next failure; it waits for a person like a
-      // dispatched one is refused (RunFailureBreaker). A run whose hold was
-      // released (queueHeld false: the person's Resume) starts: they chose to.
+      // dispatched one is refused (RunFailureBreaker). A person's Resume
+      // starts this one run; an automatic release of the hold does not count.
       const breakerHolds =
-        nextRun.queueHeld !== false &&
+        options?.personResumed !== true &&
         failedRunBreakerRefusal(
           isBreakerGuardedQueuedMessage(
             nextRun.userMessageId,
@@ -13427,7 +13434,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
       if (command.type === "queue.resume" || command.type === "queued-message.steer-settle") {
-        yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
+        yield* mapDispatchError(command)(
+          startNextQueuedRun(command.threadId, {
+            personResumed: command.type === "queue.resume",
+          }),
+        );
       }
       return {
         sequence: receipt.resultSequence,
@@ -13595,7 +13606,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     if (command.type === "queue.resume" || command.type === "queued-message.steer-settle") {
-      yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
+      yield* mapDispatchError(command)(
+        startNextQueuedRun(command.threadId, { personResumed: command.type === "queue.resume" }),
+      );
     }
     if (command.type === "notification.delivery.accept") {
       yield* mapDispatchError(command)(offerDelegatedCompletionDeliveries(command.threadId));

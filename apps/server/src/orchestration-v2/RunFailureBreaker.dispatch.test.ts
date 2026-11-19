@@ -234,6 +234,65 @@ it.effect(
       const person = runs.find((run) => run.userMessageId === `message:${threadId}:person`)!;
       assert.equal(person.status, "queued");
       assert.notEqual(person.queueHeld, true);
+      // The resumed fire fails too; the person's message behind it still starts.
+      const sink = yield* EventSink.EventSinkV2;
+      const started = yield* sink
+        .stream({ afterSequence: yield* sink.latestSequence(), eventType: "run.updated" })
+        .pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "run.updated" &&
+              stored.event.payload.id === person.id &&
+              stored.event.payload.status === "starting",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+      yield* finish(threadId, resumed, "failed");
+      yield* Fiber.join(started);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  30_000,
+);
+
+it.effect(
+  "holds the fire again when its hold is released by anything but a person's Resume",
+  () =>
+    Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const { threadId, fire } = yield* fireQueuedBehindThirdRun("breaker-auto-release", "failed");
+      assert.equal(fire.queueHeld, true);
+      const heldAgain = yield* sink
+        .stream({ afterSequence: yield* sink.latestSequence(), eventType: "run.updated" })
+        .pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "run.updated" &&
+              stored.event.payload.id === fire.id &&
+              (stored.event.payload.status === "starting" ||
+                stored.event.payload.queueHeld === true),
+          ),
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+      const now = yield* DateTime.now;
+      yield* sink.write({
+        commandId: CommandId.make(`auto-release:${fire.id}`),
+        events: [
+          {
+            id: EventId.make(`auto-release:${fire.id}`),
+            type: "run.updated" as const,
+            threadId,
+            runId: fire.id,
+            occurredAt: now,
+            payload: { ...fire, queueHeld: false },
+          },
+        ],
+      });
+      const [event] = yield* Fiber.join(heldAgain);
+      const payload = event?.event.type === "run.updated" ? event.event.payload : undefined;
+      assert.equal(payload?.status, "queued");
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   30_000,
 );

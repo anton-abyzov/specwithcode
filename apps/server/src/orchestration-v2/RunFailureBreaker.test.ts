@@ -57,11 +57,11 @@ it("guards routine fires and provider-open retries, not limit recovery or people
 });
 
 it("lets a person's Run now of a routine through, judged after the task id", () => {
-  const fire = (messageId: string, scheduledTaskId: string | undefined = "task:manual") => ({
+  const fire = (messageId: string, scheduledTaskId: string | null = "task:manual") => ({
     commandId: "scheduled-task:x",
     messageId,
     creationSource: "server",
-    scheduledTaskId,
+    ...(scheduledTaskId === null ? {} : { scheduledTaskId }),
   });
   const id = (key: string) => `scheduled-task-message:task:manual:${key}`;
   assert.isFalse(isBreakerGuardedRun(fire(id("manual:command:abc"))));
@@ -70,7 +70,7 @@ it("lets a person's Run now of a routine through, judged after the task id", () 
   assert.isTrue(isBreakerGuardedRun(fire(id("2026-11-19T06:00:00Z:scheduled"))));
   assert.isTrue(isBreakerGuardedRun(fire(id("webhook:delivery-1"))));
   // Without the task id nothing can be read as Run now.
-  assert.isTrue(isBreakerGuardedRun(fire(id("manual:command:abc"), undefined)));
+  assert.isTrue(isBreakerGuardedRun(fire(id("manual:command:abc"), null)));
 });
 
 it("judges a queued run by its message id and task", () => {
