@@ -81,7 +81,16 @@ function withWindow(
     models: [{ slug: model, name: model, isCustom: false, isDefault: true, capabilities: null }],
     usageLimits: {
       ...base.usageLimits!,
-      windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent, resetsAt }],
+      // An empty reset stands for a window that reports no reset time.
+      windows: [
+        {
+          id: "five_hour",
+          kind: "session",
+          label: "Session",
+          usedPercent,
+          ...(resetsAt === "" ? {} : { resetsAt }),
+        },
+      ],
     },
   };
 }
@@ -430,7 +439,7 @@ describe("the idle move before the limit, from the sweep (1089)", () => {
 
   it.effect("gives each window with no reset time its own move", () =>
     Effect.gen(function* () {
-      const state = world({ claudeResetAt: undefined as never });
+      const state = world({ claudeResetAt: "" });
       const open = `limit-preswitch:t1:${claudeId}:open`;
       yield* sweeps(state, (sweep) =>
         Effect.gen(function* () {
