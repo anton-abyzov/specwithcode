@@ -1957,7 +1957,8 @@ export const layer = Layer.effect(
       // A routine this machine runs, moves or rests for its runner is never rewritten by a replica.
       heldByRunner: (id) =>
         runnerRef.current === null ? Effect.succeed(false) : runnerRef.current.heldFromReplica(id),
-      restsAt: (to) => runnerRef.current?.restsAt(to) ?? Effect.succeed(new Set<string>()),
+      restsAt: (to, handover) =>
+        runnerRef.current?.restsAt(to, handover) ?? Effect.succeed(new Set<string>()),
     }).pipe(Effect.provideService(SqlClient.SqlClient, sql));
 
     const webhooks = yield* makeWebhookTrigger({
@@ -2007,9 +2008,21 @@ export const layer = Layer.effect(
     const pace = (yield* RoutineRunnerPace).everyMs;
     if (pace !== null) beforeDuePass.look = yield* runner.pacedLook(pace);
 
+    /** The rows and what each is to its runner, in one read: a row never shows with another's hash. */
+    const shown = () =>
+      runner.records
+        .atomically(list().pipe(Effect.flatMap(runner.decorate)))
+        .pipe(
+          Effect.mapError((cause) =>
+            cause._tag === "SqlError"
+              ? taskError("Could not list schedule tasks.", { cause })
+              : cause,
+          ),
+        );
     return ScheduledTaskService.of({
-      list: () => list().pipe(Effect.flatMap(runner.decorate)),
-      subscribeList: () => subscribeList().pipe(Stream.mapEffect(runner.decorate)),
+      list: shown,
+      // Each change is read again, whole: the rows it carried were read before their records.
+      subscribeList: () => subscribeList().pipe(Stream.mapEffect(shown)),
       upsert: (input, options) => runner.guardUpsert(input, upsert(input, options)),
       setEnabled: (input) => runner.guardSetEnabled(input, setEnabled(input)),
       delete: (input) => runner.guardDelete(input, deleteTask(input)),

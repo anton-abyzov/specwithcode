@@ -26,7 +26,9 @@ import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
+import { Tooltip, TooltipPopup } from "../ui/tooltip";
 import { useQuestionCardCollapsed } from "./questionCardCollapse";
+import { useQuestionOptionsLayout } from "./questionOptionsLayout";
 import {
   deriveQuestionStep,
   presentQuestionOption,
@@ -168,9 +170,27 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     setThreadCollapsed !== null
       ? threadCollapsed
       : collapsedQuestionId !== null && collapsedQuestionId === activeQuestion?.id;
-  // Options show one line each. Hover (after a short pause), keyboard focus or
-  // the details toggle opens one to its full description.
+  // With room for every description, each option shows its description in
+  // full, so the card never moves under the pointer. On a panel too short for
+  // that, options show one line each, and hover (after a short pause),
+  // keyboard focus or the details toggle opens one to its full description.
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const optionsLayout = useQuestionOptionsLayout(
+    cardRef,
+    isCollapsed,
+    [
+      prompt.requestId,
+      activeQuestion?.id ?? "",
+      activeQuestion?.question ?? "",
+      ...(activeQuestion?.options ?? []).map(
+        (option) => `${option.label}\u0001${option.description ?? ""}`,
+      ),
+    ].join("\u0000"),
+  );
+  const compactOptions = optionsLayout === "compact";
   const [hoveredOptionKey, setHoveredOptionKey] = useState<string | null>(null);
+  // The clipped description under the pointer, which the tooltip points at.
+  const [hoveredDescription, setHoveredDescription] = useState<HTMLElement | null>(null);
   const [focusedOptionKey, setFocusedOptionKey] = useState<string | null>(null);
   const [pinnedOptionKeys, setPinnedOptionKeys] = useState<ReadonlySet<string>>(
     () => new Set<string>(),
@@ -503,8 +523,10 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             this card's header take the rest of that share. */}
         <ComposerBanner.Scroll className="max-h-[clamp(6rem,calc(var(--chat-panel-height,100dvh)*0.4_-_4.5rem),22rem)]">
           <div
+            ref={cardRef}
             className="px-2 pt-1 pb-1.5 wrap-anywhere sm:px-3"
             data-question-card
+            data-question-options={optionsLayout}
             data-question-card-request={prompt.requestId}
           >
             <div className="text-sm leading-snug font-medium text-foreground">
@@ -544,8 +566,14 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                 const hasDescription = Boolean(presented.description);
                 const pinned = pinnedOptionKeys.has(optionKey);
                 const expanded =
-                  hasDescription &&
-                  (pinned || hoveredOptionKey === optionKey || focusedOptionKey === optionKey);
+                  hasDescription && (!compactOptions || pinned || focusedOptionKey === optionKey);
+                // Hover never resizes a row: a clipped description shows in a
+                // tooltip instead, so nothing under the pointer moves.
+                const showDescriptionTip =
+                  compactOptions &&
+                  !expanded &&
+                  hoveredOptionKey === optionKey &&
+                  hoveredDescription !== null;
                 return (
                   // A div, not a button: descriptions may hold links, which
                   // cannot nest inside a button and must not pick the option.
@@ -560,14 +588,24 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                     data-recommended={presented.recommended ? "true" : undefined}
                     data-expanded={expanded ? "true" : "false"}
                     onPointerEnter={(event) => {
-                      if (event.pointerType !== "mouse" || !hasDescription) return;
+                      if (event.pointerType !== "mouse" || !hasDescription || !compactOptions) {
+                        return;
+                      }
                       clearHoverTimer();
+                      const row = event.currentTarget;
                       // A short pause, so sweeping the pointer across the list
-                      // does not open every row on the way.
+                      // does not open a tooltip for every row on the way.
                       hoverTimerRef.current = window.setTimeout(() => {
                         hoverTimerRef.current = null;
-                        setHoveredOptionKey(optionKey);
-                      }, 180);
+                        const description = row.querySelector<HTMLElement>(
+                          "[data-question-option-description]",
+                        );
+                        // Only a clipped description needs its full text shown.
+                        if (description && description.scrollWidth > description.clientWidth + 1) {
+                          setHoveredDescription(description);
+                          setHoveredOptionKey(optionKey);
+                        }
+                      }, 350);
                     }}
                     onPointerLeave={() => {
                       clearHoverTimer();
@@ -581,7 +619,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                         event.target === event.currentTarget &&
                         event.currentTarget.matches(":focus-visible")
                       ) {
-                        setFocusedOptionKey(optionKey);
+                        if (compactOptions) setFocusedOptionKey(optionKey);
                       }
                     }}
                     onBlur={(event) => {
@@ -657,14 +695,29 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                             expanded
                               ? "basis-full"
                               : // One line: the markdown's blocks flow inline and clip.
-                                "min-w-0 flex-1 truncate [&_*]:inline",
+                                // A link's icon keeps its box, or it grows to the line's width.
+                                "min-w-0 flex-1 truncate [&_:not([data-link-favicon],[data-link-favicon]_*)]:inline",
                           )}
                         >
                           {renderText(presented.description, "description")}
                         </div>
                       ) : null}
                     </div>
-                    {hasDescription ? (
+                    {showDescriptionTip && presented.description ? (
+                      // Mounted only while shown, pointing at the clipped text.
+                      <Tooltip open>
+                        <TooltipPopup
+                          anchor={hoveredDescription}
+                          side="top"
+                          align="start"
+                          className="max-w-96"
+                          data-question-option-tip={letter}
+                        >
+                          {renderText(presented.description, "description")}
+                        </TooltipPopup>
+                      </Tooltip>
+                    ) : null}
+                    {hasDescription && !compactOptions ? null : hasDescription ? (
                       // For touch, where there is no hover: shows or hides the
                       // full description without picking the option.
                       <button

@@ -12,6 +12,7 @@ import {
   type ScheduledTask,
   ScheduledTaskId,
   ThreadId,
+  type RuntimeMode,
 } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -90,6 +91,12 @@ export interface Machine {
      * between two reads of one pass.
      */
     beforeRevisionsRead: Effect.Effect<void> | null;
+    /**
+     * Runs once, just before this machine next reads every runner record: where
+     * a change lands between a list's read of the rows and its read of what
+     * each row is to its runner.
+     */
+    beforeRecordsRead: Effect.Effect<void> | null;
   };
   readonly sql: SqlClient.SqlClient;
   readonly service: Service.ScheduledTaskService["Service"];
@@ -137,6 +144,14 @@ export interface Network {
   before?: ((from: string, to: string, op: string) => Effect.Effect<void>) | undefined;
   /** Runs once the other machine acted on a request, before its answer is back. */
   during?: ((from: string, to: string, op: string) => Effect.Effect<void>) | undefined;
+  /** What `from`'s routines may do on `to`; absent, anything. */
+  ceiling?: ((from: string, to: string) => RuntimeMode) | undefined;
+  /**
+   * Machines that read a change and answer as 1.0.387 did: that tag's edit
+   * schema has `kind` and `routine` only, so what else a save carries is dropped
+   * on decode, and its answers name `routine-runner.v1` alone.
+   */
+  previous?: ReadonlySet<string> | undefined;
   /** Every request sent, as `from>to:op`. */
   readonly log: Array<string>;
 }
@@ -151,6 +166,20 @@ const grantFor = (source: EnvironmentId): EffectiveWorkGrant => ({
   routines: true,
   kind: "own",
 });
+
+/** A request as the 1.0.387 schema decodes it: a save is its `kind` and `routine`. */
+const asRead387 = (wire: unknown): unknown => {
+  const request = wire as { readonly op?: string; readonly edit?: Record<string, unknown> };
+  if (request.op !== "runner-edit" || request.edit?.kind !== "save") return wire;
+  return { ...request, edit: { kind: "save", routine: request.edit.routine } };
+};
+/** An answer as 1.0.387 gives it: the one capability that release names. */
+const asAnswered387 = (answer: unknown): unknown => {
+  const given = answer as { readonly capabilities?: ReadonlyArray<string> };
+  return given?.capabilities === undefined
+    ? answer
+    : { ...given, capabilities: given.capabilities.filter((name) => name === "routine-runner.v1") };
+};
 
 /**
  * `names` are the machines, in member order; each one's project is
@@ -178,9 +207,12 @@ export const fleet = (
       (self: EnvironmentId): AwayPeerPost =>
       (target, _path, body) =>
         Effect.gen(function* () {
-          const wire = overTheWire(body) as { readonly op?: string };
           const from = nameOf(self);
           const to = nameOf(target);
+          const previous = network.previous?.has(to) === true;
+          const wire = (previous ? asRead387(overTheWire(body)) : overTheWire(body)) as {
+            readonly op?: string;
+          };
           network.log.push(`${from}>${to}:${wire.op ?? "?"}`);
           if (network.before !== undefined) yield* network.before(from, to, wire.op ?? "?");
           const route = routes.get(target);
@@ -191,7 +223,11 @@ export const fleet = (
               uncertain: false,
             });
           const answered = yield* route(
-            { sourceEnvironmentId: self, grant: grantFor(self), runtimeCeiling: "full-access" },
+            {
+              sourceEnvironmentId: self,
+              grant: grantFor(self),
+              runtimeCeiling: network.ceiling?.(from, to) ?? "full-access",
+            },
             wire,
           ).pipe(Effect.result);
           if (network.during !== undefined) yield* network.during(from, to, wire.op ?? "?");
@@ -208,7 +244,10 @@ export const fleet = (
               uncertain: false,
               status: answered.failure.status,
             });
-          return { status: 200, json: overTheWire(answered.success) };
+          return {
+            status: 200,
+            json: overTheWire(previous ? asAnswered387(answered.success) : answered.success),
+          };
         });
 
     const machine = (name: string, index: number) =>
@@ -224,6 +263,7 @@ export const fleet = (
           listFails: false,
           unlinked: new Set(),
           beforeRevisionsRead: null,
+          beforeRecordsRead: null,
         };
         // The binding this copy's project row carries, as the release before wrote it.
         const binding = () =>
@@ -341,11 +381,20 @@ export const fleet = (
           apply: (target, self, args: Array<unknown>) => {
             const statement = Reflect.apply(target as never, self, args) as Effect.Effect<unknown>;
             const text = Array.isArray(args[0]) ? args[0].join("?") : "";
-            if (!/SELECT task_id, revision FROM scheduled_task_revisions\s*$/.test(text))
+            const records =
+              /FROM scheduled_task_runners r\s+LEFT JOIN scheduled_task_copy_definitions d ON d\.task_id = r\.task_id\s*$/.test(
+                text,
+              );
+            if (
+              !records &&
+              !/SELECT task_id, revision FROM scheduled_task_revisions\s*$/.test(text)
+            )
               return statement;
             return Effect.suspend(() => {
-              const hook = state.beforeRevisionsRead ?? Effect.void;
-              state.beforeRevisionsRead = null;
+              const hook =
+                (records ? state.beforeRecordsRead : state.beforeRevisionsRead) ?? Effect.void;
+              if (records) state.beforeRecordsRead = null;
+              else state.beforeRevisionsRead = null;
               return hook;
             }).pipe(Effect.andThen(statement));
           },
@@ -537,3 +586,15 @@ export const fleet = (
       fires: () => machines.reduce((sum, entry) => sum + entry.fires(), 0),
     };
   });
+
+/**
+ * What a row on `machine` sends with a toggle or a delete: the definition its
+ * list shows for the routine, where it shows one (a copy another machine runs).
+ */
+export const shownOn = (machine: Machine) =>
+  machine.service.list().pipe(
+    Effect.map((list) => {
+      const hash = list.tasks.find((task) => task.id === ROUTINE)?.definitionHash;
+      return hash === undefined ? {} : { expectedDefinition: hash };
+    }),
+  );

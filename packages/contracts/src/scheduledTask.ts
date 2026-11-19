@@ -353,7 +353,7 @@ const ScheduledTaskExpectedRevision = Schema.Int.check(Schema.isGreaterThanOrEqu
  * machine that only keeps a copy names the one it was made on, and the
  * routine's runner refuses the change unless it holds that definition now.
  */
-const ScheduledTaskDefinitionHash = Schema.String.check(Schema.isMaxLength(128));
+export const ScheduledTaskDefinitionHash = Schema.String.check(Schema.isMaxLength(128));
 
 export const ScheduledTask = Schema.Struct({
   id: ScheduledTaskId,

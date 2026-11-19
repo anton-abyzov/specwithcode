@@ -21,6 +21,7 @@ import {
   type Machine,
   ROUTINE,
   STANDBY,
+  shownOn,
 } from "./ScheduledTaskRunner.testkit.ts";
 import { routineCopyOf } from "./ScheduledTaskCopies.ts";
 import { taskInput } from "./ScheduledTaskService.coordinatorGate.testkit.ts";
@@ -146,7 +147,7 @@ it.effect(
       yield* alpha.seed();
       yield* beta.seed();
       yield* alpha.service.setEnabled({ id: ROUTINE, enabled: false });
-      yield* beta.service.setEnabled({ id: ROUTINE, enabled: false });
+      yield* beta.service.setEnabled({ id: ROUTINE, enabled: false, ...(yield* shownOn(beta)) });
       // Beta's claim leaves while alpha's is on its way.
       let crossed = false;
       network.before = (from, _to, op) =>
@@ -158,7 +159,7 @@ it.effect(
       assert.equal((yield* beta.record)?.state, "disarmed");
       assert.equal((yield* alpha.record)?.state, "settled");
       // A person can still turn it on, on either machine.
-      yield* beta.service.setEnabled({ id: ROUTINE, enabled: true });
+      yield* beta.service.setEnabled({ id: ROUTINE, enabled: true, ...(yield* shownOn(beta)) });
       assert.isTrue((yield* listed(alpha)).enabled);
     }),
 );
@@ -421,7 +422,7 @@ it.effect("T21-07: a copy whose row could not be deleted never fires", () =>
     yield* beta.seed();
     yield* settle(alpha);
     const heal = yield* beta.breakTable("scheduled_tasks", "DELETE");
-    yield* beta.service.delete({ id: ROUTINE }).pipe(Effect.result);
+    yield* beta.service.delete({ id: ROUTINE, ...(yield* shownOn(beta)) }).pipe(Effect.result);
     // Deleted on its runner; beta's own row is still there.
     assert.isUndefined(yield* alpha.row);
     assert.isDefined(yield* beta.row);

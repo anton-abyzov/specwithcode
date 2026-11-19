@@ -5940,4 +5940,9 @@ export const pt: PhraseCatalog = {
     "A revisão fica aqui: nenhum revisor permitido em {machine}",
   "Review stays here: update SpecWithCode on {machine}":
     "A revisão fica aqui: atualize o SpecWithCode em {machine}",
+  "Close. The code stays in Settings > Machines.":
+    "Fechar. O código continua em Configurações > Máquinas.",
+  "Waiting for {machine}": "Aguardando {machine}",
+  "Waiting for machines to allow this device": "Aguardando máquinas permitirem este dispositivo",
+  "Waiting to join": "Aguardando para entrar",
 };

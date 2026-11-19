@@ -38,6 +38,10 @@ const canonical = (value: unknown): unknown => {
   return out;
 };
 
+/** Whether two values of a definition are the same, however their keys are ordered. */
+export const sameValue = (left: unknown, right: unknown): boolean =>
+  stringifyJson(canonical({ value: left })) === stringifyJson(canonical({ value: right }));
+
 /** The same for the same definition on any machine, whatever its id, thread, project or run state. */
 export const definitionHashOf = (routine: Definition): string =>
   sha256([

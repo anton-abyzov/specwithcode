@@ -44,6 +44,12 @@ export class RoutineCopies extends Context.Service<
       readonly logicalProjectId: string;
       /** The machine the routines go to: each is sent as that machine must keep it. */
       readonly recipient: string;
+      /**
+       * The routines go with the coordinator role itself (a planned handover),
+       * not beside it: one whose runner here is not settled runs where the
+       * coordinator is, so the recipient gets it on (ScheduledTaskRunner).
+       */
+      readonly handover?: boolean | undefined;
     }) => Effect.Effect<RoutineCopiesSnapshot | null, ScheduledTaskError>;
     /**
      * Keeps `routines` as this copy's own: each saved under its id, and the
@@ -173,7 +179,10 @@ export interface RoutineCopiesDeps {
    * is sent, and would fire a copy sent on beside this machine. A failure
    * fails the snapshot: unknown is never sent as on.
    */
-  readonly restsAt?: (recipient: string) => Effect.Effect<ReadonlySet<string>, ScheduledTaskError>;
+  readonly restsAt?: (
+    recipient: string,
+    handover: boolean,
+  ) => Effect.Effect<ReadonlySet<string>, ScheduledTaskError>;
 }
 
 const decodeUpsert = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);
@@ -238,6 +247,7 @@ export const makeRoutineCopies = (deps: RoutineCopiesDeps) =>
       projectId,
       logicalProjectId,
       recipient,
+      handover,
     }) =>
       Effect.gen(function* () {
         // A caller that does not say who the routines are for gets none: which of
@@ -250,7 +260,7 @@ export const makeRoutineCopies = (deps: RoutineCopiesDeps) =>
         const resting =
           deps.restsAt === undefined
             ? new Set<string>()
-            : yield* deps.restsAt(recipient).pipe(Effect.retry({ times: 1 }));
+            : yield* deps.restsAt(recipient, handover === true).pipe(Effect.retry({ times: 1 }));
         const rests = [...resting].toSorted().join("\u0000");
         const key = `${projectId}\u0000${logicalProjectId}\u0000${recipient}`;
         const held = cached.get(key);

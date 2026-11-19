@@ -5991,4 +5991,10 @@ export const fr: PhraseCatalog = {
     "La revue reste ici : aucun réviseur autorisé sur {machine}",
   "Review stays here: update SpecWithCode on {machine}":
     "La revue reste ici : mettez à jour SpecWithCode sur {machine}",
+  "Close. The code stays in Settings > Machines.":
+    "Fermer. Le code reste dans Réglages > Machines.",
+  "Waiting for {machine}": "En attente de {machine}",
+  "Waiting for machines to allow this device":
+    "En attente que des machines autorisent cet appareil",
+  "Waiting to join": "En attente de connexion",
 };

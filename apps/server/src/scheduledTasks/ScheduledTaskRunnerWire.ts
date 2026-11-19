@@ -19,6 +19,13 @@ import * as Schema from "effect/Schema";
 
 /** A machine that says this keeps runner records and answers a repeated enable without acting twice. */
 export const ROUTINE_RUNNER_CAPABILITY = "routine-runner.v1";
+/**
+ * A runner that names this keeps its own value for each field a save lists in
+ * `kept`. One that does not reads a save as its routine alone and writes it whole.
+ */
+export const ROUTINE_RUNNER_KEEPS_CAPABILITY = "routine-runner.kept.v1";
+/** What this release answers with. */
+export const RUNNER_CAPABILITIES = [ROUTINE_RUNNER_CAPABILITY, ROUTINE_RUNNER_KEEPS_CAPABILITY];
 
 const bounded = (max: number) => Schema.String.check(Schema.isMaxLength(max));
 const OperationId = bounded(128).check(Schema.isMinLength(8));
@@ -35,7 +42,15 @@ export type TransferRunState = typeof TransferRunState.Type;
 
 /** A change to a routine, sent to its runner by a machine that only keeps a copy. */
 export const RoutineRunnerEdit = Schema.Union([
-  Schema.Struct({ kind: Schema.Literal("save"), routine: CoordinatorRoutineCopy }),
+  Schema.Struct({
+    kind: Schema.Literal("save"),
+    routine: CoordinatorRoutineCopy,
+    /**
+     * What the caller left as its copy showed it. A copy may show these under
+     * its own limits, so the runner keeps its own value for each, not the copy's.
+     */
+    kept: Schema.optional(Schema.Array(Schema.Literals(["runtimeMode", "modelSelection"]))),
+  }),
   Schema.Struct({ kind: Schema.Literal("enabled"), enabled: Schema.Boolean }),
   Schema.Struct({ kind: Schema.Literal("delete") }),
 ]);
@@ -195,6 +210,9 @@ export const refuseTransfer = (status: number, message: string) =>
 /** Whether an answer names the capability; anything else is a machine that cannot be a runner's peer. */
 export const affirmsRunner = (answer: Pick<RoutineRunnerResponse, "capabilities"> | null) =>
   answer !== null && answer.capabilities.includes(ROUTINE_RUNNER_CAPABILITY);
+/** Whether the runner that answered keeps the fields a save lists as unchanged. */
+export const keepsUnchanged = (answer: Pick<RoutineRunnerResponse, "capabilities"> | null) =>
+  affirmsRunner(answer) && answer!.capabilities.includes(ROUTINE_RUNNER_KEEPS_CAPABILITY);
 
 // --- the release before: stage, enable and release without an operation id -------------
 

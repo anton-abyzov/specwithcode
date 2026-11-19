@@ -29,6 +29,7 @@ import Migration0073 from "./Migrations/073_TeamRulesRecords.ts";
 import Migration0074 from "./Migrations/074_ShellReadIndexes.ts";
 import Migration0075 from "./Migrations/075_DevicePairingCreators.ts";
 import Migration0076 from "./Migrations/076_ScheduledTaskRunners.ts";
+import Migration0077 from "./Migrations/077_ScheduledTaskCopyDefinitions.ts";
 
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -182,6 +183,7 @@ export const migrationEntries = [
   [74, "ShellReadIndexes", Migration0074],
   [75, "DevicePairingCreators", Migration0075],
   [76, "ScheduledTaskRunners", Migration0076],
+  [77, "ScheduledTaskCopyDefinitions", Migration0077],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

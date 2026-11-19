@@ -37,7 +37,7 @@ import {
 import { definitionHashOf } from "./ScheduledTaskDefinitionHash.ts";
 import {
   refuseTransfer,
-  ROUTINE_RUNNER_CAPABILITY,
+  RUNNER_CAPABILITIES,
   type RoutineRunnerRequest,
   type RoutineRunnerResponse,
   type RoutineTransferRefusal,
@@ -83,6 +83,7 @@ export interface RunnerReceiveParts {
     existing: ScheduledTask | null,
     copy: CoordinatorRoutineCopy | null,
     record: RoutineRunnerRecord,
+    sent?: CoordinatorRoutineCopy | null,
   ) => Effect.Effect<void, ScheduledTaskError | SqlError>;
   /** A resting copy follows the coordinator again, its row as it was before it rested. */
   readonly followAgain: (
@@ -108,7 +109,7 @@ export const makeRunnerReceive = (parts: RunnerReceiveParts) => {
   } = parts;
   // --- another machine asks --------------------------------------------------------------
 
-  const base = { capabilities: [ROUTINE_RUNNER_CAPABILITY] } as const;
+  const base = { capabilities: RUNNER_CAPABILITIES } as const;
   const unreadableGrant = () => refuseTransfer(409, "That routine's grant could not be read.");
 
   /** This machine's linked copy of the caller's project, within the caller's grant. */
@@ -250,45 +251,55 @@ export const makeRunnerReceive = (parts: RunnerReceiveParts) => {
                     ? sent.modelSelection
                     : held.modelSelection,
               };
-        const rested = yield* restCopy(held, copy, {
-          taskId: id,
-          state: "disarmed",
-          runnerEnvironmentId: caller.sourceEnvironmentId,
-          runnerLabel: label,
-          // The runner's revision, so a change made on this copy is made against it.
-          revision:
-            copy !== null || held === null || record === null
-              ? (request.revisions?.[index] ?? record?.revision ?? 0)
-              : record.revision,
-          acked: [],
-          operationId: null,
-          // What this record remembers for the same runner stays: a delete still
-          // owed, or what this machine was before the routine moved there.
-          operation:
-            record !== null && isPendingCopyDelete(record)
-              ? PENDING_COPY_DELETE
-              : record?.runnerEnvironmentId === caller.sourceEnvironmentId
-                ? record.operation
+        const sameRunner =
+          record?.state === "disarmed" && record.runnerEnvironmentId === caller.sourceEnvironmentId;
+        // Its runner's word counts even where this copy does not take the
+        // definition, or has no row yet for it.
+        const copyEnabled =
+          named !== null
+            ? named.enabled
+            : record?.state === "disarmed"
+              ? (record.copyEnabled ?? null)
+              : (held?.enabled ?? null);
+        const rested = yield* restCopy(
+          held,
+          copy,
+          {
+            taskId: id,
+            state: "disarmed",
+            runnerEnvironmentId: caller.sourceEnvironmentId,
+            runnerLabel: label,
+            // The runner's revision, so a change made on this copy is made against it.
+            revision:
+              copy !== null || held === null || record === null
+                ? (request.revisions?.[index] ?? record?.revision ?? 0)
+                : record.revision,
+            acked: [],
+            operationId: null,
+            // What this record remembers for the same runner stays: a delete still
+            // owed, or what this machine was before the routine moved there.
+            operation:
+              record !== null && isPendingCopyDelete(record)
+                ? PENDING_COPY_DELETE
+                : record?.runnerEnvironmentId === caller.sourceEnvironmentId
+                  ? record.operation
+                  : null,
+            asked: [],
+            // What the row said before it was turned off here, for the day it follows
+            // the coordinator again; with a definition, what its runner holds.
+            copyEnabled,
+            // The definition this row holds is still the one the same runner sent,
+            // unless one comes with this request (`restCopy`).
+            installedRevision: sameRunner ? (record.installedRevision ?? null) : null,
+            // And so is its hash, while the runner says nothing else of it.
+            definitionHash:
+              sameRunner && copyEnabled === (record.copyEnabled ?? null)
+                ? (record.definitionHash ?? null)
                 : null,
-          asked: [],
-          // What the row said before it was turned off here, for the day it follows
-          // the coordinator again; with a definition, what its runner holds.
-          // Its runner's word counts even where this copy does not take the
-          // definition, or has no row yet for it.
-          copyEnabled:
-            named !== null
-              ? named.enabled
-              : record?.state === "disarmed"
-                ? (record.copyEnabled ?? null)
-                : (held?.enabled ?? null),
-          // The definition this row holds is still the one the same runner sent,
-          // unless one comes with this request (`restCopy`).
-          installedRevision:
-            record?.state === "disarmed" &&
-            record.runnerEnvironmentId === caller.sourceEnvironmentId
-              ? (record.installedRevision ?? null)
-              : null,
-        }).pipe(Effect.result);
+          },
+          // Hashed as sent: the row may hold it under this machine's limits.
+          sent,
+        ).pipe(Effect.result);
         if (rested._tag === "Failure") {
           refused.push(id);
           continue;
@@ -431,7 +442,16 @@ export const makeRunnerReceive = (parts: RunnerReceiveParts) => {
           const routine = request.edit.routine;
           if (routine.id !== task.id)
             return yield* refuseTransfer(400, "That change names another routine.");
-          if (!accountInGrant(grant.accounts, routine.modelSelection.instanceId))
+          // What the caller did not change stays as this machine holds it: its copy
+          // may have shown a lower mode, or another sign-in, than the routine has.
+          const kept = new Set(request.edit.kept ?? []);
+          const modelSelection = kept.has("modelSelection")
+            ? task.modelSelection
+            : routine.modelSelection;
+          if (
+            !kept.has("modelSelection") &&
+            !accountInGrant(grant.accounts, routine.modelSelection.instanceId)
+          )
             return yield* refuseTransfer(
               403,
               "This machine's work grant does not allow that routine's sign-in.",
@@ -445,8 +465,8 @@ export const makeRunnerReceive = (parts: RunnerReceiveParts) => {
             projectId: task.projectId,
             threadId: task.threadId,
             workspaceStrategy: routine.workspaceStrategy,
-            modelSelection: routine.modelSelection,
-            runtimeMode: routine.runtimeMode,
+            modelSelection,
+            runtimeMode: kept.has("runtimeMode") ? task.runtimeMode : routine.runtimeMode,
             interactionMode: routine.interactionMode,
             createdBy: task.createdBy,
             creationSource: task.creationSource,

@@ -67,13 +67,14 @@ import { stringifyJson } from "../json.ts";
 import { isCoordinatorOwnedRoutine, routineCopyOf } from "./ScheduledTaskCopies.ts";
 import {
   affirmsRunner,
+  keepsUnchanged,
   type RoutineRunnerEdit,
   type RoutineRunnerRequest,
   type RoutineRunnerResponse,
 } from "./ScheduledTaskRunnerWire.ts";
 import { nextRunAt, taskError } from "./ScheduledTaskStorage.ts";
 
-import { definitionHashOf } from "./ScheduledTaskDefinitionHash.ts";
+import { definitionHashOf, sameValue } from "./ScheduledTaskDefinitionHash.ts";
 import { makeRunnerReceive } from "./ScheduledTaskRunnerReceive.ts";
 import {
   copyNotRemovedRefusal,
@@ -92,6 +93,9 @@ import {
   runsElsewhereRefusal,
   runsHere,
   STALE_ROUTINE_EDIT_REFUSAL,
+  OLDER_RUNNER_SAVE_REFUSAL,
+  UNSEEN_ROUTINE_EDIT_REFUSAL,
+  HANDOVER_RESTING_COPY_REFUSAL,
   threadHandedOffNote,
 } from "./ScheduledTaskRunnerRecords.ts";
 
@@ -171,7 +175,13 @@ export class RoutineRunnerPace extends Context.Reference<{ readonly everyMs: num
 const decodeUpsert = Schema.decodeUnknownOption(ScheduledTaskUpsertInput);
 const localNow = DateTime.withCurrentZoneLocal(DateTime.nowInCurrentZone);
 /** The hash of a resting copy's definition as its list shows it: on as it is at its runner. */
-const shownDefinition = (task: ScheduledTask, record: Pick<RoutineRunnerRecord, "copyEnabled">) =>
+const shownDefinition = (
+  task: ScheduledTask,
+  record: Pick<RoutineRunnerRecord, "copyEnabled" | "definitionHash">,
+) =>
+  // As its runner sent it, where this row took it from there: the row may hold
+  // it under this machine's own limits, and the runner hashes what it holds.
+  record.definitionHash ??
   definitionHashOf({ ...task, enabled: record.copyEnabled ?? task.enabled });
 /** When a routine on this schedule is next due, as a save that turns it on makes it. */
 const freshSlot = (schedule: ScheduledTask["schedule"], now: DateTime.DateTime) =>
@@ -253,18 +263,74 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
      * and would fire a copy sent on beside this machine. Fails when the records
      * cannot be read: unknown is never sent as on.
      */
-    const restsAt = (recipient: string): Effect.Effect<ReadonlySet<string>, ScheduledTaskError> =>
-      records.allStrict.pipe(
-        Effect.map(
-          (all) =>
-            new Set(
-              [...all.values()]
-                .filter((record) => runsHere(record) && record.acked.includes(recipient))
-                .map((record) => record.taskId),
+    const restsAt = (
+      recipient: string,
+      /**
+       * The recipient takes the coordinator role with what it is sent. A routine
+       * this machine has not settled runs where the coordinator is, so it would
+       * run nowhere if it went there off: the recipient is told to follow the
+       * coordinator again, its acknowledgement ends here, and only then is the
+       * routine left on. A settled routine runs here whatever the role, and
+       * goes off as ever.
+       */
+      handover = false,
+    ): Effect.Effect<ReadonlySet<string>, ScheduledTaskError> =>
+      Effect.gen(function* () {
+        const rests = new Set<string>();
+        for (const record of (yield* records.allStrict).values()) {
+          if (!runsHere(record)) continue;
+          const confirmed = record.acked.includes(recipient);
+          // Asked and unanswered, the recipient may rest all the same: its answer
+          // can be lost after it acted. Only a handover has to know.
+          const settlingHandover = handover && record.state === "settling";
+          if (!confirmed && !(settlingHandover && (record.asked ?? []).includes(recipient)))
+            continue;
+          if (!settlingHandover) {
+            rests.add(record.taskId);
+            continue;
+          }
+          // The recipient follows the coordinator again before anything is sent: this
+          // machine may be gone the moment the handover is taken, and a copy that
+          // still rested for it would then run nowhere. One of the release before
+          // keeps no record to rest by. Unanswered, the handover is not safe.
+          const peers = yield* Ref.get(peersRef);
+          const told =
+            peers === null
+              ? null
+              : yield* peers
+                  .post(recipient, {
+                    op: "runner-rearm",
+                    routineIds: [ScheduledTaskId.make(record.taskId)],
+                  })
+                  .pipe(Effect.result);
+          if (told === null || (told._tag === "Failure" && !isOlderRelease(told.failure)))
+            return yield* taskError(HANDOVER_RESTING_COPY_REFUSAL, {
+              taskId: ScheduledTaskId.make(record.taskId),
+            });
+          const freed = yield* writing(
+            records.atomically(
+              Effect.gen(function* () {
+                const now = yield* records.readStrict(record.taskId);
+                if (now === null || !runsHere(now)) return true;
+                // Settled meanwhile: it runs here, and the copy stays off.
+                if (now.state !== "settling") return false;
+                yield* records.write({
+                  ...now,
+                  acked: now.acked.filter((member) => member !== recipient),
+                  asked: (now.asked ?? []).filter((member) => member !== recipient),
+                });
+                return true;
+              }),
             ),
-        ),
+          );
+          if (!freed) rests.add(record.taskId);
+        }
+        return rests as ReadonlySet<string>;
+      }).pipe(
         Effect.mapError((cause) =>
-          taskError("Could not read which routines rest for this machine.", { cause }),
+          isTaskError(cause)
+            ? cause
+            : taskError("Could not read which routines rest for this machine.", { cause }),
         ),
       );
 
@@ -548,7 +614,12 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
             if (enabled) yield* records.setRowEnabled(id, false);
             yield* records.setNote(id, runsElsewhereNote(record.runnerLabel));
             // A replica's definition is not one this copy took from its runner.
-            yield* records.write({ ...record, copyEnabled: enabled, installedRevision: null });
+            yield* records.write({
+              ...record,
+              copyEnabled: enabled,
+              installedRevision: null,
+              definitionHash: null,
+            });
             return saved;
           }),
         );
@@ -856,10 +927,13 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
       existing: ScheduledTask | null,
       copy: CoordinatorRoutineCopy | null,
       record: RoutineRunnerRecord,
+      /** The definition as the runner sent it, where `copy` holds it under this machine's limits. */
+      sent: CoordinatorRoutineCopy | null = copy,
     ) =>
       records.atomically(
         Effect.gen(function* () {
           let installed = record.installedRevision ?? null;
+          let hash = record.definitionHash ?? null;
           if (existing !== null) {
             // Off first, by itself: the row keeps its slot and its one-time generation.
             if (existing.enabled) yield* records.setRowEnabled(existing.id, false);
@@ -902,10 +976,11 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
               } else if (!was || saved.nextRunAt === null)
                 yield* records.setSlot(existing.id, freshSlot(saved.schedule, yield* localNow));
               installed = record.revision;
+              hash = definitionHashOf(sent ?? copy);
             }
             yield* records.setNote(existing.id, runsElsewhereNote(record.runnerLabel));
           }
-          yield* records.write({ ...record, installedRevision: installed });
+          yield* records.write({ ...record, installedRevision: installed, definitionHash: hash });
         }),
       );
 
@@ -963,21 +1038,42 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
         // The change was made on a definition somebody saw. Its hash goes with it,
         // and the runner makes the change only on that very definition: a count
         // can match a definition this copy never held. One that names a definition
-        // this copy no longer shows is stale here already. A save that names none
-        // cannot say what it was made on, and is not sent; turning a routine on or
-        // off, or deleting it, carries no definition, so it names what is shown.
-        const shown = shownDefinition(existing, record);
-        if (seen.hash === undefined ? edit.kind === "save" : seen.hash !== shown)
+        // this copy no longer shows is stale here already. A change that names none
+        // cannot say what it was made on, and is not sent: this copy never names
+        // one for its caller, since what it shows now is not what the caller saw.
+        if (seen.hash === undefined)
+          return yield* taskError(UNSEEN_ROUTINE_EDIT_REFUSAL, { taskId: existing.id });
+        if (seen.hash !== shownDefinition(existing, record))
           return yield* taskError(STALE_ROUTINE_EDIT_REFUSAL, { taskId: existing.id });
         const installed = record.installedRevision ?? null;
         if (seen.revision !== undefined && installed !== null && seen.revision !== installed)
           return yield* taskError(STALE_ROUTINE_EDIT_REFUSAL, { taskId: existing.id });
+        // A copy that shows the routine under its own limits leaves the fields its
+        // caller did not change to the runner. One that cannot be asked to keep them
+        // would write this copy's, so it is asked first whether it can.
+        if (
+          edit.kind === "save" &&
+          (edit.kept ?? []).length > 0 &&
+          seen.hash !==
+            definitionHashOf({ ...existing, enabled: record.copyEnabled ?? existing.enabled })
+        ) {
+          const asked = yield* peers
+            .post(record.runnerEnvironmentId, { op: "status" })
+            .pipe(Effect.result);
+          if (asked._tag === "Failure" && !isOlderRelease(asked.failure))
+            return yield* taskError(
+              runsElsewhereRefusal(record.runnerLabel, asked.failure.message),
+              { taskId: existing.id },
+            );
+          if (asked._tag === "Failure" || !keepsUnchanged(asked.success))
+            return yield* taskError(OLDER_RUNNER_SAVE_REFUSAL, { taskId: existing.id });
+        }
         const answered = yield* peers
           .post(record.runnerEnvironmentId, {
             op: "runner-edit",
             routineId: existing.id,
             ...(installed === null ? {} : { expectedRevision: installed }),
-            seen: seen.hash ?? shown,
+            seen: seen.hash,
             edit,
           })
           .pipe(Effect.result);
@@ -1090,11 +1186,29 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
         return yield* guardHere(input);
       });
 
+    /**
+     * Whether a change names a definition this machine does not hold now. A
+     * caller that listed the routine while another machine ran it names what it
+     * saw; the routine may run here since, changed. Hashed as a runner hashes
+     * what it holds for a change sent to it.
+     */
+    const namesAnother = (id: ScheduledTaskId, named: string | undefined) =>
+      Effect.gen(function* () {
+        if (named === undefined) return false;
+        const held = yield* deps.findTask(id);
+        return (
+          held !== null &&
+          named !== definitionHashOf(routineCopyOf({ ...held, ownThread: true }) ?? held)
+        );
+      });
+
     const guardHere = <A>(input: {
       readonly targets: ReadonlyArray<Target>;
       readonly change: Effect.Effect<A, ScheduledTaskError>;
       readonly ownRemovable?: boolean | undefined;
       readonly expectedRevision?: number | undefined;
+      /** The definition the caller saw, when it says: checked here as its runner checks it. */
+      readonly expectedDefinition?: string | undefined;
       readonly before?: Effect.Effect<void, ScheduledTaskError> | undefined;
       /** The change deletes the routine: nothing is left to count. */
       readonly removes?: boolean | undefined;
@@ -1125,6 +1239,8 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
                 input.expectedRevision !== (yield* revisionOf(target.id, record))
               )
                 return yield* taskError(STALE_ROUTINE_EDIT_REFUSAL, { taskId: target.id });
+              if (yield* namesAnother(target.id, input.expectedDefinition))
+                return yield* taskError(STALE_ROUTINE_EDIT_REFUSAL, { taskId: target.id });
               bumped.push(target.id);
               if (record?.state === "settled") {
                 // Every other machine rests its copy: the coordinator no longer decides.
@@ -1153,6 +1269,12 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
                   input.expectedRevision !== undefined &&
                   input.expectedRevision !== (yield* revisionOf(id, null))
                 )
+                  return yield* taskError(STALE_ROUTINE_EDIT_REFUSAL, {
+                    taskId: ScheduledTaskId.make(id),
+                  });
+              // And the definition it named, in the same write as the change.
+              for (const id of bumped)
+                if (yield* namesAnother(ScheduledTaskId.make(id), input.expectedDefinition))
                   return yield* taskError(STALE_ROUTINE_EDIT_REFUSAL, {
                     taskId: ScheduledTaskId.make(id),
                   });
@@ -1191,6 +1313,12 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
         forwarded: (existing) => ({
           edit: {
             kind: "save",
+            kept: [
+              ...(input.runtimeMode === existing.runtimeMode ? (["runtimeMode"] as const) : []),
+              ...(sameValue(input.modelSelection, existing.modelSelection)
+                ? (["modelSelection"] as const)
+                : []),
+            ],
             routine: {
               id: existing.id,
               title: input.title,
