@@ -3,6 +3,7 @@ import { syncJa } from "./sync/ja";
 import { handoffJa } from "./handoff/ja";
 import { iphoneJa } from "./iphone/ja";
 import { machineLabelsJa } from "./machineLabels/ja";
+import { actionMachineJa } from "./actionMachine/ja";
 
 /** Japanese Settings titles and labels. "スレッド" for thread, as in the message catalog. */
 export const ja: PhraseCatalog = {
@@ -10,6 +11,7 @@ export const ja: PhraseCatalog = {
   ...handoffJa,
   ...iphoneJa,
   ...machineLabelsJa,
+  ...actionMachineJa,
   About: "このアプリについて",
   "Accent color": "アクセントカラー",
   Account: "アカウント",

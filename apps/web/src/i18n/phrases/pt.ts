@@ -3,6 +3,7 @@ import { syncPt } from "./sync/pt";
 import { handoffPt } from "./handoff/pt";
 import { iphonePt } from "./iphone/pt";
 import { machineLabelsPt } from "./machineLabels/pt";
+import { actionMachinePt } from "./actionMachine/pt";
 
 /** Brazilian Portuguese Settings titles and labels, "você", as in the message catalog. */
 export const pt: PhraseCatalog = {
@@ -10,6 +11,7 @@ export const pt: PhraseCatalog = {
   ...handoffPt,
   ...iphonePt,
   ...machineLabelsPt,
+  ...actionMachinePt,
   About: "Sobre",
   "Accent color": "Cor de destaque",
   Account: "Conta",

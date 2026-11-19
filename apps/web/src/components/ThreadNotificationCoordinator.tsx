@@ -71,6 +71,8 @@ import { isAccessWait } from "../studio/accessWait";
 import { paneWords } from "../studio/assistantTerms";
 import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import { currentRemoteWorkerLaunchers } from "../studio/remoteWorkerLaunchers";
+import { useMachineIdentities } from "../studio/machineIdentity";
+import { actionMachineFor, onMachineText, threadActionMachineId } from "../studio/actionMachine";
 
 /** A system notification still on screen, until the user comes back. */
 // The desktop bridge accepts notification titles up to 256 characters.
@@ -253,6 +255,12 @@ function EnvironmentNotifications({
   useLayoutEffect(() => {
     presence.current = { ownEnvironmentId, knownEnvironmentIds, unreachableEnvironmentIds };
   }, [ownEnvironmentId, knownEnvironmentIds, unreachableEnvironmentIds]);
+  // An alert names the machine to act on when it is not this window's (1427 AC-07).
+  const identityOf = useMachineIdentities();
+  const identityOfRef = useRef(identityOf);
+  useLayoutEffect(() => {
+    identityOfRef.current = identityOf;
+  }, [identityOf]);
   // The shell reducer keeps the thread list and unchanged thread objects
   // stable, so this only rescans when a thread actually changed.
   const threads =
@@ -562,7 +570,23 @@ function EnvironmentNotifications({
             const say = paneWords(
               thread.projectId != null && assistantIds.current.has(thread.projectId),
             );
-            const title = say(
+            // "Sign-in needed on M5": the thread's machine, when it is not this window's.
+            // A finished thread asks nothing, so its alert names no machine.
+            const actionMachine =
+              kind === "completion"
+                ? null
+                : actionMachineFor(
+                    identityOfRef.current(
+                      threadActionMachineId({
+                        executionMachineId: currentRaw.executionMachineId,
+                        environmentId,
+                      }),
+                      currentRaw.executionMachineLabel,
+                    ),
+                    presence.current.ownEnvironmentId,
+                  );
+            const onActionMachine = (text: string) => onMachineText(text, actionMachine?.name);
+            const title = onActionMachine(say(
               kind === "stalled"
                 ? "No activity in thread"
                 : kind === "completion"
@@ -582,6 +606,7 @@ function EnvironmentNotifications({
                             : status === "failed"
                               ? "Thread failed"
                               : "Input needed",
+              ),
             );
             // A thread stopped until the user answers or approves.
             const needsUser = action !== undefined && inputNeededAlertsEnabled;
@@ -719,7 +744,7 @@ function EnvironmentNotifications({
                 : threadName.length > SYSTEM_TITLE_MAX_LENGTH
                   ? `${threadName.slice(0, SYSTEM_TITLE_MAX_LENGTH - 1).replace(/[\uD800-\uDBFF]$/, "")}…`
                   : threadName;
-            const systemBody =
+            const systemBody = onActionMachine(
               kind === "stalled" && health !== null
                 ? `No activity for ${Math.floor(health.idleMs / 60_000)} min. Stop or continue it.`
                 : kind === "completion"
@@ -736,7 +761,8 @@ function EnvironmentNotifications({
                             ? "Usage limit reached"
                             : status === "failed"
                               ? "Stopped with an error"
-                              : "Waiting for your answer";
+                              : "Waiting for your answer",
+            );
             const bridge = window.desktopBridge;
             if (bridge?.showThreadNotification) {
               // An OS denial must not turn every token/shell update into another native request.

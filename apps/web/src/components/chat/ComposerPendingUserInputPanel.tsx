@@ -28,6 +28,7 @@ import { cn, isMacPlatform } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
 import { Tooltip, TooltipPopup } from "../ui/tooltip";
 import { useQuestionCardCollapsed } from "./questionCardCollapse";
+import { OnActionMachine, type ActionMachine } from "../../studio/actionMachine";
 import { useQuestionOptionsLayout } from "./questionOptionsLayout";
 import {
   deriveQuestionStep,
@@ -63,6 +64,8 @@ interface PendingUserInputPanelProps {
   onReplyInChat?: (() => void) | undefined;
   /** Who asked: the coordinator, or the thread's title. Named on the card when given. */
   askedBy?: string | undefined;
+  /** The asking thread's machine when it is not the window's own (1427 AC-07). */
+  machine?: ActionMachine | null | undefined;
   renderText?: QuestionTextRenderer | undefined;
   /**
    * The thread (or coordinator) the card belongs to. When given, folding the
@@ -83,6 +86,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
   onDismiss,
   onReplyInChat,
   askedBy,
+  machine,
   renderText = renderPlainQuestionText,
   collapseKey,
 }: PendingUserInputPanelProps) {
@@ -105,6 +109,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
       onDismiss={onDismiss}
       onReplyInChat={onReplyInChat}
       askedBy={askedBy}
+      machine={machine ?? null}
       renderText={renderText}
       collapseKey={collapseKey}
     />
@@ -124,6 +129,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onDismiss,
   onReplyInChat,
   askedBy,
+  machine,
   renderText,
   collapseKey,
 }: {
@@ -140,6 +146,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onDismiss: (requestId: RuntimeRequestId) => void;
   onReplyInChat: (() => void) | undefined;
   askedBy: string | undefined;
+  machine: ActionMachine | null;
   renderText: QuestionTextRenderer;
   collapseKey: string | undefined;
 }) {
@@ -445,6 +452,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               <span className="shrink-0 whitespace-nowrap text-muted-foreground">
                 {`· ${optionCount} ${optionCount === 1 ? "option" : "options"}`}
               </span>
+              <OnActionMachine machine={machine} />
             </span>
           ) : (
             <>
@@ -457,6 +465,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                   >
                     {`${askedBy} asks`}
                   </span>
+                  <OnActionMachine machine={machine} />
                   <span aria-hidden className="shrink-0 text-muted-foreground">
                     ·
                   </span>

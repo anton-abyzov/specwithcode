@@ -24,7 +24,7 @@ public struct AccessRequestCard: View {
     public var label: String {
       switch self {
       case .thread: "This thread"
-      case .machine: "Always on this machine"
+      case .machine: "Always on the agent's machine"
       }
     }
   }
@@ -48,7 +48,7 @@ public struct AccessRequestCard: View {
     public var text: String {
       switch self {
       case .allowedInThread: "Allowed for this session"
-      case .allowedOnMachine: "Allowed on this machine"
+      case .allowedOnMachine: "Allowed on the agent's machine"
       case .denied: "Denied"
       case .ended: "Request ended"
       }
@@ -68,7 +68,15 @@ public struct AccessRequestCard: View {
   /// The line for a request inherited from a forked thread while it waits.
   public static let waitingElsewhereText = "Waiting for an answer in the original thread"
   public static let allowTitle = "Allow for this session"
-  public static let alwaysTitle = "Always allow on this machine"
+  /// "Always allow on M5". On a phone "this machine" never means the device in
+  /// hand, so the card always names the machine the agent runs on (1427 AC-07);
+  /// a server too old to say which falls back to "the agent's machine".
+  public static func alwaysTitle(on machine: String?) -> String {
+    guard let machine = machine?.trimmingCharacters(in: .whitespacesAndNewlines), !machine.isEmpty else {
+      return "Always allow on the agent's machine"
+    }
+    return "Always allow on \(machine)"
+  }
 
   /// One thing the agent asks to use.
   public struct Subject: Identifiable {
@@ -107,6 +115,8 @@ public struct AccessRequestCard: View {
   let maxHeight: CGFloat?
   let waitingCount: Int
   let isElsewhere: Bool
+  /// The machine the agent runs on, which an Always grant covers.
+  let machine: String?
   let onAnswer: (Answer) -> Void
 
   @State private var pendingAnswer: Answer?
@@ -125,7 +135,8 @@ public struct AccessRequestCard: View {
   ///   - maxHeight: The tallest the composer card may be; the reason and chips scroll past it.
   ///   - waitingCount: How many requests wait in this chat, this one included. Above one the card says "1 of N".
   ///   - isElsewhere: Inherited from a forked thread; it can only be answered in the thread that asked.
-  public init(title: String, headline: String, reason: String, subjects: [Subject], note: String, outcome: Outcome?, style: Style = .composer, isBusy: Bool = false, maxHeight: CGFloat? = nil, waitingCount: Int = 1, isElsewhere: Bool = false, onAnswer: @escaping (Answer) -> Void) {
+  ///   - machine: The machine the agent runs on, named on the Always button.
+  public init(title: String, headline: String, reason: String, subjects: [Subject], note: String, outcome: Outcome?, style: Style = .composer, isBusy: Bool = false, maxHeight: CGFloat? = nil, waitingCount: Int = 1, isElsewhere: Bool = false, machine: String? = nil, onAnswer: @escaping (Answer) -> Void) {
     self.title = title
     self.headline = headline
     self.reason = reason
@@ -137,6 +148,7 @@ public struct AccessRequestCard: View {
     self.maxHeight = maxHeight
     self.waitingCount = waitingCount
     self.isElsewhere = isElsewhere
+    self.machine = machine
     self.onAnswer = onAnswer
   }
 
@@ -301,7 +313,7 @@ public struct AccessRequestCard: View {
     } label: {
       HStack(spacing: WeaveSpacing.s1) {
         if isBusy, pendingAnswer == .allow(.machine) { ProgressView().controlSize(.mini) }
-        Text(Self.alwaysTitle).lineLimit(2).minimumScaleFactor(0.85)
+        Text(Self.alwaysTitle(on: machine)).lineLimit(2).minimumScaleFactor(0.85)
       }
       .font(.weave(.footnote, weight: .medium))
       .foregroundStyle(Color.weave.muted)
@@ -310,7 +322,7 @@ public struct AccessRequestCard: View {
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
-    .accessibilityHint("Allows it in every thread on this machine")
+    .accessibilityHint("Allows it in every thread on \(machine ?? "the agent's machine")")
     .accessibilityIdentifier("access.allowMachine")
   }
 

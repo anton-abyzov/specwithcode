@@ -1,8 +1,9 @@
-import { createContext, use, type ReactNode } from "react";
+import { createContext, use, useMemo, type ReactNode } from "react";
 
 import { renderRich } from "../i18n/rich";
 import { useTx } from "../i18n";
-import { machineColorProps, type MachineIdentity } from "./machineIdentity";
+import { usePrimaryEnvironmentId } from "../state/environments";
+import { machineColorProps, useMachineIdentity, type MachineIdentity } from "./machineIdentity";
 
 /**
  * The machine a card, button or alert acts on, when it is not the window's own
@@ -35,6 +36,19 @@ export function useActionMachine(): ActionMachine | null {
   return use(ActionMachineContext);
 }
 
+/** A machine by its id, as the cards name it: null when it is the window's own. */
+export function useActionMachineFor(
+  machineId: string | null | undefined,
+  fallbackLabel?: string | null,
+): ActionMachine | null {
+  const identity = useMachineIdentity(machineId, fallbackLabel);
+  const windowEnvironmentId = usePrimaryEnvironmentId();
+  return useMemo(
+    () => actionMachineFor(identity, windowEnvironmentId),
+    [identity, windowEnvironmentId],
+  );
+}
+
 /** Every phrase the action surfaces add, so each catalog is checked for all of them. */
 export const ACTION_MACHINE_PHRASES = [
   "on {machine}",
@@ -44,9 +58,20 @@ export const ACTION_MACHINE_PHRASES = [
 ] as const;
 
 /** The machine's name in its colour, as a thread row shows it. */
-export function ActionMachineName({ machine }: { readonly machine: ActionMachine }) {
+export function ActionMachineName({
+  machine,
+  plain = false,
+}: {
+  readonly machine: ActionMachine;
+  /** Inside a button already filled with the machine's colour, the name keeps the button's text colour. */
+  readonly plain?: boolean;
+}) {
   return (
-    <span {...machineColorProps(machine)} data-action-machine className="machine-mark font-semibold">
+    <span
+      {...machineColorProps(machine)}
+      data-action-machine
+      className={plain ? "font-semibold" : "machine-mark font-semibold"}
+    >
       {machine.name}
     </span>
   );

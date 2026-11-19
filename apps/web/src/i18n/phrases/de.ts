@@ -3,6 +3,7 @@ import { syncDe } from "./sync/de";
 import { handoffDe } from "./handoff/de";
 import { iphoneDe } from "./iphone/de";
 import { machineLabelsDe } from "./machineLabels/de";
+import { actionMachineDe } from "./actionMachine/de";
 
 /** German Settings titles and labels, informal "du", as in the message catalog. */
 export const de: PhraseCatalog = {
@@ -10,6 +11,7 @@ export const de: PhraseCatalog = {
   ...handoffDe,
   ...iphoneDe,
   ...machineLabelsDe,
+  ...actionMachineDe,
   About: "Über",
   "Accent color": "Akzentfarbe",
   Account: "Konto",

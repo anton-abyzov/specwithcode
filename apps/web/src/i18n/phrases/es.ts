@@ -3,6 +3,7 @@ import { syncEs } from "./sync/es";
 import { handoffEs } from "./handoff/es";
 import { iphoneEs } from "./iphone/es";
 import { machineLabelsEs } from "./machineLabels/es";
+import { actionMachineEs } from "./actionMachine/es";
 
 /** Spanish Settings titles and labels. "hilo" for thread, as in the message catalog. */
 export const es: PhraseCatalog = {
@@ -10,6 +11,7 @@ export const es: PhraseCatalog = {
   ...handoffEs,
   ...iphoneEs,
   ...machineLabelsEs,
+  ...actionMachineEs,
   About: "Acerca de",
   "Accent color": "Color de acento",
   Account: "Cuenta",

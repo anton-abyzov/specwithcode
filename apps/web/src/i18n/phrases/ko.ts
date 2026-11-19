@@ -3,6 +3,7 @@ import { syncKo } from "./sync/ko";
 import { handoffKo } from "./handoff/ko";
 import { iphoneKo } from "./iphone/ko";
 import { machineLabelsKo } from "./machineLabels/ko";
+import { actionMachineKo } from "./actionMachine/ko";
 
 /** Korean Settings titles and labels. "스레드" for thread, as in the message catalog. */
 export const ko: PhraseCatalog = {
@@ -10,6 +11,7 @@ export const ko: PhraseCatalog = {
   ...handoffKo,
   ...iphoneKo,
   ...machineLabelsKo,
+  ...actionMachineKo,
   About: "정보",
   "Accent color": "강조 색상",
   Account: "계정",
