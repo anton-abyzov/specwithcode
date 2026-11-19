@@ -288,6 +288,9 @@ export const layerPlanningRpcHandlers = WsProjectPlanningRpcGroup.middleware(
       [WS_METHODS.projectsFolderCheck]: (
         input: import("@specweave-studio/contracts").ProjectFolderCheckInput,
       ) => folders.check(input),
+      [WS_METHODS.projectsFolderStop]: (
+        input: import("@specweave-studio/contracts").ProjectFolderStopInput,
+      ) => folders.stop(input),
       [WS_METHODS.projectsWorktreesRead]: worktrees.read,
       [WS_METHODS.projectsWorktreesRemove]: worktrees.remove,
       [WS_METHODS.projectsThreadsDelete]: (input: ProjectThreadsDeleteInput) =>

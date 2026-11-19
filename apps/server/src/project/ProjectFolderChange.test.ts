@@ -24,6 +24,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
+import { beginStopTeardown } from "../process/stopTeardowns.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { encodeClaudeProjectDir } from "../usage/projectFolderSessions.ts";
@@ -353,6 +354,103 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
         expect(busy).toMatchObject({ reason: "active_work" });
         expect(busy.message).toContain('"Coordinator"');
         expect(scenario.updates).toHaveLength(0);
+      }),
+    ),
+  );
+
+  it.effect("stops only the listed threads that still block, a waiting run by its id", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent } = yield* makeScenario;
+        scenario.threads[0] = shell("coordinator", {
+          title: "Coordinator",
+          activeRunId: RunId.make("run-1"),
+          status: "running",
+        });
+        scenario.threads[1] = shell("worker", {
+          title: "Worker",
+          activeRunId: RunId.make("run-2"),
+          status: "waiting",
+        });
+        scenario.threads.push(shell("idle", { title: "Idle" }));
+        const result = yield* withFolders(scenario, (folders) =>
+          folders.stop({
+            commandId,
+            projectId,
+            workspaceRoot: parent,
+            threadIds: [
+              ThreadId.make("coordinator"),
+              ThreadId.make("worker"),
+              ThreadId.make("idle"),
+            ],
+          }),
+        );
+        expect(result).toEqual({
+          stopped: [ThreadId.make("coordinator"), ThreadId.make("worker")],
+          failed: [],
+        });
+        expect(
+          scenario.dispatched.map((command) => [
+            command.type,
+            (command as { readonly threadId?: string }).threadId,
+          ]),
+        ).toEqual([
+          ["thread.stop", "coordinator"],
+          ["run.interrupt", "worker"],
+        ]);
+        expect(scenario.dispatched[1]).toMatchObject({ runId: "run-2", holdQueue: true });
+      }),
+    ),
+  );
+
+  it.effect("names a thread Stop could not reach", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent } = yield* makeScenario;
+        scenario.threads[0] = shell("coordinator", {
+          title: "Write project memory",
+          activeRunId: RunId.make("run-1"),
+        });
+        scenario.failDispatch = true;
+        const result = yield* withFolders(scenario, (folders) =>
+          folders.stop({
+            commandId,
+            projectId,
+            workspaceRoot: parent,
+            threadIds: [ThreadId.make("coordinator")],
+          }),
+        );
+        expect(result).toEqual({
+          stopped: [],
+          failed: [
+            {
+              id: ThreadId.make("coordinator"),
+              title: "Write project memory",
+              message: '"Write project memory" could not be stopped. Open it and press Stop there.',
+            },
+          ],
+        });
+      }),
+    ),
+  );
+
+  it.effect("keeps a thread blocking while Stop still ends its processes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent } = yield* makeScenario;
+        const release = beginStopTeardown("worker");
+        try {
+          const check = yield* withFolders(scenario, (folders) =>
+            folders.check({ projectId, workspaceRoot: parent }),
+          );
+          expect(check.activeThreads.map((thread) => thread.id)).toEqual(["worker"]);
+        } finally {
+          release();
+        }
+        const after = yield* withFolders(scenario, (folders) =>
+          folders.check({ projectId, workspaceRoot: parent }),
+        );
+        expect(after.activeThreads).toEqual([]);
       }),
     ),
   );

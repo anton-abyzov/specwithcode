@@ -350,6 +350,28 @@ export const ProjectFolderCheckInput = Schema.Struct({
 });
 export type ProjectFolderCheckInput = typeof ProjectFolderCheckInput.Type;
 
+/**
+ * Stop for the threads a folder check listed as running. The server stops each one that
+ * still blocks the change, the way its Stop button would (`thread.stop`: the running
+ * turn is interrupted, the queue held, a pending approval or question ended), and skips
+ * one that no longer blocks, so a late retry never stops a newer run.
+ */
+export const ProjectFolderStopInput = Schema.Struct({
+  commandId: CommandId,
+  projectId: ProjectId,
+  workspaceRoot: TrimmedNonEmptyString,
+  threadIds: Schema.Array(ThreadId),
+});
+export type ProjectFolderStopInput = typeof ProjectFolderStopInput.Type;
+
+export const ProjectFolderStopResult = Schema.Struct({
+  stopped: Schema.Array(ThreadId),
+  failed: Schema.Array(
+    Schema.Struct({ id: ThreadId, title: Schema.String, message: Schema.String }),
+  ),
+});
+export type ProjectFolderStopResult = typeof ProjectFolderStopResult.Type;
+
 /** What changing a project's main folder to `targetRoot` would do, checked without changing it. */
 export const ProjectFolderCheck = Schema.Struct({
   projectId: ProjectId,

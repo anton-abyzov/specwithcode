@@ -27,12 +27,15 @@ import {
   type OrchestrationV2ThreadShell,
   type Project,
   type ProjectFolderCheck,
+  type ProjectFolderStopInput,
+  type ProjectFolderStopResult,
   type ProjectId,
   type RuntimeRequestId,
   ThreadId,
 } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -44,6 +47,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import { stopTeardownPending } from "../process/stopTeardowns.ts";
 import {
   claudeHomeFromContinuationKey,
   relocateClaudeTranscript,
@@ -85,6 +89,10 @@ export class ProjectFolderService extends Context.Service<
       readonly workspaceRoot: string;
       readonly approvalRequestId?: RuntimeRequestId;
     }) => Effect.Effect<ProjectFolderCheck, ProjectFolderCheckError>;
+    /** Stops the listed threads that still keep the folder from changing. */
+    readonly stop: (
+      input: ProjectFolderStopInput,
+    ) => Effect.Effect<ProjectFolderStopResult, ProjectFolderCheckError>;
     readonly change: (
       input: ProjectFolderChangeInput,
     ) => Effect.Effect<
@@ -131,11 +139,13 @@ const PENDING_RUN_STATUSES: ReadonlySet<string> = new Set([
 export function threadBlocksFolderChange(
   thread: Pick<
     OrchestrationV2ThreadShell,
-    "activeRunId" | "pendingRuntimeRequest" | "status" | "activityRunStatus"
+    "id" | "activeRunId" | "pendingRuntimeRequest" | "status" | "activityRunStatus"
   >,
   approvalRequestId?: RuntimeRequestId,
 ): boolean {
   if (ProjectService.threadHasActiveWork(thread, approvalRequestId)) return true;
+  // Its run settled, but Stop is still ending what its CLI started.
+  if (stopTeardownPending(thread.id)) return true;
   const asking =
     approvalRequestId !== undefined && thread.pendingRuntimeRequest?.id === approvalRequestId;
   if (asking) return thread.status === "queued";
@@ -865,7 +875,68 @@ export const make = Effect.gen(function* () {
     };
   });
 
-  return ProjectFolderService.of({ check, change });
+  const stop = Effect.fn("ProjectFolderService.stop")(function* (input: ProjectFolderStopInput) {
+    // The server's own classification: only threads that still block are stopped, so a
+    // retry after the first Stop took effect never reaches a newer run.
+    const current = yield* check({
+      projectId: input.projectId,
+      workspaceRoot: input.workspaceRoot,
+    });
+    const wanted = new Set(input.threadIds);
+    const shells = new Map(
+      (yield* projectThreads(input.projectId)).map((shell) => [shell.id, shell] as const),
+    );
+    const stopped: ThreadId[] = [];
+    const failed: Array<{ id: ThreadId; title: string; message: string }> = [];
+    const reason = "Stopped to change the project folder.";
+    for (const thread of current.activeThreads) {
+      if (!wanted.has(thread.id)) continue;
+      const shell = shells.get(thread.id);
+      // A run waiting on an approval or a question is interrupted by its id, which ends
+      // the request too; thread.stop covers the rest (queues, background work).
+      const waiting =
+        shell?.status === "waiting" && shell.activeRunId !== null && shell.activeRunId !== undefined
+          ? yield* threads
+              .dispatch({
+                type: "run.interrupt",
+                commandId: CommandId.make(`${input.commandId}:interrupt:${thread.id}`),
+                threadId: thread.id,
+                runId: shell.activeRunId,
+                reason,
+                holdQueue: true,
+              })
+              .pipe(Effect.exit)
+          : null;
+      const result =
+        waiting !== null && Exit.isSuccess(waiting)
+          ? waiting
+          : yield* threads
+              .dispatch({
+                type: "thread.stop",
+                commandId: CommandId.make(`${input.commandId}:stop:${thread.id}`),
+                threadId: thread.id,
+                reason,
+              })
+              .pipe(Effect.exit);
+      if (Exit.isSuccess(result)) {
+        stopped.push(thread.id);
+      } else {
+        yield* Effect.logWarning("project.folder-stop.failed", {
+          projectId: input.projectId,
+          threadId: thread.id,
+          cause: result.cause,
+        });
+        failed.push({
+          id: thread.id,
+          title: thread.title,
+          message: `"${thread.title}" could not be stopped. Open it and press Stop there.`,
+        });
+      }
+    }
+    return { stopped, failed } satisfies ProjectFolderStopResult;
+  });
+
+  return ProjectFolderService.of({ check, stop, change });
 });
 
 export const layer = Layer.effect(ProjectFolderService, make);

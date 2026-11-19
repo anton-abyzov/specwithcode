@@ -12,9 +12,10 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
-import type { ProjectFolderCheck } from "@specweave-studio/contracts";
+import { CommandId, type ProjectFolderCheck } from "@specweave-studio/contracts";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import { displayFolder } from "../../lib/displayFolder";
+import { randomUUID } from "../../lib/utils";
 import {
   worktreesSettingRecommendation,
   worktreesSwitchDiffers,
@@ -210,22 +211,52 @@ export function workspaceRecommendationLine(
 export const STOP_WAIT_MS = 60_000;
 /** Pause between checks while Stop takes effect. */
 export const STOP_POLL_MS = 2_000;
-/** How often Stop is sent again to a thread that is still running while the flow waits. */
-export const STOP_RESEND_MS = 10_000;
-
 const TIMED_OUT = Symbol("timed out");
 
-/** The promise's value, or TIMED_OUT once `ms` have passed; the promise itself runs on. */
-function within<T>(promise: Promise<T>, ms: number): Promise<T | typeof TIMED_OUT> {
+type Timers = Set<ReturnType<typeof setTimeout>>;
+
+/** Resolves after `ms`; `timers` holds it until then, so an unmount can clear it. */
+function later(ms: number, stopTimers: Timers): Promise<void> {
   return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(TIMED_OUT), ms);
+    const timer = setTimeout(() => {
+      stopTimers.delete(timer);
+      resolve();
+    }, ms);
+    stopTimers.add(timer);
+  });
+}
+
+/** Whether two checks compare the same two repositories, so a tick still applies. */
+function sameRepositoryDetails(a: ProjectFolderCheck, b: ProjectFolderCheck) {
+  return (
+    a.targetRoot === b.targetRoot &&
+    a.currentRepository === b.currentRepository &&
+    a.targetRepository === b.targetRepository &&
+    a.sameRepository === b.sameRepository
+  );
+}
+
+/** The promise's value, or TIMED_OUT once `ms` have passed; the promise itself runs on. */
+function within<T>(
+  promise: Promise<T>,
+  ms: number,
+  stopTimers: Timers,
+): Promise<T | typeof TIMED_OUT> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      stopTimers.delete(timer);
+      resolve(TIMED_OUT);
+    }, ms);
+    stopTimers.add(timer);
     void promise.then(
       (value) => {
         clearTimeout(timer);
+        stopTimers.delete(timer);
         resolve(value);
       },
       () => {
         clearTimeout(timer);
+        stopTimers.delete(timer);
         resolve(TIMED_OUT);
       },
     );
@@ -327,15 +358,20 @@ export function ProjectFolderChange({
   // Bumped whenever the folder or the check changes, so a Stop still waiting on its runs
   // stops polling once the person moved on, and after unmount.
   const generation = useRef(0);
-  useEffect(
-    () => () => {
+  // Timers of a Stop still waiting, cleared on unmount.
+  const timers = useRef<Timers>(new Set());
+  useEffect(() => {
+    const pending = timers.current;
+    return () => {
       generation.current += 1;
-    },
-    [],
-  );
+      for (const timer of pending) clearTimeout(timer);
+      pending.clear();
+    };
+  }, []);
   const runCheck = useAtomCommand(projectEnvironment.folderCheck);
   const changeFolder = useAtomCommand(projectEnvironment.changeFolder);
   const interrupt = useAtomCommand(threadEnvironment.interruptTurn);
+  const folderStop = useAtomCommand(projectEnvironment.folderStop);
   // Only the desktop app can open a native folder picker.
   const pickFolder =
     typeof window !== "undefined" && window.desktopBridge !== undefined
@@ -386,15 +422,18 @@ export function ProjectFolderChange({
 
   /**
    * Stop ends a run asynchronously: the provider winds the turn down and the server
-   * settles it, which can take half a minute. So the flow checks the folder again until
-   * the stopped threads are idle, keeping what the person already ticked, and says
-   * plainly when they are, or which are still running once the wait runs out.
+   * settles it, which can take half a minute. So the flow asks the server to stop what
+   * blocks the change (it stops only threads that still block, so nothing newer is
+   * reached), and checks the folder again until the stopped threads are idle, keeping
+   * what the person ticked while the details it confirms stay the same. It says plainly
+   * when they are idle, which still run once the wait runs out, or that it could not tell.
    */
   async function stopRuns() {
     if (locked || !check) return;
     const run = ++generation.current;
-    const targetRoot = check.targetRoot;
-    const stopping = check.activeThreads;
+    const pressed = check;
+    const targetRoot = pressed.targetRoot;
+    const stopping = pressed.activeThreads;
     const stoppingIds = new Set(stopping.map((thread) => thread.id));
     setBusy(true);
     setPhase("stopping");
@@ -405,23 +444,41 @@ export function ProjectFolderChange({
     // keep the flow locked past it.
     const deadline = Date.now() + STOP_WAIT_MS;
     const remaining = () => Math.max(0, deadline - Date.now());
-    let failure: Parameters<typeof squashAtomCommandFailure>[0] | undefined;
-    const sendStops = (threads: ProjectFolderCheck["activeThreads"]) =>
-      Promise.all(
-        threads.map((thread) =>
+    const reasons: string[] = [];
+    const reasonOf = (result: Parameters<typeof squashAtomCommandFailure>[0]) => {
+      const cause = squashAtomCommandFailure(result);
+      if (cause instanceof Error) reasons.push(cause.message);
+    };
+    // Polling starts without waiting on this answer, so a slow one cannot use up the wait.
+    void folderStop({
+      environmentId: project.environmentId,
+      input: {
+        commandId: CommandId.make(`folder-stop:${randomUUID()}`),
+        projectId: project.id,
+        workspaceRoot: targetRoot,
+        threadIds: stopping.map((thread) => thread.id),
+      },
+    }).then(async (result) => {
+      if (result._tag === "Success") {
+        for (const failure of result.value.failed) reasons.push(failure.message);
+        return;
+      }
+      // A server without folder Stop: the thread Stop button's command, once per thread.
+      await Promise.all(
+        stopping.map((thread) =>
           interrupt({ environmentId: project.environmentId, input: { threadId: thread.id } }).then(
-            (result) => {
-              if (result._tag === "Failure") failure = result;
+            (sent) => {
+              if (sent._tag === "Failure") reasonOf(sent);
             },
           ),
         ),
       );
-    await within(sendStops(stopping), remaining());
-    let lastSent = Date.now();
+    });
     let latest: ProjectFolderCheck | null = null;
+    let unknown = false;
     let checkFailure: Parameters<typeof squashAtomCommandFailure>[0] | null = null;
     while (remaining() > 0) {
-      await new Promise((resolve) => setTimeout(resolve, Math.min(STOP_POLL_MS, remaining())));
+      await later(Math.min(STOP_POLL_MS, remaining()), timers.current);
       if (run !== generation.current) return;
       const result = await within(
         runCheck({
@@ -429,22 +486,25 @@ export function ProjectFolderChange({
           input: { projectId: project.id, workspaceRoot: targetRoot },
         }),
         remaining(),
+        timers.current,
       );
       if (run !== generation.current) return;
-      if (result === TIMED_OUT) break;
+      if (result === TIMED_OUT) {
+        unknown = true;
+        break;
+      }
       if (result._tag === "Failure") {
         checkFailure = result;
         break;
       }
       latest = result.value;
+      unknown = false;
+      // A tick confirms the details shown when it was given, not ones that changed since.
+      if (!sameRepositoryDetails(pressed, latest)) setConfirmRepository(false);
+      if (planningSummary(pressed) !== planningSummary(latest)) setConfirmPlanning(false);
       setCheck(latest);
       const still = latest.activeThreads.filter((thread) => stoppingIds.has(thread.id));
       if (still.length === 0) break;
-      // A queued message that started meanwhile is a new run: Stop reaches it too.
-      if (Date.now() - lastSent >= STOP_RESEND_MS) {
-        lastSent = Date.now();
-        void sendStops(still);
-      }
     }
     if (run !== generation.current) return;
     setBusy(false);
@@ -458,21 +518,15 @@ export function ProjectFolderChange({
       latest === null
         ? stopping
         : latest.activeThreads.filter((thread) => stoppingIds.has(thread.id));
-    if (still.length === 0) {
+    if (!unknown && latest !== null && still.length === 0) {
       setStopped(`Stopped ${quotedTitles(stopping)}.`);
       return;
     }
-    const reason =
-      failure === undefined
-        ? null
-        : (() => {
-            const cause = squashAtomCommandFailure(failure);
-            return cause instanceof Error ? cause.message : null;
-          })();
+    const reason = reasons.length > 0 ? ` ${[...new Set(reasons)].join(" ")}` : "";
     setError(
-      latest === null
-        ? `The app could not confirm within ${Math.round(STOP_WAIT_MS / 1000)} seconds that ${quotedTitles(still)} stopped.${reason ? ` ${reason}` : ""} Check the folder again, or open the thread.`
-        : `${quotedTitles(still)} ${still.length === 1 ? "is" : "are"} still running ${Math.round(STOP_WAIT_MS / 1000)} seconds after Stop.${reason ? ` ${reason}` : ""} Open ${still.length === 1 ? "the thread" : "each thread"} to see what it is doing, or press Stop again.`,
+      unknown || latest === null
+        ? `The app could not confirm within ${Math.round(STOP_WAIT_MS / 1000)} seconds that ${quotedTitles(still)} stopped.${reason} Check the folder again, or open the thread.`
+        : `${quotedTitles(still)} ${still.length === 1 ? "is" : "are"} still running ${Math.round(STOP_WAIT_MS / 1000)} seconds after Stop.${reason} Open ${still.length === 1 ? "the thread" : "each thread"} to see what it is doing, or press Stop again.`,
     );
   }
 

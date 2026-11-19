@@ -1,4 +1,4 @@
-import { MarkedProcessTree } from "../../process/markedProcessTree.ts";
+import { stopTeardownPending } from "../../process/stopTeardowns.ts";
 import { DesignScreenshotToolkit, DesignToolkit } from "../../mcp/toolkits/design/tools.ts";
 import { ProjectPlanToolkit } from "../../mcp/toolkits/projectPlan/tools.ts";
 import { ProjectMemoryToolkit } from "../../mcp/toolkits/projectMemory/tools.ts";
@@ -2988,6 +2988,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly settings?: ClaudeSettings;
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
     readonly interrupt?: Effect.Effect<void, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
+    readonly rememberProcessTree?: Effect.Effect<void>;
+    readonly endProcessTree?: Effect.Effect<void>;
     readonly environment?: NodeJS.ProcessEnv;
     readonly browserExtensionPairingFile?: string;
   }) =>
@@ -3078,6 +3080,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   }),
                 interrupt: options?.interrupt ?? Effect.void,
                 close: options?.close?.(sdkMessages) ?? Effect.void,
+                ...(options?.rememberProcessTree === undefined
+                  ? {}
+                  : { rememberProcessTree: options.rememberProcessTree }),
+                ...(options?.endProcessTree === undefined
+                  ? {}
+                  : { endProcessTree: options.endProcessTree }),
               };
             }),
           forkSession: () => Effect.die("unused forkSession"),
@@ -7999,12 +8007,22 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("ends what the CLI's tools left running once Stop has closed it", () =>
+  it.effect("holds the folder change until Stop has closed the CLI and its tools", () =>
     Effect.scoped(
       Effect.gen(function* () {
+        const calls: string[] = [];
+        let threadId = "";
         const harness = yield* makeWakeHarnessWithOptions({
-          close: (sdkMessages) => Queue.shutdown(sdkMessages),
+          close: (sdkMessages) =>
+            Effect.sync(() => calls.push(`close held=${stopTeardownPending(threadId)}`)).pipe(
+              Effect.andThen(Queue.shutdown(sdkMessages)),
+            ),
+          rememberProcessTree: Effect.sync(() =>
+            calls.push(`remember held=${stopTeardownPending(threadId)}`),
+          ),
+          endProcessTree: Effect.sync(() => calls.push("end")),
         });
+        threadId = harness.threadId;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const now = yield* DateTime.now;
         const attemptId = RunAttemptId.make("attempt-claude-stop-ends-tools");
@@ -8022,33 +8040,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             attachments: [],
           }),
         );
-        const tree = [{ pid: 4242, ppid: 1, started: "1", command: "bash -c npm test" }];
-        const calls: string[] = [];
-        yield* harness.runtime
-          .interruptTurn({ providerThread: harness.providerThread, providerTurnId })
-          .pipe(
-            Effect.provideService(MarkedProcessTree, {
-              snapshot: (flags) =>
-                Effect.sync(() => {
-                  calls.push(`snapshot ${flags.join(" ")}`);
-                  return tree;
-                }),
-              endSurvivors: (snapshot) =>
-                Effect.sync(() => {
-                  calls.push(`end ${snapshot.map((entry) => entry.pid).join(",")}`);
-                  return snapshot.length;
-                }),
-            }),
-          );
-        assert.deepEqual(calls, [
-          `snapshot --session-id=${harness.providerThread.nativeThreadRef?.nativeId} --resume=${harness.providerThread.nativeThreadRef?.nativeId}`,
-          "end 4242",
-        ]);
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId,
+        });
+        // The CLI's output ended, so the runner ended its tree; no second end here.
+        assert.deepEqual(calls, ["remember held=true", "close held=true"]);
+        assert.equal(stopTeardownPending(harness.threadId), false);
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
-  it.effect("still closes the CLI and ends its tools when it rejects the interrupt", () =>
+  it.effect("still closes the CLI when it rejects the interrupt", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const closes: string[] = [];
@@ -8081,21 +8084,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             attachments: [],
           }),
         );
-        const ended: number[] = [];
-        yield* harness.runtime
-          .interruptTurn({ providerThread: harness.providerThread, providerTurnId })
-          .pipe(
-            Effect.provideService(MarkedProcessTree, {
-              snapshot: () => Effect.succeed([{ pid: 77, ppid: 1, started: "1", command: "x" }]),
-              endSurvivors: (snapshot) =>
-                Effect.sync(() => {
-                  ended.push(...snapshot.map((entry) => entry.pid));
-                  return snapshot.length;
-                }),
-            }),
-          );
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId,
+        });
         assert.deepEqual(closes, ["close"]);
-        assert.deepEqual(ended, [77]);
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );

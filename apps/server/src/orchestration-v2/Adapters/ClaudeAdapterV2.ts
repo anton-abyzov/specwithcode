@@ -192,11 +192,8 @@ import {
   type ProviderAdapterDriverCreateInput,
 } from "../ProviderAdapterDriver.ts";
 import { type BackgroundWorkReport, backgroundWorkNotification } from "../Notification.ts";
-import {
-  MarkedProcessTree,
-  type ProcessEntry,
-  claudeSessionFlags,
-} from "../../process/markedProcessTree.ts";
+import { type OwnedProcessTree, spawnOwnedProcess } from "../../process/ownedProcessTree.ts";
+import { withStopTeardown } from "../../process/stopTeardowns.ts";
 import * as ProviderContinuationRequests from "../ProviderContinuationRequests.ts";
 import * as PromptSuggestions from "../PromptSuggestions.ts";
 import * as SubagentLaunchCheckpoints from "../SubagentLaunchCheckpoints.ts";
@@ -445,6 +442,13 @@ export interface ClaudeAgentSdkQuerySession {
   ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly close: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  /**
+   * Reads the CLI's process tree while it runs, so the end of the tree after the CLI
+   * exits still finds the orphans of tools that exited meanwhile (Windows).
+   */
+  readonly rememberProcessTree?: Effect.Effect<void>;
+  /** Ends the CLI and everything it started, now; the stream's end does it on its own. */
+  readonly endProcessTree?: Effect.Effect<void>;
   /**
    * Reconnects the named MCP server when the live process has given up on it
    * ("failed" or "needs-auth", as after a 401), and reports whether it did.
@@ -782,13 +786,53 @@ export const layerQueryRunner: Layer.Layer<
           ),
           Stream.toAsyncIterable,
         );
+        // The server spawns the CLI itself, so Stop and every close can end what the CLI
+        // started too (the SDK's own spawn and close end only the CLI).
+        let ownedTree: OwnedProcessTree | null = null;
         const queryRuntime = yield* Effect.try({
           try: () =>
             query({
               prompt,
-              options: input.options,
+              options: {
+                ...input.options,
+                spawnClaudeCodeProcess: (spawnOptions) => {
+                  const owned = spawnOwnedProcess(spawnOptions);
+                  ownedTree = owned.tree;
+                  return owned.child;
+                },
+              },
             }),
           catch: (cause) => queryRunnerError(cause, "query"),
+        });
+        // Once the CLI's output ends, what it left running is ended before the stream
+        // reports its end, so the run settles only after that; the folder change also
+        // waits on it while it runs.
+        const endOwnedTree = Effect.suspend(() => {
+          const tree: OwnedProcessTree | null = ownedTree;
+          if (tree === null) return Effect.void;
+          return withStopTeardown(
+            input.threadId,
+            Effect.promise(() => tree.end()).pipe(
+              Effect.tap((result) =>
+                result.survivors > 0
+                  ? Effect.logWarning("orchestration-v2.claude-process-tree-survivors", {
+                      threadId: input.threadId,
+                      providerSessionId: input.providerSessionId,
+                      pid: tree.root.pid,
+                      found: result.found,
+                      survivors: result.survivors,
+                    })
+                  : result.found > 0
+                    ? Effect.logInfo("orchestration-v2.claude-process-tree-ended", {
+                        threadId: input.threadId,
+                        providerSessionId: input.providerSessionId,
+                        pid: tree.root.pid,
+                        found: result.found,
+                      })
+                    : Effect.void,
+              ),
+            ),
+          );
         });
         yield* logProtocolEvent({
           direction: "outgoing",
@@ -810,7 +854,13 @@ export const layerQueryRunner: Layer.Layer<
                 payload: message,
               }),
             ),
+            Stream.ensuring(endOwnedTree),
           ),
+          endProcessTree: endOwnedTree,
+          rememberProcessTree: Effect.suspend(() => {
+            const tree: OwnedProcessTree | null = ownedTree;
+            return tree === null ? Effect.void : Effect.promise(() => tree.remember());
+          }),
           offer: (message) =>
             Queue.offer(promptQueue, message).pipe(
               Effect.asVoid,
@@ -9105,22 +9155,20 @@ export function makeClaudeAdapterV2(
                 return;
               }
               // The background shells belong to the CLI process, so closing
-              // its query is what stops them; what outlives the CLI (the SDK
-              // ends it alone) is ended from the tree read before the close.
-              const processTree = yield* MarkedProcessTree;
-              const treeSnapshot = yield* processTree
-                .snapshot(claudeSessionFlags(nativeThreadId))
-                .pipe(
-                  Effect.timeoutOption(CLAUDE_INTERRUPT_ACK_TIMEOUT),
-                  Effect.map(Option.getOrElse((): ReadonlyArray<ProcessEntry> => [])),
-                );
-              yield* closeLiveQueryForNativeThread(nativeThreadId);
-              yield* processTree.endSurvivors(treeSnapshot).pipe(Effect.timeoutOption("5 seconds"));
-              yield* retireRunningSubagents();
+              // its query is what stops them, with everything the CLI started
+              // (the runner ends its process tree when its output ends).
+              // Claimed before any wait: a turn admitted meanwhile opens its own
+              // process instead of reusing this one, and only this one is closed.
+              existing.stopping = true;
+              yield* closeLiveQuery(
+                existing,
+                "orchestration-v2.claude-query-close-timeout-on-stop",
+              );
               // A turn started while the close was pending may have opened a
-              // replacement process. Its Waiting and wake state are its own.
+              // replacement process. Its subagents, Waiting and wake state are its own.
               const current = yield* Ref.get(queryContext);
               if (current === null || current.query === existing.query) {
+                yield* retireRunningSubagents();
                 yield* clearWakeStateForNativeThread(nativeThreadId);
                 yield* resetBackgroundTaskStateForNativeThreadProcess(nativeThreadId, {
                   status: "idle",
@@ -9147,11 +9195,9 @@ export function makeClaudeAdapterV2(
             });
             // A CLI that stopped answering never acknowledges the interrupt; closing
             // the query below still ends its process, so the wait is bounded. The
-            // CLI's process tree is read meanwhile: the SDK ends the CLI alone (on
-            // Windows with TerminateProcess), so what its tools started is ended
-            // below once the query has closed.
-            const processTree = yield* MarkedProcessTree;
-            const [acknowledged, treeSnapshot] = yield* Effect.all(
+            // CLI's process tree is read meanwhile, so its end after the close also
+            // finds what tools that exited in between left running (Windows).
+            const [acknowledged] = yield* Effect.all(
               [
                 // A rejected interrupt still closes the query below: Stop ends the
                 // CLI either way, instead of leaving it running for a retry.
@@ -9165,26 +9211,11 @@ export function makeClaudeAdapterV2(
                     }).pipe(Effect.as(Option.none<void>())),
                   ),
                 ),
-                processTree
-                  .snapshot(claudeSessionFlags(existing.nativeThreadId))
-                  .pipe(
-                    Effect.timeoutOption(CLAUDE_INTERRUPT_ACK_TIMEOUT),
-                    Effect.map(Option.getOrElse((): ReadonlyArray<ProcessEntry> => [])),
-                  ),
+                (existing.query.rememberProcessTree ?? Effect.void).pipe(
+                  Effect.timeoutOption(CLAUDE_INTERRUPT_ACK_TIMEOUT),
+                ),
               ],
               { concurrency: "unbounded" },
-            );
-            const endLeftoverProcesses = processTree.endSurvivors(treeSnapshot).pipe(
-              Effect.timeoutOption("5 seconds"),
-              Effect.tap((ended) =>
-                Option.isSome(ended) && ended.value > 0
-                  ? Effect.logInfo("orchestration-v2.claude-stop-ended-leftover-processes", {
-                      providerSessionId: input.providerSessionId,
-                      providerTurnId: turnInput.providerTurnId,
-                      ended: ended.value,
-                    })
-                  : Effect.void,
-              ),
             );
             if (Option.isNone(acknowledged)) {
               yield* Effect.logWarning("orchestration-v2.claude-query-interrupt-unanswered", {
@@ -9195,13 +9226,16 @@ export function makeClaudeAdapterV2(
             }
             yield* existing.query.close.pipe(Effect.ignore);
             yield* retireRunningSubagents();
+            // The runner ends the CLI's process tree before the stream reports its
+            // end, so this also waits for that.
             const closed = yield* Deferred.await(existing.closed).pipe(
               Effect.timeoutOption("10 seconds"),
             );
-            yield* endLeftoverProcesses;
             if (Option.isSome(closed)) {
               return;
             }
+            // The CLI's output never ended: end its process tree here.
+            yield* existing.query.endProcessTree ?? Effect.void;
 
             const completedAt = yield* DateTime.now;
             yield* Effect.logWarning("orchestration-v2.claude-query-interrupt-timeout", {
@@ -9220,7 +9254,11 @@ export function makeClaudeAdapterV2(
             yield* Deferred.succeed(existing.closed, undefined);
           },
           (effect, turnInput) =>
-            effect.pipe(
+            // The folder change waits while Stop ends this thread's processes.
+            (turnInput.providerThread.appThreadId === null
+              ? effect
+              : withStopTeardown(turnInput.providerThread.appThreadId, effect)
+            ).pipe(
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapter.ProviderAdapterInterruptError({
@@ -9303,12 +9341,11 @@ export function makeClaudeAdapterV2(
           );
         });
 
-        const closeLiveQueryForNativeThread = Effect.fnUntraced(function* (nativeThreadId: string) {
-          const existing = yield* Ref.get(queryContext);
-          if (existing === null || existing.nativeThreadId !== nativeThreadId) {
-            return;
-          }
-
+        /** Closes this live query, and no newer one that replaced it meanwhile. */
+        const closeLiveQuery = Effect.fnUntraced(function* (
+          existing: ClaudeLiveQueryContext,
+          timeoutEvent: string,
+        ) {
           existing.stopping = true;
           yield* existing.query.close.pipe(Effect.ignore);
           const closed = yield* Deferred.await(existing.closed).pipe(
@@ -9318,14 +9355,26 @@ export function makeClaudeAdapterV2(
             return;
           }
 
-          yield* Effect.logWarning("orchestration-v2.claude-query-close-timeout-before-fork", {
+          yield* Effect.logWarning(timeoutEvent, {
             providerSessionId: input.providerSessionId,
-            nativeThreadId,
+            nativeThreadId: existing.nativeThreadId,
           });
+          yield* existing.query.endProcessTree ?? Effect.void;
           yield* Ref.update(queryContext, (current) =>
             current?.query === existing.query ? null : current,
           );
           yield* Deferred.succeed(existing.closed, undefined);
+        });
+
+        const closeLiveQueryForNativeThread = Effect.fnUntraced(function* (nativeThreadId: string) {
+          const existing = yield* Ref.get(queryContext);
+          if (existing === null || existing.nativeThreadId !== nativeThreadId) {
+            return;
+          }
+          yield* closeLiveQuery(
+            existing,
+            "orchestration-v2.claude-query-close-timeout-before-fork",
+          );
         });
         yield* Effect.addFinalizer(() => closeSession());
 

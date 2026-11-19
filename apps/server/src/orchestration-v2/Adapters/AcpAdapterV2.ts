@@ -8274,9 +8274,25 @@ export function makeAcpAdapterV2(
                           yield* finalizeTurn(context, "interrupted");
                         }
                         // An agent that ignored the cancel is still busy with the
-                        // stopped prompt; the next turn starts a fresh runtime
-                        // instead of queueing behind it.
-                        if (!hardRestart) yield* Ref.set(runtimeRestartRequired, true);
+                        // stopped prompt. A user Stop replaces its runtime now, which
+                        // ends the agent's process; otherwise the next turn starts a
+                        // fresh runtime instead of queueing behind it.
+                        if (!hardRestart) {
+                          yield* Ref.set(runtimeRestartRequired, true);
+                          if (turnInput.requestRuntimeRestart === true) {
+                            const replaced = yield* restartRuntimeAfterTeardownIfRequired(
+                              turnInput.providerThread.appThreadId,
+                            ).pipe(
+                              Effect.catchCause((cause) =>
+                                Effect.logWarning(
+                                  "ACP Stop could not replace a runtime that ignored the cancel",
+                                  { driver, providerTurnId: turnInput.providerTurnId, cause },
+                                ).pipe(Effect.as(false)),
+                              ),
+                            );
+                            if (replaced) return;
+                          }
+                        }
                         return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                           driver,
                           detail: `ACP provider turn ${turnInput.providerTurnId} did not acknowledge cancellation before the interrupt timeout`,
