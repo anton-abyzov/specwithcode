@@ -728,6 +728,10 @@ const ENVIRONMENTS = { environments: MACHINES.map((machine) => ({ ...machine }))
 export const useEnvironments = () => ENVIRONMENTS;
 const UNREACHABLE: ReadonlySet<string> = new Set(["spare"]);
 export const useUnreachableHosts = () => UNREACHABLE;
+// No machine judged yet: the threads list reads its machines as they are.
+const NO_REACH_STATES = new Map<string, never>();
+export const useHostReachStates = () => NO_REACH_STATES;
+export const useHostDownNotes = () => NO_REACH_STATES;
 const nickname = (environmentId: string, fallbackLabel?: string | null) =>
   MACHINES.find((machine) => machine.environmentId === environmentId)?.label ??
   fallbackLabel ??
