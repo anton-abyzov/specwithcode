@@ -49,7 +49,6 @@ import {
   type ProjectId,
   type RunId,
   type ThreadId,
-  appendThreadExecutionHistory,
 } from "@specweave-studio/contracts";
 import * as KeyedLock from "@specweave-studio/shared/KeyedLock";
 import {
@@ -78,6 +77,8 @@ import {
 import { createBundle, negotiationCandidates, repositoryPathFor } from "./bundleGit.ts";
 import { keepFencedChanges } from "./checkpointGit.ts";
 import { HandoffConnectivity, layer as HandoffConnectivityLayer } from "./handoffConnectivity.ts";
+import { makeFenceSource, makeFollowRepair } from "./handoffFence.ts";
+import * as HandoffFollow from "./handoffFollow.ts";
 import { type HandoffContinueHereOptions, HandoffMode } from "./HandoffMode.ts";
 import { HandoffPeerError, HandoffPeers, layer as HandoffPeersLayer } from "./handoffPeers.ts";
 import { shouldResume } from "./handoffPreflight.ts";
@@ -85,7 +86,6 @@ import * as Resume from "./handoffResume.ts";
 import { HandoffReceiver, type HandoffRefusal, type ReceiverCaller } from "./HandoffReceiver.ts";
 import {
   effectiveHandoffMode,
-  fenceRecord,
   findIncoming,
   incomingKey,
   type HandoffDocument,
@@ -206,6 +206,8 @@ export const make = Effect.gen(function* () {
   const locks = yield* KeyedLock.make<string>();
   const self = handoff.environmentId;
   const selfLabel = handoff.machineLabel;
+  // Keeps a worker's launcher waiting for it once it runs on another machine.
+  const follow = yield* HandoffFollow.fromContext({ self, projections, peers });
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   // A move to this machine runs on the owner's own sign-ins: no access ceiling applies.
   const selfCaller: ReceiverCaller = {
@@ -348,6 +350,7 @@ export const make = Effect.gen(function* () {
         protocolVersion: HANDOFF_PROTOCOL_VERSION,
         appVersion: HANDOFF_APP_VERSION,
         ...(carried === undefined ? {} : { carried }),
+        ...(record?.launcher == null ? {} : { launcher: record.launcher }),
       };
       const now = yield* nowIso;
       const label = yield* peerLabel(destination);
@@ -537,107 +540,9 @@ export const make = Effect.gen(function* () {
             Effect.andThen(waitForRunToEnd(shell.id)),
           );
 
-  /** Records on the source thread that it continues elsewhere: fenced, read-only, linked. */
-  const fenceSource = (
-    shell: OrchestrationV2ThreadShell,
-    destination: EnvironmentId,
-    response: TakeoverResponse,
-    epoch: number,
-    reason: TakeoverReason,
-  ) =>
-    Effect.gen(function* () {
-      const now = yield* nowIso;
-      yield* updateRecord(shell.id, (record) => ({
-        ...fenceRecord(
-          record,
-          {
-            environmentId: destination,
-            machineLabel: response.machineLabel,
-            threadId: response.threadId,
-            at: now,
-          },
-          reason === "sleep" ? "sleep" : "handoff",
-        ),
-        lease:
-          record.lease === null
-            ? null
-            : { ...record.lease, epoch, state: "fenced", renewedAt: now },
-        lastError: null,
-        pendingTakeover: null,
-      })).pipe(Effect.ignore);
-      // The destination runs the thread now. A turn still running here (an interrupt
-      // that did not land, or one that outlived the wait) is stopped again.
-      const latest = yield* projections
-        .getThreadShell(shell.id)
-        .pipe(Effect.orElseSucceed(() => null));
-      if (latest !== null && latest.activeRunId !== null) {
-        yield* orchestrator
-          .dispatch({
-            type: "run.interrupt",
-            commandId: CommandId.make(`handoff-fenced-interrupt:${latest.activeRunId}:${epoch}`),
-            threadId: shell.id,
-            runId: latest.activeRunId,
-            reason: `This thread continues on ${response.machineLabel}.`,
-            cause: "agent",
-          })
-          .pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Handoff could not interrupt the fenced copy's turn", { cause }),
-            ),
-          );
-      }
-      yield* orchestrator
-        .dispatch({
-          type: "thread.project-move.record",
-          commandId: CommandId.make(`handoff-source:${shell.id}:${epoch}`),
-          threadId: shell.id,
-          side: "source",
-          link: {
-            threadId: response.threadId,
-            projectId: response.projectId ?? shell.projectId,
-            title: shell.title,
-            movedAt: now,
-            kind: "handoff",
-            ...(destination === self
-              ? {}
-              : { environmentId: destination, machineLabel: response.machineLabel }),
-          },
-        })
-        .pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Handoff could not link the source thread", { cause }),
-          ),
-        );
-      const thread = yield* projections.getThread(shell.id).pipe(Effect.option);
-      const previous = Option.isSome(thread) ? (thread.value.execution ?? null) : null;
-      yield* orchestrator
-        .dispatch({
-          type: "thread.execution.record",
-          commandId: CommandId.make(`handoff-source-execution:${shell.id}:${epoch}`),
-          threadId: shell.id,
-          execution: {
-            ownerMachineId: previous?.ownerMachineId ?? self,
-            ownerMachineLabel: previous?.ownerMachineLabel ?? selfLabel,
-            executionMachineId: destination,
-            executionMachineLabel: response.machineLabel,
-            epoch,
-            sourceRoot: previous?.sourceRoot ?? null,
-            history: appendThreadExecutionHistory(previous?.history ?? [], {
-              machine: destination,
-              machineLabel: response.machineLabel,
-              from: now,
-              to: null,
-              reason,
-              epoch,
-            }),
-          },
-        })
-        .pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Handoff could not record the source's execution", { cause }),
-          ),
-        );
-    });
+  const fence = { self, selfLabel, nowIso, projections, orchestrator, follow, updateRecord };
+  const fenceSource = makeFenceSource(fence);
+  const repairFollows = makeFollowRepair({ ...fence, document: handoff.document });
 
   const sendTakeover = (
     destination: EnvironmentId,
@@ -690,6 +595,14 @@ export const make = Effect.gen(function* () {
       }
       const destination = pending.destinationEnvironmentId as EnvironmentId;
       const shell = yield* shellOf(threadId);
+      const taken = { shell, destination, epoch: pending.request.epoch };
+      // No row for its launcher, no re-send: the takeover stays pending for the next try.
+      yield* follow
+        .register(taken)
+        .pipe(
+          Effect.mapError(() => failed("busy", HandoffFollow.FOLLOW_NOT_RECORDED_PAUSED)),
+          Effect.tapError((error) => inDoubt(threadId, error.message)),
+        );
       const response = yield* sendTakeover(destination, pending.request).pipe(
         Effect.tapError((error) =>
           !destinationRefused(error)
@@ -697,7 +610,9 @@ export const make = Effect.gen(function* () {
             : error.code === "fenced"
               ? // The destination saw a newer epoch; a heartbeat settles who runs it.
                 inDoubt(threadId, error.message)
-              : releaseHold(threadId, error.message.slice(0, 1000)),
+              : releaseHold(threadId, error.message.slice(0, 1000)).pipe(
+                  Effect.andThen(follow.retire({ threadId, epoch: taken.epoch })),
+                ),
         ),
         Effect.mapError(fromPeer),
       );
@@ -795,6 +710,8 @@ export const make = Effect.gen(function* () {
         );
       }
       const modelSelection = input.modelSelection ?? null;
+      const declined = HandoffFollow.onwardDeclined(current?.launcher, destination, self);
+      if (declined !== null) return yield* failed("unreachable", declined);
 
       // 1. Replicate and preflight: every refusal comes before the hold, so no turn stops for it.
       const first = yield* prepare(input.threadId, destination);
@@ -853,6 +770,14 @@ export const make = Effect.gen(function* () {
       }
 
       // 3. The destination takes over at the next epoch.
+      const here = { told: current?.launcher, self, selfLabel, peers };
+      const moving = { shell: first.shell, destination, epoch };
+      const waits = yield* HandoffFollow.named(follow, moving, here).pipe(
+        Effect.mapError(() => failed("failed", HandoffFollow.FOLLOW_NOT_RECORDED)),
+        Effect.tapError((error) =>
+          releaseHold(input.threadId, error.message).pipe(Effect.andThen(resume)),
+        ),
+      );
       const request: TakeoverRequest = {
         sourceEnvironmentId: self,
         sourceThreadId: input.threadId,
@@ -860,6 +785,7 @@ export const make = Effect.gen(function* () {
         sequence: checkpoint.sequence,
         reason,
         modelSelection,
+        ...(waits === undefined ? {} : { launcher: waits }),
       };
       const response = yield* sendTakeover(destination, request).pipe(
         Effect.tapError((error) =>
@@ -874,7 +800,10 @@ export const make = Effect.gen(function* () {
                 destinationRefused(error) && error.check === "grant"
                   ? `Not moved: ${error.message}`.slice(0, 1000)
                   : null,
-              ).pipe(Effect.andThen(resume)),
+              ).pipe(
+                Effect.andThen(follow.retire({ threadId: input.threadId, epoch })),
+                Effect.andThen(resume),
+              ),
         ),
         Effect.mapError(fromPeer),
       );
@@ -1203,6 +1132,9 @@ export const make = Effect.gen(function* () {
           `This machine could not ask ${replica.sourceLabel} whether it still runs this thread; ask the user whether to continue it here (Continue here in the app).`,
         );
       }
+      const waits = detail?.launcher;
+      const out = HandoffFollow.onwardDeclined(waits, self, input.sourceEnvironmentId);
+      if (out !== null) return yield* failed("unreachable", out);
       const response = yield* receiver
         .takeover(
           // Continuing here runs on this machine's own sign-ins: no access ceiling applies.
@@ -1214,6 +1146,7 @@ export const make = Effect.gen(function* () {
             sequence: replica.checkpoint.sequence,
             reason,
             modelSelection: input.modelSelection ?? null,
+            ...(waits === undefined ? {} : { launcher: waits }),
           },
         )
         .pipe(Effect.mapError(fromPeer));
@@ -1510,6 +1443,8 @@ export const make = Effect.gen(function* () {
       for (const replica of record.replicas) members.add(replica.environmentId);
       const destinations = [...members].filter((environmentId) => {
         if (environmentId === self || !paired.has(environmentId)) return false;
+        // A copy is what lets a machine continue the work: none leaves the launcher's reach.
+        if (HandoffFollow.onwardDeclined(record.launcher, environmentId, self)) return false;
         const replica = record.replicas.find((entry) => entry.environmentId === environmentId);
         if (replica !== undefined && (replica.sequence ?? -1) >= checkpoint.sequence) return false;
         const backoff = replicateBackoff.get(backoffKey(id as ThreadId, environmentId));
@@ -1538,7 +1473,7 @@ export const make = Effect.gen(function* () {
     Effect.catchCause((cause) => Effect.logWarning("Handoff moves replication failed", { cause })),
   );
 
-  const tick = heartbeat.pipe(Effect.andThen(replicate));
+  const tick = heartbeat.pipe(Effect.andThen(repairFollows), Effect.andThen(replicate));
 
   return {
     handOff: (input: HandOffInput) => handOffAs(input, "handoff"),
@@ -1557,6 +1492,7 @@ export const make = Effect.gen(function* () {
 export const layerFleet = Layer.effectDiscard(
   Effect.gen(function* () {
     const handoff = yield* HandoffMode;
+    yield* HandoffFollow.required;
     const moves = yield* make;
     yield* handoff.attachMoves(moves);
   }),

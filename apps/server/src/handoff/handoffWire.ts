@@ -97,6 +97,18 @@ export type NegotiateRequest = typeof NegotiateRequest.Type;
 export const NegotiateResponse = Schema.Struct({ known: Schema.Array(sha) });
 export type NegotiateResponse = typeof NegotiateResponse.Type;
 
+/**
+ * The machine where a thread waits for this work's result, and the machines
+ * it can ask for it. The result is pulled by that machine, so the work may
+ * move on only to a machine in `reachable`, or back to it.
+ */
+export const HandoffLauncher = Schema.Struct({
+  environmentId: EnvironmentId,
+  label: text(120),
+  reachable: Schema.Array(EnvironmentId),
+});
+export type HandoffLauncher = typeof HandoffLauncher.Type;
+
 export const ReplicateMeta = Schema.Struct({
   sourceEnvironmentId: EnvironmentId,
   sourceLabel: text(120),
@@ -118,6 +130,8 @@ export const ReplicateMeta = Schema.Struct({
   appVersion: Schema.optional(text(40)),
   /** The ceiling the thread carries. The sender refuses a machine too old to hold it. */
   carried: Schema.optional(TeamRulesCarried),
+  /** Who waits for the result of a continuation that arrived on the sender. */
+  launcher: Schema.optional(HandoffLauncher),
 });
 export type ReplicateMeta = typeof ReplicateMeta.Type;
 export const ReplicateResponse = Schema.Struct({ sequence: NonNegativeInt });
@@ -202,6 +216,8 @@ export const TakeoverRequest = Schema.Struct({
   sequence: NonNegativeInt,
   reason: TakeoverReason,
   modelSelection: Schema.NullOr(ModelSelection),
+  /** Set while a thread waits for the result. Older receivers ignore it. */
+  launcher: Schema.optional(HandoffLauncher),
 });
 export type TakeoverRequest = typeof TakeoverRequest.Type;
 export const TakeoverResponse = Schema.Struct({

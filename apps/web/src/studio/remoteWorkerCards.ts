@@ -27,6 +27,17 @@ export function remoteWorkerCardStatus(worker: StudioFleetRemoteWorker): ThreadC
     case "following":
       if (!worker.reachable)
         return { tone: "unknown", label: `${worker.machineLabel} unreachable, retrying` };
+      // Handed off there with no run seen yet: nothing is working, and nothing has ended.
+      if (worker.awaiting === "handoff")
+        return { tone: "idle", label: `Waiting for handoff to ${worker.machineLabel}` };
+      if (worker.awaiting === "run")
+        return {
+          tone: "idle",
+          label:
+            finished === undefined
+              ? `Waiting for first run on ${worker.machineLabel}`
+              : `${finished.label} on ${worker.machineLabel}, waiting for its next run`,
+        };
       // Its run asked the person something on that machine; it is not working meanwhile.
       return worker.lastStatus === REMOTE_WORKER_WAITING_ON_YOU
         ? { tone: "waiting", label: `Last observed: needs you on ${worker.machineLabel}` }
@@ -61,6 +72,8 @@ export function remoteWorkerCardStatus(worker: StudioFleetRemoteWorker): ThreadC
  */
 export function remoteWorkerNeedsPlace(worker: StudioFleetRemoteWorker): boolean {
   if (worker.state === "launch_unknown") return true;
+  // Handed off and still to run there: not history yet, though nothing is working.
+  if (worker.state === "following" && worker.awaiting !== undefined) return true;
   const { tone } = remoteWorkerCardStatus(worker);
   return tone === "working" || tone === "waiting" || tone === "unknown";
 }
