@@ -2003,10 +2003,7 @@ export function makeAcpAdapterV2(
         // covers it and is stored as partial.
         const sessionUsageTotals = new WeakMap<
           object,
-          Map<
-            string,
-            { totals: AcpRawPromptUsage | undefined; open: boolean; unreported: boolean }
-          >
+          Map<string, { totals: AcpRawPromptUsage | undefined; open: boolean; unreported: boolean }>
         >();
         const runtimeRestartRequired = yield* Ref.make(false);
         // Native sessions whose restored history the model rejected (for
@@ -8276,6 +8273,10 @@ export function makeAcpAdapterV2(
                         if (!context.finalized) {
                           yield* finalizeTurn(context, "interrupted");
                         }
+                        // An agent that ignored the cancel is still busy with the
+                        // stopped prompt; the next turn starts a fresh runtime
+                        // instead of queueing behind it.
+                        if (!hardRestart) yield* Ref.set(runtimeRestartRequired, true);
                         return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                           driver,
                           detail: `ACP provider turn ${turnInput.providerTurnId} did not acknowledge cancellation before the interrupt timeout`,
