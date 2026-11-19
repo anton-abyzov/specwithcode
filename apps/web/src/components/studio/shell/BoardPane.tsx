@@ -11,7 +11,12 @@
  * plans written before it was set up, gets the setup in its place (BoardSetup,
  * through `setup`) instead of a hidden tab.
  */
-import type { EnvironmentId, ProjectBoardCard, ProjectId } from "@specweave-studio/contracts";
+import type {
+  EnvironmentId,
+  ProjectBoardCard,
+  ProjectBoardResult,
+  ProjectId,
+} from "@specweave-studio/contracts";
 import { PROJECT_BOARD_DONE_DEFAULT, PROJECT_BOARD_DONE_MAX } from "@specweave-studio/contracts";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import * as Schema from "effect/Schema";
@@ -44,7 +49,9 @@ import {
   boardColumnMore,
   boardGroupCounts,
   boardGroups,
+  boardBehindLine,
   boardIsEmpty,
+  boardNotDone,
   boardMachineOptions,
   boardPullRequestStates,
   boardStateLabel,
@@ -54,7 +61,8 @@ import {
   type BoardGroupId,
 } from "../../../studio/projectBoardModel";
 import { projectWorkspace } from "../../../studio/projectWorkspace";
-import { nowFromMinute } from "../../../studio/shellModel";
+import { compactAge, nowFromMinute } from "../../../studio/shellModel";
+import { useTx } from "../../../i18n";
 import { Button } from "../../ui/button";
 import { BOARD_EMPTY_ACTION, BOARD_EMPTY_PROMPT, BOARD_EMPTY_TEXT } from "../specweaveSetup.logic";
 import { BoardCard } from "./BoardCard";
@@ -558,6 +566,9 @@ function BoardCards({
               />
             </label>
           </div>
+          {board !== null && !boardIsEmpty(board) ? (
+            <BoardSummary notDone={boardNotDone(board)} behind={board.behind} now={now} />
+          ) : null}
           <BoardMachineLegend
             options={machineOptions}
             pick={machine}
@@ -706,3 +717,32 @@ function BoardCards({
 }
 
 const NO_THREADS: ReadonlyArray<never> = [];
+
+/**
+ * The Board's summary line: how many increments are not done, and, when the
+ * project folder lags its default branch, by how much.
+ */
+function BoardSummary(props: {
+  readonly notDone: number;
+  readonly behind: ProjectBoardResult["behind"];
+  readonly now: number;
+}) {
+  const tx = useTx();
+  const behind = boardBehindLine(
+    props.behind,
+    tx,
+    props.behind?.fetchedAt ? compactAge(props.behind.fetchedAt, props.now) : "",
+  );
+  return (
+    <p className="sws-board-summary" data-board-summary="">
+      <span className="sws-board-not-done" data-not-done={props.notDone}>
+        {tx("{count} not done", { count: props.notDone })}
+      </span>
+      {behind ? (
+        <span className="sws-board-behind" title={behind.title}>
+          {behind.text}
+        </span>
+      ) : null}
+    </p>
+  );
+}

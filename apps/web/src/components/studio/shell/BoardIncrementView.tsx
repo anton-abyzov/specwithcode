@@ -53,11 +53,14 @@ import {
   boardNoteText,
   boardProgress,
   boardOutOfReachNote,
+  boardSourceLine,
+  boardSourceTitle,
   incrementNumber,
   pullRequestLabel,
   threadIsLive,
 } from "../../../studio/projectBoardModel";
 import { projectWorkspace } from "../../../studio/projectWorkspace";
+import { useTx } from "../../../i18n";
 import { THREAD_TONE_LABELS, compactAge } from "../../../studio/shellModel";
 import { PullRequestGlyph } from "../../pullRequest/pullRequestIcons";
 import { BoardMachineMark, type BoardThread } from "./BoardThreads";
@@ -133,6 +136,7 @@ function Section(props: {
 
 export function BoardIncrementView(props: BoardIncrementViewProps) {
   const { incrementId, threads, now, onAsk } = props;
+  const tx = useTx();
   const [includeDone, setIncludeDone] = useState(false);
   const [allThreads, setAllThreads] = useState(false);
   const [finishedThreads, setFinishedThreads] = useState(false);
@@ -210,6 +214,15 @@ export function BoardIncrementView(props: BoardIncrementViewProps) {
   const sections = viewThreadSections(threads, allThreads);
   const summary = problemSummary(detail?.problem ?? null);
   const specPath = card?.specPath ?? null;
+  const source = card?.source ?? null;
+  const sourceLine =
+    source === null
+      ? null
+      : boardSourceLine(
+          source,
+          tx,
+          source.kind === "remote" && source.fetchedAt ? compactAge(source.fetchedAt, now) : "",
+        );
   const openSpec =
     specPath === null || missing
       ? null
@@ -278,6 +291,11 @@ export function BoardIncrementView(props: BoardIncrementViewProps) {
             </span>
           ) : null}
           {stateLine ? <span className="sws-board-view-age">{stateLine}</span> : null}
+          {sourceLine ? (
+            <span className="sws-board-view-source" title={boardSourceTitle(tx)}>
+              {sourceLine}
+            </span>
+          ) : null}
           <span className="sws-board-view-nav">
             <button
               type="button"
@@ -587,7 +605,11 @@ export function BoardIncrementView(props: BoardIncrementViewProps) {
                 ) : null
               }
             >
-              {card.specPath === null ? (
+              {card.specPath === null && card.source !== undefined ? (
+                <p className="sws-board-view-note">
+                  {tx("This copy's files could not be read on this machine.")}
+                </p>
+              ) : card.specPath === null ? (
                 <p className="sws-board-view-note">
                   No spec yet: this increment has a folder and a title but no spec.md.
                 </p>

@@ -5670,4 +5670,16 @@ export const zh: PhraseCatalog = {
     "可能让工作耗时大幅增加：实测中，经过审查的工作耗时中位数是审查前同样工作的 2.6 倍（一半的运行在 1.6 到 3.6 倍之间），因为每轮审查及其修复都会增加时间。",
   "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.":
     "可能让工作耗时增加：每次咨询约增加 2 分钟。实测中，咨询过的会话耗时约为 1.1 倍，每 10 个中有 1 个达到 1.4 倍或更多。",
+  "{count} not done": "{count} 个未完成",
+  "Project folder is {count} commit behind {branch}": "项目文件夹落后 {branch} {count} 个提交",
+  "Project folder is {count} commits behind {branch}": "项目文件夹落后 {branch} {count} 个提交",
+  "Last fetched just now.": "上次获取：刚刚。",
+  "Last fetched {age} ago.": "上次获取：{age}前。",
+  "From worktree {name}": "来自工作树 {name}",
+  "From {branch}": "来自 {branch}",
+  "From {branch}, fetched just now": "来自 {branch}，刚刚获取",
+  "From {branch}, fetched {age} ago": "来自 {branch}，{age}前获取",
+  "This is the newest copy of the increment. The project folder's copy is older or missing.":
+    "这是该增量的最新副本。项目文件夹中的副本较旧或不存在。",
+  "This copy's files could not be read on this machine.": "无法在这台机器上读取此副本的文件。",
 };

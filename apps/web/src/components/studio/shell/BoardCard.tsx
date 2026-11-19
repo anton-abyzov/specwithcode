@@ -24,9 +24,12 @@ import {
   boardPullRequestChip,
   boardReasons,
   boardRestCanContinue,
+  boardSourceLine,
+  boardSourceTitle,
   incrementNumber,
   threadIsLive,
 } from "../../../studio/projectBoardModel";
+import { useTx } from "../../../i18n";
 import { compactAge } from "../../../studio/shellModel";
 import { PullRequestGlyph } from "../../pullRequest/pullRequestIcons";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../ui/menu";
@@ -70,6 +73,7 @@ export function BoardCard({
   onAsk,
 }: BoardCardProps) {
   const countId = useId();
+  const tx = useTx();
   const progress = card.column === "done" ? null : boardProgress(card.tasks);
   const title = boardCardTitle(card);
   const number = incrementNumber(card.incrementId);
@@ -220,6 +224,11 @@ export function BoardCard({
             </button>
           ) : null}
         </div>
+      ) : null}
+      {card.source ? (
+        <p className="sws-board-card-source" title={boardSourceTitle(tx)}>
+          {boardSourceLine(card.source, tx)}
+        </p>
       ) : null}
       {stuck !== null || shownReasons.length > 0 ? (
         <ul className="sws-board-reasons" aria-label="Why it is blocked">

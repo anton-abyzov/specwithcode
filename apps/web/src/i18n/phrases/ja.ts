@@ -5924,4 +5924,19 @@ export const ja: PhraseCatalog = {
     "作業の完了までの時間が大幅に延びることがあります。計測では、レビューした作業はレビュー前の同じ作業と比べて中央値で 2.6 倍の時間がかかりました（半数の実行は 1.6〜3.6 倍）。レビューの各ラウンドと修正に時間がかかるためです。",
   "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.":
     "作業時間が延びることがあります。相談 1 回あたり約 2 分かかります。計測では、相談したスレッドは約 1.1 倍の時間がかかり、10 件に 1 件は 1.4 倍以上でした。",
+  "{count} not done": "未完了 {count} 件",
+  "Project folder is {count} commit behind {branch}":
+    "プロジェクトフォルダーは {branch} より {count} コミット遅れています",
+  "Project folder is {count} commits behind {branch}":
+    "プロジェクトフォルダーは {branch} より {count} コミット遅れています",
+  "Last fetched just now.": "最終取得: たった今。",
+  "Last fetched {age} ago.": "最終取得: {age} 前。",
+  "From worktree {name}": "ワークツリー {name} から",
+  "From {branch}": "{branch} から",
+  "From {branch}, fetched just now": "{branch} から、たった今取得",
+  "From {branch}, fetched {age} ago": "{branch} から、{age} 前に取得",
+  "This is the newest copy of the increment. The project folder's copy is older or missing.":
+    "これはインクリメントの最新のコピーです。プロジェクトフォルダーのコピーは古いか、ありません。",
+  "This copy's files could not be read on this machine.":
+    "このコピーのファイルはこのマシンでは読み取れませんでした。",
 };

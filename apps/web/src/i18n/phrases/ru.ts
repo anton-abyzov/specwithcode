@@ -5913,4 +5913,19 @@ export const ru: PhraseCatalog = {
     "Работа может занять намного больше времени: в замерах проверенная работа шла по медиане в 2,6 раза дольше, чем та же работа до проверки (у половины запусков в 1,6–3,6 раза), потому что каждый раунд проверки и его исправления добавляют время.",
   "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.":
     "Работа может занять больше времени: каждая консультация добавляет около 2 минут. В замерах треды с консультациями шли примерно в 1,1 раза дольше, а каждый десятый — в 1,4 раза дольше или больше.",
+  "{count} not done": "Не завершено: {count}",
+  "Project folder is {count} commit behind {branch}":
+    "Папка проекта отстаёт от {branch} на {count} коммит",
+  "Project folder is {count} commits behind {branch}":
+    "Папка проекта отстаёт от {branch} на {count} коммитов",
+  "Last fetched just now.": "Последнее получение: только что.",
+  "Last fetched {age} ago.": "Последнее получение: {age} назад.",
+  "From worktree {name}": "Из worktree {name}",
+  "From {branch}": "Из {branch}",
+  "From {branch}, fetched just now": "Из {branch}, получено только что",
+  "From {branch}, fetched {age} ago": "Из {branch}, получено {age} назад",
+  "This is the newest copy of the increment. The project folder's copy is older or missing.":
+    "Это самая новая копия инкремента. Копия в папке проекта старее или отсутствует.",
+  "This copy's files could not be read on this machine.":
+    "Файлы этой копии не удалось прочитать на этом компьютере.",
 };
