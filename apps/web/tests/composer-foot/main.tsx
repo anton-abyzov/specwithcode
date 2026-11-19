@@ -57,6 +57,8 @@ document.documentElement.classList.toggle("dark", dark);
 applyThemePalette("studio-chat", dark ? "dark" : "light");
 const scene = params.get("scene") ?? "window";
 const banner = params.get("banner") === "1";
+// `?draft=` seeds a saved one-line draft, as a thread reopened with words still in its box.
+const savedDraft = params.get("draft");
 const tone = (params.get("state") ?? "background") as ThreadTone;
 
 const NOW = Date.parse("2026-11-13T19:00:00Z");
@@ -247,7 +249,7 @@ function CoordinatorPane() {
 }
 
 function ThreadComposer() {
-  const promptRef = useRef("");
+  const promptRef = useRef(savedDraft ?? "");
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
   const composerFilesRef = useRef<ComposerFileAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
@@ -256,8 +258,8 @@ function ThreadComposer() {
     <ComposerSurface.Shell machineColor="blue">
       <ComposerSurface.Host>
         <div className="relative z-10">
-          {/* The window is on m4 and the thread runs on linux-mini: Send leaves this machine. */}
-          <MachineSendTargetContext value={{ name: "linux-mini", color: "blue" }}>
+          {/* The thread runs on another machine than the window's: Send leaves this one. */}
+          <MachineSendTargetContext value={{ name: "Build B", color: "blue" }}>
             <ChatComposer
               composerDraftTarget={threadRef}
               environmentId={linuxMini}
@@ -385,9 +387,9 @@ function ThreadComposer() {
               onFileOpen={() => {}}
               machine={{
                 kind: "linux",
-                label: "linux-mini",
-                short: "LM",
-                tip: "Runs on linux-mini (Ubuntu, Linux).",
+                label: "Build B",
+                short: "BB",
+                tip: "Runs on Build B (Ubuntu, Linux).",
                 warning: null,
                 color: "blue",
                 isThisMachine: false,
@@ -440,4 +442,5 @@ const router = createRouter({
     ),
   }),
 });
+if (savedDraft) useComposerDraftStore.getState().setPrompt(threadRef, savedDraft);
 createRoot(document.getElementById("root")!).render(<RouterProvider router={router} />);

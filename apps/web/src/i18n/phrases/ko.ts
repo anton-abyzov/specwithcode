@@ -2981,6 +2981,8 @@ export const ko: PhraseCatalog = {
   "Ask anything...": "무엇이든 물어보세요...",
   "Send with credits": "크레딧으로 보내기",
   "Send to this thread on {machine}": "{machine}의 이 스레드로 보내기",
+  "Start a thread on {machine}": "{machine}에서 스레드 시작",
+  "Start {count} threads on {machine}": "{machine}에서 스레드 {count}개 시작",
   "Finding pull request...": "풀 리퀘스트를 찾는 중...",
   "Searching workspace files...": "워크스페이스 파일을 검색하는 중...",
   "Draft attachment may not persist": "초안 첨부 파일이 유지되지 않을 수 있음",

@@ -80,6 +80,7 @@ import {
   memo,
   type ComponentProps,
   type ReactNode,
+  use,
   useCallback,
   useEffect,
   useId,
@@ -309,6 +310,8 @@ import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
+import { machineSendLabel } from "./machineSendLabel";
+import { MachineSendTargetContext } from "~/studio/machineIdentity";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import {
   ComposerPendingUserInputPanel,
@@ -1480,6 +1483,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   preserveComposerFocusOnPointerDown?: boolean;
   isEditingQueuedMessage: boolean;
   sendWithCredits: boolean;
+  startsThreads: number | null;
   onSubmitMessage: React.MouseEventHandler<HTMLButtonElement>;
   onResume: () => void;
   onPreviousPendingQuestion: () => void;
@@ -1523,6 +1527,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
         isEditingQueuedMessage={props.isEditingQueuedMessage}
         sendWithCredits={props.sendWithCredits}
+        startsThreads={props.startsThreads}
         onSubmitMessage={props.onSubmitMessage}
         onResume={props.onResume}
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
@@ -1833,6 +1838,7 @@ export interface ChatComposerProps {
 
 export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
   const tx = useTx();
+  const sendTarget = use(MachineSendTargetContext);
   const {
     composerDraftTarget,
     environmentId,
@@ -3458,11 +3464,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectSelectionRequired ||
     environmentUnavailable !== null ||
     (!composerSendState.hasSendableContent && !showResumeAction);
+  // A new draft has no thread yet: its send starts one, or one per selected model.
+  const startsThreads = routeKind === "draft" ? (multipleModelSelections?.length ?? 1) : null;
+  // The folded phone box sends a saved draft without opening: a plain send to another
+  // machine wears that machine's color and says where it goes, as the open box's Send does.
+  const collapsedSendTarget =
+    showResumeAction || explicitCreditOffer !== null || phase === "running" ? null : sendTarget;
   const collapsedComposerPrimaryActionLabel = showResumeAction
     ? "Resume thread"
     : explicitCreditOffer !== null
       ? "Send with credits"
-      : "Send message";
+      : collapsedSendTarget
+        ? machineSendLabel(tx, collapsedSendTarget.name, startsThreads)
+        : "Send message";
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
 
@@ -7501,9 +7515,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   className={cn(
                     "flex size-8 shrink-0 items-center justify-center rounded-full bg-message-action text-message-action-foreground hover:bg-message-action-hover disabled:opacity-(--disabled-opacity)",
                     explicitCreditOffer !== null && "w-auto gap-1.5 px-3 text-xs",
+                    collapsedSendTarget && "machine-send",
                   )}
                   disabled={collapsedComposerPrimaryActionDisabled}
                   aria-label={collapsedComposerPrimaryActionLabel}
+                  {...(collapsedSendTarget
+                    ? { "data-machine-color": collapsedSendTarget.color, "data-send-target": "" }
+                    : {})}
                   onPointerDown={(event) => event.preventDefault()}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -8253,6 +8271,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     preserveComposerFocusOnPointerDown={isMobileViewport || isComposerResting}
                     isEditingQueuedMessage={isEditingQueuedMessage}
                     sendWithCredits={explicitCreditOffer !== null}
+                    startsThreads={startsThreads}
                     onSubmitMessage={handleSubmitMessage}
                     onResume={onResume}
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}

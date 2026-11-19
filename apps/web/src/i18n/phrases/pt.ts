@@ -3016,6 +3016,8 @@ export const pt: PhraseCatalog = {
   "Ask anything...": "Pergunte qualquer coisa...",
   "Send with credits": "Enviar com créditos",
   "Send to this thread on {machine}": "Enviar para esta thread em {machine}",
+  "Start a thread on {machine}": "Iniciar uma thread em {machine}",
+  "Start {count} threads on {machine}": "Iniciar {count} threads em {machine}",
   "Finding pull request...": "Procurando pull request...",
   "Searching workspace files...": "Pesquisando arquivos do workspace...",
   "Draft attachment may not persist": "O anexo do rascunho pode não ser mantido",

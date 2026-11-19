@@ -530,11 +530,11 @@ function ComposerScene() {
                   }}
                 />
                 <span className="min-w-0 truncate text-sm font-medium">Fable 5.2</span>
-                {/* As the thread's Send draws it: M1's color, never its name. */}
+                {/* As the thread's Send draws it: the machine's color, never its name. */}
                 <button
                   type="button"
                   className="machine-send ms-auto inline-flex size-8 items-center justify-center rounded-full"
-                  aria-label="Send to this thread on M1"
+                  aria-label={`Send to this thread on ${m1.name}`}
                   data-send-target=""
                   {...machineColorProps(m1)}
                 >

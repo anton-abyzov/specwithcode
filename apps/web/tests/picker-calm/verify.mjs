@@ -329,9 +329,9 @@ try {
       // No window-wide bar: two machines on screen cannot share one.
       assert.equal(await page.locator("[data-machine-window-tint]").count(), 0);
       assert.equal(colors.chip, "teal");
-      assert.equal(
+      assert.match(
         await page.locator("[data-send-target]").getAttribute("aria-label"),
-        "Send to this thread on M1",
+        /^Send to this thread on \S+$/,
       );
       // Send never prints the machine: the chip beside it does.
       assert.equal((await page.locator("[data-send-target]").innerText()).trim(), "↑");

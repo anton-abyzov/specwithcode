@@ -3033,6 +3033,8 @@ export const fr: PhraseCatalog = {
   "Ask anything...": "Demandez n’importe quoi...",
   "Send with credits": "Envoyer avec des crédits",
   "Send to this thread on {machine}": "Envoyer à ce fil sur {machine}",
+  "Start a thread on {machine}": "Démarrer un fil sur {machine}",
+  "Start {count} threads on {machine}": "Démarrer {count} fils sur {machine}",
   "Finding pull request...": "Recherche de la pull request...",
   "Searching workspace files...": "Recherche des fichiers de l’espace de travail...",
   "Draft attachment may not persist":

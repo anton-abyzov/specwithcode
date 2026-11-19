@@ -125,6 +125,60 @@ describe("ComposerPrimaryActions", () => {
     expect(button.getAttribute("aria-label")).toBe("Send to this thread on Workstation W");
   });
 
+  it("says a new draft starts a thread, and one per model when several are picked", () => {
+    const label = (changes: Record<string, unknown>) =>
+      sendButtonTo(SEND_TARGET, changes).getAttribute("aria-label");
+    // An existing thread: the message goes to it.
+    expect(label({})).toBe("Send to this thread on Workstation W");
+    expect(label({ startsThreads: null })).toBe("Send to this thread on Workstation W");
+    // A new draft has no thread yet.
+    expect(label({ startsThreads: 1 })).toBe("Start a thread on Workstation W");
+    // Two models picked: one thread each.
+    expect(label({ startsThreads: 2 })).toBe("Start 2 threads on Workstation W");
+    // Whatever it says, the button prints none of it.
+    for (const startsThreads of [null, 1, 2])
+      expect(sendButtonTo(SEND_TARGET, { startsThreads }).textContent).toBe("");
+  });
+
+  // A name put back in one state only would pass the plain-send test above.
+  it.each([
+    ["resume", { canResume: true, hasSendableContent: false }],
+    ["queued edit", { isEditingQueuedMessage: true }],
+    ["running", { isRunning: true, canInterrupt: true }],
+    ["running, queueing", { isRunning: true, canInterrupt: true, followUpBehavior: "queue" }],
+    ["credits", { sendWithCredits: true }],
+    ["busy", { isSendBusy: true }],
+    ["connecting", { isConnecting: true }],
+    ["preparing a worktree", { isPreparingWorktree: true }],
+    ["blocked", { sendDisabledReason: "Preparing attachments" }],
+    ["machine away", { isEnvironmentUnavailable: true, waitingFor: SEND_TARGET.name }],
+    ["nothing typed", { hasSendableContent: false }],
+    ["stop only", { isRunning: true, canInterrupt: true, hasSendableContent: false }],
+    ["new draft", { startsThreads: 1 }],
+    ["new draft, two models", { startsThreads: 2 }],
+    ["stage artwork", { artwork: true }],
+  ] as const)("prints no machine on the button with a target set: %s", (_state, changes) => {
+    const { artwork, ...props } = { artwork: false, ...changes };
+    if (artwork) {
+      stageArtworkState.mode = "artwork";
+      stageArtworkState.variant = "nightly";
+    }
+    const host = document.createElement("div");
+    host.innerHTML = renderToStaticMarkup(
+      createElement(
+        MachineSendTargetContext,
+        { value: SEND_TARGET },
+        createElement(ComposerPrimaryActions, sendButtonProps(null, props)),
+      ),
+    );
+    const buttons = [...host.querySelectorAll("button")];
+    expect(buttons.length).toBeGreaterThan(0);
+    for (const button of buttons) {
+      expect(button.textContent).not.toContain(SEND_TARGET.name);
+      expect(button.textContent).not.toContain(SEND_TARGET.short);
+    }
+  });
+
   it("is as wide as a send to this machine", () => {
     const sizes = (button: Element) =>
       [...button.classList].filter((name) => /(^|:)(w|px|gap|text)-/u.test(name)).toSorted();

@@ -14,6 +14,7 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { composerFloatingLayerProps } from "./composerEventScope";
+import { machineSendLabel } from "./machineSendLabel";
 import {
   alternateComposerDispatchAction,
   resolveComposerDispatchMode,
@@ -51,6 +52,8 @@ interface ComposerPrimaryActionsProps {
   preserveComposerFocusOnPointerDown?: boolean;
   isEditingQueuedMessage?: boolean;
   sendWithCredits?: boolean;
+  /** A new draft: how many threads its send starts. Null for a thread that exists. */
+  startsThreads?: number | null;
   onSubmitMessage?: MouseEventHandler<HTMLButtonElement>;
   onResume?: () => void;
   onPreviousPendingQuestion: () => void;
@@ -106,6 +109,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   preserveComposerFocusOnPointerDown = false,
   isEditingQueuedMessage = false,
   sendWithCredits = false,
+  startsThreads = null,
   onSubmitMessage,
   onResume,
   onPreviousPendingQuestion,
@@ -282,8 +286,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           : showCreditLabel
             ? "Send with credits"
             : sendTarget
-              ? // The machine is a name a person gave it: put in as it is, never as a pattern.
-                tx("Send to this thread on {machine}").replace("{machine}", () => sendTarget.name)
+              ? machineSendLabel(tx, sendTarget.name, startsThreads)
               : "Submit message";
   // A plain send to another machine wears that machine's color and never prints its
   // name: the machine chip in the box's foot says where the message goes, and the

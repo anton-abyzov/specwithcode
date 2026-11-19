@@ -3005,6 +3005,8 @@ export const ru: PhraseCatalog = {
   "Ask anything...": "Спросите что угодно...",
   "Send with credits": "Отправить за кредиты",
   "Send to this thread on {machine}": "Отправить в этот тред на {machine}",
+  "Start a thread on {machine}": "Запустить тред на {machine}",
+  "Start {count} threads on {machine}": "Запустить треды ({count}) на {machine}",
   "Finding pull request...": "Поиск pull request...",
   "Searching workspace files...": "Поиск файлов в рабочей папке...",
   "Draft attachment may not persist": "Вложение черновика может не сохраниться",

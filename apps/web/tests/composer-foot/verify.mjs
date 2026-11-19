@@ -172,8 +172,8 @@ const SCENES = [
   { name: "window", width: 860, height: 720 },
   // Wide enough that the thread's box is past its 720 px container breakpoint.
   { name: "thread", width: 1100, height: 620 },
-  { name: "thread", width: 600, height: 520 },
-  { name: "thread", width: 390, height: 520 },
+  { name: "thread", width: 600, height: 520, draft: true },
+  { name: "thread", width: 390, height: 520, draft: true },
   { name: "coordinator", width: 600, height: 520 },
   { name: "coordinator", width: 390, height: 520 },
 ];
@@ -190,11 +190,45 @@ try {
         });
         page.on("pageerror", (error) => errors.push(`${scene.name}: ${error.message}`));
         await page.goto(
-          `${origin}/?scene=${scene.name}&theme=${theme}${banner ? "&banner=1" : ""}`,
+          `${origin}/?scene=${scene.name}&theme=${theme}${banner ? "&banner=1" : ""}${scene.draft ? "&draft=Run%20the%20tests" : ""}`,
         );
         await page.locator('[data-project-pane]').first().waitFor();
         // A typed message turns Send on, so it shows the color it sends with.
         const prompt = page.locator('[data-project-pane="threads"] [contenteditable="true"]');
+        // A phone-width box with a saved one-line draft sends without opening: its
+        // folded Send wears the machine's color and says where the message goes.
+        const foldedSend = page.locator(
+          '[data-project-pane="threads"] [data-chat-composer-transition-actions]',
+        );
+        const foldedFacts =
+          scene.draft && (await foldedSend.count()) > 0 && (await foldedSend.first().isVisible())
+            ? await foldedSend.first().evaluate((button) => {
+                const probe = button.parentElement.appendChild(document.createElement("i"));
+                probe.style.background = "var(--machine)";
+                const machinePaint = getComputedStyle(probe).backgroundColor;
+                probe.remove();
+                return {
+                  text: button.textContent,
+                  label: button.getAttribute("aria-label"),
+                  color: button.getAttribute("data-machine-color"),
+                  enabled: !button.disabled,
+                  background: getComputedStyle(button).backgroundColor,
+                  machinePaint,
+                };
+              })
+            : null;
+        if (scene.draft) {
+          await page.screenshot({ path: path.join(output, `${label}-folded-${scene.width}-${theme}${banner ? "-banner" : ""}.png`) });
+          if (!before) {
+            const where = `folded ${scene.width} ${theme}`;
+            assert.ok(foldedFacts, `${where}: no folded Send with a saved draft`);
+            assert.ok(foldedFacts.enabled, `${where}: folded Send is off with a saved draft`);
+            assert.equal(foldedFacts.text, "", `${where}: folded Send says ${foldedFacts.text}`);
+            assert.equal(foldedFacts.label, "Send to this thread on Build B", `${where}: label`);
+            assert.equal(foldedFacts.color, "blue", `${where}: folded Send color`);
+            assert.equal(foldedFacts.background, foldedFacts.machinePaint, `${where}: not painted blue`);
+          }
+        }
         // A phone-width box keeps its editor folded until it is tapped.
         const folded = page.locator(
           '[data-project-pane="threads"] [data-chat-composer-transition-prompt]',
@@ -212,7 +246,7 @@ try {
         const facts = await page.evaluate(measure);
         const tag = `${label}-${scene.name}-${scene.width}-${theme}${banner ? "-banner" : ""}`;
         await page.screenshot({ path: path.join(output, `${tag}.png`) });
-        results.push({ tag, typed, ...facts });
+        results.push({ tag, typed, folded: foldedFacts, ...facts });
         if (!before) check(tag, facts, scene, typed);
         await page.close();
       }
@@ -230,15 +264,15 @@ function check(tag, facts, scene, typed) {
   const { thread, coordinator } = facts;
   if (thread) {
     // AC-02: "Runs on <machine>" reads in full at every width.
-    assert.equal(thread.chipWords, "Runs on linux-mini", `${tag}: chip says ${thread.chipWords}`);
+    assert.equal(thread.chipWords, "Runs on Build B", `${tag}: chip says ${thread.chipWords}`);
     assert.ok(!thread.chipCompact && thread.chipNameShows, `${tag}: the machine name is hidden`);
     assert.equal(thread.chipNameCut, false, `${tag}: the machine name is cut`);
-    assert.match(thread.chipLabel ?? "", /Runs on linux-mini/, `${tag}: chip label`);
+    assert.match(thread.chipLabel ?? "", /Runs on Build B/, `${tag}: chip label`);
     // 1390 AC-02: Send never names a machine. The chip above does, and Send keeps
     // that machine's color and the round shape of a send to this machine.
     assert.equal(thread.sendWords, "", `${tag}: Send says ${thread.sendWords}`);
     assert.equal(thread.sendText, "", `${tag}: Send holds the text ${thread.sendText}`);
-    assert.equal(thread.sendLabel, "Send to this thread on linux-mini", `${tag}: Send label`);
+    assert.equal(thread.sendLabel, "Send to this thread on Build B", `${tag}: Send label`);
     assert.equal(thread.sendColor, "blue", `${tag}: Send color`);
     assert.ok(typed, `${tag}: no message could be typed`);
     if (typed) {
