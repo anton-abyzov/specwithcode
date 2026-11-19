@@ -466,17 +466,19 @@ describe("scheduled task model defaults", () => {
     };
     const settings = { ...config.settings, defaultModelSelection: null };
     expect(
-      resolve({ ...config, settings, providers: [muse, claude] } as ServerConfig, null),
+      resolve({ ...config, settings, providers: [muse, claude] } as unknown as ServerConfig, null),
     ).toEqual({ instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" });
     // With only Muse there is no regular default to guess.
-    expect(resolve({ ...config, settings, providers: [muse] } as ServerConfig, null)).toBeNull();
+    expect(
+      resolve({ ...config, settings, providers: [muse] } as unknown as ServerConfig, null),
+    ).toBeNull();
     // A Muse model the person put on Daily is a regular model again.
     const onDaily = {
       ...settings,
       modelLanes: { routine: [{ instanceId: museId, model: "muse-wonder-full-1.0" }], complex: [] },
     };
     expect(
-      resolve({ ...config, settings: onDaily, providers: [muse] } as ServerConfig, null),
+      resolve({ ...config, settings: onDaily, providers: [muse] } as unknown as ServerConfig, null),
     ).toEqual({ instanceId: museId, model: "muse-wonder-full-1.0" });
   });
   it("does not choose an implicit model on a disabled provider", () => {
