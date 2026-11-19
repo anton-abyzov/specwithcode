@@ -197,6 +197,9 @@ function shellOf(thread: Thread) {
   };
 }
 
+const threadOf = (command: OrchestrationV2ServerCommand) =>
+  (command as { readonly threadId?: string }).threadId;
+
 function layers(state: World) {
   const find = (threadId: string) => state.threads.find((thread) => thread.id === threadId)!;
   return Layer.mergeAll(
@@ -252,7 +255,7 @@ function layers(state: World) {
         Effect.gen(function* () {
           state.dispatched.push(command);
           if (state.failDispatch) return yield* Effect.die(new Error("dispatch refused"));
-          const thread = find(command.threadId);
+          const thread = find(threadOf(command)!);
           if (command.type === "thread.model-selection.set" && command.modelSelection) {
             // As the orchestrator records it (launchFallbackFields).
             const to = command.modelSelection as typeof onClaude;
@@ -282,7 +285,7 @@ const sweeps = (state: World, body: (sweep: () => Effect.Effect<void>) => Effect
 const nextSweep = () => TestClock.adjust(PROVIDER_FALLBACK_SWEEP_INTERVAL_MS);
 const ids = (state: World, threadId = "t1") =>
   state.dispatched
-    .filter((command) => command.threadId === threadId)
+    .filter((command) => threadOf(command) === threadId)
     .map((command) => command.commandId);
 const once = (state: World) => sweeps(state, (sweep) => sweep());
 
@@ -516,9 +519,9 @@ describe("the machine handoff beside the idle move (1089)", () => {
   const trigger = (order: "other-machine-first" | "same-machine-first") =>
     limitHandoffTrigger({
       thread: {
-        ...(shellOf(idleThread()) as never),
+        ...shellOf(idleThread()),
         latestRunCompletedAt: DateTime.makeUnsafe(at - 60_000),
-      },
+      } as never,
       rule: {
         providerLimitAction: "switch",
         providerLimitMachineTargets: [{ environmentId: "other" }] as never,

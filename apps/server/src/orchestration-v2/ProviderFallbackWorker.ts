@@ -1720,7 +1720,9 @@ export const makeSweep = Effect.gen(function* () {
       if (evidence !== null) holdThreads.push(evidence);
     }
     for (const runId of holdRuns.keys()) if (!retainedHoldRuns.has(runId)) holdRuns.delete(runId);
-    const latestRunIds = new Set(snapshot.threads.map((thread) => thread.latestRunId));
+    const latestRunIds = new Set<string | null>(
+      snapshot.threads.map((thread) => thread.latestRunId),
+    );
     for (const runId of idleRuns.keys()) if (!latestRunIds.has(runId)) idleRuns.delete(runId);
     // Read only for a thread the idle move could act on: free, not stopped,
     // under `switch`, and on a provider at the threshold.
