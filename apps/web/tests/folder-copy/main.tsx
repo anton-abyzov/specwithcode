@@ -21,7 +21,7 @@ const MACHINES = params.has("short")
       { id: "m3" as never, label: "Anton’s MacBook Pro", unavailable: null },
       { id: "linux" as never, label: "ministorm", unavailable: null },
     ];
-/** `?git=1`: the Git only screen, as Details > Git only, no file copy shows it. */
+/** `?git=1`: the Git handoff screen, as "Continue the coordinator here" opens it. */
 function GitFixture() {
   return (
     <main className="min-h-screen bg-background p-8 text-foreground">

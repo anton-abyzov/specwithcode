@@ -185,7 +185,7 @@ function CoordinatorPane() {
               savedMachineMissing={false}
               onView={() => {}}
               onAllowWorkers={null}
-              onCopy={() => {}}
+              onSync={() => {}}
             />
             <span className="sws-composer-aside" data-composer-aside="">
               <ComposerVoiceMenu dictation={dictation} call={call} shortcut={null} />

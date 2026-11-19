@@ -1,5 +1,5 @@
 // Headless captures of a finished copy opened again (increment 1362): the done view first,
-// then the form after "Copy changes again". Light and dark, through the real dialog.
+// then the form after "Sync again". Light and dark, through the real dialog.
 // Build first: node node_modules/vite-plus/bin/vp build --config apps/web/tests/folder-copy/vite.config.ts
 // Run from the repository root: node apps/web/tests/folder-copy/done-reopen.mjs /absolute/report-dir
 import * as NodeAssert from "node:assert/strict";
@@ -75,31 +75,31 @@ try {
     await action("Open on m5").waitFor();
     await page.keyboard.press("Escape");
     await page.getByRole("dialog").waitFor({ state: "detached" });
-    // Nothing reopens it; the person opens "Copy to another machine…" again.
+    // Nothing reopens it; the person opens "Add to another machine…" again.
     await page.waitForTimeout(500);
     NodeAssert.equal(await page.getByRole("dialog").count(), 0, "a closed dialog stays closed");
     await page.locator('[data-slot="fixture-reopen"]').click();
     await action("Open on m5").waitFor();
     NodeAssert.equal(
       (await popup.locator('[data-slot="dialog-title"], h2').first().textContent()).trim(),
-      "specweave is on m5 (copied 2h ago)",
+      "specweave is on m5 (added 2h ago)",
     );
     NodeAssert.equal(await action("Copy to m5").count(), 0, "no Copy button on the done view");
     NodeAssert.equal(await action("Undo…").count(), 1, "the done view offers Undo");
     NodeAssert.doesNotMatch(
-      await action("Copy changes again").getAttribute("class"),
+      await action("Sync again").getAttribute("class"),
       /bg-primary/,
-      "Copy changes again is a secondary action",
+      "Sync again is a secondary action",
     );
     NodeAssert.equal(await page.locator('[data-slot="handoff-coordinator"]').count(), 0);
     await shot("done-view-on-reopen");
-    await action("Copy changes again").click();
+    await action("Sync again").click();
     await action("Copy to m5").waitFor();
     await page.locator('[data-slot="copy-last"]').waitFor();
     NodeAssert.match(await popup.textContent(), /The last copy to .* on m5 finished\. View it/);
     NodeAssert.equal(
       (await popup.locator('[data-slot="dialog-title"], h2').first().textContent()).trim(),
-      "Copy specweave to m5",
+      "Add specweave to m5",
     );
     await shot("form-after-copy-changes-again");
     await context.close();

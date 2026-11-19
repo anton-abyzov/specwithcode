@@ -240,7 +240,7 @@ const status = (state: string) => ({
   unstable: [],
   committed: incompleteUndo ? undoCommitted : state === "applied",
   projectId: state === "applied" ? "copied" : null,
-  // Two hours before the page loaded, so the Done title reads "(copied 2h ago)".
+  // Two hours before the page loaded, so the Done title reads "(added 2h ago)".
   ...(state === "applied" ? { finishedAt: FINISHED_AT } : {}),
   createdAt: "2026-10-21T00:00:00Z",
   updatedAt: "2026-10-21T00:00:00Z",
@@ -475,7 +475,7 @@ export const useAtomCommand =
     return { _tag: "Success", value };
   };
 export const squashAtomCommandFailure = (value: any) => value.error;
-// Send to another machine… reads copy roles, whose module also reads interrupted commands.
+// The machine menu reads copy roles, whose module also reads interrupted commands.
 export const isAtomCommandInterrupted = () => false;
 // Shared UI (toasts) reaches modules that build their commands at import: inert here.
 export const createEnvironmentRpcCommand = () => ({});
