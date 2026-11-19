@@ -76,11 +76,11 @@ const refusal = (status: number, error: string, extra: Record<string, unknown> =
     { status, headers: { "cache-control": "no-store" } },
   );
 
-const fromRefusal = (error: HandoffRefusal) =>
-  refusal(error.status, error.message, {
-    code: error.code,
-    ...(error.check === undefined ? {} : { check: error.check }),
-    ...(error.uncertain === true ? { uncertain: true } : {}),
+const fromRefusal = (error: HandoffRefusal) => {
+  const answer = refusalAnswer(error);
+  return HttpServerResponse.jsonUnsafe(answer.body, {
+    status: answer.status,
+    headers: { "cache-control": "no-store" },
   });
 };
 

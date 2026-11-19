@@ -47,7 +47,8 @@ import type { HandoffPeerError } from "./handoffPeers.ts";
 import { shouldResume } from "./handoffPreflight.ts";
 import * as Resume from "./handoffResume.ts";
 import { HandoffRefusal, type ReceiverCaller } from "./HandoffReceiver.ts";
-import type { HandoffDocument, HandoffThreadRecord } from "./handoffState.ts";
+import { SLEEP_HOLD_WAITS } from "./HandoffAutoContinue.ts";
+import { type HandoffDocument, type HandoffThreadRecord, isRetiredReason } from "./handoffState.ts";
 import {
   arrivalOf,
   type HandoffTransferStoreShape,
@@ -89,6 +90,10 @@ const needsUpdateWaits = (label: string) =>
 const ARRIVED_FOR_THIS_RUN =
   "This thread arrived from that machine for this run, so it is not sent back automatically.";
 const BATCH_CUT = "The handoff was cut before this thread was held, so it stays here.";
+
+/** A hold whose kept takeover a sleep or silence started on an earlier release. */
+const startedBySleep = (record: HandoffThreadRecord) =>
+  record.pendingTakeover != null && isRetiredReason(record.pendingTakeover.request.reason);
 
 const failed = (code: HandoffModeErrorCode, message: string) =>
   new HandoffModeError({ code, message });
@@ -679,6 +684,9 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       }
       const open = openTransfer(transfers, self, threadId);
       if (!resuming && current?.lease?.state === "handing-off") {
+        if (open === undefined && startedBySleep(current)) {
+          return yield* failed("busy", SLEEP_HOLD_WAITS);
+        }
         const record = open ?? (yield* adoptLegacy(threadId, current));
         if (record.targetEnvironmentId !== destination) {
           // An open move is never abandoned for another destination.
@@ -1059,6 +1067,9 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
           if (record.lease?.state !== "handing-off") return;
           const transfers = yield* store.read;
           if (openTransfer(transfers, self, threadId) !== undefined) return;
+          // Never adopted, so never asked about or sent from here: only that machine's
+          // own heartbeat answer for the takeover settles it (1390 AC-36).
+          if (startedBySleep(record)) return;
           // A record that ended just before a stop that kept the hold: finish the release.
           const epoch = record.lease.epoch + 1;
           const ended = Object.values(transfers.transfers)

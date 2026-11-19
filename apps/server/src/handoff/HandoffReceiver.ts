@@ -89,6 +89,13 @@ import { refComponent } from "./checkpointGit.ts";
 import { HandoffMode } from "./HandoffMode.ts";
 import * as HandoffTransferStore from "./HandoffTransferStore.ts";
 import {
+  acceptedMessage,
+  claimRefusal,
+  dropUnstarted,
+  makeTransferStatus,
+  recordedRefusal,
+} from "./handoffTransferStatus.ts";
+import {
   HANDOFF_CONTINUE_TEXT,
   handoffSeed,
   HANDOFF_SEED_MAX_CHARS,
@@ -162,6 +169,8 @@ export class HandoffRefusal extends Data.TaggedError("HandoffRefusal")<{
    * accepted). The caller keeps its hold and asks again; it is never a "no".
    */
   readonly uncertain?: boolean | undefined;
+  /** No answer at all: the route sends none of the refusal fields (1390 AC-36). */
+  readonly inDoubt?: boolean | undefined;
 }> {}
 
 /**
@@ -180,6 +189,7 @@ export const refusalAnswer = (
           error: error.message,
           code: error.code,
           ...(error.check === undefined ? {} : { check: error.check }),
+          ...(error.uncertain === true ? { uncertain: true } : {}),
         },
       };
 
@@ -204,6 +214,9 @@ const refuse = (
 /** No answer yet: whether something began here for the request cannot be read. */
 const inDoubt = (message: string) =>
   new HandoffRefusal({ status: 503, code: "unreachable", message, inDoubt: true });
+/** A failure after this machine may have acted: the source keeps its hold and asks again. */
+const uncertainOf = (message: string) =>
+  new HandoffRefusal({ status: 503, code: "failed", message, uncertain: true });
 
 /**
  * The seed an idle continuation keeps for its first turn: the same note and
@@ -332,6 +345,16 @@ export class HandoffReceiver extends Context.Service<
     /** Another machine asks for a thread this one runs; answered by the moves once attached. */
     readonly transferPull: TransferPullHandler;
     readonly attachPull: (handler: TransferPullHandler) => Effect.Effect<void>;
+    /**
+     * Whether a thread here continues the source's thread, read under the same lock
+     * as its takeover. A continuation that launched but was never recorded is
+     * recorded now, so later heartbeats fence the source. Never launches anything;
+     * anything it cannot read is unresolved.
+     */
+    readonly continuation: (
+      sourceEnvironmentId: EnvironmentId,
+      sourceThreadId: string,
+    ) => Effect.Effect<ContinuationEvidence>;
   }
 >()("specweave-studio/handoff/HandoffReceiver") {}
 
@@ -700,6 +723,147 @@ export const make = Effect.gen(function* () {
       catch: (cause) => fromBundleError(label, cause),
     });
 
+  /**
+   * What continues one source thread here. The caller holds its takeover lock, so no
+   * launch of it is in progress: a continuation id launches only inside a takeover
+   * under that lock, after its lease is saved, and its thread is created by one
+   * accepted command. Continued: the replica says so, a receipt records the launch,
+   * or a saved lease has its thread (recorded now, receipt and all). None only with
+   * proof: the replica is here and no lease of any epoch was ever saved for it (no
+   * thread record is ever removed). A saved lease without its thread is unresolved,
+   * since a thread read never sees a deleted thread, and so is a source thread with
+   * neither replica nor receipt here: evicted cannot be told from never sent.
+   */
+  const evidenceLocked = (
+    sourceEnvironmentId: EnvironmentId,
+    sourceThreadId: ThreadId,
+    /** Epochs the caller knows a takeover was asked at. */
+    epochs: ReadonlyArray<number> = [],
+  ): Effect.Effect<Evidence> =>
+    Effect.gen(function* () {
+      const current = yield* handoff.document;
+      const key = incomingKey(sourceEnvironmentId, sourceThreadId);
+      const replica = findIncoming(current, sourceEnvironmentId, sourceThreadId);
+      const detail = (current.incomingDetails ?? {})[key];
+      if (replica?.continuedThreadId != null) {
+        return {
+          kind: "continued",
+          threadId: replica.continuedThreadId,
+          epoch: detail?.takeoverEpoch ?? replica.lease.epoch,
+          response: detail?.takeover ?? null,
+        } satisfies Evidence;
+      }
+      const receipt = (current.continuationReceipts ?? {})[key];
+      const responseOf = (shell: OrchestrationV2ThreadShell): TakeoverResponse => ({
+        threadId: shell.id,
+        projectId: shell.projectId,
+        machineLabel: label,
+        modelSelection: shell.modelSelection,
+        resumed: replica === undefined ? false : shouldResume(replica.checkpoint.runEnding),
+        notice: null,
+      });
+      /** Records a continuation its thread proves, so later heartbeats fence the source. */
+      const record = (shell: OrchestrationV2ThreadShell, epoch: number) =>
+        Effect.gen(function* () {
+          const response = responseOf(shell);
+          const now = yield* nowIso;
+          const started: TakeoverRequest = {
+            sourceEnvironmentId,
+            sourceThreadId,
+            epoch,
+            sequence: replica?.checkpoint.sequence ?? 0,
+            reason: "handoff",
+            modelSelection: null,
+          };
+          yield* handoff.updateDocument(
+            (latest) => [undefined, markContinued(latest, started, response, now)] as const,
+          );
+          yield* Effect.logWarning("Handoff recorded a continuation that launched unrecorded", {
+            sourceThreadId,
+            threadId: shell.id,
+            epoch,
+          });
+          return { kind: "continued", threadId: shell.id, epoch, response } satisfies Evidence;
+        });
+      if (receipt?.launched === true) {
+        const threadId = ThreadId.make(receipt.threadId);
+        // The thread may be gone (deleted here) or unreadable; the receipt still proves it.
+        const shell = yield* orchestrator
+          .getThreadShell(threadId)
+          .pipe(Effect.catchCause(() => Effect.succeed(null)));
+        if (shell !== null && replica !== undefined) return yield* record(shell, receipt.epoch);
+        return {
+          kind: "continued",
+          threadId,
+          epoch: receipt.epoch,
+          response: shell === null ? null : responseOf(shell),
+        } satisfies Evidence;
+      }
+      const prepared = preparedContinuations(
+        current,
+        (epoch) => continuationThreadId(sourceEnvironmentId, sourceThreadId, epoch),
+        receipt === undefined ? epochs : [...epochs, receipt.epoch],
+      );
+      for (const { threadId, epoch } of prepared.found) {
+        const shell = yield* orchestrator.getThreadShell(ThreadId.make(threadId));
+        if (shell !== null) return yield* record(shell, epoch);
+      }
+      const absent =
+        prepared.complete &&
+        prepared.found.length === 0 &&
+        replica !== undefined &&
+        receipt === undefined;
+      return absent
+        ? ({ kind: "none" } satisfies Evidence)
+        : ({ kind: "unresolved" } satisfies Evidence);
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Handoff could not read whether a thread continues here", {
+          sourceThreadId,
+          cause,
+        }).pipe(Effect.as({ kind: "unresolved" } satisfies Evidence)),
+      ),
+    );
+
+  const evidence = (
+    sourceEnvironmentId: EnvironmentId,
+    sourceThreadId: string,
+    epochs: ReadonlyArray<number> = [],
+  ) =>
+    locks.withLock(
+      incomingKey(sourceEnvironmentId, sourceThreadId),
+      evidenceLocked(sourceEnvironmentId, ThreadId.make(sourceThreadId), epochs),
+    );
+
+  /**
+   * A takeover sleep or silence started, from a machine on an earlier release: nothing
+   * launches for it. A start this machine made at that epoch answers with its thread.
+   * Only with proof that nothing began here for the thread is it refused. Anything
+   * else (a continuation at another epoch, a saved lease without its thread, an
+   * outcome that cannot be read) is no answer: an earlier release keeps its hold on
+   * that alone, on a first send as on a re-send, and its next heartbeat after this
+   * machine records the continuation, or a person's Resume here, settles it.
+   */
+  const retiredTakeover = (caller: ReceiverCaller, request: TakeoverRequest) =>
+    Effect.gen(function* () {
+      const found = yield* evidenceLocked(caller.sourceEnvironmentId, request.sourceThreadId, [
+        request.epoch,
+      ]);
+      if (found.kind === "continued" && found.epoch === request.epoch && found.response !== null) {
+        return found.response;
+      }
+      if (found.kind === "none") {
+        return yield* refuse(409, "invalid", at(RETIRED_START_REFUSAL), "lease");
+      }
+      return yield* inDoubt(
+        at(
+          found.kind === "continued"
+            ? `already continued this thread at epoch ${found.epoch}; the thread stays paused there until this machine's answer reaches it`
+            : "an earlier start of this thread here cannot be settled; nothing starts for it now, and the thread stays paused there until it is",
+        ),
+      );
+    });
+
   const takeoverLocked = (caller: ReceiverCaller, request: TakeoverRequest) => {
     /**
      * Set once this machine's acceptance stands and a thread may exist for it.
@@ -708,6 +872,7 @@ export const make = Effect.gen(function* () {
      */
     let standing = false;
     return Effect.gen(function* () {
+      if (isRetiredReason(request.reason)) return yield* retiredTakeover(caller, request);
       const lineage = {
         sourceEnvironmentId: caller.sourceEnvironmentId,
         sourceThreadId: request.sourceThreadId,
@@ -719,22 +884,8 @@ export const make = Effect.gen(function* () {
       )).acceptances[HandoffTransferStore.acceptanceKey(lineage)];
       if (recorded !== undefined) {
         // The first verdict for a lineage is final, whatever arrives after it.
-        if (recorded.verdict === "not-accepted") {
-          return yield* refuse(
-            409,
-            "invalid",
-            at("this handoff was already answered as not accepted; start it again"),
-            "lease",
-          );
-        }
-        if (recorded.operationId !== operationId || recorded.sequence !== request.sequence) {
-          return yield* refuse(
-            409,
-            "fenced",
-            at(`another handoff already took this thread at epoch ${request.epoch}`),
-            "lease",
-          );
-        }
+        const settled = recordedRefusal(recorded, operationId, request);
+        if (settled !== null) return yield* refuse(409, settled.code, at(settled.message), "lease");
         if (recorded.launched && recorded.receipt !== null) return recorded.receipt;
         // Accepted, and the launch was cut: nothing below may turn that into a "no".
         standing = true;
@@ -984,26 +1135,20 @@ export const make = Effect.gen(function* () {
           caller.grant === null ? Effect.void : grants.forgetOrigin(threadId).pipe(Effect.ignore),
         ),
       );
-      if (claim.kind === "not-accepted") {
-        return yield* refuse(
-          409,
-          "invalid",
-          at("this handoff was already answered as not accepted; start it again"),
-          "lease",
-        );
-      }
-      if (claim.kind === "divergent" || claim.kind === "stale") {
-        return yield* refuse(
-          409,
-          "fenced",
-          at(`another handoff already took this thread at epoch ${claim.acceptance.lineage.epoch}`),
-          "lease",
-        );
-      }
+      const lost = claimRefusal(claim);
+      if (lost !== null) return yield* refuse(409, lost.code, at(lost.message), "lease");
       const response = claim.acceptance.receipt ?? offered;
+      const receiptKey = incomingKey(caller.sourceEnvironmentId, request.sourceThreadId);
+      const receipt = (launched: boolean) => ({
+        threadId,
+        epoch: request.epoch,
+        launched,
+        at: now,
+      });
       yield* Effect.gen(function* () {
         // The lease and journal land before the thread exists, so its first run
         // starts under the takeover epoch and never repeats the source's side effects.
+        // The receipt beside them names this start once the replica is gone.
         const hadRecord = (yield* document).threads[threadId] !== undefined;
         yield* updateDocument((current) => {
           const record = current.threads[threadId] ?? emptyThreadRecord(project.id);
@@ -1077,16 +1222,14 @@ export const make = Effect.gen(function* () {
                 (error.operation === "resolve-project" || error.operation === "resolve-repository");
               if (!before) return Effect.fail(refuse(500, "failed", at(error.message)));
               standing = false;
-              // The lease written above is for a thread that was never created.
-              return updateDocument((current) => {
-                if (hadRecord || current.threads[threadId] === undefined) {
-                  return [undefined, current] as const;
-                }
-                const threads = Object.fromEntries(
-                  Object.entries(current.threads).filter(([id]) => id !== threadId),
-                ) as typeof current.threads;
-                return [undefined, { ...current, threads }] as const;
-              }).pipe(
+              // The lease and receipt written above are for a thread that was never created.
+              return updateDocument(
+                (current) =>
+                  [
+                    undefined,
+                    hadRecord ? current : dropUnstarted(current, threadId, receiptKey),
+                  ] as const,
+              ).pipe(
                 Effect.ignore,
                 Effect.andThen(Effect.fail(refuse(409, "failed", at(error.message)))),
               );
@@ -1189,17 +1332,9 @@ export const make = Effect.gen(function* () {
       return response;
     }).pipe(
       Effect.mapError((error) =>
-        standing && error.uncertain !== true
-          ? new HandoffRefusal({
-              status: 503,
-              code: "failed",
-              message:
-                `${error.message} ${label} had accepted this handoff, so it may run the thread; ask again.`.slice(
-                  0,
-                  1000,
-                ),
-              uncertain: true,
-            })
+        // One already in doubt keeps its shape: it is no answer for any release's source.
+        standing && error.uncertain !== true && error.inDoubt !== true
+          ? uncertainOf(acceptedMessage(error.message, label))
           : error,
       ),
     );
@@ -1309,141 +1444,18 @@ export const make = Effect.gen(function* () {
       } satisfies HeartbeatResponse;
     });
 
-  const transferStatusLocked = (caller: ReceiverCaller, request: TransferStatusRequest) =>
-    Effect.gen(function* () {
-      const lineage = {
-        sourceEnvironmentId: caller.sourceEnvironmentId,
-        sourceThreadId: request.sourceThreadId,
-        epoch: request.epoch,
-      };
-      const current = yield* document;
-      const replica = findIncoming(current, caller.sourceEnvironmentId, request.sourceThreadId);
-      const detail = (current.incomingDetails ?? {})[
-        incomingKey(caller.sourceEnvironmentId, request.sourceThreadId)
-      ];
-      // A copy continued here before transfer records existed has no acceptance on record.
-      if (replica?.continuedThreadId != null && detail?.takeover != null) {
-        return {
-          machineLabel: label,
-          status: "accepted",
-          receipt: detail.takeover,
-        } satisfies TransferStatusResponse;
-      }
-      const now = yield* nowIso;
-      const recorded = yield* updateTransfers(
-        (document) =>
-          [document.acceptances[HandoffTransferStore.acceptanceKey(lineage)], document] as const,
-      );
-      if (recorded === undefined) {
-        // Nothing on record for this lineage, so "not accepted" would be written
-        // below. The release before transfer records wrote the continuation's
-        // lease, launched it, and only then marked the copy continued: a thread
-        // it launched may be running here with no mark at all.
-        const continued = continuationThreadId(
-          caller.sourceEnvironmentId,
-          request.sourceThreadId,
-          request.epoch,
-        );
-        const leased = (current.threads[continued]?.lease ?? null) !== null;
-        const shell = Option.isNone(projections)
-          ? ("unknown" as const)
-          : yield* projections.value.getThreadShell(continued).pipe(
-              Effect.map((found) => (found === null ? ("absent" as const) : ("present" as const))),
-              Effect.orElseSucceed(() => "unknown" as const),
-            );
-        if (shell === "present") {
-          const receipt: TakeoverResponse = {
-            threadId: continued,
-            machineLabel: label,
-            modelSelection: null,
-            resumed: false,
-            notice: null,
-          };
-          yield* updateDocument((document) => {
-            const next = markContinued(
-              document,
-              {
-                sourceEnvironmentId: caller.sourceEnvironmentId,
-                sourceThreadId: request.sourceThreadId,
-                epoch: request.epoch,
-                sequence: replica?.checkpoint.sequence ?? 0,
-                reason: "handoff",
-                modelSelection: null,
-              },
-              receipt,
-              now,
-            );
-            return [undefined, next] as const;
-          });
-          return {
-            machineLabel: label,
-            status: "accepted",
-            receipt,
-          } satisfies TransferStatusResponse;
-        }
-        if (shell === "unknown" && leased) {
-          // The lease says a launch was about to happen; whether it did cannot be read.
-          return yield* new HandoffRefusal({
-            status: 503,
-            code: "failed",
-            message: at(
-              "it holds a lease for this thread's continuation and cannot read whether it started",
-            ),
-            uncertain: true,
-          });
-        }
-      }
-      const settled = yield* updateTransfers((document) =>
-        HandoffTransferStore.settleLineage(document, {
-          lineage,
-          operationId: request.operationId,
-          now,
-        }),
-      );
-      if (settled.verdict === "accepted") {
-        // A restart cut the launch after the acceptance: finish it as it was asked.
-        const receipt = settled.launched
-          ? settled.receipt
-          : yield* takeoverLocked(caller, {
-              sourceEnvironmentId: caller.sourceEnvironmentId,
-              sourceThreadId: request.sourceThreadId,
-              epoch: settled.lineage.epoch,
-              sequence: settled.sequence ?? 0,
-              reason: settled.reason as TakeoverReason,
-              modelSelection: settled.modelSelection,
-              ...(settled.operationId === null ? {} : { operationId: settled.operationId }),
-              ...(settled.trigger === null ? {} : { trigger: settled.trigger }),
-            });
-        return {
-          machineLabel: label,
-          status: "accepted",
-          receipt,
-        } satisfies TransferStatusResponse;
-      }
-      // The copy's lease moves up to the refused epoch, so a takeover from a
-      // source that sends no operation id is refused as stale too.
-      yield* updateDocument((document) => {
-        const held = findIncoming(document, caller.sourceEnvironmentId, request.sourceThreadId);
-        if (held === undefined || held.continuedThreadId !== null) return [undefined, document];
-        if (held.lease.epoch >= request.epoch) return [undefined, document];
-        return [
-          undefined,
-          {
-            ...document,
-            incoming: document.incoming.map((entry) =>
-              entry === held
-                ? { ...entry, lease: { ...entry.lease, epoch: request.epoch, renewedAt: now } }
-                : entry,
-            ),
-          },
-        ];
-      });
-      return {
-        machineLabel: label,
-        status: "not-accepted",
-        receipt: null,
-      } satisfies TransferStatusResponse;
-    });
+  const transferStatusLocked = makeTransferStatus({
+    label,
+    at,
+    nowIso,
+    document,
+    updateDocument,
+    updateTransfers,
+    continuationId: continuationThreadId,
+    projections,
+    takeover: (caller, request) => takeoverLocked(caller, request),
+    uncertain: uncertainOf,
+  });
 
   const transferStatus = (caller: ReceiverCaller, request: TransferStatusRequest) =>
     sameSource(caller, request.sourceEnvironmentId).pipe(
@@ -1466,6 +1478,9 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const continuation = (sourceEnvironmentId: EnvironmentId, sourceThreadId: string) =>
+    evidence(sourceEnvironmentId, sourceThreadId).pipe(Effect.map(publicEvidence));
+
   return HandoffReceiver.of({
     negotiate,
     replicate,
@@ -1475,6 +1490,7 @@ export const make = Effect.gen(function* () {
     transferStatus,
     transferPull,
     attachPull: (handler) => Effect.sync(() => void (pullHandler = handler)),
+    continuation,
   });
 });
 

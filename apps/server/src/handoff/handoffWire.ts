@@ -309,6 +309,15 @@ export const TransferPullRequest = Schema.Struct({
 });
 export type TransferPullRequest = typeof TransferPullRequest.Type;
 
+/** The most leases, and operations to settle, one heartbeat carries. */
+export const HEARTBEAT_PAGE_MAX = 500;
+/** One takeover of a source thread, by the epoch it would continue at. */
+export const HeartbeatOperation = Schema.Struct({
+  sourceThreadId: ThreadId,
+  epoch: NonNegativeInt,
+});
+export type HeartbeatOperation = typeof HeartbeatOperation.Type;
+
 export const HeartbeatRequest = Schema.Struct({
   sourceEnvironmentId: EnvironmentId,
   sourceLabel: text(120),

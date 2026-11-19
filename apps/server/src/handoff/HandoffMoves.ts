@@ -97,7 +97,6 @@ import {
   type PeerTranscriptMessage,
   type ReplicateMeta,
   type ReplicateResponse,
-  type TakeoverReason,
   type TakeoverRequest,
   type TakeoverResponse,
   type TransferStatusRequest,
@@ -737,7 +736,7 @@ export const make = Effect.gen(function* () {
       // Away mode names its threads, whatever their handoff mode, and their queues go too.
       const carriesQueue = input.reason === "away" || input.reason === "back";
       // Every thread's record is written before the first of them is held.
-      const planned = yield* transfers.planBatch(threadIds, destination, reason);
+      const planned = yield* transfers.planBatch(threadIds, destination, "machine-handoff");
       const results: Array<HandoffMachineThreadResult> = [];
       yield* Effect.addFinalizer(() => transfers.endBatch(planned));
       for (const threadId of threadIds) {
@@ -746,7 +745,7 @@ export const make = Effect.gen(function* () {
         const queued = carriesQueue ? yield* queuedMessagesOf(threadId) : [];
         const moved = yield* handOffAs(
           { threadId, destinationEnvironmentId: destination },
-          reason,
+          "machine-handoff",
           {
             operationId: planned.get(threadId),
           },
@@ -1069,34 +1068,20 @@ export const make = Effect.gen(function* () {
     for (const { peer, page, answer: heard } of answers) {
       if (Option.isNone(heard)) continue;
       lastAnswer.set(peer, now);
-      const minutes = announcedTo(peer);
-      yield* handoff.updateDocument((current) => {
-        const before = current.autoContinuePeers ?? {};
-        if (minutes === null && before[peer] === undefined) return [undefined, current];
-        return [
-          undefined,
-          { ...current, autoContinuePeers: noteAnswered(before, peer, minutes, nowText) },
-        ];
-      });
-      for (const continued of answer.value.continued) {
-        const shell = yield* projections
-          .getThreadShell(continued.sourceThreadId)
-          .pipe(Effect.orElseSucceed(() => null));
-        if (shell === null) continue;
-        yield* interruptRun(shell, `This thread continues on ${answer.value.machineLabel}.`);
-        yield* keepChangesAfterFence(shell, peer);
-        yield* fenceSource(
-          shell,
-          peer,
-          {
-            threadId: continued.threadId,
-            machineLabel: answer.value.machineLabel,
-            modelSelection: null,
-            resumed: false,
-            notice: null,
-          },
-          continued.epoch,
-          "handoff",
+      const plan = yield* autoContinue.answered({ document, peer, page, answer: heard.value, now });
+      if (plan.disarm) yield* handoff.updateDocument(Drain.disarmPeer(peer));
+      // A takeover sleep started is never sent again (1390 AC-36), and no transfer
+      // record adopts it: only its own "not started" gives it back. One someone asked
+      // for is carried on by its record (`transfers.reconcile`), not from here.
+      for (const sourceThreadId of plan.release) {
+        const release = updateRecord(sourceThreadId, Drain.dropSleepTakeover);
+        yield* locks.withLock(sourceThreadId, release).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logInfo("Handoff could not give back a takeover sleep started", {
+              threadId: sourceThreadId,
+              cause,
+            }),
+          ),
         );
       }
     }

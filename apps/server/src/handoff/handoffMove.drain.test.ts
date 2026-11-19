@@ -10,6 +10,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
+import { EMPTY_HANDOFF_TRANSFER_DOCUMENT } from "./HandoffTransferStore.ts";
 import { PAUSED_OFFLINE_REFUSAL, turnRefusal } from "./HandoffTurnGate.ts";
 import {
   handOff,
@@ -90,6 +91,8 @@ describe("handoff: lost takeovers, sleep and silence", () => {
           ...source.document,
           threads: { ...source.document.threads, [threadId]: { ...saved, pendingTakeover } },
         };
+        // That release kept no transfer record of it.
+        setup.transfers.document = EMPTY_HANDOFF_TRANSFER_DOCUMENT;
         network.dropTakeoverRequest = false;
         // Minis has not updated: it answers every heartbeat, and never says what did not
         // start. That answer settles nothing, and the takeover is not sent again: a
@@ -103,6 +106,8 @@ describe("handoff: lost takeovers, sleep and silence", () => {
         expect(source.document.threads[threadId]?.lease?.state).toBe("handing-off");
         expect(source.document.threads[threadId]?.pendingTakeover).toEqual(pendingTakeover);
         expect(turnRefusal(source.document, threadId, m4)).not.toBeNull();
+        // No transfer record adopts it, so nothing here asks about it or sends it.
+        expect(setup.transfers.document.transfers).toEqual({});
         // Minis updated: it answers, for that takeover, that nothing started there.
         wire.destination = setup.destinationReceiver;
         yield* moves.tick;
@@ -115,31 +120,36 @@ describe("handoff: lost takeovers, sleep and silence", () => {
       }),
   );
 
-  it.effect("keeps a re-sent takeover paused on a fenced refusal and releases it on others", () =>
-    Effect.gen(function* () {
-      const { source, destination, moves, network, destinationRoot } = yield* scenario();
-      NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
-      network.dropTakeoverRequest = true;
-      yield* handOff(moves).pipe(Effect.flip);
-      expect(source.document.threads[threadId]?.lease?.state).toBe("handing-off");
-      network.dropTakeoverRequest = false;
+  it.effect.each(["fenced", "busy"] as const)(
+    "releases a re-sent takeover only on a definite answer (%s)",
+    (refusal) =>
+      Effect.gen(function* () {
+        const { source, destination, moves, network, destinationRoot } = yield* scenario();
+        NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
+        network.dropTakeoverRequest = true;
+        yield* handOff(moves).pipe(Effect.flip);
+        expect(source.document.threads[threadId]?.lease?.state).toBe("handing-off");
+        network.dropTakeoverRequest = false;
 
-      // A newer epoch on the destination: the thread stays paused until a heartbeat settles it.
-      network.refuseTakeover = "fenced";
-      yield* moves.tick;
-      expect(source.document.threads[threadId]?.lease?.state).toBe("handing-off");
-      expect(source.document.threads[threadId]?.pendingTakeover).not.toBeNull();
-      expect(destination.launches).toHaveLength(0);
-
-      // A definite refusal for any other reason gives the thread back to the source.
-      network.refuseTakeover = "busy";
-      yield* moves.tick;
-      const record = source.document.threads[threadId];
-      expect(record?.lease?.state).toBe("active");
-      expect(record?.pendingTakeover).toBeNull();
-      expect(record?.continuedOn).toBeNull();
-      expect(destination.launches).toHaveLength(0);
-    }),
+        network.refuseTakeover = refusal;
+        if (refusal === "fenced") {
+          // A newer epoch on the destination, which cannot be asked what became of this
+          // operation: the thread stays paused.
+          network.down = true;
+          yield* moves.tick;
+          expect(source.document.threads[threadId]?.lease?.state).toBe("handing-off");
+          expect(destination.launches).toHaveLength(0);
+          network.down = false;
+        }
+        // "Not accepted", from the destination itself, gives the thread back; the epoch
+        // that was sent is used up.
+        yield* moves.tick;
+        const record = source.document.threads[threadId];
+        expect(record?.lease).toMatchObject({ state: "active", epoch: 2 });
+        expect(record?.pendingTakeover).toBeNull();
+        expect(record?.continuedOn).toBeNull();
+        expect(destination.launches).toHaveLength(0);
+      }),
   );
 
   it.effect("moves nothing because the machine goes to sleep (1390 AC-36)", () =>

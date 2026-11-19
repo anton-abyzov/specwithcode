@@ -12,7 +12,6 @@ import { afterEach } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
-  HANDOFF_LEASE_STALE_MS,
   type HandoffCheckpoint,
   type HandoffRunEnding,
   type ServerSettings as ServerSettingsValue,
@@ -24,7 +23,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as ServerConfig from "../config.ts";
@@ -41,13 +39,9 @@ import * as HandoffMoves from "./HandoffMoves.ts";
 import * as Peers from "./handoffPeers.ts";
 import { HandoffPeerError, HandoffPeers } from "./handoffPeers.ts";
 import * as HandoffReceiver from "./HandoffReceiver.ts";
+import * as HandoffTransferStore from "./HandoffTransferStore.ts";
 import { HANDOFF_PROTOCOL_VERSION } from "./handoffWire.ts";
-import {
-  EMPTY_HANDOFF_DOCUMENT,
-  emptyThreadRecord,
-  findIncoming,
-  type HandoffDocument,
-} from "./handoffState.ts";
+import { EMPTY_HANDOFF_DOCUMENT, emptyThreadRecord, type HandoffDocument } from "./handoffState.ts";
 
 const temporary: Array<string> = [];
 
@@ -516,7 +510,24 @@ export const scenario = (
       planMerge: () => Effect.die("unused"),
       extrasNegotiate: () => Effect.die("unused"),
       extrasReplicate: () => Effect.die("unused"),
+      // A receiver from before transfer records has no such route.
+      transferStatus: (_, request) =>
+        wire.destination === destinationReceiver
+          ? viaNetwork(destinationReceiver.transferStatus(asSource, request))
+          : Effect.fail(
+              new HandoffPeerError({
+                code: "invalid",
+                message: "Minis needs an update to answer for a handoff.",
+                uncertain: false,
+                needsUpdate: true,
+              }),
+            ),
+      transferPull: () => Effect.die("unused"),
     });
+    /** The source's transfer records; a case empties them to stand for an earlier release. */
+    const transfers: HandoffTransferStore.HandoffTransferMemory = {
+      document: HandoffTransferStore.EMPTY_HANDOFF_TRANSFER_DOCUMENT,
+    };
     const moves = yield* Effect.gen(function* () {
       const receiver = yield* HandoffReceiver.make;
       return yield* HandoffMoves.make.pipe(
@@ -526,6 +537,10 @@ export const scenario = (
       Effect.provide(
         Layer.mergeAll(
           sourceServices,
+          Layer.effect(
+            HandoffTransferStore.HandoffTransferStore,
+            HandoffTransferStore.makeMemory(transfers),
+          ),
           Layer.succeed(HandoffPeers, peers),
           Layer.succeed(HandoffConnectivity, {
             probe: Effect.sync(() => {
@@ -568,86 +583,9 @@ export const scenario = (
       peers,
       wire,
       asSource,
+      transfers,
     };
   });
 
 export const handOff = (moves: Effect.Success<ReturnType<typeof scenario>>["moves"]) =>
   moves.handOff({ threadId, destinationEnvironmentId: minis });
-
-/** How the source answers Minis's direct probe before Continue here. */
-export const probedSource = (
-  answer: "silent" | "awake" | "refuses" | "local",
-  probes: Array<unknown> = [],
-) =>
-  ({
-    negotiate: (_: unknown, request: unknown) => {
-      probes.push(request);
-      switch (answer) {
-        case "awake":
-          return Effect.succeed({ known: [] });
-        case "refuses":
-          return Effect.fail(
-            new HandoffPeerError({
-              code: "needs_grant",
-              check: "grant",
-              message: "M4: this machine's work grant there was revoked",
-              uncertain: false,
-            }),
-          );
-        case "local":
-          return Effect.fail(
-            new HandoffPeerError({
-              code: "needs_grant",
-              check: "grant",
-              message: "M4: this machine has no work grant there",
-              uncertain: false,
-              local: true,
-            }),
-          );
-        default:
-          return Effect.fail(
-            new HandoffPeerError({
-              code: "unreachable",
-              message: "M4 did not answer.",
-              uncertain: true,
-            }),
-          );
-      }
-    },
-  }) as unknown as HandoffPeers["Service"];
-
-/** Minis, holding a replica of the M4 thread whose lease went stale, with moves of its own. */
-export const staleReplicaOnMinis = (
-  source: Parameters<typeof probedSource>[0],
-  options: {
-    /** What a probe of Minis's own network answers; unprovided, nothing can be shown. */
-    readonly connect?: HandoffConnectivityState;
-    readonly heartbeat?: HandoffPeers["Service"]["heartbeat"];
-  } = {},
-) =>
-  Effect.gen(function* () {
-    const setup = yield* scenario();
-    const { moves, destinationReceiver, destination, destinationRoot, destinationServices } = setup;
-    NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
-    yield* moves.preflight({ destinationEnvironmentId: minis, threadIds: [threadId] });
-    const renewedAt = Date.parse(findIncoming(destination.document, m4, threadId)!.lease.renewedAt);
-    const probes: Array<unknown> = [];
-    const connect = options.connect;
-    const minisMoves = yield* HandoffMoves.make.pipe(
-      Effect.provideService(HandoffReceiver.HandoffReceiver, destinationReceiver),
-      Effect.provideService(HandoffPeers, {
-        ...probedSource(source, probes),
-        ...(options.heartbeat === undefined ? {} : { heartbeat: options.heartbeat }),
-      }),
-      Effect.provide(destinationServices),
-      connect === undefined
-        ? (effect) => effect
-        : Effect.provideService(HandoffConnectivity, { probe: Effect.succeed(connect) }),
-    );
-    yield* TestClock.setTime(renewedAt + HANDOFF_LEASE_STALE_MS + 1_000);
-    const continueHere = minisMoves.continueHere({
-      sourceEnvironmentId: m4,
-      sourceThreadId: threadId,
-    });
-    return { ...setup, minisMoves, probes, continueHere };
-  });

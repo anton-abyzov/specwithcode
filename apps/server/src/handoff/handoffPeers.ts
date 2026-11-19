@@ -335,7 +335,8 @@ export const refusedAnswer = (label: string, status: number, json: unknown): Han
       code: refusal.value.code ?? "failed",
       message: refusal.value.error,
       check: refusal.value.check,
-      uncertain: false,
+      // The machine says it may have acted: no "no" to release a hold on.
+      uncertain: refusal.value.uncertain === true,
     });
   }
   return status >= 500
@@ -586,26 +587,7 @@ export const make = Effect.gen(function* () {
           uncertain: false,
         });
       }
-      if (!answer.ok) {
-        const refusal = decodeError(json);
-        if (Option.isSome(refusal)) {
-          return yield* new HandoffPeerError({
-            code: refusal.value.code ?? "failed",
-            message: refusal.value.error,
-            check: refusal.value.check,
-            // The machine says it may have acted: no "no" to release a hold on.
-            uncertain: refusal.value.uncertain === true,
-          });
-        }
-        // A proxy's 5xx without our body may come after the destination acted.
-        return yield* answer.status >= 500
-          ? unreachable(target.label, true)
-          : new HandoffPeerError({
-              code: "failed",
-              message: `${target.label} refused the request (HTTP ${answer.status}).`,
-              uncertain: false,
-            });
-      }
+      if (!answer.ok) return yield* refusedAnswer(target.label, answer.status, json);
       const decoded = decode(json);
       if (Option.isSome(decoded)) return decoded.value;
       // The destination may have acted, so an unreadable answer is in doubt, not a refusal.
