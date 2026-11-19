@@ -20,7 +20,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { unscopedGrant } from "../fleet/workGrantPolicy.ts";
 import { continuationThreadId } from "./HandoffReceiver.ts";
-import { findIncoming } from "./handoffState.ts";
+import { emptyThreadRecord, findIncoming } from "./handoffState.ts";
 import { makeRig, type RigMachine } from "./handoffTransfer.test.fixture.ts";
 import { turnRefusal } from "./HandoffTurnGate.ts";
 import {
@@ -294,7 +294,31 @@ describe(`this build with a machine on ${PREVIOUS_RELEASE}`, () => {
           yield* holdWithRequest(a, old);
           // The release launches the continuation, then writes that it continued. That
           // last write failed: the thread runs there, and every heartbeat says "not continued".
-          old.launches.push({ threadId: continuationThreadId(a.environmentId, t1, 2) } as never);
+          const continued = continuationThreadId(a.environmentId, t1, 2);
+          old.launches.push({ threadId: continued } as never);
+          old.threads.set(continued, {
+            title: "Fix the build",
+            activeRunId: null,
+            worktreePath: null,
+          });
+          old.document = {
+            ...old.document,
+            threads: {
+              ...old.document.threads,
+              [continued]: {
+                ...emptyThreadRecord(old.projectId),
+                mode: "on",
+                lease: {
+                  holderEnvironmentId: old.environmentId,
+                  holderLabel: old.label,
+                  holderThreadId: continued,
+                  epoch: 2,
+                  renewedAt: "2026-11-19T14:00:00.000Z",
+                  state: "active",
+                },
+              },
+            },
+          };
 
           yield* a.moves.tick;
           yield* a.moves.tick;
@@ -308,6 +332,60 @@ describe(`this build with a machine on ${PREVIOUS_RELEASE}`, () => {
           expect(transferOf(a)?.state).toBe("unknown");
           expect(turnRefusal(a.document, t1, a.environmentId)).not.toBeNull();
           expect(old.launches).toHaveLength(1);
+
+          // That machine is updated. It has no acceptance on record and no mark that it
+          // continued, but the thread and its lease are there: it answers with them.
+          old.previous = false;
+          yield* a.moves.tick;
+          expect(leaseOf(a)?.state).toBe("fenced");
+          expect(a.document.threads[t1]?.continuedOn).toMatchObject({
+            environmentId: old.environmentId,
+            threadId: continued,
+          });
+          expect(transferOf(a)?.state).toBe("resumed");
+          expect(turnRefusal(a.document, t1, a.environmentId)).not.toBeNull();
+          expect(old.launches).toHaveLength(1);
+        }),
+    );
+
+    it.effect(
+      "stays held when the updated machine holds the lease and cannot read whether the thread exists",
+      () =>
+        Effect.gen(function* () {
+          const rig = yield* makeRig(temporary, withPrevious);
+          const [a, , old] = rig.machines as [RigMachine, RigMachine, RigMachine];
+          rig.addThread(a, t1);
+          yield* holdWithRequest(a, old);
+          const continued = continuationThreadId(a.environmentId, t1, 2);
+          // The release wrote the continuation's lease; whether it went on to create
+          // the thread cannot be read here.
+          old.document = {
+            ...old.document,
+            threads: {
+              ...old.document.threads,
+              [continued]: {
+                ...emptyThreadRecord(old.projectId),
+                mode: "on",
+                lease: {
+                  holderEnvironmentId: old.environmentId,
+                  holderLabel: old.label,
+                  holderThreadId: continued,
+                  epoch: 2,
+                  renewedAt: "2026-11-19T14:00:00.000Z",
+                  state: "active",
+                },
+              },
+            },
+          };
+          old.threadLookupFails = true;
+          old.previous = false;
+
+          yield* a.moves.tick;
+          yield* a.moves.tick;
+
+          expect(leaseOf(a)).toMatchObject({ state: "handing-off", epoch: 1 });
+          expect(turnRefusal(a.document, t1, a.environmentId)).not.toBeNull();
+          expect(Object.values(old.transfers.document.acceptances)).toHaveLength(0);
         }),
     );
   });

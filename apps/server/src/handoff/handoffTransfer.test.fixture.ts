@@ -131,7 +131,8 @@ export interface RigMachine {
   readonly projectId: ProjectId;
   readonly root: string;
   /** Answers as the latest release does. */
-  readonly previous: boolean;
+  /** Answers as the previous release does; set to false to update the machine. */
+  previous: boolean;
   document: HandoffDocument;
   readonly transfers: HandoffTransferMemory;
   readonly threads: Map<string, RigThread>;
@@ -151,6 +152,8 @@ export interface RigMachine {
     | null;
   /** Runs after each change to the handoff document, with the document as written. */
   onDocument: ((document: HandoffDocument) => Effect.Effect<void>) | null;
+  /** Makes this machine's thread lookups fail, as an unreadable projection does. */
+  threadLookupFails: boolean;
   /** How many times this machine was started. */
   boots: number;
   receiver: HandoffReceiver.HandoffReceiver["Service"];
@@ -244,6 +247,7 @@ export const makeRig = (
         onDispatch: null,
         onLaunch: null,
         onDocument: null,
+        threadLookupFails: false,
         boots: 0,
         receiver: undefined as never,
         moves: undefined as never,
@@ -416,7 +420,12 @@ export const makeRig = (
             ),
         } as never),
         Layer.succeed(ProjectionStore.ProjectionStoreV2, {
-          getThreadShell: (id: ThreadId) => Effect.sync(() => shellOf(target, id)),
+          getThreadShell: (id: ThreadId) =>
+            Effect.suspend(() =>
+              target.threadLookupFails
+                ? Effect.fail(silent(target.label))
+                : Effect.succeed(shellOf(target, id)),
+            ),
           getThread: () => Effect.succeed({ execution: null }),
           getThreadRecords: () =>
             Effect.succeed({
