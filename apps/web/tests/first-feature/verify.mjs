@@ -254,6 +254,29 @@ try {
             seen.removeDisabled === want.removeDisabled,
             String(seen.removeDisabled),
           );
+        if (state === "sample-review-warning") {
+          // The toast slides in over 0.5 s: wait until it rests fully on screen before the picture.
+          const settled = await page
+            .waitForFunction(
+              () => {
+                const toast = document.querySelector('[data-slot="toast-viewport"] > *');
+                if (toast === null) return false;
+                const box = toast.getBoundingClientRect();
+                return (
+                  box.left >= 0 &&
+                  box.right <= window.innerWidth &&
+                  toast.getAnimations({ subtree: true }).length === 0
+                );
+              },
+              undefined,
+              { timeout: 10_000 },
+            )
+            .then(
+              () => true,
+              () => false,
+            );
+          check(`${label}: the toast rests on screen`, settled);
+        }
         if (!want.absent) {
           const file = NodePath.join(output, `${state}-${theme}-${width}.png`);
           await page.screenshot({ path: file, fullPage: true });
