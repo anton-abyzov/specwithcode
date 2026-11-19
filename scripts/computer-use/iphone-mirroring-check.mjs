@@ -114,321 +114,24 @@ const NOT_CONNECTED = [
   "microphone in use",
 ];
 
-// Text and geometry ------------------------------------------------------------
-
-// Characters no US key types that text recognition returns for ones it does.
-const LOOKALIKES = {
-  а: "a",
-  е: "e",
-  о: "o",
-  р: "p",
-  с: "c",
-  х: "x",
-  у: "y",
-  А: "A",
-  В: "B",
-  Е: "E",
-  К: "K",
-  М: "M",
-  Н: "H",
-  О: "O",
-  Р: "P",
-  С: "C",
-  Т: "T",
-  Х: "X",
-  "¡": "i",
-  "—": "-",
-  "–": "-",
-};
-/** A reading with accents dropped and lookalikes mapped: no US key types either, so no wrong key passes. */
-export const readAs = (text) =>
-  Array.from(text.normalize("NFD").replace(/\p{M}/gu, ""))
-    .map((char) => LOOKALIKES[char] ?? char)
-    .join("");
-export const normalize = (text) => readAs(text).toLowerCase().replace(/\s+/g, " ").trim();
-/** Letters whose capital has the same shape, so a reading cannot tell their case. */
-const SAME_SHAPE = new Set("cosvwxz");
-const sameChar = (typed, read) =>
-  typed === read ||
-  (read !== undefined &&
-    SAME_SHAPE.has(typed.toLowerCase()) &&
-    typed.toLowerCase() === read.toLowerCase());
-// What may follow the typed text in the field: nothing, the cursor, or one of
-// Spotlight's inline suggestions the runs have shown ("zQ4207- Ask Siri",
-// "hbdt - HDToday", "4207 - Open"). Anything else may be typed text, so a new
-// suggestion reads UNSURE until it is added here.
-const NOTHING_AFTER = /^\|?$/;
-export const SUGGESTIONS = ["Ask Siri", "HDToday", "Open"];
-const KNOWN_SUGGESTION = new RegExp(`^\\|? ?-\\s+(?:${SUGGESTIONS.join("|")})$`);
-
-/**
- * A field reading against typed text: undefined when it does not start with
- * exactly `base`; else how many digits follow (with `digits`) and what comes
- * after them: "none", "suggestion", or "other" (possibly more typed text).
- */
-export function readField(reading, base, digits = false) {
-  const read = Array.from(readAs(reading));
-  const want = Array.from(base);
-  for (let index = 0; index < want.length; index++) {
-    if (!sameChar(want[index], read[index])) return undefined;
-  }
-  let count = 0;
-  if (digits) while (/[0-9]/.test(read[want.length + count] ?? "")) count++;
-  const rest = read.slice(want.length + count).join("");
-  const after = NOTHING_AFTER.test(rest)
-    ? "none"
-    : KNOWN_SUGGESTION.test(rest)
-      ? "suggestion"
-      : "other";
-  return { count, after };
-}
-
-/** How many digits follow `base`, when only the cursor or a known suggestion follows them. */
-export function typedTail(reading, base, digits = false) {
-  const field = readField(reading, base, digits);
-  return field === undefined || field.after === "other" ? undefined : field.count;
-}
-
-/** Whether a reading is exactly the typed text, with only the cursor or a known suggestion after it. */
-export const startsWithTyped = (reading, typed) => typedTail(reading, typed) === 0;
-
-/** Whether a reading shows Spotlight's inline suggestion after the typed text. */
-export function showsSuggestion(reading, base) {
-  return readField(reading, base, true)?.after === "suggestion";
-}
-/** Clock readings change between screenshots, so they never decide a match. */
-const isReading = (text) => /^[\d\s:.,]+(am|pm)?$/i.test(text.trim());
-
-/** How often a typing step opens Spotlight again when the phone showed no Spotlight after typing. */
-export const SPOTLIGHT_TRIES = 3;
-/** A time of day, which changes between screenshots. */
-const isTime = (text) => /^\d{1,2}:\d{2}$/.test(text);
-const texts = (lines) =>
-  lines.map((line) => normalize(line.text)).filter((text) => text !== "" && !isTime(text));
-/** What a reading shows that the home screen reading did not; only times of day are left out. */
-export const newTexts = (lines, home) => {
-  const before = new Set(texts(home));
-  return texts(lines).filter((text) => !before.has(text));
-};
-/** Home screen labels: words, not numbers or specks, which read the same on every screenshot. */
-const labels = (lines) => texts(lines).filter((text) => text.length > 2 && !isReading(text));
-/** The share of home screen labels a reading must show again to be the home screen; text recognition misses a few. */
-export const HOME_SHARE = 0.6;
-/**
- * Whether a reading after typing is the home screen with no search field. Most
- * home labels must show again. New text (numbers and single characters too) is
- * the home screen's own only when `again`, a reading taken after going home
- * once more, still shows it: what a search field showed is gone from there, so
- * a field with any wrong text is judged, never taken for the home screen.
- * Without `again`, any new text keeps the reading from being the home screen.
- */
-export function showsNoSpotlight(lines, home, again) {
-  const before = labels(home);
-  if (before.length === 0) return false;
-  const now = new Set(labels(lines));
-  if (before.filter((text) => now.has(text)).length < HOME_SHARE * before.length) return false;
-  const extra = newTexts(lines, home);
-  if (extra.length === 0) return true;
-  if (again === undefined) return false;
-  const stays = new Set(texts(again));
-  return extra.every((text) => stays.has(text));
-}
-
-export const center = (line) => ({
-  x: Math.round(line.x + line.width / 2),
-  y: Math.round(line.y + line.height / 2),
-});
-
-export function jaccard(a, b) {
-  const left = new Set(a);
-  const right = new Set(b);
-  if (left.size === 0 && right.size === 0) return 1;
-  let shared = 0;
-  for (const item of left) if (right.has(item)) shared++;
-  return shared / (left.size + right.size - shared);
-}
-
-/** Whether a line sits in the tab bar's row or column. */
-export function inBar(line, bar) {
-  const point = center(line);
-  const across = bar.axis === "row" ? point.y : point.x;
-  const along = bar.axis === "row" ? point.x : point.y;
-  return (
-    Math.abs(across - bar.at) <= bar.half &&
-    (bar.from === undefined || (along >= bar.from && along <= bar.to))
-  );
-}
-
-/**
- * The words a page shows outside its tab bar: what tells one tab's page from
- * another. Without a known bar, the bottom quarter is left out.
- */
-export function pageSignature(lines, window, bar) {
-  const limit = window.y + window.height * 0.75;
-  const onPage = (line) => (bar === undefined ? center(line).y < limit : !inBar(line, bar));
-  return [
-    ...new Set(
-      lines
-        .filter((line) => onPage(line) && !isReading(line.text))
-        .map((line) => normalize(line.text))
-        .filter((text) => text.length > 0),
-    ),
-  ];
-}
-
-/** Words that only that tab's page shows, by tab: what proves a tap landed on the named tab. */
-export const DEFAULT_ANCHORS = {
-  // A layout with the tabs on top may drop the page title; the rows read "Today, +0HRS".
-  "World Clock": ["world clock", "today", "yesterday", "no world clocks"],
-  // Not "start" or "stop": the Timers page shows those too.
-  Stopwatch: ["lap", "reset"],
-};
-
-/** The anchor words per tab: --anchors, else the defaults, else the tab's own name. */
-export function tabAnchors(config) {
-  return Object.fromEntries(
-    config.tabs.map((tab, index) => [
-      tab,
-      config.anchors?.[index] ?? DEFAULT_ANCHORS[tab] ?? [normalize(tab)],
-    ]),
-  );
-}
-
-/** The first anchor word a page signature shows, as a whole word. */
-export function anchorIn(page, words) {
-  for (const word of words) {
-    const pattern = new RegExp(
-      `(^|[^a-z])${word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^a-z])`,
-    );
-    if (page.some((entry) => pattern.test(entry))) return word;
-  }
-  return undefined;
-}
-
-/**
- * The two tab labels where they line up as a tab bar does: side by side in a
- * row (at the bottom, or on top in a wider layout) or one above the other in a
- * sidebar. A bar must also hold a third of `barLabels` (Clock shows four tabs)
- * in line with them, so a page title and one tab never pass for a bar; of two
- * readings of the same label in line, the one closer to the others is the tab.
- * The bar ends just past its outer labels, so a page title further along the
- * same line stays page text. Returns { tabs: {label: line}, bar },
- * { ambiguous: true } when two different bars fit as well, or undefined.
- */
-export function locateTabs(lines, labels, barLabels = labels) {
-  const pair = labels.map(normalize);
-  const known = [...new Set([...barLabels.map(normalize), ...pair])];
-  const needed = Math.min(3, known.length);
-  const [first, second] = pair.map((label) =>
-    lines.filter((line) => normalize(line.text) === label),
-  );
-  const candidates = [];
-  for (const a of first) {
-    for (const b of second) {
-      const ca = center(a);
-      const cb = center(b);
-      const size = Math.max(a.height, b.height);
-      let bar;
-      let rank;
-      if (Math.abs(ca.y - cb.y) <= size * 0.75 && Math.abs(ca.x - cb.x) > size) {
-        bar = { axis: "row", at: Math.round((ca.y + cb.y) / 2), half: size };
-        rank = 1e7 + bar.at;
-      } else if (
-        Math.abs(ca.y - cb.y) > size &&
-        (Math.abs(a.x - b.x) <= size || Math.abs(ca.x - cb.x) <= size)
-      ) {
-        const half = Math.round(Math.max(a.width, b.width) / 2 + size);
-        bar = { axis: "column", at: Math.round((ca.x + cb.x) / 2), half };
-        rank = -bar.at;
-      }
-      if (bar === undefined) continue;
-      const along = (line) => (bar.axis === "row" ? center(line).x : center(line).y);
-      const middle = (along(a) + along(b)) / 2;
-      const members = [a, b];
-      for (const label of known) {
-        if (pair.includes(label)) continue;
-        const inLine = lines
-          .filter((line) => normalize(line.text) === label && inBar(line, bar))
-          .sort((x, y) => Math.abs(along(x) - middle) - Math.abs(along(y) - middle));
-        if (inLine.length > 0) members.push(inLine[0]);
-      }
-      if (members.length < needed) continue;
-      // Tabs sit at an even pitch; a member far past the others is something else.
-      const places = members.map(along).sort((x, y) => x - y);
-      const gaps = places.slice(1).map((place, index) => place - places[index]);
-      if (gaps.length > 1 && Math.max(...gaps) > 2 * Math.min(...gaps) + size) continue;
-      const starts = members.map((line) => (bar.axis === "row" ? line.x : line.y));
-      const ends = members.map((line) =>
-        bar.axis === "row" ? line.x + line.width : line.y + line.height,
-      );
-      const from = Math.min(...starts) - size;
-      const to = Math.max(...ends) + size;
-      candidates.push({
-        held: members.length,
-        span: to - from,
-        rank,
-        tabs: { [labels[0]]: a, [labels[1]]: b },
-        bar: { ...bar, from, to },
-      });
-    }
-  }
-  if (candidates.length === 0) return undefined;
-  candidates.sort((x, y) => y.held - x.held || x.span - y.span || y.rank - x.rank);
-  const [best, next] = candidates;
-  const sameBar = (x, y) => x.axis === y.axis && Math.abs(x.at - y.at) <= x.half;
-  if (
-    next !== undefined &&
-    next.held === best.held &&
-    Math.abs(next.span - best.span) <= best.bar.half &&
-    !sameBar(best.bar, next.bar)
-  ) {
-    return { ambiguous: true };
-  }
-  return { tabs: best.tabs, bar: best.bar };
-}
-
-/** Every line with where it is, for a log line that shows what the check saw. */
-export const describeLines = (lines) =>
-  lines
-    .map((line) => `${JSON.stringify(line.text)}@(${center(line).x},${center(line).y})`)
-    .join(", ") || "no text";
-
-/** How far text that shows in both readings moved, as the median of the vertical moves. */
-export function verticalShift(before, after) {
-  const once = (lines) => {
-    const seen = new Map();
-    for (const line of lines) {
-      const key = normalize(line.text);
-      if (key === "" || isReading(line.text)) continue;
-      seen.set(key, seen.has(key) ? null : line);
-    }
-    return seen;
-  };
-  const a = once(before);
-  const b = once(after);
-  const moves = [];
-  for (const [key, line] of a) {
-    const other = b.get(key);
-    if (line !== null && other !== undefined && other !== null) {
-      moves.push(center(other).y - center(line).y);
-    }
-  }
-  moves.sort((x, y) => x - y);
-  const median = moves.length === 0 ? 0 : moves[Math.floor(moves.length / 2)];
-  return { common: moves.length, median };
-}
-
-/** Whether a scroll moved the page: shared text moved far enough, or the page was replaced. */
-export function scrolled(before, after, window, direction, minPx) {
-  const shift = verticalShift(before, after);
-  const sign = direction === "down" ? -1 : 1;
-  if (shift.common >= 3) return { ok: shift.median * sign >= minPx, ...shift };
-  const replaced =
-    jaccard(pageSignature(before, window), pageSignature(after, window)) < 0.4 && after.length > 0;
-  return { ok: replaced, replaced, ...shift };
-}
-
-// The check ----------------------------------------------------------------------
+// Reading the screen is in iphone-mirroring-judge.mjs.
+export * from "./iphone-mirroring-judge.mjs";
+import {
+  normalize,
+  readField,
+  SPOTLIGHT_TRIES,
+  newTexts,
+  showsNoSpotlight,
+  center,
+  jaccard,
+  pageSignature,
+  tabAnchors,
+  anchorIn,
+  backgroundOf,
+  locateTabs,
+  describeLines,
+  scrolled,
+} from "./iphone-mirroring-judge.mjs";
 
 /**
  * Runs every step through `deps` and returns the report lines and totals.
@@ -761,11 +464,13 @@ export async function runCheck(deps, options = {}) {
   // 3. Typing into Spotlight on the phone -----------------------------------------
   // Each step starts from a fresh, emptied search field, so what one step left
   // there never decides the next.
+  let lastHome = [];
   // It returns a reading of the home screen and one taken after Spotlight was asked to open.
   const freshSearch = async () => {
     await call("computer_key", { keys: "cmd+1" });
     await deps.sleep(config.settleMs);
     const home = await look();
+    lastHome = home.lines;
     await call("computer_key", { keys: "cmd+3" });
     await deps.sleep(config.settleMs);
     await call("computer_key", { keys: "backspace", repeat: CLEAR_PRESSES });
@@ -1031,11 +736,54 @@ export async function runCheck(deps, options = {}) {
     );
     return finish();
   }
+  // Clock on iOS 27 may show its tabs as icons only, in a column at the lower
+  // right: the column is found in the picture once a Clock page title shows,
+  // and its icons are the tabs in Clock's order (DEFAULTS.barLabels). Never
+  // while Spotlight still shows: its Clock row has a "Stopwatch" label, and the
+  // home screen's dock is a column of icons too.
+  const searching = searchField(seen, config.clockApp) !== undefined;
+  if (located === undefined && deps.icons !== undefined && !searching) {
+    const title = config.barLabels.find((label) =>
+      seen.lines.some((line) => normalize(line.text) === normalize(label)),
+    );
+    const order = [tabA, tabB].map((label) => config.barLabels.indexOf(label));
+    if (title !== undefined && order.every((index) => index >= 0)) {
+      try {
+        const found = await deps.icons(seen.shot.image, seen.window);
+        const column = found?.column;
+        if (column === undefined) {
+          const marks = found?.marks ?? [];
+          note(
+            `no column of ${config.barLabels.length} tab icons in the picture; icon-sized marks at ${marks.map((mark) => `(${mark.x}, ${mark.y})`).join(", ") || "none"}`,
+          );
+        }
+        if (column?.length === config.barLabels.length) {
+          const pitch = (column.at(-1).y - column[0].y) / (column.length - 1);
+          const line = (point) => ({ text: "", x: point.x, y: point.y, width: 0, height: 0 });
+          located = {
+            icons: true,
+            title,
+            tabs: { [tabA]: line(column[order[0]]), [tabB]: line(column[order[1]]) },
+            bar: {
+              axis: "column",
+              at: Math.round(column.reduce((sum, point) => sum + point.x, 0) / column.length),
+              half: Math.round(pitch / 2),
+              from: Math.round(column[0].y - pitch / 2),
+              to: Math.round(column.at(-1).y + pitch / 2),
+            },
+          };
+        }
+      } catch (error) {
+        note(`finding ${config.clockApp}'s icon column failed: ${error.message}`);
+      }
+    }
+  }
   if (located === undefined) {
     const shownTabs = barLabels.filter((label) =>
       seen.lines.some((line) => normalize(line.text) === normalize(label)),
     );
-    // Clock open with some tabs showing: text recognition missed the bar, not the product.
+    // Clock open with some tabs or a page title showing: the tabs could not be
+    // found on the screen, which says nothing about the product.
     if (shownTabs.length >= 2) {
       unsure(
         "tabs",
@@ -1043,9 +791,16 @@ export async function runCheck(deps, options = {}) {
       );
       return finish();
     }
+    if (shownTabs.length === 1 && !searching) {
+      unsure(
+        "tabs",
+        `${config.clockApp} shows "${shownTabs[0]}" but neither a tab bar holding "${tabA}" and "${tabB}" nor a column of ${config.barLabels.length} tab icons could be found; read ${describeLines(seen.lines)}`,
+      );
+      return finish();
+    }
     return stop(
       "tabs",
-      `could not find "${tabA}" and "${tabB}" in a tab bar with the other tabs (${barLabels.join(", ")}); read ${describeLines(seen.lines)}`,
+      `could not find "${tabA}" and "${tabB}" in a tab bar with the other tabs (${barLabels.join(", ")}), and no ${config.clockApp} page title showed; read ${describeLines(seen.lines)}`,
     );
   }
   const { bar } = located;
@@ -1054,13 +809,15 @@ export async function runCheck(deps, options = {}) {
   check(
     "tabs",
     true,
-    `"${tabA}" and "${tabB}" found in ${config.clockApp}, in a ${bar.axis} at ${bar.axis === "row" ? "y" : "x"} ${bar.at}`,
+    located.icons
+      ? `"${tabA}" and "${tabB}" found in ${config.clockApp} as icons ${config.barLabels.indexOf(tabA) + 1} and ${config.barLabels.indexOf(tabB) + 1} of a column of ${config.barLabels.length} at x ${bar.at}, y ${bar.from} to ${bar.to}, with the page title "${located.title}" showing`
+      : `"${tabA}" and "${tabB}" found in ${config.clockApp}, in a ${bar.axis} at ${bar.axis === "row" ? "y" : "x"} ${bar.at}`,
   );
   const signature = (reading) => pageSignature(reading.lines, reading.window, bar);
 
   const tap = async (label) => {
     // Only the bar found first counts, so a page title never stands in for a missed label.
-    const again = locateTabs(seen.lines, [tabA, tabB], barLabels);
+    const again = located.icons ? undefined : locateTabs(seen.lines, [tabA, tabB], barLabels);
     if (again?.bar?.axis === bar.axis && Math.abs(again.bar.at - bar.at) <= bar.half) {
       Object.assign(tabLines, again.tabs);
     }
@@ -1073,7 +830,13 @@ export async function runCheck(deps, options = {}) {
     seen = await look();
     return { line, point, before, pageBefore };
   };
-  const anchors = tabAnchors(config);
+  // Icon tabs carry no label, so each page's title is its first word.
+  const anchors = Object.fromEntries(
+    Object.entries(tabAnchors(config)).map(([tab, words]) => [
+      tab,
+      located.icons ? [...new Set([normalize(tab), ...words])] : words,
+    ]),
+  );
   const anchorOf = (label, page) => anchorIn(page, anchors[label]);
 
   // Not counted: makes the first tab current, so every counted tap changes the page.
@@ -1105,11 +868,38 @@ export async function runCheck(deps, options = {}) {
           const reset = await tap(other);
           note(`reset tap on "${other}" before ${name} at (${reset.point.x}, ${reset.point.y})`);
         }
+        // With icon tabs a tap is judged only from the other tab's page, read
+        // before it: a page read as neither proves nothing about the tap.
+        if (located.icons) {
+          for (let tries = 1; anchorOf(other, signature(seen)) === undefined; tries++) {
+            if (tries > 2) {
+              unsure(
+                name,
+                `the "${other}" page could not be read before the tap on "${target}", so the tap cannot be judged; the page reads ${signature(seen).slice(0, 8).join(" | ") || "nothing"}`,
+              );
+              return;
+            }
+            if (tries === 1) {
+              await deps.sleep(config.settleMs);
+              seen = await look();
+            } else {
+              const reset = await tap(other);
+              note(
+                `reset tap on "${other}" before ${name} at (${reset.point.x}, ${reset.point.y})`,
+              );
+            }
+          }
+        }
         const result = await tap(target);
         const page = signature(seen);
         const where = `"${target}" at (${result.point.x}, ${result.point.y}); ${result.before ?? "unknown"} -> ${lastFrontmost ?? "unknown"}`;
         // Landed: the page changed, shows the target tab's own words, and not the other tab's.
-        const changed = jaccard(page, result.pageBefore) < 0.5;
+        // With icon tabs the title decides "changed": the page before did not show
+        // the target's words (text behind the window's margins stays the same).
+        const changed = located.icons
+          ? anchorOf(target, result.pageBefore) === undefined &&
+            anchorOf(target, page) !== undefined
+          : jaccard(page, result.pageBefore) < 0.5;
         const anchor = anchorOf(target, page);
         const foreign = anchorOf(other, page);
         const same = refs[target] === undefined ? undefined : jaccard(page, refs[target]);
@@ -1122,7 +912,7 @@ export async function runCheck(deps, options = {}) {
         check(
           name,
           ok,
-          `${where}; ${changed ? "page changed" : "page did not change"}, ${anchor === undefined ? "no" : `"${anchor}"`} ${target} word${foreign === undefined ? "" : `, but shows "${foreign}" from ${other}`}, ${same === undefined ? "first view of this page" : `matched ${same.toFixed(2)}`}`,
+          `${where}; ${changed ? "page changed" : "page did not change"}, ${anchor === undefined ? "no" : `"${anchor}"`} ${target} word${foreign === undefined ? "" : `, but shows "${foreign}" from ${other}`}, ${same === undefined ? "first view of this page" : `matched ${same.toFixed(2)}`}${ok ? "" : `; before the tap it showed ${anchorOf(other, result.pageBefore) === undefined ? "no" : `"${anchorOf(other, result.pageBefore)}"`} ${other} word, after it reads ${page.slice(0, 8).join(" | ") || "nothing"}`}`,
         );
       });
     } catch (error) {
@@ -1142,7 +932,9 @@ export async function runCheck(deps, options = {}) {
       await call("computer_scroll", { ...point, direction: "down", amount: 5 });
       await deps.sleep(config.settleMs);
       seen = await look();
-      const down = scrolled(start, seen.lines, seen.window, "down", config.minScrollPx);
+      // Text behind the window's margins shows at the same place on the home screen.
+      const background = backgroundOf(start, lastHome);
+      const down = scrolled(start, seen.lines, seen.window, "down", config.minScrollPx, background);
       const middle = seen.lines;
       check(
         "scroll down",
@@ -1159,7 +951,14 @@ export async function runCheck(deps, options = {}) {
         });
         await deps.sleep(config.settleMs);
         const probe = await look();
-        const moved = scrolled(middle, probe.lines, probe.window, "down", config.minScrollPx);
+        const moved = scrolled(
+          middle,
+          probe.lines,
+          probe.window,
+          "down",
+          config.minScrollPx,
+          background,
+        );
         note(
           `probe, not counted: computer_drag ${moved.ok ? "moved" : "did not move"} the list (${moved.median}px, ${moved.common} lines)`,
         );
@@ -1169,7 +968,7 @@ export async function runCheck(deps, options = {}) {
       await call("computer_scroll", { ...point, direction: "up", amount: 5 });
       await deps.sleep(config.settleMs);
       seen = await look();
-      const up = scrolled(before, seen.lines, seen.window, "up", config.minScrollPx);
+      const up = scrolled(before, seen.lines, seen.window, "up", config.minScrollPx, background);
       const back =
         jaccard(pageSignature(seen.lines, seen.window), pageSignature(start, seen.window)) >= 0.7 &&
         jaccard(pageSignature(before, seen.window), pageSignature(start, seen.window)) < 0.7;

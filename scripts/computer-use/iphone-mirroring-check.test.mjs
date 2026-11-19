@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   anchorIn,
+  backgroundOf,
   CLICK_TARGET,
   jaccard,
   locateTabs,
@@ -25,7 +26,9 @@ import {
   TYPE_SAMPLES,
   typedTail,
   windowInScreenshot,
+  verticalShift,
 } from "./iphone-mirroring-check.mjs";
+import { findIconColumn } from "./iphone-mirroring-icons.mjs";
 
 const window = { x: 600, y: 100, width: 360, height: 760 };
 const line = (text, x, y, width = 100, height = 20) => ({ text, x, y, width, height });
@@ -885,6 +888,100 @@ describe("dry run", () => {
     expect(phone.state.taps).toBeUndefined();
   });
 
+  it("taps Clock's icon tabs and judges each tap by the page title", async () => {
+    // Text of other windows shows in the window's margins in every reading.
+    const behind = ["Ov", "lo", "ct", "CALENDAR", "Thu. Nov 19", "4 x", "Flood", "Inbox"];
+    const phone = simulatedPhone({ iconTabs: true, behind });
+    const result = await runCheck(phone.deps);
+    expect(result.lines).toContainEqual(
+      expect.stringMatching(
+        /^PASS tabs: "World Clock" and "Stopwatch" found in Clock as icons 1 and 3 of a column of 4 at x 920, y 580 to 740, with the page title "Stopwatch" showing$/,
+      ),
+    );
+    expect(result.lines).toContain("Clicks landed: 20 of 20");
+    expect(result.lines).toContainEqual(expect.stringMatching(/^PASS scroll down/));
+    expect(result.lines.at(-1)).toMatch(/^Result: PASS/);
+  });
+
+  it("counts a missed icon tap", async () => {
+    const phone = simulatedPhone({ iconTabs: true, missClick: 4 });
+    const result = await runCheck(phone.deps);
+    expect(result.lines).toContain("Clicks landed: 19 of 20");
+    expect(result.lines).toContainEqual(
+      expect.stringMatching(
+        /^FAIL click 4\/20: .*page did not change.*; before the tap it showed "stopwatch" Stopwatch word, after it reads stopwatch \| lap \| start$/,
+      ),
+    );
+  });
+
+  it("never looks for icon tabs while Spotlight still shows", async () => {
+    const phone = simulatedPhone({ iconTabs: true, deadReturn: true });
+    // Spotlight's Clock row reads "Stopwatch", and the tap on the result does nothing.
+    const ocr = phone.deps.ocr;
+    phone.deps.ocr = async (...args) => {
+      const read = await ocr(...args);
+      return phone.state.app === "spotlight" && phone.state.query === "Clock"
+        ? [...read, { text: "Stopwatch", x: 760, y: 260, width: 80, height: 20 }]
+        : read;
+    };
+    const call = phone.deps.call;
+    phone.deps.call = (tool, args) =>
+      tool === "computer_click" && phone.state.app === "spotlight"
+        ? call("computer_screenshot", {})
+        : call(tool, args);
+    let looked = 0;
+    phone.deps.icons = async () => {
+      looked++;
+      return { column: undefined, marks: [] };
+    };
+    const result = await runCheck(phone.deps);
+    expect(looked).toBe(0);
+    expect(result.lines).toContainEqual(expect.stringMatching(/^FAIL tabs: could not find/));
+  });
+
+  it("never counts an icon tap made from a page read as neither tab", async () => {
+    const phone = simulatedPhone({ iconTabs: true });
+    // Before counted click 5 the World Clock page loses its words in every reading.
+    const ocr = phone.deps.ocr;
+    let blank = false;
+    const call = phone.deps.call;
+    let clicks = 0;
+    phone.deps.call = (tool, args) => {
+      if (tool === "computer_click") {
+        clicks++;
+        // Click 1 is the setup tap, so call 5 is counted click 4, onto World
+        // Clock, and call 6 the reset tap before counted click 5.
+        blank = clicks === 5 || clicks === 6;
+      }
+      return call(tool, args);
+    };
+    phone.deps.ocr = async (...args) => {
+      const read = await ocr(...args);
+      return blank ? read.filter((line) => !/world clock|today/i.test(line.text)) : read;
+    };
+    const result = await runCheck(phone.deps);
+    expect(result.lines).toContainEqual(
+      expect.stringMatching(
+        /^UNSURE click 5\/20: the "World Clock" page could not be read before the tap/,
+      ),
+    );
+  });
+
+  it("calls the tabs unsure when Clock is open but neither labels nor icons are found", async () => {
+    const phone = simulatedPhone({ iconTabs: true });
+    phone.deps.icons = async () => ({ column: undefined, marks: [{ x: 910, y: 500 }] });
+    const result = await runCheck(phone.deps);
+    expect(result.lines).toContain(
+      "NOTE no column of 4 tab icons in the picture; icon-sized marks at (910, 500)",
+    );
+    expect(result.lines).toContainEqual(
+      expect.stringMatching(
+        /^UNSURE tabs: Clock shows "Stopwatch" but neither a tab bar .* nor a column of 4 tab icons/,
+      ),
+    );
+    expect(result.lines.some((entry) => entry.startsWith("FAIL "))).toBe(false);
+  });
+
   it("writes dry-run.log and never check.log", async () => {
     const out = tempOut();
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -1040,6 +1137,8 @@ describe("judging the screen", () => {
     expect(startsWithTyped("hbdt- Ask Siri", "hbdt")).toBe(true);
     expect(startsWithTyped("hbdt|", "hbdt")).toBe(true);
     expect(startsWithTyped("hbdt", "hbdt")).toBe(true);
+    // The run of November 19 at 12:45 PM read the suggestion with no spaces around the dash.
+    expect(startsWithTyped("x@y#h-Ask Siri", "x@y#h")).toBe(true);
     // Leftovers before the text, or more typed text after it, do not count.
     expect(startsWithTyped("zQ4207- Ask Siri", "4207")).toBe(false);
     expect(startsWithTyped("42075", "4207")).toBe(false);
@@ -1092,7 +1191,7 @@ describe("judging the screen", () => {
   it("tells the home screen from Spotlight over it, never a field with the wrong text", () => {
     const at = (text, y = 500) => ({ text, x: 1200, y, width: 80, height: 14 });
     const home = [
-      at("Sunny Isles B...", 313),
+      at("Weather", 313),
       at("77°", 332),
       at("11:26", 330),
       at("Messages"),
@@ -1115,6 +1214,86 @@ describe("judging the screen", () => {
     expect(showsNoSpotlight([at("Search")], home)).toBe(false);
     expect(showsNoSpotlight([], home)).toBe(false);
     expect(showsNoSpotlight(home, [])).toBe(false);
+  });
+
+  it("finds a column of four round icons at the lower right, and nothing else", () => {
+    const picture = (circles, width = 156, height = 238) => {
+      const data = new Uint8Array(width * height * 3);
+      for (const circle of circles) {
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const d = Math.hypot(x - circle.x, y - circle.y);
+            // A ring, like an icon's outline.
+            if (d <= 4 && d >= 2) data.fill(255, (y * width + x) * 3, (y * width + x) * 3 + 3);
+          }
+        }
+      }
+      return { data, width, height, channels: 3 };
+    };
+    const column = (x, ys) => ys.map((y) => ({ x, y }));
+    // window-27.png at half size: icons at x 137, y 170, 185, 201, 217.
+    expect(findIconColumn(picture(column(137, [170, 185, 201, 217])))).toEqual(
+      column(137, [170, 185, 201, 217]),
+    );
+    // A column on the left, a longer list, uneven rows, or above the middle: none.
+    expect(findIconColumn(picture(column(40, [170, 185, 201, 217])))).toBeUndefined();
+    expect(
+      findIconColumn(picture(column(137, [124, 139, 155, 170, 185, 201, 217]))),
+    ).toBeUndefined();
+    expect(findIconColumn(picture(column(137, [150, 185, 201, 217])))).toBeUndefined();
+    expect(findIconColumn(picture(column(137, [20, 35, 51, 67])))).toBeUndefined();
+  });
+
+  it("measures a scroll by the text that moved, not the text behind the window", () => {
+    const at = (text, y, x = 620) => ({ text, x, y, width: 80, height: 14 });
+    const behind = ["Ov", "CALENDAR", "Thu. Nov 19", "4 x", "Flood"].map((text, index) =>
+      at(text, 110 + index * 30, 602),
+    );
+    // The home screen shows the same text behind the window, at the same place.
+    const home = [...behind, at("Messages", 400), at("Settings", 470, 700)];
+    const rows = ["General", "Camera", "Siri", "Search"];
+    const before = [...behind, ...rows.map((text, index) => at(text, 300 + index * 50))];
+    const after = [...behind, ...rows.map((text, index) => at(text, 200 + index * 50))];
+    const background = backgroundOf(before, home);
+    expect([...background]).toEqual(["ov", "calendar", "thu. nov 19", "4 x", "flood"]);
+    expect(verticalShift(before, after, background)).toEqual({ common: 4, median: -100 });
+    // Without it the text behind the window outvotes the rows.
+    expect(verticalShift(before, after).median).toBe(0);
+
+    expect(scrolled(before, after, window, "down", 20, background).ok).toBe(true);
+    expect(scrolled(before, before, window, "down", 20, background).ok).toBe(false);
+    // A long scroll keeps two rows and brings new ones: the page was replaced.
+    const far = [
+      ...behind,
+      at("General", 130),
+      at("Camera", 180),
+      ...["Wallpaper", "Notifications", "Sounds", "Focus"].map((text, index) =>
+        at(text, 300 + index * 50),
+      ),
+    ];
+    expect(scrolled(before, far, window, "down", 20, background)).toMatchObject({
+      ok: true,
+      replaced: true,
+    });
+    // One reading spelled differently, or text where there was none, is no scroll.
+    const row = (text) => [at(text, 450, 640)];
+    expect(scrolled(row("Wi-Fi"), row("Wi Fi"), window, "down", 20, background).ok).toBe(false);
+    expect(scrolled(row("Wi Fi"), row("Wi-Fi"), window, "up", 20, background).ok).toBe(false);
+    expect(scrolled([], after, window, "down", 20, background).ok).toBe(false);
+    // Rows that stayed put, with a few readings changed, are no scroll.
+    const list = ["Settings", "General", "Camera", "Siri", "Search", "Sounds", "Focus", "Privacy"];
+    const stay = list.map((text, index) => at(text, 200 + index * 30, 640));
+    const varied = (texts) => texts.map((text, index) => at(text, 450 + index * 30, 640));
+    expect(
+      scrolled(
+        [...behind, ...stay, ...varied(["Wi-Fi", "Blue tooth", "Mobile Service"])],
+        [...behind, ...stay, ...varied(["Wi Fi", "Bluetooth", "Mobile Services"])],
+        window,
+        "down",
+        20,
+        background,
+      ).ok,
+    ).toBe(false);
   });
 
   it("tells pages apart by their words, leaving clock readings out", () => {

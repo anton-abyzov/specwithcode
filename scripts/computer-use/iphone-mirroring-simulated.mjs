@@ -10,7 +10,10 @@ import { MIRRORING_APP, PATH_REFUSAL } from "./iphone-mirroring-check.mjs";
  * tabsOnTop: Clock shows its tabs in a row at the top, under the status bar.
  * spotlightMisses: called with the number of each cmd+3; true leaves the phone
  * on the home screen. deadReturn: Return in Spotlight opens nothing; the app's
- * result under the field still opens it when tapped.
+ * result under the field still opens it when tapped. iconTabs: Clock shows its
+ * tabs as unlabelled icons in a column at the lower right, and each page its
+ * title. behind: text of other windows showing in the window's margins, the
+ * same in every reading.
  */
 export function simulatedPhone({
   missClick,
@@ -24,6 +27,8 @@ export function simulatedPhone({
   tabsOnTop = false,
   spotlightMisses,
   deadReturn = false,
+  iconTabs = false,
+  behind = [],
   // Called with the number of each input call: "refuse" puts SpecWithCode in
   // front first (the product refuses, nothing sent); "partway" sends it, then
   // reports that iPhone Mirroring left the front.
@@ -32,12 +37,15 @@ export function simulatedPhone({
   const window = { x: 600, y: 100, width: 360, height: 760 };
   const display = { width: 1512, height: 982 };
   const tabY = tabsOnTop ? 140 : 820;
-  const tabs = {
-    "World Clock": { x: 640, y: tabY, width: 90, height: 20 },
-    Alarms: { x: 740, y: tabY, width: 60, height: 20 },
-    Stopwatch: { x: 840, y: tabY, width: 80, height: 20 },
-    Timers: { x: 900, y: tabY, width: 50, height: 20 },
-  };
+  const icon = (y) => ({ x: 910, y, width: 20, height: 20 });
+  const tabs = iconTabs
+    ? { "World Clock": icon(590), Alarms: icon(630), Stopwatch: icon(670), Timers: icon(710) }
+    : {
+        "World Clock": { x: 640, y: tabY, width: 90, height: 20 },
+        Alarms: { x: 740, y: tabY, width: 60, height: 20 },
+        Stopwatch: { x: 840, y: tabY, width: 80, height: 20 },
+        Timers: { x: 900, y: tabY, width: 50, height: 20 },
+      };
   const pages = pageOverride ?? {
     "World Clock": ["World Clock", "Edit", "Cupertino", "Today, +0HRS", "10:42"],
     Stopwatch: ["00:00,00", "Lap", "Start"],
@@ -72,19 +80,25 @@ export function simulatedPhone({
   };
   const line = (text, x, y, width = 120, height = 20) => ({ text, x, y, width, height });
 
-  const ocr = () => {
+  const behindLines = () => behind.map((text, index) => line(text, 602, 110 + index * 30, 8, 14));
+  const ocr = () => [...screen(), ...behindLines()];
+  const screen = () => {
     if (state.app === "home") return [line("Clock", 640, 300), line("Settings", 760, 300)];
     if (state.app === "spotlight") {
       if (state.query === "") return [line("Search", 640, 160)];
       const field = line(`${state.query}${state.inline ? "- Ask Siri" : ""}`, 640, 160);
       // An app's name shows its result under the field.
-      return APPS.includes(state.query) ? [field, line(state.query, 640, 260)] : [field];
+      return APPS.has(state.query) ? [field, line(state.query, 640, 260)] : [field];
     }
     if (state.app === "Clock") {
       const top = tabsOnTop ? 200 : 150;
+      const page =
+        iconTabs && !pages[state.tab].includes(state.tab)
+          ? [state.tab, ...pages[state.tab]]
+          : pages[state.tab];
       return [
-        ...pages[state.tab].map((text, index) => line(text, 620, top + index * 60)),
-        ...Object.entries(tabs).map(([text, box]) =>
+        ...page.map((text, index) => line(text, 620, top + index * 60)),
+        ...Object.entries(iconTabs ? {} : tabs).map(([text, box]) =>
           line(text, box.x, box.y, box.width, box.height),
         ),
       ];
@@ -97,7 +111,7 @@ export function simulatedPhone({
     return [];
   };
 
-  const APPS = ["Clock", "Settings"];
+  const APPS = new Set(["Clock", "Settings"]);
   let inputs = 0;
   let spotlights = 0;
   const call = async (tool, args) => {
@@ -171,7 +185,7 @@ export function simulatedPhone({
       case "computer_click": {
         if (state.app === "spotlight") {
           // A tap on the app's result opens it.
-          if (APPS.includes(state.query) && args.y >= 260 && args.y < 280) {
+          if (APPS.has(state.query) && args.y >= 260 && args.y < 280) {
             state.app = state.query;
             state.scroll = 0;
           }
@@ -214,6 +228,14 @@ export function simulatedPhone({
       call,
       window: async () => ({ window, onMainDisplay: true }),
       ocr: async () => ocr(),
+      // The icon column, found in the picture only while Clock shows icon tabs.
+      icons: async () => ({
+        column:
+          iconTabs && state.app === "Clock"
+            ? Object.values(tabs).map((box) => ({ x: box.x + 10, y: box.y + 10 }))
+            : undefined,
+        marks: [],
+      }),
       frontmost: async () => state.front,
       loadavg: () => load,
       desktopApps: async () => [{ version: "simulated", path: "simulated" }],

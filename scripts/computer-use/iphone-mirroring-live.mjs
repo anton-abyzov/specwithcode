@@ -6,6 +6,8 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { findIconColumn } from "./iphone-mirroring-icons.mjs";
+
 const MIRRORING_BUNDLE_ID = "com.apple.ScreenContinuity";
 
 const MCP_PROTOCOL_VERSION = "2025-06-18";
@@ -227,6 +229,25 @@ export async function liveDeps({ client, scratch, saveScreenshots, outDir }) {
         ),
       );
       return regionToScreenshot(answer.lines, clipped);
+    },
+    // Clock's tab icons: a column of four round icons at the lower right of the window.
+    icons: async (image, region) => {
+      const source = Buffer.from(image, "base64");
+      const meta = await sharp(source).metadata();
+      const left = Math.max(0, region.x);
+      const top = Math.max(0, region.y);
+      const width = Math.min(region.width, meta.width - left);
+      const height = Math.min(region.height, meta.height - top);
+      if (width <= 0 || height <= 0) return { column: undefined, marks: [] };
+      const { data, info } = await sharp(source)
+        .extract({ left, top, width, height })
+        .removeAlpha()
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+      const marks = [];
+      const column = findIconColumn({ data, ...info }, 4, marks);
+      const place = (point) => ({ x: left + point.x, y: top + point.y });
+      return { column: column?.map(place), marks: marks.map(place) };
     },
     warmUp: async () => {
       const file = NodePath.join(scratch, "warm-up.png");
