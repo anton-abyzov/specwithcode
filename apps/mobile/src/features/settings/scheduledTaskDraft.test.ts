@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import * as routineDraft from "./scheduledTaskDraft";
 import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
@@ -419,5 +420,32 @@ describe("routine project defaults within retained Settings scope", () => {
         () => null,
       ),
     ).toBe(live);
+  });
+});
+
+describe("what a routine change says it was made on", () => {
+  // Looked up by name: a build without it sends nothing, and must fail here, not at import.
+  const seen = (task: ScheduledTask | null) =>
+    (
+      (routineDraft as Record<string, unknown>).routineSeen as
+        | ((task: ScheduledTask | null) => unknown)
+        | undefined
+    )?.(task);
+  const copy: ScheduledTask = { ...legacyTask, revision: 7, definitionHash: "shown-at-open" };
+
+  it("sends the revision and the definition the row showed", () => {
+    expect(seen(copy)).toEqual({ expectedRevision: 7, expectedDefinition: "shown-at-open" });
+  });
+
+  it("sends neither for a new routine or one that shows none", () => {
+    expect(seen(null)).toEqual({});
+    expect(seen(legacyTask)).toEqual({});
+  });
+
+  it("keeps what the form opened on, whatever the list shows later", () => {
+    const draft = editDraft(copy);
+    const later: ScheduledTask = { ...copy, revision: 8, definitionHash: "shown-later" };
+    expect(later.definitionHash).not.toBe(draft.task?.definitionHash);
+    expect(seen(draft.task)).toEqual({ expectedRevision: 7, expectedDefinition: "shown-at-open" });
   });
 });

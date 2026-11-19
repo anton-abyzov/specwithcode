@@ -12,6 +12,7 @@ import {
   type ScheduledTask,
   ScheduledTaskId,
   ThreadId,
+  type RuntimeMode,
 } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -137,6 +138,8 @@ export interface Network {
   before?: ((from: string, to: string, op: string) => Effect.Effect<void>) | undefined;
   /** Runs once the other machine acted on a request, before its answer is back. */
   during?: ((from: string, to: string, op: string) => Effect.Effect<void>) | undefined;
+  /** What `from`'s routines may do on `to`; absent, anything. */
+  ceiling?: ((from: string, to: string) => RuntimeMode) | undefined;
   /** Every request sent, as `from>to:op`. */
   readonly log: Array<string>;
 }
@@ -191,7 +194,11 @@ export const fleet = (
               uncertain: false,
             });
           const answered = yield* route(
-            { sourceEnvironmentId: self, grant: grantFor(self), runtimeCeiling: "full-access" },
+            {
+              sourceEnvironmentId: self,
+              grant: grantFor(self),
+              runtimeCeiling: network.ceiling?.(from, to) ?? "full-access",
+            },
             wire,
           ).pipe(Effect.result);
           if (network.during !== undefined) yield* network.during(from, to, wire.op ?? "?");
