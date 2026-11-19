@@ -132,6 +132,20 @@ const OTHER = (branch) =>
   `On ${branch}. The other machine's branch comes with the fetch when the remote has it; nothing is checked out`;
 const NO_REMOTE = 'Not in Git on a remote. Use "Compare all files…"';
 const NO_UPSTREAM = "No upstream. Its commits are listed as an extra";
+/** state=upstream, on m4: the plan names which upstream it is; an older machine's row stays. */
+const UPSTREAM_PLAN = {
+  "apps/web": "Follows second/feature/menu, which is not a branch of origin. Not moved",
+  "apps/api": "origin/release is no longer on origin. Not moved",
+  docs: NO_UPSTREAM,
+  "apps/status": "Moves forward 2 commits",
+};
+const UPSTREAM_RESULT = {
+  "apps/web": UPSTREAM_PLAN["apps/web"],
+  "apps/api": UPSTREAM_PLAN["apps/api"],
+  "apps/status": "origin/main is no longer on origin. Not moved",
+  "apps/worker":
+    "Sync did not change it: origin could not be asked whether the branch is still there",
+};
 const PLAN = {
   // Level with its upstream, with uncommitted files and a thread at work: never bare.
   ".": [["Up to date"], ["Up to date", "2 uncommitted files", "In use by Docs lint"]],
@@ -191,7 +205,10 @@ try {
       const stash = page.locator('[data-sync-extra="stashes"]');
       assert.equal(await stash.count(), 1);
       assert.match(await stash.textContent(), /^1 stash in /);
-      assert.equal(await stash.locator('[data-slot="checkbox"], [role="checkbox"], label').count(), 0);
+      assert.equal(
+        await stash.locator('[data-slot="checkbox"], [role="checkbox"], label').count(),
+        0,
+      );
       assert.ok(
         (await page.locator('[data-sync-extra="uncommitted"] [data-slot="checkbox"]').count()) > 0,
       );
@@ -433,6 +450,35 @@ try {
       results.push({ theme, width, case: "result, refused", ...taken, whole: wholeRefused });
       await page.close();
 
+      // 11b. Upstreams Sync does not move to. The plan says which it is; the run finds a
+      // branch gone, an origin it could not ask, and a clone's leftover folder.
+      page = await at("case=dialog&state=upstream");
+      await waitStage(page, "plan");
+      for (const [repo, sentence] of Object.entries(UPSTREAM_PLAN))
+        assert.equal((await said(page, repo, "a")).sentence, sentence, `${repo} on m4`);
+      assert.equal(await cell(page, "apps/web", "a").locator("[data-sync-detail]").count(), 0);
+      assert.equal(await cell(page, "apps/api", "a").locator("[data-sync-detail]").count(), 0);
+      taken = await shot(page, `plan-upstream-${tag}`);
+      const wholeUpstream = await longShot(page, `plan-upstream-whole-${tag}`);
+      results.push({ theme, width, case: "plan, upstreams", ...taken, whole: wholeUpstream });
+      await page.locator("[data-sync-run]").click();
+      await waitStage(page, "result");
+      for (const [repo, sentence] of Object.entries(UPSTREAM_RESULT))
+        assert.equal((await said(page, repo, "a")).sentence, sentence, `${repo} on m4, result`);
+      assert.deepEqual(await texts(page, "[data-sync-leftover]"), [
+        "m4: A clone that was stopped left .apps-site.clone-7f3a behind, and it could not be removed",
+      ]);
+      taken = await shot(page, `result-upstream-${tag}`);
+      const wholeUpstreamResult = await longShot(page, `result-upstream-whole-${tag}`);
+      results.push({
+        theme,
+        width,
+        case: "result, upstreams",
+        ...taken,
+        whole: wholeUpstreamResult,
+      });
+      await page.close();
+
       // 12. The extras could not be sent: Git still moved, and the extras say why.
       page = await at("case=dialog&state=extras-failed");
       await waitStage(page, "plan");
@@ -537,6 +583,21 @@ try {
       if (lang !== "en") {
         const taken = await longShot(page, `plan-${lang}-${width}`);
         results.push({ lang, width, case: `plan in ${lang}`, ...taken });
+      }
+      await page.close();
+    }
+    // The upstream rows and results: every sentence of theirs is translated too.
+    {
+      const page = await open(`theme=light&case=dialog&state=upstream&lang=${lang}`, 1280);
+      await waitStage(page, "plan");
+      read.upstreamPlan = await texts(page, '[data-sync-cell="a"] [data-sync-sentence]');
+      await page.locator("[data-sync-run]").click();
+      await waitStage(page, "result");
+      read.upstreamResult = await texts(page, '[data-sync-cell="a"] [data-sync-sentence]');
+      read.leftovers = await texts(page, "[data-sync-leftover]");
+      if (lang !== "en") {
+        const taken = await longShot(page, `result-upstream-${lang}-1280`);
+        results.push({ lang, width: 1280, case: `result, upstreams in ${lang}`, ...taken });
       }
       await page.close();
     }

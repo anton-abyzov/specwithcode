@@ -34,6 +34,7 @@ import type {
   ProjectSyncRepositoryFacts,
   ProjectSyncStepResult,
 } from "@specweave-studio/contracts";
+import { projectSyncUpstreamGoneDetail } from "@specweave-studio/contracts";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import {
   OrchestratorSwitcher,
@@ -159,6 +160,42 @@ const FETCHED: Record<string, Record<string, ProjectSyncFetchResult>> = {
     m5: { scanLimited: false, repositories: [facts("."), facts("apps/web", { behind: 12 })] },
   },
   idle: { m4: LEVEL, m5: LEVEL },
+  // Upstreams Sync does not move to: one that is no branch of origin, one gone from origin,
+  // and a machine on an older version that names neither.
+  upstream: {
+    m4: {
+      scanLimited: false,
+      repositories: [
+        facts("."),
+        facts("apps/web", {
+          branch: "feature/menu",
+          upstream: null,
+          otherUpstream: "second/feature/menu",
+        }),
+        facts("apps/api", {
+          branch: "release",
+          upstream: "origin/release",
+          behind: 3,
+          upstreamGone: true,
+        }),
+        facts("docs", { branch: "drafts", upstream: null }),
+        facts("apps/status", { behind: 2 }),
+        facts("apps/worker", { behind: 4 }),
+      ],
+    },
+    m5: {
+      scanLimited: false,
+      repositories: [
+        facts("."),
+        facts("apps/web", { branch: "feature/menu", upstream: "origin/feature/menu" }),
+        facts("apps/api", { branch: "release", upstream: "origin/release" }),
+        facts("docs", { branch: "drafts", upstream: "origin/drafts" }),
+        facts("apps/status"),
+        facts("apps/worker"),
+        facts("apps/site"),
+      ],
+    },
+  },
   "scan-limited": {
     m4: LEVEL,
     m5: { scanLimited: true, repositories: [facts(".", { behind: 2 })] },
@@ -287,6 +324,41 @@ const api: ProjectSyncApi = {
     record(`run:${on.label}:${JSON.stringify(plan)}`);
     if (hold === "run") return never();
     if (state === "run-refused" && on.label === "m4") return { ok: false, cause: CAUSES.offline };
+    // The branch went from origin after the fetch, origin could not be asked, and a clone
+    // that was stopped left a folder Sync could not remove.
+    if (state === "upstream")
+      return answer({
+        repositories: [
+          ...plan.fastForward.map((item) =>
+            item.path === "apps/status"
+              ? stepResult(item.path, {
+                  action: "none",
+                  reason: "no-upstream",
+                  behind: 2,
+                  detail: projectSyncUpstreamGoneDetail("origin/main"),
+                  downgraded: true,
+                })
+              : stepResult(item.path, {
+                  action: "none",
+                  reason: "refused",
+                  behind: 4,
+                  detail: "origin could not be asked whether the branch is still there.",
+                  downgraded: true,
+                }),
+          ),
+          ...plan.clone.flatMap((item) => [
+            stepResult(".apps-site.clone-7f3a", {
+              action: "none",
+              reason: "refused",
+              branch: null,
+              otherBranch: null,
+              detail:
+                "A clone that was stopped left this folder behind, and it could not be removed.",
+            }),
+            stepResult(item.path, { action: "clone", reason: "missing", remote: item.remote }),
+          ]),
+        ],
+      });
     return answer({
       repositories: [
         ...plan.fastForward.map((item) =>

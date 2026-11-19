@@ -50,6 +50,16 @@ export const syncDe: PhraseCatalog = {
     "Kein Fetch: Dieses Repository spiegelt seinen Remote, und ein Fetch würde seine Branches verschieben",
   "Sync did not change it: {reason}": "Von der Synchronisierung nicht geändert: {reason}",
   "Sync did not change it": "Von der Synchronisierung nicht geändert",
+  "Follows {name}, which is not a branch of origin. Not moved":
+    "Folgt {name}, das kein Branch von origin ist. Nicht vorgerückt",
+  "{upstream} is no longer on origin. Not moved":
+    "{upstream} gibt es auf origin nicht mehr. Nicht vorgerückt",
+  "Sync did not change it: origin could not be asked whether the branch is still there":
+    "Von der Synchronisierung nicht geändert: origin konnte nicht gefragt werden, ob es den Branch noch gibt",
+  "A clone that was stopped left {path} behind, and it could not be removed":
+    "Ein abgebrochener Klon hat {path} zurückgelassen, und der Ordner ließ sich nicht entfernen",
+  "{path}: {reason}": "{path}: {reason}",
+  "{path}: Sync did not change it": "{path}: von der Synchronisierung nicht geändert",
   "Not moved": "Nicht vorgerückt",
   "1 commit on {branch} that was never pushed": "1 Commit auf {branch}, der nie gepusht wurde",
   "{n} commits on {branch} that were never pushed":

@@ -31,6 +31,7 @@ import {
   syncExtras,
   syncFailure,
   syncPlan,
+  syncLeftovers,
   syncResultRows,
   syncRunInput,
   type ExtraResultLine,
@@ -38,6 +39,7 @@ import {
   type SyncExtras,
   type SyncFailure,
   type SyncPlan,
+  type SyncLeftover,
   type SyncResultRow,
   type SyncSide,
   type SyncText,
@@ -85,6 +87,7 @@ type Stage =
       readonly kind: "result";
       readonly checked: Checked;
       readonly rows: readonly SyncResultRow[];
+      readonly leftovers: readonly SyncLeftover[];
       readonly sides: Readonly<Record<SyncSide, SideResult>>;
     };
 
@@ -639,6 +642,7 @@ export function ProjectSyncDialog({
       kind: "result",
       checked,
       rows: syncResultRows(checked.plan, { a: a ?? null, b: b ?? null }),
+      leftovers: syncLeftovers(checked.plan, { a: a ?? null, b: b ?? null }),
       sides: {
         a: { failure: a?.failure ?? null, extras: sent.a.extras, extrasFailure: sent.a.failure },
         b: { failure: b?.failure ?? null, extras: sent.b.extras, extrasFailure: sent.b.failure },
@@ -791,6 +795,15 @@ export function ProjectSyncDialog({
                 rows={stage.kind === "result" ? stage.rows : checked.plan.rows}
                 result={stage.kind === "result"}
               />
+              {stage.kind === "result"
+                ? stage.leftovers.map((item) => (
+                    <Notice key={`${item.side}:${item.path}`}>
+                      <span data-sync-leftover={item.side}>
+                        {names[item.side]}: <Words text={item.sentence} />
+                      </span>
+                    </Notice>
+                  ))
+                : null}
               {checked.plan.scanLimited.map((side) => (
                 <Notice key={side} tone="plain">
                   {tx(
