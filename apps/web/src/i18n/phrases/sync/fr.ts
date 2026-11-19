@@ -49,6 +49,15 @@ export const syncFr: PhraseCatalog = {
     "Pas de fetch : ce dépôt est un miroir de son dépôt distant, et un fetch déplacerait ses branches",
   "Sync did not change it: {reason}": "La synchronisation ne l’a pas modifié : {reason}",
   "Sync did not change it": "La synchronisation ne l’a pas modifié",
+  "Follows {name}, which is not a branch of origin. Not moved":
+    "Suit {name}, qui n’est pas une branche d’origin. Non avancé",
+  "{upstream} is no longer on origin. Not moved": "{upstream} n’est plus sur origin. Non avancé",
+  "Sync did not change it: origin could not be asked whether the branch is still there":
+    "La synchronisation ne l’a pas modifié : impossible de demander à origin si la branche existe encore",
+  "A clone that was stopped left {path} behind, and it could not be removed":
+    "Un clonage interrompu a laissé {path}, et le dossier n’a pas pu être supprimé",
+  "{path}: {reason}": "{path} : {reason}",
+  "{path}: Sync did not change it": "{path} : la synchronisation ne l’a pas modifié",
   "Not moved": "Non avancé",
   "1 commit on {branch} that was never pushed": "1 commit sur {branch} jamais poussé",
   "{n} commits on {branch} that were never pushed": "{n} commits sur {branch} jamais poussés",

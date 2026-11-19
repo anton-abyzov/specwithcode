@@ -44,6 +44,15 @@ export const syncZh: PhraseCatalog = {
     "未 fetch：此仓库是其远程的镜像，fetch 会移动它的分支",
   "Sync did not change it: {reason}": "同步未更改它：{reason}",
   "Sync did not change it": "同步未更改它",
+  "Follows {name}, which is not a branch of origin. Not moved":
+    "跟踪 {name}，它不是 origin 的分支。未移动",
+  "{upstream} is no longer on origin. Not moved": "{upstream} 已不在 origin 上。未移动",
+  "Sync did not change it: origin could not be asked whether the branch is still there":
+    "同步未更改它：无法向 origin 确认该分支是否还在",
+  "A clone that was stopped left {path} behind, and it could not be removed":
+    "中断的克隆留下了 {path}，且无法删除",
+  "{path}: {reason}": "{path}：{reason}",
+  "{path}: Sync did not change it": "{path}：同步未更改它",
   "Not moved": "未移动",
   "1 commit on {branch} that was never pushed": "{branch} 上有 1 个从未推送的提交",
   "{n} commits on {branch} that were never pushed": "{branch} 上有 {n} 个从未推送的提交",

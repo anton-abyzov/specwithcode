@@ -49,6 +49,16 @@ export const syncJa: PhraseCatalog = {
     "fetch していません: このリポジトリはリモートのミラーで、fetch するとブランチが動いてしまいます",
   "Sync did not change it: {reason}": "同期による変更はありません: {reason}",
   "Sync did not change it": "同期による変更はありません",
+  "Follows {name}, which is not a branch of origin. Not moved":
+    "{name} を追跡していますが、origin のブランチではありません。移動しません",
+  "{upstream} is no longer on origin. Not moved":
+    "{upstream} は origin にもうありません。移動しません",
+  "Sync did not change it: origin could not be asked whether the branch is still there":
+    "同期による変更はありません: ブランチがまだあるか origin に確認できませんでした",
+  "A clone that was stopped left {path} behind, and it could not be removed":
+    "中断されたクローンが {path} を残し、削除できませんでした",
+  "{path}: {reason}": "{path}: {reason}",
+  "{path}: Sync did not change it": "{path}: 同期による変更はありません",
   "Not moved": "移動しません",
   "1 commit on {branch} that was never pushed":
     "{branch} の一度もプッシュされていないコミット 1 件",

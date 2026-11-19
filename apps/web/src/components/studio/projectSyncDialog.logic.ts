@@ -12,11 +12,13 @@
 import {
   planProjectSync,
   PROJECT_SYNC_MAX_LISTED,
+  projectSyncUpstreamGoneDetail,
   type ProjectSyncExtraItem,
   type ProjectSyncExtraResult,
   type ProjectSyncFetchResult,
   type ProjectSyncInventoryResult,
   type ProjectSyncLeftOutFile,
+  type ProjectSyncRepositoryFacts,
   type ProjectSyncRepositoryExtras,
   type ProjectSyncRunInput,
   type ProjectSyncStep,
@@ -155,6 +157,22 @@ export interface StepLine {
   readonly detail: string | null;
 }
 
+/** What a machine said of a checkout's upstream; an older machine sends only `upstream`. */
+export type UpstreamFacts = Pick<
+  ProjectSyncRepositoryFacts,
+  "upstream" | "otherUpstream" | "upstreamGone"
+>;
+
+/**
+ * Sentences a machine sends as a refusal's `detail` with no reason of their own. One that
+ * is known is shown translated; any other is shown as it came.
+ */
+const ORIGIN_NOT_ASKED = "origin could not be asked whether the branch is still there.";
+const CLONE_LEFTOVER =
+  "A clone that was stopped left this folder behind, and it could not be removed.";
+/** The machine's own English, matched and never shown translated as it is. */
+export const KNOWN_REFUSAL_DETAILS: readonly string[] = [ORIGIN_NOT_ASKED, CLONE_LEFTOVER];
+
 const uncommittedFact = (n: number) => count(n, "1 uncommitted file", "{n} uncommitted files");
 
 /**
@@ -167,6 +185,7 @@ export function stepLine(
   step: ProjectSyncStep,
   phase: "plan" | "result",
   ran: { readonly moved: number; readonly downgraded: boolean } | null = null,
+  upstream: UpstreamFacts | null = null,
 ): StepLine {
   const facts: SyncText[] = [];
   if (ran?.downgraded) facts.push({ text: "Changed since the plan" });
@@ -231,9 +250,29 @@ export function stepLine(
       });
     case "detached":
       return line("held", { text: "Not on a branch. Not moved" });
-    case "no-upstream":
-      // A later server may say why it counts an upstream as none: its words go below.
+    case "no-upstream": {
+      // Which of the two it is comes from the machine's facts, never from its English.
+      const other = upstream?.otherUpstream ?? null;
+      if (other !== null)
+        return line("held", {
+          text: "Follows {name}, which is not a branch of origin. Not moved",
+          values: { name: other },
+          code: ["name"],
+        });
+      const tracked = upstream?.upstream ?? null;
+      // Found gone by the fetch, or by the question Sync asks right before it moves.
+      if (
+        tracked !== null &&
+        (upstream?.upstreamGone === true || step.detail === projectSyncUpstreamGoneDetail(tracked))
+      )
+        return line("held", {
+          text: "{upstream} is no longer on origin. Not moved",
+          values: { upstream: tracked },
+          code: ["upstream"],
+        });
+      // Any other reason a machine gives for counting an upstream as none goes below as sent.
       return line("held", { text: "No upstream. Its commits are listed as an extra" }, step.detail);
+    }
     case "fetch-failed":
       return line(
         "failed",
@@ -256,6 +295,10 @@ export function stepLine(
         step.detail,
       );
     case "refused":
+      if (step.detail === ORIGIN_NOT_ASKED)
+        return line("failed", {
+          text: "Sync did not change it: origin could not be asked whether the branch is still there",
+        });
       return line(
         "failed",
         reasonSlot(step.detail)
@@ -292,6 +335,8 @@ export interface SyncCell {
   readonly present: boolean;
   readonly branch: string | null;
   readonly step: ProjectSyncStep;
+  /** What the machine said of the upstream; null where the repository is missing. */
+  readonly upstream: UpstreamFacts | null;
   readonly line: StepLine;
 }
 
@@ -339,11 +384,13 @@ export function syncPlan(
   const cell = (side: SyncSide, path: string): SyncCell | null => {
     const step = byPath[side].get(path);
     if (!step) return null;
+    const upstream = fetched[side].repositories.find((item) => item.path === path) ?? null;
     return {
       present: held[side].has(path),
       branch: step.branch,
       step,
-      line: stepLine(step, "plan"),
+      upstream,
+      line: stepLine(step, "plan", null, upstream),
     };
   };
   const rows: SyncRow[] = [];
@@ -360,6 +407,46 @@ export function syncPlan(
       (step) => step.action === "fast-forward" || step.action === "clone",
     ),
   };
+}
+
+/** A folder a machine reports that is no repository of the plan, such as a stopped clone's. */
+export interface SyncLeftover {
+  readonly side: SyncSide;
+  readonly path: string;
+  readonly sentence: SyncText;
+}
+
+/** Answers for folders outside the plan: a result is never dropped for having no row. */
+export function syncLeftovers(
+  plan: SyncPlan,
+  ran: Readonly<
+    Record<SyncSide, { readonly results: readonly ProjectSyncStepResult[] | null } | null>
+  >,
+): SyncLeftover[] {
+  const out: SyncLeftover[] = [];
+  for (const side of ["a", "b"] as const) {
+    const planned = new Set(plan.steps[side].map((step) => step.path));
+    for (const answer of ran[side]?.results ?? []) {
+      if (planned.has(answer.path)) continue;
+      const values = { path: answer.path };
+      const reason = reasonSlot(answer.detail);
+      out.push({
+        side,
+        path: answer.path,
+        sentence:
+          answer.detail === CLONE_LEFTOVER
+            ? {
+                text: "A clone that was stopped left {path} behind, and it could not be removed",
+                values,
+                code: ["path"],
+              }
+            : reason
+              ? { text: "{path}: {reason}", values: { ...values, reason }, code: ["path"] }
+              : { text: "{path}: Sync did not change it", values, code: ["path"] },
+      });
+    }
+  }
+  return out;
 }
 
 /** What one machine is asked to do. It is a proposal: the server reads each repository again. */
@@ -645,10 +732,13 @@ export function syncResultRows(
     const asked = planned.step.action === "fast-forward" || planned.step.action === "clone";
     const answer = ran[side]?.results?.find((item) => item.path === planned.step.path);
     if (answer) {
-      const line = stepLine(answer, "result", {
-        moved: answer.moved,
-        downgraded: answer.downgraded,
-      });
+      const line = stepLine(
+        answer,
+        "result",
+        { moved: answer.moved, downgraded: answer.downgraded },
+        // The branch can go from origin after the fetch: the answer says so, the facts name it.
+        planned.upstream,
+      );
       return {
         // A clone leaves the repository there, on the branch it checked out.
         present: planned.present || answer.reason === "missing",

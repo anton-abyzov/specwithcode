@@ -48,6 +48,15 @@ export const syncPt: PhraseCatalog = {
     "Sem fetch: este repositório espelha o remoto, e um fetch moveria as branches dele",
   "Sync did not change it: {reason}": "A sincronização não o alterou: {reason}",
   "Sync did not change it": "A sincronização não o alterou",
+  "Follows {name}, which is not a branch of origin. Not moved":
+    "Segue {name}, que não é um branch de origin. Não avançou",
+  "{upstream} is no longer on origin. Not moved": "{upstream} não está mais em origin. Não avançou",
+  "Sync did not change it: origin could not be asked whether the branch is still there":
+    "A sincronização não o alterou: não foi possível perguntar a origin se o branch ainda existe",
+  "A clone that was stopped left {path} behind, and it could not be removed":
+    "Um clone interrompido deixou {path}, e não foi possível removê-lo",
+  "{path}: {reason}": "{path}: {reason}",
+  "{path}: Sync did not change it": "{path}: a sincronização não o alterou",
   "Not moved": "Não avançou",
   "1 commit on {branch} that was never pushed": "1 commit em {branch} que nunca foi enviado",
   "{n} commits on {branch} that were never pushed":

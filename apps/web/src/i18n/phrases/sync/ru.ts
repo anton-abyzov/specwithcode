@@ -50,6 +50,15 @@ export const syncRu: PhraseCatalog = {
     "Fetch не выполнен: этот репозиторий зеркалирует удалённый, и fetch сдвинул бы его ветки",
   "Sync did not change it: {reason}": "Синхронизация его не изменила: {reason}",
   "Sync did not change it": "Синхронизация его не изменила",
+  "Follows {name}, which is not a branch of origin. Not moved":
+    "Следует за {name}, а это не ветка origin. Не продвинуто",
+  "{upstream} is no longer on origin. Not moved": "{upstream} больше нет в origin. Не продвинуто",
+  "Sync did not change it: origin could not be asked whether the branch is still there":
+    "Синхронизация его не изменила: не удалось спросить origin, есть ли ещё эта ветка",
+  "A clone that was stopped left {path} behind, and it could not be removed":
+    "Остановленное клонирование оставило {path}, и удалить папку не удалось",
+  "{path}: {reason}": "{path}: {reason}",
+  "{path}: Sync did not change it": "{path}: синхронизация его не изменила",
   "Not moved": "Не продвинуто",
   "1 commit on {branch} that was never pushed": "1 коммит в {branch}, который не был отправлен",
   "{n} commits on {branch} that were never pushed": "Неотправленных коммитов в {branch}: {n}",

@@ -26,12 +26,14 @@ import {
   extraItems,
   extraResultLine,
   isUnknownSyncCall,
+  KNOWN_REFUSAL_DETAILS,
   readStepLine,
   readSyncText,
   runHasWork,
   stepLine,
   syncExtras,
   syncFailure,
+  syncLeftovers,
   syncPlan,
   syncResultRows,
   syncRunInput,
@@ -287,6 +289,117 @@ describe("syncPlan", () => {
     );
     // Level with its upstream and with uncommitted files: the facts stay beside it.
     expect(readStepLine(rows[0]!.b.line)).toBe("Up to date · 2 uncommitted files");
+  });
+
+  it("says which upstream it is when the branch follows no branch of origin or its branch is gone", () => {
+    const row = (mine: Partial<ProjectSyncRepositoryFacts>) =>
+      syncPlan(
+        { a: fetched(facts(".", mine)), b: fetched(facts(".")) },
+        { project: "Atlas", a: "m4", b: "m5" },
+      ).rows[0]!.a;
+    const other = row({ upstream: null, otherUpstream: "second/main" });
+    expect(other.step).toMatchObject({ action: "none", reason: "no-upstream" });
+    expect(readStepLine(other.line)).toBe(
+      "Follows second/main, which is not a branch of origin. Not moved",
+    );
+    // The name is a value of the sentence, so the server's English is not shown beside it.
+    expect(other.line.sentence.values).toEqual({ name: "second/main" });
+    expect(other.line.detail).toBeNull();
+    const gone = row({ behind: 3, upstreamGone: true });
+    expect(gone.step).toMatchObject({ action: "none", reason: "no-upstream" });
+    expect(readStepLine(gone.line)).toBe("origin/main is no longer on origin. Not moved");
+    expect(gone.line.detail).toBeNull();
+    // Facts stay beside either sentence.
+    expect(readStepLine(row({ upstream: null, otherUpstream: "base", uncommitted: 2 }).line)).toBe(
+      "Follows base, which is not a branch of origin. Not moved · 2 uncommitted files",
+    );
+    // An older machine sends neither field: today's row.
+    const older = row({ upstream: null });
+    expect(readStepLine(older.line)).toBe("No upstream. Its commits are listed as an extra");
+    expect(readStepLine(row({ upstream: null, otherUpstream: null }).line)).toBe(
+      "No upstream. Its commits are listed as an extra",
+    );
+    // A reason this version does not know is shown as the machine sent it.
+    expect(
+      stepLine(step("no-upstream", { detail: "Its upstream is a tag." }), "plan", null, {
+        upstream: null,
+      }),
+    ).toMatchObject({
+      sentence: { text: "No upstream. Its commits are listed as an extra" },
+      detail: "Its upstream is a tag.",
+    });
+  });
+
+  it("reads a branch found gone, and an origin that could not be asked, from the run's answer", () => {
+    const behind = syncPlan(
+      { a: fetched(facts(".", { behind: 2 })), b: fetched(facts(".")) },
+      { project: "Atlas", a: "m4", b: "m5" },
+    );
+    expect(behind.rows[0]!.a.step.action).toBe("fast-forward");
+    const answer = (reason: ProjectSyncReason, detail: string) => ({
+      a: {
+        results: [
+          { ...step(reason, { path: ".", behind: 2, detail }), moved: 0, downgraded: true },
+        ],
+      },
+      b: null,
+    });
+    const gone = syncResultRows(
+      behind,
+      answer("no-upstream", "The branch origin/main is no longer on origin."),
+    )[0]!.a;
+    expect(readStepLine(gone.line)).toBe(
+      "origin/main is no longer on origin. Not moved · Changed since the plan",
+    );
+    expect(gone.line.detail).toBeNull();
+    expect(gone.done).toBe(false);
+    const unasked = syncResultRows(
+      behind,
+      answer("refused", "origin could not be asked whether the branch is still there."),
+    )[0]!.a;
+    expect(unasked.line.sentence).toEqual({
+      text: "Sync did not change it: origin could not be asked whether the branch is still there",
+    });
+    expect(unasked.line.tone).toBe("failed");
+    // A sentence this version does not know keeps the machine's words.
+    const unknown = syncResultRows(behind, answer("no-upstream", "The branch moved to a tag."))[0]!
+      .a;
+    expect(unknown.line.detail).toBe("The branch moved to a tag.");
+    expect(
+      readStepLine(syncResultRows(behind, answer("refused", "Something new."))[0]!.a.line),
+    ).toBe("Sync did not change it: Something new · Changed since the plan");
+  });
+
+  it("keeps an answer for a folder outside the plan, such as a stopped clone's leftover", () => {
+    const leftover = (detail: string | null) =>
+      syncLeftovers(plan, {
+        a: null,
+        b: {
+          results: [
+            {
+              ...step("refused", { path: ".apps-site.swc-clone-1", branch: null, detail }),
+              moved: 0,
+              downgraded: false,
+            },
+            { ...step("up-to-date", { path: "." }), moved: 0, downgraded: false },
+          ],
+        },
+      });
+    const known = leftover(
+      "A clone that was stopped left this folder behind, and it could not be removed.",
+    );
+    expect(known).toHaveLength(1);
+    expect(known[0]).toMatchObject({ side: "b", path: ".apps-site.swc-clone-1" });
+    expect(readSyncText(known[0]!.sentence)).toBe(
+      "A clone that was stopped left .apps-site.swc-clone-1 behind, and it could not be removed",
+    );
+    expect(readSyncText(leftover("Something new.")[0]!.sentence)).toBe(
+      ".apps-site.swc-clone-1: Something new",
+    );
+    expect(readSyncText(leftover(null)[0]!.sentence)).toBe(
+      ".apps-site.swc-clone-1: Sync did not change it",
+    );
+    expect(syncLeftovers(plan, { a: null, b: null })).toEqual([]);
   });
 
   it("shows a cloned repository as there, on the branch the clone checked out", () => {
@@ -546,7 +659,10 @@ describe("the Sync and Add words are in every language", () => {
       (match) => (match[1] ?? match[2] ?? "").replace(/\\(["'])/gu, "$1"),
     );
   const phrases = [
-    ...sentences("projectSyncDialog.logic.ts"),
+    // A machine's refusal sentences are matched, and shown through sentences of their own.
+    ...sentences("projectSyncDialog.logic.ts").filter(
+      (text) => !KNOWN_REFUSAL_DETAILS.includes(text),
+    ),
     ...sentences("useProjectSyncMenu.ts").filter((text) => !text.startsWith("../")),
     ...translated("ProjectSyncDialog.tsx"),
     "Same as {shown}",

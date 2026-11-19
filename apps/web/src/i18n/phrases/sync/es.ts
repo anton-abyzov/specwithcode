@@ -49,6 +49,15 @@ export const syncEs: PhraseCatalog = {
     "Sin fetch: este repositorio es un espejo de su remoto, y un fetch movería sus ramas",
   "Sync did not change it: {reason}": "La sincronización no lo cambió: {reason}",
   "Sync did not change it": "La sincronización no lo cambió",
+  "Follows {name}, which is not a branch of origin. Not moved":
+    "Sigue a {name}, que no es una rama de origin. No se movió",
+  "{upstream} is no longer on origin. Not moved": "{upstream} ya no está en origin. No se movió",
+  "Sync did not change it: origin could not be asked whether the branch is still there":
+    "La sincronización no lo cambió: no se pudo preguntar a origin si la rama sigue ahí",
+  "A clone that was stopped left {path} behind, and it could not be removed":
+    "Una clonación interrumpida dejó {path}, y no se pudo eliminar",
+  "{path}: {reason}": "{path}: {reason}",
+  "{path}: Sync did not change it": "{path}: la sincronización no lo cambió",
   "Not moved": "No se movió",
   "1 commit on {branch} that was never pushed": "1 commit en {branch} que nunca se envió",
   "{n} commits on {branch} that were never pushed": "{n} commits en {branch} que nunca se enviaron",

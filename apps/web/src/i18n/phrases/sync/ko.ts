@@ -49,6 +49,16 @@ export const syncKo: PhraseCatalog = {
     "fetch하지 않음: 이 저장소는 원격을 미러링하므로 fetch하면 브랜치가 이동합니다",
   "Sync did not change it: {reason}": "동기화로 변경되지 않음: {reason}",
   "Sync did not change it": "동기화로 변경되지 않음",
+  "Follows {name}, which is not a branch of origin. Not moved":
+    "{name}을(를) 추적하지만 origin의 브랜치가 아닙니다. 이동 안 함",
+  "{upstream} is no longer on origin. Not moved":
+    "{upstream}이(가) origin에 더 이상 없습니다. 이동 안 함",
+  "Sync did not change it: origin could not be asked whether the branch is still there":
+    "동기화로 변경되지 않음: 브랜치가 아직 있는지 origin에 확인하지 못했습니다",
+  "A clone that was stopped left {path} behind, and it could not be removed":
+    "중단된 클론이 {path}을(를) 남겼고 삭제하지 못했습니다",
+  "{path}: {reason}": "{path}: {reason}",
+  "{path}: Sync did not change it": "{path}: 동기화로 변경되지 않음",
   "Not moved": "이동 안 함",
   "1 commit on {branch} that was never pushed": "{branch}에서 한 번도 푸시하지 않은 커밋 1개",
   "{n} commits on {branch} that were never pushed": "{branch}에서 한 번도 푸시하지 않은 커밋 {n}개",
