@@ -957,12 +957,24 @@ async function ledgerBytes(copies: BoardCopies, id: string, copy: IncrementCopy)
   return stat?.isFile() === true ? stat.size : 0;
 }
 
+/** Whether a folder copy has its `spec.md`, by path; trusted for SPEC_SEEN_MS. */
+const specSeen = new Map<string, { readonly at: number; readonly has: boolean }>();
+/**
+ * How long a spec check holds. A spec only decides which closed copy is
+ * shown, and the card reads the spec itself, so a short delay is harmless
+ * and keeps a warm board from one stat per closed increment.
+ */
+const SPEC_SEEN_MS = 30_000;
+
 async function hasSpec(copies: BoardCopies, id: string, copy: IncrementCopy): Promise<boolean> {
   if (copy.root === null) return copies.remote?.increments.get(id)?.files.has("spec.md") ?? false;
-  const stat = await NodeFSP.stat(NodePath.join(folderOf(copy.root, id), "spec.md")).catch(
-    () => null,
-  );
-  return stat?.isFile() === true;
+  const path = NodePath.join(folderOf(copy.root, id), "spec.md");
+  const seen = specSeen.get(path);
+  if (seen !== undefined && Date.now() - seen.at < SPEC_SEEN_MS) return seen.has;
+  const stat = await NodeFSP.stat(path).catch(() => null);
+  const has = stat?.isFile() === true;
+  remember(specSeen, path, { at: Date.now(), has }, 16_384);
+  return has;
 }
 
 /** What the rule compares; the array order of the copies is its last step. */
