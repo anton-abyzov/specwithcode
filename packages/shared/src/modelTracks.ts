@@ -252,15 +252,16 @@ export function followsBuiltInFamily(track: ModelTrack, model: string): boolean 
 /**
  * A saved entry as it runs here: an entry that follows its built-in family
  * (`followsBuiltInFamily`) on the release its own source lists, else on the
- * best other source that lists one, its effort matched there; null when no
- * source here lists the family. Any other entry is returned as it is.
+ * best other source that lists one, its effort matched there. An entry no
+ * source here lists stays as saved, like any saved entry, so the Models page
+ * and the runtime read the same list. Any other entry is returned as it is.
  */
 export function fitSavedTrackEntry(
   track: ModelTrack,
   entry: ModelSelection,
   providers: ReadonlyArray<TrackProvider>,
   order?: ReadonlyArray<ProviderInstanceId> | null,
-): ModelSelection | null {
+): ModelSelection {
   if (!followsBuiltInFamily(track, entry.model)) return entry;
   const own = providers.find((provider) => provider.instanceId === entry.instanceId);
   const served =
@@ -279,7 +280,7 @@ export function fitSavedTrackEntry(
       !isHeldSource(provider as Partial<ServerProvider> as ServerProvider, slug),
   );
   return best === undefined
-    ? null
+    ? entry
     : trackAlternate(entry, { instanceId: best.provider.instanceId, model: best.slug }, providers);
 }
 
@@ -388,21 +389,14 @@ export function effectiveModelLanes(
   // A saved entry without an effort runs at its start level, as the Models page shows it;
   // one saved from a built-in row runs on the release of its family a source lists.
   const saved = (lane: ModelLane) =>
-    (lanes?.[lane] ?? []).flatMap((entry) => {
-      const fitted = fitSavedTrackEntry(TRACK_OF_LANE[lane], entry, providers, order);
-      return fitted === null
-        ? []
-        : [
-            {
-              entry: withTrackEffort(
-                fitted,
-                providers,
-                trackStartEffort(TRACK_OF_LANE[lane], entry.model),
-              ),
-              family: followsBuiltInFamily(TRACK_OF_LANE[lane], entry.model),
-            },
-          ];
-    });
+    (lanes?.[lane] ?? []).map((entry) => ({
+      entry: withTrackEffort(
+        fitSavedTrackEntry(TRACK_OF_LANE[lane], entry, providers, order),
+        providers,
+        trackStartEffort(TRACK_OF_LANE[lane], entry.model),
+      ),
+      family: followsBuiltInFamily(TRACK_OF_LANE[lane], entry.model),
+    }));
   const builtIn = {
     routine: (lanes?.routine ?? []).length === 0,
     complex: (lanes?.complex ?? []).length === 0,

@@ -25,6 +25,7 @@ vi.mock("./SettingsScopeContext", () => ({
   useSettingsScope: () => ({ target: { environmentId: "mac" } }),
 }));
 vi.mock("./settingsLayout", () => ({
+  PolicyTooltip: ({ children }: { children: ReactNode }) => <span>{children}</span>,
   SETTINGS_PICKER_TRIGGER_CLASSNAME: "",
   useRelativeTimeTick: () => Date.parse("2026-11-18T12:00:00.000Z"),
 }));

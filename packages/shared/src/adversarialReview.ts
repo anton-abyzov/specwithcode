@@ -134,21 +134,14 @@ export function reviewerOrderGroups(input: {
   // One saved from a built-in row runs on the release of its family a source lists.
   const base: ReadonlyArray<{ readonly entry: ModelSelection; readonly family: boolean }> =
     input.reviewers.length > 0
-      ? input.reviewers.flatMap((saved) => {
-          const fitted = fitSavedTrackEntry("review", saved, input.providers, input.sourceOrder);
-          return fitted === null
-            ? []
-            : [
-                {
-                  entry: withTrackEffort(
-                    fitted,
-                    input.providers,
-                    trackStartEffort("review", saved.model),
-                  ),
-                  family: followsBuiltInFamily("review", saved.model),
-                },
-              ];
-        })
+      ? input.reviewers.map((saved) => ({
+          entry: withTrackEffort(
+            fitSavedTrackEntry("review", saved, input.providers, input.sourceOrder),
+            input.providers,
+            trackStartEffort("review", saved.model),
+          ),
+          family: followsBuiltInFamily("review", saved.model),
+        }))
       : defaultReviewerChain(input).map((entry) => ({ entry, family: true }));
   // Only a person's own list pins places; the default order groups freely.
   const listed = new Set(

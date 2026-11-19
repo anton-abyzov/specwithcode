@@ -142,7 +142,18 @@ describe("a built-in track saved by an effort change", () => {
     const providers = [claude, codex];
     const { saved } = saveEffort("daily", providers, "GPT-6.1-Sol", "high");
     const routine = launchTrackLanes({ routine: [...saved], complex: [] }, providers).routine;
-    expect(slugs(routine)).toEqual(slugs(launchTrackLanes(null, providers).routine));
+    // The listed rows run where the built-in ones do; Sonnet and Luna, which
+    // nothing here lists, stay in their places as saved.
+    expect(slugs(launchTrackLanes(null, providers).routine)).toEqual([
+      "claudeAgent/claude-opus-5-5",
+      "codex/gpt-6.1-sol",
+    ]);
+    expect(slugs(routine)).toEqual([
+      "claudeAgent/claude-opus-5-5",
+      "claudeAgent/claude-sonnet-5-5",
+      "codex/gpt-6.1-sol",
+      "codex/gpt-6-luna",
+    ]);
     expect(routine.find((entry) => entry.model === "gpt-6.1-sol")?.options).toEqual([
       { id: "reasoningEffort", value: "high" },
     ]);
