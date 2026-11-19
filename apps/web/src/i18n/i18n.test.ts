@@ -29,6 +29,7 @@ import { pt } from "./messages/pt";
 import { ru } from "./messages/ru";
 import { zh } from "./messages/zh";
 import { translatePhrase } from "./phrases";
+import { ACTION_MACHINE_PHRASES } from "../studio/actionMachine";
 import { de as dePhrases } from "./phrases/de";
 import { es as esPhrases } from "./phrases/es";
 import { fr as frPhrases } from "./phrases/fr";
@@ -396,5 +397,15 @@ describe.each(Object.entries(PHRASE_CATALOGS))("%s machine label phrases", (_loc
     const phrases = Object.values(MACHINE_LABEL_PHRASES);
     expect(phrases.length).toBeGreaterThan(10);
     expect(phrases.filter((english) => !Object.hasOwn(catalog, english))).toEqual([]);
+  });
+});
+
+// Cards, buttons and alerts that name the machine they act on (1427 AC-07).
+describe.each(Object.entries(PHRASE_CATALOGS))("%s action machine phrases", (_locale, catalog) => {
+  it("translates every one, keeping {machine}", () => {
+    for (const english of ACTION_MACHINE_PHRASES) {
+      expect(Object.hasOwn(catalog, english), english).toBe(true);
+      expect(catalog[english], english).toContain("{machine}");
+    }
   });
 });

@@ -133,7 +133,7 @@ describe("getProviderStatusMessage", () => {
         auth: { status: "unauthenticated" },
         message: "",
       }),
-    ).toBe("Open provider setup to install Antigravity on this environment.");
+    ).toBe("Open provider setup to install Antigravity on this machine.");
   });
 
   it("keeps CLI sign-in advice for a provider without integrated setup", () => {
@@ -145,5 +145,44 @@ describe("getProviderStatusMessage", () => {
         message: "",
       }),
     ).toBe("Sign in via the CLI to authenticate again.");
+  });
+});
+
+describe("ProviderStatusBanner machine (1427 AC-07)", () => {
+  const unauthenticated = (): ServerProvider => ({
+    ...warningProvider(),
+    status: "error",
+    installed: false,
+    auth: { status: "unauthenticated" },
+    message: "",
+  });
+
+  it("names the machine to install on instead of this environment", () => {
+    expect(getProviderStatusMessage(unauthenticated(), "M5")).toBe(
+      "Open provider setup to install Codex on M5.",
+    );
+  });
+
+  it("names another machine in its colour in the title", () => {
+    const markup = renderToStaticMarkup(
+      <ProviderStatusBanner
+        status={{ ...unauthenticated(), installed: true }}
+        machine={{ name: "M5", color: "teal" } as const}
+        onDismiss={() => {}}
+      />,
+    );
+    expect(markup).toContain("Codex is unauthenticated");
+    expect(markup).toMatch(/data-machine-color="teal"[^>]*>M5</);
+  });
+
+  it("names nothing on the window's own machine", () => {
+    const markup = renderToStaticMarkup(
+      <ProviderStatusBanner
+        status={{ ...unauthenticated(), installed: true }}
+        machine={null}
+        onDismiss={() => {}}
+      />,
+    );
+    expect(markup).not.toContain("data-action-machine");
   });
 });

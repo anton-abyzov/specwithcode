@@ -251,3 +251,27 @@ describe("ComposerPendingUserInputPanel multi-select step", () => {
     expect(render({ withPrevious: false })).not.toContain("data-question-step");
   });
 });
+
+describe("ComposerPendingUserInputPanel machine (1427 AC-07)", () => {
+  it("names another machine beside the asker, in its colour", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerPendingUserInputPanel
+        pendingUserInputs={[prompt]}
+        respondingRequestIds={[]}
+        answers={{}}
+        questionIndex={0}
+        onToggleOption={() => {}}
+        onAdvance={() => {}}
+        onDismiss={() => {}}
+        askedBy="PS5 OBS"
+        machine={{ name: "M5", color: "teal" } as const}
+      />,
+    );
+    expect(markup).toContain("PS5 OBS asks");
+    expect(markup).toMatch(/data-action-machine-tag[^>]*>on <span[^>]*data-machine-color="teal"[^>]*>M5</);
+  });
+
+  it("names no machine on the window's own", () => {
+    expect(renderPanel()).not.toContain("data-action-machine");
+  });
+});

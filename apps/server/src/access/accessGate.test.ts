@@ -16,6 +16,8 @@ import * as ComputerUseBroker from "../computerUse/ComputerUseBroker.ts";
 import type { McpThreadInvocationScope } from "../mcp/McpInvocationContext.ts";
 import * as OrchestratorMcpService from "../mcp/OrchestratorMcpService.ts";
 import type { AccessRequestCardInput } from "../mcp/OrchestratorMcpService.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as AccessGate from "./accessGate.ts";
 import * as AccessRequests from "./AccessRequests.ts";
 
@@ -179,6 +181,42 @@ describe("appSubject", () => {
         label: "Notes",
         detail: AccessGate.APP_ACCESS_DETAIL,
       });
+    }),
+  );
+});
+
+describe("appSubject machine", () => {
+  beforeEach(() => AccessGate.clearAppSubjectCache());
+  const broker = Layer.mock(ComputerUseBroker.ComputerUseBroker)({
+    invoke: () => Effect.fail(new ComputerUseToolError({ reason: "No desktop app." })),
+  });
+  const machine = (nicknames: Record<string, { name: string }>) =>
+    Layer.mergeAll(
+      broker,
+      Layer.mock(ServerEnvironment.ServerEnvironment)({
+        getDescriptor: Effect.succeed({
+          environmentId: "env-m5",
+          label: "Antons-Mac-mini",
+        } as never),
+      }),
+      Layer.mock(ServerSettings.ServerSettingsService)({
+        getSettings: Effect.succeed({ machineNicknames: nicknames } as never),
+      }),
+    );
+
+  it.effect("names the machine the app is on by its nickname", () =>
+    Effect.gen(function* () {
+      const subject = yield* AccessGate.appSubject("Notes").pipe(
+        Effect.provide(machine({ "env-m5": { name: "M5" } })),
+      );
+      assert.strictEqual(subject.hostLabel, "M5");
+    }),
+  );
+
+  it.effect("falls back to the host label without a nickname", () =>
+    Effect.gen(function* () {
+      const subject = yield* AccessGate.appSubject("Notes").pipe(Effect.provide(machine({})));
+      assert.strictEqual(subject.hostLabel, "Antons-Mac-mini");
     }),
   );
 });

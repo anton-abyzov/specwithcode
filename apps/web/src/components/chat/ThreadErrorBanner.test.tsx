@@ -377,3 +377,37 @@ describe("ThreadErrorBanner", () => {
     });
   });
 });
+
+describe("ThreadErrorBanner machine (1427 AC-07)", () => {
+  it("names another machine on Sign in again and Continue, in its colour", () => {
+    const markup = renderToStaticMarkup(
+      <ThreadErrorBanner
+        error="Codex's sign-in expired."
+        errorClass="provider_error"
+        errorCode={PROVIDER_SIGN_IN_EXPIRED_FAILURE_CODE}
+        onContinue={() => {}}
+        signInRecovery={{ provider: "Codex", machine: "M5", onSignIn: () => {} }}
+        machine={{ name: "M5", color: "teal" } as const}
+      />,
+    );
+    expect(markup).toContain("Sign in again on <span");
+    expect(markup).toContain("Continue on <span");
+    expect(markup).toMatch(/data-machine-color="teal"[^>]*>M5</);
+  });
+
+  it("keeps the bare buttons on the window's own machine", () => {
+    const markup = renderToStaticMarkup(
+      <ThreadErrorBanner
+        error="Codex's sign-in expired."
+        errorClass="provider_error"
+        errorCode={PROVIDER_SIGN_IN_EXPIRED_FAILURE_CODE}
+        onContinue={() => {}}
+        signInRecovery={{ provider: "Codex", machine: "M4", onSignIn: () => {} }}
+        machine={null}
+      />,
+    );
+    expect(markup).toContain(">Sign in again<");
+    expect(markup).toContain(">Continue<");
+    expect(markup).not.toContain("data-action-machine");
+  });
+});
