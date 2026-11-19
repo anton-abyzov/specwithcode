@@ -504,6 +504,39 @@ describe("project sync: Git settings cannot turn the move into something else (P
       }),
   );
 
+  it.effect("runs none of the checkout's hooks, in the fetch or in the move", () => {
+    const f = behind();
+    const fired = NodePath.join(f.base, "fired");
+    for (const hook of [
+      "post-merge",
+      "reference-transaction",
+      "post-checkout",
+      "pre-merge-commit",
+    ]) {
+      const file = NodePath.join(f.b, ".git", "hooks", hook);
+      NodeFS.writeFileSync(file, `#!/bin/sh\necho ${hook} >> "${fired}"\n`);
+      NodeFS.chmodSync(file, 0o755);
+    }
+    // The hooks are live: Git run by hand fires them.
+    git(f.b, "update-ref", "refs/heads/probe", f.was);
+    expect(NodeFS.readFileSync(fired, "utf8")).toContain("reference-transaction");
+    NodeFS.rmSync(fired);
+    return withSync(f.b, (sync) =>
+      Effect.gen(function* () {
+        const fetched = yield* sync.fetch(one);
+        const run = yield* sync.run({
+          ...one,
+          fetchId: fetched.fetchId,
+          fastForward: root,
+          clone: [],
+        });
+        expect(run.repositories[0]).toMatchObject({ action: "fast-forward", moved: 1 });
+        expect(git(f.b, "rev-parse", "HEAD")).toBe(f.head);
+        expect(NodeFS.existsSync(fired)).toBe(false);
+      }),
+    );
+  });
+
   it.effect.each(["-s ours", "--strategy=ours", "-X theirs", "--quiet", '"--squash"'])(
     "declines before any write with %s in the branch's merge options",
     (options) =>

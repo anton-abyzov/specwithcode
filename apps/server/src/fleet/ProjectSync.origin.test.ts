@@ -179,6 +179,31 @@ describe("project sync: the move goes to what its fetch brought (P2-28)", () => 
     expect(git(f.b, "rev-parse", "HEAD")).toBe(f.was);
   });
 
+  it("holds what one window learned of a rewrite against another window's older fetch", async () => {
+    const f = behind();
+    const first = context(newFetchRecord("project-rewritten"));
+    const second = context(newFetchRecord("project-rewritten"));
+    for (const ctx of [first, second]) {
+      await fetchAll(ctx, at(f.b));
+      keepFetch(ctx.fetched!);
+    }
+    git(f.a, "commit", "-q", "--amend", "-m", "rewritten");
+    git(f.a, "push", "-q", "--force", "origin", "main");
+    // The first window asks and learns of it. The second, with no connection, has only
+    // its own fetch of the old tip, and is not moved to it.
+    expect(await move(first, f.b)).toMatchObject({ detail: PROJECT_SYNC_ORIGIN_MOVED_DETAIL });
+    outage(f);
+    const w = watching();
+    expect(await move({ ...second, git: w.run }, f.b)).toMatchObject({
+      action: "none",
+      reason: "refused",
+      moved: 0,
+      detail: PROJECT_SYNC_ORIGIN_MOVED_DETAIL,
+    });
+    expect(w.ran("merge")).toEqual([]);
+    expect(git(f.b, "rev-parse", "HEAD")).toBe(f.was);
+  });
+
   it("does not move to a commit somebody else's fetch brought after this Sync's", async () => {
     const f = behind();
     const ctx = context();
