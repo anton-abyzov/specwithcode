@@ -29,6 +29,7 @@ import * as Instances from "../provider/ProviderInstanceRegistry.ts";
 import * as Providers from "../provider/ProviderRegistry.ts";
 import { provider } from "../studio/fixtures.ts";
 import { limitHandoffTrigger } from "./MachineLimitHandoff.ts";
+import { PRESWITCH_TURN_STARTED } from "./limitPreswitchGuard.ts";
 import {
   makeSweep,
   PROVIDER_FALLBACK_SWEEP_INTERVAL_MS,
@@ -131,6 +132,8 @@ interface World {
   threads: Thread[];
   /** Dispatches fail with this error while set. */
   failDispatch: boolean;
+  /** The next dispatch is refused because a turn beat the move, as the orchestrator does. */
+  turnBeatsMove?: boolean;
   /** When Codex's usage was last read; null reads it fresh at every sweep. */
   codexReadAt: number | null;
   /** Instances the sweep asked to read again. */
@@ -279,6 +282,13 @@ function layers(state: World) {
         Effect.gen(function* () {
           state.dispatched.push(command);
           if (state.failDispatch) return yield* Effect.die(new Error("dispatch refused"));
+          if (state.turnBeatsMove === true) {
+            state.turnBeatsMove = false;
+            return yield* Effect.fail({
+              _tag: "OrchestratorDispatchError",
+              cause: PRESWITCH_TURN_STARTED,
+            } as never);
+          }
           const thread = find(threadOf(command)!);
           if (command.type === "thread.model-selection.set" && command.modelSelection) {
             // As the orchestrator records it (launchFallbackFields).
@@ -485,6 +495,21 @@ describe("the idle move before the limit, from the sweep (1089)", () => {
       yield* once(state);
       expect(state.refreshed).toEqual([codexId]);
       expect(ids(state)).toEqual([preswitchId]);
+    }),
+  );
+
+  it.effect("sends the move again after a turn that beat it", () =>
+    Effect.gen(function* () {
+      const state = world({ turnBeatsMove: true });
+      yield* sweeps(state, (sweep) =>
+        Effect.gen(function* () {
+          yield* sweep();
+          yield* nextSweep();
+          yield* sweep();
+        }),
+      );
+      expect(ids(state)).toEqual([preswitchId, preswitchId]);
+      expect(state.threads[0]!.selection).toEqual(onCodex);
     }),
   );
 

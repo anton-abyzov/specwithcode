@@ -131,7 +131,7 @@ import {
 } from "@specweave-studio/shared/teamRules";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import { apiCreditDetourResumeRefused } from "./providerOpenFailure.ts";
-import { preswitchMoveRefusal, sameModelSelection } from "./limitPreswitchGuard.ts";
+import { PRESWITCH_TURN_STARTED, preswitchMoveRefusal } from "./limitPreswitchGuard.ts";
 import {
   LIMIT_PRESWITCH_COMMAND_PREFIX,
   launchFallbackAfterMove,
@@ -3315,7 +3315,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (
       command.type === "thread.model-selection.set" &&
       command.expectedModelSelection !== undefined &&
-      !sameModelSelection(thread.modelSelection, command.expectedModelSelection)
+      !modelSelectionsEqual(thread.modelSelection, command.expectedModelSelection)
     )
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
@@ -3762,7 +3762,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // that took the fallback's model go home with it, held or not: left on
     // the fallback, the first to start would switch the thread straight back.
     const runsFollowingWayBack =
-      command.type === "thread.model-selection.set" && isLimitWayBack(command.commandId)
+      command.type === "thread.model-selection.set" &&
+      (isLimitWayBack(command.commandId) ||
+        // The move before the limit takes them along too, or the first to
+        // start would put the thread back on the limited provider (1089).
+        command.commandId.startsWith(LIMIT_PRESWITCH_COMMAND_PREFIX))
         ? yield* Effect.gen(function* () {
             const { runs } = yield* loadProjectionForCommand(command, ["runs"]);
             const queued = runs.filter((run) => run.status === "queued");
@@ -13502,7 +13506,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           // can go through once the thread's user lowers it again.
           if (
             cause._tag === "OrchestratorThreadAboveModeLimitError" ||
-            cause._tag === "OrchestratorTeamRulesRefusedError"
+            cause._tag === "OrchestratorTeamRulesRefusedError" ||
+            // A turn beat the move before the limit: it may go out after that turn.
+            (cause._tag === "OrchestratorDispatchError" && cause.cause === PRESWITCH_TURN_STARTED)
           )
             return yield* cause;
           // An answer's id is stable per request and answer, so a retry after a

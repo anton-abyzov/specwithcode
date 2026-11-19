@@ -1,11 +1,11 @@
-import type { ModelSelection, OrchestrationV2Run } from "@specweave-studio/contracts";
+import type { OrchestrationV2Run } from "@specweave-studio/contracts";
 import { latestExecutedRun } from "@specweave-studio/shared/orchestrationV2ThreadError";
 
-/** The same model and options on the same instance. */
-export const sameModelSelection = (left: ModelSelection, right: ModelSelection): boolean =>
-  left.instanceId === right.instanceId &&
-  left.model === right.model &&
-  JSON.stringify(left.options ?? null) === JSON.stringify(right.options ?? null);
+/**
+ * The refusal of a move that a turn started after the plan beat. It is not
+ * recorded, so the window's move can go out once that turn has ended.
+ */
+export const PRESWITCH_TURN_STARTED = "The latest turn is running or did not complete.";
 
 /**
  * Why a `limit-preswitch:` move (1089) no longer applies to the thread as it
@@ -22,6 +22,6 @@ export function preswitchMoveRefusal(runs: ReadonlyArray<OrchestrationV2Run>): {
   const latest = latestExecutedRun(runs);
   if (latest === null) return { refusal: null, latest };
   if (latest.status !== "completed")
-    return { refusal: "The latest turn is running or did not complete.", latest };
+    return { refusal: PRESWITCH_TURN_STARTED, latest };
   return { refusal: null, latest };
 }

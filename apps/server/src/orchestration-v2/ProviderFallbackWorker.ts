@@ -98,6 +98,7 @@ import {
 } from "./providerOpenFailure.ts";
 import { UnopenableHolds, UsageLimitHolds } from "./UnopenableHolds.ts";
 import { contextOverflowStop } from "./contextOverflowFallback.ts";
+import { PRESWITCH_TURN_STARTED } from "./limitPreswitchGuard.ts";
 import { contextRecoveryStep, isContextOverflowFailure } from "./ContextOverflowRecoveryWorker.ts";
 import { latestRootProviderFailure } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import { isClaudePlanLimitStop } from "../provider/claudeLimitReset.ts";
@@ -2187,8 +2188,24 @@ export const makeSweep = Effect.gen(function* () {
                 });
                 // The idle move is one try per usage window: its id names the
                 // window (the way back reads the reset from it), so it is never
-                // sent again under a retry id, and stays marked sent.
-                if (command.type === "thread.model-selection.set") return;
+                // sent again under a retry id, and stays marked sent. Only a
+                // turn that beat it frees the id, for after that turn.
+                if (command.type === "thread.model-selection.set") {
+                  const error = Cause.squash(cause);
+                  if (
+                    typeof error === "object" &&
+                    error !== null &&
+                    "cause" in error &&
+                    error.cause === PRESWITCH_TURN_STARTED
+                  )
+                    yield* Ref.update(sent, (current) => {
+                      const without = new Set(current);
+                      without.delete(baseCommandId);
+                      without.delete(command.commandId);
+                      return without;
+                    });
+                  return;
+                }
                 // A Stop that landed after the check says nothing about the target.
                 if (
                   step.type === "switch" &&

@@ -2,7 +2,7 @@ import { ProviderInstanceId, RunId, ThreadId } from "@specweave-studio/contracts
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { preswitchMoveRefusal, sameModelSelection } from "./limitPreswitchGuard.ts";
+import { PRESWITCH_TURN_STARTED, preswitchMoveRefusal } from "./limitPreswitchGuard.ts";
 
 // 1089: the orchestrator judges a pre-switch again when it lands, so a turn
 // that started after the sweep's checks keeps the thread where it is.
@@ -28,21 +28,10 @@ describe("preswitchMoveRefusal", () => {
   });
 
   it("refuses once a turn started or the latest one did not complete", () => {
-    expect(preswitchMoveRefusal([run("completed"), run("running", 1)]).refusal).not.toBeNull();
+    expect(preswitchMoveRefusal([run("completed"), run("running", 1)]).refusal).toBe(
+      PRESWITCH_TURN_STARTED,
+    );
     expect(preswitchMoveRefusal([run("interrupted")]).refusal).not.toBeNull();
     expect(preswitchMoveRefusal([run("failed")]).refusal).not.toBeNull();
-  });
-});
-
-describe("sameModelSelection", () => {
-  it("tells another model, instance or option apart", () => {
-    expect(sameModelSelection(claude, { ...claude })).toBe(true);
-    expect(sameModelSelection(claude, { ...claude, model: "claude-sonnet-5-5" })).toBe(false);
-    expect(
-      sameModelSelection(claude, { ...claude, instanceId: ProviderInstanceId.make("claude-2") }),
-    ).toBe(false);
-    expect(
-      sameModelSelection(claude, { ...claude, options: [{ id: "effort", value: "high" }] } as never),
-    ).toBe(false);
   });
 });
