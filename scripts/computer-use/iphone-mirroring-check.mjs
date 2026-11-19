@@ -50,8 +50,12 @@ export const MIRRORING_BUNDLE_ID = "com.apple.ScreenContinuity";
  * letter. Text recognition cannot tell c, o, s, v, w, x and z from their
  * capitals, reads q as "ą" and z as "2", and confuses "!" with "l" and "¡" with
  * "i", so the samples avoid those (and s/5, o/0) and the symbols are "@" and "#".
+ * The text cursor touches the last letter and can bend a d, l or b ("hbbd" read
+ * as "hbba"), so no sample ends in one.
  */
-export const TYPE_SAMPLES = ["hbdt", "QHBR", "4207", "x@y#h", "hbbd"];
+export const TYPE_SAMPLES = ["hbdt", "QHBR", "4207", "x@y#h", "hbbt"];
+/** Readings of a typed sample, the cursor's blink apart, before it is called not shown. */
+export const TYPE_READS = 3;
 /** The key repeat check types REPEAT_BASE + REPEAT_TAIL and deletes from the tail. */
 export const REPEAT_BASE = "QHBR";
 export const REPEAT_TAIL = "4207";
@@ -70,6 +74,8 @@ export const DEFAULTS = {
   pauseMs: 60_000,
   // Spotlight shows its suggestions, and an inline one after the text, about a second after a key.
   suggestMs: 2_500,
+  // About half the text cursor's blink: one of two readings this far apart misses it.
+  blinkMs: 600,
   minScrollPx: 20,
 };
 /** A failed run that started above this 1-minute load average is invalid (three times 16 cores). */
@@ -128,6 +134,8 @@ import {
   SPOTLIGHT_TRIES,
   newTexts,
   showsNoSpotlight,
+  stillHome,
+  texts,
   center,
   jaccard,
   pageSignature,
@@ -490,13 +498,24 @@ export async function runCheck(deps, options = {}) {
   // showed, no search field took the text: that judges nothing, so Spotlight is
   // opened again, up to SPOTLIGHT_TRIES times. Returns what the last try saw when
   // every try ended that way; `seen` holds the reading after typing. A reading
-  // where `shown` finds the field is judged at once.
-  const typeInSpotlight = async (text, name, waitMs, shown) => {
+  // where `shown` finds the field is judged at once. The text cursor can bend
+  // the last letter in one reading, so up to `reads` readings are taken, the
+  // cursor's blink apart and with no input between, before anything else is
+  // decided; `readings` says how many were. With `reopen`, a search the home
+  // key closed to tell it from the home screen is opened again.
+  let readings = 0;
+  const typeInSpotlight = async (text, name, waitMs, shown, reopen = false, reads = 1) => {
     for (let tries = 1; ; tries++) {
       const { home, opened } = await freshSearch();
       await call("computer_type", { text });
       await deps.sleep(waitMs);
       seen = await look();
+      readings = 1;
+      while (!shown(seen) && readings < reads) {
+        await deps.sleep(config.blinkMs);
+        seen = await look();
+        readings++;
+      }
       if (shown(seen)) return undefined;
       const after = seen;
       let gone = showsNoSpotlight(after.lines, home.lines);
@@ -508,6 +527,13 @@ export async function runCheck(deps, options = {}) {
         const again = await look();
         gone = showsNoSpotlight(after.lines, home.lines, again.lines);
         seen = after;
+        if (!gone && reopen) {
+          // The home key closed the search: it is opened again, and never used closed.
+          const detail = `no "${text}" field read, and the reading over the home screen showed text that went away with the home key, which closed the search (try ${tries} of ${SPOTLIGHT_TRIES}); read ${describeLines(after.lines.slice(0, 6))}`;
+          note(`${stamp()} ${name}: ${detail}`);
+          if (tries >= SPOTLIGHT_TRIES) return detail;
+          continue;
+        }
       }
       if (!gone) return undefined;
       const extra = newTexts(opened.lines, home.lines);
@@ -521,8 +547,18 @@ export async function runCheck(deps, options = {}) {
   for (const sample of TYPE_SAMPLES) {
     try {
       await step(`type "${sample}"`, async () => {
-        const gone = await typeInSpotlight(sample, `type "${sample}"`, config.settleMs, (reading) =>
-          reading.lines.some((line) => readField(line.text, sample)?.count === 0),
+        // A wrong key reads wrong on every reading; a bent last letter does not.
+        const gone = await typeInSpotlight(
+          sample,
+          `type "${sample}"`,
+          config.settleMs,
+          (reading) =>
+            reading.lines.some((line) => {
+              const field = readField(line.text, sample);
+              return field?.count === 0 && field.after !== "other";
+            }),
+          false,
+          TYPE_READS,
         );
         if (gone !== undefined) {
           unsure(`type "${sample}"`, noSpotlight(gone));
@@ -533,6 +569,10 @@ export async function runCheck(deps, options = {}) {
           .filter((entry) => entry.field !== undefined && entry.field.count === 0);
         const found = fields.some((entry) => entry.field.after !== "other");
         const unclear = fields.find((entry) => entry.field.after === "other");
+        const onRead =
+          readings === 1
+            ? ""
+            : ` on reading ${readings} of ${TYPE_READS}, the cursor's blink apart`;
         if (!found && unclear !== undefined) {
           unsure(
             `type "${sample}"`,
@@ -543,8 +583,8 @@ export async function runCheck(deps, options = {}) {
             `type "${sample}"`,
             found,
             found
-              ? `shown on the phone; ${front()}`
-              : `not shown as typed; read ${describeLines(seen.lines.slice(0, 12))}; ${front()}`,
+              ? `shown on the phone${onRead}; ${front()}`
+              : `not shown as typed in ${readings} readings, the cursor's blink apart; last read ${describeLines(seen.lines.slice(0, 12))}; ${front()}`,
           );
         }
       });
@@ -666,17 +706,45 @@ export async function runCheck(deps, options = {}) {
       .sort((a, b) => a.y - b.y)[0];
   // Return opens Spotlight's top hit once it shows ("Clock - Open"), so the key
   // waits for it. When Spotlight still shows after Return, the app's result is
-  // tapped instead, and the log says so.
+  // tapped instead, and the log says so. Spotlight that does not show is opened
+  // again as for typing. Returns the reading, and `missed` or `closed` when the
+  // app plainly did not open: no Spotlight on any try, or Spotlight or the home
+  // screen still showing.
   const openApp = async (name) => {
-    await freshSearch();
-    await call("computer_type", { text: name });
-    let suggested;
-    for (let waited = 0; suggested === undefined && waited < config.suggestMs;) {
+    const suggestion = (reading) =>
+      reading.lines.find((line) => readField(line.text, name)?.after === "suggestion");
+    // The field: the name read alone or with a suggestion, not where the home
+    // screen shows the same label.
+    const near = (a, b) =>
+      Math.abs(center(a).x - center(b).x) <= 3 && Math.abs(center(a).y - center(b).y) <= 3;
+    const typedField = (reading) =>
+      reading.lines.some((line) => {
+        const read = readField(line.text, name);
+        return (
+          read !== undefined &&
+          read.count === 0 &&
+          read.after !== "other" &&
+          !lastHome.some(
+            (other) => normalize(other.text) === normalize(line.text) && near(other, line),
+          )
+        );
+      });
+    const missed = await typeInSpotlight(
+      name,
+      `opening ${name}`,
+      config.settleMs,
+      typedField,
+      true,
+    );
+    if (missed !== undefined) return { reading: seen, missed };
+    let suggested = suggestion(seen);
+    for (let waited = config.settleMs; suggested === undefined && waited < config.suggestMs;) {
       await deps.sleep(config.settleMs);
       waited += config.settleMs;
       seen = await look();
-      suggested = seen.lines.find((line) => readField(line.text, name)?.after === "suggestion");
+      suggested = suggestion(seen);
     }
+    const typed = seen;
     await call("computer_key", { keys: "return" });
     await deps.sleep(config.openMs);
     seen = await look();
@@ -703,7 +771,23 @@ export async function runCheck(deps, options = {}) {
     const searching =
       field !== undefined &&
       (readField(field.text, name).after === "suggestion" || first !== undefined);
-    if (!searching || locateTabs(seen.lines, [tabA, tabB], barLabels) !== undefined) return seen;
+    // The reading after opening: whether it still shows Spotlight or only the home screen.
+    const opened = (tapped = false) => {
+      const still = searchField(seen, name);
+      const closed =
+        still !== undefined &&
+        (readField(still.text, name).after === "suggestion" ||
+          seen.lines.some((line) => line !== still && normalize(line.text) === normalize(name)))
+          ? `Spotlight still showed ${JSON.stringify(still.text)}`
+          : stillHome(seen.lines, lastHome, margins)
+            ? "the phone showed only its home screen"
+            : jaccard(own(seen.lines), own(typed.lines)) >= 0.8
+              ? `the screen read as it did in Spotlight before Return`
+              : undefined;
+      return { reading: seen, closed, tapped };
+    };
+    if (!searching || locateTabs(seen.lines, [tabA, tabB], barLabels) !== undefined)
+      return opened();
     const before =
       suggested === undefined
         ? `with no suggestion read after ${config.suggestMs / 1000} s`
@@ -712,7 +796,7 @@ export async function runCheck(deps, options = {}) {
       note(
         `${stamp()} Return did not open ${name} ${before}, and ${first === undefined ? `no "${name}" result showed to tap` : `the first "${name}" under the field is not in the first row of results, so it is another source's and was not tapped`}`,
       );
-      return seen;
+      return opened();
     }
     const point = center(result);
     await call("computer_click", point);
@@ -721,12 +805,24 @@ export async function runCheck(deps, options = {}) {
     note(
       `${stamp()} Return did not open ${name} ${before}; tapped the "${name}" result at (${point.x}, ${point.y}): ${searchField(seen, name) === undefined ? "Spotlight closed" : "Spotlight still showed"} (not one of the ${CLICK_TARGET} counted clicks)`,
     );
-    return seen;
+    return opened(true);
   };
+  // Text of other windows in the window's margins: what shows at the same place
+  // on the home screen and in Clock once it opened, which covers the home screen.
+  let margins = new Set();
+  const own = (lines) => texts(lines).filter((text) => !margins.has(text));
+  // Why an app that did not open leaves a step unjudged.
+  const notOpened = (name, open, what) =>
+    open.missed !== undefined
+      ? `${name} could not be opened, so no ${what} was tried: no usable Spotlight search for "${name}" showed on ${SPOTLIGHT_TRIES} tries; last try: ${open.missed}`
+      : `${name} did not open, so no ${what} was tried: after Return${open.tapped ? " and a tap on its result" : ""} ${open.closed}; read ${describeLines(open.reading.lines.slice(0, 12))}`;
+  let clockOpen;
   let located;
   try {
     located = await step(`opening ${config.clockApp}`, async () => {
-      seen = await openApp(config.clockApp);
+      clockOpen = await openApp(config.clockApp);
+      seen = clockOpen.reading;
+      if (clockOpen.missed !== undefined) return undefined;
       const found = locateTabs(seen.lines, [tabA, tabB], barLabels);
       if (found !== undefined && !found.ambiguous) return found;
       // One more reading: a label text recognition missed once usually shows the next time.
@@ -736,6 +832,10 @@ export async function runCheck(deps, options = {}) {
     });
   } catch (error) {
     return stop("tabs", `opening ${config.clockApp} failed: ${error.message}`);
+  }
+  if (clockOpen?.missed !== undefined) {
+    unsure("tabs", notOpened(config.clockApp, clockOpen, "tab"));
+    return finish();
   }
   if (located?.ambiguous) {
     unsure(
@@ -806,12 +906,17 @@ export async function runCheck(deps, options = {}) {
       );
       return finish();
     }
-    return stop(
+    // No tab and no page title: Clock never opened, so no tab was tried.
+    unsure(
       "tabs",
-      `could not find "${tabA}" and "${tabB}" in a tab bar with the other tabs (${barLabels.join(", ")}), and no ${config.clockApp} page title showed; read ${describeLines(seen.lines)}`,
+      clockOpen?.closed !== undefined
+        ? notOpened(config.clockApp, clockOpen, "tab")
+        : `could not find "${tabA}" and "${tabB}" in a tab bar with the other tabs (${barLabels.join(", ")}), and no ${config.clockApp} page title showed, so ${config.clockApp} did not open and no tab was tried; read ${describeLines(seen.lines)}`,
     );
+    return finish();
   }
   const { bar } = located;
+  margins = backgroundOf(seen.lines, lastHome);
   // Where each tab was last read; a reading that misses a label keeps the last place.
   const tabLines = { ...located.tabs };
   check(
@@ -931,7 +1036,12 @@ export async function runCheck(deps, options = {}) {
   // 5. Scrolling the Settings list --------------------------------------------------
   try {
     await step("scroll", async () => {
-      seen = await openApp(config.listApp);
+      const open = await openApp(config.listApp);
+      seen = open.reading;
+      if (open.missed !== undefined || open.closed !== undefined) {
+        unsure("scroll", notOpened(config.listApp, open, "scroll"));
+        return;
+      }
       const start = seen.lines;
       const point = {
         x: Math.round(seen.window.x + seen.window.width / 2),

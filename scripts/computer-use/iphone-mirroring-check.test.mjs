@@ -574,7 +574,7 @@ describe("dry run", () => {
     let typed = false;
     let covered = 0;
     phone.deps.call = async (tool, args) => {
-      if (tool === "computer_type") typed = args.text === "hbbd";
+      if (tool === "computer_type") typed = args.text === "hbbt";
       if (tool === "computer_screenshot" && typed && covered === 0) {
         covered++;
         phone.state.front = "Google Chrome";
@@ -585,11 +585,11 @@ describe("dry run", () => {
     expect(covered).toBe(1);
     expect(
       result.lines.some((entry) =>
-        /^NOTE \S+ paused type "hbbd": Google Chrome was in front in the screenshot/.test(entry),
+        /^NOTE \S+ paused type "hbbt": Google Chrome was in front in the screenshot/.test(entry),
       ),
     ).toBe(true);
     expect(
-      result.lines.find((entry) => entry.includes('type "hbbd"') && !entry.startsWith("NOTE")),
+      result.lines.find((entry) => entry.includes('type "hbbt"') && !entry.startsWith("NOTE")),
     ).toMatch(/^PASS/);
     expect(result.lines.at(-1)).toMatch(/^Result: PASS/);
   });
@@ -955,7 +955,13 @@ describe("dry run", () => {
     };
     const result = await runCheck(phone.deps);
     expect(looked).toBe(0);
-    expect(result.lines).toContainEqual(expect.stringMatching(/^FAIL tabs: could not find/));
+    // Clock never opened, so no tab was tried: never a product failure.
+    expect(result.lines).toContainEqual(
+      expect.stringMatching(
+        /^UNSURE tabs: Clock did not open, so no tab was tried: .*Spotlight still showed "Clock"/,
+      ),
+    );
+    expect(result.lines.some((entry) => entry.startsWith("FAIL "))).toBe(false);
   });
 
   it("never counts an icon tap made from a page read as neither tab", async () => {
@@ -1205,6 +1211,8 @@ describe("judging the screen", () => {
       if (/[A-Za-z]/.test(sample)) expect(sample).not.toMatch(/[250]/);
     }
     expect(TYPE_SAMPLES.some((sample) => /(.)\1/.test(sample))).toBe(true);
+    // The text cursor touches the last letter and bends a d, l or b.
+    for (const sample of TYPE_SAMPLES) expect(sample).not.toMatch(/[dlb]$/);
   });
 
   it("tells the home screen from Spotlight over it, never a field with the wrong text", () => {
