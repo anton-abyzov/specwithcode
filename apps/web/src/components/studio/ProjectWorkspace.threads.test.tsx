@@ -441,18 +441,20 @@ describe("the coordinator stays in the main column", () => {
     expect(nativeThread("worker")).toBeNull();
   });
   it("suspends worker commands during handoff and restores them without replacing the coordinator draft", async () => {
+    // A paired machine without the project: the menu offers "Add to another machine…".
+    state.pairedHosts = ["spare"];
     await render();
     await openFirstThread();
     await prompt("Keep my coordinator draft");
     expect(nativeThread("worker")?.hasAttribute("data-native-suspend")).toBe(false);
-    // The machine menu opens the handoff dialog: Send to another machine…
+    // The machine menu opens the handoff dialog from its Add item.
     await act(async () =>
       document
         .querySelector<HTMLButtonElement>('[aria-label$="this project\'s machines"]')!
         .click(),
     );
     await act(async () =>
-      document.querySelector<HTMLElement>('[data-machine-action="send"]')!.click(),
+      document.querySelector<HTMLElement>('[data-machine-action="add"]')!.click(),
     );
     await act(async () => {});
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();

@@ -466,7 +466,8 @@ it("never starts a second coordinator and names no role in any item", async () =
     }),
     unknown: [{ key: "linux-mini:p", machine: "linux-mini" }],
     onFix: vi.fn(),
-    onCopy: vi.fn(),
+    onSync: vi.fn(),
+    onAdd: vi.fn(),
     onLeave: vi.fn(),
     onMigrate: vi.fn(),
     onLink: vi.fn(),
@@ -482,9 +483,15 @@ it("never starts a second coordinator and names no role in any item", async () =
   expect(document.querySelectorAll("[data-orchestrator-make-main]")).toHaveLength(0);
 });
 
-it("keeps the names of Send to another machine…, Move running threads… and Leave this machine…", async () => {
+it("offers Sync… and Add to another machine…, and keeps the names of Move running threads… and Leave this machine…", async () => {
   const calls = handlers();
-  await renderSwitcher({ ...calls, onCopy: vi.fn(), onLeave: vi.fn(), onMigrate: vi.fn() });
+  await renderSwitcher({
+    ...calls,
+    onSync: vi.fn(),
+    onAdd: vi.fn(),
+    onLeave: vi.fn(),
+    onMigrate: vi.fn(),
+  });
   expect(rows().map((row) => row.textContent)).toEqual([
     "M4Coordinator",
     "MinisOld conversation kept",
@@ -495,7 +502,8 @@ it("keeps the names of Send to another machine…, Move running threads… and L
     "Work on M4",
   ]);
   expect(textsIn(document, ACTION_ITEMS)).toEqual([
-    "Send to another machine…",
+    "Sync…",
+    "Add to another machine…",
     "Move running threads…",
     "Leave this machine…",
     "Machine access settings",
@@ -573,8 +581,8 @@ it("shows a nickname as typed, never trimming its owner", async () => {
   );
 });
 
-it("offers one Send to another machine and Leave, even with one machine", async () => {
-  const onCopy = vi.fn<() => void>();
+it("offers Add to another machine and Leave with one machine, and no Sync without a second", async () => {
+  const onAdd = vi.fn<() => void>();
   const onLeave = vi.fn<() => void>();
   await act(async () =>
     root.render(
@@ -590,7 +598,7 @@ it("offers one Send to another machine and Leave, even with one machine", async 
         onView={vi.fn()}
         onMakeMain={null}
         onAllowWorkers={null}
-        onCopy={onCopy}
+        onAdd={onAdd}
         onLeave={onLeave}
       />,
     ),
@@ -602,11 +610,71 @@ it("offers one Send to another machine and Leave, even with one machine", async 
   );
   expect(document.querySelector('[role="menuitemradio"]')).toBeNull();
   expect(item("menuitem", "Leave this machine…")).toBeDefined();
-  expect(item("menuitem", "Add to another machine…")).toBeUndefined();
+  expect(item("menuitem", "Sync…")).toBeUndefined();
+  expect(item("menuitem", "Send to another machine…")).toBeUndefined();
   expect(item("menuitem", "Move to another machine…")).toBeUndefined();
-  await act(async () => item("menuitem", "Send to another machine…")!.click());
-  await vi.waitFor(() => expect(onCopy).toHaveBeenCalledTimes(1));
+  await act(async () => item("menuitem", "Add to another machine…")!.click());
+  await vi.waitFor(() => expect(onAdd).toHaveBeenCalledTimes(1));
   expect(onLeave).not.toHaveBeenCalled();
+});
+
+it("shows one sync fact on a row for another machine, and none on the machine shown", async () => {
+  const onOpenChange = vi.fn<(open: boolean) => void>();
+  await renderSwitcher({
+    ...handlers(),
+    ...onMinis({
+      copies: [
+        copy("m4:p", "M4"),
+        copy("minis:p", "Minis", "copy"),
+        copy("m3:p", "M3", "copy"),
+        copy("m1:p", "M1", "copy"),
+      ],
+    }),
+    onSync: vi.fn(),
+    onOpenChange,
+    syncOf: (key) =>
+      key === "m4:p"
+        ? {
+            sync: {
+              tone: "differs",
+              text: "{k} of {n} repositories differ",
+              values: { k: "3", n: "5" },
+            },
+          }
+        : key === "m3:p"
+          ? { sync: { tone: "same", text: "Same as {shown}", values: { shown: "Minis" } } }
+          : key === "m1:p"
+            ? {
+                sync: { tone: "unknown", text: "Not checked yet" },
+                needsUpdate: { version: "1.0.360" },
+              }
+            : // The machine shown: a fact passed for it is never drawn.
+              { sync: { tone: "same", text: "Same as {shown}", values: { shown: "Minis" } } },
+  });
+  // Opening the menu is when the statuses are read.
+  expect(onOpenChange).toHaveBeenCalledWith(true, expect.anything());
+  const facts = (key: string) =>
+    textsIn(document.querySelector(`[data-orchestrator-view="${key}"]`)!, "[data-row-sync]");
+  expect(facts("m4:p")).toEqual(["3 of 5 repositories differ"]);
+  expect(facts("m3:p")).toEqual(["Same as Minis"]);
+  expect(facts("m1:p")).toEqual(["Not checked yet"]);
+  expect(facts("minis:p")).toEqual([]);
+  expect(
+    textsIn(document.querySelector('[data-orchestrator-view="m1:p"]')!, "[data-row-note]"),
+  ).toEqual(["Needs update · 1.0.360"]);
+});
+
+it("greys Sync… with its reason when the machine shown cannot sync", async () => {
+  const onSync = vi.fn<() => void>();
+  await renderSwitcher({
+    ...handlers(),
+    onSync,
+    syncBlocked: { text: "This window can only read {machine}", values: { machine: "M4" } },
+  });
+  const sync = item("menuitem", "Sync…This window can only read M4")!;
+  expect(sync.getAttribute("aria-disabled")).toBe("true");
+  await act(async () => sync.click());
+  expect(onSync).not.toHaveBeenCalled();
 });
 
 /** Opens the info button by the menu's first label, where what viewing means is kept. */
