@@ -258,141 +258,141 @@ function ThreadComposer() {
         <div className="relative z-10">
           {/* The window is on m4 and the thread runs on linux-mini: Send leaves this machine. */}
           <MachineSendTargetContext value={{ name: "linux-mini", color: "blue" }}>
-          <ChatComposer
-            composerDraftTarget={threadRef}
-            environmentId={linuxMini}
-            canOperateThread
-            attachmentUploadsCapabilityKnown
-            supportsAttachmentUploads
-            supportsQuestionAttachments
-            maxFileAttachmentBytes={20 * 1024 * 1024}
-            routeKind="server"
-            routeThreadRef={threadRef}
-            draftId={null}
-            multipleModelSelections={null}
-            supportsMultipleModels={false}
-            onMultipleModelSelectionsChange={() => {}}
-            activeThreadId={threadId}
-            activeThreadEnvironmentId={linuxMini}
-            activeThread={undefined}
-            activeThreadShell={null}
-            promptHistoryMessages={[]}
-            isServerThread
-            isLocalDraftThread={false}
-            forceExpandedOnMobile={false}
-            projectSelectionRequired={false}
-            phase="ready"
-            canInterrupt={false}
-            isConnecting={false}
-            isSendBusy={false}
-            canResume={false}
-            sendDisabledReason={null}
-            isPreparingWorktree={false}
-            bannerItems={
-              banner
-                ? [
-                    {
-                      id: "resume",
-                      variant: "default",
-                      priority: "activity",
-                      content: (
-                        <div className="px-3 py-2 text-xs text-muted-foreground">
-                          Resume with less context · 169k tokens from earlier
-                        </div>
-                      ),
-                    },
-                  ]
-                : []
-            }
-            environmentUnavailable={null}
-            activePendingApproval={null}
-            pendingApprovals={[]}
-            pendingUserInputs={[]}
-            activePendingProgress={null}
-            activePendingResolvedAnswers={null}
-            activePendingIsResponding={false}
-            activePendingDraftAnswers={{}}
-            activePendingQuestionIndex={0}
-            respondingRequestIds={[]}
-            showPlanFollowUpPrompt={false}
-            activeProposedPlan={null}
-            activeTasksProgress={null}
-            activeTaskSteps={null}
-            threadSyncPhase={null}
-            runtimeMode="full-access"
-            interactionMode="default"
-            lockedProvider={null}
-            providerStatuses={providers}
-            providerCatalogKnown
-            activeProjectDefaultModelSelection={opus}
-            activeThreadModelSelection={opus}
-            reportedModelSelection={null}
-            limitFallbackFrom={null}
-            modelStateHeader={null}
-            activeContextWindow={null}
-            compactThreadUnavailable
-            compactDisabled
-            compactDisabledReason={null}
-            resolvedTheme={dark ? "dark" : "light"}
-            settings={DEFAULT_UNIFIED_SETTINGS}
-            keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
-            terminalOpen={false}
-            gitCwd="/home/fixture/specweave"
-            pullRequestProjectId={null}
-            pullRequestRepository={null}
-            restingControlsHost={null}
-            restingControlsHaveLeadingContext={false}
-            onRestingControlsVisibilityChange={() => {}}
-            getTimelineScrollableNode={() => null}
-            isTimelineAtLogicalEnd={() => true}
-            timelineOverflows={false}
-            onComposerOverlayHeightChange={() => {}}
-            onRestingChange={() => {}}
-            promptRef={promptRef}
-            composerImagesRef={composerImagesRef}
-            composerFilesRef={composerFilesRef}
-            composerTerminalContextsRef={composerTerminalContextsRef}
-            composerRef={composerRef}
-            onPageScrollKeyDown={() => {}}
-            onPageScrollKeyUp={() => {}}
-            onPageScrollRelease={() => {}}
-            editingQueuedAttachments={null}
-            onRemoveEditingQueuedAttachment={() => {}}
-            onCompactContext={() => {}}
-            onSend={(event) => event?.preventDefault()}
-            onResume={() => {}}
-            onInterrupt={() => {}}
-            onImplementPlanInNewThread={() => {}}
-            onRespondToApproval={async () => {}}
-            onSelectActivePendingUserInputOption={() => {}}
-            onAdvanceActivePendingUserInput={() => {}}
-            onDismissActivePendingUserInput={() => {}}
-            onPreviousActivePendingUserInputQuestion={() => {}}
-            onProviderModelSelect={(instanceId, model) =>
-              useComposerDraftStore
-                .getState()
-                .setModelSelection(threadRef, { instanceId, model }, { explicit: true })
-            }
-            onOpenProviderSetup={() => {}}
-            getModelDisabledReason={() => null}
-            toggleInteractionMode={() => {}}
-            handleRuntimeModeChange={() => {}}
-            handleInteractionModeChange={() => {}}
-            focusComposer={() => composerRef.current?.focusAtEnd()}
-            scheduleComposerFocus={() => composerRef.current?.focusAtEnd()}
-            setThreadError={() => {}}
-            onExpandImage={() => {}}
-            onFileOpen={() => {}}
-            machine={{
-              kind: "linux",
-              label: "linux-mini",
-              short: "LM",
-              tip: "Runs on linux-mini (Ubuntu, Linux).",
-              warning: null,
-              color: "blue",
-              isThisMachine: false,
-            }}
-          />
+            <ChatComposer
+              composerDraftTarget={threadRef}
+              environmentId={linuxMini}
+              canOperateThread
+              attachmentUploadsCapabilityKnown
+              supportsAttachmentUploads
+              supportsQuestionAttachments
+              maxFileAttachmentBytes={20 * 1024 * 1024}
+              routeKind="server"
+              routeThreadRef={threadRef}
+              draftId={null}
+              multipleModelSelections={null}
+              supportsMultipleModels={false}
+              onMultipleModelSelectionsChange={() => {}}
+              activeThreadId={threadId}
+              activeThreadEnvironmentId={linuxMini}
+              activeThread={undefined}
+              activeThreadShell={null}
+              promptHistoryMessages={[]}
+              isServerThread
+              isLocalDraftThread={false}
+              forceExpandedOnMobile={false}
+              projectSelectionRequired={false}
+              phase="ready"
+              canInterrupt={false}
+              isConnecting={false}
+              isSendBusy={false}
+              canResume={false}
+              sendDisabledReason={null}
+              isPreparingWorktree={false}
+              bannerItems={
+                banner
+                  ? [
+                      {
+                        id: "resume",
+                        variant: "default",
+                        priority: "activity",
+                        content: (
+                          <div className="px-3 py-2 text-xs text-muted-foreground">
+                            Resume with less context · 169k tokens from earlier
+                          </div>
+                        ),
+                      },
+                    ]
+                  : []
+              }
+              environmentUnavailable={null}
+              activePendingApproval={null}
+              pendingApprovals={[]}
+              pendingUserInputs={[]}
+              activePendingProgress={null}
+              activePendingResolvedAnswers={null}
+              activePendingIsResponding={false}
+              activePendingDraftAnswers={{}}
+              activePendingQuestionIndex={0}
+              respondingRequestIds={[]}
+              showPlanFollowUpPrompt={false}
+              activeProposedPlan={null}
+              activeTasksProgress={null}
+              activeTaskSteps={null}
+              threadSyncPhase={null}
+              runtimeMode="full-access"
+              interactionMode="default"
+              lockedProvider={null}
+              providerStatuses={providers}
+              providerCatalogKnown
+              activeProjectDefaultModelSelection={opus}
+              activeThreadModelSelection={opus}
+              reportedModelSelection={null}
+              limitFallbackFrom={null}
+              modelStateHeader={null}
+              activeContextWindow={null}
+              compactThreadUnavailable
+              compactDisabled
+              compactDisabledReason={null}
+              resolvedTheme={dark ? "dark" : "light"}
+              settings={DEFAULT_UNIFIED_SETTINGS}
+              keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
+              terminalOpen={false}
+              gitCwd="/home/fixture/specweave"
+              pullRequestProjectId={null}
+              pullRequestRepository={null}
+              restingControlsHost={null}
+              restingControlsHaveLeadingContext={false}
+              onRestingControlsVisibilityChange={() => {}}
+              getTimelineScrollableNode={() => null}
+              isTimelineAtLogicalEnd={() => true}
+              timelineOverflows={false}
+              onComposerOverlayHeightChange={() => {}}
+              onRestingChange={() => {}}
+              promptRef={promptRef}
+              composerImagesRef={composerImagesRef}
+              composerFilesRef={composerFilesRef}
+              composerTerminalContextsRef={composerTerminalContextsRef}
+              composerRef={composerRef}
+              onPageScrollKeyDown={() => {}}
+              onPageScrollKeyUp={() => {}}
+              onPageScrollRelease={() => {}}
+              editingQueuedAttachments={null}
+              onRemoveEditingQueuedAttachment={() => {}}
+              onCompactContext={() => {}}
+              onSend={(event) => event?.preventDefault()}
+              onResume={() => {}}
+              onInterrupt={() => {}}
+              onImplementPlanInNewThread={() => {}}
+              onRespondToApproval={async () => {}}
+              onSelectActivePendingUserInputOption={() => {}}
+              onAdvanceActivePendingUserInput={() => {}}
+              onDismissActivePendingUserInput={() => {}}
+              onPreviousActivePendingUserInputQuestion={() => {}}
+              onProviderModelSelect={(instanceId, model) =>
+                useComposerDraftStore
+                  .getState()
+                  .setModelSelection(threadRef, { instanceId, model }, { explicit: true })
+              }
+              onOpenProviderSetup={() => {}}
+              getModelDisabledReason={() => null}
+              toggleInteractionMode={() => {}}
+              handleRuntimeModeChange={() => {}}
+              handleInteractionModeChange={() => {}}
+              focusComposer={() => composerRef.current?.focusAtEnd()}
+              scheduleComposerFocus={() => composerRef.current?.focusAtEnd()}
+              setThreadError={() => {}}
+              onExpandImage={() => {}}
+              onFileOpen={() => {}}
+              machine={{
+                kind: "linux",
+                label: "linux-mini",
+                short: "LM",
+                tip: "Runs on linux-mini (Ubuntu, Linux).",
+                warning: null,
+                color: "blue",
+                isThisMachine: false,
+              }}
+            />
           </MachineSendTargetContext>
         </div>
       </ComposerSurface.Host>
