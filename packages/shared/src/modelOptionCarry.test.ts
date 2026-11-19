@@ -163,7 +163,9 @@ describe("carryModelOptions", () => {
     const carried = carryModelOptions({
       previous: [{ id: "thinking", value: true }],
       previousDescriptors: thinkingOn,
-      nextDescriptors: [{ id: "mode", label: "Mode", type: "select", options: [level("agent", "Agent")] }],
+      nextDescriptors: [
+        { id: "mode", label: "Mode", type: "select", options: [level("agent", "Agent")] },
+      ],
     });
     expect(carried.dropped).toEqual([]);
   });
@@ -172,7 +174,9 @@ describe("carryModelOptions", () => {
     const carried = carryModelOptions({
       previous: [{ id: "effort", value: "high" }],
       previousDescriptors: CLAUDE,
-      nextDescriptors: [{ id: "mode", label: "Mode", type: "select", options: [level("agent", "Agent")] }],
+      nextDescriptors: [
+        { id: "mode", label: "Mode", type: "select", options: [level("agent", "Agent")] },
+      ],
     });
     expect(describeCarriedOptions(carried, "GPT-6.2-Astra on GitHub Copilot")).toBe(
       "GPT-6.2-Astra on GitHub Copilot doesn't offer Effort, so that setting was not carried over.",
@@ -250,7 +254,8 @@ describe("carryModelOptions without a full catalog", () => {
       nextDescriptors: COPILOT,
     });
     expect(carried.options).toEqual([{ id: "reasoning_effort", value: "high" }]);
-    expect(carried.dropped).toEqual(["Thinking"]);
+    // The next model reasons at its effort level, so Thinking has nothing to lose.
+    expect(carried.dropped).toEqual([]);
   });
 
   it("names a lost option by a readable label when its descriptor is gone", () => {

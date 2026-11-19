@@ -232,7 +232,10 @@ describe("carriedProjectModelSelection", () => {
         : descriptor,
     );
     const withCodex: ReadonlyArray<ModelCarryEntry> = [
-      { ...entries[0]!, models: [model("claude-opus-5-5", "Claude Opus 5.5", thinkingOnByDefault)] },
+      {
+        ...entries[0]!,
+        models: [model("claude-opus-5-5", "Claude Opus 5.5", thinkingOnByDefault)],
+      },
       {
         instanceId: codex,
         driverKind: ProviderDriverKind.make("codex"),

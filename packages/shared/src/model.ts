@@ -345,7 +345,10 @@ export function codexModelFamily(slug: string): string {
  * which have no reasoning effort, do not.
  */
 export function isOpenAiReasoningModel(slug: string): boolean {
-  const name = slug.slice(slug.lastIndexOf("/") + 1).replace(/^openai\./i, "").toLowerCase();
+  const name = slug
+    .slice(slug.lastIndexOf("/") + 1)
+    .replace(/^openai\./i, "")
+    .toLowerCase();
   const gpt = /^gpt-(\d+)/.exec(name);
   if (gpt) return Number(gpt[1]) >= 5;
   return /^o\d+(?:$|[-.])/.test(name) || /^(?:gpt-)?codex(?:$|[-.])/.test(name);
