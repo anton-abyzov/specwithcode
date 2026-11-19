@@ -1,4 +1,7 @@
-import type { OrchestrationV2Run } from "@specweave-studio/contracts";
+import type {
+  OrchestrationV2ConversationMessage,
+  OrchestrationV2Run,
+} from "@specweave-studio/contracts";
 import { PROVIDER_FALLBACK_MESSAGE_PREFIX } from "./providerOpenFailure.ts";
 import { PROVIDER_RETRY_MESSAGE_PREFIX } from "./unopenableFallback.ts";
 
@@ -17,9 +20,33 @@ const FINISHED: ReadonlySet<OrchestrationV2Run["status"]> = new Set([
   "rolled_back",
 ]);
 
-/** How many of the thread's latest finished runs failed, counting back to the first that did not. */
+type BreakerRun = Pick<OrchestrationV2Run, "ordinal" | "status"> &
+  Partial<Pick<OrchestrationV2Run, "userMessageId">>;
+type BreakerMessage = Pick<
+  OrchestrationV2ConversationMessage,
+  "id" | "role" | "creationSource" | "scheduledTaskId"
+>;
+
+/**
+ * A run started by a person's or an agent's message, or a routine's Run now.
+ * Its failure opens a new streak: the runs before it no longer count.
+ */
+function startsFreshStreak(run: BreakerRun, messages: ReadonlyArray<BreakerMessage>): boolean {
+  if (run.userMessageId === undefined) return false;
+  const message = messages.find((candidate) => candidate.id === run.userMessageId);
+  if (message === undefined || message.role !== "user") return false;
+  if (message.id.startsWith(ROUTINE_MESSAGE_PREFIX))
+    return isManualRoutineFire(message.id, message.scheduledTaskId);
+  return message.creationSource !== "server";
+}
+
+/**
+ * How many of the thread's latest finished runs failed, counting back to the
+ * first that did not, or to the failed run a person's message started.
+ */
 export function trailingFailedRuns(
-  runs: ReadonlyArray<Pick<OrchestrationV2Run, "ordinal" | "status">>,
+  runs: ReadonlyArray<BreakerRun>,
+  messages: ReadonlyArray<BreakerMessage> = [],
 ): number {
   const finished = runs
     .filter((run) => FINISHED.has(run.status))
@@ -28,20 +55,22 @@ export function trailingFailedRuns(
   for (const run of finished) {
     if (run.status !== "failed") break;
     failed++;
+    if (startsFreshStreak(run, messages)) break;
   }
   return failed;
 }
 
 /**
  * Why an automatic run (isBreakerGuardedRun) may not start, or null when it may. A person's or an agent's
- * message always starts, and its success resets the count.
+ * message always starts and resets the count: its own retry starts a new streak.
  */
 export function failedRunBreakerRefusal(
   automatic: boolean,
-  runs: ReadonlyArray<Pick<OrchestrationV2Run, "ordinal" | "status">>,
+  runs: ReadonlyArray<BreakerRun>,
+  messages: ReadonlyArray<BreakerMessage> = [],
 ): string | null {
   if (!automatic) return null;
-  const failed = trailingFailedRuns(runs);
+  const failed = trailingFailedRuns(runs, messages);
   return failed < FAILED_RUN_BREAKER_LIMIT
     ? null
     : `Automatic runs are paused in this thread: its last ${failed} runs failed. Read the last error, fix the cause, then send a message to run it again.`;

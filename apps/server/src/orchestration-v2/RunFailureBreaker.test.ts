@@ -40,6 +40,51 @@ it("pauses automatic runs after three failures in a row and never a person's mes
   assert.isNull(failedRunBreakerRefusal(true, [...streak, { ordinal: 5, status: "completed" }]));
 });
 
+it("starts a new streak at a failed run a person's message started", () => {
+  type Message = Parameters<typeof trailingFailedRuns>[1][number];
+  const message = (id: string, creationSource: Message["creationSource"], scheduledTaskId?: string) =>
+    ({
+      id,
+      role: "user",
+      creationSource,
+      ...(scheduledTaskId === undefined ? {} : { scheduledTaskId }),
+    }) as Message;
+  const streak = [
+    { ordinal: 1, status: "failed" as const, userMessageId: "scheduled-task-message:t:1" },
+    { ordinal: 2, status: "failed" as const, userMessageId: "scheduled-task-message:t:2" },
+    { ordinal: 3, status: "failed" as const, userMessageId: "scheduled-task-message:t:3" },
+  ] as Parameters<typeof trailingFailedRuns>[0];
+  const messages = [
+    message("scheduled-task-message:t:1", "server", "t"),
+    message("scheduled-task-message:t:2", "server", "t"),
+    message("scheduled-task-message:t:3", "server", "t"),
+    message("message:person", "web"),
+    message("provider-retry:thread:run-4", "server"),
+    message("scheduled-task-message:t:manual:c", "server", "t"),
+  ];
+  const after = (...more: Array<[string, OrchestrationV2Run["status"]]>) => [
+    ...streak,
+    ...more.map(([userMessageId, status], index) => ({ ordinal: 4 + index, status, userMessageId })),
+  ] as Parameters<typeof trailingFailedRuns>[0];
+  assert.equal(trailingFailedRuns(streak, messages), 3);
+  // The person's message failed to open: its retry may still start.
+  const personFailed = after(["message:person", "failed"]);
+  assert.equal(trailingFailedRuns(personFailed, messages), 1);
+  assert.isNull(failedRunBreakerRefusal(true, personFailed, messages));
+  // Its retries count from it, and the third failure pauses again.
+  const retriesFailed = after(
+    ["message:person", "failed"],
+    ["provider-retry:thread:run-4", "failed"],
+    ["provider-retry:thread:run-4", "failed"],
+  );
+  assert.include(failedRunBreakerRefusal(true, retriesFailed, messages), "last 3 runs failed");
+  // A routine's Run now resets like a message; an automatic fire does not.
+  assert.equal(trailingFailedRuns(after(["scheduled-task-message:t:manual:c", "failed"]), messages), 1);
+  assert.equal(trailingFailedRuns(after(["scheduled-task-message:t:3", "failed"]), messages), 4);
+  // Without the messages every failure counts.
+  assert.equal(trailingFailedRuns(personFailed), 4);
+});
+
 it("guards routine fires and provider-open retries, not limit recovery or people", () => {
   const command = (messageId: string, creationSource = "server") => ({
     commandId: `command:${messageId}`,
