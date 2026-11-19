@@ -43,6 +43,10 @@ describe("preswitchMoveRefusal", () => {
     expect(preswitchMoveRefusal([run("completed"), run("starting", 1)]).refusal).toBe(
       PRESWITCH_TURN_STARTED,
     );
+    // A queued send starts on the model it was sent with: the move waits for it.
+    expect(preswitchMoveRefusal([run("completed"), run("queued", 1)]).refusal).toBe(
+      PRESWITCH_TURN_STARTED,
+    );
   });
 });
 
@@ -55,6 +59,7 @@ describe("preswitchWindowHeld", () => {
     expect(preswitchWindowHeld(sent, "t2", "claudeAgent", at)).toBe(false);
     expect(preswitchWindowHeld(sent, "t1", "codex", at)).toBe(false);
     const open = ["limit-preswitch:t1:claudeAgent:open"];
-    expect(preswitchWindowHeld(open, "t1", "claudeAgent", at)).toBe(false);
+    // A window with no reset holds until the sweep reads it under the threshold.
+    expect(preswitchWindowHeld(open, "t1", "claudeAgent", at)).toBe(true);
   });
 });

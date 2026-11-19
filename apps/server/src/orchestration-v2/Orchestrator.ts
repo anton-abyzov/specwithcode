@@ -3762,16 +3762,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // that took the fallback's model go home with it, held or not: left on
     // the fallback, the first to start would switch the thread straight back.
     const runsFollowingWayBack =
-      (command.type === "thread.model-selection.set" || command.type === "provider.switch") &&
-      ((command.type === "thread.model-selection.set" &&
-        (isLimitWayBack(command.commandId) ||
-          // The move before the limit takes them along too, or the first to
-          // start would put the thread back on the limited provider (1089).
-          command.commandId.startsWith(LIMIT_PRESWITCH_COMMAND_PREFIX))) ||
-        // A pick while the thread stands in for a pre-switch: the sends the
-        // move carried along follow that pick too, so starting one never
-        // undoes it. A send pinned to its own model keeps it.
-        (thread.limitPreswitchFrom != null && !isServerSelectionMove(command.commandId)))
+      command.type === "thread.model-selection.set" && isLimitWayBack(command.commandId)
         ? yield* Effect.gen(function* () {
             const { runs } = yield* loadProjectionForCommand(command, ["runs"]);
             const queued = runs.filter((run) => run.status === "queued");

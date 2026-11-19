@@ -28,7 +28,7 @@ import * as Projects from "../project/ProjectService.ts";
 import * as Instances from "../provider/ProviderInstanceRegistry.ts";
 import * as Providers from "../provider/ProviderRegistry.ts";
 import { provider } from "../studio/fixtures.ts";
-import { limitHandoffTrigger } from "./MachineLimitHandoff.ts";
+import { limitHandoffTrigger, MachineLimitHandoff } from "./MachineLimitHandoff.ts";
 import { PRESWITCH_TURN_STARTED } from "./limitPreswitchGuard.ts";
 import {
   makeSweep,
@@ -123,6 +123,8 @@ interface Thread {
   background?: boolean;
   /** Snoozed by a person until an hour from now. */
   snoozed?: boolean;
+  /** Sends waiting in a held queue. */
+  heldQueued?: number;
   lastError?: string;
 }
 
@@ -140,6 +142,8 @@ interface World {
   codexReadAt: number | null;
   /** Instances the sweep asked to read again. */
   readonly refreshed: string[];
+  /** The handoff keys the sweep asked another machine about. */
+  readonly considered?: string[];
   /** Called on each shell re-read (the admission re-check reads the shell again). */
   onReread?: (thread: Thread) => void;
   readonly dispatched: OrchestrationV2ServerCommand[];
@@ -198,6 +202,7 @@ function shellOf(thread: Thread) {
     pendingRuntimeRequest: null,
     settledOverride: thread.settledOverride,
     ...(thread.snoozed === true ? { snoozedUntil: DateTime.makeUnsafe(at + 3_600_000) } : {}),
+    ...(thread.heldQueued === undefined ? {} : { heldQueuedCount: thread.heldQueued }),
     ...(thread.background === true
       ? { pendingBackgroundTasks: [{ kind: "command", taskId: "task-1" }] }
       : {}),
@@ -318,7 +323,21 @@ const sweeps = (state: World, body: (sweep: () => Effect.Effect<void>) => Effect
     yield* TestClock.setTime(at);
     const sweep = yield* makeSweep;
     yield* body(() => Effect.orDie(Effect.asVoid(sweep())));
-  }).pipe(Effect.provide(layers(state)), Effect.provideService(ProviderFallbackEnv, {}));
+  }).pipe(
+    Effect.provide(layers(state)),
+    Effect.provideService(ProviderFallbackEnv, {}),
+    Effect.provideService(MachineLimitHandoff, {
+      bind: () => Effect.void,
+      consider: (input) =>
+        Effect.sync(() => {
+          state.considered?.push(input.trigger.key);
+          return "skipped" as const;
+        }),
+      holds: () => Effect.succeed(false),
+      localTurnBlocked: () => Effect.succeed(false),
+      candidates: () => Effect.die("No other machine in these tests"),
+    }),
+  );
 const nextSweep = () => TestClock.adjust(PROVIDER_FALLBACK_SWEEP_INTERVAL_MS);
 const ids = (state: World, threadId = "t1") =>
   state.dispatched
@@ -406,6 +425,30 @@ describe("the idle move before the limit, from the sweep (1089)", () => {
         }),
       );
       expect(ids(state)).toEqual([preswitchId]);
+    }),
+  );
+
+  it.effect("asks no other machine again after a hand switch back", () =>
+    Effect.gen(function* () {
+      const state = world({
+        considered: [],
+        settings: {
+          ...settings,
+          providerLimitMachineTargets: [{ environmentId: "other" }] as never,
+          providerLimitTargetOrder: "other-machine-first",
+        },
+      });
+      yield* sweeps(state, (sweep) =>
+        Effect.gen(function* () {
+          yield* sweep();
+          state.threads[0]!.selection = onClaude;
+          state.threads[0]!.preswitch = null;
+          yield* nextSweep();
+          yield* sweep();
+        }),
+      );
+      expect(ids(state)).toEqual([preswitchId]);
+      expect(state.considered).toEqual([`limit-premove:t1:${claudeId}:${resetAt}`]);
     }),
   );
 
@@ -560,6 +603,9 @@ describe("what the idle move leaves alone (1089)", () => {
   it.effect("mid-turn", () => nothing(world({ threads: [idleThread({ activeRunId: "r2" })] })));
   it.effect("a settled thread", () =>
     nothing(world({ threads: [idleThread({ settledOverride: "settled" })] })),
+  );
+  it.effect("a thread with held sends", () =>
+    nothing(world({ threads: [idleThread({ heldQueued: 1 })] })),
   );
   it.effect("a snoozed thread", () => nothing(world({ threads: [idleThread({ snoozed: true })] })));
   it.effect("a thread with no run", () =>

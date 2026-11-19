@@ -32,6 +32,7 @@ import {
   limitRestartRequest,
   limitStopWaitsForReset,
   provenFallbackSelection,
+  providerUsedPercent,
   type ProviderFallbackRule,
   reportsNoUsage,
   ruleNamesInstance,
@@ -98,7 +99,11 @@ import {
 } from "./providerOpenFailure.ts";
 import { UnopenableHolds, UsageLimitHolds } from "./UnopenableHolds.ts";
 import { contextOverflowStop } from "./contextOverflowFallback.ts";
-import { PRESWITCH_TURN_STARTED, preswitchWindowHeld } from "./limitPreswitchGuard.ts";
+import {
+  PRESWITCH_TURN_STARTED,
+  preswitchIdPrefix,
+  preswitchWindowHeld,
+} from "./limitPreswitchGuard.ts";
 import { contextRecoveryStep, isContextOverflowFailure } from "./ContextOverflowRecoveryWorker.ts";
 import { latestRootProviderFailure } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import { isClaudePlanLimitStop } from "../provider/claudeLimitReset.ts";
@@ -666,6 +671,7 @@ export function providerLimitStep(
 type IdleCandidate = FallbackThread & {
   readonly lineage?: { readonly relationshipToParent?: string | null } | null;
   readonly creationSource?: string | null;
+  readonly heldQueuedCount?: number | null;
 };
 
 /**
@@ -697,6 +703,8 @@ export function idlePreswitchId(
     // A session still hosting background work would be cut off from it.
     thread.activityRunStatus != null ||
     hostsBackgroundWork(thread) ||
+    // Held sends start on the model they were sent with: the move waits for them.
+    (thread.heldQueuedCount ?? 0) > 0 ||
     // A subagent the provider spawned takes no messages: it has no next turn.
     (thread.lineage?.relationshipToParent === "subagent" && thread.creationSource === "provider")
   )
@@ -1865,12 +1873,30 @@ export const makeSweep = Effect.gen(function* () {
       };
       // An idle move already sent this window leaves the thread as one with no
       // step: no Stop read or handoff each sweep, and its way back still runs.
+      // A reading under the threshold ends the window's hold on its moves.
+      const threshold = resolved.providerLimitSwitchAtPercent;
+      const ownProvider = providersFor(thread).find(
+        (entry) => entry.instanceId === thread.providerInstanceId,
+      );
+      const used =
+        ownProvider === undefined
+          ? null
+          : providerUsedPercent(ownProvider, now, thread.modelSelection.model);
+      if (threshold != null && used !== null && used < threshold) {
+        const prefix = preswitchIdPrefix(thread.id, thread.providerInstanceId);
+        yield* Ref.update(sent, (current) =>
+          [...current].some((id) => id.startsWith(prefix))
+            ? new Set([...current].filter((id) => !id.startsWith(prefix)))
+            : current,
+        );
+      }
       const sentIds = yield* Ref.get(sent);
-      // A move sent for an earlier window that has not reset holds too, so a
-      // hand switch back stays when another window becomes the fullest.
+      // A move sent this window holds, under whatever id the window has now,
+      // so a hand switch back stays until it resets (preswitchWindowHeld).
+      const windowHeld = (current: FallbackThread, at: number) =>
+        preswitchWindowHeld(sentIds, current.id, current.providerInstanceId, at);
       const idleHeld = (current: FallbackThread, commandId: string) =>
-        sentIds.has(commandId) ||
-        preswitchWindowHeld(sentIds, current.id, current.providerInstanceId, now);
+        sentIds.has(commandId) || windowHeld(current, now);
       const stepFor = (current: FallbackThread) => {
         const next = providerLimitStep(current, providersFor(current), resolved, now, options);
         return next?.type === "switch" &&
@@ -1980,7 +2006,11 @@ export const makeSweep = Effect.gen(function* () {
             stoppedOnLimit(current) &&
             !waitsForReset(current, rule, at) &&
             !(options.stoppedRun != null && pickedSinceStop(current, options.stoppedRun)),
-          atThreshold: shouldSwitchBeforeTurn({ provider, model, rule, nowMs: at }),
+          // A thread the window's idle move already went out for stays put
+          // on this machine too, like the local move (1089).
+          atThreshold:
+            shouldSwitchBeforeTurn({ provider, model, rule, nowMs: at }) &&
+            (stoppedOnLimit(current) || !windowHeld(current, at)),
           localStep,
           windowKey: usageWindowKey(provider, at, model),
         });
