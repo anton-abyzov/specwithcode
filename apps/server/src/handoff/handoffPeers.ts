@@ -74,6 +74,7 @@ import {
   TransferStatusResponse,
 } from "./handoffWire.ts";
 import { reviewStaysText } from "./handoffReviewLock.ts";
+import { PeerCheckRequest, PeerCheckResponse, unknownCheckPath } from "./handoffPlan.ts";
 import {
   LinkedContentRequest,
   LinkedContentResponse,
@@ -123,6 +124,7 @@ const TIMEOUT_MS: Record<PeerPath, number> = {
   "transfer-pull": 300_000,
   "review-replicate": 120_000,
   "review-takeover": 180_000,
+  check: 30_000,
 };
 /** A memory page, a coordinator's content or a plan answers with up to the link cap; the rest is small. */
 const answerLimit = (path: PeerPath) =>
@@ -273,6 +275,11 @@ export class HandoffPeers extends Context.Service<
       request: TransferStatusRequest,
     ) => Effect.Effect<TransferStatusResponse, HandoffPeerError>;
     /** Asks the machine that runs a thread to hand it to this one (1390). */
+    /** What the machine would run a thread on, asked before anything is copied there. */
+    readonly check: (
+      environmentId: EnvironmentId,
+      request: PeerCheckRequest,
+    ) => Effect.Effect<PeerCheckResponse, HandoffPeerError>;
     readonly transferPull: (
       environmentId: EnvironmentId,
       request: TransferPullRequest,
@@ -286,6 +293,8 @@ const encodeExtrasMeta = Schema.encodeSync(ExtrasReplicateMeta);
 const decodeExtrasReplicate = Schema.decodeUnknownOption(ExtrasReplicateResponse);
 const encodeMeta = Schema.encodeSync(ReplicateMeta);
 const encodePreflight = Schema.encodeSync(PeerPreflightRequest);
+const encodeCheck = Schema.encodeSync(PeerCheckRequest);
+const decodeCheck = Schema.decodeUnknownOption(PeerCheckResponse);
 const encodeTakeover = Schema.encodeSync(TakeoverRequest);
 const encodeHeartbeat = Schema.encodeSync(HeartbeatRequest);
 const encodeCoordinatorLease = Schema.encodeSync(CoordinatorLeaseRequest);
@@ -587,6 +596,10 @@ export const make = Effect.gen(function* () {
           uncertain: false,
         });
       }
+      // A machine from before hand off plans has no such path. It changed nothing.
+      if (answer.status === 404 && path === "check") {
+        return yield* new HandoffPeerError(unknownCheckPath(target.label));
+      }
       if (!answer.ok) return yield* refusedAnswer(target.label, answer.status, json);
       const decoded = decode(json);
       if (Option.isSome(decoded)) return decoded.value;
@@ -646,6 +659,8 @@ export const make = Effect.gen(function* () {
       ),
     preflight: (environmentId, request) =>
       postJson(environmentId, "preflight", encodePreflight(request), decodePreflight),
+    check: (environmentId, request) =>
+      postJson(environmentId, "check", encodeCheck(request), decodeCheck),
     takeover: (environmentId, request) =>
       postJson(
         environmentId,

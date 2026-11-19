@@ -258,13 +258,19 @@ describe("turnRefusal", () => {
 });
 
 describe("checkFailures: the check before anything is copied (1390)", () => {
-  const { checkpointSequence: _sequence, requiredSequence: _required, missingFiles: _files, ...base } =
-    ready;
+  const {
+    checkpointSequence: _sequence,
+    requiredSequence: _required,
+    missingFiles: _files,
+    ...base
+  } = ready;
 
   it("passes a thread the destination holds no copy of", () => {
     expect(checkFailures(base)).toEqual([]);
     // The preflight of the Hold step still needs the copy.
-    expect(messages({ checkpointSequence: null })).toEqual(["Minis: no checkpoint for this thread"]);
+    expect(messages({ checkpointSequence: null })).toEqual([
+      "Minis: no checkpoint for this thread",
+    ]);
   });
 
   it("names the link, the grant, the provider, the model and the lease", () => {
