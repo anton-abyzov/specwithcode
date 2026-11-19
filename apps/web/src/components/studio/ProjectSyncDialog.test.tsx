@@ -495,6 +495,161 @@ it("stops between two calls when a grant changes during the run", async () => {
   expect(results).toContain("This window can only read M5");
 });
 
+/** Two repositories of branches on each machine, and a first send that waits to be let go. */
+async function midRun() {
+  const paths = [".", "apps/site"];
+  const { api } = scripted({
+    fetch: {
+      M4: fetched(...paths.map((path) => facts(path))),
+      M5: fetched(...paths.map((path) => facts(path))),
+    },
+    inventory: { M4: branches(...paths), M5: branches(...paths) },
+  });
+  const send = api.sendExtras;
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let first = true;
+  api.sendExtras = vi.fn<ProjectSyncApi["sendExtras"]>(async (...args) => {
+    const wait = first;
+    first = false;
+    if (wait) await held;
+    return send(...args);
+  });
+  await render(api);
+  await tickAll();
+  // Not awaited to its end: the first send is outstanding.
+  await act(async () => button("[data-sync-run]").click());
+  expect(api.sendExtras).toHaveBeenCalledTimes(1);
+  return { api, release: () => act(async () => release()) };
+}
+
+it("sends nothing more once the dialog is closed during a send", async () => {
+  const { api, release } = await midRun();
+  await act(async () => root.render(<div />));
+  await release();
+  // Batch two of M4 and everything of M5 stay unsent, and nobody is asked where they stand.
+  expect(api.sendExtras).toHaveBeenCalledTimes(1);
+  expect(api.status).not.toHaveBeenCalled();
+});
+
+it("asks for no inventory after a check whose dialog was closed", async () => {
+  const { api } = scripted({ fetch: { M4: fetched(facts(".")), M5: fetched(facts(".")) } });
+  const fetchOf = api.fetch;
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  api.fetch = vi.fn<ProjectSyncApi["fetch"]>(async (on) => {
+    await held;
+    return fetchOf(on);
+  });
+  await render(api);
+  expect(stage()).toBe("checking");
+  await act(async () => root.render(<div />));
+  await act(async () => release());
+  expect(api.inventory).not.toHaveBeenCalled();
+});
+
+it("does not revive a run when a grant is lost and comes back during a send", async () => {
+  const { api, release } = await midRun();
+  await render(api, [target(M5, READ_ONLY(M5))]);
+  await render(api);
+  await release();
+  expect(api.sendExtras).toHaveBeenCalledTimes(1);
+  expect(api.status).not.toHaveBeenCalled();
+  expect(stage()).toBe("result");
+  // What was answered is kept; the rest says it was never sent, on both machines.
+  const a = extraStates("a");
+  expect([count(a, "sent"), count(a, "not-sent")]).toEqual([200, 100]);
+  expect(count(extraStates("b"), "not-sent")).toBe(300);
+  expect(document.querySelector('[data-sync-extra-results="a"]')?.textContent).toContain(
+    "This window can only read M5",
+  );
+  expect(document.querySelector("h2")?.textContent).not.toContain("in sync");
+});
+
+it("shows an extra the source could not confirm as one that may have arrived", async () => {
+  const { api } = scripted({
+    fetch: { M4: fetched(facts(".")), M5: fetched(facts(".")) },
+    inventory: { M4: WORK },
+  });
+  const send = api.sendExtras;
+  // The call succeeds: the uncommitted files have a receipt, the branch has none from M5.
+  api.sendExtras = vi.fn<ProjectSyncApi["sendExtras"]>(async (...args) => {
+    const answer = await send(...args);
+    if (!answer.ok) return answer;
+    return {
+      ok: true as const,
+      value: {
+        items: answer.value.items.map((item) =>
+          item.kind === "branch"
+            ? {
+                ...item,
+                status: "stays" as const,
+                arrivedAs: null,
+                landed: null,
+                stays: "unreachable" as const,
+                detail: "The link closed after 30 s.",
+                bytes: 0,
+              }
+            : item,
+        ),
+      },
+    };
+  });
+  await render(api);
+  await tick("not-pushed");
+  await tick("uncommitted");
+  await click("[data-sync-run]");
+  expect(extraStates("a")).toEqual(["unknown", "sent"]);
+  const line = document.querySelector('[data-sync-extra-result="unknown"]')?.textContent ?? "";
+  expect(line).toContain(
+    "No answer came back. It may have arrived on M5: check M5 before sending again.",
+  );
+  expect(line).toContain("The link closed after 30 s.");
+  expect(line).not.toContain("Stays");
+  expect(document.querySelector("[data-sync-live]")?.textContent).toBe(
+    "Sync ended, and not every answer came back. Each line says what to check.",
+  );
+});
+
+it("never says in sync when neither machine read a repository the result shows", async () => {
+  const { api } = scripted({
+    fetch: {
+      M4: fetched(facts(".", { behind: 3 }), facts("tools/cli")),
+      M5: fetched(facts("."), facts("tools/cli")),
+    },
+    // Afterwards both scans leave the nested repository out.
+    status: {
+      M4: { scanLimited: false, repositories: [checkout(".")] },
+      M5: { scanLimited: false, repositories: [checkout(".")] },
+    },
+  });
+  await render(api);
+  await click("[data-sync-run]");
+  expect(stage()).toBe("result");
+  expect(document.querySelector('[data-sync-row="tools/cli"]')).not.toBeNull();
+  expect(document.querySelector("h2")?.textContent).toBe("Sync finished for Atlas: M4 and M5");
+});
+
+it("never says in sync when one machine lists a repository twice", async () => {
+  const { api } = scripted({
+    fetch: {
+      M4: fetched(facts(".", { behind: 3 }), facts("tools/cli")),
+      M5: fetched(facts("."), facts("tools/cli")),
+    },
+    status: {
+      M4: { scanLimited: false, repositories: [checkout("."), checkout(".")] },
+      M5: { scanLimited: false, repositories: [checkout("."), checkout("tools/cli")] },
+    },
+  });
+  await render(api);
+  await click("[data-sync-run]");
+  expect(document.querySelector("h2")?.textContent).toBe("Sync finished for Atlas: M4 and M5");
+});
+
 it("leaves no Sync to press once the pair is blocked, and a late press moves nothing", async () => {
   const { api } = scripted({
     fetch: { M4: fetched(facts(".", { behind: 3 })), M5: fetched(facts(".")) },

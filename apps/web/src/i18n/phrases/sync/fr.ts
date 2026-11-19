@@ -99,8 +99,6 @@ export const syncFr: PhraseCatalog = {
     "Reste sur {source} : il dépasse une limite de taille. « Comparer tous les fichiers… » peut l’apporter.",
   "Stays on {source}: update SpecWithCode on {target} first.":
     "Reste sur {source} : mettez d’abord à jour SpecWithCode sur {target}.",
-  "Stays on {source}: {target} could not be reached.":
-    "Reste sur {source} : {target} n’a pas pu être joint.",
   "Stays on {source}: {reason}.": "Reste sur {source} : {reason}.",
   "Stays on {source}: it could not be sent.": "Reste sur {source} : l’envoi a échoué.",
   "Needs update · {version}": "Mise à jour requise · {version}",

@@ -102,8 +102,6 @@ export const syncDe: PhraseCatalog = {
     "Bleibt auf {source}: Es überschreitet eine Größengrenze. „Alle Dateien vergleichen…“ kann es mitbringen.",
   "Stays on {source}: update SpecWithCode on {target} first.":
     "Bleibt auf {source}: Aktualisiere zuerst SpecWithCode auf {target}.",
-  "Stays on {source}: {target} could not be reached.":
-    "Bleibt auf {source}: {target} war nicht erreichbar.",
   "Stays on {source}: {reason}.": "Bleibt auf {source}: {reason}.",
   "Stays on {source}: it could not be sent.":
     "Bleibt auf {source}: Es konnte nicht gesendet werden.",

@@ -99,8 +99,6 @@ export const syncPt: PhraseCatalog = {
     "Fica em {source}: passa de um limite de tamanho. “Comparar todos os arquivos…” pode trazer isso.",
   "Stays on {source}: update SpecWithCode on {target} first.":
     "Fica em {source}: atualize primeiro o SpecWithCode em {target}.",
-  "Stays on {source}: {target} could not be reached.":
-    "Fica em {source}: não foi possível acessar {target}.",
   "Stays on {source}: {reason}.": "Fica em {source}: {reason}.",
   "Stays on {source}: it could not be sent.": "Fica em {source}: não foi possível enviar.",
   "Needs update · {version}": "Precisa atualizar · {version}",

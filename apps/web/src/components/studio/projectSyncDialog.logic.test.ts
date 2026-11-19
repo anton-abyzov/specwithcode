@@ -717,7 +717,16 @@ describe("extraResultLine", () => {
       'Stays on M4: it is over a size limit. "Compare all files…" can bring it.',
     );
     expect(stays("needs-update")).toBe("Stays on M4: update SpecWithCode on M5 first.");
-    expect(stays("unreachable")).toBe("Stays on M4: M5 could not be reached.");
+    // The source could not reach the target, perhaps after the target wrote the branch.
+    const lost = extraResultLine(
+      sent({ status: "stays", arrivedAs: null, landed: null, stays: "unreachable", bytes: 0 }),
+      names,
+    );
+    expect(lost.state).toBe("unknown");
+    expect(readSyncText(lost.sentence)).toBe(
+      "No answer came back. It may have arrived on M5: check M5 before sending again.",
+    );
+    expect(readSyncText(lost.sentence)).not.toContain("Stays");
     // What the other machine said goes under the summary once, as sent.
     const told = (reason: "needs-update" | "unreachable", detail: string | null) =>
       extraResultLine(
@@ -732,7 +741,12 @@ describe("extraResultLine", () => {
     );
     expect(told("unreachable", null)).toBeNull();
     expect(told("unreachable", "  ")).toBeNull();
-    expect(told("unreachable", "Stays on M4: M5 could not be reached.")).toBeNull();
+    expect(
+      told(
+        "unreachable",
+        "No answer came back. It may have arrived on M5: check M5 before sending again.",
+      ),
+    ).toBeNull();
     // A reason already inside the sentence is not repeated under it.
     expect(
       extraResultLine(sent({ status: "stays", stays: "refused", detail: "No grant." }), names)
@@ -826,8 +840,14 @@ describe("extras that were asked for", () => {
     expect(extrasSendOutcome({ _tag: "ProjectSyncError", code: "later", reason: "x" })).toBe(
       "unknown",
     );
-    expect(extrasSendOutcome({ _tag: "EnvironmentRpcUnavailableError" })).toBe("unknown");
+    // No connection when the call was made: it never left this window.
+    expect(extrasSendOutcome({ _tag: "EnvironmentRpcUnavailableError" })).toBe("not-sent");
     expect(extrasSendOutcome({ _tag: "SchemaError" })).toBe("unknown");
+    // Words about an unknown request inside another failure prove nothing.
+    expect(
+      extrasSendOutcome({ _tag: "SchemaError", message: "Unknown request tag: projectSync.run" }),
+    ).toBe("unknown");
+    expect(extrasSendOutcome(new Error("socket closed: Unknown request tag"))).toBe("unknown");
     expect(extrasSendOutcome(undefined)).toBe("unknown");
   });
 });
@@ -857,26 +877,36 @@ describe("what the result may claim", () => {
     scanLimited: false,
   });
 
+  const proves = (
+    a: Parameters<typeof statusesProveInSync>[0],
+    b: Parameters<typeof statusesProveInSync>[1],
+    shown: readonly string[] = ["."],
+  ) => statusesProveInSync(a, b, shown);
+
   it("is proven in sync only by the same branch at the same commit, clean, on both", () => {
-    expect(statusesProveInSync(status(at("main")), status(at("main")))).toBe(true);
+    expect(proves(status(at("main")), status(at("main")))).toBe(true);
     // A clone that landed on the default branch while the source is on another one.
-    expect(statusesProveInSync(status(at("release")), status(at("main", "b".repeat(40))))).toBe(
+    expect(proves(status(at("release")), status(at("main", "b".repeat(40))))).toBe(false);
+    expect(proves(status(at("release")), status(at("main")))).toBe(false);
+    // Two fast-forwards on different upstreams end at different commits.
+    expect(proves(status(at("main")), status(at("main", "c".repeat(40))))).toBe(false);
+    expect(proves(status(at("main", HEAD, false)), status(at("main")))).toBe(false);
+    expect(proves(status(at(null)), status(at(null)))).toBe(false);
+    expect(proves(status(at("main")), status(at("main"), at("main", HEAD, true, "docs")))).toBe(
       false,
     );
-    expect(statusesProveInSync(status(at("release")), status(at("main")))).toBe(false);
-    // Two fast-forwards on different upstreams end at different commits.
-    expect(statusesProveInSync(status(at("main")), status(at("main", "c".repeat(40))))).toBe(false);
-    expect(statusesProveInSync(status(at("main", HEAD, false)), status(at("main")))).toBe(false);
-    expect(statusesProveInSync(status(at(null)), status(at(null)))).toBe(false);
-    expect(
-      statusesProveInSync(status(at("main")), status(at("main"), at("main", HEAD, true, "docs"))),
-    ).toBe(false);
-    expect(
-      statusesProveInSync({ ...status(at("main")), scanLimited: true }, status(at("main"))),
-    ).toBe(false);
-    expect(statusesProveInSync(status(), status())).toBe(false);
+    expect(proves({ ...status(at("main")), scanLimited: true }, status(at("main")))).toBe(false);
+    expect(proves(status(), status())).toBe(false);
+    // Both reads leave out a repository the result shows: nothing fresh is known of it.
+    expect(proves(status(at("main")), status(at("main")), [".", "docs"])).toBe(false);
+    // A path listed twice on one machine is not a read of the other repository there.
+    const nested = at("main", HEAD, true, "docs");
+    expect(proves(status(at("main"), at("main")), status(at("main"), nested))).toBe(false);
+    expect(proves(status(at("main"), nested), status(at("main"), nested), [".", "docs"])).toBe(
+      true,
+    );
     // No answer after the run is no proof.
-    expect(statusesProveInSync(null, status(at("main")))).toBe(false);
+    expect(proves(null, status(at("main")))).toBe(false);
   });
 
   it("never says in sync without that proof, or beside something a machine said", () => {
@@ -977,6 +1007,19 @@ describe("syncFailure", () => {
     expect(isUnknownSyncCall("Unknown request tag: projectSync.fetch")).toBe(true);
     expect(isUnknownSyncCall(new Error("Unknown request tag: projectSync.status"))).toBe(true);
     expect(isUnknownSyncCall(new Error("socket closed"))).toBe(false);
+    // Only the exact answer for one of Sync's own calls, never a typed failure with the words.
+    expect(isUnknownSyncCall("Unknown request tag: git.status")).toBe(false);
+    expect(isUnknownSyncCall("It said: Unknown request tag: projectSync.fetch")).toBe(false);
+    expect(
+      isUnknownSyncCall({ _tag: "SchemaError", message: "Unknown request tag: projectSync.fetch" }),
+    ).toBe(false);
+    expect(
+      isUnknownSyncCall({
+        _tag: "ProjectSyncError",
+        code: "failed",
+        reason: "Unknown request tag: projectSync.fetch",
+      }),
+    ).toBe(false);
     expect(read("Unknown request tag: projectSync.fetch")).toEqual([
       "needs-update",
       'Update SpecWithCode on M5 to sync with Git. "Compare all files…" works now.',

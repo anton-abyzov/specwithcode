@@ -100,8 +100,6 @@ export const syncKo: PhraseCatalog = {
     "{source}에 남습니다: 크기 제한을 넘습니다. '모든 파일 비교…'로 가져올 수 있습니다.",
   "Stays on {source}: update SpecWithCode on {target} first.":
     "{source}에 남습니다: 먼저 {target}의 SpecWithCode를 업데이트하세요.",
-  "Stays on {source}: {target} could not be reached.":
-    "{source}에 남습니다: {target}에 연결할 수 없었습니다.",
   "Stays on {source}: {reason}.": "{source}에 남습니다: {reason}.",
   "Stays on {source}: it could not be sent.": "{source}에 남습니다: 보낼 수 없었습니다.",
   "Needs update · {version}": "업데이트 필요 · {version}",
