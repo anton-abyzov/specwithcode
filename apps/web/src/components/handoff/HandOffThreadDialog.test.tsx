@@ -255,3 +255,16 @@ it("labels the main button for each state", () => {
     "Switching…",
   );
 });
+
+it("keeps confirm disabled and says why while Bring back is refused", async () => {
+  const view = props({
+    destinations: [{ environmentId: M4, label: "M4", state: "reachable" }],
+    destinationId: M4,
+    blockedReason: "Answer its question, approval or sign-in first.",
+  });
+  await render(view);
+  expect(text()).toContain("Answer its question, approval or sign-in first.");
+  const confirm = button("Hand off to M4");
+  expect(confirm).toBeDefined();
+  expect(confirm!.disabled).toBe(true);
+});

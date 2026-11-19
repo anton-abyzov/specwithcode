@@ -26,7 +26,7 @@ import {
   MessageCircleQuestionIcon,
   ShieldQuestionIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useOpenChat } from "../hooks/useOpenChat";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
@@ -66,6 +66,7 @@ import {
   interactedRecentlyHere,
 } from "../lib/backgroundActivityReporter";
 import { toastManager } from "./ui/toast";
+import { HandoffNotices } from "./handoff/HandoffNotices";
 import { isAccessWait } from "../studio/accessWait";
 import { paneWords } from "../studio/assistantTerms";
 import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
@@ -212,12 +213,15 @@ export function ThreadNotificationCoordinator() {
   if (mode === "off" && !inAppNotificationsEnabled && !inputNeededAlertsEnabled) return null;
 
   return environmentIds.map((environmentId) => (
-    <EnvironmentNotifications
-      key={environmentId}
-      environmentId={environmentId}
-      onNotification={onNotification}
-      onWithdraw={onWithdraw}
-    />
+    <Fragment key={environmentId}>
+      <EnvironmentNotifications
+        environmentId={environmentId}
+        onNotification={onNotification}
+        onWithdraw={onWithdraw}
+      />
+      {/* An automatic hand off, on the source and the destination (1390 AC-28). */}
+      <HandoffNotices environmentId={environmentId} />
+    </Fragment>
   ));
 }
 
