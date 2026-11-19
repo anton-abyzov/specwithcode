@@ -41,7 +41,7 @@ it("pauses automatic runs after three failures in a row and never a person's mes
 });
 
 it("starts a new streak at a failed run a person's message started", () => {
-  type Message = Parameters<typeof trailingFailedRuns>[1][number];
+  type Message = NonNullable<Parameters<typeof trailingFailedRuns>[1]>[number];
   const message = (id: string, creationSource: Message["creationSource"], scheduledTaskId?: string) =>
     ({
       id,
