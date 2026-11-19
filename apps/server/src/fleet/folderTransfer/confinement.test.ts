@@ -179,6 +179,40 @@ describe("Windows owner and DACL", () => {
     expect(read(`O:${USER_SID}D:(A;OICIIO;GA;;;CO)(A;OICIIO;FR;;;BU)(A;OICI;FA;;;SY)`)).toBe(false);
   });
 
+  it("the built-in administrator account is written LA, and is the user when the user is it", async () => {
+    const { windowsAccess } = await readers();
+    const builtIn = "S-1-5-21-1111111111-2222222222-3333333333-500";
+    const sddl = "O:LAG:DUD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;LA)";
+    expect(windowsAccess(sddl, builtIn)).toEqual({
+      owner: "user",
+      othersMayWrite: false,
+      othersMayReplace: false,
+      childrenOpen: false,
+    });
+    // For anyone else that account is another principal.
+    expect(windowsAccess(sddl, USER_SID)).toEqual({
+      owner: "other",
+      othersMayWrite: true,
+      othersMayReplace: true,
+      childrenOpen: true,
+    });
+  });
+
+  it("what an elevated administrator makes is owned by Administrators, and is that user's", async () => {
+    const windowsAccess = (await readers()).windowsAccess as unknown as (
+      sddl: string,
+      userSid: string,
+      elevated?: boolean,
+    ) => { readonly owner: string };
+    const sddl = `O:BAG:DUD:(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;${USER_SID})`;
+    expect(windowsAccess(sddl, USER_SID, true).owner).toBe("user");
+    expect(windowsAccess(sddl, USER_SID, false).owner).toBe("trusted");
+    expect(windowsAccess(sddl, USER_SID).owner).toBe("trusted");
+    // SYSTEM is never the user, and neither is another account.
+    expect(windowsAccess("O:SYD:(A;;FA;;;SY)", USER_SID, true).owner).toBe("trusted");
+    expect(windowsAccess(`O:${OTHER_SID}D:(A;;FA;;;SY)`, USER_SID, true).owner).toBe("other");
+  });
+
   it("a deny entry never fails a folder", async () => {
     const { windowsAccess } = await readers();
     expect(windowsAccess(`O:${USER_SID}D:(D;;FA;;;WD)`, USER_SID).othersMayWrite).toBe(false);

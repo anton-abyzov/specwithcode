@@ -132,8 +132,11 @@ describe("volumeNameRules", () => {
     expect(
       await rules("/p/t", {
         names: async () => ["Data"],
-        lstat: async (path) =>
-          path === "/p/t" || path === "/p/DATA" ? null : stat(path === "/p" ? 1n : 9n),
+        lstat: async (raw) => {
+          // The same folders whichever separator the platform joins with.
+          const path = raw.replaceAll("\\", "/");
+          return path === "/p/t" || path === "/p/DATA" ? null : stat(path === "/p" ? 1n : 9n);
+        },
       }),
     ).toEqual({ known: true, caseInsensitive: false });
   });
