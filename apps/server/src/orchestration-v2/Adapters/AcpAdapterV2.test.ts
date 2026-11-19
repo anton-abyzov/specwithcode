@@ -1308,9 +1308,13 @@ describe("AcpAdapterV2", () => {
       const instanceId = ProviderInstanceId.make("acp-session-total-usage");
       // GitHub Copilot's shape: every prompt answers with the session's running
       // totals, so the second turn used 400 input and 15 output, not 1,400.
+      // The third prompt reports nothing, so the fourth's increase also holds
+      // its usage and is stored as partial.
       const reported = [
         { inputTokens: 1000, outputTokens: 10, cachedReadTokens: 900, totalTokens: 1010 },
         { inputTokens: 1400, outputTokens: 25, cachedReadTokens: 1250, totalTokens: 1425 },
+        undefined,
+        { inputTokens: 2000, outputTokens: 40, cachedReadTokens: 1800, totalTokens: 2040 },
       ];
       let prompts = 0;
       const adapter = makeAcpAdapterV2({
@@ -1330,10 +1334,12 @@ describe("AcpAdapterV2", () => {
             wrapRuntime: (runtime) => ({
               ...runtime,
               prompt: () =>
-                Effect.sync(() => ({
-                  stopReason: "end_turn" as const,
-                  usage: reported[Math.min(prompts++, reported.length - 1)]!,
-                })),
+                Effect.sync(() => {
+                  const usage = reported[Math.min(prompts++, reported.length - 1)];
+                  return usage === undefined
+                    ? { stopReason: "end_turn" as const }
+                    : { stopReason: "end_turn" as const, usage };
+                }),
             }),
           }),
         },
@@ -1396,6 +1402,15 @@ describe("AcpAdapterV2", () => {
         inputTokens: 400,
         outputTokens: 15,
         cachedInputTokens: 350,
+        hasSubagents: false,
+      });
+      assert.isUndefined(yield* runTurn(3));
+      assert.deepEqual(yield* runTurn(4), {
+        usageScope: "main_agent",
+        usageStatus: "partial",
+        inputTokens: 600,
+        outputTokens: 15,
+        cachedInputTokens: 550,
         hasSubagents: false,
       });
     }).pipe(Effect.provide(layerTest), Effect.scoped),

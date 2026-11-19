@@ -3,6 +3,8 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   acpSessionUsageIncrease,
   addAcpTurnUsage,
+  normalizeAcpPromptUsage,
+  type AcpRawPromptUsage,
   normalizeAcpTurnTokenUsage,
   readAcpPromptUsage,
 } from "./AcpTurnTokenUsage.ts";
@@ -163,56 +165,101 @@ describe("normalizeAcpTurnTokenUsage", () => {
 });
 
 describe("acpSessionUsageIncrease", () => {
-  const totals = (inputTokens: number, outputTokens: number, cachedInputTokens?: number) => ({
+  const totals = (
+    inputTokens: number,
+    outputTokens: number,
+    more: Partial<AcpRawPromptUsage> = {},
+  ): AcpRawPromptUsage => ({
     inputTokens,
     outputTokens,
-    cachedInputTokens,
-    cacheCreationTokens: undefined,
+    cachedReadTokens: undefined,
+    cachedWriteTokens: undefined,
     reasoningTokens: undefined,
+    totalTokens: undefined,
+    ...more,
   });
 
   it("keeps the first prompt of a live session as reported", () => {
-    expect(acpSessionUsageIncrease(undefined, totals(5000, 40, 4500))).toEqual(
-      totals(5000, 40, 4500),
-    );
+    expect(acpSessionUsageIncrease(undefined, totals(5000, 40))).toEqual({
+      usage: totals(5000, 40),
+      complete: true,
+    });
   });
 
   it("returns what a prompt added to the session's running totals", () => {
-    expect(acpSessionUsageIncrease(totals(5000, 40, 4500), totals(7200, 95, 6600))).toEqual(
-      totals(2200, 55, 2100),
-    );
+    expect(
+      acpSessionUsageIncrease(
+        totals(5000, 40, { cachedReadTokens: 4500 }),
+        totals(7200, 95, { cachedReadTokens: 6600 }),
+      ),
+    ).toEqual({ usage: totals(2200, 55, { cachedReadTokens: 2100 }), complete: true });
   });
 
   it("counts an unchanged repeat once, as nothing used", () => {
     // October 21, 2026: ten turns of one Copilot thread all reported 526,009,087.
-    let baseline: ReturnType<typeof totals> | undefined;
+    let baseline: AcpRawPromptUsage | undefined;
     let stored = 0;
     for (let turn = 0; turn < 10; turn++) {
       const reported = totals(526_009_087, 1_200);
-      stored += acpSessionUsageIncrease(baseline, reported).inputTokens ?? 0;
+      stored += acpSessionUsageIncrease(baseline, reported).usage.inputTokens ?? 0;
       baseline = reported;
     }
     expect(stored).toBe(526_009_087);
   });
 
   it("starts again when a count falls, as after a reset", () => {
-    expect(acpSessionUsageIncrease(totals(9000, 300), totals(1200, 20))).toEqual(
-      totals(1200, 20),
-    );
+    expect(acpSessionUsageIncrease(totals(9000, 300), totals(1200, 20))).toEqual({
+      usage: totals(1200, 20),
+      complete: true,
+    });
   });
 
-  it("leaves a category unknown when the previous prompt did not report it", () => {
-    expect(acpSessionUsageIncrease(totals(1000, 10), totals(1500, 20, 1400))).toEqual(
-      totals(500, 10, undefined),
-    );
-  });
-
-  it("never reports reasoning above the prompt's own output", () => {
+  it("leaves a count the previous prompt did not report unknown and the usage incomplete", () => {
     expect(
-      acpSessionUsageIncrease(
-        { ...totals(100, 50), reasoningTokens: 10 },
-        { ...totals(200, 60), reasoningTokens: 40 },
-      ),
-    ).toEqual({ ...totals(100, 10), reasoningTokens: 10 });
+      acpSessionUsageIncrease(totals(1000, 10), totals(1500, 20, { cachedReadTokens: 1400 })),
+    ).toEqual({ usage: totals(500, 10), complete: false });
+  });
+
+  it("interprets the prompt's own numbers, not the difference of interpreted totals", () => {
+    // The cache is reported on top of input in both totals (the totals prove it).
+    const first = totals(100, 10, { cachedReadTokens: 900, totalTokens: 1010 });
+    const second = totals(150, 20, { cachedReadTokens: 1400, totalTokens: 1570 });
+    const { usage } = acpSessionUsageIncrease(first, second);
+    expect(normalizeAcpPromptUsage(usage)).toEqual({
+      inputTokens: 550,
+      outputTokens: 10,
+      cachedInputTokens: 500,
+      cacheCreationTokens: undefined,
+      reasoningTokens: undefined,
+    });
+    // Reasoning is capped at the prompt's own output after subtracting.
+    const thinking = acpSessionUsageIncrease(
+      totals(10, 50, { reasoningTokens: 100 }),
+      totals(20, 100, { reasoningTokens: 100 }),
+    );
+    expect(normalizeAcpPromptUsage(thinking.usage).reasoningTokens).toBe(0);
+  });
+});
+
+it("stores a turn whose counts may belong to another prompt as partial", () => {
+  expect(
+    normalizeAcpTurnTokenUsage(
+      {
+        inputTokens: 500,
+        outputTokens: 15,
+        cachedInputTokens: undefined,
+        cacheCreationTokens: undefined,
+        reasoningTokens: undefined,
+      },
+      false,
+      "completed",
+      false,
+    ),
+  ).toEqual({
+    usageScope: "main_agent",
+    usageStatus: "partial",
+    inputTokens: 500,
+    outputTokens: 15,
+    hasSubagents: false,
   });
 });

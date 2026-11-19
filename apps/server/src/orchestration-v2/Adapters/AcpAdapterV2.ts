@@ -67,8 +67,11 @@ import {
 import {
   acpSessionUsageIncrease,
   addAcpTurnUsage,
+  normalizeAcpPromptUsage,
   normalizeAcpTurnTokenUsage,
   readAcpPromptUsage,
+  readAcpRawPromptUsage,
+  type AcpRawPromptUsage,
   type AcpTurnUsageCounts,
 } from "../../provider/AcpTurnTokenUsage.ts";
 import { mcpToolPresentation } from "../../provider/McpToolPresentation.ts";
@@ -1470,6 +1473,11 @@ interface ActiveAcpTurn {
   /** What the prompts of this turn reported consuming; absent when the agent says nothing. */
   promptUsage?: AcpTurnUsageCounts;
   /**
+   * For an agent that reports session totals: the usage may include an
+   * earlier prompt that reported nothing, or miss a count, so it is partial.
+   */
+  promptUsageUncertain?: boolean;
+  /**
    * Completed the moment `runtime.prompt` resolves on the wire, before the
    * completion callback requests `runtimeCallbackPermit`. Failure does not
    * complete this; settled-soft classification ORs it with `promptSettled`.
@@ -1990,7 +1998,16 @@ export function makeAcpAdapterV2(
         // Last session totals per live runtime and session, for an agent whose
         // prompt usage is a session total. Keyed by the runtime object, so a
         // new or replacement process, whose counters start again, has none.
-        const sessionUsageTotals = new WeakMap<object, Map<string, AcpTurnUsageCounts>>();
+        // `open` is set while a prompt is out and `unreported` once one ended
+        // without totals (failed, or no usage), so the next increase also
+        // covers it and is stored as partial.
+        const sessionUsageTotals = new WeakMap<
+          object,
+          Map<
+            string,
+            { totals: AcpRawPromptUsage | undefined; open: boolean; unreported: boolean }
+          >
+        >();
         const runtimeRestartRequired = yield* Ref.make(false);
         // Native sessions whose restored history the model rejected (for
         // example a missing Gemini thought signature). Loading one again
@@ -6871,6 +6888,7 @@ export function makeAcpAdapterV2(
                   context.promptUsage,
                   context.subagents.size > 0,
                   status,
+                  context.promptUsageUncertain !== true,
                 ),
               }),
         });
@@ -7582,6 +7600,23 @@ export function makeAcpAdapterV2(
                 : { projectAdditionalDirectories };
             const promptRuntime = runtime;
             const promptSessionId = (yield* Ref.get(activeSessionId)) ?? requestedSessionId;
+            const sessionTotals = (() => {
+              if (flavor.promptUsageIsSessionTotal !== true) return undefined;
+              let sessions = sessionUsageTotals.get(promptRuntime);
+              if (sessions === undefined) {
+                sessions = new Map();
+                sessionUsageTotals.set(promptRuntime, sessions);
+              }
+              let entry = sessions.get(promptSessionId);
+              if (entry === undefined) {
+                entry = { totals: undefined, open: false, unreported: false };
+                sessions.set(promptSessionId, entry);
+              }
+              // The previous prompt never came back with usage (it failed).
+              if (entry.open) entry.unreported = true;
+              entry.open = true;
+              return entry;
+            })();
             yield* runtime.prompt({ prompt: promptParts!.prompt }, promptOptions).pipe(
               Effect.tap(() =>
                 Ref.update(promptInstructionStates, (current) => {
@@ -7601,25 +7636,29 @@ export function makeAcpAdapterV2(
                 runRuntimeCallbackAtGeneration(
                   promptGeneration,
                   Effect.gen(function* () {
-                    const reportedUsage = readAcpPromptUsage(result);
-                    let promptUsage = reportedUsage;
-                    if (reportedUsage !== undefined && flavor.promptUsageIsSessionTotal === true) {
-                      let totals = sessionUsageTotals.get(promptRuntime);
+                    let promptUsage: AcpTurnUsageCounts | undefined;
+                    let promptUsageUncertain = false;
+                    if (sessionTotals === undefined) {
+                      promptUsage = readAcpPromptUsage(result);
+                    } else {
+                      sessionTotals.open = false;
+                      const totals = readAcpRawPromptUsage(result);
                       if (totals === undefined) {
-                        totals = new Map();
-                        sessionUsageTotals.set(promptRuntime, totals);
+                        sessionTotals.unreported = true;
+                      } else {
+                        const increase = acpSessionUsageIncrease(sessionTotals.totals, totals);
+                        promptUsage = normalizeAcpPromptUsage(increase.usage);
+                        promptUsageUncertain = sessionTotals.unreported || !increase.complete;
+                        sessionTotals.totals = totals;
+                        sessionTotals.unreported = false;
                       }
-                      promptUsage = acpSessionUsageIncrease(
-                        totals.get(promptSessionId),
-                        reportedUsage,
-                      );
-                      totals.set(promptSessionId, reportedUsage);
                     }
                     // The totals advance even when the turn already ended, so
                     // the next turn's increase never counts this prompt again.
                     if (context.finalized) return;
                     if (promptUsage !== undefined) {
                       context.promptUsage = addAcpTurnUsage(context.promptUsage, promptUsage);
+                      if (promptUsageUncertain) context.promptUsageUncertain = true;
                     }
                     // A refusal or a limit stop ended the turn without finishing it,
                     // so it settles failed with the reason instead of completed.
