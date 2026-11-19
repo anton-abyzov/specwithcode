@@ -23,6 +23,7 @@ import {
 import { resolveComposerDispatchMode } from "@specweave-studio/client-runtime/state/composer-dispatch";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { submitComposerDraft } from "./composerSubmission";
+import { foldedMachineSend } from "./machineSendLabel";
 import {
   consumeExplicitCreditSendOffer,
   deriveExplicitCreditSendOffer,
@@ -704,6 +705,47 @@ describe("actual callback integration", () => {
     expect(evaluate(false, {})).toBe("Send with credits");
     expect(evaluate(false, null)).toBe("Send message");
     expect(evaluate(true, null)).toBe("Resume thread");
+    // A send to another machine may rename a plain send only: the folded button
+    // is told so with the same two inputs that pick the credits label.
+    const folded = declaration(composerSource, "foldedSend").initializer.getText(composerSource);
+    const machineSend = (showResumeAction: boolean, explicitCreditOffer: unknown, phase = "ready") =>
+      new Function(
+        "foldedMachineSend",
+        "collapsedComposerPrimaryActionLabel",
+        "showResumeAction",
+        "explicitCreditOffer",
+        "phase",
+        "sendTarget",
+        "startsThreads",
+        "tx",
+        `return ${folded}`,
+      )(
+        foldedMachineSend,
+        evaluate(showResumeAction, explicitCreditOffer),
+        showResumeAction,
+        explicitCreditOffer,
+        phase,
+        { name: "Build B", color: "blue" },
+        null,
+        (phrase: string) => phrase,
+      );
+    // A credit offer wins over a send target, and so does Resume.
+    expect(machineSend(false, {})).toEqual({
+      label: "Send with credits",
+      className: null,
+      attributes: {},
+    });
+    expect(machineSend(true, null).label).toBe("Resume thread");
+    expect(machineSend(false, null, "running").label).toBe("Send message");
+    // A plain send with a target gets the machine label and its color.
+    expect(machineSend(false, null)).toEqual({
+      label: "Send to this thread on Build B",
+      className: "machine-send",
+      attributes: { "data-machine-color": "blue", "data-send-target": "" },
+    });
+    const button = collapsedPrimaryButton().openingElement.getText(composerSource);
+    expect(button).toContain("aria-label={foldedSend.label}");
+    expect(button).toContain("{...foldedSend.attributes}");
     expect(collapsedPrimaryButton().getText(composerSource)).toContain(
       '<span>{tx("Send with credits")}</span>',
     );

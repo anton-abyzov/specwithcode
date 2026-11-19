@@ -310,7 +310,7 @@ import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
-import { machineSendLabel } from "./machineSendLabel";
+import { foldedMachineSend } from "./machineSendLabel";
 import { MachineSendTargetContext } from "~/studio/machineIdentity";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import {
@@ -3468,15 +3468,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const startsThreads = routeKind === "draft" ? (multipleModelSelections?.length ?? 1) : null;
   // The folded phone box sends a saved draft without opening: a plain send to another
   // machine wears that machine's color and says where it goes, as the open box's Send does.
-  const collapsedSendTarget =
-    showResumeAction || explicitCreditOffer !== null || phase === "running" ? null : sendTarget;
   const collapsedComposerPrimaryActionLabel = showResumeAction
     ? "Resume thread"
     : explicitCreditOffer !== null
       ? "Send with credits"
-      : collapsedSendTarget
-        ? machineSendLabel(tx, collapsedSendTarget.name, startsThreads)
-        : "Send message";
+      : "Send message";
+  const foldedSend = foldedMachineSend({
+    label: collapsedComposerPrimaryActionLabel,
+    plainSend: !showResumeAction && explicitCreditOffer === null && phase !== "running",
+    target: sendTarget,
+    startsThreads,
+    tx,
+  });
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
 
@@ -7515,13 +7518,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   className={cn(
                     "flex size-8 shrink-0 items-center justify-center rounded-full bg-message-action text-message-action-foreground hover:bg-message-action-hover disabled:opacity-(--disabled-opacity)",
                     explicitCreditOffer !== null && "w-auto gap-1.5 px-3 text-xs",
-                    collapsedSendTarget && "machine-send",
+                    foldedSend.className,
                   )}
                   disabled={collapsedComposerPrimaryActionDisabled}
-                  aria-label={collapsedComposerPrimaryActionLabel}
-                  {...(collapsedSendTarget
-                    ? { "data-machine-color": collapsedSendTarget.color, "data-send-target": "" }
-                    : {})}
+                  aria-label={foldedSend.label}
+                  {...foldedSend.attributes}
                   onPointerDown={(event) => event.preventDefault()}
                   onClick={(event) => {
                     event.stopPropagation();
