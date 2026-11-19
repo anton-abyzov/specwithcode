@@ -268,4 +268,6 @@ export const syncDe: PhraseCatalog = {
     "Vergleiche erneut, bevor du für diese geänderte Quelle eine Vorschau öffnest.",
   "The source changed. Compare again before copying.":
     "Die Quelle hat sich geändert. Vergleiche erneut, bevor du kopierst.",
+  "Not moved: its state could not be read":
+    "Nicht vorgerückt: Der Zustand konnte nicht gelesen werden",
 };

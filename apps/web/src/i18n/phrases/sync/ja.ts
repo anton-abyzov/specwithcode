@@ -268,4 +268,5 @@ export const syncJa: PhraseCatalog = {
     "変更されたこのソースをプレビューする前に、もう一度比較してください。",
   "The source changed. Compare again before copying.":
     "ソースが変更されました。コピーする前にもう一度比較してください。",
+  "Not moved: its state could not be read": "移動しません: 状態を読み取れませんでした",
 };

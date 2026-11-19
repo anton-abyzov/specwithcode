@@ -11,8 +11,11 @@ import type {
   ProjectSyncRepositoryFacts,
   ProjectSyncStep,
 } from "@specweave-studio/contracts";
-import { ProjectSyncRunResult } from "@specweave-studio/contracts";
-import { Cause, Effect, Exit, Schema } from "effect";
+import {
+  ProjectSyncReason as ProjectSyncReasonSchema,
+  ProjectSyncRunResult,
+} from "@specweave-studio/contracts";
+import { Cause, Exit, Schema } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 
 import { de } from "../../i18n/phrases/de";
@@ -201,6 +204,71 @@ describe("stepLine: the sentence per state (AC-11)", () => {
     );
     expect(readSyncText(unknown.sentence)).toBe("Not moved");
     expect(unknown.detail).toBe("A rule holds this repository.");
+  });
+});
+
+describe("what a machine sends beside a step", () => {
+  // Every reason of the contract, so a reason added there is checked here too.
+  const REASONS: readonly ProjectSyncReason[] = ProjectSyncReasonSchema.literals;
+  const DETAIL = "A made-up sentence from the machine.";
+  const facts = { ahead: 2, behind: 3, uncommitted: 4, inUseBy: "Docs lint", branch: "next" };
+
+  it.each(
+    REASONS.flatMap((reason) => [
+      [reason, "plan"],
+      [reason, "result"],
+    ]) as Array<[ProjectSyncReason, "plan" | "result"]>,
+  )("shows a detail exactly once for %s in the %s", (reason, phase) => {
+    const line = stepLine(step(reason, { ...facts, detail: DETAIL }), phase, null, {
+      upstream: "origin/main",
+    });
+    const shown = [readStepLine(line), line.detail ?? ""].join(" | ");
+    expect(shown.split("A made-up sentence from the machine")).toHaveLength(2);
+    // With nothing sent, nothing is shown under the sentence.
+    expect(stepLine(step(reason, facts), phase).detail).toBeNull();
+  });
+
+  it("covers every reason the contract lists", () => {
+    expect(REASONS.length).toBeGreaterThanOrEqual(15);
+    expect(REASONS).toContain("refused");
+  });
+
+  it("does not repeat a detail the row already says, or one the sentence is translated from", () => {
+    expect(stepLine(step("up-to-date", { detail: "Up to date." }), "plan").detail).toBeNull();
+    expect(
+      stepLine(step("detached", { detail: "not on a branch.  Not moved" }), "plan").detail,
+    ).toBeNull();
+    expect(
+      stepLine(step("in-use", { inUseBy: "Docs lint", detail: "In use by Docs lint." }), "plan")
+        .detail,
+    ).toBeNull();
+    expect(
+      stepLine(step("up-to-date", { uncommitted: 2, detail: "2 uncommitted files" }), "plan")
+        .detail,
+    ).toBeNull();
+    expect(stepLine(step("up-to-date", { detail: "  " }), "plan").detail).toBeNull();
+  });
+
+  it("never counts zero uncommitted files: the state could not be read", () => {
+    const unread = stepLine(
+      step("uncommitted", {
+        action: "fetch",
+        uncommitted: 0,
+        detail: "Its state could not be read, so it was not moved.",
+      }),
+      "plan",
+    );
+    expect(readSyncText(unread.sentence)).toBe("Not moved");
+    expect(unread.detail).toBe("Its state could not be read, so it was not moved.");
+    expect(unread.tone).toBe("held");
+    expect(unread.facts).toEqual([]);
+    const bare = stepLine(step("uncommitted", { action: "fetch", uncommitted: 0 }), "result");
+    expect(readSyncText(bare.sentence)).toBe("Not moved: its state could not be read");
+    expect(bare.detail).toBeNull();
+    // A real count still reads as before, with what the machine adds under it.
+    expect(readStepLine(stepLine(step("uncommitted", { uncommitted: 2 }), "plan"))).toBe(
+      "Not moved forward: 2 uncommitted files",
+    );
   });
 });
 
@@ -662,15 +730,13 @@ describe("extraResultLine", () => {
 
 describe("an answer outside the contract", () => {
   it("fails to decode as a whole, and reads as an answer this version cannot read", () => {
-    // What the RPC client does with an answer: decode it, and die on a value it does not list.
+    // What the RPC client does with an answer: decode it, and fail on a value it does not list.
     const answer = {
       repositories: [
         { ...step("behind", { path: "." }), reason: "held-by-policy", moved: 0, downgraded: false },
       ],
     };
-    const exit = Effect.runSyncExit(
-      Schema.decodeUnknownEffect(ProjectSyncRunResult)(answer).pipe(Effect.orDie),
-    );
+    const exit = Schema.decodeUnknownExit(ProjectSyncRunResult)(answer);
     expect(Exit.isFailure(exit)).toBe(true);
     const cause = Exit.isFailure(exit) ? Cause.squash(exit.cause) : null;
     const failure = syncFailure(cause, "M5");

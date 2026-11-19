@@ -238,4 +238,5 @@ export const syncZh: PhraseCatalog = {
     "在那里已保存的文件夹中继续，该文件夹从 origin 更新。始终把协调者移到那里。",
   "Compare again before previewing this changed source.": "预览这个已更改的来源之前，请重新比较。",
   "The source changed. Compare again before copying.": "来源已更改。复制前请重新比较。",
+  "Not moved: its state could not be read": "未移动：无法读取其状态",
 };

@@ -260,4 +260,5 @@ export const syncKo: PhraseCatalog = {
     "변경된 이 원본을 미리 보기 전에 다시 비교하세요.",
   "The source changed. Compare again before copying.":
     "원본이 변경되었습니다. 복사하기 전에 다시 비교하세요.",
+  "Not moved: its state could not be read": "이동 안 함: 상태를 읽을 수 없습니다",
 };

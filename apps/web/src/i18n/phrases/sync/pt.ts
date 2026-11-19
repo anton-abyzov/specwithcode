@@ -263,4 +263,5 @@ export const syncPt: PhraseCatalog = {
     "Compare de novo antes de pré-visualizar esta origem alterada.",
   "The source changed. Compare again before copying.":
     "A origem mudou. Compare de novo antes de copiar.",
+  "Not moved: its state could not be read": "Não avançou: não foi possível ler o estado",
 };

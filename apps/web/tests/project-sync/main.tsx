@@ -190,6 +190,8 @@ const FETCHED: Record<string, Record<string, ProjectSyncFetchResult>> = {
         facts("docs", { branch: "drafts", upstream: null }),
         facts("apps/status", { behind: 2 }),
         facts("apps/worker", { behind: 4 }),
+        // Behind in the plan; at the run its state cannot be read, so no count is invented.
+        facts("tools/cli", { behind: 1 }),
       ],
     },
     m5: {
@@ -201,6 +203,7 @@ const FETCHED: Record<string, Record<string, ProjectSyncFetchResult>> = {
         facts("docs", { branch: "drafts", upstream: "origin/drafts" }),
         facts("apps/status"),
         facts("apps/worker"),
+        facts("tools/cli"),
         facts("apps/site"),
       ],
     },
@@ -376,21 +379,30 @@ const api: ProjectSyncApi = {
       return answer({
         repositories: [
           ...plan.fastForward.map((item) =>
-            item.path === "apps/status"
+            item.path === "tools/cli"
               ? stepResult(item.path, {
-                  action: "none",
-                  reason: "no-upstream",
-                  behind: 2,
-                  detail: projectSyncUpstreamGoneDetail("origin/main"),
+                  action: "fetch",
+                  reason: "uncommitted",
+                  behind: 1,
+                  uncommitted: 0,
+                  detail: "Its state could not be read, so it was not moved.",
                   downgraded: true,
                 })
-              : stepResult(item.path, {
-                  action: "none",
-                  reason: "refused",
-                  behind: 4,
-                  detail: "origin could not be asked whether the branch is still there.",
-                  downgraded: true,
-                }),
+              : item.path === "apps/status"
+                ? stepResult(item.path, {
+                    action: "none",
+                    reason: "no-upstream",
+                    behind: 2,
+                    detail: projectSyncUpstreamGoneDetail("origin/main"),
+                    downgraded: true,
+                  })
+                : stepResult(item.path, {
+                    action: "none",
+                    reason: "refused",
+                    behind: 4,
+                    detail: "origin could not be asked whether the branch is still there.",
+                    downgraded: true,
+                  }),
           ),
           ...plan.clone.flatMap((item) => [
             stepResult(".apps-site.clone-7f3a", {

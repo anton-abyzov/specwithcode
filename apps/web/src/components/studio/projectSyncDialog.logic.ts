@@ -183,6 +183,10 @@ const CLONE_LEFTOVER =
 /** The machine's own English, matched and never shown translated as it is. */
 export const KNOWN_REFUSAL_DETAILS: readonly string[] = [ORIGIN_NOT_ASKED, CLONE_LEFTOVER];
 
+/** Two lines say the same thing when only case, spacing or a closing period differ. */
+const sameWords = (text: string) =>
+  text.trim().replace(/\.$/u, "").replace(/\s+/gu, " ").toLowerCase();
+
 const uncommittedFact = (n: number) => count(n, "1 uncommitted file", "{n} uncommitted files");
 
 /**
@@ -204,32 +208,38 @@ export function stepLine(
     facts.push(uncommittedFact(step.uncommitted));
   if (step.inUseBy !== null && step.reason !== "in-use")
     facts.push({ text: "In use by {thread}", values: { thread: step.inUseBy } });
-  const line = (tone: StepTone, sentence: SyncText, detail: string | null = null): StepLine => ({
-    tone,
-    sentence,
-    facts,
-    detail,
-  });
+  // What the machine sent beside the step goes under the sentence as sent, for every reason.
+  // A case passes null only where its sentence already carries those words, and a detail
+  // that repeats what the row says is not shown twice.
+  const line = (
+    tone: StepTone,
+    sentence: SyncText,
+    detail: string | null = step.detail,
+  ): StepLine => {
+    const said = [sentence, ...facts].map((text) => sameWords(readSyncText(text)));
+    const sent = detail?.trim() ? detail : null;
+    return {
+      tone,
+      sentence,
+      facts,
+      detail: sent !== null && said.includes(sameWords(sent)) ? null : sent,
+    };
+  };
   const remote = step.remote ?? "";
   switch (step.reason) {
     case "behind": {
       // A result names what moved; a plan names what the fetch found.
       const n = phase === "result" ? (ran?.moved ?? 0) : step.behind;
       return phase === "result"
-        ? line("done", count(n, "Moved forward 1 commit", "Moved forward {n} commits"), step.detail)
-        : line(
-            "moves",
-            count(n, "Moves forward 1 commit", "Moves forward {n} commits"),
-            step.detail,
-          );
+        ? line("done", count(n, "Moved forward 1 commit", "Moved forward {n} commits"))
+        : line("moves", count(n, "Moves forward 1 commit", "Moves forward {n} commits"));
     }
     case "missing":
       return phase === "result"
-        ? line("done", { text: "Cloned from {remote}", values: { remote } }, step.detail)
-        : line("moves", { text: "Clones it from {remote}", values: { remote } }, step.detail);
+        ? line("done", { text: "Cloned from {remote}", values: { remote } })
+        : line("moves", { text: "Clones it from {remote}", values: { remote } });
     case "up-to-date":
-      // What a machine adds to a step that went well is shown under it, as sent.
-      return line("done", { text: "Up to date" }, step.detail);
+      return line("done", { text: "Up to date" });
     case "not-pushed":
       return line(
         "held",
@@ -248,6 +258,14 @@ export function stepLine(
       return line("held", { text, values: step.ahead === 1 ? { b: values.b } : values });
     }
     case "uncommitted":
+      // No count: the machine could not read the checkout's state, and says so itself.
+      if (step.uncommitted <= 0)
+        return line(
+          "held",
+          step.detail?.trim()
+            ? { text: "Not moved" }
+            : { text: "Not moved: its state could not be read" },
+        );
       return line(
         "held",
         count(
@@ -270,24 +288,32 @@ export function stepLine(
       // Which of the two it is comes from the machine's facts, never from its English.
       const other = upstream?.otherUpstream ?? null;
       if (other !== null)
-        return line("held", {
-          text: "Follows {name}, which is not a branch of origin. Not moved",
-          values: { name: other },
-          code: ["name"],
-        });
+        return line(
+          "held",
+          {
+            text: "Follows {name}, which is not a branch of origin. Not moved",
+            values: { name: other },
+            code: ["name"],
+          },
+          null,
+        );
       const tracked = upstream?.upstream ?? null;
       // Found gone by the fetch, or by the question Sync asks right before it moves.
       if (
         tracked !== null &&
         (upstream?.upstreamGone === true || step.detail === projectSyncUpstreamGoneDetail(tracked))
       )
-        return line("held", {
-          text: "{upstream} is no longer on origin. Not moved",
-          values: { upstream: tracked },
-          code: ["upstream"],
-        });
+        return line(
+          "held",
+          {
+            text: "{upstream} is no longer on origin. Not moved",
+            values: { upstream: tracked },
+            code: ["upstream"],
+          },
+          null,
+        );
       // Any other reason a machine gives for counting an upstream as none goes below as sent.
-      return line("held", { text: "No upstream. Its commits are listed as an extra" }, step.detail);
+      return line("held", { text: "No upstream. Its commits are listed as an extra" });
     }
     case "fetch-failed":
       return line(
@@ -298,23 +324,25 @@ export function stepLine(
               values: { reason: reasonSlot(step.detail) },
             }
           : { text: "Could not fetch. The other repositories continue" },
+        // The reason is in the sentence.
+        null,
       );
     case "no-remote":
     case "missing-no-remote":
       return line("held", { text: 'Not in Git on a remote. Use "Compare all files…"' });
     case "fetch-config":
-      return line(
-        "held",
-        {
-          text: "Not fetched: this repository mirrors its remote, and a fetch would move its branches",
-        },
-        step.detail,
-      );
+      return line("held", {
+        text: "Not fetched: this repository mirrors its remote, and a fetch would move its branches",
+      });
     case "refused":
       if (step.detail === ORIGIN_NOT_ASKED)
-        return line("failed", {
-          text: "Sync did not change it: origin could not be asked whether the branch is still there",
-        });
+        return line(
+          "failed",
+          {
+            text: "Sync did not change it: origin could not be asked whether the branch is still there",
+          },
+          null,
+        );
       return line(
         "failed",
         reasonSlot(step.detail)
@@ -323,6 +351,8 @@ export function stepLine(
               values: { reason: reasonSlot(step.detail) },
             }
           : { text: "Sync did not change it" },
+        // The reason is in the sentence.
+        null,
       );
     default:
       // A reason from a newer server: say what it sent, never a guess.

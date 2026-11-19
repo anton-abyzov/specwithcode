@@ -263,4 +263,5 @@ export const syncFr: PhraseCatalog = {
     "Comparez à nouveau avant de prévisualiser cette source modifiée.",
   "The source changed. Compare again before copying.":
     "La source a changé. Comparez à nouveau avant de copier.",
+  "Not moved: its state could not be read": "Non avancé : son état n’a pas pu être lu",
 };
