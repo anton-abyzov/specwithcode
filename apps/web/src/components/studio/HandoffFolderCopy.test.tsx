@@ -586,26 +586,6 @@ it("keeps a changed-source copy successful and asks for a fresh copy", async () 
   expect(names()).not.toContain("receive");
 });
 
-it("reopening an applied copy never automatically transfers coordinator context", async () => {
-  localStorage.setItem(
-    "specwithcode:folder-copy:laptopE:source",
-    JSON.stringify({
-      operationId: "00000000-0000-4000-8000-000000000009",
-      environmentId: "kioskD",
-      mode: "copy-and-move",
-      targetFolder: "/home/sam/project",
-      projectId: "copied",
-    }),
-  );
-  statuses = [copyStatus("applied", { mode: "copy-and-move" })];
-  await mount();
-  expect(container.textContent).toContain(
-    "Files are copied. Hand off the coordinator once work here is idle.",
-  );
-  expect(names()).not.toContain("prepare");
-  expect(names()).not.toContain("receive");
-});
-
 it("does not fence or transfer after copied files were unstable", async () => {
   deferredCopy();
   statuses[1] = { ...statuses[1], unstable: ["work-in-progress.ts"] };
@@ -635,65 +615,6 @@ it.each(["offline", "busy"])(
     expect(isDisabled(button("Add to another machine"))).toBe(true);
     expect(localStorage.getItem("specwithcode:folder-copy:laptopE:source")).not.toBeNull();
     expect(button("Continue the coordinator on Kiosk D").disabled).toBe(false);
-  },
-);
-
-it.each([true, false])(
-  "checks source recovery before restarting a reopened unstable copy (safe=%s)",
-  async (safe) => {
-    const key = "specwithcode:folder-copy:laptopE:source";
-    localStorage.setItem(
-      key,
-      JSON.stringify({
-        operationId: "00000000-0000-4000-8000-000000000009",
-        environmentId: "kioskD",
-        mode: "copy-and-move",
-        targetFolder: "/home/sam/project",
-        projectId: "copied",
-      }),
-    );
-    statuses = [copyStatus("applied", { mode: "copy-and-move", unstable: ["changing.ts"] })];
-    state.handlers.copyRelease = () => {
-      if (!safe)
-        throw new Error(
-          "This context transfer is already published; recover it before starting another copy.",
-        );
-      return { released: false };
-    };
-    await mount();
-    // Files changed while copying: Copy again leads, and context cannot transfer yet.
-    expect(container.textContent).toContain(
-      "The files are on Kiosk D, but some files changed on Laptop E while copying.",
-    );
-    expect(container.querySelector('[aria-label="Changed while copying"]')?.textContent).toBe(
-      "changing.ts",
-    );
-    expect(() => button("Continue the coordinator on Kiosk D")).toThrow();
-    await click("Sync again");
-    expect(names()).toContain("copyRelease");
-    expect(names()).not.toContain("prepare");
-    if (safe) {
-      // A fresh copy of the same folder to the same machine starts measuring at once.
-      expect(names().indexOf("copyRelease")).toBeLessThan(names().indexOf("copyOffer"));
-      expect(state.calls.find(([name]) => name === "copyOffer")![1]).toMatchObject({
-        environmentId: "laptopE",
-        input: { mode: "copy-and-move", destinationEnvironmentId: "kioskD" },
-      });
-      const again = JSON.parse(localStorage.getItem(key)!);
-      expect(again).toMatchObject({
-        environmentId: "kioskD",
-        mode: "copy-and-move",
-        targetFolder: "/Users/me/Projects/project",
-        projectId: "copied",
-      });
-      expect(again.operationId).not.toBe("00000000-0000-4000-8000-000000000009");
-      // The reopened copy stopped to choose what to copy; so does the new one.
-      expect(button("Preview on Kiosk D")).toBeTruthy();
-    } else {
-      expect(container.textContent).toContain("recover it before starting another copy");
-      expect(localStorage.getItem(key)).not.toBeNull();
-      expect(container.querySelector('[data-slot="copy-done"]')).not.toBeNull();
-    }
   },
 );
 
@@ -829,34 +750,6 @@ it.each(["busy", "conflict", "invalid"])(
     expect(button("Copy and move to Kiosk D")).toBeTruthy();
   },
 );
-
-it("retains a restored fence if source release refuses after a destination preview refusal", async () => {
-  const key = "specwithcode:folder-copy:laptopE:source";
-  localStorage.setItem(
-    key,
-    JSON.stringify({
-      operationId: "00000000-0000-4000-8000-000000000009",
-      environmentId: "kioskD",
-      mode: "copy-and-move",
-      targetFolder: "/home/sam/project",
-      projectId: "copied",
-    }),
-  );
-  statuses = [copyStatus("applied", { mode: "copy-and-move" })];
-  state.handlers.receive = () => {
-    throw new Error("Destination changed");
-  };
-  state.handlers.copyRelease = () => {
-    throw new Error("Recover the published context transfer");
-  };
-  await mount();
-  await click("Continue the coordinator on Kiosk D");
-  await openMore();
-  await click("Add to another machine");
-  expect(container.textContent).toContain("Recover the published context transfer");
-  expect(localStorage.getItem(key)).not.toBeNull();
-  expect(button("Continue the coordinator on Kiosk D")).toBeTruthy();
-});
 
 it("reads a destination registration that arrived while Apply was running", async () => {
   deferredCopy();
@@ -2410,24 +2303,6 @@ it("holds a move whose checks failed, leads with Copy again and keeps the coordi
   expect(names()).not.toContain("prepare");
 });
 
-it("moves a held copy anyway through retry and transfers context despite the differences", async () => {
-  reopenMove({ projectId: "00000000-0000-4000-8000-000000000002" });
-  const committed = copyStatus("applied", {
-    mode: "copy-and-move",
-    projectId: "00000000-0000-4000-8000-000000000002",
-    checks: [failedCheck],
-  });
-  statuses = [heldMove()];
-  state.handlers.copyRetry = () => committed;
-  state.handlers.copyStatus = () => statuses.shift() ?? committed;
-  await mount();
-  await settle();
-  await click("Continue on Kiosk D anyway, on its older commits");
-  expect(names()).toContain("copyRetry");
-  expect(names()).toContain("receive");
-  expect(container.textContent).toContain("The coordinator continues on Kiosk D.");
-});
-
 it("undoes a held copy from its problems screen", async () => {
   reopenMove({ projectId: "00000000-0000-4000-8000-000000000002" });
   statuses = [heldMove()];
@@ -2509,108 +2384,6 @@ it.each([
   await mount();
   await settle();
   expect(container.querySelector('[data-slot="copy-working"]')?.textContent).toBe(text);
-});
-
-it("remembers Hand off anyway when the context transfer after it is refused for now", async () => {
-  reopenMove({ projectId: "00000000-0000-4000-8000-000000000002" });
-  const committed = copyStatus("applied", {
-    mode: "copy-and-move",
-    projectId: "00000000-0000-4000-8000-000000000002",
-    checks: [failedCheck],
-  });
-  statuses = [heldMove()];
-  state.handlers.copyRetry = () => committed;
-  state.handlers.copyStatus = () => statuses.shift() ?? committed;
-  const prepare = state.handlers.prepare!;
-  state.handlers.prepare = () => {
-    throw Object.assign(new Error("busy"), { code: "busy" });
-  };
-  await mount();
-  await settle();
-  await click("Continue on Kiosk D anyway, on its older commits");
-  expect(pointerNow()).toMatchObject({ moveAnyway: true });
-  expect(container.textContent).toContain("Work is still running on Laptop E");
-  expect(container.textContent).toContain("You chose Continue on Kiosk D anyway");
-  expect(() => button("Sync again")).toThrow();
-  state.handlers.prepare = prepare;
-  await click("Continue the coordinator on Kiosk D");
-  expect(names()).toContain("receive");
-  expect(container.textContent).toContain("The coordinator continues on Kiosk D.");
-  expect(pointerNow()).toBeNull();
-});
-
-it("offers the transfer again on a reopened move the person chose to move anyway", async () => {
-  reopenMove({ projectId: "00000000-0000-4000-8000-000000000002", moveAnyway: true });
-  statuses = [
-    copyStatus("applied", {
-      mode: "copy-and-move",
-      projectId: "00000000-0000-4000-8000-000000000002",
-      checks: [failedCheck],
-    }),
-  ];
-  await mount();
-  await settle();
-  expect(container.textContent).toContain(
-    "Files are copied. Hand off the coordinator once work here is idle.",
-  );
-  expect(() => button("Sync again")).toThrow();
-  expect(names()).not.toContain("prepare");
-  await click("Continue the coordinator on Kiosk D");
-  expect(names()).toContain("receive");
-  expect(container.textContent).toContain("The coordinator continues on Kiosk D.");
-});
-
-it("releases the source operation after undoing a held, uncommitted move", async () => {
-  reopenMove({ projectId: "00000000-0000-4000-8000-000000000002" });
-  statuses = [heldMove()];
-  state.handlers.copyUndo = ({ input }: any) => ({
-    status: input.preview ? heldMove() : copyStatus("undone", { mode: "copy-and-move" }),
-    items: [],
-    edited: 0,
-    undone: !input.preview,
-    kept: [],
-    problems: [],
-  });
-  await mount();
-  await settle();
-  await click("Undo…");
-  expect(names()).not.toContain("copySourceCancel");
-  await click("Undo the copy");
-  expect(container.textContent).toContain("is back to how it was before the copy");
-  const operationId = "00000000-0000-4000-8000-000000000009";
-  expect(state.calls.find(([name]) => name === "copySourceCancel")![1]).toMatchObject({
-    environmentId: "laptopE",
-    input: { operationId },
-  });
-  expect(state.calls.find(([name]) => name === "copyRelease")![1]).toMatchObject({
-    environmentId: "laptopE",
-    input: { projectId: "source", operationId },
-  });
-  expect(names().indexOf("copyUndo")).toBeLessThan(names().indexOf("copySourceCancel"));
-  expect(pointerNow()).toBeNull();
-});
-
-it("keeps the pointer when the source refuses to release after an undo", async () => {
-  reopenMove({ projectId: "00000000-0000-4000-8000-000000000002" });
-  statuses = [heldMove()];
-  state.handlers.copyUndo = ({ input }: any) => ({
-    status: input.preview ? heldMove() : copyStatus("undone", { mode: "copy-and-move" }),
-    items: [],
-    edited: 0,
-    undone: !input.preview,
-    kept: [],
-    problems: [],
-  });
-  state.handlers.copyRelease = () => {
-    throw new Error("The source could not release the operation.");
-  };
-  await mount();
-  await settle();
-  await click("Undo…");
-  await click("Undo the copy");
-  expect(container.textContent).toContain("is back to how it was before the copy");
-  expect(container.textContent).toContain("The source could not release the operation.");
-  expect(pointerNow()).toMatchObject({ operationId: "00000000-0000-4000-8000-000000000009" });
 });
 
 it("does not cancel the source after undoing a committed copy", async () => {

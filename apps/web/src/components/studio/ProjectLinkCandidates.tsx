@@ -10,15 +10,13 @@ import {
 import type { LinkCandidate } from "../../studio/projectLink";
 import { useRetiredMachineRecords } from "../settings/useReplacedMachineRecords";
 import { Radio, RadioGroup } from "../ui/radio-group";
-import { useLinkMachines } from "./useLinkMachines";
 
 const keyOf = (candidate: LinkCandidate) =>
   `${candidate.project.environmentId}:${candidate.project.id}`;
 
 /**
- * The first step's subtitle. A project already linked with another machine names where the
- * coordinator is, by the role derivation the menus, Settings and the copy dialog share. One that is
- * not linked yet names none: its review decides which side keeps the coordinator.
+ * The first step's subtitle. Linking never moves or removes a coordinator: every machine
+ * keeps its own, whether the project is already linked with another machine or not.
  */
 export function ProjectLinkChooseDescription({
   project,
@@ -27,18 +25,17 @@ export function ProjectLinkChooseDescription({
 }) {
   const tx = useTx();
   const projects = useProjects();
-  const machines = useLinkMachines();
   const retired = useRetiredMachineRecords();
   const main = linkedMainEnvironmentId(project, projects, retired);
   const title = logicalProjectTitle(project);
   return main === null
     ? tx(
-        "Pick {project} on another machine. Linking makes them one project with one coordinator.",
+        "Pick {project} on another machine. Linking makes them one project; each machine keeps its own coordinator.",
         { project: title },
       )
     : tx(
-        "Pick {project} on another machine. The coordinator stays on {main}; you can continue it on another machine any time.",
-        { project: title, main: machines.label(main as EnvironmentId) },
+        "Pick {project} on another machine. It joins this project and keeps its own coordinator.",
+        { project: title },
       );
 }
 

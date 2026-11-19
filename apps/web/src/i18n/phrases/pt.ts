@@ -11,6 +11,20 @@ export const pt: PhraseCatalog = {
   "Accounts & integrations": "Contas e integrações",
   Actions: "Ações",
   "Add a device with a code": "Adicionar um dispositivo com um código",
+  "Add this project on another machine. Every machine runs its own coordinator.":
+    "Adicione este projeto em outra máquina. Cada máquina executa seu próprio coordenador.",
+  "Make this project and the same project on another machine one project. Each machine keeps its own coordinator.":
+    "Faça deste projeto e do mesmo projeto em outra máquina um só projeto. Cada máquina mantém seu próprio coordenador.",
+  "Needs an update: this machine is on a version from before every machine ran its own coordinator.":
+    "Precisa de atualização: esta máquina está em uma versão anterior a cada máquina ter seu próprio coordenador.",
+  "Pick {project} on another machine. It joins this project and keeps its own coordinator.":
+    "Escolha {project} em outra máquina. Ele entra neste projeto e mantém seu próprio coordenador.",
+  "Pick {project} on another machine. Linking makes them one project; each machine keeps its own coordinator.":
+    "Escolha {project} em outra máquina. A vinculação faz deles um só projeto; cada máquina mantém seu próprio coordenador.",
+  "Runs its own coordinator for this project.":
+    "Executa seu próprio coordenador para este projeto.",
+  "Update SpecWithCode on {machine} to link projects.":
+    "Atualize o SpecWithCode em {machine} para vincular projetos.",
   "Use this machine from a browser on a phone or another computer, also when SpecWithCode Connect is off or cannot be reached. The SpecWithCode app signed in to the same Connect account needs no code.":
     "Use esta máquina a partir do navegador de um celular ou de outro computador, também quando o SpecWithCode Connect estiver desligado ou inacessível. O app SpecWithCode conectado à mesma conta do Connect não precisa de código.",
   "Add a device": "Adicionar um dispositivo",
@@ -5501,10 +5515,6 @@ export const pt: PhraseCatalog = {
     "Torna o projeto em {machine} parte deste. O coordenador fica onde está, e os threads e os arquivos ficam onde estão. Antes você confirma do que {machine} abre mão.",
   "Work on {machine}": "Trabalho em {machine}",
   "Continue in the folder already there": "Continuar na pasta que já existe lá",
-  "Pick {project} on another machine. Linking makes them one project with one coordinator.":
-    "Escolha {project} em outra máquina. Vincular os torna um só projeto, com um só coordenador.",
-  "Pick {project} on another machine. The coordinator stays on {main}; you can continue it on another machine any time.":
-    "Escolha {project} em outra máquina. O coordenador fica em {main}; você pode continuá-lo em outra máquina quando quiser.",
   "Other machine": "Outra máquina",
   "{project} was not found on another machine.": "{project} não foi encontrado em outra máquina.",
   "Preparing the machine that keeps its coordinator…":

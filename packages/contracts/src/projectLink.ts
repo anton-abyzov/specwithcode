@@ -238,6 +238,8 @@ export const ProjectLinkPreview = Schema.Struct({
   keepRefusal: Schema.NullOr(ProjectLinkRefusal),
   /** Null when this copy may join another as a member, otherwise why not. */
   joinRefusal: Schema.NullOr(ProjectLinkRefusal),
+  /** This machine keeps its coordinator when it joins. Absent before equal coordinators. */
+  equalCoordinators: Schema.optional(Schema.Literal(true)),
   /** A member's read-only copy of its coordinator's notes, goal and instructions. */
   replica: Schema.optional(Schema.NullOr(ProjectCoordinatorReplica)),
   /** After a takeover: coordinator turns this copy ran while it was unreachable. */
@@ -267,6 +269,12 @@ export const ProjectLinkPrepareInput = Schema.Struct({
   operationId: ProjectLinkOperationId,
   projectId: ProjectId,
   joining: LogicalProjectMember,
+  /**
+   * The caller checked that the joining machine keeps its coordinator when it accepts
+   * (`equalCoordinators`). Without it the kept copy refuses with `needs_update` and writes
+   * nothing: a caller from before equal coordinators never sends it.
+   */
+  equalCoordinators: Schema.optional(Schema.Literal(true)),
 });
 export type ProjectLinkPrepareInput = typeof ProjectLinkPrepareInput.Type;
 export const ProjectLinkPrepareResult = Schema.Struct({
@@ -290,6 +298,11 @@ export const ProjectLinkAcceptInput = Schema.Struct({
   coordinatorBinding: ProjectCoordinatorBinding,
   keptFingerprint: RepositoryFingerprint,
   sharedIcon: Schema.optionalKey(ProjectLinkSharedIcon),
+  /**
+   * The kept machine runs equal coordinators too, by the caller's check. Without it the
+   * joining copy refuses with `needs_update` and writes nothing.
+   */
+  equalCoordinators: Schema.optional(Schema.Literal(true)),
 });
 export type ProjectLinkAcceptInput = typeof ProjectLinkAcceptInput.Type;
 export const ProjectLinkAcceptResult = Schema.Struct({
@@ -538,6 +551,7 @@ export class ProjectLinkError extends Schema.TaggedError<ProjectLinkError>()("Pr
     "not_member",
     "superseded_conflict",
     "standby_unreachable",
+    "needs_update",
   ]),
   /** Names what differs, such as the two root repositories. */
   detail: Schema.optional(bounded(1000)),
@@ -571,6 +585,8 @@ export class ProjectLinkError extends Schema.TaggedError<ProjectLinkError>()("Pr
         "Another copy took over in a way this copy cannot confirm. Reload both machines and check which one coordinates.",
       standby_unreachable:
         "The Mac that takes over automatically did not answer. Choose Change anyway to go ahead without it.",
+      needs_update:
+        "One of the two machines is on a version from before every machine ran its own coordinator. Update SpecWithCode on both, then link again.",
     };
     return this.detail ? `${messages[this.code]} ${this.detail}` : messages[this.code];
   }

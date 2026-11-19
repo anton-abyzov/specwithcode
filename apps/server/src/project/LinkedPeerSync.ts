@@ -610,6 +610,9 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
             from: input.self,
             fromEpoch: own.binding?.epoch ?? 0,
             members: held,
+            ...(own.binding?.removedMembers === undefined
+              ? {}
+              : { removed: own.binding.removedMembers }),
           })
           .pipe(Effect.as({ changed: false }));
         const call: Effect.Effect<{ readonly changed: boolean }, LocalError | HandoffPeerError> =
@@ -621,6 +624,8 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
                   from: input.member,
                   fromEpoch: peer.binding!.epoch,
                   members: peer.members,
+                  // Whom the peer unlinked on purpose: its omission alone removes nobody.
+                  removed: peer.binding?.removedMembers ?? [],
                 })
                 .pipe(
                   Effect.tap(() =>

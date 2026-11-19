@@ -70,6 +70,8 @@ export interface UnlinkRun {
   readonly label: (environmentId: EnvironmentId) => string;
   /** The coordinator's machine is connected and may be written to now. */
   readonly keptReady: boolean;
+  /** Whether a machine is connected and may be written to now. */
+  readonly ready: (environmentId: EnvironmentId) => boolean;
   readonly preview: Call<ProjectLinkPreviewInput, ProjectLinkPreview>;
   readonly unlink: Call<ProjectUnlinkInput, unknown>;
   readonly newOperationId: () => string;
@@ -140,6 +142,32 @@ export async function runUnlink(run: UnlinkRun): Promise<string> {
     } as ProjectUnlinkInput,
   });
   if (removed._tag === "Failure") throw squashAtomCommandFailure(removed);
+  // Every other machine that stays is told too: each keeps its own list, and one that only
+  // read another's shorter list would never know this machine was unlinked on purpose. One
+  // that is away, or refuses, learns it from the next sync with a machine that was told.
+  const others = run.shared.filter(
+    (copy) =>
+      copy.environmentId !== member.environmentId &&
+      copy.environmentId !== coordinator.environmentId &&
+      copy.workspaceSettings?.logicalProject?.id ===
+        coordinator.workspaceSettings?.logicalProject?.id &&
+      run.ready(copy.environmentId),
+  );
+  await Promise.all(
+    others.map((copy) =>
+      run
+        .unlink({
+          environmentId: copy.environmentId,
+          input: {
+            side: "coordinator",
+            operationId,
+            projectId: copy.id,
+            member: memberRef,
+          } as ProjectUnlinkInput,
+        })
+        .catch(() => undefined),
+    ),
+  );
   run.pending.write(storageKey, null);
   return `${memberLabel} has its own coordinator again, with a copy of this project's notes.`;
 }
@@ -169,10 +197,16 @@ export function useUnlinkMember(): {
     if (running.current) return null;
     running.current = true;
     setBusy(true);
+    // Unlinking asks nothing a machine from before equal coordinators lacks.
+    const reachable = (environmentId: EnvironmentId) => {
+      const state = machines.state(environmentId);
+      return state === "ready" || state === "update";
+    };
     return runUnlink({
       ...input,
       label: machines.label,
-      keptReady: machines.state(input.coordinator.environmentId) === "ready",
+      keptReady: reachable(input.coordinator.environmentId),
+      ready: reachable,
       preview,
       unlink: unlinkCommand,
       newOperationId: randomUUID,

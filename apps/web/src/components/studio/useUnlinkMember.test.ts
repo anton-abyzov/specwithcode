@@ -240,7 +240,11 @@ describe("runUnlink", () => {
     expect(newOperationId).toHaveBeenCalledTimes(1);
     expect(
       calls.filter((call) => call.tag === "unlink").map((call) => call.input.operationId),
-    ).toEqual(["11111111-1111-4111-8111-111111111111", "11111111-1111-4111-8111-111111111111"]);
+    ).toEqual([
+      "11111111-1111-4111-8111-111111111111",
+      "11111111-1111-4111-8111-111111111111",
+      "11111111-1111-4111-8111-111111111111",
+    ]);
     expect(store.size).toBe(0);
   });
 

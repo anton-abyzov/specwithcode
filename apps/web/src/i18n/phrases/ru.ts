@@ -11,6 +11,20 @@ export const ru: PhraseCatalog = {
   "Accounts & integrations": "Аккаунты и интеграции",
   Actions: "Действия",
   "Add a device with a code": "Добавить устройство по коду",
+  "Add this project on another machine. Every machine runs its own coordinator.":
+    "Добавьте этот проект на другой машине. На каждой машине работает свой координатор.",
+  "Make this project and the same project on another machine one project. Each machine keeps its own coordinator.":
+    "Сделайте этот проект и тот же проект на другой машине одним проектом. Каждая машина сохраняет свой координатор.",
+  "Needs an update: this machine is on a version from before every machine ran its own coordinator.":
+    "Нужно обновление: на этой машине версия, вышедшая до того, как у каждой машины появился свой координатор.",
+  "Pick {project} on another machine. It joins this project and keeps its own coordinator.":
+    "Выберите {project} на другой машине. Он войдёт в этот проект и сохранит свой координатор.",
+  "Pick {project} on another machine. Linking makes them one project; each machine keeps its own coordinator.":
+    "Выберите {project} на другой машине. После связывания это один проект; каждая машина сохраняет свой координатор.",
+  "Runs its own coordinator for this project.":
+    "Запускает свой координатор для этого проекта.",
+  "Update SpecWithCode on {machine} to link projects.":
+    "Обновите SpecWithCode на {machine}, чтобы связывать проекты.",
   "Use this machine from a browser on a phone or another computer, also when SpecWithCode Connect is off or cannot be reached. The SpecWithCode app signed in to the same Connect account needs no code.":
     "Используйте эту машину из браузера на телефоне или другом компьютере, в том числе когда SpecWithCode Connect выключен или недоступен. Приложению SpecWithCode с той же учётной записью Connect код не нужен.",
   "Add a device": "Добавить устройство",
@@ -5501,10 +5515,6 @@ export const ru: PhraseCatalog = {
     "Проект на {machine} станет частью этого. Координатор остаётся на месте, треды и файлы тоже останутся на своих местах. Сначала вы подтвердите, от чего откажется {machine}.",
   "Work on {machine}": "Работа на {machine}",
   "Continue in the folder already there": "Продолжить в папке, которая там уже есть",
-  "Pick {project} on another machine. Linking makes them one project with one coordinator.":
-    "Выберите {project} на другой машине. После связывания это будет один проект с одним координатором.",
-  "Pick {project} on another machine. The coordinator stays on {main}; you can continue it on another machine any time.":
-    "Выберите {project} на другой машине. Координатор остаётся на {main}; продолжить его работу на другой машине можно в любой момент.",
   "Other machine": "Другая машина",
   "{project} was not found on another machine.": "{project} на другой машине не найден.",
   "Preparing the machine that keeps its coordinator…":

@@ -18,7 +18,6 @@ import {
   AuthSourceControlWriteScope,
   AuthSettingsWriteScope,
   logicalProjectTitle,
-  repositoryRelativePathOf,
   type MachineHandoffPrepareResult,
   type MachineHandoffReceiveResult,
   type MachineHandoffBundle,
@@ -131,19 +130,6 @@ export interface MachineHandoffOpenRequest {
   readonly target?: string;
   /** How files travel, instead of the default: "copy" is the measured per-file compare. */
   readonly method?: HandoffFolderMethod;
-}
-
-/**
- * A project folder that is its repository's root, not a folder inside a larger one. Git
- * reports the root with links resolved, so a home linked elsewhere (`/home/anton` to
- * `/srv/work`) still counts as its own checkout. Without a known root, the folder is its own.
- */
-function ownCheckout(item: {
-  readonly workspaceRoot: string;
-  readonly repositoryIdentity?: { readonly rootPath?: string | undefined } | null | undefined;
-}): boolean {
-  const root = item.repositoryIdentity?.rootPath;
-  return !root || repositoryRelativePathOf(item.workspaceRoot, root) === "";
 }
 
 export function ProjectMachineHandoff({
@@ -494,20 +480,13 @@ export function ProjectMachineHandoff({
     }
     if (handledTarget.current === requestedTarget) return;
     handledTarget.current = requestedTarget;
-    // "Move coordinator to X": move, with X chosen whichever way the files travel. When X
-    // already has its own checkout, nothing needs copying: the Git handoff points the
-    // coordinator at that folder.
-    const existing = candidates.find(
-      (item) => `${item.environmentId}:${item.id}` === requestedTarget,
-    );
-    setIntent("move");
-    setMoveAsked(true);
+    // Every machine keeps its own coordinator: a named machine gets the files, nothing moves.
+    setIntent("copy");
+    setMoveAsked(false);
     setCopyFlowRun((run) => run + 1);
     setSyncKey(null);
     setAddOnly(false);
-    setMethod(
-      existing && ownCheckout(project) && ownCheckout(existing) ? "folder" : DEFAULT_COPY_METHOD,
-    );
+    setMethod(DEFAULT_COPY_METHOD);
     setSelected(requestedTarget);
     setPickerMachine(null);
     setSnapshot(null);
@@ -1032,16 +1011,16 @@ export function ProjectMachineHandoff({
       : null;
     setHeldCopy(unfinished && unfinished.doneSeen !== true ? unfinished : null);
     changeOpen(true);
-    setMoveAsked(mode === "move");
+    setMoveAsked(false);
     setSyncKey(syncCandidate ? syncTarget! : null);
     if (syncCandidate) setCopyMachine(null);
     // An unfinished Git handoff wins over the menu's Copy: it may already be published.
     let gitPending = false;
     if (!kept) {
       try {
-        const pending = adding
-          ? null
-          : parsePendingMachineHandoff(localStorage.getItem(storageKey));
+        // A Git handoff left unfinished before every machine kept its coordinator is not
+        // resumed: publishing it would move the coordinator, which the server refuses.
+        const pending = null as ReturnType<typeof parsePendingMachineHandoff>;
         // An unfinished Git handoff resumes in the method that started it, an
         // unfinished copy in the current one; otherwise every opening starts fresh.
         const copyPending =
@@ -1075,7 +1054,6 @@ export function ProjectMachineHandoff({
     }
     setAddOnly(adding);
     if (adding) setCopyMachine(null);
-    if (mode === "move" && !kept) setIntent("move");
     if ((mode === "copy" || mode === "sync") && !kept && !gitPending) {
       setIntent("copy");
       setMethod(requestedMethod ?? DEFAULT_COPY_METHOD);
@@ -1243,7 +1221,7 @@ export function ProjectMachineHandoff({
               // Requested, so a saved draft or last copy cannot swap the machine or its folder.
               // Add starts a new copy: a finished one is not shown again.
               machineRequested={requestedMachine !== null || syncCopy !== undefined || addOnly}
-              defaultMode={intent === "move" ? "copy-and-move" : "copy-only"}
+              defaultMode="copy-only"
               onChoicesChange={({ mode, machine, done, review, doneAt, projectId }) => {
                 copyAtReview.current = review === true;
                 setIntent(mode === "copy-and-move" ? "move" : "copy");
@@ -1260,7 +1238,8 @@ export function ProjectMachineHandoff({
                     copyDestinationKey(environmentId, folder),
                 ) ?? null
               }
-              canMove={sourceReady && !syncTo}
+              // A copy sends files; the coordinator on this machine stays (1390 AC-35).
+              canMove={false}
               uncommittedFiles={sourceChanges?.state === "dirty" ? sourceChanges.fileCount : null}
               onBusyChange={setCopyBusy}
               onCloseLockChange={setCopyLocked}

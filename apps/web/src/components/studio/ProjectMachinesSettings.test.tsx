@@ -353,7 +353,10 @@ it("unlinks a coordinator started beside main, and only that one", async () => {
   expect(writes.map((call) => [call.environmentId, call.input.side])).toEqual([
     ["m1", "member"],
     ["m3", "coordinator"],
+    // The other machine that stays is told too, about the same machine.
+    ["m4", "coordinator"],
   ]);
+  expect(writes[2]!.input).toMatchObject({ projectId: "joined", member: ref("m1", "side") });
   expect(writes[0]!.input.leaveCoordinator).toBe(true);
   expect(writes[1]!.input.member).toEqual(ref("m1", "side"));
   expect(text()).toContain("M1 has its own coordinator again");
@@ -415,8 +418,6 @@ it("says the equal-coordinator rows in the person's language", async () => {
     expect(text()).not.toContain("Every machine runs its own coordinator.");
     await render([kept, joined]);
     expect(text()).not.toContain("Needs an update: this machine is on a version");
-    await click(button("Отвязать"));
-    expect(text()).not.toContain("It becomes its own project again");
   } finally {
     setLocalePreference("en");
   }

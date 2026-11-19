@@ -11,6 +11,20 @@ export const es: PhraseCatalog = {
   "Accounts & integrations": "Cuentas e integraciones",
   Actions: "Acciones",
   "Add a device with a code": "Añadir un dispositivo con un código",
+  "Add this project on another machine. Every machine runs its own coordinator.":
+    "Añade este proyecto en otra máquina. Cada máquina ejecuta su propio coordinador.",
+  "Make this project and the same project on another machine one project. Each machine keeps its own coordinator.":
+    "Convierte este proyecto y el mismo proyecto en otra máquina en un solo proyecto. Cada máquina conserva su propio coordinador.",
+  "Needs an update: this machine is on a version from before every machine ran its own coordinator.":
+    "Necesita una actualización: esta máquina usa una versión anterior a que cada máquina tuviera su propio coordinador.",
+  "Pick {project} on another machine. It joins this project and keeps its own coordinator.":
+    "Elige {project} en otra máquina. Se une a este proyecto y conserva su propio coordinador.",
+  "Pick {project} on another machine. Linking makes them one project; each machine keeps its own coordinator.":
+    "Elige {project} en otra máquina. Al vincularlos pasan a ser un solo proyecto; cada máquina conserva su propio coordinador.",
+  "Runs its own coordinator for this project.":
+    "Ejecuta su propio coordinador para este proyecto.",
+  "Update SpecWithCode on {machine} to link projects.":
+    "Actualiza SpecWithCode en {machine} para vincular proyectos.",
   "Use this machine from a browser on a phone or another computer, also when SpecWithCode Connect is off or cannot be reached. The SpecWithCode app signed in to the same Connect account needs no code.":
     "Usa este equipo desde el navegador de un teléfono u otro ordenador, también cuando SpecWithCode Connect está desactivado o no se puede alcanzar. La app de SpecWithCode con la misma cuenta de Connect no necesita ningún código.",
   "Add a device": "Añadir un dispositivo",
@@ -5526,10 +5540,6 @@ export const es: PhraseCatalog = {
     "Convierte el proyecto de {machine} en parte de este. El coordinador sigue donde está, y los hilos y los archivos se quedan donde están. Antes confirmas a qué renuncia {machine}.",
   "Work on {machine}": "Trabajo en {machine}",
   "Continue in the folder already there": "Continuar en la carpeta que ya está allí",
-  "Pick {project} on another machine. Linking makes them one project with one coordinator.":
-    "Elige {project} en otra máquina. Al vincularlos, pasan a ser un solo proyecto con un solo coordinador.",
-  "Pick {project} on another machine. The coordinator stays on {main}; you can continue it on another machine any time.":
-    "Elige {project} en otra máquina. El coordinador sigue en {main}; puedes continuarlo en otra máquina cuando quieras.",
   "Other machine": "Otra máquina",
   "{project} was not found on another machine.": "No se encontró {project} en otra máquina.",
   "Preparing the machine that keeps its coordinator…":

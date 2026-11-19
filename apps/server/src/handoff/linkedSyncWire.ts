@@ -14,6 +14,7 @@
 import * as Schema from "effect/Schema";
 
 import {
+  EnvironmentId,
   IsoDateTime,
   LogicalProjectMember,
   NonNegativeInt,
@@ -117,6 +118,12 @@ export const LinkedMembersRequest = Schema.Struct({
   from: LogicalProjectMember,
   fromEpoch: NonNegativeInt,
   members: memberList,
+  /** Whom the sender unlinked on purpose; absent from machines before equal coordinators. */
+  removed: Schema.optional(
+    Schema.Array(Schema.Struct({ environmentId: EnvironmentId, projectId: ProjectId })).check(
+      Schema.isMaxLength(256),
+    ),
+  ),
 });
 export type LinkedMembersRequest = typeof LinkedMembersRequest.Type;
 export const LinkedMembersResponse = Schema.Struct({

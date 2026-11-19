@@ -32,6 +32,8 @@
 import {
   CommandId,
   coordinatorOwnsRoutines,
+  MachineHandoffError,
+  type MachineHandoffPrepareInput,
   type Project,
   type ProjectCoordinatorBinding,
   ProjectLinkError,
@@ -44,6 +46,7 @@ import * as Option from "effect/Option";
 import { CoordinatorRearmStore } from "./CoordinatorRearmStore.ts";
 import { CoordinatorStandbyStore } from "./CoordinatorStandbyStore.ts";
 import { LinkedPeerSyncState } from "./LinkedPeerSyncState.ts";
+import type { ProjectLinkStandbyMethods } from "./ProjectLinkStandby.ts";
 import * as ProjectService from "./ProjectService.ts";
 
 /** What a retired entry point says. */
@@ -64,6 +67,65 @@ export const retiredRoleChange = (
 ): Effect.Effect<never, ProjectLinkError> =>
   Effect.fail(new ProjectLinkError({ code, detail: EQUAL_COORDINATORS_DETAIL }));
 
+/** The standby and planned-move calls of `ProjectLink`, as equal coordinators answer them. */
+export type RetiredStandbyMethods = Pick<
+  ProjectLinkStandbyMethods,
+  | "setStandby"
+  | "acceptStandby"
+  | "acceptStandbyFromPeer"
+  | "rearmStandby"
+  | "plannedGiveWay"
+  | "plannedTakeover"
+  | "awayTakeover"
+>;
+
+/**
+ * Nobody stands by for, or takes over, a coordinator: every such call is refused. Turning a
+ * standby off is the one exception, so a copy that still shows one can clear it.
+ */
+export const retiredStandbyMethods = (
+  standby: Pick<ProjectLinkStandbyMethods, "setStandby">,
+): RetiredStandbyMethods => {
+  const retired = () => retiredRoleChange("invalid");
+  return {
+    setStandby: (input) => (input.standby === null ? standby.setStandby(input) : retired()),
+    acceptStandby: retired,
+    acceptStandbyFromPeer: retired,
+    rearmStandby: retired,
+    plannedGiveWay: retired,
+    plannedTakeover: retired,
+    awayTakeover: retired,
+  };
+};
+
+/**
+ * `machineHandoff.prepare` as a window may call it now. Publishing a handoff was the step
+ * that relinquished this machine's coordinator; it is refused before a checkpoint is cut or
+ * anything is pushed. Reading what a handoff would carry stays.
+ */
+export const withoutCoordinatorMove =
+  <A, E, R>(prepare: (input: MachineHandoffPrepareInput) => Effect.Effect<A, E, R>) =>
+  (input: MachineHandoffPrepareInput): Effect.Effect<A, E | MachineHandoffError, R> =>
+    input.publish
+      ? Effect.fail(new MachineHandoffError({ code: "conflict", detail: COORDINATOR_STAYS_DETAIL }))
+      : prepare(input);
+
+/** What a window is told when it asks to move a coordinator. */
+export const COORDINATOR_STAYS_DETAIL =
+  "Every machine runs its own coordinator now, so it is not moved. Files already copied stay where they are; hand off threads instead.";
+
+/**
+ * A link is made only between two machines that both keep their coordinator. The caller
+ * says it checked the other end; one from before equal coordinators cannot say so, and is
+ * refused before this copy writes anything (EC2-04).
+ */
+export const requireEqualPeer = (input: {
+  readonly equalCoordinators?: true | undefined;
+}): Effect.Effect<void, ProjectLinkError> =>
+  input.equalCoordinators === true
+    ? Effect.void
+    : Effect.fail(new ProjectLinkError({ code: "needs_update" }));
+
 /** Whether a binding is already an equal coordinator's: active, following and awaiting nobody. */
 export function isEqualCoordinatorBinding(binding: ProjectCoordinatorBinding | undefined): boolean {
   return (
@@ -74,6 +136,20 @@ export function isEqualCoordinatorBinding(binding: ProjectCoordinatorBinding | u
       binding.standby === undefined &&
       binding.takenOverAt === undefined &&
       binding.takenOverBy === undefined)
+  );
+}
+
+/**
+ * Whether another machine may believe it coordinates this project too. A copy that armed a
+ * standby cannot know the standby did not take over while it was away, and a copy that took
+ * over cannot know the one it replaced ever heard. Neither is the routines' one owner: both
+ * hold them until the machines settle a runner (AC-45).
+ */
+export function takeoverUnsettled(binding: ProjectCoordinatorBinding): boolean {
+  return (
+    binding.standby !== undefined ||
+    binding.takenOverAt !== undefined ||
+    binding.takenOverBy !== undefined
   );
 }
 
@@ -97,7 +173,7 @@ export function equalCoordinatorBinding(
     ...(retired.length === 0 ? {} : { retiredOperationIds: retired }),
     // Read before the binding loses what said so: a copy that followed another machine, or
     // was moving, never becomes a second owner of the project's routines.
-    routineOwner: coordinatorOwnsRoutines(binding),
+    routineOwner: coordinatorOwnsRoutines(binding) && !takeoverUnsettled(binding),
   };
 }
 
@@ -146,9 +222,10 @@ const migrateProject = (projects: ProjectService.ProjectService["Service"], proj
     const revision = settings?.revision ?? 0;
     yield* projects.update({
       projectId: project.id,
-      // Named by what it replaces, so a second start replays instead of writing twice.
+      // Named by the project and what it replaces, so a second start replays instead of
+      // writing twice, and two projects at the same epoch and revision never share a receipt.
       commandId: CommandId.make(
-        `project-equal-coordinators:${binding.state}:${binding.epoch}:${revision}`,
+        `project-equal-coordinators:${project.id}:${binding.state}:${binding.epoch}:${revision}`,
       ),
       ownership: {
         mode: "equal-coordinators",

@@ -11,6 +11,20 @@ export const zh: PhraseCatalog = {
   "Accounts & integrations": "账户与集成",
   Actions: "操作",
   "Add a device with a code": "用代码添加设备",
+  "Add this project on another machine. Every machine runs its own coordinator.":
+    "在另一台机器上添加此项目。每台机器都运行自己的协调器。",
+  "Make this project and the same project on another machine one project. Each machine keeps its own coordinator.":
+    "将此项目与另一台机器上的同一项目合并为一个项目。每台机器保留自己的协调器。",
+  "Needs an update: this machine is on a version from before every machine ran its own coordinator.":
+    "需要更新：这台机器的版本早于每台机器各自运行协调器的版本。",
+  "Pick {project} on another machine. It joins this project and keeps its own coordinator.":
+    "在另一台机器上选择 {project}。它加入此项目并保留自己的协调器。",
+  "Pick {project} on another machine. Linking makes them one project; each machine keeps its own coordinator.":
+    "在另一台机器上选择 {project}。关联后它们成为一个项目；每台机器保留自己的协调器。",
+  "Runs its own coordinator for this project.":
+    "为此项目运行自己的协调器。",
+  "Update SpecWithCode on {machine} to link projects.":
+    "请更新 {machine} 上的 SpecWithCode 以关联项目。",
   "Use this machine from a browser on a phone or another computer, also when SpecWithCode Connect is off or cannot be reached. The SpecWithCode app signed in to the same Connect account needs no code.":
     "可从手机或另一台电脑的浏览器使用这台电脑，SpecWithCode Connect 已关闭或无法连接时也可以。用同一 Connect 账户登录的 SpecWithCode 应用无需代码。",
   "Add a device": "添加设备",
@@ -5278,10 +5292,6 @@ export const zh: PhraseCatalog = {
     "让 {machine} 上的项目成为此项目的一部分。协调者留在原处，会话和文件也保持原位。你会先确认 {machine} 放弃的内容。",
   "Work on {machine}": "{machine} 上的工作",
   "Continue in the folder already there": "在那里已有的文件夹中继续",
-  "Pick {project} on another machine. Linking makes them one project with one coordinator.":
-    "选择另一台电脑上的 {project}。关联后它们会合为一个项目，共用一个协调者。",
-  "Pick {project} on another machine. The coordinator stays on {main}; you can continue it on another machine any time.":
-    "选择另一台电脑上的 {project}。协调者仍在 {main}；你可以随时在另一台电脑上继续它。",
   "Other machine": "另一台电脑",
   "{project} was not found on another machine.": "在其他电脑上没有找到 {project}。",
   "Preparing the machine that keeps its coordinator…": "正在准备保留协调者的电脑…",

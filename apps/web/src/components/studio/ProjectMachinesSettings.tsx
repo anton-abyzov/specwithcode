@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import type { ProjectDisconnectedTurn } from "@specweave-studio/contracts";
+import { useTx } from "../../i18n";
 import { useProjects } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -61,6 +62,7 @@ export function ProjectMachinesSettings({
 }: {
   readonly members: ReadonlyArray<EnvironmentProject>;
 }) {
+  const tx = useTx();
   const projects = useProjects();
   const machines = useLinkMachines();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -191,7 +193,7 @@ export function ProjectMachinesSettings({
             description={
               <>
                 <ProjectLocation path={copy.project.workspaceRoot} />
-                <span className="block">{ROLE_TEXT[copy.role]}</span>
+                <span className="block">{tx(ROLE_TEXT[copy.role])}</span>
                 {repositorySource &&
                 (copy.project.environmentId !== repositorySource.environmentId ||
                   copy.project.id !== repositorySource.id) ? (

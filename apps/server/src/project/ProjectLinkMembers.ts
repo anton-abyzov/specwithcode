@@ -79,6 +79,11 @@ export interface AdoptMembersInput {
    * this one gave way to, since its epoch is its own word.
    */
   readonly viaApp?: boolean;
+  /**
+   * The members that copy unlinked on purpose (its `removedMembers`). An equal coordinator
+   * drops the ones it still lists; a member that copy merely does not list stays.
+   */
+  readonly removed?: ReadonlyArray<Pick<LogicalProjectMember, "environmentId" | "projectId">>;
 }
 
 export interface AdoptMembersResult {
@@ -125,9 +130,10 @@ export const makeProjectLinkMembers = (deps: ProjectLinkMembersDeps) => {
   const { admission, fail, load } = deps;
 
   /**
-   * An equal coordinator adds the members another listed copy holds. The
-   * caller holds the project lock. Nothing is removed and no entry this copy
-   * holds is rewritten; a member this copy unlinked stays unlinked.
+   * An equal coordinator adds the members another listed copy holds, and drops
+   * the ones that copy says it unlinked on purpose. The caller holds the project
+   * lock. A member the other copy only fails to list is never removed, no entry
+   * this copy holds is rewritten, and a member this copy unlinked stays unlinked.
    */
   const adoptEqualMembers = (
     project: Project,
@@ -146,6 +152,50 @@ export const makeProjectLinkMembers = (deps: ProjectLinkMembersDeps) => {
         )
       )
         return yield* fail("not_member");
+      // What the other copy unlinked on purpose, unless it lists that member again since.
+      const listedThere = new Set(input.members.map(logicalProjectMemberKey));
+      const unlinkedThere = new Set(
+        (input.removed ?? [])
+          .map(logicalProjectMemberKey)
+          .filter((key) => !listedThere.has(key) && key !== fromKey),
+      );
+      const dropped = identity.members.filter(
+        (member) =>
+          unlinkedThere.has(logicalProjectMemberKey(member)) &&
+          member.environmentId !== self.environmentId,
+      );
+      if (dropped.length > 0) {
+        const current = binding ?? { epoch: 0, state: "active" as const };
+        const droppedKeys = new Set(dropped.map(logicalProjectMemberKey));
+        const remaining = identity.members.filter(
+          (member) => !droppedKeys.has(logicalProjectMemberKey(member)),
+        );
+        // Remembered here too, so an older list from a third copy never brings them back.
+        const remembered = [
+          ...(current.removedMembers ?? []).filter(
+            (member) => !droppedKeys.has(logicalProjectMemberKey(member)),
+          ),
+          ...dropped.map(({ environmentId, projectId }) => ({ environmentId, projectId })),
+        ].slice(-256);
+        const updated = yield* deps.writeOwnership(
+          project,
+          "project-link-members-removed",
+          listId(remaining),
+          {
+            mode: "remove-member",
+            logicalProject: { ...identity, members: remaining },
+            coordinatorBinding: { ...current, removedMembers: remembered },
+          },
+        );
+        const next = yield* adoptEqualMembers(
+          updated,
+          updated.workspaceSettings?.logicalProject ?? { ...identity, members: remaining },
+          self,
+          { ...input, removed: [] },
+        );
+        void next;
+        return { replayed: false, changed: true };
+      }
       const held = new Set(identity.members.map(logicalProjectMemberKey));
       const removed = new Set((binding?.removedMembers ?? []).map(logicalProjectMemberKey));
       const added = byKey(input.members)

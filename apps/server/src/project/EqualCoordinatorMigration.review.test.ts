@@ -21,6 +21,7 @@ import {
   removeCheckouts,
   unlinkId,
 } from "./ProjectLink.testkit.ts";
+import { withoutCoordinatorMove } from "./EqualCoordinatorMigration.ts";
 import * as ProjectService from "./ProjectService.ts";
 
 afterEach(removeCheckouts);
@@ -64,7 +65,7 @@ describe(`linking with ${PINNED_RELEASE} (EC2-04, EC2-09)`, () => {
     const before = structuredClone(settingsOf(pair.m4, pair.kept.projectId));
     // A caller that did not check the joining end, as that release's window is.
     const refused = await pair.m4.fails(
-      pair.m4.run((service) =>
+      pair.m4.runUnchecked((service) =>
         service.prepare({ operationId, projectId: pair.kept.projectId, joining: pair.joining }),
       ),
     );
@@ -86,7 +87,7 @@ describe(`linking with ${PINNED_RELEASE} (EC2-04, EC2-09)`, () => {
     const before = structuredClone(settingsOf(pair.m3, pair.joining.projectId));
     // What that release's kept copy sends: the same link, without the word that it is equal.
     const refused = await pair.m3.fails(
-      pair.m3.run((service) =>
+      pair.m3.runUnchecked((service) =>
         service.accept({
           operationId,
           projectId: pair.joining.projectId,
@@ -139,6 +140,24 @@ describe("a handoff no longer moves the coordinator (AC-35)", () => {
       expect(exit._tag).toBe("Failure");
     }
     expect(settingsOf(target, pair.kept.projectId)).toEqual(before);
+  });
+});
+
+describe("the window's handoff call (AC-35)", () => {
+  const input = { projectId: "p" as never, operationId: "op" as never };
+
+  it("refuses to publish a coordinator move before anything is prepared", async () => {
+    let prepared = 0;
+    const prepare = withoutCoordinatorMove(() => Effect.sync(() => ++prepared));
+    const exit = await Effect.runPromiseExit(prepare({ ...input, publish: true }));
+    expect(exit._tag).toBe("Failure");
+    expect(JSON.stringify(exit)).toContain("runs its own coordinator");
+    expect(prepared).toBe(0);
+  });
+
+  it("still reads what a handoff would carry", async () => {
+    const prepare = withoutCoordinatorMove(() => Effect.succeed("preview"));
+    expect(await Effect.runPromise(prepare({ ...input, publish: false }))).toBe("preview");
   });
 });
 

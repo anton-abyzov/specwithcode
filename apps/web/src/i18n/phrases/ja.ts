@@ -11,6 +11,20 @@ export const ja: PhraseCatalog = {
   "Accounts & integrations": "アカウントと連携",
   Actions: "アクション",
   "Add a device with a code": "コードでデバイスを追加",
+  "Add this project on another machine. Every machine runs its own coordinator.":
+    "このプロジェクトを別のマシンに追加します。各マシンが自分のコーディネーターを実行します。",
+  "Make this project and the same project on another machine one project. Each machine keeps its own coordinator.":
+    "このプロジェクトと別のマシンの同じプロジェクトを 1 つのプロジェクトにします。各マシンは自分のコーディネーターを持ち続けます。",
+  "Needs an update: this machine is on a version from before every machine ran its own coordinator.":
+    "更新が必要です: このマシンは、各マシンが自分のコーディネーターを持つようになる前のバージョンです。",
+  "Pick {project} on another machine. It joins this project and keeps its own coordinator.":
+    "別のマシンの {project} を選びます。このプロジェクトに加わり、自分のコーディネーターを持ち続けます。",
+  "Pick {project} on another machine. Linking makes them one project; each machine keeps its own coordinator.":
+    "別のマシンの {project} を選びます。リンクすると 1 つのプロジェクトになり、各マシンは自分のコーディネーターを持ち続けます。",
+  "Runs its own coordinator for this project.":
+    "このプロジェクト用に自分のコーディネーターを実行します。",
+  "Update SpecWithCode on {machine} to link projects.":
+    "プロジェクトをリンクするには {machine} の SpecWithCode を更新してください。",
   "Use this machine from a browser on a phone or another computer, also when SpecWithCode Connect is off or cannot be reached. The SpecWithCode app signed in to the same Connect account needs no code.":
     "スマートフォンや別のコンピューターのブラウザーからこのマシンを使います。SpecWithCode Connect がオフのとき、または接続できないときにも使えます。同じ Connect アカウントでサインインした SpecWithCode アプリにコードは不要です。",
   "Add a device": "デバイスを追加",
@@ -5505,10 +5519,6 @@ export const ja: PhraseCatalog = {
     "{machine} のプロジェクトをこのプロジェクトの一部にします。コーディネーターは今の場所のままで、スレッドとファイルもそのまま残ります。{machine} が手放すものを先に確認します。",
   "Work on {machine}": "{machine} での作業",
   "Continue in the folder already there": "すでにあるフォルダで続行",
-  "Pick {project} on another machine. Linking makes them one project with one coordinator.":
-    "別のマシンにある {project} を選びます。リンクすると、1 つのコーディネーターを持つ 1 つのプロジェクトになります。",
-  "Pick {project} on another machine. The coordinator stays on {main}; you can continue it on another machine any time.":
-    "別のマシンにある {project} を選びます。コーディネーターは {main} のままで、いつでも別のマシンで続行できます。",
   "Other machine": "もう一方のマシン",
   "{project} was not found on another machine.": "別のマシンに {project} は見つかりませんでした。",
   "Preparing the machine that keeps its coordinator…":

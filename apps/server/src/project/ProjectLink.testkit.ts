@@ -319,17 +319,31 @@ export function machine(environment: string) {
       ),
     ),
   );
-  const run = <A>(
-    use: (link: ProjectLink.ProjectLink["Service"]) => Effect.Effect<A, ProjectLinkError>,
-  ) =>
-    Effect.runPromiseExit(
-      Effect.gen(function* () {
-        return yield* use(yield* ProjectLink.ProjectLink);
-      }).pipe(Effect.provide(layer)),
-    ).then((exit) => {
-      if (Exit.isSuccess(exit)) return exit.value;
-      throw Cause.squash(exit.cause);
-    });
+  const runWith =
+    (checked: boolean) =>
+    <A>(use: (link: ProjectLink.ProjectLink["Service"]) => Effect.Effect<A, ProjectLinkError>) =>
+      Effect.runPromiseExit(
+        Effect.gen(function* () {
+          const link = yield* ProjectLink.ProjectLink;
+          return yield* use(
+            checked
+              ? {
+                  ...link,
+                  prepare: (input) => link.prepare({ equalCoordinators: true, ...input }),
+                  accept: (input, options) =>
+                    link.accept({ equalCoordinators: true, ...input }, options),
+                }
+              : link,
+          );
+        }).pipe(Effect.provide(layer)),
+      ).then((exit) => {
+        if (Exit.isSuccess(exit)) return exit.value;
+        throw Cause.squash(exit.cause);
+      });
+  /** As a caller that checked both machines run equal coordinators, which a link needs. */
+  const run = runWith(true);
+  /** As a caller from before equal coordinators: it says nothing of the other machine. */
+  const runUnchecked = runWith(false);
   const fails = async (effect: Promise<unknown>) => {
     const error = await effect.then(
       () => null,
@@ -381,6 +395,7 @@ export function machine(environment: string) {
     layer,
     capabilities,
     run,
+    runUnchecked,
     fails,
     add,
     member,

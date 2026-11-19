@@ -252,3 +252,14 @@ export function staysWithProjectCoordinator(
   }
   return false;
 }
+
+/**
+ * Whether a machine keeps its own coordinator when it joins a project, by the capabilities
+ * its server advertises or the features its tools list. One that does not say so is from
+ * before equal coordinators: its accept relinquishes the coordinator, so nothing links with it.
+ */
+export function environmentRunsEqualCoordinators(
+  capabilities: { readonly equalCoordinators?: boolean | undefined } | null | undefined,
+): boolean {
+  return capabilities?.equalCoordinators === true;
+}

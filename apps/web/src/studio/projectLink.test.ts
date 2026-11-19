@@ -318,6 +318,7 @@ describe("linkCopyAsWorkers", () => {
     lastCoordinatorActivityAt: null,
     keepRefusal: null,
     joinRefusal: null,
+    equalCoordinators: true,
     ...overrides,
   });
   const ok = <A>(value: A) => Promise.resolve({ _tag: "Success" as const, value });

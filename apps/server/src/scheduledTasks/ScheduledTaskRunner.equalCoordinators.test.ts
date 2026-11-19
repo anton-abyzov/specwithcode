@@ -71,6 +71,8 @@ for (const order of [
         assert.equal(fires(), 0);
         // Once they reach each other they settle one runner, and it fires once.
         network.offline.clear();
+        // The next paced look after the wait between asks.
+        yield* TestClock.adjust("10 minutes");
         yield* everyoneLooks;
         yield* everyoneLooks;
         assert.equal(fires(), 1);

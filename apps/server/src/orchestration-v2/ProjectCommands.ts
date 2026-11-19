@@ -55,6 +55,10 @@ import type { ProjectRow } from "./ProjectStore.ts";
  * - `equal-coordinators`: the one migration to equal coordinators. A copy that gave way, was
  *   moving or had a standby runs its own coordinator again; identity and members stay.
  */
+/** Why a write that would relinquish an active coordinator is refused (1390 AC-35). */
+export const COORDINATOR_STAYS =
+  "Every machine runs its own coordinator now, so a handoff no longer moves it.";
+
 export type ProjectOwnershipMode =
   | "handoff"
   | "adopt-identity"
@@ -376,6 +380,10 @@ export function ownershipRejection(
     return "That role operation ended when every machine got its own coordinator.";
   switch (ownership.mode) {
     case "handoff": {
+      // A handoff moves threads, never the coordinator: an active copy is not relinquished.
+      // A move that was already under way before the upgrade may still finish or be released.
+      if ((old ?? ACTIVE_LEGACY_BINDING).state === "active" && next.state !== "active")
+        return COORDINATOR_STAYS;
       const acceptedIncoming =
         ownership.acceptedHandoffOperationId !== undefined &&
         ownership.acceptedHandoffOperationId === next.operationId &&

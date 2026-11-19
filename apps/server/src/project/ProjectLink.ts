@@ -87,7 +87,13 @@ import {
   coordinatorClaimWindow,
   makeProjectLinkMembers,
 } from "./ProjectLinkMembers.ts";
-import { joinedBinding, joinedBy, retiredRoleChange } from "./EqualCoordinatorMigration.ts";
+import {
+  joinedBinding,
+  joinedBy,
+  requireEqualPeer,
+  retiredRoleChange,
+  retiredStandbyMethods,
+} from "./EqualCoordinatorMigration.ts";
 import { fingerprintFolder } from "./projectFingerprint.ts";
 import { LinkedPeerSyncState } from "./LinkedPeerSyncState.ts";
 import { RoutineCopies } from "../scheduledTasks/ScheduledTaskCopies.ts";
@@ -571,6 +577,7 @@ const make = Effect.gen(function* () {
         lastCoordinatorActivityAt: activity === null ? null : DateTime.formatIso(activity),
         keepRefusal: refusals.keep,
         joinRefusal: refusals.join,
+        equalCoordinators: true as const,
         replica: Option.getOrNull(replica),
         ranWhileDisconnected:
           binding?.state === "transferred" ? yield* turnsSince(member, binding.takenOverAt) : [],
@@ -584,6 +591,7 @@ const make = Effect.gen(function* () {
         const project = yield* load(input.projectId);
         const kept = yield* selfMember(project);
         if (input.joining.environmentId === kept.environmentId) return yield* fail("same_machine");
+        yield* requireEqualPeer(input);
         const refusal = linkRefusals(project, false).keep;
         if (refusal) return yield* fail(refusal);
         const binding: ProjectCoordinatorBinding = project.workspaceSettings
@@ -628,6 +636,7 @@ const make = Effect.gen(function* () {
         const project = yield* load(input.projectId);
         const self = yield* selfMember(project);
         if (input.kept.environmentId === self.environmentId) return yield* fail("same_machine");
+        yield* requireEqualPeer(input);
         if (
           input.coordinatorBinding.state !== "active" ||
           !input.logicalProject.members.some((member) => sameMember(member, input.kept))
@@ -1150,31 +1159,9 @@ const make = Effect.gen(function* () {
       ),
   });
 
-  // Retired with equal coordinators: nobody stands by for, or takes over, a coordinator.
-  const retired = () => retiredRoleChange("invalid");
-  const retiredStandby: Pick<
-    ProjectLinkStandbyMethods,
-    | "setStandby"
-    | "acceptStandby"
-    | "acceptStandbyFromPeer"
-    | "rearmStandby"
-    | "plannedGiveWay"
-    | "plannedTakeover"
-    | "awayTakeover"
-  > = {
-    // Turning a standby off still works; naming one does not.
-    setStandby: (input) => (input.standby === null ? standby.setStandby(input) : retired()),
-    acceptStandby: retired,
-    acceptStandbyFromPeer: retired,
-    rearmStandby: retired,
-    plannedGiveWay: retired,
-    plannedTakeover: retired,
-    awayTakeover: retired,
-  };
-
   return ProjectLink.of({
     ...standby,
-    ...retiredStandby,
+    ...retiredStandbyMethods(standby),
     replicateFromMember,
     fingerprint,
     preview,

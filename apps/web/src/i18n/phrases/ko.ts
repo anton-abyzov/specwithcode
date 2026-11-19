@@ -11,6 +11,20 @@ export const ko: PhraseCatalog = {
   "Accounts & integrations": "계정 및 연동",
   Actions: "작업",
   "Add a device with a code": "코드로 기기 추가",
+  "Add this project on another machine. Every machine runs its own coordinator.":
+    "이 프로젝트를 다른 머신에 추가합니다. 모든 머신이 자체 코디네이터를 실행합니다.",
+  "Make this project and the same project on another machine one project. Each machine keeps its own coordinator.":
+    "이 프로젝트와 다른 머신의 같은 프로젝트를 하나의 프로젝트로 만듭니다. 각 머신은 자체 코디네이터를 유지합니다.",
+  "Needs an update: this machine is on a version from before every machine ran its own coordinator.":
+    "업데이트 필요: 이 머신은 모든 머신이 자체 코디네이터를 실행하기 이전 버전입니다.",
+  "Pick {project} on another machine. It joins this project and keeps its own coordinator.":
+    "다른 머신의 {project}을(를) 선택하세요. 이 프로젝트에 합류하며 자체 코디네이터를 유지합니다.",
+  "Pick {project} on another machine. Linking makes them one project; each machine keeps its own coordinator.":
+    "다른 머신의 {project}을(를) 선택하세요. 연결하면 하나의 프로젝트가 되고, 각 머신은 자체 코디네이터를 유지합니다.",
+  "Runs its own coordinator for this project.":
+    "이 프로젝트를 위해 자체 코디네이터를 실행합니다.",
+  "Update SpecWithCode on {machine} to link projects.":
+    "프로젝트를 연결하려면 {machine}의 SpecWithCode를 업데이트하세요.",
   "Use this machine from a browser on a phone or another computer, also when SpecWithCode Connect is off or cannot be reached. The SpecWithCode app signed in to the same Connect account needs no code.":
     "휴대폰이나 다른 컴퓨터의 브라우저에서 이 컴퓨터를 사용합니다. SpecWithCode Connect가 꺼져 있거나 연결할 수 없을 때도 쓸 수 있습니다. 같은 Connect 계정으로 로그인한 SpecWithCode 앱에는 코드가 필요 없습니다.",
   "Add a device": "기기 추가",
@@ -5436,10 +5450,6 @@ export const ko: PhraseCatalog = {
     "{machine}의 프로젝트를 이 프로젝트의 일부로 만듭니다. 코디네이터는 지금 있는 곳에 그대로 있고, 스레드와 파일도 그대로 있습니다. {machine}이(가) 포기하는 것을 먼저 확인합니다.",
   "Work on {machine}": "{machine}의 작업",
   "Continue in the folder already there": "이미 있는 폴더에서 계속",
-  "Pick {project} on another machine. Linking makes them one project with one coordinator.":
-    "다른 컴퓨터의 {project}을(를) 고르세요. 연결하면 코디네이터가 하나인 한 프로젝트가 됩니다.",
-  "Pick {project} on another machine. The coordinator stays on {main}; you can continue it on another machine any time.":
-    "다른 컴퓨터의 {project}을(를) 고르세요. 코디네이터는 {main}에 그대로 있으며, 언제든지 다른 컴퓨터에서 이어 갈 수 있습니다.",
   "Other machine": "다른 컴퓨터",
   "{project} was not found on another machine.": "다른 컴퓨터에서 {project}을(를) 찾지 못했습니다.",
   "Preparing the machine that keeps its coordinator…": "코디네이터를 유지할 컴퓨터를 준비하는 중…",

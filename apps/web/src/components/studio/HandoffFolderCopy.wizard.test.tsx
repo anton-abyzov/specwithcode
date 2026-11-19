@@ -403,35 +403,6 @@ it("offers Change on a copy that failed before Apply", async () => {
   expect(pointerNow()).toBeNull();
 });
 
-it("locks starting a new copy while a coordinator transfer may need recovering", async () => {
-  const applied = copyStatus("applied", {
-    mode: "copy-and-move",
-    projectId: "00000000-0000-4000-8000-000000000009",
-    rows: [newRow(".")],
-  });
-  statuses = [applied];
-  state.handlers.copySourceStatus = () => ({ state: "scanned", summary: noSecrets, error: null });
-  localStorage.setItem(
-    KEY,
-    JSON.stringify({
-      operationId: applied.operationId,
-      environmentId: "kioskD",
-      mode: "copy-and-move",
-      targetFolder: "/Users/me/Projects/project",
-      projectId: applied.projectId,
-      selection: applied.selection,
-    }),
-  );
-  await mount();
-  await settle();
-  expect(stepState()).toContain("Transfer:current");
-  expect(button("Continue the coordinator on Kiosk D").disabled).toBe(false);
-  await openMore();
-  expect(isDisabled(button("Add to another machine"))).toBe(true);
-  // Copy again releases the source too, so it is locked the same way.
-  expect(isDisabled(button("Run the same sync again"))).toBe(true);
-});
-
 // Reopening: the dialog checks the copy first, then brings back the step that was on screen.
 const LAST_KEY = "specwithcode:folder-copy-last:laptopE:source";
 const DRAFT_KEY = "specwithcode:folder-copy-draft:laptopE:source";

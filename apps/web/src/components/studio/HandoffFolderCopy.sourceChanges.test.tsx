@@ -317,36 +317,6 @@ it("shows a fresh list when a new path changed since the one accepted", async ()
   expect(pointerNow()).not.toHaveProperty("acceptedSourceChanges");
 });
 
-it("keeps the accepted list across a reopen, and Copy again clears it", async () => {
-  refuseUnlessAccepted();
-  await mount();
-  await handOff();
-  // The source is busy on the accepted retry: the pointer keeps the choice.
-  state.handlers.prepare = () => {
-    throw Object.assign(new Error("busy"), { code: "busy" });
-  };
-  await click("Move without these 3 paths");
-  expect(container.textContent).toContain("Work is still running on Laptop E");
-  expect(pointerNow().acceptedSourceChanges).toEqual({ digest: "a".repeat(64), total: 3 });
-
-  statuses = [copyStatus("applied", { mode: "copy-and-move", projectId: PROJECT })];
-  await remount();
-  expect(pointerNow().acceptedSourceChanges).toEqual({ digest: "a".repeat(64), total: 3 });
-  refuseUnlessAccepted();
-  const before = prepares().length;
-  await click("Continue the coordinator on Kiosk D");
-  expect(
-    prepares()
-      .slice(before)
-      .map((input) => input.acceptedSourceChanges),
-  ).toEqual(["a".repeat(64), "a".repeat(64)]);
-  expect(container.textContent).toContain("The coordinator continues on Kiosk D.");
-  // This browser no longer has the accepted rows: one list, not split.
-  const left = container.querySelector('[data-slot="copy-left-on-source"]')!;
-  expect(left.querySelector('[aria-label="Only on Laptop E"]')?.textContent).toContain("notes.md");
-  expect(left.querySelector('[aria-label="Left by your choice"]')).toBeNull();
-});
-
 it("keeps the list and its choices after a busy retry; Copy again drops the accepted list", async () => {
   refuseUnlessAccepted();
   await mount();

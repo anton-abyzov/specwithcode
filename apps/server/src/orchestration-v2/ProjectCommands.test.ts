@@ -551,7 +551,7 @@ describe("durable logical coordinator ownership", () => {
       ),
     );
   });
-  it("requires exact standalone identity consent to join a target project", () => {
+  it("never gives an active coordinator up to join a target project, even with consent (AC-35)", () => {
     const target = { ...settings, coordinatorBinding: { epoch: 0, state: "active" as const } };
     const ownership = {
       mode: "handoff" as const,
@@ -560,7 +560,8 @@ describe("durable logical coordinator ownership", () => {
       coordinatorBinding: { epoch: 0, state: "transferred" as const, operationId: "transfer" },
     };
     failureOf(plan({ ...command, ownership }, { project: row({ workspaceSettings: target }) }));
-    payloadOf(
+    // Consent named the identity to leave; the coordinator here still stays active.
+    failureOf(
       plan(
         {
           ...command,
