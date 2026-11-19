@@ -171,7 +171,7 @@ The newest failed install's pre-update copy (a receipt with a failed `result` or
 /usr/bin/python3 -B "$helpers/state_backup_prune.py" --mark-read ~/.specwithcode/<identity>/updates/receipts/update-<version>-<stamp>.json
 ```
 
-That stamps `stateBackupReadAt` in the receipt, and in every older failed receipt of that identity, under the installation lock (it refuses while an install runs). The next prune removes the copy, and an older failure never becomes unread again after receipt pruning removes the read one. It refuses a receipt that names no copy, so a refusal record keeps exactly its keys.
+Under the installation lock (it refuses while an install runs) that moves the identity's read watermark, `updates/failure-copy-read.json`, to the receipt's start time in one atomic write, then stamps `stateBackupReadAt` in the receipt for the next reader. The watermark covers that failure and every older one, so none becomes unread again when receipt pruning later removes the read receipt. The next prune removes the copy. A missing or unreadable watermark keeps copies, never removes them. It refuses a receipt that names no copy, so a refusal record keeps exactly its keys.
 
 ### A restart asked for from inside the service (Linux)
 

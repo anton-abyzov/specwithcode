@@ -140,7 +140,7 @@ class UnreadFailureCopy(unittest.TestCase):
         value.pop('rollbackError')
         failed.write_text(json.dumps(value))
         state_backup_prune.mark_read(self.home, failed)
-        self.assertIn(READ, json.loads(older.read_text()))
+        self.assertNotIn(READ, json.loads(older.read_text()))  # The watermark covers it, not its receipt.
         for index in range(11):
             self.receipt('1.0.%d-20261119T0500%02dZ' % (375 + index, index), {
                 'identity': 'm4', 'phase': 'preflight', 'result': 'update-failed', 'pointers': 'unchanged',
@@ -151,9 +151,99 @@ class UnreadFailureCopy(unittest.TestCase):
         self.assertIn(failed.name, removed['receipts'])
         self.assertTrue(older.is_file())
         self.assertIsNone(release_retention.unread_failure_receipt(
-            [(path, json.loads(path.read_text())) for path in self.receipts.glob('update-*.json')]))
+            [(path, json.loads(path.read_text())) for path in self.receipts.glob('update-*.json')],
+            release_retention.failure_read_through(self.own)))
         self.assertIn(older_copy.name, state_backup_prune.after_install('m4', self.home, later))
         self.assertFalse(older_copy.exists())
+
+    def age_past_the_receipt_window(self, after):
+        """Eleven newer no-copy refusals and two days of age: a finished receipt then goes by rank."""
+        for index in range(11):
+            self.receipt('1.0.%d-20261119T0600%02dZ' % (390 + index, index), {
+                'identity': 'm4', 'phase': 'preflight', 'result': 'update-failed', 'pointers': 'unchanged',
+                'error': 'AssertionError: Guarded prestate changed: rows'})
+        for path in self.receipts.iterdir():
+            os.utime(path, (time.time() - 2 * DAY,) * 2)
+
+    def restored(self, receipt):
+        value = dict(json.loads(receipt.read_text()), rollback='restored-old-release', pointers='previous-release')
+        value.pop('rollbackError')
+        receipt.write_text(json.dumps(value))
+
+    @contextlib.contextmanager
+    def unreadable(self, path):
+        path.chmod(0)
+        try:
+            with self.assertRaises(PermissionError):
+                path.read_text()
+            yield
+        finally:
+            path.chmod(0o600)
+
+    def test_an_unreadable_receipt_keeps_the_unread_failure_receipt(self):
+        """Review round 2, finding 1: an unrelated unreadable receipt must not let the unread failure's
+        receipt go, or the next state prune removes its copy unread."""
+        unrelated = self.receipt('1.0.200-20261001T000000Z', verified(hours=900))
+        failed_copy, failed, later_copy, later = self.m4_history()
+        self.restored(failed)  # Finished: receipt pruning could take it by rank.
+        self.age_past_the_receipt_window(later)
+        with self.unreadable(unrelated):
+            removed = release_retention.prune_update_receipts(self.own, keep=[later])
+        self.assertNotIn(failed.name, removed['receipts'])
+        self.assertTrue(removed['receipts'])  # Pruning still runs for the rest.
+        self.assertTrue(failed.is_file())
+        self.assertNotIn(failed.name, release_retention.prune_update_receipts(self.own, keep=[later])['receipts'])
+        self.assertNotIn(failed_copy.name, state_backup_prune.after_install('m4', self.home, later))
+        self.assertTrue(failed_copy.is_dir())
+
+    def test_an_unreadable_older_receipt_cannot_skip_the_read_mark(self):
+        """Review round 2, finding 2: the watermark is one file, so an older receipt unreadable while
+        B is marked read is still covered once it is readable again and B's receipt is gone."""
+        older_copy = self.copy('20261101T000000Z')
+        older = self.receipt('1.0.300-20261101T000000Z', m4_failure(older_copy / 'statev2.sqlite'))
+        failed_copy, failed, later_copy, later = self.m4_history()
+        self.restored(failed)
+        with self.unreadable(older):
+            state_backup_prune.mark_read(self.home, failed)
+        self.age_past_the_receipt_window(later)
+        self.assertIn(failed.name, release_retention.prune_update_receipts(self.own, keep=[later])['receipts'])
+        self.assertIn(older_copy.name, state_backup_prune.after_install('m4', self.home, later))
+
+    def test_a_failed_receipt_write_still_leaves_the_copy_read(self):
+        failed_copy, failed, later_copy, later = self.m4_history()
+        real = state_backup_prune._write_receipt
+
+        def write(path, value):
+            if path == failed:
+                raise OSError(28, 'No space left on device')
+            real(path, value)
+        with patch.object(state_backup_prune, '_write_receipt', side_effect=write), self.assertRaises(OSError):
+            state_backup_prune.mark_read(self.home, failed)
+        self.assertNotIn(READ, json.loads(failed.read_text()))
+        self.assertEqual(state_backup_prune.after_install('m4', self.home, later), [failed_copy.name])
+
+    def test_an_older_receipt_written_after_the_mark_stays_read(self):
+        failed_copy, failed, later_copy, later = self.m4_history()
+        state_backup_prune.mark_read(self.home, failed)
+        failed.unlink()
+        late_copy = self.copy('20261110T000000Z')
+        self.receipt('1.0.350-20261110T000000Z', m4_failure(late_copy / 'statev2.sqlite'))
+        self.assertIn(late_copy.name, state_backup_prune.after_install('m4', self.home, later))
+
+    def test_the_watermark_only_moves_forward(self):
+        older_copy = self.copy('20261101T000000Z')
+        older = self.receipt('1.0.300-20261101T000000Z', m4_failure(older_copy / 'statev2.sqlite'))
+        _, failed, _, _ = self.m4_history()
+        state_backup_prune.mark_read(self.home, failed)
+        state_backup_prune.mark_read(self.home, older)
+        self.assertEqual(release_retention.failure_read_through(self.own), '20261118190331588596')
+
+    def test_an_unreadable_watermark_keeps_the_copy(self):
+        failed_copy, failed, later_copy, later = self.m4_history()
+        state_backup_prune.mark_read(self.home, failed)
+        failed.write_text(json.dumps({k: v for k, v in json.loads(failed.read_text()).items() if k != READ}))
+        (self.own / 'updates' / release_retention.FAILURE_READ_FILE).write_text('{not json')
+        self.assertEqual(state_backup_prune.after_install('m4', self.home, later), [])
 
     def test_marking_an_older_receipt_leaves_newer_ones_unread(self):
         older_copy = self.copy('20261101T000000Z')
@@ -207,6 +297,10 @@ class UnreadFailureCopy(unittest.TestCase):
             state_backup_prune.mark_read(self.home, elsewhere)
         with self.assertRaisesRegex(AssertionError, 'Receipt not found'):
             state_backup_prune.mark_read(self.home, self.receipts / 'update-missing.json')
+        unstamped = self.receipt('hand-run', m4_failure(self.copy('20261118T200000Z') / 'statev2.sqlite'))
+        with self.assertRaisesRegex(AssertionError, 'no start time'):
+            state_backup_prune.mark_read(self.home, unstamped)
+        self.assertFalse((self.own / 'updates' / release_retention.FAILURE_READ_FILE).exists())
 
     def test_the_command_stamps_the_receipt(self):
         _, failed, _, _ = self.m4_history()

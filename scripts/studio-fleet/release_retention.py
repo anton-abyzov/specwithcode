@@ -65,8 +65,12 @@ VERIFIED_PROOFS = ('preservedRowsAuthAndIdentity', 'originalServicesPreserved', 
 RECEIPT_STAMP = re.compile(r'update-.+-(\d{8})T(\d{6,12})Z\.json')
 # The newest failed install's copy is the only thing that can say why it failed (M4 1.0.361: the
 # page proof refused, then 1.0.374's verified install pruned the copy before anyone read it). It
-# stays, superseded or not, until state_backup_prune.mark_read stamps this key in its receipt.
+# stays, superseded or not, until state_backup_prune.mark_read moves the identity's read watermark
+# (updates/FAILURE_READ_FILE) to or past its receipt's start time. The watermark is one file that
+# receipt pruning never touches, so no failure at or before it becomes unread again; the receipt's
+# own key is informational.
 FAILURE_COPY_READ_KEY = 'stateBackupReadAt'
+FAILURE_READ_FILE = 'failure-copy-read.json'
 
 
 def _plain_directory(root, home):
@@ -207,7 +211,7 @@ def state_backup_references(home):
                         return None
                     parsed.append((path, value))
                 superseded = superseded_receipts(parsed)
-                unread = unread_failure_receipt(parsed)
+                unread = unread_failure_receipt(parsed, failure_read_through(identity))
                 for path, value in parsed:
                     backup = value.get('stateBackup')
                     if isinstance(backup, str) and backup:
@@ -314,7 +318,7 @@ def held_state_backups(own):
         except (OSError, ValueError):
             continue
     superseded = superseded_receipts(parsed)
-    unread = unread_failure_receipt(parsed)
+    unread = unread_failure_receipt(parsed, failure_read_through(own))
     for path, value in parsed:
         if (isinstance(value, dict) and isinstance(value.get('stateBackup'), str)
                 and (path == unread or (str(value.get('rollback') or '').startswith('held') and path not in superseded))):
@@ -328,16 +332,31 @@ def failed_install(value):
             and (value.get('result') not in (None, 'updated') or str(value.get('rollback') or '').startswith('held')))
 
 
-def unread_failure_receipt(parsed):
-    """Of one identity's (path, parsed receipt) pairs, the newest failed install's receipt when nobody
-    has marked its copy read (FAILURE_COPY_READ_KEY), else None. Only that one copy is kept this way,
-    so at most one extra database per identity; an older failure's copy follows the usual rules."""
+def failure_read_through(own):
+    """The identity's read watermark: the start time (as _receipt_stamp gives it) of the newest failed
+    receipt someone marked read, or None. A missing or unreadable file reads as None, which keeps
+    copies (the safe side for evidence), never removes them."""
+    try:
+        value = json.loads((pathlib.Path(own) / 'updates' / FAILURE_READ_FILE).read_text())
+    except (OSError, ValueError):
+        return None
+    stamp = value.get('readThrough') if isinstance(value, dict) else None
+    return stamp if isinstance(stamp, str) and re.fullmatch(r'\d{20}', stamp) else None
+
+
+def unread_failure_receipt(parsed, read_through=None):
+    """Of one identity's (path, parsed receipt) pairs, the newest failed install's receipt unless it
+    was marked read: its start time is at or before `read_through` (failure_read_through), or it
+    carries FAILURE_COPY_READ_KEY. Else None. Only that one copy is kept this way, so at most one
+    extra database per identity; an older failure's copy follows the usual rules."""
     failures = [(stamp, path, value) for path, value in parsed
                 if failed_install(value) and (stamp := _receipt_stamp(path)) is not None]
     if not failures:
         return None
-    _, path, value = max(failures, key=lambda item: item[0])
-    return None if FAILURE_COPY_READ_KEY in value else path
+    stamp, path, value = max(failures, key=lambda item: item[0])
+    if FAILURE_COPY_READ_KEY in value or (read_through is not None and stamp <= read_through):
+        return None
+    return path
 
 
 def _receipt_stamp(path):
@@ -421,21 +440,24 @@ def _named_receipts(updates):
     return names
 
 
-def _unread_failure_names(receipts):
+def _unread_failure_names(receipts, own):
     """The unread failed install's receipt name (unread_failure_receipt) while its copy still exists,
-    so that copy keeps a reference; once the copy is gone the receipt follows the usual rules."""
+    so that copy keeps a reference; once it is gone the receipt follows the usual rules. A receipt that
+    cannot be read is skipped on its own: it never hides the newest readable failure (before 1168's
+    review a single unreadable file emptied this set and let that receipt go). None when the folder
+    cannot be listed: prune no receipt."""
     parsed = []
     try:
-        for path in receipts.glob('update-*.json'):
-            if path.is_symlink() or not path.is_file() or path.stat().st_size > RECEIPT_READ_LIMIT:
-                continue
-            try:
-                parsed.append((path, json.loads(path.read_text())))
-            except ValueError:
-                continue
+        paths = list(receipts.glob('update-*.json'))
     except OSError:
-        return set()
-    unread = unread_failure_receipt(parsed)
+        return None
+    for path in paths:
+        try:
+            if not path.is_symlink() and path.is_file() and path.stat().st_size <= RECEIPT_READ_LIMIT:
+                parsed.append((path, json.loads(path.read_text())))
+        except (OSError, ValueError):
+            continue
+    unread = unread_failure_receipt(parsed, failure_read_through(own))
     if unread is None or not os.path.lexists(dict(parsed)[unread]['stateBackup']):
         return set()
     return {unread.name}
@@ -510,7 +532,10 @@ def prune_update_receipts(own, keep=(), keep_newest=RECEIPTS_KEPT, now=None, rec
     if root is None:
         return removed
     protected = {pathlib.Path(str(item)).name for item in keep if item} | _named_receipts(updates)
-    protected |= _unread_failure_names(root)
+    unread = _unread_failure_names(root, own)
+    if unread is None:
+        return removed  # An unreadable receipt could be the unread failure's: remove none.
+    protected |= unread
     moment = time.time() if now is None else now
     groups = {}
     for child in root.iterdir():
