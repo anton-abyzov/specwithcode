@@ -162,26 +162,38 @@ const fleet = (offsets: { readonly c?: number } = {}) => {
         keptFingerprint: prepared.fingerprint,
       }),
     );
-    await on(kept, (service) =>
+    const joined = accepted.member as LogicalProjectMember;
+    await commit(kept, id, joined);
+    return { operationId: id, joined };
+  };
+  /** The last step of a link, as its window sends it, and sends again on a retry. */
+  const commit = (kept: Copy, id: string, joining: LogicalProjectMember) =>
+    on(kept, (service) =>
       service.commit({
         operationId: id,
         projectId: kept.member.projectId,
-        joining: accepted.member,
+        joining,
         notes: [],
       }),
     );
-  };
-  /** Settings unlinks `leaving` on `kept`, and `leaving` leaves with a project of its own. */
-  const unlink = async (kept: Copy, leaving: Copy) => {
-    await on(kept, (service) =>
+  /** How `holder` lists the copy on `listed`'s machine, if it does. */
+  const entry = (holder: Copy, listed: Copy) =>
+    (settings(holder)?.logicalProject?.members ?? []).find(
+      (member) => member.environmentId === listed.machine.environmentId,
+    );
+  /** `kept` is asked to drop a membership, named as the caller saw it listed. */
+  const drop = (kept: Copy, membership: LogicalProjectMember) =>
+    on(kept, (service) =>
       service.unlink({
         side: "coordinator",
         operationId: operationId(),
         projectId: kept.member.projectId,
-        member: leaving.member,
+        member: membership,
       }),
     );
-    await on(leaving, (service) =>
+  /** `leaving` leaves with a project of its own. */
+  const leave = (leaving: Copy) =>
+    on(leaving, (service) =>
       service.unlink({
         side: "member",
         operationId: operationId(),
@@ -189,8 +201,12 @@ const fleet = (offsets: { readonly c?: number } = {}) => {
         notes: [],
       }),
     );
+  /** Settings unlinks `leaving` on `kept`, and `leaving` leaves with a project of its own. */
+  const unlink = async (kept: Copy, leaving: Copy) => {
+    await drop(kept, entry(kept, leaving) ?? leaving.member);
+    await leave(leaving);
   };
-  return { a, b, c, copies, offline, syncOf, link, unlink, lists };
+  return { a, b, c, copies, offline, syncOf, link, commit, entry, drop, leave, unlink, lists, on };
 };
 
 /** Every machine that is on runs its sync, a few times over, as passes go by. */
@@ -266,6 +282,160 @@ describe("an unlink ends only the link it was made against", () => {
       yield* settle(run);
       assert.deepStrictEqual(run.lists(a), ["m1", "m4"]);
       assert.deepStrictEqual(run.lists(c), ["m1", "m4"]);
+    }),
+  );
+});
+
+describe("a late call names the link it was made for", () => {
+  it.effect("an unlink that arrives after the copy is linked again changes nothing", () =>
+    Effect.gen(function* () {
+      const run = fleet();
+      const { a, b } = run;
+      yield* Effect.promise(() => run.link(a, b));
+      const first = run.entry(a, b)!;
+      yield* Effect.promise(() => run.unlink(a, b));
+      const second = yield* Effect.promise(() => run.link(a, b));
+      // The same unlink, sent twice: its second copy arrives only now.
+      yield* Effect.promise(() => run.drop(a, first));
+      assert.deepStrictEqual(run.lists(a), ["m3", "m4"]);
+      assert.strictEqual(run.entry(a, b)?.linkId, second.operationId);
+    }),
+  );
+
+  it.effect("the commit of a link that was since replaced is refused", () =>
+    Effect.gen(function* () {
+      const run = fleet();
+      const { a, b } = run;
+      const first = yield* Effect.promise(() => run.link(a, b));
+      yield* Effect.promise(() => run.unlink(a, b));
+      const second = yield* Effect.promise(() => run.link(a, b));
+      const retried = yield* Effect.promise(() =>
+        run.commit(a, first.operationId, first.joined).then(
+          () => "committed",
+          () => "refused",
+        ),
+      );
+      assert.strictEqual(run.entry(a, b)?.linkId, second.operationId);
+      assert.strictEqual(retried, "refused");
+    }),
+  );
+
+  it.effect("the commit of a link that was since unlinked is refused", () =>
+    Effect.gen(function* () {
+      const run = fleet();
+      const { a, b } = run;
+      const first = yield* Effect.promise(() => run.link(a, b));
+      yield* Effect.promise(() => run.unlink(a, b));
+      const retried = yield* Effect.promise(() =>
+        run.commit(a, first.operationId, first.joined).then(
+          () => "committed",
+          () => "refused",
+        ),
+      );
+      assert.deepStrictEqual(run.lists(a), ["m4"]);
+      assert.strictEqual(retried, "refused");
+    }),
+  );
+
+  it.effect("a machine that still lists an earlier link never brings the copy back", () =>
+    Effect.gen(function* () {
+      const run = fleet();
+      const { a, b, c } = run;
+      yield* Effect.promise(() => run.link(a, c));
+      yield* settle(run);
+      // B joins through C while A is away, so A never hears of that link.
+      run.offline.add(a.machine.environmentId);
+      yield* Effect.promise(() => run.link(c, b));
+      // C goes away still listing it. B leaves, joins again through A, and A unlinks it.
+      run.offline.add(c.machine.environmentId);
+      run.offline.delete(a.machine.environmentId);
+      yield* Effect.promise(() => run.leave(b));
+      yield* Effect.promise(() => run.link(a, b));
+      yield* Effect.promise(() => run.unlink(a, b));
+      assert.deepStrictEqual(run.lists(a), ["m1", "m4"]);
+      // C comes back with the link A never saw. It is older than the one A unlinked.
+      run.offline.delete(c.machine.environmentId);
+      yield* settle(run);
+      assert.deepStrictEqual(run.lists(a), ["m1", "m4"]);
+      assert.deepStrictEqual(run.lists(c), ["m1", "m4"]);
+    }),
+  );
+});
+
+describe("with a machine from before links were named", () => {
+  /** A member as such a machine lists and sends it: with no word of which link. */
+  const unnamed = (member: LogicalProjectMember): LogicalProjectMember => ({
+    environmentId: member.environmentId,
+    projectId: member.projectId,
+    coordinatorThreadId: member.coordinatorThreadId,
+  });
+  const logicalId = (run: ReturnType<typeof fleet>) =>
+    run.a.machine.projects.get(run.a.member.projectId)!.workspaceSettings!.logicalProject!.id;
+
+  it.effect("its unlink, which names no link, never ends a named one", () =>
+    Effect.gen(function* () {
+      const run = fleet();
+      const { a, b } = run;
+      yield* Effect.promise(() => run.link(a, b));
+      yield* Effect.promise(() => run.drop(a, unnamed(run.entry(a, b)!)));
+      assert.deepStrictEqual(run.lists(a), ["m3", "m4"]);
+    }),
+  );
+
+  it.effect("its list never brings back a copy this machine unlinked", () =>
+    Effect.gen(function* () {
+      const run = fleet();
+      const { a, b, c } = run;
+      yield* Effect.promise(() => run.link(a, b));
+      yield* Effect.promise(() => run.link(a, c));
+      const listed = run.entry(a, b)!;
+      yield* Effect.promise(() => run.unlink(a, b));
+      // The list as that machine relays it: the member with its link's name lost.
+      yield* Effect.promise(() =>
+        run.on(a, (service) =>
+          service.adoptMembers({
+            projectId: a.member.projectId,
+            logicalProjectId: logicalId(run),
+            from: run.entry(a, c)!,
+            fromEpoch: 0,
+            members: [a.member, run.entry(a, c)!, unnamed(listed)],
+          }),
+        ),
+      );
+      assert.deepStrictEqual(run.lists(a), ["m1", "m4"]);
+    }),
+  );
+
+  it.effect("a member it relayed takes its link's name from a machine that knows it", () =>
+    Effect.gen(function* () {
+      const run = fleet();
+      const { a, b, c } = run;
+      yield* Effect.promise(() => run.link(a, c));
+      yield* settle(run);
+      run.offline.add(c.machine.environmentId);
+      const first = yield* Effect.promise(() => run.link(a, b));
+      yield* Effect.promise(() => run.unlink(a, b));
+      const second = yield* Effect.promise(() => run.link(a, b));
+      // C hears of B from the older machine first, which lost the name of B's link.
+      yield* Effect.promise(() =>
+        run.on(c, (service) =>
+          service.adoptMembers({
+            projectId: c.member.projectId,
+            logicalProjectId: logicalId(run),
+            from: run.entry(c, a)!,
+            fromEpoch: 0,
+            members: [run.entry(c, a)!, run.entry(c, c)!, unnamed(second.joined)],
+          }),
+        ),
+      );
+      assert.strictEqual(run.entry(c, b)?.linkId, undefined);
+      // Then from A, which knows the link: C lists that link, and the old unlink leaves it be.
+      run.offline.delete(c.machine.environmentId);
+      yield* settle(run);
+      assert.strictEqual(run.entry(c, b)?.linkId, second.operationId);
+      assert.notStrictEqual(first.operationId, second.operationId);
+      assert.deepStrictEqual(run.lists(c), everyone);
+      assert.deepStrictEqual(run.lists(a), everyone);
     }),
   );
 });
