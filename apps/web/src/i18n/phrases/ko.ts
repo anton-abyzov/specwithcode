@@ -83,7 +83,6 @@ export const ko: PhraseCatalog = {
   Confirmations: "확인",
   "Connect private machines automatically": "비공개 컴퓨터 자동 연결",
   "Context window indicator": "컨텍스트 창 표시기",
-  "Continue automatically when a machine stops answering": "컴퓨터가 응답하지 않으면 자동으로 계속",
   "Continue threads after restarts": "다시 시작한 후 스레드 계속",
   Contrast: "대비",
   "Could not check SpecWithCode Connect": "SpecWithCode Connect를 확인하지 못했습니다",
@@ -568,8 +567,6 @@ export const ko: PhraseCatalog = {
     "그다음 실행 중인 작업이 업데이트를 위해 멈추고, 앱이 다시 시작되며, 실행 중이거나 대기 중인 스레드는 그 후에 이어집니다.",
   "This routine no longer exists or is outside the selected project scope.":
     "이 루틴은 더 이상 없거나 선택한 프로젝트 범위 밖에 있습니다.",
-  "Threads in handoff mode continue on your chosen Mac after this long. Off means they wait for your click. Coordinator threads never move this way.":
-    "인계 모드의 스레드는 이 시간이 지나면 선택한 Mac에서 이어집니다. 끄면 클릭할 때까지 기다립니다. 코디네이터 스레드는 이렇게 이동하지 않습니다.",
   "Try again in a moment.": "잠시 후 다시 시도하세요.",
   "Update this environment to manage Antigravity.":
     "Antigravity를 관리하려면 이 환경을 업데이트하세요.",
@@ -1682,7 +1679,6 @@ export const ko: PhraseCatalog = {
   "Use default": "기본값 사용",
   "A removed machine": "제거된 컴퓨터",
   "More options": "추가 옵션",
-  "Automatic takeover": "자동 인계",
   "inactive chat archiving": "비활성 채팅 보관",
   "After 30 days": "30일 후",
   Never: "안 함",
@@ -4569,8 +4565,10 @@ export const ko: PhraseCatalog = {
     "{machineLabel}을(를) 추가했습니다. 새로 고침 후 이 줄에서 허용을 선택하세요.",
   "After each turn, copies this machine's threads, existing ones too, to your other machines with the same project, so any of them can pick up. Uses a few more tokens.":
     "각 턴이 끝나면 이 컴퓨터의 스레드를 기존 스레드까지 포함해 같은 프로젝트가 있는 다른 컴퓨터로 복사하므로 어느 컴퓨터에서든 이어서 할 수 있습니다. 토큰을 조금 더 사용합니다.",
-  "After work left while it slept. Ask shows one button to bring it back.":
-    "잠자기 중에 작업이 다른 곳으로 옮겨진 후의 동작입니다. 묻기를 선택하면 작업을 다시 가져오는 버튼 하나가 표시됩니다.",
+  "After you left with Away. Ask shows one button to bring it back.":
+    "자리 비움으로 떠난 후의 동작입니다. 묻기를 선택하면 작업을 다시 가져오는 버튼 하나가 표시됩니다.",
+  "Waiting for {machine} to confirm that silence no longer moves threads. Until it answers, a thread it could continue pauses here when it goes quiet.":
+    "응답이 없어도 더 이상 스레드가 옮겨지지 않는다는 것을 {machine}이(가) 확인하기를 기다리고 있습니다. 응답할 때까지, {machine}이(가) 이어받을 수 있는 스레드는 {machine}의 응답이 끊기면 여기서 일시 중지됩니다.",
   "Agents on {hereLabel} can start work on {thereLabel}":
     "{hereLabel}의 에이전트가 {thereLabel}에서 작업을 시작할 수 있음",
   "All sign-ins": "모든 로그인",
@@ -4605,18 +4603,12 @@ export const ko: PhraseCatalog = {
     "만료됨: 해당 컴퓨터에서 이곳의 워커를 다시 허용해야 합니다",
   Filter: "필터",
   "Filter: {label}": "필터: {label}",
-  "Grace time": "유예 시간",
-  "Hands work to the Away target when this Mac sleeps. The target waits the grace time first, and nothing moves if you're back sooner. Mac only.":
-    "이 Mac이 잠자기 상태가 되면 작업을 자리 비움 대상에 넘깁니다. 대상은 먼저 유예 시간 동안 기다리며, 그 전에 돌아오면 아무것도 옮겨지지 않습니다. Mac 전용입니다.",
-  "How long the target waits after the lid closes before it takes over.":
-    "덮개를 닫은 후 대상이 작업을 넘겨받기 전까지 기다리는 시간입니다.",
   "Its app sees this machine": "해당 앱에서 이 컴퓨터가 보임",
   "Its work may use any sign-in on this machine.":
     "해당 작업은 이 컴퓨터의 모든 로그인을 사용할 수 있습니다.",
   "Its work may use no sign-in here, so every launch is refused.":
     "해당 작업은 여기의 어떤 로그인도 사용할 수 없으므로 모든 실행이 거부됩니다.",
   Lasts: "기간",
-  "Leave automatically when the lid closes": "덮개를 닫으면 자동으로 자리 비움",
   "Let another of your machines run work here": "내 다른 컴퓨터가 여기서 작업을 실행하도록 허용",
   "Let {machine} manage scheduled routines": "{machine}이(가) 예약된 루틴을 관리하도록 허용",
   Limits: "제한",
@@ -4700,8 +4692,8 @@ export const ko: PhraseCatalog = {
     "여기나 {coordinatorLabel}에서 중지할 때까지입니다. 자동으로 갱신됩니다.",
   "Until you stop it, here or on that machine.": "여기나 해당 컴퓨터에서 중지할 때까지입니다.",
   "When this machine wakes": "이 컴퓨터가 깨어날 때",
-  "Where Away sends your threads, routines and coordinators. Also used when this machine sleeps; locking the screen doesn't count.":
-    "자리 비움 시 스레드, 루틴, 코디네이터를 보내는 곳입니다. 이 컴퓨터가 잠자기 상태일 때도 사용되며, 화면 잠금은 해당하지 않습니다.",
+  "Where Away sends your threads, routines and coordinators when you leave this machine. Closing the lid moves nothing.":
+    "이 컴퓨터를 떠날 때 스레드, 루틴, 코디네이터를 보내는 곳입니다. 덮개를 닫아도 아무것도 옮겨지지 않습니다.",
   "Who is it for": "누구를 위한 것인가요",
   "Whose machine {machine} is": "{machine}의 소유자",
   "Work from {machine}": "{machine}의 작업",

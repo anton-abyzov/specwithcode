@@ -68,7 +68,6 @@ const m3 = EnvironmentId.make("env-m3");
 const project = ProjectId.make("project-m4");
 const m1Project = ProjectId.make("project-m1");
 const thread = ThreadId.make("thread:fix-build");
-const coordinatorThread = ThreadId.make(`project-coordinator:${project}`);
 
 const checkpoint = (sequence: number, runEnding: HandoffRunEnding): HandoffCheckpoint =>
   ({

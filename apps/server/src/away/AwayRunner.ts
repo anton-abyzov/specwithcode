@@ -28,8 +28,8 @@
  * coordinators come back by planned handover, and the target is re-armed as
  * this machine's standby. It never revokes a grant.
  *
- * On the target, `onIntentDue` (a lid close, AC-09) continues the threads the
- * sleeping machine replicated here, after AwayIntents took its coordinators.
+ * Nothing here runs because a machine went to sleep (1390 AC-36): an Away
+ * starts only when someone chooses Leave.
  */
 import {
   AwayError,
@@ -84,7 +84,6 @@ import {
   type TransferOutcome,
 } from "../scheduledTasks/ScheduledTaskTransfer.ts";
 import { threadHandedOffNote } from "../scheduledTasks/ScheduledTaskRunnerRecords.ts";
-import { AwayIntents } from "./AwayIntents.ts";
 import { AwayPeerError, type AwayPeerPost, makeAwayPeerPost } from "./awayPeerCall.ts";
 import { AwayPlanner } from "./AwayPlanner.ts";
 import { AwaySleepBridge } from "./awaySleepBridge.ts";
@@ -1053,7 +1052,6 @@ export const make = Effect.gen(function* () {
   const scheduled = yield* ScheduledTaskService;
   const projects = yield* ProjectService.ProjectService;
   const link = yield* ProjectLink;
-  const intents = yield* AwayIntents;
   const bridge = Option.getOrUndefined(yield* Effect.serviceOption(AwaySleepBridge));
   const crypto = yield* Crypto.Crypto;
   const post: AwayPeerPost = yield* makeAwayPeerPost;
@@ -1227,30 +1225,6 @@ export const make = Effect.gen(function* () {
     } satisfies AwaySnapshot;
   });
 
-  // On the target: once a sleeping machine's grace ran out and its coordinators
-  // were taken, continue the threads it replicated here.
-  yield* intents.onIntentDue((intent) =>
-    Effect.forEach(
-      intent.threadIds,
-      (sourceThreadId) =>
-        handoff
-          .continueHere({
-            sourceEnvironmentId: intent.sourceEnvironmentId,
-            sourceThreadId: ThreadId.make(sourceThreadId),
-          })
-          .pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Away could not continue a thread a sleeping machine left here", {
-                sourceEnvironmentId: intent.sourceEnvironmentId,
-                sourceThreadId,
-                cause,
-              }),
-            ),
-          ),
-      { concurrency: 1, discard: true },
-    ),
-  );
-
   // An Away a restart cut off carries on by itself.
   yield* core.resume.pipe(
     Effect.catchCause((cause) => Effect.logWarning("Away could not resume on start", { cause })),
@@ -1279,5 +1253,5 @@ export const make = Effect.gen(function* () {
   });
 });
 
-/** Needs handoff mode, the planner, the planned handover, routine transfer and AwayIntents. */
+/** Needs handoff mode, the planner, the planned handover and routine transfer. */
 export const layer = Layer.effect(AwayRunner, make);

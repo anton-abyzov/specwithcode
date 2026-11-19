@@ -84,8 +84,6 @@ export const de: PhraseCatalog = {
   Confirmations: "Bestätigungen",
   "Connect private machines automatically": "Private Rechner automatisch verbinden",
   "Context window indicator": "Anzeige des Kontextfensters",
-  "Continue automatically when a machine stops answering":
-    "Automatisch weitermachen, wenn ein Rechner nicht mehr antwortet",
   "Continue threads after restarts": "Threads nach Neustarts fortsetzen",
   Contrast: "Kontrast",
   "Could not check SpecWithCode Connect": "SpecWithCode Connect konnte nicht geprüft werden",
@@ -576,8 +574,6 @@ export const de: PhraseCatalog = {
     "Dann wird laufende Arbeit für das Update gestoppt, die App startet neu, und laufende und wartende Threads machen danach weiter.",
   "This routine no longer exists or is outside the selected project scope.":
     "Diese Routine existiert nicht mehr oder liegt außerhalb der ausgewählten Projekte.",
-  "Threads in handoff mode continue on your chosen Mac after this long. Off means they wait for your click. Coordinator threads never move this way.":
-    "Threads im Übergabemodus machen nach dieser Zeit auf dem gewählten Mac weiter. Aus bedeutet, dass sie auf deinen Klick warten. Koordinator-Threads werden nie so verschoben.",
   "Try again in a moment.": "Versuche es gleich noch einmal.",
   "Update this environment to manage Antigravity.":
     "Aktualisiere diese Umgebung, um Antigravity zu verwalten.",
@@ -1707,7 +1703,6 @@ export const de: PhraseCatalog = {
   "Use default": "Standard nutzen",
   "A removed machine": "Ein entfernter Rechner",
   "More options": "Weitere Optionen",
-  "Automatic takeover": "Automatische Übernahme",
   "inactive chat archiving": "Archivierung inaktiver Chats",
   "After 30 days": "Nach 30 Tagen",
   Never: "Nie",
@@ -4648,8 +4643,10 @@ export const de: PhraseCatalog = {
     "{machineLabel} hinzugefügt. Wähle nach dem Aktualisieren auf dieser Zeile „Erlauben“.",
   "After each turn, copies this machine's threads, existing ones too, to your other machines with the same project, so any of them can pick up. Uses a few more tokens.":
     "Kopiert nach jedem Turn die Threads dieses Rechners, auch bestehende, auf deine anderen Rechner mit demselben Projekt, damit jeder von ihnen weitermachen kann. Verbraucht etwas mehr Tokens.",
-  "After work left while it slept. Ask shows one button to bring it back.":
-    "Nachdem Arbeit im Ruhezustand weitergegeben wurde. „Fragen“ zeigt einen Button, um sie zurückzuholen.",
+  "After you left with Away. Ask shows one button to bring it back.":
+    "Nachdem du mit „Abwesend“ gegangen bist. „Fragen“ zeigt einen Button, um die Arbeit zurückzuholen.",
+  "Waiting for {machine} to confirm that silence no longer moves threads. Until it answers, a thread it could continue pauses here when it goes quiet.":
+    "Warten auf die Bestätigung von {machine}, dass Stille keine Threads mehr verschiebt. Bis zur Antwort pausiert hier ein Thread, den {machine} fortsetzen könnte, sobald {machine} nicht mehr antwortet.",
   "Agents on {hereLabel} can start work on {thereLabel}":
     "Agents auf {hereLabel} dürfen Arbeit auf {thereLabel} starten",
   "All sign-ins": "Alle Anmeldungen",
@@ -4685,18 +4682,12 @@ export const de: PhraseCatalog = {
     "Abgelaufen: Dieser Rechner muss Worker von hier erneut erlauben",
   Filter: "Filter",
   "Filter: {label}": "Filter: {label}",
-  "Grace time": "Wartezeit",
-  "Hands work to the Away target when this Mac sleeps. The target waits the grace time first, and nothing moves if you're back sooner. Mac only.":
-    "Gibt Arbeit an das Ziel bei Abwesenheit ab, wenn dieser Mac in den Ruhezustand geht. Das Ziel wartet zuerst die Wartezeit ab, und nichts wird verschoben, wenn du früher zurück bist. Nur Mac.",
-  "How long the target waits after the lid closes before it takes over.":
-    "Wie lange das Ziel nach dem Zuklappen wartet, bevor es übernimmt.",
   "Its app sees this machine": "Seine App sieht diesen Rechner",
   "Its work may use any sign-in on this machine.":
     "Seine Arbeit darf jede Anmeldung auf diesem Rechner nutzen.",
   "Its work may use no sign-in here, so every launch is refused.":
     "Seine Arbeit darf hier keine Anmeldung nutzen, daher wird jeder Start abgelehnt.",
   Lasts: "Gültig",
-  "Leave automatically when the lid closes": "Beim Zuklappen automatisch abgeben",
   "Let another of your machines run work here":
     "Einen anderen deiner Rechner hier Arbeit ausführen lassen",
   "Let {machine} manage scheduled routines": "{machine} geplante Routinen verwalten lassen",
@@ -4782,8 +4773,8 @@ export const de: PhraseCatalog = {
   "Until you stop it, here or on that machine.":
     "Bis du es beendest, hier oder auf diesem Rechner.",
   "When this machine wakes": "Wenn dieser Rechner aufwacht",
-  "Where Away sends your threads, routines and coordinators. Also used when this machine sleeps; locking the screen doesn't count.":
-    "Wohin „Abwesend“ deine Threads, Routinen und Koordinatoren schickt. Gilt auch, wenn dieser Rechner schläft; das Sperren des Bildschirms zählt nicht.",
+  "Where Away sends your threads, routines and coordinators when you leave this machine. Closing the lid moves nothing.":
+    "Wohin „Abwesend“ deine Threads, Routinen und Koordinatoren schickt, wenn du diesen Rechner verlässt. Das Zuklappen verschiebt nichts.",
   "Who is it for": "Für wen ist er",
   "Whose machine {machine} is": "Wem {machine} gehört",
   "Work from {machine}": "Arbeit von {machine}",

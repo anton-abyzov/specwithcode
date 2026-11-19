@@ -67,13 +67,7 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { queuedRunsInDeliveryOrder } from "../orchestration-v2/QueuedRunOrder.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import {
-  autoContinueMinutes,
-  designatedMachine,
-  makeAutoContinueLoops,
-  noteAnnounced,
-  noteAnswered,
-} from "./HandoffAutoContinue.ts";
+import { heartbeatLeases, makeAutoContinueLoops, noteAnswered } from "./HandoffAutoContinue.ts";
 import { createBundle, negotiationCandidates, repositoryPathFor } from "./bundleGit.ts";
 import { keepFencedChanges } from "./checkpointGit.ts";
 import { HandoffConnectivity, layer as HandoffConnectivityLayer } from "./handoffConnectivity.ts";
@@ -898,7 +892,6 @@ export const make = Effect.gen(function* () {
       const startedAt = yield* nowIso;
       const document = yield* handoff.document;
       const threadIds = input.threadIds ?? (yield* runningHandoffThreads(document));
-      const reason: TakeoverReason = input.reason === "sleep" ? "sleep" : "machine-handoff";
       // Away mode names its threads, whatever their handoff mode, and their queues go too.
       const carriesQueue = input.reason === "away" || input.reason === "back";
       const results: Array<HandoffMachineThreadResult> = [];
@@ -908,7 +901,7 @@ export const make = Effect.gen(function* () {
         const queued = carriesQueue ? yield* queuedMessagesOf(threadId) : [];
         const moved = yield* handOffAs(
           { threadId, destinationEnvironmentId: destination },
-          reason,
+          "machine-handoff",
         ).pipe(Effect.result);
         if (moved._tag === "Success") {
           const carried =
@@ -946,8 +939,8 @@ export const make = Effect.gen(function* () {
       const run: HandoffMachineRun = {
         destinationEnvironmentId: destination,
         destinationLabel: label.slice(0, 120),
-        // The saved run keeps the reasons older servers read; Away keeps its own session.
-        reason: input.reason === "sleep" ? "sleep" : "manual",
+        // The saved run keeps the reason older servers read; Away keeps its own session.
+        reason: "manual",
         startedAt,
         finishedAt: yield* nowIso,
         results,
@@ -1052,7 +1045,7 @@ export const make = Effect.gen(function* () {
    */
   const continueHereAs = (
     input: HandoffContinueHereInput,
-    reason: "continue-here" | "auto-takeover",
+    reason: "continue-here",
     options?: HandoffContinueHereOptions,
   ) =>
     Effect.gen(function* () {
@@ -1169,7 +1162,7 @@ export const make = Effect.gen(function* () {
     return yield* handoff.snapshot;
   });
 
-  const autoContinue = yield* makeAutoContinueLoops({
+  const autoContinue = makeAutoContinueLoops({
     self,
     document: handoff.document,
     updateRecord: (threadId, change) => updateRecord(threadId, change).pipe(Effect.ignore),
@@ -1177,12 +1170,6 @@ export const make = Effect.gen(function* () {
       projections.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null)),
     peerLabel,
     interruptRun: (shell, reason) => interruptRun(shell, reason).pipe(Effect.asVoid),
-    project: (projectId) =>
-      projects.getById(projectId).pipe(
-        Effect.map(Option.getOrNull),
-        Effect.orElseSucceed(() => null),
-      ),
-    continueHereAs,
   });
 
   /**
@@ -1196,55 +1183,7 @@ export const make = Effect.gen(function* () {
   const heartbeatOnce = Effect.gen(function* () {
     const document = yield* handoff.document;
     const now = yield* Clock.currentTimeMillis;
-    const nowText = DateTime.formatIso(DateTime.makeUnsafe(now));
-    const autoMinutes = autoContinueMinutes(document.config);
-    const byPeer = new Map<
-      EnvironmentId,
-      Array<{ sourceThreadId: ThreadId; epoch: number; autoContinueMinutes?: number }>
-    >();
-    for (const [id, record] of Object.entries(document.threads)) {
-      if (record.continuedOn !== null || record.lease === null) continue;
-      if (record.lease.holderEnvironmentId !== self) continue;
-      // Only the one designated machine hears the delay, and only for a handoff-mode thread.
-      const designated =
-        autoMinutes === null ||
-        effectiveHandoffMode(document, record.projectId, record.mode) !== "on"
-          ? null
-          : designatedMachine({
-              config: document.config,
-              project: yield* projects.getById(record.projectId).pipe(
-                Effect.map(Option.getOrNull),
-                Effect.orElseSucceed(() => null),
-              ),
-              threadId: id,
-              self,
-            });
-      for (const replica of record.replicas) {
-        if (replica.environmentId === self) continue;
-        const list = byPeer.get(replica.environmentId) ?? [];
-        list.push({
-          sourceThreadId: id as ThreadId,
-          epoch: record.lease.epoch,
-          ...(autoMinutes !== null && replica.environmentId === designated
-            ? { autoContinueMinutes: autoMinutes }
-            : {}),
-        });
-        byPeer.set(replica.environmentId, list);
-      }
-    }
-    const announcedTo = (peer: EnvironmentId) =>
-      (byPeer.get(peer) ?? []).find((lease) => lease.autoContinueMinutes !== undefined)
-        ?.autoContinueMinutes ?? null;
-    // Saved before sending: a heartbeat whose answer is lost may still have reached the peer.
-    yield* handoff.updateDocument((current) => {
-      const before = current.autoContinuePeers ?? {};
-      let peers = before;
-      for (const peer of byPeer.keys()) {
-        const minutes = announcedTo(peer);
-        if (minutes !== null) peers = noteAnnounced(peers, peer, minutes, nowText);
-      }
-      return [undefined, peers === before ? current : { ...current, autoContinuePeers: peers }];
-    });
+    const byPeer = heartbeatLeases(document, self);
     // One silent peer must not hold up the others' heartbeats.
     const answers = yield* Effect.forEach(
       [...byPeer],
@@ -1264,14 +1203,10 @@ export const make = Effect.gen(function* () {
     for (const { peer, leases, answer } of answers) {
       if (Option.isNone(answer)) continue;
       lastAnswer.set(peer, now);
-      const minutes = announcedTo(peer);
       yield* handoff.updateDocument((current) => {
         const before = current.autoContinuePeers ?? {};
-        if (minutes === null && before[peer] === undefined) return [undefined, current];
-        return [
-          undefined,
-          { ...current, autoContinuePeers: noteAnswered(before, peer, minutes, nowText) },
-        ];
+        const after = noteAnswered(before, peer);
+        return [undefined, after === before ? current : { ...current, autoContinuePeers: after }];
       });
       const continuedIds = new Set(answer.value.continued.map((entry) => entry.sourceThreadId));
       for (const { sourceThreadId } of leases) {
@@ -1463,12 +1398,6 @@ export const make = Effect.gen(function* () {
         yield* replicateTo(shell, checkpoint, destination).pipe(Effect.ignore);
       }
     }
-    // Last, so a slow continuation never holds up this machine's own checkpoints.
-    yield* autoContinue.continueDue.pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("Handoff automatic continuation failed", { cause }),
-      ),
-    );
   }).pipe(
     Effect.catchCause((cause) => Effect.logWarning("Handoff moves replication failed", { cause })),
   );
@@ -1479,7 +1408,6 @@ export const make = Effect.gen(function* () {
     handOff: (input: HandOffInput) => handOffAs(input, "handoff"),
     handOffMachine,
     continueHere,
-    continueHereAs,
     resumeFenced,
     preflight,
     heartbeat,

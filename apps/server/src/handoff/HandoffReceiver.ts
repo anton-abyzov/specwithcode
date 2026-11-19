@@ -595,7 +595,12 @@ export const make = Effect.gen(function* () {
 
   const takeoverLocked = (caller: ReceiverCaller, request: TakeoverRequest) =>
     Effect.gen(function* () {
-      const verdict = takeoverVerdict(yield* document, request, label);
+      const verdict = takeoverVerdict(
+        yield* document,
+        request,
+        label,
+        continuationThreadId(caller.sourceEnvironmentId, request.sourceThreadId, request.epoch),
+      );
       if (verdict.kind === "repeat") return verdict.response;
       if (verdict.kind === "refuse") {
         return yield* refuse(409, verdict.code, verdict.message, verdict.check);

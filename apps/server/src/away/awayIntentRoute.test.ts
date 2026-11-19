@@ -256,7 +256,7 @@ describe("away intent route", () => {
     }),
   );
 
-  it.effect("pending: a waiting intent is cancelled when its grace runs out, never acted on", () =>
+  it.effect("pending: a waiting intent is cancelled, never acted on", () =>
     Effect.gen(function* () {
       const f = yield* fleet;
       yield* f.recordedEarlier();
@@ -338,8 +338,10 @@ describe("away intent route", () => {
       // Not cancellable while unknown: the source keeps its hold.
       expect(refused.body).toEqual({ cancelled: 0, state: "acting", takenOver: [] });
       const settled = yield* untouched.intents.tick;
+      // Nothing was taken, so it ends as cancelled: the source reads "done" as "work moved".
       expect(settled[0]).toMatchObject({
-        state: "done",
+        state: "cancelled",
+        cancelReason: "sleep-start-retired",
         results: [{ projectId: "easychamp-m4", outcome: "skipped" }],
       });
       expect(untouched.settledActed).toEqual(["intent-1"]);
@@ -349,7 +351,7 @@ describe("away intent route", () => {
       const after = yield* cancelIntent(untouched.intents, callerFrom("m4"), {
         sourceEnvironmentId: "m4",
       });
-      expect(after.body).toEqual({ cancelled: 0, state: "done", takenOver: [] });
+      expect(after.body).toEqual({ cancelled: 0, state: "cancelled", takenOver: [] });
 
       // The process stopped after the takeover, before the intent was marked done.
       const taken = yield* fleet;

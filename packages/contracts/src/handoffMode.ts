@@ -410,6 +410,19 @@ export const HandoffModeSnapshot = Schema.Struct({
   /** Set after a wake that found no peer: handoff-mode threads wait until one answers. */
   pausedSince: Schema.NullOr(IsoDateTime),
   machineRun: Schema.NullOr(HandoffMachineRun),
+  /**
+   * Machines an earlier release let continue this machine's threads on silence, which
+   * have not confirmed since that they no longer do. Absent from an older server.
+   */
+  pendingDisarm: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        environmentId: EnvironmentId,
+        machineLabel: bounded(120),
+        since: Schema.String,
+      }),
+    ),
+  ),
 });
 export type HandoffModeSnapshot = typeof HandoffModeSnapshot.Type;
 

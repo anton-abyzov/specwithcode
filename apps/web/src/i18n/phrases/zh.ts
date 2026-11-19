@@ -83,7 +83,6 @@ export const zh: PhraseCatalog = {
   Confirmations: "确认",
   "Connect private machines automatically": "自动连接私有电脑",
   "Context window indicator": "上下文窗口指示器",
-  "Continue automatically when a machine stops answering": "电脑无响应时自动继续",
   "Continue threads after restarts": "重启后继续会话",
   Contrast: "对比度",
   "Could not check SpecWithCode Connect": "无法检查 SpecWithCode Connect",
@@ -553,8 +552,6 @@ export const zh: PhraseCatalog = {
     "之后，运行中的工作会为更新而停止，应用重启，运行中和排队的会话会在更新后继续。",
   "This routine no longer exists or is outside the selected project scope.":
     "此例行任务已不存在，或不在所选项目范围内。",
-  "Threads in handoff mode continue on your chosen Mac after this long. Off means they wait for your click. Coordinator threads never move this way.":
-    "处于交接模式的会话会在这段时间后在你选择的 Mac 上继续。“关闭”表示它们会等待你点击。协调者会话不会以这种方式迁移。",
   "Try again in a moment.": "请稍后再试。",
   "Update this environment to manage Antigravity.": "更新此环境以管理 Antigravity。",
   "Stable gets builds that ran a day on Insiders. Insiders gets every build first.":
@@ -1641,7 +1638,6 @@ export const zh: PhraseCatalog = {
   "Use default": "使用默认值",
   "A removed machine": "已移除的电脑",
   "More options": "更多选项",
-  "Automatic takeover": "自动接管",
   "inactive chat archiving": "非活跃对话归档",
   "After 30 days": "30 天后",
   Never: "从不",
@@ -4444,8 +4440,10 @@ export const zh: PhraseCatalog = {
     "已添加 {machineLabel}。刷新后，请在这一行选择“允许”。",
   "After each turn, copies this machine's threads, existing ones too, to your other machines with the same project, so any of them can pick up. Uses a few more tokens.":
     "每轮结束后，将这台电脑的会话（包括已有会话）复制到有同一项目的其他电脑，任何一台都可以接着做。会多用一些 token。",
-  "After work left while it slept. Ask shows one button to bring it back.":
-    "在它睡眠期间转走的工作之后。“询问”会显示一个按钮，用来把工作带回来。",
+  "After you left with Away. Ask shows one button to bring it back.":
+    "在你通过离开模式离开之后。“询问”会显示一个按钮，用来把工作带回来。",
+  "Waiting for {machine} to confirm that silence no longer moves threads. Until it answers, a thread it could continue pauses here when it goes quiet.":
+    "正在等待 {machine} 确认无响应不再转移会话。在它回应之前，{machine} 可以继续的会话会在 {machine} 无响应时在这里暂停。",
   "Agents on {hereLabel} can start work on {thereLabel}":
     "{hereLabel} 上的智能体可以在 {thereLabel} 上开始工作",
   "All sign-ins": "所有登录",
@@ -4478,17 +4476,11 @@ export const zh: PhraseCatalog = {
     "已过期：那台电脑需要再次允许这里的工作节点",
   Filter: "筛选",
   "Filter: {label}": "筛选：{label}",
-  "Grace time": "宽限时间",
-  "Hands work to the Away target when this Mac sleeps. The target waits the grace time first, and nothing moves if you're back sooner. Mac only.":
-    "这台 Mac 睡眠时，将工作交给离开目标。目标会先等待宽限时间，如果你提前回来，则不会转移任何工作。仅限 Mac。",
-  "How long the target waits after the lid closes before it takes over.":
-    "合上盖子后，目标等待多久再接手。",
   "Its app sees this machine": "它的应用能看到这台电脑",
   "Its work may use any sign-in on this machine.": "它的工作可以使用这台电脑上的任何登录。",
   "Its work may use no sign-in here, so every launch is refused.":
     "它的工作不能使用这里的任何登录，因此每次启动都会被拒绝。",
   Lasts: "有效期",
-  "Leave automatically when the lid closes": "合上盖子时自动离开",
   "Let another of your machines run work here": "让你的另一台电脑在这里运行工作",
   "Let {machine} manage scheduled routines": "允许 {machine} 管理定时例行任务",
   Limits: "限制",
@@ -4570,8 +4562,8 @@ export const zh: PhraseCatalog = {
     "直到你在这里或在 {coordinatorLabel} 上停止它。它会自动续期。",
   "Until you stop it, here or on that machine.": "直到你在这里或那台电脑上停止它。",
   "When this machine wakes": "这台电脑唤醒时",
-  "Where Away sends your threads, routines and coordinators. Also used when this machine sleeps; locking the screen doesn't count.":
-    "离开模式将你的会话、例行任务和协调者发送到哪里。这台电脑睡眠时也会使用；锁屏不算。",
+  "Where Away sends your threads, routines and coordinators when you leave this machine. Closing the lid moves nothing.":
+    "离开这台电脑时，离开模式将你的会话、例行任务和协调者发送到哪里。合上盖子不会转移任何内容。",
   "Who is it for": "给谁用",
   "Whose machine {machine} is": "{machine} 属于谁",
   "Work from {machine}": "来自 {machine} 的工作",
