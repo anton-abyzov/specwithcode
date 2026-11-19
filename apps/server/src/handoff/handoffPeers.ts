@@ -129,6 +129,8 @@ const TIMEOUT_MS: Record<PeerPath, number> = {
   "review-takeover": 180_000,
   check: 30_000,
   "folder-work": 120_000,
+  // A message is small and the receiver answers before its agent reads it.
+  "coordinator-message": 15_000,
 };
 /** A memory page, a coordinator's content or a plan answers with up to the link cap; the rest is small. */
 const answerLimit = (path: PeerPath) =>

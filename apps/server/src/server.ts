@@ -267,6 +267,7 @@ import * as ProjectSyncExtras from "./fleet/ProjectSyncExtras.ts";
 import * as ProjectSyncRpc from "./fleet/ProjectSyncRpc.ts";
 import * as LinkedMemoryPeers from "./project/LinkedMemoryPeers.ts";
 import * as LinkedPeerRoute from "./project/LinkedPeerRoute.ts";
+import * as CoordinatorMessageReceiver from "./project/CoordinatorMessageReceiver.ts";
 import * as LinkedPeerSync from "./project/LinkedPeerSync.ts";
 import * as HandoffRoute from "./handoff/handoffRoute.ts";
 import * as AwayAccessRoute from "./away/awayAccessRoute.ts";
@@ -835,6 +836,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // Linked copies kept in step between machines without an open app window:
   // the peer route's side, and the loop that drives the pairs this server owns.
   LinkedMemoryPeers.layerReceiver,
+  CoordinatorMessageReceiver.layerLive.pipe(Layer.provide(ThreadManagementService.layer)),
   LinkedPeerRoute.layer.pipe(
     Layer.provide(layerCoordinatorLease),
     // Confirms a takeover with the copy that took over before this one gives way.

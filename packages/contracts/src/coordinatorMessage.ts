@@ -93,27 +93,38 @@ export type CoordinatorMessageBody = typeof CoordinatorMessageBody.Type;
 
 /**
  * Why a message cannot be sent as written, in words the sending agent can
- * act on, or null. Both the sender's tool and the receiver apply it.
+ * act on, or null. `tooLarge` marks a limit the detail belongs in a report
+ * for. Both the sender's tool and the receiver apply it.
  */
-export function coordinatorMessageProblem(message: CoordinatorMessageBody): string | null {
+export function coordinatorMessageProblem(
+  message: CoordinatorMessageBody,
+): { readonly tooLarge: boolean; readonly message: string } | null {
+  const tooLarge = (text: string) => ({ tooLarge: true, message: text });
+  const invalid = (text: string) => ({ tooLarge: false, message: text });
   if (message.text.length > COORDINATOR_MESSAGE_TEXT_MAX)
-    return `The text is ${message.text.length} characters, over ${COORDINATOR_MESSAGE_TEXT_MAX}. ${COORDINATOR_MESSAGE_TOO_LONG}`;
-  if (message.subject.trim() === "") return "A message needs a subject.";
+    return tooLarge(
+      `The text is ${message.text.length} characters, over ${COORDINATOR_MESSAGE_TEXT_MAX}. ${COORDINATOR_MESSAGE_TOO_LONG}`,
+    );
   if (message.subject.length > COORDINATOR_MESSAGE_SUBJECT_MAX)
-    return `The subject is over ${COORDINATOR_MESSAGE_SUBJECT_MAX} characters.`;
+    return tooLarge(`The subject is over ${COORDINATOR_MESSAGE_SUBJECT_MAX} characters.`);
   if (message.userStep !== undefined && message.userStep.text.length > COORDINATOR_MESSAGE_STEP_MAX)
-    return `The user step is over ${COORDINATOR_MESSAGE_STEP_MAX} characters. ${COORDINATOR_MESSAGE_TOO_LONG}`;
+    return tooLarge(
+      `The user step is over ${COORDINATOR_MESSAGE_STEP_MAX} characters. ${COORDINATOR_MESSAGE_TOO_LONG}`,
+    );
   if (message.refs.length > COORDINATOR_MESSAGE_REFS_MAX)
-    return `A message names at most ${COORDINATOR_MESSAGE_REFS_MAX} references. ${COORDINATOR_MESSAGE_TOO_LONG}`;
+    return tooLarge(
+      `A message names at most ${COORDINATOR_MESSAGE_REFS_MAX} references. ${COORDINATOR_MESSAGE_TOO_LONG}`,
+    );
   if (
     message.dedupeKey !== undefined &&
     message.dedupeKey.length > COORDINATOR_MESSAGE_DEDUPE_KEY_MAX
   )
-    return `The dedupe key is over ${COORDINATOR_MESSAGE_DEDUPE_KEY_MAX} characters.`;
+    return tooLarge(`The dedupe key is over ${COORDINATOR_MESSAGE_DEDUPE_KEY_MAX} characters.`);
+  if (message.subject.trim() === "") return invalid("A message needs a subject.");
   if (message.kind === "reply" && message.replyTo === undefined)
-    return "A reply names the message it answers (replyTo).";
+    return invalid("A reply names the message it answers (replyTo).");
   if (message.kind !== "reply" && message.replyTo !== undefined)
-    return "Only a reply names replyTo.";
+    return invalid("Only a reply names replyTo.");
   return null;
 }
 

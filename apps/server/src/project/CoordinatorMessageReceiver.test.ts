@@ -328,11 +328,17 @@ describe("CoordinatorMessageReceiver admission (AC-12)", () => {
     ),
   );
 
-  it("words the route's revoked refusal with both machines", () => {
-    const refusal = CoordinatorMessageReceiver.revokedMessageRefusal("M5", "linux-mini");
-    expect(refusal).toMatchObject({ status: 403, code: "needs_grant" });
-    namesBoth(refusal, "linux-mini");
-  });
+  it.effect("words the route's revoked refusal with both machines", () =>
+    run((receiver) =>
+      Effect.gen(function* () {
+        // The route refuses a revoked grant before the receiver reads the message.
+        const refusal = yield* receiver.revoked(LINUX);
+        expect(refusal).toMatchObject({ status: 403, code: "needs_grant" });
+        expect(refusal.message).toContain("M5 no longer takes messages from linux-mini");
+        namesBoth(refusal, "linux-mini");
+      }),
+    ),
+  );
 
   it.effect("refuses a sender that does not advertise coordinator-message.v1", () =>
     run((receiver) =>

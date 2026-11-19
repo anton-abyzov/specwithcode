@@ -17,6 +17,7 @@ import { callerFingerprint, teamRulesSessionRefusal } from "../teamRules/TeamRul
 import { parseJson } from "../json.ts";
 import { clientRuntimeModeCeiling } from "../mcp/McpInvocationContext.ts";
 import { CoordinatorLeaseReceiver } from "../project/CoordinatorLeaseRoute.ts";
+import { CoordinatorMessageReceiver } from "../project/CoordinatorMessageReceiver.ts";
 import { LinkedMemoryPeerReceiver } from "../project/LinkedMemoryPeers.ts";
 import { LinkedPeerReceiver } from "../project/LinkedPeerRoute.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
@@ -53,6 +54,7 @@ import {
   TransferStatusRequest,
   FolderWorkRequest,
 } from "./handoffWire.ts";
+import { CoordinatorMessageDeliverRequest } from "./coordinatorMessageWire.ts";
 import { isRetiredReason } from "./handoffState.ts";
 import {
   LinkedContentRequest,
@@ -158,6 +160,8 @@ export const layer = HttpRouter.add(
             Effect.orElseSucceed(() => structured),
           );
 
+    // Absent on a server built without coordinator messages: the path reads as unknown there.
+    const messages = yield* Effect.serviceOption(CoordinatorMessageReceiver);
     const auth = yield* EnvironmentAuth.EnvironmentAuth;
     const client = yield* auth.authenticateMcpClient(request).pipe(Effect.option);
     if (Option.isNone(client))
@@ -176,6 +180,9 @@ export const layer = HttpRouter.add(
       // A standby stops standing by for a coordinator this machine revoked.
       if (path === "coordinator-lease")
         yield* (yield* CoordinatorLeaseReceiver).grantRefused(grant.value.coordinatorEnvironmentId);
+      // A message's refusal names both machines (1427 AC-12).
+      if (path === "coordinator-message" && Option.isSome(messages))
+        return fromRefusal(yield* messages.value.revoked(grant.value.coordinatorEnvironmentId));
       return yield* unread(
         refusal(403, "This machine revoked that machine's work here.", {
           code: "needs_grant",
@@ -299,6 +306,14 @@ export const layer = HttpRouter.add(
         return Option.isNone(input)
           ? invalid
           : yield* answer((yield* LinkedMemoryPeerReceiver).memoryMerge(caller, input.value));
+      }
+      case "coordinator-message": {
+        const input = decodeJson(CoordinatorMessageDeliverRequest, body.value);
+        return Option.isNone(input)
+          ? invalid
+          : Option.isNone(messages)
+            ? refusal(404, "not_found", { code: "not_found" })
+            : yield* answer(messages.value.deliver(caller, input.value));
       }
       case "linked-digest": {
         const input = decodeJson(LinkedDigestRequest, body.value);
