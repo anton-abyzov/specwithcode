@@ -291,6 +291,13 @@ const checkpointMessage = (reviewLock: ReplicateMeta["reviewLock"]): ReplicateMe
       turnKey: "thread-1/run-1",
       runEnding: "usage-limit",
       sideEffects: [],
+      sourceRoot: {
+        environmentId: EnvironmentId.make("env-m4"),
+        projectId: ProjectId.make("project-m4"),
+        threadId: "thread-1",
+        workspaceRoot: "/repo",
+        branch: "feat/x",
+      },
     },
     lease: null,
     transcript: [],

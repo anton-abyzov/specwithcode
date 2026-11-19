@@ -442,6 +442,9 @@ export const make = Effect.gen(function* () {
       ];
       const project = yield* localProject(caller.sourceEnvironmentId, input.sourceProjectId);
       const review = yield* reviewOf(caller, replica, detail, input.modelSelection);
+      // A check an older source reads; the message is the row it shows, so it stands alone.
+      if (review.kind === "refused")
+        return [{ check: "provider" as const, message: review.message }];
       const modelSelection =
         review.kind === "locked"
           ? review.modelSelection
@@ -486,9 +489,6 @@ export const make = Effect.gen(function* () {
               modelSelection.instanceId,
             );
       if (account !== null) failures.push({ check: "grant", message: account });
-      // A check an older source reads; the message is the row it shows.
-      if (review.kind === "refused")
-        failures.unshift({ check: "provider", message: review.message });
       if (replica?.continuedThreadId != null) {
         failures.push({ check: "lease", message: at("already continues this thread") });
       }

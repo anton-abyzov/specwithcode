@@ -28,6 +28,7 @@ import {
 } from "@specweave-studio/shared/personalAssistant";
 import {
   type EnvironmentId,
+  type ProviderLimitMachineTarget,
   WS_METHODS,
   WsLimitHandoffRpcGroup,
   type LimitHandoffCandidate,
@@ -62,6 +63,7 @@ import * as RemoteWorkers from "../fleet/RemoteWorkers.ts";
 import {
   describeReviewWait,
   machineReviewTarget,
+  REVIEW_FAMILY_UNKNOWN,
   type ReviewStays,
   sourceReviewLock,
 } from "../handoff/handoffReviewLock.ts";
@@ -466,6 +468,21 @@ export const make = Effect.gen(function* () {
         driverKind: input.source?.driver ?? "",
         accountFingerprint: sourceUsage?.accountFingerprint ?? null,
       };
+      const judgeOn = (
+        target: ProviderLimitMachineTarget,
+        machine: (typeof list.machines)[number] | undefined,
+      ) =>
+        judgeMachineCandidate({
+          target,
+          machine,
+          source,
+          projectTitle: input.projectTitle,
+          linkedEnvironmentIds,
+          thresholdPercent: input.rule.providerLimitSwitchAtPercent,
+          unknownUsageEligible: input.rule.providerLimitUnknownUsageEligible,
+          nowMs: input.nowMs,
+          excludedModels: input.rule.providerLimitExcludedModels,
+        });
       return targets.map((saved): Verdict => {
         const machine = list.machines.find((row) => row.environmentId === saved.environmentId);
         const locked =
@@ -478,6 +495,7 @@ export const make = Effect.gen(function* () {
                 machineLabel: targetMachineLabel(saved, machine),
                 allowed: (driver, model) =>
                   teamRulesSelectionRefusal(teamRules, { driver, model }) === null,
+                usable: (target) => judgeOn(target, machine).eligible,
               });
         if (locked?.kind === "stays") {
           const reason = locked.review === "update_needed" ? "update_needed" : "refused";
@@ -505,17 +523,7 @@ export const make = Effect.gen(function* () {
             resetsAt: null,
           } satisfies MachineCandidateVerdict;
         }
-        const judged = judgeMachineCandidate({
-          target,
-          machine,
-          source,
-          projectTitle: input.projectTitle,
-          linkedEnvironmentIds,
-          thresholdPercent: input.rule.providerLimitSwitchAtPercent,
-          unknownUsageEligible: input.rule.providerLimitUnknownUsageEligible,
-          nowMs: input.nowMs,
-          excludedModels: input.rule.providerLimitExcludedModels,
-        });
+        const judged = judgeOn(target, machine);
         // A review moves only to a machine that was read and keeps its lock.
         const verdict = locked !== null && !locked.proven ? { ...judged, eligible: false } : judged;
         // A personal assistant's threads never continue on another machine.
@@ -721,7 +729,16 @@ export const make = Effect.gen(function* () {
       nowMs,
       refusals: new Map([...transient, ...(latest.refused.get(trigger.key) ?? [])]),
     });
-    yield* setWaiting(describeReviewWait(shown) ?? describeMachineWait(shown));
+    const unlockable =
+      sourceReviewLock(thread).kind === "unknown-family" &&
+      input.rule.providerLimitMachineTargets.length > 0;
+    // A review that stays is told once, by its own row.
+    yield* setWaiting(
+      unlockable
+        ? REVIEW_FAMILY_UNKNOWN
+        : (describeReviewWait(shown) ??
+            describeMachineWait(shown.filter((verdict) => verdict.review === undefined))),
+    );
     yield* Effect.logInfo("orchestration-v2.limit-handoff.no-machine", {
       threadId: thread.id,
       key: trigger.key,
