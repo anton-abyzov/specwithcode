@@ -171,13 +171,13 @@ const item = (role: string, text: string) =>
 /** Every row of AC-03 at once: one state each. */
 const EVERY_ROW = {
   copies: [
-    copy("laptopE:p", "Laptop E"),
-    copy("shelfG:p", "Shelf G", "copy"),
-    copy("deskB:p", "Desk B", "also-main"),
-    copy("kioskD:p", "Kiosk D", "moving"),
-    copy("rackF:p", "Rack F", "independent"),
+    copy("m4:p", "M4"),
+    copy("mini:p", "Mini", "copy"),
+    copy("m1:p", "M1", "also-main"),
+    copy("m3:p", "M3", "moving"),
+    copy("m5:p", "M5", "independent"),
   ],
-  unknown: [{ key: "box-a:p", machine: "box-a" }],
+  unknown: [{ key: "linux-mini:p", machine: "linux-mini" }],
 };
 
 it("names the machine shown on the chip, and the newly shown machine after a row is picked", async () => {
@@ -234,12 +234,12 @@ it("gives every row exactly one state: pill, reason or nothing", async () => {
   await renderSwitcher({ ...handlers(), ...EVERY_ROW, onFix: vi.fn() });
   // This project's machines first, the separate project after them.
   expect(rows().map((row) => row.getAttribute("data-orchestrator-view"))).toEqual([
-    "laptopE:p",
-    "shelfG:p",
-    "deskB:p",
-    "kioskD:p",
-    "box-a:p",
-    "rackF:p",
+    "m4:p",
+    "mini:p",
+    "m1:p",
+    "m3:p",
+    "linux-mini:p",
+    "m5:p",
   ]);
   expect(rows().map((row) => row.getAttribute("data-row-state"))).toEqual([
     "coordinator",
@@ -253,15 +253,15 @@ it("gives every row exactly one state: pill, reason or nothing", async () => {
     ...textsIn(rowOf(key), "[data-row-pill]"),
     ...textsIn(rowOf(key), "[data-row-reason]"),
   ];
-  expect(said("laptopE:p")).toEqual(["Coordinator"]);
+  expect(said("m4:p")).toEqual(["Coordinator"]);
   // A plain machine has no role word at all.
-  expect(said("shelfG:p")).toEqual([]);
-  expect(rowOf("shelfG:p").textContent).toBe("Shelf G");
-  expect(said("deskB:p")).toEqual(["Extra coordinator"]);
-  expect(said("kioskD:p")).toEqual(["Handing off the coordinator…"]);
-  expect(said("rackF:p")).toEqual(["Separate project"]);
-  expect(said("box-a:p")).toEqual(["This window cannot open box-a"]);
-  expect(textsIn(rowOf("box-a:p"), "[data-row-pill]")).toEqual([]);
+  expect(said("mini:p")).toEqual([]);
+  expect(rowOf("mini:p").textContent).toBe("Mini");
+  expect(said("m1:p")).toEqual(["Extra coordinator"]);
+  expect(said("m3:p")).toEqual(["Handing off the coordinator…"]);
+  expect(said("m5:p")).toEqual(["Separate project"]);
+  expect(said("linux-mini:p")).toEqual(["This window cannot open linux-mini"]);
+  expect(textsIn(rowOf("linux-mini:p"), "[data-row-pill]")).toEqual([]);
   // The one step on a row sits beside it: Fix… for the extra coordinator, Connect… for the
   // machine this window cannot open, and nothing for any other row.
   expect(
@@ -270,17 +270,17 @@ it("gives every row exactly one state: pill, reason or nothing", async () => {
       node.textContent,
       node.getAttribute("aria-label"),
     ]),
-  ).toEqual([["deskB:p", "Fix…", "Fix the extra coordinator on Desk B"]]);
+  ).toEqual([["m1:p", "Fix…", "Fix the extra coordinator on M1"]]);
   expect(
     [...document.querySelectorAll("[data-orchestrator-connect]")].map((node) => [
       node.getAttribute("data-orchestrator-connect"),
       node.textContent,
       node.getAttribute("aria-label"),
     ]),
-  ).toEqual([["box-a:p", "Connect…", "Connect box-a"]]);
+  ).toEqual([["linux-mini:p", "Connect…", "Connect linux-mini"]]);
   // A separate project's row says what that means.
-  expect(rowOf("rackF:p").title).toBe(
-    "Separate project: Rack F added this repository on its own, with its own coordinator, threads and memory.",
+  expect(rowOf("m5:p").title).toBe(
+    "Separate project: M5 added this repository on its own, with its own coordinator, threads and memory.",
   );
 });
 
@@ -329,12 +329,12 @@ it("opens Fix… for an extra coordinator after the menu closed, never picking i
   await renderSwitcher({
     ...calls,
     onFix,
-    copies: [copy("laptopE:p", "Laptop E"), copy("deskB:p", "Desk B", "also-main")],
+    copies: [copy("m4:p", "M4"), copy("m1:p", "M1", "also-main")],
   });
   await act(async () =>
-    document.querySelector<HTMLElement>('[data-orchestrator-fix="deskB:p"]')!.click(),
+    document.querySelector<HTMLElement>('[data-orchestrator-fix="m1:p"]')!.click(),
   );
-  await vi.waitFor(() => expect(onFix).toHaveBeenCalledWith("deskB:p"));
+  await vi.waitFor(() => expect(onFix).toHaveBeenCalledWith("m1:p"));
   expect(onFix).toHaveBeenCalledTimes(1);
   expect(menuOpenAtFix).toEqual([false]);
   expect(calls.onView).not.toHaveBeenCalled();
@@ -344,10 +344,10 @@ it("opens Fix… for an extra coordinator after the menu closed, never picking i
 it("offers no Fix… while the page cannot open it, but still says Extra coordinator", async () => {
   await renderSwitcher({
     ...handlers(),
-    copies: [copy("laptopE:p", "Laptop E"), copy("deskB:p", "Desk B", "also-main")],
+    copies: [copy("m4:p", "M4"), copy("m1:p", "M1", "also-main")],
   });
   expect(document.querySelector("[data-orchestrator-fix]")).toBeNull();
-  expect(textsIn(rowOf("deskB:p"), "[data-row-pill]")).toEqual(["Extra coordinator"]);
+  expect(textsIn(rowOf("m1:p"), "[data-row-pill]")).toEqual(["Extra coordinator"]);
 });
 
 /** Desk B offline with a time, Kiosk D offline with none, Laptop E (the coordinator) offline too. */
@@ -519,14 +519,14 @@ it("never starts a second coordinator and names no role in any item", async () =
     ...handlers(),
     ...onTowerH({
       copies: [
-        copy("laptopE:p", "Laptop E"),
-        copy("towerH:p", "Tower H", "copy", true),
-        copy("deskB:p", "Desk B", "also-main"),
-        copy("kioskD:p", "Kiosk D", "moving"),
-        copy("rackF:p", "Rack F", "independent"),
+        copy("m4:p", "M4"),
+        copy("minis:p", "Minis", "copy", true),
+        copy("m1:p", "M1", "also-main"),
+        copy("m3:p", "M3", "moving"),
+        copy("m5:p", "M5", "independent"),
       ],
     }),
-    unknown: [{ key: "box-a:p", machine: "box-a" }],
+    unknown: [{ key: "linux-mini:p", machine: "linux-mini" }],
     onFix: vi.fn(),
     onSync: vi.fn(),
     onAdd: vi.fn(),
