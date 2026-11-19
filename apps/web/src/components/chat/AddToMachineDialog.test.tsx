@@ -289,7 +289,7 @@ it("asks an older destination to update", async () => {
 it("points a project with no Git remote to its folder copy, not to pushing it first", async () => {
   await render({ ...source, repositoryIdentity: null } as EnvironmentProject);
   expect(text()).toContain("has nothing to clone from");
-  expect(text()).toContain("Review files to transfer");
+  expect(text()).toContain("the machine menu > Add to another machine… > Copy the whole folder.");
   expect(text()).not.toContain("Push it to GitHub");
 });
 

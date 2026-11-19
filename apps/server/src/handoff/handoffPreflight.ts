@@ -61,7 +61,7 @@ export const NOT_LINKED_HERE =
 
 /** A file the work needs that ignored-file rules kept on the source, and how to send it. */
 export const missingFileMessage = (path: string) =>
-  `no ${path}. Send it with studio_file_transfer, or with Copy to another machine`;
+  `no ${path}. Send it with studio_file_transfer, or tick it in Sync`;
 
 /** Every check that fails, worded for the user and prefixed with the machine. */
 export function preflightFailures(facts: PreflightFacts): Array<HandoffPreflightFailure> {

@@ -35,7 +35,7 @@ describe("transferRefusal", () => {
   it("keeps the old notice for an older source without a list", () => {
     const refused = transferRefusal(refusal(), false, "M3", "M4");
     expect(refused).toEqual({
-      notice: "M4 changed after copying. Copy again before moving the coordinator.",
+      notice: "M4 changed after copying. Sync again before moving the coordinator.",
       recovery: false,
       copyAgain: true,
     });
@@ -46,7 +46,7 @@ describe("transferRefusal", () => {
     for (const bad of [{ ...changes, total: 0, rows: [] }, { digest: 1 }, "changes"]) {
       const refused = transferRefusal(refusal({ changes: bad }), false, "M3", "M4");
       expect(refused).not.toHaveProperty("changes");
-      expect(refused.notice).toContain("Copy again before moving the coordinator");
+      expect(refused.notice).toContain("Sync again before moving the coordinator");
     }
   });
 

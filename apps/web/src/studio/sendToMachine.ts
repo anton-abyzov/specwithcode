@@ -1,5 +1,5 @@
 /**
- * Copy to another machine…: what each machine already holds of this project, where Main is,
+ * Sync and Add: what each machine already holds of this project, where Main is,
  * and the one sentence that says what the click will do, before it is clicked. A copy keeps
  * Main where it is; only Git only (no files copied) and "Make X main" move it. A machine with
  * a copy gets that copy filled in, not a second one.
@@ -132,14 +132,21 @@ export function pickedHolding<T extends { readonly id: string }>(
 export function existingCopyLine(input: {
   readonly there: string;
   readonly holding: MachineHolding<{ readonly workspaceRoot: string }>;
-}): string | null {
+}): SendText | null {
   const { there, holding } = input;
   if (holding.kind === "none") return null;
   if (holding.kind === "several")
-    return `${there} has this project in ${holding.copies.length} folders. Pick one.`;
+    return {
+      text: "{there} has this project in {n} folders. Pick one.",
+      values: { there, n: String(holding.copies.length) },
+    };
   const folder = displayFolder(holding.copy.workspaceRoot);
-  if (holding.kind === "main") return `${there} already has the coordinator, at ${folder}.`;
-  return `${there} already has this project, at ${folder}. Only what it is missing is copied.`;
+  if (holding.kind === "main")
+    return { text: "{there} already has the coordinator, at {folder}.", values: { there, folder } };
+  return {
+    text: "{there} already has this project, at {folder}. Sync brings it up to date.",
+    values: { there, folder },
+  };
 }
 
 /**

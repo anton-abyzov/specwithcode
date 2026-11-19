@@ -377,7 +377,7 @@ it("offers Copy again with secrets on Done in a window that can send them", asyn
       secrets: [{ path: ".env", writtenAs: ".env", size: 10, state: "written" }],
     }),
   ];
-  await act(async () => findButton(left()!, "Copy again with secrets").click());
+  await act(async () => findButton(left()!, "Sync again with secrets").click());
   await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
   // A fresh copy of the same folder and machine, with every secret ticked.
   const again = JSON.parse(localStorage.getItem(KEY)!);

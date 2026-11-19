@@ -76,7 +76,7 @@ export function HandoffCopyDone({
   readonly transferBusy?: TransferBusy | null;
   /** The person chose Move anyway: context transfers with the differences listed. */
   readonly movingAnyway?: boolean;
-  /** Copy again is offered; its advice is never shown without the button. */
+  /** Sync again is offered; its advice is never shown without the button. */
   readonly copyAgain?: boolean;
   /** The source's list of paths that changed after copying; the footer holds the choices. */
   readonly sourceReview?: MachineHandoffSourceChanges | null;
@@ -123,23 +123,31 @@ export function HandoffCopyDone({
       {problem && (
         <CopyProblems copy={copy} sourceLabel={sourceLabel}>
           {movingAnyway
-            ? `The files are on ${targetLabel}, but ${problem}. You chose Hand off anyway, so the coordinator ${contextTransferred ? "moved" : "moves"} with these differences.`
+            ? tx(
+                contextTransferred
+                  ? "The files are on {target}, but {problem}. You chose Continue on {target} anyway, so the coordinator moved with these differences."
+                  : "The files are on {target}, but {problem}. You chose Continue on {target} anyway, so the coordinator moves with these differences.",
+                { target: targetLabel, problem },
+              )
             : copyAgain
-              ? `The files are on ${targetLabel}, but ${problem}. Copy again: it compares first and moves only what changed.`
+              ? tx(
+                  "The files are on {target}, but {problem}. Sync again: it compares first and moves only what changed.",
+                  { target: targetLabel, problem },
+                )
               : `The files are on ${targetLabel}, but ${problem}.`}
         </CopyProblems>
       )}
       <div className="space-y-1" data-slot="copy-done-body">
         <p role="status">
           {moved
-            ? `The coordinator now runs on ${targetLabel}.`
+            ? tx("The coordinator continues on {target}.", { target: targetLabel })
             : mode === "copy-and-move"
               ? keptHere
                 ? `The coordinator stays on ${sourceLabel}. The copied files stay on ${targetLabel}.`
                 : sourceReview && copyAgain
                   ? "The coordinator stays here until you choose below."
                   : copyAgain
-                    ? "The coordinator stays here until you copy again."
+                    ? tx("The coordinator stays here until you sync again.")
                     : "Files are copied. Hand off the coordinator once work here is idle."
               : main
                 ? tx("{project} is on {machine}. The coordinator stays on {main}.", {
@@ -206,7 +214,7 @@ export function HandoffCopyDone({
           <p className="text-xs text-warning-foreground">{secretsNote}</p>
           {onSendSecrets && (
             <Button type="button" size="xs" variant="outline" onClick={onSendSecrets}>
-              Copy again with secrets
+              {tx("Sync again with secrets")}
             </Button>
           )}
         </div>
@@ -444,10 +452,14 @@ function CopyUndoButton({
   );
 }
 
-/** A held move's buttons: Copy again leads; Move anyway commits and moves as it is. */
+/**
+ * A held move's buttons: Sync again leads; "Continue on {target} anyway" commits and moves
+ * as it is.
+ */
 function HandoffCopyHeldActions({
   copy,
   busy,
+  targetLabel,
   undoPreview,
   onCopyAgain,
   onMoveAnyway,
@@ -455,18 +467,20 @@ function HandoffCopyHeldActions({
 }: {
   readonly copy: FolderCopyStatus;
   readonly busy: boolean;
+  readonly targetLabel: string;
   readonly undoPreview: FolderCopyUndoResult | null;
   readonly onCopyAgain: () => void;
   readonly onMoveAnyway: () => void;
   readonly onUndo: (force: boolean, previewOnly: boolean) => void;
 }) {
+  const tx = useTx();
   return (
     <>
       <Button disabled={busy} onClick={onCopyAgain}>
-        Copy again
+        {tx("Sync again")}
       </Button>
       <Button variant="outline" disabled={busy} onClick={onMoveAnyway}>
-        Hand off anyway
+        {tx("Continue on {target} anyway, on its older commits", { target: targetLabel })}
       </Button>
       {copy.backupsDiscardedAt === undefined && (
         <CopyUndoButton busy={busy} undoPreview={undoPreview} onUndo={onUndo} />
@@ -528,6 +542,7 @@ export function HandoffCopyFailed({
 export function HandoffCopyFailedActions({
   copy,
   busy,
+  targetLabel,
   failedBeforeApply,
   undoPreview,
   onCopyAgain,
@@ -539,6 +554,8 @@ export function HandoffCopyFailedActions({
 }: {
   readonly copy: FolderCopyStatus;
   readonly busy: boolean;
+  /** The destination's name, for the held move's "Continue on {target} anyway". */
+  readonly targetLabel: string;
   readonly failedBeforeApply: boolean;
   readonly undoPreview: FolderCopyUndoResult | null;
   readonly onCopyAgain: () => void;
@@ -567,6 +584,7 @@ export function HandoffCopyFailedActions({
       <HandoffCopyHeldActions
         copy={copy}
         busy={busy}
+        targetLabel={targetLabel}
         undoPreview={undoPreview}
         onCopyAgain={onCopyAgain}
         onMoveAnyway={onRetry}
@@ -588,9 +606,9 @@ export function HandoffCopyFailedActions({
 }
 
 /**
- * The finished copy's buttons: Open on {machine} leads, unless Copy again (files changed
+ * The finished copy's buttons: Open on {machine} leads, unless Sync again (files changed
  * while copying or a check failed) or moving the coordinator comes first. A copy-only copy
- * offers Copy changes again, which leads to the form, and "Continue the coordinator on {machine}" where the
+ * offers Sync again, which leads to the form, and "Continue the coordinator on {machine}" where the
  * copy is linked and is not Main: the page's own switch, one click, confirmed there. Undo…
  * sits left; the ⋯ menu holds the rest.
  */
@@ -617,7 +635,7 @@ export function HandoffCopyDoneActions({
   readonly mode: FolderCopyMode;
   readonly busy: boolean;
   readonly targetLabel: string;
-  /** Copy again is the answer: files changed while copying or a check failed. */
+  /** Sync again is the answer: files changed while copying or a check failed. */
   readonly copyAgain: boolean;
   /** A pointer is left to copy again from. */
   readonly canCopyAgain: boolean;
@@ -649,12 +667,12 @@ export function HandoffCopyDoneActions({
     <>
       {copyAgain && (
         <Button disabled={busy} onClick={onCopyAgain}>
-          Copy again
+          {tx("Sync again")}
         </Button>
       )}
       {transfer && (
         <Button disabled={busy} onClick={onTransfer}>
-          Hand off coordinator now
+          {tx("Continue the coordinator on {machine}", { machine: targetLabel })}
         </Button>
       )}
       <Button variant={copyAgain || transfer ? "outline" : "default"} onClick={onOpen}>
@@ -677,7 +695,7 @@ export function HandoffCopyDoneActions({
       )}
       {changes && (
         <Button variant="outline" disabled={busy || startNewLocked} onClick={onStartNew}>
-          Copy changes again
+          {tx("Sync again")}
         </Button>
       )}
       {(again || review || !changes) && (
@@ -693,13 +711,13 @@ export function HandoffCopyDoneActions({
             {again && (
               // Copying again releases the source like a new copy, so the same lock holds it.
               <MenuItem disabled={startNewLocked} onClick={onCopyAgain}>
-                Copy again
+                {tx("Sync again")}
               </MenuItem>
             )}
             {review && <MenuItem onClick={onLink}>Link…</MenuItem>}
             {!changes && (
               <MenuItem disabled={startNewLocked} onClick={onStartNew}>
-                Start a new copy
+                {tx("Add to another machine")}
               </MenuItem>
             )}
           </MenuPopup>

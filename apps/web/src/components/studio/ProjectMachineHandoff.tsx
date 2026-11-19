@@ -55,6 +55,9 @@ import { HandoffFolderCopy, folderCopyStorageKey } from "./HandoffFolderCopy";
 import { repositoryKeyOf } from "@specweave-studio/shared/existingCopy";
 import { useRetiredMachineRecords } from "../settings/useReplacedMachineRecords";
 import { machineHoldings, otherProjectOf, pickedHolding } from "../../studio/sendToMachine";
+import { addToMachineRoute } from "../../studio/addToMachine";
+import { linkedMachineIds } from "../../studio/linkedMachines";
+import { useTx } from "../../i18n";
 import { moveRefusal } from "./ProjectMoveOptions";
 import type { MainSwitch } from "./useMakeMain";
 import {
@@ -120,6 +123,7 @@ const isInterruptedMessage = (message: string) => message.includes("fibers inter
  * Which way the machine menu opens the dialog; `seq` makes each pick a new request.
  * "copy" opens the folder copy review directly, on `machine` when given: Run on's
  * Add to another machine… for a project with no Git remote, which has nothing to clone.
+ * "add" offers only machines that do not have the project yet.
  */
 export interface MachineHandoffOpenRequest {
   /** "sync": a copy-only review into `machine`'s existing folder; the coordinator stays here. */
@@ -128,6 +132,8 @@ export interface MachineHandoffOpenRequest {
   readonly machine?: EnvironmentId;
   /** "sync": the copy chosen in the menu, `${environmentId}:${projectId}`. */
   readonly target?: string;
+  /** How files travel, instead of the default: "copy" is the measured per-file compare. */
+  readonly method?: HandoffFolderMethod;
 }
 
 /**
@@ -159,7 +165,7 @@ export function ProjectMachineHandoff({
   readonly coordinatorId: ThreadId | null;
   readonly onOpenChange?: (open: boolean) => void;
   readonly requestedTarget?: string | null;
-  /** Set by the project's machine menu: "Send to another machine…". */
+  /** Set by the project's machine menu: Sync and Add. */
   readonly openRequest?: MachineHandoffOpenRequest | null;
   /**
    * Told once the request was acted on, so the parent drops it: this component is mounted
@@ -169,6 +175,7 @@ export function ProjectMachineHandoff({
   /** Off where the machine menu opens the dialog instead of its own button. */
   readonly showTrigger?: boolean;
 }) {
+  const tx = useTx();
   const { environments, isReady: catalogReady } = useNamedEnvironments();
   const projects = useProjects();
   const configs = useAtomValue(environmentServerConfigsAtom);
@@ -253,6 +260,8 @@ export function ProjectMachineHandoff({
   const [copyFlowRun, setCopyFlowRun] = useState(0);
   // "Sync to X…": X already has this project, so only files travel, into its own folder.
   const [syncKey, setSyncKey] = useState<string | null>(null);
+  // Opened by the menu's Add: only machines without the project are offered.
+  const [addOnly, setAddOnly] = useState(false);
   // The copy flow's machine, so switching to Git keeps it.
   const [copyMachine, setCopyMachine] = useState<EnvironmentId | null>(null);
   // The copy the person picked on a machine that holds several, by machine.
@@ -513,6 +522,7 @@ export function ProjectMachineHandoff({
     setMoveAsked(true);
     setCopyFlowRun((run) => run + 1);
     setSyncKey(null);
+    setAddOnly(false);
     setMethod(
       existing && ownCheckout(project) && ownCheckout(existing) ? "folder" : DEFAULT_COPY_METHOD,
     );
@@ -880,13 +890,12 @@ export function ProjectMachineHandoff({
     enabled: open && phase === "choose",
     canCommit: canGit.has(project.environmentId),
   });
-  const suggestedMachine = pickHandoffMachine(machines, preference) as EnvironmentId | null;
   const requestedMachine =
     candidates.find((item) => `${item.environmentId}:${item.id}` === requestedTarget)
       ?.environmentId ?? null;
   // The Git move's machine: the saved folder's, or one chosen without a saved folder yet.
   const gitMachine = target?.environmentId ?? pickerMachine;
-  const machineOptions = machines.map((item): MachineOption => ({
+  const optionOf = (item: (typeof machines)[number]): MachineOption => ({
     value: item.id,
     label: item.label,
     tone: item.unavailable ? "off" : "ready",
@@ -899,7 +908,7 @@ export function ProjectMachineHandoff({
             ? "Needs permission"
             : null,
     disabled: item.unavailable !== null,
-  }));
+  });
   /** Chooses a machine for the Git move: its usable saved folder, else the folder picker. */
   const chooseGitMachine = (environmentId: EnvironmentId | null) => {
     const saved =
@@ -928,6 +937,23 @@ export function ProjectMachineHandoff({
     projects: [project, ...candidates],
     retired,
   });
+  // Add offers machines without the project: no saved folder, no copy found there, and not a
+  // member this window never opened. The machine the copy flow chose stays, so a finished Add
+  // still names it.
+  const linkedIds = linkedMachineIds([project]);
+  const addable = machines.filter(
+    (item) =>
+      !item.hasProjectFolder &&
+      (holdings.byMachine.get(item.id)?.kind ?? "none") === "none" &&
+      !linkedIds.has(item.id),
+  );
+  const offered = addOnly
+    ? machines.filter((item) => item.id === copyMachine || addable.includes(item))
+    : machines;
+  const machineOptions = offered.map(optionOf);
+  const suggestedMachine = pickHandoffMachine(offered, preference) as EnvironmentId | null;
+  // Add for a project with no Git remote: nothing can be downloaded, only the folder copied.
+  const wholeFolderOnly = addOnly && addToMachineRoute(project) === "copy";
   // The machine the dialog sends to: the copy form's, or the Git move's.
   const sendMachine = method === "folder" ? gitMachine : copyMachine;
   const sendHolding = sendMachine ? holdings.byMachine.get(sendMachine) : undefined;
@@ -996,6 +1022,8 @@ export function ProjectMachineHandoff({
     mode: MachineHandoffOpenRequest["mode"],
     requestedMachineId?: EnvironmentId | undefined,
     syncTarget?: string | undefined,
+    requestedMethod?: HandoffFolderMethod | undefined,
+    fromMenu = false,
   ) => {
     if (!sourceReady) return;
     const syncCandidate =
@@ -1008,6 +1036,9 @@ export function ProjectMachineHandoff({
       return;
     }
     const machine = syncCandidate?.environmentId ?? requestedMachineId;
+    // Only the menu's Add filters; the page's own button keeps every machine. A Git handoff
+    // under way (a review, or one left unfinished) keeps its own machine instead.
+    let adding = mode === "add" && fromMenu && !snapshot;
     changeOpen(true);
     setMoveAsked(mode === "move");
     setSyncKey(syncCandidate ? syncTarget! : null);
@@ -1022,20 +1053,24 @@ export function ProjectMachineHandoff({
         const copyPending =
           localStorage.getItem(folderCopyStorageKey(project.environmentId, project.id)) !== null;
         gitPending = pending !== null;
+        if (gitPending) adding = false;
         setIntent(pending ? "move" : "copy");
         if (pending) setMethod("folder");
         else if (!copyPending) setMethod(DEFAULT_COPY_METHOD);
         const saved = readHandoffMachinePreference(preferenceKey);
         setPreference(saved);
-        const preferred = pickHandoffMachine(machines, saved);
-        const preferredFolder = destinations.find(
-          (item) => item.environmentId === preferred && !item.unavailable,
-        );
+        // Add never preselects a machine that has the project, nor one of its folders.
+        const preferred = pickHandoffMachine(adding ? addable : machines, saved);
+        const preferredFolder = adding
+          ? undefined
+          : destinations.find((item) => item.environmentId === preferred && !item.unavailable);
         // The preferred machine wins; without a saved folder there, the picker opens on it.
         const choice =
           pending?.targetKey ??
           preferredFolder?.key ??
-          (preferred === null ? destinations.find((item) => !item.unavailable)?.key : undefined) ??
+          (preferred === null && !adding
+            ? destinations.find((item) => !item.unavailable)?.key
+            : undefined) ??
           "";
         setSelected(choice);
         setPickerMachine(choice ? null : (preferred as EnvironmentId | null));
@@ -1045,14 +1080,20 @@ export function ProjectMachineHandoff({
         showError(cause);
       }
     }
+    setAddOnly(adding);
+    if (adding) setCopyMachine(null);
     if (mode === "move" && !snapshot) setIntent("move");
     if ((mode === "copy" || mode === "sync") && !snapshot && !gitPending) {
       setIntent("copy");
-      setMethod(DEFAULT_COPY_METHOD);
+      setMethod(requestedMethod ?? DEFAULT_COPY_METHOD);
       if (machine) {
         setSelected("");
         setPickerMachine(machine);
       }
+    } else if (mode === "add" && !snapshot && !gitPending) {
+      // With no Git remote nothing can be downloaded: the whole folder is copied.
+      if (adding && addToMachineRoute(project) === "copy") setMethod("copy");
+      else if (requestedMethod) setMethod(requestedMethod);
     }
   };
   const latestOpenDialog = useRef(openDialog);
@@ -1069,14 +1110,21 @@ export function ProjectMachineHandoff({
     // The menu has no tooltip to explain a refusal, so it says why here.
     const reason = latestBlockedReason.current;
     if (reason) toastManager.add({ type: "warning", title: reason });
-    else latestOpenDialog.current(openRequest.mode, openRequest.machine, openRequest.target);
+    else
+      latestOpenDialog.current(
+        openRequest.mode,
+        openRequest.machine,
+        openRequest.target,
+        openRequest.method,
+        true,
+      );
     latestRequestHandled.current?.(openRequest);
   }, [openRequest]);
 
   return (
     <>
       {showTrigger ? (
-        <Tip label={blockedReason ?? "Send this project to another machine"}>
+        <Tip label={blockedReason ?? tx("Sync or add this project on another machine")}>
           {/* Off, the button stays focusable (aria-disabled, not disabled), so it keeps its
             tooltip and screen readers read the reason it describes. */}
           <span className="inline-flex" data-slot="handoff-trigger-wrap">
@@ -1103,6 +1151,7 @@ export function ProjectMachineHandoff({
         sourceLabel={source?.label ?? "This machine"}
         projectTitle={logicalProjectTitle(project)}
         sync={syncTo}
+        wholeFolderOnly={wholeFolderOnly}
         workspaceContext={workspaceContext}
         destinationCheckout={receipt?.workspacePath ?? previewCheckout}
         destinationWorktreeStorage={destinationDefaultWorktreeStorage(
@@ -1166,7 +1215,7 @@ export function ProjectMachineHandoff({
               workspaceContext={workspaceContext}
               sourceLabel={source?.label ?? "This machine"}
               method={method}
-              machines={machines.map((item) => ({
+              machines={offered.map((item) => ({
                 id: item.id,
                 label: item.label,
                 unavailable: item.unavailable,
@@ -1194,7 +1243,8 @@ export function ProjectMachineHandoff({
                 requestedMachine ?? syncCopy?.environmentId ?? gitMachine ?? suggestedMachine
               }
               // Requested, so a saved draft or last copy cannot swap the machine or its folder.
-              machineRequested={requestedMachine !== null || syncCopy !== undefined}
+              // Add starts a new copy: a finished one is not shown again.
+              machineRequested={requestedMachine !== null || syncCopy !== undefined || addOnly}
               defaultMode={intent === "move" ? "copy-and-move" : "copy-only"}
               onChoicesChange={({ mode, machine, done, review, doneAt, projectId }) => {
                 copyAtReview.current = review === true;

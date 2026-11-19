@@ -167,7 +167,7 @@ let root: Root, container: HTMLDivElement;
 const props = () => state.props!;
 /**
  * Opens the dialog the way its button does. It opens on the copy; most of these tests then
- * pick "Git only, no file copy" under Details, as a person would for the Git handoff.
+ * switch to the Git handoff ("folder"), as "Continue the coordinator here" opens it.
  */
 const mount = async (method: "git" | "as-opened" = "git") => {
   await act(async () =>
@@ -1432,7 +1432,7 @@ it("holds the workspace page on this checkout while the move dialog is open", as
   expect(hold).toHaveBeenLastCalledWith(false);
 });
 
-describe("Send to another machine", () => {
+describe("Sync and Add", () => {
   // Places in the repository are known, so a same-repository copy counts as a copy.
   const at = (
     project: typeof source,

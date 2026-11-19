@@ -18,6 +18,7 @@ import {
   pickedHolding,
   sendPlan,
   type MachineHolding,
+  type SendText,
 } from "../../studio/sendToMachine";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -44,6 +45,13 @@ export interface ProjectMoveDialogContext {
   readonly machinesExtra?: ReactNode;
   /** Sync into a machine that already has the project: only files travel, nothing to hand off. */
   readonly sync?: boolean;
+  /** The machine the files come from, named by the whole-folder method. */
+  readonly sourceLabel?: string;
+  /**
+   * Add for a project with no Git remote: nothing can be downloaded, so copying the whole
+   * folder is the only way files travel.
+   */
+  readonly wholeFolderOnly?: boolean;
   /** What the chosen machine already holds of this project, where Main is, and the plan. */
   readonly send?: SendFacts | null;
   /** "Continue the coordinator on {machine}" for the finished copy, on its done screen; null where there is none. */
@@ -145,7 +153,7 @@ export function SendSummary({
     <div className="flex min-w-0 flex-col gap-2" data-slot="send-summary">
       {line && (
         <p className="text-sm text-muted-foreground" data-slot="send-existing-copy">
-          {line}
+          {tx(line.text, line.values)}
         </p>
       )}
       {send.holding.kind === "several" && (
@@ -155,6 +163,7 @@ export function SendSummary({
           picked={send.picked}
           onPick={send.onPick}
           disabled={disabled}
+          machineLabel={targetLabel}
         />
       )}
       {note && (
@@ -168,7 +177,7 @@ export function SendSummary({
       )}
       {plan && (
         <p className="rounded-lg bg-muted/40 px-3 py-2 text-sm" data-slot="send-plan">
-          {plan}
+          {typeof plan === "string" ? plan : tx(plan.text, plan.values)}
         </p>
       )}
     </div>
@@ -182,23 +191,27 @@ function CopyPicker({
   picked,
   onPick,
   disabled,
+  machineLabel,
 }: {
   readonly copies: ReadonlyArray<{ readonly id: string; readonly workspaceRoot: string }>;
   readonly mainId: string | null;
   readonly picked: string | null;
   readonly onPick: (id: string) => void;
   readonly disabled: boolean;
+  readonly machineLabel: string;
 }) {
+  const tx = useTx();
+  const legend = tx("Folder on {machine}", { machine: machineLabel });
   return (
     <fieldset disabled={disabled} className="min-w-0" data-slot="send-copy-picker">
-      <legend className="mb-2 text-sm font-medium">Copy to send to</legend>
+      <legend className="mb-2 text-sm font-medium">{legend}</legend>
       <RadioGroup
         value={picked ?? ""}
         onValueChange={(next) => {
           if (typeof next === "string" && next) onPick(next);
         }}
         disabled={disabled}
-        aria-label="Copy to send to"
+        aria-label={legend}
       >
         {copies.map((copy) => (
           <label
@@ -287,34 +300,47 @@ export function MoreOptions({
   );
 }
 
+/** The ways files travel, in order; the default (`DEFAULT_COPY_METHOD`) first. */
 const METHODS: ReadonlyArray<{
   readonly value: HandoffFolderMethod;
-  readonly label: string;
   readonly detail: string;
 }> = [
   {
     value: "clone",
-    label: "Download from GitHub (recommended)",
     detail:
       "Repositories new there download from GitHub or their Git host; one with unpushed commits or stashes is copied whole. Uncommitted and ignored files, and secrets unless you leave them out, come from this machine.",
   },
   {
     value: "copy",
-    label: "Copy everything",
     detail:
       "Also brings unpushed commits, local branches and stashes. Slower for large repositories.",
   },
   {
+    // Not a choice: "Continue the coordinator here" and an unfinished Git handoff open on it.
     value: "folder",
-    label: "Git only, no file copy",
     detail:
       "Continues in a folder already saved there, which updates from origin. Always moves the coordinator there.",
   },
 ];
 
-/** The plain name of a way files travel, as Details lists it. */
-export const methodLabel = (method: HandoffFolderMethod): string =>
-  METHODS.find((item) => item.value === method)?.label ?? "";
+/**
+ * The plain name of a way files travel, as Details lists it. The whole-folder copy is
+ * "Compare all files…" when it syncs into a folder the machine already has.
+ */
+export const methodLabel = (
+  method: HandoffFolderMethod,
+  context: { readonly sync?: boolean | undefined; readonly sourceLabel?: string | undefined },
+): SendText =>
+  method === "clone"
+    ? { text: "Download from GitHub (recommended)" }
+    : method === "folder"
+      ? { text: "Continue the coordinator here" }
+      : context.sync
+        ? { text: "Compare all files…" }
+        : {
+            text: "Copy the whole folder from {source}",
+            values: { source: context.sourceLabel ?? "this machine" },
+          };
 
 /** How files travel. Reads the dialog's method; renders nothing outside the dialog. */
 export function FilesTravelChoice() {
@@ -322,8 +348,14 @@ export function FilesTravelChoice() {
   const dialog = useProjectMoveDialog();
   if (!dialog) return null;
   const { method, onMethodChange, methodDisabled } = dialog;
-  // Git only moves Main, so it is off where Main may not move (`moveRefusal`).
+  // "folder" moves the coordinator, so it is off where it may not move (`moveRefusal`).
   const refused = moveRefusal(dialog.send);
+  // "folder" is listed only while it is the current way, so the person can leave it.
+  const choices = METHODS.filter(
+    (item) =>
+      item.value === method ||
+      (item.value !== "folder" && !(item.value === "clone" && dialog.wholeFolderOnly)),
+  );
   return (
     <fieldset disabled={methodDisabled} className="min-w-0" data-slot="handoff-method">
       <legend className="mb-2 text-sm font-medium">How files travel</legend>
@@ -333,7 +365,8 @@ export function FilesTravelChoice() {
         disabled={methodDisabled}
         aria-label="How files travel"
       >
-        {METHODS.map((item) => {
+        {choices.map((item) => {
+          const label = methodLabel(item.value, dialog);
           const blocked = item.value === "folder" && refused !== null;
           return (
             <label
@@ -344,7 +377,7 @@ export function FilesTravelChoice() {
                 <Radio value={item.value} disabled={blocked} />
               </span>
               <span className="min-w-0 leading-5">
-                <span className="block wrap-anywhere">{item.label}</span>
+                <span className="block wrap-anywhere">{tx(label.text, label.values)}</span>
                 <span className="block wrap-anywhere text-xs text-muted-foreground">
                   {blocked
                     ? refused === "main"

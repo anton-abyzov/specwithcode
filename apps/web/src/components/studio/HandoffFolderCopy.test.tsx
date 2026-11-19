@@ -438,7 +438,7 @@ it("checks the destination after Apply before fencing the source and starting co
     publish: true,
     destination: { transport: "folder-copy", environmentId: "m3" },
   });
-  expect(container.textContent).toContain("The coordinator now runs on M3.");
+  expect(container.textContent).toContain("The coordinator continues on M3.");
   expect(localStorage.length).toBe(0);
 });
 
@@ -567,9 +567,9 @@ it("finishes the copy while busy and transfers context only on an explicit retry
       destination: input.destination,
     },
   });
-  await click("Hand off coordinator now");
+  await click("Continue the coordinator on M3");
   expect(names()).toContain("receive");
-  expect(container.textContent).toContain("The coordinator now runs on M3.");
+  expect(container.textContent).toContain("The coordinator continues on M3.");
 });
 
 it("keeps a changed-source copy successful and asks for a fresh copy", async () => {
@@ -581,8 +581,8 @@ it("keeps a changed-source copy successful and asks for a fresh copy", async () 
   await click("Copy and move to M3");
   await click("Copy and move to M3");
   expect(container.querySelector('[data-slot="copy-done"]')).not.toBeNull();
-  expect(container.textContent).toContain("Copy again before moving the coordinator");
-  expect(button("Copy again")).toBeTruthy();
+  expect(container.textContent).toContain("Sync again before moving the coordinator");
+  expect(button("Sync again")).toBeTruthy();
   expect(names()).not.toContain("receive");
 });
 
@@ -613,7 +613,7 @@ it("does not fence or transfer after copied files were unstable", async () => {
   await click("Copy and move to M3");
   await click("Copy and move to M3");
   expect(container.querySelector('[data-slot="copy-done"]')).not.toBeNull();
-  expect(button("Copy again")).toBeTruthy();
+  expect(button("Sync again")).toBeTruthy();
   expect(names()).not.toContain("prepare");
 });
 
@@ -632,9 +632,9 @@ it.each(["offline", "busy"])(
     expect(container.querySelector('[data-slot="copy-done"]')).not.toBeNull();
     expect(container.textContent).toContain("Moving the coordinator didn't finish");
     await openMore();
-    expect(isDisabled(button("Start a new copy"))).toBe(true);
+    expect(isDisabled(button("Add to another machine"))).toBe(true);
     expect(localStorage.getItem("specwithcode:folder-copy:m4:source")).not.toBeNull();
-    expect(button("Hand off coordinator now").disabled).toBe(false);
+    expect(button("Continue the coordinator on M3").disabled).toBe(false);
   },
 );
 
@@ -668,8 +668,8 @@ it.each([true, false])(
     expect(container.querySelector('[aria-label="Changed while copying"]')?.textContent).toBe(
       "changing.ts",
     );
-    expect(() => button("Hand off coordinator now")).toThrow();
-    await click("Copy again");
+    expect(() => button("Continue the coordinator on M3")).toThrow();
+    await click("Sync again");
     expect(names()).toContain("copyRelease");
     expect(names()).not.toContain("prepare");
     if (safe) {
@@ -710,7 +710,7 @@ it.each(["same", "folder", "machine"])(
     await click("Copy and move to M3");
     await click("Copy and move to M3");
     await openMore();
-    await click("Start a new copy");
+    await click("Add to another machine");
     if (change === "folder") await editFolder("/home/anton/other-project");
     if (change === "machine") {
       // Same spelling on another machine must never reuse the registration.
@@ -801,7 +801,7 @@ it.each(["project-coordinator:existing-project", "custom-coordinator"])(
     expect(receive.input).not.toHaveProperty("context");
     expect(JSON.stringify(receive)).not.toContain("private");
     expect(state.calls.indexOf(prepares[1]!)).toBeGreaterThan(names().indexOf("receive"));
-    expect(container.textContent).toContain("The coordinator now runs on M3.");
+    expect(container.textContent).toContain("The coordinator continues on M3.");
   },
 );
 
@@ -821,10 +821,10 @@ it.each(["busy", "conflict", "invalid"])(
     expect(state.calls.filter(([name]) => name === "prepare")).toHaveLength(1);
     expect((state.calls.find(([name]) => name === "prepare")![1] as any).input.publish).toBe(false);
     await openMore();
-    expect(isDisabled(button("Start a new copy"))).toBe(false);
-    expect(button("Hand off coordinator now").disabled).toBe(false);
+    expect(isDisabled(button("Add to another machine"))).toBe(false);
+    expect(button("Continue the coordinator on M3").disabled).toBe(false);
     expect(localStorage.getItem("specwithcode:folder-copy:m4:source")).not.toBeNull();
-    await click("Start a new copy");
+    await click("Add to another machine");
     expect(names()).toContain("copyRelease");
     expect(button("Copy and move to M3")).toBeTruthy();
   },
@@ -850,12 +850,12 @@ it("retains a restored fence if source release refuses after a destination previ
     throw new Error("Recover the published context transfer");
   };
   await mount();
-  await click("Hand off coordinator now");
+  await click("Continue the coordinator on M3");
   await openMore();
-  await click("Start a new copy");
+  await click("Add to another machine");
   expect(container.textContent).toContain("Recover the published context transfer");
   expect(localStorage.getItem(key)).not.toBeNull();
-  expect(button("Hand off coordinator now")).toBeTruthy();
+  expect(button("Continue the coordinator on M3")).toBeTruthy();
 });
 
 it("reads a destination registration that arrived while Apply was running", async () => {
@@ -961,8 +961,8 @@ it("keeps live actions in the real dialog footer through measurement, preview, a
       ?.closest('[data-slot="dialog-footer"]'),
   ).not.toBeNull();
   await openMore();
-  expect(moreItems()).toEqual(["Copy again"]);
-  expect(dialogButton("Copy changes again")).toBeTruthy();
+  expect(moreItems()).toEqual(["Sync again"]);
+  expect(dialogButton("Sync again")).toBeTruthy();
   expect(
     document.querySelector('[data-slot="dialog-panel"] [data-slot="copy-actions"]'),
   ).toBeNull();
@@ -996,15 +996,15 @@ it("keeps deferred context retry in the footer with current handlers", async () 
   expect(document.querySelector('[data-slot="copy-done"]')?.textContent).toContain(
     "Work is still running",
   );
-  expect(dialogButton("Hand off coordinator now").disabled).toBe(false);
+  expect(dialogButton("Continue the coordinator on M3").disabled).toBe(false);
   state.handlers.prepare = prepare;
-  await dialogClick("Hand off coordinator now");
+  await dialogClick("Continue the coordinator on M3");
   expect(document.querySelector('[data-slot="copy-done"]')?.textContent).toContain(
-    "The coordinator now runs on",
+    "The coordinator continues on",
   );
   dialogButton("Open on M3");
   expect(document.querySelector('[data-slot="dialog-footer"]')?.textContent).not.toContain(
-    "Hand off coordinator now",
+    "Continue the coordinator on M3",
   );
 });
 
@@ -1246,7 +1246,7 @@ it("registers, previews context and opens the child project while copying the wh
   expect(state.calls.find(([name]) => name === "prepare")?.[1]).toMatchObject({
     input: { destination: { projectId: existing.id, coordinatorThreadId: "child-coordinator" } },
   });
-  expect(container.textContent).toContain(`The coordinator now runs on M3.In ${childDestination}`);
+  expect(container.textContent).toContain(`The coordinator continues on M3.In ${childDestination}`);
   await click("Open on M3");
   expect(onOpenProject).toHaveBeenCalledExactlyOnceWith({
     environmentId: "m3",
@@ -1279,7 +1279,7 @@ it.each(["same", "child-only", "different-root"])(
     await click("Copy and move to M3");
     await click("Copy and move to M3");
     await openMore();
-    await click("Start a new copy");
+    await click("Add to another machine");
     expect(inputFolder().value).toBe(canonical);
     if (nextScope === "different-root") await editFolder("/srv/other");
     if (nextScope === "child-only") {
@@ -1477,7 +1477,7 @@ it("keeps the dialog open only while coordinator context transfers", async () =>
   await act(async () => finishPrepare());
   await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
   expect(document.querySelector('[data-slot="copy-done"]')?.textContent).toContain(
-    "The coordinator now runs on",
+    "The coordinator continues on",
   );
   expect(
     document.querySelector<HTMLButtonElement>('[data-slot="dialog-close"][aria-label="Close"]')
@@ -1843,7 +1843,7 @@ it("makes failed checks and files changed while copying obvious and copies again
   await click("Copy to M3");
   const problems = container.querySelector('[data-slot="copy-problems"]')!;
   expect(problems.querySelector('[role="alert"]')?.textContent).toBe(
-    "The files are on M3, but some files changed on M4 while copying. Copy again: it compares first and moves only what changed.",
+    "The files are on M3, but some files changed on M4 while copying. Sync again: it compares first and moves only what changed.",
   );
   const listed = problems.querySelectorAll('[aria-label="Changed while copying"] li');
   expect(listed).toHaveLength(20);
@@ -1853,13 +1853,13 @@ it("makes failed checks and files changed while copying obvious and copies again
   ).toEqual(["git status differs from the source.", "src/a.ts"]);
   expect(problems.textContent).not.toContain("Root");
   expect(problems.textContent).toContain(
-    "Copy again: it compares first and moves only what changed.",
+    "Sync again: it compares first and moves only what changed.",
   );
   const labels = [...container.querySelectorAll("button")].map((node) => node.textContent?.trim());
-  expect(labels.indexOf("Copy again")).toBeLessThan(labels.indexOf("Open on M3"));
+  expect(labels.indexOf("Sync again")).toBeLessThan(labels.indexOf("Open on M3"));
   const first = (state.calls.find(([name]) => name === "copyStart")![1] as any).input;
   statuses = [copyStatus("previewed")];
-  await click("Copy again");
+  await click("Sync again");
   // A fresh one-click copy of the same folder to the same machine with the same choices.
   expect(names().filter((name) => name === "copyOffer")).toHaveLength(2);
   const starts = state.calls.filter(([name]) => name === "copyStart");
@@ -2351,20 +2351,20 @@ const failedCheck = { repo: ".", ok: false, problems: ["git status differs from 
 it.each([
   ["files changed while copying", { unstable: ["changing.ts"] }],
   ["a failed check", { checks: [failedCheck] }],
-])("points a reopened move with %s only at Copy again", async (_label, problem) => {
+])("points a reopened move with %s only at Sync again", async (_label, problem) => {
   reopenMove();
   statuses = [copyStatus("applied", { mode: "copy-and-move", ...problem })];
   await mount();
   await settle();
   expect(container.querySelector('[data-slot="copy-problems"]')).not.toBeNull();
-  expect(button("Copy again")).toBeTruthy();
-  expect(() => button("Hand off coordinator now")).toThrow();
+  expect(button("Sync again")).toBeTruthy();
+  expect(() => button("Continue the coordinator on M3")).toThrow();
   expect(container.textContent).not.toContain(
     "Files are copied. Hand off the coordinator once work here is idle.",
   );
   // Copy again and Start a new copy both ask the source to release first.
   await openMore();
-  expect(isDisabled(button("Start a new copy"))).toBe(false);
+  expect(isDisabled(button("Add to another machine"))).toBe(false);
   expect(names()).not.toContain("prepare");
 });
 
@@ -2399,11 +2399,11 @@ it("holds a move whose checks failed, leads with Copy again and keeps the coordi
     "git status differs from the source.",
   );
   const labels = footerLabels();
-  expect(labels.indexOf("Copy again")).toBeGreaterThanOrEqual(0);
-  expect(labels.indexOf("Copy again")).toBeLessThan(labels.indexOf("Hand off anyway"));
+  expect(labels.indexOf("Sync again")).toBeGreaterThanOrEqual(0);
+  expect(labels.indexOf("Sync again")).toBeLessThan(labels.findIndex((l) => /anyway/.test(l)));
   expect(labels).toContain("Undo…");
   expect(labels).not.toContain("Retry");
-  expect(container.textContent).toContain("Copy again brings over what changed");
+  expect(container.textContent).toContain("Sync again brings over what changed");
   expect(container.textContent).not.toContain(
     "Files are copied. Hand off the coordinator once work here is idle.",
   );
@@ -2422,10 +2422,10 @@ it("moves a held copy anyway through retry and transfers context despite the dif
   state.handlers.copyStatus = () => statuses.shift() ?? committed;
   await mount();
   await settle();
-  await click("Hand off anyway");
+  await click("Continue on M3 anyway, on its older commits");
   expect(names()).toContain("copyRetry");
   expect(names()).toContain("receive");
-  expect(container.textContent).toContain("The coordinator now runs on M3.");
+  expect(container.textContent).toContain("The coordinator continues on M3.");
 });
 
 it("undoes a held copy from its problems screen", async () => {
@@ -2458,8 +2458,8 @@ it("holds a fresh move whose checks failed instead of showing a bare error", asy
   expect(container.querySelector('[data-slot="copy-problems"]')?.textContent).toContain(
     "so the coordinator stayed here",
   );
-  expect(button("Copy again")).toBeTruthy();
-  expect(button("Hand off anyway")).toBeTruthy();
+  expect(button("Sync again")).toBeTruthy();
+  expect(button("Continue on M3 anyway, on its older commits")).toBeTruthy();
   expect(names()).not.toContain("prepare");
 });
 
@@ -2527,15 +2527,15 @@ it("remembers Hand off anyway when the context transfer after it is refused for 
   };
   await mount();
   await settle();
-  await click("Hand off anyway");
+  await click("Continue on M3 anyway, on its older commits");
   expect(pointerNow()).toMatchObject({ moveAnyway: true });
   expect(container.textContent).toContain("Work is still running on M4");
-  expect(container.textContent).toContain("You chose Hand off anyway");
-  expect(() => button("Copy again")).toThrow();
+  expect(container.textContent).toContain("You chose Continue on M3 anyway");
+  expect(() => button("Sync again")).toThrow();
   state.handlers.prepare = prepare;
-  await click("Hand off coordinator now");
+  await click("Continue the coordinator on M3");
   expect(names()).toContain("receive");
-  expect(container.textContent).toContain("The coordinator now runs on M3.");
+  expect(container.textContent).toContain("The coordinator continues on M3.");
   expect(pointerNow()).toBeNull();
 });
 
@@ -2553,11 +2553,11 @@ it("offers the transfer again on a reopened move the person chose to move anyway
   expect(container.textContent).toContain(
     "Files are copied. Hand off the coordinator once work here is idle.",
   );
-  expect(() => button("Copy again")).toThrow();
+  expect(() => button("Sync again")).toThrow();
   expect(names()).not.toContain("prepare");
-  await click("Hand off coordinator now");
+  await click("Continue the coordinator on M3");
   expect(names()).toContain("receive");
-  expect(container.textContent).toContain("The coordinator now runs on M3.");
+  expect(container.textContent).toContain("The coordinator continues on M3.");
 });
 
 it("releases the source operation after undoing a held, uncommitted move", async () => {

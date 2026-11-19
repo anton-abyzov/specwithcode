@@ -823,8 +823,7 @@ export function HandoffFolderCopy({
   const plan = () =>
     run(async () => {
       if (!offer || !pending) return;
-      if (sourceChanged)
-        throw new Error("Measure and compare again before previewing this changed source.");
+      if (sourceChanged) throw new Error("Compare again before previewing this changed source.");
       await planNow(offer, pending, selection);
     });
 
@@ -896,8 +895,7 @@ export function HandoffFolderCopy({
   const applyNow = async (saved: PendingCopy, secretsSent = false) => {
     const environmentId = saved.environmentId as EnvironmentId;
     const operationId = saved.operationId;
-    if (sourceChanged)
-      throw new Error("The source changed. Measure and compare again before copying.");
+    if (sourceChanged) throw new Error("The source changed. Compare again before copying.");
     await secrets.refreshRoute(saved);
     if (secretsBlockedNow(project.environmentId, environmentId) && secretsPromised(saved)) {
       // The form said included: the review says why not, and the person approves it there.
@@ -1415,6 +1413,7 @@ export function HandoffFolderCopy({
                 copy={copy}
                 sourceRoot={offer?.copyRoot ?? project.workspaceRoot}
                 targetLabel={targetLabel}
+                sourceLabel={sourceLabel}
                 method={pending?.method ?? method}
                 onChangeWhere={changeWhere}
                 changeDisabled={closeLocked || (working && stage !== "scanning")}
@@ -1427,7 +1426,7 @@ export function HandoffFolderCopy({
             <HandoffCopyScanFreshness
               capturedAt={copy?.capturedAt}
               status={scanStatus}
-              // The footer offers Measure and compare again only on Review; on What the
+              // The footer offers Compare again only on Review; on What the
               // freshness line holds it, or a changed source would leave no way forward.
               sourceChanged={stage === "preview" && sourceChanged}
               busy={busy}

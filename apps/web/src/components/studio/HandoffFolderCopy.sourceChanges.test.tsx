@@ -226,7 +226,7 @@ it("lists the changed paths by folder with the three choices", async () => {
   await mount();
   await handOff();
   expect(container.textContent).toContain("3 paths changed on M4 after copying.");
-  expect(container.textContent).not.toContain("Copy again before moving the coordinator");
+  expect(container.textContent).not.toContain("Sync again before moving the coordinator");
   const list = container.querySelector('[data-slot="source-changes"]')!;
   expect(list.textContent).toContain("as they were 5 minutes ago");
   const groups = [...list.querySelectorAll('[data-slot="source-change-group"]')].map(
@@ -241,12 +241,12 @@ it("lists the changed paths by folder with the three choices", async () => {
   expect(rows[2]).toBe("Gitrepositories/org/appa1b2c3d → d4e5f6a; branch main; stashes 0 → 1");
   expect(labels()).toEqual(
     expect.arrayContaining([
-      "Copy again",
+      "Sync again",
       "Move without these 3 paths",
       "Keep the coordinator on M4",
     ]),
   );
-  expect(labels()).not.toContain("Hand off coordinator now");
+  expect(labels()).not.toContain("Continue the coordinator on M3");
   expect(started()).toBe(false);
   // Nothing was accepted yet.
   expect(pointerNow()).not.toHaveProperty("acceptedSourceChanges");
@@ -267,7 +267,7 @@ it("does not offer moving without the paths for an uncaptured copy", async () =>
   await mount();
   await handOff();
   expect(container.textContent).toContain("This copy was not captured");
-  expect(labels()).toContain("Copy again");
+  expect(labels()).toContain("Sync again");
   expect(labels()).toContain("Keep the coordinator on M4");
   expect(labels().some((label) => label?.startsWith("Move without"))).toBe(false);
 });
@@ -281,7 +281,7 @@ it("moves without the paths, sends the list on both prepares and names what stay
   const retried = prepares().slice(before);
   expect(retried.map((input) => input.publish)).toEqual([false, true]);
   for (const input of retried) expect(input.acceptedSourceChanges).toBe("a".repeat(64));
-  expect(container.textContent).toContain("The coordinator now runs on M3.");
+  expect(container.textContent).toContain("The coordinator continues on M3.");
   expect(pointerNow()).toBeNull();
   expect(state.calls.find(([name]) => name === "copyDrift")?.[1]).toMatchObject({
     environmentId: "m4",
@@ -334,13 +334,13 @@ it("keeps the accepted list across a reopen, and Copy again clears it", async ()
   expect(pointerNow().acceptedSourceChanges).toEqual({ digest: "a".repeat(64), total: 3 });
   refuseUnlessAccepted();
   const before = prepares().length;
-  await click("Hand off coordinator now");
+  await click("Continue the coordinator on M3");
   expect(
     prepares()
       .slice(before)
       .map((input) => input.acceptedSourceChanges),
   ).toEqual(["a".repeat(64), "a".repeat(64)]);
-  expect(container.textContent).toContain("The coordinator now runs on M3.");
+  expect(container.textContent).toContain("The coordinator continues on M3.");
   // This browser no longer has the accepted rows: one list, not split.
   const left = container.querySelector('[data-slot="copy-left-on-source"]')!;
   expect(left.querySelector('[aria-label="Only on M4"]')?.textContent).toContain("notes.md");
@@ -361,13 +361,13 @@ it("keeps the list and its choices after a busy retry; Copy again drops the acce
   expect(container.querySelector('[data-slot="source-changes"]')?.textContent).toContain(LEDGER);
   expect(labels()).toEqual(
     expect.arrayContaining([
-      "Copy again",
+      "Sync again",
       "Move without these 3 paths",
       "Keep the coordinator on M4",
     ]),
   );
   moveCopy();
-  await click("Copy again");
+  await click("Sync again");
   expect(names()).toContain("copyRelease");
   const fresh = pointerNow();
   expect(fresh.operationId).not.toBe(accepted.operationId);
@@ -380,7 +380,7 @@ it("Copy again from the list starts a fresh copy", async () => {
   await handOff();
   const first = pointerNow().operationId;
   moveCopy();
-  await click("Copy again");
+  await click("Sync again");
   expect(pointerNow().operationId).not.toBe(first);
   expect(names().filter((name) => name === "copyOffer")).toHaveLength(2);
 });
@@ -399,7 +399,7 @@ it("keeps the coordinator on the source and leaves the copied files", async () =
     "The coordinator stays on M4. The copied files stay on M3.",
   );
   expect(container.querySelector('[data-slot="source-changes"]')).toBeNull();
-  expect(labels()).not.toContain("Hand off coordinator now");
+  expect(labels()).not.toContain("Continue the coordinator on M3");
   expect(labels()).not.toContain("Keep the coordinator on M4");
   expect(labels()).toContain("Open on M3");
   expect(pointerNow()).toBeNull();
@@ -412,9 +412,9 @@ it("keeps today's notice when an older source sends no list", async () => {
   };
   await mount();
   await handOff();
-  expect(container.textContent).toContain("Copy again before moving the coordinator");
+  expect(container.textContent).toContain("Sync again before moving the coordinator");
   expect(container.querySelector('[data-slot="source-changes"]')).toBeNull();
-  expect(labels()).toContain("Copy again");
+  expect(labels()).toContain("Sync again");
   expect(labels().some((label) => label?.startsWith("Move without"))).toBe(false);
   expect(labels()).not.toContain("Keep the coordinator on M4");
 });
@@ -428,7 +428,7 @@ it("finishes the move quietly when a source answers the drift read without a lis
     await mount();
     await handOff();
     await settle();
-    expect(container.textContent).toContain("The coordinator now runs on M3.");
+    expect(container.textContent).toContain("The coordinator continues on M3.");
     expect(names()).toContain("copyDrift");
     expect(container.querySelector('[data-slot="copy-left-on-source"]')).toBeNull();
     expect(rejections).toEqual([]);
@@ -443,7 +443,7 @@ it("says nothing more after a move when nothing is left on the source", async ()
   });
   await mount();
   await handOff();
-  expect(container.textContent).toContain("The coordinator now runs on M3.");
+  expect(container.textContent).toContain("The coordinator continues on M3.");
   expect(names()).toContain("copyDrift");
   expect(container.querySelector('[data-slot="copy-left-on-source"]')).toBeNull();
 });
@@ -499,13 +499,13 @@ it("never shows a drift read that lands after Start a new copy", async () => {
         };
   await mount();
   await handOff();
-  expect(container.textContent).toContain("The coordinator now runs on M3.");
+  expect(container.textContent).toContain("The coordinator continues on M3.");
   await openMore();
-  await click("Start a new copy");
+  await click("Add to another machine");
   moveCopy();
   await handOff();
   expect(reads).toBe(2);
-  expect(container.textContent).toContain("The coordinator now runs on M3.");
+  expect(container.textContent).toContain("The coordinator continues on M3.");
   // The first move's read answers last: it must not land on the second move's screen.
   await act(async () =>
     answer({
