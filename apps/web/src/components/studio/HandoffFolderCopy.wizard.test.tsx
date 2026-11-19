@@ -339,7 +339,7 @@ it("cancels the copy from Review's Change setup, and opens the form with the sam
   });
 });
 
-it("offers no Change once the copy is done, and Copy changes again leads to the form", async () => {
+it("offers no Change once the copy is done, and Sync again… leads to the form", async () => {
   measuredWithoutSecrets();
   const rows = [newRow(".")];
   statuses = [copyStatus("previewed", { rows }), copyStatus("applied", { rows })];
@@ -349,11 +349,11 @@ it("offers no Change once the copy is done, and Copy changes again leads to the 
   expect(changeLink()).toBeNull();
   await openMore();
   // A finished copy offers the form as a visible second choice, never as the main button.
-  expect(moreItems()).toEqual(["Sync again"]);
+  expect(moreItems()).toEqual(["Run the same sync again"]);
   expect(() => button("Copy to M3")).toThrow();
-  expect(button("Sync again").getAttribute("data-variant")).not.toBe("default");
+  expect(button("Sync again…").getAttribute("data-variant")).not.toBe("default");
   const calls = state.calls.length;
-  await click("Sync again");
+  await click("Sync again…");
   expect(stageNow()).toBe("setup");
   expect(pointerNow()).toBeNull();
   expect(folderInput().value).toBe("/Users/me/Projects/project");
@@ -425,7 +425,7 @@ it("locks starting a new copy while a coordinator transfer may need recovering",
   await openMore();
   expect(isDisabled(button("Add to another machine"))).toBe(true);
   // Copy again releases the source too, so it is locked the same way.
-  expect(isDisabled(button("Sync again"))).toBe(true);
+  expect(isDisabled(button("Run the same sync again"))).toBe(true);
 });
 
 // Reopening: the dialog checks the copy first, then brings back the step that was on screen.
@@ -511,7 +511,7 @@ it("says a copy finished while closed, then keeps it as the last copy with View 
   expect(button("Undo…")).toBeTruthy();
   expect(state.link).toHaveBeenCalledOnce();
   // The form is one click away, and keeps this copy as the last copy.
-  await click("Sync again");
+  await click("Sync again…");
   expect(stageNow()).toBe("setup");
   expect(pointerNow()).toBeNull();
   expect(document.querySelector('[data-slot="copy-last"]')?.textContent).toBe(
@@ -667,7 +667,7 @@ it("keeps a finished copy as the last copy when a new one starts from Done", asy
   await mount();
   await click("Copy to M3");
   expect(stageNow()).toBe("done");
-  await click("Sync again");
+  await click("Sync again…");
   expect(pointerNow()).toBeNull();
   expect(JSON.parse(localStorage.getItem(LAST_KEY)!)).toMatchObject({
     targetFolder: "/home/anton/Projects/project",
@@ -709,7 +709,7 @@ it("keeps the move and machine the dialog was opened with over the last copy-onl
   await mount();
   await settle();
   expect(stageNow()).toBe("done");
-  await click("Sync again");
+  await click("Sync again…");
   expect(button("Copy to M3").disabled).toBe(false);
   expect(folderInput().value).toBe("/home/anton/last");
   await act(async () => root.unmount());
@@ -737,7 +737,7 @@ it("lets the last copy go back to being the last copy when its destination is of
   statuses = [copyStatus("previewed", { rows }), copyStatus("applied", { rows })];
   await mount();
   await click("Copy to M3");
-  await click("Sync again");
+  await click("Sync again…");
   expect(localStorage.getItem(LAST_KEY)).not.toBeNull();
   state.handlers.copyStatus = () => {
     throw Object.assign(new Error("M3 is offline."), {

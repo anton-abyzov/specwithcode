@@ -695,7 +695,7 @@ export function HandoffCopyDoneActions({
       )}
       {changes && (
         <Button variant="outline" disabled={busy || startNewLocked} onClick={onStartNew}>
-          {tx("Sync again")}
+          {tx("Sync again…")}
         </Button>
       )}
       {(again || review || !changes) && (
@@ -711,7 +711,7 @@ export function HandoffCopyDoneActions({
             {again && (
               // Copying again releases the source like a new copy, so the same lock holds it.
               <MenuItem disabled={startNewLocked} onClick={onCopyAgain}>
-                {tx("Sync again")}
+                {tx("Run the same sync again")}
               </MenuItem>
             )}
             {review && <MenuItem onClick={onLink}>Link…</MenuItem>}

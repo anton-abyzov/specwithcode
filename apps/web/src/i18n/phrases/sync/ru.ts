@@ -170,6 +170,8 @@ export const syncRu: PhraseCatalog = {
   "Push these commits to their remotes and continue the coordinator on {target}.":
     "Отправить эти коммиты в их удалённые репозитории и продолжить работу координатора на {target}.",
   "Sync again": "Синхронизировать снова",
+  "Sync again…": "Синхронизировать снова…",
+  "Run the same sync again": "Повторить ту же синхронизацию",
   "Sync again with secrets": "Синхронизировать снова с секретами",
   "Sync again before handing off the coordinator.":
     "Синхронизируйте снова, прежде чем передавать координатора.",
@@ -179,8 +181,7 @@ export const syncRu: PhraseCatalog = {
     "«Синхронизировать снова» переносит версию с {source}. «Перенести без них» оставляет изменения на {source}, а копию на {target} как есть. «Оставить координатора на {source}», чтобы продолжить работу там; копия на {target} остаётся.",
   "This copy was not captured, so you can't move without them. Sync again brings them over. Or keep the coordinator on {source}; the copy on {target} stays.":
     "Состояние этой копии не сохранено, поэтому перенести без них нельзя. «Синхронизировать снова» перенесёт их. Или оставьте координатора на {source}; копия на {target} остаётся.",
-  "Sync or add this project on another machine":
-    "Синхронизировать или добавить этот проект на другой машине",
+  "Add this project to another machine": "Добавить этот проект на другую машину",
   "{project} is on {machine}": "{project} есть на {machine}",
   "{project} is on {machine} (added {when})": "{project} есть на {machine} (добавлен {when})",
   "{machine} already has this project at {folder}. Compare all files compares the two folders and adds what {machine} is missing. The coordinator stays on {source}.":

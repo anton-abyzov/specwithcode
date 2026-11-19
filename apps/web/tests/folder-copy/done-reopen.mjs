@@ -1,5 +1,5 @@
 // Headless captures of a finished copy opened again (increment 1362): the done view first,
-// then the form after "Sync again". Light and dark, through the real dialog.
+// then the form after "Sync again…". Light and dark, through the real dialog.
 // Build first: node node_modules/vite-plus/bin/vp build --config apps/web/tests/folder-copy/vite.config.ts
 // Run from the repository root: node apps/web/tests/folder-copy/done-reopen.mjs /absolute/report-dir
 import * as NodeAssert from "node:assert/strict";
@@ -87,13 +87,13 @@ try {
     NodeAssert.equal(await action("Copy to m5").count(), 0, "no Copy button on the done view");
     NodeAssert.equal(await action("Undo…").count(), 1, "the done view offers Undo");
     NodeAssert.doesNotMatch(
-      await action("Sync again").getAttribute("class"),
+      await action("Sync again…").getAttribute("class"),
       /bg-primary/,
-      "Sync again is a secondary action",
+      "Sync again… is a secondary action",
     );
     NodeAssert.equal(await page.locator('[data-slot="handoff-coordinator"]').count(), 0);
     await shot("done-view-on-reopen");
-    await action("Sync again").click();
+    await action("Sync again…").click();
     await action("Copy to m5").waitFor();
     await page.locator('[data-slot="copy-last"]').waitFor();
     NodeAssert.match(await popup.textContent(), /The last copy to .* on m5 finished\. View it/);

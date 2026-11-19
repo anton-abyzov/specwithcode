@@ -439,9 +439,9 @@ describe("shared handoff controls", () => {
         </Tip>
       </TooltipProvider>,
     );
-    const control = button("Sync…");
+    const control = button("Add to another machine…");
     expect(trigger).toBe(control);
-    expect(control.getAttribute("aria-label")).toBe("Sync or add this project on another machine");
+    expect(control.getAttribute("aria-label")).toBe("Add this project to another machine");
     expect(control.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
     await act(async () => {
       control.focus();
@@ -568,7 +568,7 @@ describe("handoff file method and intent", () => {
     ].map((node) => node.closest("label")?.textContent ?? "");
     expect(labels).toHaveLength(2);
     expect(labels[0]).toContain("Download from GitHub (recommended)");
-    expect(labels[1]).toContain("Copy the whole folder from MacBook M4");
+    expect(labels[1]).toContain("Copy the whole folder from ");
     expect(methodRadio("Download from GitHub").getAttribute("aria-checked")).toBe("true");
     expect(() => methodRadio("Continue the coordinator here")).toThrow();
     expect(document.body.textContent).not.toMatch(/\{\w+\}/);
@@ -591,46 +591,50 @@ describe("handoff file method and intent", () => {
   });
 
   it("names the whole-folder way by what it does: Add copies, Sync compares", async () => {
+    const from = { sourceLabel: "MacBook" };
     const labels = () =>
       [...document.querySelectorAll('[data-slot="handoff-method"] [role="radio"]')].map(
         (node) => node.closest("label")?.querySelector("span.block")?.textContent ?? "",
       );
-    await handoff({ method: "copy", intent: "copy", onMethodChange: vi.fn(), copyFlow });
+    await handoff({ ...from, method: "copy", intent: "copy", onMethodChange: vi.fn(), copyFlow });
     expect(labels()).toEqual([
       "Download from GitHub (recommended)",
-      "Copy the whole folder from MacBook M4",
+      "Copy the whole folder from MacBook",
     ]);
     // A project with no Git remote has nothing to download: the whole folder is the only way.
     await handoff({
+      ...from,
       method: "copy",
       intent: "copy",
       onMethodChange: vi.fn(),
       copyFlow,
       wholeFolderOnly: true,
     });
-    expect(labels()).toEqual(["Copy the whole folder from MacBook M4"]);
+    expect(labels()).toEqual(["Copy the whole folder from MacBook"]);
     await handoff({
+      ...from,
       method: "copy",
       intent: "copy",
       onMethodChange: vi.fn(),
       copyFlow,
       wholeFolderOnly: false,
-      sync: { machine: "m5", folder: "/Users/anton/specweave" },
+      sync: { machine: "m5", folder: "/Users/sam/atlas" },
     });
     expect(labels()).toEqual(["Download from GitHub (recommended)", "Compare all files…"]);
-    expect(document.querySelector("h2")?.textContent).toBe("Sync Product: MacBook M4 and m5");
+    expect(document.querySelector("h2")?.textContent).toBe("Sync Product: MacBook and m5");
     expect(document.querySelector('[data-slot="dialog-description"]')?.textContent).toBe(
-      "m5 already has this project at /Users/anton/specweave. Compare all files compares the two folders and adds what m5 is missing. The coordinator stays on MacBook M4.",
+      "m5 already has this project at /Users/sam/atlas. Compare all files compares the two folders and adds what m5 is missing. The coordinator stays on MacBook.",
     );
     await handoff({
+      ...from,
       method: "copy",
       intent: "copy",
       copyFlow,
-      sync: { machine: "m5", folder: "/Users/anton/specweave" },
+      sync: { machine: "m5", folder: "/Users/sam/atlas" },
       copyDoneOn: "m5",
     });
     expect(document.querySelector("h2")?.textContent).toBe(
-      "Product is in sync on MacBook M4 and m5",
+      "Product is in sync on MacBook and m5",
     );
   });
 

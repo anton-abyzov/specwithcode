@@ -961,8 +961,8 @@ it("keeps live actions in the real dialog footer through measurement, preview, a
       ?.closest('[data-slot="dialog-footer"]'),
   ).not.toBeNull();
   await openMore();
-  expect(moreItems()).toEqual(["Sync again"]);
-  expect(dialogButton("Sync again")).toBeTruthy();
+  expect(moreItems()).toEqual(["Run the same sync again"]);
+  expect(dialogButton("Sync again…")).toBeTruthy();
   expect(
     document.querySelector('[data-slot="dialog-panel"] [data-slot="copy-actions"]'),
   ).toBeNull();
