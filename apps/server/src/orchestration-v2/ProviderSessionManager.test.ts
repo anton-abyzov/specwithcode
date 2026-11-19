@@ -4476,6 +4476,81 @@ it.effect(
 );
 
 it.effect(
+  "ProviderSessionManagerV2 a release that wins the race with detach settles the detached thread",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const flaky: FlakyReleaseWrites = {
+        failing: yield* Ref.make<"none" | "session" | "session-and-requests">("none"),
+        failures: yield* Queue.unbounded<void>(),
+        pauseRequestWrites: {
+          paused: yield* Deferred.make<void>(),
+          resume: yield* Deferred.make<void>(),
+        },
+      };
+      const pause = flaky.pauseRequestWrites!;
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-detach-race");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        const pendingRequest = yield* makePendingRuntimeRequestEvents({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          providerThread: makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+          now,
+        });
+        const adapterEvents = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+        assert.isDefined(adapterEvents);
+        yield* Queue.offerAll(adapterEvents!, pendingRequest.providerEvents);
+        // The event pump holds the request permit while it persists the request.
+        yield* Deferred.await(pause.paused);
+        // A runtime failure reaches the session first; the detach empties it
+        // while that release waits, and then finds nothing left to release.
+        const failed = yield* manager
+          .release({ providerSessionId, reason: "runtime_error", detail: "process exited" })
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        const detached = yield* manager
+          .detach({ providerSessionId, threadId, detail: "Provider or model selection changed." })
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.succeed(pause.resume, undefined);
+        yield* Fiber.join(failed);
+        yield* Fiber.join(detached);
+
+        const projection = yield* projectionStore.getThreadProjection(threadId);
+        const request = projection.runtimeRequests.find(
+          (candidate) => candidate.id === pendingRequest.requestId,
+        );
+        assert.equal(request?.responseCapability.type, "not_resumable");
+        // The runtime failure's release settled it.
+        assert.equal(request?.status, "expired");
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            capabilities: ExclusiveCapabilities,
+            flakyReleaseWrites: flaky,
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
   "ProviderSessionManagerV2 detach from a shared session leaves other threads' requests live",
   () =>
     Effect.gen(function* () {
