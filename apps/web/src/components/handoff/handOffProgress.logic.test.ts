@@ -21,6 +21,7 @@ import {
 } from "./handoffMode383.fixture";
 import {
   automaticGroupToOpen,
+  automaticProgressStep,
   progressGroups,
   progressNotes,
   progressReason,
@@ -441,6 +442,41 @@ describe("an automatic start opens its own progress view", () => {
     expect(automaticGroupToOpen(null, [auto("resumed", "op-auto-done")])).toBeNull();
     const open = auto("sent", "op-auto-open");
     expect(automaticGroupToOpen(null, [open])).toBe(open.key);
+  });
+});
+
+describe("what a window has seen of automatic hand offs", () => {
+  const automatic = { kind: "automatic", key: "limit:1", usageWindowKey: "w" } as const;
+  const done = progressGroups(
+    [record("resumed", { operationId: "op-auto-old", batchId: null, trigger: automatic })],
+    [],
+  );
+
+  it("opens nothing after a read that carried no records", () => {
+    // The machine could not read its records for one snapshot: that is not "none".
+    const first = automaticProgressStep(null, done);
+    expect(first.open).toBeNull();
+    const blind = automaticProgressStep(first.seen, null);
+    expect(blind).toEqual({ seen: first.seen, open: null });
+    expect(automaticProgressStep(blind.seen, done).open).toBeNull();
+  });
+
+  it("never forgets a record it has seen", () => {
+    const first = automaticProgressStep(null, done);
+    const emptied = automaticProgressStep(first.seen, []);
+    expect([...(emptied.seen ?? [])]).toEqual(["op-auto-old"]);
+    expect(automaticProgressStep(emptied.seen, done).open).toBeNull();
+  });
+
+  it("opens a new one once", () => {
+    const first = automaticProgressStep(null, done);
+    const started = progressGroups(
+      [record("pending", { operationId: "op-auto-new", batchId: null, trigger: automatic })],
+      [],
+    );
+    const next = automaticProgressStep(first.seen, [...started, ...done]);
+    expect(next.open).toBe(started[0]!.key);
+    expect(automaticProgressStep(next.seen, [...started, ...done]).open).toBeNull();
   });
 });
 
