@@ -427,18 +427,28 @@ export async function runCheck(deps, options = {}) {
   let frontLost;
   const stamp = () => new Date().toISOString().slice(11, 23);
   const frontmost = async () => (deps.frontmost === undefined ? undefined : deps.frontmost());
-  // Input only ever goes to iPhone Mirroring in front. Before each input call
-  // the check brings it forward when another app is there (a click on another
-  // window takes the front).
+  // Before each input call the check brings iPhone Mirroring forward when
+  // another app is there (a click on another window takes the front). The
+  // product still decides where input goes; this only keeps Mirroring in front.
   const bringForward = async (tool) => {
-    for (let attempt = 1; attempt <= FRONT_TRIES; attempt++) {
-      const app = await frontmost();
-      if (app === undefined || app === MIRRORING_APP) return;
-      note(
-        `${stamp()} ${app} was in front before ${tool}; bringing ${MIRRORING_APP} forward (${attempt} of ${FRONT_TRIES})`,
+    let other;
+    try {
+      for (let attempt = 1; attempt <= FRONT_TRIES; attempt++) {
+        const app = await frontmost();
+        if (app === undefined || app === MIRRORING_APP) return;
+        other = app;
+        note(
+          `${stamp()} ${app} was in front before ${tool}; bringing ${MIRRORING_APP} forward (${attempt} of ${FRONT_TRIES})`,
+        );
+        await deps.call("computer_open", { application: MIRRORING_APP });
+        await deps.sleep(config.settleMs);
+      }
+    } catch (error) {
+      // Another app was seen in front: a failed recovery is that loss, not a product result.
+      if (other === undefined) throw error;
+      throw lose(
+        `${other} was in front before ${tool} and bringing ${MIRRORING_APP} forward failed (${error.message})`,
       );
-      await deps.call("computer_open", { application: MIRRORING_APP });
-      await deps.sleep(config.settleMs);
     }
     const app = await frontmost();
     if (app !== undefined && app !== MIRRORING_APP) {
@@ -836,7 +846,12 @@ export async function runCheck(deps, options = {}) {
   const anchorOf = (label, page) => anchorIn(page, anchors[label]);
 
   // Not counted: makes the first tab current, so every counted tap changes the page.
-  const warm = await tap(tabA);
+  let warm;
+  try {
+    warm = await tap(tabA);
+  } catch (error) {
+    return stop("tabs", `the setup tap on "${tabA}" failed: ${error.message}`);
+  }
   const refs = { [tabA]: signature(seen), [tabB]: undefined };
   note(
     `setup tap on "${tabA}" at (${warm.point.x}, ${warm.point.y}); its page reads ${refs[tabA].slice(0, 6).join(" | ") || "nothing"}`,

@@ -560,6 +560,51 @@ describe("dry run", () => {
     expect(result.lines.some((entry) => entry.startsWith("Clicks landed"))).toBe(false);
   });
 
+  it("ends INVALID when iPhone Mirroring leaves the front during the setup tap", async () => {
+    const phone = simulatedPhone();
+    const call = phone.deps.call;
+    let clicks = 0;
+    phone.deps.call = async (tool, args) => {
+      if (tool === "computer_click" && ++clicks === 1) {
+        await call(tool, args);
+        phone.state.front = "SpecWithCode";
+        throw new Error("iPhone Mirroring stopped being the app in front partway through.");
+      }
+      return call(tool, args);
+    };
+    const result = await runCheck(phone.deps);
+    expect(clicks).toBe(1);
+    expect(result.invalid).toBe(true);
+    expect(result.lines.at(-1)).toMatch(
+      /^Result: INVALID \(another app took the front: iPhone Mirroring left the front during computer_click/,
+    );
+  });
+
+  it("ends INVALID when bringing iPhone Mirroring forward fails after a click took the front", async () => {
+    const phone = simulatedPhone();
+    const call = phone.deps.call;
+    let probed = false;
+    let taken = false;
+    phone.deps.frontmost = async () => {
+      if (probed && !taken) {
+        taken = true;
+        phone.state.front = "SpecWithCode";
+      }
+      return phone.state.front;
+    };
+    phone.deps.call = async (tool, args) => {
+      if (tool === "computer_type" && args.text === "é") probed = true;
+      if (tool === "computer_open" && taken) throw new Error("the call timed out");
+      return call(tool, args);
+    };
+    const result = await runCheck(phone.deps);
+    expect(result.invalid).toBe(true);
+    expect(result.lines.some((entry) => entry.startsWith("FAIL "))).toBe(false);
+    expect(result.lines.at(-1)).toMatch(
+      /another app took the front: SpecWithCode was in front before computer_key and bringing iPhone Mirroring forward failed \(the call timed out\)/,
+    );
+  });
+
   it("never sends a key again after iPhone Mirroring left the front partway", async () => {
     const phone = simulatedPhone();
     const call = phone.deps.call;
