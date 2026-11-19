@@ -196,7 +196,7 @@ describe("appSubject machine", () => {
       Layer.mock(ServerEnvironment.ServerEnvironment)({
         getDescriptor: Effect.succeed({
           environmentId: "env-m5",
-          label: "Antons-Mac-mini",
+          label: "studio-host",
         } as never),
       }),
       Layer.mock(ServerSettings.ServerSettingsService)({
@@ -216,7 +216,7 @@ describe("appSubject machine", () => {
   it.effect("falls back to the host label without a nickname", () =>
     Effect.gen(function* () {
       const subject = yield* AccessGate.appSubject("Notes").pipe(Effect.provide(machine({})));
-      assert.strictEqual(subject.hostLabel, "Antons-Mac-mini");
+      assert.strictEqual(subject.hostLabel, "studio-host");
     }),
   );
 });

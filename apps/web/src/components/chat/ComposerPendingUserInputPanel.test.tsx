@@ -263,11 +263,11 @@ describe("ComposerPendingUserInputPanel machine (1427 AC-07)", () => {
         onToggleOption={() => {}}
         onAdvance={() => {}}
         onDismiss={() => {}}
-        askedBy="PS5 OBS"
+        askedBy="Release notes"
         machine={{ name: "M5", color: "teal" } as const}
       />,
     );
-    expect(markup).toContain("PS5 OBS asks");
+    expect(markup).toContain("Release notes asks");
     expect(markup).toMatch(/data-action-machine-tag[^>]*>on <span[^>]*data-machine-color="teal"[^>]*>M5</);
   });
 
