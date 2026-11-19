@@ -2,6 +2,7 @@ import { useEffect, useState, type RefObject } from "react";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import type { EnvironmentId, FolderCopyMode, ProjectId } from "@specweave-studio/contracts";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { forgetLinkRefusal, rememberLinkRefusal } from "../../studio/linkRefusals";
 import { linkCopyAsWorkers, projectLink, type CopyLinkOutcome } from "../../studio/projectLink";
 import { randomUUID } from "../../lib/utils";
 import type { PendingCopy } from "./handoffFolderCopyPending";
@@ -54,6 +55,9 @@ export function useCopyLink({
 
   const linkCopy = async (environmentId: EnvironmentId, projectId: ProjectId) => {
     const operationId = latestPending.current?.operationId;
+    // The menu says why the copy is not linked after this dialog is closed.
+    const kept = `${project.environmentId}:${project.id}`;
+    const joining = `${environmentId}:${projectId}`;
     setLink({ status: "linking" });
     try {
       const outcome = await linkCopyAsWorkers(
@@ -67,9 +71,15 @@ export function useCopyLink({
         },
       );
       setLink(outcome);
-      if (outcome.status === "linked") markLinked(operationId);
+      if (outcome.status === "linked") {
+        markLinked(operationId);
+        forgetLinkRefusal(kept, joining);
+      } else rememberLinkRefusal(kept, joining, outcome.words);
     } catch (cause) {
-      setLink({ status: "review", reason: messageOf(cause) });
+      // What a machine answered is said as it said it.
+      const words = { text: messageOf(cause), verbatim: true };
+      setLink({ status: "review", reason: words.text, words });
+      rememberLinkRefusal(kept, joining, words);
     }
   };
   const linkTarget =

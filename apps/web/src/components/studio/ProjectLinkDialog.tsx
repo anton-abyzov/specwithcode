@@ -49,6 +49,7 @@ import {
 } from "../ui/dialog";
 import { ProjectLinkCandidates, ProjectLinkChooseDescription } from "./ProjectLinkCandidates";
 import { useLinkMachines } from "./useLinkMachines";
+import { forgetLinkRefusal } from "../../studio/linkRefusals";
 
 export interface ProjectLinkTarget {
   readonly environmentId: EnvironmentId;
@@ -381,6 +382,10 @@ export function ProjectLinkDialog({
       });
       if (committed._tag === "Failure") throw squashAtomCommandFailure(committed);
       writePendingOperation(storageKey, null);
+      forgetLinkRefusal(
+        `${keptEnvironment}:${sides.kept.member.projectId}`,
+        `${joiningEnvironment}:${sides.joining.member.projectId}`,
+      );
       setPhase("complete");
       onLinked?.();
     } catch (cause) {
