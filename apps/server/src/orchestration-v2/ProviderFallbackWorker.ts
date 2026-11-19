@@ -19,8 +19,7 @@ import {
   ThreadId,
 } from "@specweave-studio/contracts";
 import { projectLimitRule } from "../project/ProjectDelegation.ts";
-import { reviewConstrainedRule } from "@specweave-studio/shared/reviewPolicy";
-import { reviewEffortKept } from "../handoff/handoffReviewLock.ts";
+import { lockedProven, lockedRule, lockedStep } from "./reviewFallbackLock.ts";
 import {
   canTakeTurn,
   FALLBACK_USAGE_MAX_AGE_MS,
@@ -502,7 +501,7 @@ const POSITIVE_BALANCE = /^\d{1,24}(?:\.\d{1,24})?$/;
  * stop that carries the simulated-limit message skips all three: a
  * simulated stop never redeems or spends anything.
  */
-export function providerLimitStep(
+function limitStep(
   thread: IdleCandidate,
   providers: ReadonlyArray<ServerProvider>,
   threadRule: ProviderFallbackRule & { readonly snoozeLimitedThreads?: boolean },
@@ -543,7 +542,7 @@ export function providerLimitStep(
   | { readonly type: "switch"; readonly command: OrchestrationV2ServerCommand }
   | null {
   // A review delegation moves only within its reviewer's family, never to the author's.
-  const rule = reviewConstrainedRule(threadRule, thread.routing, providers);
+  const rule = lockedRule(threadRule, thread.routing, providers);
   if (options.unopenable != null && thread.latestRunId === options.unopenable.runId) {
     // A provider that cannot open has no reset to wait for or redeem and no
     // credits to spend: the only step is another provider.
@@ -668,18 +667,18 @@ export function providerLimitStep(
     options.limited,
     options.failedTargets,
   );
-  if (command === null) return null;
-  // An entry of the fallback order names no options, so a review's effort is put back.
-  return command.type === "message.dispatch" && command.modelSelection != null
-    ? {
-        type: "switch",
-        command: {
-          ...command,
-          modelSelection: reviewEffortKept(thread, providers, command.modelSelection),
-        },
-      }
-    : { type: "switch", command };
+  return command === null ? null : { type: "switch", command };
 }
+
+/** The limit step, held inside a marked review's reviewer lock (see `reviewFallbackLock.ts`). */
+export const providerLimitStep: typeof limitStep = (thread, providers, rule, nowMs, options) => {
+  const proven = lockedProven(thread.routing, options.proven);
+  return lockedStep(
+    thread,
+    providers,
+    limitStep(thread, providers, rule, nowMs, { ...options, proven }),
+  );
+};
 
 /** A swept thread, with what tells a subagent the provider spawned. */
 type IdleCandidate = FallbackThread & {
@@ -2010,7 +2009,8 @@ export const makeSweep = Effect.gen(function* () {
         continue;
       // The idle move has no stopped run, so the Stop is read on the latest
       // run whatever its status: a person's Stop keeps the thread where it is.
-      const idleMove = step?.type === "switch" && step.command.type === "thread.model-selection.set";
+      const idleMove =
+        step?.type === "switch" && step.command.type === "thread.model-selection.set";
       if (idleMove && (yield* stopHoldsLatestRun(thread))) continue;
       // An idle thread at the threshold with no target to move to (1089): its
       // fallbacks' readings may only be old. One whose move already went out

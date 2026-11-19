@@ -27,6 +27,7 @@ import {
   familyOfModelId,
   lockedReviewerPick,
   type ReviewFamily,
+  reviewEffortOver,
   sameReviewModel,
 } from "@specweave-studio/shared/reviewPolicy";
 import * as Effect from "effect/Effect";
@@ -101,25 +102,39 @@ export function sourceReviewLock(thread: ReviewThread): SourceReviewLock {
 }
 
 /**
- * The lock a checkpoint leaving this machine carries: null for a thread that
- * is no review. A review that cannot be locked leaves for no other machine.
+ * The lock a checkpoint leaving this machine carries: null only for a thread
+ * that is no review. A review that cannot be locked leaves for no machine,
+ * this one included: a continuation of it would start as an ordinary thread.
  */
 export const outgoingReviewLock = (
   thread: ReviewThread,
-  toSelf: boolean,
 ): Effect.Effect<HandoffReviewLock | null, HandoffModeError> => {
   const review = sourceReviewLock(thread);
   if (review.kind === "lock") return Effect.succeed(review.lock);
-  if (review.kind === "none" || toSelf) return Effect.succeed(null);
+  if (review.kind === "none") return Effect.succeed(null);
   return Effect.fail(new HandoffModeError({ code: "invalid", message: REVIEW_FAMILY_UNKNOWN }));
 };
+
+/**
+ * A takeover request for this thread, marked when the thread is a review so
+ * it goes only to a machine that keeps the lock (see `reviewPath`).
+ */
+export const reviewTakeover = <R extends object>(
+  thread: ReviewThread,
+  request: R,
+): R & { readonly review?: boolean } =>
+  sourceReviewLock(thread).kind === "none" ? request : { ...request, review: true };
 
 const reviewerLock = (lock: HandoffReviewLock) => ({
   families: lock.families,
   ...(lock.policy.model === undefined ? {} : { model: lock.policy.model }),
 });
 
-/** The pick with the effort it keeps: the requested options, else the review's on the same model. */
+/**
+ * The pick with its options. The review's effort is the rule on the model it
+ * was set for: it wins over an effort asked for or saved there, and options
+ * it does not name stay beside it. Another model keeps what was asked for it.
+ */
 const withEffort = (
   lock: HandoffReviewLock,
   pick: { readonly instanceId: ModelSelection["instanceId"]; readonly model: string },
@@ -130,10 +145,9 @@ const withEffort = (
       ? requested.options
       : undefined;
   const options =
-    asked ??
-    (lock.effort !== undefined && sameReviewModel(lock.effort.model, pick.model)
-      ? lock.effort.options
-      : undefined);
+    lock.effort !== undefined && sameReviewModel(lock.effort.model, pick.model)
+      ? reviewEffortOver(asked, lock.effort.options)
+      : asked;
   return {
     instanceId: pick.instanceId,
     model: pick.model,
@@ -186,10 +200,11 @@ export function machineReviewTarget(input: {
     }));
   // Another model than the saved one: its saved label no longer names it.
   const { modelLabel: _saved, ...rest } = target;
-  const targetFor = (pick: (typeof offered)[number]["instanceId"], model: string) =>
-    pick === target.modelSelection.instanceId && model === target.modelSelection.model
-      ? target
-      : { ...rest, modelSelection: withEffort(lock, { instanceId: pick, model }, null) };
+  const targetFor = (pick: (typeof offered)[number]["instanceId"], model: string) => {
+    const same = pick === target.modelSelection.instanceId && model === target.modelSelection.model;
+    const modelSelection = withEffort(lock, { instanceId: pick, model }, target.modelSelection);
+    return same ? { ...target, modelSelection } : { ...rest, modelSelection };
+  };
   // First a reviewer that machine would take now; else any permitted one, whose verdict says why not.
   const { usable } = input;
   const ready =
@@ -246,12 +261,13 @@ export function arrivedReview(input: {
   readonly now: string;
 }): ArrivedReview {
   let lock = input.carried ?? null;
-  if (input.carried === undefined) {
+  if (lock === null) {
+    // Told nothing, or told "no review": the title still says what the thread is.
     const told = sourceReviewLock({ title: input.title, modelSelection: input.stored });
     if (told.kind === "unknown-family") return { kind: "refused", message: REVIEW_FAMILY_UNKNOWN };
-    lock = told.kind === "lock" ? told.lock : null;
+    if (told.kind === "none") return { kind: "unlocked" };
+    lock = told.lock;
   }
-  if (lock === null) return { kind: "unlocked" };
   const wanted = input.requested ?? input.stored;
   const offered = input.providers
     .filter(
@@ -261,18 +277,18 @@ export function arrivedReview(input: {
         provider.auth.status !== "unauthenticated" &&
         input.allowed(provider.instanceId),
     )
-    .map((provider) => {
-      const asked = provider.instanceId === wanted.instanceId;
+    // Only a model the sign-in lists counts: one that lists nothing proves no reviewer.
+    .map((provider) => ({
+      instanceId: provider.instanceId,
       // The model asked for stays offered; nothing here picks a paid model by itself.
-      const models = provider.models
+      models: provider.models
         .map((model) => model.slug)
-        .filter((slug) => (asked && slug === wanted.model) || !isPaidModel(provider, slug));
-      // A sign-in that lists no models takes whichever one is asked for.
-      return {
-        instanceId: provider.instanceId,
-        models: asked && provider.models.length === 0 ? [wanted.model] : models,
-      };
-    });
+        .filter(
+          (slug) =>
+            (provider.instanceId === wanted.instanceId && slug === wanted.model) ||
+            !isPaidModel(provider, slug),
+        ),
+    }));
   const pick = lockedReviewerPick(reviewerLock(lock), wanted, offered);
   if (pick === null)
     return { kind: "refused", message: reviewStaysText("no_reviewer", input.machineLabel) };
@@ -303,24 +319,4 @@ export function arrivedReview(input: {
     },
     notice: moved ? `A review keeps to ${label} models, so it continues on ${pick.model}.` : null,
   };
-}
-
-/**
- * A review keeps its effort when its limit fallback is the same model through
- * the same driver: an entry of the fallback order names no options of its own.
- */
-export function reviewEffortKept(
-  thread: ReviewThread & { readonly providerInstanceId: string },
-  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "driver">>,
-  target: ModelSelection,
-): ModelSelection {
-  const kept = thread.modelSelection?.options;
-  if (thread.routing?.reviewFamily === undefined || kept === undefined) return target;
-  if (target.options !== undefined || target.model !== thread.modelSelection?.model) return target;
-  const driver = (instanceId: string) =>
-    providers.find((provider) => provider.instanceId === instanceId)?.driver;
-  const from = driver(thread.providerInstanceId);
-  return from === undefined || from !== driver(target.instanceId)
-    ? target
-    : { ...target, options: kept };
 }

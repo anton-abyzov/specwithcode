@@ -656,6 +656,9 @@ export const make = Effect.gen(function* () {
           refuse(500, "failed", at("could not read destination worktree settings")),
         ),
       );
+      // Asked again before the workspace changes, so a reviewer gone since the checks leaves nothing here.
+      const still = yield* reviewOf(caller, replica, detail, request.modelSelection);
+      if (still.kind === "refused") return yield* refuse(409, "invalid", still.message, "provider");
       const name = `${refComponent(project.title).slice(0, 32)}-handoff-${refComponent(
         request.sourceThreadId,
       ).slice(-16)}-e${request.epoch}`;
@@ -727,7 +730,10 @@ export const make = Effect.gen(function* () {
         request.epoch,
       );
       const now = yield* nowIso;
+      // And once more now that the workspace is ready: this is the answer the launch runs on.
       const review = yield* reviewOf(caller, replica, detail, request.modelSelection);
+      if (review.kind === "refused")
+        return yield* refuse(409, "invalid", review.message, "provider");
       const modelSelection =
         review.kind === "locked"
           ? review.modelSelection

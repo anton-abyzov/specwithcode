@@ -367,7 +367,11 @@ describe("a reviewer lock and the machine it is sent to (1390 AC-40)", () => {
       (peers, { sent }) =>
         Effect.gen(function* () {
           yield* peers.replicate(machine.environmentId, checkpointMessage(openaiLock), null);
-          expect(replicatePosts(sent)).toHaveLength(1);
+          // On the path only a machine that keeps the lock answers, never the ordinary one.
+          expect(
+            sent.filter((call) => call.url.endsWith(`${HANDOFF_PEER_PREFIX}/review-replicate`)),
+          ).toHaveLength(1);
+          expect(replicatePosts(sent)).toHaveLength(0);
         }),
     ),
   );

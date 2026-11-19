@@ -63,6 +63,7 @@ import {
   PeerErrorBody,
   type PeerPath,
   PeerPreflightRequest,
+  reviewPath,
   PeerPreflightResponse,
   ReplicateMeta,
   ReplicateResponse,
@@ -87,6 +88,14 @@ import {
 } from "./linkedSyncWire.ts";
 
 const IDENTITY_TTL_MS = 5 * 60_000;
+/** The calls that move work off this machine: they need readable Team rules. */
+const LEAVES_THIS_MACHINE: ReadonlySet<PeerPath> = new Set([
+  "replicate",
+  "takeover",
+  "extras-replicate",
+  "review-replicate",
+  "review-takeover",
+]);
 const TIMEOUT_MS: Record<PeerPath, number> = {
   negotiate: 15_000,
   replicate: 120_000,
@@ -106,6 +115,8 @@ const TIMEOUT_MS: Record<PeerPath, number> = {
   "plan-merge": 60_000,
   "extras-negotiate": 15_000,
   "extras-replicate": 120_000,
+  "review-replicate": 120_000,
+  "review-takeover": 180_000,
 };
 /** A memory page, a coordinator's content or a plan answers with up to the link cap; the rest is small. */
 const answerLimit = (path: PeerPath) =>
@@ -459,7 +470,7 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const target = yield* findTarget(environmentId);
       // Work leaves here only under readable rules: a broken file could be hiding `none`.
-      if (path === "replicate" || path === "takeover" || path === "extras-replicate") {
+      if (LEAVES_THIS_MACHINE.has(path)) {
         const held = teamRulesHoldRefusal(yield* currentTeamRules);
         if (held !== null) {
           return yield* new HandoffPeerError({
@@ -510,6 +521,15 @@ export const make = Effect.gen(function* () {
           message: `${target.label} runs a SpecWithCode from before Sync. Update SpecWithCode on ${target.label}.`,
           uncertain: false,
           needsUpdate: true,
+        });
+      }
+      // A machine from before the reviewer lock has no such path: it answered, and took nothing.
+      if (answer.status === 404 && (path === "review-replicate" || path === "review-takeover")) {
+        return yield* new HandoffPeerError({
+          code: "invalid",
+          message: `${reviewStaysText("update_needed", target.label)}.`,
+          check: "provider",
+          uncertain: false,
         });
       }
       if (!answer.ok) {
@@ -578,13 +598,24 @@ export const make = Effect.gen(function* () {
         ),
         Effect.tap(() => (meta.reviewLock == null ? Effect.void : refuseUnlocked(environmentId))),
         Effect.flatMap((frame) =>
-          post(environmentId, "replicate", frame, "application/octet-stream", decodeReplicate),
+          post(
+            environmentId,
+            reviewPath("replicate", meta.reviewLock != null),
+            frame,
+            "application/octet-stream",
+            decodeReplicate,
+          ),
         ),
       ),
     preflight: (environmentId, request) =>
       postJson(environmentId, "preflight", encodePreflight(request), decodePreflight),
     takeover: (environmentId, request) =>
-      postJson(environmentId, "takeover", encodeTakeover(request), decodeTakeover),
+      postJson(
+        environmentId,
+        reviewPath("takeover", request.review === true),
+        encodeTakeover(request),
+        decodeTakeover,
+      ),
     heartbeat: (environmentId, request) =>
       postJson(environmentId, "heartbeat", encodeHeartbeat(request), decodeHeartbeat),
     coordinatorLease: (environmentId, request) =>

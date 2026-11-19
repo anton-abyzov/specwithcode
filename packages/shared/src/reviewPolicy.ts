@@ -519,3 +519,17 @@ export function lockedReviewerPick<I extends string>(
   }
   return null;
 }
+
+/**
+ * A review's effort over other options for the same model: its entries win by
+ * id, and options it does not name stay beside them.
+ */
+export function reviewEffortOver<O extends { readonly id: string }>(
+  others: ReadonlyArray<O> | undefined,
+  effort: ReadonlyArray<O>,
+): ReadonlyArray<O> {
+  return [
+    ...(others ?? []).filter((option) => !effort.some((kept) => kept.id === option.id)),
+    ...effort,
+  ];
+}

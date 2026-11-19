@@ -82,7 +82,7 @@ import * as HandoffFollow from "./handoffFollow.ts";
 import { type HandoffContinueHereOptions, HandoffMode } from "./HandoffMode.ts";
 import { HandoffPeerError, HandoffPeers, layer as HandoffPeersLayer } from "./handoffPeers.ts";
 import { shouldResume } from "./handoffPreflight.ts";
-import { outgoingReviewLock } from "./handoffReviewLock.ts";
+import { outgoingReviewLock, reviewTakeover } from "./handoffReviewLock.ts";
 import * as Resume from "./handoffResume.ts";
 import { HandoffReceiver, type HandoffRefusal, type ReceiverCaller } from "./HandoffReceiver.ts";
 import {
@@ -352,7 +352,7 @@ export const make = Effect.gen(function* () {
         appVersion: HANDOFF_APP_VERSION,
         ...(carried === undefined ? {} : { carried }),
         ...(record?.launcher == null ? {} : { launcher: record.launcher }),
-        reviewLock: yield* outgoingReviewLock(shell, destination === self),
+        reviewLock: yield* outgoingReviewLock(shell),
       };
       const now = yield* nowIso;
       const label = yield* peerLabel(destination);
@@ -780,7 +780,7 @@ export const make = Effect.gen(function* () {
           releaseHold(input.threadId, error.message).pipe(Effect.andThen(resume)),
         ),
       );
-      const request: TakeoverRequest = {
+      const request: TakeoverRequest = reviewTakeover(first.shell, {
         sourceEnvironmentId: self,
         sourceThreadId: input.threadId,
         epoch,
@@ -788,7 +788,7 @@ export const make = Effect.gen(function* () {
         reason,
         modelSelection,
         ...(waits === undefined ? {} : { launcher: waits }),
-      };
+      });
       const response = yield* sendTakeover(destination, request).pipe(
         Effect.tapError((error) =>
           error._tag === "HandoffPeerError" && error.uncertain

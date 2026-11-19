@@ -847,8 +847,8 @@ describe("a review starts on a machine only with a permitted reviewer there (rev
       Effect.gen(function* () {
         const unknown = { instanceId: "codex", model: "qwen3.6-35b" } as unknown as ModelSelection;
         const titled = { title: "Adversarial review: 1390", modelSelection: unknown };
-        // Leaving for this same machine, it is still a review that cannot be locked.
-        expect((yield* Effect.result(outgoingReviewLock(titled, true)))._tag).toBe("Failure");
+        // Leaving for any machine, this one included, it is a review that cannot be locked.
+        expect((yield* Effect.result(outgoingReviewLock(titled)))._tag).toBe("Failure");
         // And a destination told "no review" reads the title for itself.
         const here = yield* receiving(BOTH);
         yield* here.receiver.replicate(
