@@ -114,7 +114,7 @@ describe("carriedProjectModelSelection", () => {
       options: [{ id: "reasoning_effort", value: "high" }],
     });
     expect(carried.note).toBe(
-      "GPT-6.1 Sol on GitHub Copilot doesn't offer Ultracode or Fast mode, so those settings were not carried over.",
+      "GPT-6.1 Sol on GitHub Copilot doesn't offer Ultracode, Fast mode or Context Window, so those settings were not carried over.",
     );
   });
 
