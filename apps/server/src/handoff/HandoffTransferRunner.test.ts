@@ -945,7 +945,7 @@ describe("a hold from before transfer records", () => {
       }),
   );
 
-  it.effect("re-sends an unanswered takeover it kept on file to the same machine only", () =>
+  it.effect("asks only the machine a kept takeover named, and never sends it again", () =>
     Effect.gen(function* () {
       const rig = yield* makeRig(temporary, three);
       const [a, b, c] = rig.machines as [RigMachine, RigMachine, RigMachine];
@@ -976,9 +976,15 @@ describe("a hold from before transfer records", () => {
 
       yield* a.moves.tick;
 
-      expect(b.launches).toHaveLength(1);
-      expect(continuedOn(a, t1)?.threadId).toBe(b.launches[0]?.threadId);
-      expect(takeovers(rig, c)).toHaveLength(0);
+      // The takeover is not sent again: the release that sent it may have started the
+      // thread there. That machine is asked, writes that it never accepted, and only
+      // then does the thread run here again. No other machine is asked.
+      expect(takeovers(rig)).toHaveLength(0);
+      expect(rig.callsOf("transfer-status", b)).toHaveLength(1);
+      expect(rig.callsOf("transfer-status", c)).toHaveLength(0);
+      expect(acceptancesOf(b)[0]?.verdict).toBe("not-accepted");
+      expect(leaseOf(a, t1)).toMatchObject({ state: "active", epoch: 2 });
+      expect(b.launches).toHaveLength(0);
       expect(c.launches).toHaveLength(0);
     }),
   );
