@@ -90,6 +90,36 @@ describe("dry run", () => {
     }
   });
 
+  it("fails the key repeat check when every key call loses a press and no suggestion shows", async () => {
+    // One press short on the single backspace and on the repeat: the difference alone would pass.
+    const phone = simulatedPhone({ dropRepeat: true });
+    const call = phone.deps.call;
+    let typedRepeat = false;
+    let swallowed = false;
+    const deps = {
+      ...phone.deps,
+      call: async (tool, args) => {
+        if (tool === "computer_type" && args.text === "QHBR4207") typedRepeat = true;
+        // The first single backspace after the repeat sample never reaches the phone.
+        if (
+          typedRepeat &&
+          !swallowed &&
+          tool === "computer_key" &&
+          args.keys === "backspace" &&
+          args.repeat === undefined
+        ) {
+          swallowed = true;
+          return call("computer_screenshot", {});
+        }
+        return call(tool, args);
+      },
+    };
+    const result = await runCheck(deps);
+    expect(result.lines.find((entry) => entry.includes("key repeat"))).toMatch(
+      /^FAIL key repeat: .*one backspace removed 0, backspace repeat 3 removed 2; inline suggestion before each: no, no/,
+    );
+  });
+
   it("taps tabs shown in a row on top", async () => {
     const result = await runCheck(simulatedPhone({ tabsOnTop: true }).deps);
     expect(result.lines.find((entry) => entry.startsWith("PASS tabs"))).toMatch(
@@ -416,6 +446,8 @@ describe("judging the screen", () => {
     expect(showsSuggestion("QHBR4207- Ask Siri", "QHBR")).toBe(true);
     expect(showsSuggestion("QHBR4207", "QHBR")).toBe(false);
     expect(showsSuggestion("QHBR4207|", "QHBR")).toBe(false);
+    // A stray key after the text is not taken for the cursor.
+    expect(startsWithTyped("hbdtl", "hbdt")).toBe(false);
   });
 
   it("types samples that text recognition reads in one way only", () => {

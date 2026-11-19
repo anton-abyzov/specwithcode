@@ -144,8 +144,8 @@ export function typedTail(reading, base, digits = false) {
   let count = 0;
   if (digits) while (/[0-9]/.test(read[want.length + count] ?? "")) count++;
   const rest = read.slice(want.length + count);
-  // The cursor reads as "|", "l" or "I" right after the text.
-  const after = /^[|lI]/.test(rest[0] ?? "") && !typedChar(rest[1]) ? rest.slice(1) : rest;
+  // The cursor may read as "|" right after the text.
+  const after = rest[0] === "|" ? rest.slice(1) : rest;
   return typedChar(after[0]) ? undefined : count;
 }
 
@@ -157,7 +157,7 @@ export function showsSuggestion(reading, base) {
   const rest = squash(readAs(reading))
     .slice(base.length)
     .replace(/^[0-9]*/, "");
-  return !/^[|lI]?$/.test(rest) && /[A-Za-z]/.test(rest);
+  return /[A-Za-z]/.test(rest);
 }
 /** Clock readings change between screenshots, so they never decide a match. */
 const isReading = (text) => /^[\d\s:.,]+(am|pm)?$/i.test(text.trim());
@@ -576,7 +576,8 @@ export async function runCheck(deps, options = {}) {
       const ok =
         typed.tail === REPEAT_TAIL.length &&
         retyped.tail === afterOne.tail + 1 &&
-        (one === 0 || one === 1) &&
+        // Only a suggestion on screen may take the single press.
+        (one === 1 || (one === 0 && typed.suggestion)) &&
         sameView &&
         repeated - one === REPEAT_PRESSES - 1;
       check(
@@ -621,8 +622,11 @@ export async function runCheck(deps, options = {}) {
   const signature = (reading) => pageSignature(reading.lines, reading.window, bar);
 
   const tap = async (label) => {
+    // Only the bar found first counts, so a page title never stands in for a missed label.
     const again = locateTabs(seen.lines, [tabA, tabB]);
-    if (again !== undefined) Object.assign(tabLines, again.tabs);
+    if (again?.bar.axis === bar.axis && Math.abs(again.bar.at - bar.at) <= bar.half) {
+      Object.assign(tabLines, again.tabs);
+    }
     const line = tabLines[label];
     const point = center(line);
     const before = lastFrontmost;
