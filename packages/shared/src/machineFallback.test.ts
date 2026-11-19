@@ -244,7 +244,8 @@ describe("fallback order and wait text", () => {
 });
 
 describe("judgeAccountEvidence: what a target's sign-in adds (1390, AC-22 and AC-38)", () => {
-  const reading = {
+  type Reading = NonNullable<Parameters<typeof judgeAccountEvidence>[0]["usage"]>;
+  const reading: Reading = {
     accountFingerprint: poolB,
     usedPercent: 40,
     resetsAt: laterReset,
@@ -252,7 +253,7 @@ describe("judgeAccountEvidence: what a target's sign-in adds (1390, AC-22 and AC
     observedAt: fresh,
   };
   const evidence = (
-    usage: Partial<typeof reading> & { readonly limited?: boolean } = {},
+    usage: Partial<Reading> = {},
     overrides: Partial<Parameters<typeof judgeAccountEvidence>[0]> = {},
   ) =>
     judgeAccountEvidence({
@@ -299,7 +300,7 @@ describe("judgeAccountEvidence: what a target's sign-in adds (1390, AC-22 and AC
       // Inside its window and below the threshold, an old reading proves no room.
       { observedAt: stale, usedPercent: 10, resetsAt: laterReset },
       { accountFingerprint: null },
-    ]) {
+    ] satisfies ReadonlyArray<Partial<Reading>>) {
       expect(evidence(usage)).toMatchObject({
         kind: "usage-unknown",
         line: "Usage unknown",

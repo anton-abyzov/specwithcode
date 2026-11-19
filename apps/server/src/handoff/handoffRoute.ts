@@ -21,6 +21,7 @@ import { LinkedMemoryPeerReceiver } from "../project/LinkedMemoryPeers.ts";
 import { LinkedPeerReceiver } from "../project/LinkedPeerRoute.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { ExtrasReceiver } from "./ExtrasReceiver.ts";
+import { PeerCheckRequest } from "./handoffPlan.ts";
 import { HandoffReceiver, type HandoffRefusal, type ReceiverCaller } from "./HandoffReceiver.ts";
 import {
   COORDINATOR_REPLICA_MAX_BYTES,
@@ -199,6 +200,10 @@ export const layer = HttpRouter.add(
         return Option.isNone(input)
           ? invalid
           : yield* answer(receiver.transferStatus(caller, input.value));
+      }
+      case "check": {
+        const input = decodeJson(PeerCheckRequest, body.value);
+        return Option.isNone(input) ? invalid : yield* answer(receiver.check(caller, input.value));
       }
       case "transfer-pull": {
         const input = decodeJson(TransferPullRequest, body.value);

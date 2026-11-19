@@ -40,6 +40,7 @@ import {
   type ThreadExecutionReason,
   type ThreadExecutionRecord,
 } from "@specweave-studio/contracts";
+import { launchTrackLanes, TRACK_LANES } from "@specweave-studio/shared/modelTracks";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import * as KeyedLock from "@specweave-studio/shared/KeyedLock";
 import { projectUsesWorktrees } from "../mcp/toolkits/project/launchWorkspace.ts";
@@ -95,6 +96,13 @@ import {
   preflightFailures,
   shouldResume,
 } from "./handoffPreflight.ts";
+import {
+  confirmTarget,
+  type PeerCheckRequest,
+  type PeerCheckResponse,
+  planCapabilityFailure,
+} from "./handoffPlan.ts";
+import { providerUsageSummary } from "../usage/providerUsageSummary.ts";
 import {
   emptyThreadRecord,
   findIncoming,
@@ -259,6 +267,14 @@ export class HandoffReceiver extends Context.Service<
       caller: ReceiverCaller,
       request: PeerPreflightRequest,
     ) => Effect.Effect<PeerPreflightResponse, HandoffRefusal>;
+    /**
+     * What this machine would run each thread on, asked before anything is
+     * copied here: no replica is needed, and the usage is read for this call.
+     */
+    readonly check: (
+      caller: ReceiverCaller,
+      request: PeerCheckRequest,
+    ) => Effect.Effect<PeerCheckResponse, HandoffRefusal>;
     readonly takeover: (
       caller: ReceiverCaller,
       request: TakeoverRequest,
@@ -581,6 +597,100 @@ export const make = Effect.gen(function* () {
         capabilities: HANDOFF_CAPABILITIES,
         results,
       } satisfies PeerPreflightResponse;
+    });
+
+  const check = (caller: ReceiverCaller, request: PeerCheckRequest) =>
+    Effect.gen(function* () {
+      yield* sameSource(caller, request.sourceEnvironmentId);
+      const answer = (results: PeerCheckResponse["results"]) =>
+        ({
+          machineLabel: label,
+          protocolVersion: HANDOFF_PROTOCOL_VERSION,
+          appVersion: HANDOFF_APP_VERSION,
+          capabilities: HANDOFF_CAPABILITIES,
+          results,
+        }) satisfies PeerCheckResponse;
+      const source = { peerLabel: "The source machine", capabilities: request.capabilities };
+      // A source that does not plan cannot read what this answers; nothing is confirmed for it.
+      const unfit =
+        versionFailure({
+          peerLabel: source.peerLabel,
+          peerProtocolVersion: request.protocolVersion,
+          peerAppVersion: request.appVersion,
+          selfLabel: label,
+        }) ??
+        capabilityFailure(source) ??
+        planCapabilityFailure(source);
+      if (unfit !== null) {
+        return answer(
+          request.threads.map((thread) => ({
+            sourceThreadId: thread.sourceThreadId,
+            failures: [unfit],
+            evidence: null,
+          })),
+        );
+      }
+      const list = yield* providers.getProviders;
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.mapError(() => refuse(500, "failed", at("could not read its settings"))),
+      );
+      const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+      // Read now, for this call: the reading the source shows is this machine's own.
+      const signIns = list.map((provider) => ({
+        provider: toPreflightProvider(provider),
+        usage: providerUsageSummary(provider, nowMs),
+      }));
+      const current = yield* document;
+      const results = yield* Effect.forEach(request.threads, (thread) =>
+        Effect.gen(function* () {
+          const project = yield* localProject(caller.sourceEnvironmentId, thread.sourceProjectId);
+          const replica = findIncoming(current, caller.sourceEnvironmentId, thread.sourceThreadId);
+          const holder = replica?.lease;
+          const resolved =
+            project === null ? null : resolveProjectSettings(settings, project.id, project).settings;
+          // Review entries are the reviewer's own list; the named reviewer is what is checked.
+          const trackEntries =
+            resolved === null ||
+            thread.track === null ||
+            thread.track === "review" ||
+            resolved.threadModelMode !== "tracks"
+              ? null
+              : launchTrackLanes(resolved.modelLanes, list, resolved.defaultModelProviders, nowMs)[
+                  TRACK_LANES[thread.track]
+                ];
+          const confirmed = confirmTarget({
+            machineLabel: label,
+            sourceLabel: request.sourceLabel,
+            start: request.start,
+            thresholdPercent: request.thresholdPercent,
+            nowMs,
+            project:
+              project === null ? null : { title: project.title, inGrant: inGrant(caller, project) },
+            otherHolder:
+              holder !== undefined &&
+              holder.holderEnvironmentId !== caller.sourceEnvironmentId &&
+              holder.holderEnvironmentId !== handoff.environmentId
+                ? holder.holderLabel
+                : null,
+            thread,
+            trackEntries,
+            signIns,
+            accountRefusal: (instanceId) => accountRefusal(caller, request.sourceLabel, instanceId),
+          });
+          return {
+            sourceThreadId: thread.sourceThreadId,
+            failures:
+              replica?.continuedThreadId != null
+                ? [
+                    ...confirmed.failures,
+                    { check: "lease" as const, message: at("already continues this thread") },
+                  ]
+                : confirmed.failures,
+            evidence: confirmed.evidence,
+          };
+        }),
+      );
+      return answer(results);
     });
 
   /** A worktree at the checkpoint's base commit holding its files as uncommitted changes. */
@@ -1330,6 +1440,7 @@ export const make = Effect.gen(function* () {
     negotiate,
     replicate,
     preflight,
+    check,
     takeover,
     heartbeat,
     transferStatus,

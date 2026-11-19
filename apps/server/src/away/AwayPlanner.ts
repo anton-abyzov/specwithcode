@@ -580,6 +580,31 @@ export function isAwayCandidate(
   return running || queued ? { queued } : null;
 }
 
+/**
+ * What a thread is doing, for a hand off (1390): unlike `isAwayCandidate` an
+ * idle thread is listed too, because one with unsaved work moves and one that
+ * waits for the next message can. Null for a thread that is not this machine's
+ * to move.
+ */
+export function handoffActivity(
+  shell: Parameters<typeof isAwayCandidate>[0] &
+    Pick<OrchestrationV2ThreadShell, "settledAt" | "settledOverride">,
+  self: EnvironmentId,
+): "running" | "queued" | "waiting" | "settled" | null {
+  if (shell.archivedAt !== null || shell.deletedAt !== null) return null;
+  if (shell.lineage.relationshipToParent === "subagent") return null;
+  if (shell.executionMachineId != null && shell.executionMachineId !== self) return null;
+  const candidate = isAwayCandidate(shell, self);
+  if (candidate !== null) {
+    const running =
+      shell.activeRunId !== null ||
+      ACTIVE_RUN_STATUSES.has(shell.activityRunStatus ?? shell.status);
+    return running ? "running" : "queued";
+  }
+  if (shell.settledOverride === "active") return "waiting";
+  return shell.settledOverride === "settled" || shell.settledAt !== null ? "settled" : "waiting";
+}
+
 const isWebhookRoutine = (task: Pick<ScheduledTask, "schedule">) =>
   task.schedule.type === "webhook";
 
@@ -787,8 +812,3 @@ export const make = Effect.gen(function* () {
 
 /** Needs HandoffMode, ProjectService, the projection store, routines, AwayAccess and RemoteWorkers. */
 export const layer = Layer.effect(AwayPlanner, make);
-
-/** Stub (1390, T-10): tests first. */
-export function handoffActivity(_shell: any, _self: EnvironmentId): any {
-  return undefined;
-}

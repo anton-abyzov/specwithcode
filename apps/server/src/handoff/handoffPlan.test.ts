@@ -6,7 +6,7 @@
  * machine on the latest release and against one that keeps transfer records
  * but plans nothing.
  */
-import { execFileSync } from "node:child_process";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -45,6 +45,7 @@ import {
   PeerCheckResponse,
   planCapabilityFailure,
   planThread,
+  trackOfThread,
   unknownCheckPath,
 } from "./handoffPlan.ts";
 import { makeRig, type RigMachine } from "./handoffTransfer.test.fixture.ts";
@@ -88,13 +89,18 @@ const fableWork: ModelSelection = {
   instanceId: ProviderInstanceId.make("claudeAgent-work"),
   model: "claude-fable-5-2",
 };
-const astra: ModelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-astra" };
+const astra: ModelSelection = {
+  instanceId: ProviderInstanceId.make("codex"),
+  model: "gpt-6-astra",
+};
 const opus: ModelSelection = {
   instanceId: ProviderInstanceId.make("claudeAgent"),
   model: "claude-opus-5-5",
 };
 
-const usage = (overrides: Partial<OrchestratorMcpProviderUsage> = {}): OrchestratorMcpProviderUsage => ({
+const usage = (
+  overrides: Partial<OrchestratorMcpProviderUsage> = {},
+): OrchestratorMcpProviderUsage => ({
   accountFingerprint: poolB,
   usedPercent: 40,
   resetsAt: laterReset,
@@ -297,6 +303,22 @@ describe("the receiver confirms its own track, account and usage (AC-38)", () =>
   });
 });
 
+describe("the thread's track at the source", () => {
+  const lanes = { complex: [fable, astra], routine: [opus] };
+
+  it("is the track that names its model, Complex before Daily", () => {
+    expect(trackOfThread({ review: false, model: fable.model, lanes })).toBe("complex");
+    expect(trackOfThread({ review: false, model: opus.model, lanes })).toBe("daily");
+    expect(trackOfThread({ review: true, model: opus.model, lanes })).toBe("review");
+  });
+
+  it("is none for a project without tracks, or a model on neither", () => {
+    expect(trackOfThread({ review: false, model: fable.model, lanes: null })).toBeNull();
+    expect(trackOfThread({ review: true, model: fable.model, lanes: null })).toBeNull();
+    expect(trackOfThread({ review: false, model: "other", lanes })).toBeNull();
+  });
+});
+
 const checked = (overrides: Partial<HandoffThreadFact> = {}): HandoffThreadFact => ({
   id: t1,
   title: "Fix the parser",
@@ -430,9 +452,12 @@ describe("a hand off by hand (AC-17, AC-19, AC-20)", () => {
       disposition: "stays",
       stay: "settled",
     });
-    expect(stays({ reviewStay: "Review stays here: no permitted reviewer on Minis" })).toMatchObject(
-      { stay: "review", reason: "Review stays here: no permitted reviewer on Minis" },
-    );
+    expect(
+      stays({ reviewStay: "Review stays here: no permitted reviewer on Minis" }),
+    ).toMatchObject({
+      stay: "review",
+      reason: "Review stays here: no permitted reviewer on Minis",
+    });
     expect(stays({ brokenFolder: "/work/app-1" })).toMatchObject({
       stay: "broken-folder",
       reason: "Its folder's Git data is broken: /work/app-1",
@@ -533,7 +558,9 @@ describe("each thread's disposition in an automatic batch (AC-41)", () => {
 
   it("one idle longer is not in the batch", () => {
     expect(planThread(automatic(), idle("2026-11-19T13:49:00.000Z"))).toBeNull();
-    expect(planThread(automatic(), idle("2026-11-19T13:51:00.000Z", { lastTurnEndedAt: null }))).toBeNull();
+    expect(
+      planThread(automatic(), idle("2026-11-19T13:51:00.000Z", { lastTurnEndedAt: null })),
+    ).toBeNull();
   });
 
   it("with the threshold turned off only the limit stop moves", () => {
@@ -556,7 +583,10 @@ describe("each thread's disposition in an automatic batch (AC-41)", () => {
 
   it("never takes a healthy sibling because its track matches", () => {
     expect(
-      planThread(automatic(), checked({ activity: "running", runEnding: "active", usage: atThreshold })),
+      planThread(
+        automatic(),
+        checked({ activity: "running", runEnding: "active", usage: atThreshold }),
+      ),
     ).toBeNull();
     expect(
       planThread(
@@ -564,7 +594,9 @@ describe("each thread's disposition in an automatic batch (AC-41)", () => {
         idle("2026-11-19T13:51:00.000Z", { usage: { ...atThreshold, usedPercent: 60 } }),
       ),
     ).toBeNull();
-    expect(planThread(automatic(), checked({ activity: "settled", runEnding: "completed" }))).toBeNull();
+    expect(
+      planThread(automatic(), checked({ activity: "settled", runEnding: "completed" })),
+    ).toBeNull();
   });
 
   it("needs switch with targets", () => {
@@ -591,10 +623,10 @@ describe("each thread's disposition in an automatic batch (AC-41)", () => {
       resetsAt: laterReset,
       observedAt: fresh,
     };
-    const item = planThread(
-      automatic(),
-      { ...limitStop, check: { kind: "checked", failures: [], evidence } },
-    );
+    const item = planThread(automatic(), {
+      ...limitStop,
+      check: { kind: "checked", failures: [], evidence },
+    });
     expect(item).toMatchObject({
       disposition: "stays",
       stay: "target",
@@ -613,8 +645,7 @@ describe("each thread's disposition in an automatic batch (AC-41)", () => {
 });
 
 describe("limits measured on what will travel (AC-34)", () => {
-  const over = (measure: HandoffMeasure) =>
-    planThread(facts(), checked({ measure }));
+  const over = (measure: HandoffMeasure) => planThread(facts(), checked({ measure }));
 
   it("keeps an item over a limit under Stays, with the file or the count", () => {
     expect(
@@ -628,11 +659,15 @@ describe("limits measured on what will travel (AC-34)", () => {
       stay: "limit",
       reason: "data/dump.bin is 12 MB, over the 10 MB limit for one file",
     });
-    expect(over({ bytes: 0, files: 20_001, over: { limit: "files", count: 20_001 } })).toMatchObject(
-      { stay: "limit", reason: "20,001 files, over the 20,000 file limit" },
-    );
     expect(
-      over({ bytes: 70 * 1024 * 1024, files: 9, over: { limit: "bundle", bytes: 70 * 1024 * 1024 } }),
+      over({ bytes: 0, files: 20_001, over: { limit: "files", count: 20_001 } }),
+    ).toMatchObject({ stay: "limit", reason: "20,001 files, over the 20,000 file limit" });
+    expect(
+      over({
+        bytes: 70 * 1024 * 1024,
+        files: 9,
+        over: { limit: "bundle", bytes: 70 * 1024 * 1024 },
+      }),
     ).toMatchObject({ stay: "limit", reason: "70 MB to send, over the 64 MB limit" });
   });
 
@@ -651,7 +686,7 @@ describe("limits measured on what will travel (AC-34)", () => {
   });
 
   const git = (cwd: string, ...args: ReadonlyArray<string>) =>
-    execFileSync("git", args, {
+    NodeChildProcess.execFileSync("git", args, {
       cwd,
       encoding: "utf8",
       env: {
@@ -787,6 +822,14 @@ const request = (overrides: Partial<PeerCheckRequest> = {}): PeerCheckRequest =>
   ...overrides,
 });
 
+/** The answer encodes, travels as JSON and decodes again on the asking machine. */
+const surviveTheWire = (answer: PeerCheckResponse) =>
+  Option.isSome(
+    Schema.decodeUnknownOption(PeerCheckResponse)(
+      overTheWire(Schema.encodeSync(PeerCheckResponse)(answer)),
+    ),
+  );
+
 const caller = (machine: RigMachine) => ({
   sourceEnvironmentId: machine.environmentId,
   grant: unscopedGrant(machine.environmentId),
@@ -801,7 +844,10 @@ describe("the plan's own capability (EC2-04)", () => {
 
   it('reads "Needs update" for a machine that does not name it', () => {
     expect(
-      planCapabilityFailure({ peerLabel: "Minis", capabilities: [HANDOFF_V2_CAPABILITY, HANDOFF_PLAN_CAPABILITY] }),
+      planCapabilityFailure({
+        peerLabel: "Minis",
+        capabilities: [HANDOFF_V2_CAPABILITY, HANDOFF_PLAN_CAPABILITY],
+      }),
     ).toBeNull();
     for (const capabilities of [undefined, [], [HANDOFF_V2_CAPABILITY]]) {
       const failure = planCapabilityFailure({ peerLabel: "Minis", capabilities });
@@ -827,7 +873,7 @@ describe("the plan's own capability (EC2-04)", () => {
       expect(answer.results[0]?.evidence?.modelSelection).toEqual(opus);
       // By hand a reading nobody has is allowed, with its line.
       expect(answer.results[0]?.evidence?.line).toBe("Usage unknown");
-      expect(Option.isSome(Schema.decodeUnknownOption(PeerCheckResponse)(overTheWire(Schema.encodeSync(PeerCheckResponse)(answer))))).toBe(true);
+      expect(surviveTheWire(answer)).toBe(true);
 
       // The same call for an automatic start does not qualify on that reading.
       const strict = yield* b.receiver.check(
@@ -871,7 +917,9 @@ describe(`the plan with a machine on ${PREVIOUS_RELEASE}, and with one that only
       threads: [{ sourceThreadId: t1, sourceProjectId: P1, sequence: 1, modelSelection: opus }],
     });
     expect(
-      Option.isSome(Schema.decodeUnknownOption(PreviousPeerPreflightRequest)(overTheWire(preflight))),
+      Option.isSome(
+        Schema.decodeUnknownOption(PreviousPeerPreflightRequest)(overTheWire(preflight)),
+      ),
     ).toBe(true);
   });
 
@@ -895,13 +943,22 @@ describe(`the plan with a machine on ${PREVIOUS_RELEASE}, and with one that only
   it(`as the target: ${PREVIOUS_RELEASE} has no check path, which reads "Needs update" and Stays`, () => {
     const error = unknownCheckPath("OLD");
     expect(error).toMatchObject({ check: "version", uncertain: false, needsUpdate: true });
-    const check = checkAnswer({ peerLabel: "OLD", threadId: t1, answer: { kind: "failed", error } });
+    const check = checkAnswer({
+      peerLabel: "OLD",
+      threadId: t1,
+      answer: { kind: "failed", error },
+    });
     expect(check.kind).toBe("needs-update");
-    const item = planThread(facts({ target: { environmentId: MINI, label: "OLD" } }), checked({ check }));
+    const item = planThread(
+      facts({ target: { environmentId: MINI, label: "OLD" } }),
+      checked({ check }),
+    );
     expect(item).toMatchObject({ disposition: "stays", stay: "needs-update", ticked: false });
     expect(item?.reason?.startsWith("Needs update: OLD ")).toBe(true);
     // The same in an automatic start: it stays, it is never sent on a guess.
-    expect(planThread(automatic(), checked({ activity: "waiting", runEnding: "usage-limit", check }))).toMatchObject({
+    expect(
+      planThread(automatic(), checked({ activity: "waiting", runEnding: "usage-limit", check })),
+    ).toMatchObject({
       disposition: "stays",
       stay: "needs-update",
     });
@@ -915,7 +972,11 @@ describe(`the plan with a machine on ${PREVIOUS_RELEASE}, and with one that only
       capabilities: [HANDOFF_V2_CAPABILITY],
       results: [{ sourceThreadId: t1, failures: [], evidence: null }],
     };
-    const check = checkAnswer({ peerLabel: "Minis", threadId: t1, answer: { kind: "answered", response: answer } });
+    const check = checkAnswer({
+      peerLabel: "Minis",
+      threadId: t1,
+      answer: { kind: "answered", response: answer },
+    });
     expect(check).toMatchObject({ kind: "needs-update" });
     expect(planThread(facts(), checked({ check }))).toMatchObject({
       disposition: "stays",
