@@ -450,7 +450,7 @@ describe("limit handoff in the fallback sweep", () => {
     "a machine on the previous release is never a target for a review: it would drop the lock",
     () =>
       Effect.gen(function* () {
-        expect(PreviousRelease.PREVIOUS_RELEASE).toBe("v1.0.381");
+        expect(PreviousRelease.PREVIOUS_RELEASE).toBe("v1.0.383");
         // That release's descriptor names no reviewer lock, so its row carries none.
         expect(PreviousRelease.peerRules(PreviousRelease.descriptor(minis, "Minis"))).toEqual({
           carried: true,
