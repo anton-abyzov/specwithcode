@@ -645,6 +645,7 @@ export function ProjectOrchestratorSwitcher({
   mainOffers = [],
   onMakeMain = null,
   onCopy = null,
+  syncReadOnly = false,
   onOpenSettings = null,
 }: {
   project: EnvironmentProject;
@@ -663,9 +664,12 @@ export function ProjectOrchestratorSwitcher({
   /**
    * Opens the folder dialog: "add" for a machine without the project, "sync" with a machine
    * key and the measured copy for "Compare all files…". Null when this window may not
-   * operate the project, or the project is personal: then no entry and no fact is shown.
+   * operate the project, or the project is personal. The machine menu's Sync and Add ask
+   * through this.
    */
   onCopy?: SyncAsk | null;
+  /** The window can read this project and may not operate it: Sync is shown greyed, with why. */
+  syncReadOnly?: boolean;
   /** Opens this project's settings on its machines, for a machine "Fix…" cannot unlink. */
   onOpenSettings?: (() => void) | null;
 }) {
@@ -722,6 +726,7 @@ export function ProjectOrchestratorSwitcher({
     reachOf: (key) => reachOf(key).reach,
     versionOf: (environmentId) => versions.get(environmentId)?.environment.serverVersion ?? null,
     ask: onCopy,
+    readOnly: syncReadOnly,
   });
   return (
     <>

@@ -28,11 +28,12 @@ import { isProjectFolder } from "../../studio/projectMachineFolders";
 import {
   refreshSyncStatus,
   syncMachineKey,
+  syncReadIsOld,
   useSyncStatusReads,
   type SyncMachine,
   type SyncStatusRead,
 } from "../../studio/projectSync";
-import { machineHoldings } from "../../studio/sendToMachine";
+import { addableMachineIds } from "../../studio/addableMachines";
 import { useRetiredMachineRecords } from "../settings/useReplacedMachineRecords";
 import type { SyncTarget } from "./ProjectSyncDialog";
 
@@ -56,11 +57,17 @@ export function syncBlockedOn(input: {
   readonly access: EnvironmentScopeAccess | undefined;
 }): MachineRowText | null {
   const { machine } = input;
-  if (input.reach !== "open") return { text: "{machine} offline", values: { machine } };
+  if (input.reach === "offline") return { text: "{machine} offline", values: { machine } };
+  // Never loaded here, or it refuses this window: the words its row uses.
+  if (input.reach !== "open")
+    return { text: "This window cannot open {machine}", values: { machine } };
   if (input.read?.kind === "needs-update")
     return input.version
-      ? { text: "Needs update · {version}", values: { version: input.version } }
-      : { text: "Needs update" };
+      ? {
+          text: "{machine}: Needs update · {version}",
+          values: { machine, version: input.version },
+        }
+      : { text: "{machine}: Needs update", values: { machine } };
   // A grant that has not loaded is not a refusal: the call says so if it is one.
   if (input.access === "denied")
     return { text: "This window can only read {machine}", values: { machine } };
@@ -75,6 +82,7 @@ export function syncRowFact(input: {
   /** The other machine is offline: its status is the last one read in this session. */
   readonly offline: boolean;
   readonly version: string | null;
+  readonly now?: number;
 }): SyncMenuRow {
   const { shown, other } = input;
   const status = (read: SyncStatusRead | undefined) =>
@@ -84,8 +92,10 @@ export function syncRowFact(input: {
       shown: status(shown),
       other: status(other),
       shownName: input.shownName,
+      // Its time is said whenever the status is not a current one: the machine is offline,
+      // the read is older than a minute, or the last time it was asked it did not answer.
       asOf:
-        input.offline && other?.kind === "status"
+        other?.kind === "status" && (input.offline || syncReadIsOld(other, input.now ?? Date.now()))
           ? new Date(other.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
           : null,
     }),
@@ -110,8 +120,14 @@ export function useProjectSyncMenu(input: {
   readonly versionOf: (environmentId: EnvironmentId) => string | null;
   /** Null when this window may not operate the project or the project is personal. */
   readonly ask: SyncAsk | null;
+  /**
+   * The window can read the project and may not operate it: the sync facts show, and
+   * "Sync…" is greyed with why. False for a personal project, which is never synced.
+   */
+  readonly readOnly?: boolean;
 }) {
   const { project, ask, current } = input;
+  const facts = ask !== null || input.readOnly === true;
   const [open, setOpen] = useState(false);
   const readOf = useSyncStatusReads();
   const retired = useRetiredMachineRecords();
@@ -153,26 +169,30 @@ export function useProjectSyncMenu(input: {
     blocked: blockedOn(item.machine, item.key),
   }));
   // Greyed when the machine shown cannot sync, or when no other machine can.
-  const syncBlocked =
+  const syncBlocked: MachineRowText | null =
     blockedOn(shown, current) ??
-    (targets.every((target) => target.blocked !== null) ? (targets[0]?.blocked ?? null) : null);
+    // A window that may not operate the machine shown can read it, and no more.
+    (ask === null
+      ? { text: "This window can only read {machine}", values: { machine: input.label } }
+      : targets.every((target) => target.blocked !== null)
+        ? (targets[0]?.blocked ?? null)
+        : null);
 
-  // A paired machine lacks the project when nothing on it matches, by the rule the dialog
-  // uses. A linked machine this window never opened has the project and is not offered.
+  // A paired machine lacks the project by the rule the dialog lists machines with. A linked
+  // machine this window never opened has the project and is not offered.
   const known = new Set(input.unknown.map((ref) => checkoutKeyEnvironmentId(ref.key) as string));
-  const otherIds = input.environments
-    .map((item) => item.environmentId as string)
-    .filter((id) => id !== project.environmentId && !known.has(id));
-  const holdings = machineHoldings({
-    source: project,
-    machineIds: otherIds,
-    projects: input.projects,
-    retired,
-  });
-  const lacking = otherIds.some((id) => holdings.byMachine.get(id)?.kind === "none");
+  const lacking =
+    addableMachineIds({
+      project,
+      machineIds: input.environments
+        .map((item) => item.environmentId as string)
+        .filter((id) => !known.has(id)),
+      projects: input.projects,
+      retired,
+    }).length > 0;
 
   const syncOf = (key: string): SyncMenuRow => {
-    if (ask === null) return { sync: null };
+    if (!facts) return { sync: null };
     const environmentId = environmentIdOf(key);
     const read = readOf(key);
     const version = input.versionOf(environmentId);
@@ -191,27 +211,28 @@ export function useProjectSyncMenu(input: {
   };
 
   return {
-    onSync: ask !== null && targets.length > 0 ? () => setOpen(true) : null,
-    syncBlocked: ask !== null && targets.length > 0 ? syncBlocked : null,
+    onSync: facts && targets.length > 0 ? () => setOpen(true) : null,
+    syncBlocked: facts && targets.length > 0 ? syncBlocked : null,
     onAdd: ask !== null && lacking ? () => ask("add") : null,
     syncOf,
     /** Opening the menu reads the status of every machine that can be asked. */
     onMenuOpenChange: (next: boolean) => {
-      if (!next || ask === null) return;
+      if (!next || !facts) return;
       void refreshSyncStatus([
         ...(input.reachOf(current) === "open" ? [shown] : []),
         ...others.filter((item) => input.reachOf(item.key) === "open").map((item) => item.machine),
       ]);
     },
-    dialog: open
-      ? {
-          shown,
-          targets,
-          onClose: () => setOpen(false),
-          onCompare: ask
-            ? (target: SyncMachine) => ask("sync", syncMachineKey(target), "copy")
-            : null,
-        }
-      : null,
+    dialog:
+      open && ask !== null
+        ? {
+            shown,
+            targets,
+            onClose: () => setOpen(false),
+            onCompare: ask
+              ? (target: SyncMachine) => ask("sync", syncMachineKey(target), "copy")
+              : null,
+          }
+        : null,
   };
 }
