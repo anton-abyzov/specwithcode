@@ -81,6 +81,13 @@ describe("isSafeDestinationPath", () => {
   });
 });
 
+describe("Windows device names written with superscript digits", () => {
+  it.each(["COM\u00b9", "a/lpt\u00b2.txt", "com\u00b3"])("refuses %j on Windows", (path) => {
+    expect(safe(path, "win32")).toBe(false);
+    expect(safe(path, "linux")).toBe(true);
+  });
+});
+
 describe("validateManifestEntries", () => {
   it("accepts a plain tree, with a link kept as a link", () => {
     expect(

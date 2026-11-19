@@ -71,6 +71,20 @@ describe("macOS ACL entries", () => {
   });
 });
 
+describe("macOS listings it cannot read", () => {
+  it("an ACL marked on the folder with no entry it understands is unreadable", async () => {
+    const { darwinListingReadable } = (await readers()) as unknown as {
+      darwinListingReadable: (listing: string) => boolean;
+    };
+    expect(darwinListingReadable("drwx------  5 sam  staff  160 Jan  1 10:00 /folder\n")).toBe(
+      true,
+    );
+    expect(darwinListingReadable(`${HEAD} 0: group:everyone deny delete\n`)).toBe(true);
+    expect(darwinListingReadable(HEAD)).toBe(false);
+    expect(darwinListingReadable(`${HEAD} 0: something new\n`)).toBe(false);
+  });
+});
+
 describe("Windows owner and DACL", () => {
   it("the user, SYSTEM and Administrators may hold every right", async () => {
     const { windowsAccess } = await readers();
@@ -79,8 +93,40 @@ describe("Windows owner and DACL", () => {
         `O:${USER_SID}G:DUD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;${USER_SID})`,
         USER_SID,
       ),
-    ).toMatchObject({ owner: "user", othersMayWrite: false });
+    ).toEqual({ owner: "user", othersMayWrite: false, othersMayReplace: false });
     expect(windowsAccess("O:BAG:SYD:(A;;FA;;;SY)", USER_SID).owner).toBe("trusted");
+  });
+
+  it("a missing DACL lets everyone write, and is refused", async () => {
+    const { windowsAccess } = await readers();
+    const open = { owner: "user", othersMayWrite: true, othersMayReplace: true };
+    expect(windowsAccess(`O:${USER_SID}G:DUD:NO_ACCESS_CONTROL`, USER_SID)).toEqual(open);
+    expect(windowsAccess(`O:${USER_SID}G:DU`, USER_SID)).toEqual(open);
+    expect(windowsAccess(`O:${USER_SID}G:DUS:(AU;SA;FA;;;WD)`, USER_SID)).toEqual(open);
+  });
+
+  it("an empty DACL grants nobody anything", async () => {
+    const { windowsAccess } = await readers();
+    const shut = { owner: "user", othersMayWrite: false, othersMayReplace: false };
+    expect(windowsAccess(`O:${USER_SID}G:DUD:`, USER_SID)).toEqual(shut);
+    expect(windowsAccess(`O:${USER_SID}G:DUD:PAI`, USER_SID)).toEqual(shut);
+    expect(windowsAccess(`O:${USER_SID}G:DUD:PS:(AU;SA;FA;;;WD)`, USER_SID)).toEqual(shut);
+  });
+
+  it("an audit entry that names a right is not a grant", async () => {
+    const { windowsAccess } = await readers();
+    expect(
+      windowsAccess(`O:${USER_SID}G:DUD:(A;;FA;;;SY)S:(AU;SA;FA;;;WD)`, USER_SID).othersMayWrite,
+    ).toBe(false);
+  });
+
+  it("a descriptor it cannot read is treated as open", async () => {
+    const { windowsAccess } = await readers();
+    expect(windowsAccess("not a descriptor", USER_SID)).toEqual({
+      owner: "other",
+      othersMayWrite: true,
+      othersMayReplace: true,
+    });
   });
 
   it("another owner is named", async () => {

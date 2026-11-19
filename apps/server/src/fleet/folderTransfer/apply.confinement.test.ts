@@ -7,7 +7,10 @@ import * as NodePath from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 import { applyPlan, type ApplyInput } from "./apply.ts";
-import type { FileAction, Plan } from "./reconcile.ts";
+import type { FolderAccess } from "./confinement.ts";
+import { git } from "./folderFixture.testkit.ts";
+import type { RepositoryInfo } from "./manifest.ts";
+import type { FileAction, GitStep, Plan } from "./reconcile.ts";
 import { undoApply } from "./undo.ts";
 
 /**
@@ -19,7 +22,18 @@ import { undoApply } from "./undo.ts";
 type Stat = NodeFS.BigIntStats;
 type Lstat = (path: string) => Promise<Stat | null>;
 /** The fields these tests add to Apply's input and result. */
-type ConfinedInput = ApplyInput & { confinement?: { lstat?: Lstat; uid?: number } };
+type ConfinedInput = ApplyInput & {
+  confinement?: {
+    lstat?: Lstat;
+    uid?: number;
+    platform?: NodeJS.Platform;
+    access?: (paths: ReadonlyArray<string>) => Promise<ReadonlyMap<string, FolderAccess>>;
+    secure?: (path: string) => Promise<void>;
+  };
+  /** What the person approved: the target's kind and, when it existed, which folder it was. */
+  approved?: { kind: "empty" | "reviewed"; identity: string | null };
+  sourceRepositories: ReadonlyArray<RepositoryInfo>;
+};
 interface Refused {
   readonly path: string;
   readonly folder: string;
@@ -128,6 +142,7 @@ function scenario(
   destination: ((target: string, outside: string) => void) | false,
   files: Record<string, string>,
   extra: ReadonlyArray<FileAction> = [],
+  steps: (target: string) => ReadonlyArray<GitStep> = () => [],
 ) {
   counter += 1;
   const directory = NodePath.join(base, `case-${counter}`);
@@ -149,7 +164,7 @@ function scenario(
   const plan = {
     rows: [],
     actions: [...extra, ...Object.entries(files).map(([path, body]) => fileAction(path, body))],
-    git: [],
+    git: [...steps(target)],
     totals: { filesToMove: 0, bytesToMove: 0, bytesPresent: 0, decisionsNeeded: 0, replacing: 0 },
     warnings: [],
   } satisfies Plan;
@@ -360,6 +375,10 @@ describe.skipIf(!posix)("the folders above the target", () => {
   });
 });
 
+/** True once Apply has started giving folders their final mode. */
+const committed = (file: string) =>
+  NodeFS.existsSync(file) && (NodeFS.statSync(NodePath.dirname(file)).mode & 0o777) !== 0o700;
+
 describe.skipIf(!posix)("Add into a target that does not exist", () => {
   it("is refused under a group-writable folder, and the target is not created", async () => {
     const { input, directory, target, outside } = scenario(false, { "a.txt": "a\n" });
@@ -377,21 +396,23 @@ describe.skipIf(!posix)("Add into a target that does not exist", () => {
         folderAction("new", 0o750),
       ]);
       const created = [target, NodePath.join(target, "new"), NodePath.join(target, "new", "deep")];
-      const seen: Array<string> = [];
+      const landing: Array<string> = [];
+      const file = NodePath.join(target, "new", "deep", "a.txt");
       input.confinement = {
         lstat: async (asked) => {
           const stat = await realLstat(asked);
-          if (stat && created.includes(asked))
-            seen.push(
+          // Readings up to the check that follows the last write; the commit's own come later.
+          if (stat && created.includes(asked) && landing.length < 64 && !committed(file))
+            landing.push(
               `${NodePath.relative(target, asked) || "."}:${(stat.mode & 0o777n).toString(8)}`,
             );
           return stat;
         },
       };
       expect((await run(input)).refused).toEqual([]);
-      expect(seen.length).toBeGreaterThan(0);
       // While files were landing, every folder Apply made was the user's alone.
-      expect([...new Set(seen.map((line) => line.split(":")[1]))]).toEqual(["700"]);
+      expect(landing.length).toBeGreaterThan(0);
+      expect([...new Set(landing.map((line) => line.split(":")[1]))]).toEqual(["700"]);
       expect(bytes(target)).toMatchObject({ "new/": "750", "new/deep/": "755" });
       expect((NodeFS.statSync(target).mode & 0o777).toString(8)).toBe("755");
       expect(NodeFS.readFileSync(NodePath.join(target, "new", "deep", "a.txt"), "utf8")).toBe(
@@ -400,5 +421,289 @@ describe.skipIf(!posix)("Add into a target that does not exist", () => {
     } finally {
       process.umask(umask);
     }
+  });
+});
+
+const identityOf = (path: string) => {
+  const stat = NodeFS.lstatSync(path, { bigint: true });
+  return `${stat.dev}:${stat.ino}`;
+};
+
+describe.skipIf(!posix)("a folder Apply makes", () => {
+  it("is verified before anything is written into it", async () => {
+    const { input, target } = scenario(() => undefined, { "new/a.txt": "a\n" });
+    // The new folder comes out open to a group, as one made under inherited access would.
+    input.confinement = seam(NodePath.join(target, "new"), { mode: 0o770 });
+    await expect(run(input)).rejects.toMatchObject({
+      reason: "group-writable",
+      folder: "new",
+      written: [],
+    });
+    expect(NodeFS.existsSync(NodePath.join(target, "new", "a.txt"))).toBe(false);
+  });
+});
+
+describe.skipIf(!posix)("what the person approved", () => {
+  it("a file that appeared where the plan saw none is refused, not backed up and replaced", async () => {
+    const { input, target } = scenario(
+      (root) => NodeFS.writeFileSync(NodePath.join(root, "a.txt"), "appeared after the review\n"),
+      { "a.txt": "copied\n" },
+    );
+    await expect(run(input)).rejects.toMatchObject({ reason: "changed-since-preview" });
+    expect(NodeFS.readFileSync(NodePath.join(target, "a.txt"), "utf8")).toBe(
+      "appeared after the review\n",
+    );
+    expect(NodeFS.existsSync(input.backupRoot)).toBe(false);
+  });
+
+  it("another folder standing at the approved path is refused", async () => {
+    const { input, directory, target } = scenario(() => undefined, { "a.txt": "a\n" });
+    input.approved = { kind: "reviewed", identity: identityOf(target) };
+    NodeFS.renameSync(target, NodePath.join(directory, "target-was"));
+    NodeFS.mkdirSync(target, { mode: 0o700 });
+    await expect(run(input)).rejects.toMatchObject({ reason: "folder-changed" });
+    expect(bytes(target)).toEqual({});
+  });
+
+  it("a target approved as absent that exists now is refused", async () => {
+    const { input, target } = scenario(
+      (root) => NodeFS.writeFileSync(NodePath.join(root, "theirs.txt"), "theirs\n"),
+      { "a.txt": "a\n" },
+    );
+    input.approved = { kind: "empty", identity: null };
+    await expect(run(input)).rejects.toMatchObject({ reason: "changed-since-preview" });
+    expect(Object.keys(bytes(target))).toEqual(["theirs.txt"]);
+  });
+
+  it("a target approved as empty that holds something now is refused", async () => {
+    const { input, target } = scenario(
+      (root) => NodeFS.writeFileSync(NodePath.join(root, "theirs.txt"), "theirs\n"),
+      { "a.txt": "a\n" },
+    );
+    input.approved = { kind: "empty", identity: identityOf(target) };
+    await expect(run(input)).rejects.toMatchObject({ reason: "changed-since-preview" });
+    expect(Object.keys(bytes(target))).toEqual(["theirs.txt"]);
+  });
+
+  it("the approved folder itself copies", async () => {
+    const { input, target } = scenario(() => undefined, { "a.txt": "a\n" });
+    input.approved = { kind: "empty", identity: identityOf(target) };
+    expect((await run(input)).refused).toEqual([]);
+    expect(NodeFS.readFileSync(NodePath.join(target, "a.txt"), "utf8")).toBe("a\n");
+  });
+
+  it("a retry is held to the folder the first run wrote into", async () => {
+    const { input, directory, target } = scenario(false, { "a.txt": "a\n" });
+    input.approved = { kind: "empty", identity: null };
+    await run(input);
+    NodeFS.renameSync(target, NodePath.join(directory, "target-was"));
+    NodeFS.mkdirSync(target, { mode: 0o700 });
+    await expect(run(input)).rejects.toMatchObject({ reason: "folder-changed" });
+    expect(bytes(target)).toEqual({});
+  });
+});
+
+describe.skipIf(!posix)("a link above the target", () => {
+  it("whose text climbs back up is refused: where it leads is not certain", async () => {
+    const { input, directory, outside } = scenario(() => undefined, { "a.txt": "a\n" });
+    NodeFS.mkdirSync(NodePath.join(directory, "hop"), { mode: 0o700 });
+    NodeFS.symlinkSync("../target", NodePath.join(directory, "hop", "link"));
+    const through = NodePath.join(directory, "hop", "link");
+    const before = bytes(outside);
+    await expect(run({ ...input, targetRoot: through })).rejects.toMatchObject({
+      reason: "link-in-path",
+    });
+    expect(bytes(NodePath.join(directory, "target"))).toEqual({});
+    expect(bytes(outside)).toEqual(before);
+  });
+});
+
+describe.skipIf(!posix)("Windows ownership and missing names, through the seam", () => {
+  const windows = (
+    directory: string,
+    answer: (path: string) => FolderAccess,
+  ): NonNullable<ConfinedInput["confinement"]> => ({
+    platform: "win32",
+    access: async (paths) =>
+      new Map(
+        paths.map((path) => [
+          path,
+          path.startsWith(directory)
+            ? answer(path)
+            : { owner: "trusted", othersMayWrite: false, othersMayReplace: false },
+        ]),
+      ),
+    secure: async () => undefined,
+  });
+  const mine: FolderAccess = { owner: "user", othersMayWrite: false, othersMayReplace: false };
+
+  it("inside the target only the app's user may own a folder", async () => {
+    const { input, directory, target } = scenario(() => undefined, { "a.txt": "a\n" });
+    input.confinement = windows(directory, (path) =>
+      path === target ? { ...mine, owner: "trusted" } : mine,
+    );
+    expect((await run(input)).refused).toEqual([
+      { path: "a.txt", folder: ".", reason: "not-owned" },
+    ]);
+    expect(bytes(target)).toEqual({});
+  });
+
+  it("a folder where others may add entries cannot hold a target that does not exist yet", async () => {
+    const { input, directory, target } = scenario(false, { "a.txt": "a\n" });
+    input.confinement = windows(directory, (path) =>
+      path === directory ? { ...mine, othersMayWrite: true } : mine,
+    );
+    await expect(run(input)).rejects.toMatchObject({ reason: "acl-entry", path: directory });
+    expect(NodeFS.existsSync(target)).toBe(false);
+  });
+
+  it("the same folder may hold a target that exists and is the user's", async () => {
+    const { input, directory, target } = scenario(() => undefined, { "a.txt": "a\n" });
+    input.confinement = windows(directory, (path) =>
+      path === directory ? { ...mine, othersMayWrite: true } : mine,
+    );
+    expect((await run(input)).refused).toEqual([]);
+    expect(NodeFS.readFileSync(NodePath.join(target, "a.txt"), "utf8")).toBe("a\n");
+  });
+});
+
+const existingStep = (sourceHead: string): GitStep => ({
+  repo: ".",
+  row: "repo:.",
+  kind: "existing",
+  sourceHead,
+  sourceBranch: "main",
+  identity: null,
+  origin: null,
+  sourceBranches: {},
+  sourceStashCount: 0,
+  fetch: false,
+  moveHead: "fast-forward",
+  stashDestination: false,
+  importBranches: false,
+  importPrefix: "swc/from-source",
+  mainRepository: null,
+});
+
+/** A repository at `root` whose `next` branch changes a file in `shared`. */
+function repository(root: string) {
+  git(root, "init", "-q");
+  NodeFS.mkdirSync(NodePath.join(root, "shared"), { mode: 0o700 });
+  NodeFS.writeFileSync(NodePath.join(root, "shared", "f.txt"), "one\n");
+  NodeFS.writeFileSync(NodePath.join(root, "top.txt"), "one\n");
+  git(root, "add", ".");
+  git(root, "commit", "-q", "-m", "one");
+  git(root, "checkout", "-q", "-b", "next");
+  NodeFS.writeFileSync(NodePath.join(root, "shared", "f.txt"), "two\n");
+  git(root, "commit", "-q", "-am", "two");
+  git(root, "checkout", "-q", "main");
+}
+
+describe.skipIf(!posix)("a Git step that updates working files", () => {
+  const moved = (prepare: (root: string) => void) => {
+    let next = "";
+    const made = scenario(
+      (root) => {
+        repository(root);
+        next = git(root, "rev-parse", "next");
+        prepare(root);
+      },
+      {},
+      [],
+      () => [existingStep(next)],
+    );
+    return { ...made, next, was: git(made.target, "rev-parse", "HEAD") };
+  };
+
+  it("moves the branch in a private repository", async () => {
+    const { input, target, next } = moved(() => undefined);
+    await run(input);
+    expect(git(target, "rev-parse", "HEAD")).toBe(next);
+    expect(NodeFS.readFileSync(NodePath.join(target, "shared", "f.txt"), "utf8")).toBe("two\n");
+  });
+
+  it("is refused when a tracked folder it would write into is open to a group", async () => {
+    const { input, target, outside, was } = moved((root) =>
+      NodeFS.chmodSync(NodePath.join(root, "shared"), 0o770),
+    );
+    const before = bytes(outside);
+    await expect(run(input)).rejects.toMatchObject({ reason: "group-writable" });
+    expect(git(target, "rev-parse", "HEAD")).toBe(was);
+    expect(NodeFS.readFileSync(NodePath.join(target, "shared", "f.txt"), "utf8")).toBe("one\n");
+    expect(bytes(outside)).toEqual(before);
+  });
+
+  it("is refused when a folder of its Git data is open to a group", async () => {
+    const { input, target, was } = moved((root) =>
+      NodeFS.chmodSync(NodePath.join(root, ".git", "refs", "heads"), 0o770),
+    );
+    await expect(run(input)).rejects.toMatchObject({ reason: "group-writable" });
+    expect(git(target, "rev-parse", "HEAD")).toBe(was);
+    expect(NodeFS.readFileSync(NodePath.join(target, "shared", "f.txt"), "utf8")).toBe("one\n");
+  });
+});
+
+describe.skipIf(!posix)("repairing a copied worktree's pointer", () => {
+  /** A main repository and a linked worktree whose `.git` is a hard link to a file outside. */
+  const copied = (prepare: (admin: string) => void = () => undefined) => {
+    let head = "";
+    let admin = "";
+    const made = scenario(
+      (root, outside) => {
+        const main = NodePath.join(root, "main");
+        NodeFS.mkdirSync(main, { mode: 0o700 });
+        repository(main);
+        git(main, "worktree", "add", "-q", "-b", "side", NodePath.join(root, "wt"));
+        head = git(NodePath.join(root, "wt"), "rev-parse", "HEAD");
+        admin = NodePath.join(main, ".git", "worktrees", "wt");
+        const pointer = NodePath.join(outside, "pointer");
+        NodeFS.writeFileSync(pointer, `gitdir: ${NodePath.join(root, "was", "worktrees", "wt")}\n`);
+        NodeFS.rmSync(NodePath.join(root, "wt", ".git"));
+        NodeFS.linkSync(pointer, NodePath.join(root, "wt", ".git"));
+        prepare(admin);
+      },
+      {},
+      [],
+      () => [
+        { ...existingStep(head), kind: "copy", repo: "wt", row: "repo:wt", mainRepository: "main" },
+      ],
+    );
+    made.input.sourceRepositories = [
+      {
+        path: "wt",
+        kind: "linked",
+        head,
+        branch: "side",
+        branches: {},
+        stash: null,
+        stashCount: 0,
+        identity: null,
+        origin: null,
+        status: [],
+        worktrees: [],
+        mainRepository: "main",
+      } as RepositoryInfo,
+    ];
+    return { ...made, admin };
+  };
+
+  it("puts a new file in its place and leaves the bytes of the old one alone", async () => {
+    const { input, target, outside, admin } = copied();
+    const before = bytes(outside);
+    await run(input);
+    expect(bytes(outside)).toEqual(before);
+    expect(NodeFS.readFileSync(NodePath.join(target, "wt", ".git"), "utf8")).toBe(
+      `gitdir: ${admin}\n`,
+    );
+    expect(NodeFS.lstatSync(NodePath.join(target, "wt", ".git")).nlink).toBe(1);
+  });
+
+  it("is left alone when the main repository's record for it is open to a group", async () => {
+    const { input, target, outside } = copied((admin) => NodeFS.chmodSync(admin, 0o770));
+    const before = bytes(outside);
+    const result = await run(input);
+    expect(bytes(outside)).toEqual(before);
+    expect(NodeFS.lstatSync(NodePath.join(target, "wt", ".git")).nlink).toBe(2);
+    expect(result.warnings.some((line) => line.includes("git worktree repair"))).toBe(true);
   });
 });
