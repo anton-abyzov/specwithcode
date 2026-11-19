@@ -3,8 +3,9 @@
  * sleep records, the routines it pauses here, what a wake does with each, and
  * the sleep trigger's store as a pointer into that session.
  */
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
-  type AwaySession,
+  AwaySession,
   type AwaySleepSession,
   EnvironmentId,
   ProjectId,
@@ -12,11 +13,22 @@ import {
 } from "@specweave-studio/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 
+import * as FleetTargets from "../fleet/FleetTargets.ts";
+import { HandoffMode } from "../handoff/HandoffMode.ts";
+import { EMPTY_HANDOFF_DOCUMENT, type HandoffDocument } from "../handoff/handoffState.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import {
   fillSleepThreads,
   handoffOffFor,
+  makeLiveSleepSession,
   makeSleepSessionPort,
+  readAwaySession,
   routinesToPauseOnSleep,
   type SleepSessionDeps,
   sleepMayStart,
@@ -345,4 +357,72 @@ describe("handoffOffFor (#13)", () => {
     expect(off({ id: "t2" as never, projectId: P2 })).toBe(false);
     expect(off({ id: "t3" as never, projectId: P1 })).toBe(true);
   });
+});
+
+describe("the live session reads this machine's projects", () => {
+  it.effect(
+    "a coordinator whose role does not read keeps its routines off and is never listed as here",
+    () =>
+      Effect.gen(function* () {
+        // The lid close an earlier release recorded: the coordinator's own routine is paused here.
+        const h = harness();
+        yield* h.port.begin(SLEEP, "live");
+        let document: HandoffDocument = {
+          ...EMPTY_HANDOFF_DOCUMENT,
+          awaySession: Schema.encodeSync(AwaySession)(h.saved()!),
+        };
+        const turnedOn: string[] = [];
+        const live = yield* makeLiveSleepSession.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.succeed(HandoffMode, {
+                environmentId: EnvironmentId.make("m4"),
+                document: Effect.sync(() => document),
+                updateDocument: <A>(
+                  change: (current: HandoffDocument) => readonly [A, HandoffDocument],
+                ) =>
+                  Effect.sync(() => {
+                    const [answer, next] = change(document);
+                    document = next;
+                    return answer;
+                  }),
+                heartbeat: Effect.void,
+              } as unknown as HandoffMode["Service"]),
+              Layer.succeed(ProjectService.ProjectService, {
+                // The project store does not read when the wake asks who coordinates.
+                getById: () =>
+                  Effect.fail(
+                    new ProjectService.ProjectOperationError({
+                      operation: "list-projects",
+                      cause: new Error("The project store is busy."),
+                    }),
+                  ),
+                snapshot: Effect.succeed({ projects: [] }),
+              } as unknown as ProjectService.ProjectService["Service"]),
+              Layer.succeed(ProjectionStore.ProjectionStoreV2, {
+                getShellSnapshot: () => Effect.succeed({ threads: [] }),
+              } as unknown as ProjectionStore.ProjectionStoreV2["Service"]),
+              Layer.succeed(ScheduledTaskService, {
+                list: () => Effect.succeed({ tasks: TASKS }),
+                setEnabled: (input: { readonly id: string; readonly enabled: boolean }) =>
+                  Effect.sync(() => {
+                    if (input.enabled) turnedOn.push(input.id);
+                  }),
+              } as unknown as ScheduledTaskService["Service"]),
+              Layer.succeed(SqlClient.SqlClient, (() => Effect.succeed([{ enabled: 1 }])) as never),
+              Layer.succeed(FleetTargets.FleetTargets, {
+                load: Effect.succeed(null),
+              } as unknown as FleetTargets.FleetTargets["Service"]),
+              NodeCrypto.layer,
+            ),
+          ),
+        );
+        expect(yield* live.port.moved()).toBe(true);
+        // Unknown is not "still here": the coordinator's routine is not turned back on.
+        expect(turnedOn).toEqual([]);
+        const session = readAwaySession(document.awaySession)!;
+        expect(item(session, "routine", "r-own")?.outcome).toBe("paused");
+        expect(item(session, "coordinator", "p1")?.outcome).toBe("moved");
+      }),
+  );
 });

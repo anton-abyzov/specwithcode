@@ -114,31 +114,47 @@ describe(`a machine on ${PREVIOUS_RELEASE} sends a takeover from a lid close (13
     }),
   );
 
-  it.effect("a lease saved before a failed launch: the same epoch launches nothing", () =>
-    Effect.gen(function* () {
-      const setup = yield* scenario();
-      const previous = yield* started(setup);
-      const first = yield* earlierLidClose(setup, previous, "fails", "heard");
-      expect(first.results[0]).toMatchObject({ outcome: "stayed" });
-      expect(setup.source.document.threads[threadId]?.lease).toMatchObject({
-        state: "active",
-        epoch: 1,
-      });
-      // The turn runs on here, and the next lid close asks for epoch 2 again.
-      setup.fixture.activeRunId = "run-2";
-      const again = yield* lidCloses(previous);
-      expect(setup.destination.launches).toEqual([]);
-      expect(again.results[0]).toMatchObject({ threadId, outcome: "skipped" });
-      const record = setup.source.document.threads[threadId];
-      expect(record?.lease).toMatchObject({ state: "active", epoch: 1 });
-      expect(record?.pendingTakeover).toBeNull();
-      expect(record?.continuedOn).toBeNull();
-      expect(setup.source.dispatched.at(-1)).toMatchObject({
-        type: "message.dispatch",
-        manualContinuationOfRunId: "run-2",
-      });
-      expect(turnRefusal(setup.source.document, threadId, m4)).toBeNull();
-    }),
+  it.effect(
+    "a lease saved before a failed launch: the same epoch launches nothing, and the lid close's hold stays",
+    () =>
+      Effect.gen(function* () {
+        const setup = yield* scenario();
+        const previous = yield* started(setup);
+        const first = yield* earlierLidClose(setup, previous, "fails", "heard");
+        expect(first.results[0]).toMatchObject({ outcome: "stayed" });
+        expect(setup.source.document.threads[threadId]?.lease).toMatchObject({
+          state: "active",
+          epoch: 1,
+        });
+        // The turn runs on here, and the next lid close asks for epoch 2 again.
+        setup.fixture.activeRunId = "run-2";
+        const again = yield* lidCloses(previous);
+        expect(setup.destination.launches).toEqual([]);
+        // A saved lease without its thread may be a continuation deleted there: Minis
+        // cannot say nothing began, so the hold this lid close took stays.
+        expect(again.results[0]).toMatchObject({
+          threadId,
+          outcome: "stayed",
+          continuedThreadId: null,
+        });
+        const record = setup.source.document.threads[threadId];
+        expect(record?.lease).toMatchObject({ state: "handing-off", epoch: 1 });
+        expect(record?.pendingTakeover?.request).toMatchObject({ reason: "sleep", epoch: 2 });
+        expect(record?.continuedOn).toBeNull();
+        // The turn the lid close stopped is not started again here.
+        expect(setup.source.dispatched.at(-1)).toMatchObject({ type: "run.interrupt" });
+        expect(
+          setup.source.dispatched.some((command) => command.manualContinuationOfRunId === "run-2"),
+        ).toBe(false);
+        expect(turnRefusal(setup.source.document, threadId, m4)).not.toBeNull();
+        // Sent again, it gets no answer either, and nothing launches.
+        const resent = yield* previous
+          .handOff({ threadId, destinationEnvironmentId: minis })
+          .pipe(Effect.result);
+        expect(resent._tag).toBe("Failure");
+        expect(setup.source.document.threads[threadId]?.lease?.state).toBe("handing-off");
+        expect(setup.destination.launches).toEqual([]);
+      }),
   );
 
   it.effect("launched and never recorded: the same epoch gets that thread, nothing new", () =>
@@ -161,21 +177,41 @@ describe(`a machine on ${PREVIOUS_RELEASE} sends a takeover from a lid close (13
     }),
   );
 
-  it.effect("launched, then the destination's thread store does not read: no new launch", () =>
-    Effect.gen(function* () {
-      const setup = yield* scenario();
-      const previous = yield* started(setup);
-      yield* earlierLidClose(setup, previous, "fails-after-create", "heard");
-      setup.fixture.destinationShellsUnreadable = true;
-      setup.fixture.activeRunId = "run-2";
-      const again = yield* lidCloses(previous);
-      expect(setup.destination.launches).toHaveLength(1);
-      // The previous release reads a refusal on a first send as nothing moved, whatever
-      // its code: the thread is given back, as that release already did after the
-      // failed launch it heard about.
-      expect(again.results[0]).toMatchObject({ threadId, outcome: "skipped" });
-      expect(setup.source.document.threads[threadId]?.lease?.state).toBe("active");
-    }),
+  it.effect(
+    "launched, then the destination's thread store does not read: the source stays paused, then the thread fences it",
+    () =>
+      Effect.gen(function* () {
+        const setup = yield* scenario();
+        const previous = yield* started(setup);
+        yield* earlierLidClose(setup, previous, "fails-after-create", "heard");
+        setup.fixture.destinationShellsUnreadable = true;
+        setup.fixture.activeRunId = "run-2";
+        const again = yield* lidCloses(previous);
+        expect(setup.destination.launches).toHaveLength(1);
+        // On a first send the previous release gives the thread back on any refusal, so
+        // Minis answers nothing it cannot read: the hold this lid close took stays.
+        expect(again.results[0]).toMatchObject({
+          threadId,
+          outcome: "stayed",
+          continuedThreadId: null,
+        });
+        const held = setup.source.document.threads[threadId];
+        expect(held?.lease).toMatchObject({ state: "handing-off", epoch: 1 });
+        expect(held?.pendingTakeover?.request).toMatchObject({ reason: "sleep", epoch: 2 });
+        expect(setup.source.dispatched.at(-1)).toMatchObject({ type: "run.interrupt" });
+        expect(turnRefusal(setup.source.document, threadId, m4)).not.toBeNull();
+        // The store reads again: the re-send gets the thread that launched, nothing new.
+        setup.fixture.destinationShellsUnreadable = false;
+        const resent = yield* previous
+          .handOff({ threadId, destinationEnvironmentId: minis })
+          .pipe(Effect.result);
+        expect(resent._tag).toBe("Success");
+        if (resent._tag === "Success") expect(resent.success.threadId).toBe(continuation);
+        expect(setup.destination.launches).toHaveLength(1);
+        const record = setup.source.document.threads[threadId];
+        expect(record?.continuedOn?.threadId).toBe(continuation);
+        expect(record?.lease).toMatchObject({ state: "fenced", epoch: 2 });
+      }),
   );
 
   it.effect("its request never arrived: the re-send is refused and the thread comes back", () =>

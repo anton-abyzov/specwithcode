@@ -16,6 +16,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import * as ServerConfig from "../config.ts";
@@ -249,6 +250,10 @@ describe("an intents file that does not decode is an error, never no intents", (
         caller,
         { sourceEnvironmentId: SOURCE, graceMinutes: 2, projectIds: [], threadIds: [] },
         f.intents,
+        {
+          projects: Effect.succeed(Option.some([])),
+          continuation: () => Effect.succeed({ kind: "none" }),
+        },
       );
       // Not a refusal: a sender on an earlier release keeps its hold on a 5xx without `error`.
       expect(record.status).toBe(503);
@@ -263,6 +268,43 @@ describe("an intents file that does not decode is an error, never no intents", (
       const f = yield* live(null);
       expect(yield* f.intents.latestState(SOURCE)).toBeNull();
       expect(yield* f.intents.tick).toEqual([]);
+    }),
+  );
+});
+
+describe("compaction keeps what a source still asks about", () => {
+  it.effect("another machine's intents never push out a source's receipt that its work moved", () =>
+    Effect.gen(function* () {
+      // As the previous release left it: its 50 settled intents, the oldest the source's acted one.
+      const other = EnvironmentId.make("machine-c");
+      const receipt = acting({
+        state: "done",
+        results: [{ projectId: ProjectId.make("project-a"), outcome: "handed-over", epoch: 2 }],
+      });
+      const others = Array.from({ length: 50 }, (_, index) =>
+        acting({
+          intentId: `other-${index}`,
+          sourceEnvironmentId: other,
+          projectIds: [],
+          state: index < 49 ? "cancelled" : "waiting",
+          ...(index < 49
+            ? { cancelledAt: "2026-11-09T22:05:00.000Z", cancelReason: "replaced" }
+            : {}),
+        }),
+      );
+      const f = yield* live(fileOf(receipt, ...others));
+      expect(yield* f.intents.latestState(SOURCE)).toBe("done");
+      // The drain settles the other machine's waiting intent: 51 settled, one over the limit.
+      expect((yield* f.intents.tick).map((intent) => intent.intentId)).toEqual(["other-49"]);
+      const kept = f.saved() ?? [];
+      const mine = kept.filter((intent) => intent.sourceEnvironmentId === SOURCE);
+      expect(mine).toMatchObject([{ intentId: "intent-1", state: "done" }]);
+      expect(kept).toHaveLength(50);
+      expect(kept.some((intent) => intent.intentId === "other-0")).toBe(false);
+      // Cancel and status still answer from it: the source gives way.
+      expect(yield* f.intents.latestState(SOURCE)).toBe("done");
+      const told = yield* cancelIntent(f.intents, caller, { sourceEnvironmentId: SOURCE });
+      expect(told.body).toEqual({ cancelled: 0, state: "done", takenOver: ["project-a"] });
     }),
   );
 });
