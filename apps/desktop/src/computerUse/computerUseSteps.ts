@@ -734,6 +734,13 @@ export const MIRRORING_FRONT_WAIT_MS = 1_500;
 export const MIRRORING_TAP_HOLD_MS = 50;
 /** The pause between typed characters. */
 export const MIRRORING_KEY_GAP_MS = 15;
+/**
+ * A repeated key holds each press and leaves a gap before the next, the pace
+ * of a person pressing it: the phone was seen to take one press fewer than
+ * asked when repeats came 30 ms apart without a hold. 50 repeats take 6.5 s.
+ */
+export const MIRRORING_REPEAT_HOLD_MS = 30;
+export const MIRRORING_REPEAT_GAP_MS = 100;
 /** The most characters one `computer_type` sends to the phone, well inside the replay's 30 s limit. */
 export const MIRRORING_MAX_TYPED_CHARS = 1_000;
 
@@ -1032,10 +1039,14 @@ export function mirroringActionSteps(
         awaitMirroring(),
         ...pointerSteps(mirroringPointerTarget(window, context.cursor, context.lastPoint)),
       ];
-      for (let index = 0; index < (action.repeat ?? 1); index++) {
-        if (index > 0) steps.push({ type: "sleep", ms: 30 });
+      const repeat = action.repeat ?? 1;
+      for (let index = 0; index < repeat; index++) {
+        if (index > 0) steps.push({ type: "sleep", ms: MIRRORING_REPEAT_GAP_MS });
         for (const step of chordSteps(chord)) {
           steps.push(step.type === "key" ? { ...step, source: "hid" } : step);
+          if (repeat > 1 && step.type === "key" && step.down && step.keyCode === chord.keyCode) {
+            steps.push({ type: "sleep", ms: MIRRORING_REPEAT_HOLD_MS });
+          }
         }
       }
       return { steps, activate: false };

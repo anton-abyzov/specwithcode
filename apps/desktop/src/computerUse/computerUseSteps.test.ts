@@ -10,6 +10,8 @@ import {
   frontMirroringWindow,
   type InputStep,
   IPHONE_MIRRORING_BUNDLE_ID,
+  MIRRORING_REPEAT_GAP_MS,
+  MIRRORING_REPEAT_HOLD_MS,
   JXA_INPUT_SCRIPT,
   JXA_MIRRORING_SCRIPT,
   latinKeystroke,
@@ -573,5 +575,36 @@ describe("input replay guard", () => {
     const { posted, error } = replayWithStubs(steps, 2);
     expect(error).toMatch(/not-frontmost/);
     expect(posted.map((event) => event.type)).toEqual([5]);
+  });
+
+  it("presses a repeated key on the phone exactly as many times as asked", () => {
+    for (const repeat of [1, 2, 3, 5, 6, 50]) {
+      const plan = mirroringActionSteps({ kind: "key", keys: "backspace", repeat }, display, {
+        scene,
+        cursor: { x: 700, y: 400 },
+      });
+      const { posted, error } = replayWithStubs(plan!.steps, Number.POSITIVE_INFINITY);
+      expect(error).toBeUndefined();
+      const keys = posted.filter((event) => event.key === 51);
+      expect(keys.filter((event) => event.down)).toHaveLength(repeat);
+      expect(keys.filter((event) => !event.down)).toHaveLength(repeat);
+      // Every press is released before the next one starts, and all come from the HID state.
+      expect(keys.map((event) => event.down)).toEqual(
+        Array.from({ length: repeat }, () => [true, false]).flat(),
+      );
+      expect(keys.every((event) => event.hid)).toBe(true);
+      // A repeat holds each press and paces the next like a person would; one press is sent at once.
+      const sleeps = plan!.steps.filter((step) => step.type === "sleep").map((step) => step.ms);
+      const paced = sleeps.filter((ms) => ms !== 40);
+      expect(paced).toEqual(
+        repeat === 1
+          ? []
+          : Array.from({ length: repeat }, (_, index) =>
+              index === 0
+                ? [MIRRORING_REPEAT_HOLD_MS]
+                : [MIRRORING_REPEAT_GAP_MS, MIRRORING_REPEAT_HOLD_MS],
+            ).flat(),
+      );
+    }
   });
 });

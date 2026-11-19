@@ -7,8 +7,8 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   anchorIn,
   CLICK_TARGET,
-  findTab,
   jaccard,
+  locateTabs,
   main,
   mcpClient,
   pageSignature,
@@ -16,9 +16,12 @@ import {
   regionToScreenshot,
   runCheck,
   scrolled,
+  showsSuggestion,
   simulatedPhone,
+  startsWithTyped,
   tabAnchors,
   TYPE_SAMPLES,
+  typedTail,
   windowInScreenshot,
 } from "./iphone-mirroring-check.mjs";
 
@@ -54,6 +57,292 @@ describe("dry run", () => {
     expect(
       phone.state.calls.every((tool) => tool === "request_access" || tool.startsWith("computer_")),
     ).toBe(true);
+  });
+
+  it("passes when Spotlight's inline suggestion takes the first press of each key call", async () => {
+    for (const phone of [
+      simulatedPhone({ suggestion: true }),
+      simulatedPhone({ suggestion: true, keepsQuery: true }),
+    ]) {
+      const result = await runCheck(phone.deps);
+      expect(result.lines.find((entry) => entry.includes("key repeat"))).toMatch(
+        /^PASS key repeat: .*one backspace removed 0 \(suggestion before yes, after no\): not judged; backspace repeat 3 removed 3 \(suggestion before no\): arrived; every press of the repeat arrived/,
+      );
+      expect(result.pass).toBe(true);
+    }
+  });
+
+  it("fails the key repeat check when a repeat loses a press, and still counts the taps", async () => {
+    for (const suggestion of [false, true]) {
+      const result = await runCheck(simulatedPhone({ dropRepeat: true, suggestion }).deps);
+      expect(result.pass).toBe(false);
+      expect(result.lines.find((entry) => entry.includes("key repeat"))).toMatch(
+        suggestion
+          ? /^FAIL key repeat: .*one backspace removed 0 \(suggestion before yes, after no\): not judged; backspace repeat 3 removed 2 \(suggestion before no\): lost/
+          : /^FAIL key repeat: .*one backspace removed 1 .*: arrived; backspace repeat 3 removed 2 .*: lost/,
+      );
+      // Every step starts from an emptied field, so a lost press spoils nothing after it.
+      for (const sample of TYPE_SAMPLES) {
+        expect(result.lines.some((entry) => entry.startsWith(`PASS type "${sample}"`))).toBe(true);
+      }
+      expect(result.lines).toContain("Clicks landed: all 20, but another check failed");
+      expect(result.lines.at(-1)).toMatch(/first failure: key repeat/);
+    }
+  });
+
+  it("fails the key repeat check when every key call loses a press and no suggestion shows", async () => {
+    // One press short on the single backspace and on the repeat: the difference alone would pass.
+    const phone = simulatedPhone({ dropRepeat: true });
+    const call = phone.deps.call;
+    let typedRepeat = false;
+    let swallowed = false;
+    const deps = {
+      ...phone.deps,
+      call: async (tool, args) => {
+        if (tool === "computer_type" && args.text === "QHBR4207") typedRepeat = true;
+        // The first single backspace after the repeat sample never reaches the phone.
+        if (
+          typedRepeat &&
+          !swallowed &&
+          tool === "computer_key" &&
+          args.keys === "backspace" &&
+          args.repeat === undefined
+        ) {
+          swallowed = true;
+          return call("computer_screenshot", {});
+        }
+        return call(tool, args);
+      },
+    };
+    const result = await runCheck(deps);
+    expect(result.lines.find((entry) => entry.includes("key repeat"))).toMatch(
+      /^FAIL key repeat: .*one backspace removed 0 \(suggestion before no, after no\): lost; backspace repeat 3 removed 2 \(suggestion before no\): lost/,
+    );
+  });
+
+  /**
+   * A simulated phone whose Spotlight field always reads with "- Ask Siri" after
+   * it (a suggestion that takes no press), and whose key calls can be lost.
+   */
+  const stubbornSuggestion = ({ dropRepeat = false, loseSingle = false, loseRepeat = false }) => {
+    const phone = simulatedPhone({ dropRepeat });
+    let measuring = false;
+    return {
+      ...phone.deps,
+      ocr: async (...args) =>
+        (await phone.deps.ocr(...args)).map((entry) =>
+          phone.state.app === "spotlight" && phone.state.query !== ""
+            ? { ...entry, text: `${entry.text}- Ask Siri` }
+            : entry,
+        ),
+      call: async (tool, args) => {
+        if (tool === "computer_type") measuring = args.text === "QHBR4207";
+        const lost =
+          measuring &&
+          tool === "computer_key" &&
+          args.keys === "backspace" &&
+          (args.repeat === undefined ? loseSingle : loseRepeat);
+        return phone.deps.call(lost ? "computer_screenshot" : tool, lost ? {} : args);
+      },
+    };
+  };
+
+  it("never passes a repeat that removed one fewer while a suggestion showed", async () => {
+    const result = await runCheck(stubbornSuggestion({ dropRepeat: true }));
+    expect(result.lines.find((entry) => entry.includes("key repeat"))).toMatch(
+      /^UNSURE key repeat: .*one backspace removed 1 .*: arrived; backspace repeat 3 removed 2 \(suggestion before yes\): unsure/,
+    );
+    expect(result.invalid).toBe(true);
+  });
+
+  it("fails a repeat that removed nothing, whatever the single press showed", async () => {
+    for (const loseSingle of [false, true]) {
+      const result = await runCheck(stubbornSuggestion({ loseSingle, loseRepeat: true }));
+      expect(result.lines.find((entry) => entry.includes("key repeat"))).toMatch(
+        /^FAIL key repeat: .*backspace repeat 3 removed 0 .*: lost/,
+      );
+      expect(result.invalid).toBe(false);
+      expect(result.lines.at(-1)).toMatch(/^Result: FAIL .*first failure: key repeat/);
+    }
+  });
+
+  it("judges the repeat on its own readings, whatever came before it", async () => {
+    // An unknown annotation in the first reading, then a repeat that removed nothing.
+    const phone = simulatedPhone({ suggestion: true });
+    let measuring = false;
+    let firstRead = true;
+    const unknownFirst = {
+      ...phone.deps,
+      ocr: async (...args) => {
+        const read = await phone.deps.ocr(...args);
+        if (!measuring || !firstRead || phone.state.app !== "spotlight") return read;
+        firstRead = false;
+        return read.map((entry) => ({
+          ...entry,
+          text: entry.text.replace("- Ask Siri", "- New Suggestion"),
+        }));
+      },
+      call: async (tool, args) => {
+        if (tool === "computer_type") measuring = args.text === "QHBR4207";
+        const lost = measuring && tool === "computer_key" && args.repeat === 3;
+        return phone.deps.call(lost ? "computer_screenshot" : tool, lost ? {} : args);
+      },
+    };
+    const first = await runCheck(unknownFirst);
+    expect(first.lines.find((entry) => entry.includes("key repeat"))).toMatch(
+      /^FAIL key repeat: .*backspace repeat 3 removed 0 .*: lost/,
+    );
+    // A digit that showed up with no key pressed, then a repeat that removed nothing.
+    const other = simulatedPhone();
+    let typedNow = false;
+    const strayDigit = {
+      ...other.deps,
+      call: async (tool, args) => {
+        if (tool === "computer_type") typedNow = args.text === "QHBR4207";
+        if (
+          typedNow &&
+          tool === "computer_key" &&
+          args.repeat === undefined &&
+          args.keys === "backspace"
+        ) {
+          const result = await other.deps.call(tool, args);
+          other.state.query += "5";
+          return result;
+        }
+        const lost = typedNow && tool === "computer_key" && args.repeat === 3;
+        return other.deps.call(lost ? "computer_screenshot" : tool, lost ? {} : args);
+      },
+    };
+    const second = await runCheck(strayDigit);
+    expect(second.lines.find((entry) => entry.includes("key repeat"))).toMatch(
+      /^FAIL key repeat: .*backspace repeat 3 removed 0 \(suggestion before no\): lost/,
+    );
+  });
+
+  it("fails a repeat that removed nothing with fewer digits left than presses", async () => {
+    const phone = simulatedPhone();
+    let measuring = false;
+    const deps = {
+      ...phone.deps,
+      call: async (tool, args) => {
+        if (tool === "computer_type") {
+          measuring = args.text === "QHBR4207";
+          if (measuring) return phone.deps.call(tool, { text: "QHBR420" });
+        }
+        const lost = measuring && tool === "computer_key" && args.repeat === 3;
+        return lost ? phone.deps.call("computer_screenshot", {}) : phone.deps.call(tool, args);
+      },
+    };
+    const result = await runCheck(deps);
+    const line = result.lines.find((entry) => entry.includes("key repeat"));
+    expect(line).toMatch(/^FAIL key repeat: /);
+    expect(line).toContain('"QHBR420" -> "QHBR42" -> "QHBR42" -> "QHBR42"');
+    expect(line).toContain("backspace repeat 3 removed 0 (suggestion before no): lost");
+  });
+
+  it("says why the single press is not judged when its readings could not be counted", async () => {
+    const phone = simulatedPhone();
+    let measuring = false;
+    let first = true;
+    const deps = {
+      ...phone.deps,
+      ocr: async (...args) => {
+        if (measuring && first) {
+          first = false;
+          return [];
+        }
+        return phone.deps.ocr(...args);
+      },
+      call: async (tool, args) => {
+        if (tool === "computer_type") measuring = args.text === "QHBR4207";
+        return phone.deps.call(tool, args);
+      },
+    };
+    const result = await runCheck(deps);
+    expect(result.lines.find((entry) => entry.includes("key repeat"))).toMatch(
+      /^PASS key repeat: .*\(the single press is not judged: its readings could not be counted\)$/,
+    );
+  });
+
+  it("never passes a lost press as a suggestion that stayed on screen", async () => {
+    // The suggestion shows throughout and takes nothing; the single press and one repeat press are lost.
+    const phone = simulatedPhone({ dropRepeat: true });
+    const ocr = phone.deps.ocr;
+    let swallowed = false;
+    let repeatTyped = false;
+    const deps = {
+      ...phone.deps,
+      ocr: async (...args) =>
+        (await ocr(...args)).map((entry) =>
+          phone.state.app === "spotlight" && phone.state.query !== ""
+            ? { ...entry, text: `${entry.text}- Ask Siri` }
+            : entry,
+        ),
+      call: async (tool, args) => {
+        if (tool === "computer_type" && args.text === "QHBR4207") repeatTyped = true;
+        if (
+          repeatTyped &&
+          !swallowed &&
+          tool === "computer_key" &&
+          args.keys === "backspace" &&
+          args.repeat === undefined
+        ) {
+          swallowed = true;
+          return phone.deps.call("computer_screenshot", {});
+        }
+        return phone.deps.call(tool, args);
+      },
+    };
+    const result = await runCheck(deps);
+    expect(result.pass).toBe(false);
+    expect(result.lines.find((entry) => entry.includes("key repeat"))).toMatch(
+      /^UNSURE key repeat: .*one backspace removed 0 \(suggestion before yes, after yes\): not judged; backspace repeat 3 removed 2 \(suggestion before yes\): unsure/,
+    );
+    expect(result.invalid).toBe(true);
+    expect(result.lines.some((entry) => entry.startsWith("Clicks landed"))).toBe(false);
+  });
+
+  it("calls a typed sample unsure, never passed, when unknown text follows it", async () => {
+    for (const shown of ["hbdt- Incorrect", "hbdt "]) {
+      const phone = simulatedPhone();
+      const deps = {
+        ...phone.deps,
+        call: (tool, args) =>
+          phone.deps.call(
+            tool,
+            tool === "computer_type" && args.text === "hbdt" ? { text: shown } : args,
+          ),
+      };
+      const result = await runCheck(deps);
+      expect(result.lines.find((entry) => entry.includes('type "hbdt"'))).toMatch(
+        /^UNSURE type "hbdt"/,
+      );
+      expect(result.pass).toBe(false);
+      expect(result.invalid).toBe(true);
+    }
+  });
+
+  it("taps tabs shown in a row on top", async () => {
+    const result = await runCheck(simulatedPhone({ tabsOnTop: true }).deps);
+    expect(result.lines.find((entry) => entry.startsWith("PASS tabs"))).toMatch(
+      /in a row at y 150/,
+    );
+    expect(result.pass).toBe(true);
+  });
+
+  it("starts text recognition before the timed steps, and is invalid when it cannot", async () => {
+    const phone = simulatedPhone();
+    const warmed = await runCheck({ ...phone.deps, warmUp: async () => 66_400 });
+    expect(warmed.lines).toContain("SETUP text recognition ready in 66.4 s");
+    expect(warmed.pass).toBe(true);
+    const cold = await runCheck({
+      ...simulatedPhone().deps,
+      warmUp: async () => {
+        throw new Error("spawnSync /usr/bin/osascript ETIMEDOUT");
+      },
+    });
+    expect(cold.invalid).toBe(true);
+    expect(cold.lines.at(-1)).toMatch(/text recognition did not start: .*ETIMEDOUT/);
   });
 
   it("says 20 of 20 only on the total line", async () => {
@@ -270,6 +559,7 @@ describe("options", () => {
       ["lap", "start"],
     ]);
     expect(parseArgs(["--out", "x", "--ios", "26.1"])).toMatchObject({ out: "x", ios: "26.1" });
+    expect(() => parseArgs(["--out", "x", "--ios", " "])).toThrow(/needs the iOS version/);
   });
 
   it("refuses a live run outside a thread's shell", async () => {
@@ -290,14 +580,151 @@ describe("judging the screen", () => {
     });
   });
 
-  it("finds a tab label in the bottom of the window, not a title above", () => {
-    const lines = [
-      line("Stopwatch", 620, 150),
+  it("finds the two tabs where they line up as a tab bar, not a page title", () => {
+    const bottom = [
+      line("World Clock", 620, 150),
+      line("World Clock", 640, 820),
       line("Stopwatch", 840, 820),
-      line("Alarms", 700, 820),
+      line("Alarms", 740, 820),
     ];
-    expect(findTab(lines, window, "stopwatch")).toEqual(lines[1]);
-    expect(findTab(lines, window, "Timers")).toBeUndefined();
+    const found = locateTabs(bottom, ["World Clock", "Stopwatch"]);
+    expect(found.tabs["World Clock"]).toEqual(bottom[1]);
+    expect(found.bar).toMatchObject({ axis: "row", at: 830 });
+    // A wider layout: the tabs in a row on top, the page title below them.
+    const top = [
+      line("World Clock", 640, 140),
+      line("Stopwatch", 840, 140),
+      line("World Clock", 620, 200),
+    ];
+    expect(locateTabs(top, ["World Clock", "Stopwatch"]).tabs["World Clock"]).toEqual(top[0]);
+    // A sidebar: one above the other, left-aligned.
+    const side = [
+      line("World Clock", 610, 300),
+      line("Stopwatch", 610, 380),
+      line("Lap", 800, 300),
+    ];
+    const column = locateTabs(side, ["World Clock", "Stopwatch"]);
+    expect(column.bar.axis).toBe("column");
+    expect(pageSignature(side, window, column.bar)).toEqual(["lap"]);
+    // A title alone, with the other tab nowhere in line with it.
+    expect(
+      locateTabs(
+        [line("World Clock", 620, 150), line("Stopwatch", 900, 820)],
+        ["World Clock", "Stopwatch"],
+      ),
+    ).toBeUndefined();
+    expect(locateTabs(bottom, ["World Clock", "Timers"])).toBeUndefined();
+  });
+
+  it("needs a third Clock tab in the bar, so a title and one tab never pass for a bar", () => {
+    const clock = ["World Clock", "Alarms", "Stopwatch", "Timers"];
+    const pair = ["World Clock", "Stopwatch"];
+    // The bottom Stopwatch label missed once; the Stopwatch page title is left-aligned above.
+    const missed = [
+      line("Stopwatch", 620, 150, 80),
+      line("World Clock", 640, 820, 90),
+      line("Alarms", 740, 820, 60),
+      line("Timers", 900, 820, 50),
+    ];
+    expect(locateTabs(missed, pair, clock)).toBeUndefined();
+    // A sidebar with a World Clock title in line with the Stopwatch label.
+    const side = [
+      line("World Clock", 610, 300),
+      line("Alarms", 610, 340),
+      line("Stopwatch", 610, 380),
+      line("Timers", 610, 420),
+      line("World Clock", 800, 380),
+    ];
+    const found = locateTabs(side, pair, clock);
+    expect(found.bar.axis).toBe("column");
+    expect(found.tabs["World Clock"]).toEqual(side[0]);
+    // A World Clock title above a sidebar, in line with it: the tab is the one among the others,
+    // and the title stays page text.
+    const titled = [line("World Clock", 610, 150), ...side.slice(0, 4)];
+    const sidebar = locateTabs(titled, pair, clock);
+    expect(sidebar.tabs["World Clock"]).toEqual(titled[1]);
+    expect(pageSignature(titled, window, sidebar.bar)).toEqual(["world clock"]);
+    // The World Clock tab missed once: the title far above the others is not taken for it.
+    expect(locateTabs([titled[0], ...titled.slice(2)], pair, clock)).toBeUndefined();
+    // The full bottom bar.
+    const bottom = [...missed.slice(1), line("Stopwatch", 840, 820, 80)];
+    expect(locateTabs(bottom, pair, clock).bar).toMatchObject({ axis: "row", at: 830 });
+  });
+
+  it("reads Clock once more when the first reading misses a tab label", async () => {
+    const phone = simulatedPhone();
+    let clockReads = 0;
+    const deps = {
+      ...phone.deps,
+      ocr: async (...args) => {
+        const read = await phone.deps.ocr(...args);
+        if (phone.state.app !== "Clock" || clockReads++ > 0) return read;
+        // The first Clock reading misses the Stopwatch tab and shows a Stopwatch title.
+        return [
+          ...read.filter((entry) => entry.text !== "Stopwatch"),
+          line("Stopwatch", 620, 150, 80),
+        ];
+      },
+    };
+    const result = await runCheck(deps);
+    expect(result.lines.find((entry) => entry.startsWith("PASS tabs"))).toMatch(/in a row/);
+    expect(result.pass).toBe(true);
+  });
+
+  it("leaves a tab bar on top out of every page's words", () => {
+    const lines = [
+      line("World Clock", 640, 140),
+      line("Stopwatch", 840, 140),
+      line("Lap", 620, 400),
+    ];
+    const { bar } = locateTabs(lines, ["World Clock", "Stopwatch"]);
+    expect(pageSignature(lines, window, bar)).toEqual(["lap"]);
+    expect(anchorIn(pageSignature(lines, window, bar), ["world clock"])).toBeUndefined();
+  });
+
+  it("reads typed text only at the start of the field, tolerating what no key types", () => {
+    expect(startsWithTyped("hbdt- Ask Siri", "hbdt")).toBe(true);
+    expect(startsWithTyped("hbdt|", "hbdt")).toBe(true);
+    expect(startsWithTyped("hbdt", "hbdt")).toBe(true);
+    // Leftovers before the text, or more typed text after it, do not count.
+    expect(startsWithTyped("zQ4207- Ask Siri", "4207")).toBe(false);
+    expect(startsWithTyped("42075", "4207")).toBe(false);
+    // Case only where the shapes are the same; accents and Cyrillic lookalikes are reading noise.
+    expect(startsWithTyped("X@y#Z", "x@y#z")).toBe(true);
+    expect(startsWithTyped("x@Y#z", "x@y#z")).toBe(false);
+    expect(startsWithTyped("QНBR", "QHBR")).toBe(true);
+    expect(startsWithTyped("hbdť", "hbdt")).toBe(true);
+    // A neighbouring key never passes: q read as "ą" stays an a.
+    expect(startsWithTyped("ząxv", "zqxv")).toBe(false);
+    expect(startsWithTyped("x@y3z", "x@y#z")).toBe(false);
+    expect(typedTail("QHBR4207- Ask Siri", "QHBR", true)).toBe(4);
+    expect(typedTail("QHBR42", "QHBR", true)).toBe(2);
+    expect(typedTail("zQHBR42", "QHBR", true)).toBeUndefined();
+    expect(showsSuggestion("QHBR4207- Ask Siri", "QHBR")).toBe(true);
+    expect(showsSuggestion("QHBR4207", "QHBR")).toBe(false);
+    expect(showsSuggestion("QHBR4207|", "QHBR")).toBe(false);
+    // A stray key after the text is not taken for the cursor or a suggestion.
+    expect(startsWithTyped("hbdtl", "hbdt")).toBe(false);
+    expect(startsWithTyped("hbdt.", "hbdt")).toBe(false);
+    expect(startsWithTyped("hbdt/a", "hbdt")).toBe(false);
+    expect(startsWithTyped("hbdt-incorrect", "hbdt")).toBe(false);
+    expect(startsWithTyped("hbdt- wrong", "hbdt")).toBe(false);
+    expect(startsWithTyped("hb dt", "hbdt")).toBe(false);
+    expect(startsWithTyped("hbdt - Ask Siri", "hbdt")).toBe(true);
+    // Spaces typed around the text, or a suffix that is not a known suggestion, never pass.
+    expect(startsWithTyped("hbdt ", "hbdt")).toBe(false);
+    expect(startsWithTyped(" hbdt", "hbdt")).toBe(false);
+    expect(startsWithTyped("hbdt- Incorrect", "hbdt")).toBe(false);
+    expect(startsWithTyped("hbdt - A", "hbdt")).toBe(false);
+  });
+
+  it("types samples that text recognition reads in one way only", () => {
+    for (const sample of TYPE_SAMPLES) {
+      const letters = sample.includes("@") ? "" : sample.replace(/[^A-Za-z]/g, "");
+      expect(letters).not.toMatch(/[cosvwxzqCOSVWXZ]/);
+      expect(sample).not.toMatch(/[!il1|]/);
+    }
+    expect(TYPE_SAMPLES.some((sample) => /(.)\1/.test(sample))).toBe(true);
   });
 
   it("tells pages apart by their words, leaving clock readings out", () => {
