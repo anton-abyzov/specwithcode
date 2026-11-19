@@ -1,28 +1,28 @@
 /**
  * The advisor: which model reviews a running thread's work, and by which
- * route. A Claude thread advised by a stronger Claude model uses Claude's own
- * advisor (Anthropic reads the whole conversation inside the same request);
- * every other pair goes through the studio-code `advisor` tool, which sends a
- * budgeted brief to a child session. The order is walked by the fallback
- * system, so sign-in, usage, per-token billing and exclusions follow the same
- * rules as a reviewer or a limited thread's fallback.
+ * route. A Claude thread advised by a Claude model at least as capable uses
+ * Claude's own advisor (Anthropic reads the whole conversation inside the
+ * same request); every other pair goes through the studio-code `advisor`
+ * tool, which sends a budgeted brief to a child session. The order is the
+ * saved advisor model, then the project's Complex track, walked by the
+ * fallback system, so sign-in, usage, per-token billing and exclusions follow
+ * the same rules as a limited thread's fallback.
  *
  * @module advisor
  */
 import type {
   AdvisorSettings,
+  ModelLanes,
   ModelSelection,
   ProviderInstanceId,
-  ProviderModelTier,
-  ProviderModelTiers,
   ServerProvider,
   ThreadAdvisorMode,
 } from "@specweave-studio/contracts";
 
-import { reviewerChain, usageNeverRead } from "./adversarialReview.ts";
+import { usageNeverRead } from "./adversarialReview.ts";
 import { describeModel, isSameModel, sameModelOn } from "./modelIdentity.ts";
 import { fallbackSelectionKey } from "./modelTiers.ts";
-import { builtInTrackSelection, isHeldSource, providersForModel } from "./modelTracks.ts";
+import { launchTrackLanes } from "./modelTracks.ts";
 import {
   describeFallbackOrder,
   type ExcludedFallbackModel,
@@ -31,12 +31,6 @@ import {
   isPerTokenProvider,
   isUnknownBillingAgent,
 } from "./providerFallback.ts";
-
-/** The first advisor of the built-in order. */
-export const DEFAULT_ADVISOR_MODEL = {
-  model: "claude-fable-5-2",
-  name: "Claude Fable 5.2",
-} as const;
 
 // ── Is the advisor on for this thread ────────────────────────────────
 
@@ -62,42 +56,38 @@ export function threadAdvisorState(
 
 export interface AdvisorOrderInput {
   readonly providers: ReadonlyArray<ServerProvider>;
-  /** The saved advisor model, tried first; null uses the built-in order alone. */
+  /** The saved advisor model, tried first; null starts with the Complex track. */
   readonly model: ModelSelection | null;
-  /** The project's Review track: its saved reviewers, or empty for the built-in one. */
-  readonly reviewers: ReadonlyArray<ModelSelection>;
-  readonly tier: ProviderModelTier;
-  readonly tiers?: ProviderModelTiers | undefined;
+  /** The project's saved tracks (`modelLanes`); an empty Complex track uses the built-in one. */
+  readonly lanes: ModelLanes | null | undefined;
   /** The saved Sources order (`defaultModelProviders`): which source of a model is tried first. */
   readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | undefined;
 }
 
 /**
- * The advisor order: the saved model, then Claude Fable 5.2 on each source
- * billed by plan, then the Review track. Duplicates keep their first place.
+ * The advisor order: the saved model, then the project's Complex track with
+ * each model on every account that runs it, in the saved Sources order (see
+ * `launchTrackLanes`). The Review track is never in it: the reviewer of a
+ * finished feature does not also steer the work. Built-in entries and added
+ * accounts are never billed per token or with unknown billing. Duplicates
+ * keep their first place.
  */
 export function advisorOrder(input: AdvisorOrderInput): ReadonlyArray<ModelSelection> {
-  // Never a source billed per token or with unknown billing: the built-in
-  // entry is nobody's spending choice.
-  const fable = providersForModel({
-    providers: input.providers,
-    model: { slug: DEFAULT_ADVISOR_MODEL.model },
-    order: input.sourceOrder,
-  })
-    .filter(({ provider, slug }) => !isHeldSource(provider, slug))
-    .map(({ provider, slug }) => builtInTrackSelection({}, provider, slug));
-  const review = reviewerChain({
-    providers: input.providers,
-    reviewers: input.reviewers,
-    tier: input.tier,
-    tiers: input.tiers,
-    sourceOrder: input.sourceOrder,
-  });
+  const complex = launchTrackLanes(input.lanes, input.providers, input.sourceOrder).complex;
   const seen = new Set<string>();
-  return [...(input.model === null ? [] : [input.model]), ...fable, ...review].filter((entry) => {
+  return [...(input.model === null ? [] : [input.model]), ...complex].filter((entry) => {
     const key = fallbackSelectionKey(entry);
     return seen.has(key) ? false : (seen.add(key), true);
   });
+}
+
+/** The entries the person chose: the saved advisor model and a saved Complex track. */
+function chosenAdvisorEntries(input: AdvisorOrderInput): ReadonlySet<string> {
+  return new Set(
+    [...(input.model === null ? [] : [input.model]), ...(input.lanes?.complex ?? [])].map(
+      fallbackSelectionKey,
+    ),
+  );
 }
 
 /** Why an entry of the advisor order was passed over. */
@@ -117,11 +107,11 @@ export interface AdvisorResolution {
 
 /**
  * The first entry of the advisor order that can run now and is not the
- * thread's own model, on any source: a model does not advise itself. Only the
- * saved model counts as consent to Gemini spend or unknown billing; the
- * built-in order never picks either. As for reviewers, an entry whose usage
- * was never read keeps its place, and a stale reading yields to an entry with
- * known room.
+ * thread's own model, on any source: on the studio-code brief a model does not
+ * advise itself. Only the saved advisor model and a saved Complex track count
+ * as consent to Gemini spend or unknown billing; the built-in order never
+ * picks either. As for reviewers, an entry whose usage was never read keeps
+ * its place, and a stale reading yields to an entry with known room.
  */
 export function resolveAdvisor(
   input: AdvisorOrderInput & {
@@ -147,7 +137,7 @@ export function resolveAdvisor(
     nowMs: input.nowMs,
     limitedInstanceIds: input.limitedInstanceIds,
   });
-  const named = new Set(input.model === null ? [] : [fallbackSelectionKey(input.model)]);
+  const named = chosenAdvisorEntries(input);
   const skipped: AdvisorSkip[] = [];
   let unverified: ModelSelection | null = null;
   for (const entry of entries) {
@@ -236,38 +226,29 @@ export function claudeCapabilityLevel(slug: string): number | null {
   return CLAUDE_CAPABILITY_BY_SLUG.get(canonicalClaudeSlug(slug)) ?? null;
 }
 
-/** Fable and Mythos of one version are the same model under two names. */
-function claudeModelIdentity(slug: string): string {
-  return canonicalClaudeSlug(slug).replace(/^claude-mythos-/u, "claude-fable-");
-}
-
-/** Whether Claude's own advisor accepts `advisor` for a thread on `thread`. */
+/**
+ * Whether Claude's own advisor accepts `advisor` for a thread on `thread`.
+ * Models of equal capability may advise each other, and a model may advise
+ * itself, as Anthropic allows; `preferredAdvisor` decides when that happens.
+ */
 export function claudeAdvisorPairAllowed(thread: string, advisor: string): boolean {
   const threadLevel = claudeCapabilityLevel(thread);
   const advisorLevel = claudeCapabilityLevel(advisor);
   if (threadLevel === null || advisorLevel === null) return false;
-  // A model does not advise itself here, though Claude would allow it.
-  if (claudeModelIdentity(thread) === claudeModelIdentity(advisor)) return false;
   return advisorLevel >= MIN_CLAUDE_ADVISOR_LEVEL && advisorLevel >= threadLevel;
 }
 
 /**
- * The first entry of the advisor order that is not the thread's own model,
- * whatever its usage says. Claude's own advisor is chosen from this, not from
- * `resolveAdvisor`: a choice that followed live usage would restart the
- * Claude session each time a reading changed.
+ * The first entry of the advisor order, whatever its usage says. A thread on
+ * the model that heads the order is advised by that same model: it reads the
+ * whole conversation fresh, and the measured same-model consults changed the
+ * thread's course more often than a stronger model's (increment 1420).
+ * Claude's own advisor is chosen from this, not from `resolveAdvisor`: a
+ * choice that followed live usage would restart the Claude session each time
+ * a reading changed.
  */
-export function preferredAdvisor(
-  input: AdvisorOrderInput & { readonly thread: ModelSelection },
-): ModelSelection | null {
-  const providerOf = (selection: Pick<ModelSelection, "instanceId">) =>
-    input.providers.find((provider) => provider.instanceId === selection.instanceId);
-  const threadNames = describeModel(providerOf(input.thread), input.thread.model);
-  return (
-    advisorOrder(input).find(
-      (entry) => !isSameModel(threadNames, describeModel(providerOf(entry), entry.model)),
-    ) ?? null
-  );
+export function preferredAdvisor(input: AdvisorOrderInput): ModelSelection | null {
+  return advisorOrder(input)[0] ?? null;
 }
 
 /**
@@ -297,6 +278,57 @@ export function claudeBuiltInAdvisorModel(input: {
   const slug = sameModelOn(threadProvider, describeModel(advisorProvider, input.advisor.model));
   if (slug === undefined) return null;
   return claudeAdvisorPairAllowed(input.thread.model, slug) ? slug : null;
+}
+
+/** Who answers a thread's consults, for the thread's Advisor row. */
+export interface ThreadAdvisorPreview {
+  /** The model the next consult goes to, or null when no model can advise now. */
+  readonly advisor: ModelSelection | null;
+  /** The advisor is the model the thread runs on, through Claude's own advisor. */
+  readonly sameModel: boolean;
+  /**
+   * For a thread on Claude's own advisor: the model a consult goes to once the
+   * context passes the limit and the brief takes over; null when it is the
+   * same advisor or none.
+   */
+  readonly pastLimit: ModelSelection | null;
+}
+
+/**
+ * Who answers a thread's consults, read with the same functions the session
+ * and the `advisor` tool use, so the row and the run never disagree. It does
+ * not read the live context size: a Claude thread gets Claude's own advisor
+ * first, and `pastLimit` names who takes over past the limit.
+ */
+export function threadAdvisorPreview(
+  input: AdvisorOrderInput & {
+    readonly thread: ModelSelection;
+    readonly claudeBuiltIn: boolean;
+    readonly excludedModels?: ReadonlyArray<ExcludedFallbackModel> | undefined;
+    readonly nowMs: number;
+    readonly limitedInstanceIds?: ReadonlySet<string> | undefined;
+  },
+): ThreadAdvisorPreview {
+  const brief = resolveAdvisor(input).advisor;
+  const preferred = input.claudeBuiltIn ? preferredAdvisor(input) : null;
+  const builtIn = claudeBuiltInAdvisorModel({
+    providers: input.providers,
+    thread: input.thread,
+    advisor: preferred,
+  });
+  if (preferred === null || builtIn === null) {
+    return { advisor: brief, sameModel: false, pastLimit: null };
+  }
+  const names = (selection: ModelSelection) =>
+    describeModel(
+      input.providers.find((provider) => provider.instanceId === selection.instanceId),
+      selection.model,
+    );
+  return {
+    advisor: preferred,
+    sameModel: isSameModel(names(input.thread), names(preferred)),
+    pastLimit: brief !== null && !isSameModel(names(brief), names(preferred)) ? brief : null,
+  };
 }
 
 export type AdvisorRoute = "built-in" | "studio";
