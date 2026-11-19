@@ -173,6 +173,20 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
   const resource = options.resource ?? RESOURCE;
   const failure = (operation: string, detail: string) =>
     new ProviderSetupError({ instanceId: options.instanceId, operation, detail });
+  // Set when the API refused the token a running Codex held: the next access
+  // renews it even if its expiry time says it is still good.
+  let renewRequested = false;
+  // The life of the last token this process saw issued. A short-lived token
+  // renews at half its life, not ten minutes early, so it is not renewed on
+  // every access.
+  let issuedLifetimeMs: number | null = null;
+  const renewLeadMs = () =>
+    issuedLifetimeMs === null
+      ? ACCESS_RENEW_BEFORE_MS
+      : Math.min(ACCESS_RENEW_BEFORE_MS, issuedLifetimeMs / 2);
+  const requestRenewal = Effect.sync(() => {
+    renewRequested = true;
+  });
   let metadata: typeof Discovery.Type | undefined;
   let jwks: ReturnType<typeof createRemoteJWKSet> | undefined;
   const discover = Effect.gen(function* () {
@@ -686,6 +700,7 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
             },
             scopes.includes(REQUIRED_SCOPE) || Option.isNone(yield* read),
           );
+          issuedLifetimeMs = tokens.expires_in * 1000;
         }),
       );
       if (!scopes.includes(REQUIRED_SCOPE))
@@ -720,12 +735,6 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
       ),
     );
   });
-  // Set when the API refused the token a running Codex held: the next access
-  // renews it even if its expiry time says it is still good.
-  let renewRequested = false;
-  const requestRenewal = Effect.sync(() => {
-    renewRequested = true;
-  });
   const access = lock.withPermit(
     withSessionLock(
       Effect.uninterruptible(
@@ -740,7 +749,7 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
               "Token sharing is disabled. Sign in with ChatGPT and enable token sharing.",
             );
           const now = yield* Clock.currentTimeMillis;
-          if (!renewRequested && record.expiresAt - now > ACCESS_RENEW_BEFORE_MS) return record;
+          if (!renewRequested && record.expiresAt - now > renewLeadMs()) return record;
           if (record.earliestRefreshAt !== null && record.earliestRefreshAt > now) {
             if (record.expiresAt > now) return record;
             return yield* failure(
@@ -786,6 +795,7 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
           };
           yield* save(record);
           renewRequested = false;
+          issuedLifetimeMs = tokens.expires_in * 1000;
           if (!record.scopes.includes(REQUIRED_SCOPE))
             return yield* failure(
               "sharing",

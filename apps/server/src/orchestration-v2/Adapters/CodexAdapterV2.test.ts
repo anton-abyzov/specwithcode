@@ -4055,7 +4055,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             }).slice(0, 5),
           });
           const nowMs = yield* Clock.currentTimeMillis;
-          const processExpiresAt = nowMs + 5 * 60_000;
+          const processExpiresAt = nowMs + 60 * 60_000;
           const harness = yield* makeCodexReplayHarness(
             transcript,
             undefined,
@@ -4070,13 +4070,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               }),
               renewedAccessExpiresAt: Effect.succeed(
                 renewed === "later"
-                  ? nowMs + 60 * 60_000
+                  ? nowMs + 120 * 60_000
                   : renewed === "same"
                     ? processExpiresAt
                     : null,
               ),
             },
           );
+          // Fresh: nowhere near expiry, whatever a renewal would return.
+          assert.isNull(yield* harness.runtime.replaceWhenIdle!);
+          yield* TestClock.adjust("55 minutes");
           const reason = yield* harness.runtime.replaceWhenIdle!;
           if (renewed === "later")
             assert.equal(reason, CodexAdapterV2.CODEX_ACCESS_EXPIRING_REASON);
@@ -4112,6 +4115,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     );
     assert.equal(
       CodexAdapterV2.codexAccessExpiryReplacement(now + 60_000, now),
+      CodexAdapterV2.CODEX_ACCESS_EXPIRING_REASON,
+    );
+    // A five-minute token launched now is not replaced until half its life is gone.
+    const launched = now;
+    const shortLived = now + 5 * 60_000;
+    assert.isNull(CodexAdapterV2.codexAccessExpiryReplacement(shortLived, now, launched));
+    assert.isNull(
+      CodexAdapterV2.codexAccessExpiryReplacement(shortLived, now + 2 * 60_000, launched),
+    );
+    assert.equal(
+      CodexAdapterV2.codexAccessExpiryReplacement(shortLived, now + 3 * 60_000, launched),
       CodexAdapterV2.CODEX_ACCESS_EXPIRING_REASON,
     );
   });

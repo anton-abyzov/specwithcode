@@ -1223,16 +1223,22 @@ export function isCodexSignInExpiredMessage(message: string | null | undefined):
 
 /**
  * Why an idle managed Codex process should be replaced: the access token it
- * was started with expires within the renewal window. Null for a native
- * sign-in, which Codex renews itself.
+ * was started with expires within the renewal window. The window is at most
+ * half the token's life at launch, so a short-lived token does not replace
+ * the process on every turn. Null for a native sign-in, which Codex renews
+ * itself.
  */
 export function codexAccessExpiryReplacement(
   accessExpiresAt: number | null | undefined,
   nowMs: number,
+  launchedAtMs?: number,
 ): string | null {
-  return accessExpiresAt != null && accessExpiresAt - nowMs <= CODEX_ACCESS_RENEW_BEFORE_MS
-    ? CODEX_ACCESS_EXPIRING_REASON
-    : null;
+  if (accessExpiresAt == null) return null;
+  const lead =
+    launchedAtMs === undefined
+      ? CODEX_ACCESS_RENEW_BEFORE_MS
+      : Math.min(CODEX_ACCESS_RENEW_BEFORE_MS, Math.max(0, accessExpiresAt - launchedAtMs) / 2);
+  return accessExpiresAt - nowMs <= lead ? CODEX_ACCESS_EXPIRING_REASON : null;
 }
 
 const codexSignInExpiredFailure = () =>
@@ -6734,6 +6740,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   const expiring = codexAccessExpiryReplacement(
                     processExpiresAt,
                     yield* Clock.currentTimeMillis,
+                    openedAtMs,
                   );
                   // Only a renewed token is worth a restart; otherwise the
                   // new process would start on the same dying one.

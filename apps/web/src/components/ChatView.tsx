@@ -10482,10 +10482,14 @@ export default function ChatView(props: ChatViewProps) {
   });
   // An expired sign-in: another model on it fails the same way, so the way
   // out is signing in again on the machine that runs the thread.
-  const signInExpiredInstanceId =
-    isProviderSignInExpiredFailureCode(latestFailureItem?.failure.code) && activeThread
-      ? activeThread.modelSelection.instanceId
-      : null;
+  // It names the failed run's provider, not the current pick: after a switch
+  // to another provider, the expired one is still the one to sign in to.
+  const signInExpiredInstanceId = isProviderSignInExpiredFailureCode(
+    latestFailureItem?.failure.code,
+  )
+    ? (serverProjection?.runs.find((run) => run.id === latestFailureItem?.runId)
+        ?.providerInstanceId ?? null)
+    : null;
   const signInRecovery = useMemo(() => {
     if (signInExpiredInstanceId === null) return undefined;
     const entry = providerInstanceEntries.find(
