@@ -54,7 +54,7 @@ import {
   type CopyMeta,
   type IncrementCopy,
 } from "./IncrementCopies.ts";
-import { incrementRootFor, readBounded } from "./ThreadIncrementProgress.ts";
+import { compareNumbered, incrementRootFor, readBounded } from "./ThreadIncrementProgress.ts";
 import { INCREMENTS_DIR } from "./ThreadReports.ts";
 
 const SPEC_BYTES = 262_144;
@@ -402,7 +402,7 @@ export async function readBoardCard(
 
 const newestFirst = (left: ProjectBoardCard, right: ProjectBoardCard) =>
   (right.updatedAt ?? "").localeCompare(left.updatedAt ?? "") ||
-  right.incrementId.localeCompare(left.incrementId, undefined, { numeric: true });
+  compareNumbered(right.incrementId, left.incrementId);
 
 export async function readProjectBoard(
   workspaceRoot: string,
@@ -443,7 +443,7 @@ export async function readProjectBoard(
     .toSorted(
       (left, right) =>
         (right.copy.meta.updatedAt ?? "").localeCompare(left.copy.meta.updatedAt ?? "") ||
-        right.id.localeCompare(left.id, undefined, { numeric: true }),
+        compareNumbered(right.id, left.id),
     )
     .slice(0, doneLimit);
   const shown = [...open, ...shownClosed];
