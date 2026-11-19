@@ -887,6 +887,9 @@ export const make = Effect.gen(function* () {
         // Accepted, and the launch was cut: nothing below may turn that into a "no".
         standing = true;
       }
+      // An accepted takeover is finished as it was first asked: a repeat that
+      // lost the batch's fields never turns "Ready" into a resumed run.
+      const batch = recorded === undefined ? request.batch : recorded.batch;
       const verdict = takeoverVerdict(yield* document, request, label);
       if (verdict.kind === "repeat") return verdict.response;
       if (verdict.kind === "refuse") {
@@ -947,6 +950,17 @@ export const make = Effect.gen(function* () {
       );
       if (held !== checkpoint.commit) {
         return yield* refuse(409, "invalid", at("no checkpoint for this thread"), "checkpoint");
+      }
+      // A batch names what happens on arrival and the revision it hands over.
+      // Compared here, before a file or a worktree is placed for it.
+      const arrival = batchArrival({
+        batch,
+        sequence: request.sequence,
+        checkpoint,
+        resumable: shouldResume(checkpoint.runEnding),
+      });
+      if (arrival.kind === "refuse") {
+        return yield* refuse(409, "invalid", at(REVISION_MISMATCH), "checkpoint");
       }
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError(() =>
@@ -1042,16 +1056,6 @@ export const make = Effect.gen(function* () {
         review.kind === "locked"
           ? review.modelSelection
           : (request.modelSelection ?? detail.modelSelection);
-      // A batch names what happens on arrival and the revision it hands over.
-      const arrival = batchArrival({
-        batch: request.batch,
-        sequence: request.sequence,
-        checkpoint,
-        resumable: shouldResume(checkpoint.runEnding),
-      });
-      if (arrival.kind === "refuse") {
-        return yield* refuse(409, "invalid", at(REVISION_MISMATCH), "checkpoint");
-      }
       const resume = arrival.resume;
       const ceiling = caller.runtimeCeiling ?? null;
       const clamped =
@@ -1136,6 +1140,7 @@ export const make = Effect.gen(function* () {
           trigger: request.trigger ?? null,
           reason: request.reason,
           modelSelection: request.modelSelection,
+          ...(batch === undefined ? {} : { batch }),
           now,
         }),
       ).pipe(

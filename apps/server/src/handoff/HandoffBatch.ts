@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - batch ids and ref names come from node:crypto.
+// @effect-diagnostics nodeBuiltinImport:off - batch ids and ref names come from node:crypto; folder checks read real paths.
 /**
  * The hand off batch (1390): the one way work leaves this machine for
  * another, for a person's request and for the usage-limit rule alike.
@@ -23,6 +23,8 @@
  * update" and nothing is held.
  */
 import * as NodeCrypto from "node:crypto";
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
 
 import {
   type EnvironmentId,
@@ -59,7 +61,8 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 
-import { runGit } from "../fleet/folderTransfer/git.ts";
+import { gitList, runGit } from "../fleet/folderTransfer/git.ts";
+import { ProjectSync } from "../fleet/ProjectSync.ts";
 import { ProjectSyncExtras } from "../fleet/ProjectSyncExtras.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { BundleError, resolveRepositoryPath } from "./bundleGit.ts";
@@ -94,6 +97,15 @@ const SAME_MACHINE = "Pick another machine to hand this machine's threads to.";
 const FOLDER_WORK_UNAVAILABLE =
   "This machine cannot read its project folder work now, so it stays here.";
 const BRANCH_NEXT_STEP = "To use it there, check it out or merge it.";
+export const PROJECT_NOT_READ =
+  "This machine could not read the thread's project, so it cannot tell whose conversation it is. It stays here.";
+const AUTOMATIC_WORKING =
+  "It is working now. The usage-limit rule takes a thread that stopped, never one that works.";
+const AUTOMATIC_NO_RULE =
+  "This machine cannot read the usage-limit rule now, so nothing moves by it.";
+const BATCH_STOPPED = "The server stopped before this thread was held. Nothing moved.";
+const OUTSIDE_PROJECT = "The repository is not inside this project's folder.";
+const NOT_A_PROJECT_REPOSITORY = "The repository is not one of this project's repositories.";
 
 // What the plan asks for
 
@@ -197,12 +209,84 @@ export async function applyFolderWork(input: {
   }
   const status = await runGit(root, ["status", "--porcelain=v1", "--untracked-files=all"]);
   if (status.stdout.trim() !== "") return stays("the folder has changes of its own");
-  // The working folder takes the snapshot's files; the index goes back to the
-  // commit, so every change reads as uncommitted, as it did on the source.
-  await runGit(root, ["read-tree", "-u", "--reset", snapshot]);
+  // A file Git ignores is not in that status. Where the snapshot brings a path
+  // the commit does not track, anything already there is this folder's alone.
+  const added = await gitList(root, [
+    "diff",
+    "--name-only",
+    "--no-renames",
+    "--diff-filter=A",
+    "-z",
+    head,
+    snapshot,
+  ]);
+  for (const path of added) {
+    if (await occupied(root, path)) {
+      return stays(`this folder has its own ${path}, which Git does not list`);
+    }
+  }
+  // A merge of the two trees, not a reset: Git checks every file it would
+  // touch against the commit first and changes nothing when one differs.
+  await runGit(root, ["update-index", "-q", "--refresh"], { allowFailure: true });
+  const merged = await runGit(root, ["read-tree", "-m", "-u", head, snapshot], {
+    allowFailure: true,
+  });
+  if (merged.code !== 0) return stays("a file here changed or is in the way");
+  // The index goes back to the commit, so every change reads as uncommitted,
+  // as it did on the source.
   await runGit(root, ["read-tree", head]);
   await runGit(root, ["update-ref", marker, snapshot]);
   return { applied: true, reason: null };
+}
+
+/** Whether something of this folder's own sits at `path` or where one of its folders must be. */
+async function occupied(root: string, path: string): Promise<boolean> {
+  const segments = path.split("/");
+  for (let depth = 1; depth <= segments.length; depth += 1) {
+    const stat = await NodeFSP.lstat(NodePath.join(root, ...segments.slice(0, depth))).catch(
+      () => null,
+    );
+    if (stat === null) return false;
+    // The path itself, or a parent that is a file or a link: the files would replace or pass through it.
+    if (depth === segments.length || !stat.isDirectory()) return true;
+  }
+  return false;
+}
+
+/**
+ * The repository folder work is applied in: one of the granted project's own
+ * repositories, and really inside the project's folder. A path that climbs out
+ * of the folder, a link that leads elsewhere, and a repository the project
+ * does not list are refused. `eligible` null: only the project's own folder.
+ */
+export async function folderWorkRoot(input: {
+  readonly projectRoot: string;
+  readonly repositoryPath: string;
+  readonly eligible: ReadonlyArray<string> | null;
+}): Promise<string> {
+  const segments = input.repositoryPath
+    .split("/")
+    .filter((segment) => segment.length > 0 && segment !== ".");
+  if (segments.includes("..")) throw new BundleError("invalid", OUTSIDE_PROJECT);
+  const relative = segments.join("/");
+  const listed = new Set(
+    (input.eligible ?? [""]).map((path) =>
+      path
+        .split("/")
+        .filter((segment) => segment.length > 0 && segment !== ".")
+        .join("/"),
+    ),
+  );
+  if (!listed.has(relative)) throw new BundleError("invalid", NOT_A_PROJECT_REPOSITORY);
+  const root = await resolveRepositoryPath(input.projectRoot, relative);
+  const [real, project] = await Promise.all([
+    NodeFSP.realpath(root),
+    NodeFSP.realpath(input.projectRoot),
+  ]);
+  if (real !== project && !real.startsWith(project + NodePath.sep)) {
+    throw new BundleError("invalid", OUTSIDE_PROJECT);
+  }
+  return real;
 }
 
 export class FolderWorkReceiver extends Context.Service<
@@ -223,6 +307,7 @@ export class FolderWorkReceiver extends Context.Service<
 export const makeFolderWorkReceiver = Effect.gen(function* () {
   const handoff = yield* HandoffMode;
   const projects = yield* ProjectService.ProjectService;
+  const folder = yield* Effect.serviceOption(HandoffFolderWork);
   const locks = yield* KeyedLock.make<string>();
   const label = handoff.machineLabel;
   const at = (message: string) => `${label}: ${message}`;
@@ -260,8 +345,26 @@ export const makeFolderWorkReceiver = Effect.gen(function* () {
             ...(found.check === undefined ? {} : { check: found.check }),
           });
         }
+        const eligible =
+          folder._tag === "None"
+            ? null
+            : yield* folder.value.repositories(found.project.id).pipe(
+                Effect.mapError(
+                  () =>
+                    new HandoffRefusal({
+                      status: 500,
+                      code: "failed",
+                      message: at("could not read this project's repositories"),
+                    }),
+                ),
+              );
         const root = yield* Effect.tryPromise({
-          try: () => resolveRepositoryPath(found.project.workspaceRoot, request.repositoryPath),
+          try: () =>
+            folderWorkRoot({
+              projectRoot: found.project.workspaceRoot,
+              repositoryPath: request.repositoryPath,
+              eligible,
+            }),
           catch: fromGit,
         });
         const done = yield* locks.withLock(
@@ -287,7 +390,6 @@ export const makeFolderWorkReceiver = Effect.gen(function* () {
   });
 });
 
-export const folderWorkReceiverLayer = Layer.effect(FolderWorkReceiver, makeFolderWorkReceiver);
 
 // The source: folder work
 
@@ -411,6 +513,10 @@ export class HandoffFolderWork extends Context.Service<
   {
     readonly inventory: FolderWorkSenderDeps["inventory"];
     readonly sendExtras: FolderWorkSenderDeps["sendExtras"];
+    /** The paths of the project's own repositories, as Sync lists them ("" is the project's folder). */
+    readonly repositories: (
+      projectId: ProjectId,
+    ) => Effect.Effect<ReadonlyArray<string>, ProjectSyncError>;
   }
 >()("specweave-studio/handoff/HandoffBatch/HandoffFolderWork") {}
 
@@ -436,9 +542,23 @@ export const folderWorkLayer = Layer.effect(
   HandoffFolderWork,
   Effect.gen(function* () {
     const extras = yield* ProjectSyncExtras;
-    return HandoffFolderWork.of({ inventory: extras.inventory, sendExtras: extras.sendExtras });
+    const sync = yield* ProjectSync;
+    return HandoffFolderWork.of({
+      inventory: extras.inventory,
+      sendExtras: extras.sendExtras,
+      repositories: (projectId) =>
+        sync
+          .repositories(projectId)
+          .pipe(Effect.map((found) => found.repositories.map((repository) => repository.path))),
+    });
   }),
 );
+
+/** The destination's side, with the project's own repositories read from Sync. */
+export const folderWorkReceiverLayer = Layer.effect(
+  FolderWorkReceiver,
+  makeFolderWorkReceiver,
+).pipe(Layer.provide(folderWorkLayer));
 
 // The source: the batch
 
@@ -476,6 +596,8 @@ export interface HandoffBatchDeps {
     options: {
       readonly batchId: string;
       readonly dispositions: ReadonlyMap<ThreadId, HandoffTransferDisposition>;
+      /** The batch with its rows, written in the same write as the records, each row linked to its own. */
+      readonly entry: HandoffTransferBatch;
     },
   ) => Effect.Effect<ReadonlyMap<ThreadId, string>, HandoffModeError>;
   readonly endBatch: (planned: ReadonlyMap<ThreadId, string>) => Effect.Effect<void>;
@@ -492,6 +614,8 @@ export interface HandoffBatchDeps {
   ) => Effect.Effect<BatchMove, HandoffModeError>;
   /** Null where this server cannot read folder work. */
   readonly folderWork: ReturnType<typeof makeFolderWorkSender> | null;
+  /** The usage-limit rule's own answer for an automatic start; null where it cannot be read. */
+  readonly admission: HandoffBatchAdmission["Service"] | null;
   readonly projectTitle: (projectId: ProjectId) => Effect.Effect<string>;
 }
 
@@ -526,7 +650,7 @@ export function batchRunOf(
   const rows = (batch.rows ?? []).map((row): HandoffBatchRow => {
     const record = row.operationId === null ? undefined : document.transfers[row.operationId];
     if (record === undefined) {
-      return { ...row, context: null, continuedThreadId: null };
+      return { ...row, context: null, continuedThreadId: row.continuedThreadId ?? null };
     }
     const arrived = record.state === "resumed" || record.state === "ready";
     const line = arrived
@@ -561,6 +685,8 @@ export function batchRunOf(
 
 export function makeHandoffBatch(deps: HandoffBatchDeps) {
   const { self, selfLabel, store } = deps;
+  /** The batches this process runs now: the rest on file belong to a server that stopped. */
+  const running = new Set<string>();
 
   const updateBatch = (batchId: string, change: (batch: HandoffTransferBatch) => HandoffTransferBatch) =>
     store.update((document) => {
@@ -638,7 +764,7 @@ export function makeHandoffBatch(deps: HandoffBatchDeps) {
         const title =
           found._tag === "Success" ? found.success.shell.title.slice(0, 500) : String(threadId);
         titles.set(threadId, title);
-        const stay =
+        let stay =
           found._tag === "Failure"
             ? found.failure
             : found.success.coordinator
@@ -646,6 +772,22 @@ export function makeHandoffBatch(deps: HandoffBatchDeps) {
               : found.success.personal
                 ? failed("invalid", PERSONAL_STAYS)
                 : unfit;
+        if (stay === null && found._tag === "Success" && input.start === "automatic") {
+          // The window named this thread; the server decides whether the rule takes it now.
+          const shell = found.success.shell;
+          const why =
+            shell.activeRunId !== null
+              ? AUTOMATIC_WORKING
+              : deps.admission === null
+                ? AUTOMATIC_NO_RULE
+                : yield* deps.admission.automatic({
+                    threadId,
+                    projectId: shell.projectId,
+                    destination,
+                    trigger,
+                  });
+          if (why !== null) stay = failed("invalid", why.slice(0, 1000));
+        }
         if (stay !== null) early.set(threadId, stay);
         rows.push({
           kind: "thread",
@@ -659,46 +801,33 @@ export function makeHandoffBatch(deps: HandoffBatchDeps) {
         });
       }
 
-      // The batch is on disk, then each thread's record, before the first hold.
-      yield* store.update((document) => [
-        undefined,
-        {
-          ...document,
-          batches: {
-            ...document.batches,
-            [batchId]: {
-              batchId,
-              targetEnvironmentId: destination,
-              trigger,
-              operationIds: [],
-              createdAt: startedAt,
-              start: input.start,
-              targetLabel: label,
-              rows,
-              finishedAt: null,
-            },
-          },
-        },
-      ]);
+      // The batch and each thread's record go to disk in one write, before the
+      // first hold: no row waits on file without the record that will end it.
+      running.add(batchId);
+      yield* Effect.addFinalizer(() => Effect.sync(() => running.delete(batchId)));
+      const entry: HandoffTransferBatch = {
+        batchId,
+        targetEnvironmentId: destination,
+        trigger,
+        operationIds: [],
+        createdAt: startedAt,
+        start: input.start,
+        targetLabel: label,
+        rows,
+        finishedAt: null,
+      };
       const movable = [...wanted.keys()].filter((threadId) => !early.has(threadId));
       const dispositions = new Map<ThreadId, HandoffTransferDisposition>();
       for (const threadId of movable) {
         const disposition = wanted.get(threadId)?.disposition;
         if (disposition !== undefined) dispositions.set(threadId, disposition);
       }
-      const planned =
-        movable.length === 0
-          ? new Map<ThreadId, string>()
-          : yield* deps.planBatch(movable, destination, reason, trigger, { batchId, dispositions });
+      const planned = yield* deps.planBatch(movable, destination, reason, trigger, {
+        batchId,
+        dispositions,
+        entry,
+      });
       yield* Effect.addFinalizer(() => deps.endBatch(planned));
-      yield* updateBatch(batchId, (batch) => ({
-        ...batch,
-        rows: (batch.rows ?? []).map((row) =>
-          row.kind === "thread" && planned.has(row.id as ThreadId)
-            ? { ...row, operationId: planned.get(row.id as ThreadId) ?? null }
-            : row,
-        ),
-      }));
 
       for (const row of rows) {
         if (row.kind !== "folder-work" || row.state !== "pending" || deps.folderWork === null) {
@@ -751,6 +880,7 @@ export function makeHandoffBatch(deps: HandoffBatchDeps) {
             yield* patchRow(batchId, "thread", threadId, {
               state: moved.success.receipt?.resumed === true ? "resumed" : "ready",
               detail: moved.success.result.notice,
+              continuedThreadId: moved.success.result.threadId,
             });
           }
           outcomes.push({ threadId, title, moved: { ok: true, move: moved.success, carried } });
@@ -852,7 +982,67 @@ export function makeHandoffBatch(deps: HandoffBatchDeps) {
       })),
     );
 
-  return { run, read, handOffMachine };
+  /**
+   * Ends what a stopped server left open. A thread row with no record never
+   * held its thread, so it reads Stayed (or is linked to the record its move
+   * wrote). Folder work that never reported is sent again under the batch's own
+   * operation id: the destination answers a repeat with what it did the first
+   * time. Rows with a record are ended by the transfer runner.
+   */
+  const reconcile = Effect.gen(function* () {
+    const document = yield* store.read;
+    for (const batch of Object.values(document.batches)) {
+      if (batch.rows === undefined || running.has(batch.batchId)) continue;
+      const open = batch.rows.filter(
+        (row) => row.operationId === null && !finishedRow(row.state),
+      );
+      if (open.length === 0) continue;
+      const batchId = batch.batchId;
+      running.add(batchId);
+      yield* Effect.gen(function* () {
+        for (const row of open) {
+          if (row.kind === "thread") {
+            const record = Object.values(document.transfers).find(
+              (entry) => entry.batchId === batchId && entry.lineage.sourceThreadId === row.id,
+            );
+            yield* patchRow(
+              batchId,
+              "thread",
+              row.id,
+              record === undefined
+                ? { state: "stayed", detail: BATCH_STOPPED }
+                : { operationId: record.operationId },
+            );
+            continue;
+          }
+          const outcome: FolderWorkOutcome =
+            deps.folderWork === null
+              ? { state: "stayed", detail: FOLDER_WORK_UNAVAILABLE }
+              : yield* deps.folderWork({
+                  projectId: row.id as ProjectId,
+                  destination: batch.targetEnvironmentId,
+                  destinationLabel: batch.targetLabel ?? String(batch.targetEnvironmentId),
+                  operationId: batchId,
+                });
+          yield* patchRow(batchId, "folder-work", row.id, {
+            state: outcome.state,
+            detail: outcome.detail,
+          });
+        }
+        const finishedAt = yield* deps.nowIso;
+        yield* updateBatch(batchId, (current) => ({
+          ...current,
+          finishedAt: current.finishedAt ?? finishedAt,
+        })).pipe(Effect.ignore);
+      }).pipe(Effect.ensuring(Effect.sync(() => running.delete(batchId))));
+    }
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Handoff could not reconcile its batches", { cause }),
+    ),
+  );
+
+  return { run, read, handOffMachine, reconcile };
 }
 
 export type HandoffBatchService = ReturnType<typeof makeHandoffBatch>;

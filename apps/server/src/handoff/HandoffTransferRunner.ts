@@ -27,9 +27,11 @@ import {
   type HandOffResult,
   type HandoffCheckpoint,
   type HandoffContinueHereInput,
+  hasHandoffBatch,
   HandoffModeError,
   type HandoffModeErrorCode,
   type HandoffPreflightFailure,
+  type HandoffTransferBatch,
   type HandoffTransferCandidate,
   type HandoffTransferDisposition,
   type HandoffTransferRecord,
@@ -61,6 +63,7 @@ import {
 } from "./HandoffTransferStore.ts";
 import * as HandoffFollow from "./handoffFollow.ts";
 import { reviewTakeover, sameReview } from "./handoffReviewLock.ts";
+import { batchNeedsUpdate } from "./handoffWire.ts";
 import type {
   HandoffLauncher,
   HeartbeatRequest,
@@ -139,6 +142,8 @@ export interface TransferRunnerDeps {
    * again; it fails when the machine does not answer.
    */
   readonly keepsRecords: (destination: EnvironmentId) => Effect.Effect<boolean, HandoffModeError>;
+  /** Whether that machine names the batch capability now: it reads a disposition and a revision. */
+  readonly takesBatches: (destination: EnvironmentId) => Effect.Effect<boolean, HandoffModeError>;
   /** Keeps a worker's launcher waiting for it once it runs on another machine. */
   readonly follow: HandoffFollow.HandoffFollowShape;
   /** Follows the continuation a takeover will make, and says who the takeover names as waiting. */
@@ -585,6 +590,55 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       return null;
     });
 
+  /**
+   * Asks the destination what became of a sent record, and sends nothing. Its
+   * "accepted" fences the thread here with its receipt. Its "not accepted" is
+   * written there before it is said, so a takeover that arrives later is
+   * refused, and only then is the thread given back. No answer keeps the hold.
+   */
+  const confirm = (
+    record: HandoffTransferRecord,
+    destination: EnvironmentId,
+    shell: OrchestrationV2ThreadShell,
+  ): Effect.Effect<TakeoverResponse | null, HandoffModeError> =>
+    Effect.gen(function* () {
+      const threadId = record.lineage.sourceThreadId;
+      const epoch = record.lineage.epoch;
+      const status = yield* deps
+        .transferStatus(destination, {
+          sourceEnvironmentId: self,
+          sourceThreadId: threadId,
+          epoch,
+          operationId: record.operationId,
+        })
+        .pipe(Effect.result);
+      if (status._tag === "Failure") {
+        yield* patch(record.operationId, ["sent", "unknown", "accepted"], {
+          state: "unknown",
+          detail: status.failure.message.slice(0, 1000),
+        }).pipe(Effect.ignore);
+        return null;
+      }
+      const receipt = status.success.status === "accepted" ? status.success.receipt : null;
+      if (receipt !== null) {
+        yield* finish(record.operationId, receipt.resumed ? "resumed" : "ready", null, receipt);
+        yield* deps.fenceSource(shell, destination, receipt, epoch, record.reason as TakeoverReason);
+        return receipt;
+      }
+      if (status.success.status === "accepted") return null;
+      const detail = batchNeedsUpdate(status.success.machineLabel);
+      if (!(yield* finish(record.operationId, "failed", detail))) {
+        // Still open on file: the thread stays held and is asked about again.
+        yield* deps
+          .updateRecord(threadId, (current) => ({ ...current, lastError: NOT_RECORDED }))
+          .pipe(Effect.ignore);
+        return null;
+      }
+      yield* releaseRefused(threadId, epoch, detail);
+      yield* deps.follow.retire({ threadId, epoch });
+      return null;
+    });
+
   /** Carries on with an open record: the same operation, the same destination. */
   const settle = (
     record: HandoffTransferRecord,
@@ -629,6 +683,20 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
           candidates: [{ environmentId: destination, verdict: "unasked", fencedAt: null }],
         });
         return asked === null ? null : yield* settleLegacy(asked, shell);
+      }
+      if (record.context !== undefined) {
+        // Sent with a batch's disposition and revision. A machine that stopped
+        // naming the capability would drop both and could run a thread meant to
+        // arrive idle, so it is asked what it has and is never sent this again.
+        const takes = yield* deps.takesBatches(destination).pipe(Effect.result);
+        if (takes._tag === "Failure") {
+          yield* patch(record.operationId, ["sent", "unknown", "accepted"], {
+            state: "unknown",
+            detail: takes.failure.message.slice(0, 1000),
+          }).pipe(Effect.ignore);
+          return null;
+        }
+        if (!takes.success) return yield* confirm(record, destination, shell);
       }
       // Before it is sent again, the continuation it will make is followed again; if
       // that cannot be written, nothing is sent and the hold waits for the next try.
@@ -692,6 +760,11 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         // Resumed here, or too old, while this move waited its turn.
         return yield* failed("busy", planned.detail ?? RESUMED_HERE);
       }
+      // A hand off batch's move: its record keeps the disposition it was asked
+      // with, and its takeover names that and the revision. A move carried on
+      // after a restart reads both from the record, never from the thread again.
+      const batchId = planned?.batchId ?? start.batchId ?? null;
+      const enveloped = batchId !== null && transfers.batches[batchId]?.rows !== undefined;
       /**
        * Ends a record a batch wrote for a thread that then never left. A move
        * carried on after a restart also gives back its hold: nothing was sent.
@@ -799,9 +872,16 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         yield* stays(error);
         return yield* error;
       }
+      if (enveloped && !hasHandoffBatch(checked.capabilities)) {
+        // It stopped naming the capability since the batch was planned: nothing is sent.
+        const error = failed("invalid", batchNeedsUpdate(checked.machineLabel));
+        yield* stays(error);
+        return yield* error;
+      }
 
       const disposition =
         start.disposition ??
+        (enveloped ? planned?.disposition : undefined) ??
         (first.shell.activeRunId !== null || shouldResume(first.checkpoint.runEnding)
           ? "resume"
           : "ready");
@@ -825,7 +905,7 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       const operationId = planned?.operationId ?? NodeCrypto.randomUUID();
       const written: HandoffTransferRecord = {
         operationId,
-        batchId: planned?.batchId ?? start.batchId ?? null,
+        batchId,
         lineage: {
           sourceEnvironmentId: self,
           sourceThreadId: threadId,
@@ -977,9 +1057,9 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         launcher: waits ?? null,
         review: reviewTakeover(first.shell, {}).review === true,
         // A batch hands the thread over at this revision of its context, by name.
-        ...(start.batchId === undefined
-          ? {}
-          : { context: { sequence: checkpoint.sequence, commit: checkpoint.commit } }),
+        ...(enveloped
+          ? { context: { sequence: checkpoint.sequence, commit: checkpoint.commit } }
+          : {}),
       });
       if (sent === null) return yield* failed("busy", RESUMED_HERE);
       yield* deps
@@ -1029,11 +1109,17 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
     reason: TakeoverReason,
     trigger: HandoffTransferTrigger = MANUAL,
     options: {
-      /** The batch these records join; it is on file already and keeps its own fields. */
+      /** The batch these records join. */
       readonly batchId?: string;
       /** The asking window's name for the batch; a name already taken is not used twice. */
       readonly named?: string;
       readonly dispositions?: ReadonlyMap<ThreadId, HandoffTransferDisposition>;
+      /**
+       * The batch as its owner keeps it, rows included. It is written in the
+       * same write as the records, each thread's row linked to its record, and
+       * it is written when no thread gets one too.
+       */
+      readonly entry?: HandoffTransferBatch;
     } = {},
   ): Effect.Effect<ReadonlyMap<ThreadId, string>, HandoffModeError> =>
     Effect.gen(function* () {
@@ -1085,18 +1171,33 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         const fresh = records.filter(
           (record) => openTransfer(current, self, record.lineage.sourceThreadId) === undefined,
         );
-        if (fresh.length === 0) return [new Map<ThreadId, string>(), current] as const;
+        const base = options.entry ?? current.batches[batchId];
+        if (fresh.length === 0 && options.entry === undefined) {
+          return [new Map<ThreadId, string>(), current] as const;
+        }
+        const linked = new Map<string, string>(
+          fresh.map((record) => [record.lineage.sourceThreadId, record.operationId]),
+        );
         const next = fresh.reduce(putTransfer, {
           ...current,
           batches: {
             ...current.batches,
             [batchId]: {
               createdAt: now,
-              ...current.batches[batchId],
+              ...base,
               batchId,
               targetEnvironmentId: destination,
               trigger,
               operationIds: fresh.map((record) => record.operationId),
+              ...(base?.rows === undefined
+                ? {}
+                : {
+                    rows: base.rows.map((row) =>
+                      row.kind === "thread" && linked.has(row.id)
+                        ? { ...row, operationId: linked.get(row.id) ?? null }
+                        : row,
+                    ),
+                  }),
             },
           },
         });

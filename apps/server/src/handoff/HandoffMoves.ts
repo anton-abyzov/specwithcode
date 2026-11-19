@@ -29,6 +29,7 @@ import {
   CommandId,
   type EnvironmentId,
   HANDOFF_LEASE_RENEW_MS,
+  hasHandoffBatch,
   hasHandoffV2,
   HANDOFF_LEASE_STALE_MS,
   type HandOffInput,
@@ -79,7 +80,13 @@ import { outgoingReviewLock } from "./handoffReviewLock.ts";
 import * as Resume from "./handoffResume.ts";
 import { HandoffReceiver, type HandoffRefusal, type ReceiverCaller } from "./HandoffReceiver.ts";
 import { readSourceSet, SET_COPY_ON_HANDOFF, shipSetTo } from "./HandoffSetMoves.ts";
-import { HandoffFolderWork, makeFolderWorkSender, makeHandoffBatch } from "./HandoffBatch.ts";
+import {
+  HandoffBatchAdmission,
+  HandoffFolderWork,
+  makeFolderWorkSender,
+  makeHandoffBatch,
+  PROJECT_NOT_READ,
+} from "./HandoffBatch.ts";
 import { makeTransferRunner } from "./HandoffTransferRunner.ts";
 import * as HandoffTransferStore from "./HandoffTransferStore.ts";
 import {
@@ -451,6 +458,18 @@ export const make = Effect.gen(function* () {
       );
     });
 
+  /** What that machine names about itself now, asked with no thread. */
+  const namedBy = (destination: EnvironmentId) =>
+    peers
+      .preflight(destination, {
+        sourceEnvironmentId: self,
+        protocolVersion: HANDOFF_PROTOCOL_VERSION,
+        appVersion: HANDOFF_APP_VERSION,
+        capabilities: HANDOFF_CAPABILITIES,
+        threads: [],
+      })
+      .pipe(Effect.mapError(fromPeer));
+
   const peerPreflight = (
     destination: EnvironmentId,
     threads: ReadonlyArray<{
@@ -631,18 +650,15 @@ export const make = Effect.gen(function* () {
     keepsRecords: (destination) =>
       destination === self
         ? Effect.succeed(true)
-        : peers
-            .preflight(destination, {
-              sourceEnvironmentId: self,
-              protocolVersion: HANDOFF_PROTOCOL_VERSION,
-              appVersion: HANDOFF_APP_VERSION,
-              capabilities: HANDOFF_CAPABILITIES,
-              threads: [],
-            })
-            .pipe(
-              Effect.map((response) => hasHandoffV2(response.capabilities)),
-              Effect.mapError(fromPeer),
-            ),
+        : namedBy(destination).pipe(
+            Effect.map((response) => hasHandoffV2(response.capabilities)),
+          ),
+    takesBatches: (destination) =>
+      destination === self
+        ? Effect.succeed(true)
+        : namedBy(destination).pipe(
+            Effect.map((response) => hasHandoffBatch(response.capabilities)),
+          ),
     follow,
     launcherOf: (moving, told) =>
       HandoffFollow.named(follow, moving, { told, self, selfLabel, peers }),
@@ -731,6 +747,7 @@ export const make = Effect.gen(function* () {
     });
 
   const folder = yield* Effect.serviceOption(HandoffFolderWork);
+  const admission = yield* Effect.serviceOption(HandoffBatchAdmission);
   const batch = makeHandoffBatch({
     self,
     selfLabel,
@@ -738,16 +755,7 @@ export const make = Effect.gen(function* () {
     nowIso,
     peerLabel,
     capabilities: (destination) =>
-      peers
-        .preflight(destination, {
-          sourceEnvironmentId: self,
-          protocolVersion: HANDOFF_PROTOCOL_VERSION,
-          appVersion: HANDOFF_APP_VERSION,
-          capabilities: HANDOFF_CAPABILITIES,
-          threads: [],
-        })
-        .pipe(
-          Effect.mapError(fromPeer),
+      namedBy(destination).pipe(
           Effect.flatMap((response) => {
             const mismatch = versionFailure({
               peerLabel: response.machineLabel,
@@ -759,20 +767,24 @@ export const make = Effect.gen(function* () {
               ? Effect.succeed(response.capabilities)
               : Effect.fail(failed("invalid", mismatch.message));
           }),
-        ),
+      ),
     thread: (threadId) =>
       Effect.gen(function* () {
         const shell = yield* shellOf(threadId);
-        const project = yield* projects.getById(shell.projectId).pipe(
-          Effect.map(Option.getOrNull),
-          Effect.orElseSucceed(() => null),
+        // A project that cannot be read does not say whose conversation this is: the row stays.
+        const project = Option.getOrNull(
+          yield* projects
+            .getById(shell.projectId)
+            .pipe(Effect.mapError(() => failed("failed", PROJECT_NOT_READ))),
         );
+        if (project === null) return yield* failed("failed", PROJECT_NOT_READ);
         return {
           shell,
-          coordinator: project !== null && isProjectCoordinatorThreadId(shell.id, project),
-          personal: isPersonalAssistantProject(project?.workspaceSettings),
+          coordinator: isProjectCoordinatorThreadId(shell.id, project),
+          personal: isPersonalAssistantProject(project.workspaceSettings),
         };
       }),
+    admission: Option.getOrNull(admission),
     planBatch: transfers.planBatch,
     endBatch: transfers.endBatch,
     move: transfers.move,
@@ -1073,6 +1085,7 @@ export const make = Effect.gen(function* () {
   const heartbeatOnce = Effect.gen(function* () {
     // Open transfers first: each is carried on with its own destination.
     yield* transfers.reconcile;
+    yield* batch.reconcile;
     const document = yield* handoff.document;
     const now = yield* Clock.currentTimeMillis;
     const byPeer = autoContinue.pages(document, now);

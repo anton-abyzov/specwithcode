@@ -187,6 +187,11 @@ const selectProjectThreads = (
  * Each row of the batch, in the tool's words: a thread the destination took
  * moved; one still waiting for that machine's answer stays paused here and is
  * reported as stayed, with that said.
+ *
+ * One named thread reads the same way as many. A thread the destination or
+ * this machine refuses is a "stayed" row with the reason, not a failed call:
+ * the call fails only when the batch itself could not start. A thread that had
+ * already moved there is "moved" again, with the same thread id on the destination.
  */
 export function migrateResults(
   run: HandoffBatchRun,

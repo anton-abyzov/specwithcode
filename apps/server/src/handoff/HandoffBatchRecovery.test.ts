@@ -12,7 +12,6 @@ import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import {
-  HANDOFF_PLAN_CAPABILITY,
   HANDOFF_V2_CAPABILITY,
   type HandoffBatchRun,
   type HandoffTransferDocument,
@@ -24,6 +23,7 @@ import * as Fiber from "effect/Fiber";
 
 import { unscopedGrant } from "../fleet/workGrantPolicy.ts";
 import { applyFolderWork, coordinatorStays } from "./HandoffBatch.ts";
+import { HANDOFF_PLAN_CAPABILITY } from "./handoffPlan.ts";
 import { makeRig, type Rig, type RigMachine } from "./handoffTransfer.test.fixture.ts";
 import type { TakeoverRequest } from "./handoffWire.ts";
 
@@ -376,7 +376,7 @@ describe("a batch on file always ends (AC-23, AC-43)", () => {
           targetEnvironmentId: b.environmentId,
           trigger: { kind: "manual" },
           operationIds: [],
-          createdAt: new Date().toISOString(),
+          createdAt: "2026-11-19T14:00:00.000Z",
           start: "manual",
           targetLabel: "B",
           rows,

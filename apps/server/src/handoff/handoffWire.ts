@@ -16,7 +16,7 @@ import {
   HANDOFF_V2_CAPABILITY,
   HandoffCapabilities,
   HandoffCheckpoint,
-  HandoffContextRevision,
+  HandoffBatchEnvelope,
   HandoffLease,
   HandoffModeErrorCode,
   HandoffPreflightCheck,
@@ -292,7 +292,7 @@ export const FolderWorkResponse = Schema.Struct({
 });
 export type FolderWorkResponse = typeof FolderWorkResponse.Type;
 
-const batchNeedsUpdate = (label: string) =>
+export const batchNeedsUpdate = (label: string) =>
   `Needs update: ${label} runs a SpecWithCode from before hand off batches, so no batch moves work between it and this machine. Update SpecWithCode on ${label} first.`;
 
 /**
@@ -393,13 +393,7 @@ export const TakeoverRequest = Schema.Struct({
    * it is handed at. Absent from a single move and from an older machine, and
    * the checkpoint then decides, as before.
    */
-  batch: Schema.optional(
-    Schema.Struct({
-      batchId: HandoffTransferOperationId,
-      disposition: HandoffTransferDisposition,
-      context: HandoffContextRevision,
-    }),
-  ),
+  batch: Schema.optional(HandoffBatchEnvelope),
 });
 export type TakeoverRequest = typeof TakeoverRequest.Type;
 export const TakeoverResponse = Schema.Struct({

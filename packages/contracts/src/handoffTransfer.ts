@@ -145,6 +145,18 @@ export const HandoffContextRevision = Schema.Struct({
 });
 export type HandoffContextRevision = typeof HandoffContextRevision.Type;
 
+/**
+ * What a batch says about one thread's takeover: the batch, what the
+ * destination does on arrival, and the revision handed over. Both machines
+ * keep it as it was first sent, so a repeat after a restart is the same ask.
+ */
+export const HandoffBatchEnvelope = Schema.Struct({
+  batchId: HandoffTransferOperationId,
+  disposition: HandoffTransferDisposition,
+  context: HandoffContextRevision,
+});
+export type HandoffBatchEnvelope = typeof HandoffBatchEnvelope.Type;
+
 /** The source's record of one thread's move. */
 export const HandoffTransferRecord = Schema.Struct({
   operationId: HandoffTransferOperationId,
@@ -208,6 +220,11 @@ export const HandoffBatchStoredRow = Schema.Struct({
   disposition: Schema.NullOr(HandoffTransferDisposition),
   state: HandoffTransferState,
   detail: Schema.NullOr(text(1000)),
+  /**
+   * The thread on the destination, for a row with no record of its own: the
+   * thread had moved there before this batch asked.
+   */
+  continuedThreadId: Schema.optional(Schema.NullOr(ThreadId)),
 });
 export type HandoffBatchStoredRow = typeof HandoffBatchStoredRow.Type;
 
@@ -243,6 +260,8 @@ export const HandoffTransferAcceptance = Schema.Struct({
   reason: text(40),
   modelSelection: Schema.NullOr(ModelSelection),
   trigger: Schema.NullOr(HandoffTransferTrigger),
+  /** The batch's fields of the takeover that was accepted. Absent: it had none. */
+  batch: Schema.optional(HandoffBatchEnvelope),
   detail: Schema.NullOr(text(1000)),
   at: IsoDateTime,
 });
