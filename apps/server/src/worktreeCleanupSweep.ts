@@ -93,7 +93,6 @@ import {
   anyWorktreePolicy,
   folderRules,
   storageCleanupActivityAt,
-  storageCleanupFollowsParent,
   storageCleanupThreadFinished,
   storageCleanupThreadIdle,
 } from "./worktreeCleanupRules.ts";
@@ -388,7 +387,9 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
     const atRest = new Set(
       group.chats.filter((chat) => stateOf(chat) !== "open").map((chat) => chat.id as string),
     );
-    const working = sessions.filter((session) => !atRest.has(session.threadId));
+    const working = sessions.filter(
+      (session) => session.threadId === null || !atRest.has(session.threadId),
+    );
     const inUse =
       terminals.length > 0
         ? "A terminal is open in it."
@@ -573,11 +574,7 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
         : {
             heads: heads.map((chat) => ({ title: chat.title, state: stateOf(chat) })),
             notQuiet:
-              group.chats.find(
-                (chat) =>
-                  !storageCleanupThreadIdle(chat, ctx.now) &&
-                  !storageCleanupFollowsParent(chat, ids),
-              )?.title ?? null,
+              group.chats.find((chat) => !storageCleanupThreadIdle(chat, ctx.now))?.title ?? null,
             newestActivityAt: activity.includes(null) ? null : newestFinite(activity),
             pullRequestFinished: heads.some((chat) =>
               (chat.pullRequests ?? []).some(

@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as DateTime from "effect/DateTime";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
@@ -19,11 +20,13 @@ import {
 } from "./worktreeRemovalFailures.ts";
 
 const NOW = Date.parse("2026-11-19T12:00:00.000Z");
+/** ISO time `offsetMs` from NOW. */
+const iso = (offsetMs = 0) => DateTime.formatIso(DateTime.makeUnsafe(NOW + offsetMs));
 
 const failure = (overrides: Partial<WorktreeRemovalFailure> = {}): WorktreeRemovalFailure => ({
   folder: "/worktrees/app/feature",
   member: "the folder",
-  at: new Date(NOW).toISOString(),
+  at: iso(),
   what: "Git forgot the worktree but could not delete every file (Directory not empty): .DS_Store",
   holders: ["Finder (pid 412)"],
   removedBefore: 0,
@@ -94,7 +97,7 @@ describe("worktree removal failures", () => {
   });
 
   it("stands while the registration is gone, and for six hours after a refusal", () => {
-    const old = failure({ at: new Date(NOW - REMOVAL_RETRY_AFTER_MS).toISOString() });
+    const old = failure({ at: iso(-REMOVAL_RETRY_AFTER_MS) });
     expect(removalFailureStands(old, { registrationBroken: true, now: NOW })).toBe(true);
     expect(removalFailureStands(old, { registrationBroken: false, now: NOW })).toBe(false);
     expect(removalFailureStands(failure(), { registrationBroken: false, now: NOW + 1 })).toBe(true);
@@ -103,7 +106,7 @@ describe("worktree removal failures", () => {
       removalFailureStands(failure({ at: "soon" }), { registrationBroken: false, now: NOW }),
     ).toBe(true);
     expect(
-      removalFailureStands(failure({ at: new Date(NOW + 1).toISOString() }), {
+      removalFailureStands(failure({ at: iso(1) }), {
         registrationBroken: false,
         now: NOW,
       }),

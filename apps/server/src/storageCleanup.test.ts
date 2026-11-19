@@ -1056,6 +1056,7 @@ describe("storage cleanup plan, Clean up now and the sweeps events ask for", () 
         const event = (type: string, links: ReadonlyArray<ReturnType<typeof link>> = []) =>
           ({
             type,
+            threadId: "counter",
             payload: { id: "counter", pullRequests: links },
           }) as unknown as OrchestrationV2DomainEvent;
         // Merged before this start: a later sync of it is old news.

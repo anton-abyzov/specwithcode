@@ -433,7 +433,7 @@ describe("worktree sets", () => {
         // A member that is there is returned as it is.
         const present = yield* add(yield* listed());
         expect(present.alreadyMember).toBe(true);
-        expect(present.restored).toBeUndefined();
+        expect(present.restored).toBe(false);
         expect(present.members).toHaveLength(1);
       }),
     );

@@ -63,22 +63,6 @@ export function storageCleanupThreadFinished(
 }
 
 /**
- * A sub-chat with no run of its own (a provider's native helper) shows only
- * what its parent's run did: its parent decides for it.
- */
-export function storageCleanupFollowsParent(
-  thread: OrchestrationV2ThreadShell,
-  folderThreadIds: ReadonlySet<string>,
-): boolean {
-  return (
-    thread.lineage.relationshipToParent === "subagent" &&
-    thread.lineage.parentThreadId !== null &&
-    folderThreadIds.has(thread.lineage.parentThreadId) &&
-    thread.latestRunId === null
-  );
-}
-
-/**
  * PR metadata refreshes must not reset the inactivity clock. Null when no
  * reading is known, which never counts as inactive.
  */

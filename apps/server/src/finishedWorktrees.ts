@@ -394,6 +394,7 @@ export function decideFinishedWorktree(
     // host is not asked. It goes once it has been quiet, so a chat that only
     // answered a question keeps its folder while the person may still reply.
     const nothingOfItsOwn =
+      headsFinished &&
       !headsClosed &&
       gits.every(({ git }) => git.headInDefault === true) &&
       chats?.pullRequestFinished !== true;

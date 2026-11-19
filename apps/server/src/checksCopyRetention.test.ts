@@ -240,12 +240,12 @@ describe("retireChecksCopy", () => {
 
   it("refuses a removable copy outside verify, and one reached through a link", () => {
     const outside = makeCopy(NodePath.join(root, "other", "verify"));
+    NodeFS.mkdirSync(NodePath.join(home, "verify"), { recursive: true });
     const refused = retireChecksCopy(outside, options());
     assert.isFalse(refused.removed);
     assert.match(refused.reason, /not a checks copy folder inside verify/);
     assert.isTrue(NodeFS.existsSync(NodePath.join(outside, ".git")));
 
-    NodeFS.mkdirSync(NodePath.join(home, "verify"), { recursive: true });
     const link = NodePath.join(home, "verify", "linked");
     NodeFS.symlinkSync(outside, link);
     const linked = retireChecksCopy(link, options());

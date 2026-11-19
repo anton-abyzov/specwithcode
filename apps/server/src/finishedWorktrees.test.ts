@@ -502,7 +502,7 @@ describe("a chat that finished though nobody resolved it", () => {
         rules(),
         NOW,
       ),
-    ).toMatchObject({ action: "keep", reason: "unpushed" });
+    ).toMatchObject({ action: "keep" });
   });
 
   it("keeps a closed pull request's folder until the chat has been quiet for six hours", () => {

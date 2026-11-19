@@ -514,6 +514,7 @@ export const addThreadRepository = Effect.fn("worktreeSet.addRepository")(functi
       member: held,
       alreadyMember: true,
       baseRef: held.baseRef ?? null,
+      restored: false,
     } satisfies AddedThreadRepository;
   if (requested.relativePath === "")
     return yield* Effect.fail(
@@ -599,6 +600,7 @@ export const addThreadRepository = Effect.fn("worktreeSet.addRepository")(functi
     member,
     alreadyMember: false,
     baseRef: cut.label,
+    restored: false,
   } satisfies AddedThreadRepository;
 });
 

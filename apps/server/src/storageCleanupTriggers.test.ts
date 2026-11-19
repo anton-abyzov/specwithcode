@@ -3,7 +3,7 @@ import type {
   OrchestrationV2ThreadShell,
   ServerSettings,
 } from "@specweave-studio/contracts";
-import { RunId, ThreadId } from "@specweave-studio/contracts";
+import { RunId } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -14,10 +14,7 @@ import {
   SweepScope,
   sweepThreadAfterEvent,
 } from "./storageCleanupTriggers.ts";
-import {
-  storageCleanupFollowsParent,
-  storageCleanupThreadFinished,
-} from "./worktreeCleanupRules.ts";
+import { storageCleanupThreadFinished } from "./worktreeCleanupRules.ts";
 import { baseSettings, NOW_MS, shell } from "./worktreeCleanupSweep.testkit.ts";
 
 const THREAD = "thread-1";
@@ -198,25 +195,5 @@ describe("a chat nobody resolved counts as finished", () => {
     );
     expect(storageCleanupThreadFinished(chat({ heldQueuedCount: 1 }), NOW_MS)).toBe(false);
     expect(storageCleanupThreadFinished(chat({ latestRunId: null }), NOW_MS)).toBe(false);
-  });
-
-  it("judges a sub-chat with no run of its own by its parent in the same folder", () => {
-    const parent = ThreadId.make("parent");
-    const helper = chat({
-      latestRunId: null,
-      lineage: { ...shell().lineage, parentThreadId: parent, relationshipToParent: "subagent" },
-    });
-    expect(storageCleanupFollowsParent(helper, new Set([parent]))).toBe(true);
-    // Its parent works elsewhere, it ran itself, or it is a fork: judged on its own.
-    expect(storageCleanupFollowsParent(helper, new Set())).toBe(false);
-    expect(
-      storageCleanupFollowsParent({ ...helper, latestRunId: RunId.make("run-1") }, new Set([parent])),
-    ).toBe(false);
-    expect(
-      storageCleanupFollowsParent(
-        { ...helper, lineage: { ...helper.lineage, relationshipToParent: "fork" } },
-        new Set([parent]),
-      ),
-    ).toBe(false);
   });
 });
