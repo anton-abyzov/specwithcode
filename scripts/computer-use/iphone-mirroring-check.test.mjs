@@ -759,6 +759,46 @@ describe("dry run", () => {
     );
   });
 
+  it("fails a field with a wrong first key, and a later try never hides it", async () => {
+    const phone = simulatedPhone();
+    const call = phone.deps.call;
+    let wrong = 0;
+    phone.deps.call = (tool, args) => {
+      if (tool === "computer_type" && args.text === "hbdt" && wrong++ === 0) {
+        return call(tool, { text: "gbdt" });
+      }
+      return call(tool, args);
+    };
+    const result = await runCheck(phone.deps);
+    expect(result.lines).toContainEqual(
+      expect.stringMatching(/^FAIL type "hbdt": not shown as typed/),
+    );
+    expect(result.lines.some((entry) => /no search field/.test(entry))).toBe(false);
+    expect(wrong).toBe(1);
+  });
+
+  it("repeats on the home screen even when it shows a label the first reading missed", async () => {
+    const phone = simulatedPhone({ spotlightMisses: (n) => n === 5 });
+    const ocr = phone.deps.ocr;
+    let typed = false;
+    const call = phone.deps.call;
+    phone.deps.call = (tool, args) => {
+      if (tool === "computer_type") typed = args.text === "x@y#h";
+      return call(tool, args);
+    };
+    phone.deps.ocr = async (...args) => {
+      const read = await ocr(...args);
+      return typed && phone.state.app === "home"
+        ? [...read, { text: "Flood Watch", x: 640, y: 380, width: 120, height: 20 }]
+        : read;
+    };
+    const result = await runCheck(phone.deps);
+    expect(result.lines).toContainEqual(
+      expect.stringMatching(/^NOTE .* type "x@y#h": after typing .*\(try 1 of 3\)/),
+    );
+    expect(result.lines.at(-1)).toMatch(/^Result: PASS/);
+  });
+
   it("calls typing unsure, never failed, when Spotlight never shows on any try", async () => {
     const phone = simulatedPhone({ spotlightMisses: (n) => n >= 5 && n <= 7 });
     const result = await runCheck(phone.deps);
@@ -1061,19 +1101,20 @@ describe("judging the screen", () => {
     ];
     // The run of November 19 at 11:26 AM: the same home screen a few seconds later.
     const later = [home[0], home[1], at("11:27", 330), at("Messages"), at("Settings"), at("o")];
-    expect(showsNoSpotlight(later, home, "x@y#h")).toBe(true);
-    // A label the home reading missed is not the field.
-    expect(showsNoSpotlight([...later, at("Flood Watch", 384)], home, "x@y#h")).toBe(true);
-    // A field with wrong, short or numeric text is never the home screen.
-    for (const field of ["420", "x@", "4", "207"]) {
-      expect(showsNoSpotlight([...later, at(field, 307)], home, "4207 x@")).toBe(false);
+    expect(showsNoSpotlight(later, home)).toBe(true);
+    // New text keeps it from the home screen unless going home again still shows it.
+    const missed = [...later, at("Flood Watch", 384)];
+    expect(showsNoSpotlight(missed, home)).toBe(false);
+    expect(showsNoSpotlight(missed, home, missed)).toBe(true);
+    // A field with any wrong text is gone after going home: it is judged.
+    for (const field of ["gbdt", "420", "x@", "4", "9207", "Clock - Open"]) {
+      expect(showsNoSpotlight([...later, at(field, 307)], home, later)).toBe(false);
     }
-    expect(showsNoSpotlight([...later, at("Clock - Open", 307)], home, "hbbd")).toBe(false);
     expect(newTexts([at("x@y", 307), at("Messages"), at("11:40")], home)).toEqual(["x@y"]);
     // Another screen, or nothing to compare, is never called the home screen.
-    expect(showsNoSpotlight([at("Search")], home, "hbbd")).toBe(false);
-    expect(showsNoSpotlight([], home, "hbbd")).toBe(false);
-    expect(showsNoSpotlight(home, [], "hbbd")).toBe(false);
+    expect(showsNoSpotlight([at("Search")], home)).toBe(false);
+    expect(showsNoSpotlight([], home)).toBe(false);
+    expect(showsNoSpotlight(home, [])).toBe(false);
   });
 
   it("tells pages apart by their words, leaving clock readings out", () => {

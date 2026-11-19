@@ -215,25 +215,23 @@ const labels = (lines) => texts(lines).filter((text) => text.length > 2 && !isRe
 /** The share of home screen labels a reading must show again to be the home screen; text recognition misses a few. */
 export const HOME_SHARE = 0.6;
 /**
- * Whether a reading after typing `typed` is the home screen with no search field.
- * Most home labels show again, and no new text could be the field: the field
- * shows a known suggestion or text starting with a typed character, numbers and
- * single characters included, so a field showing the wrong text never passes
- * for the home screen. A label the home reading missed ("Flood Watch") is not
- * taken for the field unless it starts with a typed character.
+ * Whether a reading after typing is the home screen with no search field. Most
+ * home labels must show again. New text (numbers and single characters too) is
+ * the home screen's own only when `again`, a reading taken after going home
+ * once more, still shows it: what a search field showed is gone from there, so
+ * a field with any wrong text is judged, never taken for the home screen.
+ * Without `again`, any new text keeps the reading from being the home screen.
  */
-export function showsNoSpotlight(lines, home, typed) {
+export function showsNoSpotlight(lines, home, again) {
   const before = labels(home);
   if (before.length === 0) return false;
   const now = new Set(labels(lines));
   if (before.filter((text) => now.has(text)).length < HOME_SHARE * before.length) return false;
-  const chars = new Set(Array.from(normalize(typed)));
-  const suggestions = SUGGESTIONS.map((entry) => normalize(entry));
-  return !newTexts(lines, home).some(
-    (text) =>
-      chars.has(Array.from(text)[0]) ||
-      (text.includes("-") && suggestions.some((entry) => text.endsWith(entry))),
-  );
+  const extra = newTexts(lines, home);
+  if (extra.length === 0) return true;
+  if (again === undefined) return false;
+  const stays = new Set(texts(again));
+  return extra.every((text) => stays.has(text));
 }
 
 export const center = (line) => ({
@@ -778,14 +776,27 @@ export async function runCheck(deps, options = {}) {
   // Types into a fresh search. When the phone then shows only what its home screen
   // showed, no search field took the text: that judges nothing, so Spotlight is
   // opened again, up to SPOTLIGHT_TRIES times. Returns what the last try saw when
-  // every try ended that way; `seen` holds the reading after typing.
-  const typeInSpotlight = async (text, name, waitMs) => {
+  // every try ended that way; `seen` holds the reading after typing. A reading
+  // where `shown` finds the field is judged at once.
+  const typeInSpotlight = async (text, name, waitMs, shown) => {
     for (let tries = 1; ; tries++) {
       const { home, opened } = await freshSearch();
       await call("computer_type", { text });
       await deps.sleep(waitMs);
       seen = await look();
-      if (!showsNoSpotlight(seen.lines, home.lines, text)) return undefined;
+      if (shown(seen)) return undefined;
+      const after = seen;
+      let gone = showsNoSpotlight(after.lines, home.lines);
+      if (!gone && showsNoSpotlight(after.lines, home.lines, after.lines)) {
+        // The home screen with new text: home once more tells the screen's own
+        // text from a search field's, which closes.
+        await call("computer_key", { keys: "cmd+1" });
+        await deps.sleep(config.settleMs);
+        const again = await look();
+        gone = showsNoSpotlight(after.lines, home.lines, again.lines);
+        seen = after;
+      }
+      if (!gone) return undefined;
       const extra = newTexts(opened.lines, home.lines);
       const detail = `after typing "${text}" the phone showed only its home screen, no search field (try ${tries} of ${SPOTLIGHT_TRIES}); before typing, after cmd+3, it showed ${extra.length === 0 ? "nothing beyond the home screen" : `new text ${extra.map((entry) => JSON.stringify(entry)).join(", ")}`}; home screen read ${describeLines(home.lines.slice(0, 6))}`;
       note(`${stamp()} ${name}: ${detail}`);
@@ -797,7 +808,9 @@ export async function runCheck(deps, options = {}) {
   for (const sample of TYPE_SAMPLES) {
     try {
       await step(`type "${sample}"`, async () => {
-        const gone = await typeInSpotlight(sample, `type "${sample}"`, config.settleMs);
+        const gone = await typeInSpotlight(sample, `type "${sample}"`, config.settleMs, (reading) =>
+          reading.lines.some((line) => readField(line.text, sample)?.count === 0),
+        );
         if (gone !== undefined) {
           unsure(`type "${sample}"`, noSpotlight(gone));
           return;
@@ -835,7 +848,12 @@ export async function runCheck(deps, options = {}) {
   // that removed one fewer than asked while a suggestion showed is UNSURE.
   try {
     await step("key repeat", async () => {
-      const gone = await typeInSpotlight(REPEAT_BASE + REPEAT_TAIL, "key repeat", config.suggestMs);
+      const gone = await typeInSpotlight(
+        REPEAT_BASE + REPEAT_TAIL,
+        "key repeat",
+        config.suggestMs,
+        (reading) => reading.lines.some((line) => readField(line.text, REPEAT_BASE, true)),
+      );
       if (gone !== undefined) {
         unsure("key repeat", noSpotlight(gone));
         return;
