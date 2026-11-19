@@ -60,7 +60,7 @@ const period = (accountKey: string, endedAt: number, lostPercent: number): Usage
 });
 
 describe("subscriptionRows", () => {
-  it("gives each window its length and marks one that caps a single model", () => {
+  it("gives each window its length, shortest first, and marks one that caps a single model", () => {
     const { windowDurationMins: _reported, ...unsized } = weekly(10, 2 * DAY);
     const [row] = subscriptionRows(
       [
@@ -78,10 +78,10 @@ describe("subscriptionRows", () => {
       now,
     );
     expect(row?.windows.map((window) => [window.id, window.durationMs, window.scoped])).toEqual([
-      ["secondary", 7 * DAY, false],
-      ["monthly", 30 * DAY, false],
-      ["seven_day_fable", 10_080 * 60_000, true],
       ["primary", null, false],
+      ["secondary", 7 * DAY, false],
+      ["seven_day_fable", 10_080 * 60_000, true],
+      ["monthly", 30 * DAY, false],
     ]);
   });
 
@@ -293,5 +293,53 @@ describe("subscriptionsSummary", () => {
     const summary = subscriptionsSummary(list, 0, now);
     expect(summary).toEqual({ subscriptions: 2, atLimit: 0, nextResetAt: null, withoutReading: 0 });
     expect(subscriptionsSummaryText(summary, now)).toBe("2 subscriptions · 0 at a limit");
+  });
+});
+
+describe("window notes", () => {
+  const acp = ProviderDriverKind.make("acpRegistry");
+  const cursor = ProviderDriverKind.make("cursor");
+  const noteOf = (accounts: LimitAccount[]) => subscriptionRows(accounts, [], {}, now)[0]?.note?.note ?? null;
+
+  it("notes Copilot from its reading, with the vendor page and the day it was read", () => {
+    const [row] = subscriptionRows(
+      [
+        account("c", acp, undefined, "m4", {
+          subscriptionKey: `copilot:sha256:${"a".repeat(64)}`,
+          windows: [{ ...weekly(10, 9 * DAY), id: "premium_interactions", kind: "monthly" }],
+        }),
+      ],
+      [],
+      {},
+      now,
+    );
+    expect(row?.note).toEqual({
+      id: "copilot-monthly",
+      note: "Monthly allowance. Resets on the first of the month at 00:00 UTC, whatever your billing day.",
+      source: "https://docs.github.com/en/copilot/concepts/billing/billing-for-individuals",
+      readOn: "2026-11-18",
+    });
+  });
+
+  it("notes Cursor's weekly pool, a Codex Pro plan with no 5-hour window, and nothing for Claude", () => {
+    expect(noteOf([account("u", cursor, "u@x.dev", "m4", { windows: [weekly(10, DAY)] })])).toBe(
+      "One weekly pool. No hourly limit.",
+    );
+    expect(
+      noteOf([
+        account("p", codex, "p@x.dev", "m4", { windows: [weekly(10, DAY)] }, { plan: "ChatGPT Pro 20x Subscription" }),
+      ]),
+    ).toBe("No 5-hour window reported for this plan.");
+    expect(noteOf([account("q", claude, "q@x.dev", "m4", { windows: [weekly(10, DAY)] })])).toBeNull();
+  });
+
+  it("never lets a model-scoped window or Cursor's Overall earn a note", () => {
+    expect(
+      noteOf([
+        account("u", cursor, "u@x.dev", "m4", {
+          windows: [{ ...weekly(10, DAY), id: "totalPercentUsed", label: "Overall" }],
+        }),
+      ]),
+    ).toBeNull();
   });
 });

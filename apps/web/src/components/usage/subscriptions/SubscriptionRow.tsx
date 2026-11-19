@@ -8,6 +8,14 @@ import type { SubscriptionRow as Row, SubscriptionWindow } from "./subscriptionR
 
 const dayFormat = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
 export const formatDay = (at: number) => dayFormat.format(new Date(at));
+const dateTimeFormat = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
+/** The reset as a local date and time: "Nov 21, 2:00 PM". */
+export const formatDateTime = (at: number) => dateTimeFormat.format(new Date(at));
 
 function WindowLine({
   window,
@@ -19,7 +27,9 @@ function WindowLine({
   readonly now: number;
 }) {
   const countdown =
-    window.resetsAt === null ? "No reset reported" : formatDuration(window.resetsAt - now);
+    window.resetsAt === null
+      ? "No reset reported"
+      : `${formatDuration(window.resetsAt - now)} · ${formatDateTime(window.resetsAt)}`;
   return (
     <div
       className="grid grid-cols-[5.5rem_minmax(2rem,1fr)_auto] items-center gap-x-2 text-xs"
@@ -168,6 +178,11 @@ export function SubscriptionRow({
             <WindowLine key={window.id} window={window} color={color} now={now} />
           ))
         )}
+        {row.note ? (
+          <span className="text-xs text-muted-foreground" data-subscription-note={row.note.id}>
+            {row.note.note}
+          </span>
+        ) : null}
       </div>
       <div className="flex min-w-0 flex-col justify-center gap-0.5 text-xs text-muted-foreground">
         <RenewalDay row={row} onSetDay={onSetDay} />

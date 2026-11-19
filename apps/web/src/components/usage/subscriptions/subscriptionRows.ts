@@ -18,6 +18,12 @@ import {
 } from "@specweave-studio/shared/usageLimits";
 import { lossIsUpperBound } from "@specweave-studio/shared/usageResetLedger";
 import {
+  type SubscriptionNoteProvider,
+  type SubscriptionWindowRule,
+  subscriptionWindowNote,
+} from "@specweave-studio/shared/subscriptionWindowRules";
+import { providerUsageLink } from "@specweave-studio/shared/providerUsageLinks";
+import {
   isLiveWindow,
   windowModelScope,
   windowName,
@@ -26,6 +32,7 @@ import {
 
 export interface SubscriptionWindow {
   readonly id: string;
+  readonly kind: "session" | "weekly" | "monthly" | "other";
   readonly title: string;
   readonly leftPercent: number;
   /** Null when the provider reports no reset time. */
@@ -82,6 +89,8 @@ export interface SubscriptionRow {
    * account-wide window is spent and the provider does not say it still runs.
    */
   readonly atLimit: boolean;
+  /** What the reading says about a window the provider does not have; null when no rule covers it. */
+  readonly note: Pick<SubscriptionWindowRule, "id" | "note" | "source" | "readOn"> | null;
 }
 
 /** An enabled instance that has no reading, drawn after the rows that have one. */
@@ -145,6 +154,7 @@ function windowsOf(account: LimitAccount, now: number): SubscriptionWindow[] {
     .filter((window) => isLiveWindow(window, now))
     .map((window) => ({
       id: window.id,
+      kind: window.kind,
       title: windowTitle(window),
       leftPercent: remainingPercent(window),
       resetsAt: parseTime(window.resetsAt),
@@ -164,7 +174,33 @@ function windowsOf(account: LimitAccount, now: number): SubscriptionWindow[] {
             : window.kind === "monthly"
               ? 30 * DAY_MS
               : null,
-    }));
+    }))
+    .toSorted((left, right) => lengthOf(left) - lengthOf(right));
+}
+
+/** Shortest first; a window of unknown length after the ones whose length is known. */
+const lengthOf = (window: Pick<SubscriptionWindow, "kind" | "durationMs">) =>
+  window.durationMs ?? (window.kind === "session" ? 5 * 60 * 60_000 : Number.POSITIVE_INFINITY);
+
+function noteProvider(account: LimitAccount): SubscriptionNoteProvider | null {
+  const driver = String(account.driver);
+  if (driver === "cursor" || driver === "grok" || driver === "codex") return driver;
+  if (account.limits.subscriptionKey?.startsWith("copilot:")) return "copilot";
+  return providerUsageLink({ driver, label: account.displayName })?.kind === "copilot"
+    ? "copilot"
+    : null;
+}
+
+function noteOf(account: LimitAccount, windows: readonly SubscriptionWindow[], reportedRenewal: boolean) {
+  const rule = subscriptionWindowNote({
+    provider: noteProvider(account),
+    plans: [account.limits.planLabel, account.plan],
+    windows: windows.filter((window) => window.accountWide),
+    hasReportedRenewal: reportedRenewal,
+  });
+  return rule === null
+    ? null
+    : { id: rule.id, note: rule.note, source: rule.source, readOn: rule.readOn };
 }
 
 function lastLossOf(
@@ -237,6 +273,7 @@ export function subscriptionRows(
           : null,
       lastLoss: lastLossOf(account, accountKey, periods),
       atLimit: atLimitOf(account.limits, windows),
+      note: noteOf(account, windows, reported !== null && reported > now),
     };
   });
   const soonest = (row: SubscriptionRow) =>

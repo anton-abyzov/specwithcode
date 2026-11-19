@@ -1,0 +1,76 @@
+import { EnvironmentId, ProviderDriverKind } from "@specweave-studio/contracts";
+import type { LimitAccount } from "@specweave-studio/shared/usageLimits";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+vi.mock("../../chat/ProviderInstanceIcon", () => ({ ProviderInstanceIcon: () => null }));
+vi.mock("../../studio/shell/Tip", () => ({
+  Tip: ({ children }: { readonly children: unknown }) => children,
+}));
+
+import { SubscriptionRow, formatDateTime } from "./SubscriptionRow";
+import { subscriptionRows } from "./subscriptionRows";
+
+const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
+const now = new Date(2026, 10, 14, 20, 0).getTime();
+const iso = (at: number) => new Date(at).toISOString();
+
+const account = (overrides: Partial<LimitAccount> & Pick<LimitAccount, "limits">): LimitAccount => ({
+  key: "env-m1:cursor",
+  driver: ProviderDriverKind.make("cursor"),
+  displayName: null,
+  email: "me@example.com",
+  plan: "Pro",
+  accentColor: undefined,
+  environments: [{ environmentId: EnvironmentId.make("env-m1"), label: "m1" }],
+  sourceLabel: null,
+  offline: false,
+  redeem: null,
+  ...overrides,
+});
+
+export const renderAccount = (
+  overrides: Partial<LimitAccount> & Pick<LimitAccount, "limits">,
+  renewalDays: Record<string, number> = {},
+) => {
+  const [row] = subscriptionRows([account(overrides)], [], renewalDays, now);
+  return renderToStaticMarkup(
+    <SubscriptionRow row={row!} color="teal" now={now} onSetDay={() => undefined} />,
+  );
+};
+
+describe("SubscriptionRow windows and notes", () => {
+  it("shows each window's reset as a countdown and a local date and time, then the note", () => {
+    const resetsAt = now + 2 * DAY;
+    const html = renderAccount({
+      limits: {
+        checkedAt: iso(now),
+        windows: [
+          {
+            id: "includedPool",
+            kind: "weekly",
+            label: "Included usage",
+            windowDurationMins: 10_080,
+            usedPercent: 30,
+            resetsAt: iso(resetsAt),
+          },
+        ],
+      },
+    });
+    expect(html).toContain(`70% left · 2d 0h · ${formatDateTime(resetsAt)}`);
+    expect(html).toContain('data-subscription-note="cursor-weekly-pool"');
+    expect(html).toContain("One weekly pool. No hourly limit.");
+  });
+
+  it("draws no note when no rule covers the reading", () => {
+    const html = renderAccount({
+      driver: ProviderDriverKind.make("claudeAgent"),
+      limits: {
+        checkedAt: iso(now),
+        windows: [{ id: "seven_day", kind: "weekly", label: "Weekly", usedPercent: 10 }],
+      },
+    });
+    expect(html).not.toContain("data-subscription-note");
+  });
+});
