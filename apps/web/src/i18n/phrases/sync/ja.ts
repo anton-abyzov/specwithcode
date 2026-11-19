@@ -103,8 +103,6 @@ export const syncJa: PhraseCatalog = {
     "{source} に残ります: サイズの上限を超えています。「すべてのファイルを比較…」で持っていけます。",
   "Stays on {source}: update SpecWithCode on {target} first.":
     "{source} に残ります: 先に {target} の SpecWithCode を更新してください。",
-  "Stays on {source}: {target} could not be reached.":
-    "{source} に残ります: {target} に接続できませんでした。",
   "Stays on {source}: {reason}.": "{source} に残ります: {reason}。",
   "Stays on {source}: it could not be sent.": "{source} に残ります: 送信できませんでした。",
   "Needs update · {version}": "要更新 · {version}",

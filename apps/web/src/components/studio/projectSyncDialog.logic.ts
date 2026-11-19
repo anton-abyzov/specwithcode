@@ -10,6 +10,7 @@
  * @module projectSyncDialog.logic
  */
 import {
+  PROJECT_SYNC_RPC_METHODS,
   planProjectSync,
   PROJECT_SYNC_MAX_LISTED,
   projectSyncUpstreamGoneDetail,
@@ -75,11 +76,24 @@ const messageOf = (cause: unknown) =>
         String((cause as { message?: unknown }).message ?? "")
       : "";
 
+const SYNC_CALLS = new Set<string>(Object.values(PROJECT_SYNC_RPC_METHODS));
+const UNKNOWN_CALL = /^Unknown request tag: (\S+)$/u;
+
 /**
- * A server from before Sync does not know the call: the answer is a defect whose text names
- * the unknown request. Nothing else means "needs update".
+ * A server from before Sync does not know the call: the answer is a defect that is exactly
+ * the text naming one of Sync's own calls, as a string or a plain error. A typed failure
+ * that happens to hold those words is not one. Nothing else means "needs update".
  */
-export const isUnknownSyncCall = (cause: unknown) => /Unknown request tag/u.test(messageOf(cause));
+export const isUnknownSyncCall = (cause: unknown): boolean => {
+  const text =
+    typeof cause === "string"
+      ? cause
+      : cause instanceof Error && tagOf(cause) === undefined
+        ? cause.message
+        : null;
+  const call = text === null ? null : UNKNOWN_CALL.exec(text.trim());
+  return call !== null && SYNC_CALLS.has(call[1]!);
+};
 
 /** Why one machine could not take part, in the order the causes are told apart. */
 export function syncFailure(cause: unknown, machine: string): SyncFailure {
@@ -500,10 +514,16 @@ export function syncResultTitle(input: {
 export function statusesProveInSync(
   a: ProjectSyncStatusResult | null,
   b: ProjectSyncStatusResult | null,
+  /** Every repository the result shows: each needs a fresh read on both machines. */
+  shown: readonly string[],
 ): boolean {
   if (!a || !b || a.scanLimited || b.scanLimited) return false;
-  if (a.repositories.length === 0 || a.repositories.length !== b.repositories.length) return false;
+  const here = new Map(a.repositories.map((item) => [item.path, item]));
   const there = new Map(b.repositories.map((item) => [item.path, item]));
+  // A path listed twice, or on one machine only, is not a read of that repository on both.
+  if (here.size === 0 || here.size !== a.repositories.length) return false;
+  if (there.size !== b.repositories.length || there.size !== here.size) return false;
+  if (!shown.every((path) => here.has(path) && there.has(path))) return false;
   return a.repositories.every((mine) => {
     const other = there.get(mine.path);
     return (
@@ -925,6 +945,8 @@ export function extrasSendOutcome(cause: unknown): "unknown" | "not-sent" {
   if (isUnknownSyncCall(cause)) return "not-sent";
   const tag = tagOf(cause);
   if (tag === "EnvironmentAuthorizationError") return "not-sent";
+  // No connection to the machine when the call was made: it was never handed over.
+  if (tag === "EnvironmentRpcUnavailableError") return "not-sent";
   const code = (cause as { code?: unknown } | null)?.code;
   // Only the refusals known to come before the first send. Any other code may follow one.
   if (
@@ -932,7 +954,8 @@ export function extrasSendOutcome(cause: unknown): "unknown" | "not-sent" {
     (code === "not_found" || code === "personal" || code === "invalid")
   )
     return "not-sent";
-  // Git stopped part way, the link dropped or the answer could not be read: it may have arrived.
+  // Git stopped part way, the link dropped under way or the answer could not be read: it may
+  // have arrived.
   return "unknown";
 }
 
@@ -1111,8 +1134,24 @@ export function extraResultLine(
         : stays('Stays on {source}: it is over a size limit. "Compare all files…" can bring it.');
     case "needs-update":
       return stays("Stays on {source}: update SpecWithCode on {target} first.", {}, true);
-    case "unreachable":
-      return stays("Stays on {source}: {target} could not be reached.", {}, true);
+    case "unreachable": {
+      // The source lost its link to the target, perhaps after the target wrote the branch:
+      // nobody knows whether it arrived. What the source said goes under it, once.
+      const sentence: SyncText = {
+        text: "No answer came back. It may have arrived on {target}: check {target} before sending again.",
+        values: { target },
+      };
+      const said = result.detail?.trim() ? result.detail : null;
+      return {
+        ...base,
+        state: "unknown",
+        sentence,
+        facts,
+        size: null,
+        detail:
+          said !== null && sameWords(said) !== sameWords(readSyncText(sentence)) ? said : null,
+      };
+    }
     default:
       return detail
         ? stays("Stays on {source}: {reason}.", { reason: detail })

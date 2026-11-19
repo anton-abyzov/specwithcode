@@ -626,6 +626,9 @@ export function ProjectSyncDialog({
     gate.current = block;
   });
   const stopped = (line: SyncText): SyncFailure => ({ kind: "blocked", line });
+  // The run that is dispatching calls, and the one a block ended. A run is ended once.
+  const running = useRef<number | null>(null);
+  const halted = useRef<{ readonly id: number; readonly line: SyncText } | null>(null);
   // A plan on screen or a check under way: what a new block takes away.
   const planning = useRef(false);
   useEffect(() => {
@@ -651,6 +654,9 @@ export function ProjectSyncDialog({
           const machine = machineOf(side, other);
           const fetched = await api.fetch(machine);
           if (!fetched.ok) return { failure: syncFailure(fetched.cause, machine.label) };
+          // A check that was replaced or closed asks for nothing more.
+          if (id !== run.current || !alive.current)
+            return { failure: stopped(gate.current ?? { text: "Not sent." }) };
           // After the fetch, so "not pushed" is judged against what the remote has now.
           const inventory = await api.inventory(machine);
           return { fetched: fetched.value, inventory, machine };
@@ -701,7 +707,11 @@ export function ProjectSyncDialog({
   // blocked, the plan and its ticks go, a check under way is dropped, and the reason is shown.
   useEffect(() => {
     const line = gate.current;
-    if (blockKey === null || !line || !planning.current) return;
+    if (blockKey === null || !line) return;
+    // A run under way ends here for good: a grant that comes back does not revive it.
+    if (running.current !== null && halted.current?.id !== running.current)
+      halted.current = { id: running.current, line };
+    if (!planning.current) return;
     run.current += 1;
     setTicked(new Set());
     setAnyway(new Set());
@@ -722,6 +732,18 @@ export function ProjectSyncDialog({
       setStage({ kind: "failed", failures: [stopped(gate.current)] });
       return;
     }
+    running.current = id;
+    /**
+     * Asked before every call this run makes. "gone": the run was replaced or the dialog
+     * closed, and nothing more is dispatched or shown. A sentence: a machine stopped being
+     * allowed during this run, which ends it even if the grant has come back since.
+     */
+    const halt = (): SyncText | "gone" | null => {
+      if (id !== run.current || !alive.current) return "gone";
+      if (halted.current?.id === id) return halted.current.line;
+      if (gate.current) halted.current = { id, line: gate.current };
+      return gate.current;
+    };
     setStage({ kind: "running", checked, step: "git" });
     const ran = await Promise.all(
       SIDES.map(async (side) => {
@@ -729,7 +751,9 @@ export function ProjectSyncDialog({
         const input = syncRunInput(machine.projectId, checked.plan.steps[side]);
         if (!runHasWork(input)) return { results: null, failure: null };
         // Asked again right before the call: the pair may no longer be allowed.
-        if (gate.current) return { results: null, failure: stopped(gate.current), sent: false };
+        const why = halt();
+        if (why === "gone") return { results: null, failure: null, sent: false };
+        if (why) return { results: null, failure: stopped(why), sent: false };
         const result = await api.run(machine, {
           fastForward: input.fastForward,
           clone: input.clone,
@@ -768,8 +792,11 @@ export function ProjectSyncDialog({
       const route = { project: projectTitle, source: source.label, target: to.label };
       const calls = extraItems(inventory, extras, strip(ticked), strip(anyway));
       for (const [at, items] of calls.entries()) {
-        // Every call is its own decision: stop when the pair is no longer allowed.
-        const result = gate.current
+        // Every call is its own decision: this run must still be the one, the dialog open
+        // and both machines allowed.
+        const why = halt();
+        if (why === "gone") return;
+        const result = why
           ? null
           : await api.sendExtras(source, to, { operationId: randomUUID(), items });
         if (result?.ok) {
@@ -780,7 +807,7 @@ export function ProjectSyncDialog({
         const outcome = result ? extrasSendOutcome(result.cause) : "not-sent";
         sent[side].failure = result
           ? syncFailure(result.cause, source.label)
-          : stopped(gate.current ?? { text: "Not sent." });
+          : stopped(why ?? { text: "Not sent." });
         sent[side].outcome = outcome;
         sent[side].extras.push(...extraBatchLines(items, null, route, outcome));
         // The calls after it were never made.
@@ -789,10 +816,15 @@ export function ProjectSyncDialog({
         break;
       }
     }
+    const ended = halt();
+    if (ended === "gone") return;
+    // Only what both machines say now can prove they are in sync: a done step does not. A
+    // run that was stopped asks nothing more and proves nothing.
+    const after = ended
+      ? []
+      : await Promise.all(SIDES.map((side) => api.status(machineOf(side, other))));
     if (id !== run.current || !alive.current) return;
-    // Only what both machines say now can prove they are in sync: a done step does not.
-    const after = await Promise.all(SIDES.map((side) => api.status(machineOf(side, other))));
-    if (id !== run.current || !alive.current) return;
+    running.current = null;
     const [statusA, statusB] = after;
     // The rows of both machines changed: the menu reads them again when it next opens.
     forgetSyncStatus([syncMachineKey(shown), syncMachineKey(other)]);
@@ -812,6 +844,7 @@ export function ProjectSyncDialog({
       proven: statusesProveInSync(
         statusA?.ok ? statusA.value : null,
         statusB?.ok ? statusB.value : null,
+        checked.plan.rows.map((row) => row.path),
       ),
     });
   };

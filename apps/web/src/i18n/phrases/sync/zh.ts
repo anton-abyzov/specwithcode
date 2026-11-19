@@ -90,7 +90,6 @@ export const syncZh: PhraseCatalog = {
     "留在 {source} 上：超出大小限制。“比较所有文件…”可以带过去。",
   "Stays on {source}: update SpecWithCode on {target} first.":
     "留在 {source} 上：请先在 {target} 上更新 SpecWithCode。",
-  "Stays on {source}: {target} could not be reached.": "留在 {source} 上：无法连接 {target}。",
   "Stays on {source}: {reason}.": "留在 {source} 上：{reason}。",
   "Stays on {source}: it could not be sent.": "留在 {source} 上：无法发送。",
   "Needs update · {version}": "需要更新 · {version}",

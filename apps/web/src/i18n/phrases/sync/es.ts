@@ -99,8 +99,6 @@ export const syncEs: PhraseCatalog = {
     "Se queda en {source}: supera un límite de tamaño. «Comparar todos los archivos…» puede traerlo.",
   "Stays on {source}: update SpecWithCode on {target} first.":
     "Se queda en {source}: primero actualiza SpecWithCode en {target}.",
-  "Stays on {source}: {target} could not be reached.":
-    "Se queda en {source}: no se pudo contactar con {target}.",
   "Stays on {source}: {reason}.": "Se queda en {source}: {reason}.",
   "Stays on {source}: it could not be sent.": "Se queda en {source}: no se pudo enviar.",
   "Needs update · {version}": "Necesita actualizar · {version}",

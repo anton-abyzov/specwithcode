@@ -97,8 +97,6 @@ export const syncRu: PhraseCatalog = {
     "Остаётся на {source}: превышен лимит размера. «Сравнить все файлы…» может это перенести.",
   "Stays on {source}: update SpecWithCode on {target} first.":
     "Остаётся на {source}: сначала обновите SpecWithCode на {target}.",
-  "Stays on {source}: {target} could not be reached.":
-    "Остаётся на {source}: нет связи с {target}.",
   "Stays on {source}: {reason}.": "Остаётся на {source}: {reason}.",
   "Stays on {source}: it could not be sent.": "Остаётся на {source}: не удалось отправить.",
   "Needs update · {version}": "Нужно обновление · {version}",
