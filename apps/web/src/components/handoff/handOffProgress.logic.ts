@@ -252,18 +252,31 @@ export function automaticGroupToOpen(
 }
 
 /**
- * One read of the machine's records, for the view that opens by itself. A read
- * that carried no records (`groups` null) changes nothing, and a record once
- * seen stays seen, so an old hand off never opens after a gap.
+ * One read of the machine's records, for the view that opens by itself. It
+ * opens one hand off at a time and counts as seen only what it opened, what a
+ * person started, and on the window's first read what had already finished.
+ * So of two that start together each opens once, the second after the first is
+ * closed, and one that starts while a view is open (`busy`) waits for it.
+ * A read that carried no records (`groups` null) changes nothing, and a record
+ * once seen stays seen, so an old hand off never opens after a gap.
  */
 export function automaticProgressStep(
   seen: ReadonlySet<string> | null,
   groups: ReadonlyArray<HandOffProgressGroup> | null,
+  /** A progress view is open now: it stays, and nothing new is opened over it. */
+  busy = false,
 ): { readonly seen: ReadonlySet<string> | null; readonly open: string | null } {
   if (groups === null) return { seen, open: null };
+  const open = busy ? null : automaticGroupToOpen(seen, groups);
   const next = new Set(seen ?? []);
-  for (const group of groups) for (const row of group.rows) next.add(row.operationId);
-  return { seen: next, open: automaticGroupToOpen(seen, groups) };
+  for (const group of groups) {
+    const settled =
+      group.trigger.kind !== "automatic" ||
+      group.key === open ||
+      (seen === null && group.rows.every((row) => row.finished));
+    if (settled) for (const row of group.rows) next.add(row.operationId);
+  }
+  return { seen: next, open };
 }
 
 /** The newest move of one thread from this machine, or null when it has none. */

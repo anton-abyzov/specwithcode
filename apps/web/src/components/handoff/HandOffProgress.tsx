@@ -506,13 +506,13 @@ function HandOffAutomaticProgress({ environmentId }: { environmentId: Environmen
   const seen = useRef<ReadonlySet<string> | null>(null);
   // A snapshot without records is a machine that could not read them, not one with none.
   const readable = snapshot?.transfers !== undefined;
+  // A view that is open stays: the next hand off waits here until it is closed.
+  const busy = useRequest((state) => state.request !== null);
   useEffect(() => {
-    const step = automaticProgressStep(seen.current, readable ? groups : null);
+    const step = automaticProgressStep(seen.current, readable ? groups : null, busy);
     seen.current = step.seen;
-    // A view a person has open is never replaced.
-    if (step.open !== null && useRequest.getState().request === null)
-      requestHandOffProgress(environmentId, { groupKey: step.open });
-  }, [environmentId, groups, readable]);
+    if (step.open !== null) requestHandOffProgress(environmentId, { groupKey: step.open });
+  }, [busy, environmentId, groups, readable]);
   return null;
 }
 
