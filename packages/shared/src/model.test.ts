@@ -13,6 +13,7 @@ import {
   createModelSelection,
   formatCodexModelName,
   formatModelSlugName,
+  isOpenAiReasoningModel,
   getProviderOptionCurrentLabel,
   getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
@@ -418,5 +419,29 @@ describe("upgradeLegacyUltracodeEffort", () => {
         }),
       ),
     ).toEqual({ effort: "ultracode" });
+  });
+});
+
+describe("isOpenAiReasoningModel", () => {
+  it("matches GPT-5 and later, the o-series and Codex models, prefixed or not", () => {
+    for (const slug of [
+      "gpt-5",
+      "gpt-5.6-luna",
+      "gpt-6.2-astra",
+      "gpt-6.2-sol",
+      "gpt-7-nova",
+      "gpt-5.3-codex",
+      "openai.gpt-6.1-terra",
+      "openai/gpt-6.2-astra",
+      "o3",
+      "o4-mini",
+      "codex-auto-review",
+    ])
+      expect(isOpenAiReasoningModel(slug), slug).toBe(true);
+  });
+
+  it("leaves out models without reasoning effort and other makers", () => {
+    for (const slug of ["gpt-4o", "gpt-4.1-mini", "claude-opus-5-5", "gemini-4-argon", "opus"])
+      expect(isOpenAiReasoningModel(slug), slug).toBe(false);
   });
 });

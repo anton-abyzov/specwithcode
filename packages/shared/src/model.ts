@@ -337,6 +337,20 @@ export function codexModelFamily(slug: string): string {
   return slug.startsWith("openai.gpt-") ? slug.slice("openai.".length) : slug;
 }
 
+/**
+ * Whether a model id names an OpenAI reasoning family: GPT-5 and later
+ * (gpt-5.6-sol, gpt-6.2-astra, a future gpt-7-*), the o-series and Codex
+ * models, with or without a provider prefix ("openai/", "openai.",
+ * "azure/"). New releases match without a code change; GPT-4 and earlier,
+ * which have no reasoning effort, do not.
+ */
+export function isOpenAiReasoningModel(slug: string): boolean {
+  const name = slug.slice(slug.lastIndexOf("/") + 1).replace(/^openai\./i, "").toLowerCase();
+  const gpt = /^gpt-(\d+)/.exec(name);
+  if (gpt) return Number(gpt[1]) >= 5;
+  return /^o\d+(?:$|[-.])/.test(name) || /^(?:gpt-)?codex(?:$|[-.])/.test(name);
+}
+
 export function formatCodexModelName(name: string): string {
   return name.replace(/^gpt/i, "GPT").replace(/-([a-z])/g, (_, c) => "-" + c.toUpperCase());
 }

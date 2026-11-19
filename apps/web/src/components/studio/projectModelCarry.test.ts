@@ -113,9 +113,9 @@ describe("carriedProjectModelSelection", () => {
       model: "gpt-6.1-sol",
       options: [{ id: "reasoning_effort", value: "high" }],
     });
-    expect(carried.note).toContain("GPT-6.1 Sol has no ");
-    expect(carried.note).toContain("Ultracode");
-    expect(carried.note).toContain("Fast mode");
+    expect(carried.note).toBe(
+      "GPT-6.1 Sol on GitHub Copilot doesn't offer Ultracode or Fast mode, so those settings were not carried over.",
+    );
   });
 
   it("starts a first pick, or a pick after a choice with no options, on the model's defaults", () => {
@@ -199,5 +199,93 @@ describe("carriedProjectModelSelection", () => {
       model: "custom-model",
     });
     expect(carried.note).toContain("has not listed its options yet");
+  });
+
+  it("moves a Claude pick to a new Codex model with its effort and says nothing", () => {
+    // Claude's Thinking toggle is on by default and Codex reasons at its effort
+    // level, so neither Effort nor Thinking is reported as left off.
+    const codex = ProviderInstanceId.make("codex");
+    const codexReasoning: ReadonlyArray<ProviderOptionDescriptor> = [
+      {
+        id: "reasoningEffort",
+        label: "Reasoning",
+        type: "select",
+        options: [
+          { id: "low", label: "Low", isDefault: true },
+          level("medium", "Medium"),
+          level("high", "High"),
+          level("xhigh", "Extra High"),
+          level("max", "Max"),
+          level("ultra", "Ultra"),
+        ],
+      },
+      {
+        id: "serviceTier",
+        label: "Service Tier",
+        type: "select",
+        options: [{ id: "default", label: "Standard", isDefault: true }, level("priority", "Fast")],
+      },
+    ];
+    const thinkingOnByDefault = CLAUDE_OPTIONS.map((descriptor) =>
+      descriptor.id === "thinking" && descriptor.type === "boolean"
+        ? { ...descriptor, currentValue: true }
+        : descriptor,
+    );
+    const withCodex: ReadonlyArray<ModelCarryEntry> = [
+      { ...entries[0]!, models: [model("claude-opus-5-5", "Claude Opus 5.5", thinkingOnByDefault)] },
+      {
+        instanceId: codex,
+        driverKind: ProviderDriverKind.make("codex"),
+        displayName: "Codex",
+        models: [model("gpt-6.2-astra", "GPT-6.2-Astra", codexReasoning)],
+      },
+    ];
+    const carried = carriedProjectModelSelection({
+      previous: {
+        instanceId: claude,
+        model: "claude-opus-5-5",
+        options: [
+          { id: "effort", value: "xhigh" },
+          { id: "thinking", value: true },
+        ],
+      },
+      instanceId: codex,
+      model: "gpt-6.2-astra",
+      entries: withCodex,
+    });
+    expect(carried.selection.options).toEqual([{ id: "reasoningEffort", value: "xhigh" }]);
+    expect(carried.note).toBeNull();
+  });
+
+  it("names the provider when a model there truly has no effort setting", () => {
+    const copilotModeOnly: ModelCarryEntry = {
+      ...entries[1]!,
+      models: [
+        model("gpt-6.2-astra", "GPT-6.2-Astra", [
+          {
+            id: "mode",
+            label: "Mode",
+            type: "select",
+            options: [level("agent", "Agent"), level("plan", "Plan")],
+          },
+        ]),
+      ],
+    };
+    const carried = carriedProjectModelSelection({
+      previous: {
+        instanceId: claude,
+        model: "claude-opus-5-5",
+        options: [
+          { id: "effort", value: "high" },
+          { id: "thinking", value: true },
+        ],
+      },
+      instanceId: copilot,
+      model: "gpt-6.2-astra",
+      entries: [entries[0]!, copilotModeOnly],
+    });
+    expect(carried.note).toBe(
+      "GPT-6.2-Astra on GitHub Copilot doesn't offer Effort or Thinking, so those settings were not carried over.",
+    );
   });
 });

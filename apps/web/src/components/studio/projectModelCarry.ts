@@ -80,6 +80,11 @@ function descriptorsFor(
     .optionDescriptors;
 }
 
+/**
+ * "GPT-6.2-Astra on GitHub Copilot": the same model can be listed by several
+ * providers with different options, so a note about missing options names
+ * the provider unless the model's name already starts with it.
+ */
 function modelName(
   entries: ReadonlyArray<ModelCarryEntry>,
   instanceId: ProviderInstanceId,
@@ -87,7 +92,11 @@ function modelName(
 ): string {
   const entry = entries.find((candidate) => candidate.instanceId === instanceId);
   const slug = entry ? resolveSelectableModel(entry.driverKind, model, entry.models) : null;
-  return entry?.models.find((candidate) => candidate.slug === slug)?.name || model;
+  const name = entry?.models.find((candidate) => candidate.slug === slug)?.name || model;
+  const provider = entry?.displayName.trim();
+  return provider && !name.toLowerCase().startsWith(provider.split(" ")[0]!.toLowerCase())
+    ? `${name} on ${provider}`
+    : name;
 }
 
 /**

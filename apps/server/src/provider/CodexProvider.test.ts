@@ -394,6 +394,53 @@ describe("native Codex model discovery continuity", () => {
   );
 });
 
+describe("Codex models that arrive without their effort list", () => {
+  const listed = (model: string, defaultReasoningEffort: string) =>
+    mapCodexModelCapabilities({
+      defaultReasoningEffort,
+      description: "Fixture model",
+      displayName: model,
+      hidden: false,
+      id: model,
+      isDefault: false,
+      model,
+      supportedReasoningEfforts: [],
+    }).optionDescriptors;
+
+  it("gives a new OpenAI reasoning model the common effort levels", () => {
+    for (const slug of ["gpt-6.2-astra", "gpt-7-nova", "o5-mini", "codex-auto-review"]) {
+      expect(listed(slug, "medium")?.[0]).toEqual({
+        id: "reasoningEffort",
+        label: "Reasoning",
+        type: "select",
+        options: [
+          { id: "low", label: "Low" },
+          { id: "medium", label: "Medium", isDefault: true },
+          { id: "high", label: "High" },
+          { id: "xhigh", label: "Extra High" },
+        ],
+        currentValue: "medium",
+      });
+    }
+  });
+
+  it("keeps a default level outside the common ones", () => {
+    const options = listed("gpt-6.2-sol", "max")?.[0];
+    expect(options?.type === "select" ? options.options.map((option) => option.id) : []).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+  });
+
+  it("leaves Effort off only when Codex says the model does not reason", () => {
+    expect(listed("gpt-6.2-astra", "none")).toEqual([]);
+    expect(listed("gpt-4.1", "medium")).toEqual([]);
+  });
+});
+
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities({
     additionalSpeedTiers: [],

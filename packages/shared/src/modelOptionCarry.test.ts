@@ -85,7 +85,7 @@ describe("carryModelOptions", () => {
     expect(carried.dropped).toEqual(["Ultracode", "Fast mode"]);
     expect(carried.adjusted).toEqual(["Effort Max → high"]);
     expect(describeCarriedOptions(carried, "GitHub Copilot")).toBe(
-      "GitHub Copilot has no Ultracode or Fast mode, so they were left off. Effort Max → high.",
+      "GitHub Copilot doesn't offer Ultracode or Fast mode, so those settings were not carried over. Effort Max → high.",
     );
   });
 
@@ -135,6 +135,48 @@ describe("carryModelOptions", () => {
     });
     expect(carried.options).toEqual([{ id: "reasoningEffort", value: "xhigh" }]);
     expect(carried.dropped).toEqual(["Ultracode"]);
+  });
+
+  it("does not name Claude's Thinking toggle on a model that reasons at an effort level", () => {
+    const claudeWithThinking: ReadonlyArray<ProviderOptionDescriptor> = [
+      ...CLAUDE,
+      { id: "thinking", label: "Thinking", type: "boolean" },
+    ];
+    const carried = carryModelOptions({
+      previous: [
+        { id: "effort", value: "high" },
+        { id: "thinking", value: true },
+      ],
+      previousDescriptors: claudeWithThinking,
+      nextDescriptors: CODEX,
+    });
+    expect(carried.options).toEqual([{ id: "reasoningEffort", value: "high" }]);
+    expect(carried.dropped).toEqual([]);
+    expect(describeCarriedOptions(carried, "GPT-6.2-Astra on Codex")).toBeNull();
+  });
+
+  it("does not name a toggle left at its default on a model without it", () => {
+    const thinkingOn: ReadonlyArray<ProviderOptionDescriptor> = [
+      ...CLAUDE,
+      { id: "thinking", label: "Thinking", type: "boolean", currentValue: true },
+    ];
+    const carried = carryModelOptions({
+      previous: [{ id: "thinking", value: true }],
+      previousDescriptors: thinkingOn,
+      nextDescriptors: [{ id: "mode", label: "Mode", type: "select", options: [level("agent", "Agent")] }],
+    });
+    expect(carried.dropped).toEqual([]);
+  });
+
+  it("names Effort only when the next model truly has none", () => {
+    const carried = carryModelOptions({
+      previous: [{ id: "effort", value: "high" }],
+      previousDescriptors: CLAUDE,
+      nextDescriptors: [{ id: "mode", label: "Mode", type: "select", options: [level("agent", "Agent")] }],
+    });
+    expect(describeCarriedOptions(carried, "GPT-6.2-Astra on GitHub Copilot")).toBe(
+      "GPT-6.2-Astra on GitHub Copilot doesn't offer Effort, so that setting was not carried over.",
+    );
   });
 
   it("does not report switched-off toggles or default choices as lost", () => {

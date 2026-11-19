@@ -28,6 +28,7 @@ import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@specweave-
 
 import {
   codexModelFamily,
+  isOpenAiReasoningModel,
   createModelCapabilities,
   formatCodexModelName,
   readCustomModelEntries,
@@ -158,10 +159,37 @@ function codexAccountEmail(account: CodexSchema.V2GetAccountResponse["account"])
   return account.email;
 }
 
+/** Levels every current OpenAI reasoning model accepts, in ladder order. */
+const FALLBACK_REASONING_EFFORTS = ["low", "medium", "high", "xhigh"] as const;
+
+/**
+ * The efforts a model offers. Codex lists them per model, but a model can
+ * arrive before its list does (an empty `supportedReasoningEfforts` next to a
+ * real `defaultReasoningEffort`). A reasoning model then gets the common
+ * levels instead of no Effort at all; only "none" or a non-reasoning family
+ * means the model truly has no effort setting.
+ */
+export function codexSupportedReasoningEfforts(
+  model: Pick<
+    CodexSchema.V2ModelListResponse__Model,
+    "model" | "supportedReasoningEfforts" | "defaultReasoningEffort"
+  >,
+): ReadonlyArray<string> {
+  const listed = model.supportedReasoningEfforts.map(({ reasoningEffort }) => reasoningEffort);
+  if (listed.length > 0) return listed;
+  const fallbackDefault = model.defaultReasoningEffort;
+  if (fallbackDefault === "none" || !isOpenAiReasoningModel(model.model)) return [];
+  return FALLBACK_REASONING_EFFORTS.includes(
+    fallbackDefault as (typeof FALLBACK_REASONING_EFFORTS)[number],
+  )
+    ? FALLBACK_REASONING_EFFORTS
+    : [...FALLBACK_REASONING_EFFORTS, fallbackDefault];
+}
+
 export function mapCodexModelCapabilities(
   model: CodexSchema.V2ModelListResponse__Model,
 ): ModelCapabilities {
-  const reasoningOptions = model.supportedReasoningEfforts.map(({ reasoningEffort }) =>
+  const reasoningOptions = codexSupportedReasoningEfforts(model).map((reasoningEffort) =>
     reasoningEffort ===
     (codexModelFamily(model.model) === "gpt-6-astra" ? "medium" : model.defaultReasoningEffort)
       ? {
