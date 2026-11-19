@@ -31,63 +31,31 @@ final class LinkedProjectsUITests: SWCUITestCase {
     }
   }
 
-  func testUnreachableCoordinatorOffersTakeoverAfterTheWait() throws {
+  func testMachinesAreListedAsEqualsWithNoWayToMoveACoordinator() throws {
     launchLinked("coordinator-away")
-    waitFor(element(containing: "M4 unreachable · last synced"), "Settings should say the coordinator's machine is unreachable")
-    let takeover = button("Continue the coordinator here")
-    scroll(to: takeover)
-    waitForHittable(takeover, "A reachable copy should offer to take over")
-    XCTAssertTrue(takeover.isEnabled, "M4 has been away for 25 minutes, past the 10-minute wait")
-    XCTAssertTrue(element(containing: "Minis · Standby").exists, "The armed standby should be named")
-    capture("linked-coordinator-away-takeover")
-    scroll(to: element(containing: "If M4 goes quiet"))
-    capture("linked-coordinator-away-standby")
-
-    tap(takeover)
-    let confirm = app.buttons.matching(NSPredicate(format: "label == %@", "Continue here")).firstMatch
-    waitForHittable(confirm, "Taking over asks once")
-    capture("linked-takeover-confirm")
-    confirm.tap()
-    waitFor(element(containing: "Minis now coordinates this project."), "The phone should say who coordinates now")
-    capture("linked-takeover-done")
-  }
-
-  /// The warning's Machines link opens Minis' copy, whose machine answers,
-  /// not M4's settings that cannot load while M4 is away.
-  func testMachinesLinkOfAnUnreachableCoordinatorReachesTheTakeover() throws {
-    launchLinked("coordinator-away", route: "coordinator")
-    waitFor(element(containing: "M4 unreachable · last synced"), "The chat should warn that the coordinator's machine is unreachable")
-    capture("linked-unreachable-banner")
-    tap(hittableButton("Machines"))
-    let takeover = button("Continue the coordinator here")
-    scroll(to: takeover)
-    waitForHittable(takeover, "Machines should reach the copy that can take over")
-    XCTAssertFalse(element(containing: "Couldn't load settings").exists, "Machines opened the away copy's settings")
-    XCTAssertTrue(takeover.isEnabled, "M4 has been away for 25 minutes, past the 10-minute wait")
-    capture("linked-machines-link-takeover")
-    tap(takeover)
-    let confirm = app.buttons.matching(NSPredicate(format: "label == %@", "Continue here")).firstMatch
-    waitForHittable(confirm, "Taking over asks once")
-    confirm.tap()
-    waitFor(element(containing: "Minis now coordinates this project."), "The phone should say who coordinates now")
-    capture("linked-machines-link-takeover-done")
+    let machines = element(containing: "Runs its own coordinator for this project.")
+    scroll(to: machines)
+    waitFor(machines, "Settings should list each machine with its own coordinator")
+    XCTAssertFalse(button("Continue the coordinator here").exists, "No machine continues another machine's coordinator")
+    XCTAssertFalse(element(containing: "Standby").exists, "No machine stands by for another")
+    capture("linked-machines-equal")
   }
 
   func testTitleOfAnUnreachableCoordinatorOpensAReachableCopysSettings() throws {
     launchLinked("coordinator-away", route: "coordinator")
     let capsule = hittableButton(NSPredicate(format: "label BEGINSWITH %@", "SpecWeave, Coordinator"))
     capsule.tap()
-    let takeover = button("Continue the coordinator here")
-    scroll(to: takeover)
-    waitForHittable(takeover, "The title should open settings that list the machines")
+    let machines = element(containing: "Runs its own coordinator for this project.")
+    scroll(to: machines)
+    waitFor(machines, "The title should open settings that list the machines")
     XCTAssertFalse(element(containing: "Couldn't load settings").exists, "The title opened the away copy's settings")
   }
 
   func testSettingsThatCannotLoadStillListTheMachines() throws {
     launchLinked("coordinator-away")
-    let takeover = button("Continue the coordinator here")
-    scroll(to: takeover)
-    waitForHittable(takeover, "Settings of any copy should list the machines")
+    let machines = element(containing: "Runs its own coordinator for this project.")
+    scroll(to: machines)
+    waitFor(machines, "Settings of any copy should list the machines")
     capture("linked-settings-machines")
   }
 
@@ -105,15 +73,6 @@ final class LinkedProjectsUITests: SWCUITestCase {
     waitFor(machine, "The project should open on Minis, whose coordinator is active at the highest epoch")
     XCTAssertFalse(capsule.label.contains("M4"), "The project opened M4's copy: \(capsule.label)")
     capture("linked-active-copy-open")
-  }
-
-  func testAutomaticTakeoverShowsTheRearmStatus() throws {
-    launchLinked("auto-takeover")
-    let status = element(containing: "No standby armed yet: M4 did not answer. Trying again.")
-    scroll(to: status)
-    waitFor(status, "The machine that took over should say why it has no standby yet")
-    XCTAssertTrue(element(containing: "took over from M4 at").exists)
-    capture("linked-auto-takeover-rearm")
   }
 
   func testSwitchedOffLinkedMachineIsOfferedOnceWhenTheProjectOpens() throws {

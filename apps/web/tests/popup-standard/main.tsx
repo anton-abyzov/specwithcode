@@ -88,11 +88,9 @@ const copy = (
   folder: "/w/atlas",
   role: role === "main" ? "coordinator" : role === "copy" ? "workers" : "independent",
   main: role === "main",
-  rowRole: role === "main" ? "main" : role === "copy" ? "copy" : "independent",
+  rowRole: role === "unlinked" ? "independent" : "linked",
   label:
-    role === "main"
-      ? { text: "Coordinator" }
-      : role === "copy"
+    role === "main" || role === "copy"
         ? { text: "" }
         : { text: "Separate project" },
   canStart,

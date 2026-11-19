@@ -7,7 +7,6 @@ import { HandoffCopyDoneActions } from "./HandoffCopyDone";
 import { copyStatus } from "./HandoffFolderCopy.testkit";
 import { FilesTravelChoice, SendSummary } from "./ProjectMoveOptions";
 import { Tip } from "./shell/Tip";
-import { unloadedMainText } from "../../studio/makeMain";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -287,7 +286,7 @@ describe("machine handoff dialog", () => {
         expect(radio("Mac Shelf G").getAttribute("aria-disabled")).toBe("true");
         expect(button("Cancel").disabled).toBe(true);
       }
-      const action = button(phase === "checking" ? "Checking…" : "Handing off the coordinator…");
+      const action = button(phase === "checking" ? "Checking…" : "Finishing the move…");
       expect(action.disabled).toBe(true);
       await click(action);
       await escape();
@@ -575,7 +574,7 @@ describe("handoff file method and intent", () => {
     expect(labels[0]).toContain("Download from GitHub (recommended)");
     expect(labels[1]).toContain("Copy the whole folder from ");
     expect(methodRadio("Download from GitHub").getAttribute("aria-checked")).toBe("true");
-    expect(() => methodRadio("Continue the coordinator here")).toThrow();
+    expect(() => methodRadio("Continue in the folder already there")).toThrow();
     expect(document.body.textContent).not.toMatch(/\{\w+\}/);
     await handoff({
       method: "folder",
@@ -589,7 +588,7 @@ describe("handoff file method and intent", () => {
     // The Workspace locations rows live under Details, not on top of the screen.
     expect(more.querySelector('[data-slot="handoff-workspace-summary"]')).not.toBeNull();
     // Opened on it, it is listed as what it does, so the person can leave it.
-    expect(methodRadio("Continue the coordinator here").getAttribute("aria-checked")).toBe("true");
+    expect(methodRadio("Continue in the folder already there").getAttribute("aria-checked")).toBe("true");
     expect(button("Continue the coordinator on MacBook Pro")).toBeDefined();
     await click(methodRadio("Download from GitHub"));
     expect(onMethodChange).toHaveBeenLastCalledWith("clone");
@@ -741,11 +740,11 @@ describe("handoff file method and intent", () => {
       copyTargetLabel: "rackF",
     });
     expect(document.querySelector("h2")?.textContent).toBe("Add Product to rackF");
-    // "Continue the coordinator here" does the Git-only move; the copy does not offer it.
-    expect(() => methodRadio("Continue the coordinator here")).toThrow();
+    // "Continue in the folder already there" does the Git-only move; the copy does not offer it.
+    expect(() => methodRadio("Continue in the folder already there")).toThrow();
     expect(document.body.textContent).not.toContain("Git only, no file copy");
     await handoff({ intent: "move", copyFlow: undefined, copyTargetLabel: null, method: "folder" });
-    expect(methodRadio("Continue the coordinator here").closest("label")?.textContent).toContain(
+    expect(methodRadio("Continue in the folder already there").closest("label")?.textContent).toContain(
       "Always moves the coordinator there.",
     );
     expect(document.querySelector("h2")?.textContent).toBe(
@@ -902,7 +901,7 @@ describe("handoff file method and intent", () => {
         "Copy 3 changed local files into ~/specweave on rackF. The coordinator stays on laptopE.",
       );
       // The Git-only move is no choice here: it would move the coordinator into that project.
-      expect(() => methodRadio("Continue the coordinator here")).toThrow();
+      expect(() => methodRadio("Continue in the folder already there")).toThrow();
       // The Git move itself refuses too, whatever led to it, and its way says why.
       await handoff({
         sourceLabel: "deskB",
@@ -919,7 +918,7 @@ describe("handoff file method and intent", () => {
         "The coordinator cannot continue on MacBook Pro: it has this repository as a separate project.",
       );
       expect(text("send-plan")).toBeNull();
-      const git = methodRadio("Continue the coordinator here");
+      const git = methodRadio("Continue in the folder already there");
       expect(git.getAttribute("aria-disabled")).toBe("true");
       expect(git.closest("label")?.textContent).toContain(
         "Not available: it would move the coordinator into a separate project.",
@@ -928,51 +927,6 @@ describe("handoff file method and intent", () => {
       await click(button("Continue the coordinator on MacBook Pro"));
       expect(props.onReview).not.toHaveBeenCalled();
       expect(onMethodChange).not.toHaveBeenCalled();
-    });
-
-    it("offers Continue the coordinator on the done screen of a copy into a linked copy", async () => {
-      const run = vi.fn();
-      const offer = { key: "rackF:p", machine: "rackF", main: "laptopE", reason: null, note: null };
-      const done = (
-        <HandoffCopyDoneActions
-          copy={copyStatus("completed") as never}
-          mode="copy-only"
-          busy={false}
-          targetLabel="rackF"
-          copyAgain={false}
-          canCopyAgain={false}
-          canTransfer={false}
-          canUndo={false}
-          undoPreview={null}
-          linkReview={false}
-          startNewLocked={false}
-          onCopyAgain={vi.fn()}
-          onTransfer={null}
-          onOpen={vi.fn()}
-          onUndo={vi.fn()}
-          onLink={vi.fn()}
-          onStartNew={vi.fn()}
-        />
-      );
-      const finished = (over: Partial<HandoffProps>) =>
-        copyTo({ copyFlow: done, copyDoneOn: "rackF", ...over });
-      const makeMain = () =>
-        document.querySelector<HTMLButtonElement>('[data-slot="copy-make-main"]');
-      // A first copy, or a copy into another project's copy, has no switch to offer.
-      await finished({ makeMain: null });
-      expect(makeMain()).toBeNull();
-      await finished({ makeMain: { offer: { ...offer, kind: "move" }, run } });
-      expect(makeMain()?.textContent).toBe("Continue the coordinator on rackF");
-      expect(makeMain()?.disabled).toBe(false);
-      await click(makeMain()!);
-      expect(run).toHaveBeenCalledOnce();
-      // Off with the menu's own reason while the switch cannot run.
-      const { reason } = unloadedMainText({ machine: "rackF", main: "laptopE" });
-      await finished({ makeMain: { offer: { ...offer, kind: "blocked", reason }, run } });
-      expect(makeMain()?.disabled).toBe(true);
-      expect(makeMain()?.title).toBe(
-        reason.text.replace(/\{(\w+)\}/g, (slot, name: string) => reason.values?.[name] ?? slot),
-      );
     });
 
     it("keeps each copy's role among several: the one that is Main takes no move", async () => {

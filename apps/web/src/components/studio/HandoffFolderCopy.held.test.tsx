@@ -228,45 +228,6 @@ it("shows the server's held message verbatim beside the differences", async () =
   expect(problemsText()).toContain("so the coordinator stayed here");
 });
 
-it("keeps the Hand off anyway wording after the transfer clears the pointer", async () => {
-  reopenMove();
-  await mount();
-  await click("Continue on Kiosk D anyway, on its older commits");
-  expect(container.textContent).toContain("The coordinator continues on Kiosk D.");
-  expect(pointerNow()).toBeNull();
-  expect(problemsText()).toContain(
-    "You chose Continue on Kiosk D anyway, so the coordinator moved with these differences.",
-  );
-  expect(problemsText()).not.toContain("Sync again");
-  expect(labels()).not.toContain("Sync again");
-  expectCopyAgainMatchesButton();
-});
-
-it("drops Hand off anyway when the source changed, and a reopen still offers Copy again", async () => {
-  reopenMove();
-  state.handlers.prepare = () => {
-    throw Object.assign(new Error("changed"), { code: "source_changed" });
-  };
-  await mount();
-  await click("Continue on Kiosk D anyway, on its older commits");
-  expect(pointerNow()).toMatchObject({ operationId: OPERATION });
-  expect(pointerNow()).not.toHaveProperty("moveAnyway");
-  expect(problemsText()).toContain("Sync again: it compares first");
-  expect(problemsText()).not.toContain("Continue on Kiosk D anyway, on its older commits");
-  expect(labels()).toContain("Sync again");
-  expect(labels()).not.toContain("Continue the coordinator on Kiosk D");
-
-  statuses = [committedAnyway()];
-  await remount();
-  expect(problemsText()).toContain("Sync again: it compares first");
-  expect(problemsText()).not.toContain("Continue on Kiosk D anyway, on its older commits");
-  expect(labels()).toContain("Sync again");
-  expect(labels()).not.toContain("Continue the coordinator on Kiosk D");
-  await openMore();
-  expect(isDisabled(button("Add to another machine"))).toBe(false);
-  expectCopyAgainMatchesButton();
-});
-
 it("shows the destination's error on the undone screen instead of claiming a clean undo", async () => {
   const error =
     "The files here were restored, but Laptop E could not be told, so the copy is still open there. Cancel the copy on Laptop E to give the project back there.";
@@ -319,38 +280,6 @@ it("treats a copy the source no longer knows as dropped", async () => {
   expect(pointerNow()).toBeNull();
 });
 
-it("tells the source again when a reopened undone copy still has its pointer", async () => {
-  reopenMove();
-  statuses = [copyStatus("undone")];
-  await mount();
-  expect(container.textContent).toContain("is back to how it was before the copy");
-  expect(state.calls.find(([name]) => name === "copySourceCancel")![1]).toMatchObject({
-    environmentId: "laptopE",
-    input: { operationId: OPERATION },
-  });
-  expect(names()).toContain("copyRelease");
-  expect(pointerNow()).toBeNull();
-});
-
-it("says the source has not dropped an undone move when the cancel and the release both fail", async () => {
-  reopenMove();
-  state.handlers.copySourceCancel = () => {
-    throw new Error("Laptop E is unreachable.");
-  };
-  state.handlers.copyRelease = () => {
-    throw new Error("Laptop E refused the release.");
-  };
-  await mount();
-  await click("Undo…");
-  await click("Undo the copy");
-  const alert = container.querySelector('[role="alert"]')?.textContent ?? "";
-  expect(alert).toContain(
-    "Laptop E has not dropped the copy yet: Laptop E is unreachable. Reopen this window to tell it again, or cancel the copy on Laptop E.",
-  );
-  expect(alert).toContain("Laptop E refused the release.");
-  expect(pointerNow()).toMatchObject({ operationId: OPERATION });
-});
-
 it.each([false, true])(
   "recovers incomplete Undo after reopening (committed: %s)",
   async (committed) => {
@@ -400,21 +329,3 @@ it.each([false, true])(
     expect(names()).not.toContain("copyRetry");
   },
 );
-
-it("ends only the source hold while retaining incomplete Undo recovery", async () => {
-  const failed = copyStatus("failed", {
-    undoIncomplete: true,
-    committed: false,
-    failedStep: "applied",
-    error: { code: "copy_failed", message: "Undo needs recovery" },
-  });
-  reopenMove();
-  state.handlers.copyStatus = () => failed;
-  await mount();
-  await click("End source hold");
-  expect(names()).toContain("copySourceCancel");
-  expect(names()).toContain("copyRelease");
-  expect(names()).not.toContain("copyCancel");
-  expect(pointerNow()).toMatchObject({ operationId: OPERATION });
-  expect(labels()).toContain("Undo…");
-});

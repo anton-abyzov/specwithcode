@@ -11,6 +11,22 @@ export const ja: PhraseCatalog = {
   "Accounts & integrations": "アカウントと連携",
   Actions: "アクション",
   "Add a device with a code": "コードでデバイスを追加",
+  "Add this project on another machine. Every machine runs its own coordinator.":
+    "このプロジェクトを別のマシンに追加します。各マシンが自分のコーディネーターを実行します。",
+  "Make this project and the same project on another machine one project. Each machine keeps its own coordinator.":
+    "このプロジェクトと別のマシンの同じプロジェクトを 1 つのプロジェクトにします。各マシンは自分のコーディネーターを持ち続けます。",
+  "Needs an update: this machine is on a version from before every machine ran its own coordinator.":
+    "更新が必要です: このマシンは、各マシンが自分のコーディネーターを持つようになる前のバージョンです。",
+  "Pick {project} on another machine. It joins this project and keeps its own coordinator.":
+    "別のマシンの {project} を選びます。このプロジェクトに加わり、自分のコーディネーターを持ち続けます。",
+  "Pick {project} on another machine. Linking makes them one project; each machine keeps its own coordinator.":
+    "別のマシンの {project} を選びます。リンクすると 1 つのプロジェクトになり、各マシンは自分のコーディネーターを持ち続けます。",
+  "{joining} has joined the project; retry to finish listing it on {kept}.":
+    "{joining} はプロジェクトに参加しました。再試行して {kept} への登録を完了してください。",
+  "Runs its own coordinator for this project.":
+    "このプロジェクト用に自分のコーディネーターを実行します。",
+  "Update SpecWithCode on {machine} to link projects.":
+    "プロジェクトをリンクするには {machine} の SpecWithCode を更新してください。",
   "Use this machine from a browser on a phone or another computer, also when SpecWithCode Connect is off or cannot be reached. The SpecWithCode app signed in to the same Connect account needs no code.":
     "スマートフォンや別のコンピューターのブラウザーからこのマシンを使います。SpecWithCode Connect がオフのとき、または接続できないときにも使えます。同じ Connect アカウントでサインインした SpecWithCode アプリにコードは不要です。",
   "Add a device": "デバイスを追加",
@@ -4548,7 +4564,6 @@ export const ja: PhraseCatalog = {
   "Installs from npm": "npm からのインストール",
   "Machine access settings": "マシンのアクセス設定",
   "{machine} offline": "{machine} はオフライン",
-  "workers only": "ワーカーのみ",
   coordinator: "コーディネーター",
   "Link them below to make one project.": "下でリンクすると 1 つのプロジェクトになります。",
   "{value}Messages go to Percy. {value2}": "{value}メッセージは Percy に届きます。{value2}",
@@ -5215,23 +5230,10 @@ export const ja: PhraseCatalog = {
     "インストールを待っています。このページは自動で更新されます。",
   "After it installs, choose Check again.":
     "インストールが終わったら「もう一度確認」を選んでください。",
-  "in {minutes} min": "あと {minutes} 分",
-  "read-only on {main}": "{main} は読み取り専用",
-  "not ready": "準備未完了",
-  "Send this project its first message here, then try again.":
-    "ここでこのプロジェクトに最初のメッセージを送ってから、もう一度お試しください。",
-  "It starts from the shared goal, memory and plan. The conversation on {main} stays there as history, and {main} gives way when it is back.":
-    "共有の目標、メモリ、計画から始まります。{main} の会話は履歴としてそこに残り、{main} は戻ったときにメインを譲ります。",
-  "Retry it.": "もう一度お試しください。",
   "Switching…": "切り替え中…",
-  "The conversation here is kept as history.": "ここの会話は履歴として残ります。",
-  "Got it": "了解",
-  "{machine} kept its coordinator conversation from before as history. View it to read that conversation.":
-    "{machine} は以前のコーディネーターの会話を履歴として保持しています。表示するとその会話を読めます。",
   "Link {machine} to this project…": "{machine} をこのプロジェクトにリンク…",
   "Link {machine} to this project": "{machine} をこのプロジェクトにリンク",
   "Link {machine}": "{machine} をリンク",
-  "connect {main} first": "先に {main} を接続",
   "Nothing on {machine} is replaced without asking.":
     "{machine} 上のものが確認なしに置き換えられることはありません。",
   "the other machine": "別のマシン",
@@ -5500,10 +5502,6 @@ export const ja: PhraseCatalog = {
   "This app cannot see this machine, so it cannot tell what it does for this project.":
     "このアプリからはこのマシンが見えないため、このプロジェクトでの役割はわかりません。",
   "Continue here": "ここで続行",
-  "The coordinator continued on {machine} while {main} was offline. It started from the shared goal, memory and plan; the earlier conversation stays on {main} as history.":
-    "{main} がオフラインの間、コーディネーターは {machine} で続行しました。共有の目標、メモリ、計画から始めており、以前の会話は履歴として {main} に残っています。",
-  "The coordinator continued on {machine} while its old machine was offline. It started from the shared goal, memory and plan; the earlier conversation stays on the old machine as history.":
-    "以前のマシンがオフラインの間、コーディネーターは {machine} で続行しました。共有の目標、メモリ、計画から始めており、以前の会話は履歴として以前のマシンに残っています。",
   "{project} is on {machine}. The coordinator stays on {main}.":
     "{project} は {machine} にあります。コーディネーターは {main} のままです。",
   "{machine} has this repository as a separate project whose coordinator is on {main}. Nothing was linked.":
@@ -5518,20 +5516,11 @@ export const ja: PhraseCatalog = {
     "マシンを選ぶと、そのスレッドとファイルが表示されます。同期または引き継ぎをするまで何も移動しません。",
   "These are separate projects for this repository, each with its own coordinator, threads and memory. You can still open and message each one.":
     "これらはこのリポジトリ用の別々のプロジェクトで、それぞれ独自のコーディネーター、スレッド、メモリを持っています。それでも、どのプロジェクトも開いてメッセージを送れます。",
-  "Fix…": "修正…",
   "Connect…": "接続…",
   "Makes the project on {machine} part of this one. The coordinator stays where it is, and threads and files stay where they are. You confirm what {machine} gives up first.":
     "{machine} のプロジェクトをこのプロジェクトの一部にします。コーディネーターは今の場所のままで、スレッドとファイルもそのまま残ります。{machine} が手放すものを先に確認します。",
   "Work on {machine}": "{machine} での作業",
-  "{main} is offline: the coordinator starts on {machine} from the shared goal, memory and plan. You confirm first.":
-    "{main} はオフラインです。コーディネーターは {machine} で、共有の目標、メモリ、計画から始まります。先に確認します。",
-  "Syncs {machine}, then moves the coordinator conversation here from {main}. You confirm first.":
-    "{machine} を同期してから、コーディネーターの会話を {main} からここに移動します。先に確認します。",
-  "Continue the coordinator here": "ここでコーディネーターを続行",
-  "Pick {project} on another machine. Linking makes them one project with one coordinator.":
-    "別のマシンにある {project} を選びます。リンクすると、1 つのコーディネーターを持つ 1 つのプロジェクトになります。",
-  "Pick {project} on another machine. The coordinator stays on {main}; you can continue it on another machine any time.":
-    "別のマシンにある {project} を選びます。コーディネーターは {main} のままで、いつでも別のマシンで続行できます。",
+  "Continue in the folder already there": "すでにあるフォルダで続行",
   "Other machine": "もう一方のマシン",
   "{project} was not found on another machine.": "別のマシンに {project} は見つかりませんでした。",
   "Preparing the machine that keeps its coordinator…":
@@ -5553,50 +5542,10 @@ export const ja: PhraseCatalog = {
     "利用できません: そのマシンにはすでにコーディネーターがあります。",
   "Not available: it would move the coordinator into a separate project.":
     "利用できません: コーディネーターが別プロジェクトに移ってしまいます。",
-  "Goes to the coordinator on {machine} and opens it there":
-    "{machine} のコーディネーターに届き、そちらで開きます",
   "On {machine}. Not on this device.": "{machine} にあります。このデバイスにはありません。",
-  "The coordinator cannot be handed off from this machine yet.":
-    "このマシンからはまだコーディネーターを引き継げません。",
-  "The coordinator cannot continue on {machine} yet.":
-    "コーディネーターはまだ {machine} で続行できません。",
-  "The coordinator continues on {machine}": "コーディネーターは {machine} で続行します",
-  "The coordinator continues on {machine}. {names} have not confirmed it yet.":
-    "コーディネーターは {machine} で続行します。{names} はまだ確認していません。",
-  "They refuse work from the old coordinator only once they have confirmed the new one.":
-    "新しいコーディネーターを確認して初めて、以前のコーディネーターからの作業を拒否します。",
-  "The coordinator stayed on {main}": "コーディネーターは {main} のままです",
-  "Continue the coordinator on {machine}?": "{machine} でコーディネーターを続行しますか？",
-  "{main} has been offline for 10 minutes or more. The coordinator starts on {machine} from the shared goal, memory and plan. The conversation on {main} stays there as history. Until {main} is back it can still start work on its own machine; then it gives way and lists what it ran meanwhile.":
-    "{main} は 10 分以上オフラインです。コーディネーターは {machine} で、共有の目標、メモリ、計画から始まります。{main} の会話は履歴としてそこに残ります。{main} は戻るまで自分のマシンで作業を開始できますが、戻るとコーディネーターを譲り、その間に実行したものを一覧で示します。",
-  "Starting the coordinator…": "コーディネーターを起動しています…",
-  "The coordinator's machine is not reachable from here.":
-    "ここからはコーディネーターのマシンに接続できません。",
-  "The coordinator's machine did not confirm the message. It may not have arrived.":
-    "コーディネーターのマシンがメッセージを確認しませんでした。届いていない可能性があります。",
-  "Nothing was sent.": "何も送信されませんでした。",
-  "The coordinator continues here. Send your message again.":
-    "コーディネーターはここで続行します。メッセージをもう一度送信してください。",
-  "{main} must be silent for 10 minutes before the coordinator can continue on {machine}. That unlocks in {minutes} min.":
-    "コーディネーターを {machine} で続行できるのは、{main} から 10 分間応答がなくなってからです。あと {minutes} 分で可能になります。",
-  "This window can only read {main}, so it cannot hand the coordinator off from there. Open SpecWithCode on {main}, or connect to it with full access.":
-    "このウィンドウは {main} を読み取ることしかできないため、そこからコーディネーターを引き継げません。{main} で SpecWithCode を開くか、フルアクセスで接続してください。",
-  "Connect {machine} first to continue the coordinator there.":
-    "そこでコーディネーターを続行するには、まず {machine} を接続してください。",
-  "{machine} cannot continue the coordinator yet. Update SpecWithCode there, or connect to it with permission to change settings and run work.":
-    "{machine} はまだコーディネーターを続行できません。そのマシンの SpecWithCode を更新するか、設定の変更と作業の実行ができる権限で接続してください。",
-  "Connect {main} first. This window has not opened {project} on {main}, so it cannot hand the coordinator off yet.":
-    "まず {main} を接続してください。このウィンドウは {main} の {project} をまだ開いていないため、コーディネーターを引き継げません。",
-  "The coordinator continued on another machine. This one gives way once it is reachable; Send opens the newer one.":
-    "コーディネーターは別のマシンで続行しました。このマシンは接続できるようになると譲ります。送信すると新しい方が開きます。",
-  "The coordinator is on another machine. Send opens it there.":
-    "コーディネーターは別のマシンにあります。送信するとそちらで開きます。",
   "This machine has not confirmed where the coordinator is yet. Reconnect it to send messages.":
     "このマシンはコーディネーターの場所をまだ確認していません。メッセージを送るには再接続してください。",
   "Separate project": "別プロジェクト",
-  "Continue here and send": "ここで続行して送信",
-  "Files stay on this machine. Remove them to send the text, or open {project} on {machine} to attach them there.":
-    "ファイルはこのマシンに残ります。テキストを送るにはファイルを外すか、{machine} の {project} を開いてそちらで添付してください。",
   "From {source}. {machine} has this repository as a separate project (coordinator on {main}).":
     "{source} から。{machine} ではこのリポジトリが別プロジェクトになっています(コーディネーター: {main})。",
   "From {source}. {machine} has this repository as a separate project.":
@@ -5613,58 +5562,10 @@ export const ja: PhraseCatalog = {
   "Only files go into {machine}'s folder. Its coordinator does not change. To make them one project, link {source} to it from the machine menu.":
     "{machine} のフォルダーにはファイルだけが入ります。そのコーディネーターは変わりません。1 つのプロジェクトにするには、マシンメニューから {source} をリンクしてください。",
   "The coordinator stays where it is.": "コーディネーターは今の場所のままです。",
-  "Extra coordinator": "余分なコーディネーター",
-  "Handing off the coordinator…": "コーディネーターを引き継いでいます…",
-  "The coordinator conversation is on this machine.":
-    "コーディネーターの会話はこのマシンにあります。",
-  "The coordinator is on {machine}. This machine also runs a coordinator of its own, which should be fixed.":
-    "コーディネーターは {machine} にあります。このマシンでも独自のコーディネーターが動いているため、修正が必要です。",
-  "The coordinator is on {machine}. Messages typed here go to it.":
-    "コーディネーターは {machine} にあります。ここで入力したメッセージはそちらに届きます。",
-  "The coordinator is being handed off right now.": "コーディネーターは現在引き継ぎ中です。",
-  "Unlink {project} on {machine}?": "{machine} の {project} のリンクを解除しますか？",
-  "Extra coordinator on {machine}": "{machine} に余分なコーディネーター",
-  "It becomes its own project again, with an active coordinator and a copy of this project's notes. {main} stops sending it work. Threads and files stay where they are.":
-    "独立したプロジェクトに戻り、稼働中のコーディネーターとこのプロジェクトのノートのコピーを持ちます。{main} はそこへの作業の送信を止めます。スレッドとファイルはそのまま残ります。",
-  "{machine} also runs a coordinator for {project}. The project's coordinator is on {main}.":
-    "{machine} でも {project} のコーディネーターが動いています。このプロジェクトのコーディネーターは {main} にあります。",
-  "To make {machine} part of this project again, link it afterwards. Linking makes it give way to the coordinator on {main}.":
-    "{machine} を再びこのプロジェクトの一部にするには、あとでリンクしてください。リンクすると、{machine} は {main} のコーディネーターに譲ります。",
-  "{other} still follows the coordinator on {machine}. Continue the coordinator on another machine first.":
-    "{other} はまだ {machine} のコーディネーターに従っています。先に別のマシンでコーディネーターを続行してください。",
-  "{machine} cannot be unlinked from this window.":
-    "このウィンドウからは {machine} のリンクを解除できません。",
-  "Unlink {project} on {machine}": "{machine} の {project} のリンクを解除",
-  "The coordinator for {project} is on another machine.":
-    "{project} のコーディネーターは別のマシンにあります。",
-  "Ask the coordinator for {project} (on {machine}).":
-    "{project} のコーディネーター({machine})に聞く。",
-  "The coordinator for {project} is on {machine}, which is not answering.":
-    "{project} のコーディネーターは {machine} にありますが、応答がありません。",
-  "Continue here syncs {machine}, then moves the coordinator conversation here from {main}.":
-    "「ここで続行」を選ぶと、{machine} を同期してから、コーディネーターの会話を {main} からここに移動します。",
-  "{main} has been offline for 10 minutes or more. Continue here: the coordinator starts on {machine} from the shared goal, memory and plan. Its conversation on {main} stays readable there, and {main} gives way when it is back.":
-    "{main} は 10 分以上オフラインです。「ここで続行」を選ぶと、コーディネーターは {machine} で、共有の目標、メモリ、計画から始まります。{main} の会話はそこで引き続き読むことができ、{main} は戻ったときに譲ります。",
-  "{main} has been offline for {n} minutes. Continue here: the coordinator starts on {machine} from the shared goal, memory and plan. Its conversation on {main} stays readable there, and {main} gives way when it is back.":
-    "{main} は {n} 分間オフラインです。「ここで続行」を選ぶと、コーディネーターは {machine} で、共有の目標、メモリ、計画から始まります。{main} の会話はそこで引き続き読むことができ、{main} は戻ったときに譲ります。",
-  "{machine} is not answering. Continue here unlocks in {m} min.":
-    "{machine} から応答がありません。あと {m} 分で「ここで続行」が使えるようになります。",
-  "This window can only read {machine}, so it cannot send there. Open SpecWithCode on {machine}, or connect to it with full access.":
-    "このウィンドウは {machine} を読み取ることしかできないため、そこへ送信できません。{machine} で SpecWithCode を開くか、フルアクセスで接続してください。",
-  "The coordinator moved to {new}. Nothing was sent.":
-    "コーディネーターは {new} に移動しました。何も送信されませんでした。",
-  "{machine} did not take the message: {reason}. Nothing was sent.":
-    "{machine} がメッセージを受け取りませんでした: {reason}。何も送信されませんでした。",
-  "The coordinator for {project} is on {machine}. Send opens it there.":
-    "{project} のコーディネーターは {machine} にあります。送信するとそちらで開きます。",
-  "The coordinator for {project} is on another machine that this window cannot reach.":
-    "{project} のコーディネーターは、このウィンドウから接続できない別のマシンにあります。",
+  "Finishing the move…": "移動を完了しています…",
   "This window cannot open {machine}": "このウィンドウでは {machine} を開けません",
   "Offline · last seen {time}": "オフライン · 最終アクセス: {time}",
-  "Old conversation kept": "以前の会話を保持",
   "this project": "このプロジェクト",
-  "its machine": "そのマシン",
-  "the old machine": "以前のマシン",
   Send: "送信",
   "{machine} has not confirmed where the coordinator is yet. Reconnect it to send messages.":
     "{machine} はコーディネーターの場所をまだ確認していません。メッセージを送るには再接続してください。",
@@ -5677,7 +5578,6 @@ export const ja: PhraseCatalog = {
   "On {coordinator} (coordinator) and {last}": "{coordinator}（コーディネーター）と {last} 上",
   "On {coordinator} (coordinator), {machines} and {last}":
     "{coordinator}（コーディネーター）、{machines}、{last} 上",
-  "Fix the extra coordinator on {machine}": "{machine} の余分なコーディネーターを修正",
   "Connect {machine}": "{machine} を接続",
   "Project on another machine": "別のマシン上のプロジェクト",
   "Not reachable from here": "ここからは接続できません",

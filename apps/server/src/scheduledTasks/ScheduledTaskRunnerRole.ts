@@ -7,7 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import type * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
-import { coordinatorStartedBeside } from "@specweave-studio/contracts";
+import { coordinatorOwnsRoutines } from "@specweave-studio/contracts";
 import { type CoordinatorRoleShape, coordinatorRoleOf } from "../project/CoordinatorRole.ts";
 
 /**
@@ -38,8 +38,9 @@ export const makeRunnerRoleActive =
 /**
  * Whether this copy's binding is one the release before let fire the
  * project's routines alone: the project's own coordinator, or one that was
- * handed the role or took it over. A coordinator started beside it is active
- * too, but nothing ever fenced the other one for it, so it is not the owner:
+ * handed the role or took it over (`coordinatorOwnsRoutines`). A copy that
+ * joined, or followed another machine before every machine ran its own
+ * coordinator, is active too, but it never was the one owner:
  * its copy of a shared routine waits until the machines settle a runner.
  * Unreadable is not the owner.
  */
@@ -50,12 +51,7 @@ export const makeRunnerLegacyOwner =
       Effect.map(
         Option.match({
           onNone: () => false,
-          onSome: (row) => {
-            const binding = row.workspaceSettings?.coordinatorBinding;
-            return (
-              binding == null || (binding.state === "active" && !coordinatorStartedBeside(binding))
-            );
-          },
+          onSome: (row) => coordinatorOwnsRoutines(row.workspaceSettings?.coordinatorBinding),
         }),
       ),
       Effect.orElseSucceed(() => false),

@@ -162,7 +162,7 @@ function CoordinatorComposerForm(props: {
   /** False while the coordinator's machine is not connected. */
   readonly hostReachable?: boolean;
   /**
-   * The button's own words when it does more than send ("Continue here and send"). Never a
+   * The button's own words when it does more than send (none does today). Never a
    * machine name: the line above the box says where a message goes. With `run`, pressing
    * the button or the send key runs that instead of sending, and the draft stays.
    */

@@ -1114,6 +1114,8 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
     projectCreateOptions: Schema.optional(Schema.Boolean),
     /** studio_project_create takes specweave (1396). Older machines omit it. */
     projectCreateSpecweave: Schema.optional(Schema.Boolean),
+    /** A link leaves both coordinators active (1390). Older machines omit it. */
+    equalCoordinators: Schema.optional(Schema.Boolean),
     maxBatchThreads: Schema.Number,
     /** Most unfinished delegate_task children one parent run may hold at once. */
     maxLiveChildTasks: Schema.optional(Schema.Number),

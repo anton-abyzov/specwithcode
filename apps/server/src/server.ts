@@ -248,8 +248,7 @@ import * as PromptSuggestionReactor from "./orchestration-v2/PromptSuggestionRea
 import * as AdversarialReviewReactor from "./review/AdversarialReviewReactor.ts";
 import * as PromptSuggestions from "./orchestration-v2/PromptSuggestions.ts";
 import * as CoordinatorLease from "./project/CoordinatorLease.ts";
-import * as CoordinatorStandbyLoop from "./project/CoordinatorStandbyLoop.ts";
-import * as CoordinatorStandbyRearm from "./project/CoordinatorStandbyRearm.ts";
+import * as EqualCoordinatorMigration from "./project/EqualCoordinatorMigration.ts";
 import * as CoordinatorStandbyStore from "./project/CoordinatorStandbyStore.ts";
 import * as CoordinatorSuspendRoute from "./project/CoordinatorSuspendRoute.ts";
 import * as SubagentLaunchCheckpoints from "./orchestration-v2/SubagentLaunchCheckpoints.ts";
@@ -758,14 +757,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.provide(layerCoordinatorLease),
   ),
   layerCoordinatorLease,
-  // Automatic coordinator takeover, standby side: watches the armed projects'
-  // leases, takes over when they stop, then claims the epoch on the worker
-  // machines and takes on the replaced coordinator's workers. The store is the
-  // runtime's (one layer value, so one lock over the file). Beside it, re-arming.
-  Layer.merge(CoordinatorStandbyLoop.layer, CoordinatorStandbyRearm.layer).pipe(
-    Layer.provide([CoordinatorStandbyStore.layer, HandoffPeers.layer]),
-    Layer.provide(RemoteWorkers.layerFleetWorkers),
-  ),
+  // Every machine runs its own coordinator: bindings from before become active, once, at start.
+  EqualCoordinatorMigration.layer.pipe(Layer.provide(CoordinatorStandbyStore.layer)),
   // Suggested next prompts: Claude's own (same offers layer as the adapters') or generated.
   Layer.effectDiscard(PromptSuggestionReactor.start).pipe(Layer.provide(PromptSuggestions.layer)),
   // Reviews a finished feature on another model family, when the project turns that on.

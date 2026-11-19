@@ -349,6 +349,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       (`projectLink.startCoordinator`). Absent on older servers, where a
       member can only take over the single coordinator. */
   coordinatorPerMachine: Schema.optionalKey(Schema.Boolean),
+  /** Every linked machine keeps its own active coordinator: `projectLink.accept` leaves the
+      joining copy's coordinator active instead of relinquishing it. Absent on older servers,
+      whose accept gives the coordinator up, so a link is refused before either end is asked. */
+  equalCoordinators: Schema.optionalKey(Schema.Boolean),
   /** Replicates a linked project's native plan so claims bind on every machine
       (`projectLink.planExport`, `projectLink.planMerge`). */
   linkedPlans: Schema.optionalKey(Schema.Boolean),

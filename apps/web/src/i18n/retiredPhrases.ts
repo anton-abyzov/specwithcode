@@ -148,12 +148,78 @@ const PHASE_3_PHRASES: readonly string[] = [
   "Nothing is running here that's set to keep ready to move.",
 ];
 
+/**
+ * Equal coordinators (T-18, T-22): every machine that has a project runs its own coordinator.
+ * No machine is an "extra coordinator" to fix, nothing continues, hands off or takes over a
+ * coordinator, and the message box never sends to another machine.
+ */
+const EQUAL_COORDINATORS_PHRASES: readonly string[] = [
+  "Pick {project} on another machine. Linking makes them one project with one coordinator.",
+  "Pick {project} on another machine. The coordinator stays on {main}; you can continue it on another machine any time.",
+  "Ask the coordinator for {project} (on {machine}).",
+  "Connect {machine} first to continue the coordinator there.",
+  "Connect {main} first. This window has not opened {project} on {main}, so it cannot hand the coordinator off yet.",
+  "Continue here syncs {machine}, then moves the coordinator conversation here from {main}.",
+  "Continue the coordinator on {machine}?",
+  "Extra coordinator on {machine}",
+  "Fix the extra coordinator on {machine}",
+  "Goes to the coordinator on {machine} and opens it there",
+  "It becomes its own project again, with an active coordinator and a copy of this project's notes. {main} stops sending it work. Threads and files stay where they are.",
+  "It starts from the shared goal, memory and plan. The conversation on {main} stays there as history, and {main} gives way when it is back.",
+  "Starting the coordinator…",
+  "Syncs {machine}, then moves the coordinator conversation here from {main}. You confirm first.",
+  "The conversation here is kept as history.",
+  "The coordinator cannot be handed off from this machine yet.",
+  "The coordinator cannot continue on {machine} yet.",
+  "The coordinator continued on another machine. This one gives way once it is reachable; Send opens the newer one.",
+  "The coordinator continued on {machine} while its old machine was offline. It started from the shared goal, memory and plan; the earlier conversation stays on the old machine as history.",
+  "The coordinator continued on {machine} while {main} was offline. It started from the shared goal, memory and plan; the earlier conversation stays on {main} as history.",
+  "The coordinator continues here. Send your message again.",
+  "The coordinator continues on {machine}",
+  "The coordinator continues on {machine}. {names} have not confirmed it yet.",
+  "The coordinator conversation is on this machine.",
+  "The coordinator for {project} is on another machine that this window cannot reach.",
+  "The coordinator for {project} is on another machine.",
+  "The coordinator for {project} is on {machine}, which is not answering.",
+  "The coordinator for {project} is on {machine}. Send opens it there.",
+  "The coordinator is being handed off right now.",
+  "The coordinator is on another machine. Send opens it there.",
+  "The coordinator is on {machine}. Messages typed here go to it.",
+  "The coordinator is on {machine}. This machine also runs a coordinator of its own, which should be fixed.",
+  "The coordinator moved to {new}. Nothing was sent.",
+  "The coordinator stayed on {main}",
+  "The coordinator's machine did not confirm the message. It may not have arrived.",
+  "The coordinator's machine is not reachable from here.",
+  "They refuse work from the old coordinator only once they have confirmed the new one.",
+  "This window can only read {machine}, so it cannot send there. Open SpecWithCode on {machine}, or connect to it with full access.",
+  "This window can only read {main}, so it cannot hand the coordinator off from there. Open SpecWithCode on {main}, or connect to it with full access.",
+  "To make {machine} part of this project again, link it afterwards. Linking makes it give way to the coordinator on {main}.",
+  "workers only",
+  "{machine} also runs a coordinator for {project}. The project's coordinator is on {main}.",
+  "{machine} cannot continue the coordinator yet. Update SpecWithCode there, or connect to it with permission to change settings and run work.",
+  "{machine} did not take the message: {reason}. Nothing was sent.",
+  "{machine} is not answering. Continue here unlocks in {m} min.",
+  "{machine} kept its coordinator conversation from before as history. View it to read that conversation.",
+  "{main} has been offline for 10 minutes or more. Continue here: the coordinator starts on {machine} from the shared goal, memory and plan. Its conversation on {main} stays readable there, and {main} gives way when it is back.",
+  "{main} has been offline for 10 minutes or more. The coordinator starts on {machine} from the shared goal, memory and plan. The conversation on {main} stays there as history. Until {main} is back it can still start work on its own machine; then it gives way and lists what it ran meanwhile.",
+  "{main} has been offline for {n} minutes. Continue here: the coordinator starts on {machine} from the shared goal, memory and plan. Its conversation on {main} stays readable there, and {main} gives way when it is back.",
+  "{main} is offline: the coordinator starts on {machine} from the shared goal, memory and plan. You confirm first.",
+  "{main} must be silent for 10 minutes before the coordinator can continue on {machine}. That unlocks in {minutes} min.",
+  "{other} still follows the coordinator on {machine}. Continue the coordinator on another machine first.",
+  "Continue here and send",
+  "Extra coordinator",
+  "Old conversation kept",
+  "Continue the coordinator here",
+  "Handing off the coordinator…",
+];
+
 /** Exact old phrases: never quoted in the source again, and never a catalog key. */
 export const RETIRED_PHRASES: readonly string[] = [
   ...PHASE_1_PHRASES,
   ...PHASE_2_PHRASES,
   ...SLEEP_START_PHRASES,
   ...PHASE_3_PHRASES,
+  ...EQUAL_COORDINATORS_PHRASES,
 ];
 
 /** Phase 1: retired words that were plain text in a component. */
@@ -213,7 +279,20 @@ const PHASE_2_TEXT: readonly string[] = [
   "Copy again before handing off the coordinator.",
 ];
 
-/** Retired words that were plain text in a component, matched anywhere in the source. */
+/** Equal coordinators: role and coordinator-move words that were plain text in a component. */
+const EQUAL_COORDINATORS_TEXT: readonly string[] = [
+  "Continue the coordinator here",
+  "Handing off the coordinator",
+  "Extra coordinator",
+  "Old conversation kept",
+  "Continue here and send",
+  "Coordinator handoff pending",
+  "Coordinator. Plans the work and can start it on every machine.",
+  "The coordinator is on another machine. An older conversation here is read-only history.",
+  "The coordinator can continue here",
+  "stops sending it work",
+];
+
 /** Phase 3's template text, matched anywhere in the source. */
 const PHASE_3_TEXT: readonly string[] = [
   "Move ${projectName}'s running threads",
@@ -227,7 +306,13 @@ const PHASE_3_TEXT: readonly string[] = [
   'Move "${props.title}"',
 ];
 
-export const RETIRED_TEXT: readonly string[] = [...PHASE_1_TEXT, ...PHASE_2_TEXT, ...PHASE_3_TEXT];
+/** Retired words that were plain text in a component, matched anywhere in the source. */
+export const RETIRED_TEXT: readonly string[] = [
+  ...PHASE_1_TEXT,
+  ...PHASE_2_TEXT,
+  ...PHASE_3_TEXT,
+  ...EQUAL_COORDINATORS_TEXT,
+];
 
 /** Phase 1: role words. "Main machine" is a settings label of its own (D-20). */
 const PHASE_1_BANNED: readonly RegExp[] = [
@@ -252,4 +337,16 @@ const PHASE_2_BANNED: readonly RegExp[] = [
 ];
 
 /** Patterns no phrase key may match, for the phases shipped so far. */
-export const BANNED: readonly RegExp[] = [...PHASE_1_BANNED, ...PHASE_2_BANNED];
+/** Equal coordinators: no phrase names an extra coordinator or moves one from the menu. */
+const EQUAL_COORDINATORS_BANNED: readonly RegExp[] = [
+  /[Ee]xtra coordinator/u,
+  /Continue the coordinator here/u,
+  /Handing off the coordinator/u,
+  /Old conversation kept/u,
+];
+
+export const BANNED: readonly RegExp[] = [
+  ...PHASE_1_BANNED,
+  ...PHASE_2_BANNED,
+  ...EQUAL_COORDINATORS_BANNED,
+];

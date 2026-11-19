@@ -1252,9 +1252,12 @@ const make = Effect.gen(function* () {
                     member.projectId !== input.projectId,
                 ) ||
                 (targetBinding && targetBinding.state !== "active"))) ||
+            // Work that lands beside this project leaves its coordinator running (1390 AC-35);
+            // only a handoff into the project's own folder replaces an active binding.
             (!joining &&
+              useProjectFolder &&
               targetBinding?.state === "active" &&
-              !(useProjectFolder && saved && targetBinding.operationId === input.operationId))
+              !(saved && targetBinding.operationId === input.operationId))
           )
             return yield* new MachineHandoffError({ code: "conflict" });
           const incomingBinding: ProjectCoordinatorBinding = {
@@ -1490,8 +1493,8 @@ const make = Effect.gen(function* () {
               `context-${input.operationId}-paths`,
               stringifyJson(copiedContextPaths(input.bundle, materialized.workspaceRoot), null, 2),
             );
-          // Joining a standalone registration preserves its history and fences its retained coordinator.
-          // Existing historical bindings keep their original successor; the active segment has the newest epoch.
+          // Joining a standalone registration preserves its history. Its coordinator stays its
+          // own: every machine runs one (1390 AC-35). A copy that gave way before keeps that binding.
           if (
             !(
               useProjectFolder &&
@@ -1511,14 +1514,7 @@ const make = Effect.gen(function* () {
                   ...(useProjectFolder ? { acceptedHandoffOperationId: input.operationId } : {}),
                   coordinatorBinding: useProjectFolder
                     ? incomingBinding
-                    : targetBinding?.state === "transferred"
-                      ? targetBinding
-                      : {
-                          epoch: targetBinding?.epoch ?? 0,
-                          state: "transferred",
-                          operationId: input.operationId,
-                          successor,
-                        },
+                    : (targetBinding ?? { epoch: 0, state: "active" }),
                 },
               }),
               "storage_failed",

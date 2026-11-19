@@ -11,7 +11,6 @@ import {
 import type { HandoffFolderMethod } from "../../studio/folderCopy";
 import { displayFolder } from "../../lib/displayFolder";
 import { useTx } from "../../i18n";
-import type { MainOffer } from "../../studio/makeMain";
 import {
   existingCopyLine,
   otherProjectNote,
@@ -54,8 +53,6 @@ export interface ProjectMoveDialogContext {
   readonly wholeFolderOnly?: boolean;
   /** What the chosen machine already holds of this project, where Main is, and the plan. */
   readonly send?: SendFacts | null;
-  /** "Continue the coordinator on {machine}" for the finished copy, on its done screen; null where there is none. */
-  readonly makeMain?: MakeMainAction | null;
 }
 
 /** The chosen machine's holding and the names the plan sentence needs. */
@@ -74,12 +71,6 @@ export interface SendFacts {
    * never moves and the two are never linked from this dialog.
    */
   readonly otherProject?: { readonly main: string | null } | null;
-}
-
-/** The done screen's switch: the offer as the machine menu shows it, and what a click runs. */
-export interface MakeMainAction {
-  readonly offer: MainOffer;
-  readonly run: () => void;
 }
 
 export const ProjectMoveDialog = createContext<ProjectMoveDialogContext | null>(null);
@@ -317,7 +308,7 @@ const METHODS: ReadonlyArray<{
       "Also brings unpushed commits, local branches and stashes. Slower for large repositories.",
   },
   {
-    // Not a choice: "Continue the coordinator here" and an unfinished Git handoff open on it.
+    // Not a choice: "Continue in the folder already there" and an unfinished Git handoff open on it.
     value: "folder",
     detail:
       "Continues in a folder already saved there, which updates from origin. Always moves the coordinator there.",
@@ -335,7 +326,7 @@ export const methodLabel = (
   method === "clone"
     ? { text: "Download from GitHub (recommended)" }
     : method === "folder"
-      ? { text: "Continue the coordinator here" }
+      ? { text: "Continue in the folder already there" }
       : context.sync
         ? { text: "Compare all files…" }
         : {

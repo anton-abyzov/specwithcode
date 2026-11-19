@@ -258,7 +258,7 @@ const setup = (
   };
   const proxy: RemoteWorkers.RemoteWorkersShape["proxy"] = (input) =>
     Effect.suspend((): Effect.Effect<Record<string, unknown>, OrchestratorMcpFailure> => {
-      proxied.push(input.tool);
+      if (input.tool !== "orchestrator_capabilities") proxied.push(input.tool);
       if (input.tool === "studio_project_list")
         return Effect.succeed({ projects: options.sharedWithCopiesOnM1 ?? [], nextCursor: null });
       if (input.tool === "studio_thread_list")
@@ -282,13 +282,15 @@ const setup = (
           logicalProject: { ...logicalProject, members: [kept, joined] },
           coordinatorBinding: {
             epoch: 0,
-            state: "transferred",
+            state: "active",
             operationId: input.arguments.operationId,
-            successor: kept,
           },
           replayed: false,
         });
       }
+      // The other machine says it keeps its coordinator when a copy there joins a project.
+      if (input.tool === "orchestrator_capabilities")
+        return Effect.succeed({ features: { equalCoordinators: true } });
       return Effect.die(`unexpected tool ${input.tool}`);
     });
   const linkedProject = () =>

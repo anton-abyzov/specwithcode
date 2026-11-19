@@ -413,11 +413,6 @@ it.each([
 it.each([
   { how: "a copy already linked", extra: { linked: true }, status: () => copyStatus("applied") },
   {
-    how: "a move, whose coordinator carries the project identity",
-    extra: { mode: "copy-and-move" },
-    status: () => copyStatus("applied", "copy-and-move"),
-  },
-  {
     how: "a copy not registered as a project yet",
     extra: {},
     status: () => ({ ...copyStatus("applied"), projectId: null }),

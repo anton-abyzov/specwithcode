@@ -391,6 +391,7 @@ export const make = Effect.gen(function* () {
       projectLink: true,
       coordinatorTakeover: true,
       coordinatorPerMachine: true,
+      equalCoordinators: true,
       coordinatorStandby: true,
       coordinatorRearm: true,
       linkedMembersSync: true,

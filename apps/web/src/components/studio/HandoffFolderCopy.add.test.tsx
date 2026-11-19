@@ -95,24 +95,27 @@ const unfinished = {
 const polls = () =>
   state.calls.filter(([name]) => name === "copyStatus" || name === "moveCoordinator");
 
-it("opens Add as a new copy and leaves the unfinished move to another machine as it is", async () => {
+it("opens Add as a new copy and leaves a copy saved as a move to another machine alone", async () => {
   onChoices.mockClear();
   localStorage.setItem(KEY, JSON.stringify(unfinished));
   await act(async () => root.render(<CopyFixture fresh machineRequested deskBAvailable />));
   await settle();
-  // Nothing of the saved move is asked for or continued.
+  // Nothing of the saved copy is asked for or continued.
   expect(polls()).toEqual([]);
-  expect(readPendingCopy(KEY)).toMatchObject(unfinished);
+  // It reads as a copy of files now: the same operation, machine and folder, and no move.
+  expect(readPendingCopy(KEY)).toMatchObject({ ...unfinished, mode: "copy-only" });
   for (const [choices] of onChoices.mock.calls)
     expect(choices).not.toMatchObject({ mode: "copy-and-move" });
   expect(container.textContent).not.toContain("/work/atlas");
 });
 
-it("still opens that unfinished move when the dialog is not Add", async () => {
+it("opens that saved move as a copy when the dialog is not Add, and never moves the coordinator", async () => {
   onChoices.mockClear();
   localStorage.setItem(KEY, JSON.stringify(unfinished));
   await act(async () => root.render(<CopyFixture machineRequested deskBAvailable />));
   await settle();
   expect(polls().length).toBeGreaterThan(0);
-  expect(onChoices.mock.calls.some(([choices]) => choices.mode === "copy-and-move")).toBe(true);
+  expect(state.calls.some(([name]) => name === "moveCoordinator")).toBe(false);
+  for (const [choices] of onChoices.mock.calls)
+    expect(choices).not.toMatchObject({ mode: "copy-and-move" });
 });

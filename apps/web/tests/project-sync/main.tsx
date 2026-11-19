@@ -734,9 +734,6 @@ function MenuPage() {
         savedMachineMissing={false}
         reachOf={reachOf}
         onView={(key) => record(`view:${key}`)}
-        mainOffers={[]}
-        onMakeMain={() => {}}
-        onFix={() => {}}
         onAllowWorkers={() => {}}
         onMigrate={() => record("migrate")}
         onSync={() => record("sync")}
@@ -826,9 +823,6 @@ function ReadOnlyMenuPage() {
         savedMachineMissing={false}
         reachOf={reachOf}
         onView={(key) => record(`view:${key}`)}
-        mainOffers={[]}
-        onMakeMain={() => {}}
-        onFix={() => {}}
         onAllowWorkers={() => {}}
         onMigrate={() => record("migrate")}
         onSync={files.onSync ? () => (record("sync"), files.onSync?.()) : null}

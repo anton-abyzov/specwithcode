@@ -234,9 +234,8 @@ public enum LinkedProjectResolver {
 
   public static func roleText(_ role: Role) -> String {
     switch role {
-    case .coordinator: "Coordinator. Plans the work and can start it on every machine."
-    case .workers: "The coordinator is on another machine. An older conversation here is read-only history."
-    case .pending: "Coordinator handoff pending."
+    case .coordinator: "Runs its own coordinator for this project."
+    case .workers, .pending: "Needs an update before its coordinator can take messages. Update SpecWithCode there."
     }
   }
 
@@ -261,54 +260,20 @@ public enum LinkedProjectResolver {
     public var takeover: TakeoverButton
   }
 
-  /// One row per copy, coordinator first.
+  /// One row per machine, by name. Every machine runs its own coordinator, so
+  /// no row offers to continue, take over or stand by for another machine's;
+  /// a machine still on a version from before that reads as needing an update.
   public static func rows(_ copies: [Copy], now: Date, unreachableSince: Date?) -> [Row] {
-    let found = coordinators(copies)
-    let coordinating = Set(found.coordinators.map(\.candidateKey))
-    let coordinator = found.coordinators.first
-    let standby = coordinator?.binding?.state == .active ? coordinator?.binding?.standby?.member : nil
-    let reach = coordinator.map(reach) ?? .reachable
-    let availability = coordinator.flatMap { _ in reach == .unreachable ? takeoverAvailability(coordinatorConnected: false, unreachableSince: unreachableSince, now: now) : nil }
-    let ordered = copies.sorted { a, b in
-      let ra = a.candidateKey == coordinator?.candidateKey ? 0 : 1, rb = b.candidateKey == coordinator?.candidateKey ? 0 : 1
-      return ra != rb ? ra < rb : a.machineLabel.localizedStandardCompare(b.machineLabel) == .orderedAscending
-    }
-    return ordered.map { copy in
-      let role: Role = coordinating.contains(copy.candidateKey) ? .coordinator : copy.binding?.state == .transferring ? .pending : .workers
-      let isStandby = standby.map { $0.environmentId == copy.ref.environmentId && $0.projectId == copy.ref.projectId } ?? false
-      var takeover = TakeoverButton.hidden
-      var note: String?
-      if role == .workers, reach == .switchedOff, let coordinator {
-        takeover = .unavailable("Turn on \(coordinator.machineLabel) on this phone first.")
-        note = "\(coordinator.machineLabel) is switched off on this phone, so the phone cannot tell whether it still coordinates."
-      } else if role == .workers, let availability, let coordinator {
-        if !copy.machineOnline {
-          takeover = .unavailable("Connect \(copy.machineLabel) first.")
-        } else if !copy.canTakeOver {
-          takeover = .unavailable("Update SpecWithCode on \(copy.machineLabel) to continue the coordinator there.")
-        } else if availability.available {
-          takeover = .ready
-        } else {
-          takeover = .waiting(minutes: max(1, Int((availability.wait / 60).rounded(.up))))
+    copies
+      .sorted { $0.machineLabel.localizedStandardCompare($1.machineLabel) == .orderedAscending }
+      .map { copy in
+        let role: Role = switch copy.binding?.state {
+        case .transferred: .workers
+        case .transferring: .pending
+        default: .coordinator
         }
-        note = availability.available
-          ? "\(coordinator.machineLabel) has been offline for 10 minutes or more. The coordinator can continue here."
-          : "\(coordinator.machineLabel) is offline. The coordinator can continue here in \(max(1, Int((availability.wait / 60).rounded(.up)))) min if it stays away."
+        return Row(copy: copy, role: role, isStandby: false, note: nil, takeover: .hidden)
       }
-      if let binding = copy.binding, let at = binding.takenOverAt.flatMap(parseDate) {
-        if role == .coordinator, let previous = binding.predecessor.flatMap({ p in copies.first { $0.ref.environmentId == p.environmentId && $0.ref.projectId == p.projectId } }) {
-          note = "Took over from \(previous.machineLabel) \(clock(at, now: now)). \(previous.machineLabel) gives way when it is reachable again."
-        } else if role == .workers, let successor = binding.successor.flatMap({ s in copies.first { $0.ref.environmentId == s.environmentId && $0.ref.projectId == s.projectId } }) {
-          note = "\(successor.machineLabel) took over \(clock(at, now: now)). Review the coordinator turns this machine ran after that."
-        }
-      }
-      // A copy taken over from while it was away still thinks it coordinates.
-      if found.superseded.contains(where: { $0.candidateKey == copy.candidateKey }),
-         let successor = copies.first(where: { $0.binding?.predecessor?.environmentId == copy.ref.environmentId && $0.binding?.predecessor?.projectId == copy.ref.projectId }) {
-        note = "\(successor.machineLabel) took over while this machine was unreachable. It gives way when both machines are reachable."
-      }
-      return Row(copy: copy, role: role, isStandby: isStandby, note: note, takeover: takeover)
-    }
   }
 
   static func clock(_ date: Date, now: Date) -> String {

@@ -3,7 +3,6 @@ import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
-import type { MainOffer } from "../../studio/makeMain";
 import type { MachineRowRole } from "../../studio/machineRowState";
 import type { OrchestratorCopy } from "../../studio/projectCoordinatorMachine";
 import {
@@ -11,7 +10,6 @@ import {
   rememberLinkRefusal,
   resetLinkRefusalsForTest,
 } from "../../studio/linkRefusals";
-import { copyRoleLabel } from "../../studio/workersOnlyCopy";
 
 /** The project shown in `renderSwitcher`. */
 const CURRENT = "laptopE:p";
@@ -78,53 +76,35 @@ afterEach(async () => {
   document.body.innerHTML = "";
 });
 
-/** A machine of the project, as `orchestratorCopies` lists it, by its menu row role. */
+/**
+ * A machine of the project, as `orchestratorCopies` lists it. Linked machines are equals:
+ * each runs its own coordinator, and `main` only says which one project-wide settings are
+ * read from (the first linked machine of a test, by default the one that is not `canStart`).
+ */
 const copy = (
   key: string,
   machine: string,
-  rowRole: MachineRowRole = "main",
+  rowRole: MachineRowRole = "linked",
   canStart = false,
+  main = rowRole === "linked" && !canStart && !key.startsWith("member:"),
 ): OrchestratorCopy => ({
   key,
   machine,
   folder: "/w/atlas",
-  role:
-    rowRole === "copy"
-      ? "workers"
-      : rowRole === "moving"
-        ? "pending"
-        : rowRole === "independent"
-          ? "independent"
-          : "coordinator",
-  main: rowRole === "main",
+  role: rowRole === "independent" ? "independent" : "coordinator",
+  main,
   rowRole,
-  label:
-    rowRole === "independent"
-      ? { text: "Separate project" }
-      : rowRole === "single"
-        ? { text: "" }
-        : copyRoleLabel(rowRole),
+  label: rowRole === "independent" ? { text: "Separate project" } : { text: "" },
   canStart,
 });
+/** A linked machine that is not the one settings are read from. */
+const member = (key: string, machine: string, canStart = false): OrchestratorCopy =>
+  copy(key, machine, "linked", canStart, false);
 
 const handlers = () => ({
   onView: vi.fn<(key: string) => void>(),
-  onMakeMain: vi.fn<(key: string) => void>(),
   onAllowWorkers: vi.fn<() => void>(),
 });
-/** The switch `useMakeMain` works out for a machine: pressable, or off with its reason. */
-const offer = (key: string, machine: string, extra: Partial<MainOffer> = {}): MainOffer => ({
-  key,
-  machine,
-  main: "Laptop E",
-  kind: "move",
-  reason: null,
-  note: null,
-  ...extra,
-});
-const continueItems = () => [
-  ...document.querySelectorAll<HTMLElement>("[data-orchestrator-continue]"),
-];
 const rows = () => [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
 const rowOf = (key: string) =>
   document.querySelector<HTMLElement>(`[data-orchestrator-view="${key}"]`)!;
@@ -147,14 +127,9 @@ async function renderSwitcher(
         connected
         statusDetail=""
         current="laptopE:p"
-        copies={[copy("laptopE:p", "Laptop E"), copy("towerH:p", "Tower H", "copy", true)]}
+        copies={[copy("laptopE:p", "Laptop E"), member("towerH:p", "Tower H", true)]}
         unknown={[]}
         savedMachineMissing={false}
-        mainOffers={[
-          offer("towerH:p", "Tower H"),
-          offer("deskB:p", "Desk B"),
-          offer("rackF:a", "Rack F"),
-        ]}
         {...props}
       />,
     ),
@@ -172,9 +147,9 @@ const item = (role: string, text: string) =>
 const EVERY_ROW = {
   copies: [
     copy("m4:p", "M4"),
-    copy("mini:p", "Mini", "copy"),
-    copy("m1:p", "M1", "also-main"),
-    copy("m3:p", "M3", "moving"),
+    member("mini:p", "Mini"),
+    member("m1:p", "M1"),
+    member("m3:p", "M3"),
     copy("m5:p", "M5", "independent"),
   ],
   unknown: [{ key: "linux-mini:p", machine: "linux-mini" }],
@@ -192,7 +167,7 @@ it("names the machine shown on the chip, and the newly shown machine after a row
         connected
         statusDetail=""
         current={current}
-        copies={[copy("laptopE:p", "Laptop E"), copy("towerH:p", "Tower H", "copy")]}
+        copies={[copy("laptopE:p", "Laptop E"), member("towerH:p", "Tower H")]}
         unknown={[]}
         savedMachineMissing={false}
         onView={(key) => {
@@ -227,11 +202,10 @@ it("switches the view only after its menu has closed", async () => {
   await act(async () => item("menuitemradio", "Tower H")!.click());
   await vi.waitFor(() => expect(calls.onView).toHaveBeenCalledTimes(1));
   expect(menuOpenAtSwitch).toEqual([false]);
-  expect(calls.onMakeMain).not.toHaveBeenCalled();
 });
 
-it("gives every row exactly one state: pill, reason or nothing", async () => {
-  await renderSwitcher({ ...handlers(), ...EVERY_ROW, onFix: vi.fn() });
+it("lists the project's machines as equals: no role word, no pill and no step on any of them (AC-01)", async () => {
+  await renderSwitcher({ ...handlers(), ...EVERY_ROW });
   // This project's machines first, the separate project after them.
   expect(rows().map((row) => row.getAttribute("data-orchestrator-view"))).toEqual([
     "m4:p",
@@ -242,10 +216,10 @@ it("gives every row exactly one state: pill, reason or nothing", async () => {
     "m5:p",
   ]);
   expect(rows().map((row) => row.getAttribute("data-row-state"))).toEqual([
-    "coordinator",
     "plain",
-    "extra-coordinator",
-    "handing-off",
+    "plain",
+    "plain",
+    "plain",
     "cannot-open",
     "separate",
   ]);
@@ -253,24 +227,24 @@ it("gives every row exactly one state: pill, reason or nothing", async () => {
     ...textsIn(rowOf(key), "[data-row-pill]"),
     ...textsIn(rowOf(key), "[data-row-reason]"),
   ];
-  expect(said("m4:p")).toEqual(["Coordinator"]);
-  // A plain machine has no role word at all.
-  expect(said("mini:p")).toEqual([]);
-  expect(rowOf("mini:p").textContent).toBe("Mini");
-  expect(said("m1:p")).toEqual(["Extra coordinator"]);
-  expect(said("m3:p")).toEqual(["Handing off the coordinator…"]);
+  // Every linked machine reads the same: its name and nothing else.
+  for (const [key, name] of [
+    ["m4:p", "M4"],
+    ["mini:p", "Mini"],
+    ["m1:p", "M1"],
+    ["m3:p", "M3"],
+  ] as const) {
+    expect(said(key)).toEqual([]);
+    expect(rowOf(key).textContent).toBe(name);
+    expect(rowOf(key).title).toBe(name);
+  }
   expect(said("m5:p")).toEqual(["Separate project"]);
   expect(said("linux-mini:p")).toEqual(["This window cannot open linux-mini"]);
   expect(textsIn(rowOf("linux-mini:p"), "[data-row-pill]")).toEqual([]);
-  // The one step on a row sits beside it: Fix… for the extra coordinator, Connect… for the
-  // machine this window cannot open, and nothing for any other row.
-  expect(
-    [...document.querySelectorAll("[data-orchestrator-fix]")].map((node) => [
-      node.getAttribute("data-orchestrator-fix"),
-      node.textContent,
-      node.getAttribute("aria-label"),
-    ]),
-  ).toEqual([["m1:p", "Fix…", "Fix the extra coordinator on M1"]]);
+  // No row offers to make a coordinator give way; the one step is Connect…, for the
+  // machine this window cannot open.
+  expect(document.querySelector("[data-orchestrator-fix]")).toBeNull();
+  expect(document.querySelector("[data-orchestrator-continue]")).toBeNull();
   expect(
     [...document.querySelectorAll("[data-orchestrator-connect]")].map((node) => [
       node.getAttribute("data-orchestrator-connect"),
@@ -288,7 +262,7 @@ it("greys a machine this window cannot open: never pressable, with its reason an
   const calls = handlers();
   await renderSwitcher({
     ...calls,
-    copies: [copy("laptopE:p", "Laptop E"), copy("deskB:p", "Desk B", "copy")],
+    copies: [copy("laptopE:p", "Laptop E"), member("deskB:p", "Desk B")],
     unknown: [{ key: "box-a:p", machine: "box-a" }],
   });
   const greyed = rowOf("box-a:p");
@@ -311,7 +285,7 @@ it("greys a listed machine that refuses this window, the same way", async () => 
   await renderSwitcher({
     ...calls,
     reachOf,
-    copies: [copy("laptopE:p", "Laptop E"), copy("deskB:p", "Desk B", "copy")],
+    copies: [copy("laptopE:p", "Laptop E"), member("deskB:p", "Desk B")],
   });
   const refused = rowOf("deskB:p");
   expect(refused.getAttribute("data-row-state")).toBe("cannot-open");
@@ -320,34 +294,6 @@ it("greys a listed machine that refuses this window, the same way", async () => 
   await act(async () => refused.click());
   await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
   expect(calls.onView).not.toHaveBeenCalled();
-});
-
-it("opens Fix… for an extra coordinator after the menu closed, never picking its row", async () => {
-  const calls = handlers();
-  const menuOpenAtFix: boolean[] = [];
-  const onFix = vi.fn<(key: string) => void>(() => menuOpenAtFix.push(menuOpen()));
-  await renderSwitcher({
-    ...calls,
-    onFix,
-    copies: [copy("m4:p", "M4"), copy("m1:p", "M1", "also-main")],
-  });
-  await act(async () =>
-    document.querySelector<HTMLElement>('[data-orchestrator-fix="m1:p"]')!.click(),
-  );
-  await vi.waitFor(() => expect(onFix).toHaveBeenCalledWith("m1:p"));
-  expect(onFix).toHaveBeenCalledTimes(1);
-  expect(menuOpenAtFix).toEqual([false]);
-  expect(calls.onView).not.toHaveBeenCalled();
-  expect(calls.onMakeMain).not.toHaveBeenCalled();
-});
-
-it("offers no Fix… while the page cannot open it, but still says Extra coordinator", async () => {
-  await renderSwitcher({
-    ...handlers(),
-    copies: [copy("m4:p", "M4"), copy("m1:p", "M1", "also-main")],
-  });
-  expect(document.querySelector("[data-orchestrator-fix]")).toBeNull();
-  expect(textsIn(rowOf("m1:p"), "[data-row-pill]")).toEqual(["Extra coordinator"]);
 });
 
 /** Desk B offline with a time, Kiosk D offline with none, Laptop E (the coordinator) offline too. */
@@ -359,9 +305,9 @@ const offlineReach = (key: string): MachineRowReach =>
       : { reach: "open" };
 const offlineCopies = [
   copy("laptopE:p", "Laptop E"),
-  copy("deskB:p", "Desk B", "copy"),
-  copy("kioskD:p", "Kiosk D", "copy"),
-  copy("towerH:p", "Tower H", "copy"),
+  member("deskB:p", "Desk B"),
+  member("kioskD:p", "Kiosk D"),
+  member("towerH:p", "Tower H"),
 ];
 
 it("keeps an offline machine pressable, in its own state, and views it on a click", async () => {
@@ -371,9 +317,9 @@ it("keeps an offline machine pressable, in its own state, and views it on a clic
   expect(offline.getAttribute("data-row-state")).toBe("plain");
   expect(offline.getAttribute("aria-disabled")).not.toBe("true");
   expect(textsIn(offline, "[data-row-reason]")).toEqual([]);
-  // An offline coordinator still reads "Coordinator".
-  expect(rowOf("laptopE:p").getAttribute("data-row-state")).toBe("coordinator");
-  expect(textsIn(rowOf("laptopE:p"), "[data-row-pill]")).toEqual(["Coordinator"]);
+  // Every offline machine keeps the same plain row.
+  expect(rowOf("laptopE:p").getAttribute("data-row-state")).toBe("plain");
+  expect(textsIn(rowOf("laptopE:p"), "[data-row-pill]")).toEqual([]);
   expect(textsIn(rowOf("towerH:p"), "[data-row-note]")).toEqual([]);
   await act(async () => offline.click());
   await vi.waitFor(() => expect(calls.onView).toHaveBeenCalledWith("deskB:p"));
@@ -391,143 +337,65 @@ it("tells two checkouts on one machine apart by their folders", async () => {
     ...handlers(),
     copies: [
       copy("laptopE:p", "Laptop E"),
-      { ...copy("deskB:a", "Desk B", "copy"), folder: "/w/a" },
-      { ...copy("deskB:b", "Desk B", "copy"), folder: "/w/b" },
+      { ...member("deskB:a", "Desk B"), folder: "/w/a" },
+      { ...member("deskB:b", "Desk B"), folder: "/w/b" },
     ],
   });
   expect(rows().map((row) => row.textContent)).toEqual([
-    "Laptop ECoordinator",
+    "Laptop E",
     "Desk B · /w/a",
     "Desk B · /w/b",
   ]);
 });
 
-it("notes a machine that kept its old coordinator conversation, and views it on a click", async () => {
+it("views a machine that used to follow another one like any other, with no note about its past", async () => {
   const calls = handlers();
   await renderSwitcher(calls);
-  const kept = rowOf("towerH:p");
-  expect(kept.getAttribute("data-row-state")).toBe("plain");
-  expect(textsIn(kept, "[data-row-note]")).toEqual(["Old conversation kept"]);
-  expect(kept.title).toBe(
-    "Tower H kept its coordinator conversation from before as history. View it to read that conversation.",
-  );
-  await act(async () => kept.click());
+  const row = rowOf("towerH:p");
+  expect(row.getAttribute("data-row-state")).toBe("plain");
+  expect(textsIn(row, "[data-row-note]")).toEqual([]);
+  expect(row.title).toBe("Tower H");
+  await act(async () => row.click());
   await vi.waitFor(() => expect(calls.onView).toHaveBeenCalledWith("towerH:p"));
-  expect(calls.onMakeMain).not.toHaveBeenCalled();
 });
 
-/** The switcher on Tower H's page, where the coordinator is on Laptop E. */
+/** The switcher on Tower H's page, one of three linked machines. */
 const onTowerH = (extra: Partial<SwitcherProps> = {}) => ({
   label: "Tower H",
   current: "towerH:p",
   copies: [
     copy("laptopE:p", "Laptop E"),
-    copy("towerH:p", "Tower H", "copy"),
-    copy("deskB:p", "Desk B", "copy"),
+    member("towerH:p", "Tower H"),
+    member("deskB:p", "Desk B"),
   ],
-  mainOffers: [offer("towerH:p", "Tower H"), offer("deskB:p", "Desk B")],
   ...extra,
 });
 
-it("offers one Continue the coordinator here, for the machine shown, after the menu closed", async () => {
-  const calls = handlers();
-  const menuOpenAtContinue: boolean[] = [];
-  calls.onMakeMain.mockImplementation(() => menuOpenAtContinue.push(menuOpen()));
-  await renderSwitcher({ ...calls, ...onTowerH() });
-  // One item, for Tower H only: Desk B has an offer, but it is not the machine shown.
-  expect(continueItems().map((node) => node.getAttribute("data-orchestrator-continue"))).toEqual([
-    "towerH:p",
-  ]);
-  expect(continueItems()[0]?.textContent).toBe("Continue the coordinator here");
-  expect(continueItems()[0]?.title).toBe(
-    "Syncs Tower H, then moves the coordinator conversation here from Laptop E. You confirm first.",
-  );
-  // It sits in the machine shown's own group.
-  const labels = textsIn(document, '[data-slot="menu-label"]');
-  expect(labels).toEqual(["Atlas on your machines", "Work on Tower H"]);
-  await act(async () => continueItems()[0]!.click());
-  await vi.waitFor(() => expect(calls.onMakeMain).toHaveBeenCalledWith("towerH:p"));
-  expect(menuOpenAtContinue).toEqual([false]);
-  expect(calls.onView).not.toHaveBeenCalled();
-});
-
-it("says a takeover is what Continue does once the coordinator's machine is offline", async () => {
-  await renderSwitcher({
-    ...handlers(),
-    ...onTowerH({ mainOffers: [offer("towerH:p", "Tower H", { kind: "takeover" })] }),
-  });
-  expect(continueItems()[0]?.title).toBe(
-    "Laptop E is offline: the coordinator starts on Tower H from the shared goal, memory and plan. You confirm first.",
-  );
-});
-
-it("keeps Continue off with its note and reason while it is blocked", async () => {
-  const calls = handlers();
-  await renderSwitcher({
-    ...calls,
-    ...onTowerH({
-      mainOffers: [
-        offer("towerH:p", "Tower H", {
-          kind: "blocked",
-          block: "waiting",
-          reason: {
-            text: "{main} must be silent for 10 minutes before the coordinator can continue on {machine}. That unlocks in {minutes} min.",
-            values: { main: "Laptop E", machine: "Tower H", minutes: "7" },
-          },
-          note: { text: "in {minutes} min", values: { minutes: "7" } },
-        }),
-      ],
-    }),
-  });
-  const row = continueItems()[0]!;
-  expect(row.textContent).toBe("Continue the coordinator herein 7 min");
-  expect(row.getAttribute("aria-disabled")).toBe("true");
-  expect(row.title).toBe(
-    "Laptop E must be silent for 10 minutes before the coordinator can continue on Tower H. That unlocks in 7 min.",
-  );
-  await act(async () => row.click());
-  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
-  expect(calls.onMakeMain).not.toHaveBeenCalled();
-});
-
-it("offers no Continue on the coordinator's own machine, nor without an offer or a runner", async () => {
-  // On Laptop E, which holds the coordinator: offers for other machines are never shown.
-  await renderSwitcher(handlers());
-  expect(continueItems()).toEqual([]);
-  await act(async () => root.render(<></>));
-  // Not even with an offer for Laptop E itself: the coordinator is already here (AC-06).
-  await renderSwitcher({
-    ...handlers(),
-    mainOffers: [offer("laptopE:p", "Laptop E"), offer("towerH:p", "Tower H")],
-  });
-  expect(continueItems()).toEqual([]);
-  await act(async () => root.render(<></>));
-  await renderSwitcher({
-    ...handlers(),
-    ...onTowerH({ mainOffers: [offer("deskB:p", "Desk B")] }),
-  });
-  expect(continueItems()).toEqual([]);
-  await act(async () => root.render(<></>));
-  await renderSwitcher({ ...handlers(), ...onTowerH(), onMakeMain: null });
-  expect(continueItems()).toEqual([]);
+it("offers no way to move, continue or take over a coordinator on any machine shown (AC-35)", async () => {
+  for (const shown of [{}, onTowerH()]) {
+    await renderSwitcher({ ...handlers(), ...shown, onMigrate: vi.fn(), onLeave: vi.fn() });
+    expect(document.querySelector("[data-orchestrator-continue]")).toBeNull();
+    expect(document.querySelector("[data-orchestrator-fix]")).toBeNull();
+    expect(menuText()).not.toMatch(/Continue the coordinator|Handing off|Extra coordinator|Fix…/);
+    await act(async () => root.render(<></>));
+  }
 });
 
 it("never starts a second coordinator and names no role in any item", async () => {
-  // useStartCoordinator is gone (D-06): the only way to a coordinator here is Continue.
+  // Every machine already runs its own coordinator: nothing starts, moves or demotes one.
   expect("useStartCoordinator" in switcherModule).toBe(false);
   await renderSwitcher({
     ...handlers(),
     ...onTowerH({
       copies: [
         copy("m4:p", "M4"),
-        copy("minis:p", "Minis", "copy", true),
-        copy("m1:p", "M1", "also-main"),
-        copy("m3:p", "M3", "moving"),
+        member("minis:p", "Minis", true),
+        member("m1:p", "M1"),
+        member("m3:p", "M3"),
         copy("m5:p", "M5", "independent"),
       ],
     }),
     unknown: [{ key: "linux-mini:p", machine: "linux-mini" }],
-    onFix: vi.fn(),
     onSync: vi.fn(),
     onAdd: vi.fn(),
     onLeave: vi.fn(),
@@ -542,6 +410,7 @@ it("never starts a second coordinator and names no role in any item", async () =
   expect(text).not.toMatch(/\bMain\b|\bmain\b|\bCopy\b|\bcopy\b/);
   for (const node of document.querySelectorAll<HTMLElement>('[role^="menuitem"]'))
     expect(node.title).not.toMatch(/\bMain\b|\bmain\b|\bCopy\b|\bcopy\b/);
+  expect(text).not.toMatch(/[Cc]oordinator|Handing off|Fix…/);
   expect(document.querySelectorAll("[data-orchestrator-make-main]")).toHaveLength(0);
 });
 
@@ -555,8 +424,8 @@ it("offers Sync… and Add to another machine…, and keeps the names of Move ru
     onMigrate: vi.fn(),
   });
   expect(rows().map((row) => row.textContent)).toEqual([
-    "Laptop ECoordinator",
-    "Tower HOld conversation kept",
+    "Laptop E",
+    "Tower H",
   ]);
   // No "This project" label: the project's actions sit under its machines.
   expect(textsIn(document, '[data-slot="menu-label"]')).toEqual([
@@ -584,7 +453,6 @@ it("opens thread migration as its own action, after the menu closes", async () =
   await vi.waitFor(() => expect(onMigrate).toHaveBeenCalledTimes(1));
   expect(menuOpenAtMigrate).toEqual([false]);
   expect(calls.onView).not.toHaveBeenCalled();
-  expect(calls.onMakeMain).not.toHaveBeenCalled();
 });
 
 it("leaves thread migration off while the machine shown is offline", async () => {
@@ -603,7 +471,7 @@ it("marks an offline machine shown by its dot, never as live", async () => {
         connected={false}
         statusDetail="Reconnecting"
         current="towerH:p"
-        copies={[copy("laptopE:p", "Laptop E"), copy("towerH:p", "Tower H", "copy")]}
+        copies={[copy("laptopE:p", "Laptop E"), member("towerH:p", "Tower H")]}
         unknown={[]}
         savedMachineMissing={false}
         {...handlers()}
@@ -658,7 +526,6 @@ it("offers Add to another machine and Leave with one machine, and no Sync withou
         unknown={[]}
         savedMachineMissing={false}
         onView={vi.fn()}
-        onMakeMain={null}
         onAllowWorkers={null}
         onAdd={onAdd}
         onLeave={onLeave}
@@ -687,9 +554,9 @@ it("shows one sync fact on a row for another machine, and none on the machine sh
     ...onTowerH({
       copies: [
         copy("laptopE:p", "Laptop E"),
-        copy("towerH:p", "Tower H", "copy"),
-        copy("kioskD:p", "Kiosk D", "copy"),
-        copy("deskB:p", "Desk B", "copy"),
+        member("towerH:p", "Tower H"),
+        member("kioskD:p", "Kiosk D"),
+        member("deskB:p", "Desk B"),
       ],
     }),
     onSync: vi.fn(),
@@ -834,7 +701,7 @@ it("keeps that note off linked projects and off a group with a linked machine", 
     copies: [copy("laptopE:p", "Laptop E"), copy("deskB:p", "Desk B", "independent")],
   });
   expect(rows().map((row) => row.textContent)).toEqual([
-    "Laptop ECoordinator",
+    "Laptop E",
     "Desk BSeparate project",
   ]);
   await showInfo();
@@ -859,7 +726,6 @@ it("offers to link each same-repository project on another machine, from its own
   await act(async () => links[0]!.click());
   await vi.waitFor(() => expect(onLink).toHaveBeenCalledWith("rackF:old"));
   expect(calls.onView).not.toHaveBeenCalled();
-  expect(calls.onMakeMain).not.toHaveBeenCalled();
 });
 
 it("says under Link why the last try to link failed, until the two are linked", async () => {
@@ -973,11 +839,10 @@ it("gives a separate project Link, never Continue or a coordinator move", async 
       copy("rackF:old", "Rack F", "independent"),
     ],
     links: [{ key: "laptopE:p", machine: "Laptop E" }],
-    mainOffers: [offer("rackF:old", "Rack F"), offer("laptopE:p", "Laptop E")],
   });
   const labels = textsIn(document, ACTION_ITEMS);
   expect(labels).toContain("Link Laptop E to this project…");
-  expect(continueItems()).toEqual([]);
+  expect(document.querySelector("[data-orchestrator-continue]")).toBeNull();
   expect(labels.some((label) => /^Make|^Move coordinator|^Continue/.test(label ?? ""))).toBe(false);
 });
 
@@ -1003,7 +868,6 @@ it("stays a plain label with one machine and no machine actions", async () => {
         unknown={[]}
         savedMachineMissing={false}
         onView={vi.fn()}
-        onMakeMain={null}
         onAllowWorkers={null}
       />,
     ),
@@ -1018,11 +882,11 @@ it("opens linking on the coordinator's own project, never on one that follows an
   const coordinator = { environmentId: "laptopE", id: "p", workspaceSettings: atlas };
   const alone = { environmentId: "rackF", id: "q" };
   const [rackF, laptopE, single] = [viewed, coordinator, alone] as unknown as EnvironmentProject[];
-  const copies = [copy("laptopE:p", "Laptop E"), copy("rackF:p", "Rack F", "copy")];
+  const copies = [copy("laptopE:p", "Laptop E"), member("rackF:p", "Rack F")];
   expect(linkKeeper(rackF!, [laptopE!, rackF!], copies)).toBe(laptopE);
   // The coordinator's project is linked but never loaded here: nothing keeps it.
   expect(linkKeeper(rackF!, [rackF!], copies)).toBeNull();
-  expect(linkKeeper(rackF!, [rackF!], [copy("rackF:p", "Rack F", "copy")])).toBeNull();
+  expect(linkKeeper(rackF!, [rackF!], [member("rackF:p", "Rack F")])).toBeNull();
   // A project on its own keeps itself.
   expect(linkKeeper(single!, [single!], [])).toBe(single);
 });

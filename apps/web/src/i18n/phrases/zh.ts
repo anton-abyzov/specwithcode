@@ -11,6 +11,21 @@ export const zh: PhraseCatalog = {
   "Accounts & integrations": "账户与集成",
   Actions: "操作",
   "Add a device with a code": "用代码添加设备",
+  "Add this project on another machine. Every machine runs its own coordinator.":
+    "在另一台机器上添加此项目。每台机器都运行自己的协调器。",
+  "Make this project and the same project on another machine one project. Each machine keeps its own coordinator.":
+    "将此项目与另一台机器上的同一项目合并为一个项目。每台机器保留自己的协调器。",
+  "Needs an update: this machine is on a version from before every machine ran its own coordinator.":
+    "需要更新：这台机器的版本早于每台机器各自运行协调器的版本。",
+  "Pick {project} on another machine. It joins this project and keeps its own coordinator.":
+    "在另一台机器上选择 {project}。它加入此项目并保留自己的协调器。",
+  "Pick {project} on another machine. Linking makes them one project; each machine keeps its own coordinator.":
+    "在另一台机器上选择 {project}。关联后它们成为一个项目；每台机器保留自己的协调器。",
+  "{joining} has joined the project; retry to finish listing it on {kept}.":
+    "{joining} 已加入项目；请重试以完成在 {kept} 上的登记。",
+  "Runs its own coordinator for this project.": "为此项目运行自己的协调器。",
+  "Update SpecWithCode on {machine} to link projects.":
+    "请更新 {machine} 上的 SpecWithCode 以关联项目。",
   "Use this machine from a browser on a phone or another computer, also when SpecWithCode Connect is off or cannot be reached. The SpecWithCode app signed in to the same Connect account needs no code.":
     "可从手机或另一台电脑的浏览器使用这台电脑，SpecWithCode Connect 已关闭或无法连接时也可以。用同一 Connect 账户登录的 SpecWithCode 应用无需代码。",
   "Add a device": "添加设备",
@@ -4372,7 +4387,6 @@ export const zh: PhraseCatalog = {
   "Installs from npm": "npm 安装量",
   "Machine access settings": "电脑访问设置",
   "{machine} offline": "{machine} 离线",
-  "workers only": "仅工作节点",
   coordinator: "协调者",
   "Link them below to make one project.": "在下方关联即可合并为一个项目。",
   "{value}Messages go to Percy. {value2}": "{value}消息会发送给 Percy。{value2}",
@@ -5007,23 +5021,10 @@ export const zh: PhraseCatalog = {
   "Run in terminal": "在终端中运行",
   "Waiting for the install. This page updates by itself.": "正在等待安装。此页面会自动更新。",
   "After it installs, choose Check again.": "安装完成后，选择“重新检查”。",
-  "in {minutes} min": "{minutes} 分钟后",
-  "read-only on {main}": "{main} 为只读",
-  "not ready": "未就绪",
-  "Send this project its first message here, then try again.":
-    "请先在这里向此项目发送第一条消息，然后重试。",
-  "It starts from the shared goal, memory and plan. The conversation on {main} stays there as history, and {main} gives way when it is back.":
-    "它从共享的目标、记忆和计划开始。{main} 上的对话作为历史留在那里，{main} 恢复后会让出主副本。",
-  "Retry it.": "请重试。",
   "Switching…": "正在切换…",
-  "The conversation here is kept as history.": "这里的对话作为历史保留。",
-  "Got it": "知道了",
-  "{machine} kept its coordinator conversation from before as history. View it to read that conversation.":
-    "{machine} 保留了之前的协调器对话作为历史。查看它以阅读那段对话。",
   "Link {machine} to this project…": "将 {machine} 关联到此项目…",
   "Link {machine} to this project": "将 {machine} 关联到此项目",
   "Link {machine}": "关联 {machine}",
-  "connect {main} first": "请先连接 {main}",
   "Nothing on {machine} is replaced without asking.": "{machine} 上的内容不会未经询问就被替换。",
   "the other machine": "另一台机器",
   "Link with a project on another machine": "与另一台机器上的项目关联",
@@ -5273,10 +5274,6 @@ export const zh: PhraseCatalog = {
   "This app cannot see this machine, so it cannot tell what it does for this project.":
     "此应用看不到这台电脑，因此无法判断它在此项目中的作用。",
   "Continue here": "在这里继续",
-  "The coordinator continued on {machine} while {main} was offline. It started from the shared goal, memory and plan; the earlier conversation stays on {main} as history.":
-    "{main} 离线期间，协调者在 {machine} 上继续。它从共享的目标、记忆和计划开始；之前的对话作为历史留在 {main} 上。",
-  "The coordinator continued on {machine} while its old machine was offline. It started from the shared goal, memory and plan; the earlier conversation stays on the old machine as history.":
-    "原来的电脑离线期间，协调者在 {machine} 上继续。它从共享的目标、记忆和计划开始；之前的对话作为历史留在原来的电脑上。",
   "{project} is on {machine}. The coordinator stays on {main}.":
     "{machine} 上有 {project}。协调者仍在 {main}。",
   "{machine} has this repository as a separate project whose coordinator is on {main}. Nothing was linked.":
@@ -5291,20 +5288,11 @@ export const zh: PhraseCatalog = {
     "选择一台电脑，查看它的会话和文件。在你同步或交接之前，什么都不会移动。",
   "These are separate projects for this repository, each with its own coordinator, threads and memory. You can still open and message each one.":
     "这些是此仓库的独立项目，各有自己的协调者、会话和记忆。你仍可以打开其中任何一个并发送消息。",
-  "Fix…": "修复…",
   "Connect…": "连接…",
   "Makes the project on {machine} part of this one. The coordinator stays where it is, and threads and files stay where they are. You confirm what {machine} gives up first.":
     "让 {machine} 上的项目成为此项目的一部分。协调者留在原处，会话和文件也保持原位。你会先确认 {machine} 放弃的内容。",
   "Work on {machine}": "{machine} 上的工作",
-  "{main} is offline: the coordinator starts on {machine} from the shared goal, memory and plan. You confirm first.":
-    "{main} 已离线：协调者将在 {machine} 上从共享的目标、记忆和计划开始。你会先确认。",
-  "Syncs {machine}, then moves the coordinator conversation here from {main}. You confirm first.":
-    "先同步 {machine}，再把协调者对话从 {main} 移到这里。你会先确认。",
-  "Continue the coordinator here": "在这里继续协调者",
-  "Pick {project} on another machine. Linking makes them one project with one coordinator.":
-    "选择另一台电脑上的 {project}。关联后它们会合为一个项目，共用一个协调者。",
-  "Pick {project} on another machine. The coordinator stays on {main}; you can continue it on another machine any time.":
-    "选择另一台电脑上的 {project}。协调者仍在 {main}；你可以随时在另一台电脑上继续它。",
+  "Continue in the folder already there": "在那里已有的文件夹中继续",
   "Other machine": "另一台电脑",
   "{project} was not found on another machine.": "在其他电脑上没有找到 {project}。",
   "Preparing the machine that keeps its coordinator…": "正在准备保留协调者的电脑…",
@@ -5324,47 +5312,10 @@ export const zh: PhraseCatalog = {
   "Not available: that machine already has the coordinator.": "不可用：那台电脑已有协调者。",
   "Not available: it would move the coordinator into a separate project.":
     "不可用：这会把协调者移入一个独立项目。",
-  "Goes to the coordinator on {machine} and opens it there":
-    "发给 {machine} 上的协调者，并在那里打开",
   "On {machine}. Not on this device.": "在 {machine} 上。此设备上没有。",
-  "The coordinator cannot be handed off from this machine yet.": "暂时无法从这台电脑交接协调者。",
-  "The coordinator cannot continue on {machine} yet.": "协调者暂时无法在 {machine} 上继续。",
-  "The coordinator continues on {machine}": "协调者在 {machine} 上继续",
-  "The coordinator continues on {machine}. {names} have not confirmed it yet.":
-    "协调者在 {machine} 上继续。{names} 尚未确认。",
-  "They refuse work from the old coordinator only once they have confirmed the new one.":
-    "确认新的协调者后，它们才会拒绝旧协调者的工作。",
-  "The coordinator stayed on {main}": "协调者仍在 {main}",
-  "Continue the coordinator on {machine}?": "在 {machine} 上继续协调者？",
-  "{main} has been offline for 10 minutes or more. The coordinator starts on {machine} from the shared goal, memory and plan. The conversation on {main} stays there as history. Until {main} is back it can still start work on its own machine; then it gives way and lists what it ran meanwhile.":
-    "{main} 已离线 10 分钟或更久。协调者将在 {machine} 上从共享的目标、记忆和计划开始。{main} 上的对话作为历史留在那里。在 {main} 恢复之前，它仍可在自己的电脑上开始工作；恢复后它会让出，并列出期间运行的内容。",
-  "Starting the coordinator…": "正在启动协调者…",
-  "The coordinator's machine is not reachable from here.": "从这里无法连接协调者所在的电脑。",
-  "The coordinator's machine did not confirm the message. It may not have arrived.":
-    "协调者所在的电脑未确认这条消息。它可能没有送达。",
-  "Nothing was sent.": "未发送任何内容。",
-  "The coordinator continues here. Send your message again.":
-    "协调者在这里继续。请重新发送你的消息。",
-  "{main} must be silent for 10 minutes before the coordinator can continue on {machine}. That unlocks in {minutes} min.":
-    "{main} 需连续 10 分钟无响应，协调者才能在 {machine} 上继续。还需 {minutes} 分钟。",
-  "This window can only read {main}, so it cannot hand the coordinator off from there. Open SpecWithCode on {main}, or connect to it with full access.":
-    "此窗口只能读取 {main}，因此无法从那里交接协调者。请在 {main} 上打开 SpecWithCode，或以完全访问权限连接它。",
-  "Connect {machine} first to continue the coordinator there.":
-    "请先连接 {machine}，才能在那里继续协调者。",
-  "{machine} cannot continue the coordinator yet. Update SpecWithCode there, or connect to it with permission to change settings and run work.":
-    "{machine} 暂时无法继续协调者。请在那里更新 SpecWithCode，或以可更改设置并运行工作的权限连接它。",
-  "Connect {main} first. This window has not opened {project} on {main}, so it cannot hand the coordinator off yet.":
-    "请先连接 {main}。此窗口尚未打开 {main} 上的 {project}，因此还不能交接协调者。",
-  "The coordinator continued on another machine. This one gives way once it is reachable; Send opens the newer one.":
-    "协调者已在另一台电脑上继续。这台恢复连接后会让出；发送会打开较新的那台。",
-  "The coordinator is on another machine. Send opens it there.":
-    "协调者在另一台电脑上。发送会在那里打开它。",
   "This machine has not confirmed where the coordinator is yet. Reconnect it to send messages.":
     "这台电脑尚未确认协调者在哪里。请重新连接后再发送消息。",
   "Separate project": "独立项目",
-  "Continue here and send": "在这里继续并发送",
-  "Files stay on this machine. Remove them to send the text, or open {project} on {machine} to attach them there.":
-    "文件留在这台电脑上。移除文件即可发送文字，或打开 {machine} 上的 {project} 在那里附加。",
   "From {source}. {machine} has this repository as a separate project (coordinator on {main}).":
     "来自 {source}。{machine} 把此仓库作为独立项目添加（协调者在 {main}）。",
   "From {source}. {machine} has this repository as a separate project.":
@@ -5380,54 +5331,10 @@ export const zh: PhraseCatalog = {
   "Only files go into {machine}'s folder. Its coordinator does not change. To make them one project, link {source} to it from the machine menu.":
     "只把文件放入 {machine} 的文件夹。它的协调者不变。若要合为一个项目，请在电脑菜单中关联 {source}。",
   "The coordinator stays where it is.": "协调者留在原处。",
-  "Extra coordinator": "多余的协调者",
-  "Handing off the coordinator…": "正在交接协调者…",
-  "The coordinator conversation is on this machine.": "协调者对话在这台电脑上。",
-  "The coordinator is on {machine}. This machine also runs a coordinator of its own, which should be fixed.":
-    "协调者在 {machine} 上。这台电脑也在运行自己的协调者，需要修复。",
-  "The coordinator is on {machine}. Messages typed here go to it.":
-    "协调者在 {machine} 上。在这里输入的消息会发给它。",
-  "The coordinator is being handed off right now.": "协调者正在交接中。",
-  "Unlink {project} on {machine}?": "要取消关联 {machine} 上的 {project} 吗？",
-  "Extra coordinator on {machine}": "{machine} 上有多余的协调者",
-  "It becomes its own project again, with an active coordinator and a copy of this project's notes. {main} stops sending it work. Threads and files stay where they are.":
-    "它会重新成为独立的项目，有一个正在运行的协调者和此项目笔记的一份拷贝。{main} 不再给它派发工作。会话和文件保持原位。",
-  "{machine} also runs a coordinator for {project}. The project's coordinator is on {main}.":
-    "{machine} 也在为 {project} 运行一个协调者。该项目的协调者在 {main}。",
-  "To make {machine} part of this project again, link it afterwards. Linking makes it give way to the coordinator on {main}.":
-    "若要让 {machine} 重新成为此项目的一部分，之后再关联它。关联后它会让位给 {main} 上的协调者。",
-  "{other} still follows the coordinator on {machine}. Continue the coordinator on another machine first.":
-    "{other} 仍在跟随 {machine} 上的协调者。请先在另一台电脑上继续协调者。",
-  "{machine} cannot be unlinked from this window.": "无法从此窗口取消关联 {machine}。",
-  "Unlink {project} on {machine}": "取消关联 {machine} 上的 {project}",
-  "The coordinator for {project} is on another machine.": "{project} 的协调者在另一台电脑上。",
-  "Ask the coordinator for {project} (on {machine}).":
-    "询问 {project} 的协调者（在 {machine} 上）。",
-  "The coordinator for {project} is on {machine}, which is not answering.":
-    "{project} 的协调者在 {machine} 上，但它没有响应。",
-  "Continue here syncs {machine}, then moves the coordinator conversation here from {main}.":
-    "“在这里继续”会先同步 {machine}，再把协调者对话从 {main} 移到这里。",
-  "{main} has been offline for 10 minutes or more. Continue here: the coordinator starts on {machine} from the shared goal, memory and plan. Its conversation on {main} stays readable there, and {main} gives way when it is back.":
-    "{main} 已离线 10 分钟或更久。“在这里继续”：协调者将在 {machine} 上从共享的目标、记忆和计划开始。它在 {main} 上的对话仍可在那里查看，{main} 恢复后会让出。",
-  "{main} has been offline for {n} minutes. Continue here: the coordinator starts on {machine} from the shared goal, memory and plan. Its conversation on {main} stays readable there, and {main} gives way when it is back.":
-    "{main} 已离线 {n} 分钟。“在这里继续”：协调者将在 {machine} 上从共享的目标、记忆和计划开始。它在 {main} 上的对话仍可在那里查看，{main} 恢复后会让出。",
-  "{machine} is not answering. Continue here unlocks in {m} min.":
-    "{machine} 没有响应。“在这里继续”将在 {m} 分钟后可用。",
-  "This window can only read {machine}, so it cannot send there. Open SpecWithCode on {machine}, or connect to it with full access.":
-    "此窗口只能读取 {machine}，因此无法发送到那里。请在 {machine} 上打开 SpecWithCode，或以完全访问权限连接它。",
-  "The coordinator moved to {new}. Nothing was sent.": "协调者已移到 {new}。未发送任何内容。",
-  "{machine} did not take the message: {reason}. Nothing was sent.":
-    "{machine} 未接收这条消息：{reason}。未发送任何内容。",
-  "The coordinator for {project} is on {machine}. Send opens it there.":
-    "{project} 的协调者在 {machine} 上。发送会在那里打开它。",
-  "The coordinator for {project} is on another machine that this window cannot reach.":
-    "{project} 的协调者在另一台电脑上，此窗口无法连接到它。",
+  "Finishing the move…": "正在完成迁移…",
   "This window cannot open {machine}": "此窗口无法打开 {machine}",
   "Offline · last seen {time}": "离线 · 上次活动 {time}",
-  "Old conversation kept": "已保留旧对话",
   "this project": "此项目",
-  "its machine": "它所在的电脑",
-  "the old machine": "原来的电脑",
   Send: "发送",
   "{machine} has not confirmed where the coordinator is yet. Reconnect it to send messages.":
     "{machine} 尚未确认协调者在哪里。请重新连接后再发送消息。",
@@ -5440,7 +5347,6 @@ export const zh: PhraseCatalog = {
   "On {coordinator} (coordinator) and {last}": "在 {coordinator}（协调者）和 {last} 上",
   "On {coordinator} (coordinator), {machines} and {last}":
     "在 {coordinator}（协调者）、{machines} 和 {last} 上",
-  "Fix the extra coordinator on {machine}": "修复 {machine} 上多余的协调者",
   "Connect {machine}": "连接 {machine}",
   "Project on another machine": "另一台电脑上的项目",
   "Not reachable from here": "无法从此处访问",

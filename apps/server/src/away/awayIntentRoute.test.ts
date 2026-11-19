@@ -21,6 +21,7 @@ import {
   ProjectId,
 } from "@specweave-studio/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
@@ -39,6 +40,10 @@ import { heardAwakeSince } from "../project/CoordinatorStandbyWatch.ts";
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import * as ProjectLink from "../project/ProjectLink.ts";
 import { checkout, machine, removeCheckouts } from "../project/ProjectLink.testkit.ts";
+import {
+  joinedOnPinnedRelease,
+  takenOverOnPinnedRelease,
+} from "../project/equalCoordinatorCompat.fixture.ts";
 import {
   actedResults,
   type AwayIntentsShape,
@@ -101,7 +106,12 @@ const fleet = Effect.gen(function* () {
   const linkS = on(ms.layer);
   const operationId = "11111111-1111-4111-8111-111111111111";
   const prepared = yield* link4((service) =>
-    service.prepare({ operationId, projectId: members.m4.projectId, joining: members.ms }),
+    service.prepare({
+      operationId,
+      projectId: members.m4.projectId,
+      joining: members.ms,
+      equalCoordinators: true,
+    }),
   );
   const accepted = yield* linkS((service) =>
     service.accept({
@@ -111,6 +121,7 @@ const fleet = Effect.gen(function* () {
       logicalProject: prepared.logicalProject,
       coordinatorBinding: prepared.coordinatorBinding,
       keptFingerprint: prepared.fingerprint,
+      equalCoordinators: true,
     }),
   );
   yield* link4((service) =>
@@ -121,6 +132,12 @@ const fleet = Effect.gen(function* () {
       notes: [],
     }),
   );
+  // Ministorm joined on the previous release, which gave its coordinator up to the M4.
+  joinedOnPinnedRelease(ms.projects, members.ms.projectId, {
+    operationId,
+    kept: prepared.kept,
+    coordinatorBinding: prepared.coordinatorBinding,
+  });
 
   const awake = { m4: false };
   const dueHooks: AwayIntentRecord[] = [];
@@ -144,8 +161,12 @@ const fleet = Effect.gen(function* () {
         const results: AwayHandoverResult[] = [];
         for (const projectId of intent.projectIds) {
           const copy = linkedCopyOf([...ms.projects.values()], "m4", projectId)!;
-          const taken = yield* linkS((service) =>
-            service.awayTakeover({ projectId: copy.id, sourceEnvironmentId: "m4" }),
+          // Ministorm has not updated: it takes over as the previous release does.
+          const taken = takenOverOnPinnedRelease(
+            ms.projects,
+            copy.id,
+            members.m4,
+            DateTime.formatIso(yield* DateTime.now),
           );
           results.push({
             projectId,

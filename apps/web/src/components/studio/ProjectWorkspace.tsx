@@ -27,7 +27,6 @@ import {
   checkoutKeyEnvironmentId,
   checkoutUnavailableReason,
   chooseCoordinatorView,
-  coordinatorElsewhere,
   coordinatorMachineKey,
   heldCheckoutKey,
   type CheckoutUnavailableReason,
@@ -37,10 +36,8 @@ import {
   unloadedMachineRefs,
   UNCONFIRMED_COORDINATOR_PROBLEM,
   unconfirmedCoordinatorProblem,
-  WORKERS_ONLY_PROBLEM,
 } from "../../studio/projectCoordinatorMachine";
 import { useLinkMachines } from "./useLinkMachines";
-import { followedMain } from "../../studio/makeMain";
 import { type SelectProjectThread } from "../../studio/useProjectPaneSelection";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { SidebarInset } from "../ui/sidebar";
@@ -172,15 +169,6 @@ export function ProjectWorkspace({
   const linkMachines = useLinkMachines();
   // The same retired records Settings uses, so a re-joined machine's old copy never leads.
   const retired = useRetiredMachineRecords();
-  // A machine without the coordinator follows the one on another machine: the one the switch
-  // names too (`followedMain`), else the successor its own record names.
-  const followed = member ? followedMain(member, members, retired) : null;
-  const elsewhere =
-    member && ownershipProblem === WORKERS_ONLY_PROBLEM
-      ? followed
-        ? { environmentId: followed.environmentId, projectId: followed.id }
-        : coordinatorElsewhere(member, members)
-      : null;
   const unknownLabel = unknownRef
     ? (machineName(unknownRef.environmentId) ?? "That machine")
     : null;
@@ -369,15 +357,6 @@ export function ProjectWorkspace({
               ? tx(unconfirmedText.text, unconfirmedText.values)
               : tx(UNCONFIRMED_COORDINATOR_PROBLEM)
             : ownershipProblem
-        }
-        coordinatorElsewhere={
-          elsewhere
-            ? {
-                key: `${elsewhere.environmentId}:${elsewhere.projectId}`,
-                machine: machineName(elsewhere.environmentId),
-                live: followed !== null,
-              }
-            : null
         }
         checkouts={orchestratorCopies(members, checkoutName, linkMachines.startReady, retired)}
         unknownMachines={unloadedMachineRefs(members).map((ref) => ({

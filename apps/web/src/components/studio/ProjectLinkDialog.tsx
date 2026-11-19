@@ -350,6 +350,8 @@ export function ProjectLinkDialog({
           operationId,
           projectId: sides.kept.member.projectId,
           joining: sides.joining.member,
+          // `ready` holds both machines to the equal-coordinators capability.
+          equalCoordinators: true,
         },
       });
       if (prepared._tag === "Failure") throw squashAtomCommandFailure(prepared);
@@ -365,6 +367,7 @@ export function ProjectLinkDialog({
           coordinatorBinding: prepared.value.coordinatorBinding,
           keptFingerprint: prepared.value.fingerprint,
           ...(prepared.value.sharedIcon ? { sharedIcon: prepared.value.sharedIcon } : {}),
+          equalCoordinators: true,
         },
       });
       if (accepted._tag === "Failure") throw squashAtomCommandFailure(accepted);
@@ -398,7 +401,7 @@ export function ProjectLinkDialog({
       }
       setError(
         current === "commit"
-          ? `${message} ${sides.joiningLabel} already defers to ${sides.keptLabel}; retry to finish listing it there.`
+          ? `${message} ${tx("{joining} has joined the project; retry to finish listing it on {kept}.", { joining: sides.joiningLabel, kept: sides.keptLabel })}`
           : message,
       );
       setPhase("review");

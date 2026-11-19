@@ -21,6 +21,7 @@ import {
 } from "@specweave-studio/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -34,6 +35,11 @@ import { makeCheck } from "../project/CoordinatorWakeGate.ts";
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import * as ProjectLink from "../project/ProjectLink.ts";
 import { checkout, machine, removeCheckouts } from "../project/ProjectLink.testkit.ts";
+import { keepCoordinatorAfterAwayTakeover } from "../project/EqualCoordinatorMigration.ts";
+import {
+  joinedOnPinnedRelease,
+  takenOverOnPinnedRelease,
+} from "../project/equalCoordinatorCompat.fixture.ts";
 import { linkedCopyOf } from "./AwayIntents.ts";
 import { cancelIntent, intentStatus } from "./awayIntentRoute.ts";
 import { AwayPeerError, type AwayPeerPost } from "./awayPeerCall.ts";
@@ -103,7 +109,12 @@ const fleet = Effect.gen(function* () {
   const linkS = on(ms.layer);
   const operationId = "11111111-1111-4111-8111-111111111111";
   const prepared = yield* link4((service) =>
-    service.prepare({ operationId, projectId: members.m4.projectId, joining: members.ms }),
+    service.prepare({
+      operationId,
+      projectId: members.m4.projectId,
+      joining: members.ms,
+      equalCoordinators: true,
+    }),
   );
   const accepted = yield* linkS((service) =>
     service.accept({
@@ -113,6 +124,7 @@ const fleet = Effect.gen(function* () {
       logicalProject: prepared.logicalProject,
       coordinatorBinding: prepared.coordinatorBinding,
       keptFingerprint: prepared.fingerprint,
+      equalCoordinators: true,
     }),
   );
   yield* link4((service) =>
@@ -123,6 +135,12 @@ const fleet = Effect.gen(function* () {
       notes: [],
     }),
   );
+  // Ministorm joined on the previous release, which gave its coordinator up to the M4.
+  joinedOnPinnedRelease(ms.projects, members.ms.projectId, {
+    operationId,
+    kept: prepared.kept,
+    coordinatorBinding: prepared.coordinatorBinding,
+  });
   const m4ProjectId = members.m4.projectId as ProjectId;
   const coordinatorThread = `project-coordinator:${m4ProjectId}`;
 
@@ -143,8 +161,12 @@ const fleet = Effect.gen(function* () {
         const results: AwayHandoverResult[] = [];
         for (const projectId of intent.projectIds) {
           const copy = linkedCopyOf([...ms.projects.values()], "m4", projectId)!;
-          const taken = yield* linkS((service) =>
-            service.awayTakeover({ projectId: copy.id, sourceEnvironmentId: "m4" }),
+          // Ministorm has not updated: it takes over as the previous release does.
+          const taken = takenOverOnPinnedRelease(
+            ms.projects,
+            copy.id,
+            members.m4,
+            DateTime.formatIso(yield* DateTime.now),
           );
           results.push({
             projectId,
@@ -283,20 +305,8 @@ const fleet = Effect.gen(function* () {
     ids: () => Effect.succeed({ projectIds: [m4ProjectId], threadIds: ["thread-reel"] }),
     post,
     hold,
-    giveWay: (input) =>
-      input.status.coordinatorBinding === undefined || input.status.successor === undefined
-        ? Effect.succeed(false)
-        : lease.acceptAwayTakeover({
-            projectId: input.projectId,
-            targetEnvironmentId: input.targetEnvironmentId,
-            takenOver: {
-              coordinatorBinding: input.status.coordinatorBinding,
-              successor: input.status.successor,
-            },
-            receivedAt: input.receivedAt,
-            sentAtMs: input.sentAtMs,
-            answeredAtMs: input.answeredAtMs,
-          }),
+    // As the server wires it: a takeover by the un-updated target takes nothing from the M4.
+    giveWay: keepCoordinatorAfterAwayTakeover,
     stopCoordinator: lease.stopCoordinatorOf,
     confirmContinued: (threadIds) =>
       Effect.sync(() => new Set(threadIds.filter((threadId) => fencedOnM4.has(threadId)))),
@@ -319,14 +329,18 @@ const fleet = Effect.gen(function* () {
     Effect.gen(function* () {
       const now = yield* running;
       steps.push({ step, ...now });
-      expect(now.m4 && now.ms, `both copies run at ${step}`).toBe(false);
+      // While the M4 is held for what its sleep may have moved, only the target may run.
+      // Once the hold lifts both may: each machine's coordinator is its own (1390 AC-35).
       return now;
     });
   /** Exactly one copy runs. */
   const settled = (step: string) =>
     Effect.gen(function* () {
       const now = yield* check(step);
-      expect(Number(now.m4) + Number(now.ms), `one copy runs at ${step}`).toBe(1);
+      // The M4 never loses its coordinator to what an earlier release did while it slept.
+      // It is held only while its sleep is unsettled, and runs again the moment that lifts.
+      expect(now.m4, `the M4 runs its own coordinator at ${step}`).toBe(hold.current() === null);
+      expect(isActive(m4.projects.get(m4ProjectId)), `the M4 stays active at ${step}`).toBe(true);
       return now;
     });
   const lidClose = Effect.gen(function* () {
@@ -366,8 +380,8 @@ const fleet = Effect.gen(function* () {
   };
 });
 
-describe("lid close, grace, wake: one coordinator at every step", () => {
-  it.effect("the target acted while asleep: the wake check gives way to it (#1a)", () =>
+describe("lid close, grace, wake: the M4 is held, then runs its own again", () => {
+  it.effect("the target acted while asleep: the wake lifts the hold and the M4 keeps its own (#1a)", () =>
     Effect.gen(function* () {
       const f = yield* fleet;
       yield* f.lidClose;
@@ -389,13 +403,12 @@ describe("lid close, grace, wake: one coordinator at every step", () => {
         AWAY_INTENT_CANCEL_PATH,
         AWAY_INTENT_STATUS_PATH,
       ]);
-      expect(f.binding("m4")).toMatchObject({
-        state: "transferred",
-        successor: { environmentId: "ministorm" },
-        epoch: f.binding("ms")?.epoch,
-      });
-      expect(f.stopped.coordinator).toBeGreaterThan(0);
-      expect(f.stopped.workers).toBe(1);
+      // The M4 keeps its own coordinator; the target's is the target's (1390 AC-35).
+      expect(f.binding("m4")?.state).toBe("active");
+      expect(f.binding("m4")?.successor).toBeUndefined();
+      // Nothing here is stopped for it: not the coordinator, not its workers.
+      expect(f.stopped.coordinator).toBe(0);
+      expect(f.stopped.workers).toBe(0);
       expect(f.hold.current()).toBeNull();
       expect(f.session.current()?.state).toBe("wake-prompt");
       yield* f.settled("gave-way");
@@ -435,7 +448,7 @@ describe("lid close, grace, wake: one coordinator at every step", () => {
       yield* f.settled("retry-unreachable");
       f.network.down = false;
       expect(yield* f.away.retry).toBe("moved");
-      expect(f.binding("m4")?.state).toBe("transferred");
+      expect(f.binding("m4")?.state).toBe("active");
       expect(f.session.current()?.state).toBe("wake-prompt");
       yield* f.settled("retry-gave-way");
     }),
@@ -456,7 +469,7 @@ describe("lid close, grace, wake: one coordinator at every step", () => {
       yield* f.settled("target-acted-meanwhile");
       f.network.down = false;
       expect(yield* f.away.retry).toBe("moved");
-      expect(f.binding("m4")?.state).toBe("transferred");
+      expect(f.binding("m4")?.state).toBe("active");
       yield* f.settled("retry-gave-way");
     }),
   );
@@ -494,7 +507,7 @@ describe("lid close, grace, wake: one coordinator at every step", () => {
         });
         expect(done.body).toEqual({ cancelled: 0, state: "done", takenOver: [f.m4ProjectId] });
         expect(yield* f.away.retry).toBe("moved");
-        expect(f.binding("m4")?.state).toBe("transferred");
+        expect(f.binding("m4")?.state).toBe("active");
         yield* f.settled("gave-way");
       }),
   );
@@ -514,7 +527,7 @@ describe("lid close, grace, wake: one coordinator at every step", () => {
         yield* TestClock.setTime(T0 + 30 * MINUTE);
         expect(yield* f.away.wake({ onBattery: true })).toEqual({ outcome: "prompt" });
         expect(f.network.sent.map((call) => call.path)).toContain(AWAY_INTENT_CANCEL_PATH);
-        expect(f.binding("m4")?.state).toBe("transferred");
+        expect(f.binding("m4")?.state).toBe("active");
         yield* f.settled("gave-way");
       }),
   );
@@ -558,7 +571,7 @@ describe("lid close, grace, wake: one coordinator at every step", () => {
       yield* f.intents.tick;
       yield* TestClock.setTime(T0 + 10 * MINUTE);
       expect(yield* f.away.retry).toBe("moved");
-      expect(f.binding("m4")?.state).toBe("transferred");
+      expect(f.binding("m4")?.state).toBe("active");
       yield* f.settled("gave-way");
     }),
   );
@@ -665,7 +678,7 @@ describe("the boot is a wake (N2)", () => {
       yield* f.intents.tick;
       yield* TestClock.setTime(T0 + 5 * MINUTE);
       expect(yield* f.away.boot).toEqual({ outcome: "prompt" });
-      expect(f.binding("m4")?.state).toBe("transferred");
+      expect(f.binding("m4")?.state).toBe("active");
       expect(f.session.current()?.state).toBe("wake-prompt");
       yield* f.settled("boot-gave-way");
     }),
@@ -719,7 +732,7 @@ describe("Run here anyway (hold never lifts)", () => {
         // Once it answers, this copy still gives way to its takeover.
         f.network.down = false;
         expect(yield* f.away.retry).toBe("moved");
-        expect(f.binding("m4")?.state).toBe("transferred");
+        expect(f.binding("m4")?.state).toBe("active");
         yield* f.settled("forced-then-gave-way");
       }),
   );

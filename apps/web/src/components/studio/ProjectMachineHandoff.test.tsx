@@ -167,7 +167,7 @@ let root: Root, container: HTMLDivElement;
 const props = () => state.props!;
 /**
  * Opens the dialog the way its button does. It opens on the copy; most of these tests then
- * switch to the Git handoff ("folder"), as "Continue the coordinator here" opens it.
+ * switch to the Git handoff ("folder"), as "Continue in the folder already there" opens it.
  */
 const mount = async (method: "git" | "as-opened" = "git") => {
   await act(async () =>
@@ -922,31 +922,6 @@ it("refuses a sync whose copy is gone instead of guessing a folder", async () =>
   expect(props().open).toBe(false);
 });
 
-it("resumes an unfinished Git handoff on Git, not on the copy", async () => {
-  localStorage.setItem(key, JSON.stringify({ operationId, targetKey: "m1:target" }));
-  await mount("as-opened");
-  expect(props().method).toBe("folder");
-  expect(props().intent).toBe("move");
-});
-
-it("resumes an unfinished Git handoff on Git when the menu asks for a copy", async () => {
-  localStorage.setItem(key, JSON.stringify({ operationId, targetKey: "m1:target" }));
-  await act(async () =>
-    root.render(
-      <ProjectMachineHandoff
-        project={source as never}
-        coordinatorId={"coordinator" as never}
-        showTrigger={false}
-        openRequest={{ mode: "copy", seq: 1 }}
-      />,
-    ),
-  );
-  // A handoff that may already be published is never replaced by a fresh copy flow.
-  expect(props().method).toBe("folder");
-  expect(props().intent).toBe("move");
-  expect(props().selected).toBe("m1:target");
-});
-
 it("asks a saved folder to update from Git, so uncommitted work never stops the move", async () => {
   state.environments = machineEnvironments;
   await mount();
@@ -1304,28 +1279,6 @@ it("keeps a copy closed at its review offered, observed only; not one closed els
   localStorage.removeItem(pointer);
 });
 
-it("opens Move coordinator to X with its own checkout as the Git move: nothing to copy", async () => {
-  state.environments = machineEnvironments;
-  state.projects = [source, target, { ...target, id: "m3-target", environmentId: "m3" }];
-  localStorage.setItem(preferenceKey, JSON.stringify({ remembered: "m1" }));
-  await act(async () =>
-    root.render(
-      <ProjectMachineHandoff
-        project={source as never}
-        coordinatorId={"coordinator" as never}
-        requestedTarget="m3:m3-target"
-      />,
-    ),
-  );
-  expect(props().open).toBe(true);
-  expect(props().intent).toBe("move");
-  expect(props().selected).toBe("m3:m3-target");
-  expect(props().machine).toBe("m3");
-  // X already has the project in its own folder: only the coordinator moves, through Git.
-  expect(props().method).toBe("folder");
-  expect(props().copyFlow).toBeUndefined();
-});
-
 it("says why Move project is off: a focusable button that describes the reason and does nothing", async () => {
   await act(async () =>
     root.render(<ProjectMachineHandoff project={source as never} coordinatorId={null} />),
@@ -1496,15 +1449,6 @@ describe("Sync and Add", () => {
     expect(copyProps().chooseCopyFirst).toBe(false);
     expect(copyProps().savedFolder("m3")).toBe("/b");
     expect(props().send?.picked).toBe("b");
-  });
-
-  it("keeps a chosen Move when the machine changes", async () => {
-    await open(at(source, { root: "/source" }), [at(target, { root: "/target" })]);
-    await choose("m1", "copy-and-move");
-    expect(props().intent).toBe("move");
-    await choose("m3", "copy-and-move");
-    expect(props().intent).toBe("move");
-    expect(copyProps().defaultMode).toBe("copy-and-move");
   });
 
   it("never lets a re-joined machine's old record be Main in the dialog", async () => {

@@ -8,6 +8,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
   EnvironmentId,
   type Project,
+  type ProjectCoordinatorBinding,
   ProjectId,
   type ScheduledTask,
   ScheduledTaskId,
@@ -85,6 +86,8 @@ export interface Machine {
     listFails: boolean;
     /** Machines this one's project is no longer linked with. */
     unlinked: Set<string>;
+    /** The exact binding this copy's project row carries, when a test sets one. */
+    binding: ProjectCoordinatorBinding | null;
     /**
      * Runs once, just before this machine's scheduler next reads every
      * routine's revision count: where a change saved by another request lands
@@ -262,20 +265,25 @@ export const fleet = (
           beside: false,
           listFails: false,
           unlinked: new Set(),
+          binding: null,
           beforeRevisionsRead: null,
           beforeRecordsRead: null,
         };
         // The binding this copy's project row carries, as the release before wrote it.
         const binding = () =>
-          state.role.state !== "active"
-            ? { epoch: state.role.epoch, state: state.role.state }
-            : state.role.epoch === 0
-              ? undefined
-              : {
-                  epoch: state.role.epoch,
-                  state: "active" as const,
-                  ...(state.beside ? {} : { predecessor: members[(index + 1) % members.length]! }),
-                };
+          state.binding !== null
+            ? state.binding
+            : state.role.state !== "active"
+              ? { epoch: state.role.epoch, state: state.role.state }
+              : state.role.epoch === 0
+                ? undefined
+                : {
+                    epoch: state.role.epoch,
+                    state: "active" as const,
+                    ...(state.beside
+                      ? {}
+                      : { predecessor: members[(index + 1) % members.length]! }),
+                  };
         const work = { due: Effect.void as Effect.Effect<void> };
         const projectRow = (): ProjectStore.ProjectRow => ({
           ...routineProject(projectId),

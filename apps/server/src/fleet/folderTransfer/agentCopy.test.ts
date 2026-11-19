@@ -86,6 +86,8 @@ const setup = (options: {
   readonly unregistered?: boolean;
   /** The destination's home, for its protected folders. */
   readonly homeDir?: string;
+  /** The other machine says it keeps its coordinator when it joins; absent, it does. */
+  readonly equalPeer?: boolean;
 }) => {
   const world: World = { source: [], destination: [], link: [] };
   let state: FolderCopyStatus["state"] = "planned";
@@ -284,6 +286,7 @@ const setup = (options: {
       machine: M1,
       targetFolder,
       receive,
+      equalPeer: Effect.succeed(options.equalPeer ?? true),
       pollMs: 1,
     }).pipe(
       Effect.provide(Layer.mergeAll(source, link)),
@@ -341,6 +344,21 @@ describe("agent folder copy", () => {
         { step: "accept", options: { copiedFromKept: true } },
         { step: "commit" },
       ]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("copies to a machine from before equal coordinators and asks neither end to link", () =>
+    Effect.gen(function* () {
+      const there = NodePath.join(yield* tempFolder, "widgets");
+      const { world, run } = setup({ workspaceRoot: yield* plainFolder, equalPeer: false });
+      const result = yield* run(there);
+      // The files are there; the copy stays its own project until that machine is updated.
+      expect(result.projectId).toBe(copyId);
+      expect(result.linked).toBe(false);
+      expect(result).toMatchObject({
+        linkProblem: expect.stringContaining("Update SpecWithCode on"),
+      });
+      expect(world.link).toEqual([]);
     }).pipe(Effect.scoped),
   );
 

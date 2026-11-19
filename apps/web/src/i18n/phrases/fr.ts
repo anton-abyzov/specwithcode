@@ -11,6 +11,21 @@ export const fr: PhraseCatalog = {
   "Accounts & integrations": "Comptes et intégrations",
   Actions: "Actions",
   "Add a device with a code": "Ajouter un appareil avec un code",
+  "Add this project on another machine. Every machine runs its own coordinator.":
+    "Ajoutez ce projet sur une autre machine. Chaque machine exécute son propre coordinateur.",
+  "Make this project and the same project on another machine one project. Each machine keeps its own coordinator.":
+    "Faites de ce projet et du même projet sur une autre machine un seul projet. Chaque machine garde son propre coordinateur.",
+  "Needs an update: this machine is on a version from before every machine ran its own coordinator.":
+    "Mise à jour requise : cette machine utilise une version antérieure à celle où chaque machine a eu son propre coordinateur.",
+  "Pick {project} on another machine. It joins this project and keeps its own coordinator.":
+    "Choisissez {project} sur une autre machine. Il rejoint ce projet et garde son propre coordinateur.",
+  "Pick {project} on another machine. Linking makes them one project; each machine keeps its own coordinator.":
+    "Choisissez {project} sur une autre machine. La liaison en fait un seul projet ; chaque machine garde son propre coordinateur.",
+  "{joining} has joined the project; retry to finish listing it on {kept}.":
+    "{joining} a rejoint le projet ; réessayez pour finir de l’inscrire sur {kept}.",
+  "Runs its own coordinator for this project.": "Exécute son propre coordinateur pour ce projet.",
+  "Update SpecWithCode on {machine} to link projects.":
+    "Mettez à jour SpecWithCode sur {machine} pour lier des projets.",
   "Use this machine from a browser on a phone or another computer, also when SpecWithCode Connect is off or cannot be reached. The SpecWithCode app signed in to the same Connect account needs no code.":
     "Utilisez cette machine depuis le navigateur d’un téléphone ou d’un autre ordinateur, y compris lorsque SpecWithCode Connect est désactivé ou injoignable. L’app SpecWithCode connectée au même compte Connect n’a besoin d’aucun code.",
   "Add a device": "Ajouter un appareil",
@@ -4585,7 +4600,6 @@ export const fr: PhraseCatalog = {
   "Installs from npm": "Installations depuis npm",
   "Machine access settings": "Réglages d’accès entre machines",
   "{machine} offline": "{machine} hors ligne",
-  "workers only": "workers uniquement",
   coordinator: "coordinateur",
   "Link them below to make one project.": "Liez-les ci-dessous pour n'en faire qu'un seul projet.",
   "{value}Messages go to Percy. {value2}": "{value}Les messages vont à Percy. {value2}",
@@ -5262,24 +5276,10 @@ export const fr: PhraseCatalog = {
   "Waiting for the install. This page updates by itself.":
     "En attente de l’installation. Cette page se met à jour toute seule.",
   "After it installs, choose Check again.": "Une fois installé, choisissez Vérifier à nouveau.",
-  "in {minutes} min": "dans {minutes} min",
-  "read-only on {main}": "lecture seule sur {main}",
-  "not ready": "pas prêt",
-  "Send this project its first message here, then try again.":
-    "Envoyez ici un premier message à ce projet, puis réessayez.",
-  "It starts from the shared goal, memory and plan. The conversation on {main} stays there as history, and {main} gives way when it is back.":
-    "Elle repart de l’objectif, de la mémoire et du plan partagés. La conversation sur {main} y reste comme historique, et {main} cède la place à son retour.",
-  "Retry it.": "Réessayez.",
   "Switching…": "Changement…",
-  "The conversation here is kept as history.":
-    "La conversation d’ici est conservée comme historique.",
-  "Got it": "Compris",
-  "{machine} kept its coordinator conversation from before as history. View it to read that conversation.":
-    "{machine} a gardé sa conversation de coordinateur d’avant comme historique. Affichez-le pour lire cette conversation.",
   "Link {machine} to this project…": "Lier {machine} à ce projet…",
   "Link {machine} to this project": "Lier {machine} à ce projet",
   "Link {machine}": "Lier {machine}",
-  "connect {main} first": "connectez d’abord {main}",
   "Nothing on {machine} is replaced without asking.":
     "Rien n’est remplacé sur {machine} sans votre accord.",
   "the other machine": "l’autre machine",
@@ -5544,10 +5544,6 @@ export const fr: PhraseCatalog = {
   "This app cannot see this machine, so it cannot tell what it does for this project.":
     "Cette app ne voit pas cette machine et ne peut donc pas dire ce qu’elle fait pour ce projet.",
   "Continue here": "Continuer ici",
-  "The coordinator continued on {machine} while {main} was offline. It started from the shared goal, memory and plan; the earlier conversation stays on {main} as history.":
-    "Le coordinateur a continué sur {machine} pendant que {main} était hors ligne. Il est reparti de l’objectif, de la mémoire et du plan partagés ; la conversation précédente reste sur {main} comme historique.",
-  "The coordinator continued on {machine} while its old machine was offline. It started from the shared goal, memory and plan; the earlier conversation stays on the old machine as history.":
-    "Le coordinateur a continué sur {machine} pendant que son ancienne machine était hors ligne. Il est reparti de l’objectif, de la mémoire et du plan partagés ; la conversation précédente reste sur l’ancienne machine comme historique.",
   "{project} is on {machine}. The coordinator stays on {main}.":
     "{project} est sur {machine}. Le coordinateur reste sur {main}.",
   "{machine} has this repository as a separate project whose coordinator is on {main}. Nothing was linked.":
@@ -5562,20 +5558,11 @@ export const fr: PhraseCatalog = {
     "Choisissez une machine pour voir ses fils et ses fichiers. Rien ne bouge tant que vous ne synchronisez pas ou ne passez pas le relais.",
   "These are separate projects for this repository, each with its own coordinator, threads and memory. You can still open and message each one.":
     "Ce sont des projets distincts pour ce dépôt, chacun avec son propre coordinateur, ses fils et sa mémoire. Vous pouvez toujours ouvrir chacun d’eux et lui écrire.",
-  "Fix…": "Corriger…",
   "Connect…": "Connecter…",
   "Makes the project on {machine} part of this one. The coordinator stays where it is, and threads and files stay where they are. You confirm what {machine} gives up first.":
     "Fait du projet sur {machine} une partie de celui-ci. Le coordinateur reste où il est, et les fils et les fichiers restent où ils sont. Vous confirmez d’abord ce à quoi {machine} renonce.",
   "Work on {machine}": "Travail sur {machine}",
-  "{main} is offline: the coordinator starts on {machine} from the shared goal, memory and plan. You confirm first.":
-    "{main} est hors ligne : le coordinateur démarre sur {machine} à partir de l’objectif, de la mémoire et du plan partagés. Vous confirmez d’abord.",
-  "Syncs {machine}, then moves the coordinator conversation here from {main}. You confirm first.":
-    "Synchronise {machine}, puis déplace ici la conversation du coordinateur depuis {main}. Vous confirmez d’abord.",
-  "Continue the coordinator here": "Continuer le coordinateur ici",
-  "Pick {project} on another machine. Linking makes them one project with one coordinator.":
-    "Choisissez {project} sur une autre machine. Les lier en fait un seul projet avec un seul coordinateur.",
-  "Pick {project} on another machine. The coordinator stays on {main}; you can continue it on another machine any time.":
-    "Choisissez {project} sur une autre machine. Le coordinateur reste sur {main} ; vous pouvez le continuer sur une autre machine à tout moment.",
+  "Continue in the folder already there": "Continuer dans le dossier déjà présent",
   "Other machine": "Autre machine",
   "{project} was not found on another machine.":
     "{project} n’a été trouvé sur aucune autre machine.",
@@ -5598,50 +5585,10 @@ export const fr: PhraseCatalog = {
     "Indisponible : cette machine a déjà le coordinateur.",
   "Not available: it would move the coordinator into a separate project.":
     "Indisponible : cela déplacerait le coordinateur dans un projet distinct.",
-  "Goes to the coordinator on {machine} and opens it there":
-    "Va au coordinateur sur {machine} et l’ouvre là-bas",
   "On {machine}. Not on this device.": "Sur {machine}. Pas sur cet appareil.",
-  "The coordinator cannot be handed off from this machine yet.":
-    "Le coordinateur ne peut pas encore être transmis depuis cette machine.",
-  "The coordinator cannot continue on {machine} yet.":
-    "Le coordinateur ne peut pas encore continuer sur {machine}.",
-  "The coordinator continues on {machine}": "Le coordinateur continue sur {machine}",
-  "The coordinator continues on {machine}. {names} have not confirmed it yet.":
-    "Le coordinateur continue sur {machine}. {names} ne l’ont pas encore confirmé.",
-  "They refuse work from the old coordinator only once they have confirmed the new one.":
-    "Elles ne refuseront le travail de l’ancien coordinateur qu’après avoir confirmé le nouveau.",
-  "The coordinator stayed on {main}": "Le coordinateur est resté sur {main}",
-  "Continue the coordinator on {machine}?": "Continuer le coordinateur sur {machine} ?",
-  "{main} has been offline for 10 minutes or more. The coordinator starts on {machine} from the shared goal, memory and plan. The conversation on {main} stays there as history. Until {main} is back it can still start work on its own machine; then it gives way and lists what it ran meanwhile.":
-    "{main} est hors ligne depuis 10 minutes ou plus. Le coordinateur démarre sur {machine} à partir de l’objectif, de la mémoire et du plan partagés. La conversation sur {main} y reste comme historique. Tant que {main} n’est pas de retour, elle peut encore démarrer du travail sur sa propre machine ; ensuite elle cède la place et liste ce qu’elle a lancé entre-temps.",
-  "Starting the coordinator…": "Démarrage du coordinateur…",
-  "The coordinator's machine is not reachable from here.":
-    "La machine du coordinateur est injoignable d’ici.",
-  "The coordinator's machine did not confirm the message. It may not have arrived.":
-    "La machine du coordinateur n’a pas confirmé le message. Il n’est peut-être pas arrivé.",
-  "Nothing was sent.": "Rien n’a été envoyé.",
-  "The coordinator continues here. Send your message again.":
-    "Le coordinateur continue ici. Renvoyez votre message.",
-  "{main} must be silent for 10 minutes before the coordinator can continue on {machine}. That unlocks in {minutes} min.":
-    "{main} doit rester silencieuse 10 minutes avant que le coordinateur puisse continuer sur {machine}. Ce sera possible dans {minutes} min.",
-  "This window can only read {main}, so it cannot hand the coordinator off from there. Open SpecWithCode on {main}, or connect to it with full access.":
-    "Cette fenêtre ne peut que lire {main} : elle ne peut donc pas transmettre le coordinateur depuis cette machine. Ouvrez SpecWithCode sur {main}, ou connectez-vous-y avec un accès complet.",
-  "Connect {machine} first to continue the coordinator there.":
-    "Connectez d’abord {machine} pour y continuer le coordinateur.",
-  "{machine} cannot continue the coordinator yet. Update SpecWithCode there, or connect to it with permission to change settings and run work.":
-    "{machine} ne peut pas encore continuer le coordinateur. Mettez SpecWithCode à jour sur cette machine, ou connectez-vous-y avec l’autorisation de modifier les réglages et de lancer du travail.",
-  "Connect {main} first. This window has not opened {project} on {main}, so it cannot hand the coordinator off yet.":
-    "Connectez d’abord {main}. Cette fenêtre n’a pas ouvert {project} sur {main} : elle ne peut donc pas encore transmettre le coordinateur.",
-  "The coordinator continued on another machine. This one gives way once it is reachable; Send opens the newer one.":
-    "Le coordinateur a continué sur une autre machine. Celle-ci cède la place dès qu’elle est joignable ; Envoyer ouvre la plus récente.",
-  "The coordinator is on another machine. Send opens it there.":
-    "Le coordinateur est sur une autre machine. Envoyer l’ouvre là-bas.",
   "This machine has not confirmed where the coordinator is yet. Reconnect it to send messages.":
     "Cette machine n’a pas encore confirmé où se trouve le coordinateur. Reconnectez-la pour envoyer des messages.",
   "Separate project": "Projet distinct",
-  "Continue here and send": "Continuer ici et envoyer",
-  "Files stay on this machine. Remove them to send the text, or open {project} on {machine} to attach them there.":
-    "Les fichiers restent sur cette machine. Retirez-les pour envoyer le texte, ou ouvrez {project} sur {machine} pour les y joindre.",
   "From {source}. {machine} has this repository as a separate project (coordinator on {main}).":
     "Depuis {source}. {machine} a ce dépôt dans un projet distinct (coordinateur sur {main}).",
   "From {source}. {machine} has this repository as a separate project.":
@@ -5658,58 +5605,10 @@ export const fr: PhraseCatalog = {
   "Only files go into {machine}'s folder. Its coordinator does not change. To make them one project, link {source} to it from the machine menu.":
     "Seuls les fichiers vont dans le dossier de {machine}. Son coordinateur ne change pas. Pour n’en faire qu’un seul projet, liez {source} depuis le menu des machines.",
   "The coordinator stays where it is.": "Le coordinateur reste où il est.",
-  "Extra coordinator": "Coordinateur en trop",
-  "Handing off the coordinator…": "Transmission du coordinateur…",
-  "The coordinator conversation is on this machine.":
-    "La conversation du coordinateur est sur cette machine.",
-  "The coordinator is on {machine}. This machine also runs a coordinator of its own, which should be fixed.":
-    "Le coordinateur est sur {machine}. Cette machine fait aussi tourner son propre coordinateur, ce qu’il faut corriger.",
-  "The coordinator is on {machine}. Messages typed here go to it.":
-    "Le coordinateur est sur {machine}. Les messages saisis ici lui sont transmis.",
-  "The coordinator is being handed off right now.": "Le coordinateur est en cours de transmission.",
-  "Unlink {project} on {machine}?": "Délier {project} sur {machine} ?",
-  "Extra coordinator on {machine}": "Coordinateur en trop sur {machine}",
-  "It becomes its own project again, with an active coordinator and a copy of this project's notes. {main} stops sending it work. Threads and files stay where they are.":
-    "Il redevient un projet à part entière, avec un coordinateur actif et une copie des notes de ce projet. {main} cesse de lui envoyer du travail. Les fils et les fichiers restent où ils sont.",
-  "{machine} also runs a coordinator for {project}. The project's coordinator is on {main}.":
-    "{machine} fait aussi tourner un coordinateur pour {project}. Le coordinateur du projet est sur {main}.",
-  "To make {machine} part of this project again, link it afterwards. Linking makes it give way to the coordinator on {main}.":
-    "Pour réintégrer {machine} à ce projet, liez-la ensuite. La liaison lui fait céder la place au coordinateur sur {main}.",
-  "{other} still follows the coordinator on {machine}. Continue the coordinator on another machine first.":
-    "{other} suit encore le coordinateur sur {machine}. Continuez d’abord le coordinateur sur une autre machine.",
-  "{machine} cannot be unlinked from this window.":
-    "{machine} ne peut pas être déliée depuis cette fenêtre.",
-  "Unlink {project} on {machine}": "Délier {project} sur {machine}",
-  "The coordinator for {project} is on another machine.":
-    "Le coordinateur de {project} est sur une autre machine.",
-  "Ask the coordinator for {project} (on {machine}).":
-    "Demander au coordinateur de {project} (sur {machine}).",
-  "The coordinator for {project} is on {machine}, which is not answering.":
-    "Le coordinateur de {project} est sur {machine}, qui ne répond pas.",
-  "Continue here syncs {machine}, then moves the coordinator conversation here from {main}.":
-    "Continuer ici synchronise {machine}, puis déplace ici la conversation du coordinateur depuis {main}.",
-  "{main} has been offline for 10 minutes or more. Continue here: the coordinator starts on {machine} from the shared goal, memory and plan. Its conversation on {main} stays readable there, and {main} gives way when it is back.":
-    "{main} est hors ligne depuis 10 minutes ou plus. Continuer ici : le coordinateur démarre sur {machine} à partir de l’objectif, de la mémoire et du plan partagés. Sa conversation sur {main} y reste lisible, et {main} cède la place à son retour.",
-  "{main} has been offline for {n} minutes. Continue here: the coordinator starts on {machine} from the shared goal, memory and plan. Its conversation on {main} stays readable there, and {main} gives way when it is back.":
-    "{main} est hors ligne depuis {n} minutes. Continuer ici : le coordinateur démarre sur {machine} à partir de l’objectif, de la mémoire et du plan partagés. Sa conversation sur {main} y reste lisible, et {main} cède la place à son retour.",
-  "{machine} is not answering. Continue here unlocks in {m} min.":
-    "{machine} ne répond pas. Continuer ici sera possible dans {m} min.",
-  "This window can only read {machine}, so it cannot send there. Open SpecWithCode on {machine}, or connect to it with full access.":
-    "Cette fenêtre ne peut que lire {machine} : elle ne peut donc pas y envoyer de message. Ouvrez SpecWithCode sur {machine}, ou connectez-vous-y avec un accès complet.",
-  "The coordinator moved to {new}. Nothing was sent.":
-    "Le coordinateur est passé sur {new}. Rien n’a été envoyé.",
-  "{machine} did not take the message: {reason}. Nothing was sent.":
-    "{machine} n’a pas accepté le message : {reason}. Rien n’a été envoyé.",
-  "The coordinator for {project} is on {machine}. Send opens it there.":
-    "Le coordinateur de {project} est sur {machine}. Envoyer l’ouvre là-bas.",
-  "The coordinator for {project} is on another machine that this window cannot reach.":
-    "Le coordinateur de {project} est sur une autre machine que cette fenêtre ne peut pas joindre.",
+  "Finishing the move…": "Finalisation du déplacement…",
   "This window cannot open {machine}": "Cette fenêtre ne peut pas ouvrir {machine}",
   "Offline · last seen {time}": "Hors ligne · dernière activité {time}",
-  "Old conversation kept": "Ancienne conversation conservée",
   "this project": "ce projet",
-  "its machine": "sa machine",
-  "the old machine": "l’ancienne machine",
   Send: "Envoyer",
   "{machine} has not confirmed where the coordinator is yet. Reconnect it to send messages.":
     "{machine} n’a pas encore confirmé où se trouve le coordinateur. Reconnectez cette machine pour envoyer des messages.",
@@ -5722,7 +5621,6 @@ export const fr: PhraseCatalog = {
   "On {coordinator} (coordinator) and {last}": "Sur {coordinator} (coordinateur) et {last}",
   "On {coordinator} (coordinator), {machines} and {last}":
     "Sur {coordinator} (coordinateur), {machines} et {last}",
-  "Fix the extra coordinator on {machine}": "Corriger le coordinateur en trop sur {machine}",
   "Connect {machine}": "Connecter {machine}",
   "Project on another machine": "Projet sur une autre machine",
   "Not reachable from here": "Inaccessible d'ici",

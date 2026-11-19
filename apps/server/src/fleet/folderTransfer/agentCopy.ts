@@ -426,6 +426,11 @@ export const runAgentCopy = Effect.fn("fleet.agentCopy.run")(function* (input: {
     args: AgentCopyReceiveInput,
     timeoutMs?: number,
   ) => Effect.Effect<unknown, OrchestratorMcpFailure>;
+  /**
+   * Whether that machine keeps its coordinator when the copy joins this project. One
+   * that does not is never asked to link: its accept would give the coordinator up.
+   */
+  readonly equalPeer: Effect.Effect<boolean>;
   /** Between status reads; tests shorten it. */
   readonly pollMs?: number;
 }) {
@@ -530,6 +535,7 @@ export const runAgentCopy = Effect.fn("fleet.agentCopy.run")(function* (input: {
     copyId: result.copyId,
     operationId,
     ask,
+    equalPeer: input.equalPeer,
   });
   return {
     projectId: result.copyId,
@@ -549,11 +555,15 @@ const linkCopied = Effect.fn("fleet.agentCopy.link")(function* (input: {
     args: AgentCopyReceiveInput,
     timeoutMs?: number,
   ) => Effect.Effect<AgentCopyReceiveResult, OrchestratorMcpFailure>;
+  readonly equalPeer: Effect.Effect<boolean>;
 }) {
   const unlinked = (reason: string) => ({
     linked: false as const,
     linkProblem: `${reason} It is listed as a separate project until you link it: open its menu in the sidebar and choose Link….`,
   });
+  // Asked before either machine changes anything (EC2-04).
+  if (!(yield* input.equalPeer))
+    return unlinked(`Update SpecWithCode on ${input.machine.label} to link projects.`);
   const found = yield* Effect.serviceOption(ProjectLink.ProjectLink);
   if (found._tag === "None") return unlinked("This machine could not link the copy.");
   const link = found.value;
@@ -562,6 +572,7 @@ const linkCopied = Effect.fn("fleet.agentCopy.link")(function* (input: {
     const prepared = yield* link.prepare({
       operationId: linkOperationId,
       projectId: input.sourceId,
+      equalCoordinators: true,
       joining: {
         environmentId: input.machine.environmentId,
         projectId: input.copyId,
@@ -580,6 +591,7 @@ const linkCopied = Effect.fn("fleet.agentCopy.link")(function* (input: {
           coordinatorBinding: prepared.coordinatorBinding,
           keptFingerprint: prepared.fingerprint,
           ...(prepared.sharedIcon ? { sharedIcon: prepared.sharedIcon } : {}),
+          equalCoordinators: true,
         },
       },
       60_000,

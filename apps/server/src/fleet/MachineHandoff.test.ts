@@ -1207,7 +1207,8 @@ it.effect(
       expect(h.projects.get(projectId)?.workspaceSettings).toMatchObject({
         goal: "Existing target intent",
         logicalProject: { id: bundle.logicalProject!.id },
-        coordinatorBinding: { state: "transferred" },
+        // It joins with its own coordinator still running (1390 AC-35).
+        coordinatorBinding: { state: "active" },
       });
       expect(h.projects.get(received.projectId)?.workspaceSettings?.goal).toBe(bundle.context.goal);
       expect(h.projects.size).toBe(2);

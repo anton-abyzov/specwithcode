@@ -109,10 +109,9 @@ export const projectLink = {
 export const TAKEOVER_UNREACHABLE_MS = 10 * 60_000;
 
 /**
- * Whether "Continue the coordinator here" may be pressed: never while the
- * coordinator's machine is connected, and only after it has been unreachable
- * for 10 minutes. Automatic takeover runs on the server only, for a standby
- * the owner armed (standbyArming.ts); this button stays manual.
+ * How long a machine must have been unreachable before the old takeover was allowed.
+ * Nothing offers a takeover now: every machine runs its own coordinator. Kept for the
+ * legacy records it still describes.
  */
 export function takeoverAvailability(input: {
   readonly coordinatorConnected: boolean;
@@ -184,10 +183,14 @@ export type LinkMachineState = "ready" | "offline" | "update" | "permission";
 export function linkMachineState(input: {
   readonly connected: boolean;
   readonly supportsLink: boolean | undefined;
+  /** `capabilities.equalCoordinators`; absent before every machine kept its coordinator. */
+  readonly supportsEqualCoordinators: boolean | undefined;
   readonly canWrite: boolean;
 }): LinkMachineState {
   if (!input.connected) return "offline";
-  if (input.supportsLink !== true) return "update";
+  // A machine from before equal coordinators would give its coordinator up as it joins, so
+  // nothing is asked of either end until it is updated (EC2-04).
+  if (input.supportsLink !== true || input.supportsEqualCoordinators !== true) return "update";
   return input.canWrite ? "ready" : "permission";
 }
 
@@ -641,7 +644,7 @@ export function writePendingOperation(key: string, operationId: string | null): 
 const sameMember = (a: LogicalProjectMember, b: LogicalProjectMember) =>
   a.environmentId === b.environmentId && a.projectId === b.projectId;
 
-/** The joining copy already defers to the kept one: an earlier link stopped before its last step. */
+/** The joining copy already joined the kept one: an earlier link stopped before its last step. */
 export function linkIsResuming(kept: ProjectLinkPreview, joining: ProjectLinkPreview): boolean {
   const binding = joining.coordinatorBinding;
   return (
@@ -715,6 +718,13 @@ export async function linkCopyAsWorkers(
       .then(unwrap),
   ]);
   const resuming = linkIsResuming(kept, joining);
+  // Checked before either machine is asked to change anything (EC2-04).
+  for (const [side, label] of [
+    [kept, input.keptLabel],
+    [joining, input.joiningLabel],
+  ] as const)
+    if (side.equalCoordinators !== true)
+      return refused("Update SpecWithCode on {machine} to link projects.", { machine: label });
   if (kept.keepRefusal)
     return refused(LINK_REFUSAL_WORDS[kept.keepRefusal], { machine: input.keptLabel });
   if (joining.joinRefusal && !resuming)
@@ -730,7 +740,12 @@ export async function linkCopyAsWorkers(
   const prepared = unwrap(
     await commands.prepare({
       environmentId: input.kept.environmentId,
-      input: { operationId, projectId: input.kept.projectId, joining: joining.member },
+      input: {
+        operationId,
+        projectId: input.kept.projectId,
+        joining: joining.member,
+        equalCoordinators: true,
+      },
     }),
   );
   const accepted = unwrap(
@@ -744,6 +759,7 @@ export async function linkCopyAsWorkers(
         coordinatorBinding: prepared.coordinatorBinding,
         keptFingerprint: prepared.fingerprint,
         ...(prepared.sharedIcon ? { sharedIcon: prepared.sharedIcon } : {}),
+        equalCoordinators: true,
       },
     }),
   );
