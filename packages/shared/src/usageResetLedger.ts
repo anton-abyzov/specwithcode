@@ -137,26 +137,27 @@ export function resetPeriods(
 }
 
 /**
- * Two records of one window ending this close are one reset: a read up to
- * five minutes past the announced reset still counts as before it, so one
- * record can end at the announced time and another at that late read. A
- * window that started over twice within this time would have had nothing to
- * spend between the two.
+ * A read up to five minutes past the announced reset still counts as before
+ * it, and closes its period at that read: a record whose last read is its end.
+ * The same reset seen from a read before the announced time ends there
+ * instead, so two such records of one window this close are one reset.
  */
 export const SAME_RESET_MS = 15 * MINUTE;
 
 /**
  * Whether two records of one window are the same reset: their spans from last
- * read to end overlap (both reads bracket it), or they end within
- * `SAME_RESET_MS` of each other, which also covers an identical record whose
- * span is a single instant.
+ * read to end overlap (both reads bracket it), or one was closed by a read just
+ * past its announced time (its span is a single instant) and they end within
+ * `SAME_RESET_MS`. Two early resets minutes apart each span a read gap and
+ * stay apart.
  */
 export function sameResetRecord(
   left: Pick<ResetPeriod, "lastReadAt" | "endedAt">,
   right: Pick<ResetPeriod, "lastReadAt" | "endedAt">,
 ): boolean {
   if (left.lastReadAt < right.endedAt && right.lastReadAt < left.endedAt) return true;
-  return Math.abs(left.endedAt - right.endedAt) <= SAME_RESET_MS;
+  const closedAtLateRead = left.lastReadAt === left.endedAt || right.lastReadAt === right.endedAt;
+  return closedAtLateRead && Math.abs(left.endedAt - right.endedAt) <= SAME_RESET_MS;
 }
 
 /**

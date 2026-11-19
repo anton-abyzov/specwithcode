@@ -200,6 +200,16 @@ describe("mergeResetPeriods", () => {
     expect(merged[0]?.lastReadAt).toBe(reset1 + 2 * MINUTE);
   });
 
+  it("keeps two early resets ten minutes apart, each after its own read", () => {
+    const first = { ...period(t0 + 9 * HOUR, t0 + 8 * HOUR, 80, null), cause: "early" as const };
+    const second = {
+      ...period(t0 + 9 * HOUR + 10 * MINUTE, t0 + 9 * HOUR + 5 * MINUTE, 20, t0 + 9 * HOUR),
+      cause: "early" as const,
+    };
+    expect(mergeResetPeriods([[first], [second]])).toHaveLength(2);
+    expect(mergeResetPeriods([[first, second]])).toHaveLength(2);
+  });
+
   it("keeps different accounts and windows apart", () => {
     const other = { ...period(reset1, reset1 - HOUR, 10, null), windowId: "seven_day_opus" };
     expect(mergeResetPeriods([[period(reset1, reset1 - HOUR, 59, null)], [other]])).toHaveLength(2);
