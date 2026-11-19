@@ -291,6 +291,10 @@ export function locateTabs(lines, labels, barLabels = labels) {
         if (inLine.length > 0) members.push(inLine[0]);
       }
       if (members.length < needed) continue;
+      // Tabs sit at an even pitch; a member far past the others is something else.
+      const places = members.map(along).sort((x, y) => x - y);
+      const gaps = places.slice(1).map((place, index) => place - places[index]);
+      if (gaps.length > 1 && Math.max(...gaps) > 2 * Math.min(...gaps) + size) continue;
       const starts = members.map((line) => (bar.axis === "row" ? line.x : line.y));
       const ends = members.map((line) =>
         bar.axis === "row" ? line.x + line.width : line.y + line.height,
@@ -643,48 +647,55 @@ export async function runCheck(deps, options = {}) {
     await call("computer_key", { keys: "backspace", repeat: REPEAT_PRESSES });
     const afterRepeat = await read(config.settleMs);
     const shown = reads.map((text) => (text === undefined ? "nothing" : JSON.stringify(text)));
-    const all = [typed, afterOne, before, afterRepeat];
     const yes = (flag) => (flag ? "yes" : "no");
-    if (all.some((entry) => entry === undefined)) {
-      check("key repeat", false, `the search field could not be read; read ${shown.join(" -> ")}`);
-    } else if (all.some((entry) => entry.other) || typed.tail !== REPEAT_TAIL.length) {
-      unsure(
+    const usable = (entry) => entry !== undefined && !entry.other;
+    // Each call is judged on its own before and after readings, so doubt about
+    // one never hides a failure the other shows.
+    // The single press: arrived when it removed one character; lost when it
+    // removed none with no suggestion showing, or more than one; otherwise not
+    // judged, since a suggestion may have taken it without removing text.
+    let single = "not judged";
+    if (usable(typed) && usable(afterOne)) {
+      const removed = typed.tail - afterOne.tail;
+      if (removed === 1) single = "arrived";
+      else if (removed > 1 || removed < 0 || !typed.suggestion) single = "lost";
+    }
+    // The repeat: arrived when it removed exactly REPEAT_PRESSES characters;
+    // unsure when it removed one fewer while a suggestion showed before it; else lost.
+    let repeat;
+    if (afterRepeat === undefined || before === undefined) repeat = "unreadable";
+    else if (!usable(before) || !usable(afterRepeat) || before.tail < REPEAT_PRESSES)
+      repeat = "unsure";
+    else {
+      const removed = before.tail - afterRepeat.tail;
+      if (removed === REPEAT_PRESSES) repeat = "arrived";
+      else if (removed === REPEAT_PRESSES - 1 && before.suggestion) repeat = "unsure";
+      else repeat = "lost";
+    }
+    const count = (from, to) =>
+      usable(from) && usable(to) ? `${from.tail - to.tail}` : "uncounted";
+    const detail = `field read ${shown.join(" -> ")}; one backspace removed ${count(typed, afterOne)} (suggestion before ${yes(typed?.suggestion)}, after ${yes(afterOne?.suggestion)}): ${single}; backspace repeat ${REPEAT_PRESSES} removed ${count(before, afterRepeat)} (suggestion before ${yes(before?.suggestion)}): ${repeat}`;
+    const changedAlone =
+      usable(afterOne) && usable(before) && before.tail !== afterOne.tail
+        ? "; the field also changed with no key pressed"
+        : "";
+    if (single === "lost" || repeat === "lost" || repeat === "unreadable") {
+      check(
         "key repeat",
-        `field read ${shown.join(" -> ")}; the field shows more than the typed digits and a known suggestion, so what a press removed cannot be counted`,
+        false,
+        `${detail}${changedAlone}; a press did not arrive or the field was gone`,
+      );
+    } else if (repeat === "arrived" && changedAlone === "") {
+      check(
+        "key repeat",
+        true,
+        `${detail}; every press of the repeat arrived${single === "arrived" ? ", and the single press too" : " (the single press is not judged: a suggestion showed and no text was removed)"}`,
       );
     } else {
-      // "arrived", "lost" or "unsure" for one key call of `presses` presses.
-      const judge = (presses, from, to) => {
-        const removed = from.tail - to.tail;
-        if (removed === presses) return "arrived";
-        if (presses === 1 && removed === 0 && from.suggestion && !to.suggestion) return "arrived";
-        if (removed === presses - 1 && from.suggestion) return "unsure";
-        return "lost";
-      };
-      const single = judge(1, typed, afterOne);
-      const repeat =
-        before.tail === afterOne.tail ? judge(REPEAT_PRESSES, before, afterRepeat) : "unsure";
-      const detail = `field read ${shown.join(" -> ")}; one backspace removed ${typed.tail - afterOne.tail} (suggestion before ${yes(typed.suggestion)}, after ${yes(afterOne.suggestion)}), backspace repeat ${REPEAT_PRESSES} removed ${before.tail - afterRepeat.tail} (suggestion before ${yes(before.suggestion)})`;
-      if (single === "lost" || repeat === "lost") {
-        check("key repeat", false, `${detail}; a press did not arrive`);
-      } else if (single === "unsure" || repeat === "unsure") {
-        const why = [
-          single === "unsure"
-            ? "the single press changed nothing on screen while a suggestion showed"
-            : undefined,
-          repeat === "unsure"
-            ? before.tail === afterOne.tail
-              ? "the repeat removed one fewer than asked while a suggestion showed"
-              : "the field changed with no key pressed"
-            : undefined,
-        ].filter(Boolean);
-        unsure(
-          "key repeat",
-          `${detail}; ${why.join(", and ")}, so it cannot be told whether every press arrived`,
-        );
-      } else {
-        check("key repeat", true, `${detail}; every press arrived`);
-      }
+      unsure(
+        "key repeat",
+        `${detail}${changedAlone}; ${repeat === "unsure" ? "the repeat's readings cannot show whether every press arrived" : "the field changed on its own between the two calls"}`,
+      );
     }
   } catch (error) {
     check("key repeat", false, `failed: ${error.message}`);
@@ -720,6 +731,17 @@ export async function runCheck(deps, options = {}) {
     return finish();
   }
   if (located === undefined) {
+    const shownTabs = barLabels.filter((label) =>
+      seen.lines.some((line) => normalize(line.text) === normalize(label)),
+    );
+    // Clock open with some tabs showing: text recognition missed the bar, not the product.
+    if (shownTabs.length >= 2) {
+      unsure(
+        "tabs",
+        `${config.clockApp} shows ${shownTabs.map((label) => `"${label}"`).join(", ")} but no tab bar holding "${tabA}" and "${tabB}" with an even pitch could be read; read ${describeLines(seen.lines)}`,
+      );
+      return finish();
+    }
     return stop(
       "tabs",
       `could not find "${tabA}" and "${tabB}" in a tab bar with the other tabs (${barLabels.join(", ")}); read ${describeLines(seen.lines)}`,

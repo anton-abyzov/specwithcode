@@ -66,7 +66,7 @@ describe("dry run", () => {
     ]) {
       const result = await runCheck(phone.deps);
       expect(result.lines.find((entry) => entry.includes("key repeat"))).toMatch(
-        /^PASS key repeat: .*one backspace removed 0 \(suggestion before yes, after no\), backspace repeat 3 removed 3 \(suggestion before no\); every press arrived/,
+        /^PASS key repeat: .*one backspace removed 0 \(suggestion before yes, after no\): not judged; backspace repeat 3 removed 3 \(suggestion before no\): arrived; every press of the repeat arrived/,
       );
       expect(result.pass).toBe(true);
     }
@@ -78,8 +78,8 @@ describe("dry run", () => {
       expect(result.pass).toBe(false);
       expect(result.lines.find((entry) => entry.includes("key repeat"))).toMatch(
         suggestion
-          ? /^FAIL key repeat: .*one backspace removed 0 \(suggestion before yes, after no\), backspace repeat 3 removed 2 \(suggestion before no\); a press did not arrive/
-          : /^FAIL key repeat: .*one backspace removed 1 .*backspace repeat 3 removed 2 .*a press did not arrive/,
+          ? /^FAIL key repeat: .*one backspace removed 0 \(suggestion before yes, after no\): not judged; backspace repeat 3 removed 2 \(suggestion before no\): lost/
+          : /^FAIL key repeat: .*one backspace removed 1 .*: arrived; backspace repeat 3 removed 2 .*: lost/,
       );
       // Every step starts from an emptied field, so a lost press spoils nothing after it.
       for (const sample of TYPE_SAMPLES) {
@@ -116,7 +116,7 @@ describe("dry run", () => {
     };
     const result = await runCheck(deps);
     expect(result.lines.find((entry) => entry.includes("key repeat"))).toMatch(
-      /^FAIL key repeat: .*one backspace removed 0 \(suggestion before no, after no\), backspace repeat 3 removed 2 \(suggestion before no\); a press did not arrive/,
+      /^FAIL key repeat: .*one backspace removed 0 \(suggestion before no, after no\): lost; backspace repeat 3 removed 2 \(suggestion before no\): lost/,
     );
   });
 
@@ -150,7 +150,7 @@ describe("dry run", () => {
   it("never passes a repeat that removed one fewer while a suggestion showed", async () => {
     const result = await runCheck(stubbornSuggestion({ dropRepeat: true }));
     expect(result.lines.find((entry) => entry.includes("key repeat"))).toMatch(
-      /^UNSURE key repeat: .*one backspace removed 1 .*backspace repeat 3 removed 2 \(suggestion before yes\); the repeat removed one fewer than asked while a suggestion showed/,
+      /^UNSURE key repeat: .*one backspace removed 1 .*: arrived; backspace repeat 3 removed 2 \(suggestion before yes\): unsure/,
     );
     expect(result.invalid).toBe(true);
   });
@@ -159,11 +159,64 @@ describe("dry run", () => {
     for (const loseSingle of [false, true]) {
       const result = await runCheck(stubbornSuggestion({ loseSingle, loseRepeat: true }));
       expect(result.lines.find((entry) => entry.includes("key repeat"))).toMatch(
-        /^FAIL key repeat: .*backspace repeat 3 removed 0 .*a press did not arrive/,
+        /^FAIL key repeat: .*backspace repeat 3 removed 0 .*: lost/,
       );
       expect(result.invalid).toBe(false);
       expect(result.lines.at(-1)).toMatch(/^Result: FAIL .*first failure: key repeat/);
     }
+  });
+
+  it("judges the repeat on its own readings, whatever came before it", async () => {
+    // An unknown annotation in the first reading, then a repeat that removed nothing.
+    const phone = simulatedPhone({ suggestion: true });
+    let measuring = false;
+    let firstRead = true;
+    const unknownFirst = {
+      ...phone.deps,
+      ocr: async (...args) => {
+        const read = await phone.deps.ocr(...args);
+        if (!measuring || !firstRead || phone.state.app !== "spotlight") return read;
+        firstRead = false;
+        return read.map((entry) => ({
+          ...entry,
+          text: entry.text.replace("- Ask Siri", "- New Suggestion"),
+        }));
+      },
+      call: async (tool, args) => {
+        if (tool === "computer_type") measuring = args.text === "QHBR4207";
+        const lost = measuring && tool === "computer_key" && args.repeat === 3;
+        return phone.deps.call(lost ? "computer_screenshot" : tool, lost ? {} : args);
+      },
+    };
+    const first = await runCheck(unknownFirst);
+    expect(first.lines.find((entry) => entry.includes("key repeat"))).toMatch(
+      /^FAIL key repeat: .*backspace repeat 3 removed 0 .*: lost/,
+    );
+    // A digit that showed up with no key pressed, then a repeat that removed nothing.
+    const other = simulatedPhone();
+    let typedNow = false;
+    const strayDigit = {
+      ...other.deps,
+      call: async (tool, args) => {
+        if (tool === "computer_type") typedNow = args.text === "QHBR4207";
+        if (
+          typedNow &&
+          tool === "computer_key" &&
+          args.repeat === undefined &&
+          args.keys === "backspace"
+        ) {
+          const result = await other.deps.call(tool, args);
+          other.state.query += "5";
+          return result;
+        }
+        const lost = typedNow && tool === "computer_key" && args.repeat === 3;
+        return other.deps.call(lost ? "computer_screenshot" : tool, lost ? {} : args);
+      },
+    };
+    const second = await runCheck(strayDigit);
+    expect(second.lines.find((entry) => entry.includes("key repeat"))).toMatch(
+      /^FAIL key repeat: .*backspace repeat 3 removed 0 \(suggestion before no\): lost/,
+    );
   });
 
   it("never passes a lost press as a suggestion that stayed on screen", async () => {
@@ -198,7 +251,7 @@ describe("dry run", () => {
     const result = await runCheck(deps);
     expect(result.pass).toBe(false);
     expect(result.lines.find((entry) => entry.includes("key repeat"))).toMatch(
-      /^UNSURE key repeat: .*changed nothing on screen while a suggestion showed/,
+      /^UNSURE key repeat: .*one backspace removed 0 \(suggestion before yes, after yes\): not judged; backspace repeat 3 removed 2 \(suggestion before yes\): unsure/,
     );
     expect(result.invalid).toBe(true);
     expect(result.lines.some((entry) => entry.startsWith("Clicks landed"))).toBe(false);
@@ -546,6 +599,8 @@ describe("judging the screen", () => {
     const sidebar = locateTabs(titled, pair, clock);
     expect(sidebar.tabs["World Clock"]).toEqual(titled[1]);
     expect(pageSignature(titled, window, sidebar.bar)).toEqual(["world clock"]);
+    // The World Clock tab missed once: the title far above the others is not taken for it.
+    expect(locateTabs([titled[0], ...titled.slice(2)], pair, clock)).toBeUndefined();
     // The full bottom bar.
     const bottom = [...missed.slice(1), line("Stopwatch", 840, 820, 80)];
     expect(locateTabs(bottom, pair, clock).bar).toMatchObject({ axis: "row", at: 830 });
