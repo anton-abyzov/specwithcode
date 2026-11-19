@@ -1035,6 +1035,54 @@ describe("OwnedProcessTree.end after a lost parent", () => {
     expect(f.kills).toEqual([]);
   });
 
+  it("keeps doubt on a Windows worker whose launcher, itself in doubt, exits", async () => {
+    const f = fake("win32");
+    const server = windowsRow(100, 1, 1_000);
+    const cli = windowsRow(200, 100, 2_000);
+    const tool = windowsRow(201, 200, 3_000);
+    const launcher = windowsRow(202, 201, 4_000);
+    const worker = windowsRow(203, 202, 4_100);
+    f.setTable([server, cli, tool]);
+    expect(await f.tree.remember()).toBe(true);
+    // The known tool exited; its launcher and the launcher's worker run.
+    f.setTable([server, cli, launcher, worker]);
+    expect(await f.tree.remember(15_000, true)).toBe(false);
+    // The launcher exits too; the worker still runs.
+    f.setTable([server, cli, worker]);
+    expect(await f.tree.remember(15_000, true)).toBe(false);
+    f.setTable([server, worker]);
+    f.exitRootAt(6_000);
+    expect((await f.tree.end()).unknown).toBe(true);
+    expect(f.kills).toEqual([]);
+  });
+
+  it("ends a child a verified member left behind in a group no longer provably the CLI's", async () => {
+    const f = fake("darwin");
+    const member = processRow(201);
+    const youngMember = processRow(202, 201);
+    const leaver = { ...member, pgid: member.pid };
+    const escapedWorker = { ...youngMember, ppid: 1, pgid: youngMember.pid };
+    f.setTable([member]);
+    let reads = 0;
+    f.setRead(() => {
+      // Then the parent exits and its child leaves the group, reparented.
+      if (++reads === 3 && f.getTable().some((row) => row.pid === 202)) {
+        f.setTable([escapedWorker]);
+      }
+      return f.getTable();
+    });
+    f.onSignal((pid, action) => {
+      // The member forks a child in the group on SIGTERM, then leaves the group itself.
+      if (pid === -rootPid && action === "SIGTERM") f.setTable([leaver, youngMember]);
+      if (pid === 202) f.setTable(f.getTable().filter((row) => row.pid !== 202));
+    });
+    const first = await f.tree.end();
+    expect(f.signals.some((signal) => signal.endsWith(" 202"))).toBe(true);
+    expect(f.getTable().some((row) => row.pid === 202)).toBe(false);
+    expect(first.unknown).toBe(true);
+    expect((await f.tree.end()).unknown).toBe(true);
+  });
+
   it("keeps a POSIX Stop unconfirmed on retry after its first reading failed", async () => {
     const f = fake("darwin");
     const member = processRow(201);

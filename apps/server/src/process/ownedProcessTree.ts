@@ -203,20 +203,45 @@ export function unidentifiedChildren(
   table: ReadonlyArray<ProcessEntry>,
   tree: ReadonlyArray<Known>,
   remembered: ReadonlyMap<number, Known> = new Map(),
+  /** Pids already in doubt: what they started is in doubt too. */
+  doubtful: ReadonlySet<number> = new Set(),
 ): number[] {
   const parents = new Set(tree.map((known) => known.entry.pid));
   const live = new Set(table.map((entry) => `${entry.pid}:${entry.started}`));
-  return table
-    .filter((entry) => {
-      if (parents.has(entry.pid)) return false;
-      if (parents.has(entry.ppid)) return !/^\d+$/u.test(entry.started);
-      const parent = remembered.get(entry.ppid);
-      if (parent === undefined || live.has(`${parent.entry.pid}:${parent.entry.started}`)) {
-        return false;
-      }
-      return !/^\d+$/u.test(entry.started) || BigInt(entry.started) >= parent.created;
-    })
-    .map((entry) => entry.pid);
+  const byPid = new Map(table.map((entry) => [entry.pid, entry]));
+  const startOf = (entry: ProcessEntry) =>
+    /^\d+$/u.test(entry.started) ? BigInt(entry.started) : null;
+  const doubt = new Set<number>();
+  for (const entry of table) {
+    if (parents.has(entry.pid)) continue;
+    if (parents.has(entry.ppid)) {
+      if (startOf(entry) === null) doubt.add(entry.pid);
+      continue;
+    }
+    const parent = remembered.get(entry.ppid);
+    if (parent === undefined || live.has(`${parent.entry.pid}:${parent.entry.started}`)) continue;
+    const start = startOf(entry);
+    if (start === null || start >= parent.created) doubt.add(entry.pid);
+  }
+  // Doubt passes down: a process started by one in doubt may be the tree's as well. A pid
+  // in doubt since an earlier reading that has exited still passes it to its children.
+  const queue = [...doubt, ...[...doubtful].filter((pid) => !byPid.has(pid))];
+  const seeds = new Set(queue);
+  while (queue.length > 0) {
+    const pid = queue.shift()!;
+    const parent = byPid.get(pid);
+    const parentStart = parent === undefined ? null : startOf(parent);
+    for (const entry of table) {
+      if (entry.ppid !== pid || entry.pid === pid || parents.has(entry.pid)) continue;
+      if (doubt.has(entry.pid) || seeds.has(entry.pid)) continue;
+      const start = startOf(entry);
+      if (parentStart !== null && start !== null && start < parentStart) continue;
+      doubt.add(entry.pid);
+      queue.push(entry.pid);
+    }
+  }
+  for (const pid of doubtful) if (byPid.has(pid) && !parents.has(pid)) doubt.add(pid);
+  return [...doubt];
 }
 
 /**
@@ -267,7 +292,9 @@ export function posixEscapees(
     seen.add(pid);
     for (const child of children.get(pid) ?? []) {
       if (seen.has(child.pid)) continue;
-      if (child.pgid !== root.pid && child.started.length > 0) {
+      // In the CLI's group a child is reached by the group signal, but only while that
+      // group is provably the CLI's; otherwise its verified parent is what attributes it.
+      if ((child.pgid !== root.pid || !groupOwned) && child.started.length > 0) {
         escapees.push(child);
       }
       queue.push(child.pid);
@@ -373,12 +400,13 @@ export class OwnedProcessTree {
   }
 
   private noteUnidentified(table: ReadonlyArray<ProcessEntry>, tree: ReadonlyArray<Known>) {
+    const before = new Set(this.unidentified);
     const listed = new Set(table.map((entry) => entry.pid));
     const attributed = new Set(tree.map((known) => known.entry.pid));
     for (const pid of this.unidentified) {
       if (!listed.has(pid) || attributed.has(pid)) this.unidentified.delete(pid);
     }
-    for (const pid of unidentifiedChildren(table, tree, this.remembered)) {
+    for (const pid of unidentifiedChildren(table, tree, this.remembered, before)) {
       this.unidentified.add(pid);
     }
   }
@@ -600,9 +628,11 @@ export class OwnedProcessTree {
         }
       }
       if (!owned && groupUsable && !this.groupRetired && groupAlive()) {
-        // Members are listed in the group, but none this end saw: not provably the CLI's.
+        // Members are listed in the group, but none this end saw: not provably the CLI's,
+        // and not provably someone else's, now or on a later end.
         groupUsable = false;
         unknown = true;
+        this.coverageLost = true;
       }
       escapees = withDescendants(now, leavers, owned);
     };
