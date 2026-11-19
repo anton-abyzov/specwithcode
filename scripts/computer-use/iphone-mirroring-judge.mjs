@@ -337,6 +337,7 @@ export function scrolled(before, after, window, direction, minPx, background = n
     );
   const left = page(before);
   const right = page(after);
-  const replaced = right.length > 0 && jaccard(left, right) < 0.4;
+  // A page has rows to compare: a stray reading or two is never a new page.
+  const replaced = left.length >= 3 && right.length >= 3 && jaccard(left, right) < 0.4;
   return { ok: replaced, replaced, ...shift };
 }

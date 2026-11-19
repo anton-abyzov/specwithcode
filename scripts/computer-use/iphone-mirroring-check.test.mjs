@@ -1275,6 +1275,11 @@ describe("judging the screen", () => {
       ok: true,
       replaced: true,
     });
+    // One reading spelled differently, or text where there was none, is no scroll.
+    const row = (text) => [at(text, 450, 640)];
+    expect(scrolled(row("Wi-Fi"), row("Wi Fi"), window, "down", 20, background).ok).toBe(false);
+    expect(scrolled(row("Wi Fi"), row("Wi-Fi"), window, "up", 20, background).ok).toBe(false);
+    expect(scrolled([], after, window, "down", 20, background).ok).toBe(false);
     // Rows that stayed put, with a few readings changed, are no scroll.
     const list = ["Settings", "General", "Camera", "Siri", "Search", "Sounds", "Focus", "Privacy"];
     const stay = list.map((text, index) => at(text, 200 + index * 30, 640));
