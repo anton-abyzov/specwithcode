@@ -633,7 +633,30 @@ describe("handoff file method and intent", () => {
       sync: { machine: "m5", folder: "/Users/sam/atlas" },
       copyDoneOn: "m5",
     });
-    expect(document.querySelector("h2")?.textContent).toBe("Product is in sync on MacBook and m5");
+    expect(document.querySelector("h2")?.textContent).toBe(
+      "Sync finished for Product: MacBook and m5",
+    );
+  });
+
+  it("never titles a finished comparison in sync: a file may have changed while it copied", async () => {
+    // The dialog knows the copy ended and on which machine, not whether the folders match.
+    const changed = (
+      <p data-slot="copy-problem">
+        The files are on m5, but some files changed on MacBook while copying.
+      </p>
+    );
+    await handoff({
+      sourceLabel: "MacBook",
+      method: "copy",
+      intent: "copy",
+      copyFlow: changed,
+      sync: { machine: "m5", folder: "/work/atlas" },
+      copyDoneOn: "m5",
+    });
+    const title = document.querySelector("h2")?.textContent ?? "";
+    expect(title).toBe("Sync finished for Product: MacBook and m5");
+    expect(title).not.toContain("in sync");
+    expect(document.querySelector('[data-slot="copy-problem"]')).not.toBeNull();
   });
 
   it("says the copy there fast-forwards to the commits this machine pushes", async () => {
