@@ -146,6 +146,41 @@ try {
             );
           check(`${label}: says "${want.text}"`, shown);
         }
+        // A settled frame: the step's sentence fades in from opacity 0 (setup-fall, 0.56 s after
+        // 40 ms), and Playwright counts an element at opacity 0 as visible. Nothing here loops.
+        const settled = await page
+          .waitForFunction(
+            () =>
+              document
+                .getAnimations()
+                .every((animation) => animation.playState !== "running" && !animation.pending),
+            undefined,
+            { timeout: 10_000 },
+          )
+          .then(
+            () => true,
+            () => false,
+          );
+        check(`${label}: every animation has ended`, settled);
+        // A guide body that is really there: the step slot and every ancestor fully opaque, with
+        // a box and words in it. Blank bodies passed four review rounds before this check.
+        const body = await page.evaluate(() => {
+          if (document.querySelector('[data-slot="first-feature-guide"]') === null) return null;
+          const now = document.querySelector('[data-slot="first-feature-now"]');
+          if (now === null) return { missing: true };
+          let opacity = 1;
+          for (let node = now; node instanceof Element; node = node.parentElement)
+            opacity *= Number(getComputedStyle(node).opacity);
+          const box = now.getBoundingClientRect();
+          const sentence = now.querySelector("p")?.innerText.trim() ?? "";
+          return { opacity, width: box.width, height: box.height, sentence };
+        });
+        if (body !== null)
+          check(
+            `${label}: the step's sentence shows`,
+            body.opacity === 1 && body.width > 0 && body.height > 0 && body.sentence.length > 0,
+            JSON.stringify(body),
+          );
         const seen = await page.evaluate(() => {
           const all = (selector) => [...document.querySelectorAll(selector)];
           const guide = document.querySelector('[data-slot="first-feature-guide"]');

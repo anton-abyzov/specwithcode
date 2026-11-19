@@ -13,6 +13,7 @@ import {
   FULL_DISK_ACCESS_UNLOCK_PHRASES,
 } from "../components/access/FullDiskAccess";
 import { COMPUTER_USE_PERMISSION_COPY } from "../components/computerUse/ComputerUsePermissions";
+import * as FirstFeatureLogic from "../components/studio/firstFeature/firstFeature.logic";
 import { DRIVER_OPTIONS } from "../components/settings/providerDriverMeta";
 import { onboardingAgentUses } from "../onboarding/providerReadiness.logic";
 import { CHAT_OPTION_LABELS, DATE_BUCKETS, THREAD_TONE_LABELS } from "../studio/shellModel";
@@ -337,5 +338,37 @@ describe.each(Object.entries(PHRASE_CATALOGS))("%s first-run phrases", (_locale,
   });
   it("translates every one", () => {
     expect(FIRST_RUN_PHRASES.filter((english) => !Object.hasOwn(catalog, english))).toEqual([]);
+  });
+});
+
+// The first feature guide and its offer (1398 AC-17): every phrase they show, read from the
+// logic's phrase constants and any literal `tx("...")` in the folder, is in every catalog. The
+// request itself stays English, word for word (AC-22), so it is not a phrase.
+const FIRST_FEATURE_DIR = NodePath.join(SRC_DIR, "components", "studio", "firstFeature");
+const FIRST_FEATURE_PHRASES = [
+  ...new Set([
+    ...Object.entries(FirstFeatureLogic)
+      .filter(
+        ([name, value]) => typeof value === "string" && !name.startsWith("FIRST_FEATURE_REQUEST"),
+      )
+      .map(([, value]) => value as string),
+    ...NodeFS.readdirSync(FIRST_FEATURE_DIR)
+      .filter((file) => /\.tsx?$/.test(file) && !file.includes(".test."))
+      .flatMap((file) =>
+        [
+          ...NodeFS.readFileSync(NodePath.join(FIRST_FEATURE_DIR, file), "utf8").matchAll(
+            /\btx\(\s*("(?:[^"\\]|\\.)*")/g,
+          ),
+        ].map((match) => JSON.parse(match[1]!) as string),
+      ),
+  ]),
+];
+
+describe.each(Object.entries(PHRASE_CATALOGS))("%s first feature phrases", (_locale, catalog) => {
+  it("finds the first feature phrases", () => {
+    expect(FIRST_FEATURE_PHRASES.length).toBeGreaterThan(40);
+  });
+  it("translates every one", () => {
+    expect(FIRST_FEATURE_PHRASES.filter((english) => !Object.hasOwn(catalog, english))).toEqual([]);
   });
 });

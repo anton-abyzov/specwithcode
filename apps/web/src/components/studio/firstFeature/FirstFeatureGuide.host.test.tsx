@@ -216,6 +216,42 @@ describe("FirstFeatureGuide host", () => {
     expect(button("Open the thread")).toBeDefined();
   });
 
+  it("offers the request again when its card is deleted", async () => {
+    const onAsk = vi.fn();
+    const ready = (id: string, slug: string) => ({
+      instanceId: ProviderInstanceId.make(id),
+      driver: ProviderDriverKind.make(id),
+      enabled: true,
+      installed: true,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-11-18T12:00:00.000Z",
+      version: null,
+      models: [{ slug, name: slug, isCustom: false, capabilities: null }],
+      slashCommands: [],
+      skills: [],
+    });
+    const author = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" };
+    state.config = {
+      settings: DEFAULT_SERVER_SETTINGS,
+      providers: [ready("claudeAgent", "claude-opus-5-5"), ready("codex", "gpt-6.1-sol")],
+    };
+    await show(sample(), { onAsk, author });
+    await act(async () => button("Write it for me")!.click());
+    expect(button("Write it for me")).toBeUndefined();
+    // The card shows, still in Active, and is then deleted before it is done.
+    state.cards = [
+      { ...doneCard, status: "active", column: "active", tasks: { total: 4, done: 1 } },
+    ];
+    await show(sample(), { onAsk, author });
+    expect(button("Write it for me")).toBeUndefined();
+    state.cards = [];
+    await show(sample(), { onAsk, author });
+    await act(async () => button("Write it for me")!.click());
+    expect(onAsk).toHaveBeenCalledTimes(2);
+    expect(onAsk).toHaveBeenLastCalledWith(FIRST_FEATURE_REQUEST);
+  });
+
   it("offers the request again when the right one changes after it was written", async () => {
     const onAsk = vi.fn();
     const ready = (id: string, slug: string) => ({
