@@ -159,7 +159,8 @@ const sameChar = (typed, read) =>
 // suggestion reads UNSURE until it is added here.
 const NOTHING_AFTER = /^\|?$/;
 export const SUGGESTIONS = ["Ask Siri", "HDToday", "Open"];
-const KNOWN_SUGGESTION = new RegExp(`^\\|? ?-\\s+(?:${SUGGESTIONS.join("|")})$`);
+// The dash may come with no spaces around it ("x@y#h-Ask Siri").
+const KNOWN_SUGGESTION = new RegExp(`^\\|? ?-\\s*(?:${SUGGESTIONS.join("|")})$`);
 
 /**
  * A field reading against typed text: undefined when it does not start with
@@ -413,8 +414,11 @@ export function verticalShift(before, after) {
       moves.push(center(other).y - center(line).y);
     }
   }
-  moves.sort((x, y) => x - y);
-  const median = moves.length === 0 ? 0 : moves[Math.floor(moves.length / 2)];
+  // Text outside the phone (other windows behind the Mirroring window's
+  // margins) never moves; when at least three lines moved, only they count.
+  const movers = moves.filter((move) => Math.abs(move) > 2);
+  const counted = (movers.length >= 3 ? movers : moves).sort((x, y) => x - y);
+  const median = counted.length === 0 ? 0 : counted[Math.floor(counted.length / 2)];
   return { common: moves.length, median };
 }
 
@@ -1031,11 +1035,45 @@ export async function runCheck(deps, options = {}) {
     );
     return finish();
   }
+  // Clock on iOS 27 may show its tabs as icons only, in a column at the lower
+  // right: the column is found in the picture once a Clock page title shows,
+  // and its icons are the tabs in Clock's order (DEFAULTS.barLabels).
+  let icons;
+  if (located === undefined && deps.icons !== undefined) {
+    const title = config.barLabels.find((label) =>
+      seen.lines.some((line) => normalize(line.text) === normalize(label)),
+    );
+    const order = [tabA, tabB].map((label) => config.barLabels.indexOf(label));
+    if (title !== undefined && order.every((index) => index >= 0)) {
+      try {
+        const column = await deps.icons(seen.shot.image, seen.window);
+        if (column?.length === config.barLabels.length) {
+          const pitch = (column.at(-1).y - column[0].y) / (column.length - 1);
+          const line = (point) => ({ text: "", x: point.x, y: point.y, width: 0, height: 0 });
+          located = {
+            icons: true,
+            title,
+            tabs: { [tabA]: line(column[order[0]]), [tabB]: line(column[order[1]]) },
+            bar: {
+              axis: "column",
+              at: Math.round(column.reduce((sum, point) => sum + point.x, 0) / column.length),
+              half: Math.round(pitch / 2),
+              from: Math.round(column[0].y - pitch / 2),
+              to: Math.round(column.at(-1).y + pitch / 2),
+            },
+          };
+        }
+      } catch (error) {
+        note(`finding ${config.clockApp}'s icon column failed: ${error.message}`);
+      }
+    }
+  }
   if (located === undefined) {
     const shownTabs = barLabels.filter((label) =>
       seen.lines.some((line) => normalize(line.text) === normalize(label)),
     );
-    // Clock open with some tabs showing: text recognition missed the bar, not the product.
+    // Clock open with some tabs or a page title showing: the tabs could not be
+    // found on the screen, which says nothing about the product.
     if (shownTabs.length >= 2) {
       unsure(
         "tabs",
@@ -1043,9 +1081,16 @@ export async function runCheck(deps, options = {}) {
       );
       return finish();
     }
+    if (shownTabs.length === 1) {
+      unsure(
+        "tabs",
+        `${config.clockApp} shows "${shownTabs[0]}" but neither a tab bar holding "${tabA}" and "${tabB}" nor a column of ${config.barLabels.length} tab icons could be found; read ${describeLines(seen.lines)}`,
+      );
+      return finish();
+    }
     return stop(
       "tabs",
-      `could not find "${tabA}" and "${tabB}" in a tab bar with the other tabs (${barLabels.join(", ")}); read ${describeLines(seen.lines)}`,
+      `could not find "${tabA}" and "${tabB}" in a tab bar with the other tabs (${barLabels.join(", ")}), and no ${config.clockApp} page title showed; read ${describeLines(seen.lines)}`,
     );
   }
   const { bar } = located;
@@ -1054,13 +1099,15 @@ export async function runCheck(deps, options = {}) {
   check(
     "tabs",
     true,
-    `"${tabA}" and "${tabB}" found in ${config.clockApp}, in a ${bar.axis} at ${bar.axis === "row" ? "y" : "x"} ${bar.at}`,
+    located.icons
+      ? `"${tabA}" and "${tabB}" found in ${config.clockApp} as icons ${config.barLabels.indexOf(tabA) + 1} and ${config.barLabels.indexOf(tabB) + 1} of a column of ${config.barLabels.length} at x ${bar.at}, y ${bar.from} to ${bar.to}, with the page title "${located.title}" showing`
+      : `"${tabA}" and "${tabB}" found in ${config.clockApp}, in a ${bar.axis} at ${bar.axis === "row" ? "y" : "x"} ${bar.at}`,
   );
   const signature = (reading) => pageSignature(reading.lines, reading.window, bar);
 
   const tap = async (label) => {
     // Only the bar found first counts, so a page title never stands in for a missed label.
-    const again = locateTabs(seen.lines, [tabA, tabB], barLabels);
+    const again = located.icons ? undefined : locateTabs(seen.lines, [tabA, tabB], barLabels);
     if (again?.bar?.axis === bar.axis && Math.abs(again.bar.at - bar.at) <= bar.half) {
       Object.assign(tabLines, again.tabs);
     }
@@ -1073,7 +1120,13 @@ export async function runCheck(deps, options = {}) {
     seen = await look();
     return { line, point, before, pageBefore };
   };
-  const anchors = tabAnchors(config);
+  // Icon tabs carry no label, so each page's title is its first word.
+  const anchors = Object.fromEntries(
+    Object.entries(tabAnchors(config)).map(([tab, words]) => [
+      tab,
+      located.icons ? [...new Set([normalize(tab), ...words])] : words,
+    ]),
+  );
   const anchorOf = (label, page) => anchorIn(page, anchors[label]);
 
   // Not counted: makes the first tab current, so every counted tap changes the page.
@@ -1109,7 +1162,12 @@ export async function runCheck(deps, options = {}) {
         const page = signature(seen);
         const where = `"${target}" at (${result.point.x}, ${result.point.y}); ${result.before ?? "unknown"} -> ${lastFrontmost ?? "unknown"}`;
         // Landed: the page changed, shows the target tab's own words, and not the other tab's.
-        const changed = jaccard(page, result.pageBefore) < 0.5;
+        // With icon tabs the title decides "changed": the page before did not show
+        // the target's words (text behind the window's margins stays the same).
+        const changed = located.icons
+          ? anchorOf(target, result.pageBefore) === undefined &&
+            anchorOf(target, page) !== undefined
+          : jaccard(page, result.pageBefore) < 0.5;
         const anchor = anchorOf(target, page);
         const foreign = anchorOf(other, page);
         const same = refs[target] === undefined ? undefined : jaccard(page, refs[target]);

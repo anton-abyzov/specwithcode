@@ -25,7 +25,9 @@ import {
   TYPE_SAMPLES,
   typedTail,
   windowInScreenshot,
+  verticalShift,
 } from "./iphone-mirroring-check.mjs";
+import { findIconColumn } from "./iphone-mirroring-icons.mjs";
 
 const window = { x: 600, y: 100, width: 360, height: 760 };
 const line = (text, x, y, width = 100, height = 20) => ({ text, x, y, width, height });
@@ -885,6 +887,42 @@ describe("dry run", () => {
     expect(phone.state.taps).toBeUndefined();
   });
 
+  it("taps Clock's icon tabs and judges each tap by the page title", async () => {
+    // Text of other windows shows in the window's margins in every reading.
+    const behind = ["Ov", "lo", "ct", "CALENDAR", "Thu. Nov 19", "4 x", "Flood", "Inbox"];
+    const phone = simulatedPhone({ iconTabs: true, behind });
+    const result = await runCheck(phone.deps);
+    expect(result.lines).toContainEqual(
+      expect.stringMatching(
+        /^PASS tabs: "World Clock" and "Stopwatch" found in Clock as icons 1 and 3 of a column of 4 at x 920, y 580 to 740, with the page title "Stopwatch" showing$/,
+      ),
+    );
+    expect(result.lines).toContain("Clicks landed: 20 of 20");
+    expect(result.lines).toContainEqual(expect.stringMatching(/^PASS scroll down/));
+    expect(result.lines.at(-1)).toMatch(/^Result: PASS/);
+  });
+
+  it("counts a missed icon tap", async () => {
+    const phone = simulatedPhone({ iconTabs: true, missClick: 4 });
+    const result = await runCheck(phone.deps);
+    expect(result.lines).toContain("Clicks landed: 19 of 20");
+    expect(result.lines).toContainEqual(
+      expect.stringMatching(/^FAIL click 4\/20: .*page did not change/),
+    );
+  });
+
+  it("calls the tabs unsure when Clock is open but neither labels nor icons are found", async () => {
+    const phone = simulatedPhone({ iconTabs: true });
+    phone.deps.icons = async () => undefined;
+    const result = await runCheck(phone.deps);
+    expect(result.lines).toContainEqual(
+      expect.stringMatching(
+        /^UNSURE tabs: Clock shows "Stopwatch" but neither a tab bar .* nor a column of 4 tab icons/,
+      ),
+    );
+    expect(result.lines.some((entry) => entry.startsWith("FAIL "))).toBe(false);
+  });
+
   it("writes dry-run.log and never check.log", async () => {
     const out = tempOut();
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -1040,6 +1078,8 @@ describe("judging the screen", () => {
     expect(startsWithTyped("hbdt- Ask Siri", "hbdt")).toBe(true);
     expect(startsWithTyped("hbdt|", "hbdt")).toBe(true);
     expect(startsWithTyped("hbdt", "hbdt")).toBe(true);
+    // The run of November 19 at 12:45 PM read the suggestion with no spaces around the dash.
+    expect(startsWithTyped("x@y#h-Ask Siri", "x@y#h")).toBe(true);
     // Leftovers before the text, or more typed text after it, do not count.
     expect(startsWithTyped("zQ4207- Ask Siri", "4207")).toBe(false);
     expect(startsWithTyped("42075", "4207")).toBe(false);
@@ -1115,6 +1155,47 @@ describe("judging the screen", () => {
     expect(showsNoSpotlight([at("Search")], home)).toBe(false);
     expect(showsNoSpotlight([], home)).toBe(false);
     expect(showsNoSpotlight(home, [])).toBe(false);
+  });
+
+  it("finds a column of four round icons at the lower right, and nothing else", () => {
+    const picture = (circles, width = 156, height = 238) => {
+      const data = new Uint8Array(width * height * 3);
+      for (const circle of circles) {
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const d = Math.hypot(x - circle.x, y - circle.y);
+            // A ring, like an icon's outline.
+            if (d <= 4 && d >= 2) data.fill(255, (y * width + x) * 3, (y * width + x) * 3 + 3);
+          }
+        }
+      }
+      return { data, width, height, channels: 3 };
+    };
+    const column = (x, ys) => ys.map((y) => ({ x, y }));
+    // window-27.png at half size: icons at x 137, y 170, 185, 201, 217.
+    expect(findIconColumn(picture(column(137, [170, 185, 201, 217])))).toEqual(
+      column(137, [170, 185, 201, 217]),
+    );
+    // A column on the left, a longer list, uneven rows, or above the middle: none.
+    expect(findIconColumn(picture(column(40, [170, 185, 201, 217])))).toBeUndefined();
+    expect(
+      findIconColumn(picture(column(137, [124, 139, 155, 170, 185, 201, 217]))),
+    ).toBeUndefined();
+    expect(findIconColumn(picture(column(137, [150, 185, 201, 217])))).toBeUndefined();
+    expect(findIconColumn(picture(column(137, [20, 35, 51, 67])))).toBeUndefined();
+  });
+
+  it("measures a scroll by the text that moved, not the text behind the window", () => {
+    const at = (text, y, x = 620) => ({ text, x, y, width: 80, height: 14 });
+    const still = ["Ov", "CALENDAR", "Thu. Nov 19", "4 x", "Flood"].map((text, index) =>
+      at(text, 110 + index * 30, 602),
+    );
+    const rows = ["General", "Camera", "Siri", "Search"];
+    const before = [...still, ...rows.map((text, index) => at(text, 300 + index * 50))];
+    const after = [...still, ...rows.map((text, index) => at(text, 200 + index * 50))];
+    expect(verticalShift(before, after)).toEqual({ common: 9, median: -100 });
+    // Nothing moved: the still text decides.
+    expect(verticalShift(before, before).median).toBe(0);
   });
 
   it("tells pages apart by their words, leaving clock readings out", () => {
