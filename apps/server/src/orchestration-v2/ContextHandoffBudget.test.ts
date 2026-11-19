@@ -841,3 +841,81 @@ describe("handoff delivery", () => {
     }),
   );
 });
+
+describe("pending handoff chronology", () => {
+  const deliveredOrder = (
+    histories: ReadonlyArray<ReadonlyArray<OrchestrationV2HistoricalMessage>>,
+  ) =>
+    Effect.gen(function* () {
+      let order: ReadonlyArray<string> = [];
+      yield* deliverContextHandoffs({
+        handoffs: histories.map((messages, index) => ({
+          ...handoff,
+          id: ContextHandoffId.make(`handoff:chronology:${index}`),
+          history: { ...handoff.history!, messages },
+        })),
+        providerThread,
+        budget: 16_000,
+        alreadyDeliveredItemIds: new Set(),
+        inject: (history) =>
+          Effect.sync(() => {
+            order = history.messages.map((item) => String(item.itemId));
+            return true;
+          }),
+        persist: () => Effect.void,
+      });
+      return order;
+    });
+  const at = (id: string, ordinal: number | undefined, thread = threadId) => ({
+    ...message(id, "user", id),
+    threadId: thread,
+    ...(ordinal === undefined ? {} : { ordinal }),
+  });
+
+  it.effect("keeps an overlapping earlier item ahead of a later one", () =>
+    Effect.gen(function* () {
+      // The 1004 audit probe: [later] then [earlier, later].
+      const earlier = { ...at("item:earlier", undefined), runId: RunId.make("run:1") };
+      const later = { ...at("item:later", undefined), runId: RunId.make("run:2") };
+      assert.deepEqual(yield* deliveredOrder([[later], [earlier, later]]), [
+        "item:earlier",
+        "item:later",
+      ]);
+    }),
+  );
+
+  it.effect("orders disjoint histories of one thread by item ordinal", () =>
+    Effect.gen(function* () {
+      assert.deepEqual(
+        yield* deliveredOrder([
+          [at("item:detour-user", 30), at("item:detour-answer", 31)],
+          [at("item:missed", 20)],
+        ]),
+        ["item:missed", "item:detour-user", "item:detour-answer"],
+      );
+    }),
+  );
+
+  it.effect("keeps already ordered and single histories as they are", () =>
+    Effect.gen(function* () {
+      assert.deepEqual(
+        yield* deliveredOrder([
+          [at("item:a", 1), at("item:b", 2)],
+          [at("item:b", 2), at("item:c", 3)],
+        ]),
+        ["item:a", "item:b", "item:c"],
+      );
+      // A fork brings its source thread's items first; their ordinals belong
+      // to another thread and never reorder this one.
+      const source = ThreadId.make("thread:fork-source");
+      assert.deepEqual(
+        yield* deliveredOrder([[at("item:source", 90, source), at("item:own", 1)]]),
+        ["item:source", "item:own"],
+      );
+      assert.deepEqual(
+        yield* deliveredOrder([[at("item:source", 90, source)], [at("item:own", 1)]]),
+        ["item:source", "item:own"],
+      );
+    }),
+  );
+});
