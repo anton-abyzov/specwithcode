@@ -4907,8 +4907,8 @@ export const zh: PhraseCatalog = {
     "会话可以请更强的模型审查自己的思路，然后继续工作。每次咨询都会消耗顾问模型的用量。",
   advisor: "顾问",
   "Advisor model": "顾问模型",
-  "A thread is never advised by its own model; the next model in the order answers instead.":
-    "会话永远不会由自己的模型提供建议；改由顺序中的下一个模型回答。",
+  "Claude's own advisor can be the thread's own model. A brief always goes to another model, the next one in the order.":
+    "Claude 自带的顾问可以与会话使用同一个模型。摘要总是发给另一个模型，即顺序中的下一个。",
   "advisor model": "顾问模型",
   "Use the default advisor order": "使用默认的顾问顺序",
   "The Complex track": "Complex 轨道",

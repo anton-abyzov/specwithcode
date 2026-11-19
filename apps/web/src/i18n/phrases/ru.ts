@@ -5099,8 +5099,8 @@ export const ru: PhraseCatalog = {
     "Тред может попросить более сильную модель проверить свой подход и продолжить работу. Каждая консультация расходует лимит модели-советника.",
   advisor: "советник",
   "Advisor model": "Модель-советник",
-  "A thread is never advised by its own model; the next model in the order answers instead.":
-    "Тред никогда не консультируется у своей же модели; вместо неё отвечает следующая модель в порядке.",
+  "Claude's own advisor can be the thread's own model. A brief always goes to another model, the next one in the order.":
+    "Собственный советник Claude может быть той же моделью, что и тред. Сводка всегда уходит другой модели, следующей в порядке.",
   "advisor model": "модель-советник",
   "Use the default advisor order": "Использовать порядок советников по умолчанию",
   "The Complex track": "Трек Complex",

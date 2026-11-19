@@ -31,15 +31,16 @@ and it reads the whole conversation ([Claude Code advisor][cc-advisor],
 
 - the thread runs on Claude Code signed in to Anthropic;
 - **Claude's own advisor** is on;
-- the advisor is a different Claude model that Anthropic's compatibility table accepts for the
-  thread's model ([advisor tool, model compatibility][api-advisor]);
+- the advisor is a Claude model that Anthropic's compatibility table accepts for the thread's
+  model, which can be the thread's own model ([advisor tool, model compatibility][api-advisor]);
 - the thread's context is under **Context limit for Claude's advisor**.
 
 The app picks the advisor model from your settings and passes it to that Claude session. It
 switches Claude's own advisor off when the thread's advisor is off by the thread's own choice,
 when the thread uses the SpecWithCode route, and in every advisor thread. With the app and
 project setting off and no choice on the thread, the app passes nothing, and whatever your Claude
-Code settings say still applies.
+Code settings say still applies. Those consults are titled with the model that answered and "from
+Claude's settings", and the composer's **Advisor** row names that model.
 
 The studio-code `advisor` tool stays available on these threads too, so a thread whose built-in
 consult fails still has an advisor.
@@ -83,10 +84,20 @@ that message in, the app archives the advisor's child thread; nobody has to ackn
 
 ## Who advises
 
-**Advisor model** names the model to try first. Left at its default, the order is Claude Fable
-5.2, then the project's Review track. The app takes the first entry that can run now and is not
-the thread's own model: a thread is never advised by itself. Accounts billed per token, Vertex,
-paid routers and accounts of unknown billing are never picked from the default order.
+**Advisor model** names the model to try first, then the project's Complex track follows. Left at
+its default, the order is the Complex track alone, which starts with Claude Fable 5.2 when an
+account can run it now. The order never reads the Review track, though a model on both tracks can
+still both advise and review. The brief takes the first entry that can run now; Claude's own
+advisor takes the first entry without checking its usage first.
+
+Through Claude's own advisor, a thread on that first model is advised by the same model: a Fable
+5.2 thread gets Fable 5.2, with the whole conversation in view. A brief never goes to the thread's
+own model; the next entry in the order answers it. The composer's **Advisor** row names the
+advisor, says when it is the thread's own model, and names the model a brief would go to past the
+context limit. Each consult is titled with the model that answered.
+
+Accounts billed per token, Vertex, paid routers and accounts of unknown billing are never picked
+from the default order.
 
 ## Settings
 
@@ -98,7 +109,7 @@ the machine. A row's reset removes just its own field from the project's overrid
 | Row                                | Default                          | Range               |
 | ---------------------------------- | -------------------------------- | ------------------- |
 | Let threads ask a stronger model   | Off                              |                     |
-| Advisor model                      | Fable 5.2, then the Review track |                     |
+| Advisor model                      | The Complex track                |                     |
 | Claude's own advisor               | On                               |                     |
 | Context limit for Claude's advisor | 200,000 tokens                   | 50,000 to 1,000,000 |
 | Consults per run                   | 3                                | 1 to 10             |

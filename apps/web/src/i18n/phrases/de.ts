@@ -5135,8 +5135,8 @@ export const de: PhraseCatalog = {
     "Ein Thread kann ein stärkeres Modell bitten, seinen Ansatz zu prüfen, und arbeitet dann weiter. Jede Konsultation verbraucht Nutzung des Beratermodells.",
   advisor: "Berater",
   "Advisor model": "Beratermodell",
-  "A thread is never advised by its own model; the next model in the order answers instead.":
-    "Ein Thread wird nie von seinem eigenen Modell beraten; stattdessen antwortet das nächste Modell der Reihenfolge.",
+  "Claude's own advisor can be the thread's own model. A brief always goes to another model, the next one in the order.":
+    "Claudes eigener Berater kann das eigene Modell des Threads sein. Eine Zusammenfassung geht immer an ein anderes Modell, das nächste der Reihenfolge.",
   "advisor model": "Beratermodell",
   "Use the default advisor order": "Standardreihenfolge der Berater verwenden",
   "The Complex track": "Der Complex-Track",
