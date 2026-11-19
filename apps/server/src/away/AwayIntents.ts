@@ -166,6 +166,14 @@ export const makeAwayIntents = (deps: AwayIntentsDeps) =>
                 },
                 undefined,
               ];
+            // An earlier delivery from this source acted while a later one still waits. A
+            // source on an earlier release reads a count as "nothing moved" and runs its
+            // work again, so it hears what was taken and settles through status instead.
+            const acted = current.intents.findLast(
+              (held) =>
+                held.sourceEnvironmentId === sourceEnvironmentId &&
+                (held.state === "acting" || held.state === "done"),
+            );
             let cancelled = 0;
             const intents = current.intents.map((held) => {
               if (held.state !== "waiting" || held.sourceEnvironmentId !== sourceEnvironmentId)
@@ -179,11 +187,13 @@ export const makeAwayIntents = (deps: AwayIntentsDeps) =>
               };
             });
             return [
-              {
-                cancelled,
-                state: cancelled > 0 ? "cancelled" : (latest?.state ?? null),
-                takenOver: [],
-              },
+              acted === undefined
+                ? {
+                    cancelled,
+                    state: cancelled > 0 ? "cancelled" : (latest?.state ?? null),
+                    takenOver: [],
+                  }
+                : { cancelled: 0, state: acted.state, takenOver: takenOverBy(acted) },
               cancelled === 0 ? undefined : { ...current, intents },
             ];
           },

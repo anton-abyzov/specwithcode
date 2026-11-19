@@ -206,14 +206,6 @@ export interface AwaySleepShape {
 
 const isoAt = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
 
-const cancelledCount = (json: unknown): number =>
-  typeof json === "object" &&
-  json !== null &&
-  "cancelled" in json &&
-  typeof (json as { cancelled: unknown }).cancelled === "number"
-    ? (json as { cancelled: number }).cancelled
-    : 0;
-
 export const makeAwaySleep = (deps: AwaySleepDeps) =>
   Effect.gen(function* () {
     const lock = yield* Semaphore.make(1);
@@ -263,21 +255,16 @@ export const makeAwaySleep = (deps: AwaySleepDeps) =>
         const before = yield* hold.read;
         // Which work is held is unknown: nothing is asked or let go until the hold reads.
         if (isUnreadableHold(before)) return { outcome: "unresolved", answered: false } as const;
-        const cancel = yield* deps
+        // The cancel stops whatever still waits there. Its count proves only that: an earlier
+        // delivery of the same intent may have acted, so every held item is settled by status.
+        yield* deps
           .post(
             target,
             AWAY_INTENT_CANCEL_PATH,
             { sourceEnvironmentId: deps.self },
             AWAY_SLEEP_SEND_TIMEOUT_MS,
           )
-          .pipe(Effect.result);
-        // The cancel proves only that the intents waiting there never acted. A hold an earlier
-        // lid close left unresolved (it began before this one) may name work that did.
-        const ownHold = before === null || before.since === session.sentAt;
-        if (cancel._tag === "Success" && cancelledCount(cancel.success.json) > 0 && ownHold) {
-          yield* releaseEverything;
-          return { outcome: "nothing-moved", answered: true } as const;
-        }
+          .pipe(Effect.ignore);
         const held = yield* hold.read;
         const heldIds = (held?.projects ?? []).map((project) => project.projectId as ProjectId);
         const heldThreads = held?.threads ?? [];
