@@ -206,6 +206,27 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.deepEqual(options.settingSources, ["user", "project", "local"]);
   });
 
+  it("makeClaudeQueryOptions keeps per-session sections out of a worker's system prompt", () => {
+    const preset = (sharedSystemPromptCache?: boolean) => {
+      const prompt = ClaudeAdapterV2.makeClaudeQueryOptions({
+        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+        nativeThreadId: "shared-cache",
+        resume: false,
+        cwd: "/workspace",
+        ...(sharedSystemPromptCache === undefined ? {} : { sharedSystemPromptCache }),
+      }).systemPrompt;
+      if (typeof prompt !== "object" || Array.isArray(prompt) || prompt.type !== "preset")
+        throw new Error("Expected native Claude preset prompt");
+      return prompt;
+    };
+    assert.equal(preset(true).excludeDynamicSections, true);
+    // The coordinator and user threads keep Claude Code's default prompt.
+    assert.notProperty(preset(), "excludeDynamicSections");
+    assert.notProperty(preset(false), "excludeDynamicSections");
+    // Instructions are unchanged either way.
+    assert.equal(preset(true).append, preset().append);
+  });
+
   it("makeClaudeQueryOptions writes concisely by default and in detail when chosen", () => {
     const append = (responseStyle?: "concise" | "detailed") => {
       const options = ClaudeAdapterV2.makeClaudeQueryOptions({

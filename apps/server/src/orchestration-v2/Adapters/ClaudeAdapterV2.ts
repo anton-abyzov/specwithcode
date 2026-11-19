@@ -991,6 +991,13 @@ export function makeClaudeQueryOptions(input: {
   readonly agentInstructions?: string | undefined;
   readonly claudeWorkflowMode?: ClaudeWorkflowMode | undefined;
   readonly isCoordinator?: boolean | undefined;
+  /**
+   * A worker or subagent thread: its system prompt leaves out the per-session
+   * sections (working directory, auto memory path, git status), which Claude
+   * Code then sends as the first user message. Sibling workers with the same
+   * configuration can then share one cached system prompt.
+   */
+  readonly sharedSystemPromptCache?: boolean | undefined;
   readonly responseStyle?: ResponseStyle | undefined;
   readonly subagentPromptFileContents?: string | undefined;
   /** Ask the SDK for a suggested next prompt after each reply. */
@@ -1170,6 +1177,7 @@ export function makeClaudeQueryOptions(input: {
       // A resumed native session must render the current effective instructions.
       snapshot: false,
       append: workflowPolicy.instructions,
+      ...(input.sharedSystemPromptCache === true ? { excludeDynamicSections: true } : {}),
     },
     extraArgs: workflowPolicy.extraArgs,
   };
@@ -8569,6 +8577,8 @@ export function makeClaudeAdapterV2(
             agentInstructions: turnInput.runtimePolicy.agentInstructions,
             claudeWorkflowMode: turnInput.runtimePolicy.claudeWorkflowMode,
             isCoordinator: turnInput.runtimePolicy.isCoordinator,
+            sharedSystemPromptCache:
+              turnInput.appThread.lineage.relationshipToParent === "subagent",
             responseStyle: turnInput.runtimePolicy.responseStyle,
             subagentPromptFileContents,
             promptSuggestions: yield* (
