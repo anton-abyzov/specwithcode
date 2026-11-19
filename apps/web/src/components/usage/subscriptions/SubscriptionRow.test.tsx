@@ -111,3 +111,29 @@ describe("SubscriptionRow renewal", () => {
     expect(html).not.toContain("Set day");
   });
 });
+
+describe("SubscriptionRow amounts", () => {
+  it("shows Copilot's amounts beside the percent", () => {
+    const html = renderAccount({
+      driver: ProviderDriverKind.make("acpRegistry"),
+      displayName: "Copilot",
+      email: undefined,
+      limits: {
+        checkedAt: iso(now),
+        subscriptionKey: `copilot:sha256:${"c".repeat(64)}`,
+        windows: [
+          {
+            id: "premium_interactions",
+            kind: "monthly",
+            label: "Premium requests",
+            usedPercent: 59,
+            used: 885,
+            limit: 1500,
+            unit: "premium requests",
+          },
+        ],
+      },
+    });
+    expect(html).toContain("41% left (885 of 1,500 premium requests)");
+  });
+});

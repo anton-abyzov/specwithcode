@@ -14,6 +14,10 @@ const dateTimeFormat = new Intl.DateTimeFormat(undefined, {
   hour: "numeric",
   minute: "2-digit",
 });
+const amountFormat = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
+/** "885 of 1,500 premium requests". */
+export const formatAmounts = (amounts: NonNullable<SubscriptionWindow["amounts"]>) =>
+  `${amountFormat.format(amounts.used)} of ${amountFormat.format(amounts.limit)} ${amounts.unit}`;
 /** The reset as a local date and time: "Nov 21, 2:00 PM". */
 export const formatDateTime = (at: number) => dateTimeFormat.format(new Date(at));
 
@@ -57,7 +61,8 @@ function WindowLine({
             : "text-muted-foreground tabular-nums"
         }
       >
-        {window.leftPercent}% left · {countdown}
+        {window.leftPercent}% left
+        {window.amounts ? ` (${formatAmounts(window.amounts)})` : ""} · {countdown}
       </span>
     </div>
   );

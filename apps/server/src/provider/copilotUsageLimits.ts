@@ -124,6 +124,25 @@ function usedPercentOf(quota: CopilotQuotaSnapshot): number | undefined {
   return undefined;
 }
 
+const isFiniteNumber = (value: number | null | undefined): value is number =>
+  typeof value === "number" && Number.isFinite(value);
+
+/**
+ * The amounts beside the percent: all three or none. None for an unlimited
+ * quota, one without an entitlement, or one whose `remaining` is missing or
+ * not a finite number (the percent may still come from `percent_remaining`).
+ */
+function amountsOf(
+  quota: CopilotQuotaSnapshot,
+  label: string,
+): Pick<ServerProviderUsageWindow, "used" | "limit" | "unit"> {
+  if (quota.unlimited === true || !hasEntitlement(quota) || !isFiniteNumber(quota.remaining)) {
+    return {};
+  }
+  const limit = quota.entitlement!;
+  return { used: Math.max(0, limit - quota.remaining), limit, unit: label.toLowerCase() };
+}
+
 /**
  * Turns one `copilot_internal/user` response into published usage.
  *
@@ -190,6 +209,7 @@ export function copilotUserResponseToLimits(input: {
     label: chosen.label,
     usedPercent,
     ...(resetsAt ? { resetsAt } : {}),
+    ...amountsOf(chosen.quota, chosen.label),
   };
   const limits = keyed(makeUsageLimits({ checkedAt, windows: [window] }));
   // Spent premium requests do not stop Copilot: the included models keep

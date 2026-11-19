@@ -49,6 +49,8 @@ export interface SubscriptionWindow {
   readonly accountWide: boolean;
   /** Fully used and still live. */
   readonly spent: boolean;
+  /** What was used of how much, when the provider reports all three soundly; else null. */
+  readonly amounts: { readonly used: number; readonly limit: number; readonly unit: string } | null;
 }
 
 export interface SubscriptionRenewal {
@@ -144,6 +146,22 @@ export function nextRenewalOn(dayOfMonth: number, now: number): number {
 
 const DAY_MS = 24 * 60 * 60_000;
 
+/**
+ * Amounts only when all three are there, both numbers finite and zero or
+ * more, and the unit 1 to 24 characters once trimmed. Anything else is shown
+ * as no amounts; the percent stands either way.
+ */
+export function windowAmounts(
+  window: Pick<LimitAccount["limits"]["windows"][number], "used" | "limit" | "unit">,
+): SubscriptionWindow["amounts"] {
+  const { used, limit } = window;
+  const unit = typeof window.unit === "string" ? window.unit.trim() : "";
+  const sound = (value: unknown): value is number =>
+    typeof value === "number" && Number.isFinite(value) && value >= 0;
+  if (!sound(used) || !sound(limit) || unit.length < 1 || unit.length > 24) return null;
+  return { used, limit, unit };
+}
+
 /** Cursor's combined percentage of its two pools, not a quota of its own. */
 const isCursorOverall = (account: LimitAccount, windowId: string) =>
   String(account.driver) === "cursor" && windowId === "totalPercentUsed";
@@ -174,6 +192,7 @@ function windowsOf(account: LimitAccount, now: number): SubscriptionWindow[] {
       scoped: windowModelScope(window) !== null,
       accountWide: windowModelScope(window) === null && !isCursorOverall(account, window.id),
       spent: window.usedPercent >= 100,
+      amounts: windowAmounts(window),
       durationMs:
         window.windowDurationMins !== undefined && window.windowDurationMins > 0
           ? window.windowDurationMins * 60_000

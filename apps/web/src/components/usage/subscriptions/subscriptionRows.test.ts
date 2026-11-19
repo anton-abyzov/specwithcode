@@ -398,3 +398,45 @@ describe("window notes", () => {
     ).toBeNull();
   });
 });
+
+describe("window amounts", () => {
+  it("keeps sound amounts and shows anything else as none", async () => {
+    const { windowAmounts } = await import("./subscriptionRows");
+    expect(windowAmounts({ used: 885, limit: 1500, unit: " premium requests " })).toEqual({
+      used: 885,
+      limit: 1500,
+      unit: "premium requests",
+    });
+    expect(windowAmounts({})).toBeNull();
+    expect(windowAmounts({ used: 1, limit: 2 })).toBeNull();
+    expect(windowAmounts({ used: -1, limit: 2, unit: "x" })).toBeNull();
+    expect(windowAmounts({ used: Number.POSITIVE_INFINITY, limit: 2, unit: "x" })).toBeNull();
+    expect(windowAmounts({ used: 1, limit: Number.NaN, unit: "x" })).toBeNull();
+    expect(windowAmounts({ used: 1, limit: 2, unit: "   " })).toBeNull();
+    expect(windowAmounts({ used: 1, limit: 2, unit: "x".repeat(25) })).toBeNull();
+    expect(windowAmounts({ used: 0, limit: 0, unit: "x".repeat(24) })).not.toBeNull();
+  });
+
+  it("carries a Copilot reading's amounts onto its row", () => {
+    const [row] = subscriptionRows(
+      [
+        account("c", ProviderDriverKind.make("acpRegistry"), undefined, "m4", {
+          windows: [
+            {
+              ...weekly(59, 9 * DAY),
+              id: "premium_interactions",
+              kind: "monthly",
+              used: 885,
+              limit: 1500,
+              unit: "premium requests",
+            },
+          ],
+        }),
+      ],
+      [],
+      {},
+      now,
+    );
+    expect(row?.windows[0]?.amounts).toEqual({ used: 885, limit: 1500, unit: "premium requests" });
+  });
+});
