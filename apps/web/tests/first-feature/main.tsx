@@ -21,7 +21,8 @@ import "./fixture.css";
 const params = new URLSearchParams(location.search);
 const dark = params.get("theme") === "dark";
 document.documentElement.classList.toggle("dark", dark);
-applyThemePalette("studio-chat", dark ? "dark" : "light");
+// The app's default theme: "system" sets no palette, so the base tokens apply.
+applyThemePalette("system", dark ? "dark" : "light");
 
 const card = (over: Partial<ProjectBoardCard> = {}): ProjectBoardCard => ({
   incrementId: "0001-dark-mode-switch",

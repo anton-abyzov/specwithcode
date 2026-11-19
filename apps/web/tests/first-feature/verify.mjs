@@ -59,7 +59,16 @@ const browser = await chromium.launch({
   ...(executablePath ? { executablePath } : {}),
 });
 
-const receipt = { headless: true, checks: [], screenshots: [] };
+const receipt = {
+  headless: true,
+  // What these pictures do not prove (1398 PR 659 pre-screen).
+  proofLimits: [
+    "The fixture draws the guide and the offer card alone, not inside the real project page.",
+    "Only the app's default theme is drawn: a person who picked a palette sees theirs.",
+  ],
+  checks: [],
+  screenshots: [],
+};
 const check = (name, ok, detail = "") => {
   receipt.checks.push({ name, ok, detail });
   if (!ok) console.error(`FAIL ${name} ${detail}`);
@@ -146,6 +155,64 @@ try {
             );
           check(`${label}: says "${want.text}"`, shown);
         }
+        // A settled frame: the step's sentence fades in from opacity 0 (setup-fall, 0.56 s after
+        // 40 ms), and Playwright counts an element at opacity 0 as visible. Nothing here loops.
+        const settled = await page
+          .waitForFunction(
+            () =>
+              document
+                .getAnimations()
+                .every((animation) => animation.playState !== "running" && !animation.pending),
+            undefined,
+            { timeout: 10_000 },
+          )
+          .then(
+            () => true,
+            () => false,
+          );
+        check(`${label}: every animation has ended`, settled);
+        // A guide body that is really there: the step slot and every ancestor fully opaque, with
+        // a box and words in it. Blank bodies passed four review rounds before this check.
+        const body = await page.evaluate(() => {
+          if (document.querySelector('[data-slot="first-feature-guide"]') === null) return null;
+          const now = document.querySelector('[data-slot="first-feature-now"]');
+          if (now === null) return { missing: true };
+          const opacityOf = (start) => {
+            let opacity = 1;
+            for (let node = start; node instanceof Element; node = node.parentElement)
+              opacity *= Number(getComputedStyle(node).opacity);
+            return opacity;
+          };
+          const box = now.getBoundingClientRect();
+          const sentence = now.querySelector("p")?.innerText.trim() ?? "";
+          // The blank pictures hid the buttons too, so each one must show on its own.
+          const hiddenButtons = [...now.querySelectorAll("button")]
+            .filter((button) => {
+              const own = button.getBoundingClientRect();
+              // A button that is off is drawn faded on purpose, never invisible.
+              const least =
+                button.disabled || button.getAttribute("aria-disabled") === "true" ? 0.7 : 1;
+              return opacityOf(button) < least || own.width === 0 || own.height === 0;
+            })
+            .map((button) => button.textContent?.trim() || "button");
+          return {
+            opacity: opacityOf(now),
+            width: box.width,
+            height: box.height,
+            sentence,
+            hiddenButtons,
+          };
+        });
+        if (body !== null)
+          check(
+            `${label}: the step's sentence shows`,
+            body.opacity === 1 &&
+              body.width > 0 &&
+              body.height > 0 &&
+              body.sentence.length > 0 &&
+              body.hiddenButtons.length === 0,
+            JSON.stringify(body),
+          );
         const seen = await page.evaluate(() => {
           const all = (selector) => [...document.querySelectorAll(selector)];
           const guide = document.querySelector('[data-slot="first-feature-guide"]');
@@ -154,6 +221,36 @@ try {
           );
           return {
             sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+            // The page can clip what overflows, so measure the guide and the card themselves.
+            outside: all(
+              '[data-slot="first-feature-guide"], [data-slot="first-feature-guide"] *, [data-first-feature-offer], [data-first-feature-offer] *',
+            )
+              .filter((node) => {
+                const box = node.getBoundingClientRect();
+                return box.width > 0 && (box.left < -1 || box.right > window.innerWidth + 1);
+              })
+              .map((node) => node.textContent?.trim().slice(0, 40) || node.tagName)
+              .slice(0, 5),
+            // Text cut short inside the guide or the card, as a truncate class does it.
+            clipped: all('[data-slot="first-feature-guide"] *, [data-first-feature-offer] *')
+              .filter((node) => {
+                // Screen reader text such as " (done)" is a 1 px box on purpose.
+                if (node.closest(".sr-only") !== null) return false;
+                const style = getComputedStyle(node);
+                return (
+                  (style.overflowX === "hidden" || style.overflowX === "clip") &&
+                  node.scrollWidth > node.clientWidth + 1 &&
+                  node.textContent?.trim()
+                );
+              })
+              .map((node) => node.textContent.trim().slice(0, 40))
+              .slice(0, 5),
+            // innerText keeps a cut label whole, so a label that overflows its box counts as cut.
+            knotLabels: all('[data-slot="first-feature-knot-label"]').map((node) =>
+              node.scrollWidth > node.clientWidth + 1
+                ? "cut"
+                : node.firstChild?.textContent?.trim(),
+            ),
             dialog: all('[role="dialog"]').length,
             offer:
               document
@@ -197,6 +294,23 @@ try {
         });
         check(`${label}: no page errors`, errors.length === 0, errors.join("; "));
         check(`${label}: nothing runs off the side`, !seen.sideways);
+        check(
+          `${label}: the guide and the card fit the window`,
+          seen.outside.length === 0,
+          JSON.stringify(seen.outside),
+        );
+        check(
+          `${label}: no text in the guide is cut short`,
+          seen.clipped.length === 0,
+          JSON.stringify(seen.clipped),
+        );
+        if (seen.guide)
+          check(
+            `${label}: every step's name shows in full`,
+            JSON.stringify(seen.knotLabels) ===
+              JSON.stringify(["Turn SpecWeave on", "Ask for it whole", "Read the review"]),
+            JSON.stringify(seen.knotLabels),
+          );
         check(`${label}: never a dialog`, seen.dialog === 0 || state === "sample-review-warning");
         check(`${label}: no time is named`, !/minute/i.test(seen.text), seen.text.slice(0, 200));
         if (want.absent) check(`${label}: absent`, seen.offer === null);

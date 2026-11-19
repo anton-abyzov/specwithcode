@@ -109,7 +109,11 @@ function GuideKnots({ view }: { readonly view: GuideView }) {
             className="grid min-w-0 justify-items-center gap-1.5 pb-1 text-xs font-medium text-muted-foreground data-[state=now]:text-foreground"
           >
             <span aria-hidden data-slot="setup-knot" data-motion="setup" />
-            <span className="max-w-full truncate">
+            {/* The label names the step the person is on: on a phone it wraps, never cut. */}
+            <span
+              data-slot="first-feature-knot-label"
+              className="max-w-full text-center text-balance wrap-break-word"
+            >
               {tx(GUIDE_STEP_LABELS[knot.id])}
               {knot.state === "done" ? <span className="sr-only">{` (${tx("done")})`}</span> : null}
               {knot.state === "skipped" ? (
@@ -336,6 +340,8 @@ function GuideEnd(props: FirstFeatureGuideViewProps) {
               <Button
                 size="sm"
                 variant="outline"
+                // The longest action here: on a phone it wraps instead of pushing the card wide.
+                className="h-auto min-h-8 whitespace-normal py-1 text-left sm:min-h-7"
                 disabled={props.disabled === true || reviewAll !== "offered"}
                 onClick={props.onReviewAll}
               >
