@@ -21,6 +21,7 @@ import {
   useSidebar,
 } from "../ui/sidebar";
 import { SidebarAccountMenu } from "../account/SidebarAccountMenu";
+import { SidebarJoinCodePill } from "./SidebarJoinCodePill";
 import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
@@ -173,6 +174,7 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   return (
     <SidebarFooter>
       <SidebarThreadUndoNotice />
+      <SidebarJoinCodePill />
       <SidebarProviderUpdatePill />
       <SidebarServerUpdate />
       <SidebarUpdateArchitectureWarning />

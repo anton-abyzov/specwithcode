@@ -36,6 +36,7 @@ import {
   subscribeInlineCodes,
 } from "./inlineApprovalCode";
 import { makeLaterStore } from "./laterStore";
+import { hideWaitingCodes, useWaitingCodeHidden, useWaitingCodes } from "./waitingCodes";
 import { useOwnDeviceShortId } from "./ownDeviceId";
 
 const POLL_MS = 4_000;
@@ -330,25 +331,17 @@ function DeviceApprovalPromptWithAccount(
 
 /**
  * On a device machines have not approved yet: one card with every machine it
- * waits on and that machine's code, and which device this is (1406).
+ * waits on and that machine's code, and which device this is (1406). The ×,
+ * Escape and a click outside close it; the join stays pending (see waitingCodes).
  */
 export function DeviceWaitingForApprovalHost() {
-  const { environments } = useEnvironments();
   useSyncExternalStore(subscribeInlineCodes, inlineCodesVersion);
-  const waiting = environments.flatMap((environment) =>
-    environment.connection.deviceApprovalCode !== undefined &&
-    !inlineCodeShown(environment.environmentId)
-      ? [
-          {
-            id: environment.environmentId,
-            machine: environment.label,
-            code: environment.connection.deviceApprovalCode,
-          },
-        ]
-      : [],
+  const isHidden = useWaitingCodeHidden();
+  const waiting = useWaitingCodes().filter(
+    (entry) => !inlineCodeShown(entry.id) && !isHidden(entry),
   );
   if (waiting.length === 0) return null;
-  return <FloatingWaitingCard waiting={waiting} />;
+  return <FloatingWaitingCard waiting={waiting} onClose={() => hideWaitingCodes(waiting)} />;
 }
 
 /**
@@ -357,14 +350,38 @@ export function DeviceWaitingForApprovalHost() {
  */
 function FloatingWaitingCard({
   waiting,
+  onClose,
 }: {
   waiting: Parameters<typeof DeviceWaitingList>[0]["waiting"];
+  onClose: () => void;
 }) {
   const deviceId = useOwnDeviceShortId();
+  const card = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  useEffect(() => {
+    close.current = onClose;
+  });
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      close.current();
+    };
+    const onPointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && card.current?.contains(target)) return;
+      close.current();
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onPointer, true);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onPointer, true);
+    };
+  }, []);
   return (
-    <div className={FLOATING_CODE_LAYER_CLASS}>
-      <div className="pointer-events-auto">
-        <DeviceWaitingList waiting={waiting} deviceId={deviceId} />
+    <div className={FLOATING_CODE_LAYER_CLASS} data-device-waiting-layer>
+      <div ref={card} className="pointer-events-auto">
+        <DeviceWaitingList waiting={waiting} deviceId={deviceId} onClose={onClose} />
       </div>
     </div>
   );

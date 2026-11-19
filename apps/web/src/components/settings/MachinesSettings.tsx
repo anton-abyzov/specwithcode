@@ -74,6 +74,7 @@ import { incomingLine, outgoingLine } from "./machineDirections.logic";
 import { AwayAccessRequestsAll } from "../away/AwayAccessRequests";
 import { HandoffModeSettings } from "./HandoffModeSettings";
 import { IncomingWorkerAction } from "./IncomingWorkerSetup";
+import { WaitingJoinCodes } from "./WaitingJoinCodes";
 import { isPhoneConnectShown, PhoneConnectSettings } from "./PhoneConnectSettings";
 import { SettingHelp } from "./SettingHelp";
 import {
@@ -279,6 +280,7 @@ export function MachinesSettingsPanel() {
           {error}
         </p>
       ) : null}
+      <WaitingJoinCodes />
       {setup && fleet.primaryEnvironmentId ? (
         <MachineSummary environmentId={fleet.primaryEnvironmentId} rows={rows} setup={setup} />
       ) : null}

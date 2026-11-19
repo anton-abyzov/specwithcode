@@ -5935,4 +5935,8 @@ export const ru: PhraseCatalog = {
     "Ревью остаётся здесь: на {machine} нет разрешённого ревьюера",
   "Review stays here: update SpecWithCode on {machine}":
     "Ревью остаётся здесь: обновите SpecWithCode на {machine}",
+  "Close. The code stays in Settings > Machines.": "Закрыть. Код останется в Настройки > Машины.",
+  "Waiting for {machine}": "Ждём {machine}",
+  "Waiting for machines to allow this device": "Ждём, пока машины разрешат это устройство",
+  "Waiting to join": "Ожидает подключения",
 };

@@ -5982,4 +5982,9 @@ export const de: PhraseCatalog = {
     "Das Review bleibt hier: kein zugelassener Reviewer auf {machine}",
   "Review stays here: update SpecWithCode on {machine}":
     "Das Review bleibt hier: SpecWithCode auf {machine} aktualisieren",
+  "Close. The code stays in Settings > Machines.":
+    "Schließen. Der Code bleibt unter Einstellungen > Rechner.",
+  "Waiting for {machine}": "Warte auf {machine}",
+  "Waiting for machines to allow this device": "Warte, bis Rechner dieses Gerät zulassen",
+  "Waiting to join": "Wartet auf Beitritt",
 };

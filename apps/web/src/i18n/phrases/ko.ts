@@ -5872,4 +5872,8 @@ export const ko: PhraseCatalog = {
     "리뷰는 여기에 남습니다: {machine}에 허용된 리뷰어가 없음",
   "Review stays here: update SpecWithCode on {machine}":
     "리뷰는 여기에 남습니다: {machine}의 SpecWithCode를 업데이트하세요",
+  "Close. The code stays in Settings > Machines.": "닫기. 코드는 설정 > 머신에 남아 있습니다.",
+  "Waiting for {machine}": "{machine} 기다리는 중",
+  "Waiting for machines to allow this device": "머신이 이 기기를 허용하기를 기다리는 중",
+  "Waiting to join": "참여 대기 중",
 };
