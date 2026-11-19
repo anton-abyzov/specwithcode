@@ -183,42 +183,76 @@ export const makeLiveSkillRepoSources = Effect.fn("SkillManagement.makeLiveSourc
 });
 
 /** Acquisition is used only by SkillUpdate's install/apply path, never search or status. */
-export const makeSkillInstallRuntime = Effect.fn("SkillManagement.installRuntime")(function* (input: {
-  readonly home: string;
-  readonly baseDir: string;
-  readonly platform: NodeJS.Platform;
-  readonly environment: NodeJS.ProcessEnv;
-  readonly host?: ProvisionHost;
-}) {
-  const runner = yield* ProcessRunner.ProcessRunner;
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const run = yield* makeRunCli;
-  let nodeDir: string | undefined;
-  const findVskill = Effect.gen(function* () {
-    const external = yield* findVskillBinary({ home: input.home, pathEnv: input.environment.PATH,
-      platform: input.platform, appData: input.environment.APPDATA, pathExt: input.environment.PATHEXT });
-    if (external !== null) return external;
-    const prepared = yield* Effect.tryPromise({
-      try: () => prepareManagedVskill({
-        host: input.host ?? makeNodeProvisionHost({ env: input.environment }),
-        home: input.baseDir, glibc: runsOnGlibc(),
-        runNpm: async (command, args, options) => {
-          const output = await Effect.runPromise(runner.run({ command, args,
-            timeout: options?.timeoutMs ?? 120_000, timeoutBehavior: "timedOutResult",
-            env: { ...input.environment, ...options?.env }, maxOutputBytes: 1024 * 1024, outputMode: "truncate" }));
-          return { code: output.code === null ? null : Number(output.code), stdout: output.stdout, stderr: output.stderr };
-        },
-      }),
-      catch: (cause) => cause instanceof Error ? cause : new Error(String(cause)),
-    });
-    nodeDir = prepared.nodeDir;
-    return prepared.binary;
-  }).pipe(Effect.provideService(FileSystem.FileSystem, fs), Effect.provideService(Path.Path, path));
-  return { findVskill, run: (request: Parameters<typeof run>[0]) => run({ ...request,
-    env: { ...request.env, PATH: [nodeDir, request.env?.PATH ?? ""].filter(Boolean).join(input.platform === "win32" ? ";" : ":") },
-  }) };
-});
+export const makeSkillInstallRuntime = Effect.fn("SkillManagement.installRuntime")(
+  function* (input: {
+    readonly home: string;
+    readonly baseDir: string;
+    readonly platform: NodeJS.Platform;
+    readonly environment: NodeJS.ProcessEnv;
+    readonly host?: ProvisionHost;
+  }) {
+    const runner = yield* ProcessRunner.ProcessRunner;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const run = yield* makeRunCli;
+    let nodeDir: string | undefined;
+    const findVskill = Effect.gen(function* () {
+      const external = yield* findVskillBinary({
+        home: input.home,
+        pathEnv: input.environment.PATH,
+        platform: input.platform,
+        appData: input.environment.APPDATA,
+        pathExt: input.environment.PATHEXT,
+      });
+      if (external !== null) return external;
+      const prepared = yield* Effect.tryPromise({
+        try: () =>
+          prepareManagedVskill({
+            host: input.host ?? makeNodeProvisionHost({ env: input.environment }),
+            home: input.baseDir,
+            glibc: runsOnGlibc(),
+            runNpm: async (command, args, options) => {
+              const output = await Effect.runPromise(
+                runner.run({
+                  command,
+                  args,
+                  timeout: options?.timeoutMs ?? 120_000,
+                  timeoutBehavior: "timedOutResult",
+                  env: { ...input.environment, ...options?.env },
+                  maxOutputBytes: 1024 * 1024,
+                  outputMode: "truncate",
+                }),
+              );
+              return {
+                code: output.code === null ? null : Number(output.code),
+                stdout: output.stdout,
+                stderr: output.stderr,
+              };
+            },
+          }),
+        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+      });
+      nodeDir = prepared.nodeDir;
+      return prepared.binary;
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+    );
+    return {
+      findVskill,
+      run: (request: Parameters<typeof run>[0]) =>
+        run({
+          ...request,
+          env: {
+            ...request.env,
+            PATH: [nodeDir, request.env?.PATH ?? ""]
+              .filter(Boolean)
+              .join(input.platform === "win32" ? ";" : ":"),
+          },
+        }),
+    };
+  },
+);
 
 export const makeSkillManagementHandlers = Effect.fn("SkillManagement.makeHandlers")(function* (
   deps: SkillManagementDeps,
@@ -244,7 +278,10 @@ export const makeSkillManagementHandlers = Effect.fn("SkillManagement.makeHandle
     },
   });
 
-  const installer = yield* makeSkillInstallRuntime({ ...deps, baseDir: deps.baseDir ?? path.dirname(deps.stateDir) });
+  const installer = yield* makeSkillInstallRuntime({
+    ...deps,
+    baseDir: deps.baseDir ?? path.dirname(deps.stateDir),
+  });
   const updates = yield* makeSkillUpdates({
     home: deps.home,
     environment: deps.environment,
