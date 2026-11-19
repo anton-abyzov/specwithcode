@@ -152,6 +152,7 @@ it("measures, previews and applies a copy that leaves the coordinator on the sou
         operationId: "00000000-0000-4000-8000-000000000001",
         mode: "copy-only",
         destinationEnvironmentId: "kioskD",
+        lanPurpose: "sync-measured",
       },
     },
   ]);
@@ -177,7 +178,12 @@ it("measures, previews and applies a copy that leaves the coordinator on the sou
   expect(container.textContent).toContain("Linked: Laptop E can start work on Kiosk D.");
   // The dialog learns which copy was filled: that is the copy "Make Kiosk D main" would switch to.
   expect(onChoices).toHaveBeenLastCalledWith(
-    expect.objectContaining({ mode: "copy-only", machine: "kioskD", done: true, projectId: "copied" }),
+    expect.objectContaining({
+      mode: "copy-only",
+      machine: "kioskD",
+      done: true,
+      projectId: "copied",
+    }),
   );
   await click("Open on Kiosk D");
   expect(onOpenProject).toHaveBeenCalledExactlyOnceWith({
@@ -538,9 +544,9 @@ it("does not use a previous machine's late home response", async () => {
   );
   state.homes.kioskD = "/home/late-kioskD";
   await mount({ deskBAvailable: true });
-  expect(container.querySelector<HTMLInputElement>('input[aria-label="Folder on Desk B"]')!.value).toBe(
-    "/Users/sam/Projects/project",
-  );
+  expect(
+    container.querySelector<HTMLInputElement>('input[aria-label="Folder on Desk B"]')!.value,
+  ).toBe("/Users/sam/Projects/project");
 });
 
 it("finishes the copy while busy and transfers context only on an explicit retry", async () => {
@@ -1199,7 +1205,9 @@ it.each(["unavailable", "old-version"])(
     };
     await mount({ workspaceRoot: childRoot });
     await click("Copy to Kiosk D");
-    expect(container.textContent).toContain("Update or reconnect Kiosk D before copying an umbrella");
+    expect(container.textContent).toContain(
+      "Update or reconnect Kiosk D before copying an umbrella",
+    );
     expect(names()).not.toContain("copyOffer");
     expect(localStorage.getItem("specwithcode:folder-copy:laptopE:source")).toBeNull();
     await selectScope(childRoot);
@@ -1246,7 +1254,9 @@ it("registers, previews context and opens the child project while copying the wh
   expect(state.calls.find(([name]) => name === "prepare")?.[1]).toMatchObject({
     input: { destination: { projectId: existing.id, coordinatorThreadId: "child-coordinator" } },
   });
-  expect(container.textContent).toContain(`The coordinator continues on Kiosk D.In ${childDestination}`);
+  expect(container.textContent).toContain(
+    `The coordinator continues on Kiosk D.In ${childDestination}`,
+  );
   await click("Open on Kiosk D");
   expect(onOpenProject).toHaveBeenCalledExactlyOnceWith({
     environmentId: "kioskD",
@@ -1522,6 +1532,7 @@ it("keeps measuring when the dialog closes and resumes the same operation when r
       operationId: pointer.operationId,
       mode: "copy-only",
       destinationEnvironmentId: "kioskD",
+      lanPurpose: "sync-measured",
     },
   });
   expect(container.querySelector('[data-slot="copy-measuring"]')?.textContent).toBe(
@@ -1676,7 +1687,9 @@ it("copies into an empty destination in one click without a preview", async () =
   );
   expect(stepState()).toEqual(["Where:done", "Copy:done", "Done:current"]);
   // The pointer written by measuring kept the one-click choice and the selection.
-  expect(JSON.parse(localStorage.getItem("specwithcode:folder-copy:laptopE:source")!)).toMatchObject({
+  expect(
+    JSON.parse(localStorage.getItem("specwithcode:folder-copy:laptopE:source")!),
+  ).toMatchObject({
     auto: true,
     method: "copy",
     selection: DEFAULT_COPY_SELECTION,

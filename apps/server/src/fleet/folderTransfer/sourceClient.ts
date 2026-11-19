@@ -1,5 +1,6 @@
 // @effect-diagnostics globalTimers:off - plain async client shared by the destination worker and tests.
 import { parseFleetOrigin } from "../fleetOrigin.ts";
+import { LanFailure, type LanFailureKind } from "./lanWire.ts";
 import type { ManifestEntry, ManifestHeader } from "./manifest.ts";
 import { readManifestBytes } from "./manifest.ts";
 import {
@@ -365,5 +366,105 @@ export class SourceClient {
 
   async commit() {
     return this.json<{ state: string }>(await this.request("POST", "commit", {}));
+  }
+}
+
+type ManifestAnswer = Awaited<ReturnType<SourceClient["manifest"]>>;
+
+/**
+ * What the copy's client needs of the local-network path (1334 S-3, S-4). It
+ * never sees an address: the LAN is not a base URL and not a fallback URL, and
+ * `checkSourceUrl` stays Connect-only.
+ */
+export interface LanPath {
+  /** The live generation's connector, or null when this copy runs on Connect. */
+  readonly connector: () => Promise<{
+    readonly manifest: (signal?: AbortSignal) => Promise<ManifestAnswer>;
+    readonly chunks: (
+      hashes: ReadonlyArray<string>,
+      signal?: AbortSignal,
+    ) => Promise<Array<ChunkFrame>>;
+    wireBytes: number;
+  } | null>;
+  /** Switch once. Resolves only after the latch is saved, before any Connect request. */
+  readonly latch: (kind: Exclude<LanFailureKind, "denied">) => Promise<void>;
+  /** A denial: the copy stops on both paths. */
+  readonly stopped: () => Promise<void>;
+  readonly count: (path: "lan" | "connect", bytes: number) => void;
+  /**
+   * After a wrong pin or identity: true when the manifest read again over Connect
+   * names what was staged. False discards the staged data.
+   */
+  readonly recheck: (manifest: () => Promise<ManifestAnswer>) => Promise<boolean>;
+}
+
+const frameBytes = (frames: ReadonlyArray<ChunkFrame>) =>
+  frames.reduce((sum, frame) => sum + frame.data.length, 0);
+
+/**
+ * The copy's client with the local network tried first for the manifest and the
+ * chunks. Every other request (hello, selection, validate, stat, refresh,
+ * ancestry, secrets, release, commit) is the Connect client's, untouched.
+ *
+ * The Connect address and the transfer token come from the copy's own record of
+ * the original offer. Nothing a LAN answer says is used as an address, a
+ * credential or a deadline.
+ */
+export class LanFirstSourceClient extends SourceClient {
+  private readonly lan: LanPath;
+  private readonly lanSignal: AbortSignal | undefined;
+
+  constructor(options: SourceClientOptions, lan: LanPath) {
+    super(options);
+    this.lan = lan;
+    this.lanSignal = options.signal;
+  }
+
+  /** Applies the fallback table to a LAN failure: stop, or latch and let Connect run. */
+  private async fell(cause: unknown): Promise<void> {
+    if (this.lanSignal?.aborted) throw cause;
+    const failure = cause instanceof LanFailure ? cause : new LanFailure("unreachable");
+    if (failure.stops) {
+      await this.lan.stopped();
+      throw new SourceClientError("unauthorized", 403);
+    }
+    await this.lan.latch(failure.kind as Exclude<LanFailureKind, "denied">);
+  }
+
+  override async manifest(): Promise<ManifestAnswer> {
+    const connector = await this.lan.connector();
+    if (connector !== null) {
+      try {
+        const before = connector.wireBytes;
+        const answer = await connector.manifest(this.lanSignal);
+        this.lan.count("lan", connector.wireBytes - before);
+        return answer;
+      } catch (cause) {
+        await this.fell(cause);
+      }
+    }
+    return super.manifest();
+  }
+
+  override async chunks(hashes: ReadonlyArray<string>): Promise<Array<ChunkFrame>> {
+    const connector = await this.lan.connector();
+    if (connector !== null) {
+      try {
+        const frames = await connector.chunks(hashes, this.lanSignal);
+        this.lan.count("lan", frameBytes(frames));
+        return frames;
+      } catch (cause) {
+        await this.fell(cause);
+      }
+    }
+    if (!(await this.lan.recheck(() => super.manifest())))
+      throw new SourceClientError(
+        "refused",
+        409,
+        "The source could not be confirmed for part of this copy. Compare again.",
+      );
+    const frames = await super.chunks(hashes);
+    this.lan.count("connect", frameBytes(frames));
+    return frames;
   }
 }

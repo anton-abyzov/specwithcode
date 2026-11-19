@@ -15,7 +15,7 @@ import { sayLinkReason } from "../../studio/linkRefusals";
 import type { CopyLinkOutcome } from "../../studio/projectLink";
 import { copiedProjectFolder, copyDurationText, formatBytes } from "../../studio/folderCopy";
 import { statusProgressView } from "../../studio/copyProgress";
-import { CopyPhaseTrack } from "./CopyProgressPanel";
+import { CopyPhaseTrack, CopyRouteLine } from "./CopyProgressPanel";
 import { EllipsisIcon } from "lucide-react";
 import { MachineReadinessChecklist } from "../settings/MachineReadinessChecklist";
 import { Button } from "../ui/button";
@@ -118,6 +118,7 @@ export function HandoffCopyDone({
       {finished && (
         <CopyPhaseTrack view={finished} sourceLabel={sourceLabel} targetLabel={targetLabel} />
       )}
+      <CopyRouteLine view={finished} />
       {!titled && (
         <p className="text-base font-medium wrap-anywhere" data-slot="copy-done-title">
           {project.title} is on {targetLabel}
@@ -529,6 +530,7 @@ export function HandoffCopyFailed({
       {stopped?.outcome === "failed" && (
         <CopyPhaseTrack view={stopped} sourceLabel={sourceLabel} targetLabel={targetLabel} />
       )}
+      <CopyRouteLine view={stopped} />
       <p role="alert" className="wrap-anywhere text-destructive-foreground">
         {copy.state === "applied"
           ? `The files are on ${targetLabel}, but the coordinator did not start there.`

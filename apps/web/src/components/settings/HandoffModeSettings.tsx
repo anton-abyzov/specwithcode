@@ -12,7 +12,7 @@ import {
   awayConfigOf,
 } from "@specweave-studio/contracts";
 import { ChevronRightIcon } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { useProjects } from "../../state/entities";
 import { isArchivedMember } from "../../studio/projectListVisibility";
@@ -24,6 +24,7 @@ import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { FolderCopyLanSettings } from "./FolderCopyLanSettings";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
@@ -74,6 +75,8 @@ export interface HandoffModeSettingsViewProps {
   onConfig: (patch: HandoffConfigPatch) => void;
   onProjectMode: (projectId: ProjectId, mode: "on" | "off" | null) => void;
   onHandOffMachine: () => void;
+  /** Rows that save through their own setting, shown under More options. */
+  moreOptions?: ReactNode;
 }
 
 /**
@@ -317,6 +320,7 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
               />
             }
           />
+          {props.moreOptions}
         </CollapsiblePanel>
       </Collapsible>
       {props.error ? (
@@ -371,6 +375,7 @@ export function HandoffModeSettings({ environmentId }: { environmentId: Environm
         )
       }
       onHandOffMachine={() => requestHandOffMachine(environmentId)}
+      moreOptions={<FolderCopyLanSettings environmentId={environmentId} />}
     />
   );
 }

@@ -10,6 +10,14 @@ import * as Messages from "./copyMessages.ts";
 import { repositoryRelations, scanDestination } from "./destinationScan.ts";
 import { reachableOrigin } from "./git.ts";
 import { deviceOf, exists, freeBytes, privateDirectory, readJson, writeJson } from "./durable.ts";
+import {
+  type DestinationLanRecord,
+  type DestinationLanState,
+  type LanDestination,
+  type LanDestinationAccess,
+  lanPathFor,
+  NO_LAN_STATE,
+} from "./lanDestination.ts";
 import { readManifestFile, writeManifest, type Manifest } from "./manifest.ts";
 import { batchChunksFor, finalPass, pullFiles, type PullProgress } from "./pullWorker.ts";
 import {
@@ -25,8 +33,10 @@ import { validProjectRelativePath } from "../folderCopyScope.ts";
 import { olderThan } from "../../failClosedAge.ts";
 import { isSafeRelativePath } from "./paths.ts";
 import {
+  LanFirstSourceClient,
   SourceClient,
   SourceClientError,
+  type SourceClientOptions,
   StaleScanError,
   UnavailableSnapshotError,
 } from "./sourceClient.ts";
@@ -145,6 +155,11 @@ export interface DestinationRecord {
   readonly secretsExpected?: ReadonlyArray<string>;
   /** Chunks per batch the source offered in its hello; older sources and records omit it. */
   readonly sourceBatchChunks?: number;
+  /**
+   * The local-network path of this copy (1334 S-10): the highest generation seen, the
+   * latch to Connect and bytes per path. Never an address, a key, a hash or a token.
+   */
+  readonly lan?: DestinationLanState;
   /** When the person approved the copy; the copy's clock starts here. */
   readonly startedAt?: string;
   /** When Apply finished: the files are in place, checked or not. */
@@ -191,7 +206,12 @@ export interface DestinationHooks {
   readonly reachableOrigin?: (origin: string, signal: AbortSignal) => Promise<string | null>;
   /** Where `~/` secret files land; the user's home by default. */
   readonly home?: () => string;
+  /** The local-network path, built over this service's records; absent means Connect only. */
+  readonly lan?: (access: LanDestinationAccess) => LanDestination;
 }
+
+/** States after which a copy never gets a local-network generation again. */
+const LAN_TERMINAL: ReadonlySet<CopyState> = new Set(["applied", "undone", "failed", "cancelled"]);
 
 export const BACKUP_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
 /**
@@ -251,9 +271,32 @@ export class DestinationCopies {
   /** Origins checked from this machine: the address that answered, or null. */
   private readonly origins = new Map<string, Promise<string | null>>();
 
+  /** The local-network half, when this machine has one. */
+  readonly lan: LanDestination | null;
+
   constructor(stateRoot: string, hooks: DestinationHooks = {}) {
     this.root = NodePath.join(stateRoot, "folder-copies");
     this.hooks = hooks;
+    this.lan = hooks.lan?.(this.lanAccess()) ?? null;
+  }
+
+  /** The only parts of a copy's record the local-network path reads and writes. */
+  private lanAccess(): LanDestinationAccess {
+    return {
+      lanRecord: async (operationId): Promise<DestinationLanRecord | null> => {
+        const record = await this.read(operationId).catch(() => null);
+        return record ? { ...record, terminal: LAN_TERMINAL.has(record.state) } : null;
+      },
+      lanSave: (operationId, change) =>
+        this.locked(operationId, async () => {
+          const current = await this.read(operationId);
+          if (!current) throw new CopyError("refused", "Unknown copy.");
+          await writeJson(this.paths(operationId).record, {
+            ...current,
+            lan: change(current.lan ?? NO_LAN_STATE),
+          });
+        }),
+    };
   }
 
   private now() {
@@ -338,6 +381,10 @@ export class DestinationCopies {
       } as DestinationRecord;
       await writeJson(this.paths(operationId).record, next);
       return next;
+    }).then(async (next) => {
+      if (patch.state !== undefined && LAN_TERMINAL.has(patch.state))
+        await this.lan?.end(operationId, "terminal");
+      return next;
     });
   }
 
@@ -347,7 +394,7 @@ export class DestinationCopies {
     once?: { readonly timeoutMs: number },
   ) {
     // SpecWithCode Connect is the primary route; the tailnet is the fallback.
-    return new SourceClient({
+    const options: SourceClientOptions = {
       baseUrl: record.sourceConnectUrl ?? record.sourceUrl,
       ...(record.sourceConnectUrl !== undefined
         ? {
@@ -362,7 +409,19 @@ export class DestinationCopies {
       ...(this.hooks.sleep ? { sleep: this.hooks.sleep } : {}),
       ...(signal ? { signal } : {}),
       ...(once ? { retry: false, timeoutMs: once.timeoutMs } : {}),
-    });
+    };
+    // The local network carries only the manifest and the chunks, through its own connector.
+    return this.lan === null
+      ? new SourceClient(options)
+      : new LanFirstSourceClient(
+          options,
+          lanPathFor(
+            this.lan,
+            this.lanAccess(),
+            record.operationId,
+            this.paths(record.operationId),
+          ),
+        );
   }
 
   /** Records the copy and starts the preview: manifest from the source, then the plan. */
@@ -593,7 +652,8 @@ export class DestinationCopies {
     );
     const assertSamePreview = async () => {
       if (
-        JSON.stringify(await this.require(operationId)) !== JSON.stringify(record) ||
+        JSON.stringify(withoutLan(await this.require(operationId))) !==
+          JSON.stringify(withoutLan(record)) ||
         JSON.stringify(await this.readPlan(operationId)) !== JSON.stringify(plan)
       )
         throw new CopyError(
@@ -629,8 +689,11 @@ export class DestinationCopies {
     const next = await this.locked(operationId, async () => {
       await assertSamePreview();
       const { finishedAt: _finishedAt, ...unfinished } = record;
+      // The local-network state moves on its own while a preview is checked: keep what is saved.
+      const saved = (await this.require(operationId)).lan;
       const approved: DestinationRecord = {
         ...unfinished,
+        ...(saved ? { lan: saved } : {}),
         state: "approved",
         disk: { needed, free },
         ...(sourceMoved ? { warnings: [...record.warnings, SOURCE_MOVED] } : {}),
@@ -986,6 +1049,7 @@ export class DestinationCopies {
   }
 
   async close(): Promise<void> {
+    await this.lan?.close();
     this.keepaliveAbort?.abort();
     this.keepaliveAbort = null;
     if (this.keepalive !== null) clearInterval(this.keepalive);
@@ -1617,3 +1681,9 @@ export function formatBytes(bytes: number): string {
 }
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** A record without its local-network state, which changes outside a person's review. */
+function withoutLan(record: DestinationRecord) {
+  const { lan: _lan, updatedAt: _updatedAt, ...rest } = record;
+  return rest;
+}

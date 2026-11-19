@@ -7,6 +7,7 @@
  */
 import {
   FolderCopyError,
+  FolderCopyLanCheckAnswer,
   type FolderCopySecretsRoute,
   type OrchestratorMcpFailure,
   type OrchestratorMcpMachineRef,
@@ -26,6 +27,12 @@ const Answer = Schema.Struct({
   secretsKey: Schema.optional(Schema.String.check(Schema.isMaxLength(512))),
 });
 const decodeAnswer = Schema.decodeUnknownEffect(Answer);
+const decodeLanAnswer = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    lan: Schema.optional(FolderCopyLanCheckAnswer.fields.lan),
+    lanAccepted: Schema.optional(Schema.Boolean),
+  }),
+);
 
 type RouteReason = NonNullable<FolderCopySecretsRoute["reason"]>;
 
@@ -83,7 +90,38 @@ const make = Effect.gen(function* () {
         ),
       );
 
+  const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
+  /** One control call to the copy's destination; any failure means the copy stays on Connect. */
+  const control = (destinationEnvironmentId: string, args: Record<string, unknown>) =>
+    runPromise(
+      Effect.gen(function* () {
+        const machine = yield* machineOf(destinationEnvironmentId);
+        if (machine === null) return yield* Effect.fail("no_route" as const);
+        return yield* remote
+          .proxy({
+            machine,
+            tool: "studio_folder_copy_receive",
+            arguments: args,
+            timeoutMs: CHECK_TIMEOUT_MS,
+          })
+          .pipe(
+            Effect.flatMap(decodeLanAnswer),
+            // The failure carries no part of what was sent.
+            Effect.mapError(() => "refused" as const),
+          );
+      }),
+    );
+
   return SecretsPeer.of({
+    lan: {
+      check: async (destinationEnvironmentId, lanCheck) => ({
+        lan:
+          (await control(destinationEnvironmentId, { action: "lanCheck", lanCheck })).lan ?? null,
+      }),
+      offer: async (destinationEnvironmentId, lanOffer) =>
+        (await control(destinationEnvironmentId, { action: "lanOffer", lanOffer })).lanAccepted ===
+        true,
+    },
     route: (destinationEnvironmentId) =>
       Effect.gen(function* () {
         const machine = yield* machineOf(destinationEnvironmentId);

@@ -26,6 +26,7 @@ import {
 } from "../../studio/folderCopy";
 import { randomUUID } from "../../lib/utils";
 import { useCopyScope } from "./HandoffCopyScope";
+import { useSyncOffer } from "./useSyncOffer";
 import { useCopyDestination } from "./useCopyDestination";
 import { handoffErrorMarksStep } from "./handoffErrors";
 import {
@@ -179,7 +180,7 @@ export function HandoffFolderCopy({
 }) {
   const scope = useCopyScope(project);
   const capabilities = useAtomCommand(machineHandoff.copyCapabilities, { reportFailure: false });
-  const offerCopy = useAtomCommand(machineHandoff.copyOffer, { reportFailure: false });
+  const offerCopy = useSyncOffer();
   const sourceStatus = useAtomCommand(machineHandoff.copySourceStatus, { reportFailure: false });
   const sourceCancel = useAtomCommand(machineHandoff.copySourceCancel, { reportFailure: false });
   const release = useAtomCommand(machineHandoff.copyRelease, { reportFailure: false });

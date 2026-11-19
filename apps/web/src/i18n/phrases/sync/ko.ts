@@ -308,4 +308,8 @@ export const syncKo: PhraseCatalog = {
   "Its state could not be read after the run": "실행 후 상태를 읽을 수 없었습니다",
   "Could not compare: a repository could not be read":
     "비교할 수 없습니다: 저장소를 읽을 수 없었습니다",
+  "Over your local network": "로컬 네트워크로 전송",
+  "Over SpecWithCode Connect": "SpecWithCode Connect로 전송",
+  "Partly over your local network, the rest over SpecWithCode Connect":
+    "일부는 로컬 네트워크로, 나머지는 SpecWithCode Connect로 전송",
 };

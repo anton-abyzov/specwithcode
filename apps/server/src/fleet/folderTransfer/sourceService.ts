@@ -4,7 +4,10 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import type { FolderCopyLanPurpose } from "@specweave-studio/contracts";
 import { isSecretLikeProjectPath } from "../../workspace/WorkspaceSensitivePaths.ts";
+import type { LanSource, LanSourceAccess } from "./lanSource.ts";
+import { LAN_DENIALS, LAN_SELECTION_CEILING, type LanDenial } from "./lanWire.ts";
 import { FILE_CLASSES, type FileClass } from "./classify.ts";
 import { seal } from "../fileTransfer/seal.ts";
 import { privateDirectory, readJson, writeJson } from "./durable.ts";
@@ -65,10 +68,12 @@ import {
   CHUNK_OK,
   CHUNK_UNKNOWN,
   type ChunkFrame,
+  encodeFrames,
   MAX_BATCH_BYTES,
   MAX_BATCH_CHUNKS_LARGE,
   OPERATION_ID,
   sha256Hex,
+  zstdAvailable,
 } from "./wire.ts";
 
 import {
@@ -133,6 +138,10 @@ export interface SourceOperationRecord {
   readonly progress: SourceProgress | null;
   readonly error: string | null;
   readonly releaseReason: string | null;
+  /** Which of the two copies that may use the local network this is; absent for any other. */
+  readonly lanPurpose?: FolderCopyLanPurpose;
+  /** The local-network generation counter and when recent ones were issued (1334 S-1). */
+  readonly lan?: { readonly generation: number; readonly issued: ReadonlyArray<number> };
   /** Retried on a later terminal status read; never invalidates an applied copy. */
   readonly snapshotCleanupPending?: boolean;
   readonly snapshotCleanupCodes?: ReadonlyArray<string>;
@@ -186,6 +195,8 @@ interface Hooks {
   /** Returns the source coordinator to active after a copy-and-move fails before Apply. */
   readonly release?: (record: SourceOperationRecord, reason: string) => Promise<void>;
   readonly now?: () => number;
+  /** The local-network path, built over this service; absent means Connect only. */
+  readonly lan?: (access: LanSourceAccess) => LanSource;
   /** Proves a source filesystem for captured copies; tests stand in an unverifiable volume. */
   readonly verifyCaptureFilesystem?: (root: string, mode: CopyMode) => Promise<void>;
   /** The wall clock a capture compares file stamps with; tests move it past fresh files. */
@@ -310,6 +321,71 @@ export class SourceTransfers {
     this.sentSecrets = new SentSecretsLedger(stateRoot);
     this.hooks = hooks;
     this.now = hooks.now ?? (() => Date.now());
+    this.lan = hooks.lan?.(this.lanAccess()) ?? null;
+  }
+
+  /** The local-network half, when this machine has one. */
+  readonly lan: LanSource | null;
+
+  /** All the local-network path can reach: one copy's state, manifest and indexed chunks. */
+  private lanAccess(): LanSourceAccess {
+    const need = async (operationId: string) => {
+      const loaded = OPERATION_ID.test(operationId) ? await this.load(operationId) : null;
+      if (!loaded) throw new SourceTransferError(404, "not_found");
+      return loaded;
+    };
+    return {
+      lanState: async (operationId) => {
+        const loaded = OPERATION_ID.test(operationId) ? await this.load(operationId) : null;
+        if (!loaded) return null;
+        const { record } = loaded;
+        const reason = record.grant.revokedReason as LanDenial;
+        return {
+          operationId,
+          projectId: record.projectId,
+          folder: record.folder,
+          projectRelativePath: record.projectRelativePath ?? ".",
+          mode: record.mode,
+          destinationEnvironmentId: record.destinationEnvironmentId,
+          purpose: record.lanPurpose ?? null,
+          terminal: TERMINAL.has(record.state) || record.grant.revokedAt !== null,
+          denial: record.grant.revokedAt !== null && LAN_DENIALS.includes(reason) ? reason : null,
+          generation: record.lan?.generation ?? 0,
+          issued: record.lan?.issued ?? [],
+        };
+      },
+      lanSaveGeneration: async (operationId, generation, issued) =>
+        this.save(await need(operationId), { lan: { generation, issued } }, true),
+      lanManifest: async (operationId) => {
+        const loaded = await need(operationId);
+        const result = await this.manifest(loaded);
+        return result.ready
+          ? { ready: true, bytes: result.bytes }
+          : {
+              ready: false,
+              body: { state: result.record.state, progress: result.record.progress },
+            };
+      },
+      lanChunks: async (operationId, hashes, zstd) =>
+        encodeFrames(
+          await this.chunks(await need(operationId), hashes),
+          zstd && zstdAvailable() ? "zstd" : "gzip",
+        ),
+      lanDeny: async (operationId, denial) => {
+        const loaded = await need(operationId);
+        await this.stopping(loaded, async () => {
+          if (loaded.building) await loaded.building;
+          if (!TERMINAL.has(loaded.record.state))
+            await this.save(loaded, {
+              state: "cancelled",
+              releaseReason: `The copy was stopped on the source: ${denial}.`,
+              grant: revokeTransferGrant(loaded.record.grant, denial, this.now()),
+            });
+          await this.clearSnapshot(loaded);
+          return loaded.record;
+        });
+      },
+    };
   }
 
   /**
@@ -326,6 +402,8 @@ export class SourceTransfers {
    * `persistsAfterClose` still reach disk.
    */
   async close(): Promise<ReadonlyArray<PendingAtClose>> {
+    // Shutdown ends every generation: listeners and accepted sockets.
+    this.lan?.close();
     const loaded = [...this.operations.values()];
     let timer: ReturnType<typeof setTimeout> | undefined;
     const bound = new Promise<"late">((resolve) => {
@@ -384,6 +462,9 @@ export class SourceTransfers {
     );
     loaded.saving = saved.catch(() => undefined);
     await saved;
+    // The end state or the denial is on disk first; only then do the generation's sockets close.
+    if ((patch.state !== undefined && TERMINAL.has(patch.state)) || patch.grant?.revokedAt)
+      this.lan?.ended(record.operationId, "terminal");
   }
 
   private async load(operationId: string): Promise<Loaded | null> {
@@ -423,6 +504,7 @@ export class SourceTransfers {
     readonly warnings?: ReadonlyArray<string>;
     readonly secretPatterns?: ReadonlyArray<string> | undefined;
     readonly device?: { readonly key: string; readonly approval: string } | undefined;
+    readonly lanPurpose?: FolderCopyLanPurpose | undefined;
   }): Promise<{ readonly token: string; readonly record: SourceOperationRecord }> {
     this.assertOpen();
     const folder = await NodeFSP.realpath(input.folder);
@@ -479,6 +561,7 @@ export class SourceTransfers {
       error: null,
       releaseReason: null,
       warnings: input.warnings ?? [],
+      ...(input.lanPurpose && input.mode === "copy-only" ? { lanPurpose: input.lanPurpose } : {}),
       ...(input.secretPatterns?.length ? { secretPatterns: [...input.secretPatterns] } : {}),
     });
     this.operations.set(input.operationId, loaded);
@@ -668,6 +751,8 @@ export class SourceTransfers {
     });
     if (!verdict.ok || !loaded) throw new SourceTransferError(401, "unauthorized");
     if (action !== "hello") loaded.pulledAt = this.now();
+    // A pull over Connect prompts a local-network offer; the offer itself goes by the control channel.
+    if (action === undefined) this.lan?.pulled(operationId);
     if (verdict.record.lastUsedAt - loaded.record.grant.lastUsedAt > 60_000)
       await this.save(loaded, { grant: verdict.record });
     return loaded;
@@ -694,6 +779,15 @@ export class SourceTransfers {
     loaded: Loaded,
     selection: ReadonlyArray<string>,
   ): Promise<SourceOperationRecord> {
+    // A selection outside the frozen ceiling stops a local-network copy as a changed scope.
+    if (
+      this.lan !== null &&
+      loaded.record.lanPurpose !== undefined &&
+      selection.some((item) => !LAN_SELECTION_CEILING.includes(item))
+    ) {
+      await this.lan.deny(loaded.record.operationId, "scope_changed");
+      throw new SourceTransferError(401, "unauthorized");
+    }
     return this.transition(loaded, async () => {
       if (TERMINAL.has(loaded.record.state))
         throw new SourceTransferError(409, loaded.record.state);

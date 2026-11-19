@@ -5,6 +5,10 @@ import * as NodePath from "node:path";
 import {
   type EnvironmentId,
   type FolderCopyError,
+  FOLDER_COPY_LAN_CAPABILITY,
+  FolderCopyLanCheck,
+  FolderCopyLanCheckAnswer,
+  FolderCopyLanOffer,
   FolderCopyStartInput,
   FolderCopyState,
   type FolderCopyStatus,
@@ -55,7 +59,16 @@ const bounded = (max: number) => Schema.String.check(Schema.isMaxLength(max));
 
 /** Internal, between SpecWithCode machines: the destination half, one step per call. */
 export const AgentCopyReceiveInput = Schema.Struct({
-  action: Schema.Literals(["check", "start", "status", "link", "secretsCheck", "secretsKey"]),
+  action: Schema.Literals([
+    "check",
+    "start",
+    "status",
+    "link",
+    "secretsCheck",
+    "secretsKey",
+    "lanCheck",
+    "lanOffer",
+  ]),
   /** check: the folder the copy will land in, `~` meaning that machine's home. */
   targetFolder: Schema.optional(bounded(4096)),
   /** start: the source's offer, with the absolute folder check returned. */
@@ -64,6 +77,16 @@ export const AgentCopyReceiveInput = Schema.Struct({
   operationId: Schema.optional(MachineHandoffOperationId),
   /** link: the source's prepared link, accepted for the project the copy registered. */
   link: Schema.optional(ProjectLinkAcceptInput),
+  /**
+   * lanCheck: the source asks whether this copy may use the local network (1334 S-1).
+   * It carries no port, key or token. An older machine does not know the action and
+   * refuses it, and the copy runs on Connect.
+   */
+  lanCheck: Schema.optional(FolderCopyLanCheck),
+  /** lanOffer: the `lan` block for the generation this machine just answered for. */
+  lanOffer: Schema.optional(
+    Schema.Struct({ operationId: MachineHandoffOperationId, lan: FolderCopyLanOffer }),
+  ),
 });
 export type AgentCopyReceiveInput = typeof AgentCopyReceiveInput.Type;
 
@@ -79,6 +102,12 @@ export const AgentCopyReceiveResult = Schema.Struct({
   sealedSecrets: Schema.optional(Schema.Boolean),
   /** secretsKey: the copy's receiving key, base64 SPKI. Only the public half. */
   secretsKey: Schema.optional(bounded(512)),
+  /** lanCheck and lanOffer: this machine knows the local-network path. */
+  [FOLDER_COPY_LAN_CAPABILITY]: Schema.optional(Schema.Literal(1)),
+  /** lanCheck: this machine's answer, or null when it will not use the local network. */
+  lan: Schema.optional(FolderCopyLanCheckAnswer.fields.lan),
+  /** lanOffer: whether every bound field matched this machine's own record. */
+  lanAccepted: Schema.optional(Schema.Boolean),
 });
 export type AgentCopyReceiveResult = typeof AgentCopyReceiveResult.Type;
 
@@ -209,6 +238,18 @@ export const receiveAgentCopy = Effect.fn("fleet.agentCopy.receive")(function* (
       .pipe(Effect.mapError(copyFailure));
     return { secretsKey } as AgentCopyReceiveResult;
   }
+  // The same grant `start` needs, checked by the caller. The copy's recorded source must be
+  // the calling machine; reaching a private address proves none of this.
+  if (input.action === "lanCheck") {
+    if (input.lanCheck === undefined) return yield* invalid("Pass lanCheck.");
+    const answer = yield* handoff.copyLanCheck(caller.environmentId, input.lanCheck);
+    return { [FOLDER_COPY_LAN_CAPABILITY]: 1, lan: answer.lan } as AgentCopyReceiveResult;
+  }
+  if (input.action === "lanOffer") {
+    if (input.lanOffer === undefined) return yield* invalid("Pass lanOffer.");
+    const lanAccepted = yield* handoff.copyLanOffer(caller.environmentId, input.lanOffer);
+    return { [FOLDER_COPY_LAN_CAPABILITY]: 1, lanAccepted } as AgentCopyReceiveResult;
+  }
   if (input.action === "check") {
     if (input.targetFolder === undefined) return yield* invalid("Pass targetFolder.");
     return { targetFolder: yield* emptyTarget(input.targetFolder) } as AgentCopyReceiveResult;
@@ -221,7 +262,13 @@ export const receiveAgentCopy = Effect.fn("fleet.agentCopy.receive")(function* (
       return yield* invalid("Only the machine that offers a folder starts its copy here.");
     const targetFolder = yield* emptyTarget(start.targetFolder);
     const status = yield* handoff
-      .copyStart({ ...start, targetFolder, selection: [...AGENT_COPY_SELECTION] })
+      // An agent's copy is Add's whole-folder copy: the one purpose it can have here.
+      .copyStart({
+        ...start,
+        targetFolder,
+        selection: [...AGENT_COPY_SELECTION],
+        purpose: "add-to-machine",
+      })
       .pipe(Effect.mapError(copyFailure));
     return condensed(status);
   }
@@ -393,6 +440,7 @@ export const runAgentCopy = Effect.fn("fleet.agentCopy.run")(function* (input: {
       operationId,
       mode: "copy-only",
       destinationEnvironmentId: machine.environmentId,
+      lanPurpose: "add-whole-folder",
     })
     .pipe(Effect.mapError(copyFailure));
   const withdraw = (reason: string) =>

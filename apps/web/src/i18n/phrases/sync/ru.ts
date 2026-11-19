@@ -309,4 +309,8 @@ export const syncRu: PhraseCatalog = {
   "Its state could not be read after the run": "После запуска его состояние не удалось прочитать",
   "Could not compare: a repository could not be read":
     "Не удалось сравнить: репозиторий не удалось прочитать",
+  "Over your local network": "По локальной сети",
+  "Over SpecWithCode Connect": "Через SpecWithCode Connect",
+  "Partly over your local network, the rest over SpecWithCode Connect":
+    "Частично по локальной сети, остальное через SpecWithCode Connect",
 };

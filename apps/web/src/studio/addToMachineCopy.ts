@@ -153,6 +153,8 @@ export async function offerAndScan(
         operationId: input.operationId,
         mode: "copy-only",
         destinationEnvironmentId: input.destinationEnvironmentId,
+        // Add copies the whole folder: both machines may send it over the local network.
+        lanPurpose: "add-whole-folder",
       },
     }),
   );
