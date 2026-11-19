@@ -428,6 +428,31 @@ describe("the idle move before the limit, from the sweep (1089)", () => {
     }),
   );
 
+  it.effect("gives each window with no reset time its own move", () =>
+    Effect.gen(function* () {
+      const state = world({ claudeResetAt: undefined as never });
+      const open = `limit-preswitch:t1:${claudeId}:open`;
+      yield* sweeps(state, (sweep) =>
+        Effect.gen(function* () {
+          yield* sweep();
+          state.threads[0]!.selection = onClaude;
+          state.threads[0]!.preswitch = null;
+          // Still at the threshold: the hand switch back is kept.
+          yield* nextSweep();
+          yield* sweep();
+          // A reading under the threshold ends the window; the next is a new one.
+          state.claudeUsed = 40;
+          yield* nextSweep();
+          yield* sweep();
+          state.claudeUsed = 92;
+          yield* nextSweep();
+          yield* sweep();
+        }),
+      );
+      expect(ids(state)).toEqual([open, `${open}-1`]);
+    }),
+  );
+
   it.effect("asks no other machine again after a hand switch back", () =>
     Effect.gen(function* () {
       const state = world({

@@ -104,6 +104,7 @@ import {
   preswitchIdPrefix,
   preswitchWindowHeld,
 } from "./limitPreswitchGuard.ts";
+import { preswitchWindowResetAt } from "@specweave-studio/shared/threadModelIdentity";
 import { contextRecoveryStep, isContextOverflowFailure } from "./ContextOverflowRecoveryWorker.ts";
 import { latestRootProviderFailure } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import { isClaudePlanLimitStop } from "../provider/claudeLimitReset.ts";
@@ -521,6 +522,8 @@ export function providerLimitStep(
     readonly planLimitOutlived?: boolean;
     /** The run the limit stopped, to tell whether a person has picked another model since. */
     readonly stoppedRun?: Pick<OrchestrationV2Run, "providerInstanceId" | "modelSelection"> | null;
+    /** How many windows with no reset time the sweep has seen end for this thread (1089). */
+    readonly openWindow?: number;
   },
 ):
   | {
@@ -687,6 +690,11 @@ export function idlePreswitchId(
   providers: ReadonlyArray<ServerProvider>,
   rule: ProviderFallbackRule,
   nowMs: number,
+  /**
+   * Windows with no reset time the sweep has seen end for this thread: each
+   * later one gets its own id (`open-N`), or the move would replay the first.
+   */
+  openWindow = 0,
 ): string | null {
   if (
     rule.providerLimitAction !== "switch" ||
@@ -712,7 +720,9 @@ export function idlePreswitchId(
   const current = providers.find((provider) => provider.instanceId === thread.providerInstanceId);
   const model = thread.modelSelection.model;
   if (!shouldSwitchBeforeTurn({ provider: current, model, rule, nowMs })) return null;
-  return `limit-preswitch:${thread.id}:${thread.providerInstanceId}:${usageWindowKey(current, nowMs, model)}`;
+  const key = usageWindowKey(current, nowMs, model);
+  const window = key === "open" && openWindow > 0 ? `open-${openWindow}` : key;
+  return `limit-preswitch:${thread.id}:${thread.providerInstanceId}:${window}`;
 }
 
 /** The move `idlePreswitchId` names, to the fallback with room, or null. */
@@ -721,9 +731,14 @@ function idlePreswitchCommand(
   providers: ReadonlyArray<ServerProvider>,
   rule: ProviderFallbackRule,
   nowMs: number,
-  options: { readonly proven?: ModelSelection | null; readonly limited?: ReadonlySet<string> },
+  options: {
+    readonly proven?: ModelSelection | null;
+    readonly limited?: ReadonlySet<string>;
+    readonly openWindow?: number;
+  },
 ): Extract<OrchestrationV2ServerCommand, { type: "thread.model-selection.set" }> | null {
-  if (idlePreswitchId(thread, providers, rule, nowMs) === null) return null;
+  const id = idlePreswitchId(thread, providers, rule, nowMs, options.openWindow);
+  if (id === null) return null;
   const command = providerFallbackCommand(
     thread,
     providers,
@@ -732,7 +747,9 @@ function idlePreswitchCommand(
     options.proven ?? null,
     options.limited,
   );
-  return command?.type === "thread.model-selection.set" ? command : null;
+  return command?.type === "thread.model-selection.set"
+    ? { ...command, commandId: CommandId.make(id) }
+    : null;
 }
 
 /** Tries of one fallback step whose dispatch fails, and the wait that grows after each. */
@@ -770,6 +787,8 @@ export const makeSweep = Effect.gen(function* () {
   const woken = yield* Ref.make(false);
   // A user who switches back keeps their choice: each command is sent once.
   const sent = yield* Ref.make(new Set<string>());
+  // Per thread and instance, how many windows with no reset time have ended (1089).
+  const openWindows = yield* Ref.make(new Map<string, number>());
   const markSent = (id: string) => Ref.update(sent, (current) => new Set(current).add(id));
   /**
    * Whether a person's Stop holds a stopped thread's last run (see
@@ -1860,6 +1879,7 @@ export const makeSweep = Effect.gen(function* () {
       const failedOpen = unopenable.get(thread.id) ?? null;
       // A move after a target failed to open still answers the original stop.
       const stopKey = `${thread.id}:${failedOpen?.originRunId ?? thread.latestRunId}`;
+      const openKey = `${thread.id}:${thread.providerInstanceId}`;
       const options = {
         resetAttempted: simulated || (yield* Ref.get(sent)).has(resetKey),
         apiCreditsAttempted: simulated || (yield* Ref.get(sent)).has(apiAttemptKey),
@@ -1870,6 +1890,7 @@ export const makeSweep = Effect.gen(function* () {
         unopenable: failedOpen,
         planLimitOutlived: outlived.has(thread.id),
         stoppedRun: thread.latestRunId === null ? null : (holdRuns.get(thread.latestRunId) ?? null),
+        openWindow: (yield* Ref.get(openWindows)).get(openKey) ?? 0,
       };
       // An idle move already sent this window leaves the thread as one with no
       // step: no Stop read or handoff each sweep, and its way back still runs.
@@ -1884,11 +1905,19 @@ export const makeSweep = Effect.gen(function* () {
           : providerUsedPercent(ownProvider, now, thread.modelSelection.model);
       if (threshold != null && used !== null && used < threshold) {
         const prefix = preswitchIdPrefix(thread.id, thread.providerInstanceId);
-        yield* Ref.update(sent, (current) =>
-          [...current].some((id) => id.startsWith(prefix))
-            ? new Set([...current].filter((id) => !id.startsWith(prefix)))
-            : current,
-        );
+        const ended = [...(yield* Ref.get(sent))].filter((id) => id.startsWith(prefix));
+        if (ended.length > 0) {
+          yield* Ref.update(sent, (current) => {
+            const without = new Set(current);
+            for (const id of ended) without.delete(id);
+            return without;
+          });
+          // A window with no reset time ended: the next one needs its own id.
+          if (ended.some((id) => preswitchWindowResetAt(id) === null))
+            yield* Ref.update(openWindows, (current) =>
+              new Map(current).set(openKey, (current.get(openKey) ?? 0) + 1),
+            );
+        }
       }
       const sentIds = yield* Ref.get(sent);
       // A move sent this window holds, under whatever id the window has now,
@@ -1962,7 +1991,13 @@ export const makeSweep = Effect.gen(function* () {
       // An idle thread at the threshold with no target to move to (1089): its
       // fallbacks' readings may only be old. One whose move already went out
       // this window has a target, so it reads nothing.
-      const idleId = idlePreswitchId(thread, providersFor(thread), resolved, now);
+      const idleId = idlePreswitchId(
+        thread,
+        providersFor(thread),
+        resolved,
+        now,
+        options.openWindow,
+      );
       const idleWithoutTarget = idleId !== null && step === null && !idleHeld(thread, idleId);
       // A context stop reads stale providers before it moves, even when a
       // target is found: home with an old reading may have room again.
