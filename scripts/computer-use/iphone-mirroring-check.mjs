@@ -144,6 +144,7 @@ import {
   showsNoSpotlight,
   stillHome,
   texts,
+  inBar,
   center,
   jaccard,
   pageSignature,
@@ -967,23 +968,14 @@ export async function runCheck(deps, options = {}) {
   // collapsed pill shows icons only; expanded (run pr746-1, window-37) its names
   // show, though the pointer and the pill's edge hide some.
   const pillExpanded = (reading) => {
-    const pitch = 2 * bar.half;
+    // Inside the bar the icons were found in: a name read there is the pill's own.
+    const near = reading.lines.filter((line) => inBar(line, bar));
     const names = config.barLabels.map(normalize);
-    const near = reading.lines.filter((line) => {
-      const point = center(line);
-      return (
-        Math.abs(point.x - bar.at) <= pitch &&
-        point.y >= bar.from - pitch &&
-        point.y <= bar.to + pitch
-      );
+    // A whole name, or its start cut by the pointer or the pill's edge (four letters or more).
+    return near.some((line) => {
+      const text = normalize(line.text);
+      return names.some((name) => text === name || (text.length >= 4 && name.startsWith(text)));
     });
-    const shown = names.filter((name) =>
-      near.some((line) => {
-        const text = normalize(line.text);
-        return text.length >= 4 && (name.startsWith(text) || text.startsWith(name));
-      }),
-    );
-    return shown.length >= 1;
   };
 
   // Not counted: makes the first tab current, so every counted tap changes the page.

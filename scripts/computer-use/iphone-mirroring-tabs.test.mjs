@@ -34,6 +34,21 @@ describe("icon tabs and scrolling", () => {
     );
   });
 
+  it("never calls nearby text outside the bar an expanded pill", async () => {
+    const phone = simulatedPhone({ iconTabs: true, missClick: 9 });
+    const ocr = phone.deps.ocr;
+    // Beside and above the column (x 920, y 580 to 740), as the review's counterexample.
+    phone.deps.ocr = async (...args) => [
+      ...(await ocr(...args)),
+      { text: "Timers unavailable", x: 859, y: 559, width: 60, height: 10 },
+      { text: "Timers", x: 859, y: 559, width: 60, height: 10 },
+    ];
+    const result = await runCheck(phone.deps);
+    const click = result.lines.find((entry) => entry.startsWith("FAIL click 9/20"));
+    expect(click).toMatch(/page did not change/);
+    expect(click).not.toMatch(/pill/);
+  });
+
   it("counts a tap whose page switches once the expanded pill settles", async () => {
     const phone = simulatedPhone({
       iconTabs: true,
