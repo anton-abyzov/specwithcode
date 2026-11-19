@@ -352,7 +352,8 @@ it("retries a link that stopped before its last step with the same operation", a
   await click(document.querySelector<HTMLElement>('[role="checkbox"]')!);
   await click(button("Link, keep coordinator on M3"));
   expect(text()).toContain("M3 is not connected.");
-  expect(text()).toContain("already defers to M3; retry to finish listing it there.");
+  expect(text()).toContain("has joined the project; retry to finish listing it on M3.");
+  expect(text()).not.toContain("defers");
   await click(button("Retry link"));
   const operations = state.calls
     .filter((call) => call.tag !== "projects.fingerprint" && call.tag !== "projectLink.preview")

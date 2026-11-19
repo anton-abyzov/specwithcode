@@ -21,6 +21,8 @@ export const de: PhraseCatalog = {
     "Wähle {project} auf einer anderen Maschine. Es tritt diesem Projekt bei und behält seinen eigenen Koordinator.",
   "Pick {project} on another machine. Linking makes them one project; each machine keeps its own coordinator.":
     "Wähle {project} auf einer anderen Maschine. Durch das Verknüpfen werden sie ein Projekt; jede Maschine behält ihren eigenen Koordinator.",
+  "{joining} has joined the project; retry to finish listing it on {kept}.":
+    "{joining} ist dem Projekt beigetreten; versuche es erneut, um es auf {kept} fertig einzutragen.",
   "Runs its own coordinator for this project.":
     "Führt einen eigenen Koordinator für dieses Projekt aus.",
   "Update SpecWithCode on {machine} to link projects.":

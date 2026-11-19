@@ -21,8 +21,9 @@ export const ko: PhraseCatalog = {
     "다른 머신의 {project}을(를) 선택하세요. 이 프로젝트에 합류하며 자체 코디네이터를 유지합니다.",
   "Pick {project} on another machine. Linking makes them one project; each machine keeps its own coordinator.":
     "다른 머신의 {project}을(를) 선택하세요. 연결하면 하나의 프로젝트가 되고, 각 머신은 자체 코디네이터를 유지합니다.",
-  "Runs its own coordinator for this project.":
-    "이 프로젝트를 위해 자체 코디네이터를 실행합니다.",
+  "{joining} has joined the project; retry to finish listing it on {kept}.":
+    "{joining}이(가) 프로젝트에 참여했습니다. 다시 시도하여 {kept}에 등록을 완료하세요.",
+  "Runs its own coordinator for this project.": "이 프로젝트를 위해 자체 코디네이터를 실행합니다.",
   "Update SpecWithCode on {machine} to link projects.":
     "프로젝트를 연결하려면 {machine}의 SpecWithCode를 업데이트하세요.",
   "Use this machine from a browser on a phone or another computer, also when SpecWithCode Connect is off or cannot be reached. The SpecWithCode app signed in to the same Connect account needs no code.":

@@ -467,7 +467,11 @@ describe("ProjectLink", () => {
       epoch: 0,
       state: "active",
       removedMembers: [
-        { environmentId: pair.joining.environmentId, projectId: pair.joining.projectId },
+        {
+          environmentId: pair.joining.environmentId,
+          projectId: pair.joining.projectId,
+          removedAt: expect.any(String),
+        },
       ],
     });
     expect(

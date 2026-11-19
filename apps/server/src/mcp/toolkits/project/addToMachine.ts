@@ -535,11 +535,13 @@ const SaysEqualCoordinators = Schema.Struct({
  * does not answer, or does not say so, is treated as a release from before.
  */
 const peerRunsEqualCoordinators = (
-  remote: RemoteWorkers.RemoteWorkers["Service"],
+  remote: RemoteWorkers.RemoteWorkersShape,
   machine: OrchestratorMcpMachineRef,
 ): Effect.Effect<boolean> =>
   remote.proxy({ machine, tool: "orchestrator_capabilities", arguments: {} }).pipe(
-    Effect.map((answer) => Option.isSome(Schema.decodeUnknownOption(SaysEqualCoordinators)(answer))),
+    Effect.map((answer) =>
+      Option.isSome(Schema.decodeUnknownOption(SaysEqualCoordinators)(answer)),
+    ),
     Effect.orElseSucceed(() => false),
   );
 

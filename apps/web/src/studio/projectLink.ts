@@ -644,7 +644,7 @@ export function writePendingOperation(key: string, operationId: string | null): 
 const sameMember = (a: LogicalProjectMember, b: LogicalProjectMember) =>
   a.environmentId === b.environmentId && a.projectId === b.projectId;
 
-/** The joining copy already defers to the kept one: an earlier link stopped before its last step. */
+/** The joining copy already joined the kept one: an earlier link stopped before its last step. */
 export function linkIsResuming(kept: ProjectLinkPreview, joining: ProjectLinkPreview): boolean {
   const binding = joining.coordinatorBinding;
   return (

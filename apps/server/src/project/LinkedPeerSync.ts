@@ -613,6 +613,9 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
             ...(own.binding?.removedMembers === undefined
               ? {}
               : { removed: own.binding.removedMembers }),
+            ...(own.binding?.relinkedMembers === undefined
+              ? {}
+              : { relinked: own.binding.relinkedMembers }),
           })
           .pipe(Effect.as({ changed: false }));
         const call: Effect.Effect<{ readonly changed: boolean }, LocalError | HandoffPeerError> =
@@ -626,28 +629,34 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
                   members: peer.members,
                   // Whom the peer unlinked on purpose: its omission alone removes nobody.
                   removed: peer.binding?.removedMembers ?? [],
+                  relinked: peer.binding?.relinkedMembers ?? [],
                 })
                 .pipe(
+                  // The peer may be unable to call here, so what it lacks is sent: a member
+                  // this copy holds, or the unlink of one the peer still lists.
                   Effect.tap(() =>
-                    held.every((member) => peerKeys.has(logicalProjectMemberKey(member)))
+                    held.every((member) => peerKeys.has(logicalProjectMemberKey(member))) &&
+                    !(own.binding?.removedMembers ?? []).some((member) =>
+                      peerKeys.has(logicalProjectMemberKey(member)),
+                    )
                       ? Effect.void
                       : sendOwn,
                   ),
                 )
             : pull
-            ? deps.adoptMembers({
-                projectId: project.id,
-                logicalProjectId: input.identityId,
-                from: input.member,
-                fromEpoch: peer.binding!.epoch,
-                members: peer.members,
-              })
-            : peers.linkedMembers(input.member.environmentId, {
-                ...input.ref,
-                from: input.self,
-                fromEpoch: own.binding!.epoch,
-                members: held,
-              });
+              ? deps.adoptMembers({
+                  projectId: project.id,
+                  logicalProjectId: input.identityId,
+                  from: input.member,
+                  fromEpoch: peer.binding!.epoch,
+                  members: peer.members,
+                })
+              : peers.linkedMembers(input.member.environmentId, {
+                  ...input.ref,
+                  from: input.self,
+                  fromEpoch: own.binding!.epoch,
+                  members: held,
+                });
         const outcome = yield* Effect.result(call);
         if (Result.isFailure(outcome)) {
           memberHolds.delete(key);

@@ -21,6 +21,8 @@ export const ja: PhraseCatalog = {
     "別のマシンの {project} を選びます。このプロジェクトに加わり、自分のコーディネーターを持ち続けます。",
   "Pick {project} on another machine. Linking makes them one project; each machine keeps its own coordinator.":
     "別のマシンの {project} を選びます。リンクすると 1 つのプロジェクトになり、各マシンは自分のコーディネーターを持ち続けます。",
+  "{joining} has joined the project; retry to finish listing it on {kept}.":
+    "{joining} はプロジェクトに参加しました。再試行して {kept} への登録を完了してください。",
   "Runs its own coordinator for this project.":
     "このプロジェクト用に自分のコーディネーターを実行します。",
   "Update SpecWithCode on {machine} to link projects.":

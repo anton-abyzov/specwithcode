@@ -8,6 +8,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
   EnvironmentId,
   type Project,
+  type ProjectCoordinatorBinding,
   ProjectId,
   type ScheduledTask,
   ScheduledTaskId,
@@ -273,14 +274,16 @@ export const fleet = (
           state.binding !== null
             ? state.binding
             : state.role.state !== "active"
-            ? { epoch: state.role.epoch, state: state.role.state }
-            : state.role.epoch === 0
-              ? undefined
-              : {
-                  epoch: state.role.epoch,
-                  state: "active" as const,
-                  ...(state.beside ? {} : { predecessor: members[(index + 1) % members.length]! }),
-                };
+              ? { epoch: state.role.epoch, state: state.role.state }
+              : state.role.epoch === 0
+                ? undefined
+                : {
+                    epoch: state.role.epoch,
+                    state: "active" as const,
+                    ...(state.beside
+                      ? {}
+                      : { predecessor: members[(index + 1) % members.length]! }),
+                  };
         const work = { due: Effect.void as Effect.Effect<void> };
         const projectRow = (): ProjectStore.ProjectRow => ({
           ...routineProject(projectId),

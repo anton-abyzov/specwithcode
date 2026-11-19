@@ -117,9 +117,24 @@ export const ProjectCoordinatorBinding = Schema.Struct({
    * Absent from machines older than member sync, which ignore it.
    */
   removedMembers: Schema.optional(
-    Schema.Array(Schema.Struct({ environmentId: EnvironmentId, projectId: ProjectId })).check(
-      Schema.isMaxLength(256),
-    ),
+    Schema.Array(
+      Schema.Struct({
+        environmentId: EnvironmentId,
+        projectId: ProjectId,
+        /** When it was unlinked, so a later link of the same copy supersedes this. */
+        removedAt: Schema.optional(IsoDateTime),
+      }),
+    ).check(Schema.isMaxLength(256)),
+  ),
+  /**
+   * Members this copy unlinked and then linked again, with when. An unlink older
+   * than the link named here no longer removes that member anywhere. Machines
+   * from before equal coordinators ignore it.
+   */
+  relinkedMembers: Schema.optional(
+    Schema.Array(
+      Schema.Struct({ environmentId: EnvironmentId, projectId: ProjectId, linkedAt: IsoDateTime }),
+    ).check(Schema.isMaxLength(256)),
   ),
   /**
    * Role operations that were under way when this copy became an equal coordinator. A late
@@ -258,8 +273,9 @@ export function staysWithProjectCoordinator(
  * its server advertises or the features its tools list. One that does not say so is from
  * before equal coordinators: its accept relinquishes the coordinator, so nothing links with it.
  */
-export function environmentRunsEqualCoordinators(
-  capabilities: { readonly equalCoordinators?: boolean | undefined } | null | undefined,
-): boolean {
-  return capabilities?.equalCoordinators === true;
+export function environmentRunsEqualCoordinators(capabilities: object | null | undefined): boolean {
+  return (
+    (capabilities as { readonly equalCoordinators?: unknown } | null | undefined)
+      ?.equalCoordinators === true
+  );
 }

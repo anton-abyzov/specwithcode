@@ -120,9 +120,19 @@ export const LinkedMembersRequest = Schema.Struct({
   members: memberList,
   /** Whom the sender unlinked on purpose; absent from machines before equal coordinators. */
   removed: Schema.optional(
-    Schema.Array(Schema.Struct({ environmentId: EnvironmentId, projectId: ProjectId })).check(
-      Schema.isMaxLength(256),
-    ),
+    Schema.Array(
+      Schema.Struct({
+        environmentId: EnvironmentId,
+        projectId: ProjectId,
+        removedAt: Schema.optional(IsoDateTime),
+      }),
+    ).check(Schema.isMaxLength(256)),
+  ),
+  /** Whom the sender linked again after an unlink, and when: older unlinks of them lapse. */
+  relinked: Schema.optional(
+    Schema.Array(
+      Schema.Struct({ environmentId: EnvironmentId, projectId: ProjectId, linkedAt: IsoDateTime }),
+    ).check(Schema.isMaxLength(256)),
   ),
 });
 export type LinkedMembersRequest = typeof LinkedMembersRequest.Type;

@@ -4,7 +4,10 @@
  * neither end, a coordinator is no longer moved by a handoff's role write, and
  * a machine unlinked while a third was away leaves that one's list too.
  */
-import { environmentRunsEqualCoordinators } from "@specweave-studio/contracts";
+import {
+  environmentRunsEqualCoordinators,
+  type LogicalProjectMember,
+} from "@specweave-studio/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
@@ -170,8 +173,8 @@ describe("unlinking one of three machines (AC-35)", () => {
       settingsOf(target, projectId)?.coordinatorBinding;
     /** One copy reads the other's list, with whom that copy unlinked and linked again. */
     const reads = (
-      reader: { machine: Machine; member: typeof trio.kept },
-      other: { machine: Machine; member: typeof trio.kept },
+      reader: { machine: Machine; member: LogicalProjectMember },
+      other: { machine: Machine; member: LogicalProjectMember },
     ) =>
       reader.machine.run((service) =>
         service.adoptMembers({
@@ -184,10 +187,10 @@ describe("unlinking one of three machines (AC-35)", () => {
           relinked: bindingOn(other.machine, other.member.projectId)?.relinkedMembers ?? [],
         }),
       );
-    const m4 = { machine: trio.m4, member: trio.kept };
-    const m1 = { machine: trio.m1, member: trio.third };
-    const listed = (copy: typeof m4) =>
-      trio.membersOn(copy.machine, copy.member.projectId).map(keyOf);
+    type Copy = { machine: Machine; member: LogicalProjectMember };
+    const m4: Copy = { machine: trio.m4, member: trio.kept };
+    const m1: Copy = { machine: trio.m1, member: trio.third };
+    const listed = (copy: Copy) => trio.membersOn(copy.machine, copy.member.projectId).map(keyOf);
     const unlinkOnM4 = (id: string) =>
       trio.m4.run((service) =>
         service.unlink({
@@ -245,9 +248,7 @@ describe("unlinking one of three machines (AC-35)", () => {
         members: trio.membersOn(trio.m4, trio.kept.projectId),
       }),
     );
-    expect(trio.membersOn(trio.m1, trio.third.projectId).map(keyOf)).toContain(
-      keyOf(trio.joining),
-    );
+    expect(trio.membersOn(trio.m1, trio.third.projectId).map(keyOf)).toContain(keyOf(trio.joining));
     // Settings unlinks the M3 through the M4 while the M1 is away.
     await trio.m4.run((service) =>
       service.unlink({

@@ -79,6 +79,7 @@ import { CoordinatorRearmStore } from "./CoordinatorRearmStore.ts";
 import * as CoordinatorRole from "./CoordinatorRole.ts";
 import { CoordinatorStandbyStore } from "./CoordinatorStandbyStore.ts";
 import * as LinkedMemorySync from "./LinkedMemorySync.ts";
+import { rememberRelink, rememberRemoval } from "./linkMembership.ts";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
 import {
   type AddPredecessorMembersInput,
@@ -741,10 +742,12 @@ const make = Effect.gen(function* () {
           {
             mode: "link-member",
             logicalProject,
-            coordinatorBinding: project.workspaceSettings?.coordinatorBinding ?? {
-              epoch: 0,
-              state: "active",
-            },
+            // A copy this one unlinked before is linked again: that unlink ends here.
+            coordinatorBinding: rememberRelink(
+              project.workspaceSettings?.coordinatorBinding ?? { epoch: 0, state: "active" },
+              input.joining,
+              DateTime.toEpochMillis(yield* DateTime.now),
+            ),
           },
         );
         return { operationId: input.operationId, logicalProject, notesWritten, replayed: false };
@@ -765,19 +768,10 @@ const make = Effect.gen(function* () {
   const rememberRemoved = (
     binding: ProjectCoordinatorBinding,
     member: Pick<LogicalProjectMember, "environmentId" | "projectId">,
-  ): ProjectCoordinatorBinding => {
-    const key = logicalProjectMemberKey(member);
-    const kept = (binding.removedMembers ?? []).filter(
-      (removed) => logicalProjectMemberKey(removed) !== key,
+  ) =>
+    DateTime.now.pipe(
+      Effect.map((now) => rememberRemoval(binding, member, DateTime.toEpochMillis(now))),
     );
-    return {
-      ...binding,
-      removedMembers: [
-        ...kept,
-        { environmentId: member.environmentId, projectId: member.projectId },
-      ].slice(-256),
-    };
-  };
 
   const unlinkLocked = (input: ProjectUnlinkInput) =>
     admission.withLock(
@@ -805,7 +799,7 @@ const make = Effect.gen(function* () {
               replayed: true,
             };
           const logicalProject = { ...identity, members: remaining };
-          const coordinatorBinding = rememberRemoved(current, input.member);
+          const coordinatorBinding = yield* rememberRemoved(current, input.member);
           yield* writeOwnership(project, "project-unlink-member", input.operationId, {
             mode: "remove-member",
             logicalProject,

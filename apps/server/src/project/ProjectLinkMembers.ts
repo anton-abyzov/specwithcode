@@ -26,8 +26,16 @@ import {
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 
+import { stringifyJson } from "../json.ts";
 import { sha256 } from "../nodeCrypto.ts";
 import type { ProjectOwnershipUpdate } from "../orchestration-v2/ProjectCommands.ts";
+import {
+  mergeRelinked,
+  mergeRemoved,
+  removalStands,
+  type RelinkedMember,
+  type RemovedMember,
+} from "./linkMembership.ts";
 import type * as ProjectAdmission from "./ProjectAdmission.ts";
 
 /** The most members a shared identity lists (`LogicalProject`). */
@@ -83,7 +91,9 @@ export interface AdoptMembersInput {
    * The members that copy unlinked on purpose (its `removedMembers`). An equal coordinator
    * drops the ones it still lists; a member that copy merely does not list stays.
    */
-  readonly removed?: ReadonlyArray<Pick<LogicalProjectMember, "environmentId" | "projectId">>;
+  readonly removed?: ReadonlyArray<RemovedMember>;
+  /** The members that copy linked again after an unlink (its `relinkedMembers`), and when. */
+  readonly relinked?: ReadonlyArray<RelinkedMember>;
 }
 
 export interface AdoptMembersResult {
@@ -126,6 +136,12 @@ const listId = (members: ReadonlyArray<LogicalProjectMember>) =>
     .toString("hex")
     .slice(0, 16);
 
+/** Names one list with the unlinks or links written beside it, which a list alone repeats. */
+const stateId = (members: ReadonlyArray<LogicalProjectMember>, beside: ReadonlyArray<unknown>) =>
+  sha256([stringifyJson(members.map(memberRef).toSorted()), stringifyJson(beside)])
+    .toString("hex")
+    .slice(0, 16);
+
 export const makeProjectLinkMembers = (deps: ProjectLinkMembersDeps) => {
   const { admission, fail, load } = deps;
 
@@ -140,7 +156,7 @@ export const makeProjectLinkMembers = (deps: ProjectLinkMembersDeps) => {
     identity: LogicalProject,
     self: LogicalProjectMember,
     input: AdoptMembersInput,
-  ) =>
+  ): Effect.Effect<AdoptMembersResult, ProjectLinkError> =>
     Effect.gen(function* () {
       const binding = project.workspaceSettings?.coordinatorBinding;
       const fromKey = logicalProjectMemberKey(input.from);
@@ -152,12 +168,21 @@ export const makeProjectLinkMembers = (deps: ProjectLinkMembersDeps) => {
         )
       )
         return yield* fail("not_member");
-      // What the other copy unlinked on purpose, unless it lists that member again since.
+      const current = binding ?? { epoch: 0, state: "active" as const };
+      const ownRelinked = current.relinkedMembers ?? [];
+      const theirRelinked = input.relinked ?? [];
+      // What the other copy unlinked on purpose: not a member it lists again, and not an
+      // unlink that a later link of the same copy, known here or there, has ended.
       const listedThere = new Set(input.members.map(logicalProjectMemberKey));
-      const unlinkedThere = new Set(
+      const unlinkedThere = new Map(
         (input.removed ?? [])
-          .map(logicalProjectMemberKey)
-          .filter((key) => !listedThere.has(key) && key !== fromKey),
+          .filter(
+            (removal) =>
+              !listedThere.has(logicalProjectMemberKey(removal)) &&
+              logicalProjectMemberKey(removal) !== fromKey &&
+              removalStands(removal, ownRelinked, theirRelinked),
+          )
+          .map((removal) => [logicalProjectMemberKey(removal), removal] as const),
       );
       const dropped = identity.members.filter(
         (member) =>
@@ -165,39 +190,41 @@ export const makeProjectLinkMembers = (deps: ProjectLinkMembersDeps) => {
           member.environmentId !== self.environmentId,
       );
       if (dropped.length > 0) {
-        const current = binding ?? { epoch: 0, state: "active" as const };
         const droppedKeys = new Set(dropped.map(logicalProjectMemberKey));
         const remaining = identity.members.filter(
           (member) => !droppedKeys.has(logicalProjectMemberKey(member)),
         );
         // Remembered here too, so an older list from a third copy never brings them back.
-        const remembered = [
-          ...(current.removedMembers ?? []).filter(
-            (member) => !droppedKeys.has(logicalProjectMemberKey(member)),
-          ),
-          ...dropped.map(({ environmentId, projectId }) => ({ environmentId, projectId })),
-        ].slice(-256);
+        const removals = dropped.map((member) =>
+          unlinkedThere.get(logicalProjectMemberKey(member))!,
+        );
         const updated = yield* deps.writeOwnership(
           project,
           "project-link-members-removed",
-          listId(remaining),
+          stateId(remaining, removals),
           {
             mode: "remove-member",
             logicalProject: { ...identity, members: remaining },
-            coordinatorBinding: { ...current, removedMembers: remembered },
+            coordinatorBinding: {
+              ...current,
+              removedMembers: mergeRemoved(current.removedMembers ?? [], removals),
+            },
           },
         );
-        const next = yield* adoptEqualMembers(
+        yield* adoptEqualMembers(
           updated,
           updated.workspaceSettings?.logicalProject ?? { ...identity, members: remaining },
           self,
           { ...input, removed: [] },
         );
-        void next;
         return { replayed: false, changed: true };
       }
+      // The other copy's later links end the unlinks this copy remembers of the same copies.
+      const relinked = mergeRelinked(ownRelinked, theirRelinked);
+      const ownRemoved = current.removedMembers ?? [];
+      const stillRemoved = ownRemoved.filter((removal) => removalStands(removal, relinked));
       const held = new Set(identity.members.map(logicalProjectMemberKey));
-      const removed = new Set((binding?.removedMembers ?? []).map(logicalProjectMemberKey));
+      const removed = new Set(stillRemoved.map(logicalProjectMemberKey));
       const added = byKey(input.members)
         .filter(
           (member) =>
@@ -206,13 +233,28 @@ export const makeProjectLinkMembers = (deps: ProjectLinkMembersDeps) => {
             member.environmentId !== self.environmentId,
         )
         .slice(0, Math.max(0, MAX_MEMBERS - identity.members.length));
-      if (added.length === 0) return { replayed: true, changed: false };
+      const learned =
+        stillRemoved.length !== ownRemoved.length ||
+        stringifyJson(relinked) !== stringifyJson(ownRelinked);
+      if (added.length === 0 && !learned) return { replayed: true, changed: false };
       const members = [...identity.members, ...added];
-      yield* deps.writeOwnership(project, "project-link-members", listId(members), {
-        mode: "sync-members",
-        logicalProject: { ...identity, members },
-        coordinatorBinding: binding ?? { epoch: 0, state: "active" },
-      });
+      const { removedMembers: _removed, relinkedMembers: _relinked, ...rest } = current;
+      yield* deps.writeOwnership(
+        project,
+        "project-link-members",
+        learned ? stateId(members, relinked) : listId(members),
+        {
+          mode: "sync-members",
+          logicalProject: { ...identity, members },
+          coordinatorBinding: learned
+            ? {
+                ...rest,
+                ...(stillRemoved.length === 0 ? {} : { removedMembers: stillRemoved }),
+                ...(relinked.length === 0 ? {} : { relinkedMembers: relinked }),
+              }
+            : current,
+        },
+      );
       return { replayed: false, changed: true };
     });
 

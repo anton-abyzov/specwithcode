@@ -21,8 +21,9 @@ export const ru: PhraseCatalog = {
     "Выберите {project} на другой машине. Он войдёт в этот проект и сохранит свой координатор.",
   "Pick {project} on another machine. Linking makes them one project; each machine keeps its own coordinator.":
     "Выберите {project} на другой машине. После связывания это один проект; каждая машина сохраняет свой координатор.",
-  "Runs its own coordinator for this project.":
-    "Запускает свой координатор для этого проекта.",
+  "{joining} has joined the project; retry to finish listing it on {kept}.":
+    "{joining} присоединился к проекту; повторите, чтобы завершить его добавление на {kept}.",
+  "Runs its own coordinator for this project.": "Запускает свой координатор для этого проекта.",
   "Update SpecWithCode on {machine} to link projects.":
     "Обновите SpecWithCode на {machine}, чтобы связывать проекты.",
   "Use this machine from a browser on a phone or another computer, also when SpecWithCode Connect is off or cannot be reached. The SpecWithCode app signed in to the same Connect account needs no code.":

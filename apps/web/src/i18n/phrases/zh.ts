@@ -21,8 +21,9 @@ export const zh: PhraseCatalog = {
     "在另一台机器上选择 {project}。它加入此项目并保留自己的协调器。",
   "Pick {project} on another machine. Linking makes them one project; each machine keeps its own coordinator.":
     "在另一台机器上选择 {project}。关联后它们成为一个项目；每台机器保留自己的协调器。",
-  "Runs its own coordinator for this project.":
-    "为此项目运行自己的协调器。",
+  "{joining} has joined the project; retry to finish listing it on {kept}.":
+    "{joining} 已加入项目；请重试以完成在 {kept} 上的登记。",
+  "Runs its own coordinator for this project.": "为此项目运行自己的协调器。",
   "Update SpecWithCode on {machine} to link projects.":
     "请更新 {machine} 上的 SpecWithCode 以关联项目。",
   "Use this machine from a browser on a phone or another computer, also when SpecWithCode Connect is off or cannot be reached. The SpecWithCode app signed in to the same Connect account needs no code.":

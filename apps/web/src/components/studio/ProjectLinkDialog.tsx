@@ -401,7 +401,7 @@ export function ProjectLinkDialog({
       }
       setError(
         current === "commit"
-          ? `${message} ${sides.joiningLabel} already defers to ${sides.keptLabel}; retry to finish listing it there.`
+          ? `${message} ${tx("{joining} has joined the project; retry to finish listing it on {kept}.", { joining: sides.joiningLabel, kept: sides.keptLabel })}`
           : message,
       );
       setPhase("review");

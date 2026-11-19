@@ -365,6 +365,21 @@ export function ownershipRejection(
   const keepsActiveBinding = () =>
     (old ?? ACTIVE_LEGACY_BINDING).state === "active" &&
     sameRecord(next, old ?? ACTIVE_LEGACY_BINDING);
+  /**
+   * The binding stays as it is, but for the unlinks a later link ended: a copy may
+   * forget unlinks it remembered (`removedMembers`) and note the links that ended
+   * them (`relinkedMembers`). It never comes to remember a new unlink this way.
+   */
+  const keepsBindingButEndedUnlinks = () => {
+    const current = old ?? ACTIVE_LEGACY_BINDING;
+    const { removedMembers: nextRemoved, relinkedMembers: _next, ...nextRest } = next;
+    const { removedMembers: currentRemoved, relinkedMembers: _current, ...currentRest } = current;
+    const remembered = new Set((currentRemoved ?? []).map(logicalProjectMemberKey));
+    return (
+      sameRecord(nextRest, currentRest) &&
+      (nextRemoved ?? []).every((member) => remembered.has(logicalProjectMemberKey(member)))
+    );
+  };
   const includesAll = (
     outer: ReadonlyArray<LogicalProjectMember>,
     inner: ReadonlyArray<LogicalProjectMember>,
@@ -436,7 +451,7 @@ export function ownershipRejection(
       return undefined;
     case "link-member":
       if (!keepsIdentity()) return "Linking keeps the coordinator's shared identity as it is.";
-      if (!keepsActiveBinding())
+      if ((old ?? ACTIVE_LEGACY_BINDING).state !== "active" || !keepsBindingButEndedUnlinks())
         return "Only the active coordinator can add members, and its binding stays as it is.";
       if (
         !includesAll(incoming.members, identity!.members) ||
@@ -613,7 +628,7 @@ export function ownershipRejection(
         "Syncing members keeps this copy, its coordinator and its binding as they are.";
       if (old !== undefined && old.state === "transferring")
         return "A copy in a coordinator handoff does not take another copy's member list.";
-      if (!keepsIdentity() || !sameRecord(next, old ?? ACTIVE_LEGACY_BINDING)) return refused;
+      if (!keepsIdentity() || !keepsBindingButEndedUnlinks()) return refused;
       const self = selfEntries[0];
       const held = identity!.members.find((member) => member.projectId === projectId);
       if (selfEntries.length !== 1 || !self || !held || !sameRecord(self, held)) return refused;

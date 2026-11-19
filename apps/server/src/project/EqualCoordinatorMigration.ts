@@ -178,6 +178,7 @@ export function equalCoordinatorBinding(
       ? { operationId: binding.operationId }
       : {}),
     ...(binding.removedMembers === undefined ? {} : { removedMembers: binding.removedMembers }),
+    ...(binding.relinkedMembers === undefined ? {} : { relinkedMembers: binding.relinkedMembers }),
     ...(retired.length === 0 ? {} : { retiredOperationIds: retired }),
     // Read before the binding loses what said so: a copy that followed another machine, or
     // was moving, never becomes a second owner of the project's routines.
@@ -245,8 +246,7 @@ const migrateProject = (projects: ProjectService.ProjectService["Service"], proj
     return {
       projectId: project.id as string,
       from: binding.state,
-      retiredOperationId:
-        binding.state === "transferring" ? (binding.operationId ?? null) : null,
+      retiredOperationId: binding.state === "transferring" ? (binding.operationId ?? null) : null,
     };
   });
 
@@ -257,11 +257,7 @@ const migrateProject = (projects: ProjectService.ProjectService["Service"], proj
  */
 export const migrate = (
   projects: ReadonlyArray<Project>,
-): Effect.Effect<
-  EqualCoordinatorMigrationReport,
-  never,
-  ProjectService.ProjectService
-> =>
+): Effect.Effect<EqualCoordinatorMigrationReport, never, ProjectService.ProjectService> =>
   Effect.gen(function* () {
     const service = yield* ProjectService.ProjectService;
     // The stores are the runtime's; a server built without one has nothing of it to clear.
@@ -283,20 +279,24 @@ export const migrate = (
       standby === undefined ? [] : yield* standby.list.pipe(Effect.orElseSucceed(() => []));
     let standbyRecordsCleared = 0;
     for (const record of armed) {
-      const cleared = yield* standby!.modify(record.logicalProjectId, () => null).pipe(
-        Effect.as(true),
-        Effect.orElseSucceed(() => false),
-      );
+      const cleared = yield* standby!
+        .modify(record.logicalProjectId, () => null)
+        .pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        );
       if (cleared) standbyRecordsCleared += 1;
     }
     const consents =
       rearm === undefined ? [] : yield* rearm.list.pipe(Effect.orElseSucceed(() => []));
     let rearmEntriesCleared = 0;
     for (const entry of consents) {
-      const cleared = yield* rearm!.modify(entry.logicalProjectId, () => null).pipe(
-        Effect.as(true),
-        Effect.orElseSucceed(() => false),
-      );
+      const cleared = yield* rearm!
+        .modify(entry.logicalProjectId, () => null)
+        .pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        );
       if (cleared) rearmEntriesCleared += 1;
     }
     const report = { migrated, failed, standbyRecordsCleared, rearmEntriesCleared };
