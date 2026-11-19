@@ -371,10 +371,13 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
     Effect.gen(function* () {
       const now = yield* deps.nowIso;
       const pending = held.pendingTakeover ?? null;
-      // This machine too: a move to another model here is taken over by its own receiver.
-      const candidates: Array<HandoffTransferCandidate> = [
-        ...new Set([...held.replicas.map((replica) => replica.environmentId), self]),
-      ].map((environmentId) => ({ environmentId, verdict: "unasked", fencedAt: null }));
+      // The machine the kept takeover named, else every machine that holds a copy. This
+      // machine too: a move to another model here is taken over by its own receiver.
+      const candidates: Array<HandoffTransferCandidate> = (
+        pending === null
+          ? [...new Set([...held.replicas.map((replica) => replica.environmentId), self])]
+          : [pending.destinationEnvironmentId as EnvironmentId]
+      ).map((environmentId) => ({ environmentId, verdict: "unasked", fencedAt: null }));
       const record: HandoffTransferRecord = {
         operationId: `legacy:${NodeCrypto.randomUUID()}`,
         batchId: null,
@@ -386,7 +389,9 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         projectId: held.projectId,
         targetEnvironmentId:
           pending === null ? null : (pending.destinationEnvironmentId as EnvironmentId),
-        sequence: pending?.request.sequence ?? null,
+        // Never sent again: the release that sent it may have started the thread there
+        // and kept nothing to say so. Each candidate is asked what it has instead.
+        sequence: null,
         disposition: "resume",
         // A hold from before records may have been sent: it is never "held".
         state: "unknown",

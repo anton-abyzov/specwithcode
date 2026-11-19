@@ -342,9 +342,10 @@ describe(`this build with a machine on ${PREVIOUS_RELEASE}`, () => {
             environmentId: old.environmentId,
             threadId: continued,
           });
-          expect(transferOf(a)?.state).toBe("resumed");
+          expect(transferOf(a)?.state).toBe("ready");
           expect(turnRefusal(a.document, t1, a.environmentId)).not.toBeNull();
           expect(old.launches).toHaveLength(1);
+          expect(rig.callsOf("takeover")).toHaveLength(0);
         }),
     );
 
@@ -385,6 +386,8 @@ describe(`this build with a machine on ${PREVIOUS_RELEASE}`, () => {
 
           expect(leaseOf(a)).toMatchObject({ state: "handing-off", epoch: 1 });
           expect(turnRefusal(a.document, t1, a.environmentId)).not.toBeNull();
+          expect(rig.callsOf("takeover")).toHaveLength(0);
+          expect(old.launches).toHaveLength(0);
           expect(Object.values(old.transfers.document.acceptances)).toHaveLength(0);
         }),
     );
