@@ -131,6 +131,7 @@ export * from "./projectLinkSync.ts";
 export * from "./linkedMemory.ts";
 export * from "./limitHandoff.ts";
 export * from "./usageLimitHistory.ts";
+export * from "./teamUsage.ts";
 export * from "./usageResetLedger.ts";
 export * from "./resetAnnouncements.ts";
 export * from "./managedUpdates.ts";

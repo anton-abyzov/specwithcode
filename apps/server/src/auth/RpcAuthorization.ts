@@ -180,6 +180,10 @@ export const RPC_REQUIRED_SCOPES = {
   // The same quota the server config already carries, kept over time.
   [WS_METHODS.usageLimitsHistory]: AuthOrchestrationReadScope,
   [WS_METHODS.usageLimitsResets]: AuthOrchestrationReadScope,
+  // Team usage (0898): what this machine shares with a team, and whether it does.
+  [WS_METHODS.teamUsageStatus]: AuthSettingsWriteScope,
+  [WS_METHODS.teamUsageUpdate]: AuthSettingsWriteScope,
+  [WS_METHODS.teamUsageOrgs]: AuthSettingsWriteScope,
   [WS_METHODS.resetAnnouncementsList]: AuthOrchestrationReadScope,
   [WS_METHODS.serverRefreshUsageRates]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverSignalProcess]: AuthEnvironmentMaintainScope,
@@ -382,6 +386,17 @@ export const PERSONAL_DATA_RPC_METHODS: ReadonlyArray<string> = [
   WS_METHODS.telegramChannelRemove,
 ];
 
+/**
+ * Team usage (0898): whether this machine sends its usage summary to a team,
+ * where, and under which labels. The member decides on the machine; another
+ * machine's key that reached this socket cannot opt it in or read the preview.
+ */
+export const TEAM_USAGE_OWNER_RPC_METHODS: ReadonlyArray<string> = [
+  WS_METHODS.teamUsageStatus,
+  WS_METHODS.teamUsageUpdate,
+  WS_METHODS.teamUsageOrgs,
+];
+
 const OWNER_ONLY_RPC_METHODS: ReadonlySet<string> = new Set([
   WS_METHODS.awayDecideAccess,
   // Away moves this machine's threads, routines and coordinator to another
@@ -397,6 +412,7 @@ const OWNER_ONLY_RPC_METHODS: ReadonlySet<string> = new Set([
   // running the copy decides that, never another machine's key that reached this socket.
   WS_METHODS.machineHandoffCopySealedSecrets,
   ...PERSONAL_DATA_RPC_METHODS,
+  ...TEAM_USAGE_OWNER_RPC_METHODS,
 ]);
 
 const ownerOnlyRpcMessage = (method: string) =>
@@ -404,7 +420,9 @@ const ownerOnlyRpcMessage = (method: string) =>
     ? "Only this machine's owner can approve access here."
     : method === WS_METHODS.machineHandoffCopySealedSecrets
       ? "Only a person running the copy can send this machine's secret files."
-      : PERSONAL_DATA_RPC_METHODS.includes(method)
+      : TEAM_USAGE_OWNER_RPC_METHODS.includes(method)
+        ? "Only a person on this machine can change what it shares with a team."
+        : PERSONAL_DATA_RPC_METHODS.includes(method)
         ? "Only this machine's owner can see or change personal data access here."
         : "Only this machine's owner can start, stop or change Away here.";
 

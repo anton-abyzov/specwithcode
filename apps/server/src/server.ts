@@ -135,6 +135,7 @@ import * as DeviceSignInHttp from "./auth/deviceSignInHttp.ts";
 import * as ConnectDevicesHttp from "./auth/connectDevicesHttp.ts";
 import * as ProviderUsageLimitsIngestion from "./provider/ProviderUsageLimitsIngestion.ts";
 import * as UsageLimitHistory from "./usage/UsageLimitHistory.ts";
+import * as TeamUsageReporter from "./teamUsage/TeamUsageReporter.ts";
 import * as ResetAnnouncementMonitor from "./resetAnnouncements/ResetAnnouncementMonitor.ts";
 import * as UsageResetLedger from "./usage/UsageResetLedger.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
@@ -931,8 +932,14 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // Subscribes to `account.rate-limits.updated` so usage bars track live
   // telemetry instead of waiting for the next status probe.
   ProviderUsageLimitsIngestion.layer,
-  // Quota over time for burn rates and run-out estimates on the pooled limits view.
-  UsageLimitHistory.layer,
+  // Quota over time for burn rates and run-out estimates on the pooled limits view,
+  // and the opt-in team summary (0898) that reads it. Its RPC handlers are
+  // registered here, not in ws.ts, which sits at TypeScript's instantiation limit;
+  // connections read handlers from the request context.
+  TeamUsageReporter.layerRpcHandlers.pipe(
+    Layer.provideMerge(TeamUsageReporter.layer),
+    Layer.provideMerge(UsageLimitHistory.layer),
+  ),
   // What each subscription window had used when it reset, kept for a year.
   UsageResetLedger.layer,
   // Posts announcing a limits reset, read from the public feed every half hour.

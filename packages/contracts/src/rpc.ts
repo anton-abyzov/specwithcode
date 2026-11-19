@@ -16,6 +16,7 @@ import { projectSyncRpcs } from "./projectSync.ts";
 import { PROJECT_PLAN_LINK_RPC_METHODS, projectPlanLinkRpcs } from "./projectPlanLinkRpc.ts";
 import { LIMIT_HANDOFF_RPC_METHODS, limitHandoffRpcs } from "./limitHandoff.ts";
 import { USAGE_LIMIT_HISTORY_RPC_METHODS, usageLimitHistoryRpcs } from "./usageLimitHistory.ts";
+import { TEAM_USAGE_RPC_METHODS, teamUsageRpcs } from "./teamUsage.ts";
 import { USAGE_RESET_LEDGER_RPC_METHODS, usageResetLedgerRpcs } from "./usageResetLedger.ts";
 import { RESET_ANNOUNCEMENT_RPC_METHODS, resetAnnouncementRpcs } from "./resetAnnouncements.ts";
 import { provisionRpcs } from "./provision.ts";
@@ -457,6 +458,7 @@ export const WS_METHODS = {
   ...PROJECT_PLAN_LINK_RPC_METHODS,
   ...LIMIT_HANDOFF_RPC_METHODS,
   ...USAGE_LIMIT_HISTORY_RPC_METHODS,
+  ...TEAM_USAGE_RPC_METHODS,
   ...USAGE_RESET_LEDGER_RPC_METHODS,
   ...RESET_ANNOUNCEMENT_RPC_METHODS,
   ...MANAGED_UPDATES_RPC_METHODS,
@@ -2432,6 +2434,11 @@ export const WsUsageLimitHistoryRpcGroup = RpcGroup.make(...usageLimitHistoryRpc
   RpcScopeAuthorization,
 );
 
+/** Team usage opt-in and preview (0898); its own group for the same depth reason. */
+export const WsTeamUsageRpcGroup = RpcGroup.make(...teamUsageRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
 /** Closed quota periods per account; its own group for the same depth reason. */
 export const WsUsageResetLedgerRpcGroup = RpcGroup.make(...usageResetLedgerRpcs).middleware(
   RpcScopeAuthorization,
@@ -2538,6 +2545,7 @@ export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsProjectPlanLinkRpcGroup)
   .merge(WsLimitHandoffRpcGroup)
   .merge(WsUsageLimitHistoryRpcGroup)
+  .merge(WsTeamUsageRpcGroup)
   .merge(WsUsageResetLedgerRpcGroup)
   .merge(WsResetAnnouncementRpcGroup)
   .merge(WsFolderCopyRpcGroup)
