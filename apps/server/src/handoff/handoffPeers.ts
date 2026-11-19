@@ -303,6 +303,31 @@ const decodeCoordinatorReplica = Schema.decodeUnknownOption(CoordinatorReplicaRe
 
 const jsonBody = (value: unknown) => new TextEncoder().encode(stringifyJson(value));
 
+/**
+ * How a source reads an answer that is not a success. One with the refusal body
+ * (`error`, and `code` and `check`) is the destination's definite refusal. Any
+ * other 5xx may come after the destination acted (a proxy, or a destination that
+ * cannot tell), so it is in doubt, as no answer is; any other status is a refusal.
+ */
+export const refusedAnswer = (label: string, status: number, json: unknown): HandoffPeerError => {
+  const refusal = decodeError(json);
+  if (Option.isSome(refusal)) {
+    return new HandoffPeerError({
+      code: refusal.value.code ?? "failed",
+      message: refusal.value.error,
+      check: refusal.value.check,
+      uncertain: false,
+    });
+  }
+  return status >= 500
+    ? unreachable(label, true)
+    : new HandoffPeerError({
+        code: "failed",
+        message: `${label} refused the request (HTTP ${status}).`,
+        uncertain: false,
+      });
+};
+
 const toPeerTarget = (target: FleetTarget): HandoffPeerTarget => ({
   machineId: target.id,
   environmentId: target.environmentId,
@@ -532,25 +557,7 @@ export const make = Effect.gen(function* () {
           uncertain: false,
         });
       }
-      if (!answer.ok) {
-        const refusal = decodeError(json);
-        if (Option.isSome(refusal)) {
-          return yield* new HandoffPeerError({
-            code: refusal.value.code ?? "failed",
-            message: refusal.value.error,
-            check: refusal.value.check,
-            uncertain: false,
-          });
-        }
-        // A proxy's 5xx without our body may come after the destination acted.
-        return yield* answer.status >= 500
-          ? unreachable(target.label, true)
-          : new HandoffPeerError({
-              code: "failed",
-              message: `${target.label} refused the request (HTTP ${answer.status}).`,
-              uncertain: false,
-            });
-      }
+      if (!answer.ok) return yield* refusedAnswer(target.label, answer.status, json);
       const decoded = decode(json);
       if (Option.isSome(decoded)) return decoded.value;
       // The destination may have acted, so an unreadable answer is in doubt, not a refusal.

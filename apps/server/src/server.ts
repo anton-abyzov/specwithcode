@@ -799,9 +799,10 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.provideMerge(ScheduledTaskTransfer.layer),
     Layer.provideMerge(AwayPlanner.layer),
     Layer.provideMerge(AwayAccess.layer.pipe(Layer.provide(FleetTargets.layer))),
-    // The same layers as the intents loop below, so one of each.
+    // The same layers as the intents loop below and the moves' receiver, so one of each.
     Layer.provide(
       Layer.merge(AwayIntents.layer, CoordinatorPlannedHandover.layer).pipe(
+        Layer.provide(HandoffReceiver.layer),
         Layer.provide([CoordinatorStandbyStore.layer, HandoffPeers.layer, layerCoordinatorLease]),
         Layer.provide(RemoteWorkers.layerFleetWorkers),
       ),
@@ -817,6 +818,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     // The lid-close trigger: the desktop main process reports sleep and wake here.
     Layer.provideMerge(AwaySleepRoute.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
     Layer.provideMerge(CoordinatorPlannedHandover.layer),
+    Layer.provide(HandoffReceiver.layer),
     Layer.provide([CoordinatorStandbyStore.layer, HandoffPeers.layer, layerCoordinatorLease]),
     Layer.provide(Layer.merge(RemoteWorkers.layerFleetWorkers, ProjectionStoreV2.layer)),
     Layer.provide(AwaySleepBridge.layer),

@@ -165,6 +165,20 @@ export const AutoContinuePeerState = Schema.Struct({
 });
 export type AutoContinuePeerState = typeof AutoContinuePeerState.Type;
 
+/**
+ * What a takeover of one source thread started here: the continuation's id and the
+ * epoch it took, saved with the continuation's lease before it launches and marked
+ * once it launched. It outlives the replica's eviction and a later move of the
+ * continuation, so the source thread's continuation can still be named.
+ */
+export const ContinuationReceipt = Schema.Struct({
+  threadId: Schema.String,
+  epoch: NonNegativeInt,
+  launched: Schema.Boolean,
+  at: Schema.String,
+});
+export type ContinuationReceipt = typeof ContinuationReceipt.Type;
+
 export const HandoffDocument = Schema.Struct({
   version: Schema.Literal(1),
   config: HandoffConfig,
@@ -190,6 +204,15 @@ export const HandoffDocument = Schema.Struct({
   awaySession: Schema.optionalKey(Schema.Unknown).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed(null)),
   ),
+  /**
+   * Keyed by `incomingKey`: the continuation a takeover of that source thread started
+   * here. At most HANDOFF_CONTINUATION_RECEIPTS_MAX, the oldest unlaunched dropped
+   * first. Added later, so older files decode to `{}`; an older server drops the key
+   * and keeps the rest.
+   */
+  continuationReceipts: Schema.optionalKey(Schema.Record(Schema.String, ContinuationReceipt)).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed({})),
+  ),
 });
 export type HandoffDocument = typeof HandoffDocument.Type;
 
@@ -204,6 +227,7 @@ export const EMPTY_HANDOFF_DOCUMENT: HandoffDocument = {
   machineRun: null,
   autoContinuePeers: {},
   awaySession: null,
+  continuationReceipts: {},
 };
 
 export function emptyThreadRecord(projectId: ProjectId): HandoffThreadRecord {
@@ -665,6 +689,105 @@ function capIncoming(document: HandoffDocument): HandoffDocument {
   };
 }
 
+/** Reasons that start nothing any more (1390 AC-36); an earlier release may still send them. */
+export const isRetiredReason = (reason: TakeoverRequest["reason"]) =>
+  reason === "sleep" || reason === "auto-takeover";
+
+export const RETIRED_START_REFUSAL =
+  "a thread moves only when someone hands it off; sleep and silence start nothing";
+
+/**
+ * What this machine knows about continuing one source thread: a thread here
+ * continues it (recorded, or launched and proven by the thread itself), nothing
+ * began here for it, or a start whose outcome it cannot read.
+ */
+export type ContinuationEvidence =
+  | { readonly kind: "continued"; readonly threadId: string }
+  | { readonly kind: "none" }
+  | { readonly kind: "unresolved" };
+
+/** The prefix every continuation thread id carries (`continuationThreadId`). */
+export const CONTINUATION_ID_PREFIX = "handoff:";
+
+/** The most epochs a lookup of a source thread's continuations derives an id for. */
+const CONTINUATION_EPOCH_SCAN_MAX = 10_000;
+
+/**
+ * The continuation leases a takeover of this source thread saved here, at any
+ * epoch. A takeover saves its lease under the continuation's id before it
+ * launches, and that id is derived from the source and the epoch it took. The
+ * continuation's own lease only rises after that (a later move of it), and no
+ * thread record is ever removed from the document, so the id of every epoch up
+ * to the highest continuation lease here is looked up, and the epochs a caller
+ * names (`epochs`) as well. `complete` is false when the highest lease is past
+ * the scan limit: some epoch was not looked up, so absence is not shown.
+ */
+export function preparedContinuations(
+  document: Pick<HandoffDocument, "threads">,
+  idFor: (epoch: number) => string,
+  epochs: ReadonlyArray<number> = [],
+): {
+  readonly found: ReadonlyArray<{ readonly threadId: string; readonly epoch: number }>;
+  readonly complete: boolean;
+} {
+  let highest = 0;
+  for (const [threadId, record] of Object.entries(document.threads)) {
+    if (!threadId.startsWith(CONTINUATION_ID_PREFIX) || record.lease === null) continue;
+    highest = Math.max(highest, record.lease.epoch);
+  }
+  const probed = new Set<number>(epochs);
+  for (let epoch = 0; epoch <= Math.min(highest, CONTINUATION_EPOCH_SCAN_MAX); epoch += 1) {
+    probed.add(epoch);
+  }
+  const found: Array<{ threadId: string; epoch: number }> = [];
+  for (const epoch of [...probed].toSorted((a, b) => a - b)) {
+    const threadId = idFor(epoch);
+    if (document.threads[threadId] !== undefined) found.push({ threadId, epoch });
+  }
+  return { found, complete: highest <= CONTINUATION_EPOCH_SCAN_MAX };
+}
+
+export const HANDOFF_CONTINUATION_RECEIPTS_MAX = 2_000;
+
+/**
+ * Keeps the newest receipts: unlaunched ones go first, then the oldest launched.
+ * A dropped receipt never makes a continuation read as absent: its lease record
+ * stays, and a source thread with neither receipt nor replica reads unresolved.
+ */
+function capReceipts(document: HandoffDocument): HandoffDocument {
+  const entries = Object.entries(document.continuationReceipts ?? {});
+  const excess = entries.length - HANDOFF_CONTINUATION_RECEIPTS_MAX;
+  if (excess <= 0) return document;
+  const drop = new Set(
+    entries
+      .toSorted(
+        ([, a], [, b]) =>
+          Number(a.launched) - Number(b.launched) || (a.at < b.at ? -1 : a.at > b.at ? 1 : 0),
+      )
+      .slice(0, excess)
+      .map(([key]) => key),
+  );
+  return {
+    ...document,
+    continuationReceipts: Object.fromEntries(entries.filter(([key]) => !drop.has(key))),
+  };
+}
+
+/**
+ * Notes a takeover of the source thread (`key`, its `incomingKey`) starting a
+ * continuation, or that it launched. One that launched is never replaced: it
+ * names the source thread's continuation for good.
+ */
+export function noteContinuation(
+  document: HandoffDocument,
+  key: string,
+  receipt: ContinuationReceipt,
+): HandoffDocument {
+  const receipts = document.continuationReceipts ?? {};
+  if (receipts[key]?.launched === true) return document;
+  return capReceipts({ ...document, continuationReceipts: { ...receipts, [key]: receipt } });
+}
+
 export type TakeoverVerdict =
   | {
       readonly kind: "proceed";
@@ -713,6 +836,16 @@ export function takeoverVerdict(
       check: "lease",
     };
   }
+  // Sleep and silence start nothing (1390 AC-36): never a launch. The receiver answers
+  // a start an earlier release began here from its durable evidence before this check.
+  if (isRetiredReason(request.reason)) {
+    return {
+      kind: "refuse",
+      code: "invalid",
+      message: at(RETIRED_START_REFUSAL),
+      check: "lease",
+    };
+  }
   if (replica.checkpoint.sequence < request.sequence) {
     return {
       kind: "refuse",
@@ -736,7 +869,10 @@ export function takeoverVerdict(
   return { kind: "proceed", replica, detail };
 }
 
-/** Marks the replica continued here; a heartbeat from the source then fences it. */
+/**
+ * Marks the replica continued here and keeps a receipt of the launch, which stays
+ * when the replica is gone; a heartbeat from the source then fences it.
+ */
 export function markContinued(
   document: HandoffDocument,
   request: TakeoverRequest,
@@ -744,10 +880,16 @@ export function markContinued(
   now: string,
 ): HandoffDocument {
   const key = incomingKey(request.sourceEnvironmentId, request.sourceThreadId);
-  const replica = findIncoming(document, request.sourceEnvironmentId, request.sourceThreadId);
-  const detail = (document.incomingDetails ?? {})[key];
-  if (replica === undefined || detail === undefined) return document;
-  const next = replaceIncoming(document, {
+  const received = noteContinuation(document, key, {
+    threadId: response.threadId,
+    epoch: request.epoch,
+    launched: true,
+    at: now,
+  });
+  const replica = findIncoming(received, request.sourceEnvironmentId, request.sourceThreadId);
+  const detail = (received.incomingDetails ?? {})[key];
+  if (replica === undefined || detail === undefined) return received;
+  const next = replaceIncoming(received, {
     ...replica,
     continuedThreadId: response.threadId,
     lease: {
@@ -770,9 +912,10 @@ export function markContinued(
  * A heartbeat from a source: every thread it still holds that this machine
  * continued comes back, whatever epoch the source names, so the source fences
  * that copy (a continued source thread never runs again; a handback is a new
- * thread). For a replica not continued, the epoch the source holds raises the
- * replica's lease, so a delayed takeover at a lower epoch is refused. Also
- * records that the source answered.
+ * thread). A launch receipt names it after its replica was evicted, or before
+ * the replica was marked. For a replica not continued, the epoch the source
+ * holds raises the replica's lease, so a delayed takeover at a lower epoch is
+ * refused. Also records that the source answered.
  */
 export function heartbeatContinued(
   document: HandoffDocument,
@@ -792,15 +935,23 @@ export function heartbeatContinued(
   const continued: Array<{ sourceThreadId: ThreadId; epoch: number; threadId: ThreadId }> = [];
   const held = new Map(request.leases.map((lease) => [lease.sourceThreadId, lease.epoch]));
   for (const sourceThreadId of held.keys()) {
+    const key = incomingKey(request.sourceEnvironmentId, sourceThreadId);
     const replica = findIncoming(document, request.sourceEnvironmentId, sourceThreadId);
-    const detail = (document.incomingDetails ?? {})[
-      incomingKey(request.sourceEnvironmentId, sourceThreadId)
-    ];
-    if (replica?.continuedThreadId == null) continue;
+    const detail = (document.incomingDetails ?? {})[key];
+    if (replica?.continuedThreadId != null) {
+      continued.push({
+        sourceThreadId,
+        epoch: detail?.takeoverEpoch ?? replica.lease.epoch,
+        threadId: replica.continuedThreadId,
+      });
+      continue;
+    }
+    const receipt = (document.continuationReceipts ?? {})[key];
+    if (receipt?.launched !== true) continue;
     continued.push({
       sourceThreadId,
-      epoch: detail?.takeoverEpoch ?? replica.lease.epoch,
-      threadId: replica.continuedThreadId,
+      epoch: receipt.epoch,
+      threadId: receipt.threadId as ThreadId,
     });
   }
   const incoming = document.incoming.map((replica) => {
@@ -812,22 +963,95 @@ export function heartbeatContinued(
         : replica.lease;
     return { ...replica, lease, sourceLastSeenAt: now, sourceUnreachable: false };
   });
-  // Each heartbeat restates which copies this machine may continue on its own;
-  // a copy it leaves out, or names without a delay, loses that designation.
-  const designated = new Map(
-    request.leases.map((lease) => [lease.sourceThreadId as string, lease.autoContinueMinutes]),
-  );
+  // No copy is continued here on silence (1390 AC-36). A delay a source on an earlier
+  // release names is not kept, and one saved here by an earlier release is dropped.
   let incomingDetails = document.incomingDetails ?? {};
   for (const replica of incoming) {
     if (replica.sourceEnvironmentId !== request.sourceEnvironmentId) continue;
     const key = incomingKey(replica.sourceEnvironmentId, replica.sourceThreadId);
     const detail = incomingDetails[key];
-    if (detail === undefined) continue;
-    const minutes = designated.get(replica.sourceThreadId) ?? null;
-    if ((detail.autoContinueMinutes ?? null) === minutes) continue;
-    incomingDetails = { ...incomingDetails, [key]: { ...detail, autoContinueMinutes: minutes } };
+    if (detail === undefined || (detail.autoContinueMinutes ?? null) === null) continue;
+    incomingDetails = { ...incomingDetails, [key]: { ...detail, autoContinueMinutes: null } };
   }
   return [continued, { ...document, incoming, incomingDetails }];
+}
+
+/**
+ * Every machine this one still keeps a protective hold for, from the sleep and silence
+ * starts an earlier release made: one it armed that has not confirmed it is disarmed,
+ * one a thread here is fenced for (it may have continued it), the destination of a
+ * takeover sleep started that has no answer yet, and the target of a lid-close Away
+ * intent the wake check has not settled. Empty means confirmed: nothing from sleep or
+ * silence can still move a thread.
+ */
+export function pendingDisarm(
+  document: Pick<HandoffDocument, "threads" | "autoContinuePeers"> & {
+    readonly awaySession?: unknown;
+  },
+): Array<{ environmentId: EnvironmentId; machineLabel: string; since: string }> {
+  const pending = new Map<string, { machineLabel: string | null; since: string }>();
+  const note = (peer: string, machineLabel: string | null, since: string) => {
+    const seen = pending.get(peer);
+    if (seen === undefined || since < seen.since) {
+      pending.set(peer, { machineLabel: machineLabel ?? seen?.machineLabel ?? null, since });
+    }
+  };
+  for (const [peer, state] of Object.entries(document.autoContinuePeers ?? {})) {
+    note(peer, null, state.baselineAt);
+  }
+  for (const record of Object.values(document.threads)) {
+    const fence = record.autoFence ?? null;
+    if (fence !== null) note(fence.environmentId, fence.machineLabel, fence.at);
+    const pendingTakeover = record.pendingTakeover ?? null;
+    if (
+      pendingTakeover !== null &&
+      pendingTakeover.request.reason === "sleep" &&
+      record.lease?.state === "handing-off"
+    ) {
+      note(pendingTakeover.destinationEnvironmentId, null, record.lease.renewedAt);
+    }
+  }
+  // A lid-close intent (the saved Away session's `sleep`) may still be acted on, or its
+  // outcome is not settled, until the wake check settles it: the record dropped (nothing
+  // moved, or the card cleared), the wake prompt (what moved is known), or Bring back.
+  // Read as raw JSON, so a session this version cannot decode still names its target.
+  const away = document.awaySession;
+  if (typeof away === "object" && away !== null) {
+    const session = away as Record<string, unknown>;
+    const intent = session.sleep;
+    if (
+      session.trigger === "sleep" &&
+      typeof intent === "object" &&
+      intent !== null &&
+      typeof session.broughtBackAt !== "string"
+    ) {
+      const sleep = intent as Record<string, unknown>;
+      const target =
+        typeof sleep.targetEnvironmentId === "string"
+          ? sleep.targetEnvironmentId
+          : session.targetEnvironmentId;
+      if (sleep.state !== "wake-prompt" && typeof target === "string" && target.trim() !== "") {
+        const label = typeof session.targetLabel === "string" ? session.targetLabel.trim() : "";
+        note(
+          target.trim(),
+          label === "" ? null : label,
+          typeof sleep.sentAt === "string" ? sleep.sentAt : "",
+        );
+      }
+    }
+  }
+  return [...pending].map(([peer, entry]) => {
+    let machineLabel = entry.machineLabel ?? peer;
+    if (entry.machineLabel === null) {
+      for (const record of Object.values(document.threads)) {
+        const named = record.replicas.find((replica) => replica.environmentId === peer);
+        if (named === undefined) continue;
+        machineLabel = named.machineLabel;
+        break;
+      }
+    }
+    return { environmentId: peer as EnvironmentId, machineLabel, since: entry.since };
+  });
 }
 
 /** Replicas whose source has not answered for longer than a stale lease read "unknown". */

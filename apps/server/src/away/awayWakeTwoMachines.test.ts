@@ -1,11 +1,13 @@
 /**
- * A lid-close Away across two machines (1267 AC-09): the M4 coordinates
- * EasyChamp and sleeps; Ministorm holds the linked copy and the away intent.
- * The M4 runs the real sleep trigger, wake check, wake hold, coordinator gate
- * and lease give-way; Ministorm runs the real intents and routes. Every call
- * between them crosses a stub network that can lose a request or its answer.
- * After every step at most one copy may start a coordinator turn, and once
- * the wake check settled exactly one does.
+ * A lid-close Away an earlier release left, across two machines (1267 AC-09,
+ * 1390 AC-36): the M4 coordinates EasyChamp and slept on the previous
+ * release, which sent Ministorm an away intent; Ministorm has not updated and
+ * still acts on it (`previousRelease.*.test.fixture.ts`). The M4 then runs
+ * this version: its wake check, wake hold, coordinator gate and lease
+ * give-way drain what was left, and a lid close starts nothing new. Every
+ * call between them crosses a stub network that can lose a request or its
+ * answer. After every step at most one copy may start a coordinator turn,
+ * and once the wake check settled exactly one does.
  */
 import {
   AWAY_INTENT_CANCEL_PATH,
@@ -32,8 +34,8 @@ import { makeCheck } from "../project/CoordinatorWakeGate.ts";
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import * as ProjectLink from "../project/ProjectLink.ts";
 import { checkout, machine, removeCheckouts } from "../project/ProjectLink.testkit.ts";
-import { linkedCopyOf, makeAwayIntents, memoryIntentStore } from "./AwayIntents.ts";
-import { cancelIntent, intentStatus, recordIntent } from "./awayIntentRoute.ts";
+import { linkedCopyOf } from "./AwayIntents.ts";
+import { cancelIntent, intentStatus } from "./awayIntentRoute.ts";
 import { AwayPeerError, type AwayPeerPost } from "./awayPeerCall.ts";
 import { makeAwaySleep, memorySleepStore } from "./awaySleepRoute.ts";
 import {
@@ -41,6 +43,8 @@ import {
   COORDINATOR_AWAY_HOLD_REFUSAL,
   memoryWakeHoldStore,
 } from "./AwayWakeHold.ts";
+import * as PreviousIntents from "./previousRelease.awayIntents.test.fixture.ts";
+import * as PreviousSleep from "./previousRelease.awaySleep.test.fixture.ts";
 
 const MINUTE = 60_000;
 const T0 = Date.parse("2026-11-09T22:00:00.000Z");
@@ -123,11 +127,11 @@ const fleet = Effect.gen(function* () {
   const coordinatorThread = `project-coordinator:${m4ProjectId}`;
 
   // --- Ministorm: the intents, with a takeover that can be held mid-act ---
-  const intentStore = memoryIntentStore();
+  const intentStore = PreviousIntents.memoryIntentStore();
   const dueHooks: AwayIntentRecord[] = [];
   const actGate = { hold: null as Deferred.Deferred<void> | null, started: 0 };
   let ids = 0;
-  const intents = yield* makeAwayIntents({
+  const intents = yield* PreviousIntents.makeAwayIntents({
     store: intentStore,
     newId: Effect.sync(() => `intent-${++ids}`),
     // The M4 is asleep for the whole grace in these tests.
@@ -171,16 +175,24 @@ const fleet = Effect.gen(function* () {
     Effect.gen(function* () {
       const caller = callerFrom("m4");
       if (path === AWAY_INTENT_PATH)
-        return yield* recordIntent(intents, caller, body, projectsOnMs());
+        return yield* PreviousIntents.recordIntent(intents, caller, body, projectsOnMs());
       if (path === AWAY_INTENT_CANCEL_PATH) return yield* cancelIntent(intents, caller, body);
       if (path === AWAY_INTENT_STATUS_PATH)
         return yield* intentStatus(
-          intents,
+          {
+            latestState: intents.latestState,
+            continuation: (threadId) =>
+              Effect.sync(() => {
+                const continued = continuedOnMs.get(threadId);
+                return continued === undefined
+                  ? ({ kind: "none" } as const)
+                  : ({ kind: "continued", threadId: continued } as const);
+              }),
+          },
           caller,
           body,
-          projectsOnMs(),
+          Effect.sync(projectsOnMs),
           "ministorm",
-          (threadId) => continuedOnMs.get(threadId) ?? null,
         );
       return { status: 404, body: { error: "not found" } };
     });
@@ -258,7 +270,7 @@ const fleet = Effect.gen(function* () {
   }).pipe(Effect.provide(Layer.merge(m4.layer, ProjectAdmission.layer)));
   const gate = makeCheck(makeMemory().service, undefined, undefined, hold);
   const session = memorySleepStore();
-  const away = yield* makeAwaySleep({
+  const sleepDeps: PreviousSleep.AwaySleepDeps = {
     self: M4,
     store: session,
     config: Effect.succeed({
@@ -289,7 +301,10 @@ const fleet = Effect.gen(function* () {
     confirmContinued: (threadIds) =>
       Effect.sync(() => new Set(threadIds.filter((threadId) => fencedOnM4.has(threadId)))),
     resumeQueues: (threadIds) => Effect.sync(() => void resumedQueues.push(...threadIds)),
-  });
+  };
+  /** The M4 before its update: the release that still left on a lid close. */
+  const before = yield* PreviousSleep.makeAwaySleep(sleepDeps);
+  const away = yield* makeAwaySleep(sleepDeps);
 
   /** Copies that would start a coordinator turn now: active and not held by the gate. */
   const running = Effect.gen(function* () {
@@ -315,7 +330,7 @@ const fleet = Effect.gen(function* () {
       return now;
     });
   const lidClose = Effect.gen(function* () {
-    const decision = yield* away.sleep({ onBattery: true });
+    const decision = yield* before.sleep({ onBattery: true });
     expect(decision.answer).toEqual({ outcome: "left" });
     yield* check("sleep-notice");
     yield* decision.send;
@@ -718,10 +733,13 @@ describe("acceptAwayTakeover checks the recorded target's member (LOW)", () => {
       yield* TestClock.setTime(T0 + 2 * MINUTE);
       yield* f.intents.tick;
       const status = (yield* intentStatus(
-        f.intents,
+        {
+          latestState: f.intents.latestState,
+          continuation: () => Effect.succeed({ kind: "none" }),
+        },
         callerFrom("m4"),
         { sourceEnvironmentId: "m4", projectIds: [f.m4ProjectId] },
-        [],
+        Effect.succeed([]),
         "ministorm",
       )).body as { projects: ReadonlyArray<{ takenOver: boolean }> };
       expect(status.projects[0]?.takenOver).toBe(false);

@@ -410,6 +410,22 @@ export const HandoffModeSnapshot = Schema.Struct({
   /** Set after a wake that found no peer: handoff-mode threads wait until one answers. */
   pausedSince: Schema.NullOr(IsoDateTime),
   machineRun: Schema.NullOr(HandoffMachineRun),
+  /**
+   * Every machine this one still keeps a protective hold for, from the sleep and
+   * silence starts of an earlier release: one it armed that has not confirmed it is
+   * disarmed, one a thread here is fenced for, and the destination of a takeover a
+   * sleep started that has no answer yet. Empty means confirmed: nothing from sleep or
+   * silence can still move a thread. Absent from an older server, which confirms nothing.
+   */
+  pendingDisarm: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        environmentId: EnvironmentId,
+        machineLabel: bounded(120),
+        since: Schema.String,
+      }),
+    ),
+  ),
 });
 export type HandoffModeSnapshot = typeof HandoffModeSnapshot.Type;
 

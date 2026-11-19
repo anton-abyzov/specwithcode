@@ -48,6 +48,10 @@ export class HandoffTurnGate extends Context.Reference<HandoffTurnGateShape>(
 export const PAUSED_OFFLINE_REFUSAL =
   "This machine lost its network while other machines hold copies of this thread, so one of them may have continued it. It starts no turn here until one of those machines answers; choose Resume this machine to run it here anyway.";
 
+/** Why no turn starts while this machine's handoff file does not read. */
+const UNREADABLE_STATE_REFUSAL =
+  "This machine cannot read its handoff state, so another machine may have continued this thread. It starts no turn here until that state reads again.";
+
 export function turnRefusal(
   document: HandoffDocument,
   threadId: string,
@@ -88,9 +92,11 @@ export const layer = Layer.effect(
       check: (threadId: ThreadId) =>
         store.read.pipe(
           Effect.map((document) => turnRefusal(document, threadId, environmentId)),
+          // A lease state that does not read may say another machine continued this
+          // thread, so no turn starts until it reads again (1390 AC-36).
           Effect.catchCause((cause) =>
             Effect.logWarning("Handoff mode could not read its lease state", { cause }).pipe(
-              Effect.as(null),
+              Effect.as(UNREADABLE_STATE_REFUSAL),
             ),
           ),
         ),

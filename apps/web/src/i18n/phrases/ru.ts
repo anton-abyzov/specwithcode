@@ -84,8 +84,6 @@ export const ru: PhraseCatalog = {
   Confirmations: "Подтверждения",
   "Connect private machines automatically": "Подключать частные машины автоматически",
   "Context window indicator": "Индикатор контекстного окна",
-  "Continue automatically when a machine stops answering":
-    "Продолжать автоматически, когда машина перестаёт отвечать",
   "Continue threads after restarts": "Продолжать треды после перезапуска",
   Contrast: "Контраст",
   "Could not check SpecWithCode Connect": "Не удалось проверить SpecWithCode Connect",
@@ -571,8 +569,6 @@ export const ru: PhraseCatalog = {
     "Затем идущая работа останавливается для обновления, приложение перезапускается, а запущенные и стоящие в очереди треды продолжаются после него.",
   "This routine no longer exists or is outside the selected project scope.":
     "Эта рутина больше не существует или не входит в выбранные проекты.",
-  "Threads in handoff mode continue on your chosen Mac after this long. Off means they wait for your click. Coordinator threads never move this way.":
-    "Треды в режиме передачи продолжаются на выбранном вами Mac через это время. «Выключено» значит, что они ждут вашего нажатия. Треды координатора так не переносятся.",
   "Try again in a moment.": "Попробуйте ещё раз через минуту.",
   "Update this environment to manage Antigravity.":
     "Обновите это окружение, чтобы управлять Antigravity.",
@@ -1694,7 +1690,6 @@ export const ru: PhraseCatalog = {
   "Use default": "По умолчанию",
   "A removed machine": "Удалённая машина",
   "More options": "Другие параметры",
-  "Automatic takeover": "Автоматический перехват",
   "inactive chat archiving": "архивация неактивных чатов",
   "After 30 days": "Через 30 дней",
   Never: "Никогда",
@@ -4617,8 +4612,12 @@ export const ru: PhraseCatalog = {
     "{machineLabel} добавлена. После «Обновить» нажмите «Разрешить» в этой строке.",
   "After each turn, copies this machine's threads, existing ones too, to your other machines with the same project, so any of them can pick up. Uses a few more tokens.":
     "После каждого хода копирует треды этой машины, включая существующие, на ваши другие машины с тем же проектом, чтобы любая из них могла продолжить. Расходует чуть больше токенов.",
-  "After work left while it slept. Ask shows one button to bring it back.":
-    "После того как работа ушла, пока машина спала. «Спросить» показывает одну кнопку, чтобы вернуть её.",
+  "After you left with Away. Ask shows one button to bring it back.":
+    "После того как вы ушли в режиме «Не на месте». «Спросить» показывает одну кнопку, чтобы вернуть работу.",
+  "This machine has not confirmed yet that closing the lid moves nothing. Another machine may still continue a thread when this one goes quiet. This copy pauses when that can happen.":
+    "Эта машина ещё не подтвердила, что закрытие крышки ничего не переносит. Другая машина ещё может продолжить тред, когда эта перестанет отвечать. Когда это возможно, эта копия ставится на паузу.",
+  "{machine} may still run an older version that continues a thread when this machine goes quiet. Until it confirms, such a thread pauses here. Update {machine} to end this.":
+    "На {machine}, возможно, ещё работает старая версия, которая продолжает тред, когда эта машина перестаёт отвечать. Пока {machine} не подтвердит обратное, такой тред здесь ставится на паузу. Обновите {machine}, чтобы это прекратилось.",
   "Agents on {hereLabel} can start work on {thereLabel}":
     "Агенты на {hereLabel} могут запускать работу на {thereLabel}",
   "All sign-ins": "Все входы",
@@ -4653,18 +4652,12 @@ export const ru: PhraseCatalog = {
     "Истекло: та машина должна снова разрешить исполнителей здесь",
   Filter: "Фильтр",
   "Filter: {label}": "Фильтр: {label}",
-  "Grace time": "Время ожидания",
-  "Hands work to the Away target when this Mac sleeps. The target waits the grace time first, and nothing moves if you're back sooner. Mac only.":
-    "Передаёт работу машине для режима «Не на месте», когда этот Mac засыпает. Сначала она ждёт заданное время, и если вы вернётесь раньше, ничего не переносится. Только Mac.",
-  "How long the target waits after the lid closes before it takes over.":
-    "Сколько машина ждёт после закрытия крышки, прежде чем взять работу.",
   "Its app sees this machine": "Её приложение видит эту машину",
   "Its work may use any sign-in on this machine.":
     "Её работа может использовать любой вход на этой машине.",
   "Its work may use no sign-in here, so every launch is refused.":
     "Её работа не может использовать здесь ни один вход, поэтому каждый запуск отклоняется.",
   Lasts: "Действует",
-  "Leave automatically when the lid closes": "Уходить автоматически при закрытии крышки",
   "Let another of your machines run work here":
     "Разрешить другой вашей машине запускать здесь работу",
   "Let {machine} manage scheduled routines":
@@ -4750,8 +4743,10 @@ export const ru: PhraseCatalog = {
   "Until you stop it, here or on that machine.":
     "Пока вы не остановите это здесь или на той машине.",
   "When this machine wakes": "Когда эта машина просыпается",
-  "Where Away sends your threads, routines and coordinators. Also used when this machine sleeps; locking the screen doesn't count.":
-    "Куда режим «Не на месте» отправляет ваши треды, рутины и координаторов. Также используется, когда эта машина спит; блокировка экрана не считается.",
+  "Where Away sends your threads, routines and coordinators when you leave this machine.":
+    "Куда режим «Не на месте» отправляет ваши треды, рутины и координаторов, когда вы уходите с этой машины.",
+  "Where Away sends your threads, routines and coordinators when you leave this machine. Closing the lid moves nothing.":
+    "Куда режим «Не на месте» отправляет ваши треды, рутины и координаторов, когда вы уходите с этой машины. Закрытие крышки ничего не переносит.",
   "Who is it for": "Для кого это",
   "Whose machine {machine} is": "Чья машина {machine}",
   "Work from {machine}": "Работа с {machine}",

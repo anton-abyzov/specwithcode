@@ -1,9 +1,6 @@
 import { useTx } from "../../i18n";
 import {
-  AWAY_GRACE_MAX_MINUTES,
-  AWAY_GRACE_MIN_MINUTES,
   type AwayBringBack,
-  type AwaySleepTrigger,
   type EnvironmentId,
   type HandoffConfig,
   type HandoffConfigPatch,
@@ -32,27 +29,24 @@ const NOTE_LABELS: Record<HandoffConfig["noteModel"], string> = {
   cheap: "Smaller model",
   thread: "Thread's model",
 };
-const TAKEOVER_MINUTES = [0, 5, 15, 30, 60] as const;
-// The server waits at least 5 minutes whatever is stored, so a shorter value reads as 5.
-const takeoverLabel = (minutes: number) =>
-  minutes === 0 ? "Off" : `After ${Math.max(5, minutes)} min`;
-
-const SLEEP_TRIGGER_LABELS: Record<AwaySleepTrigger, string> = {
-  off: "Off",
-  "on-battery": "On battery",
-  always: "Always",
-};
-const BRING_BACK_LABELS: Record<AwayBringBack, string> = {
+/**
+ * The choices a Leave honours. Only a lid-close session ever read "auto-on-power",
+ * and sleep starts none, so a saved "auto-on-power" shows the wake card like Ask.
+ */
+type OfferedBringBack = Exclude<AwayBringBack, "auto-on-power">;
+const BRING_BACK_LABELS: Record<OfferedBringBack, string> = {
   prompt: "Ask",
-  "auto-on-power": "Bring back automatically on power",
   manual: "Do nothing",
 };
-const GRACE_MINUTES = [1, 2, 3, 5, 10, 15] as const;
-const graceLabel = (minutes: number) => `${minutes} min`;
-const isSleepTrigger = (value: unknown): value is AwaySleepTrigger =>
-  value === "off" || value === "on-battery" || value === "always";
-const isBringBack = (value: unknown): value is AwayBringBack =>
-  value === "prompt" || value === "auto-on-power" || value === "manual";
+const offeredBringBack = (saved: AwayBringBack): OfferedBringBack =>
+  saved === "manual" ? "manual" : "prompt";
+const isOfferedBringBack = (value: unknown): value is OfferedBringBack =>
+  value === "prompt" || value === "manual";
+
+const AWAY_TARGET_DESCRIPTION =
+  "Where Away sends your threads, routines and coordinators when you leave this machine.";
+const AWAY_TARGET_CONFIRMED_DESCRIPTION =
+  "Where Away sends your threads, routines and coordinators when you leave this machine. Closing the lid moves nothing.";
 
 /** A project on this machine whose own setting differs from the machine default. */
 export interface HandoffModeOverride {
@@ -88,6 +82,9 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
   const away = awayConfigOf(config);
   const awayOff = props.pending || config.sleepTarget === null;
   const overrides = props.overrides ?? [];
+  const bringBack = offeredBringBack(away.bringBack);
+  // Absent: an older server, or one that cannot tell yet. Empty: confirmed by every machine.
+  const pendingDisarm = props.snapshot.pendingDisarm;
   return (
     <SettingsSection
       {...searchableSetting("handoff-mode")}
@@ -138,7 +135,9 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
       <SettingsRow
         {...searchableSetting("handoff-sleep-target")}
         title="Away target"
-        description="Where Away sends your threads, routines and coordinators. Also used when this machine sleeps; locking the screen doesn't count."
+        description={
+          pendingDisarm?.length === 0 ? AWAY_TARGET_CONFIRMED_DESCRIPTION : AWAY_TARGET_DESCRIPTION
+        }
         control={
           <Select
             value={config.sleepTarget ?? "off"}
@@ -172,78 +171,22 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
         }
       />
       <SettingsRow
-        {...searchableSetting("away-sleep-trigger")}
-        title="Leave automatically when the lid closes"
-        description="Hands work to the Away target when this Mac sleeps. The target waits the grace time first, and nothing moves if you're back sooner. Mac only."
-        control={
-          <Select
-            value={away.sleepTrigger}
-            disabled={awayOff}
-            onValueChange={(value) => {
-              if (isSleepTrigger(value)) props.onConfig({ sleepTrigger: value });
-            }}
-          >
-            <SelectTrigger size="sm" aria-label={tx("Leave automatically when the lid closes")}>
-              <SelectValue>{SLEEP_TRIGGER_LABELS[away.sleepTrigger]}</SelectValue>
-            </SelectTrigger>
-            <SelectPopup align="end" alignItemWithTrigger={false}>
-              <SelectItem value="off">{SLEEP_TRIGGER_LABELS.off}</SelectItem>
-              <SelectItem value="on-battery">{SLEEP_TRIGGER_LABELS["on-battery"]}</SelectItem>
-              <SelectItem value="always">{SLEEP_TRIGGER_LABELS.always}</SelectItem>
-            </SelectPopup>
-          </Select>
-        }
-      />
-      <SettingsRow
-        title="Grace time"
-        description="How long the target waits after the lid closes before it takes over."
-        control={
-          <Select
-            value={String(away.graceMinutes)}
-            disabled={awayOff || away.sleepTrigger === "off"}
-            onValueChange={(value) => {
-              const minutes = Number(value);
-              if (
-                Number.isInteger(minutes) &&
-                minutes >= AWAY_GRACE_MIN_MINUTES &&
-                minutes <= AWAY_GRACE_MAX_MINUTES
-              )
-                props.onConfig({ graceMinutes: minutes });
-            }}
-          >
-            <SelectTrigger size="sm" aria-label={tx("Grace time")}>
-              <SelectValue>{graceLabel(away.graceMinutes)}</SelectValue>
-            </SelectTrigger>
-            <SelectPopup align="end" alignItemWithTrigger={false}>
-              {[...new Set<number>([...GRACE_MINUTES, away.graceMinutes])]
-                .sort((a, b) => a - b)
-                .map((minutes) => (
-                  <SelectItem key={minutes} value={String(minutes)}>
-                    {graceLabel(minutes)}
-                  </SelectItem>
-                ))}
-            </SelectPopup>
-          </Select>
-        }
-      />
-      <SettingsRow
         {...searchableSetting("away-bring-back")}
         title="When this machine wakes"
-        description="After work left while it slept. Ask shows one button to bring it back."
+        description="After you left with Away. Ask shows one button to bring it back."
         control={
           <Select
-            value={away.bringBack}
+            value={bringBack}
             disabled={awayOff}
             onValueChange={(value) => {
-              if (isBringBack(value)) props.onConfig({ bringBack: value });
+              if (isOfferedBringBack(value)) props.onConfig({ bringBack: value });
             }}
           >
             <SelectTrigger size="sm" aria-label={tx("When this machine wakes")}>
-              <SelectValue>{BRING_BACK_LABELS[away.bringBack]}</SelectValue>
+              <SelectValue>{BRING_BACK_LABELS[bringBack]}</SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
               <SelectItem value="prompt">{BRING_BACK_LABELS.prompt}</SelectItem>
-              <SelectItem value="auto-on-power">{BRING_BACK_LABELS["auto-on-power"]}</SelectItem>
               <SelectItem value="manual">{BRING_BACK_LABELS.manual}</SelectItem>
             </SelectPopup>
           </Select>
@@ -258,30 +201,6 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
           {tx("More options")}
         </CollapsibleTrigger>
         <CollapsiblePanel keepMounted>
-          <SettingsRow
-            title="Continue automatically when a machine stops answering"
-            description="Threads in handoff mode continue on your chosen Mac after this long. Off means they wait for your click. Coordinator threads never move this way."
-            control={
-              <Select
-                value={String(config.autoTakeoverMinutes)}
-                disabled={props.pending}
-                onValueChange={(value) => props.onConfig({ autoTakeoverMinutes: Number(value) })}
-              >
-                <SelectTrigger size="sm" aria-label={tx("Automatic takeover")}>
-                  <SelectValue>{takeoverLabel(config.autoTakeoverMinutes)}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  {[...new Set<number>([...TAKEOVER_MINUTES, config.autoTakeoverMinutes])].map(
-                    (minutes) => (
-                      <SelectItem key={minutes} value={String(minutes)}>
-                        {takeoverLabel(minutes)}
-                      </SelectItem>
-                    ),
-                  )}
-                </SelectPopup>
-              </Select>
-            }
-          />
           <SettingsRow
             title={tx("Turn summary")}
             description="A short note at each turn end: what's done, what's next, open questions. It helps the next machine pick up."
@@ -319,6 +238,26 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
           />
         </CollapsiblePanel>
       </Collapsible>
+      {pendingDisarm === undefined ? (
+        <p role="status" className="px-3 py-2 text-muted-foreground text-sm sm:px-4">
+          {tx(
+            "This machine has not confirmed yet that closing the lid moves nothing. Another machine may still continue a thread when this one goes quiet. This copy pauses when that can happen.",
+          )}
+        </p>
+      ) : (
+        pendingDisarm.map((machine) => (
+          <p
+            key={machine.environmentId}
+            role="status"
+            className="px-3 py-2 text-muted-foreground text-sm sm:px-4"
+          >
+            {tx(
+              "{machine} may still run an older version that continues a thread when this machine goes quiet. Until it confirms, such a thread pauses here. Update {machine} to end this.",
+              { machine: machine.machineLabel },
+            )}
+          </p>
+        ))
+      )}
       {props.error ? (
         <p role="alert" className="px-3 py-2 text-sm text-destructive-foreground sm:px-4">
           {props.error}

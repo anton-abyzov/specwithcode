@@ -111,8 +111,32 @@ const PHASE_2_PHRASES: readonly string[] = [
   "Move project",
 ];
 
+/**
+ * Sleep and silence never start a handoff (AC-36), so their settings and the sentences that
+ * promised an automatic move or return are gone.
+ */
+const SLEEP_START_PHRASES: readonly string[] = [
+  "Continue automatically when a machine stops answering",
+  "Threads in handoff mode continue on your chosen Mac after this long. Off means they wait for your click. Coordinator threads never move this way.",
+  "Automatic takeover",
+  "Grace time",
+  "Hands work to the Away target when this Mac sleeps. The target waits the grace time first, and nothing moves if you're back sooner. Mac only.",
+  "How long the target waits after the lid closes before it takes over.",
+  "Leave automatically when the lid closes",
+  "Where Away sends your threads, routines and coordinators. Also used when this machine sleeps; locking the screen doesn't count.",
+  "After work left while it slept. Ask shows one button to bring it back.",
+  // Only a lid-close session honoured it, and none starts any more.
+  "Bring back automatically on power",
+  // Replaced by sentences that say what an unconfirmed machine may still do.
+  "Waiting for {machine} to confirm that silence no longer moves threads. Until it answers, a thread it could continue pauses here when it goes quiet.",
+];
+
 /** Exact old phrases: never quoted in the source again, and never a catalog key. */
-export const RETIRED_PHRASES: readonly string[] = [...PHASE_1_PHRASES, ...PHASE_2_PHRASES];
+export const RETIRED_PHRASES: readonly string[] = [
+  ...PHASE_1_PHRASES,
+  ...PHASE_2_PHRASES,
+  ...SLEEP_START_PHRASES,
+];
 
 /** Phase 1: retired words that were plain text in a component. */
 const PHASE_1_TEXT: readonly string[] = [

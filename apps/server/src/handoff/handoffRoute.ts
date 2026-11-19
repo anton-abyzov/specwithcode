@@ -21,7 +21,12 @@ import { LinkedMemoryPeerReceiver } from "../project/LinkedMemoryPeers.ts";
 import { LinkedPeerReceiver } from "../project/LinkedPeerRoute.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { ExtrasReceiver } from "./ExtrasReceiver.ts";
-import { HandoffReceiver, type HandoffRefusal, type ReceiverCaller } from "./HandoffReceiver.ts";
+import {
+  HandoffReceiver,
+  HandoffRefusal,
+  type ReceiverCaller,
+  refusalAnswer,
+} from "./HandoffReceiver.ts";
 import {
   COORDINATOR_REPLICA_MAX_BYTES,
   CoordinatorLeaseRequest,
@@ -40,8 +45,10 @@ import {
   PeerPreflightRequest,
   type PeerPath,
   ReplicateMeta,
+  TakeoverReason,
   TakeoverRequest,
 } from "./handoffWire.ts";
+import { isRetiredReason } from "./handoffState.ts";
 import {
   LinkedContentRequest,
   LinkedDigestRequest,
@@ -67,11 +74,15 @@ const refusal = (status: number, error: string, extra: Record<string, unknown> =
     { status, headers: { "cache-control": "no-store" } },
   );
 
-const fromRefusal = (error: HandoffRefusal) =>
-  refusal(error.status, error.message, {
-    code: error.code,
-    ...(error.check === undefined ? {} : { check: error.check }),
+const fromRefusal = (error: HandoffRefusal) => {
+  const answer = refusalAnswer(error);
+  return HttpServerResponse.jsonUnsafe(answer.body, {
+    status: answer.status,
+    headers: { "cache-control": "no-store" },
   });
+};
+
+const UPDATING = "This machine is updating; try again in a minute.";
 
 const decodeJson = <S extends Schema.Top>(schema: S, bytes: Uint8Array) => {
   let raw: unknown;
@@ -83,6 +94,23 @@ const decodeJson = <S extends Schema.Top>(schema: S, bytes: Uint8Array) => {
   return Schema.decodeUnknownOption(schema as never)(raw) as Option.Option<S["Type"]>;
 };
 
+/** Answered for a sleep or silence start this machine refuses before reading it. */
+const RETIRED_UNREAD =
+  "This machine did not read the request, so whether an earlier start of this thread began here is not settled; the thread stays paused until a heartbeat settles it.";
+
+const decodeReason = Schema.Struct({ reason: TakeoverReason });
+
+/** A takeover body that asks for a start this release retired (sleep or silence). */
+const asksRetiredStart = (bytes: Uint8Array) => {
+  const asked = decodeJson(decodeReason, bytes);
+  return Option.isSome(asked) && isRetiredReason(asked.value.reason);
+};
+
+const retiredUnread = () =>
+  fromRefusal(
+    new HandoffRefusal({ status: 503, code: "busy", message: RETIRED_UNREAD, inDoubt: true }),
+  );
+
 const ok = (value: unknown) =>
   HttpServerResponse.jsonUnsafe(value, { headers: { "cache-control": "no-store" } });
 
@@ -91,33 +119,64 @@ export const layer = HttpRouter.add(
   `${HANDOFF_PEER_PREFIX}/*`,
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
-    if (yield* (yield* ServiceUpdateHold.optional).isHeld) {
-      return refusal(503, "This machine is updating; try again in a minute.", { code: "busy" });
-    }
     const url = HttpServerRequest.toURL(request);
+    if (yield* (yield* ServiceUpdateHold.optional).isHeld) {
+      // A takeover is not read while updating, so whether an earlier one began here is
+      // unknown: no answer, which keeps the source's hold on every release.
+      const takeover =
+        Option.isSome(url) && url.value.pathname === `${HANDOFF_PEER_PREFIX}/takeover`;
+      return takeover
+        ? fromRefusal(
+            new HandoffRefusal({ status: 503, code: "busy", message: UPDATING, inDoubt: true }),
+          )
+        : refusal(503, UPDATING, { code: "busy" });
+    }
     if (Option.isNone(url)) return refusal(400, "invalid_request", { code: "invalid" });
     const path = url.value.pathname.slice(HANDOFF_PEER_PREFIX.length + 1);
     if (!PEER_PATHS.has(path)) return refusal(404, "not_found", { code: "not_found" });
+    // A sleep or silence start an earlier release sends may follow one that launched
+    // here: refused before the receiver reads it, it gets no answer, never a refusal,
+    // so the source keeps its hold (1390 AC-36). Only the receiver can prove it new.
+    const unread = (
+      structured: HttpServerResponse.HttpServerResponse,
+    ): Effect.Effect<HttpServerResponse.HttpServerResponse> =>
+      path !== "takeover"
+        ? Effect.succeed(structured)
+        : request.arrayBuffer.pipe(
+            Effect.map((buffer) =>
+              asksRetiredStart(new Uint8Array(buffer)) ? retiredUnread() : structured,
+            ),
+            Effect.provideService(
+              HttpIncomingMessage.MaxBodySize,
+              ByteSize.bytes(HANDOFF_JSON_MAX_BYTES),
+            ),
+            Effect.orElseSucceed(() => structured),
+          );
 
     const auth = yield* EnvironmentAuth.EnvironmentAuth;
     const client = yield* auth.authenticateMcpClient(request).pipe(Effect.option);
-    if (Option.isNone(client)) return refusal(401, "unauthorized", { code: "needs_grant" });
+    if (Option.isNone(client))
+      return yield* unread(refusal(401, "unauthorized", { code: "needs_grant" }));
     const grants = yield* WorkGrants.WorkGrants;
     const grant = yield* grants.forClient(client.value).pipe(Effect.option);
     if (Option.isNone(grant) || grant.value === undefined) {
-      return refusal(403, "Only a paired machine's worker credential may hand off here.", {
-        code: "needs_grant",
-        check: "grant",
-      });
+      return yield* unread(
+        refusal(403, "Only a paired machine's worker credential may hand off here.", {
+          code: "needs_grant",
+          check: "grant",
+        }),
+      );
     }
     if (grant.value.revoked) {
       // A standby stops standing by for a coordinator this machine revoked.
       if (path === "coordinator-lease")
         yield* (yield* CoordinatorLeaseReceiver).grantRefused(grant.value.coordinatorEnvironmentId);
-      return refusal(403, "This machine revoked that machine's work here.", {
-        code: "needs_grant",
-        check: "grant",
-      });
+      return yield* unread(
+        refusal(403, "This machine revoked that machine's work here.", {
+          code: "needs_grant",
+          check: "grant",
+        }),
+      );
     }
     const ruled = teamRulesSessionRefusal(
       yield* currentTeamRules,
@@ -125,7 +184,7 @@ export const layer = HttpRouter.add(
       callerFingerprint(request.headers),
     );
     if (ruled !== null) {
-      return refusal(403, ruled.message, { code: "needs_grant", check: "grant" });
+      return yield* unread(refusal(403, ruled.message, { code: "needs_grant", check: "grant" }));
     }
     const caller: ReceiverCaller = {
       sourceEnvironmentId: grant.value.coordinatorEnvironmentId,
@@ -181,9 +240,8 @@ export const layer = HttpRouter.add(
       case "takeover":
       case "review-takeover": {
         const input = decodeJson(TakeoverRequest, body.value);
-        return Option.isNone(input)
-          ? invalid
-          : yield* answer(receiver.takeover(caller, input.value));
+        if (Option.isSome(input)) return yield* answer(receiver.takeover(caller, input.value));
+        return asksRetiredStart(body.value) ? retiredUnread() : invalid;
       }
       case "heartbeat": {
         const input = decodeJson(HeartbeatRequest, body.value);
