@@ -262,6 +262,49 @@ describe("routine transfer, this machine's side", () => {
     }),
   );
 
+  it.effect("tried again when the target has no trace of the move, calls it off there first", () =>
+    Effect.gen(function* () {
+      let aborts = 0;
+      const { transfer, log, memory } = out({
+        status: () => Effect.succeed({ ...CAPABLE, operation: "unknown" }),
+        "runner-stage": staged,
+        "runner-enable": silence,
+        // The first call-off is lost too: the enable may still arrive, so nothing turns on here.
+        "runner-abort": () =>
+          aborts++ === 0 ? silence() : Effect.succeed({ ...CAPABLE, operation: "aborted" }),
+      });
+      yield* transfer.moveOut(moveInput);
+      log.length = 0;
+      const stillOff = yield* transfer.moveOut(moveInput);
+      expect(stillOff).toMatchObject({ kind: "failed", offHere: true });
+      expect(log).toEqual(["post:status", "post:runner-abort"]);
+      expect(memory.rows.get(TASK.id)?.state).toBe("moving");
+      log.length = 0;
+      const back = yield* transfer.moveOut(moveInput);
+      expect(back).toMatchObject({ kind: "failed", offHere: false });
+      expect(log).toEqual([
+        "post:status",
+        "post:runner-abort",
+        "here:on",
+        `state:${STATE.nextRunAt}`,
+        "note:clear",
+      ]);
+      expect(memory.rows.size).toBe(0);
+    }),
+  );
+
+  it.effect("takes a failure of the target to read its own state as no answer, not as a no", () =>
+    Effect.gen(function* () {
+      const { transfer, log } = out({
+        "runner-stage": staged,
+        "runner-enable": () => refusal("Target: could not read its routine runners.", 503),
+      });
+      const moved = yield* transfer.moveOut(moveInput);
+      expect(moved).toMatchObject({ kind: "failed", offHere: true });
+      expect(log).not.toContain("here:on");
+    }),
+  );
+
   it.effect("never turns it off here when staging fails", () =>
     Effect.gen(function* () {
       const { transfer, log } = out({ "runner-stage": () => refusal("no grant", 403) });

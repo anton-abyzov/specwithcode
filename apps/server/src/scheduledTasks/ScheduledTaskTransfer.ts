@@ -230,6 +230,13 @@ const MoveOperation = Schema.Struct({
 type MoveOperation = typeof MoveOperation.Type;
 const decodeOperation = Schema.decodeUnknownOption(MoveOperation);
 
+/**
+ * Whether a failed call says the target did not act and will not. An answer in
+ * the 500s is this release failing to read its own state: it may have acted before.
+ */
+const definiteNo = (failure: AwayPeerError) =>
+  failure.refused && !failure.uncertain && (failure.status ?? 0) < 500;
+
 export const needsUpdateDetail = (targetLabel: string) =>
   `Stays here: ${targetLabel} must be updated before a routine can move to it.`.slice(0, 500);
 
@@ -333,7 +340,7 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
       }).pipe(Effect.result);
       if (enabled._tag === "Success" && enabled.success.enabled === true)
         return yield* moved(enabled.success.revision ?? revision + 1);
-      if (enabled._tag === "Failure" && !(enabled.failure.refused && !enabled.failure.uncertain))
+      if (enabled._tag === "Failure" && !definiteNo(enabled.failure))
         return failed(
           `${operation.targetLabel} did not confirm it turned the routine on. It stays off here; try the move again, or Bring back turns it on here.`,
           true,
@@ -364,20 +371,27 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
           "This routine's move could not be read. Bring it back, then try again.",
           true,
         );
+      // Cut off before this machine turned it off: no enable was ever sent, so the
+      // move is called off here whatever the target answers, and starts clean next time.
+      const callOffUnsent = Effect.gen(function* () {
+        yield* abort(operation.target, record.operationId!, task.id);
+        yield* backHere(task, operation, false);
+        return failed("Stays here: the move was cut off before it began. Try again.", false);
+      });
       if (operation.target !== target)
-        return failed(
-          `Stays as it is: it is moving to ${operation.targetLabel}.`,
-          operation.phase === "off",
-        );
+        return operation.phase === "off"
+          ? failed(`Stays as it is: it is moving to ${operation.targetLabel}.`, true)
+          : yield* callOffUnsent;
       const asked = yield* ask(target, {
         op: "status",
         routineId: task.id,
         operationId: record.operationId,
       }).pipe(Effect.result);
+      if (operation.phase === "staged") return yield* callOffUnsent;
       if (asked._tag === "Failure" || !affirmsRunner(asked.success))
         return failed(
-          `${operation.targetLabel} did not say where the move stands. It stays as it is; try again.`,
-          operation.phase === "off",
+          `${operation.targetLabel} did not say where the move stands. It stays off here; try again.`,
+          true,
         );
       switch (asked.success.operation) {
         case "enabled":
@@ -385,15 +399,19 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
             revision: asked.success.routine?.revision ?? (yield* deps.revisionOf(task.id)) + 1,
           });
         case "staged":
-          if (operation.phase === "off") return yield* finish(task, record, operation, null);
-          // Cut off before this machine turned it off: called off, to start clean.
-          yield* abort(target, record.operationId, task.id);
-          yield* backHere(task, operation, false);
-          return failed("Stays here: the move was cut off before it began. Try again.", false);
-        default:
-          // Not there, or called off there: it runs here.
-          yield* backHere(task, operation, operation.phase === "off");
+          return yield* finish(task, record, operation, null);
+        default: {
+          // Not there as far as it can tell. The enable may still be on its way, so the
+          // move is called off there first: after that a late enable is refused for good.
+          const called = yield* abort(target, record.operationId, task.id);
+          if (called._tag === "Failure" || called.success.operation !== "aborted")
+            return failed(
+              `${operation.targetLabel} did not confirm the move is called off. It stays off here; try again.`,
+              true,
+            );
+          yield* backHere(task, operation, true);
           return failed(`Stays here: ${operation.targetLabel} does not hold the move.`, false);
+        }
       }
     });
 
@@ -473,7 +491,13 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
         operationId,
         operation,
       };
-      yield* deps.records.write(moving).pipe(Effect.ignore);
+      // Remembered before anything changes here: a move this machine cannot remember
+      // is not started.
+      const remembered = yield* deps.records.write(moving).pipe(Effect.result);
+      if (remembered._tag === "Failure") {
+        yield* abort(target, operationId, task.id);
+        return failed("Stays here: this machine could not record the move.", false);
+      }
       // 2. Off here, then the state as it is now. It is turned on there only once
       //    this machine's row reads off: otherwise it could fire on both.
       const off = yield* deps.setEnabled(task.id, false);
@@ -491,7 +515,13 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
       const offOperation: MoveOperation = { ...operation, phase: "off", runState };
       const offRecord = { ...moving, operation: offOperation };
       // Written before the enable leaves: a retry repeats this enable and no other.
-      yield* deps.records.write(offRecord).pipe(Effect.ignore);
+      const written = yield* deps.records.write(offRecord).pipe(Effect.result);
+      if (written._tag === "Failure") {
+        // Without it a retry could not repeat the enable: called off, and on here again.
+        yield* abort(target, operationId, task.id);
+        yield* backHere(task, offOperation, true);
+        return failed("Stays here: this machine could not record the move.", false);
+      }
       // 3. On there, acknowledged.
       return yield* finish(task, offRecord, offOperation, null);
     });
@@ -674,7 +704,10 @@ export const makeTransferIn = (deps: TransferInDeps) => {
         return yield* refuse(409, "Another machine's work set up that routine here.");
       // A routine this machine runs itself, or is moving, is not another machine's to stage.
       const record = yield* strict(deps.records.read(routine.id));
-      if (record !== null && record.state !== "disarmed")
+      // A copy the same machine staged before, in a move that never ended, is staged over.
+      const leftover =
+        record?.state === "staged" && record.runnerEnvironmentId === caller.sourceEnvironmentId;
+      if (record !== null && record.state !== "disarmed" && !leftover)
         return yield* refuse(409, "This machine runs that routine itself.");
       const runtime = cappedRuntimeMode(routine.runtimeMode, caller.runtimeCeiling);
       const input = decodeUpsert({

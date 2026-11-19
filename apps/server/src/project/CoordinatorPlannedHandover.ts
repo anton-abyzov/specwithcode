@@ -531,12 +531,13 @@ export const readRunStates = (projectId: ProjectId, ids: ReadonlyArray<string>) 
 export const writeRunStates = (projectId: ProjectId, states: ReadonlyArray<RoutineRunState>) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    // A routine this machine runs itself keeps its own run state (ScheduledTaskRunner):
+    // A routine this machine runs itself, whatever the coordinator binding, keeps its own
+    // run state (ScheduledTaskRunner):
     // the source's copy only rested, so its slot may be one this machine already fired.
     const notRunHere = sql`NOT EXISTS (
       SELECT 1 FROM scheduled_task_runners
       WHERE scheduled_task_runners.task_id = scheduled_tasks.task_id
-        AND scheduled_task_runners.state <> 'disarmed'
+        AND scheduled_task_runners.state IN ('settled', 'staged', 'moving')
     )`;
     yield* Effect.forEach(
       states,

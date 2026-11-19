@@ -158,10 +158,8 @@ export const harness = Effect.gen(function* () {
       nextTurnModel: () => Effect.succeed(undefined as never),
     }),
     Layer.mock(Scheduler.Scheduler)({
-      register: <E, R>(name: string, work: Effect.Effect<void, E, R>) =>
+      register: <E, R>(_name: string, work: Effect.Effect<void, E, R>) =>
         Effect.gen(function* () {
-          // Only the pass over due routines; the runner's own tick is not driven here.
-          if (name !== "scheduled-tasks") return;
           const context = yield* Effect.context<R>();
           state.due = work.pipe(Effect.provideContext(context), Effect.orDie);
         }),

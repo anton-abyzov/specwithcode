@@ -46,6 +46,7 @@ import {
   ScheduledTaskUpsertInput,
 } from "@specweave-studio/contracts";
 import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -93,6 +94,11 @@ export const threadHandedOffNote = (label: string) =>
 export const MOVING_ROUTINE_WAIT = "Waiting: this routine is moving to another machine.";
 export const MOVING_ROUTINE_CHANGE_REFUSAL =
   "This routine is moving to another machine, so it cannot change right now. Try again in a moment.";
+export const deleteUnreachedRefusal = (labels: ReadonlyArray<string>) =>
+  `Not deleted: ${labels.join(", ")} did not confirm removing its copy, and the routine would come back from it. Try again when it is reachable.`.slice(
+    0,
+    500,
+  );
 export const STALE_ROUTINE_EDIT_REFUSAL =
   "This routine changed since you opened it, so your change was not saved. Open it again and repeat the change.";
 
@@ -117,6 +123,11 @@ export interface RoutineRunnerRecord {
 /** Whether the record makes this machine the one that runs the routine. */
 export const runsHere = (record: Pick<RoutineRunnerRecord, "state"> | null | undefined) =>
   record != null && (record.state === "settled" || record.state === "settling");
+
+/** Whether the record keeps a replica or a handover from rewriting the routine here. */
+export const keepsOwnState = (record: Pick<RoutineRunnerRecord, "state"> | null) =>
+  record !== null &&
+  (record.state === "settled" || record.state === "staged" || record.state === "moving");
 
 interface RecordRow {
   readonly task_id: string;
@@ -320,8 +331,16 @@ export interface RoutineRunnerDeps {
 
 /** How often this machine asks its peers again about routines not settled yet. */
 const SETTLE_RETRY_MS = 60_000;
-/** How often the scheduler's tick looks for routines to settle at all. */
-const RECONCILE_EVERY_MS = 30_000;
+/**
+ * How often a server looks for routines to settle with the other machines,
+ * at the earliest. The look starts after a pass over due routines, on a fiber
+ * of its own: it waits on other machines, and the scheduler's sources take
+ * turns on a fixed beat. Null (a test that settles by hand) never looks.
+ */
+export class RoutineRunnerPace extends Context.Reference<{ readonly everyMs: number | null }>(
+  "specweave-studio/scheduledTasks/RoutineRunnerPace",
+  { defaultValue: () => ({ everyMs: 30_000 }) },
+) {}
 
 const decodeUpsert = Schema.decodeUnknownOption(ScheduledTaskUpsertInput);
 
@@ -335,8 +354,12 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
     const peersRef = yield* Ref.make<RoutineRunnerPeers | null>(null);
     // One change at a time: the revision check, the change and the bump are one step.
     const lock = yield* Semaphore.make(1);
+    // One settling pass at a time; it takes `lock` only around its own writes.
+    const settling = yield* Semaphore.make(1);
+    const writing = <A, E>(effect: Effect.Effect<A, E>) => lock.withPermits(1)(effect);
+    /** The revision each routine's resting copies last heard, since this server started. */
+    const pushed = new Map<string, number>();
     const lastAsked = new Map<string, number>();
-    let lastReconcile = Number.NEGATIVE_INFINITY;
 
     /** The project's other machines, or null when this machine cannot tell itself apart. */
     const othersOf = (projectId: ProjectId) =>
@@ -370,6 +393,8 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
 
     const hold = (task: GateTask): Effect.Effect<RoutineCoordinatorHold | null> =>
       Effect.gen(function* () {
+        // A webhook routine stays with the machine its URL points to, and has no record.
+        if (task.schedule.type === "webhook") return null;
         const record = task.id === undefined ? null : yield* records.readStrict(task.id);
         if (record !== null) {
           if (record.state === "disarmed")
@@ -377,8 +402,6 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
           if (record.state === "staged" || record.state === "moving")
             return { kind: "wait", reason: MOVING_ROUTINE_WAIT } as const;
         }
-        // A webhook routine stays with the machine its URL points to.
-        if (task.schedule.type === "webhook") return null;
         if (!isCoordinatorOwnedRoutine(task)) {
           if (task.threadId != null) {
             const movedTo = yield* deps.threadMovedTo(task.threadId);
@@ -423,23 +446,71 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
       operation: null,
     });
 
+    /**
+     * Records what the other machines confirmed, and `settled` once all of them
+     * did. Read again under the lock, and only while this machine still runs the
+     * routine under the coordinator rule: one that stopped coordinating meanwhile
+     * never becomes the runner over the machine that fires it now.
+     */
+    const settleIfStillClaimed = (
+      task: ScheduledTask,
+      self: string | null,
+      others: ReadonlyArray<string>,
+      added: ReadonlyArray<string>,
+    ) =>
+      writing(
+        Effect.gen(function* () {
+          const record = yield* records.read(task.id);
+          if (record !== null && !runsHere(record)) return;
+          const acked = [...new Set([...(record?.acked ?? []), ...added])];
+          const complete = others.every((member) => acked.includes(member));
+          if (record?.state !== "settled" && (yield* deps.legacyHold(task)) !== null) {
+            // Kept as confirmed so far; the next pass frees these machines again.
+            if (acked.length > 0)
+              yield* records.write(selfRecord(task.id, self, record, acked, "settling"));
+            return;
+          }
+          yield* records.write(
+            selfRecord(task.id, self, record, acked, complete ? "settled" : "settling"),
+          );
+          yield* deps.notifyChanged;
+        }),
+      );
+
     /** Tells the machines that already rest their copies to follow the coordinator again. */
     const rearm = (peers: RoutineRunnerPeers, task: ScheduledTask, record: RoutineRunnerRecord) =>
       Effect.gen(function* () {
         // First, this machine stops firing as the runner: back under the coordinator gate.
-        if (record.state === "settled") yield* records.write({ ...record, state: "settling" });
-        let acked = [...record.acked];
+        if (record.state === "settled")
+          yield* writing(
+            Effect.gen(function* () {
+              const now = yield* records.read(task.id);
+              if (now?.state === "settled") yield* records.write({ ...now, state: "settling" });
+            }),
+          );
+        const freed: Array<string> = [];
         for (const member of record.acked) {
           const told = yield* peers
             .post(member, { op: "runner-rearm", routineIds: [task.id] })
             .pipe(Effect.result);
-          if (told._tag === "Success" || (told.failure.refused && !told.failure.uncertain))
-            acked = acked.filter((entry) => entry !== member);
+          if (told._tag === "Success" || isOlderRelease(told.failure)) freed.push(member);
         }
-        if (acked.length === 0) yield* records.remove(task.id);
-        else yield* records.write({ ...record, state: "settling", acked });
+        yield* writing(
+          Effect.gen(function* () {
+            const now = yield* records.read(task.id);
+            if (now === null || !runsHere(now)) return;
+            const acked = now.acked.filter((entry) => !freed.includes(entry));
+            if (acked.length === 0) yield* records.remove(task.id);
+            else yield* records.write({ ...now, state: "settling", acked });
+          }),
+        );
       });
 
+    /**
+     * Settling asks other machines, each for up to half a minute, so it never
+     * holds this machine's change lock while it asks: only while it writes, and
+     * every write reads the record again first.
+     */
     const reconcileOnce = (force: boolean) =>
       Effect.gen(function* () {
         const self = yield* deps.selfEnvironmentId;
@@ -457,22 +528,50 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
           // A project no other machine shares has nothing to settle: it runs as it did.
           if (others === null || others.length === 0) continue;
           const need = new Map<string, Array<ScheduledTask>>();
+          /** Routines this machine runs whose resting copies have not heard their latest revision. */
+          const stale = new Map<string, Array<ScheduledTask>>();
           for (const task of owned) {
             const record = all.get(task.id) ?? null;
             if (record !== null && !runsHere(record)) continue;
-            // Only the machine that runs it today claims it.
-            if (record === null && (yield* deps.legacyHold(task)) !== null) continue;
+            // Only the machine that runs it today claims it, or goes on claiming it.
+            if (record?.state !== "settled") {
+              const held = yield* deps.legacyHold(task);
+              if (held !== null) {
+                // It stopped coordinating before every machine confirmed: the machines
+                // that already rest their copies follow the coordinator again.
+                if (record !== null && held.kind === "rest" && peers !== null)
+                  yield* rearm(peers, task, record);
+                continue;
+              }
+            }
             const missing = others.filter((member) => !(record?.acked ?? []).includes(member));
             if (missing.length === 0) {
-              if (record?.state !== "settled") {
-                yield* records.write(
-                  selfRecord(task.id, self, record, record?.acked ?? [], "settled"),
-                );
-                yield* deps.notifyChanged;
-              }
+              if (record?.state !== "settled") yield* settleIfStillClaimed(task, self, others, []);
+              else if ((counts.get(task.id) ?? 0) !== pushed.get(task.id))
+                for (const member of others)
+                  stale.set(member, [...(stale.get(member) ?? []), task]);
               continue;
             }
             for (const member of missing) need.set(member, [...(need.get(member) ?? []), task]);
+          }
+          if (peers !== null && stale.size > 0) {
+            const reached = new Map<string, number>();
+            for (const [member, list] of stale) {
+              const told = yield* peers
+                .post(member, {
+                  op: "runner-disarm",
+                  sourceProjectId: projectId,
+                  routineIds: list.map((task) => task.id),
+                  revisions: list.map((task) => counts.get(task.id) ?? 0),
+                })
+                .pipe(Effect.result);
+              if (told._tag === "Success")
+                for (const id of told.success.acked ?? [])
+                  reached.set(id, (reached.get(id) ?? 0) + 1);
+            }
+            for (const task of new Set([...stale.values()].flat()))
+              if (reached.get(task.id) === others.length)
+                pushed.set(task.id, counts.get(task.id) ?? 0);
           }
           if (need.size === 0 || peers === null) continue;
           if (
@@ -489,7 +588,7 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
             const asked = yield* peers.post(member, { op: "status" }).pipe(Effect.result);
             if (asked._tag === "Success") {
               if (!affirmsRunner(asked.success)) old = true;
-            } else if (asked.failure.refused && !asked.failure.uncertain) old = true;
+            } else if (isOlderRelease(asked.failure)) old = true;
             else silent = true;
           }
           if (old) {
@@ -518,14 +617,7 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
           for (const task of owned) {
             const added = ackedNow.get(task.id);
             if (added === undefined) continue;
-            // Read again: a change made meanwhile bumped the revision.
-            const record = yield* records.read(task.id);
-            if (record !== null && !runsHere(record)) continue;
-            const acked = [...new Set([...(record?.acked ?? []), ...added])];
-            const complete = others.every((member) => acked.includes(member));
-            yield* records.write(
-              selfRecord(task.id, self, record, acked, complete ? "settled" : "settling"),
-            );
+            yield* settleIfStillClaimed(task, self, others, added);
           }
           yield* deps.notifyChanged;
         }
@@ -537,15 +629,33 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
 
     /** Settles what can be settled now; `force` skips the wait between asks (tests, a new routine). */
     const reconcile = (options?: { readonly force?: boolean }) =>
-      lock.withPermits(1)(reconcileOnce(options?.force === true));
+      settling.withPermits(1)(reconcileOnce(options?.force === true));
 
-    /** The scheduler's tick: a look every half minute. */
+    /** One paced look. Nothing to do until this machine can reach the others. */
     const tick = Effect.gen(function* () {
-      const now = DateTime.toEpochMillis(yield* DateTime.now);
-      if (now - lastReconcile < RECONCILE_EVERY_MS) return;
-      lastReconcile = now;
+      if ((yield* Ref.get(peersRef)) === null) return;
       yield* reconcile();
     });
+
+    /**
+     * A look at most every `everyMs`, started by the caller after a due pass. On a
+     * fiber of its own: it waits on other machines, and a due pass never waits on it.
+     */
+    const pacedLook = (everyMs: number) =>
+      Effect.gen(function* () {
+        const scope = yield* Effect.scope;
+        const looks = { last: Number.NEGATIVE_INFINITY, running: false };
+        return Effect.gen(function* () {
+          const now = DateTime.toEpochMillis(yield* DateTime.now);
+          if (looks.running || now - looks.last < everyMs) return;
+          looks.last = now;
+          looks.running = true;
+          yield* tick.pipe(
+            Effect.ensuring(Effect.sync(() => void (looks.running = false))),
+            Effect.forkIn(scope),
+          );
+        });
+      });
 
     // --- changes -------------------------------------------------------------------------
 
@@ -634,6 +744,28 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
         ),
       );
 
+    /**
+     * Tells every machine that rests its copy of a routine this machine runs
+     * that it is deleted. Returns the machines that did not confirm.
+     */
+    const tellDeleted = (record: RoutineRunnerRecord, id: ScheduledTaskId, except: string | null) =>
+      Effect.gen(function* () {
+        const peers = yield* Ref.get(peersRef);
+        const unreached: Array<string> = [];
+        for (const member of record.acked) {
+          if (member === except) continue;
+          const told =
+            peers === null
+              ? null
+              : yield* peers
+                  .post(member, { op: "runner-rearm", routineIds: [id], deleted: true })
+                  .pipe(Effect.result);
+          if (told === null || (told._tag === "Failure" && !isOlderRelease(told.failure)))
+            unreached.push((peers === null ? null : yield* peers.label(member)) ?? member);
+        }
+        return unreached;
+      });
+
     /** Sends a change to the runner. Nothing is written here unless the runner made it. */
     const forward = (
       record: RoutineRunnerRecord,
@@ -695,6 +827,8 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
       readonly change: Effect.Effect<A, ScheduledTaskError>;
       readonly ownRemovable?: boolean | undefined;
       readonly expectedRevision?: number | undefined;
+      /** Runs once the change is allowed, before it is made; a failure calls it off. */
+      readonly before?: Effect.Effect<void, ScheduledTaskError> | undefined;
       readonly forwarded?:
         | ((existing: ScheduledTask) => {
             readonly edit: RoutineRunnerEdit;
@@ -705,6 +839,8 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
       lock.withPermits(1)(
         Effect.gen(function* () {
           const bumped: Array<string> = [];
+          /** Projects of routines this machine runs whatever the coordinator binding says. */
+          const runnerProjects = new Set<string>();
           for (const target of input.targets) {
             const record = "id" in target ? yield* records.read(target.id) : null;
             if (record !== null && "id" in target) {
@@ -736,15 +872,21 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
               if (record?.state === "settled") {
                 // Every other machine rests its copy: the coordinator no longer decides.
                 const existing = yield* deps.findTask(target.id);
-                if (existing !== null && (yield* covered(record, existing.projectId))) continue;
+                if (existing !== null && (yield* covered(record, existing.projectId))) {
+                  runnerProjects.add(existing.projectId);
+                  continue;
+                }
               }
             }
+            // A save of such a routine in its own project is the runner's to make.
+            if (!("id" in target) && runnerProjects.has(target.projectId)) continue;
             const refusal = yield* legacyRefusal(target, input.ownRemovable === true);
             if (refusal !== null)
               return yield* taskError(refusal, {
                 ...("id" in target ? { taskId: target.id } : {}),
               });
           }
+          if (input.before !== undefined) yield* input.before;
           const result = yield* input.change;
           for (const id of bumped) yield* bump(id);
           return result;
@@ -795,14 +937,7 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
           },
           done: (task) => ({ task: task ?? existing }),
         }),
-      }).pipe(
-        // A routine made here, in a project no other machine shares, is its own runner at once.
-        Effect.tap((result) =>
-          input.id === undefined && isRunnerRoutine(result.task)
-            ? reconcile({ force: true })
-            : Effect.void,
-        ),
-      );
+      });
 
     const guardSetEnabled = (
       input: ScheduledTaskSetEnabledInput,
@@ -828,6 +963,14 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
         change,
         ownRemovable: true,
         expectedRevision: input.expectedRevision,
+        // The copies that rest for it go first: one left behind would come back with a replica.
+        before: Effect.gen(function* () {
+          const record = yield* records.read(input.id);
+          if (record === null || !runsHere(record)) return;
+          const unreached = yield* tellDeleted(record, input.id, null);
+          if (unreached.length > 0)
+            return yield* taskError(deleteUnreachedRefusal(unreached), { taskId: input.id });
+        }),
         forwarded: () => ({ edit: { kind: "delete" }, done: () => ({ id: input.id }) }),
       }).pipe(
         Effect.tap(() => records.remove(input.id).pipe(Effect.ignore)),
@@ -839,7 +982,6 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
       Effect.gen(function* () {
         const all = yield* records.all;
         const counts = yield* records.revisions;
-        if (all.size === 0 && counts.size === 0) return listed;
         return {
           tasks: listed.tasks.map((task) => {
             const record = all.get(task.id);
@@ -928,6 +1070,11 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
             refused.push(id);
             continue;
           }
+          // Only a routine that follows its project's coordinator has a runner to settle.
+          if (held !== null && !isRunnerRoutine(held)) {
+            refused.push(id);
+            continue;
+          }
           const record = yield* records.read(id);
           const runsItToday =
             held !== null &&
@@ -973,8 +1120,13 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
           if (
             record?.state === "disarmed" &&
             record.runnerEnvironmentId === caller.sourceEnvironmentId
-          )
+          ) {
+            if (request.deleted === true) {
+              yield* deps.remove({ id }).pipe(Effect.ignore);
+              yield* records.dropRevision(id).pipe(Effect.ignore);
+            }
             yield* records.remove(id);
+          }
         }
         yield* deps.notifyChanged;
         return { ...base, acked: [...request.routineIds] } satisfies RoutineRunnerResponse;
@@ -1024,18 +1176,23 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
           .pipe(
             Effect.mapError(() => refuseTransfer(409, "That routine's grant could not be read.")),
           );
-        const others = othersRoutineRefusal(
-          {
-            coordinatorLabel: "that machine",
-            grant: {
-              coordinatorEnvironmentId: grant.coordinatorEnvironmentId,
-              ...(grant.kind === undefined ? {} : { kind: grant.kind }),
-            },
-          },
-          task,
-          grantedBy,
-          request.edit.kind === "delete" ? "delete" : "change",
-        );
+        // The owner's own machines change the routine they all hold; another person's
+        // machine changes only what its own work set up here.
+        const others =
+          grant.owner === "self"
+            ? null
+            : othersRoutineRefusal(
+                {
+                  coordinatorLabel: "that machine",
+                  grant: {
+                    coordinatorEnvironmentId: grant.coordinatorEnvironmentId,
+                    ...(grant.kind === undefined ? {} : { kind: grant.kind }),
+                  },
+                },
+                task,
+                grantedBy,
+                request.edit.kind === "delete" ? "delete" : "change",
+              );
         if (others !== null) return yield* refuseTransfer(403, others);
         const failed = (error: ScheduledTaskError) =>
           refuseTransfer(409, `Not changed: ${error.message}`);
@@ -1050,6 +1207,9 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
           } satisfies RoutineRunnerResponse;
         switch (request.edit.kind) {
           case "delete": {
+            const unreached = yield* tellDeleted(record, task.id, caller.sourceEnvironmentId);
+            if (unreached.length > 0)
+              return yield* refuseTransfer(409, deleteUnreachedRefusal(unreached));
             yield* deps.remove({ id: task.id }).pipe(Effect.mapError(failed));
             yield* records.remove(task.id).pipe(Effect.ignore);
             yield* records.dropRevision(task.id).pipe(Effect.ignore);
@@ -1122,7 +1282,7 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
         case "status":
           return Effect.gen(function* () {
             const record =
-              request.routineId === undefined ? null : yield* records.read(request.routineId);
+              request.routineId === undefined ? null : yield* records.readStrict(request.routineId);
             const task =
               request.routineId === undefined
                 ? null
@@ -1173,7 +1333,7 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
       guardDelete,
       decorate,
       reconcile,
-      tick,
+      pacedLook,
       receive,
       records,
       covered,
@@ -1207,3 +1367,11 @@ const failOrUnreadable = (
       : unreadable(),
   );
 };
+
+/**
+ * A machine of the release before answers a request it does not know with 400,
+ * and one older still has no such route. Any other failure says nothing about
+ * its release.
+ */
+const isOlderRelease = (failure: AwayPeerError) =>
+  failure.refused && !failure.uncertain && (failure.status === 400 || failure.status === 404);

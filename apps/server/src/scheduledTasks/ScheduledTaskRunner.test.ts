@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import {
+  deleteUnreachedRefusal,
   MOVING_ROUTINE_CHANGE_REFUSAL,
   runsElsewhereNote,
   STALE_ROUTINE_EDIT_REFUSAL,
@@ -602,5 +603,137 @@ it.effect("a replica or a planned handover never rewrites the routine its runner
     });
     assert.equal((yield* beta.row)?.title, "From a replica");
     assert.equal((yield* beta.record)?.state, "disarmed");
+  }),
+);
+
+it.effect("a machine that stopped coordinating before all confirmed never becomes the runner", () =>
+  Effect.gen(function* () {
+    yield* start;
+    const { machines, everyoneLooks, fires, network } = yield* fleet(["alpha", "beta", "gamma"]);
+    const [alpha, beta, gamma] = machines as [Machine, Machine, Machine];
+    for (const machine of machines) yield* machine.seed();
+    // Gamma said it keeps runner records, then dropped off before it was asked to rest.
+    network.dropAnswer = (_from, to, op) => {
+      if (to === "gamma" && op === "status") network.offline.add("gamma");
+      return false;
+    };
+    yield* settle(alpha);
+    assert.deepInclude(yield* alpha.record, { state: "settling", acked: [beta.environmentId] });
+    assert.isNull(yield* gamma.record);
+    // Gamma is back and the coordinator moves to it: it fires the slot under the coordinator rule.
+    network.dropAnswer = () => false;
+    network.offline.delete("gamma");
+    alpha.state.role = { active: false, epoch: 2, state: "transferred" };
+    gamma.state.role = { active: true, epoch: 2, state: "active" };
+    for (const machine of machines) yield* machine.makeDue(DUE);
+    yield* gamma.due;
+    assert.equal(gamma.fires(), 1);
+    // Alpha's copy still holds that slot. It asks again: it must not settle and fire it.
+    yield* settle(alpha);
+    assert.isNull(yield* alpha.record);
+    assert.isNull(yield* beta.record);
+    yield* everyoneLooks;
+    assert.equal(fires(), 1);
+  }),
+);
+
+it.effect("deleting on the runner removes the resting copies, or deletes nothing", () =>
+  Effect.gen(function* () {
+    yield* start;
+    const { machines, network } = yield* fleet(["alpha", "beta"]);
+    const [alpha, beta] = machines as [Machine, Machine];
+    const task = yield* alpha.seed();
+    yield* beta.seed();
+    yield* settle(alpha);
+    // A copy that cannot be reached would bring the routine back with its next replica.
+    network.offline.add("beta");
+    const refused = yield* alpha.service.delete({ id: ROUTINE }).pipe(Effect.flip);
+    assert.equal(refused.message, deleteUnreachedRefusal(["beta"]));
+    assert.isDefined(yield* alpha.row);
+    network.offline.delete("beta");
+    yield* alpha.service.delete({ id: ROUTINE });
+    assert.isUndefined(yield* alpha.row);
+    assert.isUndefined(yield* beta.row);
+    assert.isNull(yield* beta.record);
+    // And a replica that still names it does not bring it back as a routine that could fire twice.
+    assert.isNull(yield* alpha.record);
+    assert.equal(task.id, ROUTINE);
+  }),
+);
+
+it.effect("a delete sent from a copy removes every other copy as well", () =>
+  Effect.gen(function* () {
+    yield* start;
+    const { machines } = yield* fleet(["alpha", "beta", "gamma"]);
+    const [alpha, beta, gamma] = machines as [Machine, Machine, Machine];
+    for (const machine of machines) yield* machine.seed();
+    yield* settle(alpha);
+    yield* beta.service.delete({ id: ROUTINE });
+    for (const machine of [alpha, beta, gamma]) assert.isUndefined(yield* machine.row);
+  }),
+);
+
+it.effect("the runner saves its own routine after the coordinator moved elsewhere", () =>
+  Effect.gen(function* () {
+    yield* start;
+    const { machines } = yield* fleet(["alpha", "beta"]);
+    const [alpha, beta] = machines as [Machine, Machine];
+    yield* alpha.seed();
+    yield* beta.seed();
+    yield* settle(alpha);
+    alpha.state.role = { active: false, epoch: 2, state: "transferred" };
+    beta.state.role = { active: true, epoch: 2, state: "active" };
+    yield* alpha.service.upsert(
+      taskInput({ id: ROUTINE, projectId: alpha.projectId, title: "Saved on its runner" }),
+    );
+    assert.equal((yield* alpha.row)?.title, "Saved on its runner");
+  }),
+);
+
+it.effect("a routine still settling follows its replica and its handover as before", () =>
+  Effect.gen(function* () {
+    yield* start;
+    const { machines, network } = yield* fleet(["alpha", "beta", "gamma"]);
+    const [alpha, , gamma] = machines as [Machine, Machine, Machine];
+    const task = yield* alpha.seed();
+    for (const machine of machines.slice(1)) yield* machine.seed();
+    network.dropAnswer = (_from, to, op) => to === "gamma" && op === "runner-disarm";
+    yield* settle(alpha);
+    assert.equal((yield* alpha.record)?.state, "settling");
+    // Alpha still runs under the coordinator rule, so what the coordinator sends still lands.
+    const copies = yield* alpha.service.routineCopies!();
+    yield* copies.replace({
+      projectId: alpha.projectId,
+      logicalProjectId: "logical-a",
+      routines: [{ ...copyOf(task), title: "From the coordinator" }],
+    });
+    assert.equal((yield* alpha.row)?.title, "From the coordinator");
+    assert.equal(gamma.fires(), 0);
+  }),
+);
+
+it.effect("resting copies hear the revision of a change made on the runner", () =>
+  Effect.gen(function* () {
+    yield* start;
+    const { machines } = yield* fleet(["alpha", "beta"]);
+    const [alpha, beta] = machines as [Machine, Machine];
+    yield* alpha.seed();
+    yield* beta.seed();
+    yield* settle(alpha);
+    yield* alpha.service.upsert(
+      taskInput({ id: ROUTINE, projectId: alpha.projectId, title: "Changed on the runner" }),
+    );
+    yield* settle(alpha);
+    assert.equal((yield* beta.record)?.revision, 1);
+    // So a change made on the copy against what it shows is taken, not refused as stale.
+    yield* beta.service.upsert(
+      taskInput({
+        id: ROUTINE,
+        projectId: beta.projectId,
+        title: "Changed on the copy",
+        expectedRevision: 1,
+      }),
+    );
+    assert.equal((yield* alpha.row)?.title, "Changed on the copy");
   }),
 );

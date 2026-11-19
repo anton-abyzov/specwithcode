@@ -39,7 +39,7 @@ import * as ProjectCoordinator from "../project/ProjectCoordinatorService.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import { DEFAULT_PROJECT_WORKSPACE_SETTINGS } from "../../../../packages/contracts/src/projectWorkspace.ts";
-import type { RoutineRunner } from "./ScheduledTaskRunner.ts";
+import { type RoutineRunner, RoutineRunnerPace } from "./ScheduledTaskRunner.ts";
 import { type RoutineTransferRefusal } from "./ScheduledTaskRunnerWire.ts";
 import {
   type Role,
@@ -239,15 +239,15 @@ export const fleet = (
             nextTurnModel: () => Effect.succeed(undefined as never),
           }),
           Layer.mock(Scheduler.Scheduler)({
-            register: <E, R>(registered: string, effect: Effect.Effect<void, E, R>) =>
+            register: <E, R>(_name: string, effect: Effect.Effect<void, E, R>) =>
               Effect.gen(function* () {
-                // The runner's own tick is driven by the tests, through `runner.reconcile`.
-                if (registered !== "scheduled-tasks") return;
                 const context = yield* Effect.context<R>();
                 work.due = effect.pipe(Effect.provideContext(context), Effect.orDie);
               }),
             heldMsBetween: () => Effect.succeed(0),
           }),
+          // The tests settle by hand, through `runner.reconcile`.
+          Layer.succeed(RoutineRunnerPace, { everyMs: null }),
           Layer.succeed(CoordinatorRole, CoordinatorRole.of(roleService(state, Stream.empty))),
           Layer.succeed(CoordinatorWakeGate, { check: () => Effect.sync(() => state.fence) }),
           Layer.mock(ServerEnvironment.ServerEnvironment)({

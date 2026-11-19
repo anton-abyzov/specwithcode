@@ -64,7 +64,12 @@ import * as WorkGrants from "../fleet/WorkGrants.ts";
 import { makeRoutineCopies, RoutineCopies } from "./ScheduledTaskCopies.ts";
 import { makeRunSkips } from "./ScheduledTaskSkips.ts";
 import { makeRoutineCoordinatorGate } from "./ScheduledTaskCoordinatorGate.ts";
-import { makeRoutineRunner, type RoutineRunner } from "./ScheduledTaskRunner.ts";
+import {
+  keepsOwnState,
+  makeRoutineRunner,
+  type RoutineRunner,
+  RoutineRunnerPace,
+} from "./ScheduledTaskRunner.ts";
 import { HandoffTurnGate } from "../handoff/HandoffTurnGate.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import {
@@ -1579,7 +1584,12 @@ export const layer = Layer.effect(
         Effect.forkScoped,
       );
 
-    yield* scheduler.register("scheduled-tasks", runDueTasks());
+    // Set once the runner exists: a look for routines to settle, started after a due pass.
+    const afterDuePass: { look: Effect.Effect<void> } = { look: Effect.void };
+    yield* scheduler.register(
+      "scheduled-tasks",
+      runDueTasks().pipe(Effect.andThen(Effect.suspend(() => afterDuePass.look))),
+    );
 
     const list: ScheduledTaskService["Service"]["list"] = () =>
       listRows().pipe(
@@ -1947,9 +1957,7 @@ export const layer = Layer.effect(
       heldByRunner: (id) =>
         runnerRef.current === null
           ? Effect.succeed(false)
-          : runnerRef.current.records
-              .read(id)
-              .pipe(Effect.map((record) => record !== null && record.state !== "disarmed")),
+          : runnerRef.current.records.read(id).pipe(Effect.map(keepsOwnState)),
     }).pipe(Effect.provideService(SqlClient.SqlClient, sql));
 
     const webhooks = yield* makeWebhookTrigger({
@@ -2011,7 +2019,8 @@ export const layer = Layer.effect(
       newId: crypto.randomUUIDv4.pipe(Effect.orDie),
     });
     runnerRef.current = runner;
-    yield* scheduler.register("routine-runners", runner.tick);
+    const pace = (yield* RoutineRunnerPace).everyMs;
+    if (pace !== null) afterDuePass.look = yield* runner.pacedLook(pace);
 
     return ScheduledTaskService.of({
       list: () => list().pipe(Effect.flatMap(runner.decorate)),

@@ -62,7 +62,12 @@ export const RoutineRunnerRequest = Schema.Union([
     runnerLabel: Schema.optional(bounded(256)),
   }),
   /** The caller no longer claims these routines: this machine's copies follow the coordinator again. */
-  Schema.Struct({ op: Schema.Literal("runner-rearm"), routineIds: RoutineIds }),
+  Schema.Struct({
+    op: Schema.Literal("runner-rearm"),
+    routineIds: RoutineIds,
+    /** The caller deleted them: this machine's resting copies go too. */
+    deleted: Schema.optional(Schema.Boolean),
+  }),
   /** A change made on a machine that keeps a copy, for the runner to make. */
   Schema.Struct({
     op: Schema.Literal("runner-edit"),
