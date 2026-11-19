@@ -220,6 +220,13 @@ describe("mergeResetPeriods", () => {
     expect(mergeResetPeriods([[late, early]])).toHaveLength(2);
   });
 
+  it("treats two machines' records of one reset with differently rounded times as one", () => {
+    const late = period(reset1 + MINUTE, reset1 + MINUTE, 90, null);
+    const rounded = period(reset1 + 3 * MINUTE, reset1 + 2 * MINUTE, 91, null);
+    expect(mergeResetPeriods([[late], [rounded]])).toHaveLength(1);
+    expect(mergeResetPeriods([[rounded], [late]])).toHaveLength(1);
+  });
+
   it("keeps different accounts and windows apart", () => {
     const other = { ...period(reset1, reset1 - HOUR, 10, null), windowId: "seven_day_opus" };
     expect(mergeResetPeriods([[period(reset1, reset1 - HOUR, 59, null)], [other]])).toHaveLength(2);

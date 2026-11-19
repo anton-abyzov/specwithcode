@@ -143,6 +143,8 @@ export function resetPeriods(
  * instead, so two such records of one window this close are one reset.
  */
 export const SAME_RESET_MS = 15 * MINUTE;
+/** Providers round one announced reset differently between reads, by up to this much. */
+export const RESET_ROUNDING_MS = 5 * MINUTE;
 
 /**
  * Whether two records of one window are the same reset: their spans from last
@@ -162,8 +164,9 @@ export function sameResetRecord(
 
 /**
  * `late` was closed at a read just past the announced reset, and `other` ended
- * at or shortly before that read: the same reset, seen from an earlier read.
- * A record ending after the late read is a later reset, however close.
+ * shortly before that read, or after it by no more than providers' rounding of
+ * the announced time (another machine read the same reset as a few minutes
+ * later). A record ending later than that is a later reset.
  */
 function lateReadOf(
   late: Pick<ResetPeriod, "lastReadAt" | "endedAt">,
@@ -171,7 +174,7 @@ function lateReadOf(
 ): boolean {
   return (
     late.lastReadAt === late.endedAt &&
-    other.endedAt <= late.endedAt &&
+    other.endedAt - late.endedAt <= RESET_ROUNDING_MS &&
     late.endedAt - other.endedAt <= SAME_RESET_MS
   );
 }
