@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTx } from "../../i18n";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import {
@@ -191,6 +192,7 @@ export function HandoffFolderCopy({
   const storageKey = folderCopyStorageKey(project.environmentId, project.id);
   const { machine, setMachine, folderDraft, setFolderDraft, folder, setFolder, findingHome } =
     useCopyDestination({ machines, preferredMachine, savedFolder, scope });
+  const tx = useTx();
   const [mode, setMode] = useState<FolderCopyMode>(
     canMove ? (defaultMode ?? "copy-only") : "copy-only",
   );
@@ -823,7 +825,8 @@ export function HandoffFolderCopy({
   const plan = () =>
     run(async () => {
       if (!offer || !pending) return;
-      if (sourceChanged) throw new Error("Compare again before previewing this changed source.");
+      if (sourceChanged)
+        throw new Error(tx("Compare again before previewing this changed source."));
       await planNow(offer, pending, selection);
     });
 
@@ -895,7 +898,7 @@ export function HandoffFolderCopy({
   const applyNow = async (saved: PendingCopy, secretsSent = false) => {
     const environmentId = saved.environmentId as EnvironmentId;
     const operationId = saved.operationId;
-    if (sourceChanged) throw new Error("The source changed. Compare again before copying.");
+    if (sourceChanged) throw new Error(tx("The source changed. Compare again before copying."));
     await secrets.refreshRoute(saved);
     if (secretsBlockedNow(project.environmentId, environmentId) && secretsPromised(saved)) {
       // The form said included: the review says why not, and the person approves it there.

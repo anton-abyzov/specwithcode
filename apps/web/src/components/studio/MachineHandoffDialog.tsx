@@ -782,7 +782,7 @@ function GitReview({
       )}
       <Collapsible data-slot="handoff-commits">
         <CollapsibleTrigger className="group -mx-1 inline-flex items-center gap-1 rounded-sm px-1 py-0.5 text-xs text-muted-foreground hover:text-foreground">
-          Details
+          {tx("Details")}
           <ChevronDownIcon
             className="size-3.5 transition-transform group-data-panel-open:rotate-180"
             aria-hidden
@@ -838,7 +838,9 @@ function SourceChangesLine({
   // Clean, as after Commit for me: say so, so the commit visibly took effect.
   if (changes?.state === "clean")
     return (
-      <AlongLine slot="handoff-source-changes">No uncommitted changes on {sourceLabel}.</AlongLine>
+      <AlongLine slot="handoff-source-changes">
+        {tx("No uncommitted changes on {source}.", { source: sourceLabel })}
+      </AlongLine>
     );
   const stays =
     changes?.state === "dirty"

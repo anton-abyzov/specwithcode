@@ -31,7 +31,7 @@ vi.mock("../studio/projectCoordinatorDraft", async (original) => ({
 }));
 vi.mock("../components/ui/toast", () => ({ toastManager: { add: runtime.toast } }));
 vi.mock("../studio/machineNickname", () => ({
-  useMachineNicknames: () => (id: string) => (id === "m1" ? "ministorm" : id),
+  useMachineNicknames: () => (id: string) => (id === "m1" ? "linux-mini" : id),
 }));
 import { EnvironmentId, ProjectId, ProviderInstanceId } from "@specweave-studio/contracts";
 import {
@@ -155,7 +155,7 @@ function linkWorkersOnlyCopy() {
     projectId: "main",
     coordinatorThreadId: "main-coordinator",
   };
-  runtime.projects[0].workspaceRoot = "/ministorm/repo";
+  runtime.projects[0].workspaceRoot = "/work/repo";
   runtime.projects[0].workspaceSettings = {
     logicalProject: { id: "one", title: "One", coordinatorId: "c", members: [] },
     coordinatorBinding: { epoch: 1, state: "transferred", successor: coordinator },
@@ -174,7 +174,7 @@ function linkWorkersOnlyCopy() {
   });
 }
 const COPY_LINE =
-  "This request is for the copy on ministorm, in /ministorm/repo. That copy is not Main: its work starts here. Delegate the work to a worker there.";
+  "This request is for the copy on linux-mini, in /work/repo. The coordinator is not on that machine: its work starts here. Delegate the work to a worker there.";
 it("opens a workers-only copy's coordinator on the other machine instead of the copy", async () => {
   linkWorkersOnlyCopy();
   const model = { instanceId: ProviderInstanceId.make("codex"), model: "chosen" };
@@ -197,11 +197,11 @@ it("aims a redirected checkout or worktree request at the copy, not the coordina
   await useProjectCoordinatorHandoff()(projectRef, {
     url: "https://github.com/a/b/pull/1",
     mode: "local",
-    worktreePath: "/ministorm/repo-wt",
+    worktreePath: "/work/repo-wt",
   });
   const text: string = runtime.enqueue.mock.calls[0]?.[0].text;
   expect(text.startsWith(COPY_LINE)).toBe(true);
-  expect(text).toContain("Use the existing worktree: /ministorm/repo-wt");
+  expect(text).toContain("Use the existing worktree: /work/repo-wt");
   expect(text).toContain("prepare the pull request in that copy's checkout");
   expect(text).not.toContain("this checkout");
 });

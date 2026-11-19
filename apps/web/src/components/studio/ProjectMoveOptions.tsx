@@ -281,13 +281,14 @@ export function MoreOptions({
   readonly disabled?: boolean;
   readonly children: ReactNode;
 }) {
+  const tx = useTx();
   return (
     <Collapsible defaultOpen={defaultOpen} data-slot="handoff-more-options">
       <CollapsibleTrigger
         className="group inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
         disabled={disabled}
       >
-        Details
+        {tx("Details")}
         <ChevronDownIcon
           className="size-3.5 transition-transform group-data-panel-open:rotate-180"
           aria-hidden
@@ -383,7 +384,7 @@ export function FilesTravelChoice() {
                     ? refused === "main"
                       ? tx("Not available: that machine already has the coordinator.")
                       : tx("Not available: it would move the coordinator into a separate project.")
-                    : item.detail}
+                    : tx(item.detail)}
                 </span>
               </span>
             </label>

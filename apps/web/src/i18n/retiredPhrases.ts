@@ -100,6 +100,15 @@ const PHASE_2_PHRASES: readonly string[] = [
   "Copy {project} to {machine}",
   "Move {project} to another machine",
   "Copy {project} to another machine",
+  "{there} has {n} copies of this project. Pick the one to send to.",
+  "{there} already has Main, at {folder}, so there is nothing to move.",
+  "Work continues on {there}, and this copy stops starting work.",
+  "Push this machine's commits, then move Main to {into}.",
+  "Linking the copy on {target}…",
+  "Linked: {source} can send work to the copy on {target}.",
+  "Keep Main on {source}",
+  "Copy again",
+  "Move project",
 ];
 
 /** Exact old phrases: never quoted in the source again, and never a catalog key. */

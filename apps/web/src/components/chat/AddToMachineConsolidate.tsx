@@ -284,9 +284,13 @@ export function AddToMachineConsolidate(props: {
                 data-slot="copy-link"
               >
                 {link?.status === "linking"
-                  ? `Linking ${destName}…`
+                  ? tx("Linking {target}…", { target: destName })
                   : link?.status === "linked"
-                    ? `Linked: ${sourceName} can start work on ${destName}, in ${copy.targetFolder}.`
+                    ? tx("Linked: {source} can start work on {target}, in {folder}.", {
+                        source: sourceName,
+                        target: destName,
+                        folder: copy.targetFolder,
+                      })
                     : link?.status === "review"
                       ? `The files are in place. Not linked yet. ${link.reason}`
                       : `The files are in ${copy.targetFolder} on ${destName}.`}

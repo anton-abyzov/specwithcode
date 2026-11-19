@@ -38,9 +38,11 @@ const REPOSITORY_GROUP = "Repositories";
 
 const paths = (value: number) => `${value.toLocaleString()} ${value === 1 ? "path" : "paths"}`;
 
-/** "Move without this path" or "Move without these 3 paths". */
+/** "Move without this path" or "Move without these 3 paths", as a phrase and its values. */
 export const moveWithoutLabel = (total: number) =>
-  `Move without ${total === 1 ? "this path" : `these ${total.toLocaleString()} paths`}`;
+  total === 1
+    ? { text: "Move without this path" }
+    : { text: "Move without these {n} paths", values: { n: total.toLocaleString() } };
 
 const shortHead = (head: string | undefined) => (head ? head.slice(0, 7) : "none");
 
@@ -193,7 +195,7 @@ export function HandoffSourceChanges({
       <p className="text-xs text-muted-foreground">
         {changes.acceptable
           ? tx(
-              "Sync again brings {source}'s version over. Move without them keeps {source}'s changes there and the copy on {target} as it is. Keep the coordinator on {source} to go on working there; the copy on {target} stays.",
+              "Sync again brings {source}'s version over. Moving without these paths keeps {source}'s changes there and leaves the copy on {target} as it is. Keep the coordinator on {source} to go on working there; the copy on {target} stays.",
               { source: sourceLabel, target: targetLabel },
             )
           : tx(
@@ -231,11 +233,11 @@ export function HandoffSourceChangesActions({
       </Button>
       {changes.acceptable && (
         <Button variant="outline" disabled={busy} onClick={onMoveWithout}>
-          {moveWithoutLabel(changes.total)}
+          {tx(moveWithoutLabel(changes.total).text, moveWithoutLabel(changes.total).values)}
         </Button>
       )}
       <Button variant="outline" data-leading disabled={busy} onClick={onKeepHere}>
-        Keep the coordinator on {sourceLabel}
+        {tx("Keep the coordinator on {source}", { source: sourceLabel })}
       </Button>
     </>
   );
