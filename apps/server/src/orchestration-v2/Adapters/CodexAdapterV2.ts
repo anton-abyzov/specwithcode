@@ -1,5 +1,5 @@
 import * as Cause from "effect/Cause";
-import { holdFailedStopTeardown } from "../../process/stopTeardowns.ts";
+import { holdFailedStopTeardown, withStopTeardown } from "../../process/stopTeardowns.ts";
 import {
   codexToolInventory,
   unknownToolInventory,
@@ -7063,6 +7063,59 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               const trackedInterruptNativeTurnIds = new Set(
                 interruptTargets.map((target) => target.context.nativeTurnId),
               );
+              const appThreadId = requestedInput.providerThread.appThreadId;
+              const holdUntilTerminalEnds = (nativeThreadId: string, processId: string) => {
+                if (appThreadId === null) return;
+                holdFailedStopTeardown(appThreadId, () =>
+                  Effect.runPromise(
+                    terminateBackgroundTerminal(nativeThreadId, processId).pipe(
+                      Effect.as(true),
+                      Effect.orElseSucceed(() => false),
+                    ),
+                  ),
+                );
+              };
+              // Set once the terminal cleanup below has run; until then a failed Stop ends
+              // the tracked terminals itself, before the lineage finalizer forgets them.
+              let terminalsHandled = false;
+              const endTerminalsAfterFailedStop = Effect.gen(function* () {
+                if (terminalsHandled) return;
+                const runningItems = yield* Ref.get(runningCommandItemsByTurn);
+                const terminals = new Map<
+                  string,
+                  { readonly nativeThreadId: string; readonly processId: string }
+                >();
+                for (const target of interruptTargets) {
+                  const items = runningItems.get(target.context.nativeTurnId);
+                  if (items === undefined || items.size === 0) continue;
+                  const nativeThreadId = yield* getNativeThreadId(
+                    target.context.providerThread,
+                  ).pipe(Effect.option);
+                  for (const item of items.values()) {
+                    if (item.processId === undefined) continue;
+                    if (Option.isNone(nativeThreadId)) {
+                      // No address for the terminal: only a restart can end it.
+                      if (appThreadId !== null)
+                        holdFailedStopTeardown(appThreadId, () => Promise.resolve(false));
+                      continue;
+                    }
+                    terminals.set(`${nativeThreadId.value}:${item.processId}`, {
+                      nativeThreadId: nativeThreadId.value,
+                      processId: item.processId,
+                    });
+                  }
+                }
+                yield* Effect.forEach(
+                  terminals.values(),
+                  ({ nativeThreadId, processId }) =>
+                    terminateBackgroundTerminal(nativeThreadId, processId).pipe(
+                      Effect.catchCause(() =>
+                        Effect.sync(() => holdUntilTerminalEnds(nativeThreadId, processId)),
+                      ),
+                    ),
+                  { concurrency: "unbounded", discard: true },
+                );
+              }).pipe(Effect.catchCause(() => Effect.void));
               const finalizeRemainingInterruptLineage = Effect.gen(function* () {
                 while (true) {
                   const newlyDiscovered: Array<ActiveCodexTurnContext> = [];
@@ -7299,6 +7352,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 yield* finalizeRemainingInterruptLineage;
 
                 const terminationResults = yield* terminateTrackedTerminals(interruptTargets);
+                terminalsHandled = true;
                 const failedTerminations = terminationResults.flatMap((result) =>
                   result.success ? [] : [result],
                 );
@@ -7306,18 +7360,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 if (failedTermination !== undefined) {
                   // A terminal Codex could not end may still run in the old folder: the
                   // folder change stays blocked until a retry confirms each one ended.
-                  const appThreadId = requestedInput.providerThread.appThreadId;
-                  if (appThreadId !== null) {
-                    for (const { nativeThreadId, processId } of failedTerminations) {
-                      holdFailedStopTeardown(appThreadId, () =>
-                        Effect.runPromise(
-                          terminateBackgroundTerminal(nativeThreadId, processId).pipe(
-                            Effect.as(true),
-                            Effect.orElseSucceed(() => false),
-                          ),
-                        ),
-                      );
-                    }
+                  for (const { nativeThreadId, processId } of failedTerminations) {
+                    holdUntilTerminalEnds(nativeThreadId, processId);
                   }
                   return yield* Effect.fail(failedTermination.error);
                 }
@@ -7352,10 +7396,21 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   }),
                 );
               }).pipe(
-                Effect.onError(() => finalizeRemainingInterruptLineage),
+                Effect.onError(() =>
+                  endTerminalsAfterFailedStop.pipe(
+                    Effect.andThen(finalizeRemainingInterruptLineage),
+                  ),
+                ),
                 Effect.ensuring(cleanupInterruptState),
               );
             }).pipe(
+              // A user Stop holds the folder change until its terminals are dealt with:
+              // the turn can read interrupted while a terminal request is still pending.
+              (effect) =>
+                requestedInput.requestRuntimeRestart === true &&
+                requestedInput.providerThread.appThreadId !== null
+                  ? withStopTeardown(requestedInput.providerThread.appThreadId, effect)
+                  : effect,
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapterInterruptError({

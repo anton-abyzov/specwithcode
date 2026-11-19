@@ -440,6 +440,18 @@ export class OwnedProcessTree {
     };
     if (table !== undefined) {
       // Tools that left the group are kept across ends, so a retry still knows them.
+      // Group members an earlier end saw that now run in another group left it (setsid on
+      // SIGTERM): they are the CLI's escapees, whatever became of the group since.
+      for (const entry of table) {
+        if (
+          entry.pid !== host.selfPid &&
+          entry.pgid !== this.root.pid &&
+          entry.started.length > 0 &&
+          this.groupSeen.get(entry.pid) === entry.started
+        ) {
+          this.escapees.set(entry.pid, entry);
+        }
+      }
       // Walked from the group only while it is the CLI's, and from tools already known.
       const known = stillRunning([...this.escapees.values()], table).map((entry) => entry.pid);
       for (const entry of posixEscapees(table, this.root, host.selfPid, groupUsable, known)) {

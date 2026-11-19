@@ -5124,6 +5124,207 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     });
   };
 
+  it.effect("holds the folder change while a Stop still ends the turn's terminal", () =>
+    Effect.gen(function* () {
+      const terminalRequest = yield* Deferred.make<void>();
+      const allowTermination = yield* Deferred.make<void>();
+      const transcript = makeCodexReplayTranscript({
+        scenario: "round8-termination-in-flight",
+        entries: [
+          ...backgroundExecTranscript.entries.slice(0, -3),
+          {
+            type: "expect_outbound",
+            label: "turn/interrupt",
+            frame: {
+              id: 4,
+              method: "turn/interrupt",
+              params: { threadId: BG_NATIVE_THREAD, turnId: BG_NATIVE_TURN },
+            },
+          },
+          { type: "emit_inbound", label: "interrupt response", frame: { id: 4, result: {} } },
+          {
+            type: "emit_inbound",
+            label: "interrupted turn",
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: BG_NATIVE_THREAD,
+                turn: makeCodexReplayTurn({ id: BG_NATIVE_TURN, status: "interrupted" }),
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            label: "terminal termination",
+            frame: {
+              id: 5,
+              method: "thread/backgroundTerminals/terminate",
+              params: {
+                threadId: BG_NATIVE_THREAD,
+                processId: "4242",
+              },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "termination confirmed",
+            frame: { id: 5, result: { terminated: true } },
+          },
+        ],
+      });
+      const harness = yield* makeCodexReplayHarness(
+        transcript,
+        () => Effect.void,
+        (method) =>
+          method === "thread/backgroundTerminals/terminate"
+            ? Deferred.succeed(terminalRequest, undefined).pipe(
+                Effect.andThen(Deferred.await(allowTermination)),
+              )
+            : Effect.void,
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("round8-delayed-stop"),
+          text: BG_PROMPT,
+        }),
+      );
+      yield* awaitUntil(
+        () =>
+          harness.events.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "command_execution" &&
+              event.turnItem.status === "running",
+          ),
+        "tracked live command",
+      );
+      const providerTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+        driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+        nativeTurnId: BG_NATIVE_TURN,
+      });
+      const interrupt = yield* harness.runtime
+        .interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId,
+          requestRuntimeRestart: true,
+        })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(terminalRequest);
+      yield* harness.firstTerminal;
+      assert.equal(harness.terminalEvents()[0]?.status, "interrupted");
+      assert.isTrue(
+        harness.events.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "command_execution" &&
+            event.turnItem.status === "interrupted",
+        ),
+      );
+      assert.isNotNull(harness.providerThread.appThreadId);
+      // The turn reads interrupted, but its terminal request is still pending.
+      assert.isTrue(stopTeardownPending(harness.providerThread.appThreadId!));
+      yield* Deferred.succeed(allowTermination, undefined);
+      yield* Fiber.join(interrupt);
+      assert.isFalse(stopTeardownPending(harness.providerThread.appThreadId!));
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect("ends the tracked terminal when Codex refuses the turn interrupt", () =>
+    Effect.gen(function* () {
+      const transcript = makeCodexReplayTranscript({
+        scenario: "round8-interrupt-rejected",
+        entries: [
+          ...backgroundExecTranscript.entries.slice(0, -3),
+          {
+            type: "expect_outbound",
+            label: "turn/interrupt",
+            frame: {
+              id: 4,
+              method: "turn/interrupt",
+              params: {
+                threadId: BG_NATIVE_THREAD,
+                turnId: BG_NATIVE_TURN,
+              },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "turn/interrupt rejected",
+            frame: { id: 4, error: { code: -32603, message: "simulated interrupt failure" } },
+          },
+          {
+            type: "expect_outbound",
+            label: "terminal termination after the refusal",
+            frame: {
+              id: 5,
+              method: "thread/backgroundTerminals/terminate",
+              params: {
+                threadId: BG_NATIVE_THREAD,
+                processId: "4242",
+              },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "termination confirmed",
+            frame: { id: 5, result: { terminated: true } },
+          },
+        ],
+      });
+      const requests: string[] = [];
+      const harness = yield* makeCodexReplayHarness(
+        transcript,
+        () => Effect.void,
+        (method) =>
+          Effect.sync(() => {
+            requests.push(method);
+          }),
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("round8-active-stop"),
+          text: BG_PROMPT,
+        }),
+      );
+      yield* awaitUntil(
+        () =>
+          harness.events.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "command_execution" &&
+              event.turnItem.status === "running",
+          ),
+        "tracked live command",
+      );
+      const providerTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+        driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+        nativeTurnId: BG_NATIVE_TURN,
+      });
+      const failed = yield* harness.runtime
+        .interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId,
+          requestRuntimeRestart: true,
+        })
+        .pipe(Effect.exit);
+      assert.equal(failed._tag, "Failure");
+      assert.include(requests, "turn/interrupt");
+      // The refused interrupt still ends the terminal the turn was running.
+      assert.include(requests, "thread/backgroundTerminals/terminate");
+      yield* harness.firstTerminal;
+      assert.equal(harness.terminalEvents()[0]?.status, "interrupted");
+      assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      assert.isNotNull(harness.providerThread.appThreadId);
+      assert.isFalse(stopTeardownPending(harness.providerThread.appThreadId!));
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
   it.effect.each(backgroundStopCases)(
     "stops a command after root completion when termination returns %s",
     (terminated) => {

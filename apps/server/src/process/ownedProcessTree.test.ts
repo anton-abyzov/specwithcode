@@ -371,6 +371,45 @@ describe("OwnedProcessTree.end", () => {
     expect(calls).toEqual(["SIGTERM -200", "SIGKILL 202"]);
   });
 
+  it("still ends a member that left the group when the read after SIGTERM failed", async () => {
+    let table: Array<ProcessEntry> | undefined = [
+      posix(200, 100, 200, "claude"),
+      posix(202, 200, 200, "tool"),
+    ];
+    let groupAlive = true;
+    const calls: string[] = [];
+    let clock = 0;
+    const host: TreeHost = {
+      platform: "darwin",
+      selfPid: 100,
+      readProcessList: async () => table,
+      signal: (pid, signal) => {
+        if (signal === 0) {
+          if (pid === -200 && groupAlive) return;
+          throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+        }
+        calls.push(`${signal} ${pid}`);
+        if (pid === -200 && signal === "SIGTERM") {
+          // The tool calls setsid() and the next read fails.
+          groupAlive = false;
+          table = undefined;
+        }
+        if (pid === 202 && signal === "SIGKILL") table = [];
+      },
+      killVerified: async () => {},
+      sleep: async (ms) => {
+        clock += ms;
+      },
+      now: () => clock,
+    };
+    const tree = new OwnedProcessTree(root(200, false), host);
+    expect((await tree.end(1_000)).unknown).toBe(true);
+    // The retry reads again and finds the same tool in its own group.
+    table = [posix(202, 1, 202, "tool")];
+    expect(await tree.end(2_000)).toMatchObject({ survivors: 0, unknown: false });
+    expect(calls).toContain("SIGKILL 202");
+  });
+
   it("stays unconfirmed when a Windows child of the tree is listed without its start", async () => {
     const t = (n: number) => 1_000_000n + BigInt(n) * 10n;
     const cli = win(200, 100, t(10), "claude.exe");
