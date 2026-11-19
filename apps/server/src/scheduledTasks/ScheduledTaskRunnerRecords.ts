@@ -47,6 +47,9 @@ export const UNSEEN_ROUTINE_EDIT_REFUSAL =
 /** A handover whose recipient may still rest a routine nobody else would run. */
 export const HANDOVER_RESTING_COPY_REFUSAL =
   "The machine taking over still rests a routine that this machine has not settled, and did not confirm it follows the coordinator again.";
+/** A save from a copy that shows the routine under its own limits, for a runner that would write them. */
+export const OLDER_RUNNER_SAVE_REFUSAL =
+  "The machine that runs this routine has an older version of the app, and this save would change the mode or model the routine runs with there. Update the app on that machine, then save again.";
 export const STALE_ROUTINE_EDIT_REFUSAL =
   "This routine changed since you opened it, so your change was not saved. Open it again and repeat the change.";
 

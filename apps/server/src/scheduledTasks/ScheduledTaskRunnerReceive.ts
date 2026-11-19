@@ -37,7 +37,7 @@ import {
 import { definitionHashOf } from "./ScheduledTaskDefinitionHash.ts";
 import {
   refuseTransfer,
-  ROUTINE_RUNNER_CAPABILITY,
+  RUNNER_CAPABILITIES,
   type RoutineRunnerRequest,
   type RoutineRunnerResponse,
   type RoutineTransferRefusal,
@@ -109,7 +109,7 @@ export const makeRunnerReceive = (parts: RunnerReceiveParts) => {
   } = parts;
   // --- another machine asks --------------------------------------------------------------
 
-  const base = { capabilities: [ROUTINE_RUNNER_CAPABILITY] } as const;
+  const base = { capabilities: RUNNER_CAPABILITIES } as const;
   const unreadableGrant = () => refuseTransfer(409, "That routine's grant could not be read.");
 
   /** This machine's linked copy of the caller's project, within the caller's grant. */

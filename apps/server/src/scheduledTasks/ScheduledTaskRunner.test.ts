@@ -26,7 +26,7 @@ import {
   STANDBY,
   shownOn,
 } from "./ScheduledTaskRunner.testkit.ts";
-import { ROUTINE_RUNNER_CAPABILITY } from "./ScheduledTaskRunnerWire.ts";
+import { RUNNER_CAPABILITIES } from "./ScheduledTaskRunnerWire.ts";
 import { RESTING_ROUTINE_NOTE } from "./ScheduledTaskCoordinatorGate.ts";
 import { routineCopyOf } from "./ScheduledTaskCopies.ts";
 import { taskInput } from "./ScheduledTaskService.coordinatorGate.testkit.ts";
@@ -571,7 +571,7 @@ it.effect("the release before cannot turn on or restage a routine that has a run
     assert.equal((yield* alpha.record)?.state, "settled");
     // And every answer of this release names the capability an older one lacks.
     const status = yield* alpha.transfer!.receive(callerFrom(beta), { op: "status" });
-    assert.deepInclude(status, { capabilities: [ROUTINE_RUNNER_CAPABILITY] });
+    assert.deepInclude(status, { capabilities: RUNNER_CAPABILITIES });
   }),
 );
 

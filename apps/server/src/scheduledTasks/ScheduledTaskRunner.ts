@@ -67,6 +67,7 @@ import { stringifyJson } from "../json.ts";
 import { isCoordinatorOwnedRoutine, routineCopyOf } from "./ScheduledTaskCopies.ts";
 import {
   affirmsRunner,
+  keepsUnchanged,
   type RoutineRunnerEdit,
   type RoutineRunnerRequest,
   type RoutineRunnerResponse,
@@ -92,6 +93,7 @@ import {
   runsElsewhereRefusal,
   runsHere,
   STALE_ROUTINE_EDIT_REFUSAL,
+  OLDER_RUNNER_SAVE_REFUSAL,
   UNSEEN_ROUTINE_EDIT_REFUSAL,
   HANDOVER_RESTING_COPY_REFUSAL,
   threadHandedOffNote,
@@ -276,8 +278,14 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
       Effect.gen(function* () {
         const rests = new Set<string>();
         for (const record of (yield* records.allStrict).values()) {
-          if (!runsHere(record) || !record.acked.includes(recipient)) continue;
-          if (!handover || record.state !== "settling") {
+          if (!runsHere(record)) continue;
+          const confirmed = record.acked.includes(recipient);
+          // Asked and unanswered, the recipient may rest all the same: its answer
+          // can be lost after it acted. Only a handover has to know.
+          const settlingHandover = handover && record.state === "settling";
+          if (!confirmed && !(settlingHandover && (record.asked ?? []).includes(recipient)))
+            continue;
+          if (!settlingHandover) {
             rests.add(record.taskId);
             continue;
           }
@@ -1040,6 +1048,26 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
         const installed = record.installedRevision ?? null;
         if (seen.revision !== undefined && installed !== null && seen.revision !== installed)
           return yield* taskError(STALE_ROUTINE_EDIT_REFUSAL, { taskId: existing.id });
+        // A copy that shows the routine under its own limits leaves the fields its
+        // caller did not change to the runner. One that cannot be asked to keep them
+        // would write this copy's, so it is asked first whether it can.
+        if (
+          edit.kind === "save" &&
+          (edit.kept ?? []).length > 0 &&
+          seen.hash !==
+            definitionHashOf({ ...existing, enabled: record.copyEnabled ?? existing.enabled })
+        ) {
+          const asked = yield* peers
+            .post(record.runnerEnvironmentId, { op: "status" })
+            .pipe(Effect.result);
+          if (asked._tag === "Failure" && !isOlderRelease(asked.failure))
+            return yield* taskError(
+              runsElsewhereRefusal(record.runnerLabel, asked.failure.message),
+              { taskId: existing.id },
+            );
+          if (asked._tag === "Failure" || !keepsUnchanged(asked.success))
+            return yield* taskError(OLDER_RUNNER_SAVE_REFUSAL, { taskId: existing.id });
+        }
         const answered = yield* peers
           .post(record.runnerEnvironmentId, {
             op: "runner-edit",
