@@ -662,8 +662,10 @@ export function providerLimitStep(
 }
 
 /** A swept thread, with what tells a subagent the provider spawned. */
-type IdleCandidate = FallbackThread &
-  Partial<Pick<OrchestrationV2ThreadShell, "lineage" | "creationSource">>;
+type IdleCandidate = FallbackThread & {
+  readonly lineage?: { readonly relationshipToParent?: string | null } | null;
+  readonly creationSource?: string | null;
+};
 
 /**
  * The `limit-preswitch:` id of the move "Switch before the limit" would make
