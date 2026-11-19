@@ -1029,7 +1029,11 @@ const caller = (machine: RigMachine) => ({
 describe("the plan's own capability (EC2-04)", () => {
   it("is advertised beside the transfer record, and is not the transfer record", () => {
     expect(HANDOFF_PLAN_CAPABILITY).not.toBe(HANDOFF_V2_CAPABILITY);
-    expect(HANDOFF_CAPABILITIES).toEqual([HANDOFF_V2_CAPABILITY, HANDOFF_PLAN_CAPABILITY]);
+    // Later wire features add their own names after these two.
+    expect(HANDOFF_CAPABILITIES.slice(0, 2)).toEqual([
+      HANDOFF_V2_CAPABILITY,
+      HANDOFF_PLAN_CAPABILITY,
+    ]);
     expect(PEER_PATHS.has("check")).toBe(true);
   });
 
