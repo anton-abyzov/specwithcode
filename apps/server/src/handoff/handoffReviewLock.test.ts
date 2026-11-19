@@ -866,6 +866,43 @@ describe("a review starts on a machine only with a permitted reviewer there (rev
       }),
   );
 
+  it.effect(
+    "T24R2-01: a takeover sent as a review never starts a thread that no longer arrives as one",
+    () =>
+      Effect.gen(function* () {
+        const minisHas = yield* receiving(BOTH);
+        // Renamed at the source before its last checkpoint: an ordinary title and no lock.
+        yield* minisHas.receiver.replicate(
+          minisHas.caller("peer"),
+          minisHas.meta({ title: "Fix the build", modelSelection: codex, reviewLock: null }),
+          null,
+        );
+        const taken = yield* Effect.result(
+          minisHas.receiver.takeover(minisHas.caller("peer"), {
+            sourceEnvironmentId: m4,
+            sourceThreadId: sourceThread,
+            epoch: 2,
+            sequence: 1,
+            reason: "handoff",
+            modelSelection: claude,
+            review: true,
+          }),
+        );
+        expect(minisHas.launches).toHaveLength(0);
+        expect(taken._tag).toBe("Failure");
+        if (taken._tag === "Failure") {
+          expect(taken.failure).toMatchObject({ status: 409, code: "invalid", check: "provider" });
+          expect(taken.failure.message).toMatch(/^Review stays here: /);
+        }
+        expect(Object.keys(minisHas.document().threads)).toEqual([]);
+        expect(JSON.stringify(minisHas.document())).not.toMatch(/"continuedThreadId":"/);
+        expect(JSON.stringify(minisHas.document())).not.toMatch(/"epoch":2/);
+        // The same checkpoint taken as an ordinary thread still starts.
+        yield* minisHas.takeOver(claude);
+        expect(minisHas.launches).toHaveLength(1);
+      }),
+  );
+
   it.effect("T24R1-05: a sign-in that lists no models is no proof of a permitted reviewer", () =>
     Effect.gen(function* () {
       const listsNothing = [
