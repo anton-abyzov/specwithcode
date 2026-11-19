@@ -569,7 +569,7 @@ describe("the idle move before the limit, from the sweep (1089)", () => {
   it.effect("moves again in a later window after a turn on the fallback and the way back", () =>
     Effect.gen(function* () {
       // A window that resets in 90 seconds, so the test can pass its reset.
-      const soon = new Date(at + 90_000).toISOString();
+      const soon = DateTime.formatIso(DateTime.makeUnsafe(at + 90_000));
       const nextReset = "2026-11-19T20:00:00.000Z";
       const state = world({ claudeResetAt: soon });
       yield* sweeps(state, (sweep) =>
