@@ -80,6 +80,7 @@ import { outgoingReviewLock } from "./handoffReviewLock.ts";
 import * as Resume from "./handoffResume.ts";
 import { HandoffReceiver, type HandoffRefusal, type ReceiverCaller } from "./HandoffReceiver.ts";
 import { readSourceSet, SET_COPY_ON_HANDOFF, shipSetTo } from "./HandoffSetMoves.ts";
+import { makeHandoffBatch } from "./HandoffBatch.ts";
 import { makeTransferRunner } from "./HandoffTransferRunner.ts";
 import * as HandoffTransferStore from "./HandoffTransferStore.ts";
 import {
@@ -1265,9 +1266,12 @@ export const make = Effect.gen(function* () {
 
   const tick = heartbeat.pipe(Effect.andThen(repairFollows), Effect.andThen(replicate));
 
+  const batch = makeHandoffBatch({});
   return {
     handOff: (input: HandOffInput) => handOffAs(input, "handoff", { trigger: input.trigger }),
     handOffMachine,
+    handOffBatch: batch.run,
+    readBatches: batch.read,
     continueHere,
     resumeFenced,
     resumeThread,

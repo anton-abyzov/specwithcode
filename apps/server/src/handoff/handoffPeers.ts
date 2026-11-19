@@ -72,6 +72,9 @@ import {
   TransferPullRequest,
   TransferStatusRequest,
   TransferStatusResponse,
+  FolderWorkRequest,
+  FolderWorkResponse,
+  unknownFolderWorkPath,
 } from "./handoffWire.ts";
 import { reviewStaysText } from "./handoffReviewLock.ts";
 import { PeerCheckRequest, PeerCheckResponse, unknownCheckPath } from "./handoffPlan.ts";
@@ -125,6 +128,7 @@ const TIMEOUT_MS: Record<PeerPath, number> = {
   "review-replicate": 120_000,
   "review-takeover": 180_000,
   check: 30_000,
+  "folder-work": 120_000,
 };
 /** A memory page, a coordinator's content or a plan answers with up to the link cap; the rest is small. */
 const answerLimit = (path: PeerPath) =>
@@ -284,6 +288,11 @@ export class HandoffPeers extends Context.Service<
       environmentId: EnvironmentId,
       request: TransferPullRequest,
     ) => Effect.Effect<TakeoverResponse, HandoffPeerError>;
+    /** A hand off batch's folder work: put the snapshot that arrived into the working folder there. */
+    readonly folderWork: (
+      environmentId: EnvironmentId,
+      request: FolderWorkRequest,
+    ) => Effect.Effect<FolderWorkResponse, HandoffPeerError>;
   }
 >()("specweave-studio/handoff/handoffPeers") {}
 
@@ -293,6 +302,8 @@ const encodeExtrasMeta = Schema.encodeSync(ExtrasReplicateMeta);
 const decodeExtrasReplicate = Schema.decodeUnknownOption(ExtrasReplicateResponse);
 const encodeMeta = Schema.encodeSync(ReplicateMeta);
 const encodePreflight = Schema.encodeSync(PeerPreflightRequest);
+const encodeFolderWork = Schema.encodeSync(FolderWorkRequest);
+const decodeFolderWork = Schema.decodeUnknownOption(FolderWorkResponse);
 const encodeCheck = Schema.encodeSync(PeerCheckRequest);
 const decodeCheck = Schema.decodeUnknownOption(PeerCheckResponse);
 const encodeTakeover = Schema.encodeSync(TakeoverRequest);
@@ -600,6 +611,10 @@ export const make = Effect.gen(function* () {
       if (answer.status === 404 && path === "check") {
         return yield* new HandoffPeerError(unknownCheckPath(target.label));
       }
+      // A machine from before hand off batches has no such path. It changed nothing.
+      if (answer.status === 404 && path === "folder-work") {
+        return yield* new HandoffPeerError(unknownFolderWorkPath(target.label));
+      }
       if (!answer.ok) return yield* refusedAnswer(target.label, answer.status, json);
       const decoded = decode(json);
       if (Option.isSome(decoded)) return decoded.value;
@@ -661,6 +676,8 @@ export const make = Effect.gen(function* () {
       postJson(environmentId, "preflight", encodePreflight(request), decodePreflight),
     check: (environmentId, request) =>
       postJson(environmentId, "check", encodeCheck(request), decodeCheck),
+    folderWork: (environmentId, request) =>
+      postJson(environmentId, "folder-work", encodeFolderWork(request), decodeFolderWork),
     takeover: (environmentId, request) =>
       postJson(
         environmentId,

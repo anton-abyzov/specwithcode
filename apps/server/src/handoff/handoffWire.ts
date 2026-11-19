@@ -12,15 +12,19 @@ import {
   CoordinatorStandbyAfterMinutes,
   EnvironmentId,
   HANDOFF_TRACK_START_CAPABILITY,
+  HANDOFF_BATCH_CAPABILITY,
   HANDOFF_V2_CAPABILITY,
   HandoffCapabilities,
   HandoffCheckpoint,
+  HandoffContextRevision,
   HandoffLease,
   HandoffModeErrorCode,
   HandoffPreflightCheck,
   HandoffPreflightFailure,
+  HandoffTransferDisposition,
   HandoffTransferOperationId,
   HandoffTransferTrigger,
+  hasHandoffBatch,
   hasHandoffV2,
   IsoDateTime,
   LogicalProjectMember,
@@ -91,6 +95,7 @@ export const HANDOFF_CAPABILITIES: ReadonlyArray<string> = [
   HANDOFF_PLAN_CAPABILITY,
   HANDOFF_TRACK_START_CAPABILITY,
   HANDOFF_WORKTREE_SET_CAPABILITY,
+  HANDOFF_BATCH_CAPABILITY,
 ];
 
 /**
@@ -259,6 +264,63 @@ export const ExtrasReplicateResponse = Schema.Struct({
 });
 export type ExtrasReplicateResponse = typeof ExtrasReplicateResponse.Type;
 
+/**
+ * A hand off batch's folder work (1390 AC-20). The snapshot of the project
+ * folder's uncommitted files has arrived as a branch; this asks the
+ * destination to put it into its working folder, which it does only when its
+ * repository is at the snapshot's parent commit and has no changes of its own.
+ * A machine from before batches answers 404 for the path.
+ */
+export const FolderWorkRequest = Schema.Struct({
+  sourceEnvironmentId: EnvironmentId,
+  sourceLabel: text(120),
+  sourceProjectId: ProjectId,
+  repositoryPath,
+  /** The batch. A repeat under the same id gets the first answer and changes nothing. */
+  operationId: HandoffTransferOperationId,
+  /** The branch the snapshot arrived as on the destination. */
+  branch: text(512),
+});
+export type FolderWorkRequest = typeof FolderWorkRequest.Type;
+export const FolderWorkResponse = Schema.Struct({
+  machineLabel: text(120),
+  capabilities: Schema.optional(HandoffCapabilities),
+  /** True when the files are in the working folder as uncommitted files. */
+  applied: Schema.Boolean,
+  /** Why they stay a branch; null when applied. */
+  reason: Schema.NullOr(text(500)),
+});
+export type FolderWorkResponse = typeof FolderWorkResponse.Type;
+
+const batchNeedsUpdate = (label: string) =>
+  `Needs update: ${label} runs a SpecWithCode from before hand off batches, so no batch moves work between it and this machine. Update SpecWithCode on ${label} first.`;
+
+/**
+ * The check a batch fails when the other machine does not name the batch
+ * capability. Nothing is held for it, and nothing falls back to a move without
+ * a disposition.
+ */
+export function batchCapabilityFailure(input: {
+  readonly peerLabel: string;
+  readonly capabilities: ReadonlyArray<string> | undefined;
+}): HandoffPreflightFailure | null {
+  const base = capabilityFailure(input);
+  if (base !== null) return base;
+  if (hasHandoffBatch(input.capabilities)) return null;
+  return { check: "version", message: batchNeedsUpdate(input.peerLabel) };
+}
+
+/** What the peer client makes of a 404 for `folder-work`: the machine is from before it and changed nothing. */
+export function unknownFolderWorkPath(label: string) {
+  return {
+    code: "invalid" as const,
+    check: "version" as const,
+    message: batchNeedsUpdate(label),
+    uncertain: false,
+    needsUpdate: true,
+  };
+}
+
 export const PeerPreflightRequest = Schema.Struct({
   sourceEnvironmentId: EnvironmentId,
   protocolVersion: Schema.optional(NonNegativeInt),
@@ -325,6 +387,19 @@ export const TakeoverRequest = Schema.Struct({
   trigger: Schema.optional(HandoffTransferTrigger),
   /** The thread is a review: it is taken over only through `review-takeover`. */
   review: Schema.optional(Schema.Boolean),
+  /**
+   * Set by a hand off batch for a destination that names the batch capability:
+   * what the destination does with the thread, and the revision of its context
+   * it is handed at. Absent from a single move and from an older machine, and
+   * the checkpoint then decides, as before.
+   */
+  batch: Schema.optional(
+    Schema.Struct({
+      batchId: HandoffTransferOperationId,
+      disposition: HandoffTransferDisposition,
+      context: HandoffContextRevision,
+    }),
+  ),
 });
 export type TakeoverRequest = typeof TakeoverRequest.Type;
 export const TakeoverResponse = Schema.Struct({
@@ -542,7 +617,8 @@ export type PeerPath =
   | "transfer-pull"
   | "review-replicate"
   | "review-takeover"
-  | "check";
+  | "check"
+  | "folder-work";
 export const PEER_PATHS: ReadonlySet<string> = new Set<PeerPath>([
   "negotiate",
   "replicate",
@@ -567,6 +643,7 @@ export const PEER_PATHS: ReadonlySet<string> = new Set<PeerPath>([
   "review-replicate",
   "review-takeover",
   "check",
+  "folder-work",
 ]);
 
 /**

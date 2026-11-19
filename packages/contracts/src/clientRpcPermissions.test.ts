@@ -6,6 +6,7 @@ import {
   AuthSourceControlWriteScope,
 } from "./auth.ts";
 import { CLIENT_GUARDED_RPC_SCOPES, clientRpcRequiredScopes } from "./clientRpcPermissions.ts";
+import { HANDOFF_BATCH_RPC_METHODS, handoffBatchRpcs } from "./handoffBatchRpc.ts";
 import {
   planProjectSync,
   planProjectSyncRepository,
@@ -46,12 +47,13 @@ describe("project sync scopes (1390 AC-33)", () => {
     }
   });
 
-  it("covers every call the contract defines, and no hand off call yet", () => {
+  it("covers every call the contract defines", () => {
     expect(projectSyncRpcs.map((rpc) => rpc._tag).toSorted()).toEqual(
       Object.keys(expected).toSorted(),
     );
     const guarded = Object.keys(CLIENT_GUARDED_RPC_SCOPES);
     expect(guarded.filter((method) => method.startsWith("projectSync."))).toHaveLength(5);
+    // The session calls of the first design gave way to the batch's (see below).
     expect(guarded.filter((method) => method.startsWith("handOff."))).toEqual([]);
   });
 
@@ -59,6 +61,37 @@ describe("project sync scopes (1390 AC-33)", () => {
     expect(clientRpcRequiredScopes("handoffMode.checkpointNow", undefined)).toEqual([
       AuthSourceControlWriteScope,
     ]);
+  });
+});
+
+describe("hand off batch scopes (1390 AC-33)", () => {
+  const expected = {
+    [HANDOFF_BATCH_RPC_METHODS.handoffBatchStart]: AuthOrchestrationOperateScope,
+    [HANDOFF_BATCH_RPC_METHODS.handoffBatchRead]: AuthFilesystemReadScope,
+  };
+
+  it("gives each call a window can make exactly one scope from the existing set", () => {
+    for (const [method, scope] of Object.entries(expected)) {
+      expect(clientRpcRequiredScopes(method, undefined), method).toEqual([scope]);
+      expect(CLIENT_GUARDED_RPC_SCOPES[method as keyof typeof expected]).toBe(scope);
+    }
+  });
+
+  it("covers every call the batch's contract defines", () => {
+    expect(handoffBatchRpcs.map((rpc) => rpc._tag).toSorted()).toEqual(
+      Object.keys(expected).toSorted(),
+    );
+    expect(
+      Object.keys(CLIENT_GUARDED_RPC_SCOPES).filter((method) => method.startsWith("handoffBatch.")),
+    ).toHaveLength(2);
+  });
+
+  it("starts a batch at the scope of the calls it replaces, and reads one at a read scope", () => {
+    expect(CLIENT_GUARDED_RPC_SCOPES["away.start"]).toBe(expected["handoffBatch.start"]);
+    expect(CLIENT_GUARDED_RPC_SCOPES["handoffMode.handOffMachine"]).toBe(
+      expected["handoffBatch.start"],
+    );
+    expect(CLIENT_GUARDED_RPC_SCOPES["projectSync.status"]).toBe(expected["handoffBatch.read"]);
   });
 });
 

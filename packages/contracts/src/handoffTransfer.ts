@@ -42,6 +42,18 @@ export function hasHandoffTrackStart(capabilities: ReadonlyArray<string> | undef
   return capabilities?.includes(HANDOFF_TRACK_START_CAPABILITY) === true;
 }
 
+/**
+ * The batch's own wire additions: a takeover that names its disposition and
+ * the revision of the context it hands over, and project folder work put into
+ * the destination's working folder. A machine that does not name it takes no
+ * batch: its rows read "Needs update" and nothing is held for it.
+ */
+export const HANDOFF_BATCH_CAPABILITY = "handoff.batch";
+
+export function hasHandoffBatch(capabilities: ReadonlyArray<string> | undefined): boolean {
+  return capabilities?.includes(HANDOFF_BATCH_CAPABILITY) === true;
+}
+
 export const HandoffTransferOperationId = text(128);
 
 /**
@@ -122,6 +134,16 @@ export const HandoffTransferLauncher = Schema.Struct({
   reachable: Schema.Array(EnvironmentId),
 });
 export type HandoffTransferLauncher = typeof HandoffTransferLauncher.Type;
+/**
+ * The revision of a thread's context a handoff carries: the checkpoint's
+ * sequence and its commit. The destination takes the thread at exactly this
+ * revision or refuses; it never takes "whatever arrived last".
+ */
+export const HandoffContextRevision = Schema.Struct({
+  sequence: NonNegativeInt,
+  commit: text(64),
+});
+export type HandoffContextRevision = typeof HandoffContextRevision.Type;
 
 /** The source's record of one thread's move. */
 export const HandoffTransferRecord = Schema.Struct({
@@ -158,8 +180,36 @@ export const HandoffTransferRecord = Schema.Struct({
    * first send went. Absent from a record sent before this field.
    */
   review: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Set for a move a batch sends to a destination that names the batch
+   * capability: the takeover then carries the disposition and this revision.
+   * Absent on a record from before batches.
+   */
+  context: Schema.optional(HandoffContextRevision),
 });
 export type HandoffTransferRecord = typeof HandoffTransferRecord.Type;
+
+/** How a batch began: a person asked, or the usage-limit rule did. */
+export const HandoffBatchStart = Schema.Literals(["manual", "automatic"]);
+export type HandoffBatchStart = typeof HandoffBatchStart.Type;
+
+/**
+ * One row of a batch as the source keeps it. A thread row with an operation
+ * reads its state from that thread's transfer record; a thread that never got
+ * a record, and project folder work (which has no lineage), keep their own.
+ */
+export const HandoffBatchStoredRow = Schema.Struct({
+  kind: Schema.Literals(["thread", "folder-work"]),
+  /** The thread's id, or the project's for folder work. */
+  id: text(256),
+  title: text(500),
+  projectId: Schema.NullOr(ProjectId),
+  operationId: Schema.NullOr(HandoffTransferOperationId),
+  disposition: Schema.NullOr(HandoffTransferDisposition),
+  state: HandoffTransferState,
+  detail: Schema.NullOr(text(1000)),
+});
+export type HandoffBatchStoredRow = typeof HandoffBatchStoredRow.Type;
 
 /** The threads one request moves together, written before the first of them is held. */
 export const HandoffTransferBatch = Schema.Struct({
@@ -168,6 +218,11 @@ export const HandoffTransferBatch = Schema.Struct({
   trigger: HandoffTransferTrigger,
   operationIds: Schema.Array(HandoffTransferOperationId),
   createdAt: IsoDateTime,
+  // Written by a batch run (1390 T-11); absent on a batch from before it.
+  start: Schema.optional(HandoffBatchStart),
+  targetLabel: Schema.optional(text(120)),
+  rows: Schema.optional(Schema.Array(HandoffBatchStoredRow).check(Schema.isMaxLength(200))),
+  finishedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
 });
 export type HandoffTransferBatch = typeof HandoffTransferBatch.Type;
 
@@ -205,3 +260,69 @@ export type HandoffTransferDocument = typeof HandoffTransferDocument.Type;
 export function isHandoffTransferFinished(state: HandoffTransferState): boolean {
   return state === "resumed" || state === "ready" || state === "stayed" || state === "failed";
 }
+
+// The batch: one type for a manual and an automatic start
+
+export const HANDOFF_BATCH_MAX_THREADS = 100;
+export const HANDOFF_BATCH_MAX_PROJECTS = 20;
+
+/**
+ * What a batch is asked to move: threads, each with what the destination does
+ * with it, and the project folder work of the projects named. There is no
+ * field for a coordinator, a routine or project memory: a batch changes which
+ * machine runs a thread and nothing else.
+ */
+export const HandoffBatchInput = Schema.Struct({
+  destinationEnvironmentId: EnvironmentId,
+  start: HandoffBatchStart,
+  /** Absent means a person asked. An automatic start names the rule that set it off. */
+  trigger: Schema.optional(HandoffTransferTrigger),
+  threads: Schema.Array(
+    Schema.Struct({
+      threadId: ThreadId,
+      /** From the plan. Absent means the thread's own state decides, as a single move does. */
+      disposition: Schema.optional(HandoffTransferDisposition),
+      modelSelection: Schema.optional(ModelSelection),
+    }),
+  ).check(Schema.isMaxLength(HANDOFF_BATCH_MAX_THREADS)),
+  /** Projects whose folder work goes along. Only a manual start carries any. */
+  folderWork: Schema.optional(
+    Schema.Array(ProjectId).check(Schema.isMaxLength(HANDOFF_BATCH_MAX_PROJECTS)),
+  ),
+});
+export type HandoffBatchInput = typeof HandoffBatchInput.Type;
+
+export const HandoffBatchRow = Schema.Struct({
+  kind: Schema.Literals(["thread", "folder-work"]),
+  id: text(256),
+  title: text(500),
+  projectId: Schema.NullOr(ProjectId),
+  operationId: Schema.NullOr(HandoffTransferOperationId),
+  disposition: Schema.NullOr(HandoffTransferDisposition),
+  state: HandoffTransferState,
+  /** "Resumed on {machine}", "Ready on {machine}", or why it stayed. */
+  detail: Schema.NullOr(text(1000)),
+  /** The revision the thread was handed over at, once it was sent. */
+  context: Schema.NullOr(HandoffContextRevision),
+  /** The thread on the destination, once it accepted. */
+  continuedThreadId: Schema.NullOr(ThreadId),
+});
+export type HandoffBatchRow = typeof HandoffBatchRow.Type;
+
+export const HandoffBatchRun = Schema.Struct({
+  batchId: HandoffTransferOperationId,
+  start: HandoffBatchStart,
+  trigger: HandoffTransferTrigger,
+  destination: Schema.Struct({ environmentId: EnvironmentId, label: text(120) }),
+  rows: Schema.Array(HandoffBatchRow),
+  startedAt: IsoDateTime,
+  /** Null while a row still waits for the destination's answer. */
+  finishedAt: Schema.NullOr(IsoDateTime),
+});
+export type HandoffBatchRun = typeof HandoffBatchRun.Type;
+
+export const HandoffBatchReadInput = Schema.Struct({
+  /** Absent reads every batch this machine still has on record, newest first. */
+  batchId: Schema.optional(HandoffTransferOperationId),
+});
+export type HandoffBatchReadInput = typeof HandoffBatchReadInput.Type;
