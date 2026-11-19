@@ -289,7 +289,7 @@ export function OrchestratorSwitcher({
     ...unknown.map((ref) => ({
       key: ref.key,
       name: ref.machine,
-      state: machineRowState({ machine: ref.machine, role: "copy", reach: "never-opened" }),
+      state: machineRowState({ machine: ref.machine, role: "linked", reach: "never-opened" }),
       hint: ref.machine,
     })),
   ];

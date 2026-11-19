@@ -1152,7 +1152,16 @@ const make = Effect.gen(function* () {
 
   // Retired with equal coordinators: nobody stands by for, or takes over, a coordinator.
   const retired = () => retiredRoleChange("invalid");
-  const retiredStandby: Partial<ProjectLinkStandbyMethods> = {
+  const retiredStandby: Pick<
+    ProjectLinkStandbyMethods,
+    | "setStandby"
+    | "acceptStandby"
+    | "acceptStandbyFromPeer"
+    | "rearmStandby"
+    | "plannedGiveWay"
+    | "plannedTakeover"
+    | "awayTakeover"
+  > = {
     // Turning a standby off still works; naming one does not.
     setStandby: (input) => (input.standby === null ? standby.setStandby(input) : retired()),
     acceptStandby: retired,
