@@ -66,6 +66,7 @@ import {
 import * as WorkGrants from "../fleet/WorkGrants.ts";
 import { runGit } from "../fleet/folderTransfer/git.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
@@ -345,6 +346,8 @@ export const make = Effect.gen(function* () {
   const grants = yield* WorkGrants.WorkGrants;
   const locks = yield* KeyedLock.make<string>();
   const transfers = yield* HandoffTransferStore.fromContext;
+  // Read where the server provides it; without it a thread's existence is unknown.
+  const projections = yield* Effect.serviceOption(ProjectionStore.ProjectionStoreV2);
   let pullHandler: TransferPullHandler | null = null;
   const label = handoff.machineLabel;
   const at = (message: string) => `${label}: ${message}`;
@@ -1326,6 +1329,69 @@ export const make = Effect.gen(function* () {
         } satisfies TransferStatusResponse;
       }
       const now = yield* nowIso;
+      const recorded = yield* updateTransfers(
+        (document) =>
+          [document.acceptances[HandoffTransferStore.acceptanceKey(lineage)], document] as const,
+      );
+      if (recorded === undefined) {
+        // Nothing on record for this lineage, so "not accepted" would be written
+        // below. The release before transfer records wrote the continuation's
+        // lease, launched it, and only then marked the copy continued: a thread
+        // it launched may be running here with no mark at all.
+        const continued = continuationThreadId(
+          caller.sourceEnvironmentId,
+          request.sourceThreadId,
+          request.epoch,
+        );
+        const leased = (current.threads[continued]?.lease ?? null) !== null;
+        const shell = Option.isNone(projections)
+          ? ("unknown" as const)
+          : yield* projections.value.getThreadShell(continued).pipe(
+              Effect.map((found) => (found === null ? ("absent" as const) : ("present" as const))),
+              Effect.orElseSucceed(() => "unknown" as const),
+            );
+        if (shell === "present") {
+          const receipt: TakeoverResponse = {
+            threadId: continued,
+            machineLabel: label,
+            modelSelection: null,
+            resumed: false,
+            notice: null,
+          };
+          yield* updateDocument((document) => {
+            const next = markContinued(
+              document,
+              {
+                sourceEnvironmentId: caller.sourceEnvironmentId,
+                sourceThreadId: request.sourceThreadId,
+                epoch: request.epoch,
+                sequence: replica?.checkpoint.sequence ?? 0,
+                reason: "handoff",
+                modelSelection: null,
+              },
+              receipt,
+              now,
+            );
+            return [undefined, next] as const;
+          });
+          return {
+            machineLabel: label,
+            status: "accepted",
+            receipt,
+          } satisfies TransferStatusResponse;
+        }
+        if (shell === "unknown" && leased) {
+          // The lease says a launch was about to happen; whether it did cannot be read.
+          return yield* new HandoffRefusal({
+            status: 503,
+            code: "failed",
+            message: at(
+              "it holds a lease for this thread's continuation and cannot read whether it started",
+            ),
+            uncertain: true,
+          });
+        }
+      }
       const settled = yield* updateTransfers((document) =>
         HandoffTransferStore.settleLineage(document, {
           lineage,
