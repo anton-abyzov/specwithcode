@@ -1261,6 +1261,64 @@ describe("the members of a set, each measured on its own", () => {
       expect(read(NodePath.join(folder, LIB), "draft.ts")).toBe("export {};\n");
     });
 
+    /** A cut attempt whose nested member was given a copy of an ignored file it needs. */
+    const cutWithCopy = async (secret: string) => {
+      const { at, there, set, folder, build } = await arrived();
+      NodeFS.appendFileSync(
+        NodePath.join(there, LIB, ".git", "info", "exclude"),
+        `${secret.split("/")[0]}\n`,
+      );
+      write(NodePath.join(there, LIB), secret, "PORT=1\n");
+      const needing: ReplicateSet = {
+        ...set,
+        members: [set.members[0]!, { ...set.members[1]!, requiredSecretPaths: [secret] }],
+      };
+      await build(needing);
+      NodeFS.rmSync(worktreeSetManifestPath(folder, NodePath));
+      const lib = NodePath.join(folder, LIB);
+      expect(read(lib, secret)).toBe("PORT=1\n");
+      const again = () =>
+        build(needing).then(
+          () => "built again",
+          (cause: Error) => cause.message,
+        );
+      return { at, lib, again };
+    };
+
+    it("keeps a cut attempt whose copied file is now a link to nothing", async () => {
+      const { lib, again } = await cutWithCopy(".env.local");
+      const copy = NodePath.join(lib, ".env.local");
+      NodeFS.rmSync(copy);
+      NodeFS.symlinkSync(NodePath.join(lib, "gone.env"), copy);
+
+      expect(await again()).toMatch(/^packages\/lib: /);
+      expect(NodeFS.lstatSync(copy).isSymbolicLink()).toBe(true);
+    });
+
+    it("keeps a cut attempt whose copied file is now a link to a file that reads the same", async () => {
+      const { at, lib, again } = await cutWithCopy(".env.local");
+      const copy = NodePath.join(lib, ".env.local");
+      const elsewhere = NodePath.join(at.base, "elsewhere.env");
+      NodeFS.writeFileSync(elsewhere, "PORT=1\n");
+      NodeFS.rmSync(copy);
+      NodeFS.symlinkSync(elsewhere, copy);
+
+      expect(await again()).toMatch(/^packages\/lib: /);
+      expect(NodeFS.readlinkSync(copy)).toBe(elsewhere);
+    });
+
+    it("keeps a cut attempt whose copied file sits under a folder that is now a link", async () => {
+      const { at, lib, again } = await cutWithCopy("config/.env.local");
+      const elsewhere = NodePath.join(at.base, "elsewhere");
+      NodeFS.mkdirSync(elsewhere);
+      NodeFS.writeFileSync(NodePath.join(elsewhere, ".env.local"), "PORT=1\n");
+      NodeFS.rmSync(NodePath.join(lib, "config"), { recursive: true });
+      NodeFS.symlinkSync(elsewhere, NodePath.join(lib, "config"));
+
+      expect(await again()).toMatch(/^packages\/lib: /);
+      expect(NodeFS.readlinkSync(NodePath.join(lib, "config"))).toBe(elsewhere);
+    });
+
     it("builds again over a cut attempt whose copied files are as they were copied", async () => {
       const { there, set, folder, build } = await arrived();
       NodeFS.appendFileSync(NodePath.join(there, LIB, ".git", "info", "exclude"), ".env.local\n");
