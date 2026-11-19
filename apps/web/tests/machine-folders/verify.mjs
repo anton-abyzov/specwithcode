@@ -65,36 +65,36 @@ try {
     );
     await page
       .getByText(
-        /^From MacBook Pro M4\. The coordinator continues on .+\. Nothing on .+ is replaced without asking\.$/,
+        /^From Laptop E\. The coordinator continues on .+\. Nothing on .+ is replaced without asking\.$/,
       )
       .waitFor();
     // Git only always moves the coordinator: nothing asks Copy or move.
     assert.equal(await page.locator('[data-slot="handoff-coordinator"]').count(), 0);
     assert.equal(await page.locator('[data-slot="machine-option"]').count(), 3);
     assert.equal(
-      await page.getByRole("radio", { name: /^MacBook Pro M3/ }).getAttribute("aria-checked"),
+      await page.getByRole("radio", { name: /^Kiosk D/ }).getAttribute("aria-checked"),
       "true",
     );
-    // M3 has no saved folder: the picker reads only M3 and fills the matching checkout.
-    assert.equal(await page.evaluate(() => window.browsedMachine), "m3");
+    // Kiosk D has no saved folder: the picker reads only Kiosk D and fills the matching checkout.
+    assert.equal(await page.evaluate(() => window.browsedMachine), "kioskD");
     assert.equal(
-      await page.getByLabel("Folder on MacBook Pro M3").inputValue(),
-      "/Users/you/Projects/sw-easychamp",
+      await page.getByLabel("Folder on Kiosk D").inputValue(),
+      "/Users/you/Projects/atlas",
     );
-    await page.getByText("Found this project on MacBook Pro M3.", { exact: false }).waitFor();
+    await page.getByText("Found this project on Kiosk D.", { exact: false }).waitFor();
     assert.equal(await page.locator("details").count(), 0);
     assert.equal(await page.locator("select").count(), 0);
-    await page.getByText("2 uncommitted files stay on MacBook Pro M4:", { exact: false }).waitFor();
+    await page.getByText("2 uncommitted files stay on Laptop E:", { exact: false }).waitFor();
     assert.equal(await page.getByRole("checkbox", { name: /Remember/ }).count(), 0);
     assert.equal(
       await page
-        .getByRole("button", { name: "Continue the coordinator on MacBook Pro M3" })
+        .getByRole("button", { name: "Continue the coordinator on Kiosk D" })
         .isDisabled(),
       true,
     );
     await page.screenshot({ path: join(output, `${width}-${theme}-choose.png`), fullPage: true });
     await page.getByRole("button", { name: "Commit for me", exact: true }).click();
-    await page.getByText("No uncommitted changes on MacBook Pro M4.", { exact: false }).waitFor();
+    await page.getByText("No uncommitted changes on Laptop E.", { exact: false }).waitFor();
     assert.equal(await page.getByRole("listbox").count(), 0);
     await page.getByRole("button", { name: "Browse…", exact: true }).click();
     assert.equal(await page.getByRole("button", { name: "Up one folder" }).count(), 0);
@@ -103,7 +103,7 @@ try {
       .getByRole("button", { name: "Projects", exact: true })
       .click();
     assert.equal(
-      await page.getByLabel("Folder on MacBook Pro M3").inputValue(),
+      await page.getByLabel("Folder on Kiosk D").inputValue(),
       "/Users/you/Projects",
     );
     await page.getByRole("option", { name: "another-project", exact: true }).click();
@@ -115,15 +115,15 @@ try {
         path: window.savedFolder.input.workspaceRoot,
         create: window.savedFolder.input.createWorkspaceRootIfMissing,
       })),
-      { environmentId: "m3", path: "/Users/you/Projects/another-project", create: false },
+      { environmentId: "kioskD", path: "/Users/you/Projects/another-project", create: false },
     );
     // The saved folder now shows read-only, with Browse… to change it.
     assert.equal(
-      await page.getByLabel("Folder on MacBook Pro M3").inputValue(),
+      await page.getByLabel("Folder on Kiosk D").inputValue(),
       "/Users/you/Projects/another-project",
     );
     await page
-      .getByRole("button", { name: "Continue the coordinator on MacBook Pro M3", exact: true })
+      .getByRole("button", { name: "Continue the coordinator on Kiosk D", exact: true })
       .click();
     await page.getByText("Committed work only.", { exact: false }).waitFor();
     assert.equal(await page.locator('[data-slot="machine-option"]').count(), 0);
@@ -133,7 +133,7 @@ try {
     assert.equal(overflow, false);
     assert.deepEqual(errors, []);
     await page.screenshot({ path: join(output, `${width}-${theme}-review.png`), fullPage: true });
-    receipt.cases.push({ width, height, theme, passed: true, remoteEnvironment: "m3", overflow });
+    receipt.cases.push({ width, height, theme, passed: true, remoteEnvironment: "kioskD", overflow });
     await page.close();
   }
   await writeFile(join(output, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");

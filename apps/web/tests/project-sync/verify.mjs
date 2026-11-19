@@ -128,12 +128,12 @@ const tick = (page, side, kind, nth = 0) =>
     .nth(nth)
     .click();
 
-/** What the plan says per repository on [m4, m5]: the sentence, then its facts. */
+/** What the plan says per repository on [laptopE, rackF]: the sentence, then its facts. */
 const OTHER = (branch) =>
   `On ${branch}. The other machine's branch comes with the fetch when the remote has it; nothing is checked out`;
 const NO_REMOTE = 'Not in Git on a remote. Use "Compare all files…"';
 const NO_UPSTREAM = "No upstream. Its commits are listed as an extra";
-/** state=upstream, on m4: the plan names which upstream it is; an older machine's row stays. */
+/** state=upstream, on laptopE: the plan names which upstream it is; an older machine's row stays. */
 const UPSTREAM_PLAN = {
   "apps/web": "Follows second/feature/menu, which is not a branch of origin. Not moved",
   "apps/api": "origin/release is no longer on origin. Not moved",
@@ -184,12 +184,12 @@ try {
       // 1. The plan: one row per kind of repository, extras on both machines, all unticked.
       let page = await at("case=dialog&state=plan");
       await waitStage(page, "plan");
-      assert.equal(await page.locator("h2").textContent(), "Sync Atlas: m4 and m5");
+      assert.equal(await page.locator("h2").textContent(), "Sync Atlas: laptopE and rackF");
       assert.deepEqual(await events(page), [
-        "fetch:m4",
-        "fetch:m5",
-        "inventory:m4",
-        "inventory:m5",
+        "fetch:laptopE",
+        "fetch:rackF",
+        "inventory:laptopE",
+        "inventory:rackF",
       ]);
       const rows = await page
         .locator("[data-sync-row]")
@@ -199,8 +199,8 @@ try {
       for (const repo of rows)
         plan[repo] = [await said(page, repo, "a"), await said(page, repo, "b")];
       for (const [repo, [a, b]] of Object.entries(PLAN)) {
-        assert.deepEqual([plan[repo][0].sentence, ...plan[repo][0].facts], a, `${repo} on m4`);
-        assert.deepEqual([plan[repo][1].sentence, ...plan[repo][1].facts], b, `${repo} on m5`);
+        assert.deepEqual([plan[repo][0].sentence, ...plan[repo][0].facts], a, `${repo} on laptopE`);
+        assert.deepEqual([plan[repo][1].sentence, ...plan[repo][1].facts], b, `${repo} on rackF`);
       }
       assert.deepEqual(Object.keys(PLAN).sort(), [...rows].sort());
       assert.equal(await page.locator('[data-slot="checkbox"][data-checked]').count(), 0);
@@ -248,16 +248,16 @@ try {
       assert.equal(calls.filter((call) => call.startsWith("run:")).length, 2);
       assert.ok(
         calls.includes(
-          'run:m4:{"fastForward":[{"path":"apps/web","otherBranch":"main"}],"clone":[]}',
+          'run:laptopE:{"fastForward":[{"path":"apps/web","otherBranch":"main"}],"clone":[]}',
         ),
         calls.join("\n"),
       );
       const sent = calls.filter((call) => call.startsWith("extras:"));
       assert.equal(sent.length, 2);
-      assert.ok(sent[0].startsWith("extras:m4>m5:"));
+      assert.ok(sent[0].startsWith("extras:laptopE>rackF:"));
       assert.ok(sent[0].includes('"sendAnyway":["notes/keys.txt"]'), sent[0]);
       assert.ok(!sent[0].includes(".env.local"), "a secret by its name was sent");
-      assert.ok(sent[1].startsWith("extras:m5>m4:"));
+      assert.ok(sent[1].startsWith("extras:rackF>laptopE:"));
       assert.equal((await said(page, "apps/web", "a")).sentence, "Moved forward 99 commits");
       // Still never bare after the run.
       assert.deepEqual((await said(page, ".", "b")).facts, [
@@ -267,7 +267,7 @@ try {
       const extraResults = await texts(page, "[data-sync-extra-result]");
       assert.equal(extraResults.length, 4);
       assert.ok(
-        extraResults.some((line) => line.includes("swc/from-m4/fix/menu")),
+        extraResults.some((line) => line.includes("swc/from-laptopE/fix/menu")),
         extraResults.join("\n"),
       );
       assert.equal(
@@ -276,7 +276,7 @@ try {
         "the file past the limit stays",
       );
       // Not everything is in sync: the title does not claim it.
-      assert.equal(await page.locator("h2").textContent(), "Sync Atlas: m4 and m5");
+      assert.equal(await page.locator("h2").textContent(), "Sync Atlas: laptopE and rackF");
       taken = await shot(page, `result-${tag}`);
       const wholeResult = await longShot(page, `result-whole-${tag}`);
       results.push({
@@ -292,10 +292,10 @@ try {
       await page.locator("[data-sync-again]").click();
       await waitStage(page, "plan");
       assert.deepEqual((await events(page)).slice(-4), [
-        "fetch:m4",
-        "fetch:m5",
-        "inventory:m4",
-        "inventory:m5",
+        "fetch:laptopE",
+        "fetch:rackF",
+        "inventory:laptopE",
+        "inventory:rackF",
       ]);
       await page.close();
 
@@ -305,7 +305,7 @@ try {
       assert.equal((await said(page, "apps/web", "b")).sentence, "Moves forward 12 commits");
       await page.locator("[data-sync-run]").click();
       await waitStage(page, "running");
-      assert.equal(await page.locator("[data-sync-progress]").textContent(), "Syncing m4 and m5…");
+      assert.equal(await page.locator("[data-sync-progress]").textContent(), "Syncing laptopE and rackF…");
       assert.equal(await page.locator("[data-sync-run]").isDisabled(), true);
       assert.equal(await page.locator("[data-sync-run]").textContent(), "Syncing…");
       await page.keyboard.press("Escape");
@@ -319,22 +319,22 @@ try {
       await waitStage(page, "plan");
       await page.locator("[data-sync-run]").click();
       await waitStage(page, "result");
-      assert.equal(await page.locator("h2").textContent(), "Atlas is in sync on m4 and m5");
+      assert.equal(await page.locator("h2").textContent(), "Atlas is in sync on laptopE and rackF");
       assert.equal(
         await page.locator("[data-sync-live]").textContent(),
-        "Atlas is in sync on m4 and m5",
+        "Atlas is in sync on laptopE and rackF",
       );
       // The repositories are a table: each cell is heard under its machine's column.
       assert.deepEqual(await texts(page, `${DIALOG} [role="columnheader"]`), [
         "Repository",
-        "m4",
-        "m5",
+        "laptopE",
+        "rackF",
       ]);
       assert.equal((await said(page, "apps/web", "b")).sentence, "Moved forward 12 commits");
-      // Only m5 had something to do.
+      // Only rackF had something to do.
       assert.deepEqual(
         (await events(page)).filter((call) => call.startsWith("run:")),
-        ['run:m5:{"fastForward":[{"path":"apps/web","otherBranch":"main"}],"clone":[]}'],
+        ['run:rackF:{"fastForward":[{"path":"apps/web","otherBranch":"main"}],"clone":[]}'],
       );
       taken = await shot(page, `result-in-sync-${tag}`);
       results.push({ theme, width, case: "result, in sync", ...taken });
@@ -354,7 +354,7 @@ try {
       results.push({ theme, width, case: "plan, nothing to do", ...taken });
       // "Compare all files…" hands over to the measured folder copy and closes this dialog.
       await page.locator("[data-sync-compare]").click();
-      assert.deepEqual((await events(page)).slice(-2), ["compare:m5", "closed"]);
+      assert.deepEqual((await events(page)).slice(-2), ["compare:rackF", "closed"]);
       await page.close();
 
       // 6. Several machines: a picker first, and nothing is fetched before a pick.
@@ -363,12 +363,12 @@ try {
       assert.equal(await page.locator("h2").textContent(), "Sync Atlas");
       assert.deepEqual(await events(page), []);
       assert.deepEqual(await texts(page, "[data-sync-target]"), [
-        "m5",
+        "rackF",
         // The row names the machine: the reason is said without it.
-        "linux-miniOffline",
-        "m1Needs update · 1.4.2",
-        "m3This window can only read m3",
-        "m2Separate project",
+        "box-aOffline",
+        "deskBNeeds update · 1.4.2",
+        "kioskDThis window can only read kioskD",
+        "hubCSeparate project",
       ]);
       assert.deepEqual(
         await page
@@ -378,14 +378,14 @@ try {
       );
       taken = await shot(page, `picker-${tag}`);
       results.push({ theme, width, case: "picker", ...taken });
-      await page.locator('[data-sync-target="m5:p"]').click();
+      await page.locator('[data-sync-target="rackF:p"]').click();
       await waitStage(page, "plan");
       await page.close();
 
       // 7. The fetch has not answered.
       page = await at("case=dialog&state=checking");
       await waitStage(page, "checking");
-      assert.equal(await page.locator("[data-sync-live]").textContent(), "Fetching on m4 and m5…");
+      assert.equal(await page.locator("[data-sync-live]").textContent(), "Fetching on laptopE and rackF…");
       // One live region that stays: the visible line is not a second one.
       assert.equal(await page.locator(`${DIALOG} p[role="status"]`).count(), 1);
       assert.equal(await page.locator("[data-sync-run]").isDisabled(), true);
@@ -395,16 +395,16 @@ try {
 
       // 8. Why a machine could not take part: nothing changed, and the slow path is offered.
       const failures = {
-        offline: "m5 is offline. Sync needs both machines connected.",
+        offline: "rackF is offline. Sync needs both machines connected.",
         "read-only":
-          "This window can only read m5, so it cannot sync it. Open SpecWithCode on m5, or connect to it with full access.",
+          "This window can only read rackF, so it cannot sync it. Open SpecWithCode on rackF, or connect to it with full access.",
         "needs-update":
-          'Update SpecWithCode on m5 to sync with Git. "Compare all files…" works now.',
-        "not-found": "m5 does not have this project.",
-        "not-git": 'The project folder on m5 is not a Git repository. Use "Compare all files…".',
-        failed: "m5 could not sync: The project folder is on a drive that is not connected.",
+          'Update SpecWithCode on rackF to sync with Git. "Compare all files…" works now.',
+        "not-found": "rackF does not have this project.",
+        "not-git": 'The project folder on rackF is not a Git repository. Use "Compare all files…".',
+        failed: "rackF could not sync: The project folder is on a drive that is not connected.",
         unreadable:
-          "m5 answered in a way this version does not read. Update SpecWithCode on this machine, then check again.",
+          "rackF answered in a way this version does not read. Update SpecWithCode on this machine, then check again.",
       };
       for (const [kind, line] of Object.entries(failures)) {
         page = await at(`case=dialog&state=${kind}`);
@@ -438,7 +438,7 @@ try {
       await waitStage(page, "plan");
       assert.ok(
         (await page.locator('[data-sync-extras="b"]').textContent()).includes(
-          "Work that is only on m5 could not be listed.",
+          "Work that is only on rackF could not be listed.",
         ),
       );
       assert.equal(await page.locator("[data-sync-run]").isDisabled(), false);
@@ -452,7 +452,7 @@ try {
       await waitStage(page, "plan");
       assert.ok(
         (await page.locator(DIALOG).textContent()).includes(
-          "Only the top repository of m5 is listed",
+          "Only the top repository of rackF is listed",
         ),
       );
       taken = await shot(page, `plan-scan-limited-${tag}`);
@@ -466,10 +466,10 @@ try {
       await waitStage(page, "result");
       assert.ok(
         (await page.locator(DIALOG).textContent()).includes(
-          "m4 did not finish its part of the sync.",
+          "laptopE did not finish its part of the sync.",
         ),
       );
-      // m4 gave no answer: its rows say so, and never "Not done".
+      // laptopE gave no answer: its rows say so, and never "Not done".
       assert.equal(
         (await said(page, "apps/web", "a")).sentence,
         'No answer came for this repository, and it may have moved. "Check again" shows where it stands',
@@ -478,7 +478,7 @@ try {
         await page.locator("[data-sync-live]").textContent(),
         "Sync ended, and not everything was moved or sent. Each repository says why.",
       );
-      assert.equal(await page.locator("h2").textContent(), "Sync Atlas: m4 and m5");
+      assert.equal(await page.locator("h2").textContent(), "Sync Atlas: laptopE and rackF");
       const refused = await page.locator('[data-sync-cell][data-tone="failed"]').count();
       assert.ok(refused > 0, "no refused step is shown");
       taken = await shot(page, `result-refused-${tag}`);
@@ -491,7 +491,7 @@ try {
       page = await at("case=dialog&state=upstream");
       await waitStage(page, "plan");
       for (const [repo, sentence] of Object.entries(UPSTREAM_PLAN))
-        assert.equal((await said(page, repo, "a")).sentence, sentence, `${repo} on m4`);
+        assert.equal((await said(page, repo, "a")).sentence, sentence, `${repo} on laptopE`);
       assert.equal(await cell(page, "apps/web", "a").locator("[data-sync-detail]").count(), 0);
       assert.equal(await cell(page, "apps/api", "a").locator("[data-sync-detail]").count(), 0);
       taken = await shot(page, `plan-upstream-${tag}`);
@@ -500,13 +500,13 @@ try {
       await page.locator("[data-sync-run]").click();
       await waitStage(page, "result");
       for (const [repo, sentence] of Object.entries(UPSTREAM_RESULT))
-        assert.equal((await said(page, repo, "a")).sentence, sentence, `${repo} on m4, result`);
+        assert.equal((await said(page, repo, "a")).sentence, sentence, `${repo} on laptopE, result`);
       assert.equal(
         await cell(page, "tools/cli", "a").locator("[data-sync-detail]").textContent(),
         "Its state could not be read, so it was not moved.",
       );
       assert.deepEqual(await texts(page, "[data-sync-leftover]"), [
-        "m4: A clone that was stopped left .apps-site.clone-7f3a behind, and it could not be removed",
+        "laptopE: A clone that was stopped left .apps-site.clone-7f3a behind, and it could not be removed",
       ]);
       taken = await shot(page, `result-upstream-${tag}`);
       const wholeUpstreamResult = await longShot(page, `result-upstream-whole-${tag}`);
@@ -526,7 +526,7 @@ try {
       await page.locator("[data-sync-run]").click();
       await waitStage(page, "result");
       const notSent = page.locator('[data-sync-extra-results="a"]');
-      assert.ok((await notSent.textContent()).includes("The extras from m4 were not sent."));
+      assert.ok((await notSent.textContent()).includes("The extras from laptopE were not sent."));
       assert.deepEqual(
         await notSent
           .locator("[data-sync-extra-result]")
@@ -547,7 +547,7 @@ try {
       const unknown = page.locator('[data-sync-extra-results="a"]');
       assert.equal(
         await unknown.locator("[data-sync-extras-outcome]").textContent(),
-        "m4 sent extras and no answer came back. They may have arrived: check m5 before sending again.",
+        "laptopE sent extras and no answer came back. They may have arrived: check rackF before sending again.",
       );
       assert.ok(!(await unknown.textContent()).includes("were not sent"));
       assert.deepEqual(
@@ -558,7 +558,7 @@ try {
       );
       assert.ok(
         (await unknown.locator('[data-sync-extra-result="unknown"]').textContent()).includes(
-          "No answer came back. It may have arrived on m5: check m5 before sending again.",
+          "No answer came back. It may have arrived on rackF: check rackF before sending again.",
         ),
       );
       assert.equal(
@@ -570,7 +570,7 @@ try {
       results.push({ theme, width, case: "result, extras with no answer", ...taken });
       await page.close();
 
-      // 12c. The window loses its grant on m5 while the plan is on screen: the plan goes.
+      // 12c. The window loses its grant on rackF while the plan is on screen: the plan goes.
       page = await at("case=dialog&state=small");
       await waitStage(page, "plan");
       assert.equal(await page.locator("[data-sync-run]").isDisabled(), false);
@@ -578,7 +578,7 @@ try {
       await waitStage(page, "failed");
       assert.equal(
         await page.locator('[data-sync-failure="blocked"]').textContent(),
-        "This window can only read m5",
+        "This window can only read rackF",
       );
       assert.equal(await page.locator("[data-sync-run]").count(), 0);
       assert.ok(!(await events(page)).some((event) => event.startsWith("run:")));
@@ -586,12 +586,12 @@ try {
       results.push({ theme, width, case: "plan, grant lost", ...taken });
       await page.close();
 
-      // 12d. Every step is done and m5 ended on another branch: finished, never "in sync".
+      // 12d. Every step is done and rackF ended on another branch: finished, never "in sync".
       page = await at("case=dialog&state=diverged");
       await waitStage(page, "plan");
       await page.locator("[data-sync-run]").click();
       await waitStage(page, "result");
-      assert.equal(await page.locator("h2").textContent(), "Sync finished for Atlas: m4 and m5");
+      assert.equal(await page.locator("h2").textContent(), "Sync finished for Atlas: laptopE and rackF");
       taken = await shot(page, `result-not-proven-${tag}`);
       results.push({ theme, width, case: "result, not proven in sync", ...taken });
       await page.close();
@@ -601,7 +601,7 @@ try {
       await waitStage(page, "plan");
       const long = await texts(page, '[data-sync-extras="a"] [data-sync-extra] label');
       assert.ok(
-        long.some((line) => line.startsWith("11 branches that exist only on m4")),
+        long.some((line) => line.startsWith("11 branches that exist only on laptopE")),
         long.join(" | "),
       );
       assert.ok(
@@ -630,11 +630,11 @@ try {
       await page.locator('[data-sync-extras="a"]').scrollIntoViewIfNeeded();
       taken = await shot(page, `plan-long-${tag}`);
       const wholeLong = await longShot(page, `plan-long-whole-${tag}`);
-      // Nothing was moved, and work is still listed on m4: finished, never "in sync".
+      // Nothing was moved, and work is still listed on laptopE: finished, never "in sync".
       await tick(page, "a", "only-here");
       await page.locator("[data-sync-run]").click();
       await waitStage(page, "result");
-      assert.equal(await page.locator("h2").textContent(), "Sync finished for Atlas: m4 and m5");
+      assert.equal(await page.locator("h2").textContent(), "Sync finished for Atlas: laptopE and rackF");
       const wholeLongResult = await longShot(page, `result-long-whole-${tag}`);
       results.push({
         theme,
@@ -647,7 +647,7 @@ try {
       });
       await page.close();
 
-      // 13. The machine menu on m4's page: one sync fact per row, "Sync…" and "Add…".
+      // 13. The machine menu on laptopE's page: one sync fact per row, "Sync…" and "Add…".
       page = await open(`theme=${theme}&case=menu`, width, 820);
       await page.locator("[data-coordinator-machine]").click();
       await page.locator('[role="menu"]').waitFor();
@@ -663,19 +663,19 @@ try {
       );
       const fact = (name) => facts.find((row) => row.machine === name);
       // The machine shown is what the others are compared with: no fact of its own.
-      assert.equal(fact("m4").fact, null);
-      assert.deepEqual([fact("m5").tone, fact("m5").fact], ["same", "Same as m4"]);
+      assert.equal(fact("laptopE").fact, null);
+      assert.deepEqual([fact("rackF").tone, fact("rackF").fact], ["same", "Same as laptopE"]);
       assert.deepEqual(
-        [fact("m1").tone, fact("m1").fact],
+        [fact("deskB").tone, fact("deskB").fact],
         ["differs", "2 of 5 repositories differ"],
       );
-      assert.equal(fact("linux-mini").tone, "differs");
-      assert.match(fact("linux-mini").fact, /^1 of 5 repositories differ · as of /);
-      assert.deepEqual(fact("linux-mini").notes, ["Offline · last seen 25m ago"]);
+      assert.equal(fact("box-a").tone, "differs");
+      assert.match(fact("box-a").fact, /^1 of 5 repositories differ · as of /);
+      assert.deepEqual(fact("box-a").notes, ["Offline · last seen 25m ago"]);
       // From before Sync: its note, and no guess about its files.
-      assert.deepEqual([fact("m3").tone, fact("m3").fact], ["unknown", "Not checked yet"]);
-      assert.deepEqual(fact("m3").notes, ["Needs update · 1.4.2"]);
-      assert.deepEqual([fact("m2").tone, fact("m2").fact], ["unknown", "Not checked yet"]);
+      assert.deepEqual([fact("kioskD").tone, fact("kioskD").fact], ["unknown", "Not checked yet"]);
+      assert.deepEqual(fact("kioskD").notes, ["Needs update · 1.4.2"]);
+      assert.deepEqual([fact("hubC").tone, fact("hubC").fact], ["unknown", "Not checked yet"]);
       const items = await texts(page, '[role="menuitem"]');
       for (const item of [
         "Sync…",
@@ -708,7 +708,7 @@ try {
       assert.equal(await sync.getAttribute("aria-disabled"), "true");
       assert.equal(
         await page.locator("[data-sync-blocked]").textContent(),
-        "This window can only read m4",
+        "This window can only read laptopE",
       );
       taken = await shot(page, `menu-sync-blocked-${tag}`, '[role="menu"]');
       await sync.click({ force: true });
@@ -732,17 +732,17 @@ try {
             ]),
           ),
         );
-      assert.equal(seen.m4, null);
-      assert.equal(seen.m5, "Same as m4");
-      assert.equal(seen.m1, "2 of 5 repositories differ");
-      assert.equal(seen.m2, "Same as m4");
-      assert.match(seen["linux-mini"], /^1 of 5 repositories differ · as of /);
-      assert.equal(seen.m3, "Not checked yet");
+      assert.equal(seen.laptopE, null);
+      assert.equal(seen.rackF, "Same as laptopE");
+      assert.equal(seen.deskB, "2 of 5 repositories differ");
+      assert.equal(seen.hubC, "Same as laptopE");
+      assert.match(seen["box-a"], /^1 of 5 repositories differ · as of /);
+      assert.equal(seen.kioskD, "Not checked yet");
       const readOnlySync = page.locator('[data-machine-action="sync"]');
       assert.equal(await readOnlySync.getAttribute("aria-disabled"), "true");
       assert.equal(
         await page.locator("[data-sync-blocked]").textContent(),
-        "This window can only read m4",
+        "This window can only read laptopE",
       );
       assert.equal(await page.locator('[data-machine-action="add"]').count(), 0);
       taken = await shot(page, `menu-read-only-window-${tag}`, '[role="menu"]');

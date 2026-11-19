@@ -37,7 +37,7 @@ const read = (value = status(), at = 1_000) => ({ kind: "status", status: value,
 afterEach(() => resetSyncStatusForTest());
 
 describe("syncBlockedOn", () => {
-  const base = { machine: "M5", reach: "open", read: undefined, version: null } as const;
+  const base = { machine: "Rack F", reach: "open", read: undefined, version: null } as const;
 
   it("lets Sync run on a connected machine whose grant allows it or has not loaded", () => {
     expect(syncBlockedOn({ ...base, access: "granted" })).toBeNull();
@@ -48,7 +48,7 @@ describe("syncBlockedOn", () => {
   it("greys it for an offline machine, an app from before Sync, and a window that can only read", () => {
     expect(syncBlockedOn({ ...base, reach: "offline", access: "granted" })).toEqual({
       text: "{machine} offline",
-      values: { machine: "M5" },
+      values: { machine: "Rack F" },
     });
     expect(
       syncBlockedOn({
@@ -59,26 +59,26 @@ describe("syncBlockedOn", () => {
       }),
     ).toEqual({
       text: "{machine}: Needs update · {version}",
-      values: { machine: "M5", version: "1.0.360" },
+      values: { machine: "Rack F", version: "1.0.360" },
     });
     expect(
       syncBlockedOn({ ...base, read: { kind: "needs-update", at: 1 }, access: "granted" }),
-    ).toEqual({ text: "{machine}: Needs update", values: { machine: "M5" } });
+    ).toEqual({ text: "{machine}: Needs update", values: { machine: "Rack F" } });
     // Only a machine that is offline is called offline.
     for (const reach of ["never-opened", "refused"] as const)
       expect(syncBlockedOn({ ...base, reach, access: "granted" })).toEqual({
         text: "This window cannot open {machine}",
-        values: { machine: "M5" },
+        values: { machine: "Rack F" },
       });
     expect(syncBlockedOn({ ...base, access: "denied" })).toEqual({
       text: "This window can only read {machine}",
-      values: { machine: "M5" },
+      values: { machine: "Rack F" },
     });
   });
 });
 
 describe("syncBlockedOn under a row that already names the machine", () => {
-  const base = { machine: "M5", reach: "open", read: undefined, version: null } as const;
+  const base = { machine: "Rack F", reach: "open", read: undefined, version: null } as const;
 
   it("says the reason without its subject", () => {
     expect(syncBlockedOn({ ...base, reach: "offline", access: "granted" }, false)).toEqual({
@@ -98,13 +98,13 @@ describe("syncBlockedOn under a row that already names the machine", () => {
   it("keeps a sentence whose subject is this window", () => {
     expect(syncBlockedOn({ ...base, access: "denied" }, false)).toEqual({
       text: "This window can only read {machine}",
-      values: { machine: "M5" },
+      values: { machine: "Rack F" },
     });
   });
 });
 
 describe("syncRowFact", () => {
-  const base = { shownName: "M5", offline: false, version: null, now: 1_000 } as const;
+  const base = { shownName: "Rack F", offline: false, version: null, now: 1_000 } as const;
 
   it("compares the two machines' last statuses", () => {
     expect(syncRowFact({ ...base, shown: read(), other: read() }).sync).toMatchObject({
@@ -162,7 +162,7 @@ describe("syncRowFact", () => {
 });
 
 describe("syncRowFact with a side that was not confirmed", () => {
-  const base = { shownName: "M5", offline: false, version: null } as const;
+  const base = { shownName: "Rack F", offline: false, version: null } as const;
   const time = (at: number) =>
     new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
@@ -202,14 +202,14 @@ describe("refreshSyncStatus", () => {
   it("reads a status once and keeps it for a minute", async () => {
     let now = 10_000;
     const api = { status: vi.fn(async () => ({ ok: true as const, value: status() })) };
-    await refreshSyncStatus([machine("m4"), machine("m5")], api, () => now);
+    await refreshSyncStatus([machine("laptopE"), machine("rackF")], api, () => now);
     expect(api.status).toHaveBeenCalledTimes(2);
-    expect(syncStatusRead("m4:p")).toEqual({ kind: "status", status: status(), at: 10_000 });
+    expect(syncStatusRead("laptopE:p")).toEqual({ kind: "status", status: status(), at: 10_000 });
     now += SYNC_STATUS_FRESH_MS - 1;
-    await refreshSyncStatus([machine("m4")], api, () => now);
+    await refreshSyncStatus([machine("laptopE")], api, () => now);
     expect(api.status).toHaveBeenCalledTimes(2);
     now += 1;
-    await refreshSyncStatus([machine("m4")], api, () => now);
+    await refreshSyncStatus([machine("laptopE")], api, () => now);
     expect(api.status).toHaveBeenCalledTimes(3);
   });
 
@@ -223,17 +223,17 @@ describe("refreshSyncStatus", () => {
       { ok: false, cause: { _tag: "EnvironmentRpcUnavailableError" } },
     ];
     const api = { status: vi.fn(async () => answers.shift()!) };
-    await refreshSyncStatus([machine("m4")], api, () => now);
+    await refreshSyncStatus([machine("laptopE")], api, () => now);
     now += SYNC_STATUS_FRESH_MS;
-    await refreshSyncStatus([machine("m4"), machine("m5")], api, () => now);
+    await refreshSyncStatus([machine("laptopE"), machine("rackF")], api, () => now);
     // What it said before stays, marked as not confirmed since.
-    expect(syncStatusRead("m4:p")).toEqual({
+    expect(syncStatusRead("laptopE:p")).toEqual({
       kind: "status",
       status: status(),
       at: 0,
       stale: true,
     });
-    expect(syncStatusRead("m5:p")).toBeUndefined();
+    expect(syncStatusRead("rackF:p")).toBeUndefined();
   });
 
   it("reads only an unknown call as needing an update", async () => {
@@ -243,7 +243,7 @@ describe("refreshSyncStatus", () => {
         cause: "Unknown request tag: projectSync.status",
       })),
     };
-    await refreshSyncStatus([machine("m1")], api, () => 5);
-    expect(syncStatusRead("m1:p")).toEqual({ kind: "needs-update", at: 5 });
+    await refreshSyncStatus([machine("deskB")], api, () => 5);
+    expect(syncStatusRead("deskB:p")).toEqual({ kind: "needs-update", at: 5 });
   });
 });

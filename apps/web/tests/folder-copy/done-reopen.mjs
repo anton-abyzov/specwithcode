@@ -71,20 +71,20 @@ try {
     };
     await page.goto(`${base}?short=1&theme=${theme}`);
     // One click copies to an empty folder; Done is seen, then the dialog is closed.
-    await action("Copy to m5").click();
-    await action("Open on m5").waitFor();
+    await action("Copy to rackF").click();
+    await action("Open on rackF").waitFor();
     await page.keyboard.press("Escape");
     await page.getByRole("dialog").waitFor({ state: "detached" });
     // Nothing reopens it; the person opens "Add to another machine…" again.
     await page.waitForTimeout(500);
     NodeAssert.equal(await page.getByRole("dialog").count(), 0, "a closed dialog stays closed");
     await page.locator('[data-slot="fixture-reopen"]').click();
-    await action("Open on m5").waitFor();
+    await action("Open on rackF").waitFor();
     NodeAssert.equal(
       (await popup.locator('[data-slot="dialog-title"], h2').first().textContent()).trim(),
-      "specweave is on m5 (added 2h ago)",
+      "specweave is on rackF (added 2h ago)",
     );
-    NodeAssert.equal(await action("Copy to m5").count(), 0, "no Copy button on the done view");
+    NodeAssert.equal(await action("Copy to rackF").count(), 0, "no Copy button on the done view");
     NodeAssert.equal(await action("Undo…").count(), 1, "the done view offers Undo");
     NodeAssert.doesNotMatch(
       await action("Sync again…").getAttribute("class"),
@@ -94,12 +94,12 @@ try {
     NodeAssert.equal(await page.locator('[data-slot="handoff-coordinator"]').count(), 0);
     await shot("done-view-on-reopen");
     await action("Sync again…").click();
-    await action("Copy to m5").waitFor();
+    await action("Copy to rackF").waitFor();
     await page.locator('[data-slot="copy-last"]').waitFor();
-    NodeAssert.match(await popup.textContent(), /The last copy to .* on m5 finished\. View it/);
+    NodeAssert.match(await popup.textContent(), /The last copy to .* on rackF finished\. View it/);
     NodeAssert.equal(
       (await popup.locator('[data-slot="dialog-title"], h2').first().textContent()).trim(),
-      "Add specweave to m5",
+      "Add specweave to rackF",
     );
     await shot("form-after-copy-changes-again");
     await context.close();

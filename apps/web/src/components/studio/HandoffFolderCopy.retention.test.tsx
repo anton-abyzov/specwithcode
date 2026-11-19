@@ -88,7 +88,7 @@ beforeEach(() => {
   localStorage.clear();
   state.calls = [];
   state.uuid = 0;
-  state.homes = { m3: "/home/anton", m1: "/Users/anton" };
+  state.homes = { kioskD: "/home/sam", deskB: "/Users/sam" };
   state.link = vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({ status: "linked" }));
   statuses = [copyStatus("previewed"), copyStatus("applied")];
   state.handlers = copyHandlers({
@@ -130,7 +130,7 @@ const summarized = (capabilities: Record<string, unknown>, value: object = reten
     },
   };
 };
-const moveToM3 = async () => {
+const moveToKioskD = async () => {
   statuses = [
     copyStatus("previewed", { mode: "copy-and-move" }),
     copyStatus("applied", {
@@ -139,8 +139,8 @@ const moveToM3 = async () => {
     }),
   ];
   await mount(MOVE);
-  await click("Copy and move to M3");
-  await click("Copy and move to M3");
+  await click("Copy and move to Kiosk D");
+  await click("Copy and move to Kiosk D");
 };
 const published = () =>
   state.calls.filter(
@@ -149,27 +149,27 @@ const published = () =>
 
 it("refuses before fencing when the destination cannot read a summarized handoff", async () => {
   summarized({ scopeVersion: 1 });
-  await moveToM3();
+  await moveToKioskD();
   expect(state.calls.find(([name]) => name === "copyCapabilities")?.[1]).toMatchObject({
-    environmentId: "m3",
+    environmentId: "kioskD",
   });
   expect(published()).toHaveLength(0);
   expect(names().filter((name) => name === "receive")).toHaveLength(1);
   expect(container.textContent).toContain(
     "Update the other machine to move the coordinator of a project this large. Nothing moved; the coordinator stays here.",
   );
-  expect(container.textContent).not.toContain("The coordinator continues on M3.");
+  expect(container.textContent).not.toContain("The coordinator continues on Kiosk D.");
 });
 
 it("moves a summarized coordinator to a destination that reads it and says what stayed", async () => {
   summarized({ scopeVersion: 1, contextRetention: 1 });
-  await moveToM3();
+  await moveToKioskD();
   expect(published()).toHaveLength(1);
   // The source fences a summarized bundle only on this confirmation.
   expect((published()[0]![1] as any).input.contextRetention).toBe(1);
-  expect(container.textContent).toContain("The coordinator continues on M3.");
+  expect(container.textContent).toContain("The coordinator continues on Kiosk D.");
   expect(container.querySelector('[data-slot="copy-done-retention"]')?.textContent).toBe(
-    "The coordinator moved with its latest 412 messages. 9,418 older messages and 1,628 worker chats stay on M4; M3 has a summary of the 200 most recent workers.",
+    "The coordinator moved with its latest 412 messages. 9,418 older messages and 1,628 worker chats stay on Laptop E; Kiosk D has a summary of the 200 most recent workers.",
   );
 });
 
@@ -179,19 +179,19 @@ it("names the machines the chats were written on after an earlier summarized han
     {
       ...retention,
       machines: [
-        { environmentId: "m4", totalThreads: 0, omittedThreads: 0, omittedMessages: 0 },
-        { environmentId: "m3", totalThreads: 1628, omittedThreads: 1428, omittedMessages: 9418 },
+        { environmentId: "laptopE", totalThreads: 0, omittedThreads: 0, omittedMessages: 0 },
+        { environmentId: "kioskD", totalThreads: 1628, omittedThreads: 1428, omittedMessages: 9418 },
       ],
     },
   );
-  await moveToM3();
+  await moveToKioskD();
   expect(container.querySelector('[data-slot="copy-done-retention"]')?.textContent).toBe(
-    "The coordinator moved with its latest 412 messages. 9,418 older messages and 1,628 worker chats stay on the machines they were written on; M3 has a summary of the 200 most recent workers.",
+    "The coordinator moved with its latest 412 messages. 9,418 older messages and 1,628 worker chats stay on the machines they were written on; Kiosk D has a summary of the 200 most recent workers.",
   );
 });
 
 it("moves a small project without asking the destination about summaries", async () => {
-  await moveToM3();
+  await moveToKioskD();
   expect(names()).not.toContain("copyCapabilities");
   expect(published()).toHaveLength(1);
   expect((published()[0]![1] as any).input).not.toHaveProperty("contextRetention");

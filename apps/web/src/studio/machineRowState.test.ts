@@ -8,7 +8,7 @@ import {
 } from "./machineRowState";
 
 const row = (role: MachineRowRole, extra: Partial<Parameters<typeof machineRowState>[0]> = {}) =>
-  machineRowState({ machine: "m5", role, reach: "open", ...extra });
+  machineRowState({ machine: "rackF", role, reach: "open", ...extra });
 
 describe("machineRowState", () => {
   it("greys a machine this window never opened or that refuses it, with the one step on the row", () => {
@@ -16,7 +16,7 @@ describe("machineRowState", () => {
       expect(row("main", { reach, keptConversation: true })).toEqual({
         kind: "cannot-open",
         pressable: false,
-        label: { text: "This window cannot open {machine}", values: { machine: "m5" } },
+        label: { text: "This window cannot open {machine}", values: { machine: "rackF" } },
         action: "connect",
         notes: [],
         sync: null,
@@ -73,7 +73,7 @@ describe("machineRowState", () => {
   });
 
   it("carries the sync fact it is given, and none on a machine it cannot open", () => {
-    const sync = { tone: "same", text: "Same as {shown}", values: { shown: "M4" } } as const;
+    const sync = { tone: "same", text: "Same as {shown}", values: { shown: "Laptop E" } } as const;
     expect(row("copy", { sync }).sync).toEqual(sync);
     expect(row("main", { sync }).sync).toEqual(sync);
     expect(row("copy", { sync, reach: "never-opened" }).sync).toBeNull();
@@ -149,7 +149,7 @@ describe("machineSyncFact", () => {
     shown: MachineSyncStatus | null,
     other: MachineSyncStatus | null,
     asOf: string | null = null,
-  ) => machineSyncFact({ shown, other, shownName: "M5", asOf });
+  ) => machineSyncFact({ shown, other, shownName: "Rack F", asOf });
 
   it("is Same only when every repository is at the same commit and both trees are clean", () => {
     const both = status([
@@ -159,7 +159,7 @@ describe("machineSyncFact", () => {
     expect(fact(both, both)).toEqual({
       tone: "same",
       text: "Same as {shown}",
-      values: { shown: "M5" },
+      values: { shown: "Rack F" },
     });
   });
 
@@ -208,7 +208,7 @@ describe("machineSyncFact", () => {
     expect(fact(one, one, "14:02")).toEqual({
       tone: "same",
       text: "Same as {shown} · as of {time}",
-      values: { shown: "M5", time: "14:02" },
+      values: { shown: "Rack F", time: "14:02" },
     });
     expect(fact(one, status([[".", B]]), "14:02")).toEqual({
       tone: "differs",

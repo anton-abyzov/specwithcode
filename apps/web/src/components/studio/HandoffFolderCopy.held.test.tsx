@@ -17,7 +17,7 @@ vi.mock("../../state/filesystem", () => ({
 }));
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: () => ({
-    data: { parentPath: "/home/anton", entries: [] },
+    data: { parentPath: "/home/sam", entries: [] },
     isPending: false,
   }),
 }));
@@ -48,7 +48,7 @@ vi.mock("@specweave-studio/client-runtime/state/runtime", () => ({
   squashAtomCommandFailure: (failure: { error: unknown }) => failure.error,
 }));
 
-const KEY = "specwithcode:folder-copy:m4:source";
+const KEY = "specwithcode:folder-copy:laptopE:source";
 const OPERATION = "00000000-0000-4000-8000-000000000009";
 const PROJECT = "00000000-0000-4000-8000-000000000002";
 const failedCheck = { repo: ".", ok: false, problems: ["git status differs from the source."] };
@@ -57,11 +57,11 @@ const HELD_MESSAGE =
 
 const copyStatus = (copyState: string, overrides: Record<string, unknown> = {}) => ({
   operationId: OPERATION,
-  sourceEnvironmentId: "m4",
+  sourceEnvironmentId: "laptopE",
   sourceProjectId: "source",
-  sourceMachine: "M4",
+  sourceMachine: "Laptop E",
   mode: "copy-and-move",
-  targetFolder: "/home/anton/project",
+  targetFolder: "/home/sam/project",
   title: "Project",
   selection: DEFAULT_COPY_SELECTION,
   mirror: false,
@@ -120,15 +120,15 @@ const mount = async () => {
         project={
           {
             id: "source",
-            environmentId: "m4",
+            environmentId: "laptopE",
             title: "Project",
             workspaceRoot: "/Users/me/Projects/project",
           } as never
         }
         coordinatorId={"coordinator" as never}
-        sourceLabel="M4"
+        sourceLabel="Laptop E"
         method="copy"
-        machines={[{ id: "m3" as never, label: "M3", unavailable: null }]}
+        machines={[{ id: "kioskD" as never, label: "Kiosk D", unavailable: null }]}
         savedFolder={() => null}
         canMove
         onBusyChange={() => {}}
@@ -148,9 +148,9 @@ const reopenMove = (overrides: Record<string, unknown> = {}) =>
     KEY,
     JSON.stringify({
       operationId: OPERATION,
-      environmentId: "m3",
+      environmentId: "kioskD",
       mode: "copy-and-move",
-      targetFolder: "/home/anton/project",
+      targetFolder: "/home/sam/project",
       projectId: PROJECT,
       ...overrides,
     }),
@@ -199,7 +199,7 @@ beforeEach(() => {
         digest: "d".repeat(64),
         manifest: { operationId: input.operationId, repositories: [] },
         destination: input.destination,
-        sourceEnvironmentId: "m4",
+        sourceEnvironmentId: "laptopE",
         sourceProjectId: "source",
         sourceThreadId: "coordinator",
       },
@@ -231,11 +231,11 @@ it("shows the server's held message verbatim beside the differences", async () =
 it("keeps the Hand off anyway wording after the transfer clears the pointer", async () => {
   reopenMove();
   await mount();
-  await click("Continue on M3 anyway, on its older commits");
-  expect(container.textContent).toContain("The coordinator continues on M3.");
+  await click("Continue on Kiosk D anyway, on its older commits");
+  expect(container.textContent).toContain("The coordinator continues on Kiosk D.");
   expect(pointerNow()).toBeNull();
   expect(problemsText()).toContain(
-    "You chose Continue on M3 anyway, so the coordinator moved with these differences.",
+    "You chose Continue on Kiosk D anyway, so the coordinator moved with these differences.",
   );
   expect(problemsText()).not.toContain("Sync again");
   expect(labels()).not.toContain("Sync again");
@@ -248,20 +248,20 @@ it("drops Hand off anyway when the source changed, and a reopen still offers Cop
     throw Object.assign(new Error("changed"), { code: "source_changed" });
   };
   await mount();
-  await click("Continue on M3 anyway, on its older commits");
+  await click("Continue on Kiosk D anyway, on its older commits");
   expect(pointerNow()).toMatchObject({ operationId: OPERATION });
   expect(pointerNow()).not.toHaveProperty("moveAnyway");
   expect(problemsText()).toContain("Sync again: it compares first");
-  expect(problemsText()).not.toContain("Continue on M3 anyway, on its older commits");
+  expect(problemsText()).not.toContain("Continue on Kiosk D anyway, on its older commits");
   expect(labels()).toContain("Sync again");
-  expect(labels()).not.toContain("Continue the coordinator on M3");
+  expect(labels()).not.toContain("Continue the coordinator on Kiosk D");
 
   statuses = [committedAnyway()];
   await remount();
   expect(problemsText()).toContain("Sync again: it compares first");
-  expect(problemsText()).not.toContain("Continue on M3 anyway, on its older commits");
+  expect(problemsText()).not.toContain("Continue on Kiosk D anyway, on its older commits");
   expect(labels()).toContain("Sync again");
-  expect(labels()).not.toContain("Continue the coordinator on M3");
+  expect(labels()).not.toContain("Continue the coordinator on Kiosk D");
   await openMore();
   expect(isDisabled(button("Add to another machine"))).toBe(false);
   expectCopyAgainMatchesButton();
@@ -269,7 +269,7 @@ it("drops Hand off anyway when the source changed, and a reopen still offers Cop
 
 it("shows the destination's error on the undone screen instead of claiming a clean undo", async () => {
   const error =
-    "The files here were restored, but M4 could not be told, so the copy is still open there. Cancel the copy on M4 to give the project back there.";
+    "The files here were restored, but Laptop E could not be told, so the copy is still open there. Cancel the copy on Laptop E to give the project back there.";
   reopenMove();
   state.handlers.copyUndo = ({ input }: any) => ({
     status: input.preview
@@ -286,24 +286,24 @@ it("shows the destination's error on the undone screen instead of claiming a cle
   await click("Undo the copy");
   expect(container.textContent).toContain(error);
   expect(container.textContent).not.toContain("is back to how it was before the copy");
-  // The browser reached M4 itself, so the copy is no longer open there.
-  expect(container.textContent).toContain("M4 has now dropped the copy.");
+  // The browser reached Laptop E itself, so the copy is no longer open there.
+  expect(container.textContent).toContain("Laptop E has now dropped the copy.");
   expect(pointerNow()).toBeNull();
 });
 
 it("says so and keeps the pointer when the source does not drop an undone copy", async () => {
   reopenMove();
   state.handlers.copySourceCancel = () => {
-    throw new Error("M4 is unreachable.");
+    throw new Error("Laptop E is unreachable.");
   };
   await mount();
   await click("Undo…");
   await click("Undo the copy");
   expect(container.textContent).toContain("is back to how it was before the copy");
   expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-    "M4 has not dropped the copy yet: M4 is unreachable.",
+    "Laptop E has not dropped the copy yet: Laptop E is unreachable.",
   );
-  expect(container.textContent).not.toContain("M4 has now dropped the copy.");
+  expect(container.textContent).not.toContain("Laptop E has now dropped the copy.");
   expect(pointerNow()).toMatchObject({ operationId: OPERATION });
 });
 
@@ -325,7 +325,7 @@ it("tells the source again when a reopened undone copy still has its pointer", a
   await mount();
   expect(container.textContent).toContain("is back to how it was before the copy");
   expect(state.calls.find(([name]) => name === "copySourceCancel")![1]).toMatchObject({
-    environmentId: "m4",
+    environmentId: "laptopE",
     input: { operationId: OPERATION },
   });
   expect(names()).toContain("copyRelease");
@@ -335,19 +335,19 @@ it("tells the source again when a reopened undone copy still has its pointer", a
 it("says the source has not dropped an undone move when the cancel and the release both fail", async () => {
   reopenMove();
   state.handlers.copySourceCancel = () => {
-    throw new Error("M4 is unreachable.");
+    throw new Error("Laptop E is unreachable.");
   };
   state.handlers.copyRelease = () => {
-    throw new Error("M4 refused the release.");
+    throw new Error("Laptop E refused the release.");
   };
   await mount();
   await click("Undo…");
   await click("Undo the copy");
   const alert = container.querySelector('[role="alert"]')?.textContent ?? "";
   expect(alert).toContain(
-    "M4 has not dropped the copy yet: M4 is unreachable. Reopen this window to tell it again, or cancel the copy on M4.",
+    "Laptop E has not dropped the copy yet: Laptop E is unreachable. Reopen this window to tell it again, or cancel the copy on Laptop E.",
   );
-  expect(alert).toContain("M4 refused the release.");
+  expect(alert).toContain("Laptop E refused the release.");
   expect(pointerNow()).toMatchObject({ operationId: OPERATION });
 });
 

@@ -13,13 +13,13 @@ document.documentElement.classList.toggle("dark", params.get("theme") === "dark"
 const MACHINES = params.has("short")
   ? [
       { id: "linux" as never, label: "linux-box", unavailable: null },
-      { id: "m1" as never, label: "m1", unavailable: null },
-      { id: "m5" as never, label: "m5", unavailable: null },
+      { id: "deskB" as never, label: "deskB", unavailable: null },
+      { id: "rackF" as never, label: "rackF", unavailable: null },
     ]
   : [
-      { id: "m1" as never, label: "Anton’s MacBook Pro M1Max (190)", unavailable: null },
-      { id: "m3" as never, label: "Anton’s MacBook Pro", unavailable: null },
-      { id: "linux" as never, label: "linux-mini", unavailable: null },
+      { id: "deskB" as never, label: "Sam’s long-named workstation (190)", unavailable: null },
+      { id: "kioskD" as never, label: "Sam’s workstation", unavailable: null },
+      { id: "linux" as never, label: "box-a", unavailable: null },
     ];
 /** `?git=1`: the Git handoff screen, as "Continue the coordinator here" opens it. */
 function GitFixture() {
@@ -28,30 +28,30 @@ function GitFixture() {
       <MachineHandoffDialog
         open
         onOpenChange={() => {}}
-        sourceLabel="m4"
+        sourceLabel="laptopE"
         projectTitle="specweave"
         workspaceContext={{
-          projectFolder: "/Users/you/Projects/github/specweave-umb",
-          repository: "/Users/you/Projects/github/specweave-umb",
-          checkout: "/Users/you/Projects/github/specweave-umb",
+          projectFolder: "/Users/you/projects/atlas",
+          repository: "/Users/you/projects/atlas",
+          checkout: "/Users/you/projects/atlas",
           mode: "local",
         }}
         destinations={[
           {
-            key: "m5:project",
-            environmentId: "m5",
-            label: "m5",
-            folder: "/Users/you/Projects/github/specweave-umb",
+            key: "rackF:project",
+            environmentId: "rackF",
+            label: "rackF",
+            folder: "/Users/you/projects/atlas",
             unavailable: null,
           },
         ]}
-        selected="m5:project"
+        selected="rackF:project"
         onSelect={() => {}}
         machines={[
           { value: "linux", label: "linux-box", tone: "ready", reason: null, disabled: false },
-          { value: "m5", label: "m5", tone: "ready", reason: null, disabled: false },
+          { value: "rackF", label: "rackF", tone: "ready", reason: null, disabled: false },
         ]}
-        machine="m5"
+        machine="rackF"
         method="folder"
         onMethodChange={() => {}}
         sourceChanges={{
@@ -75,9 +75,9 @@ function GitFixture() {
 }
 /**
  * `?holding=copy|main|several|several-main|none`: what the chosen machine already holds, as
- * Copy to another machine… reads it. The coordinator is on m4 (this machine) unless m5 holds it.
- * `?unlinked=1`: opened from m1, while m5 has this repository as a separate project
- * (coordinator on m4). `?makemain=1|blocked`: the done screen offers the page's
+ * Copy to another machine… reads it. The coordinator is on laptopE (this machine) unless rackF holds it.
+ * `?unlinked=1`: opened from deskB, while rackF has this repository as a separate project
+ * (coordinator on laptopE). `?makemain=1|blocked`: the done screen offers the page's
  * "Continue the coordinator on {machine}" switch.
  * `?move=1`, or a `fixture-move` event: a move asked for with "Continue the coordinator here".
  */
@@ -85,27 +85,27 @@ function GitFixture() {
 const METHOD = params.get("method") === "clone" ? ("clone" as const) : ("copy" as const);
 const UNLINKED = params.has("unlinked");
 const MAKE_MAIN = params.get("makemain");
-const SOURCE = UNLINKED ? "m1" : params.has("short") ? "m4" : "MacBook M4";
+const SOURCE = UNLINKED ? "deskB" : params.has("short") ? "laptopE" : "Laptop E";
 const HOLDING = params.get("holding");
 const at = (id: string, workspaceRoot: string) => ({ id, workspaceRoot });
 // A copy sits at the same place in its umbrella checkout as the project sent from.
-const copyIn = (root: string) => `${root}/repositories/anton-abyzov/specweave`;
+const copyIn = (root: string) => `${root}/repositories/acme/specweave`;
 const holding =
   HOLDING === "main"
-    ? { kind: "main" as const, copy: at("m5", copyIn("/Users/you/Projects/github/specweave-umb")) }
+    ? { kind: "main" as const, copy: at("rackF", copyIn("/Users/you/projects/atlas")) }
     : HOLDING === "several" || HOLDING === "several-main"
       ? {
           kind: "several" as const,
           copies: [
-            at("a", copyIn("/Users/you/Projects/github/specweave-umb")),
-            at("b", copyIn("/Users/you/work/specweave-umb")),
+            at("a", copyIn("/Users/you/projects/atlas")),
+            at("b", copyIn("/Users/you/work/atlas")),
           ],
           mainId: "b",
         }
       : HOLDING === "copy"
         ? {
             kind: "copy" as const,
-            copy: at("m5", copyIn("/Users/you/Projects/github/specweave-umb")),
+            copy: at("rackF", copyIn("/Users/you/projects/atlas")),
           }
         : { kind: "none" as const };
 function Fixture() {
@@ -160,8 +160,8 @@ function Fixture() {
                 holding,
                 picked,
                 onPick: setPicked,
-                mainLabel: holding.kind === "main" ? "m5" : SOURCE,
-                otherProject: UNLINKED ? { main: "m4" } : null,
+                mainLabel: holding.kind === "main" ? "rackF" : SOURCE,
+                otherProject: UNLINKED ? { main: "laptopE" } : null,
                 localFiles: params.has("uncommitted") ? Number(params.get("uncommitted")) : null,
               }
             : null
@@ -170,7 +170,7 @@ function Fixture() {
           MAKE_MAIN && doneOn && !UNLINKED
             ? {
                 offer: {
-                  key: "m5:m5",
+                  key: "rackF:rackF",
                   machine: doneOn,
                   main: SOURCE,
                   kind: MAKE_MAIN === "blocked" ? "blocked" : "move",
@@ -186,7 +186,7 @@ function Fixture() {
                 },
                 // The page's switch: this dialog steps aside, then the move opens in it.
                 run: () => {
-                  document.body.dataset.madeMain = "m5:m5";
+                  document.body.dataset.madeMain = "rackF:rackF";
                   setOpen(false);
                   askMove();
                 },
@@ -199,17 +199,17 @@ function Fixture() {
             project={
               {
                 id: "source",
-                environmentId: "m4",
+                environmentId: "laptopE",
                 title: "SpecWeave",
                 workspaceRoot:
-                  "/Users/you/Projects/github/specweave-umb/repositories/anton-abyzov/specweave",
+                  "/Users/you/projects/atlas/repositories/acme/specweave",
               } as never
             }
             coordinatorId={"coordinator" as never}
             sourceLabel={SOURCE}
             method={METHOD}
             machines={MACHINES}
-            preferredMachine={(params.has("short") ? "m5" : "linux") as never}
+            preferredMachine={(params.has("short") ? "rackF" : "linux") as never}
             // A move names its machine, as "Continue the coordinator here" does.
             machineRequested={moveAsked}
             savedFolder={() =>

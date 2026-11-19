@@ -11,7 +11,7 @@ const runtime = vi.hoisted(() => ({
 vi.mock("react", () => ({ useCallback: (fn: any) => fn }));
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: () =>
-    new Map(runtime.configsReady ? [["m1", { scratchWorkspaceRoot: "/scratch" }]] : []),
+    new Map(runtime.configsReady ? [["deskB", { scratchWorkspaceRoot: "/scratch" }]] : []),
 }));
 vi.mock("@tanstack/react-router", () => ({ useRouter: () => ({ navigate: runtime.navigate }) }));
 vi.mock("./useSettings", () => ({
@@ -31,7 +31,7 @@ vi.mock("../studio/projectCoordinatorDraft", async (original) => ({
 }));
 vi.mock("../components/ui/toast", () => ({ toastManager: { add: runtime.toast } }));
 vi.mock("../studio/machineNickname", () => ({
-  useMachineNicknames: () => (id: string) => (id === "m1" ? "linux-mini" : id),
+  useMachineNicknames: () => (id: string) => (id === "deskB" ? "box-a" : id),
 }));
 import { EnvironmentId, ProjectId, ProviderInstanceId } from "@specweave-studio/contracts";
 import {
@@ -39,7 +39,7 @@ import {
   useProjectCoordinatorHandoff,
 } from "./useProjectCoordinatorHandoff";
 const projectRef = {
-  environmentId: EnvironmentId.make("m1"),
+  environmentId: EnvironmentId.make("deskB"),
   projectId: ProjectId.make("project"),
 };
 beforeEach(() => {
@@ -87,7 +87,7 @@ it.each(["worktree", "local"] as const)(
     expect(text).toContain("+bad()");
     expect(text).toContain(mode === "worktree" ? "own worktree" : "this checkout");
     expect(runtime.navigate).toHaveBeenCalledWith(
-      expect.objectContaining({ to: "/projects/$projectKey", search: { checkout: "m1:project" } }),
+      expect.objectContaining({ to: "/projects/$projectKey", search: { checkout: "deskB:project" } }),
     );
   },
 );
@@ -123,7 +123,7 @@ it("saves the chosen coordinator model before opening its project", async () => 
     threadId: "retained",
   });
   expect(runtime.update).toHaveBeenCalledWith({
-    environmentId: "m1",
+    environmentId: "deskB",
     input: {
       projectId: "project",
       workspaceSettings: { expectedRevision: 3, coordinatorModelSelection: model },
@@ -148,10 +148,10 @@ it("waits for machine identity before classifying a cached Scratch project", asy
   expect(await useProjectCoordinatorHandoff()(projectRef)).toEqual({ kind: "unavailable" });
   expect(runtime.navigate).not.toHaveBeenCalled();
 });
-// "Copy files only" left m1's copy running workers only; its coordinator is on m4.
+// "Copy files only" left deskB's copy running workers only; its coordinator is on laptopE.
 function linkWorkersOnlyCopy() {
   const coordinator = {
-    environmentId: "m4",
+    environmentId: "laptopE",
     projectId: "main",
     coordinatorThreadId: "main-coordinator",
   };
@@ -161,7 +161,7 @@ function linkWorkersOnlyCopy() {
     coordinatorBinding: { epoch: 1, state: "transferred", successor: coordinator },
   };
   runtime.projects.push({
-    environmentId: "m4",
+    environmentId: "laptopE",
     id: "main",
     workspaceRoot: "/repo",
     title: "Project",
@@ -174,7 +174,7 @@ function linkWorkersOnlyCopy() {
   });
 }
 const COPY_LINE =
-  "This request is for the copy on linux-mini, in /work/repo. The coordinator is not on that machine: its work starts here. Delegate the work to a worker there.";
+  "This request is for the copy on box-a, in /work/repo. The coordinator is not on that machine: its work starts here. Delegate the work to a worker there.";
 it("opens a workers-only copy's coordinator on the other machine instead of the copy", async () => {
   linkWorkersOnlyCopy();
   const model = { instanceId: ProviderInstanceId.make("codex"), model: "chosen" };
@@ -182,12 +182,12 @@ it("opens a workers-only copy's coordinator on the other machine instead of the 
     await useProjectCoordinatorHandoff()(projectRef, { prompt: "Run it here", model }),
   ).toEqual({ kind: "opened", threadId: "main-coordinator" });
   expect(runtime.enqueue).toHaveBeenCalledWith({
-    environmentId: "m4",
+    environmentId: "laptopE",
     projectId: "main",
     text: `${COPY_LINE}\n\nRun it here`,
   });
   expect(runtime.navigate).toHaveBeenCalledWith(
-    expect.objectContaining({ search: { checkout: "m4:main" } }),
+    expect.objectContaining({ search: { checkout: "laptopE:main" } }),
   );
   // The model was picked for the copy's machine; the coordinator keeps its own.
   expect(runtime.update).not.toHaveBeenCalled();
@@ -209,7 +209,7 @@ it("names the copy even when the redirected request has no text of its own", asy
   linkWorkersOnlyCopy();
   await useProjectCoordinatorHandoff()(projectRef);
   expect(runtime.enqueue).toHaveBeenCalledWith({
-    environmentId: "m4",
+    environmentId: "laptopE",
     projectId: "main",
     text: COPY_LINE,
   });

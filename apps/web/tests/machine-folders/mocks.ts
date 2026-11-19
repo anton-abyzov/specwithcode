@@ -24,7 +24,7 @@ export const useEnvironmentQuery = (value: any) => {
       parentPath: path,
       entries: path.endsWith("/Projects")
         ? [
-            { name: "sw-easychamp", fullPath: `${path}/sw-easychamp` },
+            { name: "atlas", fullPath: `${path}/atlas` },
             { name: "another-project", fullPath: `${path}/another-project` },
           ].filter((entry) => entry.name.startsWith(prefix))
         : [],

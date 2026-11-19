@@ -74,7 +74,7 @@ vi.mock("../../state/environments", () => ({
 }));
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: () =>
-    new Map([["m1", { environment: { defaultWorktreesDirectory: "/target/managed/worktrees" } }]]),
+    new Map([["deskB", { environment: { defaultWorktreesDirectory: "/target/managed/worktrees" } }]]),
 }));
 vi.mock("../../state/server", () => ({ environmentServerConfigsAtom: {} }));
 vi.mock("../../state/entities", () => ({
@@ -84,7 +84,7 @@ vi.mock("../../state/entities", () => ({
 vi.mock("../../state/session", () => ({
   useEnvironmentsWithScope: (_environments: unknown, scope: string) =>
     new Set(
-      state.denied.has(scope) ? (state.sourceDenied ? [] : ["m4"]) : ["m4", "m1", "m3", "m2"],
+      state.denied.has(scope) ? (state.sourceDenied ? [] : ["laptopE"]) : ["laptopE", "deskB", "kioskD", "hubC"],
     ),
 }));
 vi.mock("../../lib/utils", async (importOriginal) => ({
@@ -114,22 +114,22 @@ const repositoryIdentity = {
 };
 const source = {
   id: "source",
-  environmentId: "m4",
+  environmentId: "laptopE",
   title: "Project",
   workspaceRoot: "/source",
   repositoryIdentity,
 };
 const target = {
   id: "target",
-  environmentId: "m1",
+  environmentId: "deskB",
   title: "Project",
   workspaceRoot: "/target",
   repositoryIdentity,
 };
 const bundle = {
-  destination: { executionMode: "project-folder", environmentId: "m1", projectId: "target" },
+  destination: { executionMode: "project-folder", environmentId: "deskB", projectId: "target" },
   manifest: { operationId, repositories: [{ relativePath: ".", head: "a".repeat(40) }] },
-  sourceEnvironmentId: "m4",
+  sourceEnvironmentId: "laptopE",
   sourceProjectId: "source",
   sourceThreadId: "coordinator",
   createdAt: "2026-10-13T20:00:00.000Z",
@@ -157,7 +157,7 @@ const started = {
   coordinatorThreadId: "new-coordinator",
   workspacePath: "/isolated-target",
 };
-const key = machineHandoffStorageKey("m4", "source");
+const key = machineHandoffStorageKey("laptopE", "source");
 let root: Root, container: HTMLDivElement;
 const props = () => state.props!;
 /**
@@ -185,8 +185,8 @@ beforeEach(() => {
   state.retired = new Set();
   state.fleet = null;
   state.environments = [
-    { environmentId: "m4", label: "M4", connection: { phase: "connected" } },
-    { environmentId: "m1", label: "M1", connection: { phase: "connected" } },
+    { environmentId: "laptopE", label: "Laptop E", connection: { phase: "connected" } },
+    { environmentId: "deskB", label: "Desk B", connection: { phase: "connected" } },
   ];
   localStorage.clear();
   state.navigate.mockResolvedValue(undefined);
@@ -211,10 +211,10 @@ afterEach(async () => {
 });
 
 const machineEnvironments = [
-  { environmentId: "m4", label: "M4", connection: { phase: "connected" } },
-  { environmentId: "m1", label: "M1", connection: { phase: "connected" } },
-  { environmentId: "m3", label: "M3", connection: { phase: "connected" } },
-  { environmentId: "m2", label: "M2", connection: { phase: "offline" } },
+  { environmentId: "laptopE", label: "Laptop E", connection: { phase: "connected" } },
+  { environmentId: "deskB", label: "Desk B", connection: { phase: "connected" } },
+  { environmentId: "kioskD", label: "Kiosk D", connection: { phase: "connected" } },
+  { environmentId: "hubC", label: "Hub C", connection: { phase: "offline" } },
 ];
 const allowWorkers = (...ids: string[]) => ({
   machines: ids.map((id) => ({ environmentId: id, workers: { status: "allowed" } })),
@@ -224,7 +224,7 @@ it("opens Compare all files on the machine's own folder, as the measured copy", 
   state.environments = machineEnvironments;
   state.projects = [
     source,
-    { ...target, id: "m3-target", environmentId: "m3", workspaceRoot: "/m3-target" },
+    { ...target, id: "kioskD-target", environmentId: "kioskD", workspaceRoot: "/kioskD-target" },
   ];
   await act(async () =>
     root.render(
@@ -232,7 +232,7 @@ it("opens Compare all files on the machine's own folder, as the measured copy", 
         project={source as never}
         coordinatorId={"coordinator" as never}
         showTrigger={false}
-        openRequest={{ mode: "sync", seq: 1, target: "m3:m3-target", method: "copy" }}
+        openRequest={{ mode: "sync", seq: 1, target: "kioskD:kioskD-target", method: "copy" }}
       />,
     ),
   );
@@ -240,15 +240,15 @@ it("opens Compare all files on the machine's own folder, as the measured copy", 
   expect(props().intent).toBe("copy");
   // The measured per-file compare, not a download: the method radio is on the copy.
   expect(props().method).toBe("copy");
-  expect(props().sync).toEqual({ machine: "M3", folder: "/m3-target" });
+  expect(props().sync).toEqual({ machine: "Kiosk D", folder: "/kioskD-target" });
   const copy = (props().copyFlow as { props: Record<string, unknown> }).props;
   expect(copy).toMatchObject({
     method: "copy",
-    preferredMachine: "m3",
+    preferredMachine: "kioskD",
     machineRequested: true,
     canMove: false,
   });
-  expect((copy.savedFolder as (id: string) => string | null)("m3")).toBe("/m3-target");
+  expect((copy.savedFolder as (id: string) => string | null)("kioskD")).toBe("/kioskD-target");
 });
 
 describe("Add from the machine menu", () => {
@@ -273,7 +273,7 @@ describe("Add from the machine menu", () => {
 
   it("offers only machines without the project, and preselects none that has it", async () => {
     state.environments = machineEnvironments;
-    // m1 has a saved folder; m3 is a linked member this window never opened.
+    // deskB has a saved folder; kioskD is a linked member this window never opened.
     state.projects = [
       {
         ...source,
@@ -283,31 +283,31 @@ describe("Add from the machine menu", () => {
             title: "Project",
             coordinatorId: "c",
             members: [
-              { environmentId: "m4", projectId: "source", coordinatorThreadId: "c" },
-              { environmentId: "m3", projectId: "far", coordinatorThreadId: "c3" },
+              { environmentId: "laptopE", projectId: "source", coordinatorThreadId: "c" },
+              { environmentId: "kioskD", projectId: "far", coordinatorThreadId: "c3" },
             ],
           },
         },
       },
       target,
     ];
-    state.fleet = allowWorkers("m1");
+    state.fleet = allowWorkers("deskB");
     await add(state.projects[0]);
     expect(props().open).toBe(true);
-    expect(offered()).toEqual(["m2"]);
-    expect(copyMachines()).toEqual(["m2"]);
+    expect(offered()).toEqual(["hubC"]);
+    expect(copyMachines()).toEqual(["hubC"]);
     expect(props().selected).toBe("");
-    expect(props().machine).not.toBe("m1");
+    expect(props().machine).not.toBe("deskB");
     expect(
       (props().copyFlow as { props: Record<string, unknown> }).props.preferredMachine,
-    ).not.toBe("m1");
+    ).not.toBe("deskB");
     expect(props().wholeFolderOnly).toBe(false);
     expect(props().method).toBe("clone");
   });
 
   it("stays Add when a move to another machine was left unfinished, and keeps its pointer", async () => {
     state.environments = machineEnvironments;
-    const saved = JSON.stringify({ operationId, targetKey: "m1:target" });
+    const saved = JSON.stringify({ operationId, targetKey: "deskB:target" });
     localStorage.setItem(key, saved);
     await add();
     expect(props().open).toBe(true);
@@ -315,7 +315,7 @@ describe("Add from the machine menu", () => {
     expect(props().intent).toBe("copy");
     expect(props().method).not.toBe("folder");
     expect(props().selected).toBe("");
-    expect(offered()).not.toContain("m1");
+    expect(offered()).not.toContain("deskB");
     // The unfinished move is still there for the page's own button to resume.
     expect(localStorage.getItem(key)).toBe(saved);
   });
@@ -332,15 +332,15 @@ describe("Add from the machine menu", () => {
   it("keeps every machine on the page's own button", async () => {
     state.environments = machineEnvironments;
     await mount("as-opened");
-    expect(offered()).toEqual(["m1", "m3", "m2"]);
+    expect(offered()).toEqual(["deskB", "kioskD", "hubC"]);
   });
 
   it("leaves an unfinished copy to another machine alone, and opens it only when asked", async () => {
     state.environments = machineEnvironments;
-    const copyKey = folderCopyStorageKey("m4", "source");
+    const copyKey = folderCopyStorageKey("laptopE", "source");
     const saved = JSON.stringify({
       operationId,
-      environmentId: "m1",
+      environmentId: "deskB",
       mode: "copy-and-move",
       targetFolder: "/work/atlas",
       projectId: null,
@@ -354,7 +354,7 @@ describe("Add from the machine menu", () => {
     expect(props().selected).toBe("");
     const flow = props().copyFlow as { type: unknown; props: Record<string, unknown> };
     expect(flow.type).toBe(AddHeldByCopy);
-    expect(flow.props.machine).toBe("M1");
+    expect(flow.props.machine).toBe("Desk B");
     expect(localStorage.getItem(copyKey)).toBe(saved);
     // Its own button is the separate way back to that copy.
     await act(async () => (flow.props.onOpen as () => void)());

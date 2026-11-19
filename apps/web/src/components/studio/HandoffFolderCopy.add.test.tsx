@@ -84,10 +84,10 @@ afterEach(async () => {
   container.remove();
 });
 
-const KEY = "specwithcode:folder-copy:m4:source";
+const KEY = "specwithcode:folder-copy:laptopE:source";
 const unfinished = {
   operationId: "00000000-0000-4000-8000-000000000009",
-  environmentId: "m1",
+  environmentId: "deskB",
   mode: "copy-and-move",
   targetFolder: "/work/atlas",
   projectId: null,
@@ -98,7 +98,7 @@ const polls = () =>
 it("opens Add as a new copy and leaves the unfinished move to another machine as it is", async () => {
   onChoices.mockClear();
   localStorage.setItem(KEY, JSON.stringify(unfinished));
-  await act(async () => root.render(<CopyFixture fresh machineRequested m1Available />));
+  await act(async () => root.render(<CopyFixture fresh machineRequested deskBAvailable />));
   await settle();
   // Nothing of the saved move is asked for or continued.
   expect(polls()).toEqual([]);
@@ -111,7 +111,7 @@ it("opens Add as a new copy and leaves the unfinished move to another machine as
 it("still opens that unfinished move when the dialog is not Add", async () => {
   onChoices.mockClear();
   localStorage.setItem(KEY, JSON.stringify(unfinished));
-  await act(async () => root.render(<CopyFixture machineRequested m1Available />));
+  await act(async () => root.render(<CopyFixture machineRequested deskBAvailable />));
   await settle();
   expect(polls().length).toBeGreaterThan(0);
   expect(onChoices.mock.calls.some(([choices]) => choices.mode === "copy-and-move")).toBe(true);
