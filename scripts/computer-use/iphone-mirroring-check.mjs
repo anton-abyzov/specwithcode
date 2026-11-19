@@ -660,18 +660,20 @@ export async function runCheck(deps, options = {}) {
       if (removed === 1) single = "arrived";
       else if (removed > 1 || removed < 0 || !typed.suggestion) single = "lost";
     }
-    // The repeat: arrived when it removed exactly REPEAT_PRESSES characters;
-    // unsure when it removed one fewer while a suggestion showed before it; else lost.
+    // The repeat: arrived when it removed REPEAT_PRESSES characters; lost when it
+    // removed fewer than the digits it could reach (one fewer with a suggestion),
+    // or more than it pressed; otherwise unsure.
     let repeat;
     if (afterRepeat === undefined || before === undefined) repeat = "unreadable";
-    else if (!usable(before) || !usable(afterRepeat) || before.tail < REPEAT_PRESSES)
-      repeat = "unsure";
+    else if (!usable(before) || !usable(afterRepeat)) repeat = "unsure";
     else {
       const removed = before.tail - afterRepeat.tail;
-      if (removed === REPEAT_PRESSES) repeat = "arrived";
-      else if (removed === REPEAT_PRESSES - 1 && before.suggestion) repeat = "unsure";
-      else repeat = "lost";
+      const least = Math.min(REPEAT_PRESSES, before.tail) - (before.suggestion ? 1 : 0);
+      if (removed < least || removed > REPEAT_PRESSES) repeat = "lost";
+      else if (removed === REPEAT_PRESSES) repeat = "arrived";
+      else repeat = "unsure";
     }
+    const mistyped = usable(typed) && typed.tail !== REPEAT_TAIL.length;
     const count = (from, to) =>
       usable(from) && usable(to) ? `${from.tail - to.tail}` : "uncounted";
     const detail = `field read ${shown.join(" -> ")}; one backspace removed ${count(typed, afterOne)} (suggestion before ${yes(typed?.suggestion)}, after ${yes(afterOne?.suggestion)}): ${single}; backspace repeat ${REPEAT_PRESSES} removed ${count(before, afterRepeat)} (suggestion before ${yes(before?.suggestion)}): ${repeat}`;
@@ -679,17 +681,16 @@ export async function runCheck(deps, options = {}) {
       usable(afterOne) && usable(before) && before.tail !== afterOne.tail
         ? "; the field also changed with no key pressed"
         : "";
-    if (single === "lost" || repeat === "lost" || repeat === "unreadable") {
-      check(
-        "key repeat",
-        false,
-        `${detail}${changedAlone}; a press did not arrive or the field was gone`,
-      );
+    if (mistyped || single === "lost" || repeat === "lost" || repeat === "unreadable") {
+      const why = mistyped
+        ? `"${REPEAT_BASE}${REPEAT_TAIL}" was not typed as sent`
+        : "a press did not arrive or the field was gone";
+      check("key repeat", false, `${detail}${changedAlone}; ${why}`);
     } else if (repeat === "arrived" && changedAlone === "") {
       check(
         "key repeat",
         true,
-        `${detail}; every press of the repeat arrived${single === "arrived" ? ", and the single press too" : " (the single press is not judged: a suggestion showed and no text was removed)"}`,
+        `${detail}; every press of the repeat arrived${single === "arrived" ? ", and the single press too" : ` (the single press is not judged: ${usable(typed) && usable(afterOne) ? "a suggestion showed and no text was removed" : "its readings could not be counted"})`}`,
       );
     } else {
       unsure(

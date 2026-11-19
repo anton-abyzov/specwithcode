@@ -219,6 +219,51 @@ describe("dry run", () => {
     );
   });
 
+  it("fails a repeat that removed nothing with fewer digits left than presses", async () => {
+    const phone = simulatedPhone();
+    let measuring = false;
+    const deps = {
+      ...phone.deps,
+      call: async (tool, args) => {
+        if (tool === "computer_type") {
+          measuring = args.text === "QHBR4207";
+          if (measuring) return phone.deps.call(tool, { text: "QHBR420" });
+        }
+        const lost = measuring && tool === "computer_key" && args.repeat === 3;
+        return lost ? phone.deps.call("computer_screenshot", {}) : phone.deps.call(tool, args);
+      },
+    };
+    const result = await runCheck(deps);
+    const line = result.lines.find((entry) => entry.includes("key repeat"));
+    expect(line).toMatch(/^FAIL key repeat: /);
+    expect(line).toContain('"QHBR420" -> "QHBR42" -> "QHBR42" -> "QHBR42"');
+    expect(line).toContain("backspace repeat 3 removed 0 (suggestion before no): lost");
+  });
+
+  it("says why the single press is not judged when its readings could not be counted", async () => {
+    const phone = simulatedPhone();
+    let measuring = false;
+    let first = true;
+    const deps = {
+      ...phone.deps,
+      ocr: async (...args) => {
+        if (measuring && first) {
+          first = false;
+          return [];
+        }
+        return phone.deps.ocr(...args);
+      },
+      call: async (tool, args) => {
+        if (tool === "computer_type") measuring = args.text === "QHBR4207";
+        return phone.deps.call(tool, args);
+      },
+    };
+    const result = await runCheck(deps);
+    expect(result.lines.find((entry) => entry.includes("key repeat"))).toMatch(
+      /^PASS key repeat: .*\(the single press is not judged: its readings could not be counted\)$/,
+    );
+  });
+
   it("never passes a lost press as a suggestion that stayed on screen", async () => {
     // The suggestion shows throughout and takes nothing; the single press and one repeat press are lost.
     const phone = simulatedPhone({ dropRepeat: true });
