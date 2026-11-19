@@ -309,6 +309,11 @@ export class OwnedProcessTree {
   /** A reading meant to catch what the CLI started failed, so an empty tree proves nothing. */
   private unconfirmed = false;
   /**
+   * A required reading succeeded and came back with the CLI already exited: it covered
+   * everything the CLI started, and an exited CLI starts nothing more.
+   */
+  private coveredToExit = false;
+  /**
    * Windows children of the tree seen without a creation time. Each stays a doubt until a
    * reading attributes it or no longer lists its pid (it exited).
    */
@@ -341,7 +346,12 @@ export class OwnedProcessTree {
     // started; a cached identity from an earlier reading does not.
     // The last such reading decides: one that succeeds right before the close covers
     // everything then running.
-    if (required) this.unconfirmed = !ok;
+    // A reading that came back after the CLI exited covers all it started, so a later one
+    // (which no longer lists the exited CLI) changes nothing.
+    if (required && !this.coveredToExit) {
+      this.unconfirmed = !ok;
+      if (ok && !this.root.alive()) this.coveredToExit = true;
+    }
     return ok;
   }
 
@@ -502,6 +512,21 @@ export class OwnedProcessTree {
     };
     if (found === 0) return settle(0);
     // Each escapee is signalled only right after a read shows it is still the same process.
+    // Known tools that still run, plus what each started since (a helper launched from a
+    // SIGTERM handler), read while the parent link still names them.
+    const withDescendants = (
+      now: ReadonlyArray<ProcessEntry>,
+      extra: ReadonlyArray<ProcessEntry> = [],
+    ) => {
+      const byPid = new Map(stillRunning(escapees, now).map((entry) => [entry.pid, entry]));
+      for (const entry of extra) byPid.set(entry.pid, entry);
+      const from = [...byPid.keys()];
+      for (const entry of posixEscapees(now, this.root, host.selfPid, false, from)) {
+        byPid.set(entry.pid, entry);
+      }
+      for (const entry of byPid.values()) this.escapees.set(entry.pid, entry);
+      return [...byPid.values()];
+    };
     const signalEscapees = async (signal: NodeJS.Signals) => {
       if (escapees.length === 0) return;
       const now = await this.read(deadline);
@@ -509,7 +534,7 @@ export class OwnedProcessTree {
         unknown = true;
         return;
       }
-      escapees = stillRunning(escapees, now);
+      escapees = withDescendants(now);
       for (const entry of escapees) {
         try {
           host.signal(entry.pid, signal);
@@ -535,19 +560,7 @@ export class OwnedProcessTree {
             const leavers = stillRunning(seenMembers, now).filter(
               (entry) => entry.pid !== host.selfPid && pgids.get(entry.pid) !== this.root.pid,
             );
-            const below = posixEscapees(
-              now,
-              this.root,
-              host.selfPid,
-              false,
-              leavers.map((entry) => entry.pid),
-            );
-            const byPid = new Map(stillRunning(escapees, now).map((entry) => [entry.pid, entry]));
-            for (const entry of [...leavers, ...below]) {
-              byPid.set(entry.pid, entry);
-              this.escapees.set(entry.pid, entry);
-            }
-            escapees = [...byPid.values()];
+            escapees = withDescendants(now, leavers);
             if (escapees.length === 0) return true;
           }
         }

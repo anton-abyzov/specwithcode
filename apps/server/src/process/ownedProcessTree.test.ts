@@ -544,6 +544,112 @@ describe("OwnedProcessTree.end", () => {
     });
     expect(calls).toEqual(["kill 200,201", "kill 201"]);
   });
+
+  it("keeps a Windows Stop confirmed when a second reading comes after the CLI exited", async () => {
+    const at = (ms: number) => BigInt(filetimeFromEpochMs(ms));
+    const server = win(100, 1, at(1_000));
+    const cli = win(200, 100, at(2_000));
+    const tool = win(201, 200, at(3_000));
+    let exitedAt: number | null = null;
+    let toolAlive = true;
+    let reads = 0;
+    const kills: number[] = [];
+    const host: TreeHost = {
+      platform: "win32",
+      selfPid: 100,
+      readProcessList: async () => {
+        const rows = [server, ...(exitedAt === null ? [cli] : []), ...(toolAlive ? [tool] : [])];
+        // The CLI exits while the first reading is out.
+        if (reads++ === 0) exitedAt = 4_000;
+        return rows;
+      },
+      signal: () => {
+        throw new Error("no POSIX signal on Windows");
+      },
+      killVerified: async (entries) => {
+        for (const entry of entries) {
+          kills.push(entry.pid);
+          if (entry.pid === 201) toolAlive = false;
+        }
+      },
+      sleep: async () => {},
+      now: () => 0,
+    };
+    const tree = new OwnedProcessTree(
+      { pid: 200, spawnedAt: 0, alive: () => exitedAt === null, exitedAtEpochMs: () => exitedAt },
+      host,
+    );
+    expect(await tree.remember(10_000, true)).toBe(true);
+    // The active Stop reads again right before the close; the exited CLI is no longer listed.
+    expect(await tree.remember(10_000, true)).toBe(false);
+    expect(await tree.end()).toEqual({ found: 1, survivors: 0, unknown: false });
+    expect(kills).toEqual([201]);
+  });
+
+  it("still holds a Windows Stop when the CLI exited between a reading and the next", async () => {
+    const at = (ms: number) => BigInt(filetimeFromEpochMs(ms));
+    const cli = win(200, 100, at(2_000));
+    let alive = true;
+    const fake = fakeHost("win32", [[cli], []]);
+    const tree = new OwnedProcessTree(
+      { pid: 200, spawnedAt: 0, alive: () => alive, exitedAtEpochMs: () => (alive ? null : 4_000) },
+      fake.host,
+    );
+    // This reading came back while the CLI ran: a tool it started after is not covered.
+    expect(await tree.remember(1_000, true)).toBe(true);
+    alive = false;
+    expect(await tree.remember(1_000, true)).toBe(false);
+    expect((await tree.end()).unknown).toBe(true);
+  });
+
+  it("ends a helper that a known POSIX tool starts on SIGTERM before the tool dies", async () => {
+    const started = "Thu Nov 19 12:03:08 2026";
+    const entry = (pid: number, ppid: number, pgid: number): ProcessEntry => ({
+      pid,
+      ppid,
+      pgid,
+      started,
+      command: `p${pid}`,
+    });
+    let cliAlive = true;
+    let toolAlive = true;
+    let helperAlive = false;
+    let clock = 0;
+    const signals: string[] = [];
+    const host: TreeHost = {
+      platform: "darwin",
+      selfPid: 100,
+      readProcessList: async () => [
+        ...(cliAlive ? [entry(200, 100, 200)] : []),
+        ...(toolAlive ? [entry(201, cliAlive ? 200 : 1, 201)] : []),
+        ...(helperAlive ? [entry(202, toolAlive ? 201 : 1, 201)] : []),
+      ],
+      signal: (pid, signal) => {
+        if (signal === 0) {
+          if (pid === -200 && cliAlive) return;
+          throw Object.assign(new Error("No such process"), { code: "ESRCH" });
+        }
+        signals.push(`${signal} ${pid}`);
+        if (pid === -200 && signal === "SIGTERM") cliAlive = false;
+        // The tool's SIGTERM handler starts a helper, and the tool itself hangs.
+        if (pid === 201 && signal === "SIGTERM") helperAlive = true;
+        if (pid === 201 && signal === "SIGKILL") toolAlive = false;
+        if (pid === 202) helperAlive = false;
+      },
+      killVerified: async () => {
+        throw new Error("no Windows kill on POSIX");
+      },
+      sleep: async (ms) => {
+        clock += ms;
+      },
+      now: () => clock,
+    };
+    const tree = new OwnedProcessTree({ pid: 200, spawnedAt: 0, alive: () => cliAlive }, host);
+    const result = await tree.end();
+    expect(helperAlive).toBe(false);
+    expect(signals).toContain("SIGKILL 202");
+    expect(result).toEqual({ found: 2, survivors: 0, unknown: false });
+  });
 });
 
 function alive(pid: number) {
