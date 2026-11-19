@@ -436,6 +436,15 @@ export class OwnedProcessTree {
    * the members that later prove the group is still the CLI's once it has exited.
    */
   private async rememberGroup(timeoutMs: number): Promise<boolean> {
+    const ok = await this.readGroup(timeoutMs);
+    // As on Windows, the last such reading decides: one that failed, or caught the CLI
+    // exited, may have missed a tool started since the one before, and a later end cannot
+    // find it once its parent is gone.
+    this.unconfirmed = !ok;
+    return ok;
+  }
+
+  private async readGroup(timeoutMs: number): Promise<boolean> {
     if (!this.root.alive()) return false;
     const table = await this.host.readProcessList(timeoutMs).catch(() => undefined);
     // Still running once the reading came back, so it ran while the reading was taken:
@@ -447,9 +456,11 @@ export class OwnedProcessTree {
       if (entry.pid === this.root.pid) this.rootStarted = entry.started;
     }
     // Tools that already left the group are the CLI's too: once the CLI closes they are
-    // reparented, and only this reading still ties them to it. An end signals each only
-    // while it still runs as the same process.
-    for (const entry of posixEscapees(table, this.root, this.host.selfPid)) {
+    // reparented, and only this reading still ties them to it. So are those started by a
+    // tool an earlier reading tied to it, still the same process here. An end signals
+    // each only while it still runs as the same process.
+    const known = stillRunning([...this.escapees.values()], table).map((entry) => entry.pid);
+    for (const entry of posixEscapees(table, this.root, this.host.selfPid, true, known)) {
       if (entry.started.length > 0) this.escapees.set(entry.pid, entry);
     }
     return true;
@@ -674,7 +685,7 @@ export class OwnedProcessTree {
         this.escapees.clear();
         for (const entry of escapees) this.escapees.set(entry.pid, entry);
       }
-      return { found, survivors, unknown: unknown || this.coverageLost };
+      return { found, survivors, unknown: unknown || this.coverageLost || this.unconfirmed };
     };
     if (found === 0) return settle(0);
     // Each escapee is signalled only right after a read shows it is still the same process.

@@ -1553,6 +1553,82 @@ describe("POSIX Stop after the pre-close reading", () => {
     },
   );
 
+  const preClose = (platform: "darwin" | "linux") => {
+    let alive = true;
+    let clock = 0;
+    let table: ProcessEntry[] | undefined;
+    const signals: string[] = [];
+    const host: TreeHost = {
+      platform,
+      selfPid: 100,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+      readProcessList: async () => table,
+      signal: (pid, action) => {
+        if (action === 0) throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+        signals.push(`${action} ${pid}`);
+        table = table?.filter((entry) => entry.pid !== pid);
+      },
+      killVerified: async () => {},
+    };
+    const tree = new OwnedProcessTree(
+      {
+        pid: 200,
+        spawnedAt: 0,
+        alive: () => alive,
+        exitedAt: () => (alive ? null : 0),
+        exitedAtEpochMs: () => (alive ? null : 0),
+      },
+      host,
+    );
+    return {
+      tree,
+      signals,
+      read: (next: ProcessEntry[] | undefined) => {
+        table = next;
+      },
+      close: (next: ProcessEntry[]) => {
+        alive = false;
+        table = next;
+      },
+    };
+  };
+  const cli = posix(200, 100, 200, "claude");
+  const launcher = posix(201, 200, 200, "launcher");
+  const tool = posix(202, 201, 202, "tool");
+  const helper = posix(203, 202, 202, "helper");
+
+  it.each(["darwin", "linux"] as const)(
+    "ends a helper started by a tool an earlier pre-close reading tied to the CLI (%s)",
+    async (platform) => {
+      const f = preClose(platform);
+      f.read([cli, launcher, tool]);
+      expect(await f.tree.remember(1_000, true)).toBe(true);
+      // The launcher exited; the same tool, reparented, started a helper.
+      f.read([cli, { ...tool, ppid: 1 }, helper]);
+      expect(await f.tree.remember(1_000, true)).toBe(true);
+      f.close([{ ...helper, ppid: 1 }]);
+      expect(await f.tree.end()).toEqual({ found: 1, survivors: 0, unknown: false });
+      expect(f.signals).toEqual(["SIGTERM 203"]);
+    },
+  );
+
+  it.each(["darwin", "linux"] as const)(
+    "keeps Stop unconfirmed when the last pre-close reading failed (%s)",
+    async (platform) => {
+      const f = preClose(platform);
+      f.read([cli]);
+      expect(await f.tree.remember(1_000, true)).toBe(true);
+      f.read(undefined);
+      expect(await f.tree.remember(1_000, true)).toBe(false);
+      f.close([{ ...tool, ppid: 1 }]);
+      expect((await f.tree.end()).unknown).toBe(true);
+      expect((await f.tree.end()).unknown).toBe(true);
+    },
+  );
+
   it("measures the start-time window on the monotonic clock, not the wall clock", async () => {
     const exitedAt = Date.UTC(2026, 10, 19, 12);
     const worker = {
