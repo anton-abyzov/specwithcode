@@ -588,7 +588,28 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
           .pipe(Effect.ignore);
         return null;
       }
-      const kept = (yield* recordOf(threadId))?.pendingTakeover?.request.launcher;
+      let kept: HandoffLauncher | undefined;
+      if (record.launcher !== undefined) {
+        kept = record.launcher ?? undefined;
+      } else {
+        // Sent by a build that did not write it with "sent". What this machine holds
+        // elsewhere says who waited; when a thread here waits and nothing says what
+        // the takeover named, it is not sent without that name.
+        const beside = yield* recordOf(threadId);
+        const told = beside?.launcher ?? null;
+        kept =
+          beside?.pendingTakeover?.request.launcher ??
+          (told !== null && told.environmentId !== self ? told : undefined);
+        if (kept === undefined && followed.success === "following") {
+          yield* deps
+            .updateRecord(threadId, (current) => ({
+              ...current,
+              lastError: HandoffFollow.FOLLOW_NOT_RECORDED_PAUSED,
+            }))
+            .pipe(Effect.ignore);
+          return null;
+        }
+      }
       return yield* dispatch(record, destination, shell, false, Effect.void, kept);
     });
 
@@ -849,6 +870,8 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         state: "sent",
         sequence: checkpoint.sequence,
         sentAt: yield* deps.nowIso,
+        // In the same write: a repeat after a stop names the same waiting machine.
+        launcher: waits ?? null,
       });
       if (sent === null) return yield* failed("busy", RESUMED_HERE);
       yield* deps
