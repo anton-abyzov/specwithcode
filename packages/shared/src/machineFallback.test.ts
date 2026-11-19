@@ -337,6 +337,22 @@ describe("judgeAccountEvidence: what a target's sign-in adds (1390, AC-22 and AC
     });
   });
 
+  it("counts a pool the source is out on as shared, whichever provider the thread stopped on", () => {
+    // The track ran out on two providers; the target offers the second one's account.
+    expect(
+      evidence(
+        { accountFingerprint: poolB, usedPercent: 10 },
+        { sameDriver: false, providerName: "Codex", sourceFingerprints: [poolA, poolB] },
+      ),
+    ).toMatchObject({
+      kind: "same-account",
+      line: "Same Codex account as M4: adds no usage",
+      automatic: false,
+      byHand: true,
+      reason: "same_account",
+    });
+  });
+
   it("never treats another provider as the same pool or as unknown", () => {
     expect(
       evidence({ accountFingerprint: null }, { sameDriver: false, providerName: "Codex" }),

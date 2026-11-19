@@ -255,6 +255,47 @@ describe("the receiver confirms its own track, account and usage (AC-38)", () =>
     }
   });
 
+  it("is no target when its copy of the project has no tracks, though the model is signed in", () => {
+    // What the receiver passes for a project that runs one fixed model: no track at all.
+    for (const start of ["automatic", "manual"] as const) {
+      const answer = confirm({ start, trackEntries: null });
+      expect(answer.failures).toEqual([
+        { check: "model", message: "Minis: App does not use the Complex track here" },
+      ]);
+      expect(answer.evidence).toBeNull();
+    }
+  });
+
+  it("skips a pool the track is already out on, whichever provider serves it", () => {
+    const poolC = `sha256:${"c".repeat(64)}`;
+    // The track ran out on Claude (pool A) and on Codex (pool C); the thread stopped on Claude.
+    const thread = {
+      modelSelection: fable,
+      track: "complex" as const,
+      driverKind: "claudeAgent",
+      accountFingerprints: [poolA, poolC],
+    };
+    const only = confirm({
+      thread,
+      trackEntries: [astra],
+      signIns: [signIn(astra, "codex", "Codex", { accountFingerprint: poolC, usedPercent: 12 })],
+    });
+    expect(only.evidence).toMatchObject({ kind: "same-account", automatic: false });
+    expect(only.failures).toEqual([
+      { check: "provider", message: "Minis: Same Codex account as M4: adds no usage" },
+    ]);
+    const next = confirm({
+      thread,
+      trackEntries: [astra, fableWork],
+      signIns: [
+        signIn(astra, "codex", "Codex", { accountFingerprint: poolC, usedPercent: 12 }),
+        signIn(fableWork, "claudeAgent", "Claude (work)"),
+      ],
+    });
+    expect(next.failures).toEqual([]);
+    expect(next.evidence?.modelSelection).toEqual(fableWork);
+  });
+
   it("intersects its sign-ins with what the grant allows", () => {
     const refusal = "Minis: this machine lets M4 use only these sign-ins: codex.";
     const answer = confirm({
@@ -305,17 +346,38 @@ describe("the receiver confirms its own track, account and usage (AC-38)", () =>
 
 describe("the thread's track at the source", () => {
   const lanes = { complex: [fable, astra], routine: [opus] };
+  const both = { complex: [fable, opus], routine: [opus, astra] };
+  const track = (input: Partial<Parameters<typeof trackOfThread>[0]>) =>
+    trackOfThread({ review: false, model: opus.model, lanes, routedLane: null, ...input });
 
-  it("is the track that names its model, Complex before Daily", () => {
-    expect(trackOfThread({ review: false, model: fable.model, lanes })).toBe("complex");
-    expect(trackOfThread({ review: false, model: opus.model, lanes })).toBe("daily");
-    expect(trackOfThread({ review: true, model: opus.model, lanes })).toBe("review");
+  it("is the track its routing chose, whatever else names the model", () => {
+    expect(track({ lanes: both, routedLane: "routine" })).toEqual({
+      track: "daily",
+      ambiguous: false,
+    });
+    expect(track({ lanes: both, routedLane: "complex" })).toEqual({
+      track: "complex",
+      ambiguous: false,
+    });
+    expect(track({ review: true, routedLane: "routine" }).track).toBe("review");
+  });
+
+  it("without a routing decision, is the one track that names its model", () => {
+    expect(track({ model: fable.model })).toEqual({ track: "complex", ambiguous: false });
+    expect(track({ model: opus.model })).toEqual({ track: "daily", ambiguous: false });
+  });
+
+  it("is not guessed when both tracks name the model", () => {
+    expect(track({ lanes: both })).toEqual({ track: null, ambiguous: true });
   });
 
   it("is none for a project without tracks, or a model on neither", () => {
-    expect(trackOfThread({ review: false, model: fable.model, lanes: null })).toBeNull();
-    expect(trackOfThread({ review: true, model: fable.model, lanes: null })).toBeNull();
-    expect(trackOfThread({ review: false, model: "other", lanes })).toBeNull();
+    expect(track({ lanes: null, routedLane: "complex" })).toEqual({
+      track: null,
+      ambiguous: false,
+    });
+    expect(track({ lanes: null, review: true }).track).toBeNull();
+    expect(track({ model: "other" })).toEqual({ track: null, ambiguous: false });
   });
 });
 
@@ -332,6 +394,7 @@ const checked = (overrides: Partial<HandoffThreadFact> = {}): HandoffThreadFact 
   reviewStay: null,
   worktreeSet: false,
   brokenFolder: null,
+  trackAmbiguous: false,
   check: {
     kind: "checked",
     failures: [],
@@ -430,6 +493,67 @@ describe("a hand off by hand (AC-17, AC-19, AC-20)", () => {
       const item = planThread(facts(), fact);
       expect(item).toMatchObject({ group: "unsaved", ticked: true, disposition: "ready" });
     }
+  });
+
+  it("never restarts a turn for a finished thread whose files are moved", () => {
+    // Settled after a limit stop, picked for its unsaved files: the files move, nothing runs.
+    expect(
+      planThread(
+        facts(),
+        checked({ activity: "settled", runEnding: "usage-limit", unsaved: true }),
+      ),
+    ).toMatchObject({ group: "unsaved", ticked: true, disposition: "ready" });
+    for (const runEnding of ["handoff", "sleep", "active"] as const) {
+      expect(
+        planThread(facts(), checked({ activity: "settled", runEnding, unsaved: true })),
+      ).toMatchObject({ disposition: "ready" });
+    }
+    // A thread that stopped on the limit and still waits is the one being continued.
+    expect(
+      planThread(
+        facts(),
+        checked({ activity: "waiting", runEnding: "usage-limit", unsaved: true }),
+      ),
+    ).toMatchObject({ ticked: true, disposition: "resume" });
+  });
+
+  it("cannot be ticked before it was measured", () => {
+    for (const plan of [facts(), automatic()]) {
+      const item = planThread(
+        plan,
+        checked({
+          activity: "waiting",
+          runEnding: "usage-limit",
+          usage: { usedPercent: 100, windowKey: laterReset, movedInWindow: false },
+          measure: null,
+        }),
+      );
+      expect(item).toMatchObject({
+        group: "stays",
+        disposition: "stays",
+        stay: "unmeasured",
+        ticked: false,
+        canTick: false,
+        reason: "Not measured yet.",
+        measure: null,
+      });
+    }
+    expect(
+      folderWorkItem(facts(), {
+        projectId: P1,
+        title: "App",
+        uncommittedFiles: 3,
+        branches: ["a"],
+        brokenFolder: null,
+        measure: null,
+      }),
+    ).toMatchObject({
+      group: "stays",
+      disposition: "stays",
+      stay: "unmeasured",
+      ticked: false,
+      canTick: false,
+    });
   });
 
   it("names why a thread stays, and a Stays row cannot be ticked", () => {
@@ -597,6 +721,19 @@ describe("each thread's disposition in an automatic batch (AC-41)", () => {
     expect(
       planThread(automatic(), checked({ activity: "settled", runEnding: "completed" })),
     ).toBeNull();
+  });
+
+  it("never moves a thread whose track is not known", () => {
+    expect(planThread(automatic(), { ...limitStop, trackAmbiguous: true })).toMatchObject({
+      disposition: "stays",
+      stay: "track",
+      ticked: false,
+      reason: "Its model is on more than one track, and nothing says which one it runs on.",
+    });
+    // By hand the person chose the target; the row moves on the model it names.
+    expect(planThread(facts(), checked({ trackAmbiguous: true }))).toMatchObject({
+      disposition: "resume",
+    });
   });
 
   it("needs switch with targets", () => {
@@ -783,6 +920,41 @@ describe("limits measured on what will travel (AC-34)", () => {
     expect(checkRefs(root)).toBe("");
   });
 
+  it("never deletes a scratch ref another measure of the same operation holds", async () => {
+    const root = repository();
+    NodeFS.writeFileSync(NodePath.join(root, "new.ts"), "export const b = 1;\n");
+    const held = git(root, "rev-parse", "HEAD");
+    git(root, "update-ref", checkRef("op-7", t1), held);
+    await expect(
+      measureTravel({
+        cwd: root,
+        threadId: t1,
+        operationId: "op-7",
+        known: async (candidates) => candidates,
+      }),
+    ).rejects.toThrow();
+    expect(git(root, "rev-parse", checkRef("op-7", t1))).toBe(held);
+  });
+
+  it("names a committed file over the limit with its real size", async () => {
+    const root = repository();
+    const base = git(root, "rev-parse", "HEAD");
+    NodeFS.writeFileSync(NodePath.join(root, "big.bin"), Buffer.alloc(4096, 7));
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "a large file nobody pushed");
+    git(root, "rm", "-q", "big.bin");
+    git(root, "commit", "-q", "-m", "and its removal");
+    const measure = await measureTravel({
+      cwd: root,
+      threadId: t1,
+      operationId: "op-8",
+      // The target holds the base only, so both commits travel.
+      known: async () => [base],
+      limits: { maxFileBytes: 1024, maxFiles: 20_000, maxBundleBytes: 64 * 1024 * 1024 },
+    });
+    expect(measure.over).toEqual({ limit: "file", path: "big.bin", bytes: 4096 });
+  });
+
   it("deletes its scratch ref when the target cannot be asked", async () => {
     const root = repository();
     NodeFS.writeFileSync(NodePath.join(root, "new.ts"), "export const b = 1;\n");
@@ -887,6 +1059,19 @@ describe("the plan's own capability (EC2-04)", () => {
       expect(strict.results[0]?.failures.map((failure) => failure.message)).toEqual([
         `${b.label}: Usage unknown`,
       ]);
+      // A thread on a track is not confirmed on the model it names: this copy of the
+      // project runs one fixed model, so it has no Daily track to offer.
+      const tracked = yield* b.receiver.check(
+        caller(a),
+        request({
+          sourceEnvironmentId: a.environmentId,
+          threads: [{ ...request().threads[0]!, sourceProjectId: a.projectId, track: "daily" }],
+        }),
+      );
+      expect(tracked.results[0]?.failures).toEqual([
+        { check: "model", message: `${b.label}: App does not use the Daily track here` },
+      ]);
+      expect(tracked.results[0]?.evidence).toBeNull();
       // The existing preflight still asks for the copy, as before.
       const preflight = yield* b.receiver.preflight(caller(a), {
         sourceEnvironmentId: a.environmentId,

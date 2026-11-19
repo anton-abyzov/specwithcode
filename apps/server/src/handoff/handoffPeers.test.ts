@@ -18,6 +18,7 @@ import { nodePath as NodePath } from "../nodePath.ts";
 import * as PreviousRelease from "./handoffReviewLock.previousRelease.test.fixture.ts";
 import { HANDOFF_PEER_PREFIX, type ReplicateMeta } from "./handoffWire.ts";
 import { HandoffPeers, layer as handoffPeersLayer } from "./handoffPeers.ts";
+import { checkAnswer, planThread } from "./handoffPlan.ts";
 import { PREVIOUS_RELEASE, PREVIOUS_UNKNOWN_PATH } from "./previousRelease383.test.fixture.ts";
 
 const machine = { ...target, connectUrl: CONNECT_ORIGIN };
@@ -84,6 +85,9 @@ function worker(
       return Response.json({ error: "not_found", code: "not_found" }, { status: 404 });
     // It is the latest release, from before transfer records: it answers those paths as that release does.
     if (url.pathname.includes("/transfer-"))
+      return Response.json(PREVIOUS_UNKNOWN_PATH.body, { status: PREVIOUS_UNKNOWN_PATH.status });
+    // It is from before hand off plans too: it has no check path.
+    if (url.pathname.endsWith("/check"))
       return Response.json(PREVIOUS_UNKNOWN_PATH.body, { status: PREVIOUS_UNKNOWN_PATH.status });
     // It accepted a takeover at epoch 93 and could not start it; epoch 92 is stale.
     if (url.pathname.endsWith("/takeover")) {
@@ -278,6 +282,91 @@ describe("handoff peers over SpecWithCode Connect", () => {
               });
               expect(failure?.message.startsWith("Needs update: ")).toBe(true);
             }
+          }),
+      ),
+  );
+
+  it.effect(
+    `reads ${PREVIOUS_RELEASE}'s answer to the check path as "Needs update", and its row stays`,
+    () =>
+      withPeers(
+        { grant: (jkt) => studioToken({ sid: "grant", jkt }), offline: new Set([ORIGIN]) },
+        (peers) =>
+          Effect.gen(function* () {
+            const threadId = ThreadId.make("thread:fix-build");
+            const projectId = ProjectId.make("project-1");
+            const selection = { instanceId: "claudeAgent", model: "claude-opus-5-5" } as never;
+            const asked = yield* Effect.result(
+              peers.check(machine.environmentId, {
+                sourceEnvironmentId: EnvironmentId.make("env-m4"),
+                sourceLabel: "M4",
+                protocolVersion: 2,
+                appVersion: "1.0.390",
+                capabilities: ["handoff.v2", "handoff.plan"],
+                start: "manual",
+                thresholdPercent: 99,
+                threads: [
+                  {
+                    sourceThreadId: threadId,
+                    sourceProjectId: projectId,
+                    modelSelection: selection,
+                    track: null,
+                    driverKind: "claudeAgent",
+                    accountFingerprints: [],
+                  },
+                ],
+              }),
+            );
+            expect(Result.isFailure(asked)).toBe(true);
+            if (!Result.isFailure(asked)) return;
+            expect(asked.failure).toMatchObject({
+              needsUpdate: true,
+              uncertain: false,
+              check: "version",
+              code: "invalid",
+            });
+            // What the peer client returned is what the plan reads: the row stays.
+            const check = checkAnswer({
+              peerLabel: machine.label,
+              threadId,
+              answer: { kind: "failed", error: asked.failure },
+            });
+            expect(check.kind).toBe("needs-update");
+            const row = planThread(
+              {
+                start: "manual",
+                self: { environmentId: EnvironmentId.make("env-m4"), label: "M4" },
+                target: { environmentId: machine.environmentId, label: machine.label },
+                rule: null,
+                threads: [],
+                folderWork: [],
+                nowMs: 0,
+              },
+              {
+                id: threadId,
+                title: "Fix the build",
+                projectId,
+                personal: false,
+                activity: "running",
+                unsaved: false,
+                pending: null,
+                runEnding: "active",
+                lastTurnEndedAt: null,
+                reviewStay: null,
+                worktreeSet: false,
+                brokenFolder: null,
+                trackAmbiguous: false,
+                check,
+                measure: { bytes: 1, files: 1, over: null },
+                usage: null,
+              },
+            );
+            expect(row).toMatchObject({
+              disposition: "stays",
+              stay: "needs-update",
+              ticked: false,
+            });
+            expect(row?.reason?.startsWith("Needs update: ")).toBe(true);
           }),
       ),
   );
