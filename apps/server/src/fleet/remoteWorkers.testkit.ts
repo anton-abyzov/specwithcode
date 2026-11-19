@@ -10,6 +10,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   type RepositoryIdentity,
+  RunId,
   ThreadId,
 } from "@specweave-studio/contracts";
 import * as Clock from "effect/Clock";
@@ -28,6 +29,7 @@ import type { FleetTarget } from "../studioFleet.ts";
 import { fakeMachine, ORIGIN, target } from "./fleetMachine.testkit.ts";
 import * as FleetTargets from "./FleetTargets.ts";
 import * as FleetWorkerGrants from "./FleetWorkerGrants.ts";
+import { type ReleasedPeer, releasedPeer } from "./releasedPeer.testkit.ts";
 import * as RemoteStudioMcpClient from "./RemoteStudioMcpClient.ts";
 import * as RemoteWorkerFollower from "./RemoteWorkerFollower.ts";
 import * as RemoteWorkers from "./RemoteWorkers.ts";
@@ -169,6 +171,10 @@ export interface World {
   readonly changed: Signal;
   /** Row writes fail, as on a disk that cannot be written. */
   storeFails: boolean;
+  /** Asked at every read of this machine's fleet file: whether that read fails. */
+  fleetReadFails: () => boolean;
+  /** The threads on this machine that a takeover created here, kept as a machine keeps them. */
+  readonly here: ReleasedPeer;
   /** Calls to other machines and row writes this server has under way. */
   inFlight: number;
 }
@@ -197,6 +203,8 @@ export const setup = (
     readonly kept?: Array<KeptMessage>;
     /** One signal for several setups in a test. */
     readonly changed?: Signal;
+    /** This machine's own threads, which outlive one server life. */
+    readonly here?: ReleasedPeer;
   } = {},
 ) => {
   const self = fleet.roles?.self ?? "env-m4";
@@ -221,6 +229,8 @@ export const setup = (
     kept: fleet.kept ?? [],
     changed: fleet.changed ?? makeSignal(),
     storeFails: false,
+    fleetReadFails: () => false,
+    here: fleet.here ?? releasedPeer(self),
     inFlight: 0,
   };
   /** A machine's tools as they are when called; every call is something a test may wait for. */
@@ -285,8 +295,75 @@ export const setup = (
     settledAt: world.caller.settled ? DateTime.toDateUtc(DateTime.nowUnsafe()) : null,
     settledOverride: world.caller.settled ? "settled" : null,
   });
+  const at = (value: string | null) => (value === null ? null : DateTime.makeUnsafe(value));
+  const hereThread = (id: string) => {
+    const thread = world.here.threads.get(id);
+    return thread === undefined
+      ? Effect.fail({ _tag: "ProjectionStoreV2ThreadNotFoundError" } as never)
+      : Effect.succeed(thread);
+  };
   const threads = Layer.mock(ThreadManagementService.ThreadManagementService)({
-    getThreadShell: (id) => Effect.sync(() => shell(id) as never),
+    // A continuation exists here only once a takeover created it.
+    getThreadShell: (id) =>
+      Effect.sync(
+        () => (id.startsWith("handoff:") && !world.here.threads.has(id) ? null : shell(id)) as never,
+      ),
+    getThreadRecords: ((id: string) =>
+      Effect.map(hereThread(id), (thread) => ({
+        thread:
+          thread.movedTo === undefined
+            ? {}
+            : {
+                movedTo: {
+                  kind: "handoff",
+                  environmentId: thread.movedTo.environmentId,
+                  machineLabel: thread.movedTo.label,
+                },
+                execution: {
+                  ownerMachineId: self,
+                  executionMachineId: thread.movedTo.environmentId,
+                  epoch: thread.movedTo.epoch,
+                  history: [
+                    { machine: self, to: "2026-10-20T13:00:00.000Z", epoch: thread.movedTo.epoch - 1 },
+                    { machine: thread.movedTo.environmentId, to: null, epoch: thread.movedTo.epoch },
+                  ],
+                },
+              },
+        runs: thread.runs.map((run) => ({
+          id: run.id,
+          ordinal: run.ordinal,
+          status: run.status,
+          startedAt: at(run.startedAt),
+          completedAt: at(run.completedAt),
+        })),
+        messages: thread.runs.map((run) => ({
+          id: run.message.id,
+          runId: run.id,
+          role: "user",
+          creationSource: run.message.creationSource,
+        })),
+      }))) as never,
+    waitForThread: ((input: { threadId: string; runId?: string; timeoutMs: number }) =>
+      Effect.gen(function* () {
+        const thread = yield* hereThread(input.threadId);
+        const find = () =>
+          input.runId === undefined
+            ? thread.runs.toSorted((left, right) => right.ordinal - left.ordinal)[0]
+            : thread.runs.find((candidate) => candidate.id === input.runId);
+        if (input.runId !== undefined && find() === undefined)
+          return yield* new ThreadManagementService.ThreadManagementRunNotFoundError({
+            threadId: ThreadId.make(input.threadId),
+            runId: RunId.make(input.runId),
+          });
+        const ended = (status: string | undefined) =>
+          status !== undefined &&
+          ["completed", "failed", "cancelled", "interrupted", "rolled_back"].includes(status);
+        // As the service does: an open run is waited for, up to the time given.
+        if (!ended(find()?.status)) yield* Effect.sleep(Math.min(input.timeoutMs, 10));
+        const run = find();
+        world.changed.fire();
+        return { threadId: input.threadId, run: run ?? null, timedOut: !ended(run?.status) && run !== undefined };
+      })) as never,
     sendToThread: (input) =>
       Effect.sync(() => {
         world.wakes.push({
@@ -381,14 +458,20 @@ export const setup = (
     Layer.provideMerge(Layer.merge(FleetWorkerGrants.layer, store)),
     Layer.provideMerge(
       Layer.succeed(FleetTargets.FleetTargets, {
-        load: Effect.succeed({
-          version: 1 as const,
-          machines: [
-            first,
-            ...(fleet.roles?.more ?? []).map((other) => other.target),
-            ...(fleet.extraTargets ?? []),
-          ],
-        }),
+        load: Effect.suspend(() =>
+          world.fleetReadFails()
+            ? Effect.fail(
+                new FleetTargets.FleetConfigReadError({ cause: "The test's file is unreadable." }),
+              )
+            : Effect.succeed({
+                version: 1 as const,
+                machines: [
+                  first,
+                  ...(fleet.roles?.more ?? []).map((other) => other.target),
+                  ...(fleet.extraTargets ?? []),
+                ],
+              }),
+        ),
         fetch: fetcher,
       }),
     ),

@@ -19,7 +19,12 @@
  *  - A thread it does not have fails with `thread_not_found`.
  *  - A thread handed on reads `executionState: "fenced"`, the machine that runs
  *    it now, and the epoch of that move in `executionHistory`
- *    (handoff/HandoffMoves.ts, the source's execution record).
+ *    (handoff/HandoffMoves.ts, the source's execution record). The fence and
+ *    the history entry are two writes there: between them the thread reads
+ *    fenced with the history it had (`handOn` with `historyWritten: false`).
+ *  - A run's id is its thread and ordinal (orchestration-v2/IdAllocator.ts,
+ *    `derive.run`), and its ordinal is given when its message is sent: a queued
+ *    message moved ahead starts earlier and keeps its ordinal.
  *
  * Every answer is decoded with the tools' own contract schemas, so a fixture
  * that drifts from the wire shape fails the test that uses it.
@@ -66,6 +71,10 @@ export interface PeerThread {
   readonly runs: Array<PeerRun>;
   /** Set once the thread was handed on to another machine. */
   movedTo?: { readonly environmentId: string; readonly label: string; readonly epoch: number };
+  /** Where the thread ran before it came here, oldest first. */
+  cameFrom?: ReadonlyArray<{ readonly environmentId: string; readonly epoch: number }>;
+  /** False between the fence and the history entry of the move in `movedTo`. */
+  historyWritten?: boolean;
 }
 
 const decodeReadInput = Schema.decodeUnknownSync(OrchestratorMcpThreadReadInput);
@@ -121,7 +130,7 @@ export function releasedPeer(environmentId: string) {
     ) => {
       const thread = threadOf(threadId);
       const ordinal = thread.runs.length + 1;
-      const id = input.id ?? `${threadId}:run-${ordinal}`;
+      const id = input.id ?? `run:thread:${encodeURIComponent(threadId)}:ordinal:${ordinal}`;
       const status = input.status ?? "running";
       const requestedAt = at();
       const run: PeerRun = {
@@ -152,12 +161,14 @@ export function releasedPeer(environmentId: string) {
     handOn: (
       threadId: string,
       to: { readonly environmentId: string; readonly label: string; readonly epoch: number },
+      options: { readonly historyWritten?: boolean } = {},
     ) => {
       const thread = threadOf(threadId);
       for (const run of thread.runs) {
         if (OPEN.includes(run.status)) peer.set(threadId, run.id, "interrupted");
       }
       thread.movedTo = to;
+      thread.historyWritten = options.historyWritten ?? true;
     },
     tools: {} as Record<"studio_thread_read" | "studio_thread_wait", FakeToolHandler>,
   };
@@ -209,21 +220,33 @@ export function releasedPeer(environmentId: string) {
             executionState: "fenced",
             executionLastSeenAt: null,
             executionHistory: [
+              ...(thread.cameFrom ?? []).map((visit) => ({
+                machine: EnvironmentId.make(visit.environmentId),
+                from: created,
+                to: created,
+                reason: "handoff",
+                epoch: visit.epoch,
+              })),
               {
                 machine: EnvironmentId.make(environmentId),
                 from: created,
-                to: created,
-                reason: "created",
+                // Its own stretch is closed by the same write that adds the next one.
+                to: thread.historyWritten === false ? null : created,
+                reason: thread.cameFrom === undefined ? "created" : "handoff",
                 epoch: thread.movedTo.epoch - 1,
               },
-              {
-                machine: EnvironmentId.make(thread.movedTo.environmentId),
-                machineLabel: thread.movedTo.label,
-                from: created,
-                to: null,
-                reason: "handoff",
-                epoch: thread.movedTo.epoch,
-              },
+              ...(thread.historyWritten === false
+                ? []
+                : [
+                    {
+                      machine: EnvironmentId.make(thread.movedTo.environmentId),
+                      machineLabel: thread.movedTo.label,
+                      from: created,
+                      to: null,
+                      reason: "handoff",
+                      epoch: thread.movedTo.epoch,
+                    },
+                  ]),
             ],
           }),
       createdAt: created,
