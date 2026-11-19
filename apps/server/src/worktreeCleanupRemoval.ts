@@ -30,9 +30,8 @@ import {
   type MemberState,
 } from "./worktreeCleanupMemberFacts.ts";
 
-/** `yyyyMMdd-HHmmss` in UTC, for an evidence folder name. */
 /** True when both files hold the same bytes, read in 1 MB chunks. */
-async function sameBytes(left: string, right: string): Promise<boolean> {
+export async function sameBytes(left: string, right: string): Promise<boolean> {
   const a = await NodeFSP.open(left, "r");
   let b: NodeFSP.FileHandle | null = null;
   try {
@@ -42,15 +41,28 @@ async function sameBytes(left: string, right: string): Promise<boolean> {
     const chunk = 1024 * 1024;
     const bufA = Buffer.alloc(chunk);
     const bufB = Buffer.alloc(chunk);
+    // Each range is read until it is complete: a read may return fewer bytes.
+    const fill = async (handle: NodeFSP.FileHandle, buffer: Buffer, length: number, at: number) => {
+      let got = 0;
+      while (got < length) {
+        const { bytesRead } = await handle.read(buffer, got, length - got, at + got);
+        if (bytesRead === 0) return false;
+        got += bytesRead;
+      }
+      return true;
+    };
     for (let offset = 0; offset < sa.size; offset += chunk) {
-      const [ra, rb] = await Promise.all([
-        a.read(bufA, 0, chunk, offset),
-        b.read(bufB, 0, chunk, offset),
+      const length = Math.min(chunk, sa.size - offset);
+      const [okA, okB] = await Promise.all([
+        fill(a, bufA, length, offset),
+        fill(b, bufB, length, offset),
       ]);
-      if (ra.bytesRead !== rb.bytesRead) return false;
-      if (!bufA.subarray(0, ra.bytesRead).equals(bufB.subarray(0, rb.bytesRead))) return false;
-      if (ra.bytesRead === 0) return false;
+      if (!okA || !okB) return false;
+      if (!bufA.subarray(0, length).equals(bufB.subarray(0, length))) return false;
     }
+    // Neither grew past the size compared.
+    const [ea, eb] = await Promise.all([a.stat(), b.stat()]);
+    if (ea.size !== sa.size || eb.size !== sb.size) return false;
     return true;
   } finally {
     await a.close();
@@ -58,6 +70,7 @@ async function sameBytes(left: string, right: string): Promise<boolean> {
   }
 }
 
+/** `yyyyMMdd-HHmmss` in UTC, for an evidence folder name. */
 const evidenceStamp = (now: number) =>
   DateTime.formatIso(DateTime.makeUnsafe(now)).slice(0, 19).replace(/[-:]/g, "").replace("T", "-");
 
@@ -264,13 +277,14 @@ export function makeRemoval(deps: {
       const format = yield* git.execute({
         operation: "WorktreeCleanupSweep.refFormat",
         cwd: at,
-        args: ["config", "--get", "extensions.refStorage"],
+        // The backend Git actually uses (Git 2.45 and later); an older Git,
+        // or any answer but "files", keeps the worktree.
+        args: ["rev-parse", "--show-ref-format"],
         maxOutputBytes: 4096,
         allowNonZeroExit: true,
         timeoutMs: 15_000,
       });
-      if (format.exitCode === 0 ? format.stdout.trim().toLowerCase() !== "files" : format.exitCode !== 1)
-        return false;
+      if (format.exitCode !== 0 || format.stdout.trim() !== "files") return false;
       const where = yield* git.execute({
         operation: "WorktreeCleanupSweep.reflogPath",
         cwd: at,
