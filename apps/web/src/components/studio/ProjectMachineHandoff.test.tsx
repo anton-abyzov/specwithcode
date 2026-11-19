@@ -167,7 +167,7 @@ let root: Root, container: HTMLDivElement;
 const props = () => state.props!;
 /**
  * Opens the dialog the way its button does. It opens on the copy; most of these tests then
- * switch to the Git handoff ("folder"), as "Continue the coordinator here" opens it.
+ * switch to the Git handoff ("folder"), as "Continue in the folder already there" opens it.
  */
 const mount = async (method: "git" | "as-opened" = "git") => {
   await act(async () =>

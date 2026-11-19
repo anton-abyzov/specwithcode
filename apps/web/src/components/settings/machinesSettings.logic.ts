@@ -38,7 +38,6 @@ import {
   type TeamRulesMachineView,
 } from "../../teamRules/teamRulesView";
 import { copyRoles, type CopyRole } from "../../studio/projectDomain";
-import { copyRoleHelp, copyRoleLabel } from "../../studio/workersOnlyCopy";
 import { workGrantProjectsSummary, workGrantStatus } from "./machineWorkGrants.logic";
 import { isShareablePairingUrl } from "./pairingUrls";
 
@@ -106,8 +105,8 @@ export interface MachineProject {
   readonly title: string;
   /** Null when this app cannot see that copy, so its role is unknown here. */
   readonly role: SharedProjectRole | "only-here" | null;
-  /** An English phrase ("Coordinator", "Separate project · also on {machine}"),
-   * translated with `roleValues`. */
+  /** An English phrase ("Separate project · also on {machine}"), translated with
+   * `roleValues`; empty for a shared copy, which has no role word. */
   readonly roleLabel: string;
   /** The role in a sentence, for the label's tooltip; translated with `roleValues`. */
   readonly roleHelp: string;
@@ -257,11 +256,10 @@ export function copyRole(
   return SHARED_ROLE[roleIn(copy, projects, retired).role];
 }
 
-/** The badge, its tooltip and the main machine's name for a shared copy. */
+/** A shared copy's role for sorting; it has no badge and no tooltip. */
 function roleWords(
   copy: MachineProjectInput,
   projects: readonly MachineProjectInput[],
-  nameOf: (environmentId: EnvironmentId) => string,
   retired?: ReadonlyMap<string, unknown>,
 ): {
   readonly role: SharedProjectRole;
@@ -269,17 +267,8 @@ function roleWords(
   readonly roleHelp: string;
   readonly roleValues?: { readonly machine: string };
 } {
-  const { role, mainEnvironmentId } = roleIn(copy, projects, retired);
-  const main = mainEnvironmentId ? nameOf(mainEnvironmentId as EnvironmentId) : null;
-  const label = copyRoleLabel(role, main);
-  const help = copyRoleHelp(role, main);
-  const values = label.values ?? help.values;
-  return {
-    role: SHARED_ROLE[role],
-    roleLabel: label.text,
-    roleHelp: help.text,
-    ...(values ? { roleValues: values } : {}),
-  };
+  // Every machine runs its own coordinator, so a shared copy carries no role word.
+  return { role: SHARED_ROLE[roleIn(copy, projects, retired).role], roleLabel: "", roleHelp: "" };
 }
 
 /** One identity with copies on more than one machine. */
@@ -448,7 +437,7 @@ function otherCopies(
       (candidate) =>
         candidate.environmentId === member.environmentId && candidate.id === member.projectId,
     );
-    const words = copy ? roleWords(copy, projects, (id) => machineOf(id).name, retired) : null;
+    const words = copy ? roleWords(copy, projects, retired) : null;
     copies.push({
       environmentId: member.environmentId,
       ...machineOf(member.environmentId),
@@ -500,7 +489,7 @@ function projectsOn(
         ...new Set(unlinked.map((copy) => machineOf(copy.environmentId).name)),
       ];
       const words = shared
-        ? roleWords(project, projects, (id) => machineOf(id).name, retired)
+        ? roleWords(project, projects, retired)
         : unlinked.length > 0
           ? {
               role: "only-here" as const,

@@ -120,7 +120,7 @@ describe("one role derivation for the project menu and Settings", () => {
     );
     expect(menu.map((copy) => [copy.role, copy.main, copy.label])).toEqual([
       ["workers", false, { text: "" }],
-      ["coordinator", true, { text: "Coordinator" }],
+      ["coordinator", true, { text: "" }],
     ]);
   });
 });
@@ -322,7 +322,8 @@ describe("machine rows", () => {
       key: "logical-easychamp",
       title: "EasyChamp",
       role: "coordinator",
-      roleLabel: "Coordinator",
+      // Every machine runs its own coordinator: a shared copy has no role word.
+      roleLabel: "",
       alsoOn: ["MacBook Pro"],
       elsewhere: [
         {
@@ -336,10 +337,10 @@ describe("machine rows", () => {
       folder: "/Users/a/Projects/sw-easychamp",
     });
     expect(rows[1]?.projects.own[0]?.elsewhere).toMatchObject([
-      { name: "M4MAX", seen: { state: "this-machine" }, roleLabel: "Coordinator" },
+      { name: "M4MAX", seen: { state: "this-machine" }, roleLabel: "" },
     ]);
     expect(rows[1]?.projects.own.map((project) => project.roleLabel)).toEqual([""]);
-    expect(rows[1]?.projects.own[0]?.roleValues).toEqual({ machine: "M4MAX" });
+    expect(rows[1]?.projects.own[0]?.roleValues).toBeUndefined();
 
     const hidden = buildMachineRows({
       environments: [env(m4, "M4MAX")],
@@ -349,7 +350,7 @@ describe("machine rows", () => {
       projects: [easyChamp(m4, "p-m4", "/Users/a/Projects/sw-easychamp", "transferring")],
       hostBlocks: [],
     });
-    expect(hidden[0]?.projects.own[0]?.roleLabel).toBe("Handing off the coordinator…");
+    expect(hidden[0]?.projects.own[0]?.roleLabel).toBe("");
     expect(hidden[1]?.projects.own).toMatchObject([
       {
         key: "logical-easychamp",
@@ -362,7 +363,7 @@ describe("machine rows", () => {
             name: "M4MAX",
             seen: { state: "this-machine" },
             folder: "/Users/a/Projects/sw-easychamp",
-            roleLabel: "Handing off the coordinator…",
+            roleLabel: "",
           },
         ],
       },
@@ -907,7 +908,7 @@ describe("old records of a machine that joined again", () => {
       replaced: new Map([[m3, m1]]),
     });
     const here = rows[0]!.projects.own[0]!;
-    expect(here.roleLabel).toBe("Coordinator");
-    expect(here.elsewhere[0]?.roleLabel).toBe("Extra coordinator");
+    expect(here.role).toBe("coordinator");
+    expect([here.roleLabel, here.elsewhere[0]?.roleLabel]).toEqual(["", ""]);
   });
 });

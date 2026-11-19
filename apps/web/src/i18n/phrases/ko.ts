@@ -4495,7 +4495,6 @@ export const ko: PhraseCatalog = {
   "Installs from npm": "npm 설치",
   "Machine access settings": "컴퓨터 접근 설정",
   "{machine} offline": "{machine} 오프라인",
-  "workers only": "워커 전용",
   coordinator: "코디네이터",
   "Link them below to make one project.": "아래에서 연결하면 하나의 프로젝트가 됩니다.",
   "{value}Messages go to Percy. {value2}": "{value}메시지는 Percy에게 전달됩니다. {value2}",
@@ -5153,23 +5152,10 @@ export const ko: PhraseCatalog = {
   "Waiting for the install. This page updates by itself.":
     "설치를 기다리는 중입니다. 이 페이지는 자동으로 업데이트됩니다.",
   "After it installs, choose Check again.": "설치가 끝나면 다시 확인을 선택하세요.",
-  "in {minutes} min": "{minutes}분 후",
-  "read-only on {main}": "{main}은(는) 읽기 전용",
-  "not ready": "준비 안 됨",
-  "Send this project its first message here, then try again.":
-    "여기서 이 프로젝트에 첫 메시지를 보낸 뒤 다시 시도하세요.",
-  "It starts from the shared goal, memory and plan. The conversation on {main} stays there as history, and {main} gives way when it is back.":
-    "공유된 목표, 메모리, 계획에서 시작합니다. {main}의 대화는 기록으로 거기에 남고, {main}은(는) 돌아오면 메인을 넘겨줍니다.",
-  "Retry it.": "다시 시도하세요.",
   "Switching…": "전환 중…",
-  "The conversation here is kept as history.": "여기의 대화는 기록으로 남습니다.",
-  "Got it": "확인",
-  "{machine} kept its coordinator conversation from before as history. View it to read that conversation.":
-    "{machine}은(는) 이전 코디네이터 대화를 기록으로 보관하고 있습니다. 열어서 그 대화를 읽으세요.",
   "Link {machine} to this project…": "{machine}을(를) 이 프로젝트에 연결…",
   "Link {machine} to this project": "{machine}을(를) 이 프로젝트에 연결",
   "Link {machine}": "{machine} 연결",
-  "connect {main} first": "먼저 {main} 연결",
   "Nothing on {machine} is replaced without asking.":
     "{machine}에 있는 것은 묻지 않고 바꾸지 않습니다.",
   "the other machine": "다른 기기",
@@ -5431,10 +5417,6 @@ export const ko: PhraseCatalog = {
   "This app cannot see this machine, so it cannot tell what it does for this project.":
     "이 앱에서 이 컴퓨터가 보이지 않아 이 프로젝트에서 어떤 일을 하는지 알 수 없습니다.",
   "Continue here": "여기서 계속",
-  "The coordinator continued on {machine} while {main} was offline. It started from the shared goal, memory and plan; the earlier conversation stays on {main} as history.":
-    "{main}이(가) 오프라인인 동안 코디네이터가 {machine}에서 이어졌습니다. 공유된 목표, 메모리, 계획에서 시작했으며, 이전 대화는 기록으로 {main}에 남아 있습니다.",
-  "The coordinator continued on {machine} while its old machine was offline. It started from the shared goal, memory and plan; the earlier conversation stays on the old machine as history.":
-    "이전 컴퓨터가 오프라인인 동안 코디네이터가 {machine}에서 이어졌습니다. 공유된 목표, 메모리, 계획에서 시작했으며, 이전 대화는 기록으로 이전 컴퓨터에 남아 있습니다.",
   "{project} is on {machine}. The coordinator stays on {main}.":
     "{project}이(가) {machine}에 있습니다. 코디네이터는 {main}에 그대로 있습니다.",
   "{machine} has this repository as a separate project whose coordinator is on {main}. Nothing was linked.":
@@ -5449,16 +5431,11 @@ export const ko: PhraseCatalog = {
     "컴퓨터를 고르면 스레드와 파일이 보입니다. 동기화하거나 넘기기 전에는 아무것도 옮겨지지 않습니다.",
   "These are separate projects for this repository, each with its own coordinator, threads and memory. You can still open and message each one.":
     "이 저장소에 대한 별도 프로젝트들이며, 각각 자체 코디네이터, 스레드, 메모리를 사용합니다. 그래도 각 프로젝트를 열고 메시지를 보낼 수 있습니다.",
-  "Fix…": "수정…",
   "Connect…": "연결…",
   "Makes the project on {machine} part of this one. The coordinator stays where it is, and threads and files stay where they are. You confirm what {machine} gives up first.":
     "{machine}의 프로젝트를 이 프로젝트의 일부로 만듭니다. 코디네이터는 지금 있는 곳에 그대로 있고, 스레드와 파일도 그대로 있습니다. {machine}이(가) 포기하는 것을 먼저 확인합니다.",
   "Work on {machine}": "{machine}의 작업",
-  "{main} is offline: the coordinator starts on {machine} from the shared goal, memory and plan. You confirm first.":
-    "{main}이(가) 오프라인입니다. 코디네이터가 {machine}에서 공유된 목표, 메모리, 계획을 바탕으로 시작합니다. 먼저 확인합니다.",
-  "Syncs {machine}, then moves the coordinator conversation here from {main}. You confirm first.":
-    "{machine}을(를) 동기화한 뒤 코디네이터 대화를 {main}에서 여기로 옮깁니다. 먼저 확인합니다.",
-  "Continue the coordinator here": "여기서 코디네이터 이어 가기",
+  "Continue in the folder already there": "이미 있는 폴더에서 계속",
   "Pick {project} on another machine. Linking makes them one project with one coordinator.":
     "다른 컴퓨터의 {project}을(를) 고르세요. 연결하면 코디네이터가 하나인 한 프로젝트가 됩니다.",
   "Pick {project} on another machine. The coordinator stays on {main}; you can continue it on another machine any time.":
@@ -5483,50 +5460,10 @@ export const ko: PhraseCatalog = {
     "사용할 수 없음: 그 컴퓨터에 이미 코디네이터가 있습니다.",
   "Not available: it would move the coordinator into a separate project.":
     "사용할 수 없음: 코디네이터가 별도 프로젝트로 옮겨집니다.",
-  "Goes to the coordinator on {machine} and opens it there":
-    "{machine}의 코디네이터에게 전달하고 거기서 엽니다",
   "On {machine}. Not on this device.": "{machine}에 있습니다. 이 기기에는 없습니다.",
-  "The coordinator cannot be handed off from this machine yet.":
-    "아직 이 컴퓨터에서 코디네이터를 넘길 수 없습니다.",
-  "The coordinator cannot continue on {machine} yet.":
-    "아직 {machine}에서 코디네이터를 이어 갈 수 없습니다.",
-  "The coordinator continues on {machine}": "코디네이터가 {machine}에서 이어집니다",
-  "The coordinator continues on {machine}. {names} have not confirmed it yet.":
-    "코디네이터가 {machine}에서 이어집니다. {names}은(는) 아직 확인하지 않았습니다.",
-  "They refuse work from the old coordinator only once they have confirmed the new one.":
-    "새 코디네이터를 확인한 뒤에야 이전 코디네이터의 작업을 거부합니다.",
-  "The coordinator stayed on {main}": "코디네이터가 {main}에 그대로 있습니다",
-  "Continue the coordinator on {machine}?": "{machine}에서 코디네이터를 이어 갈까요?",
-  "{main} has been offline for 10 minutes or more. The coordinator starts on {machine} from the shared goal, memory and plan. The conversation on {main} stays there as history. Until {main} is back it can still start work on its own machine; then it gives way and lists what it ran meanwhile.":
-    "{main}이(가) 10분 이상 오프라인입니다. 코디네이터가 {machine}에서 공유된 목표, 메모리, 계획을 바탕으로 시작합니다. {main}의 대화는 기록으로 거기에 남습니다. {main}은(는) 돌아올 때까지 자기 컴퓨터에서 작업을 시작할 수 있지만, 돌아오면 코디네이터를 넘겨주고 그동안 실행한 작업을 보여 줍니다.",
-  "Starting the coordinator…": "코디네이터를 시작하는 중…",
-  "The coordinator's machine is not reachable from here.":
-    "여기서는 코디네이터가 있는 컴퓨터에 연결할 수 없습니다.",
-  "The coordinator's machine did not confirm the message. It may not have arrived.":
-    "코디네이터가 있는 컴퓨터가 메시지를 확인하지 않았습니다. 도착하지 않았을 수 있습니다.",
-  "Nothing was sent.": "아무것도 보내지 않았습니다.",
-  "The coordinator continues here. Send your message again.":
-    "코디네이터가 여기서 이어집니다. 메시지를 다시 보내세요.",
-  "{main} must be silent for 10 minutes before the coordinator can continue on {machine}. That unlocks in {minutes} min.":
-    "{main}이(가) 10분 동안 응답이 없어야 {machine}에서 코디네이터를 이어 갈 수 있습니다. {minutes}분 후에 가능합니다.",
-  "This window can only read {main}, so it cannot hand the coordinator off from there. Open SpecWithCode on {main}, or connect to it with full access.":
-    "이 창은 {main}을(를) 읽기만 할 수 있어 거기서 코디네이터를 넘길 수 없습니다. {main}에서 SpecWithCode를 열거나 전체 접근 권한으로 연결하세요.",
-  "Connect {machine} first to continue the coordinator there.":
-    "{machine}에서 코디네이터를 이어 가려면 먼저 {machine}을(를) 연결하세요.",
-  "{machine} cannot continue the coordinator yet. Update SpecWithCode there, or connect to it with permission to change settings and run work.":
-    "{machine}은(는) 아직 코디네이터를 이어 갈 수 없습니다. 거기서 SpecWithCode를 업데이트하거나 설정 변경과 작업 실행 권한으로 연결하세요.",
-  "Connect {main} first. This window has not opened {project} on {main}, so it cannot hand the coordinator off yet.":
-    "먼저 {main}을(를) 연결하세요. 이 창에서 {main}의 {project}을(를) 열지 않아 아직 코디네이터를 넘길 수 없습니다.",
-  "The coordinator continued on another machine. This one gives way once it is reachable; Send opens the newer one.":
-    "코디네이터가 다른 컴퓨터에서 이어졌습니다. 이 컴퓨터는 연결되면 자리를 넘겨줍니다. 보내기를 누르면 새 코디네이터가 열립니다.",
-  "The coordinator is on another machine. Send opens it there.":
-    "코디네이터는 다른 컴퓨터에 있습니다. 보내기를 누르면 거기서 열립니다.",
   "This machine has not confirmed where the coordinator is yet. Reconnect it to send messages.":
     "이 컴퓨터는 아직 코디네이터의 위치를 확인하지 못했습니다. 메시지를 보내려면 다시 연결하세요.",
   "Separate project": "별도 프로젝트",
-  "Continue here and send": "여기서 계속하고 보내기",
-  "Files stay on this machine. Remove them to send the text, or open {project} on {machine} to attach them there.":
-    "파일은 이 컴퓨터에 남습니다. 텍스트만 보내려면 파일을 빼거나, {machine}에서 {project}을(를) 열어 그곳에서 첨부하세요.",
   "From {source}. {machine} has this repository as a separate project (coordinator on {main}).":
     "{source}에서. {machine}에는 이 저장소가 별도 프로젝트로 있습니다(코디네이터: {main}).",
   "From {source}. {machine} has this repository as a separate project.":
@@ -5543,57 +5480,10 @@ export const ko: PhraseCatalog = {
   "Only files go into {machine}'s folder. Its coordinator does not change. To make them one project, link {source} to it from the machine menu.":
     "{machine}의 폴더에는 파일만 들어갑니다. 그 코디네이터는 바뀌지 않습니다. 하나의 프로젝트로 만들려면 컴퓨터 메뉴에서 {source}을(를) 연결하세요.",
   "The coordinator stays where it is.": "코디네이터는 지금 있는 곳에 그대로 있습니다.",
-  "Extra coordinator": "중복 코디네이터",
-  "Handing off the coordinator…": "코디네이터를 넘기는 중…",
-  "The coordinator conversation is on this machine.": "코디네이터 대화는 이 컴퓨터에 있습니다.",
-  "The coordinator is on {machine}. This machine also runs a coordinator of its own, which should be fixed.":
-    "코디네이터는 {machine}에 있습니다. 이 컴퓨터도 자체 코디네이터를 실행하고 있으니 수정해야 합니다.",
-  "The coordinator is on {machine}. Messages typed here go to it.":
-    "코디네이터는 {machine}에 있습니다. 여기서 입력한 메시지는 그 코디네이터에게 갑니다.",
-  "The coordinator is being handed off right now.": "지금 코디네이터를 넘기는 중입니다.",
-  "Unlink {project} on {machine}?": "{machine}의 {project} 연결을 해제할까요?",
-  "Extra coordinator on {machine}": "{machine}의 중복 코디네이터",
-  "It becomes its own project again, with an active coordinator and a copy of this project's notes. {main} stops sending it work. Threads and files stay where they are.":
-    "다시 독립된 프로젝트가 되며, 활성 코디네이터와 이 프로젝트의 노트를 복사해 갖습니다. {main}은(는) 더 이상 작업을 보내지 않습니다. 스레드와 파일은 그대로 있습니다.",
-  "{machine} also runs a coordinator for {project}. The project's coordinator is on {main}.":
-    "{machine}도 {project}의 코디네이터를 실행하고 있습니다. 이 프로젝트의 코디네이터는 {main}에 있습니다.",
-  "To make {machine} part of this project again, link it afterwards. Linking makes it give way to the coordinator on {main}.":
-    "{machine}을(를) 다시 이 프로젝트에 포함하려면 나중에 연결하세요. 연결하면 {main}의 코디네이터에게 자리를 넘겨줍니다.",
-  "{other} still follows the coordinator on {machine}. Continue the coordinator on another machine first.":
-    "{other}은(는) 아직 {machine}의 코디네이터를 따릅니다. 먼저 다른 컴퓨터에서 코디네이터를 이어 가세요.",
-  "{machine} cannot be unlinked from this window.":
-    "이 창에서는 {machine}의 연결을 해제할 수 없습니다.",
-  "Unlink {project} on {machine}": "{machine}의 {project} 연결 해제",
-  "The coordinator for {project} is on another machine.":
-    "{project}의 코디네이터는 다른 컴퓨터에 있습니다.",
-  "Ask the coordinator for {project} (on {machine}).":
-    "{project}의 코디네이터({machine})에게 물어보세요.",
-  "The coordinator for {project} is on {machine}, which is not answering.":
-    "{project}의 코디네이터는 {machine}에 있지만, {machine}이(가) 응답하지 않습니다.",
-  "Continue here syncs {machine}, then moves the coordinator conversation here from {main}.":
-    "여기서 계속을 누르면 {machine}을(를) 동기화한 뒤 코디네이터 대화를 {main}에서 여기로 옮깁니다.",
-  "{main} has been offline for 10 minutes or more. Continue here: the coordinator starts on {machine} from the shared goal, memory and plan. Its conversation on {main} stays readable there, and {main} gives way when it is back.":
-    "{main}이(가) 10분 이상 오프라인입니다. 여기서 계속을 누르면 코디네이터가 {machine}에서 공유된 목표, 메모리, 계획을 바탕으로 시작합니다. {main}의 대화는 거기서 계속 읽을 수 있으며, {main}은(는) 돌아오면 자리를 넘겨줍니다.",
-  "{main} has been offline for {n} minutes. Continue here: the coordinator starts on {machine} from the shared goal, memory and plan. Its conversation on {main} stays readable there, and {main} gives way when it is back.":
-    "{main}이(가) {n}분 동안 오프라인입니다. 여기서 계속을 누르면 코디네이터가 {machine}에서 공유된 목표, 메모리, 계획을 바탕으로 시작합니다. {main}의 대화는 거기서 계속 읽을 수 있으며, {main}은(는) 돌아오면 자리를 넘겨줍니다.",
-  "{machine} is not answering. Continue here unlocks in {m} min.":
-    "{machine}이(가) 응답하지 않습니다. {m}분 후에 여기서 계속을 사용할 수 있습니다.",
-  "This window can only read {machine}, so it cannot send there. Open SpecWithCode on {machine}, or connect to it with full access.":
-    "이 창은 {machine}을(를) 읽기만 할 수 있어 거기로 보낼 수 없습니다. {machine}에서 SpecWithCode를 열거나 전체 접근 권한으로 연결하세요.",
-  "The coordinator moved to {new}. Nothing was sent.":
-    "코디네이터가 {new}(으)로 옮겨졌습니다. 아무것도 보내지 않았습니다.",
-  "{machine} did not take the message: {reason}. Nothing was sent.":
-    "{machine}이(가) 메시지를 받지 않았습니다: {reason}. 아무것도 보내지 않았습니다.",
-  "The coordinator for {project} is on {machine}. Send opens it there.":
-    "{project}의 코디네이터는 {machine}에 있습니다. 보내기를 누르면 거기서 열립니다.",
-  "The coordinator for {project} is on another machine that this window cannot reach.":
-    "{project}의 코디네이터는 이 창에서 연결할 수 없는 다른 컴퓨터에 있습니다.",
+  "Finishing the move…": "이동을 마무리하는 중…",
   "This window cannot open {machine}": "이 창에서 {machine}을(를) 열 수 없습니다",
   "Offline · last seen {time}": "오프라인 · 마지막 접속: {time}",
-  "Old conversation kept": "이전 대화 보관됨",
   "this project": "이 프로젝트",
-  "its machine": "해당 컴퓨터",
-  "the old machine": "이전 컴퓨터",
   Send: "보내기",
   "{machine} has not confirmed where the coordinator is yet. Reconnect it to send messages.":
     "{machine}이(가) 아직 코디네이터의 위치를 확인하지 못했습니다. 메시지를 보내려면 다시 연결하세요.",
@@ -5606,7 +5496,6 @@ export const ko: PhraseCatalog = {
   "On {coordinator} (coordinator) and {last}": "{coordinator}(코디네이터) 및 {last}에서",
   "On {coordinator} (coordinator), {machines} and {last}":
     "{coordinator}(코디네이터), {machines} 및 {last}에서",
-  "Fix the extra coordinator on {machine}": "{machine}의 중복 코디네이터 수정",
   "Connect {machine}": "{machine} 연결",
   "Project on another machine": "다른 컴퓨터의 프로젝트",
   "Not reachable from here": "여기서 연결할 수 없음",

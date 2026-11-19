@@ -1,13 +1,11 @@
 /**
  * What one row of the machine menu says about a machine that has the project. A row has
  * exactly one state, the first that matches, and may carry notes. It never shows a role:
- * the only fact about the coordinator is which machine holds its conversation.
+ * every machine that has the project runs its own coordinator, so the rows are equals.
  * Kept free of UI imports so the menu, the fixtures and tests share one rule.
  *
  * @module machineRowState
  */
-import type { CopyRole } from "./projectDomain";
-import { copyRoleLabel } from "./workersOnlyCopy";
 
 /** Words on a row: an English phrase and its `{slot}` values, translated where shown. */
 export interface MachineRowText {
@@ -16,11 +14,11 @@ export interface MachineRowText {
 }
 
 /**
- * A machine's part as the menu reads it: its `copyRoles` role in a linked project,
- * `independent` for the same repository added there on its own (`orchestratorCopies`), or
- * `single` for a project that is on one machine only.
+ * What a machine is to the project: `linked` for a machine of this project, `independent`
+ * for the same repository added there on its own (`orchestratorCopies`), or `single` for a
+ * project that is on one machine only.
  */
-export type MachineRowRole = CopyRole | "independent" | "single";
+export type MachineRowRole = "linked" | "independent" | "single";
 
 /**
  * Whether this window can show the machine. open: connected. offline: not connected now,
@@ -30,13 +28,7 @@ export type MachineRowRole = CopyRole | "independent" | "single";
  */
 export type MachineReach = "open" | "offline" | "never-opened" | "refused";
 
-export type MachineRowKind =
-  | "cannot-open"
-  | "separate"
-  | "extra-coordinator"
-  | "handing-off"
-  | "coordinator"
-  | "plain";
+export type MachineRowKind = "cannot-open" | "separate" | "plain";
 
 /**
  * What `projectSync.status` says of a project on one machine: per repository its
@@ -115,8 +107,8 @@ export interface MachineRowState {
   readonly pressable: boolean;
   /** The row's one state in words; null for a machine with nothing to say. */
   readonly label: MachineRowText | null;
-  /** The one step on the row: connect the machine, or fix its extra coordinator. */
-  readonly action: "connect" | "fix" | null;
+  /** The one step on the row: connect the machine. */
+  readonly action: "connect" | null;
   /** Notes on a pressable row, in the order they are shown. */
   readonly notes: readonly MachineRowText[];
   /**
@@ -133,8 +125,6 @@ export interface MachineRowInput {
   readonly reach: MachineReach;
   /** When this window last saw an offline machine, in words ("2h ago"); null when unknown. */
   readonly lastSeen?: string | null;
-  /** The machine kept a coordinator conversation from before, as history. */
-  readonly keptConversation?: boolean;
   /** The sync fact of a row for another machine than the one shown. */
   readonly sync?: MachineSyncFact | null;
   /**
@@ -168,7 +158,6 @@ export function machineRowState(input: MachineRowInput): MachineRowState {
         ? { text: "Needs update · {version}", values: { version: input.needsUpdate.version } }
         : { text: "Needs update" },
     );
-  if (input.keptConversation) notes.push({ text: "Old conversation kept" });
   const row = (
     kind: MachineRowKind,
     label: MachineRowText | null,
@@ -184,13 +173,7 @@ export function machineRowState(input: MachineRowInput): MachineRowState {
   switch (input.role) {
     case "independent":
       return row("separate", { text: "Separate project" });
-    case "also-main":
-      return row("extra-coordinator", copyRoleLabel("also-main"), "fix");
-    case "moving":
-      return row("handing-off", copyRoleLabel("moving"));
-    case "main":
-      return row("coordinator", copyRoleLabel("main"));
-    case "copy":
+    case "linked":
     case "single":
       return row("plain", null);
   }

@@ -1,21 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
-import type { EnvironmentId, ProjectDisconnectedTurn } from "@specweave-studio/contracts";
-import { machineLastSeenAt, useMachineLastSeenVersion } from "../../lib/machineLastSeen";
+import type { ProjectDisconnectedTurn } from "@specweave-studio/contracts";
 import { useProjects } from "../../state/entities";
-import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
+import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { randomUUID } from "../../lib/utils";
 import { logicalCoordinator, logicalCoordinators } from "../../studio/projectDomain";
 import {
   departedMembers,
-  highestEpoch,
   linkedCopies,
-  linkMemberOf,
-  pendingSupersedes,
   projectLink,
-  takeoverAvailability,
   type LinkedCopy,
 } from "../../studio/projectLink";
 import { Button } from "../ui/button";
@@ -29,7 +24,6 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { SettingsRow, SettingsSection } from "../settings/settingsLayout";
-import { CoordinatorStandbySettings } from "./CoordinatorStandbySettings";
 import { ProjectLocation } from "./ProjectLocation";
 import { ProjectCopyRepositories, useRepositoryInventory } from "./ProjectCopyRepositories";
 import { ProjectLinkDialog, type ProjectLinkTarget } from "./ProjectLinkDialog";
@@ -38,11 +32,12 @@ import { PROJECT_MACHINES_SECTION_ID } from "./projectMachinesSection";
 import { useLinkMachines } from "./useLinkMachines";
 import { mayLeave, useUnlinkMember } from "./useUnlinkMember";
 
+const NEEDS_UPDATE =
+  "Needs an update: this machine is on a version from before every machine ran its own coordinator.";
 const ROLE_TEXT: Record<LinkedCopy["role"], string> = {
-  coordinator: "Coordinator. Plans the work and can start it on every machine.",
-  workers:
-    "The coordinator is on another machine. An older conversation here is read-only history.",
-  pending: "Coordinator handoff pending.",
+  coordinator: "Runs its own coordinator for this project.",
+  workers: NEEDS_UPDATE,
+  pending: NEEDS_UPDATE,
 };
 
 const failureMessage = (cause: unknown, fallback: string) =>
@@ -55,25 +50,6 @@ const formatTime = (value: string) =>
     hour: "numeric",
     minute: "2-digit",
   });
-
-/** When this page first found a machine gone that this device never saw connected. */
-const firstSeenGone = new Map<string, number>();
-
-/** Since when the coordinator's machine has been unreachable from this device, or null. */
-export function unreachableSince(
-  environmentId: EnvironmentId,
-  connected: boolean,
-  now: number,
-): number | null {
-  if (connected) {
-    firstSeenGone.delete(environmentId);
-    return null;
-  }
-  const lastSeen = machineLastSeenAt(environmentId);
-  if (lastSeen !== null) return lastSeen;
-  if (!firstSeenGone.has(environmentId)) firstSeenGone.set(environmentId, now);
-  return firstSeenGone.get(environmentId)!;
-}
 
 /**
  * Settings > Project > Machines: every machine's copy of this project, what it
@@ -90,22 +66,11 @@ export function ProjectMachinesSettings({
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const preview = useAtomCommand(projectLink.preview, { reportFailure: false });
   const unlink = useAtomCommand(projectLink.unlink, { reportFailure: false });
-  const takeover = useAtomCommand(projectLink.takeover, { reportFailure: false });
-  const acceptStandby = useAtomCommand(projectLink.acceptStandby, { reportFailure: false });
-  const { environments } = useEnvironments();
   const unlinking = useUnlinkMember();
-  const [takeoverOf, setTakeoverOf] = useState<EnvironmentProject | null>(null);
   const [review, setReview] = useState<{
     readonly machine: string;
     readonly turns: ReadonlyArray<ProjectDisconnectedTurn>;
   } | null>(null);
-  // The 10-minute wait counts down while the page is open.
-  const [now, setNow] = useState(Date.now);
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(timer);
-  }, []);
-  useMachineLastSeenVersion();
   const [dialog, setDialog] = useState<{
     readonly project: EnvironmentProject;
     readonly candidate: ProjectLinkTarget | null;
@@ -140,75 +105,6 @@ export function ProjectMachinesSettings({
     repositorySource !== undefined && machines.connected(repositorySource.environmentId),
   );
   const coordinatorLabel = coordinator ? machines.label(coordinator.environmentId) : null;
-  const coordinatorConnected = coordinator ? machines.connected(coordinator.environmentId) : true;
-  // Null while the coordinator is connected: nothing to take over.
-  const availability =
-    coordinator && !coordinatorConnected
-      ? takeoverAvailability({
-          coordinatorConnected,
-          unreachableSince: unreachableSince(coordinator.environmentId, false, now),
-          now,
-        })
-      : null;
-  if (coordinator && coordinatorConnected) unreachableSince(coordinator.environmentId, true, now);
-  const givingWay = pendingSupersedes(shared);
-
-  const takeOver = async (member: EnvironmentProject) => {
-    if (running.current || !coordinator) return;
-    running.current = true;
-    setBusy(true);
-    setMessage(null);
-    const memberLabel = machines.label(member.environmentId);
-    const previousLabel = machines.label(coordinator.environmentId);
-    try {
-      const result = await takeover({
-        environmentId: member.environmentId,
-        input: {
-          operationId: randomUUID(),
-          projectId: member.id,
-          knownEpoch: highestEpoch(shared),
-          predecessor: linkMemberOf(coordinator),
-        },
-      });
-      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      // A person takeover claims no epoch on the other copies: tell each standby
-      // registered for an older coordinator, so it never fires for one that gave way.
-      const epoch = result.value.coordinatorBinding.epoch;
-      const logicalProjectId = result.value.logicalProject.id;
-      for (const other of shared) {
-        if (other.environmentId === member.environmentId) continue;
-        if (!machines.connected(other.environmentId)) continue;
-        const rearm = environments.find((item) => item.environmentId === other.environmentId)
-          ?.serverConfig?.environment.capabilities.coordinatorRearm;
-        if (rearm !== true) continue;
-        void acceptStandby({
-          environmentId: other.environmentId,
-          input: { projectId: other.id, logicalProjectId, standby: null, belowEpoch: epoch },
-        }).catch(() => undefined);
-      }
-      setMessage({
-        text: `${memberLabel} now coordinates this project. ${
-          result.value.replicaFrom
-            ? `It starts from ${previousLabel}'s notes, goal and instructions as copied ${formatTime(result.value.replicaFrom)}.`
-            : `No copy of ${previousLabel}'s notes reached it, so it starts from its own.`
-        } When ${previousLabel} is back, it gives way and lists any coordinator turns it ran meanwhile.`,
-        error: false,
-      });
-    } catch (cause) {
-      setMessage({
-        text: failureMessage(
-          cause,
-          `The coordinator did not continue on ${memberLabel}. Try again.`,
-        ),
-        error: true,
-      });
-    } finally {
-      running.current = false;
-      setBusy(false);
-      setTakeoverOf(null);
-    }
-  };
-
   const reviewTurns = async (member: EnvironmentProject) => {
     if (running.current) return;
     running.current = true;
@@ -234,7 +130,6 @@ export function ProjectMachinesSettings({
     }
   };
 
-  // The same unlink "Fix…" runs for a machine with an extra coordinator (`useUnlinkMember`).
   const unlinkMember = async (member: EnvironmentProject) => {
     if (running.current || !coordinator) return;
     running.current = true;
@@ -309,22 +204,10 @@ export function ProjectMachinesSettings({
                 ) : null}
                 {copy.unfinished && (
                   <span className="block">
-                    Joined, but {coordinatorLabel} does not list it yet. Finish linking so the
-                    coordinator can send it work.
+                    Joined, but {coordinatorLabel} does not list it yet. Finish linking so both
+                    machines list each other.
                   </span>
                 )}
-                <TakeoverNote
-                  copy={copy}
-                  coordinatorLabel={coordinatorLabel}
-                  availability={availability}
-                  givingWayTo={
-                    givingWay.find((pending) => pending.previous === copy.project)?.successor
-                  }
-                  tookOverFrom={
-                    givingWay.find((pending) => pending.successor === copy.project)?.previous
-                  }
-                  label={machines.label}
-                />
               </>
             }
             control={
@@ -360,26 +243,6 @@ export function ProjectMachinesSettings({
                       onClick={() => void reviewTurns(copy.project)}
                     >
                       Review turns
-                    </Button>
-                  ) : null}
-                  {availability ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={
-                        busy ||
-                        !availability.available ||
-                        !machines.takeoverReady(copy.project.environmentId)
-                      }
-                      title={
-                        problem ??
-                        (machines.takeoverReady(copy.project.environmentId)
-                          ? undefined
-                          : `Update SpecWithCode on ${label} to continue the coordinator there.`)
-                      }
-                      onClick={() => setTakeoverOf(copy.project)}
-                    >
-                      Continue the coordinator here
                     </Button>
                   ) : null}
                   <Button
@@ -428,19 +291,12 @@ export function ProjectMachinesSettings({
           }
         />
       ))}
-      {coordinator && copies.length > 1 ? (
-        <CoordinatorStandbySettings
-          key={`${coordinator.environmentId}:${coordinator.id}`}
-          coordinator={coordinator}
-          shared={shared}
-        />
-      ) : null}
       <SettingsRow
         title="Link with a project on another machine"
         description={
           copies.length > 1
-            ? "Add this project on another machine. The coordinator here stays and can start work there too."
-            : "Make this project and the same project on another machine one project, with one coordinator that can start work on both machines."
+            ? "Add this project on another machine. Every machine runs its own coordinator."
+            : "Make this project and the same project on another machine one project. Each machine keeps its own coordinator."
         }
         control={
           <Button
@@ -480,9 +336,9 @@ export function ProjectMachinesSettings({
               {confirm ? machines.label(confirm.environmentId) : ""}?
             </DialogTitle>
             <DialogDescription>
-              It becomes its own project again, with an active coordinator and a copy of this
-              project's notes. {coordinatorLabel} stops sending it work. Threads and files stay
-              where they are.
+              It becomes its own project again, with its own coordinator and a copy of this
+              project's notes. The other machines stop sharing this project with it. Threads and
+              files stay where they are.
             </DialogDescription>
           </DialogHeader>
           <DialogPanel />
@@ -496,35 +352,6 @@ export function ProjectMachinesSettings({
               onClick={() => confirm && void unlinkMember(confirm)}
             >
               {busy ? "Unlinking…" : "Unlink"}
-            </Button>
-          </DialogFooter>
-        </DialogPopup>
-      </Dialog>
-      <Dialog
-        open={takeoverOf !== null}
-        onOpenChange={(open) => !open && !busy && setTakeoverOf(null)}
-      >
-        <DialogPopup showCloseButton={!busy} className="w-full sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>
-              Continue the coordinator on{" "}
-              {takeoverOf ? machines.label(takeoverOf.environmentId) : ""}?
-            </DialogTitle>
-            <DialogDescription>
-              {coordinatorLabel} has been offline for at least 10 minutes. The coordinator starts on
-              this machine from the notes, goal and instructions last copied from {coordinatorLabel}
-              . When {coordinatorLabel} is back it stops coordinating and lists any coordinator
-              turns it ran meanwhile for you to review. Nothing is merged on its own; code stays in
-              git on each machine.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogPanel />
-          <DialogFooter>
-            <Button variant="outline" disabled={busy} onClick={() => setTakeoverOf(null)}>
-              Cancel
-            </Button>
-            <Button disabled={busy} onClick={() => takeoverOf && void takeOver(takeoverOf)}>
-              {busy ? "Starting the coordinator…" : "Continue here"}
             </Button>
           </DialogFooter>
         </DialogPopup>
@@ -558,56 +385,5 @@ export function ProjectMachinesSettings({
         </DialogPopup>
       </Dialog>
     </SettingsSection>
-  );
-}
-
-/** What a takeover means for one copy's row, if anything. */
-function TakeoverNote({
-  copy,
-  coordinatorLabel,
-  availability,
-  givingWayTo,
-  tookOverFrom,
-  label,
-}: {
-  copy: LinkedCopy;
-  coordinatorLabel: string | null;
-  availability: { readonly available: boolean; readonly waitMs: number } | null;
-  givingWayTo: EnvironmentProject | undefined;
-  tookOverFrom: EnvironmentProject | undefined;
-  label: (environmentId: EnvironmentId) => string;
-}) {
-  const binding = copy.project.workspaceSettings?.coordinatorBinding;
-  if (givingWayTo)
-    return (
-      <span className="block">
-        {label(givingWayTo.environmentId)} took over while this machine was unreachable. It gives
-        way when both machines are reachable from this app.
-      </span>
-    );
-  if (tookOverFrom && binding?.takenOverAt)
-    return (
-      <span className="block">
-        Took over from {label(tookOverFrom.environmentId)} {formatTime(binding.takenOverAt)}.{" "}
-        {label(tookOverFrom.environmentId)} gives way when it is reachable again.
-      </span>
-    );
-  if (copy.role === "workers" && binding?.takenOverAt && binding.successor)
-    return (
-      <span className="block">
-        {label(binding.successor.environmentId)} took over {formatTime(binding.takenOverAt)}. Review
-        the coordinator turns this machine ran after that.
-      </span>
-    );
-  if (copy.role !== "workers" || !availability || !coordinatorLabel) return null;
-  return availability.available ? (
-    <span className="block">
-      {coordinatorLabel} has been offline for 10 minutes or more. The coordinator can continue here.
-    </span>
-  ) : (
-    <span className="block">
-      {coordinatorLabel} is offline. The coordinator can continue here in{" "}
-      {Math.max(1, Math.ceil(availability.waitMs / 60_000))} min if it stays away.
-    </span>
   );
 }

@@ -13,7 +13,7 @@ const row = (role: MachineRowRole, extra: Partial<Parameters<typeof machineRowSt
 describe("machineRowState", () => {
   it("greys a machine this window never opened or that refuses it, with the one step on the row", () => {
     for (const reach of ["never-opened", "refused"] as const)
-      expect(row("main", { reach, keptConversation: true })).toEqual({
+      expect(row("linked", { reach })).toEqual({
         kind: "cannot-open",
         pressable: false,
         label: { text: "This window cannot open {machine}", values: { machine: "rackF" } },
@@ -30,26 +30,10 @@ describe("machineRowState", () => {
       label: { text: "Separate project" },
       action: null,
     });
-    expect(row("also-main")).toMatchObject({
-      kind: "extra-coordinator",
-      pressable: true,
-      label: { text: "Extra coordinator" },
-      action: "fix",
-    });
-    expect(row("moving")).toMatchObject({
-      kind: "handing-off",
-      label: { text: "Handing off the coordinator…" },
-      action: null,
-    });
-    expect(row("main")).toMatchObject({
-      kind: "coordinator",
-      label: { text: "Coordinator" },
-      action: null,
-    });
   });
 
-  it("shows no role word on a machine that only has the project", () => {
-    for (const role of ["copy", "single"] as const)
+  it("gives every linked machine the same plain row: equals, with no role and no step (AC-01)", () => {
+    for (const role of ["linked", "single"] as const)
       expect(row(role)).toEqual({
         kind: "plain",
         pressable: true,
@@ -61,65 +45,48 @@ describe("machineRowState", () => {
   });
 
   it("keeps an offline machine pressable and keeps its state, with the note first", () => {
-    expect(row("main", { reach: "offline", lastSeen: "2h ago" })).toEqual({
-      kind: "coordinator",
+    expect(row("linked", { reach: "offline", lastSeen: "2h ago" })).toEqual({
+      kind: "plain",
       pressable: true,
-      label: { text: "Coordinator" },
+      label: null,
       action: null,
       notes: [{ text: "Offline · last seen {time}", values: { time: "2h ago" } }],
       sync: null,
     });
-    expect(row("copy", { reach: "offline" }).notes).toEqual([{ text: "Offline" }]);
+    expect(row("linked", { reach: "offline" }).notes).toEqual([{ text: "Offline" }]);
   });
 
   it("carries the sync fact it is given, and none on a machine it cannot open", () => {
     const sync = { tone: "same", text: "Same as {shown}", values: { shown: "Laptop E" } } as const;
-    expect(row("copy", { sync }).sync).toEqual(sync);
-    expect(row("main", { sync }).sync).toEqual(sync);
-    expect(row("copy", { sync, reach: "never-opened" }).sync).toBeNull();
+    expect(row("linked", { sync }).sync).toEqual(sync);
+    expect(row("linked", { sync }).sync).toEqual(sync);
+    expect(row("linked", { sync, reach: "never-opened" }).sync).toBeNull();
   });
 
   it("notes a machine whose app is from before Sync, with its version when known", () => {
-    expect(row("copy", { needsUpdate: { version: "1.0.360" } }).notes).toEqual([
+    expect(row("linked", { needsUpdate: { version: "1.0.360" } }).notes).toEqual([
       { text: "Needs update · {version}", values: { version: "1.0.360" } },
     ]);
-    expect(row("copy", { needsUpdate: { version: null } }).notes).toEqual([
+    expect(row("linked", { needsUpdate: { version: null } }).notes).toEqual([
       { text: "Needs update" },
     ]);
     expect(
-      row("copy", {
+      row("linked", {
         reach: "offline",
         needsUpdate: { version: "1.0.360" },
-        keptConversation: true,
       }).notes.map((note) => note.text),
-    ).toEqual(["Offline", "Needs update · {version}", "Old conversation kept"]);
-  });
-
-  it("orders the notes: offline, old conversation kept", () => {
-    expect(
-      row("copy", {
-        reach: "offline",
-        lastSeen: "5m ago",
-        keptConversation: true,
-      }).notes.map((note) => note.text),
-    ).toEqual(["Offline · last seen {time}", "Old conversation kept"]);
+    ).toEqual(["Offline", "Needs update · {version}"]);
   });
 
   it("never names a role on any row", () => {
-    const roles: MachineRowRole[] = [
-      "main",
-      "also-main",
-      "moving",
-      "copy",
-      "independent",
-      "single",
-    ];
+    const roles: MachineRowRole[] = ["linked", "independent", "single"];
     const reaches = ["open", "offline", "never-opened", "refused"] as const;
     for (const role of roles)
       for (const reach of reaches) {
-        const state = row(role, { reach, keptConversation: true });
+        const state = row(role, { reach });
         const words = [state.label, ...state.notes].map((part) => part?.text ?? "").join(" ");
-        expect(words).not.toMatch(/\bMain\b|\bmain\b|\bCopy\b|\bcopy\b/);
+        expect(words).not.toMatch(/\bMain\b|\bmain\b|\bCopy\b|\bcopy\b|[Cc]oordinator|Handing off/);
+        expect(state.action === null || state.action === "connect").toBe(true);
       }
   });
 });

@@ -145,8 +145,8 @@ export async function runUnlink(run: UnlinkRun): Promise<string> {
 }
 
 /**
- * The unlink of a project's machine settings, shared with "Fix…" on a machine that runs an
- * extra coordinator. One unlink runs at a time; `unlink` resolves with what to say.
+ * The unlink of a project's machine settings, for a machine that leaves the project.
+ * One unlink runs at a time; `unlink` resolves with what to say.
  */
 export function useUnlinkMember(): {
   readonly busy: boolean;

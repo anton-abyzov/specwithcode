@@ -109,10 +109,9 @@ export const projectLink = {
 export const TAKEOVER_UNREACHABLE_MS = 10 * 60_000;
 
 /**
- * Whether "Continue the coordinator here" may be pressed: never while the
- * coordinator's machine is connected, and only after it has been unreachable
- * for 10 minutes. Automatic takeover runs on the server only, for a standby
- * the owner armed (standbyArming.ts); this button stays manual.
+ * How long a machine must have been unreachable before the old takeover was allowed.
+ * Nothing offers a takeover now: every machine runs its own coordinator. Kept for the
+ * legacy records it still describes.
  */
 export function takeoverAvailability(input: {
   readonly coordinatorConnected: boolean;

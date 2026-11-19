@@ -10,15 +10,12 @@ import {
   heldCheckoutKey,
   keptCoordinatorCopies,
   orchestratorCopies,
-  SUPERSEDED_COORDINATOR_PROBLEM,
+  COORDINATOR_NEEDS_UPDATE_PROBLEM,
   unloadedMachineRef,
   unloadedMachineRefs,
-  WORKERS_ONLY_PROBLEM,
-  workersOnlyProblem,
   unconfirmedCoordinatorProblem,
 } from "./projectCoordinatorMachine";
 import { COORDINATOR_PENDING_PROBLEM } from "./projectDomain";
-import { offlineSwitchPredecessor } from "./workersOnlyCopy";
 
 const plain = (environmentId: string, id: string) =>
   ({ environmentId, id }) as unknown as EnvironmentProject;
@@ -174,10 +171,34 @@ describe("chooseCoordinatorView for linked copies", () => {
         lastViewed: coordinatorMachineKey(member),
         primaryEnvironmentId: "env-m4",
       }).problem;
-    expect(view(m3Workers, [m4Coordinator, m3Workers])).toBe(WORKERS_ONLY_PROBLEM);
+    // A machine still on a version from before equal coordinators cannot take messages yet.
+    expect(view(m3Workers, [m4Coordinator, m3Workers])).toBe(COORDINATOR_NEEDS_UPDATE_PROBLEM);
     expect(view(pending, [pending])).toBe(COORDINATOR_PENDING_PROBLEM);
-    expect(view(old, [old, successor])).toBe(SUPERSEDED_COORDINATOR_PROBLEM);
+    // An older record that claims to have taken over stops nobody.
+    expect(view(old, [old, successor])).toBeNull();
     expect(view(successor, [old, successor])).toBeNull();
+  });
+
+  it("sends what is typed on a machine to that machine's own coordinator (AC-35)", () => {
+    // m3 followed m4 before the update and is active after it; m5 was added after it.
+    const formerlyTransferred = linked("env-m3", "c", "active", 0);
+    const freshlyAdded = linked("env-m5", "e", "active", 1);
+    // A machine on the old version reconnects, claiming it took over from m3.
+    const oldPeer = linked("env-old", "o", "active", 7, { environmentId: "env-m3", projectId: "c" });
+    for (const members of [
+      [m4Coordinator, formerlyTransferred, freshlyAdded],
+      [m4Coordinator, formerlyTransferred, freshlyAdded, oldPeer],
+    ])
+      for (const shown of [m4Coordinator, formerlyTransferred, freshlyAdded])
+        for (const primaryEnvironmentId of ["env-m4", "env-m3", "env-m5", "env-old"])
+          // The page shows the machine asked for, with nothing between its box and its coordinator.
+          expect(
+            chooseCoordinatorView({
+              members,
+              checkoutKey: coordinatorMachineKey(shown),
+              primaryEnvironmentId,
+            }),
+          ).toEqual({ member: shown, missing: false, problem: null });
   });
 });
 
@@ -228,56 +249,6 @@ describe("a workers-only copy whose coordinator is on another machine", () => {
     expect(coordinatorElsewhere(sameMachine, [sameMachine])).toBeNull();
   });
 
-  it("keeps the history wording only for a copy that had a conversation", () => {
-    const fresh = workersOnlyProblem("Anna's MacBook", false, "Atlas");
-    expect(fresh).toBe("The coordinator for Atlas is on Anna's MacBook. Send opens it there.");
-    expect(fresh).not.toContain("history");
-    expect(workersOnlyProblem("Anna's MacBook", true, "Atlas")).toBe(
-      "The coordinator for Atlas is on Anna's MacBook. Send opens it there. The conversation here is kept as history.",
-    );
-    expect(workersOnlyProblem(null, false)).toContain(
-      "The coordinator for this project is on another machine that this window cannot reach.",
-    );
-  });
-});
-
-describe("offlineSwitchPredecessor", () => {
-  const member = (binding: Record<string, unknown> | undefined) =>
-    ({ environmentId: "env-m5", workspaceSettings: { coordinatorBinding: binding } }) as never;
-  const old = { environmentId: "env-m4", projectId: "p", coordinatorThreadId: "c" };
-  it("names the old main only on the machine a person switched to while it was unreachable", () => {
-    expect(
-      offlineSwitchPredecessor(
-        member({ epoch: 3, state: "active", takenOverBy: "person", predecessor: old }),
-      ),
-    ).toEqual(old);
-    // A standby that took over by itself, a confirmed move, and a copy say nothing.
-    expect(
-      offlineSwitchPredecessor(
-        member({ epoch: 3, state: "active", takenOverBy: "auto", predecessor: old }),
-      ),
-    ).toBeNull();
-    expect(
-      offlineSwitchPredecessor(member({ epoch: 3, state: "active", predecessor: old })),
-    ).toBeNull();
-    expect(
-      offlineSwitchPredecessor(
-        member({ epoch: 3, state: "transferred", takenOverBy: "person", predecessor: old }),
-      ),
-    ).toBeNull();
-    expect(offlineSwitchPredecessor(member(undefined))).toBeNull();
-    // Another folder on this same machine is not another machine's conversation.
-    expect(
-      offlineSwitchPredecessor(
-        member({
-          epoch: 3,
-          state: "active",
-          takenOverBy: "person",
-          predecessor: { ...old, environmentId: "env-m5" },
-        }),
-      ),
-    ).toBeNull();
-  });
 });
 
 describe("unloadedMachineRef", () => {
@@ -344,20 +315,18 @@ describe("orchestratorCopies", () => {
     expect([lone?.rowRole, lone?.main, lone?.label]).toEqual(["single", false, { text: "" }]);
   });
 
-  it("names the coordinator, an extra coordinator and a plain machine apart", () => {
-    // m4 holds the coordinator (newest epoch); minis still runs one of its own; m3 only works.
-    const main = linked("env-m4", "proj-a", "active", 2);
-    const extra = linked("env-minis", "proj-m", "active", 0);
-    const plainCopy = linked("env-m3", "proj-c", "transferred", 0);
-    const copies = orchestratorCopies([main, extra, plainCopy], machine, () => true);
-    expect(copies.map((copy) => [copy.key, copy.role, copy.rowRole, copy.main])).toEqual([
-      ["env-m4:proj-a", "coordinator", "main", true],
-      ["env-minis:proj-m", "coordinator", "also-main", false],
-      ["env-m3:proj-c", "workers", "copy", false],
+  it("lists every linked machine the same: no role word and no row role but linked (AC-01)", () => {
+    const first = linked("env-m4", "proj-a", "active", 2);
+    const second = linked("env-minis", "proj-m", "active", 0);
+    const old = linked("env-m3", "proj-c", "transferred", 0);
+    const copies = orchestratorCopies([first, second, old], machine, () => true);
+    expect(copies.map((copy) => [copy.key, copy.rowRole, copy.label.text])).toEqual([
+      ["env-m4:proj-a", "linked", ""],
+      ["env-minis:proj-m", "linked", ""],
+      ["env-m3:proj-c", "linked", ""],
     ]);
-    expect(copies.map((copy) => copy.label.text)).toEqual(["Coordinator", "Extra coordinator", ""]);
-    // No label names a role: Main and Copy are gone from every machine.
-    for (const copy of copies) expect(copy.label.text).not.toMatch(/\bMain\b|\bCopy\b/);
+    // One machine is still where project-wide settings are read from.
+    expect(copies.filter((copy) => copy.main).map((copy) => copy.key)).toEqual(["env-m4:proj-a"]);
   });
 
   it("offers a start only on a ready workers-only linked copy", () => {
@@ -378,8 +347,8 @@ describe("orchestratorCopies", () => {
     const copies = orchestratorCopies([moving, minis], machine, () => true);
     expect(copies.map((c) => c.role)).toEqual(["pending", "workers"]);
     expect(copies.map((c) => [c.rowRole, c.label.text])).toEqual([
-      ["moving", "Handing off the coordinator…"],
-      ["copy", ""],
+      ["linked", ""],
+      ["linked", ""],
     ]);
   });
 });
@@ -522,7 +491,6 @@ describe("roles with a machine that joined again", () => {
     const retired = new Map([["env-m1-old", "env-m1"]]);
     const copies = orchestratorCopies([old, current], name, () => true, retired);
     expect(copies.find((copy) => copy.main)?.key).toBe("env-m4:proj-a");
-    expect(copies.find((copy) => copy.rowRole === "main")?.key).toBe("env-m4:proj-a");
   });
 });
 

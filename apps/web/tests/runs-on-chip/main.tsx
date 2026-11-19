@@ -44,8 +44,8 @@ const copy = (machine: string, main: boolean): OrchestratorCopy => ({
   folder: "/w/atlas",
   role: main ? "coordinator" : "workers",
   main,
-  rowRole: main ? "main" : "copy",
-  label: main ? { text: "Coordinator" } : { text: "" },
+  rowRole: "linked",
+  label: { text: "" },
   canStart: false,
 });
 

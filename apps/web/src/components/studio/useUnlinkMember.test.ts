@@ -102,8 +102,9 @@ describe("unlinkGuard", () => {
     expect(mayLeave(side, [main, side, plain])).toBe(true);
   });
 
-  it("refuses main and a plain copy as coordinators that may leave", () => {
-    expect(unlinkGuard(main, [main, side, plain])).toEqual({ allowed: false, follower: null });
+  it("lets any machine that runs its own coordinator leave, and refuses one still on the old version", () => {
+    // Every active machine is an equal: the guard holds none of them back.
+    expect(unlinkGuard(main, [main, side])).toEqual({ allowed: true, follower: null });
     expect(unlinkGuard(plain, [main, side, plain])).toEqual({ allowed: false, follower: null });
     expect(mayLeave(plain, [main, side, plain])).toBe(false);
   });

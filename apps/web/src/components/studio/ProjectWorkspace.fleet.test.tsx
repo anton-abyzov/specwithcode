@@ -205,98 +205,62 @@ describe("handoff recovery after the active coordinator moves", () => {
   });
 });
 
-describe("a workers-only copy whose coordinator runs on another machine", () => {
+describe("a linked machine beside other machines of the project (AC-35)", () => {
   const domain = { id: "one", title: "Atlas", coordinatorId: "c", members: [] };
-  const coordinatorRef = { environmentId: "m4", projectId: "main", coordinatorThreadId: "main" };
-  async function viewCopy() {
-    // "Copy files only" from m4 left this copy transferred to m4's coordinator.
-    Object.assign(state.project, {
+  const other = (id: string, environmentId: string, binding: Record<string, unknown>) =>
+    ({
+      id,
+      environmentId,
+      workspaceRoot: `/${environmentId}/atlas`,
       workspaceSettings: {
         logicalProject: domain,
-        coordinatorBinding: { epoch: 1, state: "transferred", successor: coordinatorRef },
+        coordinatorBinding: binding,
+        coordinatorThreadId: id,
       },
+    }) as never;
+  async function view(binding: Record<string, unknown>, others: never[]) {
+    Object.assign(state.project, {
+      workspaceSettings: { logicalProject: domain, coordinatorBinding: binding },
     });
-    state.otherCheckouts = [
-      {
-        id: "main",
-        environmentId: "m4",
-        workspaceRoot: "/m4/atlas",
-        workspaceSettings: {
-          logicalProject: domain,
-          coordinatorBinding: { epoch: 1, state: "active" },
-          coordinatorThreadId: "main",
-        },
-      } as never,
-    ];
-    state.pairedHosts = ["m4"];
+    state.otherCheckouts = others;
+    state.pairedHosts = ["m4", "old"];
     state.savedMachines = { atlas: "host:project" };
+    state.shells = [shell("worker")];
     await render();
   }
-  const notice = () => container.querySelector<HTMLElement>("[data-workers-only]");
+  const m4 = other("main", "m4", { epoch: 1, state: "active" });
+  // A machine on the old version, back with a record that says it took over from this one.
+  const oldPeer = other("taken", "old", {
+    epoch: 9,
+    state: "active",
+    predecessor: { environmentId: "host", projectId: "project", coordinatorThreadId: "c" },
+  });
 
-  it("says where the coordinator is, with Continue here off while this window can only read it", async () => {
-    // This copy never ran a coordinator, so it has no conversation to keep.
-    state.shells = [shell("worker")];
-    try {
-      await viewCopy();
-      expect(notice()?.dataset.workersOnly).toBe("m4:main");
-      expect(notice()?.querySelector("[data-box-line]")?.textContent).toBe(
-        "The coordinator for Atlas is on m4. Send opens it there.",
+  it("keeps the message box on this machine's own coordinator, with an old peer back too", async () => {
+    for (const others of [[m4], [m4, oldPeer]]) {
+      // This machine followed m4 before the update; it runs its own coordinator now.
+      await view({ epoch: 1, state: "active" }, others);
+      expect(container.querySelector("[data-workers-only]")).toBeNull();
+      expect(container.querySelector("[data-continue-here]")).toBeNull();
+      expect(container.textContent).not.toMatch(
+        /Send opens it there|coordinator (for Atlas )?is on|Continue here|gives way|needs an update/,
       );
-      expect(container.textContent).not.toContain("kept as history");
-      // This window has no write access on m4, so "Continue here" is off with its reason
-      // instead of opening a move m4 would refuse. It never offers a second coordinator here.
-      const continueHere = notice()!.querySelector<HTMLButtonElement>("[data-continue-here]")!;
-      expect(continueHere.textContent).toBe("Continue here");
-      expect(continueHere.disabled).toBe(true);
-      expect(notice()?.querySelector("[data-continue-here-note]")?.textContent).toBe(
-        "This window can only read m4, so it cannot hand the coordinator off from there. Open SpecWithCode on m4, or connect to it with full access.",
-      );
-      // Send goes to the coordinator on m4: the box is not off, it waits for text.
-      expect(notice()?.getAttribute("data-box-state")).toBe("routes");
-      expect(sendButton().getAttribute("data-send-label")).toBeNull();
-      expect(notice()?.textContent).not.toMatch(/again|\bmain\b|this copy/i);
-    } finally {
-      delete (state.project as { workspaceSettings?: unknown }).workspaceSettings;
     }
   });
 
-  it("continues the coordinator here through its own confirmed move, then returns here", async () => {
-    state.shells = [shell("worker")];
-    // This window may operate and write on m4, so the move can start from there.
-    state.recoveryHosts = ["m4"];
-    try {
-      await viewCopy();
-      const makeMain = notice()!.querySelector<HTMLButtonElement>("[data-continue-here]")!;
-      expect(notice()?.querySelector("[data-continue-here-note]")?.textContent).toBe(
-        "Continue here syncs host, then moves the coordinator conversation here from m4.",
-      );
-      expect(makeMain.disabled).toBe(false);
-      await act(async () => makeMain.click());
-      // The conversation to move is on m4: its page is shown, and its move dialog opens.
-      expect(state.savedMachines.atlas).toBe("m4:main");
-      expect(document.querySelector('[role="dialog"]')).toBeNull();
-      await render();
-      const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
-      expect(dialog).not.toBeNull();
-      // Closing the dialog without moving returns to the copy's page.
-      await act(async () =>
-        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
-      );
-      expect(state.savedMachines.atlas).toBe("host:project");
-    } finally {
-      delete (state.project as { workspaceSettings?: unknown }).workspaceSettings;
-    }
-  });
-
-  it("keeps the history wording for a copy that ran a coordinator before", async () => {
-    try {
-      await viewCopy();
-      expect(notice()?.textContent).toContain(
-        "The coordinator for Atlas is on m4. Send opens it there. The conversation here is kept as history.",
-      );
-    } finally {
-      delete (state.project as { workspaceSettings?: unknown }).workspaceSettings;
-    }
+  it("says a machine still on the old version needs an update, and sends nothing elsewhere", async () => {
+    await view(
+      {
+        epoch: 1,
+        state: "transferred",
+        successor: { environmentId: "m4", projectId: "main", coordinatorThreadId: "main" },
+      },
+      [m4],
+    );
+    expect(container.textContent).toContain(
+      "This machine needs an update before its coordinator can take messages.",
+    );
+    expect(container.querySelector("[data-workers-only]")).toBeNull();
+    expect(container.querySelector("[data-continue-here]")).toBeNull();
   });
 });

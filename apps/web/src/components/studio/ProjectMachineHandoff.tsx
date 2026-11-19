@@ -58,7 +58,6 @@ import { addToMachineRoute } from "../../studio/addToMachine";
 import { addableMachineIds, projectFoldersElsewhere } from "../../studio/addableMachines";
 import { useTx } from "../../i18n";
 import { moveRefusal } from "./ProjectMoveOptions";
-import type { MainSwitch } from "./useMakeMain";
 import {
   copyActivityKey,
   registerCopyOpener,
@@ -155,10 +154,7 @@ export function ProjectMachineHandoff({
   openRequest = null,
   onRequestHandled,
   showTrigger = true,
-  mainSwitch = null,
 }: {
-  /** The page's "Make X main" (`useMakeMain`), offered on a finished copy's done screen. */
-  readonly mainSwitch?: Pick<MainSwitch, "offers" | "run"> | null;
   readonly project: EnvironmentProject;
   readonly coordinatorId: ThreadId | null;
   readonly onOpenChange?: (open: boolean) => void;
@@ -976,22 +972,6 @@ export function ProjectMachineHandoff({
           localFiles: sourceChanges?.state === "dirty" ? sourceChanges.fileCount : null,
         }
       : null;
-  // A finished copy into a linked copy offers the page's own switch for that copy.
-  const doneOffer =
-    copyDone && copyMachine && copyDoneProject && !sendOther && method !== "folder"
-      ? mainSwitch?.offers.find((offer) => offer.key === `${copyMachine}:${copyDoneProject}`)
-      : undefined;
-  const makeMain =
-    doneOffer && mainSwitch?.run
-      ? {
-          offer: doneOffer,
-          run: () => {
-            // The switch has its own confirmed move or takeover; this dialog steps aside.
-            changeOpen(false);
-            mainSwitch.run?.(doneOffer.key);
-          },
-        }
-      : null;
   /** The folder the copy fills on a machine: its one copy, or the copy picked among several. */
   const copyFolderOn = (environmentId: EnvironmentId) => {
     const holding = holdings.byMachine.get(environmentId);
@@ -1217,7 +1197,6 @@ export function ProjectMachineHandoff({
         copyDoneAt={copyDone ? copyDoneAt : null}
         copyTargetLabel={machines.find((item) => item.id === copyMachine)?.label ?? null}
         send={send}
-        makeMain={makeMain}
         mainLabel={machineLabelOf(holdings.mainEnvironmentId)}
         copyFlow={
           method === "folder" ? undefined : addOnly && heldCopy ? (

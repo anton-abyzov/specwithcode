@@ -26,7 +26,6 @@ import {
   SendSummary,
   useProjectMoveDialog,
   WhatComesAlong,
-  type MakeMainAction,
   type MoveIntent,
   type SendFacts,
 } from "./ProjectMoveOptions";
@@ -136,14 +135,11 @@ export function MachineHandoffDialog({
   sync = null,
   wholeFolderOnly = false,
   send = null,
-  makeMain = null,
   staleCopy = null,
   mainLabel = null,
 }: {
   /** What the chosen machine already holds, where Main is, and the plan sentence. */
   readonly send?: SendFacts | null;
-  /** "Continue the coordinator on {machine}" on a finished copy's done screen; null where there is none. */
-  readonly makeMain?: MakeMainAction | null;
   /**
    * The review found that the destination's existing copy cannot fast-forward to the source
    * heads; the move waits for an explicit "anyway". Null when it can, or nothing was checked.
@@ -280,7 +276,6 @@ export function MachineHandoffDialog({
             sourceLabel,
             wholeFolderOnly,
             send,
-            makeMain,
           }}
         >
           <DialogHeader>
@@ -458,7 +453,7 @@ export function MachineHandoffDialog({
                   onClick={onContinue}
                 >
                   {busy
-                    ? tx("Handing off the coordinator…")
+                    ? tx("Finishing the move…")
                     : switchesMain
                       ? tx("Continue here")
                       : target

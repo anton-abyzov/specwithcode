@@ -667,9 +667,6 @@ export function HandoffCopyDoneActions({
 }) {
   const tx = useTx();
   const transfer = canTransfer && !copyAgain && onTransfer !== null;
-  // The copy is in place and Main is elsewhere: the switch the machine menu has, offered here.
-  const offered = useProjectMoveDialog()?.makeMain ?? null;
-  const makeMain = mode === "copy-only" && !copyAgain ? offered : null;
   // A finished copy's next copy is one visible step away, and leads to the form.
   const changes = mode === "copy-only" && !copyAgain;
   const again = !copyAgain && canCopyAgain;
@@ -689,21 +686,6 @@ export function HandoffCopyDoneActions({
       <Button variant={copyAgain || transfer ? "outline" : "default"} onClick={onOpen}>
         Open on {targetLabel}
       </Button>
-      {makeMain && (
-        <Button
-          variant="outline"
-          data-slot="copy-make-main"
-          disabled={busy || makeMain.offer.kind === "blocked"}
-          title={
-            makeMain.offer.reason
-              ? tx(makeMain.offer.reason.text, makeMain.offer.reason.values)
-              : undefined
-          }
-          onClick={makeMain.run}
-        >
-          {tx("Continue the coordinator on {machine}", { machine: makeMain.offer.machine })}
-        </Button>
-      )}
       {changes && (
         <Button variant="outline" disabled={busy || startNewLocked} onClick={onStartNew}>
           {tx("Sync again…")}
