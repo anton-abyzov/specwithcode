@@ -79,6 +79,15 @@ function measure() {
       content: after.content,
     };
   };
+  // A color token as the browser paints it where `el` stands.
+  const paint = (el, color) => {
+    if (!el?.parentElement) return null;
+    const probe = el.parentElement.appendChild(document.createElement("i"));
+    probe.style.background = color;
+    const painted = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return painted;
+  };
   const top = (el) => (el ? Math.round(el.getBoundingClientRect().top) : null);
   const out = { thread: null, coordinator: null };
   const threadPane = document.querySelector('[data-project-pane="threads"]');
@@ -106,7 +115,7 @@ function measure() {
       sendBackground: send ? getComputedStyle(send).backgroundColor : null,
       sendEnabled: send ? !send.disabled : null,
       sendSize: sendBox ? [Math.round(sendBox.width), Math.round(sendBox.height)] : null,
-      machineToken: getComputedStyle(threadPane).getPropertyValue("--machine").trim(),
+      machinePaint: paint(send, "var(--machine)"),
       chipWords: chip ? words(chip) : null,
       chipCompact: chip?.hasAttribute("data-machine-compact") ?? false,
       chipShortShows: visible(chip?.querySelector("[data-machine-short]")),
@@ -231,8 +240,10 @@ function check(tag, facts, scene, typed) {
     assert.equal(thread.sendText, "", `${tag}: Send holds the text ${thread.sendText}`);
     assert.equal(thread.sendLabel, "Send to this thread on linux-mini", `${tag}: Send label`);
     assert.equal(thread.sendColor, "blue", `${tag}: Send color`);
+    assert.ok(typed, `${tag}: no message could be typed`);
     if (typed) {
       assert.ok(thread.sendEnabled, `${tag}: Send is off with a message typed`);
+      assert.equal(thread.sendBackground, thread.machinePaint, `${tag}: Send is not painted blue`);
       assert.equal(thread.sendSize[0], thread.sendSize[1], `${tag}: Send is ${thread.sendSize} px`);
     }
     // AC-03: the model's name reads in full, right beside the machine.
