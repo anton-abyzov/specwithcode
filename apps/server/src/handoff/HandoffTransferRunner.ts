@@ -210,6 +210,12 @@ const MANUAL: HandoffTransferTrigger = { kind: "manual" };
 
 export const AUTOMATIC_OFF = "Hand off automatically is off for this thread.";
 export const AUTOMATIC_RUN_CHANGED = "A new turn started here since this hand off was decided.";
+/** Why a thread that waits on a question, approval or sign-in stays. */
+export const ANSWER_FIRST = "Answer it first";
+
+const waitsOnAnswer = (shell: OrchestrationV2ThreadShell) =>
+  (shell.pendingRuntimeRequest ?? null) !== null;
+
 export const AUTOMATIC_DISPOSITION_CHANGED = "This thread changed since this hand off was decided.";
 
 /**
@@ -871,6 +877,12 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         yield* stays(error);
         return yield* error;
       }
+      // A question, approval or sign-in is answered here first, for every start.
+      if (waitsOnAnswer(first.shell)) {
+        const error = failed("invalid", ANSWER_FIRST);
+        yield* stays(error);
+        return yield* error;
+      }
 
       // 2. The record, before the hold: operation, destination, checkpoint, disposition.
       const now = yield* deps.nowIso;
@@ -958,6 +970,12 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       const heldShell = yield* deps
         .shellOf(threadId)
         .pipe(Effect.tapError((error) => staysHeld(null, error.message)));
+      // A question, approval or sign-in that arrived while the hold was taken keeps
+      // the thread here: the hold is given back and its run is never interrupted.
+      if (waitsOnAnswer(heldShell)) {
+        yield* staysHeld(null, ANSWER_FIRST);
+        return yield* failed("invalid", ANSWER_FIRST);
+      }
       // A turn that started while the other machine was asked is not the one this
       // move was admitted for. Nothing was sent or stopped yet: the hold is given
       // back and that turn runs on here.
