@@ -218,6 +218,7 @@ export const makeSkillInstallRuntime = Effect.fn("SkillManagement.installRuntime
                   args,
                   timeout: options?.timeoutMs ?? 120_000,
                   timeoutBehavior: "timedOutResult",
+                  forceKillAfter: 1_000,
                   env: { ...input.environment, ...options?.env },
                   maxOutputBytes: 1024 * 1024,
                   outputMode: "truncate",

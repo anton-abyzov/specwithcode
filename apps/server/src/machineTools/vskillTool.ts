@@ -78,6 +78,7 @@ export async function prepareManagedVskill(input: {
   if (release === null)
     throw new Error("The Skills installer is already being prepared. Try again when it finishes.");
   const staging = `${prefix}.staging`;
+  const failures: unknown[] = [];
   try {
     if (await valid(prefix)) return { binary: commandAt(prefix), nodeDir };
     await host.remove(staging);
@@ -114,11 +115,27 @@ export async function prepareManagedVskill(input: {
     await host.remove(prefix);
     await host.rename(staging, prefix);
     return { binary: commandAt(prefix), nodeDir };
+  } catch (error) {
+    failures.push(error);
   } finally {
     try {
       await host.remove(staging);
-    } finally {
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
       await release();
+    } catch (error) {
+      failures.push(error);
+    }
+    if (failures.length > 0) {
+      throw new Error(
+        failures
+          .map((error) => (error instanceof Error ? error.message : String(error)))
+          .join("; "),
+        { cause: failures[0] },
+      );
     }
   }
+  throw new Error("Skills installer preparation did not complete.");
 }

@@ -62,6 +62,7 @@ fs.writeFileSync(path.join(bin,win?'vskill.cmd':'vskill'), win?'@echo off\\r\\ne
         env: { ...host.env, ...options?.env },
         timeout: options?.timeoutMs,
         timeoutBehavior: "timedOutResult",
+        forceKillAfter: 1_000,
       }),
     );
     return {
@@ -144,7 +145,7 @@ it("releases the same-process lock even if final staging cleanup fails", async (
     },
   };
   await expect(prepareManagedVskill({ ...fx, host, glibc: true })).rejects.toThrow(
-    "fixture cleanup denied",
+    /fixture registry offline[\s\S]*fixture cleanup denied/,
   );
   // Retry reaches npm instead of a permanently held in-process lock.
   await expect(prepareManagedVskill({ ...fx, glibc: true })).rejects.toThrow(
@@ -164,6 +165,25 @@ it("bounds a descendant holding npm pipes and allows a later retry", async () =>
     fx.runNpm(command, args, { ...options, timeoutMs: 150 });
   await expect(prepareManagedVskill({ ...fx, runNpm, glibc: true })).rejects.toThrow();
   expect(Date.now() - started).toBeLessThan(1500);
+  await fs.writeFile(fx.npm, original);
+  await expect(prepareManagedVskill({ ...fx, glibc: true })).resolves.toHaveProperty("binary");
+});
+
+it("force-kills an npm leader ignoring SIGTERM and releases the lock for retry", async () => {
+  const fx = await fixture();
+  const original = await fs.readFile(fx.npm, "utf8");
+  const pidFile = path.join(fx.home, "npm.pid");
+  await fs.writeFile(
+    fx.npm,
+    `process.on('SIGTERM',()=>{});require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setTimeout(()=>process.exit(0),8000);`,
+  );
+  const started = Date.now();
+  const runNpm: typeof fx.runNpm = (command, args, options) =>
+    fx.runNpm(command, args, { ...options, timeoutMs: 2000 });
+  await expect(prepareManagedVskill({ ...fx, runNpm, glibc: true })).rejects.toThrow();
+  expect(Date.now() - started).toBeLessThan(5000);
+  const pid = Number(await fs.readFile(pidFile, "utf8"));
+  expect(() => process.kill(pid, 0)).toThrow();
   await fs.writeFile(fx.npm, original);
   await expect(prepareManagedVskill({ ...fx, glibc: true })).resolves.toHaveProperty("binary");
 });
@@ -199,7 +219,7 @@ const pkg=path.join(prefix,...(win?[]:['lib']),'node_modules/vskill');fs.mkdirSy
 fs.writeFileSync(path.join(pkg,'package.json'),JSON.stringify({version:'${VSKILL_VERSION}'}));
 fs.writeFileSync(path.join(pkg,'dist/bin.js'),${JSON.stringify(cli)});
 const bin=win?prefix:path.join(prefix,'bin');fs.mkdirSync(bin,{recursive:true});
-fs.writeFileSync(path.join(bin,win?'vskill.cmd':'vskill'),win?'@echo off\\r\\nnode "%~dp0node_modules\\vskill\\dist\\bin.js" %*\\r\\n':'#!/usr/bin/env node\\n'+${JSON.stringify(cli)},{mode:0o755});`;
+fs.writeFileSync(path.join(bin,win?'vskill.cmd':'vskill'),win?${JSON.stringify('@echo off\r\nnode "%~dp0node_modules\\vskill\\dist\\bin.js" %*\r\n')}:${JSON.stringify("#!/usr/bin/env node\n" + cli)},{mode:0o755});`;
   await fs.writeFile(fx.npm, npm);
   const result = await Effect.runPromise(
     Effect.gen(function* () {
