@@ -235,7 +235,7 @@ import {
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
 import {
   anotherRouteTitle,
-  connectBackupRouteDescription,
+  connectRouteDescription,
   ROUTES_LEAVE_AGENTS_ALONE,
 } from "../cloud/routeAddedToasts";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
@@ -2915,8 +2915,8 @@ export function ConnectionsSettings({
     setAddBackendDialogOpen(false);
     toastManager.add({
       type: "success",
-      title: "SpecWithCode Connect added as a backup",
-      description: connectBackupRouteDescription(
+      title: anotherRouteTitle(machineNickname(routeTarget.environmentId, routeTarget.label)),
+      description: connectRouteDescription(
         machineNickname(routeTarget.environmentId, routeTarget.label),
       ),
     });
@@ -2927,7 +2927,7 @@ export function ConnectionsSettings({
         <div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
           <p className="text-xs text-muted-foreground">
             {tx(
-              "This machine is on your SpecWithCode Connect account. Use it as a fallback route.",
+              "This machine is on your SpecWithCode Connect account. This app can open it through Connect too.",
             )}
           </p>
           <Button

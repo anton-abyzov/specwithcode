@@ -8,6 +8,8 @@ export function anotherRouteTitle(machine: string): string {
   return `Another way to reach ${machine}`;
 }
 
-export function connectBackupRouteDescription(machine: string): string {
-  return `When this app can't reach ${machine} the usual way, it opens it through SpecWithCode Connect. ${ROUTES_LEAVE_AGENTS_ALONE}`;
+// A Connect route is saved ahead of LAN, Tailscale and SSH routes
+// (`insertRoute`), so it is never described as a backup.
+export function connectRouteDescription(machine: string): string {
+  return `This app can now also open ${machine} through SpecWithCode Connect. ${ROUTES_LEAVE_AGENTS_ALONE}`;
 }

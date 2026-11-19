@@ -449,7 +449,7 @@ describe("cloud onboarding discovery", () => {
 });
 
 describe("adding Connect to a machine saved another way", () => {
-  it("says Connect is a backup way in that leaves agents alone", async () => {
+  it("says Connect is another way in that leaves agents alone", async () => {
     discovery.listEnvironments.mockResolvedValue(linkedMachines);
     vi.mocked(toastManager.add).mockClear();
     await mount(true, [
@@ -467,9 +467,9 @@ describe("adding Connect to a machine saved another way", () => {
     });
     expect(toastManager.add).toHaveBeenCalledWith({
       type: "success",
-      title: "SpecWithCode Connect added as a backup",
+      title: "Another way to reach Work laptop",
       description:
-        "When this app can't reach Work laptop the usual way, it opens it through SpecWithCode Connect. It doesn't change what agents can do.",
+        "This app can now also open Work laptop through SpecWithCode Connect. It doesn't change what agents can do.",
     });
   });
 });

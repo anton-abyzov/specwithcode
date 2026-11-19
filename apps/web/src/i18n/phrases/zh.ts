@@ -1289,8 +1289,8 @@ export const zh: PhraseCatalog = {
   Host: "主机",
   "Paste a full pairing URL here to fill both fields automatically.":
     "在此粘贴完整的配对 URL，即可自动填写两个字段。",
-  "This machine is on your SpecWithCode Connect account. Use it as a fallback route.":
-    "这台电脑在你的 SpecWithCode Connect 账户中。可将其用作备用路由。",
+  "This machine is on your SpecWithCode Connect account. This app can open it through Connect too.":
+    "这台电脑在你的 SpecWithCode Connect 账户中。此应用也可以通过 Connect 打开它。",
   "Add SpecWithCode Connect": "添加 SpecWithCode Connect",
   "Add route": "添加路由",
   "SSH host or alias": "SSH 主机或别名",

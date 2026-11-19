@@ -1332,8 +1332,8 @@ export const ru: PhraseCatalog = {
   Host: "Хост",
   "Paste a full pairing URL here to fill both fields automatically.":
     "Вставьте сюда полный URL связывания, чтобы заполнить оба поля автоматически.",
-  "This machine is on your SpecWithCode Connect account. Use it as a fallback route.":
-    "Эта машина есть в вашем аккаунте SpecWithCode Connect. Используйте её как резервный маршрут.",
+  "This machine is on your SpecWithCode Connect account. This app can open it through Connect too.":
+    "Эта машина есть в вашем аккаунте SpecWithCode Connect. Приложение может открывать её и через Connect.",
   "Add SpecWithCode Connect": "Добавить SpecWithCode Connect",
   "Add route": "Добавить маршрут",
   "SSH host or alias": "SSH-хост или псевдоним",

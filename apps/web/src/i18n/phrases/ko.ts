@@ -1323,8 +1323,8 @@ export const ko: PhraseCatalog = {
   Host: "호스트",
   "Paste a full pairing URL here to fill both fields automatically.":
     "전체 페어링 URL을 여기에 붙여 넣으면 두 필드가 자동으로 채워집니다.",
-  "This machine is on your SpecWithCode Connect account. Use it as a fallback route.":
-    "이 컴퓨터는 SpecWithCode Connect 계정에 있습니다. 대체 경로로 사용하세요.",
+  "This machine is on your SpecWithCode Connect account. This app can open it through Connect too.":
+    "이 컴퓨터는 SpecWithCode Connect 계정에 있습니다. 이 앱에서 Connect로도 열 수 있습니다.",
   "Add SpecWithCode Connect": "SpecWithCode Connect 추가",
   "Add route": "경로 추가",
   "SSH host or alias": "SSH 호스트 또는 별칭",
