@@ -31,8 +31,9 @@ function ProjectWorkspaceRoute() {
   // and reloads that name it land on Overview instead. Nothing is deleted.
   const aideHidden = useHiddenAideRoute(projectKey);
   // A machine's "No project" folder holds chats; it is not a project and has no page.
-  const chatsFolder = useChatsProjectRoute(projectKey);
-  const leave = aideHidden || chatsFolder;
+  // Until its machine's config arrives, a folder shaped like one shows nothing.
+  const chatsRoute = useChatsProjectRoute(projectKey);
+  const leave = aideHidden || chatsRoute === "chats";
   useEffect(() => {
     if (leave) void navigate({ to: "/", replace: true });
   }, [leave, navigate]);
@@ -86,7 +87,7 @@ function ProjectWorkspaceRoute() {
     },
     [navigate, projectKey],
   );
-  if (leave) return null;
+  if (leave || chatsRoute === "pending") return null;
   return (
     <ProjectWorkspace
       projectKey={projectKey}

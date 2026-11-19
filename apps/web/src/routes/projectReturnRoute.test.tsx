@@ -6,7 +6,7 @@ const state = vi.hoisted(() => ({
   search: {} as Record<string, unknown>,
   navigate: vi.fn(),
   aideHidden: false,
-  chatsFolder: false,
+  chatsRoute: "project" as string,
   props: null as null | {
     onProjectKeyMoved: (key: string) => void;
     onSelectThread: (id: string | null) => void;
@@ -29,7 +29,7 @@ vi.mock("../components/studio/ProjectWorkspace", () => ({
   },
 }));
 vi.mock("../studio/hiddenAideRoute", () => ({ useHiddenAideRoute: () => state.aideHidden }));
-vi.mock("../studio/chatsProjectRoute", () => ({ useChatsProjectRoute: () => state.chatsFolder }));
+vi.mock("../studio/chatsProjectRoute", () => ({ useChatsProjectRoute: () => state.chatsRoute }));
 import { Route } from "./projects.$projectKey";
 let root: ReturnType<typeof createRoot>;
 beforeEach(async () => {
@@ -87,11 +87,22 @@ it("sends a hidden personal assistant's page to Overview without opening it", as
 
 it("sends a machine's No project folder to Overview: chats have no project page", async () => {
   state.search = {};
-  state.chatsFolder = true;
+  state.chatsRoute = "chats";
   await act(async () =>
     root.render(createElement((Route as unknown as { component: ComponentType }).component)),
   );
   expect(state.props).toBeNull();
   expect(state.navigate).toHaveBeenCalledWith({ to: "/", replace: true });
-  state.chatsFolder = false;
+  state.chatsRoute = "project";
+});
+
+it("waits, neither opening nor leaving, while a folder shaped like No project is unclassified", async () => {
+  state.search = {};
+  state.chatsRoute = "pending";
+  await act(async () =>
+    root.render(createElement((Route as unknown as { component: ComponentType }).component)),
+  );
+  expect(state.props).toBeNull();
+  expect(state.navigate).not.toHaveBeenCalled();
+  state.chatsRoute = "project";
 });

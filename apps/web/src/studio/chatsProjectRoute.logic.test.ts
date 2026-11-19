@@ -1,37 +1,49 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { isChatsProjectRoute } from "./chatsProjectRoute.logic";
+import { chatsProjectRoute } from "./chatsProjectRoute.logic";
 
 const scratchRootFor = (environmentId: string) => `/data/${environmentId}/scratch`;
+const unknown = () => undefined;
+const one = (workspaceRoot: string) => ({
+  memberProjects: [{ environmentId: "m1", workspaceRoot }],
+});
 
-describe("isChatsProjectRoute", () => {
+describe("chatsProjectRoute", () => {
   it("sends a page naming a machine's No project folder away", () => {
-    const group = { memberProjects: [{ environmentId: "m1", workspaceRoot: "/data/m1/scratch" }] };
-    expect(isChatsProjectRoute({ group, scratchRootFor })).toBe(true);
+    expect(chatsProjectRoute({ group: one("/data/m1/scratch"), scratchRootFor })).toBe("chats");
   });
 
   it("keeps a real project's page, and one only partly made of chat folders", () => {
-    const real = { memberProjects: [{ environmentId: "m1", workspaceRoot: "/code/app" }] };
-    expect(isChatsProjectRoute({ group: real, scratchRootFor })).toBe(false);
+    expect(chatsProjectRoute({ group: one("/code/app"), scratchRootFor })).toBe("project");
     const mixed = {
       memberProjects: [
         { environmentId: "m1", workspaceRoot: "/data/m1/scratch" },
         { environmentId: "m2", workspaceRoot: "/code/app" },
       ],
     };
-    expect(isChatsProjectRoute({ group: mixed, scratchRootFor })).toBe(false);
+    expect(chatsProjectRoute({ group: mixed, scratchRootFor })).toBe("project");
+    expect(chatsProjectRoute({ group: undefined, scratchRootFor })).toBe("project");
   });
 
-  it("tells a No project folder apart before the machine's config arrives", () => {
-    expect(isChatsProjectRoute({ group: undefined, scratchRootFor })).toBe(false);
-    const chats = {
-      memberProjects: [{ environmentId: "m1", workspaceRoot: "/home/me/.specwithcode/m1/scratch" }],
-    };
-    expect(isChatsProjectRoute({ group: chats, scratchRootFor: () => undefined })).toBe(true);
-    const real = { memberProjects: [{ environmentId: "m1", workspaceRoot: "/code/app" }] };
-    expect(isChatsProjectRoute({ group: real, scratchRootFor: () => undefined })).toBe(false);
-    // A loaded config that offers no folder: nothing there is a chat folder.
-    const group = { memberProjects: [{ environmentId: "m1", workspaceRoot: "/data/m1/scratch" }] };
-    expect(isChatsProjectRoute({ group, scratchRootFor: () => null })).toBe(false);
+  it("waits for the config before deciding a folder shaped like No project", () => {
+    expect(
+      chatsProjectRoute({
+        group: one("/home/me/.specwithcode/m1/scratch"),
+        scratchRootFor: unknown,
+      }),
+    ).toBe("pending");
+    // A real project named scratch in the app's projects folder matches the same shape.
+    const named = one("/home/me/.specwithcode/projects/scratch");
+    expect(chatsProjectRoute({ group: named, scratchRootFor: unknown })).toBe("pending");
+    expect(
+      chatsProjectRoute({ group: named, scratchRootFor: () => "/home/me/.specwithcode/scratch" }),
+    ).toBe("project");
+    expect(chatsProjectRoute({ group: one("/code/app"), scratchRootFor: unknown })).toBe("project");
+  });
+
+  it("treats nothing as a chat folder on a machine whose config offers none", () => {
+    expect(chatsProjectRoute({ group: one("/data/m1/scratch"), scratchRootFor: () => null })).toBe(
+      "project",
+    );
   });
 });
