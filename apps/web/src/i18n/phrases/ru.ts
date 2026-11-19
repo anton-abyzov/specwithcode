@@ -1,7 +1,9 @@
 import type { PhraseCatalog } from "../phrases";
+import { syncRu } from "./sync/ru";
 
 /** Russian Settings titles and labels. "тред" for thread, as in the message catalog. */
 export const ru: PhraseCatalog = {
+  ...syncRu,
   About: "О приложении",
   "Accent color": "Акцентный цвет",
   Account: "Аккаунт",
@@ -3130,7 +3132,6 @@ export const ru: PhraseCatalog = {
   "Run this draft on": "Запустить этот черновик на",
   "Auto balance matching projects": "Автобаланс подходящих проектов",
   "Add to another machine…": "Добавить на другую машину…",
-  "Send to another machine…": "Отправить на другую машину…",
   Link: "Связать",
   "Leave this machine…": "Уйти с этой машины…",
   "Another project or no project": "Другой проект или без проекта",
@@ -5235,10 +5236,6 @@ export const ru: PhraseCatalog = {
   "Link {machine} to this project": "Связать {machine} с этим проектом",
   "Link {machine}": "Связать {machine}",
   "connect {main} first": "сначала подключите {main}",
-  "Copy {project} to {machine}": "Скопировать {project} на {machine}",
-  "Move {project} to {machine}": "Перенести {project} на {machine}",
-  "Copy {project} to another machine": "Скопировать {project} на другую машину",
-  "Move {project} to another machine": "Перенести {project} на другую машину",
   "Nothing on {machine} is replaced without asking.":
     "На {machine} ничего не заменяется без вопроса.",
   "the other machine": "другой машине",

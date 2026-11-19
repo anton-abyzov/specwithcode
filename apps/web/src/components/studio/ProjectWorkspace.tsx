@@ -363,8 +363,11 @@ export function ProjectWorkspace({
           onSelectThread ? selectedThreadEnvironmentId : localSelectedEnvironment
         }
         ownershipProblem={
-          ownershipProblem === UNCONFIRMED_COORDINATOR_PROBLEM && member
-            ? tx(unconfirmedText.text, unconfirmedText.values)
+          ownershipProblem === UNCONFIRMED_COORDINATOR_PROBLEM
+            ? // A member that cannot be named gets the same sentence without a name.
+              member
+              ? tx(unconfirmedText.text, unconfirmedText.values)
+              : tx(UNCONFIRMED_COORDINATOR_PROBLEM)
             : ownershipProblem
         }
         coordinatorElsewhere={

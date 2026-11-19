@@ -25,7 +25,7 @@ const claude: ModelSelection = {
 };
 
 const ready: PreflightFacts = {
-  machineLabel: "Minis",
+  machineLabel: "Tower H",
   project: { title: "SpecWeave", inGrant: true },
   checkpointSequence: 4,
   requiredSequence: 4,
@@ -53,38 +53,38 @@ describe("preflightFailures", () => {
 
   it("names the machine and the exact missing piece", () => {
     expect(messages({ missingFiles: [".env.local"] })).toEqual([
-      "Minis: no .env.local. Send it with studio_file_transfer, or with Copy to another machine",
+      "Tower H: no .env.local. Send it with studio_file_transfer, or tick it in Sync",
     ]);
     expect(messages({ provider: { ...ready.provider!, authStatus: "unauthenticated" } })).toEqual([
-      "Minis: Claude not signed in",
+      "Tower H: Claude not signed in",
     ]);
     expect(messages({ provider: { ...ready.provider!, installed: false } })).toEqual([
-      "Minis: Claude not installed",
+      "Tower H: Claude not installed",
     ]);
-    expect(messages({ provider: null })).toEqual(["Minis: claudeAgent is not set up"]);
+    expect(messages({ provider: null })).toEqual(["Tower H: claudeAgent is not set up"]);
     expect(
       messages({ provider: { ...ready.provider!, models: [{ slug: "claude-haiku" }] } }),
-    ).toEqual(["Minis: model claude-opus-5-5 not available on Claude"]);
+    ).toEqual(["Tower H: model claude-opus-5-5 not available on Claude"]);
   });
 
   it("refuses a project that is only named the same", () => {
     const [notLinked] = messages({ project: null });
-    expect(notLinked).toMatch(/^Minis: this project is not linked here\. /u);
+    expect(notLinked).toMatch(/^Tower H: this project is not linked here\. /u);
     // It names both remedies: Link… and adding the project to that machine.
     expect(notLinked).toContain("Link…");
     expect(notLinked).toContain("studio_project_add_to_machine");
     expect(messages({ project: { title: "SpecWeave", inGrant: false } })).toEqual([
-      "Minis: no work grant for SpecWeave",
+      "Tower H: no work grant for SpecWeave",
     ]);
   });
 
   it("requires the newest checkpoint and a free lease", () => {
     expect(messages({ checkpointSequence: null })).toEqual([
-      "Minis: no checkpoint for this thread",
+      "Tower H: no checkpoint for this thread",
     ]);
-    expect(messages({ checkpointSequence: 3 })).toEqual(["Minis: no checkpoint for this thread"]);
-    expect(messages({ otherHolder: "M3" })).toEqual([
-      "Minis: another machine (M3) runs this thread",
+    expect(messages({ checkpointSequence: 3 })).toEqual(["Tower H: no checkpoint for this thread"]);
+    expect(messages({ otherHolder: "Kiosk D" })).toEqual([
+      "Tower H: another machine (Kiosk D) runs this thread",
     ]);
   });
 
@@ -95,9 +95,9 @@ describe("preflightFailures", () => {
         provider: { ...ready.provider!, authStatus: "unauthenticated" },
       }),
     ).toEqual([
-      "Minis: no .env.local. Send it with studio_file_transfer, or with Copy to another machine",
-      "Minis: no .env. Send it with studio_file_transfer, or with Copy to another machine",
-      "Minis: Claude not signed in",
+      "Tower H: no .env.local. Send it with studio_file_transfer, or tick it in Sync",
+      "Tower H: no .env. Send it with studio_file_transfer, or tick it in Sync",
+      "Tower H: Claude not signed in",
     ]);
   });
 });
@@ -134,7 +134,7 @@ describe("handoffSeed", () => {
         kind: "pr-create" as const,
         target: "branch:feat/handoff",
         epoch: 1,
-        environmentId: EnvironmentId.make("env-m4"),
+        environmentId: EnvironmentId.make("env-laptopE"),
         at: "2026-10-20T14:00:00.000Z",
         result: "github.com/o/r#7",
       },
@@ -145,13 +145,13 @@ describe("handoffSeed", () => {
 
   it("starts a fresh session from the checkpoint and lists side effects not to repeat", () => {
     const seed = handoffSeed({
-      sourceLabel: "M4",
+      sourceLabel: "Laptop E",
       reason: "handoff",
       checkpoint,
       lastMessages: [{ role: "user", text: "Finish the PR." }],
     });
     expect(seed.startsWith(HANDOFF_CONTINUE_TEXT)).toBe(true);
-    expect(seed).toContain("handed off from M4 after its usage limit was reached");
+    expect(seed).toContain("handed off from Laptop E after its usage limit was reached");
     expect(seed).toContain("branch feat/handoff");
     expect(seed).toContain("Do not repeat these");
     expect(seed).toContain("pr-create branch:feat/handoff (github.com/o/r#7)");
@@ -160,7 +160,7 @@ describe("handoffSeed", () => {
 
   it("stays under its size cap however long the transcript is", () => {
     const seed = handoffSeed({
-      sourceLabel: "M4",
+      sourceLabel: "Laptop E",
       reason: "sleep",
       checkpoint,
       lastMessages: Array.from({ length: 8 }, (_, index) => ({
@@ -173,8 +173,8 @@ describe("handoffSeed", () => {
 });
 
 describe("turnRefusal", () => {
-  const m4 = EnvironmentId.make("env-m4");
-  const minis = EnvironmentId.make("env-minis");
+  const laptopE = EnvironmentId.make("env-laptopE");
+  const towerH = EnvironmentId.make("env-towerH");
   const threadId = ThreadId.make("thread-1");
   const projectId = ProjectId.make("project-1");
   const withRecord = (
@@ -187,7 +187,7 @@ describe("turnRefusal", () => {
   });
   const lease = (holder: EnvironmentId, state: "active" | "handing-off" | "fenced") => ({
     holderEnvironmentId: holder,
-    holderLabel: holder === m4 ? "M4" : "Minis",
+    holderLabel: holder === laptopE ? "Laptop E" : "Tower H",
     holderThreadId: threadId,
     epoch: 2,
     renewedAt: "2026-10-20T14:00:00.000Z",
@@ -195,11 +195,13 @@ describe("turnRefusal", () => {
   });
 
   it("allows a thread handoff mode does not track", () => {
-    expect(turnRefusal(EMPTY_HANDOFF_DOCUMENT, threadId, m4)).toBeNull();
+    expect(turnRefusal(EMPTY_HANDOFF_DOCUMENT, threadId, laptopE)).toBeNull();
   });
 
   it("allows the lease holder", () => {
-    expect(turnRefusal(withRecord({ lease: lease(m4, "active") }), threadId, m4)).toBeNull();
+    expect(
+      turnRefusal(withRecord({ lease: lease(laptopE, "active") }), threadId, laptopE),
+    ).toBeNull();
   });
 
   it("refuses a fenced copy, another holder and a handoff in flight", () => {
@@ -207,35 +209,35 @@ describe("turnRefusal", () => {
       turnRefusal(
         withRecord({
           continuedOn: {
-            environmentId: minis,
-            machineLabel: "Minis",
+            environmentId: towerH,
+            machineLabel: "Tower H",
             threadId: ThreadId.make("thread-9"),
             at: "2026-10-20T14:00:00.000Z",
           },
         }),
         threadId,
-        m4,
+        laptopE,
       ),
-    ).toContain("continues on Minis");
-    expect(turnRefusal(withRecord({ lease: lease(minis, "active") }), threadId, m4)).toContain(
-      "Another machine (Minis)",
-    );
-    expect(turnRefusal(withRecord({ lease: lease(m4, "fenced") }), threadId, m4)).toContain(
-      "read-only",
-    );
-    expect(turnRefusal(withRecord({ lease: lease(m4, "handing-off") }), threadId, m4)).toContain(
-      "being handed off",
-    );
+    ).toContain("continues on Tower H");
+    expect(
+      turnRefusal(withRecord({ lease: lease(towerH, "active") }), threadId, laptopE),
+    ).toContain("Another machine (Tower H)");
+    expect(
+      turnRefusal(withRecord({ lease: lease(laptopE, "fenced") }), threadId, laptopE),
+    ).toContain("read-only");
+    expect(
+      turnRefusal(withRecord({ lease: lease(laptopE, "handing-off") }), threadId, laptopE),
+    ).toContain("being handed off");
   });
 
   it("pauses a machine that lost its network with replicated leases until it is back", () => {
     const document = withRecord(
       {
-        lease: lease(m4, "active"),
+        lease: lease(laptopE, "active"),
         replicas: [
           {
-            environmentId: minis,
-            machineLabel: "Minis",
+            environmentId: towerH,
+            machineLabel: "Tower H",
             state: "current",
             sequence: 2,
             detail: null,
@@ -245,11 +247,11 @@ describe("turnRefusal", () => {
       },
       { pausedSince: "2026-10-20T14:05:00.000Z" },
     );
-    const refusal = turnRefusal(document, threadId, m4);
+    const refusal = turnRefusal(document, threadId, laptopE);
     expect(refusal).toContain("lost its network");
     expect(refusal).toContain("Resume this machine");
     expect(refusal).not.toContain("woke");
     // Without a pause the same thread starts turns.
-    expect(turnRefusal({ ...document, pausedSince: null }, threadId, m4)).toBeNull();
+    expect(turnRefusal({ ...document, pausedSince: null }, threadId, laptopE)).toBeNull();
   });
 });

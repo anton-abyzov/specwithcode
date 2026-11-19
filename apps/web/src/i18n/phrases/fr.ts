@@ -1,7 +1,9 @@
 import type { PhraseCatalog } from "../phrases";
+import { syncFr } from "./sync/fr";
 
 /** French Settings titles and labels. "fil" for thread, as in the message catalog. */
 export const fr: PhraseCatalog = {
+  ...syncFr,
   About: "À propos",
   "Accent color": "Couleur d’accent",
   Account: "Compte",
@@ -3160,7 +3162,6 @@ export const fr: PhraseCatalog = {
   "Run this draft on": "Exécuter ce brouillon sur",
   "Auto balance matching projects": "Répartir automatiquement les projets correspondants",
   "Add to another machine…": "Ajouter à une autre machine…",
-  "Send to another machine…": "Envoyer vers une autre machine…",
   Link: "Lier",
   "Leave this machine…": "Quitter cette machine…",
   "Another project or no project": "Un autre projet ou aucun projet",
@@ -5285,10 +5286,6 @@ export const fr: PhraseCatalog = {
   "Link {machine} to this project": "Lier {machine} à ce projet",
   "Link {machine}": "Lier {machine}",
   "connect {main} first": "connectez d’abord {main}",
-  "Copy {project} to {machine}": "Copier {project} vers {machine}",
-  "Move {project} to {machine}": "Déplacer {project} vers {machine}",
-  "Copy {project} to another machine": "Copier {project} vers une autre machine",
-  "Move {project} to another machine": "Déplacer {project} vers une autre machine",
   "Nothing on {machine} is replaced without asking.":
     "Rien n’est remplacé sur {machine} sans votre accord.",
   "the other machine": "l’autre machine",

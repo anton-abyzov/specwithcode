@@ -58,10 +58,10 @@ const git = (cwd: string, ...args: Array<string>) =>
     { encoding: "utf8", env: gitEnv, stdio: ["ignore", "pipe", "pipe"] },
   ).trim();
 
-const m4 = EnvironmentId.make("env-m4");
-const minis = EnvironmentId.make("env-minis");
-const sourceProject = ProjectId.make("project-m4");
-const destinationProject = ProjectId.make("project-minis");
+const laptopE = EnvironmentId.make("env-laptopE");
+const towerH = EnvironmentId.make("env-towerH");
+const sourceProject = ProjectId.make("project-laptopE");
+const destinationProject = ProjectId.make("project-towerH");
 const threadId = ThreadId.make("thread:limit-preflight");
 const modelSelection = {
   instanceId: ProviderInstanceId.make("claudeAgent"),
@@ -84,28 +84,28 @@ const machine = (environmentId: EnvironmentId, label: string): Machine => ({
   dispatched: [],
 });
 
-/** The source on M4 with a turn still running, and Minis lacking `.env.local` and Claude. */
+/** The source on Laptop E with a turn still running, and Tower H lacking `.env.local` and Claude. */
 const scenario = (options: { readonly modeOn: boolean }) =>
   Effect.gen(function* () {
     const base = NodeFS.realpathSync(
       NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "swc-limit-preflight-")),
     );
     temporary.push(base);
-    const sourceRoot = NodePath.join(base, "m4-repo");
+    const sourceRoot = NodePath.join(base, "laptopE-repo");
     NodeFS.mkdirSync(sourceRoot);
     git(sourceRoot, "init", "-q", "-b", "feat/limit");
     NodeFS.writeFileSync(NodePath.join(sourceRoot, ".gitignore"), ".env.local\n");
     NodeFS.writeFileSync(NodePath.join(sourceRoot, "app.ts"), "export const a = 1;\n");
     git(sourceRoot, "add", "-A");
     git(sourceRoot, "commit", "-q", "-m", "base");
-    const destinationRoot = NodePath.join(base, "minis-repo");
+    const destinationRoot = NodePath.join(base, "towerH-repo");
     git(base, "clone", "-q", sourceRoot, destinationRoot);
     NodeFS.writeFileSync(NodePath.join(sourceRoot, "app.ts"), "export const a = 2;\n");
     NodeFS.writeFileSync(NodePath.join(sourceRoot, ".env.local"), "TOKEN=source\n");
-    const worktreesDir = NodePath.join(base, "minis-worktrees");
+    const worktreesDir = NodePath.join(base, "towerH-worktrees");
 
-    const source = machine(m4, "M4");
-    const destination = machine(minis, "Minis");
+    const source = machine(laptopE, "Laptop E");
+    const destination = machine(towerH, "Tower H");
     const fixture = { activeRunId: "run-1" as string | null, sequence: 0 };
     const takeovers: Array<unknown> = [];
 
@@ -146,8 +146,8 @@ const scenario = (options: { readonly modeOn: boolean }) =>
               runEnding: fixture.activeRunId === null ? "usage-limit" : "active",
               sideEffects: [],
               sourceRoot: {
-                environmentId: m4,
-                machineLabel: "M4",
+                environmentId: laptopE,
+                machineLabel: "Laptop E",
                 projectId: sourceProject,
                 threadId,
                 workspaceRoot: written.root,
@@ -172,8 +172,8 @@ const scenario = (options: { readonly modeOn: boolean }) =>
               // Linked both ways, as the receiver requires.
               logicalProject: {
                 members: [
-                  { environmentId: m4, projectId: sourceProject },
-                  { environmentId: minis, projectId: destinationProject },
+                  { environmentId: laptopE, projectId: sourceProject },
+                  { environmentId: towerH, projectId: destinationProject },
                 ],
               },
             }
@@ -249,7 +249,7 @@ const scenario = (options: { readonly modeOn: boolean }) =>
         servicesFor(destination, { project: destinationProject, root: destinationRoot }),
       ),
     );
-    const asSource = { sourceEnvironmentId: m4, grant: unscopedGrant(m4) };
+    const asSource = { sourceEnvironmentId: laptopE, grant: unscopedGrant(laptopE) };
     const viaNetwork = <A>(effect: Effect.Effect<A, HandoffReceiver.HandoffRefusal>) =>
       effect.pipe(
         Effect.mapError(
@@ -263,8 +263,9 @@ const scenario = (options: { readonly modeOn: boolean }) =>
         ),
       );
     const peers = HandoffPeers.of({
-      target: () => Effect.succeed({ machineId: "minis", environmentId: minis, label: "Minis" }),
-      targets: Effect.succeed([{ machineId: "minis", environmentId: minis, label: "Minis" }]),
+      target: () =>
+        Effect.succeed({ machineId: "towerH", environmentId: towerH, label: "Tower H" }),
+      targets: Effect.succeed([{ machineId: "towerH", environmentId: towerH, label: "Tower H" }]),
       negotiate: (_, request) => viaNetwork(destinationReceiver.negotiate(asSource, request)),
       replicate: (_, meta, bundle) =>
         viaNetwork(destinationReceiver.replicate(asSource, meta, bundle)),
@@ -310,8 +311,8 @@ const scenario = (options: { readonly modeOn: boolean }) =>
             ...emptyThreadRecord(sourceProject),
             mode: "on",
             lease: {
-              holderEnvironmentId: m4,
-              holderLabel: "M4",
+              holderEnvironmentId: laptopE,
+              holderLabel: "Laptop E",
               holderThreadId: threadId,
               epoch: 1,
               renewedAt: "2026-10-20T14:00:00.000Z",
@@ -323,7 +324,7 @@ const scenario = (options: { readonly modeOn: boolean }) =>
     }
     const notes: Array<unknown> = [];
     const port = makeLimitHandoffPort({
-      environmentId: m4,
+      environmentId: laptopE,
       document: Effect.sync(() => source.document),
       handOff: moves.handOff,
       recordNote: (input) => Effect.sync(() => void notes.push(input)),
@@ -334,13 +335,13 @@ const scenario = (options: { readonly modeOn: boolean }) =>
 const request: LimitHandoffRequest = {
   threadId,
   projectId: sourceProject,
-  destinationEnvironmentId: minis,
-  destinationLabel: "Minis",
+  destinationEnvironmentId: towerH,
+  destinationLabel: "Tower H",
   modelSelection,
   reason: "usage-limit",
   resume: true,
   idempotencyKey: "limit-handoff:thread:limit-preflight:run-1",
-  sourceSummary: "Claude limit reached on M4",
+  sourceSummary: "Claude limit reached on Laptop E",
   modelLabel: "Claude Opus 5.5",
 };
 
@@ -378,15 +379,15 @@ describe("a limit handoff whose preflight fails", () => {
             type: "refused",
             code: "invalid",
             message:
-              "Minis: no .env.local. Send it with studio_file_transfer, or with Copy to another machine; Minis: Claude not signed in",
+              "Tower H: no .env.local. Send it with studio_file_transfer, or tick it in Sync; Tower H: Claude not signed in",
             retryable: false,
           });
           // No lease, epoch, fence or error change on the source.
           expect(moveState(source.document)).toEqual(before);
           if (modeOn) {
             expect(source.document.threads[threadId]?.lease).toEqual({
-              holderEnvironmentId: m4,
-              holderLabel: "M4",
+              holderEnvironmentId: laptopE,
+              holderLabel: "Laptop E",
               holderThreadId: threadId,
               epoch: 1,
               renewedAt: "2026-10-20T14:00:00.000Z",
@@ -399,13 +400,13 @@ describe("a limit handoff whose preflight fails", () => {
           expect(fixture.activeRunId).toBe("run-1");
           expect(source.dispatched).toEqual([]);
           expect(notes).toEqual([]);
-          // No half-move: no takeover was sent and nothing continues on Minis.
+          // No half-move: no takeover was sent and nothing continues on Tower H.
           expect(takeovers).toEqual([]);
           expect(destination.launches).toEqual([]);
           expect(destination.dispatched).toEqual([]);
-          expect(findIncoming(destination.document, m4, threadId)?.continuedThreadId ?? null).toBe(
-            null,
-          );
+          expect(
+            findIncoming(destination.document, laptopE, threadId)?.continuedThreadId ?? null,
+          ).toBe(null);
           expect(
             Object.values(destination.document.threads).filter((record) => record.lease !== null),
           ).toEqual([]);

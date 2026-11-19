@@ -940,6 +940,8 @@ function TakeoverNotices({
             project={coordinator}
             coordinatorId={linkMemberOf(coordinator).coordinatorThreadId}
             requestedTarget={handBack}
+            // Opened by the button above only: this mount shows no control of its own.
+            showTrigger={false}
             onOpenChange={handBackOpenChange}
           />
         </span>

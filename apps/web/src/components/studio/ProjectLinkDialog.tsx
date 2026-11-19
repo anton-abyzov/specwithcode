@@ -19,7 +19,7 @@ import { bestLinkCopy, linkCandidateGroups } from "../../studio/linkCandidateGro
 import {
   defaultKeptSide,
   fingerprintSummary,
-  LINK_REFUSAL_TEXT,
+  LINK_REFUSAL_WORDS,
   linkIsResuming,
   looksLikeSameProject,
   noteMergeComplete,
@@ -49,6 +49,7 @@ import {
 } from "../ui/dialog";
 import { ProjectLinkCandidates, ProjectLinkChooseDescription } from "./ProjectLinkCandidates";
 import { useLinkMachines } from "./useLinkMachines";
+import { forgetLinkRefusal } from "../../studio/linkRefusals";
 
 export interface ProjectLinkTarget {
   readonly environmentId: EnvironmentId;
@@ -265,9 +266,9 @@ export function ProjectLinkDialog({
     : null;
   const refusal = sides
     ? sides.kept.keepRefusal
-      ? LINK_REFUSAL_TEXT[sides.kept.keepRefusal](sides.keptLabel)
+      ? tx(LINK_REFUSAL_WORDS[sides.kept.keepRefusal], { machine: sides.keptLabel })
       : sides.joining.joinRefusal && !resuming
-        ? LINK_REFUSAL_TEXT[sides.joining.joinRefusal](sides.joiningLabel)
+        ? tx(LINK_REFUSAL_WORDS[sides.joining.joinRefusal], { machine: sides.joiningLabel })
         : null
     : null;
   const machineProblem = hereProblem ?? (target ? machines.problem(target.environmentId) : null);
@@ -381,6 +382,10 @@ export function ProjectLinkDialog({
       });
       if (committed._tag === "Failure") throw squashAtomCommandFailure(committed);
       writePendingOperation(storageKey, null);
+      forgetLinkRefusal(
+        `${keptEnvironment}:${sides.kept.member.projectId}`,
+        `${joiningEnvironment}:${sides.joining.member.projectId}`,
+      );
       setPhase("complete");
       onLinked?.();
     } catch (cause) {

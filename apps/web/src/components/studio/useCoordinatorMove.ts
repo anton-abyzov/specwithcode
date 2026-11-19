@@ -9,6 +9,7 @@ import type {
   ThreadId,
 } from "@specweave-studio/contracts";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { txNow } from "../../i18n";
 import { machineHandoff } from "../../studio/machineHandoff";
 import { copiedProjectFolder } from "../../studio/folderCopy";
 import { unwrap, type PendingCopy } from "./handoffFolderCopyPending";
@@ -114,7 +115,7 @@ export function useCoordinatorMove({
   ) => {
     if (!anyway && applied && copyProblem(applied, sourceLabel) !== null) {
       setCopyAgain(true);
-      setTransferNotice("Copy again before handing off the coordinator.");
+      setTransferNotice(txNow("Sync again before handing off the coordinator."));
       setTransferBusy(null);
       setStage("done");
       return;

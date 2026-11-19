@@ -121,7 +121,7 @@ try {
         ["LM", "M1", "WWW"],
         `${tag}: the narrowest chips' short labels`,
       );
-      // The coordinator's Send to another machine: its color at every width, never its name.
+      // The coordinator's machine chip: its color at every width, never its name.
       const sends = await page
         .locator("[data-send-row] button")
         .evaluateAll((buttons) =>

@@ -653,7 +653,7 @@ async function cloneRepository(root: string, step: GitStep, warnings: Array<stri
     throw new ApplyRefusedError(
       "git-failed",
       step.repo,
-      `Cloning ${step.repo === "." ? "the root repository" : step.repo} from origin failed: this machine cannot read ${step.origin}${cloneFailureReason(result?.stderr ?? "")}. Copy again with that repository copied whole, or sign in to Git here (for example gh auth login) and Retry.`,
+      `Cloning ${step.repo === "." ? "the root repository" : step.repo} from origin failed: this machine cannot read ${step.origin}${cloneFailureReason(result?.stderr ?? "")}. Sync again with that repository copied whole, or sign in to Git here (for example gh auth login) and Retry.`,
     );
   const head = step.sourceHead;
   const has = head
@@ -1083,7 +1083,7 @@ async function restoreSnapshotFiles(
   const more =
     list.length > STATUS_PATHS_NAMED ? ` and ${list.length - STATUS_PATHS_NAMED} more` : "";
   warnings.push(
-    `${list.length === 1 ? "1 file" : `${list.length} files`} changed on the source after copying started; the copy has them as they were when it started. Copy again to bring the newer versions. (${named}${more})`,
+    `${list.length === 1 ? "1 file" : `${list.length} files`} changed on the source after copying started; the copy has them as they were when it started. Sync again to bring the newer versions. (${named}${more})`,
   );
   return list;
 }

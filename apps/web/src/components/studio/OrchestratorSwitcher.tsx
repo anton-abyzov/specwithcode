@@ -1,4 +1,3 @@
-import "./shell/composer-foot.css";
 import {
   machineColorProps,
   useMachineIdentity,
@@ -13,11 +12,12 @@ import {
   DoorOpenIcon,
   Link2Icon,
   MessageSquareShareIcon,
+  RefreshCwIcon,
   Settings2Icon,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTx } from "../../i18n";
-import { useProjects } from "../../state/entities";
+import { useProjects, useServerConfigs } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
 import { machineLastSeenAt, useMachineLastSeenVersion } from "../../lib/machineLastSeen";
 import { formatAgo } from "../../studio/hostLimitsModel";
@@ -33,12 +33,17 @@ import {
   machineRowState,
   type MachineReach,
   type MachineRowKind,
+  type MachineRowText,
+  type MachineSyncFact,
 } from "../../studio/machineRowState";
 import { useMachineNickname, useMachineNicknames } from "../../studio/machineNickname";
 import { requestAway } from "../../studio/awayRequest";
 import { requestMigrateProjectThreads } from "../handoff/HandOffMachineDialog";
 import { ExtraCoordinatorFix } from "./ExtraCoordinatorFix";
+import { ProjectSyncDialog } from "./ProjectSyncDialog";
+import { useProjectSyncMenu, type SyncAsk } from "./useProjectSyncMenu";
 import { ProjectLinkDialog, type ProjectLinkTarget } from "./ProjectLinkDialog";
+import { sayLinkReason, useLinkRefusals } from "../../studio/linkRefusals";
 import { Button } from "../ui/button";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import {
@@ -101,9 +106,24 @@ const PILL: Record<MachineRowKind, string> = {
   plain: "",
 };
 
+/** What a row for another machine says about its files, beside its one state. */
+export interface MachineRowSync {
+  readonly sync: MachineSyncFact | null;
+  /** The machine's app is from before Sync; its version when the window knows it. */
+  readonly needsUpdate?: { readonly version: string | null } | null;
+}
+
+const NO_SYNC: MachineRowSync = { sync: null };
+
+const SYNC_PILL: Record<MachineSyncFact["tone"], string> = {
+  same: "border-success/40 text-success-foreground",
+  differs: "border-warning/40 bg-warning/10 text-warning-foreground",
+  unknown: "border-border text-muted-foreground",
+};
+
 /**
- * The machines that have this project, then what can be done with the project (send it to
- * another machine, link a separate project) and with the machine shown (continue the
+ * The machines that have this project, then what can be done with the project (sync it with
+ * another machine, add it to one, link a separate project) and with the machine shown (continue the
  * coordinator here, move its running threads, leave). Picking a machine reads that
  * machine's server and moves nothing; every move is its own confirmed action.
  *
@@ -130,7 +150,11 @@ export function OrchestratorSwitcher({
   onFix = null,
   onAllowWorkers,
   onMigrate = null,
-  onCopy = null,
+  onSync = null,
+  syncBlocked = null,
+  onAdd = null,
+  syncOf = () => NO_SYNC,
+  onOpenChange,
   links = [],
   onLink = null,
   onLeave = null,
@@ -166,8 +190,16 @@ export function OrchestratorSwitcher({
   onAllowWorkers: (() => void) | null;
   /** Opens "Move running threads" for the threads of the machine shown; null while it is offline. */
   onMigrate?: (() => void) | null;
-  /** "Send to another machine…": the one way to bring this project to another machine. */
-  onCopy?: (() => void) | null;
+  /** "Sync…": offered when another machine has the project; null when none does. */
+  onSync?: (() => void) | null;
+  /** Why Sync cannot run from the machine shown: the entry is greyed with it. */
+  syncBlocked?: MachineRowText | null;
+  /** "Add to another machine…": only when a paired machine does not have the project. */
+  onAdd?: (() => void) | null;
+  /** The sync fact of a row for another machine; no fact when left out. */
+  syncOf?: (key: string) => MachineRowSync;
+  /** The menu opened or closed. Opening is when each machine's status is read. */
+  onOpenChange?: (open: boolean) => void;
   /**
    * Projects on other machines that track the same repository and are not part of this
    * one, at most one per machine: each gets "Link X to this project…".
@@ -183,6 +215,8 @@ export function OrchestratorSwitcher({
   // as an invisible layer that catches clicks.
   const pendingView = useRef<(() => void) | null>(null);
   const tx = useTx();
+  // Why linking a copy last failed, kept after the Add dialog was closed.
+  const refusalOf = useLinkRefusals();
   const onText = tx("On {machine}", { machine: label });
   // The chip names the machine shown and its state by the dot alone, in the machine's own
   // color while connected (never a status green that reads as another machine). While it is not
@@ -210,7 +244,7 @@ export function OrchestratorSwitcher({
   const listed = copies.filter((copy) => isProjectFolder(copy.folder));
   const viewable = (listed.length >= 2 || unknown.length > 0) && onView !== null;
   const machineActions =
-    onCopy !== null || onLeave !== null || (onLink !== null && links.length > 0);
+    onSync !== null || onAdd !== null || onLeave !== null || (onLink !== null && links.length > 0);
   if (!viewable && !machineActions)
     return (
       <span
@@ -251,12 +285,14 @@ export function OrchestratorSwitcher({
     allSeparate &&
     others.length > 0 &&
     others.every((copy) => linkActions.some((link) => link.key === copy.key));
-  const projectActions = onCopy !== null || linkActions.length > 0;
+  const projectActions = onSync !== null || onAdd !== null || linkActions.length > 0;
   const groupLabel = tx("{project} on your machines", { project: projectTitle });
   const rows = [
     ...listed.map((copy) => {
       const name = nameOf(copy);
       const reach = reachOf(copy.key);
+      // The machine shown is what the others are compared with: it has no fact of its own.
+      const files = syncOf(copy.key);
       return {
         key: copy.key,
         name,
@@ -266,6 +302,8 @@ export function OrchestratorSwitcher({
           reach: reach.reach,
           lastSeen: reach.lastSeen ?? null,
           keptConversation: copy.canStart,
+          sync: copy.key === current ? null : files.sync,
+          needsUpdate: files.needsUpdate ?? null,
         }),
         hint: copy.canStart
           ? tx(
@@ -295,7 +333,7 @@ export function OrchestratorSwitcher({
   ];
   const firstSeparate = ordered.findIndex((row) => row.state.kind === "separate");
   return (
-    <Menu>
+    <Menu {...(onOpenChange ? { onOpenChange } : {})}>
       <span className="project-muted sws-host sws-execution-control">
         {/* No tooltip: one opened from this chip covered the message box. What picking a
             machine means is said inside the menu, which opens only when asked. */}
@@ -387,6 +425,14 @@ export function OrchestratorSwitcher({
                                 {tx(row.state.label.text, row.state.label.values)}
                               </span>
                             ) : null}
+                            {row.state.sync ? (
+                              <span
+                                className={`max-w-full rounded-full border px-1.5 text-xs ${SYNC_PILL[row.state.sync.tone]}`}
+                                data-row-sync={row.state.sync.tone}
+                              >
+                                {tx(row.state.sync.text, row.state.sync.values)}
+                              </span>
+                            ) : null}
                           </span>
                           {row.state.label && !row.state.pressable ? (
                             <span className="text-muted-foreground text-xs" data-row-reason="">
@@ -439,15 +485,35 @@ export function OrchestratorSwitcher({
         ) : null}
         {projectActions ? (
           <MenuGroup>
-            {onCopy ? (
+            {onSync ? (
               <MenuItem
-                data-machine-action="send"
+                data-machine-action="sync"
+                disabled={syncBlocked !== null}
                 onClick={() => {
-                  pendingView.current = onCopy;
+                  if (syncBlocked === null) pendingView.current = onSync;
+                }}
+              >
+                <RefreshCwIcon aria-hidden />
+                {tx("Sync…")}
+                {syncBlocked ? (
+                  <span
+                    className="ms-auto ps-4 text-end text-muted-foreground text-xs"
+                    data-sync-blocked=""
+                  >
+                    {tx(syncBlocked.text, syncBlocked.values)}
+                  </span>
+                ) : null}
+              </MenuItem>
+            ) : null}
+            {onAdd ? (
+              <MenuItem
+                data-machine-action="add"
+                onClick={() => {
+                  pendingView.current = onAdd;
                 }}
               >
                 <CopyPlusIcon aria-hidden />
-                {tx("Send to another machine…")}
+                {tx("Add to another machine…")}
               </MenuItem>
             ) : null}
             {linkActions.map((link) => (
@@ -463,7 +529,20 @@ export function OrchestratorSwitcher({
                 }}
               >
                 <Link2Icon aria-hidden />
-                {tx("Link {machine} to this project…", { machine: link.machine })}
+                <span className="flex min-w-0 flex-col">
+                  {tx("Link {machine} to this project…", { machine: link.machine })}
+                  {refusalOf(current, link.key) ? (
+                    // Why the last try to link it failed, kept after Add was closed.
+                    <span
+                      className="text-muted-foreground text-xs wrap-anywhere"
+                      data-orchestrator-link-refusal=""
+                    >
+                      {tx("Not linked yet. {reason}", {
+                        reason: sayLinkReason(refusalOf(current, link.key)!, tx),
+                      })}
+                    </span>
+                  ) : null}
+                </span>
               </MenuItem>
             ))}
           </MenuGroup>
@@ -582,6 +661,7 @@ export function ProjectOrchestratorSwitcher({
   mainOffers = [],
   onMakeMain = null,
   onCopy = null,
+  syncReadOnly = false,
   onOpenSettings = null,
 }: {
   project: EnvironmentProject;
@@ -597,7 +677,15 @@ export function ProjectOrchestratorSwitcher({
   onView: ((key: string) => void) | null;
   mainOffers?: readonly MainOffer[];
   onMakeMain?: ((key: string) => void) | null;
-  onCopy?: (() => void) | null;
+  /**
+   * Opens the folder dialog: "add" for a machine without the project, "sync" with a machine
+   * key and the measured copy for "Compare all files…". Null when this window may not
+   * operate the project, or the project is personal. The machine menu's Sync and Add ask
+   * through this.
+   */
+  onCopy?: SyncAsk | null;
+  /** The window can read this project and may not operate it: Sync is shown greyed, with why. */
+  syncReadOnly?: boolean;
   /** Opens this project's settings on its machines, for a machine "Fix…" cannot unlink. */
   onOpenSettings?: (() => void) | null;
 }) {
@@ -642,6 +730,21 @@ export function ProjectOrchestratorSwitcher({
   const mainKey = copies.find((copy) => copy.main)?.key;
   const fixCoordinator = shared.find((item) => keyOf(item) === mainKey);
   const linkOffers = linkProject === null ? [] : offers;
+  const versions = useServerConfigs();
+  const files = useProjectSyncMenu({
+    project,
+    label: name,
+    current,
+    copies,
+    unknown,
+    environments,
+    projects,
+    nameOf: nickname,
+    reachOf: (key) => reachOf(key).reach,
+    versionOf: (environmentId) => versions.get(environmentId)?.environment.serverVersion ?? null,
+    ask: onCopy,
+    readOnly: syncReadOnly,
+  });
   return (
     <>
       <OrchestratorSwitcher
@@ -661,7 +764,11 @@ export function ProjectOrchestratorSwitcher({
         mainOffers={mainOffers}
         onMakeMain={onMakeMain}
         onFix={setFixKey}
-        onCopy={onCopy}
+        onSync={files.onSync}
+        syncBlocked={files.syncBlocked}
+        onAdd={files.onAdd}
+        syncOf={files.syncOf}
+        onOpenChange={files.onMenuOpenChange}
         links={linkOffers.map((offer) => ({
           key: `${offer.environmentId}:${offer.id}`,
           machine: nickname(offer.environmentId),
@@ -696,6 +803,16 @@ export function ProjectOrchestratorSwitcher({
           joining
         />
       )}
+      {files.dialog ? (
+        <ProjectSyncDialog
+          projectTitle={projectTitle}
+          shown={files.dialog.shown}
+          shownBlocked={files.dialog.shownBlocked}
+          targets={files.dialog.targets}
+          onClose={files.dialog.onClose}
+          onCompare={files.dialog.onCompare}
+        />
+      ) : null}
       {fixMember && fixCoordinator ? (
         <ExtraCoordinatorFix
           member={fixMember}

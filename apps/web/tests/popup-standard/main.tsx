@@ -118,7 +118,7 @@ function MachineMenu({ linked }: { linked: boolean }) {
         onView={setCurrent}
         onAllowWorkers={() => {}}
         onMigrate={() => {}}
-        onCopy={() => {}}
+        onSync={() => {}}
         onLeave={linked ? () => {} : null}
         links={linked ? [] : [{ key: "m1:p", machine: "m1" }]}
         onLink={linked ? null : () => {}}
@@ -144,7 +144,7 @@ function GalleryMenu() {
             </MenuItem>
             <MenuItem>
               <CopyPlusIcon aria-hidden />
-              Send to another machine…
+              Sync…
             </MenuItem>
             <MenuItem>
               <Link2Icon aria-hidden />

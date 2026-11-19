@@ -73,6 +73,7 @@ export interface HandoffPreview {
 }
 
 export function MachineHandoffButton({ className, ...props }: ComponentProps<typeof Button>) {
+  const tx = useTx();
   return (
     <Button
       {...props}
@@ -80,19 +81,17 @@ export function MachineHandoffButton({ className, ...props }: ComponentProps<typ
       size="sm"
       className={cn("h-6 gap-1.5 px-2 text-xs sm:h-6 sm:text-xs", className)}
       data-slot="handoff-trigger"
-      aria-label="Send this project to another machine"
+      aria-label={tx("Add this project to another machine")}
     >
       <LaptopIcon className="size-3.5 shrink-0" aria-hidden />
-      <span>Send to another machine</span>
+      <span>{tx("Add to another machine…")}</span>
     </Button>
   );
 }
 
-/** " (copied 2h ago)" for a finished copy's title; nothing when the time is unknown. */
-const copiedWhen = (finishedAt: string | null): string => {
-  const when = finishedAt ? formatRelativeTimeLabel(finishedAt) : "";
-  return when ? ` (copied ${when})` : "";
-};
+/** "2h ago" for a finished copy's title; null when the time is unknown. */
+const addedWhen = (finishedAt: string | null): string | null =>
+  (finishedAt ? formatRelativeTimeLabel(finishedAt) : "") || null;
 
 /** The transfer has one explicit destination and one commit point. */
 export function MachineHandoffDialog({
@@ -135,6 +134,7 @@ export function MachineHandoffDialog({
   machinesLoading = false,
   machinesExtra,
   sync = null,
+  wholeFolderOnly = false,
   send = null,
   makeMain = null,
   staleCopy = null,
@@ -162,6 +162,8 @@ export function MachineHandoffDialog({
    * that folder and says so; the coordinator stays here.
    */
   readonly sync?: { readonly machine: string; readonly folder: string } | null;
+  /** Add for a project with no Git remote: copying the whole folder is the only way. */
+  readonly wholeFolderOnly?: boolean;
   /** Shown under the machine list: machines that can be connected from here. */
   readonly machinesExtra?: ReactNode;
   /** The other machines' first status read has not settled: their list shows a loading row. */
@@ -256,6 +258,7 @@ export function MachineHandoffDialog({
   const close = () => {
     if (!locked) onOpenChange(false);
   };
+  const added = copying && copyDoneOn && intent === "copy" ? addedWhen(copyDoneAt) : null;
   return (
     <Dialog
       open={open}
@@ -274,6 +277,8 @@ export function MachineHandoffDialog({
             machinesLoading,
             machinesExtra,
             sync: sync !== null,
+            sourceLabel,
+            wholeFolderOnly,
             send,
             makeMain,
           }}
@@ -283,25 +288,44 @@ export function MachineHandoffDialog({
               {/* A finished copy says where the project is and when it got there. */}
               {copying && copyDoneOn
                 ? sync
-                  ? `${projectTitle} is synced to ${copyDoneOn}`
-                  : `${projectTitle} is on ${copyDoneOn}${intent === "copy" ? copiedWhen(copyDoneAt) : ""}`
+                  ? // The copy ended; whether the folders match is said below, by its checks.
+                    tx("Sync finished for {project}: {source} and {machine}", {
+                      project: projectTitle,
+                      source: sourceLabel,
+                      machine: copyDoneOn,
+                    })
+                  : added
+                    ? tx("{project} is on {machine} (added {when})", {
+                        project: projectTitle,
+                        machine: copyDoneOn,
+                        when: added,
+                      })
+                    : tx("{project} is on {machine}", {
+                        project: projectTitle,
+                        machine: copyDoneOn,
+                      })
                 : sync && copying
-                  ? `Sync ${projectTitle} to ${sync.machine}`
+                  ? tx("Sync {project}: {source} and {machine}", {
+                      project: projectTitle,
+                      source: sourceLabel,
+                      machine: sync.machine,
+                    })
                   : complete
-                    ? `${projectTitle} is on ${targetLabel}`
+                    ? tx("{project} is on {machine}", {
+                        project: projectTitle,
+                        machine: targetLabel,
+                      })
                     : there
                       ? tx(
-                          switchesMain
+                          switchesMain || moving
                             ? "Continue the coordinator on {machine}"
-                            : moving
-                              ? "Move {project} to {machine}"
-                              : "Copy {project} to {machine}",
+                            : "Add {project} to {machine}",
                           { project: projectTitle, machine: there },
                         )
                       : tx(
                           moving
-                            ? "Move {project} to another machine"
-                            : "Copy {project} to another machine",
+                            ? "Continue the coordinator on another machine"
+                            : "Add {project} to another machine",
                           { project: projectTitle },
                         )}
             </DialogTitle>
@@ -309,9 +333,14 @@ export function MachineHandoffDialog({
             {!(copying && copyDoneOn) && (
               <DialogDescription className="wrap-anywhere">
                 {complete
-                  ? `The coordinator now runs on ${targetLabel}.`
+                  ? tx("The coordinator continues on {target}.", { target: targetLabel })
                   : sync && copying
-                    ? `${sync.machine} already has this project at ${sync.folder}. Sync compares the two folders and adds what ${sync.machine} is missing: repositories or folders of the workspace, and files Git doesn't carry. Anything that differs there is shown to you before it changes. The coordinator stays on ${sourceLabel}.`
+                    ? // The Git-first sentence of Wording table 3 belongs to the Sync dialog; this
+                      // sync mode is the measured file compare, and says so.
+                      tx(
+                        "{machine} already has this project at {folder}. Compare all files compares the two folders and adds what {machine} is missing. The coordinator stays on {source}.",
+                        { machine: sync.machine, folder: sync.folder, source: sourceLabel },
+                      )
                     : `${tx(header.text, header.values)} ${tx(
                         "Nothing on {machine} is replaced without asking.",
                         { machine: there ?? tx("the other machine") },
@@ -429,10 +458,12 @@ export function MachineHandoffDialog({
                   onClick={onContinue}
                 >
                   {busy
-                    ? "Moving…"
+                    ? tx("Handing off the coordinator…")
                     : switchesMain
                       ? tx("Continue here")
-                      : `Move project to ${target?.label ?? "selected machine"}`}
+                      : target
+                        ? tx("Continue the coordinator on {machine}", { machine: target.label })
+                        : tx("Continue the coordinator on another machine")}
                 </Button>
               </>
             ) : (
@@ -459,8 +490,8 @@ export function MachineHandoffDialog({
                     : machineLabel
                       ? switchesMain
                         ? tx("Continue here")
-                        : `Move project to ${machineLabel}`
-                      : "Move project"}
+                        : tx("Continue the coordinator on {machine}", { machine: machineLabel })
+                      : tx("Continue the coordinator on another machine")}
                 </Button>
               </>
             )}
@@ -671,6 +702,7 @@ function GitReview({
   readonly busy: boolean;
   readonly staleCopy?: ComponentProps<typeof MachineHandoffDialog>["staleCopy"];
 }) {
+  const tx = useTx();
   const stale = staleCopy
     ? staleCopyText({
         skipped: staleCopy.skipped,
@@ -751,7 +783,7 @@ function GitReview({
       )}
       <Collapsible data-slot="handoff-commits">
         <CollapsibleTrigger className="group -mx-1 inline-flex items-center gap-1 rounded-sm px-1 py-0.5 text-xs text-muted-foreground hover:text-foreground">
-          Details
+          {tx("Details")}
           <ChevronDownIcon
             className="size-3.5 transition-transform group-data-panel-open:rotate-180"
             aria-hidden
@@ -781,8 +813,12 @@ function GitReview({
         </span>
         <span className="min-w-0 wrap-anywhere leading-5">
           {preview.gitSync
-            ? `Push these commits and continue the project on ${targetLabel}.`
-            : `Push these commits to their remotes and continue the project on ${targetLabel}.`}
+            ? tx("Push these commits and continue the coordinator on {target}.", {
+                target: targetLabel,
+              })
+            : tx("Push these commits to their remotes and continue the coordinator on {target}.", {
+                target: targetLabel,
+              })}
         </span>
       </label>
     </div>
@@ -799,23 +835,34 @@ function SourceChangesLine({
   readonly sourceLabel: string;
   readonly busy: boolean;
 }) {
+  const tx = useTx();
   // Clean, as after Commit for me: say so, so the commit visibly took effect.
   if (changes?.state === "clean")
     return (
-      <AlongLine slot="handoff-source-changes">No uncommitted changes on {sourceLabel}.</AlongLine>
+      <AlongLine slot="handoff-source-changes">
+        {tx("No uncommitted changes on {source}.", { source: sourceLabel })}
+      </AlongLine>
     );
-  const count =
+  const stays =
     changes?.state === "dirty"
       ? changes.fileCount === 1
-        ? "1 uncommitted file stays"
-        : `${changes.fileCount.toLocaleString("en-US")} uncommitted files stay`
-      : "Uncommitted work stays";
+        ? tx(
+            "1 uncommitted file stays on {source}: Git carries commits only. Commit them, or choose Copy the whole folder under Details.",
+            { source: sourceLabel },
+          )
+        : tx(
+            "{count} uncommitted files stay on {source}: Git carries commits only. Commit them, or choose Copy the whole folder under Details.",
+            { count: changes.fileCount, source: sourceLabel },
+          )
+      : tx(
+          "Uncommitted work stays on {source}: Git carries commits only. Commit them, or choose Copy the whole folder under Details.",
+          { source: sourceLabel },
+        );
   const commit = changes?.state === "dirty" ? changes.onCommit : null;
   return (
     <>
       <AlongLine stays slot="handoff-source-changes">
-        {count} on {sourceLabel}: Git carries commits only. Commit them, or choose Copy everything
-        under Details.
+        {stays}
       </AlongLine>
       {(commit || changes?.error) && (
         <li className="min-w-0 space-y-1.5 ps-6.5">

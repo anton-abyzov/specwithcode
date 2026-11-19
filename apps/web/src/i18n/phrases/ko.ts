@@ -1,7 +1,9 @@
 import type { PhraseCatalog } from "../phrases";
+import { syncKo } from "./sync/ko";
 
 /** Korean Settings titles and labels. "스레드" for thread, as in the message catalog. */
 export const ko: PhraseCatalog = {
+  ...syncKo,
   About: "정보",
   "Accent color": "강조 색상",
   Account: "계정",
@@ -3105,7 +3107,6 @@ export const ko: PhraseCatalog = {
   "Run this draft on": "이 초안을 실행할 위치",
   "Auto balance matching projects": "일치하는 프로젝트 자동 분산",
   "Add to another machine…": "다른 컴퓨터에 추가…",
-  "Send to another machine…": "다른 컴퓨터로 보내기…",
   Link: "연결",
   "Leave this machine…": "이 컴퓨터 떠나기…",
   "Another project or no project": "다른 프로젝트 또는 프로젝트 없음",
@@ -5174,10 +5175,6 @@ export const ko: PhraseCatalog = {
   "Link {machine} to this project": "{machine}을(를) 이 프로젝트에 연결",
   "Link {machine}": "{machine} 연결",
   "connect {main} first": "먼저 {main} 연결",
-  "Copy {project} to {machine}": "{project}을(를) {machine}(으)로 복사",
-  "Move {project} to {machine}": "{project}을(를) {machine}(으)로 이동",
-  "Copy {project} to another machine": "{project}을(를) 다른 기기로 복사",
-  "Move {project} to another machine": "{project}을(를) 다른 기기로 이동",
   "Nothing on {machine} is replaced without asking.":
     "{machine}에 있는 것은 묻지 않고 바꾸지 않습니다.",
   "the other machine": "다른 기기",
