@@ -14,7 +14,7 @@ import { handoffNoticeOf, observeHandoffNotices } from "./handoffNotice.logic";
 const note = "Handed off to M5 at 14:02: Claude limit reached on M4";
 const link = (patch: Partial<OrchestrationV2ThreadProjectMoveLink>) =>
   ({
-    threadId: "thread-other",
+    threadId: "thread-other" as never,
     projectId: "project-1",
     title: "Ship the release",
     movedAt: "2026-11-19T14:02:00.000Z",
@@ -46,7 +46,12 @@ describe("handoffNoticeOf", () => {
     expect(
       handoffNoticeOf(
         thread("t2", {
-          movedFrom: link({ threadId: "t1", machineLabel: "M4", environmentId: "env-m4" as never, note }),
+          movedFrom: link({
+            threadId: "t1" as never,
+            machineLabel: "M4",
+            environmentId: "env-m4" as never,
+            note,
+          }),
         }),
       ),
     ).toEqual({ identity: "moved-from:t1", title: "Continued here from M4", body: note });
@@ -71,7 +76,7 @@ describe("observeHandoffNotices", () => {
     const first = observeHandoffNotices(null, [thread("t1")]);
     const second = observeHandoffNotices(first.seen, [
       thread("t1", { movedTo: link({ note }) }),
-      thread("t2", { movedFrom: link({ threadId: "t9", machineLabel: "M4", note }) }),
+      thread("t2", { movedFrom: link({ threadId: "t9" as never, machineLabel: "M4", note }) }),
     ]);
     expect(second.notices.map((notice) => [notice.thread.id, notice.notice.title])).toEqual([
       ["t1", "Handed off to M5"],
@@ -79,7 +84,7 @@ describe("observeHandoffNotices", () => {
     ]);
     const third = observeHandoffNotices(second.seen, [
       thread("t1", { movedTo: link({ note }) }),
-      thread("t2", { movedFrom: link({ threadId: "t9", machineLabel: "M4", note }) }),
+      thread("t2", { movedFrom: link({ threadId: "t9" as never, machineLabel: "M4", note }) }),
     ]);
     expect(third.notices).toEqual([]);
   });
@@ -88,7 +93,7 @@ describe("observeHandoffNotices", () => {
     const first = observeHandoffNotices(null, [thread("t1")]);
     const second = observeHandoffNotices(first.seen, [
       thread("t1", { movedTo: link({}) }),
-      thread("t2", { movedFrom: link({ threadId: "t1" }) }),
+      thread("t2", { movedFrom: link({ threadId: "t1" as never }) }),
     ]);
     expect(second.notices).toEqual([]);
   });

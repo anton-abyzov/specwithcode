@@ -522,6 +522,7 @@ import {
 } from "../logicalProject";
 import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../threadRoutes";
 import { HANDOFF_CONTINUED, movedAwayBanner, threadMoveBanner } from "./threadMove.logic";
+import { BringBackButton, useBringBackOffer } from "./handoff/BringBack";
 import {
   isSameSidebarThreadRef,
   useSidebarPendingFileDropStore,
@@ -9309,6 +9310,12 @@ function useChatViewActions(
       ? null
       : (threadHandoffState(handoffSnapshot, activeThread.id)?.continuedOn ?? null);
   const projectedThread = serverProjection?.thread ?? null;
+  // Bring back on a handed-off thread, on either machine (1390 AC-23).
+  const bringBack = useBringBackOffer(
+    projectedThread === null || activeThread === undefined
+      ? null
+      : { ...projectedThread, environmentId: activeThread.environmentId },
+  );
   const threadMoveBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     const banner =
       projectedThread === null || activeThread === undefined
@@ -9372,14 +9379,18 @@ function useChatViewActions(
       title: banner.title,
       description: banner.description,
       actions: (
-        <Button size="xs" variant="outline" onClick={open}>
-          {banner.actionLabel}
-        </Button>
+        <>
+          <Button size="xs" variant="outline" onClick={open}>
+            {banner.actionLabel}
+          </Button>
+          <BringBackButton offer={bringBack} />
+        </>
       ),
     };
   }, [
     activeThread,
     allProjects,
+    bringBack,
     handoffContinuedOn,
     handoffMachineName,
     navigate,
