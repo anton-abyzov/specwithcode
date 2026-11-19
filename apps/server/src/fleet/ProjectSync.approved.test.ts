@@ -65,9 +65,9 @@ const syncLayer = (projects: ReadonlyArray<Project>) =>
     Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provideMerge(NodeServices.layer),
   );
-const withSync = <A>(
+const withSync = <A, E>(
   folder: string,
-  body: (sync: ProjectSync.ProjectSync["Service"]) => Effect.Effect<A, unknown>,
+  body: (sync: ProjectSync.ProjectSync["Service"]) => Effect.Effect<A, E>,
   projects: ReadonlyArray<Project> = [project(projectA, folder)],
 ) =>
   Effect.gen(function* () {
