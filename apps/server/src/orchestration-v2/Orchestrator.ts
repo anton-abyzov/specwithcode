@@ -3762,11 +3762,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // that took the fallback's model go home with it, held or not: left on
     // the fallback, the first to start would switch the thread straight back.
     const runsFollowingWayBack =
-      command.type === "thread.model-selection.set" &&
-      (isLimitWayBack(command.commandId) ||
-        // The move before the limit takes them along too, or the first to
-        // start would put the thread back on the limited provider (1089).
-        command.commandId.startsWith(LIMIT_PRESWITCH_COMMAND_PREFIX) ||
+      (command.type === "thread.model-selection.set" || command.type === "provider.switch") &&
+      ((command.type === "thread.model-selection.set" &&
+        (isLimitWayBack(command.commandId) ||
+          // The move before the limit takes them along too, or the first to
+          // start would put the thread back on the limited provider (1089).
+          command.commandId.startsWith(LIMIT_PRESWITCH_COMMAND_PREFIX))) ||
         // A pick while the thread stands in for a pre-switch: the sends the
         // move carried along follow that pick too, so starting one never
         // undoes it. A send pinned to its own model keeps it.
@@ -10610,6 +10611,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     thread: OrchestrationV2AppThread,
   ) =>
     Effect.gen(function* () {
+      // Settled or snoozed since the sweep planned it: the thread stays put.
+      if (thread.settledOverride === "settled") return "The thread was settled.";
+      const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+      if (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs)
+        return "The thread is snoozed.";
       const { runs } = yield* loadProjectionForCommand(command, ["runs"]);
       const { refusal, latest } = preswitchMoveRefusal(runs);
       if (refusal !== null || latest === null) return refusal;

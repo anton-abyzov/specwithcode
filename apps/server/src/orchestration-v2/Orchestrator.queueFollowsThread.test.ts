@@ -478,30 +478,33 @@ it("the server's continuations of a stopped thread release its held queue", () =
 
 // 1089: a pre-switch carries the queued sends along; a person's later pick
 // carries them too, so the next one to start never undoes that pick.
-it.effect("sends the pre-switch carried follow a later pick", () =>
-  Effect.gen(function* () {
-    const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const threadId = ThreadId.make("thread:preswitch-then-pick");
-    yield* createThread(threadId);
-    yield* orchestrator.dispatch({
-      type: "thread.model-selection.set",
-      commandId: CommandId.make(`limit-preswitch:${threadId}:${broken}:2026-11-19T15:00:00.000Z`),
-      threadId,
-      modelSelection: fallbackSelection,
-      expectedModelSelection: brokenSelection,
-    });
-    yield* sendUser(threadId, "brief", "start_immediately");
-    yield* sendUser(threadId, "next", "queue_after_active");
-    const queued = (yield* projectionOf(threadId)).runs.find((run) => run.status === "queued")!;
-    assert.deepEqual(queued.modelSelection, fallbackSelection);
+it.effect.each(["thread.model-selection.set", "provider.switch"] as const)(
+  "sends the pre-switch carried follow a later pick (%s)",
+  (pickType) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make(`thread:preswitch-then-pick:${pickType}`);
+      const resetAt = "2026-11-19T15:00:00.000Z";
+      yield* createThread(threadId);
+      yield* orchestrator.dispatch({
+        type: "thread.model-selection.set",
+        commandId: CommandId.make(`limit-preswitch:${threadId}:${broken}:${resetAt}`),
+        threadId,
+        modelSelection: fallbackSelection,
+        expectedModelSelection: brokenSelection,
+      });
+      yield* sendUser(threadId, "brief", "start_immediately");
+      yield* sendUser(threadId, "next", "queue_after_active");
+      const queued = (yield* projectionOf(threadId)).runs.find((run) => run.status === "queued")!;
+      assert.deepEqual(queued.modelSelection, fallbackSelection);
 
-    yield* orchestrator.dispatch({
-      type: "thread.model-selection.set",
-      commandId: CommandId.make(`person-pick:${threadId}`),
-      threadId,
-      modelSelection: brokenSelection,
-    });
-    const after = (yield* projectionOf(threadId)).runs.find((run) => run.id === queued.id)!;
-    assert.deepEqual(after.modelSelection, brokenSelection);
-  }).pipe(Effect.scoped, Effect.provide(layerTest)),
+      yield* orchestrator.dispatch({
+        type: pickType,
+        commandId: CommandId.make(`person-pick:${threadId}`),
+        threadId,
+        modelSelection: brokenSelection,
+      });
+      const after = (yield* projectionOf(threadId)).runs.find((run) => run.id === queued.id)!;
+      assert.deepEqual(after.modelSelection, brokenSelection);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );

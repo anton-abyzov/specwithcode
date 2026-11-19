@@ -687,6 +687,12 @@ export function idlePreswitchId(
     thread.status !== "completed" ||
     thread.latestRunId === null ||
     thread.settledOverride === "settled" ||
+    // A snooze holds the thread where it is until it wakes.
+    recoverySnoozeBlocks(
+      { snoozedUntil: thread.snoozedUntil ?? null, limitRecovery: thread.limitRecovery ?? null },
+      nowMs,
+      false,
+    ) ||
     !threadIsFree(thread) ||
     // A session still hosting background work would be cut off from it.
     thread.activityRunStatus != null ||

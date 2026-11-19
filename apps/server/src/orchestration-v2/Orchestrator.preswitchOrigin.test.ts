@@ -203,3 +203,28 @@ it.effect("refuses a pre-switch planned before a person's pick", () =>
     assert.deepEqual((yield* projections.getThread(threadId)).modelSelection, fallback);
   }).pipe(Effect.provide(layerTest)),
 );
+
+// 1089: a settle that lands after the sweep planned the move keeps the thread put.
+it.effect("refuses a pre-switch on a thread settled since it was planned", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const { threadId, preswitchId } = yield* setup("late-settle");
+    yield* orchestrator.dispatch({
+      type: "thread.settle",
+      commandId: CommandId.make("settle-before-move"),
+      threadId,
+    });
+    const refused = yield* orchestrator
+      .dispatch({
+        type: "thread.model-selection.set",
+        commandId: preswitchId,
+        threadId,
+        modelSelection: fallback,
+        expectedModelSelection: home,
+      })
+      .pipe(Effect.flip);
+    assert.include(String((refused as { cause?: unknown }).cause), "settled");
+    assert.deepEqual((yield* projections.getThread(threadId)).modelSelection, home);
+  }).pipe(Effect.provide(layerTest)),
+);

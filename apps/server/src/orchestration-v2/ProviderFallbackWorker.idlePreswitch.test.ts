@@ -121,6 +121,8 @@ interface Thread {
   providerSubagent?: boolean;
   /** Background work the provider session still hosts. */
   background?: boolean;
+  /** Snoozed by a person until an hour from now. */
+  snoozed?: boolean;
   lastError?: string;
 }
 
@@ -195,6 +197,7 @@ function shellOf(thread: Thread) {
     activeRunId: thread.activeRunId === null ? null : RunId.make(thread.activeRunId),
     pendingRuntimeRequest: null,
     settledOverride: thread.settledOverride,
+    ...(thread.snoozed === true ? { snoozedUntil: DateTime.makeUnsafe(at + 3_600_000) } : {}),
     ...(thread.background === true
       ? { pendingBackgroundTasks: [{ kind: "command", taskId: "task-1" }] }
       : {}),
@@ -538,6 +541,7 @@ describe("what the idle move leaves alone (1089)", () => {
   it.effect("a settled thread", () =>
     nothing(world({ threads: [idleThread({ settledOverride: "settled" })] })),
   );
+  it.effect("a snoozed thread", () => nothing(world({ threads: [idleThread({ snoozed: true })] })));
   it.effect("a thread with no run", () =>
     nothing(world({ threads: [idleThread({ latestRunId: null, runs: [] })] })),
   );
