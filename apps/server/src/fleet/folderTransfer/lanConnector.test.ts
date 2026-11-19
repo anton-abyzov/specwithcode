@@ -13,7 +13,7 @@ import {
 } from "./lan.testkit.ts";
 import type { LanCertificate } from "./lanCertificate.ts";
 import { LanConnector, type LanRoute } from "./lanConnector.ts";
-import { LanFailure, mintLanToken, type LanClientLimits } from "./lanWire.ts";
+import { LAN_CLIENT_LIMITS, LanFailure, mintLanToken, type LanClientLimits } from "./lanWire.ts";
 import { CHUNK_OK, encodeFrames, sha256Hex } from "./wire.ts";
 
 const servers: Array<FakeLanServer> = [];
@@ -344,6 +344,34 @@ describe("streamed, counted reads (AC-29)", () => {
     const manifest = await connector.manifest();
     expect("entries" in manifest && manifest.entries).toEqual([manifestLines[1]]);
     expect(connector.wireBytes).toBe(gzipLines(manifestLines).length);
+  });
+
+  it("cuts a progress answer that keeps dripping, as soon as it passes a small answer's size", async () => {
+    const real = certificate("source");
+    let sent = 0;
+    const timers: Array<ReturnType<typeof setInterval>> = [];
+    const source = await serve(
+      real,
+      honest((_request, response) => {
+        // "Not ready yet", and then two kilobytes every few milliseconds, with no end.
+        response.writeHead(202, { "content-type": "application/json" });
+        const drip = setInterval(() => {
+          if (response.destroyed) return clearInterval(drip);
+          sent += 2048;
+          response.write(Buffer.alloc(2048, 32));
+        }, 4);
+        timers.push(drip);
+      }),
+    );
+    const connector = connect({ ports: [source.port], pin: real.sha256 });
+    const started = Date.now();
+    const cause = await failure(connector.manifest());
+    for (const timer of timers) clearInterval(timer);
+    expect(cause.kind).toBe("not_authorization");
+    // It was never slow enough to stall, so only the size can have stopped it, and early.
+    expect(Date.now() - started).toBeLessThan(1_500);
+    expect(sent).toBeLessThan(40 * LAN_CLIENT_LIMITS.smallAnswerBytes);
+    expect(connector.wireBytes).toBe(0);
   });
 
   it("cuts off an oversized or highly compressed manifest at each limit", async () => {

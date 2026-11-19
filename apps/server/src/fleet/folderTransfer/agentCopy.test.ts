@@ -557,6 +557,58 @@ describe("agent folder copy", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live(
+    "answers the first local-network question with one boolean, and a retire with nothing",
+    () =>
+      Effect.gen(function* () {
+        const seen: Array<unknown> = [];
+        const layer = Layer.mergeAll(
+          Layer.mock(MachineHandoff.MachineHandoff)({
+            copyLanProbe: (source: string, body: { purpose: string }) => {
+              seen.push(["probe", source, body.purpose]);
+              return Effect.succeed(true);
+            },
+            copyLanRetire: (source: string, body: { generation: number }) => {
+              seen.push(["retire", source, body.generation]);
+              return Effect.void;
+            },
+          } as never),
+          Layer.mock(ProjectLink.ProjectLink)({}),
+          NodeServices.layer,
+          config,
+        );
+        const operationId = "0b0e9c4e-5d6f-4a1b-8c2d-3e4f5a6b7c8d";
+        const receive = (args: object) =>
+          receiveAgentCopy(args as AgentCopyReceiveInput, { environmentId: SOURCE }).pipe(
+            Effect.provide(layer),
+          );
+        // A machine that does not know the action refuses the call; that is not this answer.
+        const answered = (args: object) =>
+          receive(args).pipe(Effect.orElseSucceed(() => "refused" as const));
+        // No hash, no address, no generation: the capability and yes or no.
+        expect(
+          yield* answered({
+            action: "lanProbe",
+            lanProbe: { operationId, purpose: "sync-measured" },
+          }),
+        ).toEqual({ folderCopyLan: 1, lanReady: true });
+        // The same answer whatever generation is named.
+        for (const generation of [1, 99])
+          expect(
+            yield* answered({ action: "lanRetire", lanRetire: { operationId, generation } }),
+          ).toEqual({ folderCopyLan: 1 });
+        expect(seen).toEqual([
+          ["probe", SOURCE, "sync-measured"],
+          ["retire", SOURCE, 1],
+          ["retire", SOURCE, 99],
+        ]);
+        expect((yield* Effect.flip(receive({ action: "lanProbe" }))).message).toContain("lanProbe");
+        expect((yield* Effect.flip(receive({ action: "lanRetire" }))).message).toContain(
+          "lanRetire",
+        );
+      }).pipe(Effect.scoped),
+  );
+
   it.live("names rebuildable folders as the scan collapses them, skipping repositories", () =>
     Effect.gen(function* () {
       const root = yield* plainFolder;

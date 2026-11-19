@@ -13,14 +13,28 @@ import { FOLDER_TRANSFER_PREFIX } from "./wire.ts";
  * address. The app's own policy (`systemLanPolicy`) never admits loopback, and
  * there is no environment switch that makes it.
  */
-export function loopbackPolicy(): LanPolicy & { network: string; attached: boolean } {
+export function loopbackPolicy(): LanPolicy & {
+  network: string;
+  attached: boolean;
+  /** Where the route to a peer leaves; changing only this is a route-only change. */
+  route: string;
+  /** Private literals this policy admits besides loopback. They are never dialled. */
+  alsoAdmitted: Array<string>;
+  /** How many times the interfaces were listed (a child process in the app's policy). */
+  listed: number;
+} {
   const policy = {
     network: "test0|127.0.0.1/8",
     attached: true,
-    admit: (host: string) => host === "127.0.0.1",
-    eligible: async () =>
-      policy.attached ? [{ name: "test0", address: "127.0.0.1", prefix: 8 }] : [],
-    routeInterface: async () => (policy.attached ? "test0" : null),
+    route: "test0",
+    alsoAdmitted: [] as Array<string>,
+    listed: 0,
+    admit: (host: string) => host === "127.0.0.1" || policy.alsoAdmitted.includes(host),
+    eligible: async () => {
+      policy.listed += 1;
+      return policy.attached ? [{ name: "test0", address: "127.0.0.1", prefix: 8 }] : [];
+    },
+    routeInterface: async () => (policy.attached ? policy.route : null),
     signature: () => policy.network,
   };
   return policy;
@@ -60,6 +74,8 @@ export interface RawClient {
   readonly received: () => Buffer;
   readonly closed: Promise<void>;
   readonly session: () => Buffer | null;
+  /** The code of the error that ended the socket, a TLS alert included; null when none. */
+  readonly failure: () => string | null;
 }
 
 /** A TLS client outside the connector, for peers that must be refused. */
@@ -100,10 +116,14 @@ export function rawClient(input: {
         received: () => Buffer.alloc(0),
         closed: Promise.resolve(),
         session: () => null,
+        failure: () => "ERR_LOCAL_KEY_MISMATCH",
       });
     }
     const closed = new Promise<void>((done) => socket.once("close", () => done()));
-    socket.on("error", () => undefined);
+    let failure: string | null = null;
+    socket.on("error", (cause: NodeJS.ErrnoException) => {
+      failure ??= cause.code ?? cause.message;
+    });
     socket.on("data", (part: Buffer) => parts.push(part));
     socket.on("session", (value) => {
       session = value;
@@ -117,6 +137,7 @@ export function rawClient(input: {
         received: () => Buffer.concat(parts),
         closed,
         session: () => session,
+        failure: () => failure,
       });
     socket.once("secureConnect", () => {
       secure = true;

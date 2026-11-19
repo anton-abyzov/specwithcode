@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off - the LAN listener on real loopback sockets.
 import * as NodeCrypto from "node:crypto";
 import * as NodeNet from "node:net";
+import * as NodeTls from "node:tls";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
@@ -88,11 +89,12 @@ async function rig(
     interfaces: [LOOPBACK],
     certificate: source,
     recipientCertificateSha256: recipient.sha256,
+    recipientCertificatePem: recipient.certificatePem,
     tokenSha256: minted.sha256,
     served,
     budgets,
     now: () => state.clock,
-  });
+  } as never);
   const built: Rig = Object.assign(state, {
     operationId,
     listener,
@@ -166,10 +168,11 @@ describe("address admission (AC-12)", () => {
           interfaces: [{ name: "any", address, prefix: 0 }],
           certificate: r.source,
           recipientCertificateSha256: r.recipient.sha256,
+          recipientCertificatePem: r.recipient.certificatePem,
           tokenSha256: "0".repeat(64),
           served: {} as LanServed,
           budgets: r.budgets,
-        }),
+        } as never),
       ).rejects.toThrow("unbindable");
   });
 });
@@ -314,7 +317,72 @@ describe("recipient proof of possession (AC-03, AC-17)", () => {
     expect(r.listener.stats).toMatchObject({ routed: 0, responses: 0 });
   });
 
-  it("never serves a resumed session", async () => {
+  it("refuses a client with no certificate inside the handshake", async () => {
+    const r = await rig();
+    const client = await rawClient({ port: r.port });
+    client.socket.write(`GET ${lanPath(r.operationId, "hello")} HTTP/1.1\r\nhost: lan\r\n\r\n`);
+    await within(client.closed, 2_000);
+    // The TLS layer says why: the alert, not a socket that was closed after the fact.
+    expect(client.failure()).toBe("ERR_SSL_TLSV13_ALERT_CERTIFICATE_REQUIRED");
+    expect(client.received()).toHaveLength(0);
+    expect(r.listener.stats).toMatchObject({
+      secureConnections: 0,
+      authenticatedSockets: 0,
+      parserSockets: 0,
+      routed: 0,
+      responses: 0,
+    });
+  });
+
+  it("never lets another certificate reach the secure connection, the parser or a byte", async () => {
+    const r = await rig();
+    // A well-formed recipient certificate of another generation, with its own key.
+    const client = await rawClient({ port: r.port, certificate: certificate("recipient") });
+    const answer = await rawRequest(client, {
+      method: "GET",
+      path: lanPath(r.operationId, "hello"),
+      token: r.token,
+      waitMs: 500,
+    });
+    await within(client.closed, 2_000);
+    expect(answer.status).toBeNull();
+    expect(client.received()).toHaveLength(0);
+    // Server side: the handshake was rejected by the TLS layer, before any of this code ran.
+    expect(r.listener.stats).toMatchObject({
+      handshakeFailures: 1,
+      secureConnections: 0,
+      authenticatedSockets: 0,
+      // No socket of this peer was ever given to the HTTP parser, the only reader there is.
+      parserSockets: 0,
+      routed: 0,
+      responses: 0,
+      bodiesOpened: 0,
+    });
+    expect(r.calls).toEqual([]);
+  });
+
+  it("opens only with the certificate whose hash is pinned as its one trust anchor", async () => {
+    const r = await rig();
+    await expect(
+      LanGenerationListener.open({
+        operationId: r.operationId,
+        generation: 2,
+        destinationEnvironmentId: "destination-env",
+        interfaces: [LOOPBACK],
+        certificate: r.source,
+        recipientCertificateSha256: r.recipient.sha256,
+        recipientCertificatePem: certificate("recipient").certificatePem,
+        tokenSha256: "0".repeat(64),
+        served: {} as LanServed,
+        budgets: r.budgets,
+      } as never).then((listener) => {
+        listener.end("shutdown");
+        return "opened";
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("issues tickets and never honours one: a resumed client gets a full handshake", async () => {
     const r = await rig();
     const first = await proven(r);
     await rawRequest(first, {
@@ -324,24 +392,20 @@ describe("recipient proof of possession (AC-03, AC-17)", () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 100));
     const session = first.session();
+    // TLS 1.3 under Node always sends a ticket; this is a real one from this listener.
+    expect(session).not.toBeNull();
     first.socket.destroy();
-    const routed = r.listener.stats.routed;
-    const again = await rawClient({
-      port: r.port,
-      certificate: r.recipient,
-      ...(session ? { session } : {}),
-    });
+    const again = await rawClient({ port: r.port, certificate: r.recipient, session: session! });
     const answer = await rawRequest(again, {
       method: "GET",
       path: lanPath(r.operationId, "hello"),
       token: r.token,
       waitMs: 700,
     });
-    // Either the handshake was a full one, or the resumed socket got nothing.
-    if (again.socket.isSessionReused()) {
-      expect(answer.status).toBeNull();
-      expect(r.listener.stats.routed).toBe(routed);
-    } else expect(answer.status).toBe(200);
+    // Both ends ran the whole handshake again, certificate and key proof included.
+    expect(again.socket.isSessionReused()).toBe(false);
+    expect(answer.status).toBe(200);
+    expect(r.listener.stats).toMatchObject({ secureConnections: 2, authenticatedSockets: 2 });
     again.socket.destroy();
   });
 
@@ -586,39 +650,46 @@ describe("budgets at one past their value (AC-10, AC-28)", () => {
     for (const client of clients) client.socket.destroy();
   });
 
-  it("holds five chunk reads at once to four", async () => {
-    const r = await rig();
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    r.chunks = async () => {
-      await held;
-      return new Uint8Array();
-    };
+  it("answers a fifth chunk read at once 429, on a fifth socket that did reach the route", async () => {
+    // The socket limit is raised for this test only, so the read limit is what refuses.
+    const r = await rig({ limits: { ...quickSourceLimits, authenticatedSockets: 8 } });
+    r.chunks = () => new Promise(() => undefined);
+    const post = `POST ${lanPath(r.operationId, "chunks")} HTTP/1.1\r\nhost: lan\r\nauthorization: Bearer ${r.token}\r\ncontent-length: 13\r\n\r\n{"chunks":[]}`;
     const clients = [];
     for (let index = 0; index < LAN_SOURCE_LIMITS.chunkReadsPerOperation; index += 1) {
       const client = await proven(r);
-      client.socket.write(
-        `POST ${lanPath(r.operationId, "chunks")} HTTP/1.1\r\nhost: lan\r\nauthorization: Bearer ${r.token}\r\ncontent-length: 13\r\n\r\n{"chunks":[]}`,
-      );
+      client.socket.write(post);
       clients.push(client);
     }
     for (let waited = 0; r.calls.length < 4 && waited < 100; waited += 1)
       await new Promise((resolve) => setTimeout(resolve, 10));
     expect(r.calls).toHaveLength(4);
-    // A fifth socket cannot open (four are in use), so one of the four asks again.
-    release();
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    r.chunks = () => new Promise(() => undefined);
-    for (const client of clients)
-      client.socket.write(
-        `POST ${lanPath(r.operationId, "chunks")} HTTP/1.1\r\nhost: lan\r\nauthorization: Bearer ${r.token}\r\ncontent-length: 13\r\n\r\n{"chunks":[]}`,
-      );
-    for (let waited = 0; r.calls.length < 8 && waited < 100; waited += 1)
-      await new Promise((resolve) => setTimeout(resolve, 10));
+    const fifth = await proven(r);
+    clients.push(fifth);
+    const answer = await rawRequest(fifth, {
+      method: "POST",
+      path: lanPath(r.operationId, "chunks"),
+      token: r.token,
+      body: '{"chunks":[]}',
+    });
+    expect(answer.status).toBe(429);
+    // It was refused at the route: the copy's chunks were not read a fifth time.
+    expect(r.calls).toHaveLength(4);
     expect(r.budgets.chunkReads).toBe(4);
     for (const client of clients) client.socket.destroy();
+  });
+
+  it("forgets failed addresses after a minute and never tracks more than its cap", () => {
+    let clock = 1_000_000;
+    const budgets = new LanSourceBudgets(quickSourceLimits, () => clock);
+    const tracked = () => (budgets as unknown as { tracked?: number }).tracked;
+    for (let index = 0; index < 5_000; index += 1)
+      budgets.failed(`10.${(index >> 16) & 255}.${(index >> 8) & 255}.${index & 255}`);
+    expect(typeof tracked()).toBe("number");
+    expect(tracked()).toBeLessThanOrEqual(1024);
+    clock += 61_000;
+    budgets.failed("10.9.9.9");
+    expect(tracked()).toBe(1);
   });
 
   it("counts failed handshakes per address and drops the eleventh at accept for 60 s", async () => {
@@ -688,10 +759,11 @@ describe("budgets at one past their value (AC-10, AC-28)", () => {
         interfaces: [1, 2, 3, 4, 5].map(() => LOOPBACK),
         certificate: r.source,
         recipientCertificateSha256: r.recipient.sha256,
+        recipientCertificatePem: r.recipient.certificatePem,
         tokenSha256: "0".repeat(64),
         served: {} as LanServed,
         budgets: r.budgets,
-      }),
+      } as never),
     ).rejects.toThrow("unbindable");
   });
 });
@@ -758,6 +830,79 @@ describe("lifetime and closing (AC-09, AC-32, AC-33)", () => {
   });
 });
 
+describe("a response is timed by what the peer takes (S-8)", () => {
+  const BODY = 12 * 1024 * 1024;
+
+  /** A proven client that reads the answer only as fast as the test lets it. */
+  async function paced(r: Rig) {
+    const tcp = NodeNet.connect({ host: "127.0.0.1", port: r.port });
+    tcp.on("error", () => undefined);
+    const socket = NodeTls.connect({
+      socket: tcp,
+      minVersion: "TLSv1.3",
+      ALPNProtocols: [LAN_ALPN],
+      rejectUnauthorized: false,
+      cert: r.recipient.certificatePem,
+      key: r.recipient.keyPem,
+    });
+    socket.on("error", () => undefined);
+    socket.pause();
+    await new Promise<void>((resolve) => socket.once("secureConnect", () => resolve()));
+    // The TCP socket: a paused TLS stream does not report the close by itself.
+    const closed = new Promise<void>((resolve) => tcp.once("close", () => resolve()));
+    socket.write(
+      `GET ${lanPath(r.operationId, "manifest")} HTTP/1.1\r\nhost: lan\r\nauthorization: Bearer ${r.token}\r\n\r\n`,
+    );
+    return { socket, closed };
+  }
+
+  it("does not cut a slow reader that keeps taking bytes", async () => {
+    const r = await rig();
+    r.manifest = async () => ({ ready: true as const, bytes: NodeCrypto.randomBytes(BODY) });
+    const { socket, closed } = await paced(r);
+    let taken = 0;
+    const started = Date.now();
+    // 256 KiB every 20 ms: far slower than the link, and never idle for the stall limit.
+    const reader = setInterval(() => {
+      const part = socket.read(256 * 1024) as Buffer | null;
+      taken += (part ?? (socket.read() as Buffer | null))?.length ?? 0;
+    }, 20);
+    await within(
+      (async () => {
+        while (taken < BODY && !socket.destroyed)
+          await new Promise((resolve) => setTimeout(resolve, 20));
+      })(),
+      15_000,
+    );
+    clearInterval(reader);
+    // The whole answer arrived, over a time several stall limits long.
+    expect(taken).toBeGreaterThanOrEqual(BODY);
+    expect(Date.now() - started).toBeGreaterThan(quickSourceLimits.stallMs * 2);
+    socket.destroy();
+    await closed;
+  }, 30_000);
+
+  it("cuts a peer that stops taking bytes, within the stall limit", async () => {
+    const r = await rig();
+    // More than any socket buffer between the two ends can hold for it.
+    r.manifest = async () => ({ ready: true as const, bytes: Buffer.alloc(8 * BODY, 7) });
+    const { socket, closed } = await paced(r);
+    const started = Date.now();
+    // It reads nothing for three stall limits. The source gave up on it meanwhile.
+    await new Promise((resolve) => setTimeout(resolve, quickSourceLimits.stallMs * 3));
+    let taken = 0;
+    socket.on("data", (part: Buffer) => {
+      taken += part.length;
+    });
+    socket.resume();
+    // What it finds when it looks again: a closed connection and a fraction of the answer.
+    expect(await within(closed, 2_000)).not.toBe("timeout");
+    expect(taken).toBeLessThan(BODY);
+    expect(Date.now() - started).toBeLessThan(quickSourceLimits.stallMs * 3 + 2_000);
+    socket.destroy();
+  }, 15_000);
+});
+
 describe("the bound hashes (S-1)", () => {
   it("changes with every bound field and cannot run fields together", () => {
     const scope = {
@@ -765,11 +910,16 @@ describe("the bound hashes (S-1)", () => {
       copyRoot: "/a/b",
       projectRelativePath: ".",
       mode: "copy-only",
+      ceiling: ["tracked"],
     };
-    expect(lanScopeSha256(scope)).toMatch(/^[a-f0-9]{64}$/);
-    expect(lanScopeSha256({ ...scope, copyRoot: "/a", projectRelativePath: "/b." })).not.toBe(
-      lanScopeSha256(scope),
+    const scopeOf = (input: object) => lanScopeSha256(input as never);
+    expect(scopeOf(scope)).toMatch(/^[a-f0-9]{64}$/);
+    expect(scopeOf({ ...scope, copyRoot: "/a", projectRelativePath: "/b." })).not.toBe(
+      scopeOf(scope),
     );
+    // The approved classes are part of the scope: a wider or other set is another hash.
+    expect(scopeOf({ ...scope, ceiling: ["tracked", "untracked"] })).not.toBe(scopeOf(scope));
+    expect(scopeOf({ ...scope, ceiling: ["untracked"] })).not.toBe(scopeOf(scope));
     expect(lanTargetSha256({ targetPath: "/t", kind: "empty" })).not.toBe(
       lanTargetSha256({ targetPath: "/t", kind: "reviewed" }),
     );
