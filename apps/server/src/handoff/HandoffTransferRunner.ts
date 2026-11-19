@@ -225,7 +225,7 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         pendingTakeover: null,
         lastError,
       }))
-      .pipe(Effect.ignore);
+      .pipe(Effect.match({ onFailure: () => false, onSuccess: () => true }));
 
   /**
    * Gives back a hold whose takeover was definitely not accepted. The epoch it
@@ -742,7 +742,9 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       /** Nothing was sent: the thread is given back, and the record says why it stayed. */
       const staysHeld = (message: string | null, detail: string) =>
         finish(operationId, "stayed", detail).pipe(
-          Effect.andThen((ended) => (ended ? releaseUnsent(threadId, message) : Effect.void)),
+          Effect.flatMap((ended) =>
+            ended ? releaseUnsent(threadId, message) : Effect.succeed(false),
+          ),
         );
       // Read the run after the hold: a turn that started before it is the one to stop.
       const heldShell = yield* deps
@@ -750,6 +752,8 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         .pipe(Effect.tapError((error) => staysHeld(null, error.message)));
       let checkpoint = first.checkpoint;
       const resume = deps.resumeTurn(heldShell);
+      /** The stopped turn runs again only once the hold was really given back. */
+      const resumeIf = (released: boolean) => (released ? resume : Effect.void);
       if (heldShell.activeRunId !== null) {
         yield* deps
           .updateRecord(threadId, (record) => ({
@@ -773,13 +777,13 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
                 0,
                 1000,
               );
-            return staysHeld(message, message).pipe(Effect.andThen(resume));
+            return staysHeld(message, message).pipe(Effect.flatMap(resumeIf));
           }),
         );
         checkpoint = again.checkpoint;
       }
       if (Resume.hasUnsettledChild(checkpoint)) {
-        yield* staysHeld(null, Resume.UNSETTLED_CHILD_REFUSAL).pipe(Effect.andThen(resume));
+        yield* staysHeld(null, Resume.UNSETTLED_CHILD_REFUSAL).pipe(Effect.flatMap(resumeIf));
         return yield* failed("failed", Resume.UNSETTLED_CHILD_REFUSAL);
       }
 
