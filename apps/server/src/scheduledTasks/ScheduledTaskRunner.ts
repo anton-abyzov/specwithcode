@@ -747,12 +747,17 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
 
     /**
      * Tells every machine that rests its copy of a routine this machine runs
-     * that it is deleted. Returns the machines that did not confirm.
+     * that it is deleted. Returns the machines that did not confirm. When some
+     * did not, the delete is off, and the ones that did have no copy and no
+     * record any more: they leave the confirmed set, so this machine is back
+     * under the coordinator rule until the next look settles with them again.
+     * Called with the change lock held.
      */
     const tellDeleted = (record: RoutineRunnerRecord, id: ScheduledTaskId, except: string | null) =>
       Effect.gen(function* () {
         const peers = yield* Ref.get(peersRef);
         const unreached: Array<string> = [];
+        const dropped: Array<string> = [];
         for (const member of record.acked) {
           if (member === except) continue;
           const told =
@@ -763,7 +768,16 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
                   .pipe(Effect.result);
           if (told === null || (told._tag === "Failure" && !isOlderRelease(told.failure)))
             unreached.push((peers === null ? null : yield* peers.label(member)) ?? member);
+          else dropped.push(member);
         }
+        if (unreached.length > 0 && dropped.length > 0)
+          yield* records
+            .write({
+              ...record,
+              state: "settling",
+              acked: record.acked.filter((member) => !dropped.includes(member)),
+            })
+            .pipe(Effect.ignore);
         return unreached;
       });
 

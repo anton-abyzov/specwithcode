@@ -119,6 +119,7 @@ function out(
     covered: () => Effect.succeed(true),
     selfEnvironmentId: Effect.succeed(SOURCE),
     revisionOf: () => Effect.succeed(0),
+    setRevision: () => Effect.void,
     newOperationId: Effect.succeed("routine-move:fixture-1"),
   });
   return { transfer, log, memory };
@@ -417,6 +418,7 @@ describe("routine transfer, the target's side", () => {
       writeState: () => Effect.sync(() => void log.push("state")),
       records: memory.records,
       selfEnvironmentId: Effect.succeed(TARGET),
+      revisionOf: () => Effect.succeed(0),
       commitEnable: (input) =>
         Effect.sync(() => {
           log.push("commit");
@@ -534,6 +536,7 @@ describe("a runner move, the target's side", () => {
       writeState: () => Effect.sync(() => void log.push("state")),
       records: memory.records,
       selfEnvironmentId: Effect.succeed(TARGET),
+      revisionOf: () => Effect.succeed(0),
       commitEnable: (input) =>
         Effect.sync(() => {
           log.push(`commit:${input.runState.nextRunAt}`);

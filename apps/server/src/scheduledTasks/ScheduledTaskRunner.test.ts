@@ -858,3 +858,58 @@ it.effect("a move cut off after the routine was turned off turns it on again her
     assert.equal((yield* alpha.record)?.state, "settled");
   }),
 );
+
+it.effect("a routine taken back is named as the runner by every other copy again", () =>
+  Effect.gen(function* () {
+    yield* start;
+    const { machines } = yield* fleet(["alpha", "beta", "gamma"]);
+    const [alpha, beta, gamma] = machines as [Machine, Machine, Machine];
+    const task = yield* alpha.seed();
+    yield* beta.seed();
+    yield* gamma.seed();
+    yield* settle(alpha);
+    assert.equal((yield* move(alpha, beta, task)).kind, "moved");
+    yield* settle(beta);
+    assert.equal((yield* gamma.record)?.runnerEnvironmentId, beta.environmentId);
+    const back = yield* alpha.transfer!.bringBack({
+      task,
+      target: beta.environmentId,
+      targetLabel: "beta",
+      wasEnabled: true,
+    });
+    assert.equal(back.kind, "returned");
+    yield* settle(alpha);
+    assert.equal((yield* gamma.record)?.runnerEnvironmentId, alpha.environmentId);
+    assert.equal((yield* alpha.record)?.state, "settled");
+  }),
+);
+
+it.effect("a delete refused by one unreachable copy never leaves two machines firing", () =>
+  Effect.gen(function* () {
+    yield* start;
+    const { machines, network, everyoneLooks, fires } = yield* fleet(["alpha", "beta", "gamma"]);
+    const [alpha, beta, gamma] = machines as [Machine, Machine, Machine];
+    yield* alpha.seed();
+    yield* beta.seed();
+    yield* gamma.seed();
+    yield* settle(alpha);
+    network.offline.add("gamma");
+    const refused = yield* alpha.service.delete({ id: ROUTINE }).pipe(Effect.flip);
+    assert.equal(refused.message, deleteUnreachedRefusal(["gamma"]));
+    // Beta gave its copy up, so alpha no longer counts it as resting.
+    assert.isUndefined(yield* beta.row);
+    assert.equal((yield* alpha.record)?.state, "settling");
+    assert.notInclude((yield* alpha.record)?.acked ?? [], beta.environmentId);
+    // A replica brings beta's copy back; it is told to rest again before alpha runs alone.
+    yield* beta.seed();
+    network.offline.delete("gamma");
+    yield* settle(alpha);
+    assert.equal((yield* alpha.record)?.state, "settled");
+    assert.equal((yield* beta.record)?.state, "disarmed");
+    yield* alpha.makeDue(DUE);
+    yield* beta.makeDue(DUE);
+    yield* everyoneLooks;
+    assert.equal(fires(), 1);
+    assert.equal(gamma.fires(), 0);
+  }),
+);

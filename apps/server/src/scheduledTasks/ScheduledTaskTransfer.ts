@@ -114,6 +114,8 @@ export const RoutineTransferResponse = Schema.Struct({
   runState: Schema.optional(Schema.NullOr(TransferRunState)),
   /** The routine runs with less access there than here (the grant's cap). */
   capped: Schema.optional(Schema.Boolean),
+  /** `release`: the count of changes this machine reached as the routine's runner. */
+  revision: Schema.optional(NonNegativeInt),
 });
 export type RoutineTransferResponse = typeof RoutineTransferResponse.Type;
 
@@ -175,6 +177,8 @@ export interface TransferOutDeps {
   readonly selfEnvironmentId: Effect.Effect<string | null>;
   /** This machine's count of changes to the routine; the target continues from it. */
   readonly revisionOf: (taskId: string) => Effect.Effect<number>;
+  /** Sets that count: a routine taken back continues above the machine that ran it meanwhile. */
+  readonly setRevision: (taskId: string, revision: number) => Effect.Effect<void>;
   /** One id for a whole move; every step of it, and every retry, carries it. */
   readonly newOperationId: Effect.Effect<string>;
 }
@@ -559,6 +563,12 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
         const operation = Option.getOrNull(decodeOperation(record.operation));
         yield* restoreRecord(input.task.id, operation?.prior ?? null);
       }
+      // Above the count the other copies heard from that machine: they follow the
+      // higher one, so they name this machine again.
+      yield* deps.setRevision(
+        input.task.id,
+        Math.max(released.success.revision ?? 0, yield* deps.revisionOf(input.task.id)) + 1,
+      );
       yield* deps.note(input.task.id, null);
       // On first, then the state: turning on computes its own next run, which the state replaces.
       if (input.wasEnabled) yield* deps.setEnabled(input.task.id, true);
@@ -600,6 +610,8 @@ export interface TransferInDeps {
     "read" | "write" | "remove" | "receipt" | "putReceipt"
   >;
   readonly selfEnvironmentId: Effect.Effect<string | null>;
+  /** This machine's count of changes to a routine it runs. */
+  readonly revisionOf: (taskId: string) => Effect.Effect<number>;
   /**
    * The end of a move, as one write: the carried run state, this machine as
    * the runner, and the receipt that answers every repeat. All of it or none.
@@ -784,8 +796,15 @@ export const makeTransferIn = (deps: TransferInDeps) => {
         case "release": {
           const held = yield* ownRoutine(caller, request.routineId);
           // Already gone: a retry after the first answer was lost.
-          if (held === null)
-            return { routineId: request.routineId, enabled: false, runState: null };
+          if (held === null) {
+            const rests = yield* strict(deps.records.read(request.routineId));
+            return {
+              routineId: request.routineId,
+              enabled: false,
+              runState: null,
+              ...(rests === null ? {} : { revision: rests.revision }),
+            };
+          }
           // Read first: turning it off clears its next run.
           const runState = yield* deps.readState(request.routineId);
           yield* deps
@@ -797,18 +816,21 @@ export const makeTransferIn = (deps: TransferInDeps) => {
           // A routine this machine ran by a runner record goes back to its caller: the
           // record stays, resting, so a copy that arrives later cannot fire here as well.
           const record = yield* strict(deps.records.read(request.routineId));
-          if (record !== null)
-            yield* strict(
-              deps.records.write({
-                ...record,
-                state: "disarmed",
-                runnerEnvironmentId: caller.sourceEnvironmentId,
-                runnerLabel: null,
-                acked: [],
-                operation: null,
-              }),
-            );
-          return { routineId: request.routineId, enabled: false, runState };
+          if (record === null) return { routineId: request.routineId, enabled: false, runState };
+          // Kept on the resting record, so a repeat of this request answers the same count.
+          const revision = yield* deps.revisionOf(request.routineId);
+          yield* strict(
+            deps.records.write({
+              ...record,
+              state: "disarmed",
+              runnerEnvironmentId: caller.sourceEnvironmentId,
+              runnerLabel: null,
+              revision,
+              acked: [],
+              operation: null,
+            }),
+          );
+          return { routineId: request.routineId, enabled: false, runState, revision };
         }
       }
     });
@@ -1088,6 +1110,8 @@ export const makeTransfer = ({ sql, scheduled, post, projects, label }: Transfer
       covered: (record, projectId) => runner.covered(record, projectId as ProjectId),
       selfEnvironmentId: runner.selfEnvironmentId,
       revisionOf: runner.revision,
+      setRevision: (taskId, revision) =>
+        runner.records.setRevision(taskId, revision).pipe(Effect.ignore),
       newOperationId: runner.newId.pipe(Effect.map((id) => `routine-move:${id}`)),
     });
 
@@ -1121,6 +1145,7 @@ export const makeTransfer = ({ sql, scheduled, post, projects, label }: Transfer
         ),
       records: runner.records,
       selfEnvironmentId: runner.selfEnvironmentId,
+      revisionOf: runner.revision,
       commitEnable: (input) =>
         runner.records
           .atomically(
