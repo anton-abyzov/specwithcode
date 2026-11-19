@@ -71,6 +71,7 @@ import {
   checkEpoch,
   deriveHandoffBadge,
   effectiveHandoffMode,
+  EMPTY_HANDOFF_DOCUMENT,
   emptyThreadRecord,
   pendingDisarm,
   type EpochVerdict,
@@ -137,7 +138,14 @@ export class HandoffMode extends Context.Service<
       change: (document: HandoffDocument) => readonly [A, HandoffDocument],
     ) => Effect.Effect<A, HandoffModeError>;
     readonly attachMoves: (port: HandoffMovesPort) => Effect.Effect<void>;
+    /** Fails while the handoff file does not read. */
     readonly snapshot: Effect.Effect<HandoffModeSnapshot, HandoffModeError>;
+    /**
+     * What Settings and the thread rows show; never fails. While the handoff file does
+     * not read it is the empty state without `pendingDisarm` (unknown), so no earlier
+     * answer stays on screen and nothing promises that closing the lid moves nothing.
+     */
+    readonly viewSnapshot: Effect.Effect<HandoffModeSnapshot>;
     readonly updateConfig: (
       patch: HandoffConfigPatch,
     ) => Effect.Effect<HandoffModeSnapshot, HandoffModeError>;
@@ -171,7 +179,7 @@ export class HandoffMode extends Context.Service<
     ) => Effect.Effect<ReadonlyArray<HandoffPreflightResult>, HandoffModeError>;
     /**
      * May this machine act for the thread now? `runId` checks the epoch the
-     * run started under. Never fails: a store it cannot read counts as unleased.
+     * run started under. Never fails: a store it cannot read counts as fenced.
      */
     readonly fence: (threadId: ThreadId, runId?: string | null) => Effect.Effect<EpochVerdict>;
     /** Before an external side effect: proceed, reuse the journaled result, or refuse. */
@@ -195,6 +203,9 @@ export class HandoffMode extends Context.Service<
 >()("specweave-studio/handoff/HandoffMode") {}
 
 const notStarted = new HandoffModeError({ code: "busy", message: "Handoff is still starting." });
+
+const STATE_UNREADABLE =
+  "This machine cannot read its handoff state, so it cannot tell whether another machine runs this thread; it does nothing for the thread until that state reads again.";
 
 const describe = (cause: unknown): string => {
   if (cause instanceof Error) return cause.message.slice(0, 500);
@@ -270,6 +281,13 @@ export const make = Effect.gen(function* () {
   });
 
   const snapshot = Effect.map(store.read, toSnapshot);
+
+  const viewSnapshot = snapshot.pipe(
+    Effect.orElseSucceed((): HandoffModeSnapshot => {
+      const { pendingDisarm: _unknown, ...unread } = toSnapshot(EMPTY_HANDOFF_DOCUMENT);
+      return unread;
+    }),
+  );
 
   const updateThread = (
     threadId: ThreadId,
@@ -663,9 +681,10 @@ export const make = Effect.gen(function* () {
         const epoch = runId == null ? undefined : record?.runEpochs[runId];
         return checkEpoch(record, environmentId, epoch);
       }),
+      // A lease state that does not read may hide a move: this copy acts on nothing.
       Effect.catchCause((cause) =>
         Effect.logWarning("Handoff mode could not read its lease state", { cause }).pipe(
-          Effect.as<EpochVerdict>({ kind: "unleased" }),
+          Effect.as<EpochVerdict>({ kind: "fenced", message: STATE_UNREADABLE }),
         ),
       ),
     );
@@ -685,13 +704,11 @@ export const make = Effect.gen(function* () {
             : { epoch: record.runEpochs[input.runId] }),
         });
       }),
+      // Neither the lease nor the journal reads: the effect may belong to another
+      // machine's copy now, or already be done, so it is not repeated here.
       Effect.catchCause((cause) =>
         Effect.logWarning("Handoff mode could not read its side-effect journal", { cause }).pipe(
-          Effect.as<SideEffectVerdict>({
-            kind: "proceed",
-            epoch: 0,
-            turnKey: threadTurnKey(input.threadId, input.runId),
-          }),
+          Effect.as<SideEffectVerdict>({ kind: "refuse", message: STATE_UNREADABLE }),
         ),
       ),
     );
@@ -839,6 +856,7 @@ export const make = Effect.gen(function* () {
         moves = port;
       }),
     snapshot,
+    viewSnapshot,
     updateConfig,
     setThreadMode,
     setProjectMode,
@@ -870,7 +888,7 @@ export const layerRpcHandlers = WsHandoffModeRpcGroup.middleware(RpcInstrumentat
   Effect.gen(function* () {
     const handoff = yield* HandoffMode;
     return {
-      [WS_METHODS.handoffModeSnapshot]: () => handoff.snapshot,
+      [WS_METHODS.handoffModeSnapshot]: () => handoff.viewSnapshot,
       [WS_METHODS.handoffModeUpdateConfig]: handoff.updateConfig,
       [WS_METHODS.handoffModeSetThreadMode]: handoff.setThreadMode,
       [WS_METHODS.handoffModeSetProjectMode]: handoff.setProjectMode,

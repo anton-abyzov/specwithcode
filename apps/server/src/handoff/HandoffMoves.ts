@@ -1168,10 +1168,15 @@ export const make = Effect.gen(function* () {
     self,
     document: handoff.document,
     updateRecord: (threadId, change) => updateRecord(threadId, change).pipe(Effect.ignore),
-    threadShell: (threadId) =>
-      projections.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null)),
+    saveRecord: updateRecord,
+    readShell: (threadId) => projections.getThreadShell(threadId).pipe(Effect.option),
     peerLabel,
     interruptRun: (shell, reason) => interruptRun(shell, reason).pipe(Effect.asVoid),
+    followContinuation: (shell, peer, response, epoch) =>
+      interruptRun(shell, `This thread continues on ${response.machineLabel}.`).pipe(
+        Effect.andThen(keepChangesAfterFence(shell, peer)),
+        Effect.andThen(fenceSource(shell, peer, response, epoch, "handoff")),
+      ),
   });
 
   /**
@@ -1203,10 +1208,10 @@ export const make = Effect.gen(function* () {
           ),
       { concurrency: "unbounded" },
     );
-    for (const { peer, page, answer } of answers) {
-      if (Option.isNone(answer)) continue;
+    for (const { peer, page, answer: heard } of answers) {
+      if (Option.isNone(heard)) continue;
       lastAnswer.set(peer, now);
-      const plan = autoContinue.answered({ document, peer, page, answer: answer.value, now });
+      const plan = yield* autoContinue.answered({ document, peer, page, answer: heard.value, now });
       if (plan.disarm) yield* handoff.updateDocument(Drain.disarmPeer(peer));
       // A takeover sleep started is never sent again (1390 AC-36): only its own "not
       // started" gives it back. One someone asked for is sent again until answered.
@@ -1226,28 +1231,8 @@ export const make = Effect.gen(function* () {
           ),
         );
       }
-      for (const continued of answer.value.continued) {
-        const shell = yield* projections
-          .getThreadShell(continued.sourceThreadId)
-          .pipe(Effect.orElseSucceed(() => null));
-        if (shell === null) continue;
-        yield* interruptRun(shell, `This thread continues on ${answer.value.machineLabel}.`);
-        yield* keepChangesAfterFence(shell, peer);
-        yield* fenceSource(
-          shell,
-          peer,
-          {
-            threadId: continued.threadId,
-            machineLabel: answer.value.machineLabel,
-            modelSelection: null,
-            resumed: false,
-            notice: null,
-          },
-          continued.epoch,
-          "handoff",
-        );
-      }
     }
+    yield* autoContinue.followUp;
     yield* autoContinue.fenceQuiet(now);
     const usableRemote = (record: (typeof document.threads)[string]) =>
       record.replicas.filter(

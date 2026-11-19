@@ -335,6 +335,10 @@ export type AwayIntentThreadStatus = typeof AwayIntentThreadStatus.Type;
 export const AwayIntentStatusAnswer = Schema.Struct({
   /** The state of the source's latest intent here, or null without one. */
   intentState: Schema.NullOr(AwayIntentState),
+  /**
+   * The asked projects. An asked project left out is in doubt on the target
+   * (it may have taken it over and handed it on): the source keeps holding it.
+   */
   projects: Schema.Array(AwayIntentProjectStatus),
   /**
    * The asked threads; absent from targets that predate it. An asked thread

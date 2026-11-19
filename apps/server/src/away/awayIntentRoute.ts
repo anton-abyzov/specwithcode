@@ -1,10 +1,12 @@
 /**
  * The routes a machine going to sleep used to reach its Away target on
  * (1267 AC-09; 1390 AC-36). Sleep starts nothing now:
- * `POST /api/away/v1/intent` refuses every new intent with a definite answer,
- * so a machine on an earlier release keeps its work and lets its hold go. A
+ * `POST /api/away/v1/intent` refuses new work with a definite answer, so a
+ * machine on an earlier release keeps its work and lets its hold go. A
  * request that may repeat the intent recorded here before the update gets
- * that intent back instead, so its sender keeps its hold and asks on wake.
+ * that intent back instead, and one naming work that may already continue
+ * here gets no answer yet: either way its sender keeps its hold and asks on
+ * wake.
  * `POST /api/away/v1/intent/cancel` and `POST /api/away/v1/intent/status`
  * still answer for intents recorded before this machine updated: whether one
  * was cancelled, and per project whether this machine took it over, with the
@@ -42,7 +44,7 @@ import { HandoffReceiver, type ReceiverCaller } from "../handoff/HandoffReceiver
 import type { ContinuationEvidence } from "../handoff/handoffState.ts";
 import { parseJson } from "../json.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import { AwayIntents, type AwayIntentsShape, projectStatus } from "./AwayIntents.ts";
+import { AwayIntents, type AwayIntentsShape, linkedCopyOf, projectStatus } from "./AwayIntents.ts";
 import { answerJson, awayPeerCaller } from "./awayPeerCall.ts";
 
 const MAX_BODY_BYTES = 128 * 1024;
@@ -112,17 +114,81 @@ const mayRepeat = (
 };
 
 /**
+ * What a refusal of an intent is checked against: this machine's own record
+ * of the work it names, whatever its intents still hold.
+ */
+export interface IntentRefusalEvidence {
+  /** This machine's projects; none when they do not read. Read only for an intent naming projects. */
+  readonly projects: Effect.Effect<Option.Option<ReadonlyArray<Project>>>;
+  /** Handoff mode's receiver for the caller's thread. Never launches. */
+  readonly continuation: (sourceThreadId: string) => Effect.Effect<ContinuationEvidence>;
+}
+
+/**
+ * Whether the source's project provably never moved here: this machine has
+ * no linked copy of it, or its copy has no binding or defers to the source's
+ * copy. A copy that coordinates, is mid-handover or defers to a third machine
+ * proves nothing: a binding that gave way names no predecessor, so one that
+ * took the project over from the source and handed it on reads like that.
+ */
+const stayedWithSource = (
+  projects: ReadonlyArray<Project>,
+  sourceEnvironmentId: string,
+  sourceProjectId: string,
+): boolean => {
+  const copy = linkedCopyOf(projects, sourceEnvironmentId, sourceProjectId);
+  const binding = copy?.workspaceSettings?.coordinatorBinding;
+  return (
+    copy === undefined ||
+    binding == null ||
+    (binding.state === "transferred" &&
+      binding.successor?.environmentId === sourceEnvironmentId &&
+      binding.successor.projectId === sourceProjectId)
+  );
+};
+
+/**
+ * Whether any work the request names began here or cannot be told apart from
+ * work that did: a project that may have moved here, a thread continued here
+ * or whose launch is in doubt, or projects that do not read. Read from the
+ * bindings and handoff mode, so an intent record compacted away, or older
+ * than the source's latest, still counts.
+ */
+const anyBeganHere = (
+  sourceEnvironmentId: string,
+  request: Pick<AwayIntentRequest, "projectIds" | "threadIds">,
+  evidence: IntentRefusalEvidence,
+): Effect.Effect<boolean> =>
+  Effect.gen(function* () {
+    if (request.projectIds.length > 0) {
+      const projects = yield* evidence.projects;
+      if (Option.isNone(projects)) return true;
+      for (const projectId of request.projectIds)
+        if (!stayedWithSource(projects.value, sourceEnvironmentId, projectId)) return true;
+    }
+    const threads = yield* Effect.forEach(request.threadIds, (threadId) =>
+      evidence.continuation(threadId),
+    );
+    return threads.some((found) => found.kind !== "none");
+  });
+
+/**
  * An intent from `caller`. Nothing is recorded and nothing starts. One that
  * may repeat the source's latest intent here (`mayRepeat`) gets it back as an earlier
  * release answered its first delivery (200, the intent and the projects not
  * kept), so its sender holds and settles on wake through cancel and status.
- * Any other is refused with 409 and a reason, which a sender on an earlier
- * release reads as a definite "no". When the intents do not read, 503.
+ * Only proven new work is refused with 409 and a reason, which a sender on an
+ * earlier release reads as a definite "no" and runs: none of the work it names
+ * began here (`anyBeganHere`). Otherwise, or when the intents do not read, 503
+ * without `error`: its sender keeps every hold, and its wake check settles
+ * each project and thread from this machine's evidence, with or without a
+ * record of the intent.
  */
 export const recordIntent = (
   caller: ReceiverCaller,
   raw: unknown,
   intents: Pick<AwayIntentsShape, "list">,
+  evidence: IntentRefusalEvidence,
 ): Effect.Effect<IntentAnswer> =>
   Effect.gen(function* () {
     const body = decodeIntent(raw);
@@ -150,6 +216,14 @@ export const recordIntent = (
           refusedProjectIds: body.value.projectIds.filter(
             (projectId) => !latest.projectIds.includes(projectId),
           ),
+        },
+      };
+    if (yield* anyBeganHere(caller.sourceEnvironmentId, body.value, evidence))
+      return {
+        status: NOT_NOW,
+        body: {
+          unavailable:
+            "Some of this work may already continue on this machine. Ask what happened to it after waking.",
         },
       };
     return { status: 409, body: { error: SLEEP_START_REFUSAL } };
@@ -186,7 +260,9 @@ const notNow = (error: string): IntentAnswer => ({ status: NOT_NOW, body: { erro
  * Whether this machine took over each of the caller's projects. Answered from
  * the bindings here, not only from the intents: a planned handover in doubt
  * and an intent that acted both show as a copy that coordinates with the
- * caller's copy as its predecessor.
+ * caller's copy as its predecessor. Not taken over is answered only where the
+ * project provably stayed with the caller (`stayedWithSource`); any other is
+ * left out of `projects`, which a source on any release keeps held.
  *
  * Each asked thread is answered from handoff mode: continued names the
  * thread here; provably not begun is null. A thread whose launch here is in
@@ -235,9 +311,13 @@ export const intentStatus = <E>(
       return notNow("This machine cannot tell yet whether it continued a thread. Ask again.");
     const answer: AwayIntentStatusAnswer = {
       intentState: state.success,
-      projects: projectIds.map((projectId) =>
-        projectStatus(projectsHere, selfEnvironmentId, caller.sourceEnvironmentId, projectId),
-      ),
+      projects: projectIds.flatMap((projectId) => {
+        const source = caller.sourceEnvironmentId;
+        const status = projectStatus(projectsHere, selfEnvironmentId, source, projectId);
+        // Neither taken over nor deferring to the source: it may have come here and gone on.
+        const known = status.takenOver || stayedWithSource(projectsHere, source, projectId);
+        return known ? [status] : [];
+      }),
       ...(asked === undefined
         ? {}
         : {
@@ -269,7 +349,17 @@ const intentRoute = HttpRouter.add(
     if ("refused" in who) return who.refused;
     const body = yield* readBody;
     if (body === undefined) return tooLarge;
-    const answer = yield* recordIntent(who.caller, body.raw, yield* AwayIntents);
+    const projects = (yield* ProjectService.ProjectService).snapshot.pipe(
+      Effect.map((snapshot) => snapshot.projects),
+      Effect.option,
+    );
+    // The receiver the handoff peer route uses, so its takeover lock orders these reads.
+    const receiver = yield* HandoffReceiver;
+    const answer = yield* recordIntent(who.caller, body.raw, yield* AwayIntents, {
+      projects,
+      continuation: (sourceThreadId) =>
+        receiver.continuation(who.caller.sourceEnvironmentId, sourceThreadId),
+    });
     return answerJson(answer.status, answer.body);
   }),
 );

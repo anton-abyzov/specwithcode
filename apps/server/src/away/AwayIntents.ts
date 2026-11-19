@@ -59,7 +59,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import { forkParked } from "../serverActivation.ts";
 
 const FILE_NAME = "away-intents.json";
-/** Settled intents kept for the summary; older ones are dropped. */
+/** Settled intents kept for the summary; older ones are dropped, except each source's receipts. */
 const KEEP_SETTLED = 50;
 /** Why a waiting intent ends: sleep no longer starts a move (1390 AC-36). */
 export const SLEEP_START_RETIRED = "sleep-start-retired";
@@ -363,13 +363,36 @@ export function actedResults(
   });
 }
 
-/** Keeps every open intent and the newest settled ones. */
+/**
+ * The intents no compaction drops: each source's latest, which cancel and
+ * status answer about, and its latest done one, the receipt that its work
+ * moved here. One is retired only once a later one of the same kind from the
+ * same source is recorded, which only an earlier release does, so other
+ * sources' intents never push them out.
+ */
+function receiptsOf(intents: ReadonlyArray<AwayIntentRecord>): ReadonlySet<string> {
+  const latest = new Map<string, string>();
+  const done = new Map<string, string>();
+  for (const intent of intents) {
+    latest.set(intent.sourceEnvironmentId, intent.intentId);
+    if (intent.state === "done") done.set(intent.sourceEnvironmentId, intent.intentId);
+  }
+  return new Set([...latest.values(), ...done.values()]);
+}
+
+/** Keeps every open intent, every source's receipts and the newest other settled ones. */
 function trim(file: StoreFile): StoreFile {
   const settled = file.intents.filter(
     (intent) => intent.state !== "waiting" && intent.state !== "acting",
   );
   if (settled.length <= KEEP_SETTLED) return file;
-  const drop = new Set(settled.slice(0, settled.length - KEEP_SETTLED).map((i) => i.intentId));
+  const kept = receiptsOf(file.intents);
+  const drop = new Set(
+    settled
+      .filter((intent) => !kept.has(intent.intentId))
+      .slice(0, settled.length - KEEP_SETTLED)
+      .map((intent) => intent.intentId),
+  );
   return { ...file, intents: file.intents.filter((intent) => !drop.has(intent.intentId)) };
 }
 

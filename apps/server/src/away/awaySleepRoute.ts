@@ -65,6 +65,7 @@ import { type AwayPeerPost, makeAwayPeerPost } from "./awayPeerCall.ts";
 import { makeLiveSleepSession, type SleepSessionPort } from "./awaySleepSession.ts";
 import {
   type AwayWakeHoldStore,
+  isUnreadableHold,
   makeFileWakeHoldStore,
   memoryWakeHoldStore,
   releaseProjects,
@@ -248,14 +249,20 @@ export const makeAwaySleep = (deps: AwaySleepDeps) =>
      * Cancels the intent, then asks the target what it took over. Gives way
      * for each project taken over and releases each project the target did
      * not take and will not (its latest intent is cancelled, done, or gone).
-     * Held worker threads are released once the target says it did not
-     * continue them (and will not), or once handoff mode records the
+     * Held worker threads are released once the target names them as not
+     * continued (and never to be), or once handoff mode records the
      * continuation here, which fences them and keeps their queues. Anything
-     * else keeps the hold. `answered` says whether the target answered.
+     * else keeps the hold: a project or thread the answer leaves out, an answer
+     * that says nothing of threads, or a hold that does not read. `answered`
+     * says whether the target answered for all that is held; without that,
+     * Run here anyway is offered after a while.
      */
     const check = (session: AwaySleepSession) =>
       Effect.gen(function* () {
         const target = session.targetEnvironmentId;
+        const before = yield* hold.read;
+        // Which work is held is unknown: nothing is asked or let go until the hold reads.
+        if (isUnreadableHold(before)) return { outcome: "unresolved", answered: false } as const;
         const cancel = yield* deps
           .post(
             target,
@@ -264,7 +271,10 @@ export const makeAwaySleep = (deps: AwaySleepDeps) =>
             AWAY_SLEEP_SEND_TIMEOUT_MS,
           )
           .pipe(Effect.result);
-        if (cancel._tag === "Success" && cancelledCount(cancel.success.json) > 0) {
+        // The cancel proves only that the intents waiting there never acted. A hold an earlier
+        // lid close left unresolved (it began before this one) may name work that did.
+        const ownHold = before === null || before.since === session.sentAt;
+        if (cancel._tag === "Success" && cancelledCount(cancel.success.json) > 0 && ownHold) {
           yield* releaseEverything;
           return { outcome: "nothing-moved", answered: true } as const;
         }
@@ -330,15 +340,24 @@ export const makeAwaySleep = (deps: AwaySleepDeps) =>
         const continuedThere: string[] = [];
         for (const threadId of heldThreads) {
           const entry = answer.threads?.find((thread) => thread.threadId === threadId);
-          if (entry?.continuedThreadId != null) continuedThere.push(threadId);
+          // Left out, or no word on threads at all: no answer for it, so it stays held.
+          if (entry === undefined) continue;
+          if (entry.continuedThreadId != null) continuedThere.push(threadId);
           else if (
-            answer.threads === undefined ||
             answer.intentState === "cancelled" ||
             answer.intentState === null ||
-            (entry !== undefined && answer.threadsSettled === true)
+            answer.threadsSettled === true
           )
             notContinued.push(threadId);
         }
+        // Run here anyway stays on offer while the target says nothing of a held project or thread.
+        const answeredProjects = new Set<string>(answer.projects.map((entry) => entry.projectId));
+        const answeredThreads = new Set<string>(
+          (answer.threads ?? []).map((entry) => entry.threadId),
+        );
+        const allAnswered =
+          heldThreads.every((threadId) => answeredThreads.has(threadId)) &&
+          heldIds.every((projectId) => answeredProjects.has(projectId));
         if (continuedThere.length > 0) moved = true;
         const fenced =
           continuedThere.length === 0
@@ -357,7 +376,7 @@ export const makeAwaySleep = (deps: AwaySleepDeps) =>
           yield* stopHeld(
             "This machine is checking whether another machine took over its coordinator.",
           );
-          return { outcome: "unresolved", answered: true } as const;
+          return { outcome: "unresolved", answered: allAnswered } as const;
         }
         if (!settled) return { outcome: "unresolved", answered: true } as const;
         return { outcome: moved ? "moved" : "nothing-moved", answered: true } as const;
@@ -431,12 +450,23 @@ export const makeAwaySleep = (deps: AwaySleepDeps) =>
         send: Effect.void,
       } satisfies AwaySleepDecision);
 
+    /**
+     * Whether a lid close the target refused holds only its own work: the refusal
+     * proves that intent moved nothing. A hold an earlier lid close left, or one that
+     * does not read, may name work that did, so the check settles it instead.
+     */
+    const refusedOwnHold = (session: AwaySleepSession) =>
+      Effect.map(hold.read, (held) => {
+        if (session.state !== "send-failed") return false;
+        return held === null || (!isUnreadableHold(held) && held.since === session.sentAt);
+      });
+
     const wake = (request: AwayWakeRequest) =>
       lock.withPermit(
         Effect.gen(function* () {
           const session = yield* deps.store.read;
           if (session === null) return { outcome: "none" } satisfies AwayWakeAnswer;
-          if (session.state === "send-failed") {
+          if (yield* refusedOwnHold(session)) {
             // One write: routines on again, the session closed and its sleep record dropped.
             if (deps.away !== undefined) yield* deps.away.nothingMoved;
             else yield* deps.store.write(null);
@@ -445,7 +475,8 @@ export const makeAwaySleep = (deps: AwaySleepDeps) =>
           }
           // Already prompted on an earlier wake or unlock; the card reads the session.
           if (session.state === "wake-prompt") return { outcome: "none" } satisfies AwayWakeAnswer;
-          // pending-intent or send-uncertain: the target may hold the intent, or have acted.
+          // pending-intent, send-uncertain, or refused beside other held work: the target
+          // may hold an intent, or have acted.
           return yield* afterCheck(session, yield* check(session), request);
         }),
       );
@@ -462,8 +493,9 @@ export const makeAwaySleep = (deps: AwaySleepDeps) =>
     const retry: AwaySleepShape["retry"] = lock.withPermit(
       Effect.gen(function* () {
         const session = yield* deps.store.read;
-        if (session === null) return null;
-        if (session.state === "send-failed" || session.state === "wake-prompt") return null;
+        if (session === null || session.state === "wake-prompt") return null;
+        // A refused lid close holding only its own work is settled by the wake.
+        if (yield* refusedOwnHold(session)) return null;
         const now = yield* Clock.currentTimeMillis;
         // Before a wake notice the machine may be about to sleep: cancelling then would leave nothing covered.
         if (
