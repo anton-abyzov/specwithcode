@@ -2028,6 +2028,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             nextMessage?.scheduledTaskId,
           ),
           projection.runs,
+          projection.messages,
         ) !== null;
       if (
         breakerHolds ||
@@ -5879,7 +5880,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       // A thread whose last runs all failed stops re-running itself.
-      const breakerRefusal = failedRunBreakerRefusal(isBreakerGuardedRun(command), projection.runs);
+      const breakerRefusal = failedRunBreakerRefusal(
+        isBreakerGuardedRun(command),
+        projection.runs,
+        projection.messages,
+      );
       if (breakerRefusal !== null) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
