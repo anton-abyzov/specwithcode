@@ -57,7 +57,7 @@ import { projectCompatibleProviders } from "../project/ProjectProviderCompatibil
 import * as Projects from "../project/ProjectService.ts";
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import { SIMULATED_USAGE_LIMIT_MESSAGE, simulatedUsageLimitInstances } from "./ProviderFailure.ts";
-import { limitHandoffTrackState } from "./limitHandoffTrack.ts";
+import { limitHandoffStillAdmitted, limitHandoffTrackState } from "./limitHandoffTrack.ts";
 import { limitHandoffTrigger, MachineLimitHandoff } from "./MachineLimitHandoff.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -2111,13 +2111,9 @@ export const makeSweep = Effect.gen(function* () {
           const local =
             providerLimitStep(current, own, rule, at, { ...options, limited: limitedNow })?.type ??
             null;
-          const fresh = triggerFor(current, own, rule, local, at, limitedNow);
-          // The same stop, and the same track still out here: a move is for both.
-          return (
-            fresh !== null &&
-            fresh.key === trigger?.key &&
-            fresh.track?.track === trigger.track?.track &&
-            fresh.track?.outHere === trigger.track?.outHere
+          return limitHandoffStillAdmitted(
+            trigger,
+            triggerFor(current, own, rule, local, at, limitedNow),
           );
         }),
       ).pipe(
