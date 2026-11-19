@@ -131,7 +131,9 @@ import {
 } from "@specweave-studio/shared/teamRules";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import { apiCreditDetourResumeRefused } from "./providerOpenFailure.ts";
+import { PRESWITCH_TURN_STARTED, preswitchMoveRefusal } from "./limitPreswitchGuard.ts";
 import {
+  LIMIT_PRESWITCH_COMMAND_PREFIX,
   launchFallbackAfterMove,
   limitPreswitchAfterMove,
 } from "@specweave-studio/shared/threadModelIdentity";
@@ -3334,6 +3336,33 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandType: command.type,
         cause: `Thread ${command.threadId} is deleted.`,
       });
+    }
+    // A move planned from one selection never replaces another: a pick that
+    // landed after the plan wins (1089).
+    if (
+      command.type === "thread.model-selection.set" &&
+      command.expectedModelSelection !== undefined &&
+      !modelSelectionsEqual(thread.modelSelection, command.expectedModelSelection)
+    )
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "The thread's model changed since this move was planned.",
+      });
+    // The move before the limit (1089) is judged again here, on the thread as
+    // it is when the move lands: the sweep's checks run before this command
+    // is applied, and a Stop or a new turn can land in between.
+    if (
+      command.type === "thread.model-selection.set" &&
+      command.commandId.startsWith(LIMIT_PRESWITCH_COMMAND_PREFIX)
+    ) {
+      const refusal = yield* preswitchRefusal(command, thread);
+      if (refusal !== null)
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: refusal,
+        });
     }
     if (
       command.type === "thread.pull-request.watch" &&
@@ -10603,6 +10632,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         mapDispatchError(command),
       );
 
+  /** `preswitchMoveRefusal`, then a person's Stop on the latest turn. */
+  const preswitchRefusal = (
+    command: Extract<OrchestrationV2ServerCommand, { type: "thread.model-selection.set" }>,
+    thread: OrchestrationV2AppThread,
+  ) =>
+    Effect.gen(function* () {
+      // Settled or snoozed since the sweep planned it: the thread stays put.
+      if (thread.settledOverride === "settled") return "The thread was settled.";
+      const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+      if (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs)
+        return "The thread is snoozed.";
+      const { runs } = yield* loadProjectionForCommand(command, ["runs"]);
+      const { refusal, latest } = preswitchMoveRefusal(runs);
+      if (refusal !== null || latest === null) return refusal;
+      if (yield* stopHoldsLimitResume(command, { thread }, latest.id)) return STOPPED_THREAD_REFUSAL;
+      return null;
+    });
+
   /**
    * Whether a person's Stop holds a run that recovery or provider fallback
    * would continue by itself (see `personStopHoldsRun`). Stop turns recovery's
@@ -13497,7 +13544,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           // can go through once the thread's user lowers it again.
           if (
             cause._tag === "OrchestratorThreadAboveModeLimitError" ||
-            cause._tag === "OrchestratorTeamRulesRefusedError"
+            cause._tag === "OrchestratorTeamRulesRefusedError" ||
+            // A turn beat the move before the limit: it may go out after that turn.
+            (cause._tag === "OrchestratorDispatchError" && cause.cause === PRESWITCH_TURN_STARTED)
           )
             return yield* cause;
           // An answer's id is stable per request and answer, so a retry after a

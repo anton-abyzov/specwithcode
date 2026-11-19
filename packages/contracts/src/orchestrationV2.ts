@@ -3458,6 +3458,12 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     modelSelection: ModelSelection,
+    /**
+     * The selection the move was planned from. When set, the move is refused
+     * if the thread's selection changed since, so a server move never
+     * replaces a pick made after it was planned.
+     */
+    expectedModelSelection: Schema.optional(ModelSelection),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.advisor-mode.set"),
