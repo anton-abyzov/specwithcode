@@ -242,13 +242,15 @@ describe("equal coordinators: the migration (AC-35, EC2-07)", () => {
       logicalProjectId: pair.identity.id,
     } as never);
     await Effect.runPromise(
-      pair.m3.rearmStore.modify(pair.identity.id, () => ({
-        logicalProjectId: pair.identity.id,
-        projectId: pair.joining.projectId,
-        consent: null,
-        consentUpdatedAt: null,
-        run: null,
-      })) as Effect.Effect<unknown>,
+      pair.m3.rearmStore
+        .modify(pair.identity.id, () => ({
+          logicalProjectId: pair.identity.id,
+          projectId: pair.joining.projectId,
+          consent: null,
+          consentUpdatedAt: null,
+          run: null,
+        }))
+        .pipe(Effect.orDie),
     );
 
     const kept = await runMigration(pair.m4);
@@ -471,7 +473,9 @@ describe(`equal coordinators: compatibility with ${PINNED_RELEASE} (EC2-09)`, ()
         projectId: pair.joining.projectId,
         kept: prepared.kept,
         logicalProject: prepared.logicalProject,
-        coordinatorBinding: decodeOld(JSON.parse(JSON.stringify(prepared.coordinatorBinding))),
+        coordinatorBinding: decodeNew(
+          decodeOld(JSON.parse(JSON.stringify(prepared.coordinatorBinding))),
+        ),
         keptFingerprint: prepared.fingerprint,
       }),
     );
@@ -489,12 +493,14 @@ describe(`equal coordinators: compatibility with ${PINNED_RELEASE} (EC2-09)`, ()
       successor: pair.kept,
       coordinatorBinding: supersedingBinding(pair.joining),
     });
+    expect(request.successor).toEqual(pair.kept);
     const error = (await pair.m3.fails(
       pair.m3.run((service) =>
         service.supersede({
           projectId: pair.joining.projectId,
           logicalProjectId: request.logicalProjectId,
-          successor: request.successor,
+          // The successor the request names, as this build's own member type.
+          successor: pair.kept,
           coordinatorBinding: decodeNew(request.coordinatorBinding),
         }),
       ),

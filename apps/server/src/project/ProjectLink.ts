@@ -637,7 +637,7 @@ const make = Effect.gen(function* () {
         const binding = project.workspaceSettings?.coordinatorBinding;
         if (current?.id === input.logicalProject.id) {
           // Already this identity's member: a retry, or the same link done before.
-          if (joinedBy(binding, input.operationId))
+          if (binding != null && joinedBy(binding, input.operationId))
             return {
               operationId: input.operationId,
               member: self,
