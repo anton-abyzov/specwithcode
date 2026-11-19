@@ -12,6 +12,7 @@ import { type RefObject, useEffect, useLayoutEffect, useState } from "react";
 export type QuestionOptionsLayout = "measure" | "all" | "compact";
 
 const SETTLE_MS = 150;
+const MAX_FOLD_WAITS = 20;
 
 /**
  * Picks the layout again only when the content changes (a new prompt or the
@@ -58,18 +59,26 @@ export function useQuestionOptionsLayout(
     const root = viewportOf(cardRef.current)?.parentElement ?? null;
     if (!root) return;
     let timer: number | null = null;
+    // Set when the text's font changed: measure again even at the same size.
+    let fontsChanged = false;
+    let waits = 0;
     // A folded card's scroll area is detached or empty: nothing to compare.
     const measurable = () => root.isConnected && root.clientWidth > 0;
     const recheck = () => {
       if (!measurable()) return;
-      // Mid fold or unfold: pick once the panel has settled at its height.
-      if (folding(root)) {
+      // Mid fold or unfold: pick once the panel has settled at its height
+      // (with a cap, should the panel ever carry an endless animation).
+      if (folding(root) && waits < MAX_FOLD_WAITS) {
+        waits += 1;
         settle();
         return;
       }
+      waits = 0;
       const space = spaceOf(root);
+      const force = fontsChanged;
+      fontsChanged = false;
       setMeasured((current) =>
-        current && !current.stale && current.space !== space
+        current && !current.stale && (force || current.space !== space)
           ? { ...current, stale: true }
           : current,
       );
@@ -92,8 +101,9 @@ export function useQuestionOptionsLayout(
     let live = true;
     if (typeof document !== "undefined" && document.fonts?.status === "loading") {
       void document.fonts.ready.then(() => {
-        if (!live || !measurable()) return;
-        setMeasured((current) => (current && !current.stale ? { ...current, stale: true } : current));
+        if (!live) return;
+        fontsChanged = true;
+        settle();
       });
     }
     return () => {
