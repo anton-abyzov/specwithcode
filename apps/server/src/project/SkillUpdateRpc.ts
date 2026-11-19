@@ -195,7 +195,7 @@ export const makeSkillInstallRuntime = Effect.fn("SkillManagement.installRuntime
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const run = yield* makeRunCli;
-    let nodeDir: string | undefined;
+    const runtimes = new Map<string, string>();
     const findVskill = Effect.gen(function* () {
       const external = yield* findVskillBinary({
         home: input.home,
@@ -204,7 +204,10 @@ export const makeSkillInstallRuntime = Effect.fn("SkillManagement.installRuntime
         appData: input.environment.APPDATA,
         pathExt: input.environment.PATHEXT,
       });
-      if (external !== null) return external;
+      if (external !== null) {
+        runtimes.delete(external);
+        return external;
+      }
       const prepared = yield* Effect.tryPromise({
         try: () =>
           prepareManagedVskill({
@@ -233,7 +236,7 @@ export const makeSkillInstallRuntime = Effect.fn("SkillManagement.installRuntime
           }),
         catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
       });
-      nodeDir = prepared.nodeDir;
+      runtimes.set(prepared.binary, prepared.nodeDir);
       return prepared.binary;
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
@@ -244,9 +247,10 @@ export const makeSkillInstallRuntime = Effect.fn("SkillManagement.installRuntime
       run: (request: Parameters<typeof run>[0]) =>
         run({
           ...request,
+          ...(runtimes.has(request.command) ? { forceKillAfter: 1_000 } : {}),
           env: {
             ...request.env,
-            PATH: [nodeDir, request.env?.PATH ?? ""]
+            PATH: [runtimes.get(request.command), request.env?.PATH ?? ""]
               .filter(Boolean)
               .join(input.platform === "win32" ? ";" : ":"),
           },

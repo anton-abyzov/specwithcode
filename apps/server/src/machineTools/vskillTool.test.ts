@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - packaged-layout fixtures use a real private filesystem.
+import { CommandResolutionCache } from "@specweave-studio/shared/shell";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -208,11 +209,12 @@ it("the Settings install path bootstraps from packaged Node, installs a missing 
     },
   };
   const cli = `const fs=require('node:fs'),path=require('node:path');
+if(fs.existsSync(path.join(process.env.HOME,'hang-cli'))){process.on('SIGTERM',()=>{});fs.writeFileSync(path.join(process.env.HOME,'cli.pid'),String(process.pid));setTimeout(()=>process.exit(0),8000);}else{
 if(process.argv[2]==='--version'){console.log('${VSKILL_VERSION}');process.exit(0);}
 if(process.argv[2]!=='install')process.exit(3);
 const root=path.join(process.env.HOME,'.agents');fs.mkdirSync(path.join(root,'skills/sample'),{recursive:true});
 fs.writeFileSync(path.join(root,'vskill.lock'),${JSON.stringify(JSON.stringify(lock))});
-fs.writeFileSync(path.join(root,'skills/sample/SKILL.md'),'---\\nname: sample\\n---\\nSynthetic skill');`;
+fs.writeFileSync(path.join(root,'skills/sample/SKILL.md'),'---\\nname: sample\\n---\\nSynthetic skill');}`;
   const npm = `const fs=require('node:fs'),path=require('node:path');
 const prefix=process.argv[process.argv.indexOf('--prefix')+1],win=process.platform==='win32';
 const pkg=path.join(prefix,...(win?[]:['lib']),'node_modules/vskill');fs.mkdirSync(path.join(pkg,'dist'),{recursive:true});
@@ -270,11 +272,27 @@ fs.writeFileSync(path.join(bin,win?'vskill.cmd':'vskill'),win?${JSON.stringify('
             Effect.succeed({ state: "ok", visibility: "public", branch: "main", skill: source }),
         },
         ...installer,
+        run: (request) => installer.run({ ...request, timeout: 2000 }),
       });
       const projectId = ProjectId.make("packaged-install");
       yield* service.update({ projectId, userLevel: true, operation: "status" });
       yield* Effect.promise(async () => {
         await expect(fs.stat(path.join(fx.home, "tools/vskill"))).rejects.toThrow();
+      });
+      yield* Effect.promise(() => fs.writeFile(path.join(fx.home, "hang-cli"), "1"));
+      const started = Date.now();
+      const failed = yield* service.update({
+        projectId,
+        userLevel: true,
+        operation: "install",
+        install: { repo: "owner/repo", skill: "sample" },
+      });
+      expect(failed.outcomes?.[0].outcome).toBe("failed");
+      expect(Date.now() - started).toBeLessThan(5000);
+      yield* Effect.promise(async () => {
+        const pid = Number(await fs.readFile(path.join(fx.home, "cli.pid"), "utf8"));
+        expect(() => process.kill(pid, 0)).toThrow();
+        await fs.rm(path.join(fx.home, "hang-cli"));
       });
       return yield* service.update({
         projectId,
@@ -290,5 +308,60 @@ fs.writeFileSync(path.join(bin,win?'vskill.cmd':'vskill'),win?${JSON.stringify('
   });
   expect(await fs.readFile(path.join(fx.home, ".agents/skills/sample/SKILL.md"), "utf8")).toContain(
     "Synthetic skill",
+  );
+});
+
+it("keeps external Node selection after a managed install in the same runtime", async () => {
+  const fx = await fixture();
+  const externalDir = path.join(fx.home, "external");
+  await fs.mkdir(externalDir);
+  const shimDir = path.join(fx.home, ".local", "bin");
+  await fs.mkdir(shimDir, { recursive: true });
+  const env = { HOME: fx.home, PATH: externalDir };
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const installer = yield* makeSkillInstallRuntime({
+        home: fx.home,
+        baseDir: fx.home,
+        platform: process.platform,
+        environment: env,
+        host: fx.host,
+      });
+      const managed = yield* installer.findVskill;
+      expect(managed).toContain("tools");
+      yield* Effect.promise(async () => {
+        const node = path.join(externalDir, process.platform === "win32" ? "node.exe" : "node");
+        await fs.copyFile(process.execPath, node);
+        await fs.chmod(node, 0o755);
+        const cli = "console.log(process.execPath)";
+        await fs.writeFile(path.join(shimDir, "cli.js"), cli);
+        const shim =
+          process.platform === "win32"
+            ? '@echo off\r\nnode "%~dp0cli.js" %*\r\n'
+            : "#!/usr/bin/env node\n" + cli;
+        await fs.writeFile(
+          path.join(shimDir, process.platform === "win32" ? "vskill.cmd" : "vskill"),
+          shim,
+          { mode: 0o755 },
+        );
+      });
+      // Simulate expiry of the shared 30-second negative lookup cache.
+      (yield* CommandResolutionCache).clear();
+      const external = yield* installer.findVskill;
+      expect(external).toContain(shimDir);
+      const output = yield* installer.run({
+        command: external!,
+        args: ["--version"],
+        cwd: fx.home,
+        timeout: 5000,
+        env,
+      });
+      expect(output.exitCode).toBe(0);
+      expect(output.stdout.trim()).toBe(
+        yield* Effect.promise(() =>
+          fs.realpath(path.join(externalDir, process.platform === "win32" ? "node.exe" : "node")),
+        ),
+      );
+    }).pipe(Effect.provide(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
   );
 });
