@@ -61,8 +61,6 @@ export const syncKo: PhraseCatalog = {
   "Not moved": "이동 안 함",
   "1 commit on {branch} that was never pushed": "{branch}에서 한 번도 푸시하지 않은 커밋 1개",
   "{n} commits on {branch} that were never pushed": "{branch}에서 한 번도 푸시하지 않은 커밋 {n}개",
-  "Sent straight to {target} over the link between the machines, as branch {name}. Nothing goes to GitHub.":
-    "컴퓨터 사이의 연결을 통해 {target}에 브랜치 {name}(으)로 바로 보냅니다. GitHub에는 아무것도 보내지 않습니다.",
   "1 branch that exists only on {machine}": "{machine}에만 있는 브랜치 1개",
   "{n} branches that exist only on {machine}": "{machine}에만 있는 브랜치 {n}개",
   "Sent straight to {target} over the link between the machines, as branches under {name}. Nothing goes to GitHub.":
@@ -88,8 +86,6 @@ export const syncKo: PhraseCatalog = {
   "1 file left out": "제외된 파일 1개",
   "{n} files left out": "제외된 파일 {n}개",
   "{target} already has it as branch {name}.": "{target}에 이미 브랜치 {name}(으)로 있습니다.",
-  "{branch} is checked out on {target}, so this arrived beside it as {name}. To use it there, check it out or merge it.":
-    "{target}에서 {branch}이(가) 체크아웃되어 있어 그 옆에 {name}(으)로 도착했습니다. 그곳에서 사용하려면 체크아웃하거나 병합하세요.",
   "{target} has other work under that name, so this arrived beside it as {name}. To use it there, check it out or merge it.":
     "{target}에 같은 이름의 다른 작업이 있어 그 옆에 {name}(으)로 도착했습니다. 그곳에서 사용하려면 체크아웃하거나 병합하세요.",
   "On {target} as branch {name}. To use it there, check it out or merge it.":
@@ -261,4 +257,38 @@ export const syncKo: PhraseCatalog = {
   "The source changed. Compare again before copying.":
     "원본이 변경되었습니다. 복사하기 전에 다시 비교하세요.",
   "Not moved: its state could not be read": "이동 안 함: 상태를 읽을 수 없습니다",
+  "Sent straight to {target} over the link between the machines, as a branch under {name}. Nothing goes to GitHub.":
+    "컴퓨터 사이의 연결을 통해 {target}에 {name} 아래의 브랜치로 바로 보냅니다. GitHub에는 아무것도 보내지 않습니다.",
+  "The branch it would arrive as is checked out on {target}, so this arrived beside it as {name}. To use it there, check it out or merge it.":
+    "도착할 브랜치가 {target}에서 체크아웃되어 있어 그 옆에 {name}(으)로 도착했습니다. 그곳에서 사용하려면 체크아웃하거나 병합하세요.",
+  "No answer came back. It may have arrived on {target}: check {target} before sending again.":
+    "응답이 돌아오지 않았습니다. {target}에 도착했을 수 있습니다. 다시 보내기 전에 {target}에서 확인하세요.",
+  "Not sent.": "보내지 않았습니다.",
+  "{machine} sent extras and no answer came back. They may have arrived: check {target} before sending again.":
+    "{machine}에서 추가 항목을 보냈지만 응답이 돌아오지 않았습니다. 도착했을 수 있습니다. 다시 보내기 전에 {target}에서 확인하세요.",
+  "Sync ended, and not every answer came back. Each line says what to check.":
+    "동기화가 끝났지만 돌아오지 않은 응답이 있습니다. 확인할 내용은 각 줄에 표시됩니다.",
+  "A move to another machine is not finished. Finish or cancel it, then add a machine.":
+    "다른 컴퓨터로의 이동이 끝나지 않았습니다. 완료하거나 취소한 다음 컴퓨터를 추가하세요.",
+  "The copy on {machine} is already shared with other machines. Unlink it there first.":
+    "{machine}의 사본은 이미 다른 컴퓨터와 공유되어 있습니다. 먼저 그곳에서 연결을 해제하세요.",
+  "The copy on {machine} does not hold its coordinator, so it cannot be the one that stays.":
+    "{machine}의 사본에는 코디네이터가 없어 남는 쪽이 될 수 없습니다.",
+  "A coordinator handoff is in progress on {machine}. Finish or retry it first.":
+    "{machine}에서 코디네이터 인계가 진행 중입니다. 먼저 완료하거나 다시 시도하세요.",
+  "The project on {machine} is paused. Resume it first.":
+    "{machine}의 프로젝트가 일시 중지되어 있습니다. 먼저 다시 시작하세요.",
+  "The project on {machine} is archived. Restore it first.":
+    "{machine}의 프로젝트가 보관되어 있습니다. 먼저 복원하세요.",
+  "Only code projects can be linked across machines.":
+    "코드 프로젝트만 컴퓨터 간에 연결할 수 있습니다.",
+  "The coordinator on {machine} is working. Let it finish or stop it, then link.":
+    "{machine}의 코디네이터가 작업 중입니다. 끝나기를 기다리거나 중지한 다음 연결하세요.",
+  "Project notes differ on {machine}.": "{machine}의 프로젝트 노트가 다릅니다.",
+  "The copy's repository does not match the source.": "사본의 저장소가 원본과 일치하지 않습니다.",
+  "some files changed on {source} while copying":
+    "복사하는 동안 {source}에서 일부 파일이 변경되었습니다",
+  "the check of Root failed": "루트 저장소 검사에 실패했습니다",
+  "the check of {repository} failed": "{repository} 검사에 실패했습니다",
+  "the checks of {n} repositories failed": "저장소 {n}개의 검사에 실패했습니다",
 };

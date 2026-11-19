@@ -63,8 +63,6 @@ export const syncJa: PhraseCatalog = {
     "{branch} の一度もプッシュされていないコミット 1 件",
   "{n} commits on {branch} that were never pushed":
     "{branch} の一度もプッシュされていないコミット {n} 件",
-  "Sent straight to {target} over the link between the machines, as branch {name}. Nothing goes to GitHub.":
-    "マシン間の接続で {target} に直接、ブランチ {name} として送ります。GitHub には何も送りません。",
   "1 branch that exists only on {machine}": "{machine} にしかないブランチ 1 件",
   "{n} branches that exist only on {machine}": "{machine} にしかないブランチ {n} 件",
   "Sent straight to {target} over the link between the machines, as branches under {name}. Nothing goes to GitHub.":
@@ -91,8 +89,6 @@ export const syncJa: PhraseCatalog = {
   "{n} files left out": "除外したファイル {n} 件",
   "{target} already has it as branch {name}.":
     "{target} にはすでにブランチ {name} としてあります。",
-  "{branch} is checked out on {target}, so this arrived beside it as {name}. To use it there, check it out or merge it.":
-    "{target} では {branch} がチェックアウトされているため、{name} として隣に届きました。そこで使うには、チェックアウトするかマージしてください。",
   "{target} has other work under that name, so this arrived beside it as {name}. To use it there, check it out or merge it.":
     "{target} には同じ名前の別の作業があるため、{name} として隣に届きました。そこで使うには、チェックアウトするかマージしてください。",
   "On {target} as branch {name}. To use it there, check it out or merge it.":
@@ -269,4 +265,39 @@ export const syncJa: PhraseCatalog = {
   "The source changed. Compare again before copying.":
     "ソースが変更されました。コピーする前にもう一度比較してください。",
   "Not moved: its state could not be read": "移動しません: 状態を読み取れませんでした",
+  "Sent straight to {target} over the link between the machines, as a branch under {name}. Nothing goes to GitHub.":
+    "マシン間の接続で {target} に直接、{name} 以下のブランチとして送ります。GitHub には何も送りません。",
+  "The branch it would arrive as is checked out on {target}, so this arrived beside it as {name}. To use it there, check it out or merge it.":
+    "届くはずだったブランチが {target} でチェックアウトされているため、{name} として隣に届きました。そこで使うには、チェックアウトするかマージしてください。",
+  "No answer came back. It may have arrived on {target}: check {target} before sending again.":
+    "応答が返ってきませんでした。{target} に届いている可能性があります。もう一度送る前に {target} で確認してください。",
+  "Not sent.": "送信されませんでした。",
+  "{machine} sent extras and no answer came back. They may have arrived: check {target} before sending again.":
+    "{machine} は追加分を送りましたが、応答が返ってきませんでした。届いている可能性があります。もう一度送る前に {target} で確認してください。",
+  "Sync ended, and not every answer came back. Each line says what to check.":
+    "同期は終わりましたが、返ってこなかった応答があります。確認することは各行に表示されます。",
+  "A move to another machine is not finished. Finish or cancel it, then add a machine.":
+    "別のマシンへの移動が終わっていません。完了するかキャンセルしてから、マシンを追加してください。",
+  "The copy on {machine} is already shared with other machines. Unlink it there first.":
+    "{machine} のコピーはすでに他のマシンと共有されています。先にそこでリンクを解除してください。",
+  "The copy on {machine} does not hold its coordinator, so it cannot be the one that stays.":
+    "{machine} のコピーにはコーディネーターがないため、残す側にはできません。",
+  "A coordinator handoff is in progress on {machine}. Finish or retry it first.":
+    "{machine} でコーディネーターの引き継ぎが進行中です。先に完了するか、やり直してください。",
+  "The project on {machine} is paused. Resume it first.":
+    "{machine} のプロジェクトは一時停止中です。先に再開してください。",
+  "The project on {machine} is archived. Restore it first.":
+    "{machine} のプロジェクトはアーカイブされています。先に復元してください。",
+  "Only code projects can be linked across machines.":
+    "マシン間でリンクできるのはコードプロジェクトだけです。",
+  "The coordinator on {machine} is working. Let it finish or stop it, then link.":
+    "{machine} のコーディネーターは作業中です。終わるのを待つか停止してから、リンクしてください。",
+  "Project notes differ on {machine}.": "{machine} のプロジェクトノートに違いがあります。",
+  "The copy's repository does not match the source.":
+    "コピーのリポジトリがコピー元と一致しません。",
+  "some files changed on {source} while copying":
+    "コピー中に {source} で一部のファイルが変更されました",
+  "the check of Root failed": "ルートリポジトリのチェックに失敗しました",
+  "the check of {repository} failed": "{repository} のチェックに失敗しました",
+  "the checks of {n} repositories failed": "{n} 件のリポジトリのチェックに失敗しました",
 };

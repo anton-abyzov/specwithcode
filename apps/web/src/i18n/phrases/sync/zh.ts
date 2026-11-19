@@ -55,8 +55,6 @@ export const syncZh: PhraseCatalog = {
   "Not moved": "未移动",
   "1 commit on {branch} that was never pushed": "{branch} 上有 1 个从未推送的提交",
   "{n} commits on {branch} that were never pushed": "{branch} 上有 {n} 个从未推送的提交",
-  "Sent straight to {target} over the link between the machines, as branch {name}. Nothing goes to GitHub.":
-    "通过电脑之间的连接直接发送到 {target}，作为分支 {name}。不会发送到 GitHub。",
   "1 branch that exists only on {machine}": "1 个只在 {machine} 上存在的分支",
   "{n} branches that exist only on {machine}": "{n} 个只在 {machine} 上存在的分支",
   "Sent straight to {target} over the link between the machines, as branches under {name}. Nothing goes to GitHub.":
@@ -79,8 +77,6 @@ export const syncZh: PhraseCatalog = {
   "1 file left out": "1 个文件被排除",
   "{n} files left out": "{n} 个文件被排除",
   "{target} already has it as branch {name}.": "{target} 已有它，分支为 {name}。",
-  "{branch} is checked out on {target}, so this arrived beside it as {name}. To use it there, check it out or merge it.":
-    "{branch} 已在 {target} 上检出，因此它作为 {name} 放在旁边。要在那里使用，请检出或合并它。",
   "{target} has other work under that name, so this arrived beside it as {name}. To use it there, check it out or merge it.":
     "{target} 上已有同名的其他工作，因此它作为 {name} 放在旁边。要在那里使用，请检出或合并它。",
   "On {target} as branch {name}. To use it there, check it out or merge it.":
@@ -239,4 +235,35 @@ export const syncZh: PhraseCatalog = {
   "Compare again before previewing this changed source.": "预览这个已更改的来源之前，请重新比较。",
   "The source changed. Compare again before copying.": "来源已更改。复制前请重新比较。",
   "Not moved: its state could not be read": "未移动：无法读取其状态",
+  "Sent straight to {target} over the link between the machines, as a branch under {name}. Nothing goes to GitHub.":
+    "通过电脑之间的连接直接发送到 {target}，作为 {name} 下的分支。不会发送到 GitHub。",
+  "The branch it would arrive as is checked out on {target}, so this arrived beside it as {name}. To use it there, check it out or merge it.":
+    "它本应使用的分支已在 {target} 上检出，因此它作为 {name} 放在旁边。要在那里使用，请检出或合并它。",
+  "No answer came back. It may have arrived on {target}: check {target} before sending again.":
+    "没有收到回复。它可能已到达 {target}：再次发送前请先在 {target} 上确认。",
+  "Not sent.": "未发送。",
+  "{machine} sent extras and no answer came back. They may have arrived: check {target} before sending again.":
+    "{machine} 已发送附加项，但没有收到回复。它们可能已到达：再次发送前请先在 {target} 上确认。",
+  "Sync ended, and not every answer came back. Each line says what to check.":
+    "同步已结束，但并非所有回复都已收到。每一行都写明了要确认什么。",
+  "A move to another machine is not finished. Finish or cancel it, then add a machine.":
+    "向另一台电脑的移动尚未完成。请先完成或取消它，然后再添加电脑。",
+  "The copy on {machine} is already shared with other machines. Unlink it there first.":
+    "{machine} 上的副本已与其他电脑共享。请先在那里取消关联。",
+  "The copy on {machine} does not hold its coordinator, so it cannot be the one that stays.":
+    "{machine} 上的副本没有自己的协调者，因此不能作为保留的一方。",
+  "A coordinator handoff is in progress on {machine}. Finish or retry it first.":
+    "{machine} 上正在交接协调者。请先完成或重试。",
+  "The project on {machine} is paused. Resume it first.": "{machine} 上的项目已暂停。请先恢复它。",
+  "The project on {machine} is archived. Restore it first.":
+    "{machine} 上的项目已归档。请先还原它。",
+  "Only code projects can be linked across machines.": "只有代码项目可以跨电脑关联。",
+  "The coordinator on {machine} is working. Let it finish or stop it, then link.":
+    "{machine} 上的协调者正在工作。请等它完成或将其停止，然后再关联。",
+  "Project notes differ on {machine}.": "{machine} 上的项目笔记不一致。",
+  "The copy's repository does not match the source.": "副本的仓库与来源不一致。",
+  "some files changed on {source} while copying": "复制期间 {source} 上有文件发生了变化",
+  "the check of Root failed": "根仓库的检查失败",
+  "the check of {repository} failed": "{repository} 的检查失败",
+  "the checks of {n} repositories failed": "{n} 个仓库的检查失败",
 };
