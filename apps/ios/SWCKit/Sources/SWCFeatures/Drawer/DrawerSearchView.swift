@@ -66,7 +66,7 @@ struct DrawerSearchView: View {
             if !results.projects.isEmpty {
               DrawerSectionLabel("Projects")
               ForEach(results.projects) { project in
-                WeaveRow(project.title, subtitle: project.machineLabel, titleLineLimit: 1, subtitleLineLimit: 1, action: { open(project) }) {
+                WeaveRow(project.title, subtitleText: MachineMark.text(project.machineLabel, tint: model.machineTint(project.ref.environmentId)), titleLineLimit: 1, subtitleLineLimit: 1, action: { open(project) }) {
                   ProjectAvatar(icon: project.icon.avatarIcon, title: project.title, size: 24, style: .plain)
                     .frame(width: 28)
                     .accessibilityHidden(true)
@@ -79,7 +79,7 @@ struct DrawerSearchView: View {
             if !results.threads.isEmpty {
               DrawerSectionLabel("Threads")
               ForEach(results.threads) { thread in
-                WeaveRow(thread.title, subtitle: [thread.identity.label, thread.projectTitle, thread.placement.subtitle()].compactMap { $0 }.joined(separator: " · "), titleLineLimit: 1, subtitleLineLimit: 2, action: { router.open(.thread(thread.ref)) }) {
+                WeaveRow(thread.title, subtitleText: Text("\(Text(verbatim: [thread.identity.label, thread.projectTitle].compactMap { $0 }.joined(separator: " · "))) · \(model.placementSubtitle(thread))"), titleLineLimit: 1, subtitleLineLimit: 2, action: { router.open(.thread(thread.ref)) }) {
                   ThreadIdentityMarks(identity: thread.identity)
                 } trailing: {
                   RecentThreadGlyph(thread: thread)

@@ -416,16 +416,66 @@ public struct ThreadPlanProgress: Codable, Hashable, Sendable {
   }
 }
 
+/// What a running turn's newest unfinished step is.
+public enum ActiveWorkKind: String, Codable, Hashable, Sendable, CaseIterable {
+  case command, tool, subagent, thread, task
+}
+
 public struct ActiveWork: Codable, Hashable, Sendable {
+  /// A command line or a prompt: detail, never a row's status.
   public var label: String
   public var startedAt: Date
   /// The thread a wait is on.
   public var waitThreadId: String?
+  /// Absent from older servers, and for a kind this build does not know.
+  public var kind: ActiveWorkKind?
 
-  public init(label: String, startedAt: Date, waitThreadId: String? = nil) {
+  public init(label: String, startedAt: Date, waitThreadId: String? = nil, kind: ActiveWorkKind? = nil) {
     self.label = label
     self.startedAt = startedAt
     self.waitThreadId = waitThreadId
+    self.kind = kind
+  }
+
+  enum CodingKeys: String, CodingKey { case label, startedAt, waitThreadId, kind }
+
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    label = try c.decode(String.self, forKey: .label)
+    startedAt = try c.decode(Date.self, forKey: .startedAt)
+    waitThreadId = try c.decodeIfPresent(String.self, forKey: .waitThreadId)
+    kind = ((try? c.decodeIfPresent(String.self, forKey: .kind)) ?? nil).flatMap(ActiveWorkKind.init(rawValue:))
+  }
+
+  /// The labels the server gives a step it cannot name; each still says its kind.
+  static let fixedLabels: [String: ActiveWorkKind] = [
+    "another thread": .thread,
+    "a delegated task": .task,
+    "a subagent": .subagent,
+    "a tool": .tool,
+  ]
+
+  /// The step in plain words for a row: "Running a command", "Waiting on a
+  /// subagent". Mirrors the shared `activeWorkPhrase`: without a kind (an
+  /// older server) a fixed label names it, and anything else is a step.
+  public static func phrase(label: String?, kind: ActiveWorkKind?) -> String {
+    switch kind ?? label.flatMap({ fixedLabels[$0] }) {
+    case .command: "Running a command"
+    case .tool: "Using a tool"
+    case .subagent: "Waiting on a subagent"
+    case .thread: "Waiting on another thread"
+    case .task: "Waiting on a delegated task"
+    case nil: "Running a step"
+    }
+  }
+
+  public var phrase: String { Self.phrase(label: label, kind: kind) }
+
+  /// The command or prompt itself, on one line, when it says more than the
+  /// phrase does; nil for the fixed labels.
+  public var detail: String? {
+    let line = label.split(whereSeparator: \.isNewline).first.map(String.init)?.trimmingCharacters(in: .whitespaces) ?? ""
+    return line.isEmpty || Self.fixedLabels[line] != nil ? nil : line
   }
 }
 

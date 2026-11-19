@@ -47,7 +47,14 @@ extension MachineSummary {
   /// little out of date: shown like a connection in progress.
   var displayStatus: WeaveStatus { isStale ? .connecting : status.weaveStatus }
 
-  var statusLabel: String { isDisconnected ? "Disconnected on this phone" : teamRulesRefusal != nil ? "Turned off by team rules" : connectStatusLabel ?? (isStale ? "Catching up" : status.label) }
+  var statusLabel: String { isDisconnected ? "Disconnected on this phone" : teamRulesRefusal != nil ? "Turned off by team rules" : connectStatusLabel ?? (isStale ? "Catching up" : neverReached ? MachineActivity.unreachable : status.label) }
+
+  /// It never sent its chats and projects and the phone keeps trying it: it
+  /// cannot be reached, which is not the same as holding nothing.
+  var neverReached: Bool { !isCounted && !isSettling && status.canWake }
+
+  /// The state for a short row, which adds that an unanswered machine is not counted.
+  var rowStatus: String { isCounted || isDisconnected ? statusLabel : "\(statusLabel) · \(MachineActivity.line(counted: false, working: 0, projects: 0))" }
 }
 
 extension UserMessageState {

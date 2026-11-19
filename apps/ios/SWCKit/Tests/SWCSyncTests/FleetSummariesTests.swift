@@ -35,6 +35,11 @@ import SWCWire
     #expect(rows["local"]?.placement.label == "M4")
     #expect(rows["remote"]?.placement.label == "M4 → Minis")
     #expect(rows["remote"]?.isUnknown == false)
+    // The ids behind the names, for each machine's color.
+    #expect(rows["local"]?.ownerMachineId == "m4")
+    #expect(rows["local"]?.runsOnMachineId == nil)
+    #expect(rows["remote"]?.ownerMachineId == "m4")
+    #expect(rows["remote"]?.runsOnMachineId == "minis")
   }
 
   @Test func nicknamesNameEveryMachineIncludingRosterOnlyOnes() throws {

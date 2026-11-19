@@ -28,8 +28,9 @@ struct MachinesView: View {
         } else {
           GroupedCard(separatorInset: 56) {
             ForEach(model.machines) { machine in
-              WeaveRow(machine.displayName, subtitle: [machine.statusLabel, machine.platform].compactMap { $0 }.joined(separator: " · "), showsChevron: true, action: { nav.push(.machine(machine.id)) }) {
-                MachineBadge(status: machine.displayStatus, size: 18)
+              // Icon in its color, name, state, what runs there, version.
+              WeaveRow(machine.displayName, subtitle: machine.statusLabel, note: ([model.activityLine(machine)] + [machine.serverVersion].compactMap(\.self)).joined(separator: " · "), titleLineLimit: 1, subtitleLineLimit: 2, showsChevron: true, action: { nav.push(.machine(machine.id)) }) {
+                MachineBadge(status: machine.displayStatus, systemName: machine.symbol, size: 18, tint: model.machineTint(machine.id))
                   .frame(width: 28)
                   .accessibilityHidden(true)
               } trailing: {
@@ -206,7 +207,7 @@ struct MachineDetailView: View {
 
   private func hero(_ machine: MachineSummary) -> some View {
     HStack(spacing: WeaveSpacing.s4) {
-      MachineBadge(status: machine.displayStatus, systemName: Self.symbol(for: machine), size: 30)
+      MachineBadge(status: machine.displayStatus, systemName: machine.symbol, size: 30, tint: model.machineTint(machine.id))
         .frame(width: 64, height: 64)
         .background(Color.weave.panel, in: RoundedRectangle(cornerRadius: WeaveRadius.lg, style: .continuous))
         .accessibilityHidden(true)
@@ -237,13 +238,13 @@ struct MachineDetailView: View {
     } else if machine.status == .needsRepair, !machine.hasDirectPairing, machine.viaConnect {
       Banner("SpecWithCode Connect couldn't open a connection to \(machine.displayName). Make sure Connect is on in its Settings > Machines.", title: "Can't reach \(machine.displayName)", kind: .fail)
     } else if machine.status == .needsRepair {
-      Banner("The pairing for \(machine.label) has expired. Pair again to keep using it from this phone.", title: "Pair again", kind: .fail, actionTitle: "Pair again") { nav.push(.repair(machine.id)) }
+      Banner("The pairing for \(machine.displayName) has expired. Pair again to keep using it from this phone.", title: "Pair again", kind: .fail, actionTitle: "Pair again") { nav.push(.repair(machine.id)) }
     } else if machine.status == .unsupported {
-      Banner("Update SpecWithCode on \(machine.label) to use it from this phone.", title: "Update needed", kind: .warn)
+      Banner("Update SpecWithCode on \(machine.displayName) to use it from this phone.", title: "Update needed", kind: .warn)
     } else if let days = machine.tokenDaysLeft, days < Self.expiryWarningDays {
-      Banner("The pairing for \(machine.label) expires \(Self.expiry(days)). Pair again to keep using it from this phone.", title: "Pair again soon", kind: .warn, actionTitle: "Pair again") { nav.push(.repair(machine.id)) }
+      Banner("The pairing for \(machine.displayName) expires \(Self.expiry(days)). Pair again to keep using it from this phone.", title: "Pair again soon", kind: .warn, actionTitle: "Pair again") { nav.push(.repair(machine.id)) }
     } else if machine.isStale {
-      Banner("Catching up with \(machine.label). Its projects and threads may be a little behind for a moment.", kind: .info)
+      Banner("Catching up with \(machine.displayName). Its projects and threads may be a little behind for a moment.", kind: .info)
     }
   }
 
@@ -256,11 +257,6 @@ struct MachineDetailView: View {
     }
   }
 
-  private static func symbol(for machine: MachineSummary) -> String {
-    let platform = machine.platform?.lowercased() ?? ""
-    if platform.contains("linux") || platform.contains("windows") { return "server.rack" }
-    return "laptopcomputer"
-  }
 }
 
 extension String {

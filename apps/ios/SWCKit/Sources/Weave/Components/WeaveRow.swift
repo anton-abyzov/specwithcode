@@ -14,8 +14,8 @@ import SwiftUI
 /// always at accessibility sizes) moves under the title instead of being cut.
 public struct WeaveRow<Leading: View, Trailing: View>: View {
   let title: String
-  let subtitle: String?
-  let note: String?
+  let subtitle: Text?
+  let note: Text?
   let titleLineLimit: Int?
   let subtitleLineLimit: Int?
   let showsChevron: Bool
@@ -43,14 +43,42 @@ public struct WeaveRow<Leading: View, Trailing: View>: View {
     @ViewBuilder trailing: () -> Trailing
   ) {
     self.title = title
-    self.subtitle = subtitle
-    self.note = note
+    self.subtitle = subtitle.map { Text(verbatim: $0) }
+    self.note = note.map { Text(verbatim: $0) }
     self.titleLineLimit = titleLineLimit
     self.subtitleLineLimit = subtitleLineLimit
     self.showsChevron = showsChevron
     self.isDestructive = isDestructive
     self.insets = insets
     self.stacksTrailing = stacksTrailing
+    self.action = action
+    self.leading = leading()
+    self.trailing = trailing()
+  }
+
+  /// A row whose second lines carry their own styling, such as a machine's
+  /// name after a square of its color.
+  public init(
+    _ title: String,
+    subtitleText: Text?,
+    noteText: Text? = nil,
+    titleLineLimit: Int? = nil,
+    subtitleLineLimit: Int? = nil,
+    showsChevron: Bool = false,
+    insets: EdgeInsets = WeaveRowInsets.standard,
+    action: (() -> Void)? = nil,
+    @ViewBuilder leading: () -> Leading,
+    @ViewBuilder trailing: () -> Trailing
+  ) {
+    self.title = title
+    self.subtitle = subtitleText
+    self.note = noteText
+    self.titleLineLimit = titleLineLimit
+    self.subtitleLineLimit = subtitleLineLimit
+    self.showsChevron = showsChevron
+    self.isDestructive = false
+    self.insets = insets
+    self.stacksTrailing = false
     self.action = action
     self.leading = leading()
     self.trailing = trailing()
@@ -119,14 +147,14 @@ public struct WeaveRow<Leading: View, Trailing: View>: View {
         .lineLimit(scaled(titleLineLimit))
         .fixedSize(horizontal: false, vertical: titleLineLimit == nil)
       if let subtitle {
-        Text(subtitle)
+        subtitle
           .font(.weave(.callout))
           .foregroundStyle(Color.weave.muted)
           .lineLimit(scaled(subtitleLineLimit))
           .fixedSize(horizontal: false, vertical: subtitleLineLimit == nil)
       }
       if let note {
-        Text(note)
+        note
           .font(.weave(.callout))
           .foregroundStyle(Color.weave.muted)
           .lineLimit(scaled(1))

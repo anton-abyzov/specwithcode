@@ -286,6 +286,9 @@ public enum ShellSummaries {
       if let next = thread.movedTo, next.isHandoff, listed.contains("\(next.environmentId ?? machine.environmentId)/\(next.threadId)") { continue }
       var summary = threadSummary(thread, environmentId: machine.environmentId, projectTitle: titles[thread.projectId], machineLabel: machine.displayName, machineOnline: machine.online, machineSettling: machine.settling, providers: machine.providers)
       summary.placement = placement(thread, on: machine, directory: directory)
+      let (owner, execution) = placementIds(thread, on: machine)
+      summary.ownerMachineId = owner
+      summary.runsOnMachineId = execution == owner ? nil : execution
       summary.isCoordinatorWorker = isCoordinatorWorker(thread, coordinatorIds: coordinatorIds)
       byProject[thread.projectId, default: []].append(summary)
     }
@@ -330,10 +333,16 @@ public enum ShellSummaries {
 
   /// Where a thread lives and runs. A thread listed by an unreachable
   /// machine, or one its machine reports it cannot reach, is unknown.
-  static func placement(_ thread: ThreadShell, on machine: Machine, directory: Directory) -> ThreadPlacement {
+  /// The machine a thread lives on and the one it runs on, by environment id.
+  static func placementIds(_ thread: ThreadShell, on machine: Machine) -> (owner: String, execution: String) {
     let owner = thread.ownerMachineId ?? machine.environmentId
     let handoff = thread.movedTo?.isHandoff == true ? thread.movedTo : nil
-    let execution = thread.executionMachineId ?? handoff?.environmentId ?? owner
+    return (owner, thread.executionMachineId ?? handoff?.environmentId ?? owner)
+  }
+
+  static func placement(_ thread: ThreadShell, on machine: Machine, directory: Directory) -> ThreadPlacement {
+    let (owner, execution) = placementIds(thread, on: machine)
+    let handoff = thread.movedTo?.isHandoff == true ? thread.movedTo : nil
     let executionName = directory.name(execution, reported: thread.executionMachineLabel ?? handoff?.machineLabel)
     var placement = ThreadPlacement(owner: directory.name(owner), runsOn: execution == owner ? nil : executionName)
     if !machine.online && !machine.settling {
@@ -581,7 +590,8 @@ public enum ShellSummaries {
       return thread.pendingRuntimeRequest?.kind == .authRefresh ? "Sign-in needed" : "Approval requested"
     case .working:
       if let wait = attention.dependencyWait { return wait }
-      if let label = thread.activeWork?.label, !label.isEmpty { return oneLine(label) }
+      // In words: the label is a command line or a prompt, detail for the info sheet.
+      if let work = thread.activeWork, work.kind != nil || !work.label.isEmpty { return work.phrase }
     case .failed:
       if let error = thread.lastError, !error.isEmpty { return oneLine(error) }
     case .idle:
@@ -618,6 +628,7 @@ public enum ShellSummaries {
       waitsOnUser: (thread.heldQueuedCount ?? 0) > 0 || attention.needsReply
     )
     summary.machineSettling = machineSettling
+    if activity == .working { summary.workDetail = thread.activeWork?.detail.map { oneLine($0) } }
     summary.isDone = thread.status == .completed
     summary.waitReason = attention.dependencyWait
     summary.asksForAccess = thread.pendingRuntimeRequest?.isAccessRequest == true

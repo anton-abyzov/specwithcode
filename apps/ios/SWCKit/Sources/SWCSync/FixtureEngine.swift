@@ -214,6 +214,8 @@ public final class FixtureEngine: AppEngine {
         unreachable.insert(model.machines[i].id)
       }
       if scenario == .offlineStartup {
+        // Nothing saved and nothing answered: the machines are not counted.
+        for i in model.machines.indices { model.machines[i].isCounted = false }
         model.projects = []
         model.aide = nil
         model.threadsByProject = [:]

@@ -72,14 +72,37 @@ public struct ServerSettings: Codable, Hashable, Sendable {
 
 /// One entry of `ServerSettings.machineNicknames`. An empty name means the
 /// machine's default short name; its stamp still lets a reset beat an older rename.
+/// `color`, `icon` and `short` are absent until someone picks them, and on
+/// older servers. They are kept as sent, so writing an entry back never drops them.
 public struct MachineNicknameEntry: Codable, Hashable, Sendable {
   public var name: String
   /// ISO 8601; the newest entry wins when machines disagree.
   public var updatedAt: String
+  /// A palette id such as "teal".
+  public var color: String?
+  /// A machine kind such as "mac-mini".
+  public var icon: String?
+  /// Two or three characters a chip keeps when it runs out of room.
+  public var short: String?
 
-  public init(name: String, updatedAt: String) {
+  public init(name: String, updatedAt: String, color: String? = nil, icon: String? = nil, short: String? = nil) {
     self.name = name
     self.updatedAt = updatedAt
+    self.color = color
+    self.icon = icon
+    self.short = short
+  }
+
+  enum CodingKeys: String, CodingKey { case name, updatedAt, color, icon, short }
+
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    name = try c.decode(String.self, forKey: .name)
+    updatedAt = try c.decode(String.self, forKey: .updatedAt)
+    // A value of another type reads as absent instead of dropping the nickname.
+    color = (try? c.decodeIfPresent(String.self, forKey: .color)) ?? nil
+    icon = (try? c.decodeIfPresent(String.self, forKey: .icon)) ?? nil
+    short = (try? c.decodeIfPresent(String.self, forKey: .short)) ?? nil
   }
 }
 

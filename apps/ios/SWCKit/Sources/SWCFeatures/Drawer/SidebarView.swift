@@ -124,7 +124,7 @@ struct SidebarView: View {
         ForEach(model.machines) { machine in
           machineChip(machine.id) {
             HStack(spacing: WeaveSpacing.s1) {
-              MachineBadge(status: machine.displayStatus, size: 15)
+              MachineBadge(status: machine.displayStatus, systemName: machine.symbol, size: 15, tint: model.machineTint(machine.id))
               Text(machine.displayName).font(.weave(.callout, weight: .medium))
             }
           }
@@ -149,7 +149,7 @@ struct SidebarView: View {
       }
     } label: {
       HStack(spacing: WeaveSpacing.s1) {
-        if let current { MachineBadge(status: current.displayStatus, size: 15) }
+        if let current { MachineBadge(status: current.displayStatus, systemName: current.symbol, size: 15, tint: model.machineTint(current.id)) }
         Text(current?.displayName ?? "All machines")
           .font(.weave(.callout, weight: .medium))
           .lineLimit(1)
@@ -309,7 +309,7 @@ struct SidebarView: View {
         .sidebarRowStyle(selected: false)
       ForEach(group.shown) { thread in
         let (detail, machine) = details(thread)
-        ThreadLine(thread: thread, detail: detail, machine: machine)
+        ThreadLine(thread: thread, detail: detail, machine: machine, machineTint: machine == nil ? nil : model.machineTint(id: thread.ownerMachineId, named: thread.placement.owner), placement: detail?.hasSuffix(thread.placement.subtitle()) == true ? model.placementSubtitle(thread) : nil)
           .accessibilityIdentifier("sidebar.thread")
           .sidebarItem(.chat(.thread(thread.ref)))
           .threadRowActions(thread)
@@ -336,7 +336,7 @@ struct SidebarView: View {
     let visible = showAllRecents ? threads : Array(threads.prefix(Self.recentCount))
     ForEach(visible) { thread in
       let (detail, machine) = details(thread)
-      ThreadLine(thread: thread, detail: detail, machine: machine)
+      ThreadLine(thread: thread, detail: detail, machine: machine, machineTint: machine == nil ? nil : model.machineTint(id: thread.ownerMachineId, named: thread.placement.owner), placement: detail?.hasSuffix(thread.placement.subtitle()) == true ? model.placementSubtitle(thread) : nil)
         .accessibilityIdentifier("sidebar.thread")
         .sidebarItem(.chat(.thread(thread.ref)))
         .threadRowActions(thread)
@@ -507,8 +507,8 @@ struct SidebarView: View {
     if !model.machines.isEmpty {
       Section("Machines") {
         ForEach(model.machines) { machine in
-          SidebarRow(title: machine.displayName, subtitle: machine.statusLabel) {
-            MachineBadge(status: machine.displayStatus, size: 18)
+          SidebarRow(title: machine.displayName, subtitle: machine.rowStatus) {
+            MachineBadge(status: machine.displayStatus, systemName: machine.symbol, size: 18, tint: model.machineTint(machine.id))
           } trailing: {
             EmptyView()
           }
@@ -618,6 +618,9 @@ private struct ThreadLine: View {
   let thread: ThreadSummary
   var detail: String?
   var machine: String?
+  var machineTint: Color?
+  /// The placement that ends `detail`, drawn with each machine's color.
+  var placement: Text?
 
   var body: some View {
     HStack(spacing: WeaveSpacing.s2) {
@@ -629,7 +632,7 @@ private struct ThreadLine: View {
           .lineLimit(1)
           .truncationMode(.tail)
         if let detail, !detail.isEmpty {
-          Text(detail)
+          detailText(detail)
             .font(.weave(.footnote))
             .foregroundStyle(Color.weave.muted)
             .lineLimit(1)
@@ -648,7 +651,7 @@ private struct ThreadLine: View {
       }
       Spacer(minLength: 0)
       if let machine {
-        Text(machine)
+        MachineMark(name: machine, tint: machineTint)
           .font(.weave(.footnote))
           .foregroundStyle(Color.weave.muted)
           .lineLimit(1)
@@ -660,6 +663,12 @@ private struct ThreadLine: View {
     .accessibilityElement(children: .combine)
     .accessibilityLabel(thread.title)
     .accessibilityValue(([ThreadStatusMark.state(of: thread).label, detail?.isEmpty == false ? detail : model, machine, thread.isUnread ? "Unread" : nil] as [String?]).compactMap { $0 }.joined(separator: ", "))
+  }
+
+  private func detailText(_ detail: String) -> Text {
+    let plain = thread.placement.subtitle()
+    guard let placement, detail.hasSuffix(plain) else { return Text(verbatim: detail) }
+    return Text("\(Text(verbatim: String(detail.dropLast(plain.count))))\(placement)")
   }
 
   /// The model, or nil when the thread does not say which one runs it.

@@ -28,7 +28,7 @@ struct ThreadInfoSheet: View {
           WeaveRow("Machine", stacksTrailing: true) {
             EmptyView()
           } trailing: {
-            MachineBadge(status: machine?.status.weaveStatus ?? .offline, label: machine?.displayName ?? summary?.machineLabel)
+            MachineBadge(status: machine?.status.weaveStatus ?? .offline, label: machine?.displayName ?? summary?.machineLabel, systemName: machine?.symbol ?? "laptopcomputer", tint: model.machineTint(thread.environmentId))
           }
           if let summary {
             WeaveRow("Provider", trailingText: summary.identity.provider)
@@ -57,13 +57,22 @@ struct ThreadInfoSheet: View {
         if let preview = summary?.preview {
           VStack(alignment: .leading, spacing: WeaveSpacing.s2) {
             FieldLabel("Latest")
-            Text(preview)
-              .weaveFont(.body)
-              .foregroundStyle(Color.weave.ink)
-              .textSelection(.enabled)
-              .padding(WeaveSpacing.s4)
-              .frame(maxWidth: .infinity, alignment: .leading)
-              .weavePanel(in: RoundedRectangle(cornerRadius: WeaveRadius.card, style: .continuous))
+            VStack(alignment: .leading, spacing: WeaveSpacing.s2) {
+              Text(preview)
+                .weaveFont(.body)
+                .foregroundStyle(Color.weave.ink)
+              // The command or prompt behind "Running a command": detail, here only.
+              if let detail = summary?.workDetail, detail != preview {
+                Text(detail)
+                  .font(.weave(.footnote).monospaced())
+                  .foregroundStyle(Color.weave.muted)
+                  .accessibilityIdentifier("thread-info.work-detail")
+              }
+            }
+            .textSelection(.enabled)
+            .padding(WeaveSpacing.s4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .weavePanel(in: RoundedRectangle(cornerRadius: WeaveRadius.card, style: .continuous))
           }
         }
       }

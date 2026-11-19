@@ -119,7 +119,12 @@ public final class LiveEngine: AppEngine {
   let summaryCache = ShellSummaries.Cache()
   /// The user's machine nicknames, merged from every machine's settings.
   var fleetNicknames: [String: String] {
-    MachineNickname.merge(machineOrder.compactMap { machines[$0]?.settings?.machineNicknames })
+    fleetNicknameEntries.mapValues(\.name)
+  }
+
+  /// The same entries with each machine's color, icon and short label.
+  var fleetNicknameEntries: [String: MachineNicknameEntry] {
+    MachineNickname.mergeEntries(machineOrder.compactMap { machines[$0]?.settings?.machineNicknames })
   }
   var fleetLinking = false
   var connectionChanges: Set<String> = []
@@ -519,9 +524,12 @@ public final class LiveEngine: AppEngine {
   func publish() {
     guard let model else { return }
     let entries = machineOrder.compactMap { machines[$0] }
-    let nicknames = fleetNicknames
+    let nicknameEntries = fleetNicknameEntries
+    let nicknames = nicknameEntries.mapValues(\.name)
     let now = options.now()
-    assign(model, \.machines, entries.map { summary($0, nicknames: nicknames, now: now) })
+    let identities = MachineIdentities(known: entries.map(\.environmentId) + fleetNames.keys.sorted(), entries: nicknameEntries)
+    assign(model, \.identities, identities)
+    assign(model, \.machines, entries.map { summary($0, nicknames: nicknames, identities: identities, now: now) })
     // Percy is a switch in the desktop's settings; any machine saying so shows it.
     let aideEnabled = AideSetting.visible(entries.map { aideMachine($0, nicknames: nicknames) }, previous: model.aideEnabled)
     assign(model, \.aideEnabled, aideEnabled)
@@ -579,7 +587,7 @@ public final class LiveEngine: AppEngine {
     AideSetting.Machine(environmentId: entry.environmentId, displayName: displayName(entry, nicknames: nicknames), enabled: entry.record.enabled, aideEnabled: entry.settings?.aideEnabled, cachedAideEnabled: entry.cachedAideEnabled, canOperate: entry.canOperate, listed: entry.isOnline || entry.cachedSnapshot != nil)
   }
 
-  func summary(_ entry: MachineEntry, nicknames: [String: String]? = nil, now: ContinuousClock.Instant? = nil) -> MachineSummary {
+  func summary(_ entry: MachineEntry, nicknames: [String: String]? = nil, identities: MachineIdentities? = nil, now: ContinuousClock.Instant? = nil) -> MachineSummary {
     let settling = entry.isSettling(at: now ?? options.now())
     var status: MachineStatus = entry.record.enabled ? (MachineStatus(rawValue: entry.status.state.rawValue) ?? .offline) : .offline
     // No attempt has answered yet: offline here only means "no socket yet",
@@ -605,6 +613,10 @@ public final class LiveEngine: AppEngine {
     if case .http(status: 429, code: _)? = entry.status.lastError { result.isRefusingSignIns = true }
     if case let .teamRules(message)? = entry.status.lastError { result.teamRulesRefusal = message }
     result.teamRules = entry.teamRules.map(TeamRulesInfo.init)
+    // The picked icon, else the machine's own setting, else the hardware it detected.
+    let chosen = identities?.chosenIcon(entry.environmentId) ?? fleetNicknameEntries[entry.environmentId]?.icon.flatMap(MachineKind.init(rawValue:))
+    result.kind = chosen ?? (entry.settings?.environmentIcon ?? entry.config?.environment.platform.machine).flatMap(MachineKind.init(rawValue:))
+    result.isCounted = entry.snapshot != nil || entry.cachedSnapshot != nil
     return result
   }
 

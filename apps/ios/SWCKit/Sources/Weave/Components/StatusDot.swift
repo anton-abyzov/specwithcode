@@ -65,7 +65,9 @@ public struct MachineBadge: View {
   let size: CGFloat
   let showsIcon: Bool
   let lineLimit: Int
+  let tint: Color?
 
+  /// - Parameter tint: The machine's own color for its glyph; muted without one.
   /// - Parameter label: The machine name, shown after the glyph when given.
   /// - Parameter showsIcon: False keeps the name and its status dot and drops the glyph, for a
   ///   tight header: the name says which machine, the glyph only says it is one.
@@ -75,8 +77,10 @@ public struct MachineBadge: View {
     systemName: String = "laptopcomputer",
     size: CGFloat = 16,
     showsIcon: Bool = true,
-    lineLimit: Int = 2
+    lineLimit: Int = 2,
+    tint: Color? = nil
   ) {
+    self.tint = tint
     self.status = status
     self.label = label
     self.systemName = systemName
@@ -90,7 +94,7 @@ public struct MachineBadge: View {
       if showsIcon {
         Image(systemName: systemName)
           .font(.system(size: size, weight: .regular))
-          .foregroundStyle(Color.weave.muted)
+          .foregroundStyle(tint ?? Color.weave.muted)
           .overlay(alignment: .bottomTrailing) {
             StatusDot(status, size: max(5, size * 0.36), ringColor: .weave.canvas)
               .offset(x: size * 0.2, y: size * 0.12)

@@ -142,8 +142,18 @@ import SWCWire
     #expect(ShellSummaries.preview(thread) == "Line one line two")
 
     thread.status = .running
+    // The row says the step in words; the command line stays out of it.
+    thread.activeWork = ActiveWork(label: "npm test -- --watch", startedAt: Date(), kind: .command)
+    #expect(ShellSummaries.preview(thread) == "Running a command")
+    let summary = ShellSummaries.threadSummary(thread, environmentId: "env", projectTitle: nil, machineLabel: "M4", machineOnline: true)
+    #expect(summary.preview == "Running a command")
+    #expect(summary.workDetail == "npm test -- --watch")
+    // An older server sends no kind: its fixed labels still name it, anything else is a step.
+    thread.activeWork = ActiveWork(label: "a subagent", startedAt: Date())
+    #expect(ShellSummaries.preview(thread) == "Waiting on a subagent")
+    #expect(ShellSummaries.threadSummary(thread, environmentId: "env", projectTitle: nil, machineLabel: "M4", machineOnline: true).workDetail == nil)
     thread.activeWork = ActiveWork(label: "Running tests", startedAt: Date())
-    #expect(ShellSummaries.preview(thread) == "Running tests")
+    #expect(ShellSummaries.preview(thread) == "Running a step")
 
     thread.pendingRuntimeRequest = PendingRuntimeRequestSummary(id: "r", kind: .command, createdAt: Date())
     #expect(ShellSummaries.preview(thread) == "Approval requested")

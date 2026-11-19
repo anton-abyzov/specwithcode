@@ -62,8 +62,8 @@ private struct GlobalSettingsRoot: View {
   private var machines: some View {
     GroupedCard(label: "Machines", separatorInset: 56) {
       ForEach(model.machines) { machine in
-        WeaveRow(machine.displayName, subtitle: machine.statusLabel, showsChevron: true, action: { nav.push(.machine(machine.id)) }) {
-          MachineBadge(status: machine.displayStatus, size: 18)
+        WeaveRow(machine.displayName, subtitle: machine.rowStatus, showsChevron: true, action: { nav.push(.machine(machine.id)) }) {
+          MachineBadge(status: machine.displayStatus, systemName: machine.symbol, size: 18, tint: model.machineTint(machine.id))
             .frame(width: 28)
             .accessibilityHidden(true)
         } trailing: {

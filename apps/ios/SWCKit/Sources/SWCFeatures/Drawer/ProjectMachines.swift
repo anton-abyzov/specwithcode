@@ -8,6 +8,8 @@ struct ProjectMachine: Identifiable, Hashable {
   let name: String
   let status: WeaveStatus
   let statusLabel: String
+  /// The machine's own color; nil for a machine known only by a name.
+  var tint: Color? = nil
 }
 
 extension AppModel {
@@ -21,10 +23,10 @@ extension AppModel {
     return copies.compactMap { id, label, online in
       guard seen.insert(id).inserted else { return nil }
       if let machine = machine(id) {
-        return ProjectMachine(id: id, name: machine.displayName, status: machine.displayStatus, statusLabel: machine.statusLabel)
+        return ProjectMachine(id: id, name: machine.displayName, status: machine.displayStatus, statusLabel: machine.statusLabel, tint: machineTint(id))
       }
       let status: WeaveStatus = online ? .online : .offline
-      return ProjectMachine(id: id, name: label, status: status, statusLabel: status.label)
+      return ProjectMachine(id: id, name: label, status: status, statusLabel: status.label, tint: machineTint(id))
     }
   }
 
@@ -33,17 +35,17 @@ extension AppModel {
   func threadMachines(of project: ProjectSummary, threads: [ThreadSummary]) -> [ProjectMachine] {
     var list: [ProjectMachine] = []
     for machine in machines(of: project) where !list.contains(where: { ThreadSummary.sameMachine($0.id, machine.name) }) {
-      list.append(ProjectMachine(id: machine.name, name: machine.name, status: machine.status, statusLabel: machine.statusLabel))
+      list.append(ProjectMachine(id: machine.name, name: machine.name, status: machine.status, statusLabel: machine.statusLabel, tint: machine.tint))
     }
     for thread in threads where !list.contains(where: { thread.runs(on: $0.id) }) {
       let name = thread.runsOnMachine
       if let machine = machines.first(where: { ThreadSummary.sameMachine($0.displayName, name) }) {
-        list.append(ProjectMachine(id: name, name: machine.displayName, status: machine.displayStatus, statusLabel: machine.statusLabel))
+        list.append(ProjectMachine(id: name, name: machine.displayName, status: machine.displayStatus, statusLabel: machine.statusLabel, tint: machineTint(machine.id)))
       } else {
         // Online describes where the thread lives; a machine it runs on that
         // this phone doesn't know reads as offline.
         let status: WeaveStatus = thread.placement.runsOn == nil && thread.machineOnline ? .online : .offline
-        list.append(ProjectMachine(id: name, name: name, status: status, statusLabel: status.label))
+        list.append(ProjectMachine(id: name, name: name, status: status, statusLabel: status.label, tint: thread.runsOnMachineId.map { machineTint($0) }))
       }
     }
     return list
@@ -100,8 +102,9 @@ struct ProjectMachinesLine: View {
     HStack(spacing: WeaveSpacing.s2) {
       ForEach(machines.prefix(shown)) { machine in
         HStack(spacing: 4) {
-          StatusDot(machine.status, size: 7)
-          Text(machine.name).lineLimit(1)
+          MachineMark(name: machine.name, tint: machine.tint)
+          // The square says which machine; a dot is added only when it is not online.
+          if machine.status != .online || machine.tint == nil { StatusDot(machine.status, size: 6) }
         }
         .fixedSize()
       }
@@ -114,7 +117,7 @@ struct ProjectMachinesLine: View {
   }
 
   private var wrapped: some View {
-    Text(machines.map(\.name).joined(separator: ", "))
+    MachineMark.text(machines)
       .font(.weave(.footnote))
       .foregroundStyle(Color.weave.muted)
       .fixedSize(horizontal: false, vertical: true)
@@ -134,7 +137,7 @@ struct ThreadMachineFilter: View {
         ForEach(machines) { machine in
           chip(machine.id) {
             HStack(spacing: WeaveSpacing.s1) {
-              MachineBadge(status: machine.status, size: 15)
+              MachineBadge(status: machine.status, size: 15, tint: machine.tint)
               Text(machine.name).font(.weave(.callout, weight: .medium))
             }
           }

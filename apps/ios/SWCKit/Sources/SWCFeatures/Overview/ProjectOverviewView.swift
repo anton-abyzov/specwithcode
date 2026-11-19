@@ -35,7 +35,7 @@ struct ProjectOverviewView: View {
           .plainListRow()
       }
       if let machine = model.machine(project.environmentId), machine.isStale {
-        Banner("Catching up with \(machine.label). \(isAssistant ? "Topics" : "Threads") may be a little behind for a moment.", kind: .info)
+        Banner("Catching up with \(machine.displayName). \(isAssistant ? "Topics" : "Threads") may be a little behind for a moment.", kind: .info)
           .padding(.horizontal, WeaveSpacing.gutter)
           .padding(.vertical, WeaveSpacing.s2)
           .plainListRow()
@@ -121,7 +121,7 @@ struct ProjectOverviewView: View {
   }
 
   private func row(_ thread: ThreadSummary, showsMachine: Bool) -> some View {
-    WeaveRow(thread.title, subtitle: thread.identity.label, note: Self.note(thread, showsMachine: showsMachine), titleLineLimit: 1, subtitleLineLimit: 1, insets: WeaveRowInsets.list, action: { nav.push(.chat(.thread(thread.ref))) }) {
+    WeaveRow(thread.title, subtitleText: Text(verbatim: thread.identity.label), noteText: noteText(thread, showsMachine: showsMachine), titleLineLimit: 1, subtitleLineLimit: 1, insets: WeaveRowInsets.list, action: { nav.push(.chat(.thread(thread.ref))) }) {
       ThreadIdentityMarks(identity: thread.identity)
     } trailing: {
       HStack(spacing: WeaveSpacing.s2) {
@@ -184,6 +184,14 @@ struct ProjectOverviewView: View {
   /// project spans machines, the thread runs away from home, or its machine is
   /// unreachable), then its plan while it works, why it failed or what it
   /// waits for. A quiet thread on the project's only machine has none.
+  /// `note` with each machine's name after a square of its color.
+  private func noteText(_ thread: ThreadSummary, showsMachine: Bool) -> Text? {
+    guard let note = Self.note(thread, showsMachine: showsMachine) else { return nil }
+    let label = thread.placement.label
+    guard note.hasPrefix(label) else { return Text(verbatim: note) }
+    return Text("\(model.placementText(thread))\(Text(verbatim: String(note.dropFirst(label.count))))")
+  }
+
   static func note(_ thread: ThreadSummary, showsMachine: Bool, now: Date = .now) -> String? {
     let machine = showsMachine || thread.placement.runsOn != nil || thread.isUnknown ? thread.placement.label : nil
     let parts = [machine, status(thread, now: now)].compactMap(\.self).filter { !$0.isEmpty }

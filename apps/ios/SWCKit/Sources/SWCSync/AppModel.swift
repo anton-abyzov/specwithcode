@@ -98,6 +98,11 @@ public struct MachineSummary: Identifiable, Hashable, Sendable {
   public var teamRules: TeamRulesInfo? = nil
   /// Why the machine's Team rules refuse this phone right now, in the machine's words.
   public var teamRulesRefusal: String? = nil
+  /// The icon picked for it, else the hardware it reports; nil when neither says.
+  public var kind: MachineKind? = nil
+  /// False for a machine that never sent its chats and projects, live or
+  /// saved: its counts are unknown, not zero.
+  public var isCounted: Bool = true
 
   public init(id: String, label: String, displayName: String? = nil, status: MachineStatus, platform: String? = nil, serverVersion: String? = nil, address: String? = nil, tokenDaysLeft: Int? = nil, isStale: Bool = false, viaConnect: Bool = false, needsSignIn: Bool = false, checkedAt: Date? = nil, hasDirectPairing: Bool? = nil) {
     self.displayName = displayName ?? MachineNickname.shortName(label)
@@ -270,6 +275,12 @@ public struct ThreadSummary: Identifiable, Hashable, Sendable {
   /// Where the thread lives and runs, by machine nickname, and whether its
   /// state is unknown because that machine is unreachable.
   public var placement: ThreadPlacement
+  /// The machines `placement` names, by environment id, for their colors.
+  public var ownerMachineId: String?
+  public var runsOnMachineId: String?
+  /// The running step's command or prompt on one line: detail for the thread's
+  /// info sheet, never a row's status.
+  public var workDetail: String?
 
   public init(ref: ThreadRef, projectRef: ProjectRef? = nil, projectTitle: String? = nil, title: String, activity: ThreadActivity, preview: String? = nil, updatedAt: Date, workStartedAt: Date? = nil, isPinned: Bool = false, isResolved: Bool = false, isUnread: Bool = false, machineLabel: String, machineOnline: Bool, planProgress: PlanProgress? = nil, placement: ThreadPlacement? = nil, activityAt: Date? = nil, identity: ThreadIdentity = .unknown, waitsOnUser: Bool = false) {
     self.ref = ref
@@ -759,6 +770,9 @@ public final class AppModel {
   public var connect: ConnectState?
   /// Open simulators and emulators by machine; missing until a machine answers.
   public var devices: [String: MachineDevices] = [:]
+  /// Every machine's color and chosen icon, from the fleet's nicknames. Nil
+  /// until an engine sets it; the machines then take their default colors.
+  public var identities: MachineIdentities?
   public var appearance: AppearancePreference {
     didSet { UserDefaults.standard.set(appearance.rawValue, forKey: "appearance") }
   }

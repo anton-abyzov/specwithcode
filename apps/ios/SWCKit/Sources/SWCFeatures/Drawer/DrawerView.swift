@@ -170,10 +170,10 @@ struct DrawerView: View {
     // With more than one machine, every row says which ones it is on;
     // otherwise the name only tells apart projects with the same name.
     let machines = model.machines.count > 1 ? model.machines(of: project) : []
-    let subtitle = machines.isEmpty
-      ? (shared.contains(project.title.lowercased()) ? project.machineLabel : nil)
-      : machines.map(\.name).joined(separator: " · ")
-    return WeaveRow(project.title, subtitle: subtitle, titleLineLimit: 1, subtitleLineLimit: machines.count > 1 ? 2 : 1, action: { router.open(target) }) {
+    let subtitle: Text? = machines.isEmpty
+      ? (shared.contains(project.title.lowercased()) ? MachineMark.text(project.machineLabel, tint: model.machineTint(project.ref.environmentId)) : nil)
+      : MachineMark.text(machines)
+    return WeaveRow(project.title, subtitleText: subtitle, titleLineLimit: 1, subtitleLineLimit: machines.count > 1 ? 2 : 1, action: { router.open(target) }) {
       ProjectAvatar(icon: project.icon.avatarIcon, title: project.title, size: 24, style: .plain)
         .frame(width: 28)
         .accessibilityHidden(true)
@@ -225,7 +225,7 @@ struct DrawerView: View {
             .padding(.horizontal, WeaveSpacing.s4)
           ForEach(rows) { thread in
             let target = ChatTarget.thread(thread.ref)
-            WeaveRow(thread.title, subtitle: (thread.accessWaitLine ?? thread.identity.label) + "\n" + thread.placement.subtitle(), titleLineLimit: 1, subtitleLineLimit: 3, action: { router.open(target) }) {
+            WeaveRow(thread.title, subtitleText: Text("\(Text(verbatim: thread.accessWaitLine ?? thread.identity.label))\n\(model.placementSubtitle(thread))"), titleLineLimit: 1, subtitleLineLimit: 3, action: { router.open(target) }) {
               ThreadIdentityMarks(identity: thread.identity)
             } trailing: {
               RecentThreadGlyph(thread: thread)
@@ -249,8 +249,8 @@ struct DrawerView: View {
       DrawerSectionLabel("Machines")
       ForEach(model.machines) { machine in
         // The status goes under the name: beside it, the narrow drawer cut one or the other.
-        WeaveRow(machine.displayName, subtitle: machine.statusLabel, titleLineLimit: 1, subtitleLineLimit: 2, action: { router.push(.machine(machine.id)) }) {
-          MachineBadge(status: machine.displayStatus, size: 18)
+        WeaveRow(machine.displayName, subtitle: machine.rowStatus, titleLineLimit: 1, subtitleLineLimit: 2, action: { router.push(.machine(machine.id)) }) {
+          MachineBadge(status: machine.displayStatus, systemName: machine.symbol, size: 18, tint: model.machineTint(machine.id))
             .frame(width: 28)
             .accessibilityHidden(true)
         } trailing: {

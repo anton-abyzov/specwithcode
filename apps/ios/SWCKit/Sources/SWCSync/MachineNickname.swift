@@ -13,13 +13,18 @@ public enum MachineNickname {
   /// knows. Mirrors the shared `mergeMachineNicknames`: the newest stamp wins,
   /// and equal stamps keep the greater name so every device agrees.
   public static func merge(_ maps: [[String: MachineNicknameEntry]]) -> [String: String] {
+    mergeEntries(maps).mapValues(\.name)
+  }
+
+  /// The same merge, keeping each entry's color, icon and short label.
+  public static func mergeEntries(_ maps: [[String: MachineNicknameEntry]]) -> [String: MachineNicknameEntry] {
     var merged: [String: MachineNicknameEntry] = [:]
     for map in maps {
       for (environmentId, entry) in map {
         merged[environmentId] = newer(merged[environmentId], entry)
       }
     }
-    return merged.mapValues(\.name)
+    return merged
   }
 
   static func newer(_ current: MachineNicknameEntry?, _ incoming: MachineNicknameEntry) -> MachineNicknameEntry {
