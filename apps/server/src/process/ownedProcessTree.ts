@@ -517,11 +517,12 @@ export class OwnedProcessTree {
     const withDescendants = (
       now: ReadonlyArray<ProcessEntry>,
       extra: ReadonlyArray<ProcessEntry> = [],
+      fromGroup = false,
     ) => {
       const byPid = new Map(stillRunning(escapees, now).map((entry) => [entry.pid, entry]));
       for (const entry of extra) byPid.set(entry.pid, entry);
       const from = [...byPid.keys()];
-      for (const entry of posixEscapees(now, this.root, host.selfPid, false, from)) {
+      for (const entry of posixEscapees(now, this.root, host.selfPid, fromGroup, from)) {
         byPid.set(entry.pid, entry);
       }
       for (const entry of byPid.values()) this.escapees.set(entry.pid, entry);
@@ -572,7 +573,13 @@ export class OwnedProcessTree {
     await signalEscapees("SIGTERM");
     const grace = host.now() + Math.max(0, (deadline - host.now()) / 2);
     if (await settled(grace)) return settle(0);
-    if (groupAlive()) this.signalGroup("SIGKILL");
+    if (groupAlive()) {
+      // What a member started on SIGTERM outside the group (a detached helper) is read
+      // while the member still runs: once SIGKILL ends it, the helper names no parent.
+      const now = await this.read(deadline);
+      if (now !== undefined) escapees = withDescendants(now, [], groupUsable);
+      this.signalGroup("SIGKILL");
+    }
     await signalEscapees("SIGKILL");
     if (await settled(deadline)) return settle(0);
     return settle((groupAlive() ? 1 : 0) + escapees.length);
@@ -612,6 +619,8 @@ export class OwnedProcessTree {
     const table = await this.read(verifyBy);
     if (table === undefined) return { found: Math.max(found, 0), survivors: 0, unknown: true };
     left = windowsTree(table, this.root, host.selfPid, this.remembered);
+    // Kept like every reading's: a retry still knows a survivor once its parent exits.
+    for (const known of left) this.remembered.set(known.entry.pid, known);
     this.noteUnidentified(table, left);
     return {
       found: Math.max(found, 0),

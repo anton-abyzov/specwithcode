@@ -650,6 +650,91 @@ describe("OwnedProcessTree.end", () => {
     expect(signals).toContain("SIGKILL 202");
     expect(result).toEqual({ found: 2, survivors: 0, unknown: false });
   });
+
+  it("ends a detached helper that a POSIX group member starts on SIGTERM", async () => {
+    const started = "Thu Nov 19 12:03:08 2026";
+    const entry = (pid: number, ppid: number, pgid: number): ProcessEntry => ({
+      pid,
+      ppid,
+      pgid,
+      started,
+      command: `p${pid}`,
+    });
+    let clock = 0;
+    let toolAlive = true;
+    let helperAlive = false;
+    const signals: string[] = [];
+    const host: TreeHost = {
+      platform: "darwin",
+      selfPid: 100,
+      readProcessList: async () => [
+        ...(toolAlive ? [entry(201, 1, 200)] : []),
+        ...(helperAlive ? [entry(202, toolAlive ? 201 : 1, 202)] : []),
+      ],
+      signal: (pid, signal) => {
+        if (signal === 0) {
+          if (pid === -200 && toolAlive) return;
+          throw Object.assign(new Error("No such process"), { code: "ESRCH" });
+        }
+        signals.push(`${signal} ${pid}`);
+        // The tool's SIGTERM handler starts a helper in a session of its own, then hangs.
+        if (pid === -200 && signal === "SIGTERM") helperAlive = true;
+        if (pid === -200 && signal === "SIGKILL") toolAlive = false;
+        if (pid === 202) helperAlive = false;
+      },
+      killVerified: async () => {
+        throw new Error("no Windows kill on POSIX");
+      },
+      sleep: async (ms) => {
+        clock += ms;
+      },
+      now: () => clock,
+    };
+    const tree = new OwnedProcessTree({ pid: 200, spawnedAt: 0, alive: () => false }, host);
+    const result = await tree.end();
+    expect(helperAlive).toBe(false);
+    expect(signals).toContain("SIGKILL 202");
+    expect(result.survivors).toBe(0);
+    expect(result.unknown).toBe(false);
+  });
+
+  it("remembers a Windows survivor its last reading found, for the retry", async () => {
+    let clock = 0;
+    let read = 0;
+    const kills: number[][] = [];
+    const at = (pid: number) => BigInt(filetimeFromEpochMs(pid * 10));
+    const cli = win(200, 100, at(200));
+    const tool = win(201, 200, at(201));
+    const helper = win(202, 201, at(202));
+    const host: TreeHost = {
+      platform: "win32",
+      selfPid: 100,
+      readProcessList: async () => {
+        const tables = [[cli, tool], [tool], [tool, helper], [helper]];
+        return tables[read++] ?? (kills.some((pids) => pids.includes(202)) ? [] : [helper]);
+      },
+      signal: () => {
+        throw new Error("no POSIX signal on Windows");
+      },
+      killVerified: async (entries, timeoutMs) => {
+        kills.push(entries.map((entry) => entry.pid));
+        // The kill takes the whole budget; the tool exits only after the last reading.
+        clock += timeoutMs;
+      },
+      sleep: async (ms) => {
+        clock += ms;
+      },
+      now: () => clock,
+    };
+    let alive = true;
+    const tree = new OwnedProcessTree({ pid: 200, spawnedAt: 0, alive: () => alive }, host);
+    expect(await tree.remember(10_000, true)).toBe(true);
+    alive = false;
+    expect(await tree.end()).toEqual({ found: 1, survivors: 2, unknown: false });
+    // The tool is gone by the retry; its helper is still known, and is ended.
+    expect(await tree.end()).toEqual({ found: 1, survivors: 0, unknown: false });
+    expect(kills).toEqual([[201], [202]]);
+  });
 });
 
 function alive(pid: number) {
