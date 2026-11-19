@@ -211,7 +211,8 @@ export const make = Effect.gen(function* () {
   } satisfies TeamUsageReporter["Service"];
 });
 
-export const layer = Layer.effect(TeamUsageReporter, make);
+// The vsk_ token lookup runs `security` on macOS; the runner is not a server-wide service.
+export const layer = Layer.effect(TeamUsageReporter, make).pipe(Layer.provide(ProcessRunner.layer));
 
 export const layerRpcHandlers = WsTeamUsageRpcGroup.middleware(RpcInstrumentation).toLayer(
   Effect.gen(function* () {
