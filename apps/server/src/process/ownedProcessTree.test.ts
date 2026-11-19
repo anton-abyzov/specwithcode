@@ -1221,6 +1221,67 @@ describe("OwnedProcessTree.end after a lost parent", () => {
     expect((await tree.end()).unknown).toBe(true);
   });
 
+  it.each([false, true])(
+    "keeps doubt on a Windows worker whose start appears or goes missing (missing first: %s)",
+    async (firstMissing) => {
+      const f = fake("win32");
+      const server = windowsRow(100, 1, 1000);
+      const cli = windowsRow(200, 100, 2000);
+      const tool = windowsRow(201, 200, 3000);
+      const launcher = windowsRow(202, 201, 4000);
+      const worker = windowsRow(203, 202, 5000);
+      const withoutStart = { ...worker, started: "" };
+      const before = firstMissing ? withoutStart : worker;
+      const after = firstMissing ? worker : withoutStart;
+      f.setTable([server, cli, tool]);
+      expect(await f.tree.remember(15000, true)).toBe(true);
+      f.exitRootAt(3500);
+      const ends = [];
+      for (const rows of [[launcher, before], [before], [after]]) {
+        f.setTable([server, ...rows]);
+        ends.push(await f.tree.end(400));
+      }
+      expect(ends.map((end) => end.unknown)).toEqual([true, true, true]);
+      expect(f.kills).toEqual([]);
+    },
+  );
+
+  it("keeps doubt when a group member it never saw leaves before the group probe", async () => {
+    const tool = processRow(201);
+    const worker = processRow(202);
+    const moved = { ...worker, pgid: 202 };
+    const tables = [[tool], [worker], [moved]];
+    let reads = 0;
+    let clock = 0;
+    let live = tables[0]!;
+    const host: TreeHost = {
+      platform: "darwin",
+      selfPid: 100,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+      readProcessList: async () => {
+        const sample = tables[Math.min(reads++, tables.length - 1)]!;
+        // The worker is listed in the group, then leaves it before the probe.
+        if (reads === 2) live = [moved];
+        return sample;
+      },
+      signal: (pid, action) => {
+        if (!live.some((entry) => entry.pgid === -pid)) {
+          throw Object.assign(new Error("no such process group"), { code: "ESRCH" });
+        }
+        if (action === "SIGTERM") live = [worker];
+      },
+      killVerified: async () => {
+        throw new Error("no Windows kill on POSIX");
+      },
+    };
+    const tree = new OwnedProcessTree({ pid: rootPid, spawnedAt: 0, alive: () => false }, host);
+    expect((await tree.end()).unknown).toBe(true);
+    expect((await tree.end()).unknown).toBe(true);
+  });
+
   it("keeps a POSIX Stop unconfirmed on retry after its first reading failed", async () => {
     const f = fake("darwin");
     const member = processRow(201);

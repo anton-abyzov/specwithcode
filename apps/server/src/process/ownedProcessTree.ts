@@ -235,10 +235,12 @@ export function unidentifiedChildren(
   for (const [pid, entry] of doubt) queue.push({ pid, start: startOf(entry) });
   for (const [pid, started] of doubtful) {
     const row = byPid.get(pid);
-    if (row !== undefined && row.started === started && !parents.has(pid)) {
-      doubt.set(pid, started);
-    }
-    queue.push({ pid, start: startOf(started) });
+    // A start missing from either reading cannot tell the process from a newer one: it
+    // stays in doubt, keeping whichever start is known.
+    const same =
+      row !== undefined && (row.started === started || row.started === "" || started === "");
+    if (same && !parents.has(pid)) doubt.set(pid, started === "" ? row.started : started);
+    queue.push({ pid, start: startOf(started === "" && same ? row.started : started) });
   }
   const walked = new Set<string>();
   while (queue.length > 0) {
@@ -651,6 +653,17 @@ export class OwnedProcessTree {
           this.groupSeen.get(entry.pid) === entry.started,
       );
       const owned = ownsGroup(now);
+      // Listed in the group, but none of them one this end saw: not provably the CLI's, and
+      // they may leave the group (or it may empty) before anyone looks again.
+      const unaccounted =
+        !owned &&
+        groupUsable &&
+        !this.groupRetired &&
+        now.some((entry) => entry.pgid === this.root.pid && entry.pid !== host.selfPid);
+      if (unaccounted) {
+        unknown = true;
+        this.coverageLost = true;
+      }
       // Members joined since (forked by a seen member) carry the group's continuity on.
       if (owned) {
         for (const entry of now) {
