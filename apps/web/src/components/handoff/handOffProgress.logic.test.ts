@@ -480,6 +480,68 @@ describe("what a window has seen of automatic hand offs", () => {
   });
 });
 
+describe("automatic hand offs that overlap", () => {
+  const trigger = (key: string) => ({ kind: "automatic", key, usageWindowKey: "w" }) as const;
+  const pending = (id: string, project: string) =>
+    progressGroups(
+      [
+        record("pending", {
+          operationId: id,
+          batchId: null,
+          projectId: project as ProjectId,
+          trigger: trigger(id),
+        }),
+      ],
+      [],
+    )[0]!;
+  // An empty first read: the window has seen that this machine has no records.
+  const baseline = automaticProgressStep(null, []).seen;
+
+  it("shows each of two that start between two reads, one after the other, exactly once", () => {
+    const a = pending("op-a", "project-a");
+    const b = pending("op-b", "project-b");
+    const groups = [b, a];
+    const first = automaticProgressStep(baseline, groups, false);
+    expect(first.open).toBe(b.key);
+    // The first view is open: nothing replaces it, and the other is not lost.
+    const during = automaticProgressStep(first.seen, groups, true);
+    expect(during.open).toBeNull();
+    // Done was pressed.
+    const second = automaticProgressStep(during.seen, groups, false);
+    expect(second.open).toBe(a.key);
+    const third = automaticProgressStep(second.seen, groups, true);
+    expect(automaticProgressStep(third.seen, groups, false).open).toBeNull();
+  });
+
+  it("shows one that starts while a view is open, once that view is closed", () => {
+    const a = pending("op-a", "project-a");
+    const first = automaticProgressStep(baseline, [a], false);
+    expect(first.open).toBe(a.key);
+    const b = pending("op-b", "project-b");
+    // It arrives before Done: the open view stays, and the arrival is not marked seen.
+    const arrived = automaticProgressStep(first.seen, [b, a], true);
+    expect(arrived.open).toBeNull();
+    const afterDone = automaticProgressStep(arrived.seen, [b, a], false);
+    expect(afterDone.open).toBe(b.key);
+    expect(automaticProgressStep(afterDone.seen, [b, a], false).open).toBeNull();
+  });
+
+  it("on a first read with two under way, shows both in turn and no finished one", () => {
+    const a = pending("op-a", "project-a");
+    const b = pending("op-b", "project-b");
+    const done = progressGroups(
+      [record("resumed", { operationId: "op-done", batchId: null, trigger: trigger("done") })],
+      [],
+    )[0]!;
+    const groups = [b, a, done];
+    const first = automaticProgressStep(null, groups, false);
+    expect(first.open).toBe(b.key);
+    const second = automaticProgressStep(first.seen, groups, false);
+    expect(second.open).toBe(a.key);
+    expect(automaticProgressStep(second.seen, groups, false).open).toBeNull();
+  });
+});
+
 /**
  * Version-pinned in both directions with the shapes of tag v1.0.383, the
  * release before transfer records: its snapshot has no `transfers`, and its
