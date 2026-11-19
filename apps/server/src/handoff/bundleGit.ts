@@ -107,9 +107,13 @@ export async function createBundle(input: {
   readonly commit: string;
   readonly exclude: ReadonlyArray<string>;
   readonly maxBytes?: number;
+  /** The Git folder `ref` is in, when not the one `root` opens. */
+  readonly gitDir?: string;
 }): Promise<BundleFile> {
+  const env = input.gitDir === undefined ? {} : { env: { GIT_DIR: input.gitDir } };
   const tip = await runGit(input.root, ["rev-parse", "--verify", "-q", `${input.ref}^{commit}`], {
     allowFailure: true,
+    ...env,
   });
   if (tip.code !== 0 || tip.stdout.trim() !== input.commit) {
     throw new BundleError("mismatch", "The checkpoint ref moved; write a new checkpoint first.");
@@ -119,14 +123,11 @@ export async function createBundle(input: {
   try {
     const file = NodePath.join(scratch, "checkpoint.bundle");
     const exclude = input.exclude.filter((sha) => isCommitSha(sha) && sha !== input.commit);
-    await runGit(input.root, [
-      "bundle",
-      "create",
-      "--quiet",
-      file,
-      input.ref,
-      ...exclude.map((sha) => `^${sha}`),
-    ]);
+    await runGit(
+      input.root,
+      ["bundle", "create", "--quiet", file, input.ref, ...exclude.map((sha) => `^${sha}`)],
+      env,
+    );
     const bytes = (await NodeFSP.stat(file)).size;
     if (bytes > (input.maxBytes ?? HANDOFF_MAX_BUNDLE_BYTES)) {
       throw new BundleError(

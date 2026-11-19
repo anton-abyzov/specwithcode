@@ -120,6 +120,13 @@ export async function writeCheckpoint(input: {
    */
   readonly exclusive?: boolean;
   /**
+   * The Git folder `ref` is written in (and an earlier one read from), when
+   * not the checkout's own: a private repository that reads the checkout's
+   * objects through its alternates. The snapshot's objects are always written
+   * in the checkout's object store.
+   */
+  readonly refGitDir?: string;
+  /**
    * Also check untracked files by content (`snapshotSecrets.ts`) and leave out
    * what it flags, except the files named in `sendAnyway`. Off unless asked
    * for: a thread's checkpoint keeps today's name check alone until the thread
@@ -134,6 +141,7 @@ export async function writeCheckpoint(input: {
 }): Promise<CheckpointCommit> {
   const root = await repositoryRoot(input.cwd);
   const ref = input.ref ?? handoffRef(input.threadId);
+  const refEnv = input.refGitDir === undefined ? {} : { env: { GIT_DIR: input.refGitDir } };
   const head = await runGit(root, ["rev-parse", "--verify", "-q", "HEAD^{commit}"], {
     allowFailure: true,
   });
@@ -301,6 +309,7 @@ export async function writeCheckpoint(input: {
         ? null
         : await runGit(root, ["rev-parse", "--verify", "-q", `${ref}^{commit}`], {
             allowFailure: true,
+            ...refEnv,
           });
     if (previous !== null && previous.code === 0) {
       const previousCommit = previous.stdout.trim();
@@ -340,7 +349,11 @@ export async function writeCheckpoint(input: {
         { env: CHECKPOINT_IDENTITY },
       )
     ).stdout.trim();
-    await runGit(root, ["update-ref", ref, commit, ...(input.exclusive === true ? [""] : [])]);
+    await runGit(
+      root,
+      ["update-ref", ref, commit, ...(input.exclusive === true ? [""] : [])],
+      refEnv,
+    );
     return {
       root,
       commit,

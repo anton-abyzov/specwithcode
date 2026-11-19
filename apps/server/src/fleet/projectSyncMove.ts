@@ -56,7 +56,8 @@ import {
   LOCAL_MS,
   present,
   shortBranch,
-  MOVE_ENV,
+  moveEnv,
+  offlineGit,
   type SyncContext,
   type SyncGit,
   type SyncRepository,
@@ -236,10 +237,12 @@ async function graftsSet(gitDir: string): Promise<boolean | null> {
  * is never taken for a finding.
  */
 export async function fastForwardRepository(
-  context: SyncContext,
+  entry: SyncContext,
   repository: SyncRepository,
   otherBranch: string | null,
 ): Promise<ProjectSyncStepResult> {
+  // No Git child of a move can fetch, from its first folder probe on; the fetch is not a move's.
+  const context: SyncContext = { ...entry, git: offlineGit(entry.git) };
   const { git } = context;
   // A folder Sync could not read is left alone, whatever any fetch says of it.
   if (repository.unread === true)
@@ -340,7 +343,7 @@ export async function fastForwardRepository(
   if (ready !== null) return decline(...ready);
 
   const transaction = (context.transaction ?? refTransaction)(cwd, "sync: fast-forward", {
-    env: { ...MOVE_ENV, GIT_DIR: row.gitDir, GIT_WORK_TREE: cwd },
+    env: { GIT_DIR: row.gitDir, GIT_WORK_TREE: cwd, ...moveEnv() },
   });
   // From its start the transaction is this call's: whatever happens, also a `prepare` that
   // throws, it is closed before this returns (an `abort` after a `commit` or an `abort`

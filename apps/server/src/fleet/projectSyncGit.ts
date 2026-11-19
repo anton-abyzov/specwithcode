@@ -44,28 +44,56 @@ export const SYNC_ENV = {
 } as const;
 
 /**
- * On top of `SYNC_ENV` for every Git child of a move (its reads, the ref
- * transaction, the tree writer, the readback): no transport at all, whatever a
- * setting or a partial clone asks for. `GIT_ALLOW_PROTOCOL` allows no protocol,
- * and `protocol.allow=never` is set through Git's own environment pair.
+ * On top of `SYNC_ENV` for every Git child of a move (its folder probes, its
+ * reads, the ref transaction, the tree writer, the readback): no transport at
+ * all, whatever a setting or a partial clone asks for. `GIT_ALLOW_PROTOCOL` is
+ * present and empty, so Git allows no protocol (it is checked before any
+ * `protocol.*.allow` setting), and `protocol.allow=never` is added through
+ * Git's environment pairs after any the server inherited, which stay.
+ * `inherited` is the environment the child would get otherwise.
  */
-export const MOVE_ENV = {
-  ...SYNC_ENV,
-  GIT_ALLOW_PROTOCOL: "none",
-  GIT_CONFIG_COUNT: "1",
-  GIT_CONFIG_KEY_0: "protocol.allow",
-  GIT_CONFIG_VALUE_0: "never",
-} as const;
+export function moveEnv(
+  inherited: Readonly<Record<string, string | undefined>> = {},
+): Record<string, string | undefined> {
+  const env = { ...process.env, ...inherited };
+  const raw = env.GIT_CONFIG_COUNT;
+  // Git reads an empty count as none; one that is not a count would make Git refuse to run.
+  const count = raw !== undefined && /^\d{1,4}$/.test(raw) ? Number(raw) : 0;
+  const last = count - 1;
+  const added =
+    count > 0 &&
+    env[`GIT_CONFIG_KEY_${last}`] === "protocol.allow" &&
+    env[`GIT_CONFIG_VALUE_${last}`] === "never";
+  return {
+    ...SYNC_ENV,
+    GIT_ALLOW_PROTOCOL: "",
+    // Added once: a runner of a move wrapped again adds nothing.
+    ...(added
+      ? {}
+      : {
+          GIT_CONFIG_COUNT: String(count + 1),
+          [`GIT_CONFIG_KEY_${count}`]: "protocol.allow",
+          [`GIT_CONFIG_VALUE_${count}`]: "never",
+        }),
+  };
+}
+
+/** A runner whose every command runs with `moveEnv`, after the caller's environment. */
+export const offlineGit =
+  (git: SyncGit): SyncGit =>
+  (cwd, args, options) => {
+    const env = { ...options?.env };
+    return git(cwd, args, { ...options, env: { ...env, ...moveEnv(env) } });
+  };
 
 /** A runner whose every command opens `gitDir` with `workTree` as its checkout, and cannot fetch. */
 export const boundGit =
   (git: SyncGit, gitDir: string, workTree: string): SyncGit =>
-  (cwd, args, options) =>
-    git(cwd, args, {
-      ...options,
-      // The move's own settings last: no caller turns transport back on.
-      env: { ...options?.env, GIT_DIR: gitDir, GIT_WORK_TREE: workTree, ...MOVE_ENV },
-    });
+  (cwd, args, options) => {
+    // The move's own settings last: no caller turns transport back on.
+    const env = { ...options?.env, GIT_DIR: gitDir, GIT_WORK_TREE: workTree };
+    return git(cwd, args, { ...options, env: { ...env, ...moveEnv(env) } });
+  };
 
 export interface SyncContext {
   readonly git: SyncGit;

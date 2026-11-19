@@ -6,12 +6,17 @@
  * peer route a thread hand off uses, one bundle per branch, never through the
  * remote and never through the folder copy. Uncommitted work travels as one
  * snapshot commit built with a private index, so the branch, the index and the
- * working tree here stay as they are. On this machine only hidden refs under
- * `refs/specwithcode/extras/` are written: each send creates its own only
- * where none of that name exists, and removes only what it created, at the
- * commit it wrote. A ref this call did not write is never removed.
+ * working tree here stay as they are. No ref of the repository is written or
+ * removed: a send writes its objects (a snapshot's commit and tree) in the
+ * repository's object store, and its one temporary ref in a private bare
+ * repository of its own, in a new folder of the system's temporary folder,
+ * that reads those objects through `objects/info/alternates`. The bundle is
+ * made there, and removing that folder is the whole cleanup. No send runs
+ * `gc` or `prune`, so the snapshot's objects stay through Git's prune grace
+ * period like any other new object.
  */
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
@@ -413,31 +418,23 @@ export async function sendExtra(input: {
     detail: detail === null ? null : detail.slice(0, 1900),
   });
   const hidden = `${EXTRAS_REF_PREFIX}${refComponent(input.operationId)}/${input.index}`;
-  // The repository this send works in, for all of it: its hidden ref is written, checked
-  // and removed there (`GIT_DIR`), and a checkout that opens another one by the time the
-  // bundle is made or sent stays.
+  // The repository this send works in, for all of it: a checkout that opens another one by
+  // the time the bundle is made or sent stays.
   const where = await gitFolders(syncGit, root).catch(() => null);
   if (where === null) return stays("failed", "The checkout's Git folder could not be read.");
   const pinned = { GIT_DIR: where.gitDir, GIT_WORK_TREE: where.cwd };
-  // Which directories hold that repository's refs, by device and inode: a repository put
-  // back at the same path (restored from a copy) is another one, whatever it holds.
-  const store = await refStore(root, pinned).catch(() => null);
-  if (store === null) return stays("failed", "The checkout's Git folder could not be read.");
-  const sameStore = async () => (await refStore(root, pinned).catch(() => null)) === store;
   const stillHere = async () => {
     const now = await gitFolders(syncGit, root).catch(() => null);
-    if (
-      now === null ||
-      now.cwd !== where.cwd ||
-      now.gitDir !== where.gitDir ||
-      !(await sameStore())
-    )
+    if (now === null || now.cwd !== where.cwd || now.gitDir !== where.gitDir)
       throw new Error("The checkout's Git folder changed during the send, so it stays.");
   };
-  // The commit this call wrote the hidden ref at, once Git created it; null while it has not.
-  let created: string | null = null;
+  // The send's own repository, for its temporary ref; removed once the send is over.
+  let own: PrivateRefs | null = null;
   const outcome = await (async (): Promise<ProjectSyncExtraResult> => {
     try {
+      const refs = await privateRefs(root, pinned);
+      own = refs;
+      const inOwn = { env: { GIT_DIR: refs.gitDir } };
       let commit: string;
       let leaf: string;
       let exclude: ReadonlyArray<string>;
@@ -445,10 +442,8 @@ export async function sendExtra(input: {
       if (item.kind === "branch") {
         const tip = await refCommit(root, `refs/heads/${item.branch}`);
         if (tip === null) return stays("missing-branch");
-        // The branch may move while this runs: the hidden ref holds what is sent. Created only
-        // where none of that name exists: a ref another process holds is never taken over.
-        await runGit(root, ["update-ref", hidden, tip, ""], { env: pinned });
-        created = tip;
+        // The branch may move while this runs: the temporary ref holds what is sent.
+        await runGit(refs.folder, ["update-ref", hidden, tip, ""], inOwn);
         commit = tip;
         leaf = item.branch;
         exclude = await peer.negotiate(await negotiationCandidates(root, tip));
@@ -472,19 +467,20 @@ export async function sendExtra(input: {
         }
       } else {
         await stillHere();
+        // The snapshot's objects go in the checkout's object store, its ref in the send's own.
         const snapshot = await writeCheckpoint({
           cwd: root,
           threadId: `sync-${input.operationId}`,
           ref: hidden,
+          refGitDir: refs.gitDir,
           exclusive: true,
           message: `SpecWithCode: uncommitted work on ${input.sourceLabel}`,
           contentCheck: { pastLimit: "leave-out", sendAnyway: item.sendAnyway },
         });
-        // Its own only once the pinned repository has it, as a direct ref at that commit.
         await stillHere();
-        const written = await refState(root, pinned, hidden);
-        if (written.kind === "direct" && written.oid === snapshot.commit) created = snapshot.commit;
-        else throw new Error("The snapshot's ref could not be read back, so it stays.");
+        const written = await refState(refs.folder, inOwn.env, hidden);
+        if (written.kind !== "direct" || written.oid !== snapshot.commit)
+          throw new Error("The snapshot's ref could not be read back, so it stays.");
         const leftOutAll: Array<ProjectSyncLeftOutFile> = await Promise.all(
           [
             ...snapshot.excludedSecretPaths.map((path) => ({
@@ -556,7 +552,8 @@ export async function sendExtra(input: {
       await stillHere();
       if (!exclude.includes(commit)) {
         const bundle = await createBundle({
-          root,
+          root: refs.folder,
+          gitDir: refs.gitDir,
           ref: hidden,
           commit,
           exclude,
@@ -587,30 +584,78 @@ export async function sendExtra(input: {
       return stays("failed", cause instanceof Error ? cause.message : "Git did not finish.");
     }
   })();
-  // Only the ref this call created, in the repository it created it in, and only while it
-  // is still a direct ref at the commit written; never through a symbolic ref. One whose
-  // ownership cannot be shown any more is left, and said.
-  if (created === null) return outcome;
-  // Removed, or already gone (another program removed it): nothing to say. Anything else,
-  // a store that is not the one written in included, is left, and said.
-  let done = false;
-  if (await sameStore()) {
-    const found = await refState(root, pinned, hidden).catch(() => null);
-    if (found?.kind === "absent") done = true;
-    else if (found?.kind === "direct" && found.oid === created) {
-      const deleted = await runGit(root, ["update-ref", "--no-deref", "-d", hidden, created], {
-        env: pinned,
-        allowFailure: true,
-      }).catch(() => null);
-      done = deleted !== null && deleted.code === 0;
-    }
-  }
-  if (done) return outcome;
-  const note = `A temporary ref, ${hidden}, was left in the repository: cleanup could not confirm ownership.`;
+  // The temporary ref was only ever in the send's own repository: removing it is all.
+  const left = own as PrivateRefs | null;
+  if (left === null || (await left.dispose())) return outcome;
+  const note = `A temporary folder of the send, ${left.folder}, could not be removed.`;
   return {
     ...outcome,
     detail: (outcome.detail === null ? note : `${outcome.detail} ${note}`).slice(0, 1900),
   };
+}
+
+/** A send's private repository: its folder, its Git folder, and how it is removed. */
+interface PrivateRefs {
+  readonly folder: string;
+  readonly gitDir: string;
+  /** Removes the folder; false when it is still there. */
+  readonly dispose: () => Promise<boolean>;
+}
+
+/**
+ * A private bare repository for one send's temporary ref, in a new folder of
+ * the system's temporary folder that only this call knows. It reads the
+ * objects of the repository `env` pins through `objects/info/alternates`, and
+ * that repository's `shallow` list when it has one, so a bundle made here
+ * holds what one made in the repository would. It never writes there.
+ */
+async function privateRefs(
+  root: string,
+  env: Readonly<Record<string, string>>,
+): Promise<PrivateRefs> {
+  const read = (args: ReadonlyArray<string>) =>
+    exactLines((cwd, all, options) => runGit(cwd, all, { ...options, env }), root, args, 1);
+  const [objects, shallow, format] = await Promise.all([
+    read(["rev-parse", "--path-format=absolute", "--git-path", "objects"]),
+    read(["rev-parse", "--path-format=absolute", "--git-path", "shallow"]),
+    read(["rev-parse", "--show-object-format"]),
+  ]);
+  if (objects === null || shallow === null || format === null)
+    throw new Error("The checkout's Git folder could not be read.");
+  const store = objects[0]!;
+  // One line of the alternates file, read as written: a quote would start a quoted name.
+  if (!NodePath.isAbsolute(store) || store.startsWith('"') || /[\r\n]/.test(store))
+    throw new Error("The checkout's object folder cannot be named to Git.");
+  const folder = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "swc-sync-send-"));
+  const dispose = async () => {
+    await NodeFSP.rm(folder, { recursive: true, force: true }).catch(() => undefined);
+    return (await NodeFSP.lstat(folder).catch(() => null)) === null;
+  };
+  try {
+    const gitDir = NodePath.join(folder, "refs.git");
+    await runGit(
+      folder,
+      [
+        "init",
+        "--bare",
+        "-q",
+        "--template=",
+        ...(format[0] === "sha1" ? [] : [`--object-format=${format[0]}`]),
+      ],
+      { env: { GIT_DIR: gitDir } },
+    );
+    await NodeFSP.mkdir(NodePath.join(gitDir, "objects", "info"), { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(gitDir, "objects", "info", "alternates"), `${store}\n`, {
+      flag: "wx",
+    });
+    await NodeFSP.copyFile(shallow[0]!, NodePath.join(gitDir, "shallow")).catch((cause) => {
+      if ((cause as { readonly code?: unknown }).code !== "ENOENT") throw cause;
+    });
+    return { folder, gitDir, dispose };
+  } catch (cause) {
+    await dispose();
+    throw cause;
+  }
 }
 
 /**
@@ -644,27 +689,6 @@ async function refState(
   return name === ref && oid !== undefined && /^[0-9a-f]{40,64}$/.test(oid) && symref === ""
     ? { kind: "direct", oid }
     : { kind: "other" };
-}
-
-/**
- * The identity of a repository's ref store: device and inode of its Git folder
- * and of the `refs` folder of its common Git folder. Rejects when unread.
- */
-async function refStore(root: string, env: Readonly<Record<string, string>>): Promise<string> {
-  const common = await exactLines(
-    (cwd, args, options) => runGit(cwd, args, { ...options, env }),
-    root,
-    ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    1,
-  );
-  if (common === null) throw new Error("The repository's Git folder could not be read.");
-  const ids = await Promise.all(
-    [env.GIT_DIR!, NodePath.join(common[0]!, "refs")].map(async (folder) => {
-      const stat = await NodeFSP.stat(folder, { bigint: true });
-      return `${stat.dev}:${stat.ino}`;
-    }),
-  );
-  return ids.join(" ");
 }
 
 export class ProjectSyncExtras extends Context.Service<
