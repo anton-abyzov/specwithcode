@@ -61,7 +61,7 @@ try {
     // Screen 1: title, helper naming where the coordinator goes, machine rows, the folder, Details.
     assert.match(
       await page.getByRole("dialog").getByRole("heading").first().textContent(),
-      /^Move EasyChamp to /,
+      /^Continue the coordinator on /,
     );
     await page
       .getByText(
