@@ -15,6 +15,8 @@ export interface RecordedGit {
   readonly cwd: string;
   readonly args: ReadonlyArray<string>;
   readonly privateIndex: boolean;
+  /** The Git folder the command was pinned to (`GIT_DIR`), null when it found its own. */
+  readonly gitDir: string | null;
 }
 const recorded: Array<RecordedGit> = [];
 export const recordedGit = (): ReadonlyArray<RecordedGit> => recorded;
@@ -40,6 +42,7 @@ export function recordingGit(actual: GitModule): GitModule {
       cwd,
       args: [...args],
       privateIndex: options?.env?.GIT_INDEX_FILE !== undefined,
+      gitDir: options?.env?.GIT_DIR ?? null,
     };
     recorded.push(command);
     await gitHooks.before?.(command);
@@ -103,33 +106,34 @@ export function gitCommandsNotAllowed(): Array<string> {
                 ? rest.join(" ") === "list"
                 : verb === "worktree"
                   ? rest.join(" ") === "list --porcelain"
-                  : verb === "bundle"
-                    ? ["create", "verify", "list-heads"].includes(rest[0] ?? "")
-                    : verb === "update-ref"
-                      ? rest[0] === "-d"
-                        ? // With the commit it was listed at, or without: only ever a hidden ref.
-                          (rest.length === 2 || rest.length === 3) && HIDDEN.test(rest[1] ?? "")
-                        : rest[0] === "--no-deref" && rest[1] === "-d"
-                          ? // A send's own hidden ref, never through a symbolic ref, at its commit.
-                            rest.length === 4 && HIDDEN.test(rest[2] ?? "")
+                  : verb === "init"
+                    ? // Only the send's own private repository, made bare and without templates.
+                      rest.join(" ") === "--bare -q --template=" ||
+                      rest.join(" ").startsWith("--bare -q --template= --object-format=")
+                    : verb === "bundle"
+                      ? ["create", "verify", "list-heads"].includes(rest[0] ?? "")
+                      : verb === "update-ref"
+                        ? rest[0] === "-d"
+                          ? // With the commit it was listed at, or without: only ever a hidden ref.
+                            (rest.length === 2 || rest.length === 3) && HIDDEN.test(rest[1] ?? "")
                           : HIDDEN.test(rest[0] ?? "") ||
                             // An arrival branch is created only where no ref of that name exists.
                             (ARRIVAL.test(rest[0] ?? "") && rest.length === 3 && rest[2] === "")
-                      : verb === "fetch"
-                        ? (rest.length === 5 &&
-                            rest.slice(0, 3).join(" ") ===
-                              "--quiet --no-tags --no-write-fetch-head" &&
-                            /^(\/|[A-Za-z]:[\\/])/.test(rest[3] ?? "") &&
-                            /:refs\/specwithcode\/extras-incoming\//.test(rest[4] ?? "")) ||
-                          // An arrival branch is moved forward from a hidden ref of this very
-                          // repository, with no `+`: Git refuses anything but a fast-forward.
-                          (rest.length === 8 &&
-                            rest.slice(0, 7).join(" ") ===
-                              "--quiet --no-tags --no-prune --no-recurse-submodules --no-write-fetch-head --refmap= ." &&
-                            /^refs\/specwithcode\/extras-incoming\/[^:+]+:refs\/heads\/swc\/from-[^:]+$/.test(
-                              rest[7] ?? "",
-                            ))
-                        : false;
+                        : verb === "fetch"
+                          ? (rest.length === 5 &&
+                              rest.slice(0, 3).join(" ") ===
+                                "--quiet --no-tags --no-write-fetch-head" &&
+                              /^(\/|[A-Za-z]:[\\/])/.test(rest[3] ?? "") &&
+                              /:refs\/specwithcode\/extras-incoming\//.test(rest[4] ?? "")) ||
+                            // An arrival branch is moved forward from a hidden ref of this very
+                            // repository, with no `+`: Git refuses anything but a fast-forward.
+                            (rest.length === 8 &&
+                              rest.slice(0, 7).join(" ") ===
+                                "--quiet --no-tags --no-prune --no-recurse-submodules --no-write-fetch-head --refmap= ." &&
+                              /^refs\/specwithcode\/extras-incoming\/[^:+]+:refs\/heads\/swc\/from-[^:]+$/.test(
+                                rest[7] ?? "",
+                              ))
+                          : false;
     if (!ok) out.push(args.join(" ").slice(0, 300));
   }
   return out;

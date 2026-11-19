@@ -1,9 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off - disposable real Git fixtures, and a fixed time for a branch name.
 /**
- * Sync extras, review round 6 (1390, R6-03): a send removes its temporary
- * ref only in the repository it wrote it in, and only while that ref is still
- * a direct ref at the commit it wrote. A branch the name was pointed at, and a
- * ref of the same name in a repository the checkout was moved to, stay.
+ * Sync extras, review rounds 6 and 7 (1390, R6-03, R7-02): a ref of the send's
+ * temporary name that another program makes in the user's repository is
+ * never touched, whatever it is: since round 8 the send writes its own only
+ * in a private repository. A branch the name was pointed at, and a ref of the
+ * same name in a repository the checkout was moved to, stay.
  */
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -87,7 +88,8 @@ describe("a send removes only its own direct ref, in its own repository (R6-03)"
     );
     expect(refAt(f.a, "refs/heads/keep")).toBe(tip);
     expect(git(f.a, "symbolic-ref", HIDDEN)).toBe("refs/heads/keep");
-    expect(result.detail ?? "").toContain(HIDDEN);
+    // Not the send's ref: nothing is said of it.
+    expect(result.detail ?? "").not.toContain(HIDDEN);
   });
 
   it("a snapshot: the branch the hidden name was pointed at stays", async () => {
@@ -97,13 +99,13 @@ describe("a send removes only its own direct ref, in its own repository (R6-03)"
       f.a,
       { kind: "uncommitted", path: ".", sendAnyway: [] },
       peerOn(f.b, () => {
-        git(f.a, "update-ref", "refs/heads/keep", git(f.a, "rev-parse", HIDDEN));
+        git(f.a, "update-ref", "refs/heads/keep", git(f.a, "rev-parse", "HEAD"));
         git(f.a, "symbolic-ref", HIDDEN, "refs/heads/keep");
       }),
     );
     expect(refAt(f.a, "refs/heads/keep")).not.toBe("");
     expect(git(f.a, "symbolic-ref", HIDDEN)).toBe("refs/heads/keep");
-    expect(result.detail ?? "").toContain(HIDDEN);
+    expect(result.detail ?? "").not.toContain(HIDDEN);
   });
 
   it("a checkout moved to another Git folder: that folder's ref of the same name stays", async () => {
@@ -118,15 +120,16 @@ describe("a send removes only its own direct ref, in its own repository (R6-03)"
       f.a,
       { kind: "branch", path: ".", branch: "main" },
       peerOn(f.b, () => {
-        // The copy has the hidden ref too, by the same name and at the same commit.
+        // The copy has a ref of the hidden name too, at the same commit.
         NodeFS.cpSync(first, second, { recursive: true });
+        git(f.base, `--git-dir=${second}`, "update-ref", HIDDEN, tip);
         NodeFS.writeFileSync(NodePath.join(f.a, ".git"), `gitdir: ${second}\n`);
       }),
     );
     expect(
       git(f.base, `--git-dir=${second}`, "for-each-ref", "--format=%(objectname)", HIDDEN),
     ).toBe(tip);
-    // Its own ref, in the repository it wrote it in, is removed.
+    // None was ever written in the repository the send started in.
     expect(
       git(f.base, `--git-dir=${first}`, "for-each-ref", "--format=%(objectname)", HIDDEN),
     ).toBe("");
@@ -136,13 +139,17 @@ describe("a send removes only its own direct ref, in its own repository (R6-03)"
 });
 
 describe("a repository replaced at the same path keeps its ref (R7-02)", () => {
-  /** Puts a copy of the Git folder in its place: same path, same refs, another directory. */
-  const replace = (cwd: string) => {
+  /**
+   * Puts a copy of the Git folder in its place (same path, same refs, another
+   * directory) that holds a ref of the hidden name at `oid`.
+   */
+  const replace = (cwd: string, oid: string) => {
     const gitDir = NodePath.join(cwd, ".git");
     const copy = `${gitDir}-copy`;
     NodeFS.cpSync(gitDir, copy, { recursive: true });
     NodeFS.rmSync(gitDir, { recursive: true, force: true });
     NodeFS.renameSync(copy, gitDir);
+    git(cwd, "update-ref", HIDDEN, oid);
   };
 
   it("a branch send", async () => {
@@ -152,27 +159,23 @@ describe("a repository replaced at the same path keeps its ref (R7-02)", () => {
     const result = await send(
       f.a,
       { kind: "branch", path: ".", branch: "main" },
-      peerOn(f.b, () => replace(f.a)),
+      peerOn(f.b, () => replace(f.a, tip)),
     );
     expect(refAt(f.a, HIDDEN)).toBe(tip);
-    expect(result.detail ?? "").toContain("cleanup could not confirm ownership");
+    expect(result.detail ?? "").not.toContain("could not confirm ownership");
   });
 
   it("a snapshot send", async () => {
     const f = twoMachines();
     write(f.a, "app.ts", "export const a = 'edited';\n");
-    let snapshot = "";
+    const head = git(f.a, "rev-parse", "HEAD");
     const result = await send(
       f.a,
       { kind: "uncommitted", path: ".", sendAnyway: [] },
-      peerOn(f.b, () => {
-        snapshot = git(f.a, "rev-parse", HIDDEN);
-        replace(f.a);
-      }),
+      peerOn(f.b, () => replace(f.a, head)),
     );
-    expect(snapshot).not.toBe("");
-    expect(refAt(f.a, HIDDEN)).toBe(snapshot);
-    expect(result.detail ?? "").toContain("cleanup could not confirm ownership");
+    expect(refAt(f.a, HIDDEN)).toBe(head);
+    expect(result.detail ?? "").not.toContain("could not confirm ownership");
   });
 });
 

@@ -658,7 +658,8 @@ describe("extras through the peer messages to the real receiver (1390 AC-13)", (
             }),
           );
           yield* Effect.promise(() => arrival);
-          expect(git(f.a, "for-each-ref", "refs/specwithcode/extras")).not.toBe("");
+          // The send's ref is in its own private repository (R8-01), never in this one.
+          expect(git(f.a, "for-each-ref", "refs/specwithcode/extras")).toBe("");
           const cancelled = yield* Effect.forkChild(Fiber.interrupt(send));
           yield* Effect.forEach(Array.from({ length: 200 }), () => Effect.yieldNow, {
             discard: true,
@@ -711,12 +712,10 @@ describe("extras through the peer messages to the real receiver (1390 AC-13)", (
               });
             const first = yield* Effect.forkChild(send(OPERATION));
             yield* Effect.promise(() => holding);
-            const own = `refs/specwithcode/extras/${OPERATION}/0`;
-            expect(git(f.a, "for-each-ref", "--format=%(objectname)", own)).toBe(tip);
+            // Each send's ref is in its own private repository (R8-01), never in this one.
+            expect(git(f.a, "for-each-ref", "refs/specwithcode")).toBe("");
             const second = yield* send(OTHER);
             expect(second.items[0]).toMatchObject({ status: "sent", stays: null });
-            // The second send removed only its own ref.
-            expect(git(f.a, "for-each-ref", "--format=%(objectname)", own)).toBe(tip);
             release();
             const firstSent = yield* Fiber.join(first);
             expect(firstSent.items[0]).toMatchObject({ status: "sent", stays: null });

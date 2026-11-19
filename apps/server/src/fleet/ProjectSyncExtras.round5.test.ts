@@ -133,7 +133,8 @@ describe("a send removes only the refs it wrote (R5-06)", () => {
     commit(f.a, "app.ts", "export const a = 2;\n");
     const result = await send(f.a, { kind: "branch", path: ".", branch: "main" }, peerOn(f.b));
     expect(refAt(f.a, HIDDEN)).toBe(theirs);
-    expect(result).toMatchObject({ status: "stays", stays: "failed" });
+    // The send's own ref is in a private repository (R8-01): the name in this one is not its.
+    expect(result).toMatchObject({ status: "sent" });
   });
 
   it("writes and removes nothing for a branch that is gone", async () => {
@@ -152,7 +153,7 @@ describe("a send removes only the refs it wrote (R5-06)", () => {
     write(f.a, "app.ts", "export const a = 'edited';\n");
     const result = await send(f.a, { kind: "uncommitted", path: ".", sendAnyway: [] }, peerOn(f.b));
     expect(refAt(f.a, HIDDEN)).toBe(theirs);
-    expect(result).toMatchObject({ status: "stays", stays: "failed" });
+    expect(result).toMatchObject({ status: "sent" });
   });
 
   it("removes its own ref once the branch is sent", async () => {
