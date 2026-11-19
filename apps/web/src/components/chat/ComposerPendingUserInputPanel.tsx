@@ -27,6 +27,7 @@ import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collaps
 import { cn, isMacPlatform } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
 import { useQuestionCardCollapsed } from "./questionCardCollapse";
+import { useQuestionOptionsLayout } from "./questionOptionsLayout";
 import {
   deriveQuestionStep,
   presentQuestionOption,
@@ -168,8 +169,24 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     setThreadCollapsed !== null
       ? threadCollapsed
       : collapsedQuestionId !== null && collapsedQuestionId === activeQuestion?.id;
-  // Options show one line each. Hover (after a short pause), keyboard focus or
-  // the details toggle opens one to its full description.
+  // With room for every description, each option shows its description in
+  // full, so the card never moves under the pointer. On a panel too short for
+  // that, options show one line each, and hover (after a short pause),
+  // keyboard focus or the details toggle opens one to its full description.
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const optionsLayout = useQuestionOptionsLayout(
+    cardRef,
+    [
+      prompt.requestId,
+      activeQuestion?.id ?? "",
+      isCollapsed ? "folded" : "open",
+      activeQuestion?.question ?? "",
+      ...(activeQuestion?.options ?? []).map(
+        (option) => `${option.label}\u0001${option.description ?? ""}`,
+      ),
+    ].join("\u0000"),
+  );
+  const compactOptions = optionsLayout === "compact";
   const [hoveredOptionKey, setHoveredOptionKey] = useState<string | null>(null);
   const [focusedOptionKey, setFocusedOptionKey] = useState<string | null>(null);
   const [pinnedOptionKeys, setPinnedOptionKeys] = useState<ReadonlySet<string>>(
@@ -503,8 +520,10 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             this card's header take the rest of that share. */}
         <ComposerBanner.Scroll className="max-h-[clamp(6rem,calc(var(--chat-panel-height,100dvh)*0.4_-_4.5rem),22rem)]">
           <div
+            ref={cardRef}
             className="px-2 pt-1 pb-1.5 wrap-anywhere sm:px-3"
             data-question-card
+            data-question-options={optionsLayout}
             data-question-card-request={prompt.requestId}
           >
             <div className="text-sm leading-snug font-medium text-foreground">
@@ -545,7 +564,10 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                 const pinned = pinnedOptionKeys.has(optionKey);
                 const expanded =
                   hasDescription &&
-                  (pinned || hoveredOptionKey === optionKey || focusedOptionKey === optionKey);
+                  (!compactOptions ||
+                    pinned ||
+                    hoveredOptionKey === optionKey ||
+                    focusedOptionKey === optionKey);
                 return (
                   // A div, not a button: descriptions may hold links, which
                   // cannot nest inside a button and must not pick the option.
@@ -560,7 +582,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                     data-recommended={presented.recommended ? "true" : undefined}
                     data-expanded={expanded ? "true" : "false"}
                     onPointerEnter={(event) => {
-                      if (event.pointerType !== "mouse" || !hasDescription) return;
+                      if (event.pointerType !== "mouse" || !hasDescription || !compactOptions) {
+                        return;
+                      }
                       clearHoverTimer();
                       // A short pause, so sweeping the pointer across the list
                       // does not open every row on the way.
@@ -581,7 +605,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                         event.target === event.currentTarget &&
                         event.currentTarget.matches(":focus-visible")
                       ) {
-                        setFocusedOptionKey(optionKey);
+                        if (compactOptions) setFocusedOptionKey(optionKey);
                       }
                     }}
                     onBlur={(event) => {
@@ -657,14 +681,15 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                             expanded
                               ? "basis-full"
                               : // One line: the markdown's blocks flow inline and clip.
-                                "min-w-0 flex-1 truncate [&_*]:inline",
+                                // Only block elements: a link's icon box keeps its size.
+                                "min-w-0 flex-1 truncate [&_:is(p,div,ul,ol,li,blockquote,pre,h1,h2,h3,h4,h5,h6,table,thead,tbody,tr,th,td)]:inline",
                           )}
                         >
                           {renderText(presented.description, "description")}
                         </div>
                       ) : null}
                     </div>
-                    {hasDescription ? (
+                    {hasDescription && !compactOptions ? null : hasDescription ? (
                       // For touch, where there is no hover: shows or hides the
                       // full description without picking the option.
                       <button
