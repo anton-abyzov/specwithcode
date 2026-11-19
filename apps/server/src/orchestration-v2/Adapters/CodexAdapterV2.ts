@@ -1905,6 +1905,20 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           ProviderAdapterV2TurnInput["projectContext"]
         >();
         const restoredProjectCompactions = new Set<string>();
+        // Restores still being injected, per native thread. A turn waits for
+        // them (each times out after 10 seconds), so its project context
+        // reaches the model after the restored snapshot and its receipt stays
+        // true; a restore landing after it would replace what it delivered.
+        const restoresInFlight = new Map<string, Set<Deferred.Deferred<void>>>();
+        // Native threads whose last restore failed or timed out. A timed-out
+        // injection may still land later, after any prompt, so no prompt there
+        // is acknowledged (each resends the full snapshot) until a restore
+        // completes.
+        const unsettledRestores = new Set<string>();
+        const awaitRestores = (threadId: string) =>
+          Effect.forEach([...(restoresInFlight.get(threadId) ?? [])], Deferred.await, {
+            discard: true,
+          });
         // Codex drops client developer messages during compaction but only
         // resends additionalContext when it changes. Restore the current entries.
         const restoreAdditionalContext = (threadId: string, compactionId: string) => {
@@ -1941,11 +1955,13 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   : []),
               ],
             });
+            unsettledRestores.delete(threadId);
           }).pipe(
             Effect.timeout("10 seconds"),
             Effect.catchCause((cause) =>
               Effect.sync(() => {
                 restoredProjectCompactions.delete(key);
+                unsettledRestores.add(threadId);
               }).pipe(
                 Effect.andThen(
                   Effect.logWarning(
@@ -4823,9 +4839,22 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             if (payload.item.type === "contextCompaction")
               // The notification callback runs on the input reader. Let it read
               // the injection response while the session-scoped request waits.
-              yield* restoreAdditionalContext(payload.threadId, payload.item.id).pipe(
-                Effect.forkIn(scope, { startImmediately: true }),
-              );
+              yield* Effect.gen(function* () {
+                const done = yield* Deferred.make<void>();
+                const pending = restoresInFlight.get(payload.threadId) ?? new Set();
+                pending.add(done);
+                restoresInFlight.set(payload.threadId, pending);
+                yield* restoreAdditionalContext(payload.threadId, payload.item.id).pipe(
+                  Effect.ensuring(
+                    Effect.sync(() => {
+                      pending.delete(done);
+                      if (pending.size === 0 && restoresInFlight.get(payload.threadId) === pending)
+                        restoresInFlight.delete(payload.threadId);
+                    }).pipe(Effect.andThen(Deferred.succeed(done, undefined))),
+                  ),
+                  Effect.forkIn(scope, { startImmediately: true }),
+                );
+              });
             if (
               (payload.item.type === "subAgentActivity" ||
                 payload.item.type === "collabAgentToolCall") &&
@@ -6409,13 +6438,18 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               else next.delete(threadId);
               return next;
             });
+            yield* awaitRestores(threadId);
             const started = yield* onLoadedNativeThread(
               threadId,
               turnInput.providerThread.appThreadId ?? null,
               client.request("turn/start", turnStartParams),
               turnInput,
             );
-            if ((codexInput.length > 0 || commandContext) && turnInput.projectContext)
+            if (
+              (codexInput.length > 0 || commandContext) &&
+              turnInput.projectContext &&
+              !unsettledRestores.has(threadId)
+            )
               yield* turnInput.projectContext.accepted;
             yield* registerRootTurn({
               turnInput,
