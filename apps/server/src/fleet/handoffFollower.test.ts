@@ -181,7 +181,7 @@ describe("the follower of a handed-off thread", () => {
         yield* settled(
           world,
           Effect.sync(() => target.asked(THREAD)),
-          (asked) => asked >= 2,
+          (asked) => asked >= 1,
         );
         // Someone cancels the queued message after the follower has looked.
         target.set(THREAD, followUp.id, "cancelled");
@@ -457,6 +457,32 @@ describe("the follower of a handed-off thread", () => {
         expect(kept).toHaveLength(1);
         expect(third.world.wakes.every((wake) => wake.threadId === LAUNCHER)).toBe(true);
       });
+    },
+    LIVE,
+  );
+
+  it.live(
+    "follows it onward past a message left queued on the copy the target handed on",
+    () => {
+      const { target, onward, kept, boot } = stage();
+      target.create(THREAD);
+      target.start(THREAD);
+      target.handOn(THREAD, { environmentId: onward.environmentId, label: "Onward", epoch: 3 });
+      // A message that did not move with the thread: on the fenced copy it never starts.
+      target.start(THREAD, { status: "queued", creationSource: "web" });
+      const next = continuationThreadId(ROLES.target.environmentId, THREAD, 3);
+      onward.create(next);
+      const run = onward.start(next);
+      onward.set(next, run.id, "completed");
+      const { world, layer } = boot();
+      return Effect.gen(function* () {
+        yield* allow("auto", "onward");
+        yield* follow(handedOff());
+        yield* settled(world, keptCount(kept), (count) => count >= 1);
+        const [row] = yield* settled(world, rows, (current) => current[0]?.state === "idle");
+        expect(row).toMatchObject({ machineId: "onward", remoteThreadId: next });
+        expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: wakeOf(run.id) }]);
+      }).pipe(Effect.provide(layer));
     },
     LIVE,
   );

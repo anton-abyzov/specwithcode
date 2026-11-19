@@ -697,6 +697,7 @@ describe("RemoteWorkers", () => {
         {
           commandId: "remote-worker-wake:rwt:command-1:b-run-1",
           mode: "queue",
+          threadId: "coordinator",
           text: 'Remote worker [Fix the flaky test](studio://thread/env-m1/b-thread-1) on M1 finished: completed. Read it with studio_thread_read {threadId:"studio://thread/env-m1/b-thread-1"}.',
         },
       ]);

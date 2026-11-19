@@ -68,6 +68,7 @@ export { readProviderUsage } from "./remoteWorkerProbe.ts";
 import { remoteRepositoryBrief } from "./remoteRepositories.ts";
 import * as ProjectWorkspaceService from "../project/ProjectWorkspaceService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
+import { afterHandoffRunEnded, owesResult } from "./handoffDelivery.ts";
 import * as RemoteWorkerStore from "./RemoteWorkerStore.ts";
 import * as WorkerEpochStore from "./WorkerEpochStore.ts";
 import {
@@ -1348,19 +1349,22 @@ const make = Effect.gen(function* () {
       const key = input.runId ?? "no-run";
       const updatedAt = yield* isoNow;
       yield* store
-        .modify(row.id, (current) =>
-          current
-            ? {
-                ...current,
-                state: "idle",
-                lastStatus: input.status,
-                deliveredRunIds: current.deliveredRunIds.includes(key)
-                  ? current.deliveredRunIds
-                  : [...current.deliveredRunIds, key].slice(-50),
-                updatedAt,
-              }
-            : undefined,
-        )
+        .modify(row.id, (current) => {
+          if (!current) return undefined;
+          // A handed-off thread's result is still the follower's to tell: seeing a run
+          // end here, least of all one that was only stopped, does not deliver it.
+          const stillOwed = afterHandoffRunEnded(current, input.status);
+          if (stillOwed !== undefined) return { ...current, ...stillOwed, updatedAt };
+          return {
+            ...current,
+            state: "idle",
+            lastStatus: input.status,
+            deliveredRunIds: current.deliveredRunIds.includes(key)
+              ? current.deliveredRunIds
+              : [...current.deliveredRunIds, key].slice(-50),
+            updatedAt,
+          };
+        })
         .pipe(Effect.ignore);
     });
 
@@ -1420,6 +1424,14 @@ const make = Effect.gen(function* () {
             : { launchedAt: row.launchStartedAt as StudioFleetRemoteWorker["updatedAt"] }),
           ...(row.runtimeMode === undefined ? {} : { runtimeMode: row.runtimeMode }),
           ...(row.loweredFrom === undefined ? {} : { loweredFrom: row.loweredFrom }),
+          ...(owesResult(row) && row.handoff.awaiting !== undefined
+            ? {
+                    awaiting:
+                      row.handoff.awaiting === "continuation"
+                        ? ("handoff" as const)
+                        : ("run" as const),
+                  }
+            : {}),
         })),
       );
     });

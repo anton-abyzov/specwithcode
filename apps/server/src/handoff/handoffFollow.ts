@@ -13,6 +13,11 @@
  * The row starts "awaiting": the continuation may not exist yet, and one that
  * arrives idle has no run to report. A definite refusal retires the row; the
  * same handoff sent again, or its receipt arriving late, brings it back.
+ *
+ * A thread no agent's thread waits for is "not eligible" and moves as before.
+ * For one that is waited for, the row must be on disk before the takeover is
+ * sent: a launcher that could not be looked up, or a row that could not be
+ * written, fails the registration and the move is not made.
  */
 import type {
   EnvironmentId,
@@ -20,6 +25,7 @@ import type {
   ProjectId,
   ThreadId,
 } from "@specweave-studio/contracts";
+import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -28,11 +34,28 @@ import * as RemoteWorkerFollower from "../fleet/RemoteWorkerFollower.ts";
 import * as RemoteWorkerStore from "../fleet/RemoteWorkerStore.ts";
 import type * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { firstMessageSender, launchedByAgent } from "../project/LaunchedWorkerWake.ts";
-import type { HandoffPeers } from "./handoffPeers.ts";
+import type { HandoffPeerError, HandoffPeers } from "./handoffPeers.ts";
 import { continuationThreadId } from "./HandoffReceiver.ts";
 
 /** Why a retired row stopped: the takeover it was written for never happened. */
 export const HANDOFF_NOT_TAKEN = "The other machine did not take this thread.";
+
+/** What the user reads when a move is not made because its follow could not be recorded. */
+export const FOLLOW_NOT_RECORDED =
+  "Not moved: this machine could not record which thread waits for this worker's result. Try again.";
+
+/** What the user reads when an unanswered handoff is not sent again for the same reason. */
+export const FOLLOW_NOT_RECORDED_PAUSED =
+  "This machine could not record which thread waits for this worker's result, so the unanswered handoff was not sent again.";
+
+/** The follow of a waited-for worker could not be made durable. */
+export class HandoffFollowError extends Data.TaggedError("HandoffFollowError")<{
+  readonly threadId: string;
+  readonly cause: unknown;
+}> {}
+
+/** "following": a row is on disk. "not-eligible": no thread here waits for this worker. */
+export type HandoffFollowOutcome = "following" | "not-eligible";
 
 export interface HandoffFollowInput {
   readonly shell: Pick<
@@ -56,7 +79,9 @@ export interface HandoffFollowShape {
    * Before the takeover is sent, and again before it is re-sent after a restart
    * or a lost answer: follows the continuation it will create.
    */
-  readonly register: (input: HandoffFollowInput) => Effect.Effect<void>;
+  readonly register: (
+    input: HandoffFollowInput,
+  ) => Effect.Effect<HandoffFollowOutcome, HandoffFollowError>;
   /** The destination continued the thread: follows what it answered. Safe to repeat. */
   readonly confirm: (
     input: HandoffFollowInput & {
@@ -65,7 +90,7 @@ export interface HandoffFollowShape {
         readonly projectId?: ProjectId | undefined;
       };
     },
-  ) => Effect.Effect<void>;
+  ) => Effect.Effect<HandoffFollowOutcome, HandoffFollowError>;
   /** The destination definitely did not take the thread: nothing to follow. */
   readonly retire: (input: {
     readonly threadId: ThreadId;
@@ -75,8 +100,8 @@ export interface HandoffFollowShape {
 
 /** Where remote workers are not followed (no fleet): a handoff follows nothing. */
 export const none: HandoffFollowShape = {
-  register: () => Effect.void,
-  confirm: () => Effect.void,
+  register: () => Effect.succeed("not-eligible"),
+  confirm: () => Effect.succeed("not-eligible"),
   retire: () => Effect.void,
 };
 
@@ -88,8 +113,8 @@ export interface HandoffFollowDependencies {
     ProjectionStore.ProjectionStoreV2Shape,
     "getThreadRecords" | "getThreadShell"
   >;
-  /** This machine's name for `environmentId` in its fleet, when it has one. */
-  readonly machineIdOf: (environmentId: EnvironmentId) => Effect.Effect<string | undefined>;
+  /** This machine's name for `environmentId` in its fleet; fails when it has none. */
+  readonly machineIdOf: (environmentId: EnvironmentId) => Effect.Effect<string, HandoffPeerError>;
 }
 
 /** One row per takeover: a retry at the same epoch finds the row of the first try. */
@@ -109,7 +134,8 @@ export const make = (dependencies: HandoffFollowDependencies): HandoffFollowShap
 
   /**
    * The thread waiting for this worker: the one whose agent sent its first
-   * message. A delegated child is not woken, here as on this machine.
+   * message. A delegated child is not woken, here as on this machine. Undefined
+   * when no thread waits; a lookup that fails is an error, never "nobody".
    */
   const launcherOf = (shell: HandoffFollowInput["shell"]) =>
     Effect.gen(function* () {
@@ -125,35 +151,22 @@ export const make = (dependencies: HandoffFollowDependencies): HandoffFollowShap
         launcher.lineage.relationshipToParent === "subagent"
         ? undefined
         : sender;
-    }).pipe(Effect.orElseSucceed(() => undefined));
-
-  // Following is best effort: it never fails or delays the handoff itself.
-  const quiet =
-    (what: string, threadId: string) =>
-    (effect: Effect.Effect<void, RemoteWorkerStore.RemoteWorkerStoreError>) =>
-      effect.pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning(`Handoff could not ${what} the thread's launcher follow.`, {
-            threadId,
-            cause,
-          }),
-        ),
-      );
+    });
 
   const ensure = (
     input: HandoffFollowInput,
     continuation: { readonly threadId: string; readonly projectId: string | null },
-  ) =>
+  ): Effect.Effect<HandoffFollowOutcome, HandoffFollowError> =>
     Effect.gen(function* () {
       // A continuation on this machine is not another machine's to report.
-      if (input.destination === self) return;
+      if (input.destination === self) return "not-eligible" as const;
       const rowId = handoffFollowRowId(self, input.shell.id, input.epoch);
       const launcher = yield* launcherOf(input.shell);
+      if (launcher === undefined) return "not-eligible" as const;
       const machineId = yield* dependencies.machineIdOf(input.destination);
       const now = DateTime.formatIso(yield* DateTime.now);
-      const row = yield* store.modify(rowId, (current) => {
+      yield* store.modify(rowId, (current) => {
         if (current === undefined || revivable(current)) {
-          if (launcher === undefined || machineId === undefined) return undefined;
           return {
             id: rowId,
             callerThreadId: launcher,
@@ -185,6 +198,7 @@ export const make = (dependencies: HandoffFollowDependencies): HandoffFollowShap
         const movedTo = current.environmentId === input.destination ? undefined : machineId;
         if (
           current.handoff?.awaiting === "continuation" &&
+          (current.handoff.hops ?? 0) === 0 &&
           current.state === "following" &&
           nothingDelivered(current) &&
           (movedTo !== undefined ||
@@ -203,21 +217,38 @@ export const make = (dependencies: HandoffFollowDependencies): HandoffFollowShap
         }
         return undefined;
       });
+      // What is on disk now, whoever wrote it: the takeover is sent only over a row.
+      const row = (yield* store.list).find((candidate) => candidate.id === rowId);
+      if (row === undefined)
+        return yield* new HandoffFollowError({
+          threadId: input.shell.id,
+          cause: "The follow row was not kept.",
+        });
       // Idempotent: one follow per row runs, whoever asks again.
-      if (row?.state === "following") yield* follower.follow(rowId);
-    });
+      if (row.state === "following") yield* follower.follow(rowId);
+      return "following" as const;
+    }).pipe(
+      // Failures only: an interrupted move stays interrupted.
+      Effect.tapError((cause) =>
+        Effect.logWarning("Handoff could not record the thread's launcher follow.", {
+          threadId: input.shell.id,
+          cause,
+        }),
+      ),
+      Effect.mapError((cause) => new HandoffFollowError({ threadId: input.shell.id, cause })),
+    );
 
   return {
     register: (input) =>
       ensure(input, {
         threadId: continuationThreadId(self, input.shell.id, input.epoch),
         projectId: null,
-      }).pipe(quiet("start", input.shell.id)),
+      }),
     confirm: (input) =>
       ensure(input, {
         threadId: input.continuation.threadId,
         projectId: input.continuation.projectId ?? null,
-      }).pipe(quiet("confirm", input.shell.id)),
+      }),
     retire: ({ threadId, epoch }) =>
       Effect.gen(function* () {
         const now = DateTime.formatIso(yield* DateTime.now);
@@ -226,7 +257,15 @@ export const make = (dependencies: HandoffFollowDependencies): HandoffFollowShap
             ? undefined
             : { ...current, state: "disposed", lastError: HANDOFF_NOT_TAKEN, updatedAt: now },
         );
-      }).pipe(quiet("end", threadId)),
+      }).pipe(
+        // The takeover was refused, so nothing is owed: a row left behind only keeps asking.
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Handoff could not end the thread's launcher follow.", {
+            threadId,
+            cause,
+          }),
+        ),
+      ),
   };
 };
 
@@ -250,10 +289,7 @@ export const fromContext = (dependencies: {
       store: store.value,
       follower: follower.value,
       machineIdOf: (environmentId) =>
-        dependencies.peers.target(environmentId).pipe(
-          Effect.map((target): string | undefined => target.machineId),
-          Effect.orElseSucceed(() => undefined),
-        ),
+        dependencies.peers.target(environmentId).pipe(Effect.map((target) => target.machineId)),
     });
   });
 

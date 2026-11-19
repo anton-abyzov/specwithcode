@@ -97,6 +97,21 @@ export const HandoffThreadRecord = Schema.Struct({
       }),
     ),
   ).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
+  /**
+   * Another machine continued this thread, but the row that keeps its launcher
+   * waiting for the result could not be written: what to write, tried again on
+   * every lease tick until it is on disk. Absent when nothing is owed.
+   */
+  followOwed: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({
+        destinationEnvironmentId: Schema.String,
+        epoch: NonNegativeInt,
+        threadId: Schema.String,
+        projectId: Schema.NullOr(Schema.String),
+      }),
+    ),
+  ),
 });
 export type HandoffThreadRecord = typeof HandoffThreadRecord.Type;
 

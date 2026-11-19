@@ -262,10 +262,12 @@ export function stage(
           launch: (input: ThreadLaunchService.ThreadLaunchInput) =>
             Effect.sync(() => {
               launches.push(input);
-              if (!peer.threads.has(input.threadId)) peer.create(input.threadId, targetProject);
+              // The receiver names every continuation itself.
+              const threadId = String(input.threadId);
+              if (!peer.threads.has(threadId)) peer.create(threadId, targetProject);
               // A continuation that resumes starts its first run with the takeover.
               if (input.initialMessage !== undefined)
-                peer.start(input.threadId, { creationSource: "server" });
+                peer.start(threadId, { creationSource: "server" });
               return { threadId: input.threadId, projection: {}, resumed: false };
             }),
         } as never),
@@ -411,16 +413,14 @@ export function stage(
    * change builds them: no remote worker services in reach.
    */
   const makeMovesAlone = makeMoves.pipe(
-    Effect.provide(
-      Layer.succeed(ProjectService.ProjectService, {
-        getById: (id: ProjectId) =>
-          Effect.succeed(
-            id === sourceProject
-              ? Option.some({ ...project(), id: sourceProject, workspaceRoot: sourceRoot })
-              : Option.none(),
-          ),
-      } as never),
-    ),
+    Effect.provideService(ProjectService.ProjectService, {
+      getById: (id: ProjectId) =>
+        Effect.succeed(
+          id === sourceProject
+            ? Option.some({ ...project(), id: sourceProject, workspaceRoot: sourceRoot })
+            : Option.none(),
+        ),
+    } as never),
   );
   const handOffWith = (moves: Effect.Success<typeof makeMoves>) =>
     moves.handOff({ threadId: worker, destinationEnvironmentId: target.environmentId });

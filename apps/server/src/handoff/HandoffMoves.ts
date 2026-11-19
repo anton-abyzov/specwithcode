@@ -77,7 +77,7 @@ import {
 import { createBundle, negotiationCandidates, repositoryPathFor } from "./bundleGit.ts";
 import { keepFencedChanges } from "./checkpointGit.ts";
 import { HandoffConnectivity, layer as HandoffConnectivityLayer } from "./handoffConnectivity.ts";
-import { makeFenceSource } from "./handoffFence.ts";
+import { makeFenceSource, makeFollowRepair } from "./handoffFence.ts";
 import * as HandoffFollow from "./handoffFollow.ts";
 import { type HandoffContinueHereOptions, HandoffMode } from "./HandoffMode.ts";
 import { HandoffPeerError, HandoffPeers, layer as HandoffPeersLayer } from "./handoffPeers.ts";
@@ -539,15 +539,9 @@ export const make = Effect.gen(function* () {
             Effect.andThen(waitForRunToEnd(shell.id)),
           );
 
-  const fenceSource = makeFenceSource({
-    self,
-    selfLabel,
-    nowIso,
-    projections,
-    orchestrator,
-    follow,
-    updateRecord,
-  });
+  const fence = { self, selfLabel, nowIso, projections, orchestrator, follow, updateRecord };
+  const fenceSource = makeFenceSource(fence);
+  const repairFollows = makeFollowRepair({ ...fence, document: handoff.document });
 
   const sendTakeover = (
     destination: EnvironmentId,
@@ -601,7 +595,13 @@ export const make = Effect.gen(function* () {
       const destination = pending.destinationEnvironmentId as EnvironmentId;
       const shell = yield* shellOf(threadId);
       const taken = { shell, destination, epoch: pending.request.epoch };
-      yield* follow.register(taken);
+      // No row for its launcher, no re-send: the takeover stays pending for the next try.
+      yield* follow
+        .register(taken)
+        .pipe(
+          Effect.mapError(() => failed("busy", HandoffFollow.FOLLOW_NOT_RECORDED_PAUSED)),
+          Effect.tapError((error) => inDoubt(threadId, error.message)),
+        );
       const response = yield* sendTakeover(destination, pending.request).pipe(
         Effect.tapError((error) =>
           !destinationRefused(error)
@@ -775,7 +775,12 @@ export const make = Effect.gen(function* () {
         reason,
         modelSelection,
       };
-      yield* follow.register({ shell: first.shell, destination, epoch });
+      yield* follow.register({ shell: first.shell, destination, epoch }).pipe(
+        Effect.mapError(() => failed("failed", HandoffFollow.FOLLOW_NOT_RECORDED)),
+        Effect.tapError((error) =>
+          releaseHold(input.threadId, error.message).pipe(Effect.andThen(resume)),
+        ),
+      );
       const response = yield* sendTakeover(destination, request).pipe(
         Effect.tapError((error) =>
           error._tag === "HandoffPeerError" && error.uncertain
@@ -1456,7 +1461,7 @@ export const make = Effect.gen(function* () {
     Effect.catchCause((cause) => Effect.logWarning("Handoff moves replication failed", { cause })),
   );
 
-  const tick = heartbeat.pipe(Effect.andThen(replicate));
+  const tick = heartbeat.pipe(Effect.andThen(repairFollows), Effect.andThen(replicate));
 
   return {
     handOff: (input: HandOffInput) => handOffAs(input, "handoff"),
