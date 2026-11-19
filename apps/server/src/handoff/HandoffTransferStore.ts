@@ -237,6 +237,8 @@ export function claimAcceptance(
     readonly trigger: HandoffTransferTrigger | null;
     readonly reason: string;
     readonly modelSelection: HandoffTransferAcceptance["modelSelection"];
+    /** The batch's fields as they were asked; a launch a restart cut is finished with them. */
+    readonly batch?: HandoffTransferAcceptance["batch"];
     readonly now: string;
   },
 ): readonly [AcceptanceClaim, HandoffTransferDocument] {
@@ -266,6 +268,7 @@ export function claimAcceptance(
     reason: input.reason,
     modelSelection: input.modelSelection,
     trigger: input.trigger,
+    ...(input.batch === undefined ? {} : { batch: input.batch }),
     detail: null,
     at: input.now,
   };

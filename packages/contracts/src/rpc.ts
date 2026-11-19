@@ -12,6 +12,7 @@ import { PROJECT_LINK_RPC_METHODS, projectLinkRpcs } from "./projectLinkRpc.ts";
 import { LINKED_MEMORY_RPC_METHODS, linkedMemoryRpcs } from "./linkedMemoryRpc.ts";
 import { HANDOFF_MODE_RPC_METHODS, handoffModeRpcs } from "./handoffModeRpc.ts";
 import { AWAY_RPC_METHODS, awayRpcs } from "./awayRpc.ts";
+import { HANDOFF_BATCH_RPC_METHODS, handoffBatchRpcs } from "./handoffBatchRpc.ts";
 import { projectSyncRpcs } from "./projectSync.ts";
 import { PROJECT_PLAN_LINK_RPC_METHODS, projectPlanLinkRpcs } from "./projectPlanLinkRpc.ts";
 import { LIMIT_HANDOFF_RPC_METHODS, limitHandoffRpcs } from "./limitHandoff.ts";
@@ -455,6 +456,7 @@ export const WS_METHODS = {
   ...LINKED_MEMORY_RPC_METHODS,
   ...HANDOFF_MODE_RPC_METHODS,
   ...AWAY_RPC_METHODS,
+  ...HANDOFF_BATCH_RPC_METHODS,
   ...PROJECT_PLAN_LINK_RPC_METHODS,
   ...LIMIT_HANDOFF_RPC_METHODS,
   ...USAGE_LIMIT_HISTORY_RPC_METHODS,
@@ -2491,8 +2493,13 @@ export const WsHandoffModeRpcGroup = RpcGroup.make(...handoffModeRpcs).middlewar
   RpcScopeAuthorization,
 );
 
-/** Away mode preflight and access requests; its own group for the same depth reason. */
-export const WsAwayRpcGroup = RpcGroup.make(...awayRpcs).middleware(RpcScopeAuthorization);
+/**
+ * Away mode preflight and access requests, and the hand off batch's two calls;
+ * its own group for the same depth reason.
+ */
+export const WsAwayRpcGroup = RpcGroup.make(...awayRpcs, ...handoffBatchRpcs).middleware(
+  RpcScopeAuthorization,
+);
 
 /** Project sync between machines (`projectSync.ts`); its own group for the same depth reason. */
 export const WsProjectSyncRpcGroup = RpcGroup.make(...projectSyncRpcs).middleware(

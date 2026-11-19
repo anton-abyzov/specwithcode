@@ -27,6 +27,7 @@ import { LinkedMemoryPeerReceiver } from "../project/LinkedMemoryPeers.ts";
 import { LinkedPeerReceiver } from "../project/LinkedPeerRoute.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { ExtrasReceiver } from "./ExtrasReceiver.ts";
+import { FolderWorkReceiver } from "./HandoffBatch.ts";
 import { HandoffReceiver, HandoffRefusal } from "./HandoffReceiver.ts";
 import * as Peers from "./handoffPeers.ts";
 import * as HandoffRoute from "./handoffRoute.ts";
@@ -86,6 +87,7 @@ function api(options: {
         Layer.mock(LinkedMemoryPeerReceiver)({}),
         Layer.mock(LinkedPeerReceiver)({}),
         Layer.mock(ExtrasReceiver)({}),
+        Layer.mock(FolderWorkReceiver)({}),
         Layer.mock(HandoffReceiver)({
           negotiate: () => Effect.succeed({ known: [] }),
           takeover: (_caller, request) =>

@@ -27,10 +27,13 @@ import {
   type HandOffResult,
   type HandoffCheckpoint,
   type HandoffContinueHereInput,
+  hasHandoffBatch,
   HandoffModeError,
   type HandoffModeErrorCode,
   type HandoffPreflightFailure,
+  type HandoffTransferBatch,
   type HandoffTransferCandidate,
+  type HandoffTransferDisposition,
   type HandoffTransferRecord,
   type HandoffTransferTrigger,
   isHandoffTransferFinished,
@@ -60,6 +63,7 @@ import {
 } from "./HandoffTransferStore.ts";
 import * as HandoffFollow from "./handoffFollow.ts";
 import { reviewTakeover, sameReview } from "./handoffReviewLock.ts";
+import { batchNeedsUpdate } from "./handoffWire.ts";
 import type {
   HandoffLauncher,
   HeartbeatRequest,
@@ -138,6 +142,10 @@ export interface TransferRunnerDeps {
    * again; it fails when the machine does not answer.
    */
   readonly keepsRecords: (destination: EnvironmentId) => Effect.Effect<boolean, HandoffModeError>;
+  /** Whether that machine names the batch capability now: it reads a disposition and a revision. */
+  readonly takesBatches: (
+    destination: EnvironmentId,
+  ) => Effect.Effect<{ readonly takes: boolean; readonly label: string }, HandoffModeError>;
   /** Keeps a worker's launcher waiting for it once it runs on another machine. */
   readonly follow: HandoffFollow.HandoffFollowShape;
   /** Follows the continuation a takeover will make, and says who the takeover names as waiting. */
@@ -189,6 +197,13 @@ export interface TransferStart {
   readonly trigger?: HandoffTransferTrigger | undefined;
   /** A record a batch wrote for this thread before its first hold. */
   readonly operationId?: string | undefined;
+  /** What the plan asked the destination to do; absent, the thread's own state decides. */
+  readonly disposition?: HandoffTransferDisposition | undefined;
+  /**
+   * The batch this move belongs to. Its takeover names the disposition and the
+   * revision handed over, which only a destination with the batch capability reads.
+   */
+  readonly batchId?: string | undefined;
 }
 
 const MANUAL: HandoffTransferTrigger = { kind: "manual" };
@@ -312,6 +327,15 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
     modelSelection: record.modelSelection,
     operationId: record.operationId,
     trigger: record.trigger,
+    ...(record.batchId === null || record.context === undefined
+      ? {}
+      : {
+          batch: {
+            batchId: record.batchId,
+            disposition: record.disposition,
+            context: record.context,
+          },
+        }),
   });
 
   /**
@@ -589,6 +613,36 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
           true,
         )).receipt;
       }
+      if (record.context !== undefined && record.targetEnvironmentId !== null) {
+        const destination = record.targetEnvironmentId;
+        // Sent with a batch's disposition and revision. A machine that stopped
+        // naming the capability drops both, and it finishes a launch that was
+        // cut from the checkpoint alone, on a takeover and on a status question
+        // alike: either could run a thread meant to arrive idle. So nothing is
+        // sent and nothing is asked, by any way a record without a batch is
+        // settled: this comes before those, and the record keeps its revision.
+        // The thread stays held here until that machine names the capability
+        // again; then the same operation is repeated.
+        const takes = yield* deps.takesBatches(destination).pipe(Effect.result);
+        if (takes._tag === "Failure") {
+          yield* patch(record.operationId, ["sent", "unknown", "accepted"], {
+            state: "unknown",
+            detail: takes.failure.message.slice(0, 1000),
+          }).pipe(Effect.ignore);
+          return null;
+        }
+        if (!takes.success.takes) {
+          const waits = `${batchNeedsUpdate(takes.success.label)} This thread stays paused here until then.`;
+          yield* patch(record.operationId, ["sent", "unknown", "accepted"], {
+            state: "unknown",
+            detail: waits.slice(0, 1000),
+          }).pipe(Effect.ignore);
+          yield* deps
+            .updateRecord(threadId, (current) => ({ ...current, lastError: waits }))
+            .pipe(Effect.ignore);
+          return null;
+        }
+      }
       if (record.targetEnvironmentId === null || record.sequence === null) {
         return yield* settleLegacy(record, shell);
       }
@@ -604,6 +658,8 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         }).pipe(Effect.ignore);
         return null;
       }
+      // A batch's record is never settled the legacy way, whatever that machine names.
+      if (!keeps.success && record.context !== undefined) return null;
       if (!keeps.success) {
         // It may confirm a continuation it has; it is never asked to make one.
         const asked = yield* patch(record.operationId, ["sent", "unknown", "accepted"], {
@@ -675,6 +731,11 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         // Resumed here, or too old, while this move waited its turn.
         return yield* failed("busy", planned.detail ?? RESUMED_HERE);
       }
+      // A hand off batch's move: its record keeps the disposition it was asked
+      // with, and its takeover names that and the revision. A move carried on
+      // after a restart reads both from the record, never from the thread again.
+      const batchId = planned?.batchId ?? start.batchId ?? null;
+      const enveloped = batchId !== null && transfers.batches[batchId]?.rows !== undefined;
       /**
        * Ends a record a batch wrote for a thread that then never left. A move
        * carried on after a restart also gives back its hold: nothing was sent.
@@ -782,11 +843,20 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         yield* stays(error);
         return yield* error;
       }
+      if (enveloped && !hasHandoffBatch(checked.capabilities)) {
+        // It stopped naming the capability since the batch was planned: nothing is sent.
+        const error = failed("invalid", batchNeedsUpdate(checked.machineLabel));
+        yield* stays(error);
+        return yield* error;
+      }
 
-      const disposition =
+      // What the thread is now; the plan's or the batch's ask is only what is sent.
+      const derived =
         first.shell.activeRunId !== null || shouldResume(first.checkpoint.runEnding)
           ? "resume"
           : "ready";
+      const disposition =
+        start.disposition ?? (enveloped ? planned?.disposition : undefined) ?? derived;
       // An automatic move is for the run, the disposition and the preference it was
       // admitted with. Read here, after the checkpoint and before the hold, so a turn
       // that started since, or Off chosen since, is never stopped for it.
@@ -794,7 +864,7 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         trigger,
         mode: (yield* recordOf(threadId))?.mode,
         runId: first.shell.activeRunId ?? first.shell.latestRunId,
-        disposition,
+        disposition: derived,
       });
       if (stale !== null) {
         const error = failed("invalid", stale);
@@ -807,7 +877,7 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       const operationId = planned?.operationId ?? NodeCrypto.randomUUID();
       const written: HandoffTransferRecord = {
         operationId,
-        batchId: planned?.batchId ?? null,
+        batchId,
         lineage: {
           sourceEnvironmentId: self,
           sourceThreadId: threadId,
@@ -895,7 +965,10 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         trigger,
         mode: undefined,
         runId: heldShell.activeRunId ?? heldShell.latestRunId,
-        disposition: heldShell.activeRunId !== null ? "resume" : disposition,
+        disposition:
+          heldShell.activeRunId !== null || shouldResume(first.checkpoint.runEnding)
+            ? "resume"
+            : "ready",
       });
       if (changed !== null) {
         yield* staysHeld(null, changed);
@@ -958,6 +1031,10 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         // In the same write: a repeat after a stop names the same waiting machine.
         launcher: waits ?? null,
         review: reviewTakeover(first.shell, {}).review === true,
+        // A batch hands the thread over at this revision of its context, by name.
+        ...(enveloped
+          ? { context: { sequence: checkpoint.sequence, commit: checkpoint.commit } }
+          : {}),
       });
       if (sent === null) return yield* failed("busy", RESUMED_HERE);
       yield* deps
@@ -990,10 +1067,12 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       )
       .pipe(Effect.forkDetach, Effect.flatMap(Fiber.join));
 
+  /** One thread's move, with the destination's own answer beside the result. */
+  const move = (input: HandOffInput, reason: TakeoverReason, start: TransferStart = {}) =>
+    owned(input.threadId, run(input, reason, start, false));
+
   const handOff = (input: HandOffInput, reason: TakeoverReason, start: TransferStart = {}) =>
-    owned(input.threadId, run(input, reason, start, false)).pipe(
-      Effect.map((moved) => moved.result),
-    );
+    move(input, reason, start).pipe(Effect.map((moved) => moved.result));
 
   /**
    * Before the first hold of a batch: one record per thread, with its
@@ -1004,14 +1083,26 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
     destination: EnvironmentId,
     reason: TakeoverReason,
     trigger: HandoffTransferTrigger = MANUAL,
-    /** The asking window's name for the batch; a name already taken is not used twice. */
-    named?: string,
+    options: {
+      /** The batch these records join. */
+      readonly batchId?: string;
+      /** The asking window's name for the batch; a name already taken is not used twice. */
+      readonly named?: string;
+      readonly dispositions?: ReadonlyMap<ThreadId, HandoffTransferDisposition>;
+      /**
+       * The batch as its owner keeps it, rows included. It is written in the
+       * same write as the records, each thread's row linked to its record, and
+       * it is written when no thread gets one too.
+       */
+      readonly entry?: HandoffTransferBatch;
+    } = {},
   ): Effect.Effect<ReadonlyMap<ThreadId, string>, HandoffModeError> =>
     Effect.gen(function* () {
       const document = yield* deps.document;
       const now = yield* deps.nowIso;
+      const named = options.named;
       const taken = named === undefined || (yield* store.read).batches[named] !== undefined;
-      const batchId = taken ? NodeCrypto.randomUUID() : named;
+      const batchId = options.batchId ?? (taken ? NodeCrypto.randomUUID() : named);
       const records: Array<HandoffTransferRecord> = [];
       for (const threadId of threadIds) {
         const record = document.threads[threadId];
@@ -1032,10 +1123,11 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
           targetEnvironmentId: destination,
           sequence: checkpoint?.sequence ?? null,
           disposition:
-            shell.value.activeRunId !== null ||
+            options.dispositions?.get(threadId) ??
+            (shell.value.activeRunId !== null ||
             (checkpoint !== null && shouldResume(checkpoint.runEnding))
               ? "resume"
-              : "ready",
+              : "ready"),
           state: "pending",
           legacy: false,
           candidates: [],
@@ -1054,17 +1146,33 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         const fresh = records.filter(
           (record) => openTransfer(current, self, record.lineage.sourceThreadId) === undefined,
         );
-        if (fresh.length === 0) return [new Map<ThreadId, string>(), current] as const;
+        const base = options.entry ?? current.batches[batchId];
+        if (fresh.length === 0 && options.entry === undefined) {
+          return [new Map<ThreadId, string>(), current] as const;
+        }
+        const linked = new Map<string, string>(
+          fresh.map((record) => [record.lineage.sourceThreadId, record.operationId]),
+        );
         const next = fresh.reduce(putTransfer, {
           ...current,
           batches: {
             ...current.batches,
             [batchId]: {
+              createdAt: now,
+              ...base,
               batchId,
               targetEnvironmentId: destination,
               trigger,
               operationIds: fresh.map((record) => record.operationId),
-              createdAt: now,
+              ...(base?.rows === undefined
+                ? {}
+                : {
+                    rows: base.rows.map((row) =>
+                      row.kind === "thread" && linked.has(row.id)
+                        ? { ...row, operationId: linked.get(row.id) ?? null }
+                        : row,
+                    ),
+                  }),
             },
           },
         });
@@ -1276,5 +1384,15 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       ),
     );
 
-  return { handOff, planBatch, endBatch, resumeHere, resumeUnsent, reconcile, pull, servePull };
+  return {
+    handOff,
+    move,
+    planBatch,
+    endBatch,
+    resumeHere,
+    resumeUnsent,
+    reconcile,
+    pull,
+    servePull,
+  };
 }

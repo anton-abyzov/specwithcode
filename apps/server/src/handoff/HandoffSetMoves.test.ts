@@ -14,6 +14,7 @@ import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import {
+  HANDOFF_BATCH_CAPABILITY,
   HANDOFF_V2_CAPABILITY,
   type HandoffTransferRecord,
   ThreadId,
@@ -344,7 +345,13 @@ describe("a thread in a worktree set", () => {
         preflight: (from, request) =>
           current
             .preflight(from, request)
-            .pipe(Effect.map((answer) => ({ ...answer, capabilities: [HANDOFF_V2_CAPABILITY] }))),
+            // A build with batches and without sets: only the set capability is missing.
+            .pipe(
+              Effect.map((answer) => ({
+                ...answer,
+                capabilities: [HANDOFF_V2_CAPABILITY, HANDOFF_BATCH_CAPABILITY],
+              })),
+            ),
       };
       rig.network.calls.length = 0;
 
@@ -687,7 +694,13 @@ describe("the worktree set capability with a machine that does not name it", () 
       preflight: (from, request) =>
         current
           .preflight(from, request)
-          .pipe(Effect.map((answer) => ({ ...answer, capabilities: [HANDOFF_V2_CAPABILITY] }))),
+          // A build with batches and without sets: only the set capability is missing.
+          .pipe(
+            Effect.map((answer) => ({
+              ...answer,
+              capabilities: [HANDOFF_V2_CAPABILITY, HANDOFF_BATCH_CAPABILITY],
+            })),
+          ),
     };
   };
 

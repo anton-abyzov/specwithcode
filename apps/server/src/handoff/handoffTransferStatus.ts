@@ -230,6 +230,7 @@ export const makeTransferStatus =
               modelSelection: settled.modelSelection,
               ...(settled.operationId === null ? {} : { operationId: settled.operationId }),
               ...(settled.trigger === null ? {} : { trigger: settled.trigger }),
+              ...(settled.batch === undefined ? {} : { batch: settled.batch }),
             });
         return {
           machineLabel: deps.label,

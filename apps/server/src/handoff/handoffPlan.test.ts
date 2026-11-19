@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
   HANDOFF_TRACK_START_CAPABILITY,
+  HANDOFF_BATCH_CAPABILITY,
   HANDOFF_V2_CAPABILITY,
   type ModelSelection,
   type OrchestratorMcpProviderUsage,
@@ -1082,6 +1083,7 @@ const ADVERTISED = [
   HANDOFF_PLAN_CAPABILITY,
   HANDOFF_TRACK_START_CAPABILITY,
   HANDOFF_WORKTREE_SET_CAPABILITY,
+  HANDOFF_BATCH_CAPABILITY,
 ];
 
 describe("the plan's own capability (EC2-04)", () => {

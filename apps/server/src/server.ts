@@ -257,6 +257,7 @@ import * as ScheduledTaskRunReactor from "./scheduledTasks/ScheduledTaskRunReact
 import * as AideBriefingSetup from "./project/AideBriefingSetup.ts";
 import * as LaunchedWorkerWake from "./project/LaunchedWorkerWake.ts";
 import * as ImportedThreadTitleRepair from "./project/ImportedThreadTitleRepair.ts";
+import * as HandoffBatch from "./handoff/HandoffBatch.ts";
 import * as HandoffMoves from "./handoff/HandoffMoves.ts";
 import * as HandoffPeers from "./handoff/handoffPeers.ts";
 import * as HandoffReceiver from "./handoff/HandoffReceiver.ts";
@@ -784,6 +785,14 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // Handoff moves between machines; the receiver also serves the peer route.
   HandoffMoves.layerFleet.pipe(
     Layer.provideMerge(HandoffReceiver.layer),
+    // A hand off batch sends project folder work with Sync's own extras.
+    Layer.provide(
+      HandoffBatch.folderWorkLayer.pipe(
+        Layer.provide(ProjectSyncExtras.layer.pipe(Layer.provideMerge(ProjectSync.layer))),
+        Layer.provide(HandoffPeers.layer),
+        Layer.provide(RemoteWorkers.layerFleetWorkers),
+      ),
+    ),
     // One store for both: the moves' records and the receiver's verdicts share a file.
     Layer.provide(HandoffTransferStore.layer),
     Layer.provide(Layer.merge(RemoteWorkers.layerFleetWorkers, ProjectionStoreV2.layer)),
@@ -791,6 +800,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // Project sync (1390): its handlers, and the receiver the peer route lands extras with.
   ProjectSyncRpc.layerRpcHandlers.pipe(
     Layer.provideMerge(ExtrasReceiver.layer),
+    Layer.provideMerge(HandoffBatch.folderWorkReceiverLayer),
     Layer.provide(ProjectSyncExtras.layer.pipe(Layer.provideMerge(ProjectSync.layer))),
     Layer.provide(HandoffPeers.layer),
     Layer.provide(RemoteWorkers.layerFleetWorkers),

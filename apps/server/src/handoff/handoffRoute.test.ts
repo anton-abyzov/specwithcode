@@ -26,6 +26,7 @@ import { CoordinatorLeaseReceiver } from "../project/CoordinatorLeaseRoute.ts";
 import { LinkedMemoryPeerReceiver } from "../project/LinkedMemoryPeers.ts";
 import { LinkedPeerReceiver } from "../project/LinkedPeerRoute.ts";
 import { ExtrasReceiver } from "./ExtrasReceiver.ts";
+import { FolderWorkReceiver } from "./HandoffBatch.ts";
 import { HandoffReceiver, HandoffRefusal, type ReceiverCaller } from "./HandoffReceiver.ts";
 import * as HandoffRoute from "./handoffRoute.ts";
 import {
@@ -115,6 +116,13 @@ function api() {
                 branch: `swc/from-M4/${meta.leaf}`,
                 landed: "created",
               };
+            }),
+        }),
+        Layer.mock(FolderWorkReceiver)({
+          apply: (caller) =>
+            Effect.sync(() => {
+              callers.push(caller);
+              return { machineLabel: "Mini", applied: true, reason: null };
             }),
         }),
         Layer.mock(HandoffReceiver)({

@@ -21,6 +21,7 @@ import { LinkedMemoryPeerReceiver } from "../project/LinkedMemoryPeers.ts";
 import { LinkedPeerReceiver } from "../project/LinkedPeerRoute.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { ExtrasReceiver } from "./ExtrasReceiver.ts";
+import { FolderWorkReceiver } from "./HandoffBatch.ts";
 import { PeerCheckRequest } from "./handoffPlan.ts";
 import {
   HandoffReceiver,
@@ -50,6 +51,7 @@ import {
   TakeoverRequest,
   TransferPullRequest,
   TransferStatusRequest,
+  FolderWorkRequest,
 } from "./handoffWire.ts";
 import { isRetiredReason } from "./handoffState.ts";
 import {
@@ -261,6 +263,12 @@ export const layer = HttpRouter.add(
       case "check": {
         const input = decodeJson(PeerCheckRequest, body.value);
         return Option.isNone(input) ? invalid : yield* answer(receiver.check(caller, input.value));
+      }
+      case "folder-work": {
+        const input = decodeJson(FolderWorkRequest, body.value);
+        return Option.isNone(input)
+          ? invalid
+          : yield* answer((yield* FolderWorkReceiver).apply(caller, input.value));
       }
       case "transfer-pull": {
         const input = decodeJson(TransferPullRequest, body.value);

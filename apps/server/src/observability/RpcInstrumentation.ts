@@ -50,6 +50,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.handoffModeContinueHere]: "handoffMode",
   [WS_METHODS.handoffModeResumeFenced]: "handoffMode",
   [WS_METHODS.handoffModePreflight]: "handoffMode",
+  [WS_METHODS.handoffBatchStart]: "handoffMode",
+  [WS_METHODS.handoffBatchRead]: "handoffMode",
   [WS_METHODS.awayPreflight]: "handoffMode",
   [WS_METHODS.awayRequestAccess]: "handoffMode",
   [WS_METHODS.awayAccessStatus]: "handoffMode",

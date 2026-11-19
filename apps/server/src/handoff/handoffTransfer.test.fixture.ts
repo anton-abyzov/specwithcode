@@ -43,7 +43,14 @@ import * as ServerSettings from "../serverSettings.ts";
 import { writeCheckpoint } from "./checkpointGit.ts";
 import { HandoffConnectivity } from "./handoffConnectivity.ts";
 import { HandoffMode } from "./HandoffMode.ts";
+import {
+  type FolderWorkReceiver,
+  HandoffBatchAdmission,
+  HandoffFolderWork,
+  makeFolderWorkReceiver,
+} from "./HandoffBatch.ts";
 import { unknownCheckPath } from "./handoffPlan.ts";
+import { unknownFolderWorkPath } from "./handoffWire.ts";
 import * as HandoffMoves from "./HandoffMoves.ts";
 import { HandoffPeerError, HandoffPeers } from "./handoffPeers.ts";
 import * as HandoffReceiver from "./HandoffReceiver.ts";
@@ -95,7 +102,8 @@ export type PeerCallPath =
   | "heartbeat"
   | "transfer-status"
   | "transfer-pull"
-  | "check";
+  | "check"
+  | "folder-work";
 
 export interface PeerCall {
   readonly from: EnvironmentId;
@@ -163,6 +171,23 @@ export interface RigMachine {
   /** Asked at each read of this machine's projects; false reads as the project unlinked. */
   linked: () => boolean;
   receiver: HandoffReceiver.HandoffReceiver["Service"];
+  /** This machine's side of a batch's folder work. */
+  folderWork: FolderWorkReceiver["Service"]["apply"];
+  /**
+   * The capabilities this machine names, when it is a build between two
+   * releases: null answers as the current build does.
+   */
+  capabilities: ReadonlyArray<string> | null;
+  /** The project's folder when it is not the repository's top level; null: the top level. */
+  projectRoot: string | null;
+  /** How many of the next project lookups fail, as an unreadable store does. */
+  projectLookupFails: number;
+  /** The next project lookup waits on this first; it is used once. */
+  projectLookupGate: Effect.Effect<void> | null;
+  /** This machine's own folder work, read at the next start; null: it cannot read any. */
+  folderSource: HandoffFolderWork["Service"] | null;
+  /** The usage-limit rule's answer for an automatic start, read at the next start; null: no rule is readable. */
+  admission: HandoffBatchAdmission["Service"] | null;
   moves: Effect.Success<typeof HandoffMoves.make>;
 }
 
@@ -213,10 +238,11 @@ const unknownPath = (label: string) =>
 
 export const makeRig = (
   temporary: Array<string>,
-  shape: ReadonlyArray<{ readonly name: string; readonly previous?: boolean }> = [
-    { name: "a" },
-    { name: "b" },
-  ],
+  shape: ReadonlyArray<{
+    readonly name: string;
+    readonly previous?: boolean;
+    readonly capabilities?: ReadonlyArray<string>;
+  }> = [{ name: "a" }, { name: "b" }],
 ): Effect.Effect<Rig> =>
   Effect.gen(function* () {
     const base = NodeFS.realpathSync(
@@ -258,6 +284,13 @@ export const makeRig = (
         stateDir: NodeFS.mkdtempSync(NodePath.join(base, "state-")),
         linked: () => true,
         receiver: undefined as never,
+        folderWork: undefined as never,
+        capabilities: entry.capabilities ?? null,
+        projectRoot: null,
+        projectLookupFails: 0,
+        projectLookupGate: null,
+        folderSource: null,
+        admission: { automatic: () => Effect.succeed(null) },
         moves: undefined as never,
       };
     });
@@ -335,7 +368,7 @@ export const makeRig = (
     const projectOf = (target: RigMachine) => ({
       id: target.projectId,
       title: "App",
-      workspaceRoot: target.root,
+      workspaceRoot: target.projectRoot ?? target.root,
       workspaceSettings: { logicalProject: { members } },
     });
 
@@ -375,9 +408,24 @@ export const makeRig = (
         } as never),
         Layer.succeed(ProjectService.ProjectService, {
           getById: (id: ProjectId) =>
-            Effect.succeed(
-              id === target.projectId ? Option.some(projectOf(target)) : Option.none(),
-            ),
+            Effect.suspend(() => {
+              const gate = target.projectLookupGate;
+              if (gate !== null) {
+                target.projectLookupGate = null;
+                return gate.pipe(
+                  Effect.as(
+                    id === target.projectId ? Option.some(projectOf(target)) : Option.none(),
+                  ),
+                );
+              }
+              if (target.projectLookupFails > 0) {
+                target.projectLookupFails -= 1;
+                return Effect.fail(new Error("The projects could not be read.") as never);
+              }
+              return Effect.succeed(
+                id === target.projectId ? Option.some(projectOf(target)) : Option.none(),
+              );
+            }),
           snapshot: Effect.sync(() => ({ projects: target.linked() ? [projectOf(target)] : [] })),
         } as never),
         Layer.succeed(ProviderRegistry.ProviderRegistry, {
@@ -457,6 +505,9 @@ export const makeRig = (
       Effect.gen(function* () {
         if (!PREVIOUS_PEER_PATHS.has(path)) {
           if (path === "check") return yield* new HandoffPeerError(unknownCheckPath(to.label));
+          if (path === "folder-work") {
+            return yield* new HandoffPeerError(unknownFolderWorkPath(to.label));
+          }
           return yield* unknownPath(to.label);
         }
         const caller = {
@@ -545,7 +596,15 @@ export const makeRig = (
         case "replicate":
           return to.receiver.replicate(caller, request as never, bundle as never);
         case "preflight":
-          return to.receiver.preflight(caller, request as never);
+          return to.receiver
+            .preflight(caller, request as never)
+            .pipe(
+              Effect.map((response) =>
+                to.capabilities === null
+                  ? response
+                  : { ...response, capabilities: to.capabilities },
+              ),
+            );
         case "takeover":
           return to.receiver.takeover(caller, request as never);
         case "heartbeat":
@@ -556,6 +615,8 @@ export const makeRig = (
           return to.receiver.transferPull(caller, request as never);
         case "check":
           return to.receiver.check(caller, request as never);
+        case "folder-work":
+          return to.folderWork(caller, request as never);
       }
     };
 
@@ -620,6 +681,7 @@ export const makeRig = (
         transferStatus: (to, request) => send(self, to, "transfer-status", request),
         transferPull: (to, request) => send(self, to, "transfer-pull", request),
         check: (to, request) => send(self, to, "check", request),
+        folderWork: (to, request) => send(self, to, "folder-work", request),
         coordinatorLease: unused,
         coordinatorReplica: unused,
         memoryExport: unused,
@@ -645,6 +707,12 @@ export const makeRig = (
           Layer.succeed(HandoffTransferStore, store),
           Layer.succeed(HandoffPeers, peersFor(machine)),
           Layer.succeed(HandoffConnectivity, { probe: Effect.succeed("online" as const) }),
+          machine.folderSource === null
+            ? Layer.empty
+            : Layer.succeed(HandoffFolderWork, machine.folderSource),
+          machine.admission === null
+            ? Layer.empty
+            : Layer.succeed(HandoffBatchAdmission, machine.admission),
         );
         const receiver = yield* HandoffReceiver.make.pipe(Effect.provide(services));
         const moves = yield* HandoffMoves.make.pipe(
@@ -652,6 +720,7 @@ export const makeRig = (
           Effect.provide(services),
         );
         machine.receiver = receiver;
+        machine.folderWork = (yield* makeFolderWorkReceiver.pipe(Effect.provide(services))).apply;
         machine.moves = moves;
         machine.boots += 1;
       }).pipe(Effect.orDie);

@@ -14,6 +14,9 @@ import {
   type HandOffInput,
   type HandOffMachineInput,
   type HandOffResult,
+  type HandoffBatchInput,
+  type HandoffBatchReadInput,
+  type HandoffBatchRun,
   type HandoffCheckpoint,
   type HandoffChildDisposition,
   type HandoffCheckpointReason,
@@ -120,6 +123,13 @@ export interface HandoffMovesPort {
   readonly handOffMachine: (
     input: HandOffMachineInput,
   ) => Effect.Effect<HandoffMachineRun, HandoffModeError>;
+  /** The hand off batch: threads with their dispositions, and project folder work. */
+  readonly handOffBatch: (
+    input: HandoffBatchInput,
+  ) => Effect.Effect<HandoffBatchRun, HandoffModeError>;
+  readonly readBatches: (
+    input: HandoffBatchReadInput,
+  ) => Effect.Effect<ReadonlyArray<HandoffBatchRun>, HandoffModeError>;
   readonly continueHere: (
     input: HandoffContinueHereInput,
     options?: HandoffContinueHereOptions,
@@ -185,6 +195,17 @@ export class HandoffMode extends Context.Service<
     readonly handOffMachine: (
       input: HandOffMachineInput,
     ) => Effect.Effect<HandoffMachineRun, HandoffModeError>;
+    /**
+     * The one way work leaves this machine (1390): a person's request and the
+     * usage-limit rule start the same batch. It moves no coordinator, no
+     * routine and no project memory.
+     */
+    readonly handOffBatch: (
+      input: HandoffBatchInput,
+    ) => Effect.Effect<HandoffBatchRun, HandoffModeError>;
+    readonly readBatches: (
+      input: HandoffBatchReadInput,
+    ) => Effect.Effect<ReadonlyArray<HandoffBatchRun>, HandoffModeError>;
     readonly continueHere: (
       input: HandoffContinueHereInput,
       options?: HandoffContinueHereOptions,
@@ -906,6 +927,8 @@ export const make = Effect.gen(function* () {
       input.reason === "sleep"
         ? Effect.fail(new HandoffModeError({ code: "invalid", message: SLEEP_MOVES_NOTHING }))
         : viaMoves((port) => port.handOffMachine(input)),
+    handOffBatch: (input) => viaMoves((port) => port.handOffBatch(input)),
+    readBatches: (input) => viaMoves((port) => port.readBatches(input)),
     continueHere: (input, options) => viaMoves((port) => port.continueHere(input, options)),
     resumeFenced: viaMoves((port) => port.resumeFenced),
     resumeThread: (threadId, operationId) =>

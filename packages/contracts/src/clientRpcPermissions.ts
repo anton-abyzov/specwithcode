@@ -133,6 +133,10 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.awaySnapshot]: AuthOrchestrationReadScope,
   [WS_METHODS.awayUpdateConfig]: AuthSettingsWriteScope,
   [WS_METHODS.awayForceLocal]: AuthOrchestrationOperateScope,
+  // The hand off batch (1390 AC-33): starting one holds and moves threads, as `away.start`
+  // does; reading one shows rows a window that can only read this machine may see.
+  [WS_METHODS.handoffBatchStart]: AuthOrchestrationOperateScope,
+  [WS_METHODS.handoffBatchRead]: AuthFilesystemReadScope,
   [WS_METHODS.projectLinkDigest]: AuthOrchestrationReadScope,
   [WS_METHODS.projectLinkSyncStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.projectLinkMemoryExport]: AuthOrchestrationReadScope,
