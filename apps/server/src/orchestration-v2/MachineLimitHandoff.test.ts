@@ -293,6 +293,9 @@ function run(scenario: Scenario, sweeps = 1) {
   );
 }
 
+// Built out here: a test body is an Effect generator.
+const previousCandidate = Schema.decodeUnknownSync(PreviousRelease.LimitHandoffCandidate);
+
 describe("limit handoff in the fallback sweep", () => {
   // A review by Claude of work an OpenAI model wrote, stopped on Claude's limit here (1390 AC-40).
   const reviewRouting = {
@@ -467,11 +470,10 @@ describe("limit handoff in the fallback sweep", () => {
             review: "update_needed",
           });
           // A window on that release still reads the row.
-          expect(
-            Schema.decodeUnknownSync(PreviousRelease.LimitHandoffCandidate)(
-              JSON.parse(JSON.stringify(candidate)),
-            ),
-          ).toMatchObject({ reason: "update_needed", eligible: false });
+          expect(previousCandidate(JSON.parse(JSON.stringify(candidate)))).toMatchObject({
+            reason: "update_needed",
+            eligible: false,
+          });
         }
         // The same machines still take a thread that is no review.
         const ordinary = yield* run({ machines: older, localSpent: true }, 1);
