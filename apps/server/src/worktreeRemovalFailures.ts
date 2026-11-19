@@ -125,15 +125,13 @@ export function openFilesUnder(
   return new Promise((resolve) => {
     NodeChildProcess.execFile(
       "lsof",
-      ["-n", "-P", "-w", "-F", "pcn"],
+      ["-n", "-P", "-F", "pcn"],
       { timeout: OPEN_FILES_TIMEOUT_MS, maxBuffer: OPEN_FILES_MAX_OUTPUT_BYTES, encoding: "utf8" },
-      (error, stdout) => {
-        if (error === null) return resolve(parseLsofHoldersUnder(stdout, folder));
-        const failure = error as { readonly killed?: boolean; readonly code?: unknown };
-        // Exit 1 with output: some files could not be read, the rest were listed.
-        if (failure.killed !== true && failure.code === 1 && stdout.length > 0)
-          return resolve(parseLsofHoldersUnder(stdout, folder));
-        resolve(null);
+      (error, stdout, stderr) => {
+        // A failed run, or one that warned it could not read something, may
+        // have missed a holder: not known.
+        if (error !== null || stderr.trim() !== "") return resolve(null);
+        resolve(parseLsofHoldersUnder(stdout, folder));
       },
     );
   });

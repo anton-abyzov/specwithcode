@@ -230,18 +230,49 @@ export function makeRemoval(deps: {
    */
   const keepReflog = Effect.fn("WorktreeCleanupSweep.keepReflog")(
     function* (state: MemberState, at: string) {
-      const reflog = yield* git.execute({
-        operation: "WorktreeCleanupSweep.reflogToKeep",
+      // Both sides of every entry: Git's reachability keeps an entry's old
+      // value too, and the reflog walk lists only new values.
+      const where = yield* git.execute({
+        operation: "WorktreeCleanupSweep.reflogPath",
         cwd: at,
-        args: ["log", "-g", "--format=%H", "HEAD"],
+        args: ["rev-parse", "--git-path", "logs/HEAD"],
+        maxOutputBytes: 64 * 1024,
+        allowNonZeroExit: true,
+        timeoutMs: 15_000,
+      });
+      if (where.exitCode !== 0 || where.stdout.trim() === "") return false;
+      const file = path.resolve(at, where.stdout.trim());
+      if (!(yield* fs.exists(file))) return true;
+      const text = yield* fs.readFileString(file);
+      const listed = new Set<string>();
+      for (const line of text.split("\n")) {
+        if (line === "") continue;
+        const entry = /^([0-9a-f]{40,64}) ([0-9a-f]{40,64}) /.exec(line);
+        // A line that cannot be read hides history: keep the worktree.
+        if (entry === null) return false;
+        for (const oid of [entry[1]!, entry[2]!]) if (!/^0+$/.test(oid)) listed.add(oid);
+      }
+      if (listed.size === 0) return true;
+      if (listed.size > REFLOG_KEPT_MAX) return false;
+      const kinds = yield* git.execute({
+        operation: "WorktreeCleanupSweep.reflogObjects",
+        cwd: at,
+        args: ["cat-file", "--batch-check=%(objectname) %(objecttype)"],
+        stdin: `${[...listed].join("\n")}\n`,
         maxOutputBytes: 8 * 1024 * 1024,
         allowNonZeroExit: true,
         timeoutMs: 30_000,
       });
-      if (reflog.exitCode !== 0 || reflog.stdoutTruncated) return false;
-      const commits = [...new Set(reflog.stdout.split("\n").map((line) => line.trim()))].filter(
-        (line) => /^[0-9a-f]{40,64}$/.test(line),
-      );
+      if (kinds.exitCode !== 0 || kinds.stdoutTruncated) return false;
+      const commits: Array<string> = [];
+      for (const line of kinds.stdout.split("\n")) {
+        if (line === "") continue;
+        const [oid, kind] = line.split(" ");
+        // An object already gone has nothing left for the removal to lose.
+        if (kind === "missing") continue;
+        if (kind !== "commit" || oid === undefined) return false;
+        commits.push(oid);
+      }
       if (commits.length === 0) return true;
       if (commits.length > REFLOG_KEPT_MAX) return false;
       const tree = yield* git.execute({
@@ -406,6 +437,11 @@ export function makeRemoval(deps: {
         return yield* keepAside(
           holders === null ? "Which process has files open in it is not known" : `${holders.join(", ")} had files open in it`,
         );
+      // With nothing open in it and its old path gone, a write needs a new
+      // open by the set-aside path; what was read before is read again, so a
+      // write that landed before the listing is never removed uncopied.
+      if (!(yield* memberUnchanged(assessment, state, false, target)))
+        return yield* keepAside("It changed");
       // Files Git leaves behind were checked by nobody: they stay, and so does the rest.
       const removal = yield* git
         .removeWorktree({
