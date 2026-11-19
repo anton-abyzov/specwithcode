@@ -17,6 +17,7 @@ import {
   resolveProjectSettings,
   type LegacyProjectSettingsFields,
 } from "@specweave-studio/shared/projectSettings";
+import { reviewOnlyModel } from "@specweave-studio/shared/regularTrack";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { formatRelativeTime } from "../../timestampFormat";
 
@@ -335,8 +336,8 @@ export function scheduledTaskDefaultModel(
       entry.isAvailable &&
       entry.snapshot.auth.status !== "unauthenticated",
   );
-  const configured = resolveProjectSettings(settings, project?.id ?? null, project).settings
-    .defaultModelSelection;
+  const resolved = resolveProjectSettings(settings, project?.id ?? null, project).settings;
+  const configured = resolved.defaultModelSelection;
   for (const selection of [configured, settings.defaultModelSelection]) {
     if (
       selection &&
@@ -348,9 +349,12 @@ export function scheduledTaskDefaultModel(
     )
       return selection;
   }
+  // A guessed default is regular work: never a Review-only model, even when a
+  // provider marks one its default (Muse lists Wonder Full as its default).
+  const reviewOnly = reviewOnlyModel(resolved);
   const models = available.flatMap((entry) =>
     entry.models
-      .filter((model) => !model.isLegacy)
+      .filter((model) => !model.isLegacy && !reviewOnly({ model: model.slug }))
       .map((model) => ({ instanceId: entry.instanceId, model })),
   );
   const fallback = models.find(({ model }) => model.isDefault) ?? models[0];
