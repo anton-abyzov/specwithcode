@@ -13,7 +13,8 @@ import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
-import { wouldFire379 } from "./ScheduledTaskRunner.release379.testkit.ts";
+import type { AwayPeerPost } from "../away/awayPeerCall.ts";
+import { makeTransferOut379, wouldFire379 } from "./ScheduledTaskRunner.release379.testkit.ts";
 import {
   COORDINATES,
   fleet,
@@ -415,5 +416,130 @@ it.effect("T21-12: a save whose revision could not advance changes nothing", () 
     yield* healInsert;
     yield* healUpdate;
     assert.equal((yield* listed(alpha)).revision, 0);
+  }),
+);
+
+// --- T21-13 --------------------------------------------------------------------------------
+
+/**
+ * The release before's own sender on `source`, over the route this release
+ * answers on, with what `source`'s row read as each request left it.
+ */
+const sender379 = (source: Machine) => {
+  const seen: Array<string> = [];
+  const post: AwayPeerPost = (target, path, body, timeout) =>
+    Effect.gen(function* () {
+      const row = yield* source.row;
+      seen.push(`${(body as { readonly op: string }).op}:${row?.enabled ? "on" : "off"}`);
+      return yield* source.post(target, path, body, timeout);
+    });
+  const sender = makeTransferOut379({
+    post,
+    readState: () =>
+      source.row.pipe(
+        Effect.map((row) =>
+          row === undefined
+            ? null
+            : {
+                nextRunAt: row.next_run_at,
+                lastRunAt: null,
+                runCount: row.run_count,
+                onceGeneration: 0,
+                running: false,
+                enabled: Boolean(row.enabled),
+              },
+        ),
+      ),
+    setEnabled: (id, enabled) =>
+      source.service.setEnabled({ id, enabled }).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      ),
+    note: (id, note) =>
+      source.sql`UPDATE scheduled_tasks SET last_run_error = ${note} WHERE task_id = ${id}`.pipe(
+        Effect.asVoid,
+        Effect.orDie,
+      ),
+    writeState: (task, state) =>
+      source.sql`
+        UPDATE scheduled_tasks
+        SET next_run_at = ${state.nextRunAt}, last_run_at = ${state.lastRunAt}, run_count = ${state.runCount}
+        WHERE task_id = ${task.id}
+      `.pipe(Effect.asVoid, Effect.orDie),
+    nowMs: Effect.succeed(Date.parse(NOON)),
+  });
+  return { sender, seen };
+};
+const olderSource = Effect.gen(function* () {
+  yield* start;
+  const all = yield* fleet(["alpha", "beta"], { release: { alpha: "1.0.377" } });
+  const [alpha, beta] = all.machines as [Machine, Machine];
+  // A worker's routine: the kind that release moved by itself, bound to the worker's thread.
+  for (const machine of [alpha, beta])
+    yield* machine.sql`INSERT INTO orchestration_v2_projection_threads ${machine.sql.insert({ thread_id: "worker-thread", project_id: machine.projectId, title: "Synthetic", default_provider: "codex", runtime_mode: "full-access", interaction_mode: "default", created_at: "2026-10-09T00:00:00Z", updated_at: "2026-10-09T00:00:00Z", deleted_at: null, payload_json: "{}" })}`;
+  const task = yield* alpha.seed({ threadId: "worker-thread" });
+  yield* alpha.makeDue(DUE);
+  return { ...all, alpha, beta, task, ...sender379(alpha) };
+});
+const input379 = (task: ScheduledTask, beta: Machine) => ({
+  task,
+  target: beta.environmentId,
+  targetLabel: "beta",
+  copy: routineCopyOf({ ...task, ownThread: true })!,
+  boundThreadId: "worker-thread",
+});
+
+it.effect("T21-13: the release before's sender moves a routine here and takes it back", () =>
+  Effect.gen(function* () {
+    const { alpha, beta, task, sender, seen, everyoneLooks, fires } = yield* olderSource;
+    assert.deepInclude(yield* sender.moveOut(input379(task, beta)), { kind: "moved" });
+    // Its order: staged while the source is still on, turned on only once it is off.
+    assert.deepEqual(seen, ["stage:on", "enable:off"]);
+    assert.notOk((yield* alpha.row)?.enabled);
+    assert.deepInclude(yield* beta.row, { enabled: 1, next_run_at: DUE });
+    // It runs here by that release's rule: no runner record was written for it.
+    assert.isNull(yield* beta.record);
+    yield* everyoneLooks;
+    assert.equal(fires(), 1);
+    assert.equal(beta.state.sends, 1);
+    assert.deepInclude(
+      yield* sender.bringBack({
+        task,
+        target: beta.environmentId,
+        targetLabel: "beta",
+        wasEnabled: true,
+      }),
+      { kind: "returned" },
+    );
+    assert.deepEqual(seen, ["stage:on", "enable:off", "release:off"]);
+    assert.isUndefined(yield* beta.row);
+    assert.deepInclude(yield* alpha.row, { enabled: 1, run_count: 1 });
+  }),
+);
+
+it.effect("T21-13: a stage this machine refuses leaves the older source running it", () =>
+  Effect.gen(function* () {
+    const { alpha, beta, task, sender, seen, everyoneLooks, fires } = yield* olderSource;
+    // This machine runs a routine of that id itself: not another machine's to stage.
+    yield* beta.runner.records.write({
+      taskId: ROUTINE,
+      state: "settled",
+      runnerEnvironmentId: beta.environmentId,
+      runnerLabel: null,
+      revision: 0,
+      acked: [],
+      operationId: null,
+      operation: null,
+    });
+    assert.deepInclude(yield* sender.moveOut(input379(task, beta)), {
+      kind: "failed",
+      offHere: false,
+    });
+    assert.deepEqual(seen, ["stage:on"]);
+    assert.isUndefined(yield* beta.row);
+    assert.deepInclude(yield* alpha.row, { enabled: 1 });
+    yield* everyoneLooks;
+    assert.equal(fires(), 1);
+    assert.equal(alpha.fires(), 1);
   }),
 );

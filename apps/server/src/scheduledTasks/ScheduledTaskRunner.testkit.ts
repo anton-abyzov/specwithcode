@@ -88,6 +88,8 @@ export interface Machine {
   readonly runner: RoutineRunner;
   /** Absent on a 1.0.377 machine. */
   readonly transfer: ScheduledTaskTransfer["Service"] | null;
+  /** This machine's requests to the others' routines routes, as its own move sends them. */
+  readonly post: AwayPeerPost;
   /** One pass of this machine's scheduler over what is due. */
   readonly due: Effect.Effect<void>;
   /**
@@ -480,6 +482,7 @@ export const fleet = (
                 .pipe(Effect.asVoid, Effect.orDie);
             }).pipe(Effect.orDie),
           fires: () => state.launches + state.sends,
+          post: postFrom(environmentId),
           row,
           record: Effect.suspend(() => live.current.runner.records.read(ROUTINE)),
           seed: (overrides = {}) =>
