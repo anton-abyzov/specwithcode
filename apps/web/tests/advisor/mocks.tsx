@@ -55,13 +55,32 @@ export const providers: ServerProvider[] = [
     ["claude-fable-5-2", "Claude Fable 5.2"],
     ["claude-opus-5-5", "Claude Opus 5.5"],
   ]),
-  provider("codex", "codex", "Codex", [["gpt-6.1-sol", "GPT-6.1 Sol"]]),
+  provider("codex", "codex", "Codex", [
+    ["gpt-6.1-sol", "GPT-6.1 Sol"],
+    ["gpt-6-astra", "GPT-6 Astra"],
+  ]),
 ];
+
+/**
+ * The composer's thread, from `?thread=`: on GPT-6.1 Sol by default; `fable`
+ * advised by its own model; `opus` advised by Fable; `passthrough` with the
+ * app's advisor off and an answer from Claude's own advisor setting.
+ */
+const THREADS = {
+  sol: { label: "GPT-6.1 Sol", instanceId: "codex", model: "gpt-6.1-sol" },
+  fable: { label: "Claude Fable 5.2", instanceId: "claudeAgent", model: "claude-fable-5-2" },
+  opus: { label: "Claude Opus 5.5", instanceId: "claudeAgent", model: "claude-opus-5-5" },
+  passthrough: { label: "Claude Fable 5.2", instanceId: "claudeAgent", model: "claude-fable-5-2" },
+} as const;
+const threadCase = new URLSearchParams(window.location.search).get("thread");
+export const fixtureThread =
+  THREADS[(threadCase ?? "sol") as keyof typeof THREADS] ?? THREADS.sol;
+const passThrough = threadCase === "passthrough";
 
 /** The machine's settings: the advisor on with its defaults; the project overrides two fields. */
 let environmentSettings: ServerSettings = {
   ...DEFAULT_SERVER_SETTINGS,
-  advisor: { ...DEFAULT_ADVISOR_SETTINGS, enabled: true },
+  advisor: { ...DEFAULT_ADVISOR_SETTINGS, enabled: !passThrough },
   projectSettingsOverrides: {
     [PROJECT_ID]: { advisor: { maxConsultsPerRun: 5, briefTokenBudget: 32_000 } },
   } as ServerSettings["projectSettingsOverrides"],
@@ -245,9 +264,32 @@ export function useThreadShell() {
     environmentId: ENVIRONMENT_ID,
     projectId: PROJECT_ID,
     title: "Atlas checkout",
+    modelSelection: {
+      instanceId: ProviderInstanceId.make(fixtureThread.instanceId),
+      model: fixtureThread.model,
+    },
     source: { advisorMode: threadAdvisorMode, reviewMode: threadReviewMode, purpose: null },
   };
 }
+/** In pass-through, one earlier consult answered by Claude's own advisor setting. */
+const PASS_THROUGH_ITEMS = [
+  {
+    sourceThreadId: "thread-atlas-1",
+    sourceItemId: "consult-pass-through",
+    visibility: "visible",
+    item: {
+      id: "consult-pass-through",
+      threadId: "thread-atlas-1",
+      type: "dynamic_tool",
+      toolName: "advisor",
+      title: "Asked the advisor (claude-fable-5-2)",
+      status: "completed",
+      output: "Check the retry path before the parser.",
+      input: {},
+    },
+  },
+];
+export const useThreadVisibleTurnItems = () => (passThrough ? PASS_THROUGH_ITEMS : []);
 export const threadEnvironment = {
   setAdvisorMode: "setAdvisorMode",
   setReviewMode: "setReviewMode",
