@@ -234,6 +234,10 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.gitHubCredentialRemoveCopied]: AuthSettingsWriteScope,
   [WS_METHODS.gitHubCredentialCopyPreview]: AuthSettingsWriteScope,
   [WS_METHODS.gitHubCredentialCopy]: AuthSettingsWriteScope,
+  // Team usage (0898): what this machine shares with a team is the member's own setting.
+  [WS_METHODS.teamUsageStatus]: AuthSettingsWriteScope,
+  [WS_METHODS.teamUsageUpdate]: AuthSettingsWriteScope,
+  [WS_METHODS.teamUsageOrgs]: AuthSettingsWriteScope,
   // Runs git with this machine's credentials; only offered before a clone, which needs write.
   [WS_METHODS.sourceControlCheckRemoteAccess]: AuthSourceControlWriteScope,
   [WS_METHODS.sourceControlInspectDestination]: AuthSourceControlWriteScope,

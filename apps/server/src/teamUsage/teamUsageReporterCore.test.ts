@@ -36,24 +36,22 @@ function harness(options: { statuses?: number[]; token?: string | undefined } = 
         saved = state;
       }),
     buildSummary: (config: TeamUsageConfig) =>
-      Effect.sync(
-        (): TeamUsageSummary => ({
-          machineLabel: config.machineLabel ?? "M4",
-          at: DateTime.formatIso(DateTime.makeUnsafe(now)),
-          accounts: [
-            {
-              provider: "claudeAgent" as TeamUsageSummary["accounts"][number]["provider"],
-              accountLabel: "Claude",
-              windows: [
-                { kind: "session", remainingPercent: 100 - used, lowestRemainingPercent: 100 - used },
-              ],
-              limitHits: 0,
-              handoffs: 0,
-              providerSwitches: 0,
-            },
-          ],
-        }),
-      ),
+      Effect.sync((): TeamUsageSummary => ({
+        machineLabel: config.machineLabel ?? "M4",
+        at: DateTime.formatIso(DateTime.makeUnsafe(now)),
+        accounts: [
+          {
+            provider: "claudeAgent" as TeamUsageSummary["accounts"][number]["provider"],
+            accountLabel: "Claude",
+            windows: [
+              { kind: "session", remainingPercent: 100 - used, lowestRemainingPercent: 100 - used },
+            ],
+            limitHits: 0,
+            handoffs: 0,
+            providerSwitches: 0,
+          },
+        ],
+      })),
     readHostedToken: Effect.sync(() => {
       tokenReads += 1;
       return "token" in options ? options.token : TOKEN;
@@ -117,8 +115,12 @@ describe("team usage opt-in (0898 AC-01)", () => {
 
   it("opting out stops sending and deletes this machine's history, retried until confirmed", async () => {
     const h = harness({ statuses: [200, 0, 503, 204] });
-    await run(h.reporter.update({ config: { enabled: true, endpoint: hosted, machineLabel: "Work Mac" } }));
-    await run(h.reporter.update({ config: { enabled: false, endpoint: hosted, machineLabel: "Work Mac" } }));
+    await run(
+      h.reporter.update({ config: { enabled: true, endpoint: hosted, machineLabel: "Work Mac" } }),
+    );
+    await run(
+      h.reporter.update({ config: { enabled: false, endpoint: hosted, machineLabel: "Work Mac" } }),
+    );
     expect(h.sent.map((request) => request.method)).toEqual(["POST", "DELETE"]);
     expect(h.sent[1]!.url).toBe(
       "https://verified-skill.com/api/v1/tenants/tenant-1/usage-summaries?machineLabel=Work+Mac",
@@ -136,13 +138,15 @@ describe("team usage opt-in (0898 AC-01)", () => {
 
   it("renaming the machine removes the history under the old label", async () => {
     const h = harness();
-    await run(h.reporter.update({ config: { enabled: true, endpoint: hosted, machineLabel: "Old" } }));
-    await run(h.reporter.update({ config: { enabled: true, endpoint: hosted, machineLabel: "New" } }));
-    expect(h.sent.map((request) => `${request.method} ${request.url.split("?")[1] ?? ""}`)).toEqual([
-      "POST ",
-      "DELETE machineLabel=Old",
-      "POST ",
-    ]);
+    await run(
+      h.reporter.update({ config: { enabled: true, endpoint: hosted, machineLabel: "Old" } }),
+    );
+    await run(
+      h.reporter.update({ config: { enabled: true, endpoint: hosted, machineLabel: "New" } }),
+    );
+    expect(h.sent.map((request) => `${request.method} ${request.url.split("?")[1] ?? ""}`)).toEqual(
+      ["POST ", "DELETE machineLabel=Old", "POST "],
+    );
   });
 
   it("opting back in before the delete is confirmed waits for the delete", async () => {
@@ -152,7 +156,13 @@ describe("team usage opt-in (0898 AC-01)", () => {
     await run(h.reporter.update({ config: { enabled: true, endpoint: hosted } }));
     expect(h.sent.map((request) => request.method)).toEqual(["POST", "DELETE", "DELETE"]);
     await run(h.reporter.tick);
-    expect(h.sent.map((request) => request.method)).toEqual(["POST", "DELETE", "DELETE", "DELETE", "POST"]);
+    expect(h.sent.map((request) => request.method)).toEqual([
+      "POST",
+      "DELETE",
+      "DELETE",
+      "DELETE",
+      "POST",
+    ]);
   });
 
   it("asks for a sign-in instead of sending when there is no vsk_ token", async () => {
@@ -166,7 +176,11 @@ describe("team usage opt-in (0898 AC-01)", () => {
 });
 
 describe("team usage transport (0898 AC-04)", () => {
-  const summary: TeamUsageSummary = { machineLabel: "M4", at: "2026-11-19T10:00:00.000Z", accounts: [] };
+  const summary: TeamUsageSummary = {
+    machineLabel: "M4",
+    at: "2026-11-19T10:00:00.000Z",
+    accounts: [],
+  };
 
   it("refuses plain http and addresses with credentials in them", () => {
     expect(

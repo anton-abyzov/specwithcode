@@ -58,7 +58,8 @@ function windowsFor(
         : history.find((entry) => entry.accountKey === accountKey && entry.windowId === window.id);
     let highestUsed = window.usedPercent;
     for (const sample of series?.samples ?? []) {
-      if (Date.parse(sample.at) >= dayStartMs) highestUsed = Math.max(highestUsed, sample.usedPercent);
+      if (Date.parse(sample.at) >= dayStartMs)
+        highestUsed = Math.max(highestUsed, sample.usedPercent);
     }
     windows.push({
       kind: window.kind,

@@ -100,7 +100,10 @@ export const readTeamUsageCounts = (nowMs: number) =>
       WHERE instance_id IS NOT NULL
       GROUP BY instance_id`;
 
-    const counts = new Map<string, { limitHits: number; handoffs: number; providerSwitches: number }>();
+    const counts = new Map<
+      string,
+      { limitHits: number; handoffs: number; providerSwitches: number }
+    >();
     const add = (rows: readonly CountRow[], key: keyof TeamUsageInstanceCounts) => {
       for (const row of rows) {
         if (row.instance_id === null) continue;

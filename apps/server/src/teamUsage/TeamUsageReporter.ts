@@ -55,7 +55,9 @@ export class TeamUsageReporter extends Context.Service<
   TeamUsageReporter,
   {
     readonly status: Effect.Effect<TeamUsageStatus>;
-    readonly update: (input: TeamUsageUpdateInput) => Effect.Effect<TeamUsageStatus, TeamUsageError>;
+    readonly update: (
+      input: TeamUsageUpdateInput,
+    ) => Effect.Effect<TeamUsageStatus, TeamUsageError>;
     readonly orgs: Effect.Effect<TeamUsageOrgsResult>;
   }
 >()("specweave-studio/teamUsage/TeamUsageReporter") {}
@@ -129,7 +131,9 @@ export const make = Effect.gen(function* () {
       writeFileStringAtomically({ filePath, contents: `${JSON.stringify(state, null, 2)}\n` }).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
-        Effect.catchCause((cause) => Effect.logWarning("could not save team usage state", { cause })),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("could not save team usage state", { cause }),
+        ),
       ),
     buildSummary: (teamConfig) =>
       Effect.gen(function* () {
@@ -162,7 +166,11 @@ export const make = Effect.gen(function* () {
       (value === undefined || value.trim() === ""
         ? secrets.remove(TEAM_USAGE_SECRET)
         : secrets.set(TEAM_USAGE_SECRET, new TextEncoder().encode(value.trim()))
-      ).pipe(Effect.catchCause((cause) => Effect.logWarning("could not store team credential", { cause }))),
+      ).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("could not store team credential", { cause }),
+        ),
+      ),
     send,
     nowMs: Clock.currentTimeMillis,
   });
@@ -175,7 +183,10 @@ export const make = Effect.gen(function* () {
   const orgs = Effect.gen(function* () {
     const token = yield* hostedToken;
     if (token === undefined)
-      return { orgs: [], error: "Sign in with `vskill auth login` first." } satisfies TeamUsageOrgsResult;
+      return {
+        orgs: [],
+        error: "Sign in with `vskill auth login` first.",
+      } satisfies TeamUsageOrgsResult;
     const response = yield* http
       .execute(
         HttpClientRequest.get(`${TEAM_USAGE_HOSTED_ORIGIN}/api/v1/tenants/usage-orgs`).pipe(
@@ -188,13 +199,19 @@ export const make = Effect.gen(function* () {
         Effect.option,
       );
     if (Option.isNone(response) || response.value.status !== 200)
-      return { orgs: [], error: "Could not list your orgs on verified-skill.com." } satisfies TeamUsageOrgsResult;
+      return {
+        orgs: [],
+        error: "Could not list your orgs on verified-skill.com.",
+      } satisfies TeamUsageOrgsResult;
     const body = yield* response.value.json.pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(OrgsResponse)),
       Effect.option,
     );
     if (Option.isNone(body))
-      return { orgs: [], error: "verified-skill.com sent an unexpected answer." } satisfies TeamUsageOrgsResult;
+      return {
+        orgs: [],
+        error: "verified-skill.com sent an unexpected answer.",
+      } satisfies TeamUsageOrgsResult;
     return {
       orgs: body.value.orgs.filter((org) => org.tenantId.trim() !== "" && org.label.trim() !== ""),
     } satisfies TeamUsageOrgsResult;
@@ -203,11 +220,13 @@ export const make = Effect.gen(function* () {
   return {
     status: core.status,
     update: (input) =>
-      core.update(input).pipe(
-        Effect.flatMap((result) =>
-          result.ok ? core.status : Effect.fail(new TeamUsageError({ message: result.reason })),
+      core
+        .update(input)
+        .pipe(
+          Effect.flatMap((result) =>
+            result.ok ? core.status : Effect.fail(new TeamUsageError({ message: result.reason })),
+          ),
         ),
-      ),
     orgs,
   } satisfies TeamUsageReporter["Service"];
 });

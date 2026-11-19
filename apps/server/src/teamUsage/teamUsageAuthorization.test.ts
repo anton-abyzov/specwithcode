@@ -13,7 +13,10 @@ import { RpcScopeAuthorization } from "@specweave-studio/contracts";
 import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
 
 const methods = [WS_METHODS.teamUsageStatus, WS_METHODS.teamUsageUpdate, WS_METHODS.teamUsageOrgs];
-const coordinator = { kind: "coordinator" as const, environmentId: EnvironmentId.make("env-other") };
+const coordinator = {
+  kind: "coordinator" as const,
+  environmentId: EnvironmentId.make("env-other"),
+};
 
 describe("team usage RPCs are the member's own", () => {
   it("need settings:write", () => {
@@ -24,7 +27,9 @@ describe("team usage RPCs are the member's own", () => {
   it("refuse a coordinator key, let the person's own device through", () => {
     for (const method of methods) {
       expect(RpcAuthorization.refusesOwnerOnlyRpc(method, coordinator)).toBe(true);
-      expect(RpcAuthorization.refusesOwnerOnlyRpc(method, { kind: "device", id: "mac" })).toBe(false);
+      expect(RpcAuthorization.refusesOwnerOnlyRpc(method, { kind: "device", id: "mac" })).toBe(
+        false,
+      );
     }
   });
 
@@ -37,10 +42,13 @@ describe("team usage RPCs are the member's own", () => {
       });
       const refused = yield* Effect.exit(
         Effect.scoped(
-          authorize(call as never, {
-            rpc: { _tag: WS_METHODS.teamUsageUpdate },
-            payload: { config: { enabled: true } },
-          } as never),
+          authorize(
+            call as never,
+            {
+              rpc: { _tag: WS_METHODS.teamUsageUpdate },
+              payload: { config: { enabled: true } },
+            } as never,
+          ),
         ),
       );
       expect(Exit.isFailure(refused)).toBe(true);
@@ -49,8 +57,6 @@ describe("team usage RPCs are the member's own", () => {
           "Only a person on this machine can change what it shares with a team.",
         );
       expect(ran).toBe(false);
-    }).pipe(
-      Effect.provide(RpcAuthorization.layer([AuthSettingsWriteScope], coordinator)),
-    ),
+    }).pipe(Effect.provide(RpcAuthorization.layer([AuthSettingsWriteScope], coordinator))),
   );
 });
