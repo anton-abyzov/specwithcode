@@ -442,7 +442,16 @@ export const makeRunnerReceive = (parts: RunnerReceiveParts) => {
           const routine = request.edit.routine;
           if (routine.id !== task.id)
             return yield* refuseTransfer(400, "That change names another routine.");
-          if (!accountInGrant(grant.accounts, routine.modelSelection.instanceId))
+          // What the caller did not change stays as this machine holds it: its copy
+          // may have shown a lower mode, or another sign-in, than the routine has.
+          const kept = new Set(request.edit.kept ?? []);
+          const modelSelection = kept.has("modelSelection")
+            ? task.modelSelection
+            : routine.modelSelection;
+          if (
+            !kept.has("modelSelection") &&
+            !accountInGrant(grant.accounts, routine.modelSelection.instanceId)
+          )
             return yield* refuseTransfer(
               403,
               "This machine's work grant does not allow that routine's sign-in.",
@@ -456,8 +465,8 @@ export const makeRunnerReceive = (parts: RunnerReceiveParts) => {
             projectId: task.projectId,
             threadId: task.threadId,
             workspaceStrategy: routine.workspaceStrategy,
-            modelSelection: routine.modelSelection,
-            runtimeMode: routine.runtimeMode,
+            modelSelection,
+            runtimeMode: kept.has("runtimeMode") ? task.runtimeMode : routine.runtimeMode,
             interactionMode: routine.interactionMode,
             createdBy: task.createdBy,
             creationSource: task.creationSource,

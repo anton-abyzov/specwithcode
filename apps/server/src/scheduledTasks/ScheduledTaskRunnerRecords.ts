@@ -44,6 +44,9 @@ export const copyNotRemovedRefusal = (label: string | null) =>
 /** A change to a routine another machine runs that does not say which definition it was made on. */
 export const UNSEEN_ROUTINE_EDIT_REFUSAL =
   "This routine runs on another machine, and this change did not say which version of it was shown, so nothing was changed. Reload the routines, or update the app, and try again.";
+/** A handover whose recipient may still rest a routine nobody else would run. */
+export const HANDOVER_RESTING_COPY_REFUSAL =
+  "The machine taking over still rests a routine that this machine has not settled, and did not confirm it follows the coordinator again.";
 export const STALE_ROUTINE_EDIT_REFUSAL =
   "This routine changed since you opened it, so your change was not saved. Open it again and repeat the change.";
 

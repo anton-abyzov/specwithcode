@@ -189,6 +189,20 @@ export function routineSeen(task: Pick<ScheduledTask, "revision" | "definitionHa
   };
 }
 
+/** What the row's switch sends: the routine turned the other way, on what the row showed. */
+export function routineToggleInput(
+  task: Pick<ScheduledTask, "id" | "enabled" | "revision" | "definitionHash">,
+) {
+  return { id: task.id, enabled: !task.enabled, ...routineSeen(task) };
+}
+
+/** What the row's delete sends: the routine, as the row showed it. */
+export function routineDeleteInput(
+  task: Pick<ScheduledTask, "id" | "revision" | "definitionHash">,
+) {
+  return { id: task.id, ...routineSeen(task) };
+}
+
 export type ScheduledTaskDraft = {
   readonly task: ScheduledTask | null;
   readonly title: string;

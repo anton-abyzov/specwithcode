@@ -71,7 +71,9 @@ import { SettingsSection } from "./components/SettingsSection";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 import {
   editDraft,
+  routineDeleteInput,
   routineSeen,
+  routineToggleInput,
   scheduledTaskDefaultModel,
   scheduleFromDraft,
   type ScheduledTaskDraft as Draft,
@@ -1223,11 +1225,8 @@ function EnvironmentTasks({
       action === "run"
         ? await runNow({ environmentId, input: { id: task.id } })
         : action === "toggle"
-          ? await setEnabled({
-              environmentId,
-              input: { id: task.id, enabled: !task.enabled, ...routineSeen(task) },
-            })
-          : await remove({ environmentId, input: { id: task.id, ...routineSeen(task) } });
+          ? await setEnabled({ environmentId, input: routineToggleInput(task) })
+          : await remove({ environmentId, input: routineDeleteInput(task) });
     failure(`Could not ${action === "toggle" ? "update" : action} routine`, result);
   };
 

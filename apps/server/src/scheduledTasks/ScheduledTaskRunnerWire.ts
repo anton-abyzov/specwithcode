@@ -35,7 +35,15 @@ export type TransferRunState = typeof TransferRunState.Type;
 
 /** A change to a routine, sent to its runner by a machine that only keeps a copy. */
 export const RoutineRunnerEdit = Schema.Union([
-  Schema.Struct({ kind: Schema.Literal("save"), routine: CoordinatorRoutineCopy }),
+  Schema.Struct({
+    kind: Schema.Literal("save"),
+    routine: CoordinatorRoutineCopy,
+    /**
+     * What the caller left as its copy showed it. A copy may show these under
+     * its own limits, so the runner keeps its own value for each, not the copy's.
+     */
+    kept: Schema.optional(Schema.Array(Schema.Literals(["runtimeMode", "modelSelection"]))),
+  }),
   Schema.Struct({ kind: Schema.Literal("enabled"), enabled: Schema.Boolean }),
   Schema.Struct({ kind: Schema.Literal("delete") }),
 ]);
