@@ -528,7 +528,60 @@ describe("dry run", () => {
     };
     const result = await runCheck(phone.deps);
     expect(result.pass).toBe(true);
-    expect(result.lines.some((entry) => entry.startsWith("NOTE computer_type refused"))).toBe(true);
+    expect(
+      result.lines.some((entry) =>
+        /^NOTE \S+ computer_type was refused with nothing sent/.test(entry),
+      ),
+    ).toBe(true);
+  });
+
+  it("brings iPhone Mirroring back when a click puts SpecWithCode in front", async () => {
+    // SpecWithCode takes the front just before the first two keys, as a click on its window does.
+    const phone = simulatedPhone({ stealFront: (n) => (n <= 2 ? "refuse" : undefined) });
+    const result = await runCheck(phone.deps);
+    expect(result.lines.at(-1)).toMatch(/^Result: PASS/);
+    expect(
+      result.lines.filter((entry) =>
+        /^NOTE \S+ SpecWithCode was in front before computer_key; bringing iPhone Mirroring forward/.test(
+          entry,
+        ),
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("ends INVALID, never FAIL, when SpecWithCode keeps taking the front", async () => {
+    const phone = simulatedPhone({ stealFront: (n) => (n >= 8 ? "refuse" : undefined) });
+    const result = await runCheck(phone.deps);
+    expect(result.invalid).toBe(true);
+    expect(result.lines.at(-1)).toMatch(
+      /^Result: INVALID \(another app took the front: computer_\w+ was refused 3 times with another app in front; keep hands off the Mac/,
+    );
+    expect(result.lines.some((entry) => entry.startsWith("FAIL "))).toBe(false);
+    expect(result.lines.some((entry) => entry.startsWith("Clicks landed"))).toBe(false);
+  });
+
+  it("never sends a key again after iPhone Mirroring left the front partway", async () => {
+    const phone = simulatedPhone();
+    const call = phone.deps.call;
+    let repeats = 0;
+    phone.deps.call = async (tool, args) => {
+      if (tool === "computer_key" && args.repeat === 3) {
+        repeats++;
+        await call(tool, args);
+        phone.state.front = "SpecWithCode";
+        throw new Error("iPhone Mirroring stopped being the app in front partway through.");
+      }
+      return call(tool, args);
+    };
+    const result = await runCheck(phone.deps);
+    expect(repeats).toBe(1);
+    expect(result.invalid).toBe(true);
+    expect(result.lines.find((entry) => entry.includes("key repeat"))).toMatch(
+      /^UNSURE key repeat/,
+    );
+    expect(result.lines.at(-1)).toMatch(
+      /another app took the front: iPhone Mirroring left the front during computer_key/,
+    );
   });
 
   it("writes dry-run.log and never check.log", async () => {

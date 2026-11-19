@@ -24,17 +24,19 @@
 //   Result: INVALID  with no click total: the run proves nothing and is
 //                    repeated. Setup did not finish (access, window,
 //                    connection), the installed app has no iPhone Mirroring
-//                    path, or a failed run started at a 1-minute load above 48.
+//                    path, another app kept taking the front (a click on
+//                    another window does), or a failed run started at a
+//                    1-minute load above 48.
 //
 // Before a live run: the phone is near the Mac, locked, with its language set
 // to English; iPhone Mirroring shows the phone (connected) on the main
-// display; nothing else covers the window. The run takes about four minutes.
+// display; nothing else covers the window. Keep hands off the Mac's trackpad
+// and keyboard while it runs. It takes about four minutes.
 //
 // Exit code: 0 PASS, 1 FAIL, 3 INVALID, 2 a usage error.
 //
 // --dry-run drives a simulated phone through the same steps and writes
 // <out>/dry-run.log (never check.log). --miss <n> makes counted click n miss.
-import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -78,6 +80,25 @@ export const MAX_FAIL_LOAD = 48;
 export const PATH_PROBE = "é";
 /** The start of the refusal the iPhone Mirroring path gives for PATH_PROBE. */
 export const PATH_REFUSAL = "passes only the keys of a US keyboard";
+/** Tools that send input; each goes only to iPhone Mirroring in front. */
+const INPUT_TOOLS = new Set([
+  "computer_click",
+  "computer_drag",
+  "computer_key",
+  "computer_scroll",
+  "computer_type",
+]);
+/** How often the check brings iPhone Mirroring forward, or retries, before the run is INVALID. */
+export const FRONT_TRIES = 3;
+/** Refusals that sent nothing because another app was in front: safe to try again. */
+const SENT_NOTHING = [
+  "cannot click or type in SpecWithCode itself",
+  "app in front changed",
+  "did not come to the front",
+  "Could not tell which app is in front",
+];
+/** iPhone Mirroring left the front partway: part of the input may be on the phone. */
+const LEFT_FRONT = "stopped being the app in front partway";
 /** What iPhone Mirroring shows instead of the phone when it is not connected. */
 const NOT_CONNECTED = [
   "lock your iphone",
@@ -388,6 +409,8 @@ export async function runCheck(deps, options = {}) {
     deps.onLine?.(line);
   };
   const check = (name, ok, detail) => {
+    // With another app taking the front, a failed step says nothing about the product.
+    if (!ok && frontLost !== undefined) return unsure(name, detail) ?? false;
     checks.push({ name, ok });
     log(`${ok ? "PASS" : "FAIL"} ${name}: ${detail}`);
     return ok;
@@ -400,18 +423,53 @@ export async function runCheck(deps, options = {}) {
   const note = (detail) => log(`NOTE ${detail}`);
 
   let lastFrontmost;
-  const call = async (tool, args) => {
-    const attempt = () => deps.call(tool, args);
-    let result;
-    try {
-      result = await attempt();
-    } catch (error) {
-      // The gate refuses input when the app in front changed (a card was answered).
-      if (!String(error?.message).includes("app in front changed")) throw error;
-      note(`${tool} refused because the app in front changed; reopening ${MIRRORING_APP}.`);
+  // Set when another app kept taking the front: the run then proves nothing.
+  let frontLost;
+  const stamp = () => new Date().toISOString().slice(11, 23);
+  const frontmost = async () => (deps.frontmost === undefined ? undefined : deps.frontmost());
+  // Input only ever goes to iPhone Mirroring in front. Before each input call
+  // the check brings it forward when another app is there (a click on another
+  // window takes the front).
+  const bringForward = async (tool) => {
+    for (let attempt = 1; attempt <= FRONT_TRIES; attempt++) {
+      const app = await frontmost();
+      if (app === undefined || app === MIRRORING_APP) return;
+      note(
+        `${stamp()} ${app} was in front before ${tool}; bringing ${MIRRORING_APP} forward (${attempt} of ${FRONT_TRIES})`,
+      );
       await deps.call("computer_open", { application: MIRRORING_APP });
       await deps.sleep(config.settleMs);
-      result = await attempt();
+    }
+    const app = await frontmost();
+    if (app !== undefined && app !== MIRRORING_APP) {
+      throw lose(`${app} took the front back ${FRONT_TRIES} times before ${tool}`);
+    }
+  };
+  const lose = (reason) => {
+    frontLost ??= `${reason}; keep hands off the Mac while the check runs`;
+    return new Error(frontLost);
+  };
+  const call = async (tool, args) => {
+    let result;
+    if (!INPUT_TOOLS.has(tool)) result = await deps.call(tool, args);
+    else {
+      if (frontLost !== undefined) throw new Error(frontLost);
+      for (let attempt = 1; result === undefined; attempt++) {
+        await bringForward(tool);
+        try {
+          result = await deps.call(tool, args);
+        } catch (error) {
+          const message = String(error?.message);
+          // Part of it may be on the phone: never send it again.
+          if (message.includes(LEFT_FRONT))
+            throw lose(`${MIRRORING_APP} left the front during ${tool}`);
+          if (!SENT_NOTHING.some((phrase) => message.includes(phrase))) throw error;
+          if (attempt >= FRONT_TRIES) {
+            throw lose(`${tool} was refused ${FRONT_TRIES} times with another app in front`);
+          }
+          note(`${stamp()} ${tool} was refused with nothing sent (${message}); trying again`);
+        }
+      }
     }
     if (typeof result?.data?.frontmostApplication === "string") {
       lastFrontmost = result.data.frontmostApplication;
@@ -450,6 +508,7 @@ export async function runCheck(deps, options = {}) {
   };
 
   const finish = () => {
+    if (frontLost !== undefined) return invalid(`another app took the front: ${frontLost}`);
     const clickChecks = checks.filter((entry) => entry.name.startsWith("click "));
     const landed = clickChecks.filter((entry) => entry.ok).length;
     const passed = checks.filter((entry) => entry.ok).length;
@@ -512,7 +571,7 @@ export async function runCheck(deps, options = {}) {
     });
     const status = access.data?.status ?? "unknown";
     if (status !== "allowed") return invalid(`request_access answered ${status}`);
-    setup("access allowed");
+    setup(`access allowed; ${stamp()} frontmost ${(await frontmost()) ?? "unknown"}`);
   } catch (error) {
     return invalid(`request_access failed: ${error.message}`);
   }
@@ -897,6 +956,10 @@ export function simulatedPhone({
   dropRepeat = false,
   keepsQuery = false,
   tabsOnTop = false,
+  // Called with the number of each input call: "refuse" puts SpecWithCode in
+  // front first (the product refuses, nothing sent); "partway" sends it, then
+  // reports that iPhone Mirroring left the front.
+  stealFront,
 } = {}) {
   const window = { x: 600, y: 100, width: 360, height: 760 };
   const display = { width: 1512, height: 982 };
@@ -964,8 +1027,32 @@ export function simulatedPhone({
     return [];
   };
 
+  let inputs = 0;
   const call = async (tool, args) => {
     state.calls.push(tool);
+    if (
+      tool !== "computer_open" &&
+      tool.startsWith("computer_") &&
+      tool !== "computer_screenshot"
+    ) {
+      const steal = stealFront?.(++inputs);
+      if (steal === "refuse") state.front = "SpecWithCode";
+      if (state.front !== MIRRORING_APP) {
+        throw new Error(
+          "Agents cannot click or type in SpecWithCode itself, so they cannot answer their own access requests.",
+        );
+      }
+      if (steal === "partway") {
+        await act(tool, args);
+        state.front = "SpecWithCode";
+        throw new Error(
+          "iPhone Mirroring stopped being the app in front partway through, so the rest was not sent.",
+        );
+      }
+    }
+    return act(tool, args);
+  };
+  const act = async (tool, args) => {
     const done = (data = {}) => ({ data: { display, frontmostApplication: state.front, ...data } });
     switch (tool) {
       case "request_access":
@@ -1045,6 +1132,7 @@ export function simulatedPhone({
       call,
       window: async () => ({ window, onMainDisplay: true }),
       ocr: async () => ocr(),
+      frontmost: async () => state.front,
       loadavg: () => load,
       desktopApps: async () => [{ version: "simulated", path: "simulated" }],
       sleep: async () => {},
@@ -1052,241 +1140,14 @@ export function simulatedPhone({
   };
 }
 
-// Live dependencies -----------------------------------------------------------------
-
-const MCP_PROTOCOL_VERSION = "2025-06-18";
-
-/** An MCP client that calls the service as the thread whose shell runs this script. */
-export function mcpClient({ url, authorization, fetchImpl = fetch }) {
-  let sessionId = null;
-  let id = 0;
-  const post = async (body) => {
-    const response = await fetchImpl(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-        authorization,
-        "mcp-protocol-version": MCP_PROTOCOL_VERSION,
-        ...(sessionId === null ? {} : { "mcp-session-id": sessionId }),
-      },
-      body: JSON.stringify(body),
-    });
-    sessionId = response.headers.get("mcp-session-id") ?? sessionId;
-    const text = await response.text();
-    if (body.id === undefined) return undefined;
-    if (!response.ok) throw new Error(`MCP ${body.method} answered HTTP ${response.status}`);
-    const type = response.headers.get("content-type") ?? "";
-    const payload = type.includes("text/event-stream")
-      ? text
-          .split("\n")
-          .filter((row) => row.startsWith("data:"))
-          .map((row) => row.slice(5).trim())
-          .filter((row) => row.startsWith("{"))
-          .map((row) => JSON.parse(row))
-          .find((message) => message.id === body.id)
-      : JSON.parse(text);
-    if (payload?.error) throw new Error(payload.error.message ?? `MCP ${body.method} failed`);
-    return payload?.result;
-  };
-  return {
-    async initialize() {
-      const result = await post({
-        jsonrpc: "2.0",
-        id: ++id,
-        method: "initialize",
-        params: {
-          protocolVersion: MCP_PROTOCOL_VERSION,
-          capabilities: {},
-          clientInfo: { name: "iphone-mirroring-check", version: "1" },
-        },
-      });
-      await post({ jsonrpc: "2.0", method: "notifications/initialized", params: {} });
-      return result?.serverInfo;
-    },
-    async call(name, args) {
-      const result = await post({
-        jsonrpc: "2.0",
-        id: ++id,
-        method: "tools/call",
-        params: { name, arguments: args },
-      });
-      const content = result?.content ?? [];
-      const text = content
-        .filter((part) => part.type === "text")
-        .map((part) => part.text)
-        .join("\n");
-      if (result?.isError) throw new Error(text || `${name} failed`);
-      let data = result?.structuredContent;
-      if (data === undefined) {
-        try {
-          data = JSON.parse(text);
-        } catch {
-          data = {};
-        }
-      }
-      const image = content.find((part) => part.type === "image")?.data;
-      return { data, image };
-    },
-  };
-}
-
-const run = (file, args, input, timeout = 20_000) =>
-  NodeChildProcess.execFileSync(file, args, { encoding: "utf8", timeout, input }).trim();
-/** Text recognition's first call after a restart took 66 s on an M4; later ones take under a second. */
-const OCR_FIRST_TIMEOUT_MS = 180_000;
-const OCR_TIMEOUT_MS = 60_000;
-
-const WINDOW_SCRIPT = `
-ObjC.import("CoreGraphics");
-ObjC.import("AppKit");
-function run(argv) {
-  var apps = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(argv[0]);
-  var pids = {};
-  for (var a = 0; a < apps.count; a++) pids[String(apps.objectAtIndex(a).processIdentifier)] = true;
-  var list = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(1 | 16, 0))) || [];
-  var found = null;
-  for (var i = 0; i < list.length && found === null; i++) {
-    var w = list[i];
-    var b = w.kCGWindowBounds || {};
-    if (pids[String(w.kCGWindowOwnerPID)] === true && Number(w.kCGWindowLayer) === 0 && Number(b.Width) > 100) {
-      found = { x: Number(b.X), y: Number(b.Y), width: Number(b.Width), height: Number(b.Height) };
-    }
-  }
-  var main = $.NSScreen.screens.objectAtIndex(0).frame.size;
-  return JSON.stringify({ window: found, main: { width: Number(main.width), height: Number(main.height) } });
-}`;
-
-const OCR_SCRIPT = `
-ObjC.import("Foundation");
-ObjC.import("Vision");
-function run(argv) {
-  var handler = $.VNImageRequestHandler.alloc.initWithURLOptions($.NSURL.fileURLWithPath(argv[0]), $({}));
-  var request = $.VNRecognizeTextRequest.alloc.init;
-  request.recognitionLevel = 0;
-  request.usesLanguageCorrection = false;
-  request.recognitionLanguages = $(["en-US"]);
-  if (!handler.performRequestsError($([request]), $())) return JSON.stringify({ lines: [] });
-  var results = request.results;
-  var lines = [];
-  for (var i = 0; i < results.count; i++) {
-    var top = results.objectAtIndex(i).topCandidates(1);
-    if (top.count === 0) continue;
-    var box = results.objectAtIndex(i).boundingBox;
-    lines.push({ text: top.objectAtIndex(0).string.js, x: Number(box.origin.x), y: Number(box.origin.y), width: Number(box.size.width), height: Number(box.size.height) });
-  }
-  return JSON.stringify({ lines: lines });
-}`;
-
-const DESKTOP_APPS_SCRIPT = `
-ObjC.import("AppKit");
-function run() {
-  var apps = $.NSWorkspace.sharedWorkspace.runningApplications;
-  var found = [];
-  for (var i = 0; i < apps.count; i++) {
-    var app = apps.objectAtIndex(i);
-    var id = app.bundleIdentifier;
-    var name = app.localizedName;
-    var ours = (id && !id.isNil() && id.js === "com.specweave.studio") || (name && !name.isNil() && name.js === "SpecWithCode");
-    if (!ours || app.bundleURL.isNil()) continue;
-    var bundle = $.NSBundle.bundleWithURL(app.bundleURL);
-    var version = bundle.isNil() ? null : bundle.objectForInfoDictionaryKey("CFBundleShortVersionString");
-    found.push({ path: app.bundleURL.path.js, version: version && !version.isNil() ? version.js : "unknown" });
-  }
-  return JSON.stringify(found);
-}`;
-
-/** Converts a window in display points to screenshot pixels, and says whether it is on the main display. */
-export function windowInScreenshot(found, main, size) {
-  if (found === null || found === undefined) return undefined;
-  const scale = size.width / main.width;
-  const onMainDisplay =
-    found.x >= 0 &&
-    found.y >= 0 &&
-    found.x + found.width <= main.width &&
-    found.y + found.height <= main.height;
-  return {
-    onMainDisplay,
-    window: {
-      x: Math.round(found.x * scale),
-      y: Math.round(found.y * scale),
-      width: Math.round(found.width * scale),
-      height: Math.round(found.height * scale),
-    },
-  };
-}
-
-/** Maps Vision's bottom-left, normalized boxes inside a region to screenshot pixels. */
-export function regionToScreenshot(lines, region) {
-  return lines.map((line) => ({
-    text: line.text,
-    x: Math.round(region.x + line.x * region.width),
-    y: Math.round(region.y + (1 - line.y - line.height) * region.height),
-    width: Math.round(line.width * region.width),
-    height: Math.round(line.height * region.height),
-  }));
-}
-
-export async function liveDeps({ client, scratch, saveScreenshots, outDir }) {
-  const { default: sharp } = await import("sharp");
-  let shots = 0;
-  return {
-    call: (tool, args) => client.call(tool, args),
-    window: async (size) => {
-      const answer = JSON.parse(
-        run("/usr/bin/osascript", ["-l", "JavaScript", "-e", WINDOW_SCRIPT, MIRRORING_BUNDLE_ID]),
-      );
-      return windowInScreenshot(answer.window, answer.main, size);
-    },
-    ocr: async (image, region) => {
-      const source = Buffer.from(image, "base64");
-      const meta = await sharp(source).metadata();
-      const left = Math.max(0, region.x);
-      const top = Math.max(0, region.y);
-      const clipped = {
-        x: left,
-        y: top,
-        width: Math.min(region.width, meta.width - left),
-        height: Math.min(region.height, meta.height - top),
-      };
-      if (clipped.width <= 0 || clipped.height <= 0) return [];
-      const file = NodePath.join(scratch, `window-${++shots}.png`);
-      await sharp(source)
-        .extract({ left: clipped.x, top: clipped.y, width: clipped.width, height: clipped.height })
-        .resize({ width: clipped.width * 2 })
-        .png()
-        .toFile(file);
-      if (saveScreenshots)
-        NodeFS.copyFileSync(file, NodePath.join(outDir, NodePath.basename(file)));
-      const answer = JSON.parse(
-        run(
-          "/usr/bin/osascript",
-          ["-l", "JavaScript", "-e", OCR_SCRIPT, file],
-          undefined,
-          OCR_TIMEOUT_MS,
-        ),
-      );
-      return regionToScreenshot(answer.lines, clipped);
-    },
-    warmUp: async () => {
-      const file = NodePath.join(scratch, "warm-up.png");
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="480" height="120"><rect width="100%" height="100%" fill="white"/><text x="20" y="80" font-size="56" font-family="Helvetica">Warm up 4207</text></svg>`;
-      await sharp(Buffer.from(svg)).png().toFile(file);
-      const started = Date.now();
-      run(
-        "/usr/bin/osascript",
-        ["-l", "JavaScript", "-e", OCR_SCRIPT, file],
-        undefined,
-        OCR_FIRST_TIMEOUT_MS,
-      );
-      return Date.now() - started;
-    },
-    loadavg: () => NodeOS.loadavg()[0],
-    desktopApps: async () =>
-      JSON.parse(run("/usr/bin/osascript", ["-l", "JavaScript", "-e", DESKTOP_APPS_SCRIPT])),
-    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-  };
-}
+// Live dependencies are in iphone-mirroring-live.mjs.
+export {
+  liveDeps,
+  mcpClient,
+  regionToScreenshot,
+  windowInScreenshot,
+} from "./iphone-mirroring-live.mjs";
+import { liveDeps, mcpClient, run } from "./iphone-mirroring-live.mjs";
 
 // Command line ------------------------------------------------------------------------
 
