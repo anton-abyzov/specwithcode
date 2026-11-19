@@ -1,7 +1,9 @@
 import type { PhraseCatalog } from "../phrases";
+import { syncEs } from "./sync/es";
 
 /** Spanish Settings titles and labels. "hilo" for thread, as in the message catalog. */
 export const es: PhraseCatalog = {
+  ...syncEs,
   About: "Acerca de",
   "Accent color": "Color de acento",
   Account: "Cuenta",
@@ -3150,7 +3152,6 @@ export const es: PhraseCatalog = {
   "Run this draft on": "Ejecutar este borrador en",
   "Auto balance matching projects": "Equilibrar automáticamente los proyectos coincidentes",
   "Add to another machine…": "Añadir a otro equipo…",
-  "Send to another machine…": "Enviar a otro equipo…",
   Link: "Vincular",
   "Leave this machine…": "Dejar este equipo…",
   "Another project or no project": "Otro proyecto o ninguno",
@@ -5252,10 +5253,6 @@ export const es: PhraseCatalog = {
   "Link {machine} to this project": "Vincular {machine} a este proyecto",
   "Link {machine}": "Vincular {machine}",
   "connect {main} first": "conecta {main} primero",
-  "Copy {project} to {machine}": "Copiar {project} a {machine}",
-  "Move {project} to {machine}": "Mover {project} a {machine}",
-  "Copy {project} to another machine": "Copiar {project} a otro equipo",
-  "Move {project} to another machine": "Mover {project} a otro equipo",
   "Nothing on {machine} is replaced without asking.":
     "Nada en {machine} se reemplaza sin preguntar.",
   "the other machine": "el otro equipo",

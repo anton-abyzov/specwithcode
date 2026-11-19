@@ -1,7 +1,9 @@
 import type { PhraseCatalog } from "../phrases";
+import { syncPt } from "./sync/pt";
 
 /** Brazilian Portuguese Settings titles and labels, "você", as in the message catalog. */
 export const pt: PhraseCatalog = {
+  ...syncPt,
   About: "Sobre",
   "Accent color": "Cor de destaque",
   Account: "Conta",
@@ -3137,7 +3139,6 @@ export const pt: PhraseCatalog = {
   "Run this draft on": "Executar este rascunho em",
   "Auto balance matching projects": "Balancear automaticamente os projetos correspondentes",
   "Add to another machine…": "Adicionar a outra máquina…",
-  "Send to another machine…": "Enviar para outra máquina…",
   Link: "Vincular",
   "Leave this machine…": "Sair desta máquina…",
   "Another project or no project": "Outro projeto ou nenhum projeto",
@@ -5228,10 +5229,6 @@ export const pt: PhraseCatalog = {
   "Link {machine} to this project": "Vincular {machine} a este projeto",
   "Link {machine}": "Vincular {machine}",
   "connect {main} first": "conecte {main} primeiro",
-  "Copy {project} to {machine}": "Copiar {project} para {machine}",
-  "Move {project} to {machine}": "Mover {project} para {machine}",
-  "Copy {project} to another machine": "Copiar {project} para outra máquina",
-  "Move {project} to another machine": "Mover {project} para outra máquina",
   "Nothing on {machine} is replaced without asking.":
     "Nada em {machine} é substituído sem perguntar.",
   "the other machine": "a outra máquina",

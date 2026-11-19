@@ -1,7 +1,9 @@
 import type { PhraseCatalog } from "../phrases";
+import { syncJa } from "./sync/ja";
 
 /** Japanese Settings titles and labels. "スレッド" for thread, as in the message catalog. */
 export const ja: PhraseCatalog = {
+  ...syncJa,
   About: "このアプリについて",
   "Accent color": "アクセントカラー",
   Account: "アカウント",
@@ -3132,7 +3134,6 @@ export const ja: PhraseCatalog = {
   "Run this draft on": "この下書きを実行するマシン",
   "Auto balance matching projects": "一致するプロジェクトを自動で分散",
   "Add to another machine…": "別のマシンに追加…",
-  "Send to another machine…": "別のマシンに送る…",
   Link: "リンク",
   "Leave this machine…": "このマシンを離れる…",
   "Another project or no project": "別のプロジェクトまたはプロジェクトなし",
@@ -5225,10 +5226,6 @@ export const ja: PhraseCatalog = {
   "Link {machine} to this project": "{machine} をこのプロジェクトにリンク",
   "Link {machine}": "{machine} をリンク",
   "connect {main} first": "先に {main} を接続",
-  "Copy {project} to {machine}": "{project} を {machine} にコピー",
-  "Move {project} to {machine}": "{project} を {machine} に移動",
-  "Copy {project} to another machine": "{project} を別のマシンにコピー",
-  "Move {project} to another machine": "{project} を別のマシンに移動",
   "Nothing on {machine} is replaced without asking.":
     "{machine} 上のものが確認なしに置き換えられることはありません。",
   "the other machine": "別のマシン",

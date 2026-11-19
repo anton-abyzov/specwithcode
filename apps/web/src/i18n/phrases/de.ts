@@ -1,7 +1,9 @@
 import type { PhraseCatalog } from "../phrases";
+import { syncDe } from "./sync/de";
 
 /** German Settings titles and labels, informal "du", as in the message catalog. */
 export const de: PhraseCatalog = {
+  ...syncDe,
   About: "Über",
   "Accent color": "Akzentfarbe",
   Account: "Konto",
@@ -3145,7 +3147,6 @@ export const de: PhraseCatalog = {
   "Run this draft on": "Diesen Entwurf ausführen auf",
   "Auto balance matching projects": "Passende Projekte automatisch verteilen",
   "Add to another machine…": "Auf anderem Rechner hinzufügen…",
-  "Send to another machine…": "An anderen Rechner senden…",
   Link: "Verknüpfen",
   "Leave this machine…": "Diesen Rechner verlassen…",
   "Another project or no project": "Anderes Projekt oder kein Projekt",
@@ -5259,10 +5260,6 @@ export const de: PhraseCatalog = {
   "Link {machine} to this project": "{machine} mit diesem Projekt verknüpfen",
   "Link {machine}": "{machine} verknüpfen",
   "connect {main} first": "zuerst {main} verbinden",
-  "Copy {project} to {machine}": "{project} auf {machine} kopieren",
-  "Move {project} to {machine}": "{project} auf {machine} verschieben",
-  "Copy {project} to another machine": "{project} auf einen anderen Rechner kopieren",
-  "Move {project} to another machine": "{project} auf einen anderen Rechner verschieben",
   "Nothing on {machine} is replaced without asking.":
     "Auf {machine} wird nichts ungefragt ersetzt.",
   "the other machine": "dem anderen Rechner",
