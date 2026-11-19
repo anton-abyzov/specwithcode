@@ -134,20 +134,48 @@ export function tickableHandoffRows(rows: ReadonlyArray<HandoffMachineThreadRow>
 export const HANDOFF_BATCH_LIMIT = 100;
 
 /**
- * The ticked ids, with the person's own ticks over the defaults, in row order
- * (running first, then the newest waiting) up to `HANDOFF_BATCH_LIMIT`.
- * `overLimit` says more were wanted than one hand off takes.
+ * The ticks the dialog opens with: the first `HANDOFF_BATCH_LIMIT` rows that
+ * can go (running first, then the newest waiting). They are decided once;
+ * after that only the person's own ticks change the set.
  */
-export function selectedHandoffRows(
-  rows: ReadonlyArray<HandoffMachineThreadRow>,
-  overrides: ReadonlyMap<ThreadId, boolean>,
-): { readonly ids: Set<ThreadId>; readonly overLimit: boolean } {
-  const ticked = tickableHandoffRows(rows);
-  const wanted = rows
-    .map((row) => row.threadId)
-    .filter((id) => ticked.has(id) && (overrides.get(id) ?? true));
+export function initialHandoffTicks(rows: ReadonlyArray<HandoffMachineThreadRow>): {
+  readonly ticks: ReadonlySet<ThreadId>;
+  readonly overLimit: boolean;
+} {
+  const can = [...tickableHandoffRows(rows)];
   return {
-    ids: new Set(wanted.slice(0, HANDOFF_BATCH_LIMIT)),
-    overLimit: wanted.length > HANDOFF_BATCH_LIMIT,
+    ticks: new Set(can.slice(0, HANDOFF_BATCH_LIMIT)),
+    overLimit: can.length > HANDOFF_BATCH_LIMIT,
   };
+}
+
+/** The person ticks or unticks one row; a tick past the limit is refused. */
+export function toggleHandoffTick(
+  ticks: ReadonlySet<ThreadId>,
+  threadId: ThreadId,
+  on: boolean,
+): { readonly ticks: ReadonlySet<ThreadId>; readonly refused: boolean } {
+  if (on === ticks.has(threadId)) return { ticks, refused: false };
+  if (on && ticks.size >= HANDOFF_BATCH_LIMIT) return { ticks, refused: true };
+  const next = new Set(ticks);
+  if (on) next.add(threadId);
+  else next.delete(threadId);
+  return { ticks: next, refused: false };
+}
+
+/** The ticked ids that still name a row that can go, in row order. */
+export function sentHandoffRows(
+  rows: ReadonlyArray<HandoffMachineThreadRow>,
+  ticks: ReadonlySet<ThreadId>,
+): Set<ThreadId> {
+  return new Set([...tickableHandoffRows(rows)].filter((id) => ticks.has(id)));
+}
+
+/** The check's ids as an array, and a key that changes only when the set does. */
+export function handoffCheckRequest(ids: ReadonlySet<ThreadId>): {
+  readonly key: string;
+  readonly threadIds: ThreadId[];
+} {
+  const threadIds = [...ids].toSorted();
+  return { key: JSON.stringify(threadIds), threadIds };
 }

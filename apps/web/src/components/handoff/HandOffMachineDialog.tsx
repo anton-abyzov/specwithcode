@@ -24,8 +24,11 @@ import {
 import { useMachineNicknames } from "../../studio/machineNickname";
 import {
   HANDOFF_BATCH_LIMIT,
+  handoffCheckRequest,
   handoffMachineRows,
-  selectedHandoffRows,
+  initialHandoffTicks,
+  sentHandoffRows,
+  toggleHandoffTick,
   type HandoffMachineGroup,
   type HandoffMachineThreadRow,
 } from "./handOffMachineRows";
@@ -419,6 +422,8 @@ export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
   );
 }
 
+const EMPTY_TICKS: ReadonlySet<ThreadId> = new Set();
+
 const groupOf = (thread: HandoffMachineThreadRow): HandoffMachineGroup => thread.group ?? "running";
 
 /** One row that can go: its tick, and once checked, whether it goes and how. */
@@ -525,10 +530,15 @@ function HandOffMachineDialog({
     () => handoffMachineRows({ environmentId, shells, snapshot, projects, projectId }),
     [environmentId, projectId, projects, shells, snapshot],
   );
-  // The person's own ticks; every other row keeps its default.
-  const [ticks, setTicks] = useState<ReadonlyMap<ThreadId, boolean>>(new Map());
-  const picked = useMemo(() => selectedHandoffRows(threads, ticks), [threads, ticks]);
-  const selected = picked.ids;
+  // The ticks are decided once, from the first rows the dialog shows; after that
+  // only the person's own ticks change them, and a freed slot stays empty.
+  const [ticked, setTicked] = useState<{
+    readonly ticks: ReadonlySet<ThreadId>;
+    readonly overLimit: boolean;
+  } | null>(null);
+  if (ticked === null && threads.length > 0) setTicked(initialHandoffTicks(threads));
+  const ticks = ticked?.ticks ?? EMPTY_TICKS;
+  const selected = useMemo(() => sentHandoffRows(threads, ticks), [threads, ticks]);
   const [preflight, setPreflight] = useState<ReadonlyMap<ThreadId, HandoffPreflightResult>>(
     new Map(),
   );
@@ -539,11 +549,13 @@ function HandOffMachineDialog({
   const [run, setRun] = useState<HandoffMachineRun | null>(null);
 
   const destination = pickDestination(destinations, destinationId);
-  const selectedKey = [...selected].toSorted().join(",");
+  // The ids go to the check as an array; the key only tells the effect the set changed.
+  const selectedKey = handoffCheckRequest(selected).key;
   const [recheck, setRecheck] = useState(0);
 
   useEffect(() => {
-    if (destination === null || selectedKey === "" || run) return;
+    const threadIds = JSON.parse(selectedKey) as ThreadId[];
+    if (destination === null || threadIds.length === 0 || run) return;
     let live = true;
     setChecking(true);
     setPreflightError(null);
@@ -551,7 +563,7 @@ function HandOffMachineDialog({
       environmentId,
       input: {
         destinationEnvironmentId: destination,
-        threadIds: selectedKey.split(",") as ThreadId[],
+        threadIds,
       },
     }).then((next) => {
       if (!live) return;
@@ -603,8 +615,13 @@ function HandOffMachineDialog({
       }}
       threads={threads}
       selected={selected}
-      overLimit={picked.overLimit}
-      onToggle={(threadId, on) => setTicks((current) => new Map(current).set(threadId, on))}
+      overLimit={ticked?.overLimit ?? false}
+      onToggle={(threadId, on) =>
+        setTicked((current) => {
+          const next = toggleHandoffTick(current?.ticks ?? EMPTY_TICKS, threadId, on);
+          return { ticks: next.ticks, overLimit: (current?.overLimit ?? false) || next.refused };
+        })
+      }
       checking={checking}
       preflight={preflight}
       preflightError={preflightError}
