@@ -206,3 +206,26 @@ it("is not offered on a connection without settings:write", async () => {
   expect(host.innerHTML).toBe("");
   expect(state.calls).toEqual([]);
 });
+
+it("refuses a plain http endpoint with a clear message, without calling the machine", async () => {
+  state.replies["team-usage:status"] = [status()];
+  await mount();
+  await act(async () => radio("A self-hosted team endpoint").click());
+  await type(byLabel("Endpoint URL"), "http://team.example/usage");
+  await act(async () => byLabel("Share daily usage with my team")!.click());
+  expect(updates()).toEqual([]);
+  expect(host.textContent).toContain("The team endpoint must use https://.");
+});
+
+it("does not say 'no orgs' when the machine is not signed in", async () => {
+  state.replies["team-usage:status"] = [status()];
+  state.replies["team-usage:orgs"] = [
+    { orgs: [], error: "Sign in with `vskill auth login` first." },
+  ];
+  await mount();
+  await act(async () => button("Choose org").click());
+  await flush();
+  expect(host.textContent).toContain("Sign in with `vskill auth login` first.");
+  expect(host.textContent).not.toContain("not a member of any org");
+  expect(button("Choose org")).toBeTruthy();
+});

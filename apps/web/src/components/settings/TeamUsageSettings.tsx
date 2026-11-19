@@ -124,8 +124,11 @@ export function TeamUsageSettings({
     const result = await readOrgs({ environmentId, input: {} });
     if (result._tag !== "Success")
       return setError(failureText(result, "Could not list your orgs."));
-    setOrgs(result.value.orgs);
+    // An empty list with an error (not signed in, team unreachable) is not "no orgs":
+    // keep the button so the member can try again.
     if (result.value.error) setError(result.value.error);
+    if (result.value.error && result.value.orgs.length === 0) return;
+    setOrgs(result.value.orgs);
     if (result.value.orgs.length === 1) setTenantId(result.value.orgs[0]!.tenantId);
   };
 
@@ -141,6 +144,9 @@ export function TeamUsageSettings({
   const save = async (enabled: boolean) => {
     setError(null);
     const target = endpoint();
+    // The machine refuses anything but https:// (AC-04); say so instead of a schema error.
+    if (target?.kind === "selfHosted" && !/^https:\/\//.test(target.url))
+      return setError("The team endpoint must use https://.");
     if (enabled && target === undefined)
       return setError(
         destination === "hosted" ? "Pick your org first." : "Enter the team endpoint first.",
@@ -286,7 +292,9 @@ export function TeamUsageSettings({
 
       <div role="status" className="space-y-1 text-muted-foreground">
         {error ? <p className="text-destructive-foreground">{tx(error)}</p> : null}
-        {status.lastError ? <p className="text-destructive-foreground">{status.lastError}</p> : null}
+        {status.lastError ? (
+          <p className="text-destructive-foreground">{status.lastError}</p>
+        ) : null}
         {status.removalPending ? (
           <p>
             {tx('Removing "{label}" from the team. It retries until the team confirms.', {
