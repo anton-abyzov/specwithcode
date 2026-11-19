@@ -167,6 +167,12 @@ describe("the receiver confirms its own track, account and usage (AC-38)", () =>
     });
   });
 
+  it("says nothing about its sign-ins for a project outside the grant", () => {
+    const answer = confirm({ start: "manual", project: { title: "App", inGrant: false } });
+    expect(answer.failures).toEqual([{ check: "grant", message: "Minis: no work grant for App" }]);
+    expect(answer.evidence).toBeNull();
+  });
+
   it("needs no copy of the thread: nothing here asks for a checkpoint", () => {
     expect(confirm().failures.map((failure) => failure.check)).not.toContain("checkpoint");
   });

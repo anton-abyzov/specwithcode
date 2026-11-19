@@ -1,6 +1,7 @@
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import {
   AuthOrchestrationOperateScope,
+  HANDOFF_BATCH_MAX_PROJECTS,
   type EnvironmentId,
   type HandoffMachineRun,
   type HandoffPlanView,
@@ -37,8 +38,10 @@ import {
   type HandoffMachineThreadRow,
 } from "./handOffMachineRows";
 import {
+  automaticDestinations,
   folderWorkTicked,
   handoffUsageLines,
+  movablePlanIds,
   planHandoffRows,
   threadsTicked,
 } from "./handOffMachinePlan";
@@ -163,6 +166,11 @@ export interface HandOffMachineDialogViewProps {
   onDestination: (environmentId: EnvironmentId) => void;
   /** What each machine adds per provider, as its plan said (AC-22); absent when not read. */
   usage?: ReadonlyMap<EnvironmentId, readonly string[]>;
+  /**
+   * False until the chosen machine's measured plan arrived: nothing can be sent on
+   * the window's own rows or an unweighed plan. Absent reads as ready (fixtures).
+   */
+  planReady?: boolean;
   threads: readonly HandoffMachineThreadRow[];
   selected: ReadonlySet<ThreadId>;
   /** More rows are ticked than one hand off takes: the first ones go. */
@@ -262,7 +270,14 @@ export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
           className="flex min-h-0 flex-col"
           onSubmit={(event) => {
             event.preventDefault();
-            if (!props.run && !props.submitting && !props.checking && movable > 0) props.onSubmit();
+            if (
+              !props.run &&
+              !props.submitting &&
+              !props.checking &&
+              props.planReady !== false &&
+              movable > 0
+            )
+              props.onSubmit();
           }}
         >
           <DialogHeader>
@@ -427,6 +442,7 @@ export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
                     props.submitting ||
                     props.checking ||
                     props.destinationId === null ||
+                    props.planReady === false ||
                     movable === 0
                   }
                 >
@@ -564,18 +580,22 @@ function HandOffMachineDialog({
   const canPlan =
     useEnvironmentScopeAccess(environmentId, AuthOrchestrationOperateScope) === "granted";
   const [plans, setPlans] = useState<ReadonlyMap<EnvironmentId, HandoffPlanView>>(new Map());
+  // Only a weighed plan decides the rows and what is sent; the others give usage lines.
+  const [measured, setMeasured] = useState<ReadonlyMap<EnvironmentId, HandoffPlanView>>(new Map());
   const [planFailed, setPlanFailed] = useState(false);
   const reachable = destinations
     .filter((item) => item.state === "reachable")
     .map((item) => item.environmentId);
   const reachableKey = JSON.stringify(reachable);
-  const chosen = pickDestination(destinations, destinationId);
-  const chosenPlan = chosen === null ? undefined : plans.get(chosen);
+  // Nothing is picked for the person but a machine with a different account that has room.
+  const evidence = useMemo(() => automaticDestinations(plans), [plans]);
+  const chosen = pickDestination(destinations, destinationId, evidence);
+  const chosenPlan = chosen === null ? undefined : measured.get(chosen);
   const threads = useMemo(
     () => (chosenPlan === undefined ? clientRows : planHandoffRows(chosenPlan)),
     [chosenPlan, clientRows],
   );
-  const planSettled = !canPlan || planFailed || chosen === null || chosenPlan !== undefined;
+  const planSettled = !canPlan || planFailed || chosenPlan !== undefined;
   // The ticks are decided once, from the first rows the dialog shows; after that
   // only the person's own ticks change them, and a freed slot stays empty.
   const [ticked, setTicked] = useState<{
@@ -610,6 +630,8 @@ function HandOffMachineDialog({
           return;
         }
         setPlans((current) => new Map(current).set(target, next.value));
+        if (target === destination)
+          setMeasured((current) => new Map(current).set(target, next.value));
       });
     }
     return () => {
@@ -680,6 +702,7 @@ function HandOffMachineDialog({
       destinations={destinations}
       destinationId={destination}
       usage={usage}
+      planReady={chosenPlan !== undefined}
       onDestination={(next) => {
         setDestinationId(next);
         setPreflight(new Map());
@@ -751,17 +774,23 @@ function HandOffMachineDialog({
         run ? name(run.destinationEnvironmentId, run.destinationLabel) : destinationName
       }
       onSubmit={() => {
-        if (destination === null) return;
+        if (destination === null || chosenPlan === undefined) return;
+        // Only what the weighed plan for this machine lets go is sent.
+        const movableIds = movablePlanIds(chosenPlan);
         const threadIds = threadsTicked(
           threads
             .map((thread) => thread.threadId)
-            .filter((threadId) => selected.has(threadId) && preflight.get(threadId)?.ok),
+            .filter(
+              (threadId) =>
+                movableIds.has(threadId) && selected.has(threadId) && preflight.get(threadId)?.ok,
+            ),
         );
         const folderWork = folderWorkTicked(
           threads
             .filter((thread) => thread.kind === "folder-work")
             .map((thread) => thread.threadId)
-            .filter((threadId) => selected.has(threadId)),
+            .filter((threadId) => movableIds.has(threadId) && selected.has(threadId))
+            .slice(0, HANDOFF_BATCH_MAX_PROJECTS),
         );
         setSubmitting(true);
         setError(null);

@@ -7,10 +7,13 @@ import type {
 import { describe, expect, it } from "vite-plus/test";
 
 import { initialHandoffTicks } from "./handOffMachineRows";
+import { pickDestination } from "./HandoffResults";
 import {
+  automaticDestinations,
   folderWorkRowId,
   folderWorkTicked,
   handoffUsageLines,
+  movablePlanIds,
   planHandoffRows,
 } from "./handOffMachinePlan";
 
@@ -47,9 +50,9 @@ describe("the target picker's usage lines (AC-22)", () => {
       handoffUsageLines(
         view({
           usage: [
-            { providerName: "Claude", kind: "different-account", percentLeft: 60 },
-            { providerName: "Codex", kind: "same-account", percentLeft: null },
-            { providerName: "Gemini", kind: "usage-unknown", percentLeft: null },
+            { providerName: "Claude", kind: "different-account", percentLeft: 60, automatic: true },
+            { providerName: "Codex", kind: "same-account", percentLeft: null, automatic: false },
+            { providerName: "Gemini", kind: "usage-unknown", percentLeft: null, automatic: false },
           ],
         }),
       ),
@@ -114,5 +117,65 @@ describe("the dialog's rows from the plan (AC-17)", () => {
     expect(rows.find((entry) => entry.threadId === "t-review")?.reason).toBe(
       "Desk has no reviewer from another family.",
     );
+  });
+});
+
+describe("the destination the dialog picks for the person (AC-22)", () => {
+  const MINI = "env-mini" as EnvironmentId;
+  const RACK = "env-rack" as EnvironmentId;
+  const machines = [
+    { environmentId: DESK, label: "Desk", state: "reachable" as const },
+    { environmentId: MINI, label: "Mini", state: "reachable" as const },
+    { environmentId: RACK, label: "Rack", state: "reachable" as const },
+  ];
+  const usageOf = (usage: HandoffPlanView["usage"]) => view({ usage });
+
+  it("picks nothing on same-account or unknown usage until the person clicks", () => {
+    const plans = new Map([
+      [
+        DESK,
+        usageOf([
+          { providerName: "Claude", kind: "same-account", percentLeft: null, automatic: false },
+        ]),
+      ],
+      [
+        MINI,
+        usageOf([
+          { providerName: "Claude", kind: "usage-unknown", percentLeft: null, automatic: false },
+        ]),
+      ],
+    ]);
+    const evidence = automaticDestinations(plans);
+    expect(pickDestination(machines.slice(0, 2), null, evidence)).toBeNull();
+    // A click still picks it: by hand a same-account machine is allowed.
+    expect(pickDestination(machines.slice(0, 2), DESK, evidence)).toBe(DESK);
+    // A different account with room is picked for the person.
+    plans.set(
+      RACK,
+      usageOf([
+        { providerName: "Claude", kind: "different-account", percentLeft: 60, automatic: true },
+      ]),
+    );
+    expect(pickDestination(machines, null, automaticDestinations(plans))).toBe(RACK);
+  });
+});
+
+describe("what a hand off may send (AC-17)", () => {
+  it("is only what the measured plan lets go, never a row it puts under Stays", () => {
+    const plan = view({
+      items: [
+        row({ id: "t-ok" }),
+        row({
+          id: "t-big",
+          group: "stays",
+          ticked: false,
+          canTick: false,
+          disposition: "stays",
+          stay: "limit",
+          reason: "data/dump.bin is 12 MB, over the 10 MB limit for one file",
+        }),
+      ],
+    });
+    expect([...movablePlanIds(plan)]).toEqual(["t-ok"]);
   });
 });

@@ -172,18 +172,23 @@ export function destinationsNeedingUpdate(
 /**
  * The machine a dialog sends to: the one picked while it can take work, else
  * the first that can. A machine that needs an update is never it, however it
- * was picked.
+ * was picked. With `evidence`, nothing is picked for the person but a machine
+ * whose every sign-in confirmed a different account with room (AC-22): a
+ * same-account, unknown or stale one waits for a click.
  */
 export function pickDestination(
   destinations: readonly HandoffDestination[],
   chosen: EnvironmentId | null,
+  evidence?: ReadonlySet<EnvironmentId>,
 ): EnvironmentId | null {
   const reachable = destinations.filter((item) => item.state === "reachable");
-  return (
-    reachable.find((item) => item.environmentId === chosen)?.environmentId ??
-    reachable[0]?.environmentId ??
-    null
-  );
+  const picked = reachable.find((item) => item.environmentId === chosen)?.environmentId;
+  if (picked !== undefined) return picked;
+  const fallback =
+    evidence === undefined
+      ? reachable
+      : reachable.filter((item) => evidence.has(item.environmentId));
+  return fallback[0]?.environmentId ?? null;
 }
 
 export interface DestinationUpdateRow {

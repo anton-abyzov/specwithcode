@@ -30,6 +30,8 @@ export const HandoffPlanUsage = Schema.Struct({
   providerName: text(120),
   kind: Schema.Literals(["different-account", "same-account", "usage-unknown"]),
   percentLeft: Schema.NullOr(percent),
+  /** A different account with a fresh reading that has room: only such a machine is picked for the person. */
+  automatic: Schema.Boolean,
 });
 export type HandoffPlanUsage = typeof HandoffPlanUsage.Type;
 

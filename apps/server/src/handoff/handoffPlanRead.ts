@@ -432,6 +432,7 @@ export const makeHandoffPlanRead =
           providerName: evidence.providerName,
           kind: evidence.kind,
           percentLeft: evidence.kind === "different-account" ? evidence.percentLeft : null,
+          automatic: evidence.automatic,
         });
       }
 

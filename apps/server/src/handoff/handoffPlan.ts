@@ -204,6 +204,9 @@ export function confirmTarget(input: {
 
   // Without the project here nothing else can be said about its tracks.
   if (input.project === null) return { failures: base, evidence: null };
+  // A project outside the grant is refused before any sign-in is read: the answer
+  // names no provider, account or usage of this machine.
+  if (!input.project.inGrant) return { failures: base, evidence: null };
   let candidates: ReadonlyArray<ModelSelection>;
   if (thread.track === null) {
     // Only a thread with no track at the source is checked on the model it names.

@@ -218,7 +218,9 @@ describe("what the machine asked adds (AC-22)", () => {
           { email: "me@example.com", usedPercent: 90 },
           { email: "other@example.com", usedPercent: 40 },
         ),
-      ).toEqual([{ providerName: "Claude", kind: "different-account", percentLeft: 60 }]);
+      ).toEqual([
+        { providerName: "Claude", kind: "different-account", percentLeft: 60, automatic: true },
+      ]);
     }),
   );
 
@@ -229,14 +231,16 @@ describe("what the machine asked adds (AC-22)", () => {
           { email: "me@example.com", usedPercent: 90 },
           { email: "me@example.com", usedPercent: 90 },
         ),
-      ).toEqual([{ providerName: "Claude", kind: "same-account", percentLeft: null }]);
+      ).toEqual([
+        { providerName: "Claude", kind: "same-account", percentLeft: null, automatic: false },
+      ]);
     }),
   );
 
   it.effect("never calls an account different when this machine's own is unknown", () =>
     Effect.gen(function* () {
       expect(yield* usageWith(null, { email: "other@example.com", usedPercent: 40 })).toEqual([
-        { providerName: "Claude", kind: "usage-unknown", percentLeft: null },
+        { providerName: "Claude", kind: "usage-unknown", percentLeft: null, automatic: false },
       ]);
     }),
   );

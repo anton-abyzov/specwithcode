@@ -431,3 +431,13 @@ it("shows the plan's groups and each machine's usage line (AC-17, AC-22)", async
   await act(async () => button("Hand off to Minis")!.click());
   expect(view.onSubmit).toHaveBeenCalledTimes(1);
 });
+
+it("sends nothing ticked before the chosen machine's measured plan arrived", async () => {
+  // Checked and ticked, but the weighed plan that may put it under Stays is not here yet.
+  const view = props({ selected: new Set([ready]), planReady: false });
+  await act(async () => root.render(<HandOffMachineDialogView {...view} />));
+  const submit = buttons().find((item) => item.textContent?.startsWith("Hand off to Minis"));
+  expect(submit?.disabled).toBe(true);
+  await act(async () => submit!.closest("form")!.requestSubmit());
+  expect(view.onSubmit).not.toHaveBeenCalled();
+});

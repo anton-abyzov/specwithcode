@@ -1,4 +1,5 @@
 import type {
+  EnvironmentId,
   HandoffPlanUsage,
   HandoffPlanView,
   ProjectId,
@@ -85,4 +86,33 @@ export function planHandoffRows(view: HandoffPlanView): HandoffMachineThreadRow[
     }))
     .toSorted((a, b) => ORDER[a.row.group] - ORDER[b.row.group] || a.index - b.index)
     .map(({ row }) => row);
+}
+
+/**
+ * The machines the dialog may pick for the person (AC-22): every provider line
+ * a different account with a fresh reading that has room. Same-account,
+ * unknown, stale or unasked machines wait for a click.
+ */
+export function automaticDestinations(
+  plans: ReadonlyMap<EnvironmentId, HandoffPlanView>,
+): Set<EnvironmentId> {
+  return new Set(
+    [...plans]
+      .filter(
+        ([, plan]) =>
+          plan.unreachable === null &&
+          plan.usage.length > 0 &&
+          plan.usage.every((usage) => usage.automatic),
+      )
+      .map(([id]) => id),
+  );
+}
+
+/** The ids the measured plan lets go: the only ones a hand off may send. */
+export function movablePlanIds(view: HandoffPlanView): Set<ThreadId> {
+  return new Set(
+    planHandoffRows(view)
+      .filter((row) => row.group !== "stays" && row.canTick !== false)
+      .map((row) => row.threadId),
+  );
 }
