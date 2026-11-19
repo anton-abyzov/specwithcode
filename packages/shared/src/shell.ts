@@ -116,6 +116,23 @@ export function isVolatilePathEntry(entry: string): boolean {
   return /[\\/]fnm_multishells[\\/]/i.test(entry);
 }
 
+/**
+ * A folder a Node version manager owns (fnm, nvm, Volta, asdf, mise, n): a CLI
+ * installed there moves when Node is upgraded, so a saved path into it may be
+ * gone while the same command still sits on PATH. Any other saved path is the
+ * person's own choice and is never swapped for another binary.
+ */
+export function isNodeVersionPathEntry(entry: string): boolean {
+  return /[\\/](?:fnm[\\/]|\.nvm[\\/]versions[\\/]|\.volta[\\/]tools[\\/]|node-versions[\\/]|installs[\\/]nodejs[\\/]|n[\\/]versions[\\/]|node[\\/]v\d)/i.test(
+    entry,
+  );
+}
+
+/** A saved command path that may be looked up again by name when it is gone. */
+function isReplaceableSavedPath(command: string): boolean {
+  return isVolatilePathEntry(command) || isNodeVersionPathEntry(command);
+}
+
 /** The same folders, every lasting one before every per-shell one, each group in its own order. */
 export function lastingPathEntriesFirst<T extends string>(entries: ReadonlyArray<T>): T[] {
   return [
@@ -153,6 +170,7 @@ export function lastingReplacementForCommand(
   resolveExecutable: SpawnExecutableResolver = resolveSpawnExecutableWithNode,
 ): string | undefined {
   if (!command.includes("/") && !command.includes("\\")) return undefined;
+  if (!isReplaceableSavedPath(command)) return undefined;
   const volatile = isVolatilePathEntry(command);
   const present = resolveExecutable(command, platform, env) !== undefined;
   if (present && !volatile) return undefined;
@@ -770,7 +788,7 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     // Split on both separators: a Windows path read on Linux must still shrink to a bare name.
     const name = commandNameOf(command);
     const lasting =
-      name.length > 0
+      name.length > 0 && isReplaceableSavedPath(command)
         ? yield* resolveCommandPathForPlatform(name, {
             ...options,
             env: withoutVolatilePathEntries(env, platform),

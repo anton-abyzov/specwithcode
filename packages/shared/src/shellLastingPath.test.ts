@@ -88,6 +88,13 @@ describe("saved command paths", () => {
     ).toBe(lasting);
   });
 
+  it("never swaps a configured path outside a Node version folder for another binary", () => {
+    expect(
+      lastingReplacementForCommand(NodePath.join(root, "bin/codex"), "linux", env),
+    ).toBeUndefined();
+    expect(lastingReplacementForCommand("/opt/tools/codex", "linux", env)).toBeUndefined();
+  });
+
   it("keeps a lasting path that exists, and a bare name", () => {
     expect(lastingReplacementForCommand(lasting, "linux", env)).toBeUndefined();
     expect(lastingReplacementForCommand("codex", "linux", env)).toBeUndefined();
