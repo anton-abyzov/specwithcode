@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - Reads folder ownership, permission bits and ACLs before Apply writes.
+// @effect-diagnostics globalTimers:off nodeBuiltinImport:off - Reads folder ownership, permission bits and ACLs before Apply writes.
 import * as NodeChildProcess from "node:child_process";
 import type * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
@@ -336,16 +336,93 @@ const WINDOWS_SCRIPT = [
 ].join("\n");
 const FILE_ATTRIBUTE_REPARSE_POINT = 0x400;
 
-async function windowsAccessOf(paths: ReadonlyArray<string>): Promise<Map<string, FolderAccess>> {
-  const result = new Map<string, FolderAccess>();
-  const { output, ok } = await run(
+interface WindowsReader {
+  readonly child: NodeChildProcess.ChildProcessWithoutNullStreams;
+  buffer: string;
+  /** One per line still owed, oldest first; null when the reader ended before answering. */
+  readonly waiting: Array<(line: string | null) => void>;
+}
+let windowsReader: WindowsReader | null = null;
+/** How long one batch of answers may take before the reader counts as gone. */
+const WINDOWS_READER_TIMEOUT_MS = 30_000;
+
+/**
+ * One PowerShell kept open for the whole process: starting one per reading costs
+ * about a second, and a copy reads its folders again after every write. It holds
+ * the process open only while an answer is owed.
+ */
+function windowsReaderSession(): WindowsReader {
+  if (windowsReader) return windowsReader;
+  const child = NodeChildProcess.spawn(
     "powershell.exe",
     ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_SCRIPT],
-    paths.map((path) => `${path}\n`).join(""),
+    { stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
   );
-  if (!ok) return result;
-  const lines = output.split(/\r?\n/);
-  paths.forEach((path, index) => {
+  const made: WindowsReader = { child, buffer: "", waiting: [] };
+  const end = () => {
+    if (windowsReader === made) windowsReader = null;
+    for (const settle of made.waiting.splice(0)) settle(null);
+  };
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => {
+    made.buffer += chunk;
+    for (let at = made.buffer.indexOf("\n"); at >= 0; at = made.buffer.indexOf("\n")) {
+      const line = made.buffer.slice(0, at).replace(/\r$/, "");
+      made.buffer = made.buffer.slice(at + 1);
+      made.waiting.shift()?.(line);
+    }
+  });
+  child.stderr.resume();
+  child.on("error", end);
+  child.on("close", end);
+  child.stdin.on("error", end);
+  windowsReader = made;
+  return made;
+}
+
+function holdWindowsReader(reader: WindowsReader, held: boolean): void {
+  const parts = [
+    reader.child,
+    reader.child.stdin,
+    reader.child.stdout,
+    reader.child.stderr,
+  ] as const;
+  for (const part of parts) {
+    const handle = part as unknown as { ref?: () => void; unref?: () => void };
+    if (held) handle.ref?.();
+    else handle.unref?.();
+  }
+}
+
+/** Serialized: answers come back in the order the paths went in. */
+let windowsReading: Promise<unknown> = Promise.resolve();
+
+async function windowsLines(paths: ReadonlyArray<string>): Promise<Array<string | null>> {
+  const reader = windowsReaderSession();
+  holdWindowsReader(reader, true);
+  const timer = setTimeout(() => reader.child.kill(), WINDOWS_READER_TIMEOUT_MS);
+  try {
+    const lines = paths.map(
+      () => new Promise<string | null>((resolve) => reader.waiting.push(resolve)),
+    );
+    // A reader that has already gone settles what waits when the write fails.
+    reader.child.stdin.write(paths.map((path) => `${path}\n`).join(""));
+    return await Promise.all(lines);
+  } finally {
+    clearTimeout(timer);
+    if (windowsReader === reader) holdWindowsReader(reader, false);
+  }
+}
+
+async function windowsAccessOf(paths: ReadonlyArray<string>): Promise<Map<string, FolderAccess>> {
+  const result = new Map<string, FolderAccess>();
+  // A name with a line break in it cannot be asked about, and stays unread.
+  const asked = paths.filter((path) => !/[\r\n]/.test(path));
+  if (asked.length === 0) return result;
+  const reading = windowsReading.then(() => windowsLines(asked));
+  windowsReading = reading.catch(() => undefined);
+  const lines = await reading.catch(() => asked.map(() => null));
+  asked.forEach((path, index) => {
     const [state, sid, elevated, attributes, sddl] = (lines[index] ?? "").split("\t");
     if (state !== "ok" || !sid || !sddl) return;
     result.set(path, {
