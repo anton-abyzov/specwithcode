@@ -21,6 +21,7 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -459,6 +460,119 @@ it.effect("Codex first native goal carries project context and keeps the objecti
     });
     assert.equal(accepted, 1);
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+it.effect(
+  "Codex starts the next turn only after a compaction's project context restore is injected",
+  () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "restore-order-native";
+      const firstTurn = makeCodexReplayTurn({ id: "first-turn", status: "completed" });
+      const preamble = codexReplayPreamble({
+        nativeThreadId,
+        nativeTurnId: "first-turn",
+        prompt: "work",
+      });
+      const second = codexReplayPreamble({
+        nativeThreadId,
+        nativeTurnId: "second-turn",
+        prompt: "next",
+      })
+        .slice(5)
+        .map((entry) => {
+          const frame = "frame" in entry ? (entry.frame as Record<string, unknown>) : {};
+          return { ...entry, frame: "id" in frame ? { ...frame, id: 5 } : frame };
+        }) as CodexReplay.CodexAppServerReplayEntry[];
+      const methods: Array<string> = [];
+      const harness = yield* openCodex(
+        makeCodexReplayTranscript({
+          scenario: "project-restore-order",
+          entries: [
+            ...preamble,
+            {
+              type: "emit_inbound",
+              label: "compacted",
+              frame: {
+                method: "item/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: "first-turn",
+                  item: { type: "contextCompaction", id: "compaction-1" },
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "first done",
+              frame: {
+                method: "turn/completed",
+                params: { threadId: nativeThreadId, turn: firstTurn },
+              },
+            },
+            // Strict order: the restore's injection must come before the next turn/start.
+            {
+              type: "expect_outbound",
+              label: "restore",
+              frame: {
+                id: 4,
+                method: "thread/inject_items",
+                params: {
+                  threadId: nativeThreadId,
+                  items: [
+                    {
+                      type: "message",
+                      role: "user",
+                      content: [{ type: "input_text", text: "restored memory" }],
+                    },
+                  ],
+                },
+              },
+            },
+            { type: "emit_inbound", label: "restored", frame: { id: 4, result: {} } },
+            ...second,
+          ],
+        }),
+        (method) => {
+          methods.push(method);
+        },
+      );
+      const terminals = yield* Queue.unbounded<void>();
+      yield* harness.runtime.events.pipe(
+        Stream.runForEach((event) =>
+          event.type === "turn.terminal" ? Queue.offer(terminals, undefined) : Effect.void,
+        ),
+        Effect.forkScoped,
+      );
+      const restoreCalled = yield* Deferred.make<void>();
+      const releaseRestore = yield* Deferred.make<void>();
+      const turn = (attempt: string, text: string) => ({
+        ...makeCodexTestTurnInput({
+          ...harness,
+          now: DateTime.nowUnsafe(),
+          attemptId: RunAttemptId.make(attempt),
+          text,
+        }),
+        projectContext: {
+          accepted: Effect.void,
+          restore: Deferred.succeed(restoreCalled, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseRestore)),
+            Effect.as("restored memory"),
+          ),
+        },
+      });
+      yield* harness.runtime.startTurn(turn("restore-order-1", "work"));
+      yield* Deferred.await(restoreCalled);
+      yield* Queue.take(terminals);
+      // The next prompt arrives while the restore is still on its way.
+      const next = yield* harness.runtime
+        .startTurn(turn("restore-order-2", "next"))
+        .pipe(Effect.forkScoped);
+      yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 50)));
+      assert.equal(methods.filter((method) => method === "turn/start").length, 1);
+      yield* Deferred.succeed(releaseRestore, undefined);
+      yield* Fiber.join(next);
+      assert.deepEqual(methods.slice(-2), ["thread/inject_items", "turn/start"]);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
 
 it.effect(

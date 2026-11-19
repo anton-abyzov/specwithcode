@@ -281,7 +281,7 @@ it.layer(layer)("Project context durable delivery", (it) => {
           expectedRevision: null,
         });
         yield* sql`UPDATE projection_projects SET workspace_settings_json=${JSON.stringify({ ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, paused: true, archived: true })} WHERE project_id=${input.projectId}`;
-        assert.include(yield* service.restore(input.projectId, input.threadId), "Latest memory");
+        assert.include(yield* service.restore(input), "Latest memory");
         yield* (yield* ProjectStore.ProjectStoreV2).apply({
           sequence: 2,
           eventId: EventId.make("purge-context"),
@@ -306,7 +306,7 @@ it.layer(layer)("Project context durable delivery", (it) => {
           1,
         );
         assert.equal(
-          (yield* service.restore(input.projectId, input.threadId).pipe(Effect.flip)).code,
+          (yield* service.restore(input).pipe(Effect.flip)).code,
           "not_found",
         );
       }),
@@ -377,7 +377,7 @@ it.layer(layer)("Project context durable delivery", (it) => {
         content: lines.join("\n"),
         expectedRevision: 1,
       });
-      const restored = yield* service.restore(input.projectId, input.threadId);
+      const restored = yield* service.restore(input);
       assert.include(restored, "fact added elsewhere");
       // Comparing against B would send the added line again as a diff.
       const next = yield* service.prepare({ ...input, runId: "after-restore" });
@@ -387,13 +387,27 @@ it.layer(layer)("Project context durable delivery", (it) => {
       assert.equal((yield* service.prepare({ ...input, runId: "settled" })).text, "");
     }),
   );
+  it.effect("keeps the receipt of another native history when one is restored", () =>
+    Effect.gen(function* () {
+      const input = yield* seed("restore-scope");
+      const other = { ...input, nativeThreadId: "native-other", runId: "other-1" };
+      const service = yield* Delivery.ProjectContextDelivery;
+      yield* (yield* service.prepare(input)).accepted;
+      yield* (yield* service.prepare(other)).accepted;
+      yield* service.restore(input);
+      const restoredHistory = yield* service.prepare({ ...input, runId: "after" });
+      assert.include(restoredHistory.text, "current snapshot");
+      // The other history still holds its value, so nothing is resent there.
+      assert.equal((yield* service.prepare({ ...other, runId: "other-2" })).text, "");
+    }),
+  );
   it.effect("never acknowledges a prompt prepared before a restore", () =>
     Effect.gen(function* () {
       const input = yield* seed("restore-pending");
       const service = yield* Delivery.ProjectContextDelivery;
       yield* (yield* service.prepare(input)).accepted;
       const pending = yield* service.prepare({ ...input, runId: "before-restore" });
-      yield* service.restore(input.projectId, input.threadId);
+      yield* service.restore(input);
       yield* pending.accepted;
       const next = yield* service.prepare({ ...input, runId: "after-restore" });
       assert.include(next.text, "current snapshot");
