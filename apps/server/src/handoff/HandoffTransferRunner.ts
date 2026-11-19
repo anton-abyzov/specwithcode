@@ -57,7 +57,9 @@ import {
   reverseMoveSuppressed,
   transitionTransfer,
 } from "./HandoffTransferStore.ts";
+import * as HandoffFollow from "./handoffFollow.ts";
 import type {
+  HandoffLauncher,
   HeartbeatRequest,
   HeartbeatResponse,
   PeerPreflightResponse,
@@ -130,6 +132,13 @@ export interface TransferRunnerDeps {
    * again; it fails when the machine does not answer.
    */
   readonly keepsRecords: (destination: EnvironmentId) => Effect.Effect<boolean, HandoffModeError>;
+  /** Keeps a worker's launcher waiting for it once it runs on another machine. */
+  readonly follow: HandoffFollow.HandoffFollowShape;
+  /** Follows the continuation a takeover will make, and says who the takeover names as waiting. */
+  readonly launcherOf: (
+    moving: HandoffFollow.HandoffFollowInput,
+    told: HandoffLauncher | null | undefined,
+  ) => Effect.Effect<HandoffLauncher | undefined, HandoffFollow.HandoffFollowError>;
   readonly peerPreflight: (
     destination: EnvironmentId,
     threads: ReadonlyArray<{
@@ -257,7 +266,11 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
     notice: response.notice,
   });
 
-  const requestOf = (record: HandoffTransferRecord): TakeoverRequest => ({
+  const requestOf = (
+    record: HandoffTransferRecord,
+    launcher: HandoffLauncher | undefined,
+  ): TakeoverRequest => ({
+    ...(launcher === undefined ? {} : { launcher }),
     sourceEnvironmentId: self,
     sourceThreadId: record.lineage.sourceThreadId,
     epoch: record.lineage.epoch,
@@ -280,11 +293,14 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
     shell: OrchestrationV2ThreadShell,
     first: boolean,
     onRefused: Effect.Effect<void>,
+    launcher: HandoffLauncher | undefined,
   ): Effect.Effect<TakeoverResponse, HandoffModeError> =>
     Effect.gen(function* () {
       const threadId = record.lineage.sourceThreadId;
       const epoch = record.lineage.epoch;
-      const answer = yield* deps.sendTakeover(destination, requestOf(record)).pipe(Effect.result);
+      const answer = yield* deps
+        .sendTakeover(destination, requestOf(record, launcher))
+        .pipe(Effect.result);
       let response = answer._tag === "Success" ? answer.success : null;
       const error = answer._tag === "Failure" ? answer.failure : null;
       const neverLeft =
@@ -363,6 +379,8 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         return yield* failed(refusal.code, refusal.message);
       }
       yield* releaseRefused(threadId, epoch, grant);
+      // Nothing will exist there for the launcher to follow.
+      yield* deps.follow.retire({ threadId, epoch });
       yield* onRefused;
       return yield* failed(refusal.code, refusal.message);
     });
@@ -498,6 +516,7 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       if (next.every((candidate) => candidate.verdict === "not-accepted")) {
         if (yield* finish(record.operationId, "failed", NO_MACHINE_ACCEPTED)) {
           yield* releaseRefused(threadId, epoch, null);
+          yield* deps.follow.retire({ threadId, epoch });
           return null;
         }
       }
@@ -555,7 +574,22 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         });
         return asked === null ? null : yield* settleLegacy(asked, shell);
       }
-      return yield* dispatch(record, destination, shell, false, Effect.void);
+      // Before it is sent again, the continuation it will make is followed again; if
+      // that cannot be written, nothing is sent and the hold waits for the next try.
+      const followed = yield* deps.follow
+        .register({ shell, destination, epoch: record.lineage.epoch })
+        .pipe(Effect.result);
+      if (followed._tag === "Failure") {
+        yield* deps
+          .updateRecord(threadId, (current) => ({
+            ...current,
+            lastError: HandoffFollow.FOLLOW_NOT_RECORDED_PAUSED,
+          }))
+          .pipe(Effect.ignore);
+        return null;
+      }
+      const kept = (yield* recordOf(threadId))?.pendingTakeover?.request.launcher;
+      return yield* dispatch(record, destination, shell, false, Effect.void, kept);
     });
 
   /** One thread's move, start to finish, under the thread's lock. */
@@ -660,6 +694,12 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         return yield* error;
       }
       const modelSelection = input.modelSelection ?? null;
+      const declined = HandoffFollow.onwardDeclined(current?.launcher, destination, self);
+      if (declined !== null) {
+        const error = failed("unreachable", declined);
+        yield* stays(error);
+        return yield* error;
+      }
 
       // 1. Replicate and preflight: every refusal comes before the hold, so no turn stops for it.
       const first = yield* deps.prepare(threadId, destination).pipe(Effect.tapError(stays));
@@ -792,6 +832,17 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         return yield* failed("failed", Resume.UNSETTLED_CHILD_REFUSAL);
       }
 
+      // The thread that waits for this worker's result follows it to the destination;
+      // a move whose follow cannot be written is not made.
+      const waits = yield* deps
+        .launcherOf({ shell: first.shell, destination, epoch }, current?.launcher)
+        .pipe(
+          Effect.mapError(() => failed("failed", HandoffFollow.FOLLOW_NOT_RECORDED)),
+          Effect.tapError((error) =>
+            staysHeld(error.message, error.message).pipe(Effect.flatMap(resumeIf)),
+          ),
+        );
+
       // 4. "Sent" is on record before anything is sent. It and "Resume here"
       // start from the same state, so exactly one of them applies.
       const sent = yield* patch(operationId, ["held"], {
@@ -803,12 +854,15 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       yield* deps
         .updateRecord(threadId, (record) => ({
           ...record,
-          pendingTakeover: { destinationEnvironmentId: destination, request: requestOf(sent) },
+          pendingTakeover: {
+            destinationEnvironmentId: destination,
+            request: requestOf(sent, waits),
+          },
         }))
         .pipe(Effect.ignore);
 
       // 5. The destination takes over at the next epoch.
-      const response = yield* dispatch(sent, destination, first.shell, true, resume);
+      const response = yield* dispatch(sent, destination, first.shell, true, resume, waits);
       return { result: result(destination, response), receipt: response };
     });
 

@@ -636,6 +636,9 @@ export const make = Effect.gen(function* () {
               Effect.map((response) => hasHandoffV2(response.capabilities)),
               Effect.mapError(fromPeer),
             ),
+    follow,
+    launcherOf: (moving, told) =>
+      HandoffFollow.named(follow, moving, { told, self, selfLabel, peers }),
     peerPreflight,
     preflightError,
     interruptRun,
