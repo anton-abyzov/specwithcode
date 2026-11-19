@@ -69,6 +69,9 @@ import {
   ReplicateResponse,
   TakeoverRequest,
   TakeoverResponse,
+  TransferPullRequest,
+  TransferStatusRequest,
+  TransferStatusResponse,
 } from "./handoffWire.ts";
 import { reviewStaysText } from "./handoffReviewLock.ts";
 import {
@@ -115,8 +118,9 @@ const TIMEOUT_MS: Record<PeerPath, number> = {
   "plan-merge": 60_000,
   "extras-negotiate": 15_000,
   "extras-replicate": 120_000,
-  "review-replicate": 120_000,
-  "review-takeover": 180_000,
+  "transfer-status": 15_000,
+  // The source stops its turn (up to 45 seconds) and waits for this machine's takeover.
+  "transfer-pull": 300_000,
 };
 /** A memory page, a coordinator's content or a plan answers with up to the link cap; the rest is small. */
 const answerLimit = (path: PeerPath) =>
@@ -261,6 +265,16 @@ export class HandoffPeers extends Context.Service<
       meta: ExtrasReplicateMeta,
       bundle: Uint8Array | null,
     ) => Effect.Effect<ExtrasReplicateResponse, HandoffPeerError>;
+    /** What became of a takeover this machine has no answer for (1390). */
+    readonly transferStatus: (
+      environmentId: EnvironmentId,
+      request: TransferStatusRequest,
+    ) => Effect.Effect<TransferStatusResponse, HandoffPeerError>;
+    /** Asks the machine that runs a thread to hand it to this one (1390). */
+    readonly transferPull: (
+      environmentId: EnvironmentId,
+      request: TransferPullRequest,
+    ) => Effect.Effect<TakeoverResponse, HandoffPeerError>;
   }
 >()("specweave-studio/handoff/handoffPeers") {}
 
@@ -298,6 +312,9 @@ const decodeReplicate = Schema.decodeUnknownOption(ReplicateResponse);
 const decodePreflight = Schema.decodeUnknownOption(PeerPreflightResponse);
 const decodeTakeover = Schema.decodeUnknownOption(TakeoverResponse);
 const decodeHeartbeat = Schema.decodeUnknownOption(HeartbeatResponse);
+const encodeTransferStatus = Schema.encodeSync(TransferStatusRequest);
+const decodeTransferStatus = Schema.decodeUnknownOption(TransferStatusResponse);
+const encodeTransferPull = Schema.encodeSync(TransferPullRequest);
 const decodeCoordinatorLease = Schema.decodeUnknownOption(CoordinatorLeaseResponse);
 const decodeCoordinatorReplica = Schema.decodeUnknownOption(CoordinatorReplicaResponse);
 
@@ -523,13 +540,14 @@ export const make = Effect.gen(function* () {
           needsUpdate: true,
         });
       }
-      // A machine from before the reviewer lock has no such path: it answered, and took nothing.
-      if (answer.status === 404 && (path === "review-replicate" || path === "review-takeover")) {
+      // A machine from before transfer records has no such path. It changed nothing.
+      if (answer.status === 404 && (path === "transfer-status" || path === "transfer-pull")) {
         return yield* new HandoffPeerError({
           code: "invalid",
-          message: `${reviewStaysText("update_needed", target.label)}.`,
-          check: "provider",
+          message: `Needs update: ${target.label} runs a SpecWithCode from before handoff transfer records. Update SpecWithCode on ${target.label} first.`,
+          check: "version",
           uncertain: false,
+          needsUpdate: true,
         });
       }
       if (!answer.ok) {
@@ -655,6 +673,15 @@ export const make = Effect.gen(function* () {
       postJson(environmentId, "plan-export", encodePlanExport(request), decodePlanExport),
     planMerge: (environmentId, request) =>
       postJson(environmentId, "plan-merge", encodePlanMerge(request), decodePlanMerge),
+    transferStatus: (environmentId, request) =>
+      postJson(
+        environmentId,
+        "transfer-status",
+        encodeTransferStatus(request),
+        decodeTransferStatus,
+      ),
+    transferPull: (environmentId, request) =>
+      postJson(environmentId, "transfer-pull", encodeTransferPull(request), decodeTakeover),
     extrasNegotiate: (environmentId, request) =>
       postJson(environmentId, "extras-negotiate", encodeExtrasNegotiate(request), decodeNegotiate),
     extrasReplicate: (environmentId, meta, bundle) =>
