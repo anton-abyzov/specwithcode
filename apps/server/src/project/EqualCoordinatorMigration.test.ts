@@ -1,4 +1,5 @@
 import {
+  coordinatorOwnsRoutines,
   type LogicalProject,
   type ProjectCoordinatorBinding,
   ProjectCoordinatorBinding as CurrentBinding,
@@ -15,6 +16,7 @@ import {
   EQUAL_COORDINATORS_DETAIL,
   equalCoordinatorBinding,
   isEqualCoordinatorBinding,
+  joinedBinding,
   migrate,
 } from "./EqualCoordinatorMigration.ts";
 import {
@@ -97,11 +99,17 @@ describe("equal coordinators: link acceptance (AC-35)", () => {
   it("writes active on the joining copy, beside the kept copy's own active coordinator", async () => {
     const pair = legacyPair();
     const { accepted } = await link(pair);
-    expect(accepted.coordinatorBinding).toEqual({ epoch: 0, state: "active", operationId });
+    expect(accepted.coordinatorBinding).toEqual({
+      epoch: 0,
+      state: "active",
+      operationId,
+      routineOwner: false,
+    });
     expect(bindingOf(pair.m3, pair.joining.projectId)).toEqual({
       epoch: 0,
       state: "active",
       operationId,
+      routineOwner: false,
     });
     expect(bindingOf(pair.m4, pair.kept.projectId)).toEqual({ epoch: 0, state: "active" });
     expect(pair.m3.ownershipModes).toEqual(["join-as-member"]);
@@ -149,7 +157,12 @@ describe("equal coordinators: the migration (AC-35, EC2-07)", () => {
     ]);
     expect(report.failed).toEqual([]);
     const after = settingsOf(pair.m3, pair.joining.projectId);
-    expect(after.coordinatorBinding).toEqual({ epoch: 0, state: "active", operationId });
+    expect(after.coordinatorBinding).toEqual({
+      epoch: 0,
+      state: "active",
+      operationId,
+      routineOwner: false,
+    });
     // Identity, the member list and this copy's own coordinator thread are untouched.
     expect(after.logicalProject).toEqual(before.logicalProject);
     expect(pair.m3.ownershipModes.at(-1)).toBe("equal-coordinators");
@@ -183,7 +196,12 @@ describe("equal coordinators: the migration (AC-35, EC2-07)", () => {
       { projectId: pair.kept.projectId, from: "transferring", retiredOperationId: "role-move" },
     ]);
     const migrated = bindingOf(pair.m4, pair.kept.projectId)!;
-    expect(migrated).toEqual({ epoch: 2, state: "active", retiredOperationIds: ["role-move"] });
+    expect(migrated).toEqual({
+      epoch: 2,
+      state: "active",
+      retiredOperationIds: ["role-move"],
+      routineOwner: false,
+    });
     expect(typesToOwnCoordinator(pair.m4, pair.kept.projectId)).toBe(true);
 
     // The old operation retries its acknowledgement after the restart.
@@ -236,7 +254,11 @@ describe("equal coordinators: the migration (AC-35, EC2-07)", () => {
     const kept = await runMigration(pair.m4);
     const joined = await runMigration(pair.m3);
 
-    expect(bindingOf(pair.m4, pair.kept.projectId)).toEqual({ epoch: 1, state: "active" });
+    expect(bindingOf(pair.m4, pair.kept.projectId)).toEqual({
+      epoch: 1,
+      state: "active",
+      routineOwner: false,
+    });
     expect(kept.migrated[0]?.from).toBe("active");
     expect(joined.standbyRecordsCleared).toBe(1);
     expect(joined.rearmEntriesCleared).toBe(1);
@@ -266,7 +288,27 @@ describe("equal coordinators: the migration (AC-35, EC2-07)", () => {
       epoch: 4,
       state: "active",
       retiredOperationIds: ["b"],
+      routineOwner: false,
     });
+  });
+
+  it("leaves one owner of the project's routines: the copy that was it before (AC-45)", () => {
+    const member = machine("m9").member("p");
+    const owns = (binding: ProjectCoordinatorBinding) =>
+      coordinatorOwnsRoutines(equalCoordinatorBinding(binding));
+    // The project's first coordinator, and one that was handed the role or took it over.
+    expect(owns({ epoch: 0, state: "active" })).toBe(true);
+    expect(owns({ epoch: 3, state: "active", operationId: "c", predecessor: member })).toBe(true);
+    // A copy that followed another machine, was moving, or was started beside the first.
+    expect(owns({ epoch: 0, state: "transferred", operationId: "a", successor: member })).toBe(false);
+    expect(owns({ epoch: 0, state: "transferring", operationId: "b", successor: member })).toBe(false);
+    expect(owns({ epoch: 2, state: "active" })).toBe(false);
+    // A copy that joins after the update is not the owner either.
+    expect(coordinatorOwnsRoutines(joinedBinding("link-1", 0))).toBe(false);
+    // Migrating twice never changes the answer.
+    const once = equalCoordinatorBinding({ epoch: 3, state: "active", predecessor: member });
+    expect(equalCoordinatorBinding(once)).toEqual(once);
+    expect(coordinatorOwnsRoutines(once)).toBe(true);
   });
 });
 
@@ -462,6 +504,7 @@ describe(`equal coordinators: compatibility with ${PINNED_RELEASE} (EC2-09)`, ()
       epoch: 0,
       state: "active",
       operationId,
+      routineOwner: false,
     });
     // Typing on the formerly transferred member still goes to its own coordinator.
     expect(typesToOwnCoordinator(pair.m3, pair.joining.projectId)).toBe(true);

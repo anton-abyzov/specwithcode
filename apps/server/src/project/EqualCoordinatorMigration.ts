@@ -11,7 +11,9 @@
  *   stays active, without its standby. `transferred` becomes active at the
  *   same epoch and follows no successor. `transferring` becomes active too,
  *   and its operation id is retired, so a late write under that operation
- *   never fences this copy again (`ownershipRejection`).
+ *   never fences this copy again (`ownershipRejection`). Each keeps whether it
+ *   was the one owner of the project's routines (`routineOwner`), so two
+ *   machines never both fire a routine no runner is settled for.
  * - `joinedBinding`: what link acceptance writes on the joining copy.
  * - `migrate`: the one pass over this machine's projects, run when the server
  *   starts. It also clears what only ever held a coordinator back: standby
@@ -29,6 +31,7 @@
  */
 import {
   CommandId,
+  coordinatorOwnsRoutines,
   type Project,
   type ProjectCoordinatorBinding,
   ProjectLinkError,
@@ -92,12 +95,16 @@ export function equalCoordinatorBinding(
       : {}),
     ...(binding.removedMembers === undefined ? {} : { removedMembers: binding.removedMembers }),
     ...(retired.length === 0 ? {} : { retiredOperationIds: retired }),
+    // Read before the binding loses what said so: a copy that followed another machine, or
+    // was moving, never becomes a second owner of the project's routines.
+    routineOwner: coordinatorOwnsRoutines(binding),
   };
 }
 
 /** What link acceptance writes on the joining copy: its own coordinator, at the kept epoch. */
 export function joinedBinding(operationId: string, epoch: number): ProjectCoordinatorBinding {
-  return { epoch, state: "active", operationId };
+  // The project's routines already have their owner on the machine this copy joins.
+  return { epoch, state: "active", operationId, routineOwner: false };
 }
 
 /** Whether a joining copy already holds the binding `joinedBinding` wrote for this link. */

@@ -43,6 +43,7 @@ describe("ProjectLink", () => {
       epoch: 0,
       state: "active",
       operationId,
+      routineOwner: false,
     });
     expect(committed.logicalProject.members).toEqual([pair.kept, pair.joining]);
     expect(accepted.logicalProject.members).toEqual([pair.kept, pair.joining]);

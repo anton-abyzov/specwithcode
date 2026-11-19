@@ -129,8 +129,34 @@ export const ProjectCoordinatorBinding = Schema.Struct({
   retiredOperationIds: Schema.optional(
     Schema.Array(Schema.String.check(Schema.isMaxLength(128))).check(Schema.isMaxLength(16)),
   ),
+  /**
+   * Whether this copy is the one that fired the project's routines alone before the machines
+   * settle a runner. Written when a copy becomes an equal coordinator or joins a project, so
+   * that making every copy active never makes two of them the owner. Absent on a binding
+   * from before; `coordinatorOwnsRoutines` then reads the binding's shape.
+   */
+  routineOwner: Schema.optional(Schema.Boolean),
 });
 export type ProjectCoordinatorBinding = typeof ProjectCoordinatorBinding.Type;
+
+/** Started beside the project's first coordinator: active above epoch 0, with no predecessor. */
+export function coordinatorStartedBeside(binding: ProjectCoordinatorBinding | undefined): boolean {
+  return binding?.state === "active" && binding.epoch > 0 && binding.predecessor === undefined;
+}
+
+/**
+ * Whether a copy's binding is the one the release before routine runners let fire the
+ * project's routines alone: the project's own coordinator, or one that was handed the role or
+ * took it over. A copy that joined, followed another machine or was started beside the first
+ * is active too, and is not the owner.
+ */
+export function coordinatorOwnsRoutines(
+  binding: ProjectCoordinatorBinding | null | undefined,
+): boolean {
+  if (binding == null) return true;
+  if (binding.state !== "active") return false;
+  return binding.routineOwner ?? !coordinatorStartedBeside(binding);
+}
 
 /**
  * Every machine runs its own coordinator, so any of them may leave its shared project,

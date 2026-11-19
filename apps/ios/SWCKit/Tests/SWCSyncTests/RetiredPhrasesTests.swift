@@ -27,6 +27,16 @@ import Testing
     "Take over automatically on",
     "Check the machines and take over again if you still need to.",
     "Take over did not finish. Retry it.",
+    // Equal coordinators: every machine runs its own, and none continues another's.
+    "Coordinator. Plans the work and can start it on every machine.",
+    "The coordinator is on another machine. An older conversation here is read-only history.",
+    "Coordinator handoff pending.",
+    "WeaveButton(\"Continue the coordinator here\"",
+    "Continue the coordinator on \\(confirming?.copy.machineLabel ?? \"this machine\")?",
+    "Each machine has the project's files. The coordinator conversation is on one of them.",
+    "The coordinator can continue here.",
+    "Continue automatically on",
+    "Another machine can continue this coordinator when its machine stops answering.",
   ]
 
   static let sources: URL = URL(fileURLWithPath: #filePath)
