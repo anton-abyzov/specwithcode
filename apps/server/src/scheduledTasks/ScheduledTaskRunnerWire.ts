@@ -175,3 +175,46 @@ export const refuseTransfer = (status: number, message: string) =>
 /** Whether an answer names the capability; anything else is a machine that cannot be a runner's peer. */
 export const affirmsRunner = (answer: Pick<RoutineRunnerResponse, "capabilities"> | null) =>
   answer !== null && answer.capabilities.includes(ROUTINE_RUNNER_CAPABILITY);
+
+// --- the release before: stage, enable and release without an operation id -------------
+
+export const ROUTINE_TRANSFER_PROTOCOL_VERSION = 1;
+
+export const RoutineTransferRequest = Schema.Union([
+  Schema.Struct({
+    protocolVersion: NonNegativeInt,
+    op: Schema.Literal("stage"),
+    /** The caller's copy of the project; the target uses its own linked copy. */
+    sourceProjectId: bounded(256),
+    routine: CoordinatorRoutineCopy,
+    ownThread: Schema.Boolean,
+    /** The target's thread the routine posts into: the continuation of the moved worker. */
+    boundThreadId: Schema.NullOr(bounded(512)),
+  }),
+  Schema.Struct({
+    protocolVersion: NonNegativeInt,
+    op: Schema.Literal("enable"),
+    routineId: ScheduledTaskId,
+    runState: TransferRunState,
+  }),
+  Schema.Struct({
+    protocolVersion: NonNegativeInt,
+    op: Schema.Literal("release"),
+    routineId: ScheduledTaskId,
+  }),
+]);
+export type RoutineTransferRequest = typeof RoutineTransferRequest.Type;
+
+export const RoutineTransferResponse = Schema.Struct({
+  routineId: bounded(256),
+  /** The target's copy of the project. */
+  projectId: Schema.optional(bounded(256)),
+  enabled: Schema.Boolean,
+  /** `release`: the state the target's copy ended with; null when it had none. */
+  runState: Schema.optional(Schema.NullOr(TransferRunState)),
+  /** The routine runs with less access there than here (the grant's cap). */
+  capped: Schema.optional(Schema.Boolean),
+  /** `release`: the count of changes this machine reached as the routine's runner. */
+  revision: Schema.optional(NonNegativeInt),
+});
+export type RoutineTransferResponse = typeof RoutineTransferResponse.Type;

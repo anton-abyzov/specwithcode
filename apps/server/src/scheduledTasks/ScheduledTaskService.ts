@@ -70,6 +70,7 @@ import {
   type RoutineRunner,
   RoutineRunnerPace,
 } from "./ScheduledTaskRunner.ts";
+import { makeRunnerRoleActive } from "./ScheduledTaskRunnerRole.ts";
 import { HandoffTurnGate } from "../handoff/HandoffTurnGate.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import {
@@ -1978,23 +1979,7 @@ export const layer = Layer.effect(
       sql,
       legacyHold,
       projects,
-      roleActive: (projectId) =>
-        Effect.gen(function* () {
-          if (role !== undefined)
-            return Option.match(yield* role.roleOf(projectId), {
-              onNone: () => false,
-              onSome: (status) => status.active,
-            });
-          const row = yield* projects
-            .get(projectId)
-            .pipe(Effect.orElseSucceed(() => Option.none<ProjectStore.ProjectRow>()));
-          return Option.isSome(row)
-            ? CoordinatorRole.coordinatorRoleOf({
-                id: row.value.projectId,
-                workspaceSettings: row.value.workspaceSettings ?? undefined,
-              }).active
-            : false;
-        }),
+      roleActive: makeRunnerRoleActive(role, projects),
       selfEnvironmentId:
         environment === undefined ? Effect.succeed(null) : environment.getEnvironmentId,
       threadMovedTo: (threadId) =>
