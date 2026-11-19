@@ -4613,8 +4613,10 @@ export const ru: PhraseCatalog = {
     "После каждого хода копирует треды этой машины, включая существующие, на ваши другие машины с тем же проектом, чтобы любая из них могла продолжить. Расходует чуть больше токенов.",
   "After you left with Away. Ask shows one button to bring it back.":
     "После того как вы ушли в режиме «Не на месте». «Спросить» показывает одну кнопку, чтобы вернуть работу.",
-  "Waiting for {machine} to confirm that silence no longer moves threads. Until it answers, a thread it could continue pauses here when it goes quiet.":
-    "Ждём, пока {machine} подтвердит, что молчание больше не переносит треды. Пока ответа нет, тред, который {machine} может продолжить, ставится здесь на паузу, если {machine} перестаёт отвечать.",
+  "This machine has not confirmed yet that closing the lid moves nothing. Another machine may still continue a thread when this one goes quiet. This copy pauses when that can happen.":
+    "Эта машина ещё не подтвердила, что закрытие крышки ничего не переносит. Другая машина ещё может продолжить тред, когда эта перестанет отвечать. Когда это возможно, эта копия ставится на паузу.",
+  "{machine} may still run an older version that continues a thread when this machine goes quiet. Until it confirms, such a thread pauses here. Update {machine} to end this.":
+    "На {machine}, возможно, ещё работает старая версия, которая продолжает тред, когда эта машина перестаёт отвечать. Пока {machine} не подтвердит обратное, такой тред здесь ставится на паузу. Обновите {machine}, чтобы это прекратилось.",
   "Agents on {hereLabel} can start work on {thereLabel}":
     "Агенты на {hereLabel} могут запускать работу на {thereLabel}",
   "All sign-ins": "Все входы",
@@ -4740,6 +4742,8 @@ export const ru: PhraseCatalog = {
   "Until you stop it, here or on that machine.":
     "Пока вы не остановите это здесь или на той машине.",
   "When this machine wakes": "Когда эта машина просыпается",
+  "Where Away sends your threads, routines and coordinators when you leave this machine.":
+    "Куда режим «Не на месте» отправляет ваши треды, рутины и координаторов, когда вы уходите с этой машины.",
   "Where Away sends your threads, routines and coordinators when you leave this machine. Closing the lid moves nothing.":
     "Куда режим «Не на месте» отправляет ваши треды, рутины и координаторов, когда вы уходите с этой машины. Закрытие крышки ничего не переносит.",
   "Who is it for": "Для кого это",

@@ -682,6 +682,7 @@ export const make = Effect.gen(function* () {
       if (record === undefined || pending === null || record.lease?.state !== "handing-off") {
         return yield* failed("busy", "No unanswered handoff of this thread to re-send.");
       }
+      if (pending.request.reason === "sleep") return yield* failed("busy", Drain.SLEEP_HOLD_WAITS);
       const destination = pending.destinationEnvironmentId as EnvironmentId;
       const shell = yield* shellOf(threadId);
       const response = yield* sendTakeover(destination, pending.request).pipe(
@@ -1251,45 +1252,39 @@ export const make = Effect.gen(function* () {
   const heartbeatOnce = Effect.gen(function* () {
     const document = yield* handoff.document;
     const now = yield* Clock.currentTimeMillis;
-    const byPeer = Drain.heartbeatLeases(document, self);
+    const byPeer = autoContinue.pages(document, now);
     // One silent peer must not hold up the others' heartbeats.
     const answers = yield* Effect.forEach(
       [...byPeer],
-      ([peer, leases]) =>
+      ([peer, page]) =>
         peers
           .heartbeat(peer, {
             sourceEnvironmentId: self,
             sourceLabel: selfLabel.slice(0, 120),
-            leases: leases.slice(0, 500),
+            leases: page.leases,
+            ...(page.settle.length === 0 ? {} : { settle: page.settle }),
           })
           .pipe(
             Effect.option,
-            Effect.map((answer) => ({ peer, leases, answer })),
+            Effect.map((answer) => ({ peer, page, answer })),
           ),
       { concurrency: "unbounded" },
     );
-    for (const { peer, leases, answer } of answers) {
+    for (const { peer, page, answer } of answers) {
       if (Option.isNone(answer)) continue;
       lastAnswer.set(peer, now);
-      yield* handoff.updateDocument((current) => {
-        const before = current.autoContinuePeers ?? {};
-        const after = Drain.noteAnswered(before, peer);
-        return [undefined, after === before ? current : { ...current, autoContinuePeers: after }];
-      });
-      const continuedIds = new Set(answer.value.continued.map((entry) => entry.sourceThreadId));
-      for (const { sourceThreadId } of leases) {
-        const record = document.threads[sourceThreadId];
-        if (continuedIds.has(sourceThreadId)) continue;
-        if (record?.lease?.state !== "handing-off") continue;
-        if (record.pendingTakeover?.destinationEnvironmentId !== peer) continue;
-        // The destination answers again but never continued it: send the takeover again,
-        // unless sleep started it (1390 AC-36). That one is dropped and the thread stays here.
-        const bySleep = record.pendingTakeover.request.reason === "sleep";
-        const again = Effect.gen(function* () {
-          if (bySleep) yield* updateRecord(sourceThreadId, Drain.dropSleepTakeover);
-          else yield* resendPending(sourceThreadId);
+      const plan = autoContinue.answered({ document, peer, page, answer: answer.value, now });
+      if (plan.disarm) yield* handoff.updateDocument(Drain.disarmPeer(peer));
+      // A takeover sleep started is never sent again (1390 AC-36): only its own "not
+      // started" gives it back. One someone asked for is sent again until answered.
+      const again = (threadId: ThreadId) =>
+        Effect.gen(function* () {
+          const released = plan.release.includes(threadId);
+          if (released) yield* updateRecord(threadId, Drain.dropSleepTakeover);
+          else yield* resendPending(threadId);
         });
-        yield* locks.withLock(sourceThreadId, again).pipe(
+      for (const sourceThreadId of [...plan.release, ...plan.resend]) {
+        yield* locks.withLock(sourceThreadId, again(sourceThreadId)).pipe(
           Effect.catchCause((cause) =>
             Effect.logInfo("Handoff re-sent a takeover that is still open", {
               threadId: sourceThreadId,

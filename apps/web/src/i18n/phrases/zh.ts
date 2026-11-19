@@ -4441,8 +4441,10 @@ export const zh: PhraseCatalog = {
     "每轮结束后，将这台电脑的会话（包括已有会话）复制到有同一项目的其他电脑，任何一台都可以接着做。会多用一些 token。",
   "After you left with Away. Ask shows one button to bring it back.":
     "在你通过离开模式离开之后。“询问”会显示一个按钮，用来把工作带回来。",
-  "Waiting for {machine} to confirm that silence no longer moves threads. Until it answers, a thread it could continue pauses here when it goes quiet.":
-    "正在等待 {machine} 确认无响应不再转移会话。在它回应之前，{machine} 可以继续的会话会在 {machine} 无响应时在这里暂停。",
+  "This machine has not confirmed yet that closing the lid moves nothing. Another machine may still continue a thread when this one goes quiet. This copy pauses when that can happen.":
+    "这台电脑尚未确认合上盖子不会转移任何内容。这台电脑无响应时，另一台电脑仍可能继续某个会话。可能发生这种情况时，这份副本会暂停。",
+  "{machine} may still run an older version that continues a thread when this machine goes quiet. Until it confirms, such a thread pauses here. Update {machine} to end this.":
+    "{machine} 可能仍在运行旧版本，会在这台电脑无响应时继续会话。在 {machine} 确认之前，这类会话会在这里暂停。更新 {machine} 即可解除。",
   "Agents on {hereLabel} can start work on {thereLabel}":
     "{hereLabel} 上的智能体可以在 {thereLabel} 上开始工作",
   "All sign-ins": "所有登录",
@@ -4561,6 +4563,8 @@ export const zh: PhraseCatalog = {
     "直到你在这里或在 {coordinatorLabel} 上停止它。它会自动续期。",
   "Until you stop it, here or on that machine.": "直到你在这里或那台电脑上停止它。",
   "When this machine wakes": "这台电脑唤醒时",
+  "Where Away sends your threads, routines and coordinators when you leave this machine.":
+    "离开这台电脑时，离开模式将你的会话、例行任务和协调者发送到哪里。",
   "Where Away sends your threads, routines and coordinators when you leave this machine. Closing the lid moves nothing.":
     "离开这台电脑时，离开模式将你的会话、例行任务和协调者发送到哪里。合上盖子不会转移任何内容。",
   "Who is it for": "给谁用",

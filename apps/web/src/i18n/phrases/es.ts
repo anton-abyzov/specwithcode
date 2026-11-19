@@ -4641,8 +4641,10 @@ export const es: PhraseCatalog = {
     "Después de cada turno, copia los hilos de esta máquina, también los existentes, a tus otras máquinas con el mismo proyecto, para que cualquiera pueda continuarlos. Usa algunos tokens más.",
   "After you left with Away. Ask shows one button to bring it back.":
     "Después de irte con Ausente. Preguntar muestra un botón para traer el trabajo de vuelta.",
-  "Waiting for {machine} to confirm that silence no longer moves threads. Until it answers, a thread it could continue pauses here when it goes quiet.":
-    "Esperando a que {machine} confirme que el silencio ya no mueve hilos. Hasta que responda, un hilo que {machine} podría continuar se pausa aquí cuando deja de responder.",
+  "This machine has not confirmed yet that closing the lid moves nothing. Another machine may still continue a thread when this one goes quiet. This copy pauses when that can happen.":
+    "Este equipo aún no ha confirmado que cerrar la tapa no mueve nada. Otro equipo aún podría continuar un hilo cuando este deje de responder. Esta copia se pausa cuando eso puede ocurrir.",
+  "{machine} may still run an older version that continues a thread when this machine goes quiet. Until it confirms, such a thread pauses here. Update {machine} to end this.":
+    "{machine} puede seguir con una versión anterior que continúa un hilo cuando este equipo deja de responder. Hasta que lo confirme, ese hilo se pausa aquí. Actualiza {machine} para terminar con esto.",
   "Agents on {hereLabel} can start work on {thereLabel}":
     "Los agentes de {hereLabel} pueden iniciar trabajo en {thereLabel}",
   "All sign-ins": "Todos los inicios de sesión",
@@ -4769,6 +4771,8 @@ export const es: PhraseCatalog = {
     "Hasta que lo detengas aquí o en {coordinatorLabel}. Se renueva solo.",
   "Until you stop it, here or on that machine.": "Hasta que lo detengas, aquí o en esa máquina.",
   "When this machine wakes": "Cuando esta máquina se despierta",
+  "Where Away sends your threads, routines and coordinators when you leave this machine.":
+    "A dónde envía Ausente tus hilos, rutinas y coordinadores cuando dejas este equipo.",
   "Where Away sends your threads, routines and coordinators when you leave this machine. Closing the lid moves nothing.":
     "A dónde envía Ausente tus hilos, rutinas y coordinadores cuando dejas este equipo. Cerrar la tapa no mueve nada.",
   "Who is it for": "Para quién es",

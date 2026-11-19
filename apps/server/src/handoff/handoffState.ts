@@ -636,6 +636,53 @@ function capIncoming(document: HandoffDocument): HandoffDocument {
   };
 }
 
+/** Reasons that start nothing any more (1390 AC-36); an earlier release may still send them. */
+export const isRetiredReason = (reason: TakeoverRequest["reason"]) =>
+  reason === "sleep" || reason === "auto-takeover";
+
+export const RETIRED_START_REFUSAL =
+  "a thread moves only when someone hands it off; sleep and silence start nothing";
+
+/**
+ * What this machine knows about continuing one source thread: a thread here
+ * continues it (recorded, or launched and proven by the thread itself), nothing
+ * began here for it, or a start whose outcome it cannot read.
+ */
+export type ContinuationEvidence =
+  | { readonly kind: "continued"; readonly threadId: string }
+  | { readonly kind: "none" }
+  | { readonly kind: "unresolved" };
+
+/** The prefix every continuation thread id carries (`continuationThreadId`). */
+export const CONTINUATION_ID_PREFIX = "handoff:";
+
+/**
+ * The continuation leases a takeover of this source thread saved here, at any
+ * epoch. A takeover saves its lease under the continuation's id at the epoch it
+ * takes, and that id is derived from the source and that epoch, so a record
+ * whose own epoch derives its own id is one, exactly. A run keeps that epoch;
+ * only a later move of the continuation itself changes it, so the epochs a
+ * caller knows of (`epochs`) are looked up by id as well.
+ */
+export function preparedContinuations(
+  document: Pick<HandoffDocument, "threads">,
+  idFor: (epoch: number) => string,
+  epochs: ReadonlyArray<number> = [],
+): Array<{ readonly threadId: string; readonly epoch: number }> {
+  const found: Array<{ threadId: string; epoch: number }> = [];
+  for (const [threadId, record] of Object.entries(document.threads)) {
+    if (!threadId.startsWith(CONTINUATION_ID_PREFIX) || record.lease === null) continue;
+    if (idFor(record.lease.epoch) === threadId) found.push({ threadId, epoch: record.lease.epoch });
+  }
+  for (const epoch of epochs) {
+    const threadId = idFor(epoch);
+    if (document.threads[threadId] === undefined) continue;
+    if (found.some((entry) => entry.threadId === threadId)) continue;
+    found.push({ threadId, epoch });
+  }
+  return found;
+}
+
 export type TakeoverVerdict =
   | {
       readonly kind: "proceed";
@@ -659,8 +706,6 @@ export function takeoverVerdict(
   document: HandoffDocument,
   request: TakeoverRequest,
   machineLabel: string,
-  /** The thread id this takeover continues as; its record exists once a takeover began. */
-  continuationThreadId?: string,
 ): TakeoverVerdict {
   const at = (message: string) => `${machineLabel}: ${message}`;
   const replica = findIncoming(document, request.sourceEnvironmentId, request.sourceThreadId);
@@ -686,18 +731,13 @@ export function takeoverVerdict(
       check: "lease",
     };
   }
-  // Sleep and silence start nothing (1390 AC-36). A machine on an earlier release may
-  // still send one: it gets a definite refusal, never silence. One this machine already
-  // began before it updated is finished instead, so the source is never told "not
-  // accepted" about work that runs here.
-  if (
-    (request.reason === "sleep" || request.reason === "auto-takeover") &&
-    (continuationThreadId === undefined || document.threads[continuationThreadId] === undefined)
-  ) {
+  // Sleep and silence start nothing (1390 AC-36): never a launch. The receiver answers
+  // a start an earlier release began here from its durable evidence before this check.
+  if (isRetiredReason(request.reason)) {
     return {
       kind: "refuse",
       code: "invalid",
-      message: at("a thread moves only when someone hands it off; sleep and silence start nothing"),
+      message: at(RETIRED_START_REFUSAL),
       check: "lease",
     };
   }
@@ -814,21 +854,48 @@ export function heartbeatContinued(
 }
 
 /**
- * Machines an earlier release let continue this machine's threads on silence, which have
- * not answered a heartbeat since. Until one answers, it may still act on what it was told.
+ * Every machine this one still keeps a protective hold for, from the sleep and silence
+ * starts an earlier release made: one it armed that has not confirmed it is disarmed,
+ * one a thread here is fenced for (it may have continued it), and the destination of a
+ * takeover sleep started that has no answer yet. Empty means confirmed: nothing from
+ * sleep or silence can still move a thread.
  */
 export function pendingDisarm(
   document: Pick<HandoffDocument, "threads" | "autoContinuePeers">,
 ): Array<{ environmentId: EnvironmentId; machineLabel: string; since: string }> {
-  return Object.entries(document.autoContinuePeers ?? {}).map(([peer, state]) => {
-    let machineLabel = peer;
-    for (const record of Object.values(document.threads)) {
-      const named = record.replicas.find((replica) => replica.environmentId === peer);
-      if (named === undefined) continue;
-      machineLabel = named.machineLabel;
-      break;
+  const pending = new Map<string, { machineLabel: string | null; since: string }>();
+  const note = (peer: string, machineLabel: string | null, since: string) => {
+    const seen = pending.get(peer);
+    if (seen === undefined || since < seen.since) {
+      pending.set(peer, { machineLabel: machineLabel ?? seen?.machineLabel ?? null, since });
     }
-    return { environmentId: peer as EnvironmentId, machineLabel, since: state.baselineAt };
+  };
+  for (const [peer, state] of Object.entries(document.autoContinuePeers ?? {})) {
+    note(peer, null, state.baselineAt);
+  }
+  for (const record of Object.values(document.threads)) {
+    const fence = record.autoFence ?? null;
+    if (fence !== null) note(fence.environmentId, fence.machineLabel, fence.at);
+    const pendingTakeover = record.pendingTakeover ?? null;
+    if (
+      pendingTakeover !== null &&
+      pendingTakeover.request.reason === "sleep" &&
+      record.lease?.state === "handing-off"
+    ) {
+      note(pendingTakeover.destinationEnvironmentId, null, record.lease.renewedAt);
+    }
+  }
+  return [...pending].map(([peer, entry]) => {
+    let machineLabel = entry.machineLabel ?? peer;
+    if (entry.machineLabel === null) {
+      for (const record of Object.values(document.threads)) {
+        const named = record.replicas.find((replica) => replica.environmentId === peer);
+        if (named === undefined) continue;
+        machineLabel = named.machineLabel;
+        break;
+      }
+    }
+    return { environmentId: peer as EnvironmentId, machineLabel, since: entry.since };
   });
 }
 
