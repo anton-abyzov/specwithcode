@@ -74,3 +74,53 @@ export const pinnedReleaseAccept = (input: {
   },
   role: { kind: "gave-way" as const, epoch: input.coordinatorBinding.epoch, successor: input.kept },
 });
+
+/** The projects of one machine, as the link test kit keeps them. */
+type Copies = Map<
+  string,
+  { readonly workspaceSettings?: { readonly coordinatorBinding?: unknown } | null | undefined }
+>;
+const rebind = (copies: Copies, projectId: string, coordinatorBinding: unknown) => {
+  const project = copies.get(projectId);
+  if (project === undefined) throw new Error(`No project ${projectId} on that machine.`);
+  copies.set(projectId, {
+    ...project,
+    workspaceSettings: { ...project.workspaceSettings, coordinatorBinding },
+  } as never);
+  return coordinatorBinding;
+};
+
+/**
+ * Leaves a joined copy as that release's accept left it, for a machine that has not
+ * updated: its coordinator relinquished to the kept copy.
+ */
+export const joinedOnPinnedRelease = (
+  copies: Copies,
+  projectId: string,
+  input: Parameters<typeof pinnedReleaseAccept>[0],
+) => rebind(copies, projectId, pinnedReleaseAccept(input).coordinatorBinding);
+
+/**
+ * What that release's automatic takeover writes on a copy that had given way: the next
+ * epoch, active, naming the machine it replaces.
+ */
+export const takenOverOnPinnedRelease = (
+  copies: Copies,
+  projectId: string,
+  predecessor: typeof Member.Type,
+  takenOverAt: string,
+) => {
+  const before = copies.get(projectId)?.workspaceSettings?.coordinatorBinding as
+    | { readonly epoch: number }
+    | undefined;
+  const coordinatorBinding = {
+    epoch: (before?.epoch ?? 0) + 1,
+    state: "active" as const,
+    operationId: `away-takeover:${projectId}`,
+    predecessor,
+    takenOverAt,
+    takenOverBy: "auto" as const,
+  };
+  rebind(copies, projectId, coordinatorBinding);
+  return { coordinatorBinding };
+};

@@ -67,6 +67,14 @@ export const retiredRoleChange = (
 ): Effect.Effect<never, ProjectLinkError> =>
   Effect.fail(new ProjectLinkError({ code, detail: EQUAL_COORDINATORS_DETAIL }));
 
+/**
+ * What a machine does when a target on an earlier release answers that it took this
+ * project's coordinator over while the machine slept: nothing is given up. The hold on this
+ * machine's coordinator lifts (true), and it goes on running its own; the other machine's
+ * coordinator is its own too. Thread holds are settled separately, by what really moved.
+ */
+export const keepCoordinatorAfterAwayTakeover = (): Effect.Effect<boolean> => Effect.succeed(true);
+
 /** The standby and planned-move calls of `ProjectLink`, as equal coordinators answer them. */
 export type RetiredStandbyMethods = Pick<
   ProjectLinkStandbyMethods,

@@ -20,6 +20,7 @@
  * Both routes accept only this machine's own desktop bearer, like
  * `COORDINATOR_SUSPEND_PATH`.
  */
+import { keepCoordinatorAfterAwayTakeover } from "../project/EqualCoordinatorMigration.ts";
 import {
   AWAY_FORCE_LOCAL_AFTER_MS,
   AWAY_INTENT_CANCEL_PATH,
@@ -578,20 +579,9 @@ export const make = Effect.gen(function* () {
     ...(lease === undefined
       ? {}
       : {
-          giveWay: (input) =>
-            input.status.coordinatorBinding === undefined || input.status.successor === undefined
-              ? Effect.succeed(false)
-              : lease.acceptAwayTakeover({
-                  projectId: input.projectId,
-                  targetEnvironmentId: input.targetEnvironmentId,
-                  takenOver: {
-                    coordinatorBinding: input.status.coordinatorBinding,
-                    successor: input.status.successor,
-                  },
-                  receivedAt: input.receivedAt,
-                  sentAtMs: input.sentAtMs,
-                  answeredAtMs: input.answeredAtMs,
-                }),
+          // Every machine keeps its own coordinator: a takeover an earlier release made
+          // while this one slept lifts the hold here and takes nothing away (1390 AC-35).
+          giveWay: keepCoordinatorAfterAwayTakeover,
           stopCoordinator: lease.stopCoordinatorOf,
         }),
     confirmContinued: (threadIds) =>
