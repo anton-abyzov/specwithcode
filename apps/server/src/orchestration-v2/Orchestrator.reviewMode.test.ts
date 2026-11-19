@@ -135,7 +135,7 @@ it.effect("gives a delegated child its project's review, not the parent's choice
         commandId: CommandId.make("delegate-child"),
         parentThreadId: parent.threadId,
         parentRunId: parent.run.id as RunId,
-        parentNodeId: parent.run.rootNodeId,
+        parentNodeId: parent.run.rootNodeId as never,
         task: "Write the tests",
         modelSelection,
         runtimeMode: "full-access",

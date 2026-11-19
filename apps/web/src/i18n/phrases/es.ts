@@ -5858,14 +5858,18 @@ export const es: PhraseCatalog = {
   "Sign in again to reach your machines through SpecWithCode Connect.":
     "Vuelve a iniciar sesión para acceder a tus máquinas a través de SpecWithCode Connect.",
   "Sign in again": "Volver a iniciar sesión",
-  "first": "primero",
-  "None of the ready agents runs a model on this list.": "Ninguno de los agentes listos usa un modelo de esta lista.",
+  first: "primero",
+  "None of the ready agents runs a model on this list.":
+    "Ninguno de los agentes listos usa un modelo de esta lista.",
   "No reviewer yet.": "Aún no hay revisor.",
-  "A review needs a model from a second family, such as {first} or {second}.": "Una revisión necesita un modelo de otra familia, como {first} o {second}.",
+  "A review needs a model from a second family, such as {first} or {second}.":
+    "Una revisión necesita un modelo de otra familia, como {first} o {second}.",
   "Add one": "Añadir uno",
   "+{n} more": "+{n} más",
   "Ready once an agent is signed in.": "Listo cuando un agente inicie sesión.",
   "How much longer work takes with {setting}": "Cuánto más tarda el trabajo con «{setting}»",
-  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.": "Puede hacer que el trabajo tarde mucho más en terminar: en las mediciones, el trabajo revisado tardó una mediana de 2,6 veces el tiempo del mismo trabajo antes de la revisión (la mitad de las ejecuciones, de 1,6 a 3,6 veces), porque cada ronda de revisión y sus correcciones añaden tiempo.",
-  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.": "Puede hacer que el trabajo tarde más: cada consulta añade unos 2 minutos. En las mediciones, los hilos que consultaron tardaron unas 1,1 veces el tiempo normal, y 1 de cada 10 tardó 1,4 veces o más.",
+  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.":
+    "Puede hacer que el trabajo tarde mucho más en terminar: en las mediciones, el trabajo revisado tardó una mediana de 2,6 veces el tiempo del mismo trabajo antes de la revisión (la mitad de las ejecuciones, de 1,6 a 3,6 veces), porque cada ronda de revisión y sus correcciones añaden tiempo.",
+  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.":
+    "Puede hacer que el trabajo tarde más: cada consulta añade unos 2 minutos. En las mediciones, los hilos que consultaron tardaron unas 1,1 veces el tiempo normal, y 1 de cada 10 tardó 1,4 veces o más.",
 };

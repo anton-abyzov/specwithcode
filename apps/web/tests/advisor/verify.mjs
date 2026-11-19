@@ -320,7 +320,10 @@ for (const theme of ["light", "dark"]) {
     }
     await page.locator('[data-thread-review-choice="on"]').click();
     const review = (await calls(page)).find((call) => call[0] === "setReviewMode");
-    if (review?.[1]?.input?.reviewMode !== "on" || review?.[1]?.input?.threadId !== "thread-atlas-1")
+    if (
+      review?.[1]?.input?.reviewMode !== "on" ||
+      review?.[1]?.input?.threadId !== "thread-atlas-1"
+    )
       fail(`composer ${at}`, `review On wrote ${JSON.stringify(review)}`);
     await page.locator("[data-thread-advisor-menu]").waitFor({ state: "detached" });
     await page.getByRole("button", { name: "Thread options" }).click();

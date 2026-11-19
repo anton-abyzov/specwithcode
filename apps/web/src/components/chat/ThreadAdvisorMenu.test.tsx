@@ -261,9 +261,9 @@ describe("the Adversarial review row", () => {
         node.type === "div" &&
         (node.props["data-thread-advisor-menu"] || node.props["data-thread-review-menu"]),
     );
-    expect(rows.map((row) => (row.props["data-thread-review-menu"] ? "review" : "advisor"))).toEqual(
-      ["advisor", "review"],
-    );
+    expect(
+      rows.map((row) => (row.props["data-thread-review-menu"] ? "review" : "advisor")),
+    ).toEqual(["advisor", "review"]);
     const review = rows[1]!;
     expect(text(review)).toContain("Adversarial review");
     expect(text(review)).toContain(
@@ -281,7 +281,9 @@ describe("the Adversarial review row", () => {
       "How much longer work takes with Advisor",
       "How much longer work takes with Adversarial review",
     ]);
-    const notes = renderer.root.findAll((node) => node.type === "span" && node.props["data-note"]);
+    const notes = renderer.root.findAll(
+      (node) => node.type === "span" && node.props["data-note"] !== undefined,
+    );
     expect(notes.map(text)).toEqual([
       expect.stringContaining("each consult adds about 2 minutes"),
       expect.stringContaining("a median 2.6 times as long"),

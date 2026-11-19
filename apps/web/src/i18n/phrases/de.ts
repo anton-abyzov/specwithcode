@@ -5871,14 +5871,18 @@ export const de: PhraseCatalog = {
   "Sign in again to reach your machines through SpecWithCode Connect.":
     "Melde dich erneut an, um deine Rechner über SpecWithCode Connect zu erreichen.",
   "Sign in again": "Erneut anmelden",
-  "first": "zuerst",
-  "None of the ready agents runs a model on this list.": "Keiner der bereiten Agenten nutzt ein Modell auf dieser Liste.",
+  first: "zuerst",
+  "None of the ready agents runs a model on this list.":
+    "Keiner der bereiten Agenten nutzt ein Modell auf dieser Liste.",
   "No reviewer yet.": "Noch kein Prüfer.",
-  "A review needs a model from a second family, such as {first} or {second}.": "Eine Prüfung braucht ein Modell aus einer zweiten Familie, etwa {first} oder {second}.",
+  "A review needs a model from a second family, such as {first} or {second}.":
+    "Eine Prüfung braucht ein Modell aus einer zweiten Familie, etwa {first} oder {second}.",
   "Add one": "Eines hinzufügen",
   "+{n} more": "+{n} weitere",
   "Ready once an agent is signed in.": "Bereit, sobald ein Agent angemeldet ist.",
   "How much longer work takes with {setting}": "Wie viel länger die Arbeit mit „{setting}“ dauert",
-  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.": "Kann die Arbeit deutlich verlängern: In Messungen dauerte geprüfte Arbeit im Median 2,6-mal so lange wie dieselbe Arbeit vor dem Review (die Hälfte der Läufe 1,6- bis 3,6-mal), weil jede Review-Runde und ihre Korrekturen Zeit kosten.",
-  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.": "Kann die Arbeit verlängern: Jede Konsultation kostet etwa 2 Minuten. In Messungen dauerten Threads mit Konsultationen etwa 1,1-mal so lange, jeder zehnte 1,4-mal so lange oder länger.",
+  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.":
+    "Kann die Arbeit deutlich verlängern: In Messungen dauerte geprüfte Arbeit im Median 2,6-mal so lange wie dieselbe Arbeit vor dem Review (die Hälfte der Läufe 1,6- bis 3,6-mal), weil jede Review-Runde und ihre Korrekturen Zeit kosten.",
+  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.":
+    "Kann die Arbeit verlängern: Jede Konsultation kostet etwa 2 Minuten. In Messungen dauerten Threads mit Konsultationen etwa 1,1-mal so lange, jeder zehnte 1,4-mal so lange oder länger.",
 };

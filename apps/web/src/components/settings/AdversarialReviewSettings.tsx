@@ -33,10 +33,7 @@ import {
   SettingsRow,
   useRelativeTimeTick,
 } from "./settingsLayout";
-import {
-  ADVERSARIAL_REVIEW_TIME_NOTE,
-  SLOWER_WORK_NOTE_LABEL,
-} from "./slowerWorkNotes";
+import { ADVERSARIAL_REVIEW_TIME_NOTE, SLOWER_WORK_NOTE_LABEL } from "./slowerWorkNotes";
 import {
   useScopedSettings,
   useScopedSettingsMixed,

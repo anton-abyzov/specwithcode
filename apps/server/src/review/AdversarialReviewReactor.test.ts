@@ -75,7 +75,10 @@ describe("runMayTakeAutoReview", () => {
       true,
     );
     expect(
-      AdversarialReviewReactor.runMayTakeAutoReview(personThread as never, fromCoordinator as never),
+      AdversarialReviewReactor.runMayTakeAutoReview(
+        personThread as never,
+        fromCoordinator as never,
+      ),
     ).toBe(false);
     expect(AdversarialReviewReactor.runMayTakeAutoReview(delegated as never, undefined)).toBe(
       false,
@@ -84,9 +87,9 @@ describe("runMayTakeAutoReview", () => {
 
   it("lets the thread's own On review a delegated thread and an agent's run", () => {
     const on = { ...delegated, reviewMode: "on" };
-    expect(AdversarialReviewReactor.runMayTakeAutoReview(on as never, fromCoordinator as never)).toBe(
-      true,
-    );
+    expect(
+      AdversarialReviewReactor.runMayTakeAutoReview(on as never, fromCoordinator as never),
+    ).toBe(true);
     expect(
       AdversarialReviewReactor.runMayTakeAutoReview(
         { ...on, title: AdversarialReviewService.adversarialReviewTitle("x") } as never,

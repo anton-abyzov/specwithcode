@@ -5762,14 +5762,18 @@ export const ko: PhraseCatalog = {
   "Sign in again to reach your machines through SpecWithCode Connect.":
     "SpecWithCode Connect를 통해 머신에 접근하려면 다시 로그인하세요.",
   "Sign in again": "다시 로그인",
-  "first": "먼저",
-  "None of the ready agents runs a model on this list.": "준비된 에이전트 중 이 목록의 모델을 쓰는 에이전트가 없습니다.",
+  first: "먼저",
+  "None of the ready agents runs a model on this list.":
+    "준비된 에이전트 중 이 목록의 모델을 쓰는 에이전트가 없습니다.",
   "No reviewer yet.": "아직 리뷰어가 없습니다.",
-  "A review needs a model from a second family, such as {first} or {second}.": "리뷰에는 {first} 또는 {second} 같은 다른 계열의 모델이 필요합니다.",
+  "A review needs a model from a second family, such as {first} or {second}.":
+    "리뷰에는 {first} 또는 {second} 같은 다른 계열의 모델이 필요합니다.",
   "Add one": "추가하기",
   "+{n} more": "+{n}개 더",
   "Ready once an agent is signed in.": "에이전트가 로그인하면 준비됩니다.",
   "How much longer work takes with {setting}": "'{setting}' 사용 시 작업이 얼마나 더 걸리는지",
-  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.": "작업 완료까지 시간이 훨씬 오래 걸릴 수 있습니다. 측정 결과 리뷰한 작업은 리뷰 전 같은 작업보다 중앙값 2.6배의 시간이 걸렸습니다(실행의 절반은 1.6~3.6배). 리뷰 라운드와 그 수정에 시간이 들기 때문입니다.",
-  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.": "작업 시간이 늘어날 수 있습니다. 상담 한 번에 약 2분이 걸립니다. 측정 결과 상담한 스레드는 약 1.1배의 시간이 걸렸고, 10개 중 1개는 1.4배 이상 걸렸습니다.",
+  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.":
+    "작업 완료까지 시간이 훨씬 오래 걸릴 수 있습니다. 측정 결과 리뷰한 작업은 리뷰 전 같은 작업보다 중앙값 2.6배의 시간이 걸렸습니다(실행의 절반은 1.6~3.6배). 리뷰 라운드와 그 수정에 시간이 들기 때문입니다.",
+  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.":
+    "작업 시간이 늘어날 수 있습니다. 상담 한 번에 약 2분이 걸립니다. 측정 결과 상담한 스레드는 약 1.1배의 시간이 걸렸고, 10개 중 1개는 1.4배 이상 걸렸습니다.",
 };

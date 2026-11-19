@@ -253,14 +253,13 @@ export const threadEnvironment = {
   setReviewMode: "setReviewMode",
 };
 type ModeInput = { advisorMode?: "on" | "off" | null; reviewMode?: "on" | "off" | null };
-export const useOrchestrationCommand =
-  (command: string) => async (call: { input: ModeInput }) => {
-    record([command, call]);
-    if (command === "setReviewMode") threadReviewMode = call.input.reviewMode ?? null;
-    else threadAdvisorMode = call.input.advisorMode ?? null;
-    version += 1;
-    for (const listener of listeners) listener();
-  };
+export const useOrchestrationCommand = (command: string) => async (call: { input: ModeInput }) => {
+  record([command, call]);
+  if (command === "setReviewMode") threadReviewMode = call.input.reviewMode ?? null;
+  else threadAdvisorMode = call.input.advisorMode ?? null;
+  version += 1;
+  for (const listener of listeners) listener();
+};
 
 // state/queries: consult items carry their output, so nothing is fetched.
 export const useTurnItemDetail = (target: unknown) => {

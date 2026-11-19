@@ -253,10 +253,7 @@ export function ThreadAdvisorMenu(props: {
       ) : null}
       {showReview ? (
         <ThreadReviewMenuItems
-          state={threadReviewMenuState(
-            shell.source.reviewMode,
-            projectSettings.adversarialReview,
-          )}
+          state={threadReviewMenuState(shell.source.reviewMode, projectSettings.adversarialReview)}
           separated={props.separated || showAdvisor}
           onChoose={(reviewMode) => {
             void setReviewMode({
