@@ -85,9 +85,10 @@ that message in, the app archives the advisor's child thread; nobody has to ackn
 ## Who advises
 
 **Advisor model** names the model to try first, then the project's Complex track follows. Left at
-its default, the order is the Complex track alone, which starts with Claude Fable 5.2 until you
-change the track. The Review track is never part of it, so the model that reviews the work
-does not also advise it. The app takes the first entry that can run now.
+its default, the order is the Complex track alone, which starts with Claude Fable 5.2 when an
+account can run it now. The order never reads the Review track, though a model on both tracks can
+still both advise and review. The brief takes the first entry that can run now; Claude's own
+advisor takes the first entry without checking its usage first.
 
 Through Claude's own advisor, a thread on that first model is advised by the same model: a Fable
 5.2 thread gets Fable 5.2, with the whole conversation in view. A brief never goes to the thread's
