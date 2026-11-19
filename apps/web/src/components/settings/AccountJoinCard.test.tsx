@@ -474,6 +474,10 @@ describe("allowing the chosen machine", () => {
     expect(view.text()).toContain(
       "It also gets a key to this machine for a year: terminals, files, settings and sign-ins",
     );
+    // 1422 AC-03: the other machine's app is not part of this Allow; its code comes later.
+    expect(view.text()).toContain(
+      "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.",
+    );
     await act(async () => view.button("Allow M1")?.props.onClick());
     expect(requestConfirmDialog).not.toHaveBeenCalled();
     expect(joinAccountMachineForWorkers).toHaveBeenCalledOnce();

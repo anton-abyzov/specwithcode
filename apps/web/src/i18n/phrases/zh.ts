@@ -5092,8 +5092,8 @@ export const zh: PhraseCatalog = {
     "它还会获得这台电脑的密钥，有效期一年：终端、文件、设置和登录，以及权限、更新和技能。项目限制仍然有效。",
   "It stops using {machine} right away. To use it again, it asks with a new code.":
     "它会立即停止使用 {machine}。要再次使用，它需要用新代码申请。",
-  "Its app was approved here with a code, so it can use this machine, and agents on this machine can now run work on it. You can change or remove it in Settings > Machines.":
-    "它的应用已在这里通过代码获得批准，因此它可以使用这台电脑，这台电脑上的智能体现在也可以在它上面运行工作。你可以在 设置 > 机器 中更改或移除它。",
+  "Its app was approved here with a code, so it can open this machine. Agents here can now run work on {label}; its agents can't run work here unless you allow that in Settings > Machines. To open {label} from this app, type the code shown here into {label} once.":
+    "它的应用已在这里通过代码获得批准，因此可以打开这台电脑。这里的智能体现在可以在 {label} 上运行工作；除非你在 设置 > 机器 中允许，否则它的智能体不能在这里工作。要从此应用打开 {label}，请在 {label} 上输入这里显示的代码一次。",
   "Kept by the update": "因更新而保留",
   "Kept by the update. Check this list.": "因更新而保留。请检查此列表。",
   Later: "稍后",
@@ -5142,8 +5142,8 @@ export const zh: PhraseCatalog = {
   "{label} joined": "{label} 已加入",
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine} 不再允许此设备连接。请在 {machine} 上的 SpecWithCode 中重新批准。",
-  "Allow lets that device's SpecWithCode app open {machine} and do what this app can here: chats, terminals, files, settings and sign-ins. Letting another machine's agents run work here is a separate choice.":
-    "允许后，该设备上的 SpecWithCode 应用可以打开 {machine}，并像此应用一样在这里使用聊天、终端、文件、设置和登录。是否让另一台机器的智能体在这里工作，是另一项单独的选择。",
+  "Allow lets that device's SpecWithCode app open {machine} and do everything this app can here: chats and the work they start, terminals, files, settings, sign-ins, and approving or removing other devices. Letting another machine's agents run work here is a separate choice.":
+    "允许后，该设备上的 SpecWithCode 应用可以打开 {machine}，并在这里做此应用能做的一切：聊天及其启动的工作、终端、文件、设置、登录，以及批准或移除其他设备。是否让另一台机器的智能体在这里工作，是另一项单独的选择。",
   "Asked at {time}": "申请于 {time}",
   "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.":
     "名称是设备自己起的。只有代码能证明它就是你眼前的设备，所以只允许你能在它上面看到的代码。",
@@ -5700,4 +5700,7 @@ export const zh: PhraseCatalog = {
     "一次交接最多 {n} 个线程。其余的之后再交接。",
   "{provider} sign-in expired on {machine}": "{machine} 上的 {provider} 登录已过期",
   "{provider} sign-in expired": "{provider} 登录已过期",
+  "Its app": "它的应用",
+  "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
+    "当那台电脑的应用打开这台电脑时，会请求一次代码：代码显示在那边，你在这里输入。",
 };

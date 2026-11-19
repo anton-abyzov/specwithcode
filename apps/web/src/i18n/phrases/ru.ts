@@ -5304,8 +5304,8 @@ export const ru: PhraseCatalog = {
     "Оно также получает ключ к этой машине на год: терминалы, файлы, настройки и входы, а также доступ, обновления и навыки. Ограничения проектов продолжают действовать.",
   "It stops using {machine} right away. To use it again, it asks with a new code.":
     "Оно сразу перестаёт использовать {machine}. Чтобы снова получить доступ, оно запросит его с новым кодом.",
-  "Its app was approved here with a code, so it can use this machine, and agents on this machine can now run work on it. You can change or remove it in Settings > Machines.":
-    "Его приложение одобрено здесь по коду, поэтому оно может использовать эту машину, а агенты этой машины теперь могут запускать на нём работу. Изменить или удалить его можно в «Настройки > Машины».",
+  "Its app was approved here with a code, so it can open this machine. Agents here can now run work on {label}; its agents can't run work here unless you allow that in Settings > Machines. To open {label} from this app, type the code shown here into {label} once.":
+    "Его приложение одобрено здесь по коду, поэтому оно может открывать эту машину. Агенты этой машины теперь могут запускать работу на {label}; его агенты не могут работать здесь, пока вы не разрешите это в «Настройки > Машины». Чтобы открыть {label} из этого приложения, один раз введите на {label} код, показанный здесь.",
   "Kept by the update": "Сохранено при обновлении",
   "Kept by the update. Check this list.": "Сохранено при обновлении. Проверьте этот список.",
   Later: "Позже",
@@ -5355,8 +5355,8 @@ export const ru: PhraseCatalog = {
   "{label} joined": "Подключено: {label}",
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine} больше не пускает это устройство. Одобрите его снова в SpecWithCode на {machine}.",
-  "Allow lets that device's SpecWithCode app open {machine} and do what this app can here: chats, terminals, files, settings and sign-ins. Letting another machine's agents run work here is a separate choice.":
-    "«Разрешить» даёт приложению SpecWithCode на этом устройстве открыть {machine} и делать здесь то же, что это приложение: чаты, терминалы, файлы, настройки и входы в аккаунты. Пускать ли сюда агентов другой машины, решается отдельно.",
+  "Allow lets that device's SpecWithCode app open {machine} and do everything this app can here: chats and the work they start, terminals, files, settings, sign-ins, and approving or removing other devices. Letting another machine's agents run work here is a separate choice.":
+    "«Разрешить» даёт приложению SpecWithCode на этом устройстве открыть {machine} и делать здесь всё, что может это приложение: чаты и запущенную из них работу, терминалы, файлы, настройки, входы в аккаунты, а также одобрять и удалять другие устройства. Пускать ли сюда агентов другой машины, решается отдельно.",
   "Asked at {time}": "Запрос в {time}",
   "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.":
     "Имя устройство выбирает само. Доказывает, что это устройство перед вами, только код, поэтому разрешайте лишь код, который видите на нём.",
@@ -5947,4 +5947,7 @@ export const ru: PhraseCatalog = {
     "За одну передачу уходит до {n} тредов. Остальные передайте потом.",
   "{provider} sign-in expired on {machine}": "Вход в {provider} на {machine} истёк",
   "{provider} sign-in expired": "Вход в {provider} истёк",
+  "Its app": "Его приложение",
+  "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
+    "Когда приложение той машины откроет эту, оно один раз попросит код: код показывается там, а вводите его здесь.",
 };

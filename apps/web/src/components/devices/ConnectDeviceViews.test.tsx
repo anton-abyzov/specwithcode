@@ -223,7 +223,7 @@ describe("the approval pop-up with several devices (1406)", () => {
   it("says what Allow opens, apart from another machine's agents (1422)", async () => {
     await open([first]);
     expect(prompt()!.querySelector("[data-device-approval-grants]")!.textContent).toBe(
-      "Allow lets that device's SpecWithCode app open m4 and do what this app can here: chats, terminals, files, settings and sign-ins. Letting another machine's agents run work here is a separate choice.",
+      "Allow lets that device's SpecWithCode app open m4 and do everything this app can here: chats and the work they start, terminals, files, settings, sign-ins, and approving or removing other devices. Letting another machine's agents run work here is a separate choice.",
     );
   });
 

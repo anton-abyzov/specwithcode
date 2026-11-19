@@ -5240,8 +5240,8 @@ export const ko: PhraseCatalog = {
     "또한 이 컴퓨터의 키를 1년 동안 받습니다. 터미널, 파일, 설정, 로그인과 함께 권한, 업데이트, 스킬이 포함됩니다. 프로젝트 제한은 계속 적용됩니다.",
   "It stops using {machine} right away. To use it again, it asks with a new code.":
     "즉시 {machine}을(를) 사용할 수 없게 됩니다. 다시 사용하려면 새 코드로 요청해야 합니다.",
-  "Its app was approved here with a code, so it can use this machine, and agents on this machine can now run work on it. You can change or remove it in Settings > Machines.":
-    "해당 앱이 여기서 코드로 승인되어 이 컴퓨터를 사용할 수 있으며, 이제 이 컴퓨터의 에이전트도 그곳에서 작업을 실행할 수 있습니다. 설정 > 머신에서 변경하거나 제거할 수 있습니다.",
+  "Its app was approved here with a code, so it can open this machine. Agents here can now run work on {label}; its agents can't run work here unless you allow that in Settings > Machines. To open {label} from this app, type the code shown here into {label} once.":
+    "해당 앱이 여기서 코드로 승인되어 이 컴퓨터를 열 수 있습니다. 이제 여기의 에이전트가 {label}에서 작업을 실행할 수 있습니다. {label}의 에이전트는 설정 > 머신에서 허용하지 않으면 여기서 작업할 수 없습니다. 이 앱에서 {label}을(를) 열려면 여기에 표시되는 코드를 {label}에서 한 번 입력하세요.",
   "Kept by the update": "업데이트로 유지됨",
   "Kept by the update. Check this list.": "업데이트로 유지되었습니다. 이 목록을 확인하세요.",
   Later: "나중에",
@@ -5290,8 +5290,8 @@ export const ko: PhraseCatalog = {
   "{label} joined": "{label} 참여함",
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine}에서 더 이상 이 기기의 연결을 허용하지 않습니다. {machine}의 SpecWithCode에서 다시 승인하세요.",
-  "Allow lets that device's SpecWithCode app open {machine} and do what this app can here: chats, terminals, files, settings and sign-ins. Letting another machine's agents run work here is a separate choice.":
-    "허용하면 그 기기의 SpecWithCode 앱이 {machine}을(를) 열고 이 앱처럼 채팅, 터미널, 파일, 설정, 로그인을 사용할 수 있습니다. 다른 머신의 에이전트가 여기서 작업하게 할지는 별도의 선택입니다.",
+  "Allow lets that device's SpecWithCode app open {machine} and do everything this app can here: chats and the work they start, terminals, files, settings, sign-ins, and approving or removing other devices. Letting another machine's agents run work here is a separate choice.":
+    "허용하면 그 기기의 SpecWithCode 앱이 {machine}을(를) 열고 이 앱이 여기서 할 수 있는 모든 일을 할 수 있습니다. 채팅과 채팅이 시작하는 작업, 터미널, 파일, 설정, 로그인, 다른 기기의 승인과 제거까지 포함됩니다. 다른 머신의 에이전트가 여기서 작업하게 할지는 별도의 선택입니다.",
   "Asked at {time}": "{time}에 요청",
   "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.":
     "이름은 기기가 스스로 정한 것입니다. 눈앞의 기기임을 증명하는 것은 코드뿐이니, 그 기기에서 읽을 수 있는 코드만 허용하세요.",
@@ -5882,4 +5882,7 @@ export const ko: PhraseCatalog = {
     "한 번의 인계로 최대 {n}개 스레드가 갑니다. 나머지는 그다음에 인계하세요.",
   "{provider} sign-in expired on {machine}": "{machine}의 {provider} 로그인이 만료되었습니다",
   "{provider} sign-in expired": "{provider} 로그인이 만료되었습니다",
+  "Its app": "해당 앱",
+  "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
+    "그 컴퓨터의 앱이 이 컴퓨터를 열 때 한 번 코드를 요청합니다. 코드는 그쪽에 표시되고, 여기서 입력합니다.",
 };

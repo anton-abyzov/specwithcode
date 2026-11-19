@@ -707,6 +707,13 @@ function JoinCardAction({
             "Not sent on their own. Each secret transfer asks first, and that card appears on the machine that asks, not on this one.",
           )}
         </dd>
+        {/* 1422 AC-03: the other machine's app is a separate device approval here. */}
+        <dt className="text-muted-foreground">{tx("Its app")}</dt>
+        <dd>
+          {tx(
+            "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.",
+          )}
+        </dd>
       </dl>
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" disabled={blocked} onClick={() => onAllow?.()}>
