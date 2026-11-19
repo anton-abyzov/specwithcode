@@ -134,6 +134,7 @@ import {
   SPOTLIGHT_TRIES,
   newTexts,
   showsNoSpotlight,
+  stillHome,
   center,
   jaccard,
   pageSignature,
@@ -496,14 +497,24 @@ export async function runCheck(deps, options = {}) {
   // showed, no search field took the text: that judges nothing, so Spotlight is
   // opened again, up to SPOTLIGHT_TRIES times. Returns what the last try saw when
   // every try ended that way; `seen` holds the reading after typing. A reading
-  // where `shown` finds the field is judged at once. With `reopen`, a search
-  // the home key closed to tell it from the home screen is opened again.
-  const typeInSpotlight = async (text, name, waitMs, shown, reopen = false) => {
+  // where `shown` finds the field is judged at once. The text cursor can bend
+  // the last letter in one reading, so up to `reads` readings are taken, the
+  // cursor's blink apart and with no input between, before anything else is
+  // decided; `readings` says how many were. With `reopen`, a search the home
+  // key closed to tell it from the home screen is opened again.
+  let readings = 0;
+  const typeInSpotlight = async (text, name, waitMs, shown, reopen = false, reads = 1) => {
     for (let tries = 1; ; tries++) {
       const { home, opened } = await freshSearch();
       await call("computer_type", { text });
       await deps.sleep(waitMs);
       seen = await look();
+      readings = 1;
+      while (!shown(seen) && readings < reads) {
+        await deps.sleep(config.blinkMs);
+        seen = await look();
+        readings++;
+      }
       if (shown(seen)) return undefined;
       const after = seen;
       let gone = showsNoSpotlight(after.lines, home.lines);
@@ -517,7 +528,7 @@ export async function runCheck(deps, options = {}) {
         seen = after;
         if (!gone && reopen && tries < SPOTLIGHT_TRIES) {
           note(
-            `${stamp()} ${name}: Spotlight showed new text but no "${text}" field over the home screen, and the home key closed it (try ${tries} of ${SPOTLIGHT_TRIES}); read ${describeLines(after.lines.slice(0, 6))}`,
+            `${stamp()} ${name}: no "${text}" field read, and the reading over the home screen showed text that went away with the home key, so Spotlight is opened again (try ${tries} of ${SPOTLIGHT_TRIES}); read ${describeLines(after.lines.slice(0, 6))}`,
           );
           continue;
         }
@@ -534,32 +545,32 @@ export async function runCheck(deps, options = {}) {
   for (const sample of TYPE_SAMPLES) {
     try {
       await step(`type "${sample}"`, async () => {
-        const gone = await typeInSpotlight(sample, `type "${sample}"`, config.settleMs, (reading) =>
-          reading.lines.some((line) => readField(line.text, sample)?.count === 0),
+        // A wrong key reads wrong on every reading; a bent last letter does not.
+        const gone = await typeInSpotlight(
+          sample,
+          `type "${sample}"`,
+          config.settleMs,
+          (reading) =>
+            reading.lines.some((line) => {
+              const field = readField(line.text, sample);
+              return field?.count === 0 && field.after !== "other";
+            }),
+          false,
+          TYPE_READS,
         );
         if (gone !== undefined) {
           unsure(`type "${sample}"`, noSpotlight(gone));
           return;
         }
-        // The text cursor can bend the last letter in one reading, so a field not
-        // read as typed is read again after the cursor blinked, with no input
-        // between: a wrong key reads wrong every time.
-        let fields;
-        let found;
-        let reads = 0;
-        while (true) {
-          reads++;
-          fields = seen.lines
-            .map((line) => ({ line, field: readField(line.text, sample) }))
-            .filter((entry) => entry.field !== undefined && entry.field.count === 0);
-          found = fields.some((entry) => entry.field.after !== "other");
-          if (found || reads >= TYPE_READS) break;
-          await deps.sleep(config.blinkMs);
-          seen = await look();
-        }
+        const fields = seen.lines
+          .map((line) => ({ line, field: readField(line.text, sample) }))
+          .filter((entry) => entry.field !== undefined && entry.field.count === 0);
+        const found = fields.some((entry) => entry.field.after !== "other");
         const unclear = fields.find((entry) => entry.field.after === "other");
         const onRead =
-          reads === 1 ? "" : ` on reading ${reads} of ${TYPE_READS}, the cursor's blink apart`;
+          readings === 1
+            ? ""
+            : ` on reading ${readings} of ${TYPE_READS}, the cursor's blink apart`;
         if (!found && unclear !== undefined) {
           unsure(
             `type "${sample}"`,
@@ -571,7 +582,7 @@ export async function runCheck(deps, options = {}) {
             found,
             found
               ? `shown on the phone${onRead}; ${front()}`
-              : `not shown as typed in ${reads} readings, the cursor's blink apart; last read ${describeLines(seen.lines.slice(0, 12))}; ${front()}`,
+              : `not shown as typed in ${readings} readings, the cursor's blink apart; last read ${describeLines(seen.lines.slice(0, 12))}; ${front()}`,
           );
         }
       });
@@ -765,7 +776,7 @@ export async function runCheck(deps, options = {}) {
         (readField(still.text, name).after === "suggestion" ||
           seen.lines.some((line) => line !== still && normalize(line.text) === normalize(name)))
           ? `Spotlight still showed ${JSON.stringify(still.text)}`
-          : showsNoSpotlight(seen.lines, lastHome)
+          : stillHome(seen.lines, lastHome)
             ? "the phone showed only its home screen"
             : undefined;
       return { reading: seen, closed, tapped };

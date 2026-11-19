@@ -122,6 +122,22 @@ export function showsNoSpotlight(lines, home, again) {
   return extra.every((text) => stays.has(text));
 }
 
+/**
+ * Whether a reading after an app was asked to open is still the home screen:
+ * most home labels show again, and the labels it shows that the home screen
+ * did not are few next to them. Text recognition misreads a label or two on
+ * every reading, and the text of other windows in the margins shows on every
+ * screen, so neither alone decides it.
+ */
+export function stillHome(lines, home) {
+  const before = labels(home);
+  if (before.length === 0) return false;
+  const now = labels(lines);
+  const kept = new Set(before.filter((text) => now.includes(text)));
+  const added = new Set(now.filter((text) => !before.includes(text)));
+  return kept.size >= HOME_SHARE * new Set(before).size && added.size <= kept.size / 2;
+}
+
 export const center = (line) => ({
   x: Math.round(line.x + line.width / 2),
   y: Math.round(line.y + line.height / 2),
