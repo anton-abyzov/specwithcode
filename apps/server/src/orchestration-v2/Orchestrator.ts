@@ -209,6 +209,11 @@ import {
   wakesLeftOnAnotherInstance,
 } from "./QueueFollowsThread.ts";
 import {
+  failedRunBreakerRefusal,
+  isBreakerGuardedQueuedMessage,
+  isBreakerGuardedRun,
+} from "./RunFailureBreaker.ts";
+import {
   cancelledForUpdate,
   holdForPerson,
   holdForRestart,
@@ -1736,6 +1741,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   // is released or expires. The failed run that asked for the start is kept so
   // a queue behind a provider failure is still held then.
   const heldQueueThreadIds = new Map<ThreadId, RunId | undefined>();
+  // A person's Resume after a failed-run streak lets one queued run past the
+  // breaker. It is bound to the run that is next when the queue is first
+  // checked after it ("next" until then), so a retry that checks later still
+  // honours it and no other run ever passes on it. Only a Resume's first
+  // commit grants it; a replay of its receipt does not.
+  const breakerConsent = new Map<ThreadId, RunId | "next">();
   let heldQueueWaiter = false;
   const startQueuesAfterHold: Effect.Effect<void> = Effect.gen(function* () {
     yield* updateHold.awaitReleased;
@@ -2001,7 +2012,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const compactedForRetry =
         failedRun?.status === "completed" &&
         failedRun.userMessageId.startsWith(`${CONTEXT_COMPACT_MESSAGE_PREFIX}${threadId}:`);
+      // A routine fire or provider retry queued before the streak began would
+      // start as the thread's next failure; it waits for a person like a
+      // dispatched one is refused (RunFailureBreaker). A person's Resume
+      // starts the one run it is bound to; an automatic release does not count.
+      if (breakerConsent.get(threadId) === "next") breakerConsent.set(threadId, nextRun.id);
+      const breakerHolds =
+        breakerConsent.get(threadId) !== nextRun.id &&
+        failedRunBreakerRefusal(
+          isBreakerGuardedQueuedMessage(
+            nextRun.userMessageId,
+            threadId,
+            nextMessage?.scheduledTaskId,
+          ),
+          projection.runs,
+        ) !== null;
       if (
+        breakerHolds ||
         compactedForRetry ||
         shouldHoldQueueAfterFailure({
           failure: failure ?? undefined,
@@ -5820,6 +5847,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandId: command.commandId,
           commandType: command.type,
           cause: handoffRefusal,
+        });
+      }
+      // A thread whose last runs all failed stops re-running itself.
+      const breakerRefusal = failedRunBreakerRefusal(isBreakerGuardedRun(command), projection.runs);
+      if (breakerRefusal !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: breakerRefusal,
         });
       }
       // Provider fallback continues a stopped thread by itself, on the same
@@ -13397,6 +13433,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
+      // A replayed Resume grants nothing: only its first commit is the person's choice.
       if (command.type === "queue.resume" || command.type === "queued-message.steer-settle") {
         yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
       }
@@ -13565,6 +13602,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         detail: committed.receipt.error ?? "Previously rejected.",
       });
     }
+    if (command.type === "queue.resume") breakerConsent.set(command.threadId, "next");
     if (command.type === "queue.resume" || command.type === "queued-message.steer-settle") {
       yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
     }
