@@ -3,6 +3,7 @@
  * A clone's staging folder while it is being set up (1390, P2-35): from the
  * moment its mark can be read, a sweep in this server knows the clone is live.
  */
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "@effect/vitest";
@@ -66,5 +67,43 @@ describe("project sync: a sweep while a clone is being set up (P2-35)", () => {
     } finally {
       process.env.GIT_CONFIG_GLOBAL = "/dev/null";
     }
+  });
+
+  it("leaves a marked folder another process is filling, and says so (R5-07)", async () => {
+    const f = twoMachines();
+    const root = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(f.base, "project-")));
+    const folder = NodeFS.mkdtempSync(NodePath.join(root, ".swc-clone-lib-"));
+    const name = NodePath.basename(folder);
+    // Another server process marks the folder as its clone step does, and keeps running.
+    const moduleUrl = new URL("./cloneStaging.ts", import.meta.url).href;
+    const other = NodeChildProcess.spawn(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `const m = await import(${JSON.stringify(moduleUrl)});` +
+          `await m.markCloneStaging(${JSON.stringify(folder)});` +
+          'console.log("marked"); setInterval(() => {}, 1000);',
+      ],
+      { stdio: ["ignore", "pipe", "inherit"] },
+    );
+    const ended = new Promise((resolve) => other.on("exit", resolve));
+    try {
+      await new Promise<void>((resolve, reject) => {
+        other.stdout.on("data", (chunk: Buffer) => {
+          if (chunk.toString().includes("marked")) resolve();
+        });
+        other.on("exit", () => reject(new Error("the other process ended early")));
+      });
+      const kept = await sweepCloneLeftovers(root, [name]);
+      expect(NodeFS.existsSync(NodePath.join(folder, "swc-clone-staging"))).toBe(true);
+      expect(kept).toEqual({ failed: [], live: [name] });
+    } finally {
+      other.kill();
+    }
+    await ended;
+    // Its owner is gone now: the folder is a leftover, and goes.
+    expect(await sweepCloneLeftovers(root, [name])).toEqual({ failed: [], live: [] });
+    expect(NodeFS.existsSync(folder)).toBe(false);
   });
 });
