@@ -5357,8 +5357,8 @@ export const ja: PhraseCatalog = {
   "{label} joined": "{label} が参加しました",
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine} はこのデバイスの接続を許可しなくなりました。{machine} の SpecWithCode でもう一度承認してください。",
-  "Allow lets that device's SpecWithCode app open {machine} and do everything this app can here: chats and the work they start, terminals, files, settings, sign-ins, and approving or removing other devices. Letting another machine's agents run work here is a separate choice.":
-    "許可すると、そのデバイスの SpecWithCode アプリが {machine} を開き、このアプリにできることをすべてここで行えるようになります。チャットとそこから始まる作業、ターミナル、ファイル、設定、サインイン、ほかのデバイスの承認や削除も含みます。別のマシンのエージェントにここで作業させるかどうかは、別の設定です。",
+  "Allow lets that device's SpecWithCode app open {machine} and use its chats and the work they start, terminals, files, settings and sign-ins, and approve or remove other devices. Letting another machine's agents run work here is a separate choice.":
+    "許可すると、そのデバイスの SpecWithCode アプリが {machine} を開き、チャットとそこから始まる作業、ターミナル、ファイル、設定、サインインを使い、ほかのデバイスを承認または削除できるようになります。別のマシンのエージェントにここで作業させるかどうかは、別の設定です。",
   "Asked at {time}": "{time} に申請",
   "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.":
     "名前はデバイスが自分で付けたものです。目の前のデバイスであることを証明するのはコードだけなので、そのデバイスに表示されたコードだけを許可してください。",

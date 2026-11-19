@@ -5290,8 +5290,8 @@ export const ko: PhraseCatalog = {
   "{label} joined": "{label} 참여함",
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine}에서 더 이상 이 기기의 연결을 허용하지 않습니다. {machine}의 SpecWithCode에서 다시 승인하세요.",
-  "Allow lets that device's SpecWithCode app open {machine} and do everything this app can here: chats and the work they start, terminals, files, settings, sign-ins, and approving or removing other devices. Letting another machine's agents run work here is a separate choice.":
-    "허용하면 그 기기의 SpecWithCode 앱이 {machine}을(를) 열고 이 앱이 여기서 할 수 있는 모든 일을 할 수 있습니다. 채팅과 채팅이 시작하는 작업, 터미널, 파일, 설정, 로그인, 다른 기기의 승인과 제거까지 포함됩니다. 다른 머신의 에이전트가 여기서 작업하게 할지는 별도의 선택입니다.",
+  "Allow lets that device's SpecWithCode app open {machine} and use its chats and the work they start, terminals, files, settings and sign-ins, and approve or remove other devices. Letting another machine's agents run work here is a separate choice.":
+    "허용하면 그 기기의 SpecWithCode 앱이 {machine}을(를) 열고 채팅과 채팅이 시작하는 작업, 터미널, 파일, 설정, 로그인을 사용하며 다른 기기를 승인하거나 제거할 수 있습니다. 다른 머신의 에이전트가 여기서 작업하게 할지는 별도의 선택입니다.",
   "Asked at {time}": "{time}에 요청",
   "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.":
     "이름은 기기가 스스로 정한 것입니다. 눈앞의 기기임을 증명하는 것은 코드뿐이니, 그 기기에서 읽을 수 있는 코드만 허용하세요.",

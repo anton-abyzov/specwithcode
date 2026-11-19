@@ -5357,8 +5357,8 @@ export const pt: PhraseCatalog = {
   "{label} joined": "{label} entrou",
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine} não deixa mais este dispositivo entrar. Aprove de novo no SpecWithCode em {machine}.",
-  "Allow lets that device's SpecWithCode app open {machine} and do everything this app can here: chats and the work they start, terminals, files, settings, sign-ins, and approving or removing other devices. Letting another machine's agents run work here is a separate choice.":
-    "Permitir deixa o app SpecWithCode desse dispositivo abrir {machine} e fazer aqui tudo o que este app faz: chats e o trabalho que eles iniciam, terminais, arquivos, configurações, logins, e aprovar ou remover outros dispositivos. Deixar os agentes de outra máquina trabalharem aqui é uma escolha à parte.",
+  "Allow lets that device's SpecWithCode app open {machine} and use its chats and the work they start, terminals, files, settings and sign-ins, and approve or remove other devices. Letting another machine's agents run work here is a separate choice.":
+    "Permitir deixa o app SpecWithCode desse dispositivo abrir {machine} e usar os chats e o trabalho que eles iniciam, terminais, arquivos, configurações e logins, e aprovar ou remover outros dispositivos. Deixar os agentes de outra máquina trabalharem aqui é uma escolha à parte.",
   "Asked at {time}": "Pedido às {time}",
   "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.":
     "O nome é o próprio dispositivo que escolhe. Só o código prova que é o dispositivo na sua frente, então permita apenas um código que você consiga ler nele.",

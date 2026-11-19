@@ -5142,8 +5142,8 @@ export const zh: PhraseCatalog = {
   "{label} joined": "{label} 已加入",
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine} 不再允许此设备连接。请在 {machine} 上的 SpecWithCode 中重新批准。",
-  "Allow lets that device's SpecWithCode app open {machine} and do everything this app can here: chats and the work they start, terminals, files, settings, sign-ins, and approving or removing other devices. Letting another machine's agents run work here is a separate choice.":
-    "允许后，该设备上的 SpecWithCode 应用可以打开 {machine}，并在这里做此应用能做的一切：聊天及其启动的工作、终端、文件、设置、登录，以及批准或移除其他设备。是否让另一台机器的智能体在这里工作，是另一项单独的选择。",
+  "Allow lets that device's SpecWithCode app open {machine} and use its chats and the work they start, terminals, files, settings and sign-ins, and approve or remove other devices. Letting another machine's agents run work here is a separate choice.":
+    "允许后，该设备上的 SpecWithCode 应用可以打开 {machine}，使用其中的聊天及其启动的工作、终端、文件、设置和登录，并批准或移除其他设备。是否让另一台机器的智能体在这里工作，是另一项单独的选择。",
   "Asked at {time}": "申请于 {time}",
   "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.":
     "名称是设备自己起的。只有代码能证明它就是你眼前的设备，所以只允许你能在它上面看到的代码。",
