@@ -14,9 +14,16 @@ import {
 } from "./confinement.ts";
 import { exists, JsonLog, lstatOrNull } from "./durable.ts";
 import { type GitResult, originCandidates, remoteEnv, runGit } from "./git.ts";
+import {
+  gitAdminFolders,
+  gitCheckedOut,
+  gitDirtyPaths,
+  gitTouchedPaths,
+} from "./gitConfinement.ts";
 import { hashFile, type RepositoryInfo } from "./manifest.ts";
 import { isSafeRelativePath, linkTargetOnWire } from "./paths.ts";
 import { stagedPath } from "./pullWorker.ts";
+import { repairWorktree, type Gate } from "./worktreeRepair.ts";
 import type { FileAction, GitStep, Plan } from "./reconcile.ts";
 
 /**
@@ -28,6 +35,8 @@ import type { FileAction, GitStep, Plan } from "./reconcile.ts";
  */
 export type JournalEntry =
   | { readonly t: "root-created"; readonly path: string }
+  /** Which folder the target was when the first run began: a retry writes only into that one. */
+  | { readonly t: "root-identity"; readonly identity: string }
   | { readonly t: "mkdir"; readonly path: string }
   | { readonly t: "backup"; readonly path: string; readonly backup: string }
   | {
@@ -132,14 +141,6 @@ function refusalLines(refused: ReadonlyArray<RefusedEntry>): Array<string> {
   );
 }
 
-/** What Apply uses to hold a write to folders the user controls alone. */
-interface Gate {
-  /** The chain read before a write; null when it fails, with the entry recorded as refused. */
-  readonly enter: (relative: string) => Promise<ChainReading | null>;
-  /** The chain read again after the write: a failure or another folder stops the copy. */
-  readonly leave: (relative: string, before: ChainReading) => Promise<void>;
-}
-
 export interface RepositoryCheck {
   readonly repo: string;
   readonly ok: boolean;
@@ -168,6 +169,15 @@ export interface ApplyInput {
   readonly unstable?: ReadonlySet<string>;
   /** Where the folder checks read the file system; tests stand in another owner here. */
   readonly confinement?: Partial<ConfinementSeam>;
+  /**
+   * What the person approved: whether the target was missing or empty (`empty`)
+   * or a reviewed tree, and which folder it was (device and file id; null when
+   * it did not exist). The first run refuses anything else standing there.
+   */
+  readonly approved?: {
+    readonly kind: "empty" | "reviewed";
+    readonly identity: string | null;
+  };
 }
 
 const absoluteIn = (root: string, relative: string) => {
@@ -247,13 +257,20 @@ export async function removePartials(
  * Moves `from` to `to`, copying across volumes; links are moved as links. A copy
  * lands under a temporary name first, so `to` never holds half an entry.
  */
-export async function moveEntry(from: string, to: string, journalFile: string): Promise<void> {
+export async function moveEntry(
+  from: string,
+  to: string,
+  journalFile: string,
+  /** False for a move into the target, whose folders Apply has made and checked one by one. */
+  makeParents = true,
+): Promise<void> {
   try {
     await NodeFSP.rename(from, to);
     return;
   } catch (cause) {
     const code = (cause as NodeJS.ErrnoException).code;
     if (code === "ENOENT") {
+      if (!makeParents) throw cause;
       // The usual case has its folder already; create it only when the rename says so.
       await NodeFSP.mkdir(NodePath.dirname(to), { recursive: true, mode: 0o700 });
       try {
@@ -289,6 +306,8 @@ interface FolderState {
   readonly created: Set<string>;
   /** Folders checked as real folders (not links) in this batch; each is lstat'ed once per batch. */
   readonly verified: Set<string>;
+  /** Makes one missing folder private and verifies it before use; stops the copy when it is not. */
+  readonly make: (absolute: string, prefix: string) => Promise<void>;
 }
 
 /**
@@ -312,8 +331,8 @@ async function ensureFolders(root: string, relative: string, folders: FolderStat
       if (!folders.created.has(prefix))
         await folders.journal.append({ t: "mkdir", path: prefix }, true);
       folders.created.add(prefix);
-      // Private until the copy commits.
-      await NodeFSP.mkdir(current, { mode: 0o700 });
+      // Private until the copy commits, and verified before anything goes in.
+      await folders.make(current, prefix);
     }
     folders.verified.add(prefix);
   }
@@ -420,15 +439,6 @@ export async function applyPlan(input: ApplyInput): Promise<ApplyResult> {
   );
   /** Every recorded write intent, earlier runs' and this one's. */
   const intents = new Set(replayed.keys());
-  const folders: FolderState = {
-    journal,
-    created: new Set(
-      previous
-        .filter((entry) => entry.t === "mkdir")
-        .map((entry) => (entry as { path: string }).path),
-    ),
-    verified: new Set(),
-  };
   const warnings: Array<string> = [];
   const root = input.targetRoot;
   const guard = new Confinement(root, input.confinement);
@@ -453,6 +463,21 @@ export async function applyPlan(input: ApplyInput): Promise<ApplyResult> {
     error.written = [...landed];
     return error;
   };
+  const folders: FolderState = {
+    journal,
+    created: new Set(
+      previous
+        .filter((entry) => entry.t === "mkdir")
+        .map((entry) => (entry as { path: string }).path),
+    ),
+    verified: new Set(),
+    make: async (absolute, prefix) => {
+      const reason = await guard.create(absolute);
+      if (reason) throw stopped({ folder: prefix, reason });
+    },
+  };
+  /** The folder the target was when the first run began. */
+  let pinnedRoot: string | null = null;
   const leave = async (relative: string, before: ChainReading) => {
     const after = await guard.chain(relative);
     if (after.failure) throw stopped(after.failure);
@@ -463,6 +488,8 @@ export async function applyPlan(input: ApplyInput): Promise<ApplyResult> {
   const guarded = async <T>(relative: string, act: () => Promise<T>): Promise<T> => {
     const before = await guard.chain(relative);
     if (before.failure) throw stopped(before.failure);
+    if (pinnedRoot !== null && before.identities.get(".") !== pinnedRoot)
+      throw stopped({ folder: ".", reason: "folder-changed" });
     const result = await act();
     await leave(relative, before);
     return result;
@@ -483,9 +510,44 @@ export async function applyPlan(input: ApplyInput): Promise<ApplyResult> {
       path,
       `Nothing was copied: ${folderName(failure.folder)} is ${CONFINEMENT_REASON_TEXT[failure.reason]}, so another user could redirect the copy.`,
     );
+  const changed = (detail: string) => new ApplyRefusedError("changed-since-preview", ".", detail);
+  /**
+   * Before a Git command: every folder of the repository's Git data, and every
+   * folder holding a working file the command changes, passes the rule, or the
+   * command does not run. Git writes there itself; nothing can stand beside it.
+   */
+  const confineGit = async (repo: string, touched: ReadonlyArray<string> | null) => {
+    const name = repo === "." ? "the root repository" : repo;
+    const admin = await gitAdminFolders(root, repo);
+    if (admin === null || touched === null)
+      throw new ApplyRefusedError(
+        "git-failed",
+        repo,
+        `Git was not run in ${name}: the folders it would write into could not be listed.`,
+      );
+    const prefix = repo === "." ? "" : `${repo}/`;
+    const entries = [
+      ...admin.map((folder) => `${folder}/x`),
+      ...touched.map((path) => prefix + path),
+    ];
+    await guard.prime(entries.flatMap((entry) => guard.folders(entry).map(([, path]) => path)));
+    const memo = new Map<string, ConfinementFailure | string | null>();
+    for (const entry of entries) {
+      const { failure } = await guard.chain(entry, undefined, memo);
+      if (!failure) continue;
+      const error = new ApplyRefusedError(
+        failure.reason,
+        failure.folder,
+        `Git was not run in ${name}: ${folderName(failure.folder)} is ${CONFINEMENT_REASON_TEXT[failure.reason]}.`,
+      );
+      error.folder = failure.folder;
+      error.written = [...landed];
+      throw error;
+    }
+  };
   /** The folders a Git step works in: down to the repository, or to its parent when the step makes it. */
   const repositoryChain = (step: GitStep) =>
-    step.kind === "replace" || step.kind === "clone" || step.kind === "add-worktree"
+    step.kind === "replace" || step.kind === "add-worktree"
       ? step.repo
       : step.repo === "."
         ? "."
@@ -537,6 +599,29 @@ export async function applyPlan(input: ApplyInput): Promise<ApplyResult> {
     // is left out and named; the rest is applied.
     const anchored = await guard.anchor();
     if (anchored) throw refusedHere(anchored, anchored.folder);
+    // Approval binds the copy to one folder: the one reviewed, or the one the first run made.
+    const standing = await guard.rootIdentity();
+    const recorded = previous.find((entry) => entry.t === "root-identity");
+    const madeBefore = previous.some((entry) => entry.t === "root-created");
+    const holdsSomething = async () =>
+      standing !== null && (await NodeFSP.readdir(root)).length > 0;
+    if (recorded) {
+      if (standing !== recorded.identity) throw stopped({ folder: ".", reason: "folder-changed" });
+    } else if (madeBefore) {
+      // An earlier run made the folder and stopped before recording which one it was.
+      if (await holdsSomething()) throw stopped({ folder: ".", reason: "folder-changed" });
+    } else if (input.approved) {
+      if (input.approved.identity === null && standing !== null)
+        throw changed(
+          "The target folder did not exist when the copy was approved and does now; review the copy again.",
+        );
+      if (input.approved.identity !== null && standing !== input.approved.identity)
+        throw stopped({ folder: ".", reason: "folder-changed" });
+      if (input.approved.kind === "empty" && (await holdsSomething()))
+        throw changed(
+          "The target folder was empty when the copy was approved and is not now; review the copy again.",
+        );
+    }
     /** Paths the plan itself replaces: a file or link there is not on the way, Apply makes the folder. */
     const replaced = new Set(backups.keys());
     for (const step of steps) if (step.kind === "replace") replaced.add(step.repo);
@@ -562,8 +647,18 @@ export async function applyPlan(input: ApplyInput): Promise<ApplyResult> {
     if (!(await exists(root))) {
       if (!previous.some((entry) => entry.t === "root-created"))
         await journal.append({ t: "root-created", path: root }, true);
-      await makePrivateFolders(root);
+      await makePrivateFolders(root, async (part) => {
+        const reason = await guard.create(part);
+        if (reason) throw refusedHere({ folder: part, reason }, part);
+      });
       rootCreated = true;
+    }
+    if (recorded) pinnedRoot = recorded.identity;
+    else {
+      pinnedRoot = await guard.rootIdentity();
+      if (pinnedRoot === null) throw stopped({ folder: ".", reason: "not-a-folder" });
+      // Durable with the next sync, which every change of the target waits for.
+      await journal.append({ t: "root-identity", identity: pinnedRoot });
     }
 
     // Before files: replaced folders go to the backup; clones and added worktrees create their folders.
@@ -575,29 +670,42 @@ export async function applyPlan(input: ApplyInput): Promise<ApplyResult> {
       }
       if (step.kind === "clone") {
         if (!previous.some((entry) => entry.t === "cloned" && entry.path === step.repo)) {
-          await guarded(step.repo, async () => {
+          // Git makes everything below the repository's folder, which is private and verified first.
+          await guarded(repositoryChain(step), async () => {
             await ensureFolders(root, `${step.repo}/x`, folders);
             await journal.append({ t: "cloned", path: step.repo }, true);
             await cloneRepository(root, step, warnings);
           });
         } else if (!(await exists(NodePath.join(absoluteIn(root, step.repo), ".git"))))
           // The journal names a clone before it runs: a Retry clones what never arrived.
-          await guarded(step.repo, () => cloneRepository(root, step, warnings));
+          await guarded(repositoryChain(step), () => cloneRepository(root, step, warnings));
       }
     }
     for (const step of steps)
       if (step.kind === "existing" && step.fetch)
-        await guarded(repositoryChain(step), () => fetchStaged(input, step));
+        await guarded(repositoryChain(step), async () => {
+          await confineGit(step.mainRepository ?? step.repo, []);
+          await fetchStaged(input, step);
+        });
     for (const step of steps)
       if (
         step.kind === "add-worktree" &&
         !previous.some((entry) => entry.t === "worktree-added" && entry.path === step.repo)
       )
-        await guarded(step.repo, () => addWorktree(input, step, journal, warnings));
+        await guarded(step.repo, async () => {
+          if (step.mainRepository) await confineGit(step.mainRepository, []);
+          // Git fills the worktree's folder; Apply makes it, private, first.
+          await ensureFolders(root, `${step.repo}/x`, folders);
+          await addWorktree(input, step, journal, warnings);
+        });
     // Branches move before work files: the source's uncommitted changes go on top of its commit.
     for (const step of steps)
       if (step.kind === "existing")
-        await guarded(repositoryChain(step), () => reconcileRefs(input, step, journal, previous));
+        await guarded(repositoryChain(step), () =>
+          reconcileRefs(input, step, journal, previous, (touched) =>
+            confineGit(step.repo, touched),
+          ),
+        );
 
     /**
      * A write marked done by an earlier run whose target is gone: its rename was
@@ -613,6 +721,19 @@ export async function applyPlan(input: ApplyInput): Promise<ApplyResult> {
       );
     };
 
+    /** Repositories whose working files a Git step of this plan checks out. */
+    const checkouts = new Set(
+      steps
+        .filter((step) => step.kind !== "copy" && step.kind !== "replace")
+        .map((step) => step.repo),
+    );
+    const checkedOutHere = async (action: FileAction) => {
+      const repo = action.entry?.repo;
+      if (repo === null || repo === undefined || !checkouts.has(repo)) return false;
+      const prefix = repo === "." ? "" : `${repo}/`;
+      if (!action.writePath.startsWith(prefix)) return false;
+      return gitCheckedOut(absoluteIn(root, repo), action.writePath.slice(prefix.length));
+    };
     const listings = new Map<string, ReadonlyArray<string>>();
     const applyAction = async (action: FileAction) => {
       const target = action.writePath;
@@ -635,6 +756,21 @@ export async function applyPlan(input: ApplyInput): Promise<ApplyResult> {
           target,
           `${target} changed after the preview; review the copy again.`,
         );
+      // A file where the reviewed plan saw nothing is someone's work since the review: it is
+      // refused, not backed up and replaced. Only a checkout by this copy's own Git step may put one there.
+      if (
+        present?.isFile() &&
+        (action.kind === "write" || action.kind === "keep-both" || action.kind === "link") &&
+        !action.replaces &&
+        !backups.has(target) &&
+        !replayed.has(target) &&
+        !(await checkedOutHere(action))
+      )
+        throw new ApplyRefusedError(
+          "changed-since-preview",
+          target,
+          `${target} appeared after the preview; review the copy again.`,
+        );
       if (action.kind === "mkdir") {
         if (!present?.isDirectory()) {
           if (present) await clear(target, location, present);
@@ -642,7 +778,7 @@ export async function applyPlan(input: ApplyInput): Promise<ApplyResult> {
             await journal.append({ t: "mkdir", path: target }, true);
           folders.created.add(target);
           // Private until the copy commits; its own mode comes then.
-          await NodeFSP.mkdir(location, { mode: 0o700 });
+          await folders.make(location, target);
         }
         folders.verified.add(target);
         return;
@@ -683,7 +819,7 @@ export async function applyPlan(input: ApplyInput): Promise<ApplyResult> {
       } else {
         const staged = stagedPath(input.stagingRoot, action.path);
         if (!(await exists(staged))) throw new ApplyRefusedError("staged-missing", action.path);
-        await moveEntry(staged, location, input.journalFile);
+        await moveEntry(staged, location, input.journalFile, false);
       }
       landed.push(target);
       await journal.append({ t: "write-done", path: target });
@@ -741,17 +877,36 @@ export async function applyPlan(input: ApplyInput): Promise<ApplyResult> {
     }
 
     // After files: worktree repair for copied repositories, then verification.
+    /** Copied worktrees whose pointer could not be repaired safely: Git cannot read them yet. */
+    const unrepaired = new Set<string>();
     for (const step of steps) {
       if (step.kind !== "copy") continue;
       const info = byRepo.get(step.repo);
       if (info?.kind === "linked" && info.mainRepository !== null)
-        await repairWorktree(root, info, journal, warnings, gate);
+        if (
+          !(await repairWorktree(
+            root,
+            { path: info.path, mainRepository: info.mainRepository },
+            (entry) => journal.append(entry, true),
+            warnings,
+            gate,
+          ))
+        )
+          unrepaired.add(step.repo);
     }
     const restored = await restoreSnapshotFiles(input, intents, folders, previous, warnings, gate);
     const checks: Array<RepositoryCheck> = [];
     for (const step of steps)
       if (step.kind === "copy" || step.kind === "replace")
-        checks.push(await verifyRepository(input, step, byRepo.get(step.repo)));
+        checks.push(
+          unrepaired.has(step.repo)
+            ? {
+                repo: step.repo,
+                ok: false,
+                problems: ["Its .git file still names the source machine's folders."],
+              }
+            : await verifyRepository(input, step, byRepo.get(step.repo)),
+        );
     // Commit: the folders this copy made get their final mode, deepest first, so
     // a parent is still private while its children change.
     if (process.platform !== "win32") {
@@ -768,11 +923,18 @@ export async function applyPlan(input: ApplyInput): Promise<ApplyResult> {
         const final = mode & ~0o022;
         if (!stat?.isDirectory() || (stat.mode & 0o777) === final) continue;
         await guarded(prefix, () => NodeFSP.chmod(location, final));
+        // The folder itself, with its new mode, still passes.
+        const after = await guard.chain(`${prefix}/x`);
+        if (after.failure) throw stopped(after.failure);
       }
-      if (previous.some((entry) => entry.t === "root-created") || rootCreated) {
+      if (madeBefore || rootCreated) {
         const again = await guard.anchor();
         if (again) throw stopped(again);
         await NodeFSP.chmod(root, usual & ~0o022);
+        const after = (await guard.anchor()) ?? (await guard.chain(".")).failure;
+        if (after) throw stopped(after);
+        if ((await guard.rootIdentity()) !== pinnedRoot)
+          throw stopped({ folder: ".", reason: "folder-changed" });
       }
     }
     await journal.append({ t: "done" }, true);
@@ -787,13 +949,13 @@ export async function applyPlan(input: ApplyInput): Promise<ApplyResult> {
  * Creates `folder` and what is missing above it one part at a time, each private
  * (0700): a recursive mkdir would walk through a link put there meanwhile.
  */
-async function makePrivateFolders(folder: string) {
+async function makePrivateFolders(folder: string, create: (part: string) => Promise<void>) {
   const missing: Array<string> = [];
   for (let current = folder; !(await lstatOrNull(current)); current = NodePath.dirname(current)) {
     missing.unshift(current);
     if (NodePath.dirname(current) === current) break;
   }
-  for (const part of missing) await NodeFSP.mkdir(part, { mode: 0o700 });
+  for (const part of missing) await create(part);
 }
 
 /** The write intent for a file or link action: what its target should hold afterwards. */
@@ -918,10 +1080,13 @@ async function reconcileRefs(
   step: GitStep,
   journal: JsonLog<JournalEntry>,
   previous: ReadonlyArray<JournalEntry>,
+  /** Refuses unless Git's data folders, and the folders of these working files, are the user's alone. */
+  confine: (touched: ReadonlyArray<string> | null) => Promise<void>,
 ) {
   const cwd = absoluteIn(input.targetRoot, step.repo);
   const main = absoluteIn(input.targetRoot, step.mainRepository ?? step.repo);
   const namespace = `refs/swc-incoming/${input.operationId}`;
+  await confine([]);
   const checkedOut =
     (
       await runGit(cwd, ["symbolic-ref", "-q", "--short", "HEAD"], { allowFailure: true })
@@ -978,6 +1143,7 @@ async function reconcileRefs(
     const resumed = previous.some((entry) => entry.t === "head" && entry.repo === step.repo);
     if (head !== step.sourceHead) {
       if (step.stashDestination && !resumed && (await trackedChanges(cwd))) {
+        await confine(await gitDirtyPaths(cwd));
         const message = `swc-handoff-${input.operationId}`;
         // Git's stash helper builds its own pathspecs. Inheriting literal mode
         // leaves quoted untracked names (such as spaces) behind after stash push.
@@ -1002,6 +1168,8 @@ async function reconcileRefs(
           previous,
         );
       }
+      // The move rewrites working files: every folder holding one is checked before Git runs.
+      await confine(await gitTouchedPaths(cwd, head, step.sourceHead));
       const command =
         step.moveHead === "fast-forward"
           ? ["merge", "--ff-only", "-q", step.sourceHead]
@@ -1061,70 +1229,6 @@ async function addWorktree(
   const result = await runGit(main, args, { allowFailure: true });
   if (result.code !== 0)
     throw new ApplyRefusedError("git-failed", step.repo, "Adding the worktree failed.");
-}
-
-/**
- * A copied linked worktree's `.git` file names its main repository by absolute
- * path. Point it at the copy, then let Git repair the main repository's record.
- */
-async function repairWorktree(
-  root: string,
-  info: RepositoryInfo,
-  journal: JsonLog<JournalEntry>,
-  warnings: Array<string>,
-  gate: Gate,
-) {
-  const location = absoluteIn(root, info.path);
-  const gitFile = NodePath.join(location, ".git");
-  const pointer = info.path === "." ? ".git" : `${info.path}/.git`;
-  const before = await gate.enter(pointer);
-  // Rewritten in place below: never through a link standing where the pointer file was.
-  if (!before || !(await lstatOrNull(gitFile))?.isFile()) {
-    warnings.push(`${info.path}: its .git file was left as copied; run git worktree repair there.`);
-    return;
-  }
-  const text = await NodeFSP.readFile(gitFile, "utf8").catch(() => null);
-  const match = text ? /^gitdir:\s*(.+?)\s*$/m.exec(text) : null;
-  if (!match) {
-    warnings.push(`${info.path}: its .git file could not be read; run git worktree repair there.`);
-    return;
-  }
-  const name = NodePath.basename(match[1]!);
-  const main = absoluteIn(root, info.mainRepository!);
-  const adminDir = NodePath.join(main, ".git", "worktrees", name);
-  if (!(await exists(adminDir))) {
-    warnings.push(
-      `${info.path}: its main repository has no record for it; run git worktree repair there.`,
-    );
-    return;
-  }
-  // Git writes the pointer with `/` on Windows; compare in native form.
-  if (NodePath.resolve(match[1]!) !== adminDir) {
-    // Rewrite in place: Windows refuses to recreate a hidden file, and Git
-    // hides `.git` there.
-    const handle = await NodeFSP.open(gitFile, "r+");
-    try {
-      await handle.truncate(0);
-      await handle.write(`gitdir: ${adminDir}\n`, 0);
-    } finally {
-      await handle.close();
-    }
-  }
-  await runGit(main, ["worktree", "repair", location], { allowFailure: true });
-  await gate.leave(pointer, before);
-  // Both pointers now name this machine's paths; record them so Undo does not mistake them for edits.
-  for (const file of [gitFile, NodePath.join(adminDir, "gitdir")]) {
-    const hashed = await hashFile(file, false).catch(() => null);
-    if (hashed)
-      await journal.append(
-        {
-          t: "rewritten",
-          path: NodePath.relative(root, file).split(NodePath.sep).join("/"),
-          sha256: hashed.sha256,
-        },
-        true,
-      );
-  }
 }
 
 const STATUS_PATHS_NAMED = 20;
@@ -1265,7 +1369,7 @@ async function restoreSnapshotFiles(
         const before = await gate.enter(full);
         if (!before) continue;
         await ensureFolders(root, full, folders);
-        await moveEntry(staged, absoluteIn(root, full), input.journalFile);
+        await moveEntry(staged, absoluteIn(root, full), input.journalFile, false);
         await gate.leave(full, before);
         restored.add(full);
       }

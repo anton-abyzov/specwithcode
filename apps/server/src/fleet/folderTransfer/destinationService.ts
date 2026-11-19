@@ -123,6 +123,15 @@ export interface DestinationRecord {
   readonly sourceMachine: string;
   readonly mode: "copy-only" | "copy-and-move";
   readonly targetFolder: string;
+  /**
+   * Frozen at approval: whether the target was missing or empty, and which
+   * folder it was (device and file id, null when missing). Apply writes only
+   * into that folder.
+   */
+  readonly targetApproved?: {
+    readonly kind: "empty" | "reviewed";
+    readonly identity: string | null;
+  };
   readonly title: string;
   readonly selection: ReadonlyArray<FileClass>;
   readonly purpose?: "add-to-machine" | "review";
@@ -707,6 +716,7 @@ export class DestinationCopies {
         ...unfinished,
         ...(saved ? { lan: saved } : {}),
         state: "approved",
+        targetApproved: await approvedTarget(record.targetFolder),
         disk: { needed, free },
         ...(sourceMoved ? { warnings: [...record.warnings, SOURCE_MOVED] } : {}),
         error: null,
@@ -1358,6 +1368,7 @@ export class DestinationCopies {
       sourceRepositories: manifest.header.repositories,
       leftBehind: leftBehind(manifest, unstable),
       unstable,
+      ...(record.targetApproved ? { approved: record.targetApproved } : {}),
     });
     // Apply's lines first: they name any folder it refused, and the list is cut.
     const warnings = [...result.warnings, ...record.warnings].slice(0, 200);
@@ -1668,6 +1679,16 @@ const SOURCE_MOVED =
   "The source changed after its scan. This copy carries the scanned files and history; files that change during the copy are read again.";
 
 /** Every row is left out or new with nothing here: no source change could overwrite work here. */
+/** The target as the person approved it: which folder stands there, and whether it holds anything. */
+async function approvedTarget(
+  folder: string,
+): Promise<NonNullable<DestinationRecord["targetApproved"]>> {
+  const stat = await NodeFSP.lstat(folder, { bigint: true }).catch(() => null);
+  if (!stat) return { kind: "empty", identity: null };
+  const empty = stat.isDirectory() && (await NodeFSP.readdir(folder)).length === 0;
+  return { kind: empty ? "empty" : "reviewed", identity: `${stat.dev}:${stat.ino}` };
+}
+
 function nothingHere(plan: Plan): boolean {
   return plan.rows.every(
     (row) =>

@@ -25,8 +25,8 @@ export function isSafeRelativePath(value: string, platform: NodeJS.Platform = pr
 /** The longest name a destination takes, in UTF-8 bytes: the bound of byte-limited file systems. */
 export const MAX_PART_BYTES = 255;
 
-/** Names Windows gives to devices, with or without an extension. */
-const WINDOWS_DEVICE_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
+/** Names Windows gives to devices, with or without an extension; a port's digit may be superscript. */
+const WINDOWS_DEVICE_NAME = /^(?:con|prn|aux|nul|(?:com|lpt)[1-9\u00b9\u00b2\u00b3])(?:\..*)?$/i;
 
 /**
  * The rule a destination applies to a path it is about to create. On top of

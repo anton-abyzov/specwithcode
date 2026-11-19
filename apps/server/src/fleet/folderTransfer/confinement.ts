@@ -61,6 +61,11 @@ export interface ConfinementSeam {
   readonly lstat: (path: string) => Promise<Stat | null>;
   /** Access beyond permission bits, per path. A missing answer means it could not be read. */
   readonly access: (paths: ReadonlyArray<string>) => Promise<ReadonlyMap<string, FolderAccess>>;
+  /**
+   * Makes a folder Apply just created the user's alone where permission bits do
+   * not: on Windows an explicit owner and DACL in place of what it inherited.
+   */
+  readonly secure: (path: string) => Promise<void>;
 }
 
 const WRITE_RIGHTS = new Set([
@@ -85,6 +90,20 @@ export function darwinAclGrantsOthers(listing: string, user: string): boolean {
     if (entry[3]!.split(",").some((right) => WRITE_RIGHTS.has(right.trim()))) return true;
   }
   return false;
+}
+
+/**
+ * False when a listing of one folder marks an ACL (`+` after the permission
+ * bits) but holds no entry, or a line that is not an entry this reader knows:
+ * what it cannot read it does not call private.
+ */
+export function darwinListingReadable(listing: string): boolean {
+  const [heading = "", ...rest] = listing.split("\n");
+  const lines = rest.filter((line) => line.trim().length > 0);
+  if (!lines.every((line) => /^\s*\d+:\s+.+?\s+(?:inherited\s+)?(?:allow|deny)\s+\S/.test(line)))
+    return false;
+  const marked = (heading.split(/\s+/)[0] ?? "").charAt(10) === "+";
+  return marked ? lines.length > 0 : true;
 }
 
 /** SYSTEM, Administrators and TrustedInstaller, as SDDL writes them. */
@@ -123,7 +142,17 @@ function sddlMask(rights: string): bigint {
   return mask;
 }
 
-/** Owner and effective write grants from a folder's security descriptor (SDDL). */
+const SDDL_SID = "(?:S-[\\d-]+|[A-Z]{2})";
+/** Owner, group, then the DACL's flags and entries; the SACL after it grants nothing. */
+const SDDL_SHAPE = new RegExp(
+  `^O:(${SDDL_SID})(?:G:${SDDL_SID})?(?:D:([A-Z_]*?)((?:\\([^)]*\\))*))?(?:S:.*)?$`,
+);
+
+/**
+ * Owner and effective write grants from a folder's security descriptor (SDDL).
+ * No DACL at all (a null DACL) lets everyone do everything; a DACL with no
+ * entries lets nobody do anything. A descriptor this cannot read counts as open.
+ */
 export function windowsAccess(
   sddl: string,
   userSid: string,
@@ -132,11 +161,15 @@ export function windowsAccess(
   readonly othersMayWrite: boolean;
   readonly othersMayReplace: boolean;
 } {
-  const ownerSid = /^O:(S-[\d-]+|[A-Z]{2})/.exec(sddl)?.[1] ?? "";
+  const shape = SDDL_SHAPE.exec(sddl.trim());
+  if (!shape) return { owner: "other", othersMayWrite: true, othersMayReplace: true };
+  const ownerSid = shape[1]!;
   const owner = ownerSid === userSid ? "user" : WINDOWS_TRUSTED.has(ownerSid) ? "trusted" : "other";
+  if (shape[2] === undefined || shape[2].includes("NO_ACCESS_CONTROL"))
+    return { owner, othersMayWrite: true, othersMayReplace: true };
   let othersMayWrite = false;
   let othersMayReplace = false;
-  for (const ace of sddl.matchAll(/\(([^)]*)\)/g)) {
+  for (const ace of (shape[3] ?? "").matchAll(/\(([^)]*)\)/g)) {
     const [type, flags, rights, , , sid] = ace[1]!.split(";");
     // Allow entries only; an inherit-only entry applies to children, which are checked themselves.
     if (!["A", "OA", "XA", "ZA"].includes(type ?? "") || (flags ?? "").includes("IO")) continue;
@@ -149,7 +182,11 @@ export function windowsAccess(
   return { owner, othersMayWrite, othersMayReplace };
 }
 
-function run(command: string, args: ReadonlyArray<string>, input = ""): Promise<string> {
+function run(
+  command: string,
+  args: ReadonlyArray<string>,
+  input = "",
+): Promise<{ readonly output: string; readonly ok: boolean }> {
   return new Promise((resolve) => {
     const child = NodeChildProcess.spawn(command, args, {
       stdio: ["pipe", "pipe", "ignore"],
@@ -157,9 +194,10 @@ function run(command: string, args: ReadonlyArray<string>, input = ""): Promise<
     });
     const chunks: Array<Buffer> = [];
     child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
-    // A path that vanished makes `ls` exit non-zero; what it did list still counts.
-    child.on("error", () => resolve(""));
-    child.on("close", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    child.on("error", () => resolve({ output: "", ok: false }));
+    child.on("close", (code) =>
+      resolve({ output: Buffer.concat(chunks).toString("utf8"), ok: code === 0 }),
+    );
     child.stdin.on("error", () => undefined);
     child.stdin.end(input);
   });
@@ -170,28 +208,59 @@ const ACCESS_BATCH = 200;
 async function darwinAccess(paths: ReadonlyArray<string>): Promise<Map<string, FolderAccess>> {
   const user = NodeOS.userInfo().username;
   const result = new Map<string, FolderAccess>();
-  for (let start = 0; start < paths.length; start += ACCESS_BATCH) {
-    const batch = paths.slice(start, start + ACCESS_BATCH);
-    const output = await run("/bin/ls", ["-lde", "--", ...batch]);
+  const read = async (batch: ReadonlyArray<string>): Promise<void> => {
+    const listed = await run("/bin/ls", ["-lde", "--", ...batch]);
+    if (!listed.ok) {
+      // One path that cannot be listed fails the call: ask one at a time, and leave that one unread.
+      if (batch.length > 1) for (const path of batch) await read([path]);
+      return;
+    }
     let current: string | null = null;
     let lines: Array<string> = [];
     const close = () => {
-      if (current !== null)
-        result.set(current, { othersMayWrite: darwinAclGrantsOthers(lines.join("\n"), user) });
+      if (current === null) return;
+      const listing = lines.join("\n");
+      if (darwinListingReadable(listing))
+        result.set(current, { othersMayWrite: darwinAclGrantsOthers(listing, user) });
     };
-    for (const line of output.split("\n")) {
+    for (const line of listed.output.split("\n")) {
       if (/^\s+\d+:\s/.test(line)) {
         lines.push(line);
         continue;
       }
       close();
-      lines = [];
+      lines = [line];
       // The folder a heading names: the longest asked path the line ends with.
       current =
         batch.filter((path) => line.endsWith(` ${path}`)).sort((a, b) => b.length - a.length)[0] ??
         null;
     }
     close();
+  };
+  for (let start = 0; start < paths.length; start += ACCESS_BATCH)
+    await read(paths.slice(start, start + ACCESS_BATCH));
+  return result;
+}
+
+/**
+ * File systems where a POSIX ACL cannot grant more than the group permission
+ * bits show (its mask is those bits): ext, XFS, Btrfs, tmpfs, overlayfs, ZFS,
+ * F2FS, bcachefs. Anywhere else (network, FUSE, FAT) the bits are not known to
+ * be the whole story, and the folder reads as unreadable.
+ */
+const POSIX_MASK_FILE_SYSTEMS = new Set([
+  0xef53, 0x58465342, 0x9123683e, 0x01021994, 0x794c7630, 0x2fc12fc1, 0xf2f52010, 0xca451a4e,
+]);
+
+async function linuxAccess(paths: ReadonlyArray<string>): Promise<Map<string, FolderAccess>> {
+  const result = new Map<string, FolderAccess>();
+  for (const path of paths) {
+    const type = await NodeFSP.statfs(path).then(
+      (stat) => Number(stat.type),
+      () => null,
+    );
+    if (type !== null && POSIX_MASK_FILE_SYSTEMS.has(type))
+      result.set(path, { othersMayWrite: false });
   }
   return result;
 }
@@ -210,11 +279,12 @@ const FILE_ATTRIBUTE_REPARSE_POINT = 0x400;
 
 async function windowsAccessOf(paths: ReadonlyArray<string>): Promise<Map<string, FolderAccess>> {
   const result = new Map<string, FolderAccess>();
-  const output = await run(
+  const { output, ok } = await run(
     "powershell.exe",
     ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_SCRIPT],
     paths.map((path) => `${path}\n`).join(""),
   );
+  if (!ok) return result;
   const lines = output.split(/\r?\n/);
   paths.forEach((path, index) => {
     const [state, sid, attributes, sddl] = (lines[index] ?? "").split("\t");
@@ -225,6 +295,33 @@ async function windowsAccessOf(paths: ReadonlyArray<string>): Promise<Map<string
     });
   });
   return result;
+}
+
+let windowsUser: Promise<string> | null = null;
+
+/**
+ * Replaces what a new folder inherited with an explicit owner and DACL: the
+ * user, SYSTEM and Administrators, and nobody else. A failure shows in the
+ * check that follows, which reads the folder's access again.
+ */
+async function windowsSecure(path: string): Promise<void> {
+  windowsUser ??= run("powershell.exe", [
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    "[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
+  ]).then((result) => result.output.trim());
+  const sid = await windowsUser;
+  if (!/^S-[\d-]+$/.test(sid)) return;
+  await run("icacls.exe", [path, "/setowner", `*${sid}`]);
+  await run("icacls.exe", [
+    path,
+    "/inheritance:r",
+    "/grant:r",
+    `*${sid}:(OI)(CI)F`,
+    "*S-1-5-18:(OI)(CI)F",
+    "*S-1-5-32-544:(OI)(CI)F",
+  ]);
 }
 
 const lstatOrNull = (path: string): Promise<Stat | null> =>
@@ -247,8 +344,11 @@ function defaultSeam(overrides: Partial<ConfinementSeam> = {}): ConfinementSeam 
         ? darwinAccess
         : platform === "win32"
           ? windowsAccessOf
-          : // A POSIX ACL's mask is the group permission bits: no entry grants more than they show.
-            async (paths) => new Map(paths.map((path) => [path, { othersMayWrite: false }]))),
+          : platform === "linux"
+            ? linuxAccess
+            : // Unknown rules: no answer, so every folder reads as unreadable.
+              async () => new Map()),
+    secure: overrides.secure ?? (platform === "win32" ? windowsSecure : async () => undefined),
   };
 }
 
@@ -315,14 +415,17 @@ export class Confinement {
     stat: Stat,
     above: { readonly next: Stat | null } | null,
   ): Promise<ConfinementReason | null> {
+    // A name that does not exist yet belongs to whoever may add it: no leniency above it.
+    const missing = above !== null && above.next === null;
     if (stat.isSymbolicLink()) return "link-in-path";
     if (!stat.isDirectory()) return "not-a-folder";
     const access = await this.accessOf(path, stat);
     if (access === null) return "acl-unreadable";
     if (access.reparsePoint) return "link-in-path";
     if (this.seam.platform === "win32") {
-      // Administrators are outside the threat model, and an elevated user's folders belong to that group.
+      // Above the target SYSTEM and Administrators may own a folder; inside it only the user.
       if (access.owner === undefined || access.owner === "other") return "not-owned";
+      if (!above && access.owner !== "user") return "not-owned";
     } else {
       const uid = Number(stat.uid);
       if (uid !== this.seam.uid && !(above && uid === 0)) return "not-owned";
@@ -339,7 +442,10 @@ export class Confinement {
         if (mode & 0o020) return "group-writable";
       }
     }
-    const open = above ? (access.othersMayReplace ?? access.othersMayWrite) : access.othersMayWrite;
+    const open =
+      above && !missing
+        ? (access.othersMayReplace ?? access.othersMayWrite)
+        : access.othersMayWrite;
     return open ? "acl-entry" : null;
   }
 
@@ -379,11 +485,36 @@ export class Confinement {
         return { folder: child, reason: "link-in-path" };
       hops += 1;
       if (hops > MAX_LINK_HOPS) return { folder: child, reason: "link-in-path" };
-      const named = NodePath.resolve(current, await NodeFSP.readlink(child));
-      const namedRoot = NodePath.parse(named).root;
-      pending = [...named.slice(namedRoot.length).split(NodePath.sep).filter(Boolean), ...pending];
-      current = namedRoot;
+      // Followed part by part as the system would. Text that climbs back up is
+      // refused: after another link, `..` does not lead where the text suggests.
+      const text = await NodeFSP.readlink(child);
+      const textRoot = NodePath.parse(text).root;
+      const parts = text
+        .slice(textRoot.length)
+        .split(NodePath.sep)
+        .filter((item) => item !== "" && item !== ".");
+      if (parts.includes("..")) return { folder: child, reason: "link-in-path" };
+      pending = [...parts, ...pending];
+      if (textRoot) current = textRoot;
     }
+  }
+
+  /**
+   * Makes one missing folder under a parent that passed: private from its first
+   * moment, secured where bits are not enough, and read back before anything
+   * uses it. Returns why it is not the user's alone, or null.
+   */
+  async create(path: string): Promise<ConfinementReason | null> {
+    await NodeFSP.mkdir(path, { mode: 0o700 });
+    await this.seam.secure(path);
+    const stat = await this.seam.lstat(path);
+    return stat ? this.judge(path, stat, null) : "not-a-folder";
+  }
+
+  /** The target folder as it reads now: which folder stands there, or null. */
+  async rootIdentity(): Promise<string | null> {
+    const stat = await this.seam.lstat(this.root);
+    return stat ? identityOf(stat) : null;
   }
 
   /** The folders an entry at `relative` is written through: the target, then each parent. */

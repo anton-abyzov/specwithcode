@@ -23,27 +23,92 @@ export interface DestinationState {
   readonly fingerprint?: string;
 }
 
+/** How the name rules of a volume are read; tests stand in a volume here. */
+export interface VolumeReader {
+  readonly lstat: (
+    path: string,
+  ) => Promise<{ readonly dev: bigint; readonly ino: bigint; isDirectory: () => boolean } | null>;
+  /** Names in a folder; a few are enough. */
+  readonly names: (folder: string) => Promise<ReadonlyArray<string>>;
+}
+
+const NAMES_READ = 4096;
+
+const volumeReader: VolumeReader = {
+  lstat: (path) =>
+    NodeFSP.lstat(path, { bigint: true }).catch((cause: unknown) => {
+      const code = (cause as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR") return null;
+      throw cause;
+    }),
+  names: async (folder) => {
+    const names: Array<string> = [];
+    const open = await NodeFSP.opendir(folder);
+    try {
+      for (
+        let entry = await open.read();
+        entry && names.length < NAMES_READ;
+        entry = await open.read()
+      )
+        names.push(entry.name);
+    } finally {
+      await open.close();
+    }
+    return names;
+  },
+};
+
 /**
- * True when the volume holding `directory` treats `A` and `a` as one name. The
- * probe file goes in the folder's parent, so the target itself is never touched.
+ * Whether the volume a copy into `target` lands on treats `A` and `a` as one
+ * name. Read from an entry that exists, never tested by writing: nothing is
+ * created or removed. The entry comes from the target itself, or from a folder
+ * above it on the same volume, so a mount point is judged by its own volume.
+ * When no entry can tell, or a read fails, the rules are unknown and the answer
+ * is the strict one: names that differ only by case are treated as one.
  */
-export async function caseInsensitiveAt(directory: string): Promise<boolean> {
-  let probe = NodePath.dirname(directory);
-  while (!(await exists(probe))) {
-    const parent = NodePath.dirname(probe);
-    if (parent === probe) break;
-    probe = parent;
-  }
-  const name = `.swc-case-probe-${process.pid}-${Date.now()}`;
-  const file = NodePath.join(probe, name);
+export async function volumeNameRules(
+  target: string,
+  reader: Partial<VolumeReader> = {},
+): Promise<{ readonly known: boolean; readonly caseInsensitive: boolean }> {
+  const { lstat, names } = { ...volumeReader, ...reader };
+  const unknown = { known: false, caseInsensitive: true };
   try {
-    await NodeFSP.writeFile(file, "", { flag: "wx" });
-    return await exists(NodePath.join(probe, name.toUpperCase()));
+    let folder = target;
+    let stat = await lstat(folder);
+    while (!stat) {
+      const parent = NodePath.dirname(folder);
+      if (parent === folder) return unknown;
+      folder = parent;
+      stat = await lstat(folder);
+    }
+    if (!stat.isDirectory()) return unknown;
+    const volume = stat.dev;
+    for (;;) {
+      for (const name of await names(folder)) {
+        const other = name === name.toUpperCase() ? name.toLowerCase() : name.toUpperCase();
+        if (other === name) continue;
+        const one = await lstat(NodePath.join(folder, name));
+        if (!one) continue;
+        const same = await lstat(NodePath.join(folder, other));
+        return {
+          known: true,
+          caseInsensitive: same !== null && same.dev === one.dev && same.ino === one.ino,
+        };
+      }
+      const parent = NodePath.dirname(folder);
+      if (parent === folder) return unknown;
+      const above = await lstat(parent);
+      if (!above || above.dev !== volume) return unknown;
+      folder = parent;
+    }
   } catch {
-    return process.platform === "darwin" || process.platform === "win32";
-  } finally {
-    await NodeFSP.rm(file, { force: true });
+    return unknown;
   }
+}
+
+/** True when the volume a copy into `directory` lands on treats `A` and `a` as one name, or cannot tell. */
+export async function caseInsensitiveAt(directory: string): Promise<boolean> {
+  return (await volumeNameRules(directory)).caseInsensitive;
 }
 
 /**
