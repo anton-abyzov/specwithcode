@@ -1333,8 +1333,8 @@ export const ja: PhraseCatalog = {
   Host: "ホスト",
   "Paste a full pairing URL here to fill both fields automatically.":
     "完全なペアリング URL をここに貼り付けると、両方の欄が自動で入力されます。",
-  "This machine is on your SpecWithCode Connect account. Use it as a fallback route.":
-    "このマシンは SpecWithCode Connect アカウントに登録されています。予備のルートとして使えます。",
+  "This machine is on your SpecWithCode Connect account. This app can open it through Connect too.":
+    "このマシンは SpecWithCode Connect アカウントに登録されています。このアプリは Connect 経由でも開けます。",
   "Add SpecWithCode Connect": "SpecWithCode Connect を追加",
   "Add route": "ルートを追加",
   "SSH host or alias": "SSH ホストまたはエイリアス",

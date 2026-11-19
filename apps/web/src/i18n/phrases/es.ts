@@ -1343,8 +1343,8 @@ export const es: PhraseCatalog = {
   Host: "Host",
   "Paste a full pairing URL here to fill both fields automatically.":
     "Pega aquí una URL de vinculación completa para rellenar ambos campos automáticamente.",
-  "This machine is on your SpecWithCode Connect account. Use it as a fallback route.":
-    "Este equipo está en tu cuenta de SpecWithCode Connect. Úsalo como ruta de respaldo.",
+  "This machine is on your SpecWithCode Connect account. This app can open it through Connect too.":
+    "Este equipo está en tu cuenta de SpecWithCode Connect. Esta app también puede abrirlo a través de Connect.",
   "Add SpecWithCode Connect": "Añadir SpecWithCode Connect",
   "Add route": "Añadir ruta",
   "SSH host or alias": "Host o alias SSH",
