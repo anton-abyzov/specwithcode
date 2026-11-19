@@ -605,6 +605,36 @@ describe("dry run", () => {
     );
   });
 
+  it("ends INVALID when the app in front cannot be read after bringing Mirroring forward", async () => {
+    // SpecWithCode stays in front through every recovery, then the last read fails,
+    // on the final home key after every check has passed.
+    const phone = simulatedPhone();
+    const call = phone.deps.call;
+    let passed = 0;
+    let reads = 0;
+    const stealing = () => passed >= 30;
+    phone.deps.onLine = (line) => {
+      if (line.startsWith("PASS ")) passed++;
+    };
+    phone.deps.call = async (tool, args) => {
+      if (tool === "computer_open" && stealing()) return { data: {} };
+      return call(tool, args);
+    };
+    const read = phone.deps.frontmost;
+    phone.deps.frontmost = async () => {
+      if (!stealing()) return read();
+      if (++reads > 3) throw new Error("osascript timed out");
+      return "SpecWithCode";
+    };
+    const result = await runCheck(phone.deps);
+    expect(passed).toBe(30);
+    expect(result.invalid).toBe(true);
+    expect(result.lines.some((entry) => entry.startsWith("Clicks landed"))).toBe(false);
+    expect(result.lines.at(-1)).toMatch(
+      /another app took the front: SpecWithCode was in front before computer_\w+ and bringing iPhone Mirroring forward failed \(osascript timed out\)/,
+    );
+  });
+
   it("never sends a key again after iPhone Mirroring left the front partway", async () => {
     const phone = simulatedPhone();
     const call = phone.deps.call;

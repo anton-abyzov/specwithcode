@@ -431,12 +431,16 @@ export async function runCheck(deps, options = {}) {
   // another app is there (a click on another window takes the front). The
   // product still decides where input goes; this only keeps Mirroring in front.
   const bringForward = async (tool) => {
+    // Once another app was seen in front, only a read showing iPhone Mirroring
+    // ends the loss; anything else, a failed read or open included, is that loss.
     let other;
     try {
-      for (let attempt = 1; attempt <= FRONT_TRIES; attempt++) {
+      for (let attempt = 1; ; attempt++) {
         const app = await frontmost();
-        if (app === undefined || app === MIRRORING_APP) return;
+        if (app === MIRRORING_APP || (app === undefined && other === undefined)) return;
+        if (app === undefined) throw new Error(`the app in front could not be read`);
         other = app;
+        if (attempt > FRONT_TRIES) break;
         note(
           `${stamp()} ${app} was in front before ${tool}; bringing ${MIRRORING_APP} forward (${attempt} of ${FRONT_TRIES})`,
         );
@@ -444,16 +448,12 @@ export async function runCheck(deps, options = {}) {
         await deps.sleep(config.settleMs);
       }
     } catch (error) {
-      // Another app was seen in front: a failed recovery is that loss, not a product result.
       if (other === undefined) throw error;
       throw lose(
         `${other} was in front before ${tool} and bringing ${MIRRORING_APP} forward failed (${error.message})`,
       );
     }
-    const app = await frontmost();
-    if (app !== undefined && app !== MIRRORING_APP) {
-      throw lose(`${app} took the front back ${FRONT_TRIES} times before ${tool}`);
-    }
+    throw lose(`${other} took the front back ${FRONT_TRIES} times before ${tool}`);
   };
   const lose = (reason) => {
     frontLost ??= `${reason}; keep hands off the Mac while the check runs`;
