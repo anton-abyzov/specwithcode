@@ -998,7 +998,7 @@ export const make = Effect.gen(function* () {
       yield* Effect.gen(function* () {
         // The lease and journal land before the thread exists, so its first run
         // starts under the takeover epoch and never repeats the source's side effects.
-        // The receipt beside them names this start once the replica is gone.
+        const hadRecord = (yield* document).threads[threadId] !== undefined;
         yield* updateDocument((current) => {
           const record = current.threads[threadId] ?? emptyThreadRecord(project.id);
           const next = {
@@ -1060,15 +1060,30 @@ export const make = Effect.gen(function* () {
                 }),
           })
           .pipe(
-            Effect.mapError((error) => {
+            Effect.catch((error) => {
               // Refused before the thread was asked for (a paused or missing project, an
-              // unknown repository): nothing exists here, so this is a "no" and the
-              // acceptance goes. Not after an earlier launch that was cut.
+              // unknown repository): the launch service raises these, with no thread
+              // id, before it creates anything. Nothing exists here, so this is a "no"
+              // and the acceptance goes. Not after an earlier launch that was cut.
               const before =
+                !cutBefore &&
                 error.threadId === undefined &&
                 (error.operation === "resolve-project" || error.operation === "resolve-repository");
-              if (before && !cutBefore) standing = false;
-              return refuse(before && !cutBefore ? 409 : 500, "failed", at(error.message));
+              if (!before) return Effect.fail(refuse(500, "failed", at(error.message)));
+              standing = false;
+              // The lease written above is for a thread that was never created.
+              return updateDocument((current) => {
+                if (hadRecord || current.threads[threadId] === undefined) {
+                  return [undefined, current] as const;
+                }
+                const threads = Object.fromEntries(
+                  Object.entries(current.threads).filter(([id]) => id !== threadId),
+                ) as typeof current.threads;
+                return [undefined, { ...current, threads }] as const;
+              }).pipe(
+                Effect.ignore,
+                Effect.andThen(Effect.fail(refuse(409, "failed", at(error.message)))),
+              );
             }),
           );
       }).pipe(
