@@ -127,6 +127,7 @@ import {
   pageSignature,
   tabAnchors,
   anchorIn,
+  backgroundOf,
   locateTabs,
   describeLines,
   scrolled,
@@ -463,11 +464,13 @@ export async function runCheck(deps, options = {}) {
   // 3. Typing into Spotlight on the phone -----------------------------------------
   // Each step starts from a fresh, emptied search field, so what one step left
   // there never decides the next.
+  let lastHome = [];
   // It returns a reading of the home screen and one taken after Spotlight was asked to open.
   const freshSearch = async () => {
     await call("computer_key", { keys: "cmd+1" });
     await deps.sleep(config.settleMs);
     const home = await look();
+    lastHome = home.lines;
     await call("computer_key", { keys: "cmd+3" });
     await deps.sleep(config.settleMs);
     await call("computer_key", { keys: "backspace", repeat: CLEAR_PRESSES });
@@ -865,6 +868,28 @@ export async function runCheck(deps, options = {}) {
           const reset = await tap(other);
           note(`reset tap on "${other}" before ${name} at (${reset.point.x}, ${reset.point.y})`);
         }
+        // With icon tabs a tap is judged only from the other tab's page, read
+        // before it: a page read as neither proves nothing about the tap.
+        if (located.icons) {
+          for (let tries = 1; anchorOf(other, signature(seen)) === undefined; tries++) {
+            if (tries > 2) {
+              unsure(
+                name,
+                `the "${other}" page could not be read before the tap on "${target}", so the tap cannot be judged; the page reads ${signature(seen).slice(0, 8).join(" | ") || "nothing"}`,
+              );
+              return;
+            }
+            if (tries === 1) {
+              await deps.sleep(config.settleMs);
+              seen = await look();
+            } else {
+              const reset = await tap(other);
+              note(
+                `reset tap on "${other}" before ${name} at (${reset.point.x}, ${reset.point.y})`,
+              );
+            }
+          }
+        }
         const result = await tap(target);
         const page = signature(seen);
         const where = `"${target}" at (${result.point.x}, ${result.point.y}); ${result.before ?? "unknown"} -> ${lastFrontmost ?? "unknown"}`;
@@ -907,7 +932,9 @@ export async function runCheck(deps, options = {}) {
       await call("computer_scroll", { ...point, direction: "down", amount: 5 });
       await deps.sleep(config.settleMs);
       seen = await look();
-      const down = scrolled(start, seen.lines, seen.window, "down", config.minScrollPx);
+      // Text behind the window's margins shows at the same place on the home screen.
+      const background = backgroundOf(start, lastHome);
+      const down = scrolled(start, seen.lines, seen.window, "down", config.minScrollPx, background);
       const middle = seen.lines;
       check(
         "scroll down",
@@ -924,7 +951,14 @@ export async function runCheck(deps, options = {}) {
         });
         await deps.sleep(config.settleMs);
         const probe = await look();
-        const moved = scrolled(middle, probe.lines, probe.window, "down", config.minScrollPx);
+        const moved = scrolled(
+          middle,
+          probe.lines,
+          probe.window,
+          "down",
+          config.minScrollPx,
+          background,
+        );
         note(
           `probe, not counted: computer_drag ${moved.ok ? "moved" : "did not move"} the list (${moved.median}px, ${moved.common} lines)`,
         );
@@ -934,7 +968,7 @@ export async function runCheck(deps, options = {}) {
       await call("computer_scroll", { ...point, direction: "up", amount: 5 });
       await deps.sleep(config.settleMs);
       seen = await look();
-      const up = scrolled(before, seen.lines, seen.window, "up", config.minScrollPx);
+      const up = scrolled(before, seen.lines, seen.window, "up", config.minScrollPx, background);
       const back =
         jaccard(pageSignature(seen.lines, seen.window), pageSignature(start, seen.window)) >= 0.7 &&
         jaccard(pageSignature(before, seen.window), pageSignature(start, seen.window)) < 0.7;

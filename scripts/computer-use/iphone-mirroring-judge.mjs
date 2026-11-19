@@ -282,17 +282,31 @@ export const describeLines = (lines) =>
     .join(", ") || "no text";
 
 /**
- * How far text that shows in both readings moved, as the median of the vertical
- * moves. Text outside the phone (other windows behind the Mirroring window's
- * margins) never moves: when at least three lines moved, only they count.
- * `still` holds the text that stayed put.
+ * Text a reading shows at the same place as the home screen reading: text of
+ * other windows behind the Mirroring window's margins, which no scroll moves.
  */
-export function verticalShift(before, after) {
+export function backgroundOf(lines, home) {
+  const near = (a, b) =>
+    Math.abs(center(a).x - center(b).x) <= 3 && Math.abs(center(a).y - center(b).y) <= 3;
+  return new Set(
+    lines
+      .filter((line) =>
+        home.some((other) => normalize(other.text) === normalize(line.text) && near(other, line)),
+      )
+      .map((line) => normalize(line.text)),
+  );
+}
+
+/**
+ * How far text that shows in both readings moved, as the median of the
+ * vertical moves, leaving out `background` (see backgroundOf).
+ */
+export function verticalShift(before, after, background = new Set()) {
   const once = (lines) => {
     const seen = new Map();
     for (const line of lines) {
       const key = normalize(line.text);
-      if (key === "" || isReading(line.text)) continue;
+      if (key === "" || isReading(line.text) || background.has(key)) continue;
       seen.set(key, seen.has(key) ? null : line);
     }
     return seen;
@@ -300,38 +314,29 @@ export function verticalShift(before, after) {
   const a = once(before);
   const b = once(after);
   const moves = [];
-  const still = new Set();
   for (const [key, line] of a) {
     const other = b.get(key);
     if (line !== null && other !== undefined && other !== null) {
-      const move = center(other).y - center(line).y;
-      moves.push(move);
-      if (Math.abs(move) <= 2) still.add(key);
+      moves.push(center(other).y - center(line).y);
     }
   }
-  const movers = moves.filter((move) => Math.abs(move) > 2);
-  const counted = (movers.length >= 3 ? movers : moves).sort((x, y) => x - y);
-  const median = counted.length === 0 ? 0 : counted[Math.floor(counted.length / 2)];
-  return { common: moves.length, moved: movers.length, median, still };
+  moves.sort((x, y) => x - y);
+  const median = moves.length === 0 ? 0 : moves[Math.floor(moves.length / 2)];
+  return { common: moves.length, median };
 }
 
-/**
- * Whether a scroll moved the page: shared text moved far enough, or the page
- * was replaced. The text that stayed put is left out of "replaced", so a long
- * scroll that kept few rows is not held back by text behind the window.
- */
-export function scrolled(before, after, window, direction, minPx) {
-  const { still, ...shift } = verticalShift(before, after);
+/** Whether a scroll moved the page: shared text moved far enough, or the page was replaced. */
+export function scrolled(before, after, window, direction, minPx, background = new Set()) {
+  const shift = verticalShift(before, after, background);
   const sign = direction === "down" ? -1 : 1;
-  if (shift.moved >= 3) return { ok: shift.median * sign >= minPx, ...shift };
+  if (shift.common >= 3) return { ok: shift.median * sign >= minPx, ...shift };
   const page = (lines) =>
     pageSignature(
-      lines.filter((line) => !still.has(normalize(line.text))),
+      lines.filter((line) => !background.has(normalize(line.text))),
       window,
     );
   const left = page(before);
   const right = page(after);
-  // A page has rows to compare: one stray reading on each side is not a new page.
-  const replaced = left.length >= 3 && right.length >= 3 && jaccard(left, right) < 0.4;
+  const replaced = right.length > 0 && jaccard(left, right) < 0.4;
   return { ok: replaced, replaced, ...shift };
 }

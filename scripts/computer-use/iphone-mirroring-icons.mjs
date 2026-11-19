@@ -90,8 +90,8 @@ export function findIconColumn({ data, width, height, channels }, count = 4, mar
       blob.width <= width * 0.12 &&
       blob.height >= width * 0.025 &&
       blob.height <= width * 0.12 &&
-      blob.width / blob.height >= 0.5 &&
-      blob.width / blob.height <= 2,
+      blob.width / blob.height >= 0.7 &&
+      blob.width / blob.height <= 1.43,
   );
   for (const icon of icons) marks.push({ x: Math.round(icon.x), y: Math.round(icon.y) });
   const columns = [];

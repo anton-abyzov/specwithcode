@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   anchorIn,
+  backgroundOf,
   CLICK_TARGET,
   jaccard,
   locateTabs,
@@ -938,6 +939,34 @@ describe("dry run", () => {
     expect(result.lines).toContainEqual(expect.stringMatching(/^FAIL tabs: could not find/));
   });
 
+  it("never counts an icon tap made from a page read as neither tab", async () => {
+    const phone = simulatedPhone({ iconTabs: true });
+    // Before counted click 5 the World Clock page loses its words in every reading.
+    const ocr = phone.deps.ocr;
+    let blank = false;
+    const call = phone.deps.call;
+    let clicks = 0;
+    phone.deps.call = (tool, args) => {
+      if (tool === "computer_click") {
+        clicks++;
+        // Click 1 is the setup tap, so call 5 is counted click 4, onto World
+        // Clock, and call 6 the reset tap before counted click 5.
+        blank = clicks === 5 || clicks === 6;
+      }
+      return call(tool, args);
+    };
+    phone.deps.ocr = async (...args) => {
+      const read = await ocr(...args);
+      return blank ? read.filter((line) => !/world clock|today/i.test(line.text)) : read;
+    };
+    const result = await runCheck(phone.deps);
+    expect(result.lines).toContainEqual(
+      expect.stringMatching(
+        /^UNSURE click 5\/20: the "World Clock" page could not be read before the tap/,
+      ),
+    );
+  });
+
   it("calls the tabs unsure when Clock is open but neither labels nor icons are found", async () => {
     const phone = simulatedPhone({ iconTabs: true });
     phone.deps.icons = async () => ({ column: undefined, marks: [{ x: 910, y: 500 }] });
@@ -1217,30 +1246,48 @@ describe("judging the screen", () => {
 
   it("measures a scroll by the text that moved, not the text behind the window", () => {
     const at = (text, y, x = 620) => ({ text, x, y, width: 80, height: 14 });
-    const still = ["Ov", "CALENDAR", "Thu. Nov 19", "4 x", "Flood"].map((text, index) =>
+    const behind = ["Ov", "CALENDAR", "Thu. Nov 19", "4 x", "Flood"].map((text, index) =>
       at(text, 110 + index * 30, 602),
     );
+    // The home screen shows the same text behind the window, at the same place.
+    const home = [...behind, at("Messages", 400), at("Settings", 470, 700)];
     const rows = ["General", "Camera", "Siri", "Search"];
-    const before = [...still, ...rows.map((text, index) => at(text, 300 + index * 50))];
-    const after = [...still, ...rows.map((text, index) => at(text, 200 + index * 50))];
-    expect(verticalShift(before, after)).toMatchObject({ common: 9, moved: 4, median: -100 });
-    // Nothing moved: the still text decides.
-    expect(verticalShift(before, before).median).toBe(0);
-    const window = { x: 600, y: 100, width: 360, height: 760 };
-    expect(scrolled(before, before, window, "down", 20).ok).toBe(false);
+    const before = [...behind, ...rows.map((text, index) => at(text, 300 + index * 50))];
+    const after = [...behind, ...rows.map((text, index) => at(text, 200 + index * 50))];
+    const background = backgroundOf(before, home);
+    expect([...background]).toEqual(["ov", "calendar", "thu. nov 19", "4 x", "flood"]);
+    expect(verticalShift(before, after, background)).toEqual({ common: 4, median: -100 });
+    // Without it the text behind the window outvotes the rows.
+    expect(verticalShift(before, after).median).toBe(0);
+
+    expect(scrolled(before, after, window, "down", 20, background).ok).toBe(true);
+    expect(scrolled(before, before, window, "down", 20, background).ok).toBe(false);
     // A long scroll keeps two rows and brings new ones: the page was replaced.
     const far = [
-      ...still,
+      ...behind,
       at("General", 130),
       at("Camera", 180),
       ...["Wallpaper", "Notifications", "Sounds", "Focus"].map((text, index) =>
         at(text, 300 + index * 50),
       ),
     ];
-    expect(scrolled(before, far, window, "down", 20)).toMatchObject({ ok: true, replaced: true });
-    // One stray reading on each side is not a new page.
+    expect(scrolled(before, far, window, "down", 20, background)).toMatchObject({
+      ok: true,
+      replaced: true,
+    });
+    // Rows that stayed put, with a few readings changed, are no scroll.
+    const list = ["Settings", "General", "Camera", "Siri", "Search", "Sounds", "Focus", "Privacy"];
+    const stay = list.map((text, index) => at(text, 200 + index * 30, 640));
+    const varied = (texts) => texts.map((text, index) => at(text, 450 + index * 30, 640));
     expect(
-      scrolled([...before, at("o", 500)], [...before, at("00", 500)], window, "down", 20).ok,
+      scrolled(
+        [...behind, ...stay, ...varied(["Wi-Fi", "Blue tooth", "Mobile Service"])],
+        [...behind, ...stay, ...varied(["Wi Fi", "Bluetooth", "Mobile Services"])],
+        window,
+        "down",
+        20,
+        background,
+      ).ok,
     ).toBe(false);
   });
 
