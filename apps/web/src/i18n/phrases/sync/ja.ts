@@ -177,6 +177,8 @@ export const syncJa: PhraseCatalog = {
   "Push these commits to their remotes and continue the coordinator on {target}.":
     "これらのコミットをそれぞれのリモートにプッシュして、{target} でコーディネーターを続行します。",
   "Sync again": "もう一度同期",
+  "Sync again…": "もう一度同期…",
+  "Run the same sync again": "同じ同期をもう一度実行",
   "Sync again with secrets": "シークレットも含めてもう一度同期",
   "Sync again before handing off the coordinator.":
     "コーディネーターを引き継ぐ前に、もう一度同期してください。",
@@ -186,7 +188,7 @@ export const syncJa: PhraseCatalog = {
     "「もう一度同期」は {source} の版を持ってきます。「それらなしで移動」は {source} の変更をそこに残し、{target} のコピーはそのままにします。そこで作業を続けるには「コーディネーターを {source} に残す」を選びます。{target} のコピーは残ります。",
   "This copy was not captured, so you can't move without them. Sync again brings them over. Or keep the coordinator on {source}; the copy on {target} stays.":
     "このコピーは記録されていないため、それらなしでは移動できません。「もう一度同期」で持ってこられます。または、コーディネーターを {source} に残してください。{target} のコピーは残ります。",
-  "Sync or add this project on another machine": "このプロジェクトを別のマシンで同期または追加",
+  "Add this project to another machine": "このプロジェクトを別のマシンに追加",
   "{project} is on {machine}": "{project} は {machine} にあります",
   "{project} is on {machine} (added {when})": "{project} は {machine} にあります ({when}に追加)",
   "{machine} already has this project at {folder}. Compare all files compares the two folders and adds what {machine} is missing. The coordinator stays on {source}.":

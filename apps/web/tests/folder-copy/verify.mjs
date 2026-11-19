@@ -100,9 +100,9 @@ const walker = (page, label, flow, viewport) => {
       name,
     );
   const body = () => page.locator('[data-slot="dialog-panel"]').textContent();
-  /** Starts the next copy from Done: Sync again when it shows, else the ⋯ menu item. */
+  /** Starts the next copy from Done: Sync again… when it shows, else the ⋯ menu item. */
   const startNew = async () => {
-    const again = footer.getByRole("button", { name: "Sync again", exact: true });
+    const again = footer.getByRole("button", { name: "Sync again…", exact: true });
     if (await again.count()) await again.click();
     else await menu("Add to another machine");
   };
@@ -467,7 +467,7 @@ const choosing = async (page, w) => {
   });
   NodeAssert.match(await body(), /SpecWeave is on ministorm\. The coordinator stays here\./);
 
-  // Done was seen: the reopen still shows the finished copy. Sync again archives it
+  // Done was seen: the reopen still shows the finished copy. Sync again… archives it
   // and starts at Where with a last-copy strip.
   await close();
   await reopen();
@@ -477,7 +477,7 @@ const choosing = async (page, w) => {
     title: COPIED_TITLE,
   });
   const statuses = await calls("copyStatus");
-  await action("Sync again").click();
+  await action("Sync again…").click();
   await page.locator('[data-slot="copy-last"]').waitFor();
   // The reopen shows the last copy without scrolling.
   NodeAssert.ok(

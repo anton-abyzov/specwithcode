@@ -1124,7 +1124,7 @@ export function ProjectMachineHandoff({
   return (
     <>
       {showTrigger ? (
-        <Tip label={blockedReason ?? tx("Sync or add this project on another machine")}>
+        <Tip label={blockedReason ?? tx("Add this project to another machine")}>
           {/* Off, the button stays focusable (aria-disabled, not disabled), so it keeps its
             tooltip and screen readers read the reason it describes. */}
           <span className="inline-flex" data-slot="handoff-trigger-wrap">

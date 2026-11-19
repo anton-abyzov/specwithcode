@@ -174,6 +174,8 @@ export const syncEs: PhraseCatalog = {
   "Push these commits to their remotes and continue the coordinator on {target}.":
     "Enviar estos commits a sus remotos y continuar el coordinador en {target}.",
   "Sync again": "Volver a sincronizar",
+  "Sync again…": "Volver a sincronizar…",
+  "Run the same sync again": "Repetir la misma sincronización",
   "Sync again with secrets": "Volver a sincronizar con secretos",
   "Sync again before handing off the coordinator.":
     "Vuelve a sincronizar antes de traspasar el coordinador.",
@@ -183,8 +185,7 @@ export const syncEs: PhraseCatalog = {
     "«Volver a sincronizar» trae la versión de {source}. «Mover sin ellos» deja los cambios de {source} allí y la copia de {target} como está. «Mantener el coordinador en {source}» para seguir trabajando allí; la copia de {target} se queda.",
   "This copy was not captured, so you can't move without them. Sync again brings them over. Or keep the coordinator on {source}; the copy on {target} stays.":
     "Esta copia no se capturó, así que no puedes mover sin ellos. «Volver a sincronizar» los trae. O mantén el coordinador en {source}; la copia de {target} se queda.",
-  "Sync or add this project on another machine":
-    "Sincronizar o añadir este proyecto en otro equipo",
+  "Add this project to another machine": "Añadir este proyecto a otro equipo",
   "{project} is on {machine}": "{project} está en {machine}",
   "{project} is on {machine} (added {when})": "{project} está en {machine} (añadido {when})",
   "{machine} already has this project at {folder}. Compare all files compares the two folders and adds what {machine} is missing. The coordinator stays on {source}.":

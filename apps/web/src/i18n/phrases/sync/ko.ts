@@ -170,6 +170,8 @@ export const syncKo: PhraseCatalog = {
   "Push these commits to their remotes and continue the coordinator on {target}.":
     "이 커밋을 각 원격에 푸시하고 {target}에서 코디네이터를 이어 갑니다.",
   "Sync again": "다시 동기화",
+  "Sync again…": "다시 동기화…",
+  "Run the same sync again": "같은 동기화 다시 실행",
   "Sync again with secrets": "비밀 포함해 다시 동기화",
   "Sync again before handing off the coordinator.": "코디네이터를 넘기기 전에 다시 동기화하세요.",
   "Sync again brings over what changed; it compares first and moves only changed files. Continue on {target} anyway moves the coordinator with these differences. Undo puts {target}'s folder back.":
@@ -178,7 +180,7 @@ export const syncKo: PhraseCatalog = {
     "'다시 동기화'는 {source}의 버전을 가져옵니다. '제외하고 이동'은 {source}의 변경 사항을 그곳에 두고 {target}의 사본을 그대로 둡니다. 그곳에서 계속 작업하려면 코디네이터를 {source}에 두세요. {target}의 사본은 남습니다.",
   "This copy was not captured, so you can't move without them. Sync again brings them over. Or keep the coordinator on {source}; the copy on {target} stays.":
     "이 사본은 캡처되지 않아 제외하고 이동할 수 없습니다. '다시 동기화'로 가져올 수 있습니다. 또는 코디네이터를 {source}에 두세요. {target}의 사본은 남습니다.",
-  "Sync or add this project on another machine": "다른 컴퓨터에서 이 프로젝트 동기화 또는 추가",
+  "Add this project to another machine": "이 프로젝트를 다른 컴퓨터에 추가",
   "{project} is on {machine}": "{project}이(가) {machine}에 있습니다",
   "{project} is on {machine} (added {when})": "{project}이(가) {machine}에 있습니다({when} 추가)",
   "{machine} already has this project at {folder}. Compare all files compares the two folders and adds what {machine} is missing. The coordinator stays on {source}.":

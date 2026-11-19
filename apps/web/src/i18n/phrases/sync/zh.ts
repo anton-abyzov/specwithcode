@@ -157,6 +157,8 @@ export const syncZh: PhraseCatalog = {
   "Push these commits to their remotes and continue the coordinator on {target}.":
     "将这些提交推送到各自的远程，并在 {target} 上继续协调者。",
   "Sync again": "重新同步",
+  "Sync again…": "重新同步…",
+  "Run the same sync again": "再次运行相同的同步",
   "Sync again with secrets": "包含机密重新同步",
   "Sync again before handing off the coordinator.": "交接协调者之前请重新同步。",
   "Sync again brings over what changed; it compares first and moves only changed files. Continue on {target} anyway moves the coordinator with these differences. Undo puts {target}'s folder back.":
@@ -165,7 +167,7 @@ export const syncZh: PhraseCatalog = {
     "“重新同步”会带来 {source} 的版本。“不带它们迁移”会把 {source} 的更改留在那里，{target} 上的副本保持原样。“将协调者留在 {source}”可在那里继续工作；{target} 上的副本保留。",
   "This copy was not captured, so you can't move without them. Sync again brings them over. Or keep the coordinator on {source}; the copy on {target} stays.":
     "这次复制没有被捕获，因此无法不带它们迁移。“重新同步”会带来它们。或者将协调者留在 {source}；{target} 上的副本保留。",
-  "Sync or add this project on another machine": "在另一台电脑上同步或添加此项目",
+  "Add this project to another machine": "将此项目添加到另一台电脑",
   "{project} is on {machine}": "{project} 在 {machine} 上",
   "{project} is on {machine} (added {when})": "{project} 在 {machine} 上（{when}添加）",
   "{machine} already has this project at {folder}. Compare all files compares the two folders and adds what {machine} is missing. The coordinator stays on {source}.":
