@@ -494,6 +494,69 @@ describe("agent folder copy", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("answers a local-network check for the calling machine only (1334 S-1)", () =>
+    Effect.gen(function* () {
+      const seen: Array<unknown> = [];
+      const layer = Layer.mergeAll(
+        Layer.mock(MachineHandoff.MachineHandoff)({
+          copyLanCheck: (source, body) => {
+            seen.push(["check", source, body.generation]);
+            return Effect.succeed({ lan: null });
+          },
+          copyLanOffer: (source, body) => {
+            seen.push(["offer", source, body.lan.generation]);
+            return Effect.succeed(false);
+          },
+        }),
+        Layer.mock(ProjectLink.ProjectLink)({}),
+        NodeServices.layer,
+        config,
+      );
+      const operationId = "0b0e9c4e-5d6f-4a1b-8c2d-3e4f5a6b7c8d";
+      const sha = "a".repeat(64);
+      const check = {
+        operationId,
+        generation: 3,
+        purpose: "sync-measured" as const,
+        candidates: [{ host: "10.0.0.2" }],
+      };
+      const receive = (args: AgentCopyReceiveInput) =>
+        receiveAgentCopy(args, { environmentId: SOURCE }).pipe(Effect.provide(layer));
+      // The source is the authenticated caller, whatever the body says.
+      expect(yield* receive({ action: "lanCheck", lanCheck: check })).toEqual({
+        folderCopyLan: 1,
+        lan: null,
+      });
+      expect(
+        yield* receive({
+          action: "lanOffer",
+          lanOffer: {
+            operationId,
+            lan: {
+              version: 1,
+              generation: 3,
+              purpose: "sync-measured",
+              addresses: [{ host: "10.0.0.2", port: 50000 }],
+              sourceCertificateSha256: sha,
+              recipientCertificateSha256: sha,
+              lanToken: `swclan_${"t".repeat(43)}`,
+              scopeSha256: sha,
+              targetSha256: sha,
+              bindingSha256: sha,
+              expiresAt: 1,
+            },
+          },
+        }),
+      ).toEqual({ folderCopyLan: 1, lanAccepted: false });
+      expect(seen).toEqual([
+        ["check", SOURCE, 3],
+        ["offer", SOURCE, 3],
+      ]);
+      expect((yield* Effect.flip(receive({ action: "lanCheck" }))).message).toContain("lanCheck");
+      expect((yield* Effect.flip(receive({ action: "lanOffer" }))).message).toContain("lanOffer");
+    }).pipe(Effect.scoped),
+  );
+
   it.live("names rebuildable folders as the scan collapses them, skipping repositories", () =>
     Effect.gen(function* () {
       const root = yield* plainFolder;
