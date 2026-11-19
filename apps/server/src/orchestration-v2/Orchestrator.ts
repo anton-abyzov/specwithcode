@@ -1739,8 +1739,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   // Threads whose queue start an update hold skipped. Nothing else starts them
   // again (no terminal event follows), so one waiter retries them once the hold
   // is released or expires. The failed run that asked for the start is kept so
-  // a queue behind a provider failure is still held then.
-  const heldQueueThreadIds = new Map<ThreadId, RunId | undefined>();
+  // a queue behind a provider failure is still held then, and so is a
+  // person's Resume, so the run they released still starts.
+  const heldQueueThreadIds = new Map<
+    ThreadId,
+    { readonly failedRunId?: RunId; readonly personResumed?: boolean }
+  >();
   let heldQueueWaiter = false;
   const startQueuesAfterHold: Effect.Effect<void> = Effect.gen(function* () {
     yield* updateHold.awaitReleased;
@@ -1749,12 +1753,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     heldQueueWaiter = false;
     yield* Effect.forEach(
       heldQueues,
-      ([threadId, failedRunId]) =>
+      ([threadId, options]) =>
         threadDispatch
-          .withLock(
-            threadId,
-            startNextQueuedRun(threadId, failedRunId === undefined ? undefined : { failedRunId }),
-          )
+          .withLock(threadId, startNextQueuedRun(threadId, options))
           .pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("Failed to start a queued V2 run after the update hold ended", {
@@ -1772,7 +1773,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const resumeQueueRetries = new Map<ThreadId, number>();
   const startQueueAfterResume = (
     threadId: ThreadId,
-    failedRunId: RunId | undefined,
+    options: Parameters<typeof startNextQueuedRun>[1],
   ): Effect.Effect<void> =>
     Effect.gen(function* () {
       const tries = resumeQueueRetries.get(threadId);
@@ -1788,10 +1789,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         Effect.sleep(Duration.millis(RESUME_QUEUE_RETRY_MS)).pipe(
           Effect.andThen(Effect.sync(() => resumeQueueRetries.set(threadId, attempt))),
           Effect.andThen(
-            threadDispatch.withLock(
-              threadId,
-              startNextQueuedRun(threadId, failedRunId === undefined ? undefined : { failedRunId }),
-            ),
+            // A person's Resume keeps its consent across the wait.
+            threadDispatch.withLock(threadId, startNextQueuedRun(threadId, options)),
           ),
           Effect.andThen(
             Effect.sync(() => {
@@ -1906,7 +1905,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // An update hold keeps the queue where it is; the drain cancels it. A
       // queue left after the hold ends starts then.
       if (yield* updateHold.isHeld) {
-        heldQueueThreadIds.set(threadId, options?.failedRunId ?? heldQueueThreadIds.get(threadId));
+        const earlier = heldQueueThreadIds.get(threadId);
+        const failedRunId = options?.failedRunId ?? earlier?.failedRunId;
+        heldQueueThreadIds.set(threadId, {
+          ...(failedRunId === undefined ? {} : { failedRunId }),
+          ...(options?.personResumed === true || earlier?.personResumed === true
+            ? { personResumed: true }
+            : {}),
+        });
         if (!heldQueueWaiter) {
           heldQueueWaiter = true;
           yield* Effect.forkDetach(startQueuesAfterHold);
@@ -1922,7 +1928,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (coordinatorRefusal !== null) {
         // A resume hold ends by itself within seconds, with no queue transition to start it.
         if (coordinatorRefusal === CoordinatorWakeGate.COORDINATOR_RESUME_REFUSAL)
-          yield* startQueueAfterResume(threadId, options?.failedRunId);
+          yield* startQueueAfterResume(threadId, options);
         return;
       }
       const projection = yield* readCommandProjection(threadId);
