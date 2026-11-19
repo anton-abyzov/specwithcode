@@ -907,14 +907,44 @@ describe("dry run", () => {
     const result = await runCheck(phone.deps);
     expect(result.lines).toContain("Clicks landed: 19 of 20");
     expect(result.lines).toContainEqual(
-      expect.stringMatching(/^FAIL click 4\/20: .*page did not change/),
+      expect.stringMatching(
+        /^FAIL click 4\/20: .*page did not change.*; before the tap it showed "stopwatch" Stopwatch word, after it reads stopwatch \| lap \| start$/,
+      ),
     );
+  });
+
+  it("never looks for icon tabs while Spotlight still shows", async () => {
+    const phone = simulatedPhone({ iconTabs: true, deadReturn: true });
+    // Spotlight's Clock row reads "Stopwatch", and the tap on the result does nothing.
+    const ocr = phone.deps.ocr;
+    phone.deps.ocr = async (...args) => {
+      const read = await ocr(...args);
+      return phone.state.app === "spotlight" && phone.state.query === "Clock"
+        ? [...read, { text: "Stopwatch", x: 760, y: 260, width: 80, height: 20 }]
+        : read;
+    };
+    const call = phone.deps.call;
+    phone.deps.call = (tool, args) =>
+      tool === "computer_click" && phone.state.app === "spotlight"
+        ? call("computer_screenshot", {})
+        : call(tool, args);
+    let looked = 0;
+    phone.deps.icons = async () => {
+      looked++;
+      return { column: undefined, marks: [] };
+    };
+    const result = await runCheck(phone.deps);
+    expect(looked).toBe(0);
+    expect(result.lines).toContainEqual(expect.stringMatching(/^FAIL tabs: could not find/));
   });
 
   it("calls the tabs unsure when Clock is open but neither labels nor icons are found", async () => {
     const phone = simulatedPhone({ iconTabs: true });
-    phone.deps.icons = async () => undefined;
+    phone.deps.icons = async () => ({ column: undefined, marks: [{ x: 910, y: 500 }] });
     const result = await runCheck(phone.deps);
+    expect(result.lines).toContain(
+      "NOTE no column of 4 tab icons in the picture; icon-sized marks at (910, 500)",
+    );
     expect(result.lines).toContainEqual(
       expect.stringMatching(
         /^UNSURE tabs: Clock shows "Stopwatch" but neither a tab bar .* nor a column of 4 tab icons/,
@@ -1132,7 +1162,7 @@ describe("judging the screen", () => {
   it("tells the home screen from Spotlight over it, never a field with the wrong text", () => {
     const at = (text, y = 500) => ({ text, x: 1200, y, width: 80, height: 14 });
     const home = [
-      at("Sunny Isles B...", 313),
+      at("Weather", 313),
       at("77°", 332),
       at("11:26", 330),
       at("Messages"),
@@ -1193,9 +1223,25 @@ describe("judging the screen", () => {
     const rows = ["General", "Camera", "Siri", "Search"];
     const before = [...still, ...rows.map((text, index) => at(text, 300 + index * 50))];
     const after = [...still, ...rows.map((text, index) => at(text, 200 + index * 50))];
-    expect(verticalShift(before, after)).toEqual({ common: 9, median: -100 });
+    expect(verticalShift(before, after)).toMatchObject({ common: 9, moved: 4, median: -100 });
     // Nothing moved: the still text decides.
     expect(verticalShift(before, before).median).toBe(0);
+    const window = { x: 600, y: 100, width: 360, height: 760 };
+    expect(scrolled(before, before, window, "down", 20).ok).toBe(false);
+    // A long scroll keeps two rows and brings new ones: the page was replaced.
+    const far = [
+      ...still,
+      at("General", 130),
+      at("Camera", 180),
+      ...["Wallpaper", "Notifications", "Sounds", "Focus"].map((text, index) =>
+        at(text, 300 + index * 50),
+      ),
+    ];
+    expect(scrolled(before, far, window, "down", 20)).toMatchObject({ ok: true, replaced: true });
+    // One stray reading on each side is not a new page.
+    expect(
+      scrolled([...before, at("o", 500)], [...before, at("00", 500)], window, "down", 20).ok,
+    ).toBe(false);
   });
 
   it("tells pages apart by their words, leaving clock readings out", () => {

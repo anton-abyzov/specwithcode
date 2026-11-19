@@ -88,7 +88,7 @@ export function simulatedPhone({
       if (state.query === "") return [line("Search", 640, 160)];
       const field = line(`${state.query}${state.inline ? "- Ask Siri" : ""}`, 640, 160);
       // An app's name shows its result under the field.
-      return APPS.includes(state.query) ? [field, line(state.query, 640, 260)] : [field];
+      return APPS.has(state.query) ? [field, line(state.query, 640, 260)] : [field];
     }
     if (state.app === "Clock") {
       const top = tabsOnTop ? 200 : 150;
@@ -111,7 +111,7 @@ export function simulatedPhone({
     return [];
   };
 
-  const APPS = ["Clock", "Settings"];
+  const APPS = new Set(["Clock", "Settings"]);
   let inputs = 0;
   let spotlights = 0;
   const call = async (tool, args) => {
@@ -185,7 +185,7 @@ export function simulatedPhone({
       case "computer_click": {
         if (state.app === "spotlight") {
           // A tap on the app's result opens it.
-          if (APPS.includes(state.query) && args.y >= 260 && args.y < 280) {
+          if (APPS.has(state.query) && args.y >= 260 && args.y < 280) {
             state.app = state.query;
             state.scroll = 0;
           }
@@ -229,10 +229,13 @@ export function simulatedPhone({
       window: async () => ({ window, onMainDisplay: true }),
       ocr: async () => ocr(),
       // The icon column, found in the picture only while Clock shows icon tabs.
-      icons: async () =>
-        iconTabs && state.app === "Clock"
-          ? Object.values(tabs).map((box) => ({ x: box.x + 10, y: box.y + 10 }))
-          : undefined,
+      icons: async () => ({
+        column:
+          iconTabs && state.app === "Clock"
+            ? Object.values(tabs).map((box) => ({ x: box.x + 10, y: box.y + 10 }))
+            : undefined,
+        marks: [],
+      }),
       frontmost: async () => state.front,
       loadavg: () => load,
       desktopApps: async () => [{ version: "simulated", path: "simulated" }],

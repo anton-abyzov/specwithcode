@@ -238,14 +238,16 @@ export async function liveDeps({ client, scratch, saveScreenshots, outDir }) {
       const top = Math.max(0, region.y);
       const width = Math.min(region.width, meta.width - left);
       const height = Math.min(region.height, meta.height - top);
-      if (width <= 0 || height <= 0) return undefined;
+      if (width <= 0 || height <= 0) return { column: undefined, marks: [] };
       const { data, info } = await sharp(source)
         .extract({ left, top, width, height })
         .removeAlpha()
         .raw()
         .toBuffer({ resolveWithObject: true });
-      const column = findIconColumn({ data, ...info });
-      return column?.map((point) => ({ x: left + point.x, y: top + point.y }));
+      const marks = [];
+      const column = findIconColumn({ data, ...info }, 4, marks);
+      const place = (point) => ({ x: left + point.x, y: top + point.y });
+      return { column: column?.map(place), marks: marks.map(place) };
     },
     warmUp: async () => {
       const file = NodePath.join(scratch, "warm-up.png");

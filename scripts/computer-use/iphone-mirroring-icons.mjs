@@ -9,9 +9,10 @@ const EDGE = 60;
  * The centres of a column of `count` evenly spaced icons in the lower right of
  * an RGB(A) picture, top to bottom, in its own pixels; undefined when there is
  * no such column or more than one. Sizes are fractions of the picture, so the
- * screenshot's scale does not matter.
+ * screenshot's scale does not matter. Every icon-sized mark it saw goes into
+ * `marks`, for a log that shows why no column was found.
  */
-export function findIconColumn({ data, width, height, channels }, count = 4) {
+export function findIconColumn({ data, width, height, channels }, count = 4, marks = []) {
   if (width < 40 || height < 40) return undefined;
   const lum = new Float32Array(width * height);
   for (let index = 0; index < width * height; index++) {
@@ -92,6 +93,7 @@ export function findIconColumn({ data, width, height, channels }, count = 4) {
       blob.width / blob.height >= 0.5 &&
       blob.width / blob.height <= 2,
   );
+  for (const icon of icons) marks.push({ x: Math.round(icon.x), y: Math.round(icon.y) });
   const columns = [];
   for (const first of icons) {
     const column = icons
