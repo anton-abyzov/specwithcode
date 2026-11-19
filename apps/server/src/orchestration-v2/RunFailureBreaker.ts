@@ -47,6 +47,17 @@ export function failedRunBreakerRefusal(
     : `Automatic runs are paused in this thread: its last ${failed} runs failed. Read the last error, fix the cause, then send a message to run it again.`;
 }
 
+const ROUTINE_MESSAGE_PREFIX = "scheduled-task-message:";
+
+/**
+ * A person's Run now of a routine (fire keys `<task>:manual:<command>` and
+ * `<task>:<uuid>:manual`, ScheduledTaskService). It is how someone retries a
+ * routine after fixing it, so the breaker lets it through.
+ */
+function isManualRoutineFire(messageId: string): boolean {
+  return messageId.includes(":manual:") || messageId.endsWith(":manual");
+}
+
 /**
  * The runs a thread starts by itself again and again: routine fires (their
  * message id, see ScheduledTaskOccurrence) and the server's retry or fallback
@@ -59,11 +70,24 @@ export function isBreakerGuardedRun(command: {
   readonly messageId: string;
   readonly creationSource?: string | undefined;
 }): boolean {
-  if (command.messageId.startsWith("scheduled-task-message:")) return true;
+  if (command.messageId.startsWith(ROUTINE_MESSAGE_PREFIX))
+    return !isManualRoutineFire(command.messageId);
   return (
     command.creationSource === "server" &&
     [PROVIDER_FALLBACK_MESSAGE_PREFIX, PROVIDER_RETRY_MESSAGE_PREFIX].some(
       (prefix) => command.commandId.startsWith(prefix) || command.messageId.startsWith(prefix),
     )
+  );
+}
+
+/**
+ * A queued run the thread would start by itself, judged by its message id
+ * alone (a queued run keeps no command): a scheduled routine fire, or the
+ * server's provider retry or fallback for this thread.
+ */
+export function isBreakerGuardedQueuedMessage(messageId: string, threadId: string): boolean {
+  if (messageId.startsWith(ROUTINE_MESSAGE_PREFIX)) return !isManualRoutineFire(messageId);
+  return [PROVIDER_FALLBACK_MESSAGE_PREFIX, PROVIDER_RETRY_MESSAGE_PREFIX].some((prefix) =>
+    messageId.startsWith(`${prefix}${threadId}:`),
   );
 }

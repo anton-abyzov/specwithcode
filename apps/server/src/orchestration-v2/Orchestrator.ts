@@ -208,7 +208,11 @@ import {
   queuedRunStartSelection,
   wakesLeftOnAnotherInstance,
 } from "./QueueFollowsThread.ts";
-import { failedRunBreakerRefusal, isBreakerGuardedRun } from "./RunFailureBreaker.ts";
+import {
+  failedRunBreakerRefusal,
+  isBreakerGuardedQueuedMessage,
+  isBreakerGuardedRun,
+} from "./RunFailureBreaker.ts";
 import {
   cancelledForUpdate,
   holdForPerson,
@@ -2002,7 +2006,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const compactedForRetry =
         failedRun?.status === "completed" &&
         failedRun.userMessageId.startsWith(`${CONTEXT_COMPACT_MESSAGE_PREFIX}${threadId}:`);
+      // A routine fire or provider retry queued before the streak began would
+      // start as the thread's next failure; it waits for a person like a
+      // dispatched one is refused (RunFailureBreaker).
+      const breakerHolds =
+        failedRunBreakerRefusal(
+          isBreakerGuardedQueuedMessage(nextRun.userMessageId, threadId),
+          projection.runs,
+        ) !== null;
       if (
+        breakerHolds ||
         compactedForRetry ||
         shouldHoldQueueAfterFailure({
           failure: failure ?? undefined,

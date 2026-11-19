@@ -3,6 +3,7 @@ import type { OrchestrationV2Run } from "@specweave-studio/contracts";
 import {
   FAILED_RUN_BREAKER_LIMIT,
   failedRunBreakerRefusal,
+  isBreakerGuardedQueuedMessage,
   isBreakerGuardedRun,
   trailingFailedRuns,
 } from "./RunFailureBreaker.ts";
@@ -52,4 +53,20 @@ it("guards routine fires and provider-open retries, not limit recovery or people
   assert.isFalse(isBreakerGuardedRun(command("limit-resume:run-1")));
   assert.isFalse(isBreakerGuardedRun(command("provider-retry:run-1", "web")));
   assert.isFalse(isBreakerGuardedRun(command("message:web:abc", "web")));
+});
+
+it("lets a person's Run now of a routine through", () => {
+  const fire = (messageId: string) => ({ commandId: "scheduled-task:x", messageId, creationSource: "server" });
+  assert.isFalse(isBreakerGuardedRun(fire("scheduled-task-message:task-1:manual:command:abc")));
+  assert.isFalse(isBreakerGuardedRun(fire("scheduled-task-message:task-1:7f0c:manual")));
+  assert.isTrue(isBreakerGuardedRun(fire("scheduled-task-message:task-1:webhook:delivery-1")));
+});
+
+it("judges a queued run by its message id", () => {
+  assert.isTrue(isBreakerGuardedQueuedMessage("scheduled-task-message:task-1:2026-11-19T06:00", "thread-1"));
+  assert.isFalse(isBreakerGuardedQueuedMessage("scheduled-task-message:task-1:manual:command:abc", "thread-1"));
+  assert.isTrue(isBreakerGuardedQueuedMessage("provider-retry:thread-1:run-3", "thread-1"));
+  assert.isTrue(isBreakerGuardedQueuedMessage("provider-fallback:thread-1:run-3", "thread-1"));
+  assert.isFalse(isBreakerGuardedQueuedMessage("provider-retry:thread-2:run-3", "thread-1"));
+  assert.isFalse(isBreakerGuardedQueuedMessage("message:web:abc", "thread-1"));
 });
