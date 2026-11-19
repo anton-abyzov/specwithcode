@@ -162,35 +162,6 @@ export const HandoffTransferDocument = Schema.Struct({
 });
 export type HandoffTransferDocument = typeof HandoffTransferDocument.Type;
 
-/** The one next step a row offers for a record's state. */
-export type HandoffTransferNextStep =
-  | "cancel"
-  | "resume-here"
-  | "wait"
-  | "open"
-  | "fix"
-  | "try-again";
-
-export function handoffTransferNextStep(state: HandoffTransferState): HandoffTransferNextStep {
-  switch (state) {
-    case "pending":
-      return "cancel";
-    case "held":
-      return "resume-here";
-    case "sent":
-    case "accepted":
-    case "unknown":
-      return "wait";
-    case "resumed":
-    case "ready":
-      return "open";
-    case "stayed":
-      return "fix";
-    case "failed":
-      return "try-again";
-  }
-}
-
 /** Finished rows: the thread is where it will stay for this operation. */
 export function isHandoffTransferFinished(state: HandoffTransferState): boolean {
   return state === "resumed" || state === "ready" || state === "stayed" || state === "failed";

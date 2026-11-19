@@ -18,7 +18,7 @@ import { nodePath as NodePath } from "../nodePath.ts";
 import * as PreviousRelease from "./handoffReviewLock.previousRelease.test.fixture.ts";
 import { HANDOFF_PEER_PREFIX, type ReplicateMeta } from "./handoffWire.ts";
 import { HandoffPeers, layer as handoffPeersLayer } from "./handoffPeers.ts";
-import { PREVIOUS_RELEASE, PREVIOUS_UNKNOWN_PATH } from "./previousRelease381.test.fixture.ts";
+import { PREVIOUS_RELEASE, PREVIOUS_UNKNOWN_PATH } from "./previousRelease383.test.fixture.ts";
 
 const machine = { ...target, connectUrl: CONNECT_ORIGIN };
 const heartbeat = {
@@ -85,6 +85,14 @@ function worker(
     // It is the latest release, from before transfer records: it answers those paths as that release does.
     if (url.pathname.includes("/transfer-"))
       return Response.json(PREVIOUS_UNKNOWN_PATH.body, { status: PREVIOUS_UNKNOWN_PATH.status });
+    // It accepted a takeover at epoch 3 and could not start it; any other epoch is stale.
+    if (url.pathname.endsWith("/takeover"))
+      return new TextDecoder().decode(init?.body as Uint8Array).includes('"epoch":3')
+        ? Response.json(
+            { error: "M1 could not start it.", code: "failed", uncertain: true },
+            { status: 503 },
+          )
+        : Response.json({ error: "M1 saw a newer epoch.", code: "fenced" }, { status: 409 });
     return Response.json({ machineLabel: "M1", continued: [] });
   }) as typeof fetch;
   return { fetcher, sent };
@@ -260,6 +268,29 @@ describe("handoff peers over SpecWithCode Connect", () => {
             }
           }),
       ),
+  );
+
+  it.effect("reads the in-doubt mark of a refused takeover, and its absence as a definite no", () =>
+    withPeers(
+      { grant: (jkt) => studioToken({ sid: "grant", jkt }), offline: new Set([ORIGIN]) },
+      (peers) =>
+        Effect.gen(function* () {
+          const takeover = (epoch: number) =>
+            peers
+              .takeover(machine.environmentId, {
+                sourceEnvironmentId: EnvironmentId.make("env-m4"),
+                sourceThreadId: ThreadId.make("thread:fix-build"),
+                epoch,
+                sequence: 1,
+                reason: "handoff",
+                modelSelection: null,
+                operationId: "0a1b2c3d-1111-4222-8333-444455556666",
+              })
+              .pipe(Effect.flip);
+          expect(yield* takeover(3)).toMatchObject({ code: "failed", uncertain: true });
+          expect(yield* takeover(2)).toMatchObject({ code: "fenced", uncertain: false });
+        }),
+    ),
   );
 
   it.effect("keeps a bearer grant off the Connect address", () =>
