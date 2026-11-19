@@ -41,6 +41,9 @@ export function forgetLinkRefusal(a: string, b: string): void {
 export const linkRefusal = (kept: string, joining: string): LinkReason | undefined =>
   refusals.get(pairKey(kept, joining));
 
+/** For tests: every reason kept, whichever pair it is for. */
+export const linkRefusalsForTest = (): LinkReason[] => [...refusals.values()];
+
 /** For tests: the memory is module state. */
 export function resetLinkRefusalsForTest(): void {
   refusals.clear();

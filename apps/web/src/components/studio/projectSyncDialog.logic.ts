@@ -233,6 +233,9 @@ export function stepLine(
     case "behind": {
       // A result names what moved; a plan names what the fetch found.
       const n = phase === "result" ? (ran?.moved ?? 0) : step.behind;
+      // Nothing moved, or the machine could not read where the checkout ended: never "Moved
+      // forward". What it sent says why.
+      if (phase === "result" && n <= 0) return line("held", { text: "Not moved" });
       return phase === "result"
         ? line("done", count(n, "Moved forward 1 commit", "Moved forward {n} commits"))
         : line("moves", count(n, "Moves forward 1 commit", "Moves forward {n} commits"));
@@ -923,7 +926,12 @@ export function extrasSendOutcome(cause: unknown): "unknown" | "not-sent" {
   const tag = tagOf(cause);
   if (tag === "EnvironmentAuthorizationError") return "not-sent";
   const code = (cause as { code?: unknown } | null)?.code;
-  if (tag === "ProjectSyncError" && code !== "failed") return "not-sent";
+  // Only the refusals known to come before the first send. Any other code may follow one.
+  if (
+    tag === "ProjectSyncError" &&
+    (code === "not_found" || code === "personal" || code === "invalid")
+  )
+    return "not-sent";
   // Git stopped part way, the link dropped or the answer could not be read: it may have arrived.
   return "unknown";
 }
