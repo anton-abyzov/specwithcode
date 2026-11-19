@@ -8,6 +8,8 @@ import {
   EventId,
   MessageId,
   type ModelSelection,
+  NodeId,
+  RuntimeRequestId,
   type OrchestrationV2Command,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
@@ -3687,6 +3689,172 @@ describe("orchestration v2 provider switching", () => {
             [workThreadId, "work prompt"],
           ],
         );
+      }),
+    ),
+  );
+
+  it.live("cancels a pending Claude approval when the thread switches to Codex", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("switch-cancels-approval");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: { 1: "claude asked to run a command" },
+            capturedTurns,
+          }),
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: { 2: "codex took over" },
+            capturedTurns,
+          }),
+        ]);
+        const requestId = RuntimeRequestId.make("runtime-request:switch-cancels-approval");
+        const nodeId = NodeId.make("node:switch-cancels-approval");
+        const result = yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const send = (key: string, text: string, modelSelection: ModelSelection) =>
+            orchestrator
+              .dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`command:switch-approval:${key}`),
+                threadId,
+                messageId: MessageId.make(`message:switch-approval:${key}`),
+                createdBy: "user",
+                creationSource: "web",
+                text,
+                attachments: [],
+                modelSelection,
+                dispatchMode: { type: "start_immediately" },
+              })
+              .pipe(Effect.andThen(waitForIdle(threadId)), Effect.andThen(worker.drain()));
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("command:switch-approval:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Switch with a pending approval",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          yield* send("claude", "Run the migration", CLAUDE_MODEL_SELECTION);
+          const afterClaude = yield* orchestrator.getThreadProjection(threadId);
+          const claudeSession = afterClaude.providerSessions.find(
+            (session) => session.driver === CLAUDE_DRIVER && session.status === "ready",
+          );
+          const claudeThread = afterClaude.providerThreads.find(
+            (providerThread) => providerThread.driver === CLAUDE_DRIVER,
+          );
+          if (claudeSession === undefined || claudeThread === undefined) {
+            return yield* Effect.die("Expected a live Claude session after the first turn.");
+          }
+          // The Claude session holds an approval its live callback answers.
+          const now = yield* DateTime.now;
+          yield* (yield* EventSink.EventSinkV2).write({
+            events: [
+              {
+                id: EventId.make("event:switch-approval:node"),
+                type: "node.updated",
+                threadId,
+                nodeId,
+                driver: CLAUDE_DRIVER,
+                occurredAt: now,
+                payload: {
+                  id: nodeId,
+                  threadId,
+                  runId: null,
+                  parentNodeId: null,
+                  rootNodeId: nodeId,
+                  kind: "approval_request",
+                  status: "waiting",
+                  countsForRun: false,
+                  providerThreadId: claudeThread.id,
+                  providerTurnId: null,
+                  nativeItemRef: null,
+                  runtimeRequestId: requestId,
+                  checkpointScopeId: null,
+                  startedAt: now,
+                  completedAt: null,
+                },
+              },
+              {
+                id: EventId.make("event:switch-approval:request"),
+                type: "runtime-request.updated",
+                threadId,
+                nodeId,
+                driver: CLAUDE_DRIVER,
+                occurredAt: now,
+                payload: {
+                  id: requestId,
+                  nodeId,
+                  providerTurnId: null,
+                  nativeRequestRef: {
+                    driver: CLAUDE_DRIVER,
+                    nativeId: "pending-approval",
+                    strength: "strong",
+                  },
+                  kind: "command",
+                  status: "pending",
+                  responseCapability: { type: "live", providerSessionId: claudeSession.id },
+                  createdAt: now,
+                  resolvedAt: null,
+                },
+              },
+            ],
+          });
+          const before = (yield* orchestrator.getThreadProjection(threadId)).runtimeRequests.find(
+            (request) => request.id === requestId,
+          );
+          yield* send("codex", "Continue on Codex", CODEX_MODEL_SELECTION);
+          const after = yield* orchestrator.getThreadProjection(threadId);
+          return {
+            before,
+            after: after.runtimeRequests.find((request) => request.id === requestId),
+            claudeSessionId: claudeSession.id,
+            runs: after.runs.map((run) => [run.ordinal, run.status]),
+          };
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "switch-cancels-approval",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              layerRegistry,
+              { databaseLayer: fixtureProjectDatabase([projectId]) },
+            ),
+          ),
+        );
+        assert.deepEqual(result.runs, [
+          [1, "completed"],
+          [2, "completed"],
+        ]);
+        // Live before the switch, so the switch's detach is what settles it.
+        assert.equal(result.before?.status, "pending");
+        assert.equal(result.before?.responseCapability.type, "live");
+        assert.notEqual(result.after?.status, "pending");
+        assert.equal(result.after?.responseCapability.type, "not_resumable");
       }),
     ),
   );
