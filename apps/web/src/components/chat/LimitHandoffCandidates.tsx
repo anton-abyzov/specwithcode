@@ -6,6 +6,7 @@ import type {
   ThreadId,
 } from "@specweave-studio/contracts";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
+import { describeTrackWait } from "@specweave-studio/shared/machineFallback";
 import { useEffect, useState } from "react";
 
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -15,6 +16,16 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const REFRESH_MS = 30_000;
+
+/** "14:02" today, "Nov 20, 14:02" on another day, in the reader's own time. */
+export function formatResetTime(at: string, now = new Date()): string {
+  const date = new Date(at);
+  if (Number.isNaN(date.getTime())) return at;
+  const time = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return date.toDateString() === now.toDateString()
+    ? time
+    : `${date.toLocaleDateString(undefined, { month: "short", day: "numeric" })}, ${time}`;
+}
 
 /** The order machines are tried in, as one sentence. */
 export function limitHandoffOrderText(result: LimitHandoffCandidatesResult): string {
@@ -47,15 +58,45 @@ const REVIEW_STAYS = {
  * can't, and the order they are tried in, sit in the button's tooltip (it
  * opens on hover and on keyboard focus); when none can, the banner says why
  * the thread waits and lists each machine's verdict in plain view.
+ *
+ * A thread on a track that no machine has says so instead, with the earliest
+ * reset or "Reset unknown" and what each machine answered (1390). Nothing is
+ * offered to move it: it stays until that reset.
  */
 export function LimitHandoffCandidateList({
   result,
   onMove,
+  formatTime = formatResetTime,
 }: {
   result: LimitHandoffCandidatesResult;
   onMove: (candidate: LimitHandoffCandidate) => void;
+  formatTime?: (at: string) => string;
 }) {
   const tx = useTx();
+  const trackWait = result.track == null ? null : describeTrackWait(result.track, formatTime);
+  if (trackWait !== null) {
+    return (
+      <div
+        className="flex basis-full flex-col gap-1 text-xs"
+        aria-label={tx("Other machines")}
+        data-slot="limit-handoff-track-wait"
+      >
+        <p role="status" className="text-muted-foreground">
+          {`${trackWait.title}. ${trackWait.detail}.`}
+        </p>
+        {result.track!.machines.length > 0 ? (
+          <ul
+            className="flex flex-col gap-0.5 text-muted-foreground"
+            data-slot="limit-handoff-verdicts"
+          >
+            {result.track!.machines.map((machine) => (
+              <li key={machine.environmentId}>{machine.line}</li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+    );
+  }
   if (result.candidates.length === 0) return null;
   if (!result.available) {
     return (

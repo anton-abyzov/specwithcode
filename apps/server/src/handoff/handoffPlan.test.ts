@@ -1062,7 +1062,7 @@ describe("the plan's own capability (EC2-04)", () => {
           threads: [{ ...request().threads[0]!, sourceProjectId: a.projectId }],
         }),
       );
-      expect(answer.capabilities).toEqual([HANDOFF_V2_CAPABILITY, HANDOFF_PLAN_CAPABILITY]);
+      expect(answer.capabilities).toEqual([...HANDOFF_CAPABILITIES]);
       expect(answer.results).toHaveLength(1);
       expect(answer.results[0]?.failures).toEqual([]);
       expect(answer.results[0]?.evidence?.modelSelection).toEqual(opus);

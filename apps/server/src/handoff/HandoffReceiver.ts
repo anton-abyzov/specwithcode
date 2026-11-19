@@ -102,6 +102,7 @@ import {
   type PeerCheckResponse,
   planCapabilityFailure,
 } from "./handoffPlan.ts";
+import { trackStartCapabilityFailure } from "../orchestration-v2/limitHandoffTrack.ts";
 import { providerUsageSummary } from "../usage/providerUsageSummary.ts";
 import {
   emptyThreadRecord,
@@ -620,7 +621,13 @@ export const make = Effect.gen(function* () {
           selfLabel: label,
         }) ??
         capabilityFailure(source) ??
-        planCapabilityFailure(source);
+        planCapabilityFailure(source) ??
+        // A track start is this build's own wire feature: a source from before it gets no answer for one.
+        trackStartCapabilityFailure({
+          ...source,
+          start: request.start,
+          tracked: request.threads.some((thread) => thread.track !== null),
+        });
       if (unfit !== null) {
         return answer(
           request.threads.map((thread) => ({

@@ -14,6 +14,7 @@ import {
   type ServerProvider,
   ThreadId,
 } from "@specweave-studio/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
@@ -50,7 +51,7 @@ import {
 } from "./limitHandoffTrack.ts";
 
 const now = Date.parse("2026-11-19T14:00:00.000Z");
-const iso = (ms: number) => new Date(ms).toISOString();
+const iso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
 const claude = ProviderInstanceId.make("claudeAgent");
 const claudeTwo = ProviderInstanceId.make("claudeAgent-2");
 const codex = ProviderInstanceId.make("codex");
@@ -428,9 +429,7 @@ describe("when no machine has the track, the thread stays and names the next res
     expect(decision).toMatchObject({ everyMachineOut: true, earliestReset: null });
     expect(decision.recheckAt).toBe(iso(now + TRACK_RECHECK_UNKNOWN_MS));
     // A reset already past is no reset to wait for.
-    expect(
-      decide({ machines: [out(minis, "Minis", iso(now - 60_000))] }).earliestReset,
-    ).toBeNull();
+    expect(decide({ machines: [out(minis, "Minis", iso(now - 60_000))] }).earliestReset).toBeNull();
   });
 
   it("is not out on every machine while one could not be asked, and that one is asked again", () => {

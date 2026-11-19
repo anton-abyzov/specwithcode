@@ -447,31 +447,33 @@ describe("an automatic track start against the real receiver (1390 T-13)", () =>
     ],
   };
 
-  it.effect("is confirmed before anything is copied, and a machine with no room is sent nothing", () =>
-    Effect.gen(function* () {
-      const { source, destination, takeovers, port } = yield* scenario({ modeOn: true });
-      const before = structuredClone(destination.document);
+  it.effect(
+    "is confirmed before anything is copied, and a machine with no room is sent nothing",
+    () =>
+      Effect.gen(function* () {
+        const { source, destination, takeovers, port } = yield* scenario({ modeOn: true });
+        const before = structuredClone(destination.document);
 
-      const answer = yield* port.check!(towerH, tracked);
+        const answer = yield* port.check!(towerH, tracked);
 
-      if (answer.kind !== "answered") throw new Error(`no answer: ${answer.error.message}`);
-      // Tower H names the track start, so its answer is read for the track.
-      expect(answer.response.capabilities).toContain("handoff.track-start");
-      const judged = judgeTrackMachine({
-        environmentId: towerH,
-        machineLabel: "Tower H",
-        threadId,
-        answer,
-      });
-      // Claude is not signed in there: no sign-in with a reading that qualifies.
-      expect(judged.state).not.toBe("room");
-      expect(judged.evidence?.automatic ?? false).toBe(false);
-      // Asking copied nothing and moved nothing.
-      expect(destination.document).toEqual(before);
-      expect(takeovers).toEqual([]);
-      expect(destination.launches).toEqual([]);
-      expect(source.dispatched).toEqual([]);
-    }),
+        if (answer.kind !== "answered") throw new Error(`no answer: ${answer.error.message}`);
+        // Tower H names the track start, so its answer is read for the track.
+        expect(answer.response.capabilities).toContain("handoff.track-start");
+        const judged = judgeTrackMachine({
+          environmentId: towerH,
+          machineLabel: "Tower H",
+          threadId,
+          answer,
+        });
+        // Claude is not signed in there: no sign-in with a reading that qualifies.
+        expect(judged.state).not.toBe("room");
+        expect(judged.evidence?.automatic ?? false).toBe(false);
+        // Asking copied nothing and moved nothing.
+        expect(destination.document).toEqual(before);
+        expect(takeovers).toEqual([]);
+        expect(destination.launches).toEqual([]);
+        expect(source.dispatched).toEqual([]);
+      }),
   );
 
   it.effect("is not answered for a source that names no track start (EC2-04)", () =>
@@ -492,7 +494,9 @@ describe("an automatic track start against the real receiver (1390 T-13)", () =>
       expect(refused.results[0]?.failures[0]?.message.startsWith("Needs update: ")).toBe(true);
       // The same source may still plan a hand off by hand, and this build's own start is read.
       const byHand = yield* from(["handoff.v2", "handoff.plan"], "manual");
-      expect(byHand.results[0]?.failures.some((failure) => failure.check === "version")).toBe(false);
+      expect(byHand.results[0]?.failures.some((failure) => failure.check === "version")).toBe(
+        false,
+      );
       const own = yield* from(HANDOFF_CAPABILITIES, "automatic");
       expect(own.results[0]?.failures.some((failure) => failure.check === "version")).toBe(false);
     }),

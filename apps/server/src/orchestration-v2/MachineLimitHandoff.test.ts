@@ -235,16 +235,17 @@ interface Scenario {
   readonly optedOut?: boolean;
 }
 
-type TrackAnswer = NonNullable<LimitHandoffPortShape["check"]> extends (
-  ...args: never[]
-) => Effect.Effect<infer A>
-  ? A
-  : never;
+type TrackAnswer =
+  NonNullable<LimitHandoffPortShape["check"]> extends (...args: never[]) => Effect.Effect<infer A>
+    ? A
+    : never;
 
 function run(scenario: Scenario, sweeps = 1) {
   const requests: LimitHandoffRequest[] = [];
-  const checks: Array<{ readonly environmentId: EnvironmentId; readonly input: LimitHandoffCheckInput }> =
-    [];
+  const checks: Array<{
+    readonly environmentId: EnvironmentId;
+    readonly input: LimitHandoffCheckInput;
+  }> = [];
   const dispatched: OrchestrationV2ServerCommand[] = [];
   let stopReads = 0;
   const settings: ServerSettings = {
@@ -1174,39 +1175,39 @@ describe("limit handoff in the fallback sweep", () => {
 });
 
 describe("the automatic start when a thread's track is out here (1390 T-13)", () => {
-  for (const order of ["other-machine-first", "same-machine-first"] as const) {
-    itEffect.effect(
-      `a track with room on this machine asks no machine, under ${order} (AC-37)`,
-      () =>
-        Effect.gen(function* () {
-          const result = yield* run({
-            settings: { ...onTracks, providerLimitTargetOrder: order },
-            thread: daily,
-            machines: [machine(minis, "Minis"), machine(m3, "M3")],
-          });
-          // The next model of the Daily track runs here; nothing was asked of Minis or M3.
-          expect(result.checks).toEqual([]);
-          expect(result.requests).toEqual([]);
-          expect(result.dispatched[0]).toMatchObject({
-            modelSelection: { instanceId: codexId, model: "gpt-6" },
-          });
-        }),
-    );
+  const orders = ["other-machine-first", "same-machine-first"] as const;
 
-    itEffect.effect(`a track out on this machine hands off, under ${order} (AC-37)`, () =>
+  itEffect.effect.each(orders)(
+    "a track with room on this machine asks no machine, under %s (AC-37)",
+    (order) =>
       Effect.gen(function* () {
         const result = yield* run({
           settings: { ...onTracks, providerLimitTargetOrder: order },
           thread: daily,
-          localSpent: true,
           machines: [machine(minis, "Minis"), machine(m3, "M3")],
-          checks: { [minis]: trackAnswer("Minis", trackEvidence()) },
         });
-        expect(result.requests).toHaveLength(1);
-        expect(result.dispatched).toEqual([]);
+        // The next model of the Daily track runs here; nothing was asked of Minis or M3.
+        expect(result.checks).toEqual([]);
+        expect(result.requests).toEqual([]);
+        expect(result.dispatched[0]).toMatchObject({
+          modelSelection: { instanceId: codexId, model: "gpt-6" },
+        });
       }),
-    );
-  }
+  );
+
+  itEffect.effect.each(orders)("a track out on this machine hands off, under %s (AC-37)", (order) =>
+    Effect.gen(function* () {
+      const result = yield* run({
+        settings: { ...onTracks, providerLimitTargetOrder: order },
+        thread: daily,
+        localSpent: true,
+        machines: [machine(minis, "Minis"), machine(m3, "M3")],
+        checks: { [minis]: trackAnswer("Minis", trackEvidence()) },
+      });
+      expect(result.requests).toHaveLength(1);
+      expect(result.dispatched).toEqual([]);
+    }),
+  );
 
   itEffect.effect(
     "asks the machine for the thread's own track and moves onto the sign-in it confirmed (AC-38)",
@@ -1343,20 +1344,22 @@ describe("the automatic start when a thread's track is out here (1390 T-13)", ()
       }),
   );
 
-  itEffect.effect("with no reset time anywhere it says so, and does not ask each sweep (AC-39)", () =>
-    Effect.gen(function* () {
-      const result = yield* run(
-        {
-          ...everyOut(null, null),
-          // This machine's own windows name no reset either.
-          thread: { ...daily, usageLimitResetAt: null },
-        },
-        3,
-      );
-      expect(result.checks).toHaveLength(2);
-      expect(result.requests).toEqual([]);
-      expect(result.shown?.track).toMatchObject({ everyMachineOut: true, target: null });
-    }),
+  itEffect.effect(
+    "with no reset time anywhere it says so, and does not ask each sweep (AC-39)",
+    () =>
+      Effect.gen(function* () {
+        const result = yield* run(
+          {
+            ...everyOut(null, null),
+            // This machine's own windows name no reset either.
+            thread: { ...daily, usageLimitResetAt: null },
+          },
+          3,
+        );
+        expect(result.checks).toHaveLength(2);
+        expect(result.requests).toEqual([]);
+        expect(result.shown?.track).toMatchObject({ everyMachineOut: true, target: null });
+      }),
   );
 
   itEffect.effect(
@@ -1405,7 +1408,10 @@ describe("the automatic start when a thread's track is out here (1390 T-13)", ()
       const result = yield* run({
         settings: {
           ...onTracks,
-          modelLanes: { ...onTracks.modelLanes!, complex: [{ instanceId: claudeId, model: "opus" }] },
+          modelLanes: {
+            ...onTracks.modelLanes!,
+            complex: [{ instanceId: claudeId, model: "opus" }],
+          },
         },
         localSpent: true,
         machines: [machine(minis, "Minis")],
