@@ -40,6 +40,7 @@ layer("076_ScheduledTaskRunners", (it) => {
         ["updated_at", 0],
         ["asked_json", 0],
         ["copy_enabled", 0],
+        ["installed_revision", 0],
       ]);
       assert.deepStrictEqual(yield* columns("scheduled_task_revisions"), [
         ["task_id", 1],
