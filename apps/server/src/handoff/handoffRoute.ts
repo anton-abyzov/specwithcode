@@ -47,6 +47,8 @@ import {
   ReplicateMeta,
   TakeoverReason,
   TakeoverRequest,
+  TransferPullRequest,
+  TransferStatusRequest,
 } from "./handoffWire.ts";
 import { isRetiredReason } from "./handoffState.ts";
 import {
@@ -248,6 +250,18 @@ export const layer = HttpRouter.add(
         return Option.isNone(input)
           ? invalid
           : yield* answer(receiver.heartbeat(caller, input.value));
+      }
+      case "transfer-status": {
+        const input = decodeJson(TransferStatusRequest, body.value);
+        return Option.isNone(input)
+          ? invalid
+          : yield* answer(receiver.transferStatus(caller, input.value));
+      }
+      case "transfer-pull": {
+        const input = decodeJson(TransferPullRequest, body.value);
+        return Option.isNone(input)
+          ? invalid
+          : yield* answer(receiver.transferPull(caller, input.value));
       }
       case "coordinator-lease": {
         const input = decodeJson(CoordinatorLeaseRequest, body.value);

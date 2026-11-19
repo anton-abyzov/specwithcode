@@ -15,7 +15,14 @@ import {
   settled,
   type World,
 } from "../fleet/remoteWorkers.testkit.ts";
-import { launcher, removeStages, type Stage, stage, target, worker } from "./handoffFollow.testkit.ts";
+import {
+  launcher,
+  removeStages,
+  type Stage,
+  stage,
+  target,
+  worker,
+} from "./handoffFollow.testkit.ts";
 
 afterEach(removeStages);
 
@@ -150,19 +157,41 @@ describe("a handed-off worker's result", () => {
         s.network.refuseTakeover = true;
         expect((yield* handOff.pipe(Effect.flip)).code).toBe("busy");
         expect(s.documents.source.threads[worker]?.lease?.state).toBe("active");
-        expect(yield* rows).toMatchObject([{ state: "disposed", deliveredRunIds: [] }]);
+        const [refused] = yield* rows;
+        expect(refused).toMatchObject({ state: "disposed", deliveredRunIds: [] });
+        expect(yield* rows).toHaveLength(1);
         expect(s.kept).toEqual([]);
-        // The same thread is handed off again at the same epoch, and this time it is taken.
+        // The same thread is handed off again, and this time it is taken. The refused
+        // epoch is used up, so the move that goes through has a follow of its own.
         s.network.refuseTakeover = false;
         const moved = yield* handOff;
         const { run } = s.lastRun();
-        yield* settled(life.world, rows, (current) => current[0]?.followedRunId === run.id);
+        yield* settled(life.world, rows, (current) =>
+          current.some((row) => row.followedRunId === run.id),
+        );
         expect(s.kept).toEqual([]);
         yield* s.finish();
-        const current = yield* settled(life.world, rows, (all) => all[0]?.state === "idle");
-        expect(current).toHaveLength(1);
-        expect(current[0]?.remoteThreadId).toBe(moved.threadId);
+        const current = yield* settled(life.world, rows, (all) =>
+          all.some((row) => row.state === "idle"),
+        );
+        expect(current).toHaveLength(2);
+        // The refused move's follow stays ended and told the launcher nothing.
+        expect(current.find((row) => row.id === refused?.id)).toMatchObject({
+          state: "disposed",
+          deliveredRunIds: [],
+        });
+        // The move that went through is another row, and the one result came from it.
+        const accepted = current.find((row) => row.id !== refused?.id);
+        expect(accepted).toMatchObject({
+          state: "idle",
+          callerThreadId: launcher,
+          remoteThreadId: moved.threadId,
+          deliveredRunIds: [run.id],
+        });
         expect(s.kept).toHaveLength(1);
+        expect(s.kept).toMatchObject([
+          { threadId: launcher, commandId: wakeOf(accepted?.id, run.id) },
+        ]);
       }).pipe(Effect.provide(life.layer));
     },
     LIVE,

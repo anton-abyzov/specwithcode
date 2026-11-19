@@ -47,6 +47,7 @@ import {
 } from "./handoffState.ts";
 import {
   HANDOFF_APP_VERSION,
+  HANDOFF_CAPABILITIES,
   HANDOFF_PROTOCOL_VERSION,
   PeerErrorBody,
   ReplicateMeta,
@@ -258,6 +259,7 @@ const receiving = (signIns: ReadonlyArray<ReturnType<typeof signIn>>) =>
           sourceEnvironmentId: m4,
           protocolVersion: HANDOFF_PROTOCOL_VERSION,
           appVersion: HANDOFF_APP_VERSION,
+          capabilities: HANDOFF_CAPABILITIES,
           threads: [
             {
               sourceThreadId: sourceThread,
@@ -276,6 +278,7 @@ const receiving = (signIns: ReadonlyArray<ReturnType<typeof signIn>>) =>
         sequence: 1,
         reason: "handoff",
         modelSelection: requested,
+        operationId: "0a1b2c3d-1111-4222-8333-444455556666",
       });
     return {
       receiver,
@@ -886,6 +889,7 @@ describe("a review starts on a machine only with a permitted reviewer there (rev
             reason: "handoff",
             modelSelection: claude,
             review: true,
+            operationId: "0a1b2c3d-1111-4222-8333-444455556666",
           }),
         );
         expect(minisHas.launches).toHaveLength(0);

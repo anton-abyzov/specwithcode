@@ -3,7 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 
 import { describe, expect, it } from "@effect/vitest";
-import { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
+import { EnvironmentId, ProjectId, ThreadId } from "@specweave-studio/contracts";
 import { verifyDpopProof } from "@specweave-studio/shared/dpop";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -18,6 +18,7 @@ import { nodePath as NodePath } from "../nodePath.ts";
 import * as PreviousRelease from "./handoffReviewLock.previousRelease.test.fixture.ts";
 import { HANDOFF_PEER_PREFIX, type ReplicateMeta } from "./handoffWire.ts";
 import { HandoffPeers, layer as handoffPeersLayer } from "./handoffPeers.ts";
+import { PREVIOUS_RELEASE, PREVIOUS_UNKNOWN_PATH } from "./previousRelease383.test.fixture.ts";
 
 const machine = { ...target, connectUrl: CONNECT_ORIGIN };
 const heartbeat = {
@@ -81,6 +82,20 @@ function worker(
     // This worker is from before Sync extras: it has no such path.
     if (url.pathname.includes("/extras-"))
       return Response.json({ error: "not_found", code: "not_found" }, { status: 404 });
+    // It is the latest release, from before transfer records: it answers those paths as that release does.
+    if (url.pathname.includes("/transfer-"))
+      return Response.json(PREVIOUS_UNKNOWN_PATH.body, { status: PREVIOUS_UNKNOWN_PATH.status });
+    // It accepted a takeover at epoch 93 and could not start it; epoch 92 is stale.
+    if (url.pathname.endsWith("/takeover")) {
+      const sent = new TextDecoder().decode(init?.body as Uint8Array);
+      if (sent.includes('"epoch":93'))
+        return Response.json(
+          { error: "M1 could not start it.", code: "failed", uncertain: true },
+          { status: 503 },
+        );
+      if (sent.includes('"epoch":92'))
+        return Response.json({ error: "M1 saw a newer epoch.", code: "fenced" }, { status: 409 });
+    }
     // The previous release answers only the paths it had.
     if (
       options.previousRelease?.() === true &&
@@ -222,6 +237,70 @@ describe("handoff peers over SpecWithCode Connect", () => {
             `${CONNECT_ORIGIN}${HANDOFF_PEER_PREFIX}/extras-negotiate`,
             `${CONNECT_ORIGIN}${HANDOFF_PEER_PREFIX}/extras-replicate`,
           ]);
+        }),
+    ),
+  );
+
+  it.effect(
+    `reads ${PREVIOUS_RELEASE}'s answer to the transfer record paths as "Needs update", never as silence`,
+    () =>
+      withPeers(
+        { grant: (jkt) => studioToken({ sid: "grant", jkt }), offline: new Set([ORIGIN]) },
+        (peers) =>
+          Effect.gen(function* () {
+            const source = EnvironmentId.make("env-m4");
+            const status = yield* Effect.result(
+              peers.transferStatus(machine.environmentId, {
+                sourceEnvironmentId: source,
+                sourceThreadId: ThreadId.make("thread:fix-build"),
+                epoch: 2,
+                operationId: "0a1b2c3d-1111-4222-8333-444455556666",
+              }),
+            );
+            const pull = yield* Effect.result(
+              peers.transferPull(machine.environmentId, {
+                sourceEnvironmentId: source,
+                threadId: ThreadId.make("thread:fix-build"),
+                modelSelection: null,
+              }),
+            );
+            const failures = [
+              Result.isFailure(status) ? status.failure : null,
+              Result.isFailure(pull) ? pull.failure : null,
+            ];
+            for (const failure of failures) {
+              // A definite answer that changed nothing there: not "may have acted".
+              expect(failure).toMatchObject({
+                needsUpdate: true,
+                uncertain: false,
+                check: "version",
+                code: "invalid",
+              });
+              expect(failure?.message.startsWith("Needs update: ")).toBe(true);
+            }
+          }),
+      ),
+  );
+
+  it.effect("reads the in-doubt mark of a refused takeover, and its absence as a definite no", () =>
+    withPeers(
+      { grant: (jkt) => studioToken({ sid: "grant", jkt }), offline: new Set([ORIGIN]) },
+      (peers) =>
+        Effect.gen(function* () {
+          const takeover = (epoch: number) =>
+            peers
+              .takeover(machine.environmentId, {
+                sourceEnvironmentId: EnvironmentId.make("env-m4"),
+                sourceThreadId: ThreadId.make("thread:fix-build"),
+                epoch,
+                sequence: 1,
+                reason: "handoff",
+                modelSelection: null,
+                operationId: "0a1b2c3d-1111-4222-8333-444455556666",
+              })
+              .pipe(Effect.flip);
+          expect(yield* takeover(93)).toMatchObject({ code: "failed", uncertain: true });
+          expect(yield* takeover(92)).toMatchObject({ code: "fenced", uncertain: false });
         }),
     ),
   );

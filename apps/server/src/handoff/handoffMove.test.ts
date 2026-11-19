@@ -8,17 +8,14 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
-import { HANDOFF_LEASE_STALE_MS, ThreadId, threadTurnKey } from "@specweave-studio/contracts";
+import { ThreadId } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 
 import { incomingRef } from "./bundleGit.ts";
-import * as HandoffMoves from "./HandoffMoves.ts";
-import { HandoffPeerError, HandoffPeers } from "./handoffPeers.ts";
-import * as HandoffReceiver from "./HandoffReceiver.ts";
-import { HANDOFF_PROTOCOL_VERSION } from "./handoffWire.ts";
-import { emptyThreadRecord, guardSideEffect, findIncoming, incomingKey } from "./handoffState.ts";
+import { HandoffPeerError } from "./handoffPeers.ts";
+import { HANDOFF_CAPABILITIES, HANDOFF_PROTOCOL_VERSION } from "./handoffWire.ts";
+import { findIncoming } from "./handoffState.ts";
 import {
   destinationProject,
   directory,
@@ -28,11 +25,9 @@ import {
   m4,
   minis,
   modelSelection,
-  probedSource,
   registerCleanup,
   scenario,
   sourceProject,
-  staleReplicaOnMinis,
   threadId,
 } from "./handoffMove.test.fixture.ts";
 
@@ -238,44 +233,6 @@ describe("handoff between two machines", () => {
     }),
   );
 
-  it.effect("never continues here a copy from a machine on another handoff version", () =>
-    Effect.gen(function* () {
-      const { moves, destinationReceiver, destination, destinationRoot, destinationServices } =
-        yield* scenario();
-      NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
-      yield* moves.preflight({ destinationEnvironmentId: minis, threadIds: [threadId] });
-      const key = incomingKey(m4, threadId);
-      expect(destination.document.incomingDetails?.[key]?.sourceProtocolVersion).toBe(
-        HANDOFF_PROTOCOL_VERSION,
-      );
-      // A copy sent by a build from before the version check.
-      const {
-        sourceProtocolVersion: _v,
-        sourceAppVersion: _a,
-        ...older
-      } = destination.document.incomingDetails?.[key]!;
-      destination.document = {
-        ...destination.document,
-        incomingDetails: { ...destination.document.incomingDetails, [key]: older },
-      };
-      const renewedAt = Date.parse(
-        findIncoming(destination.document, m4, threadId)!.lease.renewedAt,
-      );
-      const minisMoves = yield* HandoffMoves.make.pipe(
-        Effect.provideService(HandoffReceiver.HandoffReceiver, destinationReceiver),
-        Effect.provideService(HandoffPeers, {} as never),
-        Effect.provide(destinationServices),
-      );
-      yield* TestClock.setTime(renewedAt + HANDOFF_LEASE_STALE_MS + 1_000);
-      const refused = yield* minisMoves
-        .continueHere({ sourceEnvironmentId: m4, sourceThreadId: threadId })
-        .pipe(Effect.flip);
-      expect(refused.code).toBe("invalid");
-      expect(refused.message).toContain("Update M4 first.");
-      expect(destination.launches).toHaveLength(0);
-    }),
-  );
-
   it.effect("tells an older source which machine to update, in a check it can read", () =>
     Effect.gen(function* () {
       const { destinationReceiver, asSource } = yield* scenario();
@@ -292,6 +249,7 @@ describe("handoff between two machines", () => {
         ...request,
         protocolVersion: HANDOFF_PROTOCOL_VERSION,
         appVersion: "9.9.9",
+        capabilities: HANDOFF_CAPABILITIES,
       });
       expect(current.protocolVersion).toBe(HANDOFF_PROTOCOL_VERSION);
       expect(current.results[0]?.failures.some((entry) => entry.message.includes("Update"))).toBe(
@@ -383,263 +341,6 @@ describe("handoff between two machines", () => {
         "handoff",
       );
       expect(destination.launches[0]?.initialMessage).toBeDefined();
-    }),
-  );
-
-  it.effect(
-    "continues a silent source here after its lease went stale; the source fences on rejoin",
-    () =>
-      Effect.gen(function* () {
-        const {
-          moves,
-          destinationReceiver,
-          destination,
-          source,
-          sourceRoot,
-          destinationRoot,
-          destinationServices,
-        } = yield* scenario();
-        NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
-        // A turn end replicated checkpoint 1 to Minis; then M4 dropped off the network.
-        yield* moves.preflight({ destinationEnvironmentId: minis, threadIds: [threadId] });
-        const renewedAt = Date.parse(
-          findIncoming(destination.document, m4, threadId)!.lease.renewedAt,
-        );
-        const minisMoves = yield* HandoffMoves.make.pipe(
-          Effect.provideService(HandoffReceiver.HandoffReceiver, destinationReceiver),
-          Effect.provideService(HandoffPeers, probedSource("silent")),
-          Effect.provide(destinationServices),
-        );
-        yield* TestClock.setTime(renewedAt + 30_000);
-        const early = yield* minisMoves
-          .continueHere({ sourceEnvironmentId: m4, sourceThreadId: threadId })
-          .pipe(Effect.flip);
-        expect(early.code).toBe("busy");
-        expect(destination.launches).toHaveLength(0);
-
-        yield* TestClock.setTime(renewedAt + HANDOFF_LEASE_STALE_MS + 1_000);
-        const continued = yield* minisMoves.continueHere({
-          sourceEnvironmentId: m4,
-          sourceThreadId: threadId,
-        });
-        expect(destination.launches).toHaveLength(1);
-        expect(destination.document.threads[continued.threadId]?.lease?.epoch).toBe(2);
-        // The pull request the source opened is reused, never opened again.
-        expect(
-          guardSideEffect({
-            record: destination.document.threads[continued.threadId],
-            environmentId: minis,
-            turnKey: threadTurnKey(continued.threadId, "run-9"),
-            kind: "pr-create",
-            target: "anton-abyzov/app#12",
-          }).kind,
-        ).toBe("reuse");
-        // A repeat is the same continuation.
-        const again = yield* minisMoves.continueHere({
-          sourceEnvironmentId: m4,
-          sourceThreadId: threadId,
-        });
-        expect(again.threadId).toBe(continued.threadId);
-        expect(destination.launches).toHaveLength(1);
-
-        // M4 kept working while it was away, then comes back at the old epoch:
-        // its first heartbeat fences its copy and keeps that work on a branch.
-        const head = git(sourceRoot, "rev-parse", "HEAD");
-        NodeFS.writeFileSync(NodePath.join(sourceRoot, "app.ts"), "export const a = 3;\n");
-        yield* moves.tick;
-        const kept = source.document.threads[threadId]?.fencedBranch;
-        expect(kept).toBe("swc/from-m4/feat/fix-build");
-        expect(git(sourceRoot, "show", `${kept}:app.ts`)).toBe("export const a = 3;");
-        expect(git(sourceRoot, "rev-parse", "HEAD")).toBe(head);
-        expect(git(sourceRoot, "symbolic-ref", "--short", "HEAD")).toBe("feat/fix-build");
-        expect(source.document.threads[threadId]?.continuedOn?.threadId).toBe(continued.threadId);
-        expect(source.document.threads[threadId]?.lease?.state).toBe("fenced");
-        // A late handoff from M4 answers with the continuation; it never starts another.
-        const late = yield* handOff(moves);
-        expect(late.threadId).toBe(continued.threadId);
-        expect(destination.launches).toHaveLength(1);
-      }),
-  );
-
-  it.effect.each(["awake", "refuses"] as const)(
-    "refuses Continue here while the source answers a direct probe (%s)",
-    (answer) =>
-      Effect.gen(function* () {
-        const { continueHere, destination, probes } = yield* staleReplicaOnMinis(answer);
-        const refused = yield* continueHere.pipe(Effect.flip);
-        expect(refused.code).toBe("busy");
-        expect(refused.message).toBe(
-          "M4 answered just now and still holds this thread; hand it off from there.",
-        );
-        expect(probes).toEqual([
-          expect.objectContaining({ sourceEnvironmentId: minis, candidates: [] }),
-        ]);
-        expect(destination.launches).toHaveLength(0);
-        expect(findIncoming(destination.document, m4, threadId)?.continuedThreadId).toBeNull();
-      }),
-  );
-
-  it.effect.each(["silent", "local"] as const)(
-    "continues here when the source is unreachable or cannot be probed (%s)",
-    (answer) =>
-      Effect.gen(function* () {
-        const { continueHere, destination, probes } = yield* staleReplicaOnMinis(answer);
-        const continued = yield* continueHere;
-        expect(probes).toHaveLength(1);
-        expect(destination.launches).toHaveLength(1);
-        expect(destination.document.threads[continued.threadId]?.lease?.epoch).toBe(2);
-      }),
-  );
-
-  it.effect("refuses Continue here while this machine's own network is down", () =>
-    Effect.gen(function* () {
-      const { continueHere, destination, probes } = yield* staleReplicaOnMinis("silent", {
-        connect: "offline",
-      });
-      const refused = yield* continueHere.pipe(Effect.flip);
-      expect(refused.code).toBe("busy");
-      expect(refused.message).toContain("cannot reach the network");
-      expect(probes).toHaveLength(0);
-      expect(destination.launches).toHaveLength(0);
-    }),
-  );
-
-  it.effect.each([
-    { connect: "unknown", source: "silent", refusal: "cannot show that its network works" },
-    { connect: "online", source: "local", refusal: "could not ask M4" },
-  ] as const)(
-    "holds an agent to a shown network and a source it asked ($connect, $source)",
-    ({ connect, source, refusal }) =>
-      Effect.gen(function* () {
-        const { minisMoves, destination } = yield* staleReplicaOnMinis(source, { connect });
-        const refused = yield* minisMoves
-          .continueHere({ sourceEnvironmentId: m4, sourceThreadId: threadId }, { byAgent: true })
-          .pipe(Effect.flip);
-        expect(refused.code).toBe("busy");
-        expect(refused.message).toContain(refusal);
-        expect(refused.message).toContain("ask the user");
-        expect(destination.launches).toHaveLength(0);
-      }),
-  );
-
-  it.effect("lets an agent continue once this machine is online and the source is silent", () =>
-    Effect.gen(function* () {
-      const { minisMoves, destination } = yield* staleReplicaOnMinis("silent", {
-        connect: "online",
-      });
-      yield* minisMoves.continueHere(
-        { sourceEnvironmentId: m4, sourceThreadId: threadId },
-        { byAgent: true },
-      );
-      expect(destination.launches).toHaveLength(1);
-    }),
-  );
-
-  it.effect("reads a slow lease tick as no sleep", () =>
-    Effect.gen(function* () {
-      // Minis holds a thread of its own with a copy on M4, so its tick heartbeats M4,
-      // and M4 takes 90 seconds to answer. M4 also answers the probe, so an attempt
-      // that passes the wake check is refused only for that.
-      let answered = 0;
-      const { minisMoves, destination } = yield* staleReplicaOnMinis("awake", {
-        heartbeat: () =>
-          Effect.sleep("90 seconds").pipe(
-            Effect.tap(() =>
-              Effect.sync(() => {
-                answered += 1;
-              }),
-            ),
-            Effect.as({ machineLabel: "M4", continued: [] as Array<never> }),
-          ),
-      });
-      const own = ThreadId.make("thread-minis-own");
-      destination.document = {
-        ...destination.document,
-        threads: {
-          ...destination.document.threads,
-          [own]: {
-            ...emptyThreadRecord(destinationProject),
-            lease: {
-              holderEnvironmentId: minis,
-              holderLabel: "Minis",
-              holderThreadId: own,
-              epoch: 1,
-              renewedAt: "2026-10-20T14:00:00.000Z",
-              state: "active",
-            },
-            replicas: [
-              {
-                environmentId: m4,
-                machineLabel: "M4",
-                state: "current",
-                sequence: 1,
-                detail: null,
-                updatedAt: "2026-10-20T14:00:00.000Z",
-              },
-            ],
-          },
-        },
-      };
-      const attempt = minisMoves
-        .continueHere({ sourceEnvironmentId: m4, sourceThreadId: threadId })
-        .pipe(
-          Effect.flip,
-          Effect.map((error) => error.message),
-        );
-      const tick = Effect.gen(function* () {
-        const fiber = yield* minisMoves.heartbeat.pipe(Effect.forkChild);
-        yield* Effect.yieldNow;
-        return fiber;
-      });
-      yield* tick;
-      yield* TestClock.adjust("90 seconds");
-      yield* TestClock.adjust("30 seconds");
-      const slow = yield* tick;
-      // Eighty seconds into a tick: no idle time, so no wake.
-      yield* TestClock.adjust("80 seconds");
-      expect(yield* attempt).toContain("answered just now");
-      yield* TestClock.adjust("10 seconds");
-      yield* Fiber.join(slow);
-      expect(answered).toBe(2);
-      // The next tick starts 30 seconds after the slow one ended: still no wake.
-      yield* TestClock.adjust("30 seconds");
-      yield* tick;
-      expect(yield* attempt).toContain("answered just now");
-    }),
-  );
-
-  it.effect("waits a minute after this machine starts or wakes before continuing here", () =>
-    Effect.gen(function* () {
-      const { destination, destinationReceiver, destinationServices, minisMoves } =
-        yield* staleReplicaOnMinis("silent");
-      const attempt = (moves: typeof minisMoves) =>
-        moves.continueHere({ sourceEnvironmentId: m4, sourceThreadId: threadId });
-      // A server that just started.
-      const started = yield* HandoffMoves.make.pipe(
-        Effect.provideService(HandoffReceiver.HandoffReceiver, destinationReceiver),
-        Effect.provideService(HandoffPeers, probedSource("silent")),
-        Effect.provide(destinationServices),
-      );
-      const fresh = yield* attempt(started).pipe(Effect.flip);
-      expect(fresh.code).toBe("busy");
-      expect(fresh.message).toContain("just started or woke");
-      // A machine whose lease ticks stopped for five minutes slept; before its next tick
-      // sees the gap, Continue here already does.
-      yield* minisMoves.heartbeat;
-      yield* TestClock.adjust("5 minutes");
-      expect((yield* attempt(minisMoves).pipe(Effect.flip)).message).toContain(
-        "just started or woke",
-      );
-      yield* minisMoves.heartbeat;
-      expect((yield* attempt(minisMoves).pipe(Effect.flip)).code).toBe("busy");
-      yield* TestClock.adjust("30 seconds");
-      yield* minisMoves.heartbeat;
-      expect((yield* attempt(minisMoves).pipe(Effect.flip)).code).toBe("busy");
-      expect(destination.launches).toHaveLength(0);
-      yield* TestClock.adjust("31 seconds");
-      yield* minisMoves.heartbeat;
-      yield* attempt(minisMoves);
-      expect(destination.launches).toHaveLength(1);
     }),
   );
 
@@ -757,38 +458,6 @@ describe("handoff between two machines", () => {
       ]);
       expect(fixture.activeRunId).toBeNull();
     }),
-  );
-
-  it.effect(
-    "interrupts again after the takeover when the first interrupt did not stop the turn",
-    () =>
-      Effect.gen(function* () {
-        const { source, destination, moves, fixture, destinationRoot } = yield* scenario();
-        NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
-        fixture.activeRunId = "run-1";
-        fixture.ignoreInterrupt = true;
-        let done = false;
-        const fiber = yield* handOff(moves).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              done = true;
-            }),
-          ),
-          Effect.forkChild,
-        );
-        // The bounded wait for the turn to end runs out. Git work in between is real I/O,
-        // so the test clock moves in small steps while the handoff runs.
-        for (let step = 0; step < 2_000 && !done; step += 1) {
-          yield* TestClock.withLive(Effect.sleep("5 millis"));
-          yield* TestClock.adjust("1 second");
-        }
-        const result = yield* Fiber.join(fiber);
-        expect(result.threadId).toBe(destination.launches[0]?.threadId);
-        const interrupts = source.dispatched.filter((command) => command.type === "run.interrupt");
-        expect(interrupts).toHaveLength(2);
-        expect(interrupts[1]).toMatchObject({ runId: "run-1", cause: "agent" });
-        expect(String(interrupts[1]?.commandId)).toContain("handoff-fenced-interrupt:run-1");
-      }),
   );
 
   it.effect("backs off a failing replication instead of retrying it on every tick", () =>

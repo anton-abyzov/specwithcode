@@ -307,7 +307,7 @@ export function stage(
             code: refusal.code,
             message: refusal.message,
             check: refusal.check,
-            uncertain: false,
+            uncertain: refusal.uncertain === true,
           }),
       ),
     );
@@ -320,8 +320,7 @@ export function stage(
   const peers = {
     target: () => Effect.succeed(there),
     targets: Effect.sync(() => (network.fleetUnread ? [] : [there, ...network.ungranted])),
-    negotiate: (_: unknown, request: never) =>
-      asked((built) => built.negotiate(asSource, request)),
+    negotiate: (_: unknown, request: never) => asked((built) => built.negotiate(asSource, request)),
     replicate: (_: unknown, meta: never, bundle: never) =>
       asked((built) => built.replicate(asSource, meta, bundle)),
     preflight: (environmentId: unknown, request: never) =>
@@ -352,8 +351,11 @@ export function stage(
         Effect.filterOrFail(() => !network.dropTakeoverAnswer, noAnswer),
       );
     },
-    heartbeat: (_: unknown, request: never) =>
-      asked((built) => built.heartbeat(asSource, request)),
+    heartbeat: (_: unknown, request: never) => asked((built) => built.heartbeat(asSource, request)),
+    transferStatus: (_: unknown, request: never) =>
+      asked((built) => built.transferStatus(asSource, request)),
+    transferPull: (_: unknown, request: never) =>
+      asked((built) => built.transferPull(asSource, request)),
   } as unknown as HandoffPeers["Service"];
 
   const workerShell = () => ({
@@ -383,7 +385,10 @@ export function stage(
       Layer.mergeAll(
         Layer.succeed(HandoffMode, handoffFor("source")),
         Layer.succeed(HandoffPeers, peers),
-        Layer.succeed(HandoffReceiver.HandoffReceiver, {} as never),
+        // The source's own receiver is asked for nothing here but to take the pull handler.
+        Layer.succeed(HandoffReceiver.HandoffReceiver, {
+          attachPull: () => Effect.void,
+        } as never),
         Layer.succeed(HandoffConnectivity, { probe: Effect.succeed("online" as const) }),
         orchestrator,
         Layer.succeed(ProjectionStore.ProjectionStoreV2, {

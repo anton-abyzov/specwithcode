@@ -26,7 +26,7 @@ import { CoordinatorLeaseReceiver } from "../project/CoordinatorLeaseRoute.ts";
 import { LinkedMemoryPeerReceiver } from "../project/LinkedMemoryPeers.ts";
 import { LinkedPeerReceiver } from "../project/LinkedPeerRoute.ts";
 import { ExtrasReceiver } from "./ExtrasReceiver.ts";
-import { HandoffReceiver, type ReceiverCaller } from "./HandoffReceiver.ts";
+import { HandoffReceiver, HandoffRefusal, type ReceiverCaller } from "./HandoffReceiver.ts";
 import * as HandoffRoute from "./handoffRoute.ts";
 import {
   encodeFrame,
@@ -53,6 +53,7 @@ const credentials: Record<
 function api() {
   const callers: Array<ReceiverCaller> = [];
   const extras: Array<{ readonly meta: unknown; readonly bundle: Uint8Array | null }> = [];
+  const transfers: Array<unknown> = [];
   const takeovers: Array<unknown> = [];
   const token = (headers: Record<string, string | undefined>) =>
     (headers.authorization ?? "").replace(/^Bearer /, "");
@@ -117,20 +118,57 @@ function api() {
             }),
         }),
         Layer.mock(HandoffReceiver)({
+          // Epoch 93: it accepted the takeover and could not start the thread, so the
+          // acceptance stands. Epoch 92: stale. Any other takeover goes through.
+          takeover: (caller, request) =>
+            request.epoch === 93
+              ? Effect.fail(
+                  new HandoffRefusal({
+                    status: 503,
+                    code: "failed",
+                    message: "Mini accepted this handoff and could not start it.",
+                    uncertain: true,
+                  }),
+                )
+              : request.epoch === 92
+                ? Effect.fail(
+                    new HandoffRefusal({
+                      status: 409,
+                      code: "fenced",
+                      message: "Mini saw a newer epoch.",
+                    }),
+                  )
+                : Effect.sync(() => {
+                    callers.push(caller);
+                    takeovers.push(request);
+                    return {
+                      threadId: ThreadId.make("thread-continued"),
+                      machineLabel: "Mini",
+                      modelSelection: null,
+                      resumed: false,
+                      notice: null,
+                    };
+                  }),
           negotiate: (caller) =>
             Effect.sync(() => {
               callers.push(caller);
               return { known: [] };
             }),
-          takeover: (caller, request) =>
+          transferStatus: (caller, request) =>
             Effect.sync(() => {
               callers.push(caller);
-              takeovers.push(request);
+              transfers.push(request);
+              return { machineLabel: "Mini", status: "not-accepted" as const, receipt: null };
+            }),
+          transferPull: (caller, request) =>
+            Effect.sync(() => {
+              callers.push(caller);
+              transfers.push(request);
               return {
-                threadId: ThreadId.make("thread-continued"),
+                threadId: ThreadId.make("handoff:continued"),
                 machineLabel: "Mini",
                 modelSelection: null,
-                resumed: false,
+                resumed: true,
                 notice: null,
               };
             }),
@@ -185,7 +223,7 @@ function api() {
         body: body as never,
       }),
     );
-  return { negotiate, post, frame, callers, extras, takeovers, dispose };
+  return { negotiate, post, frame, callers, extras, transfers, takeovers, dispose };
 }
 
 describe("handoff route", () => {
@@ -299,6 +337,75 @@ describe("handoff route", () => {
       const answer = await app.post("linked-something-newer", "limited", "{}");
       expect(answer.status).toBe(404);
       expect(await answer.json()).toEqual({ error: "not_found", code: "not_found" });
+    } finally {
+      await app.dispose();
+    }
+  });
+
+  it("hands the transfer record paths to the receiver, with the caller its grant names", async () => {
+    const app = api();
+    try {
+      const status = {
+        sourceEnvironmentId: m4,
+        sourceThreadId: ThreadId.make("thread-m4"),
+        epoch: 2,
+        operationId: "0a1b2c3d-1111-4222-8333-444455556666",
+      };
+      const asked = await app.post("transfer-status", "limited", JSON.stringify(status));
+      expect(asked.status).toBe(200);
+      expect(await asked.json()).toEqual({
+        machineLabel: "Mini",
+        status: "not-accepted",
+        receipt: null,
+      });
+      const pull = {
+        sourceEnvironmentId: m4,
+        threadId: ThreadId.make("thread-mini"),
+        modelSelection: null,
+      };
+      const pulled = await app.post("transfer-pull", "limited", JSON.stringify(pull));
+      expect(pulled.status).toBe(200);
+      expect(await pulled.json()).toMatchObject({ threadId: "handoff:continued", resumed: true });
+      expect(app.transfers).toEqual([status, pull]);
+      expect(app.callers.map((caller) => caller.sourceEnvironmentId)).toEqual([m4, m4]);
+      // A body that is not this message, and a grant that was revoked, never reach it.
+      const invalid = await app.post("transfer-status", "limited", JSON.stringify({ epoch: 2 }));
+      expect(invalid.status).toBe(400);
+      expect(await invalid.json()).toMatchObject({ code: "invalid" });
+      expect((await app.post("transfer-pull", "revoked", JSON.stringify(pull))).status).toBe(403);
+      expect(app.transfers).toHaveLength(2);
+    } finally {
+      await app.dispose();
+    }
+  });
+
+  it("says a failure after an accepted takeover is in doubt, and a refusal is not", async () => {
+    const app = api();
+    try {
+      const takeover = (epoch: number) =>
+        app.post(
+          "takeover",
+          "limited",
+          JSON.stringify({
+            sourceEnvironmentId: m4,
+            sourceThreadId: ThreadId.make("thread-m4"),
+            epoch,
+            sequence: 1,
+            reason: "handoff",
+            modelSelection: null,
+            operationId: "0a1b2c3d-1111-4222-8333-444455556666",
+          }),
+        );
+      const doubt = await takeover(93);
+      expect(doubt.status).toBe(503);
+      expect(await doubt.json()).toEqual({
+        error: "Mini accepted this handoff and could not start it.",
+        code: "failed",
+        uncertain: true,
+      });
+      const refused = await takeover(92);
+      expect(refused.status).toBe(409);
+      expect(await refused.json()).toEqual({ error: "Mini saw a newer epoch.", code: "fenced" });
     } finally {
       await app.dispose();
     }

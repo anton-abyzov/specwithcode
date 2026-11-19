@@ -174,6 +174,9 @@ export function makeLimitHandoffPort(deps: LimitHandoffAdapterDeps): LimitHandof
             threadId: request.threadId,
             destinationEnvironmentId: request.destinationEnvironmentId,
             modelSelection: request.modelSelection,
+            // The transfer record keeps who asked, so a thread that arrives for
+            // a run is not sent straight back for the same one.
+            trigger: { kind: "automatic", key: request.idempotencyKey.slice(0, 512) },
           })
           .pipe(Effect.result);
         if (answer._tag === "Success") {
