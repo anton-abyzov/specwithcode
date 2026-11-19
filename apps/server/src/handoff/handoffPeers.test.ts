@@ -3,7 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 
 import { describe, expect, it } from "@effect/vitest";
-import { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
+import { EnvironmentId, ProjectId, ThreadId } from "@specweave-studio/contracts";
 import { verifyDpopProof } from "@specweave-studio/shared/dpop";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -18,6 +18,7 @@ import { nodePath as NodePath } from "../nodePath.ts";
 import * as PreviousRelease from "./handoffReviewLock.previousRelease.test.fixture.ts";
 import { HANDOFF_PEER_PREFIX, type ReplicateMeta } from "./handoffWire.ts";
 import { HandoffPeers, layer as handoffPeersLayer } from "./handoffPeers.ts";
+import { PREVIOUS_RELEASE, PREVIOUS_UNKNOWN_PATH } from "./previousRelease381.test.fixture.ts";
 
 const machine = { ...target, connectUrl: CONNECT_ORIGIN };
 const heartbeat = {
@@ -81,15 +82,9 @@ function worker(
     // This worker is from before Sync extras: it has no such path.
     if (url.pathname.includes("/extras-"))
       return Response.json({ error: "not_found", code: "not_found" }, { status: 404 });
-    // The previous release answers only the paths it had.
-    if (
-      options.previousRelease?.() === true &&
-      !PreviousRelease.PEER_PATHS.has(url.pathname.slice(HANDOFF_PEER_PREFIX.length + 1))
-    )
-      return Response.json(PreviousRelease.unknownPath.body, {
-        status: PreviousRelease.unknownPath.status,
-      });
-    if (url.pathname.endsWith("replicate")) return Response.json({ sequence: 1 });
+    // It is the latest release, from before transfer records: it answers those paths as that release does.
+    if (url.pathname.includes("/transfer-"))
+      return Response.json(PREVIOUS_UNKNOWN_PATH.body, { status: PREVIOUS_UNKNOWN_PATH.status });
     return Response.json({ machineLabel: "M1", continued: [] });
   }) as typeof fetch;
   return { fetcher, sent };
@@ -224,6 +219,44 @@ describe("handoff peers over SpecWithCode Connect", () => {
           ]);
         }),
     ),
+  );
+
+  it.effect(
+    `reads ${PREVIOUS_RELEASE}'s answer to the transfer record paths as "Needs update", never as silence`,
+    () =>
+      withPeers(
+        { grant: (jkt) => studioToken({ sid: "grant", jkt }), offline: new Set([ORIGIN]) },
+        (peers) =>
+          Effect.gen(function* () {
+            const source = EnvironmentId.make("env-m4");
+            const status = yield* Effect.result(
+              peers.transferStatus(machine.environmentId, {
+                sourceEnvironmentId: source,
+                sourceThreadId: ThreadId.make("thread:fix-build"),
+                epoch: 2,
+                operationId: "0a1b2c3d-1111-4222-8333-444455556666",
+              }),
+            );
+            const pull = yield* Effect.result(
+              peers.transferPull(machine.environmentId, {
+                sourceEnvironmentId: source,
+                threadId: ThreadId.make("thread:fix-build"),
+                modelSelection: null,
+              }),
+            );
+            for (const answer of [status, pull]) {
+              const failure = Result.isFailure(answer) ? answer.failure : null;
+              // A definite answer that changed nothing there: not "may have acted".
+              expect(failure).toMatchObject({
+                needsUpdate: true,
+                uncertain: false,
+                check: "version",
+                code: "invalid",
+              });
+              expect(failure?.message.startsWith("Needs update: ")).toBe(true);
+            }
+          }),
+      ),
   );
 
   it.effect("keeps a bearer grant off the Connect address", () =>

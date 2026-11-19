@@ -53,7 +53,7 @@ const credentials: Record<
 function api() {
   const callers: Array<ReceiverCaller> = [];
   const extras: Array<{ readonly meta: unknown; readonly bundle: Uint8Array | null }> = [];
-  const takeovers: Array<unknown> = [];
+  const transfers: Array<unknown> = [];
   const token = (headers: Record<string, string | undefined>) =>
     (headers.authorization ?? "").replace(/^Bearer /, "");
   // Route handlers read their services per request, so they stay in the output.
@@ -122,15 +122,21 @@ function api() {
               callers.push(caller);
               return { known: [] };
             }),
-          takeover: (caller, request) =>
+          transferStatus: (caller, request) =>
             Effect.sync(() => {
               callers.push(caller);
-              takeovers.push(request);
+              transfers.push(request);
+              return { machineLabel: "Mini", status: "not-accepted" as const, receipt: null };
+            }),
+          transferPull: (caller, request) =>
+            Effect.sync(() => {
+              callers.push(caller);
+              transfers.push(request);
               return {
-                threadId: ThreadId.make("thread-continued"),
+                threadId: ThreadId.make("handoff:continued"),
                 machineLabel: "Mini",
                 modelSelection: null,
-                resumed: false,
+                resumed: true,
                 notice: null,
               };
             }),
@@ -185,7 +191,7 @@ function api() {
         body: body as never,
       }),
     );
-  return { negotiate, post, frame, callers, extras, takeovers, dispose };
+  return { negotiate, post, frame, callers, extras, transfers, dispose };
 }
 
 describe("handoff route", () => {
@@ -299,6 +305,43 @@ describe("handoff route", () => {
       const answer = await app.post("linked-something-newer", "limited", "{}");
       expect(answer.status).toBe(404);
       expect(await answer.json()).toEqual({ error: "not_found", code: "not_found" });
+    } finally {
+      await app.dispose();
+    }
+  });
+
+  it("hands the transfer record paths to the receiver, with the caller its grant names", async () => {
+    const app = api();
+    try {
+      const status = {
+        sourceEnvironmentId: m4,
+        sourceThreadId: ThreadId.make("thread-m4"),
+        epoch: 2,
+        operationId: "0a1b2c3d-1111-4222-8333-444455556666",
+      };
+      const asked = await app.post("transfer-status", "limited", JSON.stringify(status));
+      expect(asked.status).toBe(200);
+      expect(await asked.json()).toEqual({
+        machineLabel: "Mini",
+        status: "not-accepted",
+        receipt: null,
+      });
+      const pull = {
+        sourceEnvironmentId: m4,
+        threadId: ThreadId.make("thread-mini"),
+        modelSelection: null,
+      };
+      const pulled = await app.post("transfer-pull", "limited", JSON.stringify(pull));
+      expect(pulled.status).toBe(200);
+      expect(await pulled.json()).toMatchObject({ threadId: "handoff:continued", resumed: true });
+      expect(app.transfers).toEqual([status, pull]);
+      expect(app.callers.map((caller) => caller.sourceEnvironmentId)).toEqual([m4, m4]);
+      // A body that is not this message, and a grant that was revoked, never reach it.
+      const invalid = await app.post("transfer-status", "limited", JSON.stringify({ epoch: 2 }));
+      expect(invalid.status).toBe(400);
+      expect(await invalid.json()).toMatchObject({ code: "invalid" });
+      expect((await app.post("transfer-pull", "revoked", JSON.stringify(pull))).status).toBe(403);
+      expect(app.transfers).toHaveLength(2);
     } finally {
       await app.dispose();
     }
