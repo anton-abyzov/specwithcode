@@ -671,7 +671,7 @@ export function providerLimitStep(
 type IdleCandidate = FallbackThread & {
   readonly lineage?: { readonly relationshipToParent?: string | null } | null;
   readonly creationSource?: string | null;
-  readonly heldQueuedCount?: number | null;
+  readonly heldQueuedCount?: number | null | undefined;
 };
 
 /**
