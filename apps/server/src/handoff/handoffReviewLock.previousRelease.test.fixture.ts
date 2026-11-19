@@ -64,6 +64,36 @@ export const ReplicateMeta = Schema.Struct({
 });
 export type ReplicateMeta = typeof ReplicateMeta.Type;
 
+/* apps/server/src/handoff/handoffWire.ts: every operation that release answers. */
+
+export const PEER_PATHS: ReadonlySet<string> = new Set([
+  "negotiate",
+  "replicate",
+  "preflight",
+  "takeover",
+  "heartbeat",
+  "coordinator-lease",
+  "coordinator-replica",
+  "memory-export",
+  "memory-merge",
+  "linked-digest",
+  "linked-content",
+  "linked-replica",
+  "linked-supersede",
+  "linked-members",
+  "plan-export",
+  "plan-merge",
+  "extras-negotiate",
+  "extras-replicate",
+]);
+
+/* apps/server/src/handoff/handoffRoute.ts: its answer to any other path. */
+
+export const unknownPath = {
+  status: 404,
+  body: { error: "not_found", code: "not_found" },
+} as const;
+
 /* packages/contracts/src/handoffMode.ts */
 
 export const HandoffPreflightCheck = Schema.Literals([
