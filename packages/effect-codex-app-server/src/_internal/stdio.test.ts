@@ -73,6 +73,10 @@ describe("Codex App Server exit reason", () => {
       "refresh failed for [hidden]",
     );
     assert.equal(summarizeStderr("  \n"), undefined);
+    assert.equal(
+      summarizeStderr("Error: proxy rejected https://user:example-password@proxy.example.com/x"),
+      "Error: proxy rejected https://[hidden]@proxy.example.com/x",
+    );
   });
 
   it("keeps only the tail of long output", () => {

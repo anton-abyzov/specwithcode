@@ -82,7 +82,9 @@ export const summarizeStderr = (stderr: string): string | undefined => {
     );
   const picked = lines.findLast((line) => ERROR_LINE.test(line)) ?? lines.at(-1);
   if (picked === undefined) return undefined;
-  const masked = picked.replace(SECRET, "[hidden]");
+  const masked = picked
+    .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, "$1[hidden]@")
+    .replace(SECRET, "[hidden]");
   return masked.length > SUMMARY_LIMIT ? `${masked.slice(0, SUMMARY_LIMIT - 1)}…` : masked;
 };
 

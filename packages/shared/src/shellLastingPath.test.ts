@@ -97,6 +97,37 @@ describe("saved command paths", () => {
     expect(lastingReplacementForCommand(perShell, "linux", { PATH: shellFolder })).toBeUndefined();
   });
 
+  effectIt.effect("gives up on a Windows path read on Linux instead of looking it up forever", () =>
+    Effect.gen(function* () {
+      const result = yield* resolveCommandPath("C:\\Tools\\codex.exe", { env }).pipe(
+        Effect.provideService(HostProcessPlatform, "linux"),
+        Effect.provideService(HostProcessEnvironment, env),
+        Effect.provideService(CommandResolutionCache, new Map()),
+        Effect.provide(NodeServices.layer),
+        Effect.timeoutOption(2_000),
+        Effect.flip,
+        Effect.option,
+      );
+      expect(result._tag).toBe("Some");
+      expect(lastingReplacementForCommand("C:\\Tools\\codex.exe", "linux", env)).toBe(lasting);
+    }),
+  );
+
+  effectIt.effect("never remembers a per-shell hit", () =>
+    Effect.gen(function* () {
+      const cache = new Map();
+      const only = { PATH: shellFolder };
+      const found = yield* resolveCommandPath("codex", { env: only }).pipe(
+        Effect.provideService(HostProcessPlatform, "linux"),
+        Effect.provideService(HostProcessEnvironment, only),
+        Effect.provideService(CommandResolutionCache, cache),
+        Effect.provide(NodeServices.layer),
+      );
+      expect(found).toBe(perShell);
+      expect(cache.size).toBe(0);
+    }),
+  );
+
   effectIt.effect("spawns a gone or per-shell path from the lasting folder", () =>
     Effect.gen(function* () {
       const spawnFrom = (command: string) =>

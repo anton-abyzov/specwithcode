@@ -124,6 +124,12 @@ export function lastingPathEntriesFirst<T extends string>(entries: ReadonlyArray
   ];
 }
 
+/** A path's last part, split on either separator: what to look up by name, or "" when there is none. */
+function commandNameOf(command: string): string {
+  const name = command.split(/[\\/]/).pop() ?? "";
+  return name === command ? "" : name;
+}
+
 function withoutVolatilePathEntries(
   env: NodeJS.ProcessEnv,
   platform: NodeJS.Platform,
@@ -150,8 +156,7 @@ export function lastingReplacementForCommand(
   const volatile = isVolatilePathEntry(command);
   const present = resolveExecutable(command, platform, env) !== undefined;
   if (present && !volatile) return undefined;
-  const path = platform === "win32" ? NodePath.win32 : NodePath.posix;
-  const name = path.basename(command);
+  const name = commandNameOf(command);
   if (name.length === 0) return undefined;
   const found = resolveExecutable(name, platform, withoutVolatilePathEntries(env, platform));
   return found !== undefined && found !== command ? found : undefined;
@@ -762,7 +767,8 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
       }
     }
     // A saved path that is gone, or that lives in a per-shell folder, is looked up again by name.
-    const name = (platform === "win32" ? NodePath.win32 : NodePath.posix).basename(command);
+    // Split on both separators: a Windows path read on Linux must still shrink to a bare name.
+    const name = commandNameOf(command);
     const lasting =
       name.length > 0
         ? yield* resolveCommandPathForPlatform(name, {
@@ -828,7 +834,10 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
       if (listing?.names && !listing.names.has(candidate.toLowerCase())) continue;
       const candidatePath = path.join(pathEntry, candidate);
       if (yield* isExecutableFile(candidatePath, platform, windowsPathExtensions)) {
-        cacheCommandResolution(cache, cacheKey, candidatePath, nowNanos);
+        // A per-shell hit is a last resort and is never remembered: it is looked for afresh each time.
+        if (!isVolatilePathEntry(candidatePath)) {
+          cacheCommandResolution(cache, cacheKey, candidatePath, nowNanos);
+        }
         return candidatePath;
       }
     }
