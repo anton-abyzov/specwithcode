@@ -35,6 +35,8 @@ import {
   sleepStoreOver,
 } from "./awaySleepSession.ts";
 
+const encodeAwaySession = Schema.encodeSync(AwaySession);
+
 const MS = EnvironmentId.make("ministorm");
 const P1 = ProjectId.make("p1");
 const P2 = ProjectId.make("p2");
@@ -369,7 +371,7 @@ describe("the live session reads this machine's projects", () => {
         yield* h.port.begin(SLEEP, "live");
         let document: HandoffDocument = {
           ...EMPTY_HANDOFF_DOCUMENT,
-          awaySession: Schema.encodeSync(AwaySession)(h.saved()!),
+          awaySession: encodeAwaySession(h.saved()!),
         };
         const turnedOn: string[] = [];
         const live = yield* makeLiveSleepSession.pipe(

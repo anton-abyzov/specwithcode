@@ -1164,7 +1164,9 @@ export const make = Effect.gen(function* () {
     });
 
   const takeover = (caller: ReceiverCaller, request: TakeoverRequest) =>
-    sameSource(caller, request.sourceEnvironmentId).pipe(
+    Effect.gen(function* () {
+      yield* sameSource(caller, request.sourceEnvironmentId);
+    }).pipe(
       // Not read, so a sleep or silence start is not proven new: no answer (1390 AC-36).
       Effect.mapError((refused) =>
         isRetiredReason(request.reason) ? inDoubt(refused.message) : refused,

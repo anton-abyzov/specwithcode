@@ -1009,7 +1009,7 @@ describe("an intent delivered again across the update (lost answer)", () => {
           expect(yield* f.intents.latestState(EnvironmentId.make("m4"))).toBe("cancelled");
           // Whether the earlier release launched the thread here is not known yet.
           f.evidence.set("thread-reel", { kind: "unresolved" });
-        });
+        }).pipe(Effect.orDie);
         const m4 = yield* previousSource(lostThenAgain(f, later, delivered), reelAndProject);
         yield* (yield* m4.source.sleep({ onBattery: false })).send;
         // Its latest record is another intent, but the work it names moved here.

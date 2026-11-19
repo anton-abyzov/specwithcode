@@ -524,9 +524,12 @@ const rig = (document: HandoffDocument, self: EnvironmentId) =>
       } as never),
       Layer.succeed(ProjectionStore.ProjectionStoreV2, {
         getThreadShell: (id: ThreadId) =>
-          Effect.suspend((): Effect.Effect<ReturnType<typeof shell> | null, Error> => {
+          Effect.suspend((): Effect.Effect<ReturnType<typeof shell> | null, HandoffModeError> => {
             const read = state.shellReads.shift() ?? "ok";
-            if (read === "fail") return Effect.fail(new Error("the thread store did not read"));
+            if (read === "fail")
+              return Effect.fail(
+                new HandoffModeError({ code: "failed", message: "The thread store did not read." }),
+              );
             if (read === "die") return Effect.die("the thread store broke");
             return Effect.succeed(id === thread ? shell() : null);
           }),

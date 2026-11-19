@@ -203,7 +203,7 @@ describe("an acting intent is settled only from state that reads", () => {
       expect(settled).toHaveLength(1);
       expect(settled[0]).toMatchObject({
         state: "done",
-        results: [{ projectId: "project-a", outcome: "handed-over", epoch: 2 }],
+        results: [{ projectId: "project-a", outcome: "handed-over", detail: "", epoch: 2 }],
       });
       expect(f.saved()?.map((intent) => intent.state)).toEqual(["done"]);
       expect(f.adopted).toEqual(["project-b"]);
