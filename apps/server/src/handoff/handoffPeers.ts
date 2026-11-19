@@ -69,6 +69,7 @@ import {
   TakeoverRequest,
   TakeoverResponse,
 } from "./handoffWire.ts";
+import { reviewStaysText } from "./handoffReviewLock.ts";
 import {
   LinkedContentRequest,
   LinkedContentResponse,

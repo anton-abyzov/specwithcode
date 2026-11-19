@@ -298,6 +298,11 @@ const previousRelease = {
   decode: Schema.decodeUnknownSync(Previous.ReplicateMeta),
 };
 
+// Decoders are built out here: a test body is an Effect generator.
+const previousFailure = Schema.decodeUnknownSync(Previous.HandoffPreflightFailure);
+const previousErrorBody = Schema.decodeUnknownSync(Previous.PeerErrorBody);
+const currentErrorBody = Schema.decodeUnknownSync(PeerErrorBody);
+
 describe("a review thread arriving with its reviewer lock", () => {
   it.effect("a machine holding only the author's family is refused: the review stays", () =>
     Effect.gen(function* () {
@@ -621,17 +626,15 @@ describe(`against the previous release (${Previous.PREVIOUS_RELEASE})`, () => {
         );
         const failures = yield* onlyClaude.preflight(claude);
         expect(failures).toEqual([{ check: "provider", message: STAYS }]);
-        expect(Schema.decodeUnknownSync(Previous.HandoffPreflightFailure)(failures[0])).toEqual(
-          failures[0],
-        );
+        expect(previousFailure(failures[0])).toEqual(failures[0]);
         const refused = yield* onlyClaude.takeOver(claude).pipe(Effect.flip);
         const body = { error: refused.message, code: refused.code, check: refused.check };
-        expect(Schema.decodeUnknownSync(Previous.PeerErrorBody)(body)).toEqual({
+        expect(previousErrorBody(body)).toEqual({
           error: STAYS,
           code: "invalid",
           check: "provider",
         });
-        expect(Schema.decodeUnknownSync(PeerErrorBody)(body)).toEqual(body);
+        expect(currentErrorBody(body)).toEqual(body);
         expect(onlyClaude.launches).toHaveLength(0);
       }),
   );
