@@ -21,7 +21,9 @@
  * be idle, so nothing waits in the thread's own queue where a later revoke
  * could not reach it. Right before it is sent, every admission check runs
  * again against the live project and grant policy; a message that fails
- * stays visible as refused and never reaches the agent. It is sent the way a
+ * stays visible as refused and never reaches the agent. It is handed over
+ * only when the send starts a turn now; a send the thread would queue is
+ * withdrawn and the row waits for the next check. It is sent the way a
  * remote worker wake is (`RemoteWorkerFollower.wake`): it never interrupts,
  * steers or answers a pending card, and the turn it starts runs on this
  * machine's own sign-ins and rules. Nothing runs under the sender's grant.
@@ -30,6 +32,8 @@
  * @module CoordinatorMessageReceiver
  */
 import {
+  AuthOrchestrationOperateScope,
+  type AuthPrincipal,
   COORDINATOR_MESSAGE_CAPABILITY,
   COORDINATOR_MESSAGE_HOURLY_CAP,
   type CoordinatorMessageBody,
@@ -49,10 +53,15 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
+import {
+  latestRootProviderFailure,
+  usageLimitBlockedRun,
+} from "@specweave-studio/shared/orchestrationV2ThreadError";
 
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as WorkGrants from "../fleet/WorkGrants.ts";
-import type { EffectiveWorkGrant } from "../fleet/workGrantPolicy.ts";
+import { coordinatorOfPrincipal, type EffectiveWorkGrant } from "../fleet/workGrantPolicy.ts";
 import type {
   CoordinatorMessageDeliverRequest,
   CoordinatorMessageDeliverResponse,
@@ -60,6 +69,7 @@ import type {
 } from "../handoff/coordinatorMessageWire.ts";
 import { HandoffRefusal, type ReceiverCaller } from "../handoff/HandoffReceiver.ts";
 import { labelsOf, refuseRevoked } from "../mcp/workGrantAccess.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as CoordinatorMessageStore from "./CoordinatorMessageStore.ts";
 import type { CoordinatorMessageRecord } from "./CoordinatorMessageStore.ts";
@@ -83,16 +93,31 @@ const FLUSH_EVERY = Duration.seconds(15);
 export class CoordinatorMessageReceiver extends Context.Service<
   CoordinatorMessageReceiver,
   {
-    /** `operate`: whether the caller's credential holds the operate scope. */
+    /**
+     * `operate`: whether the caller's credential holds the operate scope;
+     * `sessionId`: that credential's session, checked live again before delivery.
+     */
     readonly deliver: (
       caller: ReceiverCaller,
       request: CoordinatorMessageDeliverRequest,
-      access: { readonly operate: boolean },
+      access: { readonly operate: boolean; readonly sessionId: string },
     ) => Effect.Effect<CoordinatorMessageDeliverResponse, HandoffRefusal>;
+    /**
+     * The grant this machine keeps for the credential's coordinator, read
+     * without creating, settling or migrating a policy; undefined when none
+     * is kept or the credential is no coordinator's.
+     */
+    readonly grantFor: (
+      client:
+        | { readonly principal?: AuthPrincipal; readonly label: string; readonly access: string }
+        | undefined,
+    ) => Effect.Effect<EffectiveWorkGrant | undefined, WorkGrants.WorkGrantsError>;
     /** Delivers every message that is due now; how many wakes were queued. */
     readonly flush: Effect.Effect<number>;
     /** The refusal the route answers a revoked sender with, naming both machines. */
     readonly revoked: (sender: EnvironmentId) => Effect.Effect<HandoffRefusal>;
+    /** The refusal the route answers a coordinator with no kept grant with, naming both machines. */
+    readonly ungranted: (sender: EnvironmentId) => Effect.Effect<HandoffRefusal>;
   }
 >()("specweave-studio/project/CoordinatorMessageReceiver") {}
 
@@ -109,6 +134,15 @@ export const revokedMessageRefusal = (receiver: string, sender: string) =>
     403,
     "needs_grant",
     `${receiver} no longer takes messages from ${sender}. The user can allow it on ${receiver} in Settings > Machines.`,
+    "grant",
+  );
+
+/** The refusal for a sender this machine keeps no grant for. */
+export const ungrantedMessageRefusal = (receiver: string, sender: string) =>
+  refuse(
+    403,
+    "needs_grant",
+    `${receiver} takes messages only from machines it lets work here, and ${sender} has no grant on ${receiver}.`,
     "grant",
   );
 
@@ -204,8 +238,8 @@ export const frameCoordinatorMessage = (
   if (dropped > 0)
     lines.push(
       dropped === 1
-        ? "1 thread reference was left out: this machine could not place it in this project."
-        : `${dropped} thread references were left out: this machine could not place them in this project.`,
+        ? "1 reference was left out: this machine could not place it in this project."
+        : `${dropped} references were left out: this machine could not place them in this project.`,
     );
   lines.push(
     "A message never answers a pending question, approval or access card, and never counts as the user's consent.",
@@ -258,7 +292,53 @@ interface Authority {
   readonly project: Project;
   readonly grant: EffectiveWorkGrant;
   readonly stamp: string;
+  /** Both members' link identities, so a leave and rejoin reads as a change. */
+  readonly membership: string;
 }
+
+/** Which link admitted a member: its `linkId` and generation (`ProjectLink`). */
+const membershipOf = (project: Project, peer: EnvironmentId, self: EnvironmentId) =>
+  [self, peer]
+    .map((environmentId) => {
+      const member = project.workspaceSettings?.logicalProject?.members.find(
+        (candidate) => candidate.environmentId === environmentId,
+      ) as { readonly linkId?: string; readonly generation?: number } | undefined;
+      return `${environmentId}=${member?.linkId ?? "-"}#${member?.generation ?? "-"}`;
+    })
+    .join("|");
+
+/**
+ * The step and refs that still name a member of `project`; any naming a
+ * machine that left are dropped, the step too when its machine left.
+ */
+const toCurrentMembers = <R extends Pick<CoordinatorMessageRecord, "userStep" | "refs">>(
+  record: R,
+  project: Project,
+) => {
+  const listed = new Set<string>(
+    (project.workspaceSettings?.logicalProject?.members ?? []).map((member) => member.environmentId),
+  );
+  const refs = record.refs.filter((ref) => ref.kind === "pull_request" || listed.has(ref.environmentId));
+  const stepLeft = record.userStep !== undefined && !listed.has(record.userStep.environmentId);
+  const { userStep, ...rest } = record;
+  return {
+    record: { ...rest, ...(userStep === undefined || stepLeft ? {} : { userStep }), refs },
+    dropped: record.refs.length - refs.length,
+  };
+};
+
+/** Whether the thread stopped at a usage limit that still holds; the orchestrator would queue a send. */
+const limitStopHolds = (
+  projection: { readonly runs: ReadonlyArray<unknown>; readonly turnItems?: ReadonlyArray<unknown> },
+  now: number,
+) => {
+  const runs = projection.runs as Parameters<typeof usageLimitBlockedRun>[0];
+  const items = (projection.turnItems ?? []) as Parameters<typeof usageLimitBlockedRun>[1];
+  const run = usageLimitBlockedRun(runs, items, null);
+  if (run === null) return false;
+  const resetMs = Date.parse(latestRootProviderFailure(run, items)?.resetAt ?? "");
+  return !Number.isFinite(resetMs) || resetMs > now;
+};
 
 export const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
@@ -266,6 +346,8 @@ export const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const store = yield* CoordinatorMessageStore.CoordinatorMessageStore;
   const grants = yield* WorkGrants.WorkGrants;
+  const auth = yield* EnvironmentAuth.EnvironmentAuth;
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
   const selfEnvironmentId = yield* environment.getEnvironmentId;
   // The fleet list and nicknames as this layer was built with them, wherever it is called from.
   const context = yield* Effect.context<never>();
@@ -286,6 +368,22 @@ export const make = Effect.gen(function* () {
       environmentId === selfEnvironmentId ? own : (labels.get(environmentId) ?? "another machine");
   });
 
+  /** The kept policy for `peer`, never created, settled or migrated by this read. */
+  const peek = (peer: EnvironmentId) =>
+    grants.peekPolicy === undefined
+      ? Effect.fail(new WorkGrants.WorkGrantsError({ reason: "storage" }))
+      : grants.peekPolicy(peer);
+
+  const grantFor: CoordinatorMessageReceiver["Service"]["grantFor"] = (client) =>
+    Effect.gen(function* () {
+      const coordinator = coordinatorOfPrincipal(client?.principal);
+      if (coordinator === undefined) return undefined;
+      const record = yield* peek(coordinator);
+      if (record === undefined) return undefined;
+      const managers = yield* grants.managers.pipe(Effect.orElseSucceed(() => new Set<string>()));
+      return WorkGrants.effectiveGrant(record, managers, yield* Clock.currentTimeMillis);
+    });
+
   /**
    * The grant policy this machine keeps for `peer`, read without creating
    * one, with its identity: created and last changed. A revoke followed by a
@@ -293,12 +391,11 @@ export const make = Effect.gen(function* () {
    */
   const livePolicy = (peer: EnvironmentId, now: number, receiver: string, sender: string) =>
     Effect.gen(function* () {
-      const policies = yield* grants.policies.pipe(
+      const record = yield* peek(peer).pipe(
         Effect.mapError(() =>
           refuse(500, "failed", `${receiver} could not read who may message it; ${sender} may try again.`),
         ),
       );
-      const record = policies.find((policy) => policy.coordinatorEnvironmentId === peer);
       if (record === undefined) return undefined;
       const managers = yield* grants.managers.pipe(Effect.orElseSucceed(() => new Set<string>()));
       return {
@@ -311,7 +408,8 @@ export const make = Effect.gen(function* () {
    * Every authority check, the same at admission and right before delivery:
    * membership and the grant's projects (`linkedCopyFor`, which also refuses a
    * personal assistant project), a kept grant that is not revoked or past its
-   * time limit, the capability, and what the kind needs.
+   * time limit, the capability the sender advertised when it was admitted
+   * (no later negotiation), and what the kind needs.
    */
   const authorize = (input: {
     readonly peer: EnvironmentId;
@@ -338,12 +436,7 @@ export const make = Effect.gen(function* () {
       ).pipe(Effect.mapError((error) => fromCopyRefusal(error, receiver, sender)));
       // Unlike sync, a message needs a grant this machine keeps: it can cost a model turn.
       if (live === undefined || input.routeGrant === null)
-        return yield* refuse(
-          403,
-          "needs_grant",
-          `${receiver} takes messages only from machines it lets work here, and ${sender} has no grant on ${receiver}.`,
-          "grant",
-        );
+        return yield* ungrantedMessageRefusal(receiver, sender);
       const revoked = input.routeGrant?.revoked === true || live.grant.revoked;
       yield* refuseRevoked({
         grant: { ...live.grant, revoked },
@@ -364,7 +457,12 @@ export const make = Effect.gen(function* () {
           `${receiver} lets ${sender} only read here, so ${sender} may send ${receiver} only findings and replies.`,
           "grant",
         );
-      return { project, grant: live.grant, stamp: live.stamp } satisfies Authority;
+      return {
+        project,
+        grant: live.grant,
+        stamp: live.stamp,
+        membership: membershipOf(project, input.peer, selfEnvironmentId),
+      } satisfies Authority;
     });
 
   /**
@@ -452,7 +550,7 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const label = yield* namer;
       const now = yield* Clock.currentTimeMillis;
-      const { project, receiver, sender, stamp, placed } = yield* admit(
+      const { project, receiver, sender, stamp, membership, placed } = yield* admit(
         caller,
         request,
         access.operate,
@@ -492,6 +590,8 @@ export const make = Effect.gen(function* () {
         grantStamp: stamp,
         operate: access.operate,
         capabilities: [...request.capabilities],
+        sessionId: access.sessionId,
+        membership,
       };
       const answer = (outcome: CoordinatorMessageOutcome, record: CoordinatorMessageRecord) =>
         ({
@@ -534,6 +634,7 @@ export const make = Effect.gen(function* () {
               ...(message.userStep === undefined ? {} : { userStep: message.userStep }),
               droppedRefs: placed.dropped,
               admittedUnder,
+              revision: (unread.revision ?? 0) + 1,
               count: unread.count + 1,
               updatedAt: now,
             };
@@ -583,6 +684,7 @@ export const make = Effect.gen(function* () {
             updatedAt: now,
             deliverAfter: folded ? oldest + HOUR_MS : now + Duration.toMillis(WAKE_SETTLE),
             admittedUnder,
+            revision: 0,
             droppedRefs: placed.dropped,
           };
           const outcome: CoordinatorMessageOutcome = quiet
@@ -610,10 +712,10 @@ export const make = Effect.gen(function* () {
 
   /**
    * Where a due message goes: this copy's own coordinator thread, in this
-   * very project and only while it is idle, so the message starts a turn now
-   * and never waits in the thread's queue.
+   * very project and only while a send starts a turn now (idle, not stopped
+   * at a usage limit), so the message never waits in the thread's queue.
    */
-  const destination = (project: Project) =>
+  const destination = (project: Project, now: number) =>
     Effect.gen(function* () {
       const settings = project.workspaceSettings;
       if (settings?.paused || settings?.archived) return "held" as const;
@@ -639,6 +741,7 @@ export const make = Effect.gen(function* () {
       if (projection === undefined) return "busy" as const;
       if (projection.runs.some((candidate) => !TERMINAL_RUN.has(candidate.status)))
         return "busy" as const;
+      if (limitStopHolds(projection, now)) return "busy" as const;
       return { project, shell };
     });
 
@@ -649,45 +752,68 @@ export const make = Effect.gen(function* () {
     return thread === undefined ? undefined : ThreadId.make(thread);
   };
 
+  /**
+   * Moves rows to `state`, each only while it still holds the revision the
+   * caller read: a repeat merged in since then is new text, not this one.
+   */
   const setState = (
-    ids: ReadonlySet<string>,
+    seen: ReadonlyMap<string, number>,
     state: CoordinatorMessageRecord["state"],
     now: number,
+    change: (record: CoordinatorMessageRecord) => Partial<CoordinatorMessageRecord> = () => ({}),
   ) =>
     store
-      .update(now, (records) => ({
-        records: records.map((record) =>
-          record.direction === "incoming" && ids.has(record.id)
-            ? { ...record, state, updatedAt: now }
-            : record,
-        ),
-        result: undefined,
-      }))
+      .update(now, (records) => {
+        let changed = false;
+        const next = records.map((record) => {
+          if (record.direction !== "incoming" || !seen.has(record.id)) return record;
+          if ((record.revision ?? 0) !== seen.get(record.id)) return record;
+          changed = true;
+          return { ...record, ...change(record), state, updatedAt: now };
+        });
+        return { records: changed ? next : records, result: undefined };
+      })
       .pipe(Effect.ignore);
 
-  /** The row's admission, checked again now; a refusal is kept and never reaches the agent. */
+  const revisions = (rows: ReadonlyArray<CoordinatorMessageRecord>) =>
+    new Map(rows.map((row) => [row.id, row.revision ?? 0]));
+
+  /**
+   * The row's admission, checked again now; a refusal is kept and never
+   * reaches the agent. The admitting session must still be live, act for the
+   * sender and, for what needs it, still hold the operate scope; the grant
+   * policy and both members' links must be the ones it was admitted under.
+   */
   const stillAuthorized = (
     record: CoordinatorMessageRecord,
     now: number,
     label: (environmentId: EnvironmentId) => string,
   ) =>
-    record.admittedUnder === undefined
-      ? Effect.succeed(undefined)
-      : authorize({
-          peer: record.peerEnvironmentId,
-          projectId: record.projectId,
-          logicalProjectId: record.logicalProjectId,
-          kind: record.kind,
-          operate: record.admittedUnder.operate,
-          capabilities: record.admittedUnder.capabilities,
-          now,
-          label,
-        }).pipe(
-          Effect.map((authority) =>
-            authority.stamp === record.admittedUnder?.grantStamp ? authority : undefined,
-          ),
-          Effect.orElseSucceed(() => undefined),
-        );
+    Effect.gen(function* () {
+      const admitted = record.admittedUnder;
+      if (admitted === undefined) return undefined;
+      const sessions = yield* auth.listSessions().pipe(Effect.orElseSucceed(() => []));
+      const session = sessions.find((candidate) => candidate.sessionId === admitted.sessionId);
+      if (session === undefined || coordinatorOfPrincipal(session.principal) !== record.peerEnvironmentId)
+        return undefined;
+      const authority = yield* authorize({
+        peer: record.peerEnvironmentId,
+        projectId: record.projectId,
+        logicalProjectId: record.logicalProjectId,
+        kind: record.kind,
+        operate: admitted.operate && session.scopes.includes(AuthOrchestrationOperateScope),
+        capabilities: admitted.capabilities,
+        now,
+        label,
+      }).pipe(Effect.orElseSucceed(() => undefined));
+      if (
+        authority === undefined ||
+        authority.stamp !== admitted.grantStamp ||
+        authority.membership !== admitted.membership
+      )
+        return undefined;
+      return authority;
+    });
 
   const flush: CoordinatorMessageReceiver["Service"]["flush"] = Effect.gen(function* () {
     const label = yield* namer;
@@ -710,22 +836,22 @@ export const make = Effect.gen(function* () {
     for (const group of groups.values()) {
       // Every row of the group is checked on its own; a refused one is kept and left out.
       const authorized: Array<{ record: CoordinatorMessageRecord; authority: Authority }> = [];
-      const refused = new Set<string>();
+      const refused: Array<CoordinatorMessageRecord> = [];
       for (const record of group) {
         const authority = yield* stillAuthorized(record, now, label);
-        if (authority === undefined) refused.add(record.id);
+        if (authority === undefined) refused.push(record);
         else authorized.push({ record, authority });
       }
-      if (refused.size > 0) yield* setState(refused, "refused", now);
+      if (refused.length > 0) yield* setState(revisions(refused), "refused", now);
       const first = authorized[0];
       if (first === undefined) continue;
-      const ids = new Set(authorized.map((each) => each.record.id));
+      const seen = revisions(authorized.map((each) => each.record));
       const expired = now - first.record.receivedAt > DAY_MS;
-      const target = yield* destination(first.authority.project);
+      const target = yield* destination(first.authority.project, now);
       if (typeof target === "string") {
         // A day-old message misleads more than it helps (the sender's outbox gives up then too).
-        if (expired) yield* setState(ids, "not_delivered", now);
-        else if (target === "held" && first.record.state === "settling") yield* setState(ids, "held", now);
+        if (expired) yield* setState(seen, "not_delivered", now);
+        else if (target === "held" && first.record.state === "settling") yield* setState(seen, "held", now);
         continue;
       }
       const sender = label(first.record.peerEnvironmentId);
@@ -733,19 +859,23 @@ export const make = Effect.gen(function* () {
       let text: string;
       if (digest) text = frameDigest(authorized.map((each) => each.record), sender);
       else {
-        // A thread ref is placed again now: it may have moved since the message arrived.
-        const placed = yield* placeRefs(first.record.refs, target.project);
+        // The step and refs keep only machines still in the project, and a
+        // thread ref is placed again now: it may have moved since it arrived.
+        const current = toCurrentMembers(first.record, target.project);
+        const placed = yield* placeRefs(current.record.refs, target.project);
         text = frameCoordinatorMessage(
           {
-            ...first.record,
+            ...current.record,
             refs: placed.refs,
-            droppedRefs: (first.record.droppedRefs ?? 0) + placed.dropped,
+            droppedRefs: (first.record.droppedRefs ?? 0) + current.dropped + placed.dropped,
           },
           sender,
           label,
         );
       }
-      const id = digest ? `coordinator-message-digest:${first.record.id}` : `coordinator-message:${first.record.id}`;
+      // A fresh id per try, so a send withdrawn before is never taken for this one.
+      const attempt = `${first.record.id}:${first.record.revision ?? 0}:${first.record.attempts ?? 0}`;
+      const id = digest ? `coordinator-message-digest:${attempt}` : `coordinator-message:${attempt}`;
       const sent = yield* threads
         .sendToThread({
           projectId: target.project.id,
@@ -767,19 +897,41 @@ export const make = Effect.gen(function* () {
           creationSource: "server",
         })
         .pipe(
-          Effect.as(true),
           Effect.catch((error) =>
             Effect.logWarning("Could not deliver a coordinator message.", {
               messageId: first.record.id,
               error: error._tag,
-            }).pipe(Effect.as(false)),
+            }).pipe(Effect.as(undefined)),
           ),
         );
-      if (!sent) {
-        if (expired) yield* setState(ids, "not_delivered", now);
+      if (sent === undefined) {
+        if (expired) yield* setState(seen, "not_delivered", now);
         continue;
       }
-      yield* setState(ids, "delivered", now);
+      if (sent.delivery !== "started") {
+        // Queued behind a turn or a usage limit, it would outlive every check
+        // made here. Withdraw it; the row waits and is checked again in full.
+        yield* orchestrator
+          .dispatch({
+            type: "queued-run.cancel",
+            commandId: CommandId.make(`coordinator-message-withdraw:${attempt}`),
+            threadId: target.shell.id,
+            runId: sent.run.id,
+          })
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Could not withdraw a queued coordinator message.", {
+                messageId: first.record.id,
+                cause,
+              }),
+            ),
+          );
+        yield* setState(seen, first.record.state, now, (record) => ({
+          attempts: (record.attempts ?? 0) + 1,
+        }));
+        continue;
+      }
+      yield* setState(seen, "delivered", now);
       woken += 1;
     }
     return woken;
@@ -790,13 +942,18 @@ export const make = Effect.gen(function* () {
       Effect.map((label) => revokedMessageRefusal(label(selfEnvironmentId), label(sender))),
     );
 
-  return CoordinatorMessageReceiver.of({ deliver, flush, revoked });
+  const ungranted: CoordinatorMessageReceiver["Service"]["ungranted"] = (sender) =>
+    namer.pipe(
+      Effect.map((label) => ungrantedMessageRefusal(label(selfEnvironmentId), label(sender))),
+    );
+
+  return CoordinatorMessageReceiver.of({ deliver, grantFor, flush, revoked, ungranted });
 });
 
 /**
- * Needs `ProjectService`, `ServerEnvironment`, `ThreadManagementService` and
- * `CoordinatorMessageStore`; reads `WorkGrants` and the machine labels
- * without requiring them.
+ * Needs `ProjectService`, `ServerEnvironment`, `ThreadManagementService`,
+ * `EnvironmentAuth`, `OrchestratorV2` and `CoordinatorMessageStore`; reads
+ * `WorkGrants` and the machine labels without requiring them.
  */
 export const layer = Layer.effect(CoordinatorMessageReceiver, make);
 

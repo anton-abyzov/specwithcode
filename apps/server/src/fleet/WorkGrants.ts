@@ -161,6 +161,14 @@ export interface WorkGrantsShape {
   readonly forgetOrigin: (threadId: ThreadId) => Effect.Effect<void, WorkGrantsError>;
   readonly policies: Effect.Effect<ReadonlyArray<WorkGrantPolicyRecord>, WorkGrantsError>;
   /**
+   * The policy this machine already keeps for a coordinator, read without
+   * creating, settling or initializing anything: undefined when none exists.
+   * For checks that must refuse a coordinator nobody allowed (1427).
+   */
+  readonly peekPolicy?: (
+    coordinatorEnvironmentId: EnvironmentId,
+  ) => Effect.Effect<WorkGrantPolicyRecord | undefined, WorkGrantsError>;
+  /**
    * The coordinators that manage this machine now (the owner's own machines),
    * read from this machine's sessions: what makes a grant `own`. Fails rather
    * than guess when the sessions cannot be read.
@@ -761,6 +769,17 @@ export const make = Effect.gen(function* () {
     recordOrigin,
     forgetOrigin,
     policies: lock.withPermit(read).pipe(Effect.map((file) => file.policies)),
+    peekPolicy: (coordinatorEnvironmentId) =>
+      lock.withPermit(
+        Effect.gen(function* () {
+          // No file yet: nothing is kept, and the first-read migration is not this read's to run.
+          if (!(yield* fileSystem.exists(filePath))) return undefined;
+          const file = yield* decodeStoreFile(yield* fileSystem.readFileString(filePath));
+          return file.policies.find(
+            (policy) => policy.coordinatorEnvironmentId === coordinatorEnvironmentId,
+          );
+        }).pipe(Effect.mapError((cause) => (isWorkGrantsError(cause) ? cause : storageError(cause)))),
+      ),
     managers: readManagers.pipe(Effect.mapError(storageError)),
     origins: lock.withPermit(read).pipe(Effect.map((file) => file.origins)),
     update,

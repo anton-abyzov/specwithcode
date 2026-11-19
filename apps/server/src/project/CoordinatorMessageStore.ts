@@ -73,15 +73,25 @@ export const CoordinatorMessageRecord = Schema.Struct({
   /**
    * Incoming: the authority it was admitted under, checked again before it
    * reaches the agent. The grant policy's identity (created and last changed),
-   * whether the sender's credential could operate, and what it advertised.
+   * whether the sender's credential could operate, the session and the
+   * membership it came under.
    */
   admittedUnder: Schema.optional(
     Schema.Struct({
       grantStamp: Schema.String,
       operate: Schema.Boolean,
+      /** What the sender advertised when it was admitted; no later negotiation. */
       capabilities: Schema.Array(Schema.String),
+      /** The authenticated session that sent it, checked live again before delivery. */
+      sessionId: Schema.String,
+      /** Both members' link identities (`linkId`, `generation`) when it was admitted. */
+      membership: Schema.String,
     }),
   ),
+  /** Raised by every merge, so a delivery marks only the text it actually sent. */
+  revision: Schema.optional(NonNegativeInt),
+  /** Sends the coordinator thread queued instead of starting, each withdrawn. */
+  attempts: Schema.optional(NonNegativeInt),
   /** Incoming: thread refs left out because this machine could not place them in the project. */
   droppedRefs: Schema.optional(NonNegativeInt),
 });

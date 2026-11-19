@@ -12,6 +12,7 @@ import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as WorkGrants from "../fleet/WorkGrants.ts";
+import { coordinatorOfPrincipal } from "../fleet/workGrantPolicy.ts";
 import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import { callerFingerprint, teamRulesSessionRefusal } from "../teamRules/TeamRulesReach.ts";
 import { parseJson } from "../json.ts";
@@ -167,8 +168,16 @@ export const layer = HttpRouter.add(
     if (Option.isNone(client))
       return yield* unread(refusal(401, "unauthorized", { code: "needs_grant" }));
     const grants = yield* WorkGrants.WorkGrants;
-    const grant = yield* grants.forClient(client.value).pipe(Effect.option);
+    // A message reads the kept grant and never creates or settles one (1427).
+    const grant = yield* (
+      path === "coordinator-message" && Option.isSome(messages)
+        ? messages.value.grantFor(client.value)
+        : grants.forClient(client.value)
+    ).pipe(Effect.option);
     if (Option.isNone(grant) || grant.value === undefined) {
+      const sender = coordinatorOfPrincipal(client.value.principal);
+      if (path === "coordinator-message" && Option.isSome(messages) && sender !== undefined)
+        return fromRefusal(yield* messages.value.ungranted(sender));
       return yield* unread(
         refusal(403, "Only a paired machine's worker credential may hand off here.", {
           code: "needs_grant",
@@ -317,6 +326,7 @@ export const layer = HttpRouter.add(
                 messages.value.deliver(caller, input.value, {
                   // A problem or a request needs a credential that may operate here.
                   operate: client.value.access !== "read-only",
+                  sessionId: client.value.sessionId,
                 }),
               );
       }
