@@ -275,10 +275,23 @@ describe("equal coordinators: the migration (AC-35, EC2-07)", () => {
     const cases: ProjectCoordinatorBinding[] = [
       { epoch: 0, state: "active" },
       { epoch: 4, state: "transferred", operationId: "a", successor: member },
-      { epoch: 4, state: "transferred", operationId: "a", successor: member, takenOverAt: "2026-11-01T00:00:00.000Z" },
+      {
+        epoch: 4,
+        state: "transferred",
+        operationId: "a",
+        successor: member,
+        takenOverAt: "2026-11-01T00:00:00.000Z",
+      },
       { epoch: 4, state: "transferring", operationId: "b", successor: member },
       { epoch: 4, state: "transferring" },
-      { epoch: 7, state: "active", operationId: "c", predecessor: member, takenOverAt: "2026-11-01T00:00:00.000Z", takenOverBy: "auto" },
+      {
+        epoch: 7,
+        state: "active",
+        operationId: "c",
+        predecessor: member,
+        takenOverAt: "2026-11-01T00:00:00.000Z",
+        takenOverBy: "auto",
+      },
     ];
     for (const binding of cases) {
       const equal = equalCoordinatorBinding(binding);
@@ -302,8 +315,12 @@ describe("equal coordinators: the migration (AC-35, EC2-07)", () => {
     expect(owns({ epoch: 0, state: "active" })).toBe(true);
     expect(owns({ epoch: 3, state: "active", operationId: "c", predecessor: member })).toBe(true);
     // A copy that followed another machine, was moving, or was started beside the first.
-    expect(owns({ epoch: 0, state: "transferred", operationId: "a", successor: member })).toBe(false);
-    expect(owns({ epoch: 0, state: "transferring", operationId: "b", successor: member })).toBe(false);
+    expect(owns({ epoch: 0, state: "transferred", operationId: "a", successor: member })).toBe(
+      false,
+    );
+    expect(owns({ epoch: 0, state: "transferring", operationId: "b", successor: member })).toBe(
+      false,
+    );
     expect(owns({ epoch: 2, state: "active" })).toBe(false);
     // A copy that joins after the update is not the owner either.
     expect(coordinatorOwnsRoutines(joinedBinding("link-1", 0))).toBe(false);
@@ -450,7 +467,10 @@ describe(`equal coordinators: compatibility with ${PINNED_RELEASE} (EC2-09)`, ()
         notes: [],
       }),
     );
-    expect(committed.logicalProject.members).toEqual([pair.kept, pair.joining]);
+    expect(committed.logicalProject.members).toEqual([
+      pair.kept,
+      { ...pair.joining, linkId: operationId },
+    ]);
     expect(typesToOwnCoordinator(pair.m4, pair.kept.projectId)).toBe(true);
   });
 

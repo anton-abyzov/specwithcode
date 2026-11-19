@@ -45,8 +45,10 @@ describe("ProjectLink", () => {
       operationId,
       routineOwner: false,
     });
-    expect(committed.logicalProject.members).toEqual([pair.kept, pair.joining]);
-    expect(accepted.logicalProject.members).toEqual([pair.kept, pair.joining]);
+    // Both ends name the membership by the link that made it.
+    const linkedAs = { ...pair.joining, linkId: operationId };
+    expect(committed.logicalProject.members).toEqual([pair.kept, linkedAs]);
+    expect(accepted.logicalProject.members).toEqual([pair.kept, linkedAs]);
     // The kept copy records which folder on which machine each member maps to.
     expect(
       kept.workspaceSettings!.logicalProject!.members.map((member) => [
@@ -470,6 +472,7 @@ describe("ProjectLink", () => {
         {
           environmentId: pair.joining.environmentId,
           projectId: pair.joining.projectId,
+          linkId: operationId,
           removedAt: expect.any(String),
         },
       ],
@@ -529,12 +532,13 @@ describe("ProjectLink", () => {
     // The kept server fills its own folder in; the joining server fills in its own.
     expect(prepared.kept).toEqual(pair.kept);
     expect(prepared.logicalProject.members).toEqual([pair.kept, m2]);
-    expect(accepted.member).toEqual(pair.joining);
-    expect(accepted.logicalProject.members).toEqual([pair.kept, m2, pair.joining]);
-    expect(committed.logicalProject.members).toEqual([pair.kept, m2, pair.joining]);
+    const joined = { ...pair.joining, linkId: operationId };
+    expect(accepted.member).toEqual(joined);
+    expect(accepted.logicalProject.members).toEqual([pair.kept, m2, joined]);
+    expect(committed.logicalProject.members).toEqual([pair.kept, m2, joined]);
     const stored = () =>
       pair.m4.projects.get(pair.kept.projectId)!.workspaceSettings!.logicalProject!.members;
-    expect(stored()).toEqual([pair.kept, m2, pair.joining]);
+    expect(stored()).toEqual([pair.kept, m2, joined]);
     // Retries that carry no folders still match the rooted entries.
     const retried = await pair.m3.run((service) =>
       service.accept({
@@ -556,7 +560,7 @@ describe("ProjectLink", () => {
       }),
     );
     expect(recommitted.replayed).toBe(true);
-    expect(stored()).toEqual([pair.kept, m2, pair.joining]);
+    expect(stored()).toEqual([pair.kept, m2, joined]);
     // Unlinking matches by machine and project whether or not either side has a folder.
     const removed = await pair.m4.run((service) =>
       service.unlink({

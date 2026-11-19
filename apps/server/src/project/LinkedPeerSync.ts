@@ -79,6 +79,7 @@ import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { forkParked } from "../serverActivation.ts";
 import { LinkedMemorySync } from "./LinkedMemorySync.ts";
 import { describeCopy, selfMemberOf } from "./LinkedPeerRoute.ts";
+import { removalEnds } from "./linkMembership.ts";
 import {
   type LinkedCoordinator,
   type LinkedPair,
@@ -246,6 +247,14 @@ const notRefused = (error: unknown) =>
 
 const memberRefs = (members: ReadonlyArray<LogicalProjectMember>) =>
   [...new Set(members.map(memberRef))].toSorted();
+
+/** Which link listed each copy: two lists of the same copies may hold different links of one. */
+const linkRefs = (members: ReadonlyArray<LogicalProjectMember>) =>
+  members.map((member) => `${logicalProjectMemberKey(member)} ${member.linkId ?? ""}`).toSorted();
+const sameLinks = (
+  left: ReadonlyArray<LogicalProjectMember>,
+  right: ReadonlyArray<LogicalProjectMember>,
+) => linkRefs(left).join("\n") === linkRefs(right).join("\n");
 
 export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
   Effect.gen(function* () {
@@ -562,7 +571,11 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
         const { project, peer } = input;
         const own = { binding: input.ownBinding };
         const held = project.workspaceSettings?.logicalProject?.members;
-        if (held === undefined || peer.members === undefined || sameMemberSet(held, peer.members))
+        if (
+          held === undefined ||
+          peer.members === undefined ||
+          (sameMemberSet(held, peer.members) && sameLinks(held, peer.members))
+        )
           return;
         const isPeer =
           logicalProjectMemberKey(peer.member) === logicalProjectMemberKey(input.member);
@@ -597,6 +610,8 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
         const lists = stringifyJson([
           memberRefs(held),
           memberRefs(peer.members),
+          linkRefs(held),
+          linkRefs(peer.members),
           own.binding?.epoch ?? null,
           peer.binding?.epoch ?? null,
         ]);
@@ -636,8 +651,15 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
                   // this copy holds, or the unlink of one the peer still lists.
                   Effect.tap(() =>
                     held.every((member) => peerKeys.has(logicalProjectMemberKey(member))) &&
-                    !(own.binding?.removedMembers ?? []).some((member) =>
-                      peerKeys.has(logicalProjectMemberKey(member)),
+                    !(own.binding?.removedMembers ?? []).some((removal) =>
+                      peer.members!.some((member) =>
+                        removalEnds(
+                          removal,
+                          member,
+                          own.binding?.relinkedMembers ?? [],
+                          peer.binding?.relinkedMembers ?? [],
+                        ),
+                      ),
                     )
                       ? Effect.void
                       : sendOwn,

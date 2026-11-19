@@ -24,6 +24,12 @@ export const LogicalProjectMember = Schema.Struct({
   workspaceRoot: Schema.optionalKey(
     TrimmedNonEmptyString.check(Schema.isMaxLength(LOGICAL_PROJECT_MEMBER_ROOT_MAX_LENGTH)),
   ),
+  /**
+   * Names this membership: the link that listed the copy, new each time it is linked
+   * and the same on every machine. An unlink ends the membership it names and no later
+   * one. Absent on members linked before this field.
+   */
+  linkId: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(128))),
 });
 export type LogicalProjectMember = typeof LogicalProjectMember.Type;
 
@@ -121,7 +127,9 @@ export const ProjectCoordinatorBinding = Schema.Struct({
       Schema.Struct({
         environmentId: EnvironmentId,
         projectId: ProjectId,
-        /** When it was unlinked, so a later link of the same copy supersedes this. */
+        /** The membership the unlink ended (`LogicalProjectMember.linkId`), when it had one. */
+        linkId: Schema.optional(Schema.String.check(Schema.isMaxLength(128))),
+        /** When it was unlinked; decides only for a membership without a `linkId`. */
         removedAt: Schema.optional(IsoDateTime),
       }),
     ).check(Schema.isMaxLength(256)),

@@ -1,10 +1,13 @@
 /**
- * Which link an unlink ended. A copy remembers whom it unlinked and when
- * (`removedMembers`), and when it linked one of them again (`relinkedMembers`).
- * An unlink stands only against the link it ended: a later link of the same
- * copy supersedes it, on every machine that hears of both, in any order.
- * Each time is set after the one it answers, so a machine's clock never
- * reorders an unlink and the link that followed it there.
+ * Which membership an unlink ended. Every link gives the copy it lists a link
+ * id (`LogicalProjectMember.linkId`), the same on every machine, and an unlink
+ * names the id it ended (`removedMembers`). It removes that membership and an
+ * older one from before ids, never a later link of the same copy, whichever
+ * machine made that link and whatever the clocks say.
+ *
+ * Unlinks of memberships from before link ids carry none. Those are dated, and
+ * a later link of the copy on the machine that unlinked it (`relinkedMembers`)
+ * ends them; each time is set after the one it answers.
  */
 import {
   logicalProjectMemberKey,
@@ -65,35 +68,61 @@ export const mergeRelinked = (
   return [...merged.values()].slice(-MAX_REMEMBERED);
 };
 
-/** The newest unlink of each copy, the last `MAX_REMEMBERED` kept. */
+/** The membership an unlink names: the copy, and the link id it ended when it had one. */
+const removalKey = (removal: RemovedMember) =>
+  `${logicalProjectMemberKey(removal)}\u0000${removal.linkId ?? ""}`;
+
+/** One unlink per membership, the newest kept, the last `MAX_REMEMBERED` of them. */
 export const mergeRemoved = (
   own: ReadonlyArray<RemovedMember>,
   added: ReadonlyArray<RemovedMember>,
 ): ReadonlyArray<RemovedMember> => {
-  const addedKeys = new Set(added.map(logicalProjectMemberKey));
-  return [...own.filter((entry) => !addedKeys.has(logicalProjectMemberKey(entry))), ...added].slice(
+  const addedKeys = new Set(added.map(removalKey));
+  return [...own.filter((entry) => !addedKeys.has(removalKey(entry))), ...added].slice(
     -MAX_REMEMBERED,
   );
 };
 
-/** This copy unlinks `member` now: after any link of it this copy knows of. */
+/**
+ * Whether an unlink ends the membership `member` is listed with. One that names a
+ * link id ends that membership, and one from before ids, which is older. One without
+ * an id ends only a membership without one, and only while no later link is known.
+ */
+export const removalEnds = (
+  removal: RemovedMember,
+  member: Pick<LogicalProjectMember, "environmentId" | "projectId" | "linkId">,
+  ...relinked: ReadonlyArray<ReadonlyArray<RelinkedMember>>
+) =>
+  logicalProjectMemberKey(removal) === logicalProjectMemberKey(member) &&
+  (removal.linkId !== undefined
+    ? member.linkId === undefined || member.linkId === removal.linkId
+    : member.linkId === undefined && removalStands(removal, ...relinked));
+
+/** This copy unlinks `member` now: the membership it lists, dated after any link it knows of. */
 export const rememberRemoval = (
   binding: ProjectCoordinatorBinding,
-  member: MemberKey,
+  member: MemberKey & Pick<LogicalProjectMember, "linkId">,
   nowMs: number,
 ): ProjectCoordinatorBinding => {
   const linkedAt = linkedAtIn(binding.relinkedMembers ?? [], logicalProjectMemberKey(member));
   const removedAt = iso(Math.max(nowMs, (linkedAt ?? 0) + 1));
   return {
     ...binding,
-    removedMembers: mergeRemoved(binding.removedMembers ?? [], [{ ...ref(member), removedAt }]),
+    removedMembers: mergeRemoved(binding.removedMembers ?? [], [
+      {
+        ...ref(member),
+        ...(member.linkId === undefined ? {} : { linkId: member.linkId }),
+        removedAt,
+      },
+    ]),
   };
 };
 
 /**
- * This copy links `member` again after unlinking it: the unlink is forgotten
- * here and the link is dated after it. The binding is returned as it is for
- * a copy this one never unlinked.
+ * This copy links `member` again after unlinking a membership from before link ids:
+ * that unlink is forgotten here and the link is dated after it. Unlinks that name a
+ * link id stay, since the new link has another. The binding is returned as it is for
+ * a copy with no such unlink.
  */
 export const rememberRelink = (
   binding: ProjectCoordinatorBinding,
@@ -101,15 +130,13 @@ export const rememberRelink = (
   nowMs: number,
 ): ProjectCoordinatorBinding => {
   const key = logicalProjectMemberKey(member);
-  const removal = (binding.removedMembers ?? []).find(
-    (entry) => logicalProjectMemberKey(entry) === key,
-  );
+  const undated = (entry: RemovedMember) =>
+    logicalProjectMemberKey(entry) === key && entry.linkId === undefined;
+  const removal = (binding.removedMembers ?? []).find(undated);
   if (removal === undefined) return binding;
   const linkedAt = iso(Math.max(nowMs, millis(removal.removedAt) + 1));
   const { removedMembers, ...rest } = binding;
-  const remaining = (removedMembers ?? []).filter(
-    (entry) => logicalProjectMemberKey(entry) !== key,
-  );
+  const remaining = (removedMembers ?? []).filter((entry) => !undated(entry));
   return {
     ...rest,
     ...(remaining.length === 0 ? {} : { removedMembers: remaining }),

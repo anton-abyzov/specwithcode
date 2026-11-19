@@ -665,9 +665,11 @@ const make = Effect.gen(function* () {
           if (!compareFingerprints(own, input.keptFingerprint).rootMatches)
             return yield* fail("repository_mismatch", rootSummary(own, input.keptFingerprint));
         }
+        // This link names the membership: an unlink of an earlier one never ends it.
+        const joinedAs: LogicalProjectMember = { ...self, linkId: input.operationId };
         const logicalProject: LogicalProject = {
           ...input.logicalProject,
-          members: mergeMembers(input.logicalProject.members, [self]),
+          members: mergeMembers(input.logicalProject.members, [joinedAs]),
         };
         // This copy keeps its own coordinator: every machine runs one (EqualCoordinatorMigration).
         const joined = joinedBinding(input.operationId, input.coordinatorBinding.epoch);
@@ -690,7 +692,7 @@ const make = Effect.gen(function* () {
         }
         return {
           operationId: input.operationId,
-          member: self,
+          member: joinedAs,
           logicalProject,
           coordinatorBinding: joined,
           replayed: false,
@@ -715,7 +717,10 @@ const make = Effect.gen(function* () {
         if (!identity) return yield* fail("conflict", "Prepare the link on this copy first.");
         const refusal = linkRefusals(project, false).keep;
         if (refusal) return yield* fail(refusal);
-        const listed = identity.members.some((member) => sameMember(member, input.joining));
+        // The membership is named by this link, on both machines and every one they tell.
+        const joining: LogicalProjectMember = { ...input.joining, linkId: input.operationId };
+        const earlier = identity.members.find((member) => sameMember(member, joining));
+        const listed = earlier !== undefined && earlier.linkId === joining.linkId;
         const notesWritten = yield* writeNotes(project.id, input.notes);
         yield* recordSuperseded(project.id, input.superseded ?? []);
         if (listed)
@@ -726,30 +731,44 @@ const make = Effect.gen(function* () {
             replayed: true,
           };
         if (
+          earlier === undefined &&
           identity.members.some(
-            (member) => logicalProjectMemberKey(member) === logicalProjectMemberKey(input.joining),
+            (member) => logicalProjectMemberKey(member) === logicalProjectMemberKey(joining),
           )
         )
           return yield* fail("conflict", "That copy is listed with another coordinator thread.");
-        // The joining entry keeps the folder its own machine recorded when it accepted.
-        const own = withOwnRoot(identity, kept);
-        const logicalProject = { ...own, members: [...own.members, input.joining] };
-        // Reread: writing notes does not change settings, but stay exact about the revision.
-        yield* writeOwnership(
-          yield* load(input.projectId),
-          "project-link-member",
-          input.operationId,
-          {
-            mode: "link-member",
-            logicalProject,
-            // A copy this one unlinked before is linked again: that unlink ends here.
-            coordinatorBinding: rememberRelink(
-              project.workspaceSettings?.coordinatorBinding ?? { epoch: 0, state: "active" },
-              input.joining,
-              DateTime.toEpochMillis(yield* DateTime.now),
+        const now = DateTime.toEpochMillis(yield* DateTime.now);
+        // Listed here by an earlier link, which that copy left: this copy ends that
+        // membership first, so an unlink of it made elsewhere never ends the new one.
+        let current = yield* load(input.projectId);
+        if (earlier !== undefined) {
+          const held = current.workspaceSettings!.logicalProject!;
+          current = yield* writeOwnership(current, "project-link-member-ended", input.operationId, {
+            mode: "remove-member",
+            logicalProject: {
+              ...held,
+              members: held.members.filter((member) => !sameMember(member, earlier)),
+            },
+            coordinatorBinding: rememberRemoval(
+              current.workspaceSettings?.coordinatorBinding ?? { epoch: 0, state: "active" },
+              earlier,
+              now,
             ),
-          },
-        );
+          });
+        }
+        // The joining entry keeps the folder its own machine recorded when it accepted.
+        const own = withOwnRoot(current.workspaceSettings?.logicalProject ?? identity, kept);
+        const logicalProject = { ...own, members: [...own.members, joining] };
+        yield* writeOwnership(current, "project-link-member", input.operationId, {
+          mode: "link-member",
+          logicalProject,
+          // An unlink of this copy from before link ids ends here; the others name theirs.
+          coordinatorBinding: rememberRelink(
+            current.workspaceSettings?.coordinatorBinding ?? { epoch: 0, state: "active" },
+            joining,
+            now + 1,
+          ),
+        });
         return { operationId: input.operationId, logicalProject, notesWritten, replayed: false };
       }),
     );
@@ -767,7 +786,7 @@ const make = Effect.gen(function* () {
    */
   const rememberRemoved = (
     binding: ProjectCoordinatorBinding,
-    member: Pick<LogicalProjectMember, "environmentId" | "projectId">,
+    member: Pick<LogicalProjectMember, "environmentId" | "projectId" | "linkId">,
   ) =>
     DateTime.now.pipe(
       Effect.map((now) => rememberRemoval(binding, member, DateTime.toEpochMillis(now))),
@@ -799,7 +818,10 @@ const make = Effect.gen(function* () {
               replayed: true,
             };
           const logicalProject = { ...identity, members: remaining };
-          const coordinatorBinding = yield* rememberRemoved(current, input.member);
+          const leaving = identity.members.find(
+            (member) => logicalProjectMemberKey(member) === logicalProjectMemberKey(input.member),
+          );
+          const coordinatorBinding = yield* rememberRemoved(current, leaving ?? input.member);
           yield* writeOwnership(project, "project-unlink-member", input.operationId, {
             mode: "remove-member",
             logicalProject,
@@ -847,7 +869,8 @@ const make = Effect.gen(function* () {
           id,
           title: identity?.title ?? project.title,
           coordinatorId: `coordinator:${id}`,
-          members: [self],
+          // Its own project again: the link that listed it in the other one is over.
+          members: [(({ linkId: _ended, ...own }) => own)(self)],
         };
         const active: ProjectCoordinatorBinding = {
           epoch: 0,

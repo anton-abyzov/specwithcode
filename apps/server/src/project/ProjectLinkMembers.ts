@@ -32,6 +32,7 @@ import type { ProjectOwnershipUpdate } from "../orchestration-v2/ProjectCommands
 import {
   mergeRelinked,
   mergeRemoved,
+  removalEnds,
   removalStands,
   type RelinkedMember,
   type RemovedMember,
@@ -171,23 +172,18 @@ export const makeProjectLinkMembers = (deps: ProjectLinkMembersDeps) => {
       const current = binding ?? { epoch: 0, state: "active" as const };
       const ownRelinked = current.relinkedMembers ?? [];
       const theirRelinked = input.relinked ?? [];
-      // What the other copy unlinked on purpose: not a member it lists again, and not an
-      // unlink that a later link of the same copy, known here or there, has ended.
+      // What the other copy unlinked on purpose, by the membership each unlink ended. One
+      // from before link ids also lapses when that copy lists the member again.
       const listedThere = new Set(input.members.map(logicalProjectMemberKey));
-      const unlinkedThere = new Map(
-        (input.removed ?? [])
-          .filter(
-            (removal) =>
-              !listedThere.has(logicalProjectMemberKey(removal)) &&
-              logicalProjectMemberKey(removal) !== fromKey &&
-              removalStands(removal, ownRelinked, theirRelinked),
-          )
-          .map((removal) => [logicalProjectMemberKey(removal), removal] as const),
+      const unlinkedThere = (input.removed ?? []).filter(
+        (removal) =>
+          logicalProjectMemberKey(removal) !== fromKey &&
+          (removal.linkId !== undefined || !listedThere.has(logicalProjectMemberKey(removal))),
       );
+      const endedBy = (member: LogicalProjectMember) =>
+        unlinkedThere.find((removal) => removalEnds(removal, member, ownRelinked, theirRelinked));
       const dropped = identity.members.filter(
-        (member) =>
-          unlinkedThere.has(logicalProjectMemberKey(member)) &&
-          member.environmentId !== self.environmentId,
+        (member) => member.environmentId !== self.environmentId && endedBy(member) !== undefined,
       );
       if (dropped.length > 0) {
         const droppedKeys = new Set(dropped.map(logicalProjectMemberKey));
@@ -195,9 +191,7 @@ export const makeProjectLinkMembers = (deps: ProjectLinkMembersDeps) => {
           (member) => !droppedKeys.has(logicalProjectMemberKey(member)),
         );
         // Remembered here too, so an older list from a third copy never brings them back.
-        const removals = dropped.map((member) =>
-          unlinkedThere.get(logicalProjectMemberKey(member))!,
-        );
+        const removals = dropped.map((member) => endedBy(member)!);
         const updated = yield* deps.writeOwnership(
           project,
           "project-link-members-removed",
@@ -222,14 +216,16 @@ export const makeProjectLinkMembers = (deps: ProjectLinkMembersDeps) => {
       // The other copy's later links end the unlinks this copy remembers of the same copies.
       const relinked = mergeRelinked(ownRelinked, theirRelinked);
       const ownRemoved = current.removedMembers ?? [];
-      const stillRemoved = ownRemoved.filter((removal) => removalStands(removal, relinked));
+      const stillRemoved = ownRemoved.filter(
+        (removal) => removal.linkId !== undefined || removalStands(removal, relinked),
+      );
       const held = new Set(identity.members.map(logicalProjectMemberKey));
-      const removed = new Set(stillRemoved.map(logicalProjectMemberKey));
       const added = byKey(input.members)
         .filter(
           (member) =>
             !held.has(logicalProjectMemberKey(member)) &&
-            !removed.has(logicalProjectMemberKey(member)) &&
+            // A membership this copy unlinked stays out; a later link of that copy comes in.
+            !stillRemoved.some((removal) => removalEnds(removal, member, relinked)) &&
             member.environmentId !== self.environmentId,
         )
         .slice(0, Math.max(0, MAX_MEMBERS - identity.members.length));
@@ -242,7 +238,9 @@ export const makeProjectLinkMembers = (deps: ProjectLinkMembersDeps) => {
       yield* deps.writeOwnership(
         project,
         "project-link-members",
-        learned ? stateId(members, relinked) : listId(members),
+        learned || members.some((member) => member.linkId !== undefined)
+          ? stateId(members, [members.map((member) => member.linkId ?? null), relinked])
+          : listId(members),
         {
           mode: "sync-members",
           logicalProject: { ...identity, members },

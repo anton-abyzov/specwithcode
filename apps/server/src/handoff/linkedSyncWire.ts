@@ -124,6 +124,7 @@ export const LinkedMembersRequest = Schema.Struct({
       Schema.Struct({
         environmentId: EnvironmentId,
         projectId: ProjectId,
+        linkId: Schema.optional(Schema.String.check(Schema.isMaxLength(128))),
         removedAt: Schema.optional(IsoDateTime),
       }),
     ).check(Schema.isMaxLength(256)),
