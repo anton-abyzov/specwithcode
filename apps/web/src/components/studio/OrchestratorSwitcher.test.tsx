@@ -18,9 +18,31 @@ const CURRENT = "m4:p";
 
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
+const linkCopy = vi.hoisted(() => vi.fn());
+vi.mock("../../studio/projectLink", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../studio/projectLink")>()),
+  linkCopyAsWorkers: linkCopy,
+}));
 
 import * as switcherModule from "./OrchestratorSwitcher";
 import { linkKeeper, OrchestratorSwitcher, type MachineRowReach } from "./OrchestratorSwitcher";
+import { useCopyLink } from "./useCopyLink";
+
+/** The end of Add's own dialog: the copy is done and is linked as the dialog links it. */
+function AddDone() {
+  useCopyLink({
+    project: { environmentId: "m4", id: "p" } as never,
+    sourceLabel: "M4",
+    targetLabel: "M5",
+    machine: "m5" as never,
+    stage: "done",
+    mode: "copy-only",
+    copyProjectId: "old" as never,
+    latestPending: { current: null },
+    remember: vi.fn(),
+  });
+  return null;
+}
 
 /** The menu's actions; the info button by the first label is a menu item with no text. */
 const ACTION_ITEMS = '[role="menuitem"]:not([data-slot="menu-info-button"])';
@@ -827,6 +849,22 @@ it("says under Link why the last try to link failed, until the two are linked", 
   expect(refusal()).toBe("Not linked yet. No.");
   await act(async () => forgetLinkRefusal("m5:old", CURRENT));
   expect(refusal()).toBeUndefined();
+});
+
+it("says under Link why linking threw, after Add was closed and the menu opened again", async () => {
+  linkCopy.mockRejectedValue(new Error("The two notes could not be merged."));
+  await act(async () => root.render(<AddDone />));
+  expect(linkCopy).toHaveBeenCalledTimes(1);
+  // Add is closed: nothing of it is on screen, and nothing was put in the menu's memory here.
+  await act(async () => root.render(<div />));
+  await renderSwitcher({
+    ...handlers(),
+    onLink: vi.fn(),
+    links: [{ key: "m5:old", machine: "M5" }],
+  });
+  expect(document.querySelector("[data-orchestrator-link-refusal]")?.textContent).toBe(
+    "Not linked yet. The two notes could not be merged.",
+  );
 });
 
 it("gives a separate project Link, never Continue or a coordinator move", async () => {

@@ -399,10 +399,10 @@ it.each([
     await act(async () => vi.advanceTimersByTimeAsync(2000));
     expect(state.link).toHaveBeenCalledOnce();
     expect(saved().linked).toBeUndefined();
-    // A refusal is kept for the machine menu; a machine that did not answer refused nothing.
-    expect(refusalsKept()).toEqual(
-      how === "it needs review" ? [{ text: "Notes differ.", verbatim: true }] : [],
-    );
+    // Kept for the machine menu either way: what was returned, or what the failure said.
+    expect(refusalsKept()).toEqual([
+      { text: how === "it needs review" ? "Notes differ." : "offline", verbatim: true },
+    ]);
     // The copy is still announced as done.
     expect(state.toasts).toHaveLength(1);
   } finally {

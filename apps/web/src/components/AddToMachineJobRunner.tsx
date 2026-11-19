@@ -46,7 +46,7 @@ import {
   writeAddToMachineCopy,
 } from "~/studio/addToMachineCopy";
 import { useMachineNicknames } from "~/studio/machineNickname";
-import { forgetLinkRefusal, rememberLinkRefusal } from "~/studio/linkRefusals";
+import { linkSide, recordLinkFailure, recordLinkOutcome } from "~/studio/linkRefusals";
 import { linkCopyAsWorkers } from "~/studio/projectLink";
 import { ProjectLinkDialog } from "./studio/ProjectLinkDialog";
 import { toastManager } from "./ui/toast";
@@ -360,12 +360,7 @@ async function runJob(job: AddToMachineJob, context: RunContext): Promise<void> 
     });
     finish(job);
     // The machine menu says why beside Link, after this notice is gone.
-    const pair = [
-      `${job.source.environmentId}:${job.source.projectId}`,
-      `${destination.environmentId}:${destination.projectId}`,
-    ] as const;
-    if (outcome.status === "linked") forgetLinkRefusal(...pair);
-    else rememberLinkRefusal(...pair, outcome.words);
+    recordLinkOutcome(linkSide(job.source), linkSide(destination), outcome);
     if (outcome.status === "review")
       toastManager.add(
         stackedThreadToast({
@@ -378,6 +373,13 @@ async function runJob(job: AddToMachineJob, context: RunContext): Promise<void> 
   } catch (cause) {
     const transient = isTransient(cause);
     if (!transient) finish(job);
+    // A failure that is not tried again is this pair's last word until Link succeeds.
+    if (!transient)
+      recordLinkFailure(
+        linkSide(job.source),
+        linkSide(destination),
+        messageOf(cause, "Linking stopped."),
+      );
     toastManager.add(
       stackedThreadToast({
         type: "error",

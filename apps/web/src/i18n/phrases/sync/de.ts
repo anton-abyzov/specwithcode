@@ -299,4 +299,10 @@ export const syncDe: PhraseCatalog = {
   "the check of Root failed": "die Prüfung des Haupt-Repositorys ist fehlgeschlagen",
   "the check of {repository} failed": "die Prüfung von {repository} ist fehlgeschlagen",
   "the checks of {n} repositories failed": "die Prüfungen von {n} Repositorys sind fehlgeschlagen",
+  "A copy to {machine} is not finished. Finish or cancel it, then add another machine.":
+    "Eine Kopie auf {machine} ist nicht abgeschlossen. Schließe sie ab oder brich sie ab und füge dann einen weiteren Rechner hinzu.",
+  "A copy is not finished. Finish or cancel it, then add another machine.":
+    "Eine Kopie ist nicht abgeschlossen. Schließe sie ab oder brich sie ab und füge dann einen weiteren Rechner hinzu.",
+  "Open the unfinished copy": "Die unfertige Kopie öffnen",
+  "Finish handoff": "Übergabe abschließen",
 };

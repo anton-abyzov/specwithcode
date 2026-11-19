@@ -298,4 +298,10 @@ export const syncJa: PhraseCatalog = {
   "the check of Root failed": "ルートリポジトリのチェックに失敗しました",
   "the check of {repository} failed": "{repository} のチェックに失敗しました",
   "the checks of {n} repositories failed": "{n} 件のリポジトリのチェックに失敗しました",
+  "A copy to {machine} is not finished. Finish or cancel it, then add another machine.":
+    "{machine} へのコピーが完了していません。完了するかキャンセルしてから、別のマシンを追加してください。",
+  "A copy is not finished. Finish or cancel it, then add another machine.":
+    "コピーが完了していません。完了するかキャンセルしてから、別のマシンを追加してください。",
+  "Open the unfinished copy": "未完了のコピーを開く",
+  "Finish handoff": "引き継ぎを完了",
 };

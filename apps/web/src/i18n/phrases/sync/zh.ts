@@ -265,4 +265,10 @@ export const syncZh: PhraseCatalog = {
   "the check of Root failed": "根仓库的检查失败",
   "the check of {repository} failed": "{repository} 的检查失败",
   "the checks of {n} repositories failed": "{n} 个仓库的检查失败",
+  "A copy to {machine} is not finished. Finish or cancel it, then add another machine.":
+    "到 {machine} 的复制尚未完成。请完成或取消它，然后再添加另一台机器。",
+  "A copy is not finished. Finish or cancel it, then add another machine.":
+    "复制尚未完成。请完成或取消它，然后再添加另一台机器。",
+  "Open the unfinished copy": "打开未完成的复制",
+  "Finish handoff": "完成交接",
 };

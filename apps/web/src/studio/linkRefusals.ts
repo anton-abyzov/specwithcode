@@ -41,6 +41,41 @@ export function forgetLinkRefusal(a: string, b: string): void {
 export const linkRefusal = (kept: string, joining: string): LinkReason | undefined =>
   refusals.get(pairKey(kept, joining));
 
+/** A project on a machine, as the two sides of a link are named here. */
+export const linkSide = (side: { readonly environmentId: string; readonly projectId: string }) =>
+  `${side.environmentId}:${side.projectId}`;
+
+/**
+ * Where every try to link a copy ends: linked forgets the pair's reason, anything else keeps
+ * the newest one. Returns the reason kept, or null once linked.
+ */
+export function recordLinkOutcome(
+  kept: string,
+  joining: string,
+  outcome:
+    | { readonly status: "linked" }
+    | { readonly status: "review"; readonly reason: string; readonly words?: LinkReason },
+): LinkReason | null {
+  if (outcome.status === "linked") {
+    forgetLinkRefusal(kept, joining);
+    return null;
+  }
+  // Without a sentence of this window's own, the reason is what a machine said, as said.
+  const reason = outcome.words ?? { text: outcome.reason, verbatim: true };
+  rememberLinkRefusal(kept, joining, reason);
+  return reason;
+}
+
+/** The same for a try that threw: what the failure said is kept as said. */
+export const recordLinkFailure = (kept: string, joining: string, said: string): LinkReason =>
+  recordLinkOutcome(kept, joining, { status: "review", reason: said })!;
+
+/** A reason in the reader's language; text a machine sent stays as sent. */
+export const sayLinkReason = (
+  reason: LinkReason,
+  tx: (text: string, values?: Readonly<Record<string, string>>) => string,
+): string => (reason.verbatim ? reason.text : tx(reason.text, reason.values));
+
 /** For tests: every reason kept, whichever pair it is for. */
 export const linkRefusalsForTest = (): LinkReason[] => [...refusals.values()];
 

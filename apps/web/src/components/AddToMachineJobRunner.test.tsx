@@ -231,6 +231,13 @@ it("asks for a review when linking needs one", async () => {
   expect(listAddToMachineJobs()).toEqual([]);
 });
 
+it("keeps why linking failed when the link throws and is not tried again", async () => {
+  state.linkFails = new Error("The two notes could not be merged.") as never as Record<string, unknown>;
+  await run("clone-f", "done");
+  expect(listAddToMachineJobs()).toEqual([]);
+  expect(refusalsKept()).toEqual([{ text: "The two notes could not be merged.", verbatim: true }]);
+});
+
 describe("after a restart, with no clone snapshot left", () => {
   const stale = { createdAt: new Date(Date.now() - 60_000).toISOString() };
   const folder = (state: string, checkedOut: boolean) => ({

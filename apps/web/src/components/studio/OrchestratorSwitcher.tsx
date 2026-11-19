@@ -43,7 +43,7 @@ import { ExtraCoordinatorFix } from "./ExtraCoordinatorFix";
 import { ProjectSyncDialog } from "./ProjectSyncDialog";
 import { useProjectSyncMenu, type SyncAsk } from "./useProjectSyncMenu";
 import { ProjectLinkDialog, type ProjectLinkTarget } from "./ProjectLinkDialog";
-import { useLinkRefusals } from "../../studio/linkRefusals";
+import { sayLinkReason, useLinkRefusals } from "../../studio/linkRefusals";
 import { Button } from "../ui/button";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import {
@@ -272,8 +272,6 @@ export function OrchestratorSwitcher({
       : null;
   // Linking is what makes two projects for one repository one project; nothing is copied.
   const linkActions = onLink ? links : [];
-  const refusalWords = (reason: NonNullable<ReturnType<typeof refusalOf>>) =>
-    reason.verbatim ? reason.text : tx(reason.text, reason.values);
   // Every machine added the repository on its own: the menu says once that they are separate
   // projects and what that leaves alone. With a linked machine in the group (listed, or known
   // only as one this window never opened) the sentence does not hold for every row.
@@ -540,7 +538,7 @@ export function OrchestratorSwitcher({
                       data-orchestrator-link-refusal=""
                     >
                       {tx("Not linked yet. {reason}", {
-                        reason: refusalWords(refusalOf(current, link.key)!),
+                        reason: sayLinkReason(refusalOf(current, link.key)!, tx),
                       })}
                     </span>
                   ) : null}

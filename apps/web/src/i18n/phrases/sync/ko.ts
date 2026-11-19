@@ -289,4 +289,10 @@ export const syncKo: PhraseCatalog = {
   "the check of Root failed": "루트 저장소 검사에 실패했습니다",
   "the check of {repository} failed": "{repository} 검사에 실패했습니다",
   "the checks of {n} repositories failed": "저장소 {n}개의 검사에 실패했습니다",
+  "A copy to {machine} is not finished. Finish or cancel it, then add another machine.":
+    "{machine}(으)로의 복사가 끝나지 않았습니다. 끝내거나 취소한 다음 다른 기기를 추가하세요.",
+  "A copy is not finished. Finish or cancel it, then add another machine.":
+    "복사가 끝나지 않았습니다. 끝내거나 취소한 다음 다른 기기를 추가하세요.",
+  "Open the unfinished copy": "끝나지 않은 복사 열기",
+  "Finish handoff": "인계 완료",
 };

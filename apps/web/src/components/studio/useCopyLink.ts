@@ -2,7 +2,7 @@ import { useEffect, useState, type RefObject } from "react";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import type { EnvironmentId, FolderCopyMode, ProjectId } from "@specweave-studio/contracts";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { forgetLinkRefusal, rememberLinkRefusal } from "../../studio/linkRefusals";
+import { recordLinkFailure, recordLinkOutcome } from "../../studio/linkRefusals";
 import { linkCopyAsWorkers, projectLink, type CopyLinkOutcome } from "../../studio/projectLink";
 import { randomUUID } from "../../lib/utils";
 import type { PendingCopy } from "./handoffFolderCopyPending";
@@ -70,16 +70,12 @@ export function useCopyLink({
           newOperationId: randomUUID,
         },
       );
-      setLink(outcome);
-      if (outcome.status === "linked") {
-        markLinked(operationId);
-        forgetLinkRefusal(kept, joining);
-      } else rememberLinkRefusal(kept, joining, outcome.words);
+      const words = recordLinkOutcome(kept, joining, outcome);
+      setLink(outcome.status === "review" && words ? { ...outcome, words } : outcome);
+      if (outcome.status === "linked") markLinked(operationId);
     } catch (cause) {
-      // What a machine answered is said as it said it.
-      const words = { text: messageOf(cause), verbatim: true };
+      const words = recordLinkFailure(kept, joining, messageOf(cause));
       setLink({ status: "review", reason: words.text, words });
-      rememberLinkRefusal(kept, joining, words);
     }
   };
   const linkTarget =

@@ -95,7 +95,8 @@ import { HandoffAccountMachines } from "./HandoffAccountMachines";
 import { HandoffBusyThreads } from "./HandoffBusyThreads";
 import { refusedBusyOf } from "./handoffCopySteps";
 import { sameStaleReason } from "../../studio/staleCopyText";
-import { readPendingCopy } from "./handoffFolderCopyPending";
+import { readPendingCopy, type PendingCopy } from "./handoffFolderCopyPending";
+import { AddHeldByCopy } from "./AddHeldByCopy";
 
 function previewInput(projectId: ProjectId, bundle: MachineHandoffBundle) {
   return {
@@ -259,6 +260,8 @@ export function ProjectMachineHandoff({
   const [syncKey, setSyncKey] = useState<string | null>(null);
   // Opened by the menu's Add: only machines without the project are offered.
   const [addOnly, setAddOnly] = useState(false);
+  /** An unfinished copy to another machine found when Add was opened: Add leaves it alone. */
+  const [heldCopy, setHeldCopy] = useState<PendingCopy | null>(null);
   // The copy flow's machine, so switching to Git keeps it.
   const [copyMachine, setCopyMachine] = useState<EnvironmentId | null>(null);
   // The copy the person picked on a machine that holds several, by machine.
@@ -1022,23 +1025,39 @@ export function ProjectMachineHandoff({
     // Only the menu's Add filters; the page's own button keeps every machine. Add is always
     // Add: it never turns into the move that was left unfinished, whose pointer stays.
     const adding = mode === "add" && fromMenu;
-    if (adding && snapshot) {
-      // A move this window already published holds the dialog until it ends.
+    // A move that completed is over: its result is put away and Add starts clean.
+    const moved = adding && snapshot !== null && phase === "complete";
+    if (adding && snapshot && !moved) {
+      // A move this window already published is unfinished: the refusal opens it to finish.
       toastManager.add({
         type: "warning",
         title: tx(
           "A move to another machine is not finished. Finish or cancel it, then add a machine.",
         ),
+        actionProps: { children: tx("Finish handoff"), onClick: () => changeOpen(true) },
       });
       return;
     }
+    if (moved) {
+      setSnapshot(null);
+      setReceipt(null);
+      setConsent(false);
+      setPhase("choose");
+      setError(null);
+    }
+    const kept = moved ? null : snapshot;
+    // The project keeps one unfinished copy at a time: Add neither opens nor replaces it.
+    const unfinished = adding
+      ? readPendingCopy(folderCopyStorageKey(project.environmentId, project.id))
+      : null;
+    setHeldCopy(unfinished && unfinished.doneSeen !== true ? unfinished : null);
     changeOpen(true);
     setMoveAsked(mode === "move");
     setSyncKey(syncCandidate ? syncTarget! : null);
     if (syncCandidate) setCopyMachine(null);
     // An unfinished Git handoff wins over the menu's Copy: it may already be published.
     let gitPending = false;
-    if (!snapshot) {
+    if (!kept) {
       try {
         const pending = adding
           ? null
@@ -1076,15 +1095,15 @@ export function ProjectMachineHandoff({
     }
     setAddOnly(adding);
     if (adding) setCopyMachine(null);
-    if (mode === "move" && !snapshot) setIntent("move");
-    if ((mode === "copy" || mode === "sync") && !snapshot && !gitPending) {
+    if (mode === "move" && !kept) setIntent("move");
+    if ((mode === "copy" || mode === "sync") && !kept && !gitPending) {
       setIntent("copy");
       setMethod(requestedMethod ?? DEFAULT_COPY_METHOD);
       if (machine) {
         setSelected("");
         setPickerMachine(machine);
       }
-    } else if (mode === "add" && !snapshot && !gitPending) {
+    } else if (mode === "add" && !kept && !gitPending) {
       // With no Git remote nothing can be downloaded: the whole folder is copied.
       if (adding && addToMachineRoute(project) === "copy") setMethod("copy");
       else if (requestedMethod) setMethod(requestedMethod);
@@ -1201,9 +1220,15 @@ export function ProjectMachineHandoff({
         makeMain={makeMain}
         mainLabel={machineLabelOf(holdings.mainEnvironmentId)}
         copyFlow={
-          method === "folder" ? undefined : (
+          method === "folder" ? undefined : addOnly && heldCopy ? (
+            <AddHeldByCopy
+              machine={machines.find((item) => item.id === heldCopy.environmentId)?.label ?? null}
+              onOpen={() => openDialog("copy")}
+            />
+          ) : (
             <HandoffFolderCopy
               key={copyFlowRun}
+              addOnly={addOnly}
               project={project}
               coordinatorId={coordinatorId}
               workspaceContext={workspaceContext}

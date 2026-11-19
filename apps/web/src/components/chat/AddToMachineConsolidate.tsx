@@ -28,6 +28,7 @@ import {
   withoutDivergedTakeTheirs,
 } from "~/studio/addToMachineCopy";
 import { formatBytes } from "~/studio/folderCopy";
+import { linkSide, recordLinkOutcome } from "~/studio/linkRefusals";
 import { linkCopyAsWorkers, projectLink, unlinkUndoneCopy } from "~/studio/projectLink";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { CopyPlanPreview, CopyProgress, CopyUndoPreview } from "../studio/HandoffCopyPreview";
@@ -131,6 +132,12 @@ export function AddToMachineConsolidate(props: {
     if (outcome.status === "linked")
       // The menu selects the project next, so it must be in the store first.
       await waitForProject(scopeProjectRef(destination, projectId), 10_000).catch(() => null);
+    // The machine menu says why beside Link after this dialog is closed.
+    recordLinkOutcome(
+      linkSide({ environmentId: source.environmentId, projectId: source.id }),
+      linkSide({ environmentId: destination, projectId }),
+      outcome,
+    );
     setLink(outcome);
     if (outcome.status === "linked") props.onLinked(projectId);
   };

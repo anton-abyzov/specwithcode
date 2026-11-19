@@ -293,4 +293,10 @@ export const syncPt: PhraseCatalog = {
   "the check of Root failed": "a verificação do repositório raiz falhou",
   "the check of {repository} failed": "a verificação de {repository} falhou",
   "the checks of {n} repositories failed": "as verificações de {n} repositórios falharam",
+  "A copy to {machine} is not finished. Finish or cancel it, then add another machine.":
+    "Uma cópia para {machine} não foi concluída. Conclua ou cancele e depois adicione outra máquina.",
+  "A copy is not finished. Finish or cancel it, then add another machine.":
+    "Uma cópia não foi concluída. Conclua ou cancele e depois adicione outra máquina.",
+  "Open the unfinished copy": "Abrir a cópia não concluída",
+  "Finish handoff": "Concluir a transferência",
 };

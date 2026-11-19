@@ -190,6 +190,8 @@ export interface FixtureOptions {
   defaultMode?: "copy-only" | "copy-and-move";
   preferredMachine?: string;
   machineRequested?: boolean;
+  /** Opened by "Add to another machine…". */
+  fresh?: boolean;
   /** How files travel, as the dialog holds it. */
   method?: "copy" | "clone";
   /** Several copies on the machine and none picked yet. */
@@ -227,6 +229,7 @@ export function CopyFixture(overrides: FixtureOptions) {
         ? { preferredMachine: overrides.preferredMachine as never }
         : {})}
       {...(overrides.machineRequested ? { machineRequested: true } : {})}
+      {...(overrides.fresh ? { addOnly: true } : {})}
       {...(overrides.chooseCopyFirst ? { chooseCopyFirst: true } : {})}
       onBusyChange={overrides.dialog ? updateBusy : onBusyChange}
       onCloseLockChange={setLocked}
