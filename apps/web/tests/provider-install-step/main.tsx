@@ -167,6 +167,25 @@ const CASES: ReadonlyArray<Case> = [
     }),
   },
   {
+    id: "k-email",
+    title: "k. Signed in with an email, partly masked",
+    environmentId: MAC,
+    name: "Claude",
+    instance: { driver: ProviderDriverKind.make("claudeAgent"), enabled: true },
+    provider: provider("claudeAgent", {
+      installed: true,
+      status: "ready",
+      version: "2.1.0",
+      auth: {
+        status: "authenticated",
+        type: "subscription",
+        email: "samplecoder@gmail.com",
+        label: "Claude Ultra Subscription",
+      },
+      models: [{ slug: "claude-sonnet-5-5", name: "Sonnet 5.5", isCustom: false }] as never,
+    }),
+  },
+  {
     id: "j-signed-out",
     title: "j. Installed, not signed in",
     environmentId: MAC,

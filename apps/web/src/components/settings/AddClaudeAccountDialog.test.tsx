@@ -397,7 +397,7 @@ describe("AddClaudeAccountDialog", () => {
       },
     ];
     await render();
-    expect(container.textContent).toContain("Signed in as team@company.example.");
+    expect(container.textContent).toContain("Signed in as t••••m@company.example.");
     expect(container.textContent).toContain("Plan: Claude Max Subscription.");
     expect(container.querySelector("details")).toBeNull();
     expect(button("Done")).toBeDefined();

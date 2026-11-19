@@ -520,7 +520,7 @@ describe("accountEmailLine", () => {
   it("names the reported email", () => {
     expect(
       accountEmailLine("Claude", snapshot({ status: "authenticated", email: " pat@example.com " })),
-    ).toBe("Signed in as pat@example.com");
+    ).toBe("Signed in as p••••t@example.com");
   });
   it("says so when a signed-in provider reports none, and never guesses", () => {
     expect(accountEmailLine("Grok", snapshot({ status: "authenticated" }))).toBe(

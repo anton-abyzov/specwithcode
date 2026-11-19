@@ -154,7 +154,7 @@ it("checks the machine and project, and lists what still needs a sign-in or acce
   expect(state.calls).toEqual([{ environmentId: "m3", input: { projectId: "copied" } }]);
   const text = container.textContent ?? "";
   expect(text).toContain("Claude: signed in");
-  expect(text).toContain("me@example.com");
+  expect(text).toContain("m••••@example.com");
   expect(text).toContain("Codex: not signed in");
   expect(text).toContain("GitHub CLI: not signed in");
   expect(text).toContain("run gh auth login");

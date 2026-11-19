@@ -31,7 +31,7 @@ describe("AccountHeader", () => {
       />,
     );
     expect(node.textContent).toContain("Claude Ultra");
-    expect(node.textContent).toContain("dev@example.com");
+    expect(node.textContent).toContain("d••••v@example.com");
     const link = node.querySelector("a[data-usage-link]");
     expect(link?.getAttribute("href")).toBe("https://claude.ai/settings/usage");
     expect(link?.getAttribute("aria-label")).toBe("Open Claude usage");

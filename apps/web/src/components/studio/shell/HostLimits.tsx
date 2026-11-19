@@ -4,6 +4,7 @@
  * offline hosts show what they last reported and when. Opening it never asks
  * a provider for anything: it reads the snapshots each host already holds.
  */
+import { maskEmail } from "@specweave-studio/shared/maskEmail";
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import { formatDuration } from "@specweave-studio/shared/usageLimits";
@@ -117,7 +118,8 @@ function ProviderRow({ row, now, dim }: { row: HostProviderRow; now: number; dim
         <div>
           <strong>{row.label}</strong>
           <span className="sws-hl-identity">
-            {[row.identity, row.plan].filter(Boolean).join(" · ") || null}
+            {[maskEmail(row.identity) ?? row.identity, row.plan].filter(Boolean).join(" · ") ||
+              null}
           </span>
           {row.sharedWith.length > 0 ? (
             <span
