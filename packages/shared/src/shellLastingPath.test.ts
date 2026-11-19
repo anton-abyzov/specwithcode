@@ -109,7 +109,7 @@ describe("saved command paths", () => {
         Effect.option,
       );
       expect(result._tag).toBe("Some");
-      expect(lastingReplacementForCommand("C:\\Tools\\codex.exe", "linux", env)).toBe(lasting);
+      expect(lastingReplacementForCommand("C:\\Tools\\codex.exe", "linux", env)).toBeUndefined();
     }),
   );
 
