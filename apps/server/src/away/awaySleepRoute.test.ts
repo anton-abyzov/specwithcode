@@ -7,6 +7,7 @@
  * run on the same stores before this version takes over.
  */
 import {
+  AWAY_FORCE_LOCAL_AFTER_MS,
   AWAY_INTENT_CANCEL_PATH,
   AWAY_INTENT_PATH,
   AWAY_INTENT_STATUS_PATH,
@@ -46,7 +47,11 @@ interface Sent {
   readonly body: unknown;
 }
 
-/** The target acted: the cancel came too late and the status names the takeover. */
+/**
+ * The target acted: the cancel came too late and the status names the
+ * takeover, and the held thread as not continued, as every release that
+ * answers about intents does.
+ */
 const movedAnswer = (path: string): Effect.Effect<unknown, AwayPeerError> =>
   Effect.succeed(
     path === AWAY_INTENT_CANCEL_PATH
@@ -55,6 +60,8 @@ const movedAnswer = (path: string): Effect.Effect<unknown, AwayPeerError> =>
         ? {
             intentState: "done",
             projects: [{ projectId: "easychamp", takenOver: true, epoch: 2 }],
+            threads: [{ threadId: "thread-1", continuedThreadId: null }],
+            threadsSettled: true,
             receivedAt: "2026-11-09T22:10:00.000Z",
           }
         : {},
@@ -348,6 +355,156 @@ describe("waking after an earlier release left (D-02)", () => {
       const { away, remote } = yield* setup();
       assert.deepEqual(yield* away.wake({ onBattery: false }), { outcome: "none" });
       assert.deepEqual(remote.sent, []);
+    }),
+  );
+});
+
+describe("a wake check lets go only of what the target answered for", () => {
+  it.effect("a held thread the status says nothing of stays held, and Run here anyway opens", () =>
+    Effect.gen(function* () {
+      const status = {
+        value: {
+          intentState: "done",
+          projects: [{ projectId: "easychamp", takenOver: true, epoch: 2 }],
+          receivedAt: "2026-11-09T22:10:00.000Z",
+        } as Record<string, unknown>,
+      };
+      const { before, away, store, hold, gaveWay } = yield* setup({}, (path) =>
+        path === AWAY_INTENT_STATUS_PATH ? Effect.succeed(status.value) : movedAnswer(path),
+      );
+      yield* (yield* before.sleep({ onBattery: true })).send;
+      yield* TestClock.adjust(10 * MINUTE);
+      // No word on threads at all: it gives way for the project, and the thread waits.
+      assert.deepEqual(yield* away.wake({ onBattery: true }), { outcome: "none" });
+      assert.deepEqual(gaveWay, ["easychamp"]);
+      assert.deepEqual(hold.current()?.threads, ["thread-1"]);
+      assert.isDefined(store.current()?.unreachableSince);
+      // Cancelled there, but the thread left out of the answer: still no word on it.
+      status.value = {
+        ...status.value,
+        intentState: "cancelled",
+        threads: [],
+        threadsSettled: true,
+      };
+      yield* TestClock.adjust(MINUTE);
+      assert.strictEqual(yield* away.retry, "unresolved");
+      assert.deepEqual(hold.current()?.threads, ["thread-1"]);
+      // Named as not continued, and nothing more continues there: it runs here again.
+      status.value = {
+        ...status.value,
+        intentState: "done",
+        threads: [{ threadId: "thread-1", continuedThreadId: null }],
+      };
+      assert.strictEqual(yield* away.retry, "moved");
+      assert.isNull(hold.current());
+    }),
+  );
+
+  it.effect("a cancel holds only this lid close's work, not a hold an earlier one left", () =>
+    Effect.gen(function* () {
+      const status = { answered: false };
+      const { before, away, store, hold, gaveWay } = yield* setup({}, (path) =>
+        path === AWAY_INTENT_CANCEL_PATH
+          ? Effect.succeed({ cancelled: 1 })
+          : path === AWAY_INTENT_STATUS_PATH
+            ? status.answered
+              ? Effect.succeed({
+                  intentState: "cancelled",
+                  projects: [{ projectId: "easychamp", takenOver: false }],
+                  threads: [
+                    { threadId: "thread-earlier", continuedThreadId: "thread-earlier-ms" },
+                    { threadId: "thread-1", continuedThreadId: null },
+                  ],
+                  threadsSettled: true,
+                  receivedAt: "2026-11-09T22:10:00.000Z",
+                })
+              : noAnswer
+            : movedAnswer(path),
+      );
+      // An earlier lid close left its thread held, unresolved; the next one adds to the hold.
+      yield* hold.write({
+        version: 1,
+        targetEnvironmentId: MS,
+        since: "2026-11-09T21:00:00.000Z",
+        projects: [],
+        threads: ["thread-earlier"],
+      });
+      yield* (yield* before.sleep({ onBattery: true })).send;
+      assert.deepEqual(hold.current()?.threads, ["thread-earlier", "thread-1"]);
+      yield* TestClock.adjust(MINUTE);
+      // The latest intent was cancelled, but the earlier one may have acted: the status decides.
+      assert.deepEqual(yield* away.wake({ onBattery: true }), { outcome: "none" });
+      assert.deepEqual(hold.current()?.threads, ["thread-earlier", "thread-1"]);
+      assert.isNotNull(store.current());
+      status.answered = true;
+      assert.strictEqual(yield* away.retry, "moved");
+      assert.deepEqual(gaveWay, []);
+      assert.isNull(hold.current());
+    }),
+  );
+
+  it.effect("a lid close the target refused lets go of nothing an earlier one left held", () =>
+    Effect.gen(function* () {
+      const { away, store, hold } = yield* setup();
+      yield* hold.write({
+        version: 1,
+        targetEnvironmentId: MS,
+        since: "2026-11-09T21:00:00.000Z",
+        projects: [],
+        threads: ["thread-earlier"],
+      });
+      yield* store.write({
+        state: "send-failed",
+        targetEnvironmentId: MS,
+        graceMinutes: 2,
+        projectIds: [],
+        threadIds: [],
+        sentAt: "2026-11-09T22:00:00.000Z",
+        dueAt: "2026-11-09T22:02:00.000Z",
+      });
+      yield* TestClock.adjust(MINUTE);
+      // The refusal proves this intent moved nothing; the status says nothing of the earlier
+      // thread, so it stays held, and Run here anyway is offered after a while.
+      assert.deepEqual(yield* away.wake({ onBattery: true }), { outcome: "none" });
+      assert.deepEqual(hold.current()?.threads, ["thread-earlier"]);
+      assert.strictEqual(store.current()?.state, "send-failed");
+      assert.isDefined(store.current()?.unreachableSince);
+    }),
+  );
+
+  it.effect("a held project the status leaves out stays held, and Run here anyway opens", () =>
+    Effect.gen(function* () {
+      const { before, away, store, hold, gaveWay } = yield* setup({}, (path) =>
+        path === AWAY_INTENT_STATUS_PATH
+          ? Effect.succeed({
+              intentState: "done",
+              projects: [],
+              threads: [{ threadId: "thread-1", continuedThreadId: null }],
+              threadsSettled: true,
+              receivedAt: "2026-11-09T22:10:00.000Z",
+            })
+          : movedAnswer(path),
+      );
+      yield* (yield* before.sleep({ onBattery: true })).send;
+      yield* TestClock.adjust(10 * MINUTE);
+      // The target may have taken it over and handed it on: no word on it, so it waits.
+      assert.deepEqual(yield* away.wake({ onBattery: true }), { outcome: "none" });
+      const held = hold.current();
+      assert.deepEqual(
+        held?.projects.map((project) => project.projectId),
+        ["easychamp"],
+      );
+      assert.isUndefined(held?.threads);
+      assert.deepEqual(gaveWay, []);
+      assert.isDefined(store.current()?.unreachableSince);
+      // A person can still run it here once the wait ran out.
+      yield* TestClock.adjust(AWAY_FORCE_LOCAL_AFTER_MS);
+      assert.deepEqual(yield* away.forceLocal, {
+        ok: true,
+        projectIds: ["easychamp"],
+        threadIds: [],
+      });
+      assert.isNull(hold.current());
     }),
   );
 });

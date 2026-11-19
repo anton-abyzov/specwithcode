@@ -35,12 +35,14 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { writeCheckpoint } from "./checkpointGit.ts";
 import { HandoffMode } from "./HandoffMode.ts";
+import { overTheWire } from "./handoffMove.test.fixture.ts";
 import * as HandoffReceiver from "./HandoffReceiver.ts";
 // Read through the namespace, so a case for a rule this release adds fails on its own.
 import * as HandoffState from "./handoffState.ts";
 import {
   EMPTY_HANDOFF_DOCUMENT,
   emptyThreadRecord,
+  fenceRecord,
   findIncoming,
   HANDOFF_INCOMING_MAX,
   HandoffDocument,
@@ -68,6 +70,9 @@ class LaunchRefusedError extends Schema.TaggedError<LaunchRefusedError>()("Launc
 
 const m4 = EnvironmentId.make("env-m4");
 const minis = EnvironmentId.make("env-minis");
+/** A third machine a continuation here moves on to. */
+const third = EnvironmentId.make("env-m1");
+const onward = ThreadId.make("handoff:onward-on-m1");
 const sourceProject = ProjectId.make("project-src");
 const localProject = ProjectId.make("project-local");
 const sourceThread = ThreadId.make("thread-src");
@@ -215,6 +220,48 @@ describe("incoming replicas", () => {
     expect(Option.isSome(decoded)).toBe(true);
     expect(Option.getOrThrow(decoded).incomingDetails).toEqual({});
   });
+
+  it("decodes a full document the previous release wrote, with no receipts", () => {
+    // The document schema is the previous release's but for the receipts, so a document
+    // with every kind of entry, its receipts left out, is one that release wrote.
+    const continued = markContinued(
+      stored(EMPTY_HANDOFF_DOCUMENT, meta(3)),
+      takeover(),
+      response,
+      now,
+    );
+    const written: Document = {
+      ...stored(continued, meta(2, 1, ThreadId.make("thread-waiting"))),
+      projectModes: { [localProject]: "on" },
+      threads: {
+        [sourceThread]: {
+          ...emptyThreadRecord(localProject),
+          mode: "on",
+          lease: {
+            holderEnvironmentId: minis,
+            holderLabel: "Minis",
+            holderThreadId: sourceThread,
+            epoch: 4,
+            renewedAt: now,
+            state: "handing-off",
+          },
+          pendingTakeover: { destinationEnvironmentId: m4, request: takeover({ reason: "sleep" }) },
+          autoFence: { environmentId: m4, machineLabel: "M4", at: now },
+          runEpochs: { "run-1": 4 },
+        },
+      },
+      pausedSince: now,
+      autoContinuePeers: { [m4]: { minutes: 10, baselineAt: now } },
+      awaySession: { trigger: "sleep", targetEnvironmentId: m4 },
+    };
+    const { continuationReceipts: _receipts, ...previous } = encodeDocument(written) as Record<
+      string,
+      unknown
+    >;
+    const decoded = decodeDocument(JSON.parse(JSON.stringify(previous)));
+    expect(Option.isSome(decoded)).toBe(true);
+    expect(Option.getOrThrow(decoded)).toEqual({ ...written, continuationReceipts: {} });
+  });
 });
 
 describe("takeover", () => {
@@ -305,14 +352,31 @@ describe("a takeover that sleep or silence started (1390 AC-36)", () => {
     }
     // The receiver finds that lease, at the epoch it saved, without being told the epoch.
     const idFor = (epoch: number) => HandoffReceiver.continuationThreadId(m4, sourceThread, epoch);
-    expect(HandoffState.preparedContinuations(started, idFor)).toEqual([
-      { threadId: continuationId, epoch: 2 },
-    ]);
+    expect(HandoffState.preparedContinuations(started, idFor)).toEqual({
+      found: [{ threadId: continuationId, epoch: 2 }],
+      complete: true,
+    });
     expect(
       HandoffState.preparedContinuations(started, (epoch) =>
         HandoffReceiver.continuationThreadId(m4, ThreadId.make("thread-other"), epoch),
       ),
-    ).toEqual([]);
+    ).toEqual({ found: [], complete: true });
+    // The continuation moved on to a third machine at epoch 3: still found at the epoch it took.
+    const record = started.threads[continuationId]!;
+    const movedOn: Document = {
+      ...started,
+      threads: {
+        [continuationId]: fenceRecord(
+          { ...record, lease: { ...record.lease!, epoch: 3 } },
+          { environmentId: third, machineLabel: "M1", threadId: onward, at: later },
+          "handoff",
+        ),
+      },
+    };
+    expect(HandoffState.preparedContinuations(movedOn, idFor)).toEqual({
+      found: [{ threadId: continuationId, epoch: 2 }],
+      complete: true,
+    });
   });
 });
 
@@ -628,11 +692,15 @@ const receiving = (
       }),
     );
     const receiver = yield* HandoffReceiver.make.pipe(Effect.provide(services));
-    const replicate = (caller: HandoffReceiver.ReceiverCaller, modelSelection: ModelSelection) =>
+    const replicate = (
+      caller: HandoffReceiver.ReceiverCaller,
+      modelSelection: ModelSelection,
+      threadId: ThreadId = sourceThread,
+    ) =>
       receiver.replicate(
         caller,
         {
-          ...meta(1),
+          ...meta(1, 1, threadId),
           repositoryPath: options.repositoryBelowProject === true ? "repo" : "",
           modelSelection,
           runtimeMode: options.runtimeMode ?? "full-access",
@@ -677,6 +745,10 @@ const receiving = (
       baseCommit: written.baseCommit,
       worktreesDir: NodePath.join(base, "worktrees"),
       document: () => document,
+      /** What another part of this machine writes to the same file. */
+      change: (next: (current: Document) => Document) => {
+        document = next(document);
+      },
     };
   });
 
@@ -857,25 +929,66 @@ describe("a start an earlier release began here (1390 AC-36)", () => {
           // The lease is saved at epoch 2; the launch fails before any thread exists.
           yield* Effect.result(takeOver(peer()));
           launchState.fail = false;
-          const answer = yield* Effect.result(
-            receiver.takeover(peer(), takeover({ sequence: 1, reason })),
-          );
+          const answer = yield* receiver
+            .takeover(peer(), takeover({ sequence: 1, reason }))
+            .pipe(Effect.flip);
           expect(launches, reason).toHaveLength(0);
-          // The previous release keeps its hold on a fenced refusal alone; any other releases it.
-          expect(answer, reason).toMatchObject({
-            _tag: "Failure",
-            failure: { code: "fenced", check: "lease" },
+          // No thread behind the lease may be one deleted here: no answer, which both of
+          // the previous release's branches (first send, re-send) read as in doubt.
+          expect(answer, reason).toMatchObject({ status: 503, inDoubt: true });
+          expect(overTheWire("Minis", answer), reason).toMatchObject({
+            code: "unreachable",
+            uncertain: true,
           });
         }
         // With nothing begun here, the definite refusal: nothing runs here to wait for.
         const fresh = yield* receiving();
         yield* fresh.replicate(peer(), claude);
-        const refused = yield* Effect.result(
-          fresh.receiver.takeover(peer(), takeover({ sequence: 1, reason: "sleep" })),
-        );
-        expect(refused).toMatchObject({ _tag: "Failure", failure: { code: "invalid" } });
+        const refused = yield* fresh.receiver
+          .takeover(peer(), takeover({ sequence: 1, reason: "sleep" }))
+          .pipe(Effect.flip);
+        expect(refused).toMatchObject({ status: 409, code: "invalid" });
+        expect(overTheWire("Minis", refused)).toMatchObject({ code: "invalid", uncertain: false });
         expect(fresh.launches).toHaveLength(0);
       }),
+  );
+
+  it.effect("continued here at another epoch: no answer, never a refusal", () =>
+    Effect.gen(function* () {
+      const { receiver, replicate, takeOver } = yield* receiving();
+      yield* replicate(peer(), claude);
+      const response = yield* takeOver(peer());
+      // An earlier release asks for epoch 3 of the thread that continues here at 2.
+      const answer = yield* receiver
+        .takeover(peer(), takeover({ sequence: 1, reason: "sleep", epoch: 3 }))
+        .pipe(Effect.flip);
+      expect(answer).toMatchObject({ status: 503, inDoubt: true });
+      expect(overTheWire("Minis", answer).uncertain).toBe(true);
+      // Its heartbeat then fences it with that thread.
+      const beat = yield* receiver.heartbeat(peer(), {
+        sourceEnvironmentId: m4,
+        sourceLabel: "M4",
+        leases: [{ sourceThreadId: sourceThread, epoch: 2 }],
+      });
+      expect(beat.continued).toEqual([
+        { sourceThreadId: sourceThread, epoch: 2, threadId: response.threadId },
+      ]);
+    }),
+  );
+
+  it.effect("no replica and no receipt here: unresolved, never none", () =>
+    Effect.gen(function* () {
+      // An earlier release may have started it before the replica was evicted.
+      const { receiver, launches } = yield* receiving();
+      expect(yield* receiver.continuation(m4, sourceThread)).toEqual({ kind: "unresolved" });
+      const beat = yield* receiver.heartbeat(peer(), asking(2));
+      expect(beat).toMatchObject({ continued: [], notStarted: [] });
+      const answer = yield* receiver
+        .takeover(peer(), takeover({ sequence: 1, reason: "sleep" }))
+        .pipe(Effect.flip);
+      expect(answer).toMatchObject({ status: 503, inDoubt: true });
+      expect(launches).toHaveLength(0);
+    }),
   );
 
   it.effect("a failed launch, then the same epoch by hand: it launches once and continues", () =>
@@ -937,14 +1050,16 @@ describe("a start an earlier release began here (1390 AC-36)", () => {
       // A source that asks nothing hears nothing it would not know what to do with.
       const { settle: _settle, ...plain } = asking(2);
       expect((yield* fresh.receiver.heartbeat(peer(), plain)).notStarted).toBeUndefined();
-      // A lease saved for a launch that failed: no thread here, so nothing started.
+      // A lease saved for a launch that failed has no thread here, which a thread deleted
+      // here would look like too: nothing is answered for it.
       const failed = yield* receiving();
       yield* failed.replicate(peer(), claude);
       failed.launchState.fail = true;
       yield* Effect.result(failed.takeOver(peer()));
-      expect((yield* failed.receiver.heartbeat(peer(), asking(2))).notStarted).toEqual([
-        { sourceThreadId: sourceThread, epoch: 2 },
-      ]);
+      expect(yield* failed.receiver.heartbeat(peer(), asking(2))).toMatchObject({
+        continued: [],
+        notStarted: [],
+      });
       // A thread store it cannot read answers nothing for it: the source keeps its hold.
       failed.launchState.shellsUnreadable = true;
       expect(yield* failed.receiver.heartbeat(peer(), asking(2))).toMatchObject({
@@ -1022,10 +1137,102 @@ describe("a start an earlier release began here (1390 AC-36)", () => {
       expect(yield* failed.receiver.continuation(m4, sourceThread)).toEqual({
         kind: "unresolved",
       });
+      // Readable, it is still no proof: a thread read never sees a deleted thread.
       failed.launchState.shellsUnreadable = false;
-      expect(yield* failed.receiver.continuation(m4, sourceThread)).toEqual({ kind: "none" });
+      expect(yield* failed.receiver.continuation(m4, sourceThread)).toEqual({
+        kind: "unresolved",
+      });
       expect(failed.launches).toHaveLength(0);
     }),
+  );
+});
+
+/**
+ * The continuation the cut takeover launched moves on to a third machine at epoch 3,
+ * as a handoff from here records it: the lease rises and the copy here is fenced.
+ */
+const movedOn = (current: Document, continuationId: ThreadId): Document => {
+  const record = current.threads[continuationId]!;
+  return {
+    ...current,
+    threads: {
+      ...current.threads,
+      [continuationId]: fenceRecord(
+        { ...record, lease: { ...record.lease!, epoch: 3 } },
+        { environmentId: third, machineLabel: "M1", threadId: onward, at: later },
+        "handoff",
+      ),
+    },
+  };
+};
+
+describe("a continuation that moved on, its replica evicted (1390 AC-36)", () => {
+  const continuationId = HandoffReceiver.continuationThreadId(m4, sourceThread, 2);
+
+  /** Launched at epoch 2 and cut before it was recorded, moved on, then evicted by replicas. */
+  const evicted = Effect.gen(function* () {
+    const setup = yield* receiving();
+    yield* setup.replicate(peer(), claude);
+    setup.launchState.failAfterCreate = true;
+    yield* Effect.result(setup.takeOver(peer()));
+    setup.launchState.failAfterCreate = false;
+    expect(findIncoming(setup.document(), m4, sourceThread)?.continuedThreadId).toBeNull();
+    setup.change((current) => movedOn(current, continuationId));
+    // Replicas of other threads fill the cache; one never continued here goes first.
+    yield* Effect.forEach(
+      Array.from({ length: HANDOFF_INCOMING_MAX }, (_, index) =>
+        ThreadId.make(`thread-filler-${index}`),
+      ),
+      (threadId) => setup.replicate(peer(), claude, threadId),
+      { concurrency: 8, discard: true },
+    );
+    expect(setup.document().incoming).toHaveLength(HANDOFF_INCOMING_MAX);
+    expect(findIncoming(setup.document(), m4, sourceThread)).toBeUndefined();
+    return setup;
+  });
+
+  it.effect(
+    "the status check and the heartbeat still name it; nothing is not started",
+    () =>
+      Effect.gen(function* () {
+        const { receiver, launches } = yield* evicted;
+        expect(yield* receiver.continuation(m4, sourceThread)).toEqual({
+          kind: "continued",
+          threadId: continuationId,
+        });
+        const beat = yield* receiver.heartbeat(peer(), asking(2));
+        expect(beat.notStarted).toEqual([]);
+        expect(beat.continued).toEqual([
+          { sourceThreadId: sourceThread, epoch: 2, threadId: continuationId },
+        ]);
+        // A source on an earlier release asks nothing; its heartbeat fences it all the same.
+        const { settle: _settle, ...plain } = asking(2);
+        expect((yield* receiver.heartbeat(peer(), plain)).continued).toEqual([
+          { sourceThreadId: sourceThread, epoch: 2, threadId: continuationId },
+        ]);
+        expect(launches).toHaveLength(1);
+      }),
+    120_000,
+  );
+
+  it.effect(
+    "with no receipt, as an earlier release left it: found by its lease, never none",
+    () =>
+      Effect.gen(function* () {
+        const { receiver, change, created } = yield* evicted;
+        change((current) => ({ ...current, continuationReceipts: {} }));
+        // Its thread is gone here too (deleted): nothing proves it never ran.
+        created.delete(continuationId);
+        expect(yield* receiver.continuation(m4, sourceThread)).toEqual({ kind: "unresolved" });
+        expect((yield* receiver.heartbeat(peer(), asking(2))).notStarted).toEqual([]);
+        // With its thread there, its lease names it at the epoch it took.
+        created.add(continuationId);
+        expect(yield* receiver.continuation(m4, sourceThread)).toEqual({
+          kind: "continued",
+          threadId: continuationId,
+        });
+      }),
+    120_000,
   );
 });
 

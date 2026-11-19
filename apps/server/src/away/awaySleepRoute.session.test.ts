@@ -69,6 +69,8 @@ const setup = (options: {
             json: {
               intentState: "done",
               projects: [{ projectId: "easychamp", takenOver: true, epoch: 2 }],
+              threads: [{ threadId: "thread-1", continuedThreadId: null }],
+              threadsSettled: true,
               receivedAt: "2026-11-09T22:10:00.000Z",
             },
           };

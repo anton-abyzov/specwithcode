@@ -9,9 +9,12 @@
  */
 import { describe, expect, it } from "@effect/vitest";
 import {
+  AwaySession,
+  type AwaySleepSession,
   EnvironmentId,
   type HandoffCheckpoint,
   type HandoffIncomingReplica,
+  HandoffModeError,
   type HandoffRunEnding,
   ProjectId,
   ThreadId,
@@ -23,6 +26,11 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
+import {
+  settleSleepMoved,
+  settleSleepNothingMoved,
+  sleepSessionOf,
+} from "../away/awaySleepSession.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -391,6 +399,14 @@ interface Rig {
   readonly dispatched: Array<{ readonly type: string }>;
   readonly down: Set<EnvironmentId>;
   activeRunId: string | null;
+  /** How each next read of the thread store goes; once empty, reads succeed. */
+  readonly shellReads: Array<"ok" | "fail" | "die">;
+  /** Writes the handoff file refuses, by the document they would save. */
+  refuse: ((next: HandoffDocument) => boolean) | null;
+  /** Every document a write saved, in order. */
+  readonly history: Array<HandoffDocument>;
+  /** Reading the project breaks. */
+  projectDies: boolean;
 }
 
 const rig = (document: HandoffDocument, self: EnvironmentId) =>
@@ -409,16 +425,26 @@ const rig = (document: HandoffDocument, self: EnvironmentId) =>
       dispatched: [],
       down: new Set(),
       activeRunId: "run-1",
+      shellReads: [],
+      refuse: null,
+      history: [],
+      projectDies: false,
     };
     const handoff = {
       environmentId: self,
       machineLabel: self === m4 ? "M4" : "M1",
       document: Effect.sync(() => state.document),
       updateDocument: <A>(change: (document: HandoffDocument) => readonly [A, HandoffDocument]) =>
-        Effect.sync(() => {
+        Effect.suspend((): Effect.Effect<A, HandoffModeError> => {
           const [result, next] = change(state.document);
+          if (state.refuse?.(next) === true) {
+            return Effect.fail(
+              new HandoffModeError({ code: "failed", message: "The handoff file did not save." }),
+            );
+          }
           state.document = next;
-          return result;
+          state.history.push(next);
+          return Effect.succeed(result);
         }),
     } as unknown as HandoffMode["Service"];
     const labels: Record<string, string> = { [m1]: "M1", [m3]: "M3", [m4]: "M4" };
@@ -481,7 +507,12 @@ const rig = (document: HandoffDocument, self: EnvironmentId) =>
       Layer.succeed(HandoffReceiver, receiver),
       // No project here, so a fence never runs Git in a folder of this test.
       Layer.succeed(ProjectService.ProjectService, {
-        getById: () => Effect.succeed(Option.none()),
+        getById: () =>
+          Effect.suspend((): Effect.Effect<Option.Option<never>> =>
+            state.projectDies
+              ? Effect.die("the project store broke")
+              : Effect.succeed(Option.none()),
+          ),
       } as never),
       Layer.succeed(Orchestrator.OrchestratorV2, {
         dispatch: (command: { type: string }) =>
@@ -492,7 +523,13 @@ const rig = (document: HandoffDocument, self: EnvironmentId) =>
           }),
       } as never),
       Layer.succeed(ProjectionStore.ProjectionStoreV2, {
-        getThreadShell: (id: ThreadId) => Effect.succeed(id === thread ? shell() : null),
+        getThreadShell: (id: ThreadId) =>
+          Effect.suspend((): Effect.Effect<ReturnType<typeof shell> | null, Error> => {
+            const read = state.shellReads.shift() ?? "ok";
+            if (read === "fail") return Effect.fail(new Error("the thread store did not read"));
+            if (read === "die") return Effect.die("the thread store broke");
+            return Effect.succeed(id === thread ? shell() : null);
+          }),
         getThread: () => Effect.succeed({ execution: null }),
       } as never),
     );
@@ -834,6 +871,253 @@ describe("a hold from sleep or silence lifts only on its own answer (1390 AC-36)
       expect(asked.has(thread)).toBe(true);
     }),
   );
+});
+
+const continuedOnM1 = {
+  sourceThreadId: thread,
+  epoch: 2,
+  threadId: ThreadId.make("thread:continued"),
+};
+
+/** M1 after it continued the thread on its own: it names that continuation whenever asked. */
+const answersContinued = (peer: EnvironmentId, request: HeartbeatRequest): HeartbeatResponse =>
+  peer === m1
+    ? {
+        machineLabel: "M1",
+        continued: request.leases.some((lease) => lease.sourceThreadId === thread)
+          ? [continuedOnM1]
+          : [],
+      }
+    : { machineLabel: "M3", continued: [], notStarted: request.settle ?? [] };
+
+/** The turn gate this machine applies before a turn starts on the thread. */
+const gateShut = (document: HandoffDocument) => turnRefusal(document, thread, m4) !== null;
+const CONTINUES_ON_M1 = "This thread continues on M1; it no longer starts turns here.";
+
+/**
+ * The source after M1, armed and quiet past its fence, got the thread fenced here.
+ * A turn the fence's interrupt did not stop still runs. M1 is back and says it
+ * continued the thread; the writes from here on are recorded.
+ */
+const fencedForQuietM1 = Effect.gen(function* () {
+  const setup = yield* rig(armedSourceDocument(), m4);
+  setup.state.down.add(m1);
+  yield* setup.awake(170_000);
+  yield* setup.moves.heartbeat;
+  expect(setup.state.document.threads[thread]?.autoFence?.environmentId).toBe(m1);
+  setup.state.activeRunId = "run-2";
+  setup.state.down.delete(m1);
+  setup.state.answer = answersContinued;
+  setup.state.history.length = 0;
+  return setup;
+});
+
+describe("a machine that says it continued a thread fences it here for good (1390 AC-36)", () => {
+  it.effect(
+    "the fence is saved before the thread is read; a read that fails waits for the next beat",
+    () =>
+      Effect.gen(function* () {
+        const { state, moves, awake } = yield* fencedForQuietM1;
+        // The thread store does not read once, right after M1's answer.
+        state.shellReads.push("fail");
+        yield* awake(30_000);
+        yield* moves.heartbeat;
+        // No write in that heartbeat let a turn start here.
+        expect(state.history.length).toBeGreaterThan(0);
+        expect(state.history.filter((document) => !gateShut(document))).toEqual([]);
+        const record = state.document.threads[thread];
+        expect(record?.continuedOn).toMatchObject({
+          environmentId: m1,
+          threadId: "thread:continued",
+        });
+        expect(record?.lease).toMatchObject({ state: "fenced", epoch: 2 });
+        expect(turnRefusal(state.document, thread, m4)).toBe(CONTINUES_ON_M1);
+        expect(state.dispatched).not.toContainEqual(
+          expect.objectContaining({ type: "run.interrupt", runId: "run-2" }),
+        );
+        // M1 is unreachable on the next beat: what this machine saved finishes the stop.
+        state.down.add(m1);
+        yield* awake(30_000);
+        yield* moves.heartbeat;
+        expect(state.dispatched).toContainEqual(
+          expect.objectContaining({ type: "run.interrupt", threadId: thread, runId: "run-2" }),
+        );
+        expect(state.dispatched).toContainEqual(
+          expect.objectContaining({ type: "thread.project-move.record", threadId: thread }),
+        );
+        expect(state.history.filter((document) => !gateShut(document))).toEqual([]);
+        expect(pendingDisarm(state.document)).toEqual([]);
+      }),
+  );
+
+  it.effect("a restart right after that answer reads the thread shut", () =>
+    Effect.gen(function* () {
+      const first = yield* fencedForQuietM1;
+      first.state.shellReads.push("fail");
+      yield* first.awake(30_000);
+      yield* first.moves.heartbeat;
+      const saved = reloaded(first.state.document);
+      expect(turnRefusal(saved, thread, m4)).toBe(CONTINUES_ON_M1);
+      // A new process over the saved file, with M1 silent again.
+      const second = yield* rig(saved, m4);
+      second.state.down.add(m1);
+      yield* TestClock.setTime(T0 + 170_000 + 60_000);
+      yield* second.moves.heartbeat;
+      expect(second.state.history.filter((document) => !gateShut(document))).toEqual([]);
+      expect(turnRefusal(second.state.document, thread, m4)).toBe(CONTINUES_ON_M1);
+    }),
+  );
+
+  it.effect("a fence that does not save keeps every hold, and the machine stays armed", () =>
+    Effect.gen(function* () {
+      const { state, moves, awake } = yield* fencedForQuietM1;
+      // The handoff file takes no write that records the continuation.
+      state.refuse = (next) => (next.threads[thread]?.continuedOn ?? null) !== null;
+      yield* awake(30_000);
+      yield* moves.heartbeat;
+      expect(state.history.filter((document) => !gateShut(document))).toEqual([]);
+      expect(state.document.autoContinuePeers?.[m1]).toBeDefined();
+      expect(state.document.threads[thread]?.autoFence?.environmentId).toBe(m1);
+      expect(turnRefusal(state.document, thread, m4)).toContain("M1 is not answering");
+      expect(pendingDisarm(state.document).map((entry) => entry.environmentId)).toEqual([m1]);
+      // Once the file takes writes again, the same answer fences the thread.
+      state.refuse = null;
+      yield* awake(30_000);
+      yield* moves.heartbeat;
+      expect(state.document.threads[thread]?.continuedOn?.threadId).toBe("thread:continued");
+      expect(state.history.filter((document) => !gateShut(document))).toEqual([]);
+    }),
+  );
+
+  it.effect("stopping the turn here fails: the thread stays shut, the next beat finishes", () =>
+    Effect.gen(function* () {
+      const { state, moves, awake } = yield* fencedForQuietM1;
+      // The thread reads and the interrupt goes out; then the store breaks while the
+      // interrupt waits for the turn to end.
+      state.shellReads.push("ok", "die");
+      yield* awake(30_000);
+      yield* moves.heartbeat;
+      expect(state.history.filter((document) => !gateShut(document))).toEqual([]);
+      // M1 is unreachable next, so nothing it says decides this.
+      state.down.add(m1);
+      yield* awake(30_000);
+      yield* moves.heartbeat;
+      expect(state.history.filter((document) => !gateShut(document))).toEqual([]);
+      expect(turnRefusal(state.document, thread, m4)).toBe(CONTINUES_ON_M1);
+      expect(state.dispatched).toContainEqual(
+        expect.objectContaining({ type: "thread.project-move.record", threadId: thread }),
+      );
+    }),
+  );
+
+  it.effect("keeping this machine's changes fails: the thread stays shut", () =>
+    Effect.gen(function* () {
+      const { state, moves, awake } = yield* fencedForQuietM1;
+      state.projectDies = true;
+      yield* awake(30_000);
+      yield* moves.heartbeat;
+      state.down.add(m1);
+      yield* awake(30_000);
+      yield* moves.heartbeat;
+      expect(state.history.filter((document) => !gateShut(document))).toEqual([]);
+      expect(turnRefusal(state.document, thread, m4)).toBe(CONTINUES_ON_M1);
+    }),
+  );
+
+  it.effect("a quiet machine's fence saves when the thread does not read; the turn stops", () =>
+    Effect.gen(function* () {
+      const { state, moves, awake } = yield* rig(armedSourceDocument(), m4);
+      state.down.add(m1);
+      // The thread store does not read when M1 passes its fence.
+      state.shellReads.push("fail");
+      yield* awake(170_000);
+      yield* moves.heartbeat;
+      expect(state.document.threads[thread]?.autoFence?.environmentId).toBe(m1);
+      expect(turnRefusal(state.document, thread, m4)).toContain("M1 is not answering");
+      expect(state.dispatched).toEqual([]);
+      // M1 is still quiet: the turn the fence missed stops on the next beat.
+      yield* awake(30_000);
+      yield* moves.heartbeat;
+      expect(state.dispatched).toEqual([
+        expect.objectContaining({ type: "run.interrupt", threadId: thread, runId: "run-1" }),
+      ]);
+      expect(state.document.threads[thread]?.fencedBy).toBe("sleep");
+      expect(turnRefusal(state.document, thread, m4)).toContain("M1 is not answering");
+    }),
+  );
+});
+
+describe("a lid close an earlier release sent (Away)", () => {
+  const sleep: AwaySleepSession = {
+    state: "pending-intent",
+    targetEnvironmentId: m1,
+    graceMinutes: 5,
+    projectIds: [],
+    threadIds: [thread],
+    sentAt: iso(T0),
+    dueAt: iso(T0 + 5 * MINUTE),
+  };
+  /** The session that release saved when the lid closed. */
+  const lidClose = (intent: AwaySleepSession = sleep): AwaySession =>
+    sleepSessionOf({
+      sessionId: "away-1",
+      targetEnvironmentId: m1,
+      targetLabel: "M1",
+      coordinatorScope: "live",
+      sleep: intent,
+      facts: { projectTitles: new Map(), threadTitles: new Map(), handoffOff: [] },
+    });
+  const withSession = (session: unknown): HandoffDocument => ({
+    ...sourceDocument(),
+    awaySession: session,
+  });
+  const saved = (session: AwaySession) => withSession(Schema.encodeSync(AwaySession)(session));
+  const waitsOnM1 = [{ environmentId: m1, machineLabel: "M1", since: iso(T0) }];
+  const wokeAt = iso(T0 + 10 * MINUTE);
+
+  it("names its target, through a restart, until the wake check finds nothing moved", () => {
+    expect(pendingDisarm(saved(lidClose()))).toEqual(waitsOnM1);
+    expect(pendingDisarm(reloaded(saved(lidClose())))).toEqual(waitsOnM1);
+    // No answer to the send, a refused send, and Run here anyway all leave the intent
+    // with M1, or its outcome unsettled: still listed.
+    for (const state of ["send-uncertain", "send-failed"] as const) {
+      expect(pendingDisarm(saved(lidClose({ ...sleep, state })))).toEqual(waitsOnM1);
+    }
+    const forced = lidClose({
+      ...sleep,
+      wokeAt,
+      unreachableSince: wokeAt,
+      forcedLocalAt: iso(T0 + 20 * MINUTE),
+    });
+    expect(pendingDisarm(saved(forced))).toEqual(waitsOnM1);
+    // A session this version cannot decode still names its target.
+    expect(
+      pendingDisarm(
+        withSession({
+          trigger: "sleep",
+          targetLabel: "M1",
+          broughtBackAt: null,
+          sleep: { state: "pending-intent", targetEnvironmentId: m1, sentAt: iso(T0) },
+        }),
+      ),
+    ).toEqual(waitsOnM1);
+    // The wake check found nothing moved: the session closes and drops its intent.
+    const { sleep: _dropped, ...closed } = settleSleepNothingMoved(lidClose(), wokeAt, new Map());
+    expect(pendingDisarm(saved(closed))).toEqual([]);
+  });
+
+  it("clears once the wake check records what moved, or Bring back ran", () => {
+    const open = lidClose();
+    expect(pendingDisarm(saved(open))).toEqual(waitsOnM1);
+    const moved: AwaySession = {
+      ...settleSleepMoved(open, wokeAt, [], new Map([[thread as string, "thread:continued"]])),
+      sleep: { ...sleep, state: "wake-prompt", wokeAt },
+    };
+    expect(pendingDisarm(saved(moved))).toEqual([]);
+    expect(pendingDisarm(saved({ ...open, broughtBackAt: wokeAt }))).toEqual([]);
+    // A Leave pressed by hand is no lid close.
+    expect(pendingDisarm(saved({ ...open, trigger: "manual" }))).toEqual([]);
+  });
 });
 
 describe(`against the previous release (${PREVIOUS_RELEASE})`, () => {

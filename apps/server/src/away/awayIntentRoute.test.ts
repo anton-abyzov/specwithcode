@@ -46,7 +46,13 @@ import {
   makeAwayIntents,
   memoryIntentStore,
 } from "./AwayIntents.ts";
-import { cancelIntent, type IntentAnswer, intentStatus, recordIntent } from "./awayIntentRoute.ts";
+import {
+  cancelIntent,
+  type IntentAnswer,
+  type IntentRefusalEvidence,
+  intentStatus,
+  recordIntent,
+} from "./awayIntentRoute.ts";
 import { AwayPeerError, type AwayPeerPost } from "./awayPeerCall.ts";
 import { memoryWakeHoldStore } from "./AwayWakeHold.ts";
 import { previousAwayAnswerKind } from "../handoff/previousRelease.test.fixture.ts";
@@ -173,6 +179,11 @@ const fleet = Effect.gen(function* () {
     (name === "m4" ? m4.projects.get(members.m4.projectId) : ms.projects.get(members.ms.projectId))
       ?.workspaceSettings?.coordinatorBinding;
   const projectsHere = (): ReadonlyArray<Project> => [...ms.projects.values()];
+  /** What a refusal here is checked against: the bindings and handoff mode. */
+  const here: IntentRefusalEvidence = {
+    projects: Effect.sync(() => Option.some(projectsHere())),
+    continuation,
+  };
   /** This version's status route on the target, as the source asks it. */
   const status = (body: unknown) =>
     intentStatus(
@@ -223,6 +234,7 @@ const fleet = Effect.gen(function* () {
     binding,
     members,
     projectsHere,
+    here,
     lease,
     evidence,
     status,
@@ -237,6 +249,12 @@ const intentBody = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+/** A machine where nothing of the caller's ever began: no projects, no thread continued. */
+const nothingHere: IntentRefusalEvidence = {
+  projects: Effect.succeed(Option.some([])),
+  continuation: () => Effect.succeed({ kind: "none" }),
+};
+
 /** `POST /intent` here; it answers without reading the store on releases before it did. */
 const register = (...args: Parameters<typeof recordIntent>): Effect.Effect<IntentAnswer> => {
   const answer: Effect.Effect<IntentAnswer> | IntentAnswer = recordIntent(...args);
@@ -247,11 +265,11 @@ describe("away intent route", () => {
   it.effect("refuses a new intent: only the calling machine is told, and nothing is recorded", () =>
     Effect.gen(function* () {
       const f = yield* fleet;
-      const forged = yield* register(callerFrom("m1"), intentBody(), f.intents);
+      const forged = yield* register(callerFrom("m1"), intentBody(), f.intents, f.here);
       expect(forged.status).toBe(403);
-      const invalid = yield* register(callerFrom("m4"), { graceMinutes: -1 }, f.intents);
+      const invalid = yield* register(callerFrom("m4"), { graceMinutes: -1 }, f.intents, f.here);
       expect(invalid.status).toBe(400);
-      const answer = yield* register(callerFrom("m4"), intentBody(), f.intents);
+      const answer = yield* register(callerFrom("m4"), intentBody(), f.intents, f.here);
       expect(answer.status).toBe(409);
       expect(answer.body).toEqual({ error: expect.stringContaining("goes to sleep") });
       expect(f.store.current().intents).toEqual([]);
@@ -343,17 +361,30 @@ describe("away intent route", () => {
         projects: [{ projectId: "easychamp-m4", takenOver: true, epoch: epoch + 1 }],
       });
       // The same body again may be its lost first delivery: the record answers, unchanged.
-      expect(yield* register(callerFrom("m4"), intentBody(), f.intents)).toMatchObject({
+      expect(yield* register(callerFrom("m4"), intentBody(), f.intents, f.here)).toMatchObject({
         status: 200,
         body: { intent: { intentId: "intent-1", state: "done" }, refusedProjectIds: [] },
       });
-      // A different one is new work, refused without disturbing the record of the old one.
-      expect(
-        (yield* register(callerFrom("m4"), intentBody({ graceMinutes: 5 }), f.intents)).status,
-      ).toBe(409);
+      // A different one naming the project that continues here is no answer: its sender holds.
+      const naming = yield* register(
+        callerFrom("m4"),
+        intentBody({ graceMinutes: 5 }),
+        f.intents,
+        f.here,
+      );
+      expect(naming.status).toBe(503);
+      expect(previousAwayAnswerKind(naming.status, naming.body)).toBe("uncertain");
+      // One naming only work that never came here is new work, refused; the record stays.
+      const fresh = yield* register(
+        callerFrom("m4"),
+        intentBody({ graceMinutes: 5, projectIds: [], threadIds: ["thread-new"] }),
+        f.intents,
+        f.here,
+      );
+      expect(fresh.status).toBe(409);
       // However late the same body arrives, it may still be that delivery: never "not accepted".
       yield* TestClock.setTime(T0 + 61 * MINUTE);
-      expect((yield* register(callerFrom("m4"), intentBody(), f.intents)).status).toBe(200);
+      expect((yield* register(callerFrom("m4"), intentBody(), f.intents, f.here)).status).toBe(200);
       expect(yield* f.intents.tick).toEqual([]);
       expect(f.takeovers).toEqual(["intent-1"]);
       expect(f.store.current().intents.map((intent) => intent.state)).toEqual(["done"]);
@@ -427,7 +458,7 @@ describe("away intent route", () => {
       expect(answer.status).toBe(500);
       expect(yield* failing.tick).toEqual([]);
       // A repeated intent cannot be told from a new one: no answer, so the sender keeps its hold.
-      const record = yield* register(callerFrom("m4"), intentBody(), failing);
+      const record = yield* register(callerFrom("m4"), intentBody(), failing, nothingHere);
       expect(record.status).toBe(503);
       expect(previousAwayAnswerKind(record.status, record.body)).toBe("uncertain");
     }),
@@ -456,6 +487,7 @@ describe("against the previous release (v1.0.378)", () => {
               callerFrom("m4"),
               JSON.parse(JSON.stringify(body)),
               intents,
+              nothingHere,
             );
             answered.push(answer.status);
             const kind = previousAwayAnswerKind(answer.status, answer.body);
@@ -633,6 +665,7 @@ const ministorm =
       readonly intents: AwayIntentsShape;
       readonly status: (body: unknown) => Effect.Effect<IntentAnswer>;
       readonly projectsHere: () => ReadonlyArray<Project>;
+      readonly here: IntentRefusalEvidence;
     },
     net: { updated: boolean },
   ) =>
@@ -640,7 +673,7 @@ const ministorm =
     const caller = callerFrom("m4");
     if (path === AWAY_INTENT_PATH)
       return net.updated
-        ? register(caller, body, f.intents)
+        ? register(caller, body, f.intents, f.here)
         : PreviousIntents.recordIntent(f.before, caller, body, f.projectsHere());
     if (path === AWAY_INTENT_CANCEL_PATH) return cancelIntent(f.intents, caller, body);
     if (path === AWAY_INTENT_STATUS_PATH) return f.status(body);
@@ -783,34 +816,115 @@ describe("a thread whose launch here is in doubt is never released as not contin
   );
 });
 
+describe("a project taken over here and handed on to a third machine", () => {
+  it.effect("is never answered as not taken over: the source keeps holding it", () =>
+    Effect.gen(function* () {
+      const f = yield* fleet;
+      const caller = callerFrom("m4");
+      const onward = { handed: false };
+      /** Ministorm's copy once it handed the coordinator on: the binding names no predecessor. */
+      const handedOn = (project: Project): Project => {
+        if (project.id !== f.members.ms.projectId) return project;
+        const binding = {
+          epoch: 9,
+          state: "transferred",
+          operationId: "handover:onward",
+          successor: { environmentId: "m1", projectId: "easychamp-m1" },
+        };
+        return {
+          ...project,
+          workspaceSettings: { ...project.workspaceSettings, coordinatorBinding: binding },
+        } as unknown as Project;
+      };
+      const projects = Effect.sync((): ReadonlyArray<Project> => {
+        const here = f.projectsHere();
+        return onward.handed ? here.map(handedOn) : here;
+      });
+      const status = (body: unknown) =>
+        intentStatus(
+          {
+            latestState: f.intents.latestState,
+            continuation: () => Effect.succeed({ kind: "none" }),
+          },
+          caller,
+          body,
+          projects,
+          "ministorm",
+        );
+      const m4 = yield* previousSource(
+        (path, body) =>
+          path === AWAY_INTENT_PATH
+            ? PreviousIntents.recordIntent(f.before, caller, body, f.projectsHere())
+            : path === AWAY_INTENT_CANCEL_PATH
+              ? cancelIntent(f.intents, caller, body)
+              : status(body),
+        { projectIds: [ProjectId.make("easychamp-m4")], threadIds: [] },
+      );
+      yield* (yield* m4.source.sleep({ onBattery: false })).send;
+      // The earlier release takes the project over after the grace, then hands it on.
+      yield* TestClock.setTime(T0 + 2 * MINUTE);
+      expect((yield* f.before.tick)[0]).toMatchObject({ state: "done" });
+      onward.handed = true;
+      const asked = yield* status({ sourceEnvironmentId: "m4", projectIds: ["easychamp-m4"] });
+      expect(asked).toMatchObject({ status: 200, body: { intentState: "done", projects: [] } });
+      // Its wake hears no word on the project: the hold stays, nothing gives way or runs here.
+      yield* TestClock.setTime(T0 + 30 * MINUTE);
+      expect(yield* m4.source.wake({ onBattery: false })).toEqual({ outcome: "none" });
+      const held = m4.hold.current()?.projects.map((project) => project.projectId);
+      expect(held).toEqual(["easychamp-m4"]);
+      expect(m4.gaveWay).toEqual([]);
+      // Another intent naming it is not refused either.
+      const again = yield* register(caller, intentBody({ graceMinutes: 7 }), f.intents, {
+        ...f.here,
+        projects: Effect.map(projects, Option.some),
+      });
+      expect(again.status).toBe(503);
+    }),
+  );
+});
+
+/**
+ * The target for a lid close whose answer was lost: its first delivery reached
+ * the earlier release, which recorded it and acted after the grace. Then
+ * `meanwhile` runs on the target, and the same request arrives again after the
+ * target updated; that answer, collected in `delivered`, reaches the source.
+ */
+const lostThenAgain =
+  (
+    f: Parameters<typeof ministorm>[0],
+    meanwhile: Effect.Effect<void>,
+    delivered: Array<IntentAnswer>,
+  ) =>
+  (path: string, body: unknown): Effect.Effect<IntentAnswer> => {
+    const caller = callerFrom("m4");
+    return path !== AWAY_INTENT_PATH
+      ? ministorm(f, { updated: true })(path, body)
+      : Effect.gen(function* () {
+          yield* PreviousIntents.recordIntent(f.before, caller, body, f.projectsHere());
+          yield* TestClock.setTime(T0 + 2 * MINUTE);
+          expect((yield* f.before.tick)[0]).toMatchObject({ state: "done" });
+          yield* meanwhile;
+          const again = yield* register(caller, body, f.intents, f.here);
+          delivered.push(again);
+          return again;
+        });
+  };
+
+const reelAndProject = {
+  projectIds: [ProjectId.make("easychamp-m4")],
+  threadIds: ["thread-reel"],
+};
+
 describe("an intent delivered again across the update (lost answer)", () => {
   it.effect("the record answers, the source keeps its hold, and its wake gives way to it", () =>
     Effect.gen(function* () {
       const f = yield* fleet;
       const epoch = f.binding("ms")?.epoch ?? 0;
-      const caller = callerFrom("m4");
-      const delivered: number[] = [];
-      const route = ministorm(f, { updated: true });
-      const m4 = yield* previousSource(
-        (path, body) =>
-          path !== AWAY_INTENT_PATH
-            ? route(path, body)
-            : Effect.gen(function* () {
-                // The first delivery reached the earlier release, which recorded it and acted
-                // after the grace; its answer was lost. The same request arrives again after
-                // the target updated, and that answer reaches the source.
-                yield* PreviousIntents.recordIntent(f.before, caller, body, f.projectsHere());
-                yield* TestClock.setTime(T0 + 2 * MINUTE);
-                expect((yield* f.before.tick)[0]).toMatchObject({ state: "done" });
-                const again = yield* register(caller, body, f.intents);
-                delivered.push(again.status);
-                return again;
-              }),
-        { projectIds: [ProjectId.make("easychamp-m4")], threadIds: ["thread-reel"] },
-      );
+      const delivered: IntentAnswer[] = [];
+      const m4 = yield* previousSource(lostThenAgain(f, Effect.void, delivered), reelAndProject);
       yield* (yield* m4.source.sleep({ onBattery: false })).send;
       // The recorded outcome, never "not accepted": the source keeps its hold for the wake check.
-      expect(delivered).toEqual([200]);
+      expect(delivered.map((answer) => answer.status)).toEqual([200]);
       expect(m4.session.current()?.state).toBe("pending-intent");
       expect(m4.hold.current()).not.toBeNull();
       // Nothing new was recorded or started for the second delivery.
@@ -825,6 +939,113 @@ describe("an intent delivered again across the update (lost answer)", () => {
       expect(m4.session.current()?.state).toBe("wake-prompt");
       expect(f.binding("ms")).toMatchObject({ state: "active", epoch: epoch + 1 });
       expect(f.takeovers).toEqual(["intent-1"]);
+    }),
+  );
+
+  it.effect(
+    "pushed out by 50 later settled intents of another machine: never refused, the wake gives way to what moved",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fleet;
+        const epoch = f.binding("ms")?.epoch ?? 0;
+        const delivered: IntentAnswer[] = [];
+        const evicted = Effect.gen(function* () {
+          // The earlier release continued the thread here too.
+          f.evidence.set("thread-reel", { kind: "continued", threadId: "thread-reel-ms" });
+          // Another machine's lid closes 51 times there; each intent replaces the one before.
+          for (let index = 0; index < 51; index += 1) {
+            const recorded = yield* PreviousIntents.recordIntent(
+              f.before,
+              callerFrom("m1"),
+              { sourceEnvironmentId: "m1", graceMinutes: 2, projectIds: [], threadIds: [] },
+              f.projectsHere(),
+            );
+            expect(recorded.status).toBe(200);
+          }
+          // Its compaction dropped the source's acted intent: no record of it is left.
+          const left = f.store.current().intents;
+          expect(left.filter((intent) => intent.sourceEnvironmentId === "m4")).toEqual([]);
+          expect(left.filter((intent) => intent.state === "cancelled")).toHaveLength(50);
+        });
+        const m4 = yield* previousSource(lostThenAgain(f, evicted, delivered), reelAndProject);
+        yield* (yield* m4.source.sleep({ onBattery: false })).send;
+        // Never "not accepted": the work it names moved here, so the answer is no answer yet.
+        expect(delivered.map((answer) => answer.status)).toEqual([503]);
+        expect(previousAwayAnswerKind(503, delivered[0]?.body)).toBe("uncertain");
+        expect(m4.session.current()?.state).toBe("send-uncertain");
+        const held = m4.hold.current();
+        expect(held?.threads).toEqual(["thread-reel"]);
+        expect(held?.projects.map((project) => project.projectId)).toEqual(["easychamp-m4"]);
+        expect(m4.resumed).toEqual([]);
+        expect(yield* f.intents.latestState(EnvironmentId.make("m4"))).toBeNull();
+        // It wakes with no intent recorded here: it gives way to the takeover, fences the thread.
+        yield* TestClock.setTime(T0 + 30 * MINUTE);
+        expect(yield* m4.source.wake({ onBattery: false })).toEqual({ outcome: "prompt" });
+        expect(m4.gaveWay).toEqual(["easychamp-m4"]);
+        expect(m4.fenced).toEqual(["thread-reel"]);
+        expect(m4.resumed).toEqual([]);
+        expect(m4.hold.current()).toBeNull();
+        expect(m4.session.current()?.state).toBe("wake-prompt");
+        expect(f.binding("ms")).toMatchObject({ state: "active", epoch: epoch + 1 });
+        expect(f.takeovers).toEqual(["intent-1"]);
+      }),
+  );
+
+  it.effect(
+    "acted on, with a later intent from the same machine recorded after it: held, then settled",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fleet;
+        const delivered: IntentAnswer[] = [];
+        const later = Effect.gen(function* () {
+          // The same machine's next lid close reached it too; the drain cancelled that one.
+          yield* PreviousIntents.recordIntent(
+            f.before,
+            callerFrom("m4"),
+            intentBody({ graceMinutes: 5, projectIds: [], threadIds: ["thread-other"] }),
+            f.projectsHere(),
+          );
+          expect((yield* f.intents.tick)[0]).toMatchObject({ intentId: "intent-2" });
+          expect(yield* f.intents.latestState(EnvironmentId.make("m4"))).toBe("cancelled");
+          // Whether the earlier release launched the thread here is not known yet.
+          f.evidence.set("thread-reel", { kind: "unresolved" });
+        });
+        const m4 = yield* previousSource(lostThenAgain(f, later, delivered), reelAndProject);
+        yield* (yield* m4.source.sleep({ onBattery: false })).send;
+        // Its latest record is another intent, but the work it names moved here.
+        expect(delivered.map((answer) => answer.status)).toEqual([503]);
+        expect(m4.session.current()?.state).toBe("send-uncertain");
+        expect(m4.hold.current()).not.toBeNull();
+        // The wake asks; the launch is still in doubt, so nothing is released.
+        yield* TestClock.setTime(T0 + 30 * MINUTE);
+        expect(yield* m4.source.wake({ onBattery: false })).toEqual({ outcome: "none" });
+        expect(m4.hold.current()?.threads).toEqual(["thread-reel"]);
+        expect(m4.gaveWay).toEqual([]);
+        expect(m4.resumed).toEqual([]);
+        // Handoff mode recovers the continuation: the source gives way and fences the thread.
+        f.evidence.set("thread-reel", { kind: "continued", threadId: "thread-reel-ms" });
+        expect(yield* m4.source.retry).toBe("moved");
+        expect(m4.gaveWay).toEqual(["easychamp-m4"]);
+        expect(m4.fenced).toEqual(["thread-reel"]);
+        expect(m4.resumed).toEqual([]);
+        expect(m4.hold.current()).toBeNull();
+      }),
+  );
+
+  it.effect("the work it names does not read yet: no answer, then refused once it reads", () =>
+    Effect.gen(function* () {
+      const f = yield* fleet;
+      const unread: IntentRefusalEvidence = { ...f.here, projects: Effect.succeed(Option.none()) };
+      const answer = yield* register(callerFrom("m4"), intentBody(), f.intents, unread);
+      expect(answer.status).toBe(503);
+      expect(previousAwayAnswerKind(answer.status, answer.body)).toBe("uncertain");
+      // A thread whose launch here is in doubt is no answer either.
+      f.evidence.set("thread-reel", { kind: "unresolved" });
+      expect((yield* register(callerFrom("m4"), intentBody(), f.intents, f.here)).status).toBe(503);
+      // Both read as never begun here: new work, refused, and nothing is recorded.
+      f.evidence.delete("thread-reel");
+      expect((yield* register(callerFrom("m4"), intentBody(), f.intents, f.here)).status).toBe(409);
+      expect(f.store.current().intents).toEqual([]);
     }),
   );
 });

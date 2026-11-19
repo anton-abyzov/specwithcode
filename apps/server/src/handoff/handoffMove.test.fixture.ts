@@ -38,6 +38,7 @@ import { writeCheckpoint } from "./checkpointGit.ts";
 import { HandoffConnectivity, type HandoffConnectivityState } from "./handoffConnectivity.ts";
 import { HandoffMode } from "./HandoffMode.ts";
 import * as HandoffMoves from "./HandoffMoves.ts";
+import * as Peers from "./handoffPeers.ts";
 import { HandoffPeerError, HandoffPeers } from "./handoffPeers.ts";
 import * as HandoffReceiver from "./HandoffReceiver.ts";
 import { HANDOFF_PROTOCOL_VERSION } from "./handoffWire.ts";
@@ -103,6 +104,27 @@ function machine(environmentId: EnvironmentId, label: string): Machine {
 class LaunchRefusedError extends Schema.TaggedError<LaunchRefusedError>()("LaunchRefusedError", {
   message: Schema.String,
 }) {}
+
+/**
+ * A destination's refusal as the source reads it over the network: the route's own
+ * answer (status and JSON body) read back by the source's own classifier. Both are
+ * read through their namespaces, so a suite run against sources that do not share
+ * them yet maps a refusal as the destination named it.
+ */
+export function overTheWire(label: string, refusal: HandoffReceiver.HandoffRefusal) {
+  const encode = HandoffReceiver.refusalAnswer as typeof HandoffReceiver.refusalAnswer | undefined;
+  const classify = Peers.refusedAnswer as typeof Peers.refusedAnswer | undefined;
+  if (encode === undefined || classify === undefined) {
+    return new HandoffPeerError({
+      code: refusal.code,
+      message: refusal.message,
+      check: refusal.check,
+      uncertain: false,
+    });
+  }
+  const answer = encode(refusal);
+  return classify(label, answer.status, JSON.parse(JSON.stringify(answer.body)) as unknown);
+}
 
 /** The receiver calls a source machine makes over the network. */
 type WireReceiver = Pick<
@@ -399,17 +421,7 @@ export const scenario = (
               uncertain: true,
             }),
           )
-        : effect.pipe(
-            Effect.mapError(
-              (refusal) =>
-                new HandoffPeerError({
-                  code: refusal.code,
-                  message: refusal.message,
-                  check: refusal.check,
-                  uncertain: false,
-                }),
-            ),
-          );
+        : effect.pipe(Effect.mapError((refusal) => overTheWire("Minis", refusal)));
     const peers = HandoffPeers.of({
       target: () => Effect.succeed({ machineId: "minis", environmentId: minis, label: "Minis" }),
       targets: Effect.succeed([{ machineId: "minis", environmentId: minis, label: "Minis" }]),
