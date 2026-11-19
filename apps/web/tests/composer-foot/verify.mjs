@@ -95,7 +95,18 @@ function measure() {
       const style = getComputedStyle(el, "::after");
       return style.display === "none" ? null : { border: style.borderTopColor, shadow: style.boxShadow };
     };
+    const send = threadPane.querySelector("button[data-send-target]");
+    const sendBox = send?.getBoundingClientRect();
     out.thread = {
+      // Send to another machine: its color and the arrow, never the machine in words.
+      sendWords: send ? words(send) : null,
+      sendText: send?.textContent ?? null,
+      sendLabel: send?.getAttribute("aria-label") ?? null,
+      sendColor: send?.getAttribute("data-machine-color") ?? null,
+      sendBackground: send ? getComputedStyle(send).backgroundColor : null,
+      sendEnabled: send ? !send.disabled : null,
+      sendSize: sendBox ? [Math.round(sendBox.width), Math.round(sendBox.height)] : null,
+      machineToken: getComputedStyle(threadPane).getPropertyValue("--machine").trim(),
       chipWords: chip ? words(chip) : null,
       chipCompact: chip?.hasAttribute("data-machine-compact") ?? false,
       chipShortShows: visible(chip?.querySelector("[data-machine-short]")),
@@ -171,6 +182,12 @@ try {
           `${origin}/?scene=${scene.name}&theme=${theme}${banner ? "&banner=1" : ""}`,
         );
         await page.locator('[data-project-pane]').first().waitFor();
+        // A typed message turns Send on, so it shows the color it sends with.
+        const prompt = page.locator('[data-project-pane="threads"] [contenteditable="true"]');
+        if (await prompt.count()) {
+          await prompt.first().click();
+          await page.keyboard.type("Run the tests");
+        }
         await page.waitForTimeout(400);
         const facts = await page.evaluate(measure);
         const tag = `${label}-${scene.name}-${scene.width}-${theme}${banner ? "-banner" : ""}`;
@@ -197,6 +214,14 @@ function check(tag, facts, scene) {
     assert.ok(!thread.chipCompact && thread.chipNameShows, `${tag}: the machine name is hidden`);
     assert.equal(thread.chipNameCut, false, `${tag}: the machine name is cut`);
     assert.match(thread.chipLabel ?? "", /Runs on linux-mini/, `${tag}: chip label`);
+    // 1390 AC-02: Send never names a machine. The chip above does, and Send keeps
+    // that machine's color and the round shape of a send to this machine.
+    assert.equal(thread.sendWords, "", `${tag}: Send says ${thread.sendWords}`);
+    assert.equal(thread.sendText, "", `${tag}: Send holds the text ${thread.sendText}`);
+    assert.equal(thread.sendLabel, "Send to this thread on linux-mini", `${tag}: Send label`);
+    assert.equal(thread.sendColor, "blue", `${tag}: Send color`);
+    assert.ok(thread.sendEnabled, `${tag}: Send is off with a message typed`);
+    assert.equal(thread.sendSize[0], thread.sendSize[1], `${tag}: Send is ${thread.sendSize} px`);
     // AC-03: the model's name reads in full, right beside the machine.
     assert.equal(thread.model, "Opus 5.5", `${tag}: model shows ${thread.model}`);
     assert.equal(thread.modelCut, false, `${tag}: the model name is cut`);

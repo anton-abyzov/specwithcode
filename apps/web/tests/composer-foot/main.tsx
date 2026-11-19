@@ -38,6 +38,7 @@ import { CoordinatorModelPicker } from "../../src/components/studio/shell/Coordi
 import { Tip } from "../../src/components/studio/shell/Tip";
 import { runtimeModeConfig, runtimeModeOptions } from "../../src/components/chat/runtimeModeConfig";
 import { getProjectCoordinatorComposer } from "../../src/studio/projectCoordinatorComposer";
+import { MachineSendTargetContext } from "../../src/studio/machineIdentity";
 import { useComposerDraftStore } from "../../src/composerDraftStore";
 import { THREAD_TONE_LABELS, type ThreadTone } from "../../src/studio/shellModel";
 import type { ComposerFileAttachment, ComposerImageAttachment } from "../../src/composerDraftStore";
@@ -255,6 +256,8 @@ function ThreadComposer() {
     <ComposerSurface.Shell machineColor="blue">
       <ComposerSurface.Host>
         <div className="relative z-10">
+          {/* The window is on m4 and the thread runs on linux-mini: Send leaves this machine. */}
+          <MachineSendTargetContext value={{ name: "linux-mini", color: "blue" }}>
           <ChatComposer
             composerDraftTarget={threadRef}
             environmentId={linuxMini}
@@ -390,6 +393,7 @@ function ThreadComposer() {
               isThisMachine: false,
             }}
           />
+          </MachineSendTargetContext>
         </div>
       </ComposerSurface.Host>
     </ComposerSurface.Shell>

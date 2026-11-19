@@ -2980,6 +2980,7 @@ export const ko: PhraseCatalog = {
   "Enable a provider in Settings": "설정에서 제공업체를 사용하도록 설정하세요",
   "Ask anything...": "무엇이든 물어보세요...",
   "Send with credits": "크레딧으로 보내기",
+  "Send to this thread on {machine}": "{machine}의 이 스레드로 보내기",
   "Finding pull request...": "풀 리퀘스트를 찾는 중...",
   "Searching workspace files...": "워크스페이스 파일을 검색하는 중...",
   "Draft attachment may not persist": "초안 첨부 파일이 유지되지 않을 수 있음",

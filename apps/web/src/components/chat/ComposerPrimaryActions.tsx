@@ -282,10 +282,13 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           : showCreditLabel
             ? "Send with credits"
             : sendTarget
-              ? `Send to ${sendTarget.name}`
+              ? // The machine is a name a person gave it: put in as it is, never as a pattern.
+                tx("Send to this thread on {machine}").replace("{machine}", () => sendTarget.name)
               : "Submit message";
-  // A plain send to another machine wears that machine's color and names it.
-  const namesTarget =
+  // A plain send to another machine wears that machine's color and never prints its
+  // name: the machine chip in the box's foot says where the message goes, and the
+  // button's label says it to a screen reader.
+  const wearsTarget =
     sendTarget !== null &&
     !showResume &&
     !isEditingQueuedMessage &&
@@ -318,8 +321,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       className={cn(
         "relative isolate flex h-9 w-9 items-center justify-center overflow-hidden rounded-full shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:inset-shadow-control-highlight hover:scale-105 active:inset-shadow-control-pressed active:shadow-none disabled:pointer-events-none disabled:opacity-(--disabled-opacity) disabled:shadow-none disabled:hover:scale-100 sm:h-8 sm:w-8 [&_svg]:pointer-events-none",
         showCreditLabel && "w-auto gap-1.5 px-3 text-sm sm:w-auto",
-        namesTarget &&
-          "machine-send w-auto gap-1.5 px-3 text-sm font-semibold sm:w-auto @max-[720px]/composer-surface:gap-1 @max-[720px]/composer-surface:px-2.5",
+        wearsTarget && "machine-send",
         stageBackdropVariant
           ? "bg-transparent text-white enabled:shadow-black/24 enabled:hover:brightness-110"
           : "bg-message-action text-message-action-foreground enabled:shadow-message-action/24 hover:bg-message-action-hover",
@@ -334,7 +336,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         (!hasSendableContent && !showResume)
       }
       aria-label={submitStatus ?? submitLabel}
-      {...(namesTarget ? { "data-machine-color": sendTarget.color, "data-send-target": "" } : {})}
+      {...(wearsTarget ? { "data-machine-color": sendTarget.color, "data-send-target": "" } : {})}
     >
       {stageBackdropVariant ? (
         <span className="pointer-events-none absolute inset-0 -z-10" aria-hidden="true">
@@ -361,21 +363,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         </svg>
       )}
       {showCreditLabel ? <span>{tx("Send with credits")}</span> : null}
-      {namesTarget ? (
-        <span className="max-w-32 truncate @max-[720px]/composer-surface:hidden" aria-hidden>
-          Send to {sendTarget.name}
-        </span>
-      ) : null}
-      {/* Narrow, the machine's short label stays beside the arrow, never the arrow alone. */}
-      {namesTarget ? (
-        <span
-          className="hidden @max-[720px]/composer-surface:inline"
-          aria-hidden
-          data-send-target-short=""
-        >
-          {sendTarget.short ?? sendTarget.name}
-        </span>
-      ) : null}
     </button>
   );
 

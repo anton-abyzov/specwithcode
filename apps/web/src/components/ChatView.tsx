@@ -5102,7 +5102,7 @@ function useChatViewState(props: ChatViewProps) {
           : "available",
   );
   // The composer wears the color of the machine the next message goes to: the thread's
-  // own, or the one a draft's Run on names. On another machine, Send says so.
+  // own, or the one a draft's Run on names. On another machine, Send wears it too.
   const composerMachine = useMachineIdentity(
     activeEnvironment?.environmentId ?? null,
     activeEnvironment?.label,
@@ -5110,11 +5110,11 @@ function useChatViewState(props: ChatViewProps) {
   const composerSendTarget = useMemo(
     () =>
       // The machine this window belongs to, not "is it loopback": a phone's own machine
-      // is its primary one, and only a send that leaves it names where it goes.
+      // is its primary one, and only a send that leaves it wears where it goes.
       composerMachine &&
       primaryEnvironmentId !== null &&
       composerMachine.environmentId !== primaryEnvironmentId
-        ? { name: composerMachine.name, color: composerMachine.color, short: composerMachine.short }
+        ? { name: composerMachine.name, color: composerMachine.color }
         : null,
     [composerMachine, primaryEnvironmentId],
   );

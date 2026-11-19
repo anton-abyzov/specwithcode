@@ -3026,6 +3026,7 @@ export const es: PhraseCatalog = {
   "Enable a provider in Settings": "Activa un proveedor en Ajustes",
   "Ask anything...": "Pregunta lo que quieras...",
   "Send with credits": "Enviar con créditos",
+  "Send to this thread on {machine}": "Enviar a este hilo en {machine}",
   "Finding pull request...": "Buscando pull request...",
   "Searching workspace files...": "Buscando archivos del espacio de trabajo...",
   "Draft attachment may not persist": "Puede que el adjunto del borrador no se conserve",

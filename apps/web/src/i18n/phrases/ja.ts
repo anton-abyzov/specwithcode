@@ -3007,6 +3007,7 @@ export const ja: PhraseCatalog = {
   "Enable a provider in Settings": "設定でプロバイダーを有効にしてください",
   "Ask anything...": "何でも質問してください...",
   "Send with credits": "クレジットで送信",
+  "Send to this thread on {machine}": "{machine} のこのスレッドに送信",
   "Finding pull request...": "プルリクエストを検索中...",
   "Searching workspace files...": "ワークスペースのファイルを検索中...",
   "Draft attachment may not persist": "下書きの添付ファイルが保持されない可能性があります",

@@ -331,8 +331,10 @@ try {
       assert.equal(colors.chip, "teal");
       assert.equal(
         await page.locator("[data-send-target]").getAttribute("aria-label"),
-        "Send to M1",
+        "Send to this thread on M1",
       );
+      // Send never prints the machine: the chip beside it does.
+      assert.equal((await page.locator("[data-send-target]").innerText()).trim(), "↑");
       await shot(`composer-machines-${tag}`);
 
       // A window on M4: the coordinator on M1 and a thread on M4, side by side. Each pane
