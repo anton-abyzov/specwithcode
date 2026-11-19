@@ -634,6 +634,23 @@ export const FolderCopyLanCheck = Schema.Struct({
 });
 export type FolderCopyLanCheck = typeof FolderCopyLanCheck.Type;
 
+/**
+ * Asked before any address is named: does the destination know this path and has it
+ * opted in for this copy? Only a yes is followed by `lanCheck` with candidates.
+ */
+export const FolderCopyLanProbe = Schema.Struct({
+  operationId: MachineHandoffOperationId,
+  purpose: FolderCopyLanPurpose,
+});
+export type FolderCopyLanProbe = typeof FolderCopyLanProbe.Type;
+
+/** The source ended a generation: the destination drops its key and its connections. */
+export const FolderCopyLanRetire = Schema.Struct({
+  operationId: MachineHandoffOperationId,
+  generation: lanGeneration,
+});
+export type FolderCopyLanRetire = typeof FolderCopyLanRetire.Type;
+
 /** The destination's answer: `lan: null` when it will not use the local network. */
 export const FolderCopyLanCheckAnswer = Schema.Struct({
   lan: Schema.NullOr(
@@ -641,6 +658,14 @@ export const FolderCopyLanCheckAnswer = Schema.Struct({
       version: Schema.Literal(FOLDER_COPY_LAN_VERSION),
       generation: lanGeneration,
       recipientCertificateSha256: sha256Hex,
+      /**
+       * The recipient's one-time certificate, DER in base64. The source makes it the
+       * listener's only trust anchor, so the TLS layer itself checks who connects. It
+       * names nothing and is useless without its key, which never leaves the destination.
+       */
+      recipientCertificate: Schema.String.check(
+        Schema.isPattern(/^[A-Za-z0-9+/]{200,2700}={0,2}$/),
+      ),
       targetSha256: sha256Hex,
       /** Indexes into `candidates` that are directly attached for the destination. */
       usable: Schema.Array(Schema.Int).check(Schema.isMaxLength(4)),
@@ -649,7 +674,7 @@ export const FolderCopyLanCheckAnswer = Schema.Struct({
 });
 export type FolderCopyLanCheckAnswer = typeof FolderCopyLanCheckAnswer.Type;
 
-/** The `lan` block, version 1. Only certificate hashes cross the wire, never a certificate. */
+/** The `lan` block, version 1. It carries certificate hashes only; no key and no certificate. */
 export const FolderCopyLanOffer = Schema.Struct({
   version: Schema.Literal(FOLDER_COPY_LAN_VERSION),
   generation: lanGeneration,

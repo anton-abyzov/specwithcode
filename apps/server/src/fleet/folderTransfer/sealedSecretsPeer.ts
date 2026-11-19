@@ -31,6 +31,7 @@ const decodeLanAnswer = Schema.decodeUnknownEffect(
   Schema.Struct({
     lan: Schema.optional(FolderCopyLanCheckAnswer.fields.lan),
     lanAccepted: Schema.optional(Schema.Boolean),
+    lanReady: Schema.optional(Schema.Boolean),
   }),
 );
 
@@ -114,6 +115,12 @@ const make = Effect.gen(function* () {
 
   return SecretsPeer.of({
     lan: {
+      probe: async (destinationEnvironmentId, lanProbe) =>
+        (await control(destinationEnvironmentId, { action: "lanProbe", lanProbe })).lanReady ===
+        true,
+      retire: async (destinationEnvironmentId, lanRetire) => {
+        await control(destinationEnvironmentId, { action: "lanRetire", lanRetire });
+      },
       check: async (destinationEnvironmentId, lanCheck) => ({
         lan:
           (await control(destinationEnvironmentId, { action: "lanCheck", lanCheck })).lan ?? null,

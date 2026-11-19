@@ -310,10 +310,19 @@ export class LanConnector {
       request.once("response", (response) => {
         answered = true;
         const parts: Array<Buffer> = [];
+        // Only a 200 may be large. A 202 or an error is cut at the small-answer limit while
+        // it streams, and an answer that declares more is cut before its first byte.
+        const cap =
+          response.statusCode === 200
+            ? options.maxBytes
+            : Math.min(options.maxBytes, this.limits.smallAnswerBytes);
+        const declared = Number(response.headers["content-length"] ?? "0");
+        if (Number.isFinite(declared) && declared > cap)
+          return finish(new LanFailure("not_authorization"));
         response.on("data", (part: Buffer) => {
           received += part.length;
           // Cut off at the limit; nothing past it is kept.
-          if (received > options.maxBytes) return finish(new LanFailure("not_authorization"));
+          if (received > cap) return finish(new LanFailure("not_authorization"));
           if (options.onData && response.statusCode === 200) options.onData(part);
           else parts.push(part);
         });
@@ -427,8 +436,6 @@ export class LanConnector {
     });
     if (answer.status === 202) {
       gunzip.destroy();
-      if (answer.body.length > this.limits.smallAnswerBytes)
-        throw new LanFailure("not_authorization");
       try {
         const body = JSON.parse(answer.body.toString("utf8")) as {
           progress?: { files: number; bytes: number } | null;

@@ -9,6 +9,8 @@ import {
   FolderCopyLanCheck,
   FolderCopyLanCheckAnswer,
   FolderCopyLanOffer,
+  FolderCopyLanProbe,
+  FolderCopyLanRetire,
   FolderCopyStartInput,
   FolderCopyState,
   type FolderCopyStatus,
@@ -66,8 +68,10 @@ export const AgentCopyReceiveInput = Schema.Struct({
     "link",
     "secretsCheck",
     "secretsKey",
+    "lanProbe",
     "lanCheck",
     "lanOffer",
+    "lanRetire",
   ]),
   /** check: the folder the copy will land in, `~` meaning that machine's home. */
   targetFolder: Schema.optional(bounded(4096)),
@@ -83,6 +87,10 @@ export const AgentCopyReceiveInput = Schema.Struct({
    * refuses it, and the copy runs on Connect.
    */
   lanCheck: Schema.optional(FolderCopyLanCheck),
+  /** lanProbe: asked first, before any address is named. Answered yes or no. */
+  lanProbe: Schema.optional(FolderCopyLanProbe),
+  /** lanRetire: the source ended a generation. It can only end one. */
+  lanRetire: Schema.optional(FolderCopyLanRetire),
   /** lanOffer: the `lan` block for the generation this machine just answered for. */
   lanOffer: Schema.optional(
     Schema.Struct({ operationId: MachineHandoffOperationId, lan: FolderCopyLanOffer }),
@@ -108,6 +116,8 @@ export const AgentCopyReceiveResult = Schema.Struct({
   lan: Schema.optional(FolderCopyLanCheckAnswer.fields.lan),
   /** lanOffer: whether every bound field matched this machine's own record. */
   lanAccepted: Schema.optional(Schema.Boolean),
+  /** lanProbe: whether this machine will use the local network for this copy. */
+  lanReady: Schema.optional(Schema.Boolean),
 });
 export type AgentCopyReceiveResult = typeof AgentCopyReceiveResult.Type;
 
@@ -240,6 +250,17 @@ export const receiveAgentCopy = Effect.fn("fleet.agentCopy.receive")(function* (
   }
   // The same grant `start` needs, checked by the caller. The copy's recorded source must be
   // the calling machine; reaching a private address proves none of this.
+  if (input.action === "lanProbe") {
+    if (input.lanProbe === undefined) return yield* invalid("Pass lanProbe.");
+    const lanReady = yield* handoff.copyLanProbe(caller.environmentId, input.lanProbe);
+    return { [FOLDER_COPY_LAN_CAPABILITY]: 1, lanReady } as AgentCopyReceiveResult;
+  }
+  if (input.action === "lanRetire") {
+    if (input.lanRetire === undefined) return yield* invalid("Pass lanRetire.");
+    yield* handoff.copyLanRetire(caller.environmentId, input.lanRetire);
+    // The same answer for a live generation, an ended one and one never made.
+    return { [FOLDER_COPY_LAN_CAPABILITY]: 1 } as AgentCopyReceiveResult;
+  }
   if (input.action === "lanCheck") {
     if (input.lanCheck === undefined) return yield* invalid("Pass lanCheck.");
     const answer = yield* handoff.copyLanCheck(caller.environmentId, input.lanCheck);

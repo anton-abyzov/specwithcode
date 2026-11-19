@@ -120,12 +120,18 @@ export class SourceClient {
    * second address, a failure first moves to the other address at once (each
    * address once per request), then retries alternate with the usual backoff.
    */
+  /** Runs before every request; the local-network client settles its path first. */
+  protected beforeConnect(): Promise<void> {
+    return Promise.resolve();
+  }
+
   private async request(
     method: "GET" | "POST",
     action: string,
     body?: unknown,
     timeoutMs = 120_000,
   ): Promise<Response> {
+    await this.beforeConnect();
     const path = `${FOLDER_TRANSFER_PREFIX}/${this.options.operationId}/${action}`;
     const limit = Math.min(timeoutMs, this.options.timeoutMs ?? timeoutMs);
     const retries = this.options.retry === false ? 0 : RETRY_DELAYS_MS.length;
@@ -367,6 +373,14 @@ export class SourceClient {
   async commit() {
     return this.json<{ state: string }>(await this.request("POST", "commit", {}));
   }
+
+  /**
+   * Tells the source this side of a local-network generation ended. It can only
+   * end one; an older source has no such route and the answer is not read.
+   */
+  async lanRetire(generation: number): Promise<void> {
+    await this.request("POST", "lan-retire", { generation }, 5_000);
+  }
 }
 
 type ManifestAnswer = Awaited<ReturnType<SourceClient["manifest"]>>;
@@ -386,6 +400,8 @@ export interface LanPath {
     ) => Promise<Array<ChunkFrame>>;
     wireBytes: number;
   } | null>;
+  /** Settles a generation lost to a restart before a request goes to Connect. */
+  readonly beforeConnect: () => Promise<void>;
   /** Switch once. Resolves only after the latch is saved, before any Connect request. */
   readonly latch: (kind: Exclude<LanFailureKind, "denied">) => Promise<void>;
   /** A denial: the copy stops on both paths. */
@@ -418,6 +434,10 @@ export class LanFirstSourceClient extends SourceClient {
     super(options);
     this.lan = lan;
     this.lanSignal = options.signal;
+  }
+
+  protected override beforeConnect(): Promise<void> {
+    return this.lan.beforeConnect();
   }
 
   /** Applies the fallback table to a LAN failure: stop, or latch and let Connect run. */

@@ -123,7 +123,11 @@ export type LanEndCause =
   | "expired"
   | "network_changed"
   | "woke"
-  | "shutdown";
+  | "shutdown"
+  /** The other machine said its side ended. */
+  | "retired"
+  /** The source built another manifest: the one this generation published is gone. */
+  | "manifest_changed";
 
 /** A recorded denial: an authenticated answer about authorization (S-4). */
 export type LanDenial = "revoked" | "refused" | "scope_changed";
@@ -202,14 +206,27 @@ export function lanScopeSha256(input: {
   readonly copyRoot: string;
   readonly projectRelativePath: string;
   readonly mode: string;
+  /** The classes approved for this copy; never the whole list by default. */
+  readonly ceiling: ReadonlyArray<string>;
 }): string {
   return framed("swc-folder-lan-scope-v1", [
     input.sourceProjectId,
     input.copyRoot,
     input.projectRelativePath,
     input.mode,
-    [...LAN_SELECTION_CEILING].sort().join(","),
+    [...new Set(input.ceiling)].sort().join(","),
   ]);
+}
+
+/**
+ * The selection ceiling a copy is frozen to: the approved classes, sorted. Null when
+ * the selection is empty or names a class that never travels the local network.
+ */
+export function lanCeilingOf(selection: ReadonlyArray<string>): ReadonlyArray<string> | null {
+  const ceiling = [...new Set(selection)].sort();
+  return ceiling.length === 0 || ceiling.some((item) => !LAN_SELECTION_CEILING.includes(item))
+    ? null
+    : ceiling;
 }
 
 export function lanTargetSha256(input: {

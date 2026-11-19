@@ -72,6 +72,24 @@ export class LanSourceBudgets {
     this.now = now;
   }
 
+  /** How many addresses the two tables hold; both are pruned and capped. */
+  get tracked(): number {
+    return this.failures.size + this.blockedUntil.size;
+  }
+
+  /** Drops what has aged out, then the oldest entries past the cap. */
+  private prune(now: number) {
+    for (const [remote, until] of this.blockedUntil)
+      if (now >= until) this.blockedUntil.delete(remote);
+    for (const [remote, times] of this.failures)
+      if (times.every((at) => now - at >= 60_000)) this.failures.delete(remote);
+    for (const table of [this.blockedUntil, this.failures])
+      for (const remote of table.keys()) {
+        if (table.size <= LAN_ADDRESS_TABLE_CAP) break;
+        table.delete(remote);
+      }
+  }
+
   blocked(remote: string): boolean {
     const until = this.blockedUntil.get(remote);
     if (until === undefined) return false;
@@ -105,19 +123,31 @@ export class LanSourceBudgets {
     const now = this.now();
     const recent = (this.failures.get(remote) ?? []).filter((at) => now - at < 60_000);
     recent.push(now);
+    // Re-inserted, so the table's order is by last failure and the cap drops the oldest.
+    this.failures.delete(remote);
     this.failures.set(remote, recent);
     if (recent.length >= this.limits.failedHandshakesPerMinute) {
       this.blockedUntil.set(remote, now + this.limits.failedHandshakeBlockMs);
       this.failures.delete(remote);
     }
+    this.prune(now);
   }
 }
+
+/** Addresses remembered for failed handshakes, across every generation of one source. */
+export const LAN_ADDRESS_TABLE_CAP = 1024;
+/** A response is written in pieces this size, so its progress is what the peer took. */
+const RESPONSE_PIECE_BYTES = 64 * 1024;
 
 export interface LanListenerStats {
   accepted: number;
   refusedAtAccept: number;
   handshakeFailures: number;
   authenticatedSockets: number;
+  /** Handshakes the TLS layer let through: only a peer holding the pinned certificate's key. */
+  secureConnections: number;
+  /** Sockets handed to the HTTP parser, the only reader of request bytes: all after that proof. */
+  parserSockets: number;
   /** Requests that reached the route table: only sockets that proved the recipient key. */
   routed: number;
   responses: number;
@@ -129,6 +159,8 @@ const ALLOWED: ReadonlySet<string> = new Set(["GET hello", "GET manifest", "POST
 
 interface Tracked {
   readonly raw: NodeNet.Socket;
+  /** The interface whose address this socket was accepted on. */
+  readonly entry: LanInterface;
   headerTimer: ReturnType<typeof setTimeout> | null;
   busy: boolean;
 }
@@ -143,6 +175,8 @@ export class LanGenerationListener {
     refusedAtAccept: 0,
     handshakeFailures: 0,
     authenticatedSockets: 0,
+    secureConnections: 0,
+    parserSockets: 0,
     routed: 0,
     responses: 0,
     bodiesOpened: 0,
@@ -155,8 +189,10 @@ export class LanGenerationListener {
   private readonly recipientCertificateSha256: string;
   private tokenSha256: string;
   private readonly listeners: Array<{ server: NodeNet.Server; host: string; port: number }> = [];
+  private readonly bound: Array<LanInterface> = [];
   private readonly sockets = new Map<NodeNet.Socket, Tracked>();
   private readonly authenticated = new Set<NodeTls.TLSSocket>();
+  private readonly peers = new Map<NodeTls.TLSSocket, { host: string; name: string }>();
   private tls: NodeTls.Server | null;
   private readonly http: NodeHttp.Server;
   private readonly watchdog: ReturnType<typeof setInterval>;
@@ -171,6 +207,7 @@ export class LanGenerationListener {
     readonly destinationEnvironmentId: string;
     readonly certificate: LanCertificate;
     readonly recipientCertificateSha256: string;
+    readonly recipientCertificatePem: string;
     readonly tokenSha256: string;
     readonly served: LanServed;
     readonly budgets: LanSourceBudgets;
@@ -195,14 +232,21 @@ export class LanGenerationListener {
       minVersion: "TLSv1.3",
       maxVersion: "TLSv1.3",
       ALPNProtocols: [LAN_ALPN],
-      // The exact hash is the trust: the certificate is asked for, and compared below.
+      // The recipient's one-time certificate is the only trust anchor. A peer with no
+      // certificate fails the handshake; one with another certificate is rejected by the
+      // TLS layer before `secureConnection`. The exact hash is compared again below.
       requestCert: true,
-      rejectUnauthorized: false,
+      rejectUnauthorized: true,
+      ca: [input.recipientCertificatePem],
       handshakeTimeout: this.limits.handshakeMs,
-      // No stateless tickets; a resumed session is refused in `secured` as well.
+      // TLS 1.3 still issues tickets under this option, and Node cannot send none. They
+      // are never honoured: no session is stored and every lookup finds nothing, so each
+      // connection is a full handshake and there is no key for early data.
       secureOptions: NodeCrypto.constants.SSL_OP_NO_TICKET,
       sessionIdContext: NodeCrypto.randomBytes(16).toString("hex"),
     });
+    this.tls.on("newSession", (_id, _data, done) => done());
+    this.tls.on("resumeSession", (_id, done) => done(null, null));
     this.tls.on("secureConnection", (socket) => this.secured(socket));
     this.tls.on("tlsClientError", (_error, socket) => {
       this.handshakeFailed(socket as NodeTls.TLSSocket);
@@ -230,12 +274,24 @@ export class LanGenerationListener {
     readonly interfaces: ReadonlyArray<LanInterface>;
     readonly certificate: LanCertificate;
     readonly recipientCertificateSha256: string;
+    /** The certificate that hash names; `open` refuses one that does not match it. */
+    readonly recipientCertificatePem: string;
     readonly tokenSha256: string;
     readonly served: LanServed;
     readonly budgets: LanSourceBudgets;
     readonly now?: () => number;
     readonly onEnd?: (cause: LanEndCause) => void;
   }): Promise<LanGenerationListener> {
+    let anchored = false;
+    try {
+      anchored = sameSha256(
+        sha256Of(new NodeCrypto.X509Certificate(input.recipientCertificatePem).raw),
+        input.recipientCertificateSha256,
+      );
+    } catch {
+      anchored = false;
+    }
+    if (!anchored) throw new Error("unbindable");
     const listener = new LanGenerationListener({
       ...input,
       now: input.now ?? Date.now,
@@ -259,6 +315,16 @@ export class LanGenerationListener {
     return this.listeners.map(({ host, port }) => ({ host, port }));
   }
 
+  /** Each authenticated peer with the interface it came in on, for the route check. */
+  get routes(): ReadonlyArray<{ readonly host: string; readonly name: string }> {
+    return [...this.peers.values()];
+  }
+
+  /** Every bound interface, for the same check before a peer has connected. */
+  get interfaces(): ReadonlyArray<LanInterface> {
+    return this.bound;
+  }
+
   get ended(): LanEndCause | null {
     return this.endedFor;
   }
@@ -280,6 +346,7 @@ export class LanGenerationListener {
         server.removeListener("error", reject);
         server.on("error", () => this.end("network_changed"));
         this.listeners.push({ server, host, port: (server.address() as NodeNet.AddressInfo).port });
+        this.bound.push(entry);
         resolve();
       });
     });
@@ -300,7 +367,7 @@ export class LanGenerationListener {
       socket.destroy();
       return;
     }
-    this.sockets.set(socket, { raw: socket, headerTimer: null, busy: false });
+    this.sockets.set(socket, { raw: socket, entry, headerTimer: null, busy: false });
     socket.once("close", () => {
       const tracked = this.sockets.get(socket);
       if (tracked?.headerTimer) clearTimeout(tracked.headerTimer);
@@ -330,6 +397,7 @@ export class LanGenerationListener {
 
   /** The handshake finished. Nothing has parsed a byte of HTTP for this socket yet. */
   private secured(socket: NodeTls.TLSSocket) {
+    this.stats.secureConnections += 1;
     socket.on("error", () => undefined);
     const raw = this.rawOf(socket);
     const remote = socket.remoteAddress ?? "";
@@ -338,6 +406,7 @@ export class LanGenerationListener {
     const proven =
       this.endedFor === null &&
       raw !== null &&
+      socket.authorized &&
       socket.getProtocol() === "TLSv1.3" &&
       socket.alpnProtocol === LAN_ALPN &&
       // A resumed session would skip the proof of the key: every connection is a full handshake.
@@ -355,9 +424,11 @@ export class LanGenerationListener {
       return;
     }
     this.authenticated.add(socket);
+    this.peers.set(socket, { host: remote, name: this.sockets.get(raw)!.entry.name });
     this.stats.authenticatedSockets += 1;
     socket.once("close", () => {
       this.authenticated.delete(socket);
+      this.peers.delete(socket);
       raw.destroy();
     });
     const tracked = this.sockets.get(raw)!;
@@ -369,6 +440,7 @@ export class LanGenerationListener {
     armHeaders();
     socket.prependListener("data", armHeaders);
     socket.setTimeout(this.limits.idleSocketMs, () => socket.destroy());
+    this.stats.parserSockets += 1;
     this.http.emit("connection", socket);
   }
 
@@ -387,22 +459,38 @@ export class LanGenerationListener {
       "cache-control": "no-store",
       ...(close ? { connection: "close" } : {}),
     });
-    response.end(body);
     const socket = response.socket;
     if (close) response.once("finish", () => socket?.destroy());
-    else if (socket) this.watchStall(response, socket);
+    this.send(response, body);
   }
 
-  /** Closes a response whose peer takes too little for too long. */
-  private watchStall(response: NodeHttp.ServerResponse, socket: NodeNet.Socket) {
-    let last = socket.bytesWritten;
+  /**
+   * Writes the body a piece at a time, each after the one before it left this process.
+   * What counts as progress is what the peer took, never what is queued here: a peer
+   * that takes less than the stall allowance in a window loses its socket.
+   */
+  private send(response: NodeHttp.ServerResponse, body: Uint8Array) {
+    let taken = 0;
+    let mark = 0;
+    let at = 0;
     const timer = setInterval(() => {
-      const written = socket.bytesWritten;
-      if (written - last < this.limits.stallBytes) socket.destroy();
-      last = written;
+      if (taken - mark < this.limits.stallBytes) response.socket?.destroy();
+      mark = taken;
     }, this.limits.stallMs);
     timer.unref();
     response.once("close", () => clearInterval(timer));
+    const next = () => {
+      if (response.destroyed || this.endedFor !== null) return;
+      if (at >= body.byteLength) return void response.end();
+      const piece = body.subarray(at, at + RESPONSE_PIECE_BYTES);
+      at += piece.byteLength;
+      response.write(piece, (error) => {
+        if (error) return;
+        taken += piece.byteLength;
+        next();
+      });
+    };
+    next();
   }
 
   private refuse(response: NodeHttp.ServerResponse, status: number, error: string) {
@@ -565,6 +653,7 @@ export class LanGenerationListener {
       tracked.raw.destroy();
     }
     this.authenticated.clear();
+    this.peers.clear();
     this.sockets.clear();
     this.tls?.removeAllListeners();
     this.tls = null;

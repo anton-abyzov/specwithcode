@@ -287,6 +287,12 @@ export class DestinationCopies {
         const record = await this.read(operationId).catch(() => null);
         return record ? { ...record, terminal: LAN_TERMINAL.has(record.state) } : null;
       },
+      lanRetire: async (operationId, generation) => {
+        const record = await this.read(operationId).catch(() => null);
+        if (!record) return;
+        // Plain Connect, with the copy's own grant, tried once.
+        await this.client(record, undefined, { timeoutMs: 5_000 }, true).lanRetire(generation);
+      },
       lanSave: (operationId, change) =>
         this.locked(operationId, async () => {
           const current = await this.read(operationId);
@@ -392,6 +398,7 @@ export class DestinationCopies {
     record: DestinationRecord,
     signal?: AbortSignal,
     once?: { readonly timeoutMs: number },
+    connectOnly = false,
   ) {
     // SpecWithCode Connect is the primary route; the tailnet is the fallback.
     const options: SourceClientOptions = {
@@ -411,7 +418,7 @@ export class DestinationCopies {
       ...(once ? { retry: false, timeoutMs: once.timeoutMs } : {}),
     };
     // The local network carries only the manifest and the chunks, through its own connector.
-    return this.lan === null
+    return this.lan === null || connectOnly
       ? new SourceClient(options)
       : new LanFirstSourceClient(
           options,

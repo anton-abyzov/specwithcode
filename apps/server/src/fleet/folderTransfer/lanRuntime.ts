@@ -47,6 +47,8 @@ export function lanHooks(link: LanLink, policy: LanPolicy = systemLanPolicy()) {
         updating: () => link.updating(),
         // Without a control route to the destination there is no offer and no listener.
         peer: {
+          probe: (destination, body) => link.peer?.probe(destination, body) ?? noRoute(),
+          retire: (destination, body) => link.peer?.retire(destination, body) ?? noRoute(),
           check: (destination, body) => link.peer?.check(destination, body) ?? noRoute(),
           offer: (destination, body) => link.peer?.offer(destination, body) ?? noRoute(),
         },

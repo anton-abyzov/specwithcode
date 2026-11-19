@@ -73,6 +73,8 @@ import {
   type FolderCopyLanCheck,
   type FolderCopyLanCheckAnswer,
   type FolderCopyLanOffer,
+  type FolderCopyLanProbe,
+  type FolderCopyLanRetire,
 } from "@specweave-studio/contracts";
 import { busyHandoffError } from "./handoffBusyThreads.ts";
 import { normalizeMachineNickname } from "@specweave-studio/shared/machineNicknames";
@@ -125,6 +127,7 @@ import { copiedContextPaths } from "./folderCopyContextPaths.ts";
 import { SecretsPeer, stageSealedSecrets } from "./folderTransfer/sealedSecrets.ts";
 import { lanHooks, lanSettingInEffect, newLanLink } from "./folderTransfer/lanRuntime.ts";
 import type { LanControlPeer } from "./folderTransfer/lanSource.ts";
+import { serveWithAuthority, type TransferAuthority } from "./folderTransfer/transferAuthority.ts";
 import { makeCopyRegistration } from "./folderCopyRegistration.ts";
 import { makeExistingCopyLocks } from "./existingCopyLocks.ts";
 import { existingCopyUpdate, gitGuarded } from "./machineHandoffGitGuard.ts";
@@ -153,14 +156,10 @@ import {
   DestinationCopies,
   type DestinationRecord as FolderDestinationRecord,
 } from "./folderTransfer/destinationService.ts";
-import {
-  handleSourceRequest,
-  type RawRequest,
-  type RawResponse,
-} from "./folderTransfer/sourceRoutes.ts";
+import type { RawRequest, RawResponse } from "./folderTransfer/sourceRoutes.ts";
 import { SourceTransfers } from "./folderTransfer/sourceService.ts";
 import * as ConnectDeviceTrust from "./ConnectDeviceTrust.ts";
-import { requestDeviceBinding, transferRefusedForDevice } from "./deviceBoundTransfers.ts";
+import { bindingRefused, requestDeviceBinding } from "./deviceBoundTransfers.ts";
 import { registerHandoff } from "./folderTransfer/folderWork.ts";
 import {
   busyCopyWarnings,
@@ -277,6 +276,16 @@ export class MachineHandoff extends Context.Service<
       callerEnvironmentId: string,
       body: { readonly operationId: string; readonly lan: FolderCopyLanOffer },
     ) => Effect.Effect<boolean>;
+    /** Destination: yes or no to the local network for one copy, before any address is named. */
+    readonly copyLanProbe: (
+      callerEnvironmentId: string,
+      body: FolderCopyLanProbe,
+    ) => Effect.Effect<boolean>;
+    /** Destination: the source ended a generation; this side's ends with it. */
+    readonly copyLanRetire: (
+      callerEnvironmentId: string,
+      body: FolderCopyLanRetire,
+    ) => Effect.Effect<void>;
     /** Gives the copy service its control line to other machines, once the fleet link exists. */
     readonly attachLanPeer: (peer: LanControlPeer) => Effect.Effect<void>;
   }
@@ -492,8 +501,21 @@ const make = Effect.gen(function* () {
     Stream.runForEach(() => readLanSetting),
     Effect.forkScoped,
   );
+  // One decision for a copy's every read, on Connect and on the local network.
+  const transferAuthority: TransferAuthority = (record) =>
+    runPromise(
+      Effect.gen(function* () {
+        if (teamRulesMachineLinkRefusal(yield* currentTeamRules) !== null)
+          return { status: 403, code: "team_rules" } as const;
+        // A copy a device offered stops when that device is removed (1327).
+        if (yield* bindingRefused(deviceTrust, record?.device))
+          return { status: 401, code: "unauthorized" } as const;
+        return null;
+      }),
+    );
   const sources = new SourceTransfers(store.root, {
     lan: lan.source,
+    authority: transferAuthority,
     release: (record, reason) =>
       runPromise(
         releaseCoordinator(ProjectId.make(record.projectId), record.operationId, reason),
@@ -801,30 +823,9 @@ const make = Effect.gen(function* () {
       );
     });
   const serveFolderTransfer: MachineHandoff["Service"]["serveFolderTransfer"] = (request) =>
-    Effect.gen(function* () {
-      const environmentId = yield* environment.getEnvironmentId;
-      if (teamRulesMachineLinkRefusal(yield* currentTeamRules) !== null) {
-        return {
-          status: 403,
-          contentType: "application/json",
-          body: new TextEncoder().encode('{"error":"team_rules"}'),
-        };
-      }
-      // A copy a device offered stops when that device is removed (1327).
-      if (
-        yield* transferRefusedForDevice(
-          deviceTrust,
-          (operationId) => sources.read(operationId),
-          request.path,
-        )
-      )
-        return {
-          status: 401,
-          contentType: "application/json",
-          body: new TextEncoder().encode('{"error":"unauthorized"}'),
-        };
-      return yield* Effect.promise(() => handleSourceRequest(sources, environmentId, request));
-    });
+    Effect.flatMap(environment.getEnvironmentId, (environmentId) =>
+      Effect.promise(() => serveWithAuthority(transferAuthority, sources, environmentId, request)),
+    );
   const folderCopyManifest = makeFolderCopyManifest(sources, idle);
   const folderCopyDecision = makeFolderCopyDriftDecision(sources);
   const copyContextAvailable = makeFolderCopyContextCheck(sources);
@@ -1711,6 +1712,14 @@ const make = Effect.gen(function* () {
     copyLanOffer: (caller, body) =>
       Effect.promise(() => copies.lan?.offer(caller, body) ?? Promise.resolve(false)).pipe(
         Effect.orElseSucceed(() => false),
+      ),
+    copyLanProbe: (caller, body) =>
+      Effect.promise(() => copies.lan?.probe(caller, body) ?? Promise.resolve(false)).pipe(
+        Effect.orElseSucceed(() => false),
+      ),
+    copyLanRetire: (caller, body) =>
+      Effect.promise(() => copies.lan?.retired(caller, body) ?? Promise.resolve()).pipe(
+        Effect.ignore,
       ),
     attachLanPeer: (peer) =>
       Effect.sync(() => {

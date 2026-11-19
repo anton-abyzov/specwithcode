@@ -130,3 +130,52 @@ export function createLanCertificate(input: {
     sha256: NodeCrypto.createHash("sha256").update(certificateDer).digest("hex"),
   };
 }
+
+const CLIENT_AUTH = "1.3.6.1.5.5.7.3.2";
+
+/**
+ * The recipient's certificate as the listener's only trust anchor, or null.
+ *
+ * It arrives on the control channel as DER next to its hash. It is taken only when the
+ * bytes hash to that value and keep the profile this module issues: the fixed subject,
+ * self-signed, `CA: false`, `clientAuth` alone, no alternative name, a P-256 key and a
+ * life no longer than a generation plus five minutes each side.
+ */
+export function recipientAnchorPem(input: {
+  readonly derBase64: string;
+  readonly sha256: string;
+  readonly now: number;
+  readonly generationMs: number;
+}): string | null {
+  try {
+    const bytes = Buffer.from(input.derBase64, "base64");
+    const presented = NodeCrypto.createHash("sha256").update(bytes).digest();
+    const expected = Buffer.from(input.sha256, "hex");
+    if (expected.length !== 32 || !NodeCrypto.timingSafeEqual(presented, expected)) return null;
+    const certificate = new NodeCrypto.X509Certificate(bytes);
+    const from = Date.parse(certificate.validFrom);
+    const to = Date.parse(certificate.validTo);
+    const key = certificate.publicKey;
+    const name = `CN=${LAN_CERTIFICATE_SUBJECT}`;
+    if (
+      certificate.subject !== name ||
+      certificate.issuer !== name ||
+      certificate.ca ||
+      certificate.subjectAltName !== undefined ||
+      certificate.keyUsage?.length !== 1 ||
+      certificate.keyUsage[0] !== CLIENT_AUTH ||
+      key.asymmetricKeyType !== "ec" ||
+      key.asymmetricKeyDetails?.namedCurve !== "prime256v1" ||
+      !certificate.verify(key) ||
+      !Number.isFinite(from) ||
+      !Number.isFinite(to) ||
+      input.now < from ||
+      input.now >= to ||
+      to - from > input.generationMs + 11 * 60_000
+    )
+      return null;
+    return certificate.toString();
+  } catch {
+    return null;
+  }
+}
