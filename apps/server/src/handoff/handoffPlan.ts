@@ -592,7 +592,7 @@ export interface HandoffThreadFact {
   readonly brokenFolder: string | null;
   /**
    * Its model is on more than one track and no routing decision says which one
-   * it runs on (`trackOfThread`): an automatic move never guesses.
+   * it runs on (`trackOfThread`): the row stays, in both starts, until it is known.
    */
   readonly trackAmbiguous: boolean;
   readonly check: HandoffTargetCheck;
@@ -738,7 +738,10 @@ export function planThread(
   if (thread.brokenFolder !== null) {
     return stays("broken-folder", `Its folder's Git data is broken: ${thread.brokenFolder}`);
   }
-  if (!manual && thread.trackAmbiguous) {
+  // For both starts: by hand a person may accept an account that adds nothing or
+  // whose usage is unknown, never a track nobody can name. The check for such a
+  // thread names its model alone, and a target that can run the model proves no track.
+  if (thread.trackAmbiguous) {
     return stays(
       "track",
       "Its model is on more than one track, and nothing says which one it runs on.",
@@ -863,7 +866,7 @@ export function buildHandoffPlan(facts: HandoffPlanFacts): HandoffPlan {
  * The thread's track at the source. The routing decision that chose its model
  * names the track; a model can sit on both, so its name alone does not. Without
  * a decision the track is the one list that names the model, and when both do
- * it is not guessed: `ambiguous`, which no automatic move goes ahead on. Null
+ * it is not guessed: `ambiguous`, and such a row stays in both starts. Null
  * when the project is not on tracks or neither list names the model.
  */
 export function trackOfThread(input: {
