@@ -846,6 +846,11 @@ export const layerWithOptions = (
         readonly reason: ProviderSessionReleaseReason;
         /** Requests created later belong to a replacement session with the same id. */
         readonly releasedAt: DateTime.Utc;
+        /**
+         * A thread whose detach released this session. It already left the
+         * attachments, but its requests still wait on this session's callbacks.
+         */
+        readonly detachedThreadId?: ThreadId;
       }) =>
         Effect.gen(function* () {
           const providerSessionId = input.entry.runtime.providerSessionId;
@@ -856,8 +861,12 @@ export const layerWithOptions = (
               ? "Provider session failed before this runtime request was resolved."
               : "Provider session was closed before this runtime request was resolved.";
 
+          const threadIds = new Set(input.entry.attachedThreadIds);
+          if (input.detachedThreadId !== undefined) {
+            threadIds.add(input.detachedThreadId);
+          }
           const events: Array<OrchestrationV2DomainEvent> = [];
-          for (const threadId of input.entry.attachedThreadIds) {
+          for (const threadId of threadIds) {
             const projection = yield* projectionStore.getThreadRecords(
               threadId,
               ["runtimeRequests", "nodes", "turnItems"],
@@ -957,6 +966,7 @@ export const layerWithOptions = (
         readonly detail?: string;
         readonly releasedAt: DateTime.Utc;
         readonly replaced: boolean;
+        readonly detachedThreadId?: ThreadId;
       }) =>
         Effect.all(
           [
@@ -1115,6 +1125,8 @@ export const layerWithOptions = (
         readonly gracefulSubscribers?: boolean;
         /** Keep MCP credentials, as a server shutdown does (service update). */
         readonly keepMcpCredentials?: boolean;
+        /** The thread whose detach left this session without attachments. */
+        readonly detachedThreadId?: ThreadId;
       }) =>
         Effect.acquireUseRelease(
           removeLiveEntry(input),
@@ -1144,6 +1156,9 @@ export const layerWithOptions = (
                     entry,
                     reason: input.reason,
                     ...(input.detail === undefined ? {} : { detail: input.detail }),
+                    ...(input.detachedThreadId === undefined
+                      ? {}
+                      : { detachedThreadId: input.detachedThreadId }),
                     releasedAt,
                   };
                   const recorded = yield* Effect.exit(
@@ -2884,10 +2899,13 @@ export const layerWithOptions = (
               detached.value.attachedThreadIds.size === 0 &&
               !detached.value.supportsMultipleProviderThreads
             ) {
+              // The detached thread's approvals wait on this session's
+              // callbacks, which the release ends, so they are settled too.
               yield* releaseEntry({
                 providerSessionId: input.providerSessionId,
                 reason: "manual_shutdown",
                 ...(input.detail === undefined ? {} : { detail: input.detail }),
+                detachedThreadId: input.threadId,
               });
               return;
             }
