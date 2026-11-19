@@ -73,6 +73,7 @@ function Probe(props: {
   readOnly: boolean;
   third?: boolean;
   copies?: readonly OrchestratorCopy[];
+  reachOf?: (key: string) => "open" | "offline";
 }) {
   menu = useProjectSyncMenu({
     project: project("m4", "p"),
@@ -86,7 +87,8 @@ function Probe(props: {
       ...(props.third ? [{ environmentId: "mini" as never }] : []),
     ],
     projects: [project("m4", "p"), project("m5", "p")],
-    reachOf: () => "open",
+    nameOf: (environmentId) => environmentId,
+    reachOf: props.reachOf ?? (() => "open"),
     versionOf: () => null,
     ask: props.ask,
     readOnly: props.readOnly,
@@ -159,10 +161,12 @@ it("offers Sync between linked machines only, and lists a separate project greye
     ["m5", null],
     ["m1", "Separate project"],
   ]);
-  // Opening the menu never asks a machine that is not a member for its status.
+  // Opening the menu reads the separate project's status too, and asks nothing else of it.
   runAtomCommand.mockResolvedValue({ _tag: "Success", value: status("a".repeat(40)) });
   await act(async () => menu.onMenuOpenChange(true));
-  expect(runAtomCommand).toHaveBeenCalledTimes(2);
+  expect(runAtomCommand.mock.calls.map(([, command]) => command)).toEqual(
+    Array.from({ length: 3 }, () => "projectSync.status"),
+  );
 });
 
 it("has no Sync where the only other machine has the repository as a separate project", async () => {
