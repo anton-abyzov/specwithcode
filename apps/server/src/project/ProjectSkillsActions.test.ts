@@ -232,8 +232,6 @@ const fixture = (options: {
   readonly lock?: { version: string; pinnedVersion?: string };
   readonly rowLock?: (lockPath: string, home: string) => ProjectSkillLock | null;
   readonly projectMarker?: boolean;
-  readonly managed?: boolean;
-  readonly onPrepare?: () => void;
 }) =>
   Effect.gen(function* () {
     const root = yield* tempDir("project-skills-actions-");
@@ -261,16 +259,13 @@ const fixture = (options: {
       home,
       environment: {
         PATH: [
-          ...(options.managed ? [] : [bin, dirname(process.execPath)]),
+          bin,
+          dirname(process.execPath),
           ...(platform === "win32" ? [] : ["/usr/bin", "/bin"]),
         ].join(platform === "win32" ? ";" : ":"),
       },
       platform,
       backupDir: undefined,
-      prepareVskill: () => Effect.sync(() => {
-        options.onPrepare?.();
-        return { binary: join(bin, platform === "win32" ? "vskill.cmd" : "vskill"), nodeDir: dirname(process.execPath) };
-      }),
       resolveRow: () => Effect.succeed(ctx),
       agentControl: () => Effect.succeed(undefined),
       codexClient: () => Effect.die("no Codex in these tests"),
@@ -685,18 +680,5 @@ describe("ProjectSkillsActions with a stand-in vskill", () => {
         .pipe(Effect.flip);
       expect(noLock.reason).toBe("not_registry_skill");
     }).pipe(Effect.provide(live)),
-  );
-});
-
-it.layer(live)("managed Skills dependency fallback", (it) => {
-  it.effect.each([false, true])("uses the fallback only when vskill is missing: %s", (managed) =>
-    Effect.gen(function* () {
-      let prepared = 0;
-      const fx = yield* fixture({ managed, onPrepare: () => { prepared++; } });
-      yield* write(join(fx.bin, "next.lock"), lockText({ version: "1.2.0", pinnedVersion: "1.2.0" }));
-      yield* fx.service.action(action({ kind: "install-version", version: "1.2.0" }));
-      expect(prepared).toBe(managed ? 1 : 0);
-      expect(yield* readOr(fx.lockPath)).toContain('"1.2.0"');
-    }),
   );
 });

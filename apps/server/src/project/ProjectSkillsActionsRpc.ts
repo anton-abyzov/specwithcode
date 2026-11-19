@@ -25,9 +25,6 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ServerConfig from "../config.ts";
-import { prepareManagedVskill } from "../machineTools/vskillTool.ts";
-import { runsOnGlibc } from "../machineTools/machineTools.ts";
-import { makeNodeProvisionHost } from "../provision/host.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as FleetTargets from "../fleet/FleetTargets.ts";
@@ -112,10 +109,6 @@ const layerSkillsActionsRpcHandlers = WsProjectSkillsActionsRpcGroup.middleware(
         home,
         environment: hostEnvironment,
         platform,
-        prepareVskill: () => Effect.tryPromise({
-          try: () => prepareManagedVskill({ host: makeNodeProvisionHost(), home: config.baseDir, glibc: runsOnGlibc() }),
-          catch: (cause) => cause instanceof Error ? cause : new Error(String(cause)),
-        }),
         backupDir: path.join(config.stateDir, "skills", "backups"),
         resolveRow,
         agentControl: (instanceId) =>
@@ -174,6 +167,7 @@ const layerSkillsActionsRpcHandlers = WsProjectSkillsActionsRpcGroup.middleware(
         environment: hostEnvironment,
         platform,
         stateDir: config.stateDir,
+        baseDir: config.baseDir,
         skills,
         registry,
         machineName: environment.getDescriptor.pipe(Effect.map((descriptor) => descriptor.label)),

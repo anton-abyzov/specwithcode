@@ -17,6 +17,8 @@ export async function prepareManagedVskill(input: {
   readonly host: ProvisionHost;
   readonly home: string;
   readonly glibc: boolean;
+  /** Bounded platform runner, supplied by the live RPC boundary. */
+  readonly runNpm: ProvisionHost["exec"];
 }): Promise<PreparedVskill> {
   const { host, home } = input;
   const windows = host.platform === "win32";
@@ -25,11 +27,20 @@ export async function prepareManagedVskill(input: {
     home, platform: host.platform, arch: host.arch, glibc: input.glibc,
   });
   const pathKey = Object.keys(host.env).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
-  const searchPath = [...dirs, host.env[pathKey] ?? ""].join(windows ? ";" : ":");
-  const node = await host.which("node", searchPath);
+  const searchDirs = [...dirs, ...(host.env[pathKey] ?? "").split(windows ? ";" : ":")]
+    .map((dir) => dir.replace(/^"(.*)"$/, "$1"))
+    .filter((dir) => path.isAbsolute(dir));
+  const locate = async (name: string) => {
+    for (const dir of searchDirs) {
+      const candidate = path.join(dir, name);
+      if (await host.isExecutable(candidate)) return candidate;
+    }
+    return null;
+  };
+  const node = await locate(windows ? "node.exe" : "node");
   if (node === null) throw new Error("Skills needs Node.js. Install Node.js in Settings > Machine setup, then try again.");
   const nodeDir = path.dirname(node);
-  const existing = await host.which("vskill", searchPath);
+  const existing = await locate(windows ? "vskill.cmd" : "vskill");
   if (existing !== null) return { binary: existing, nodeDir };
   const prefix = path.join(home, "tools", "vskill", VSKILL_VERSION);
   const commandAt = (root: string) => windows ? path.join(root, "vskill.cmd") : path.join(root, "bin", "vskill");
@@ -51,7 +62,7 @@ export async function prepareManagedVskill(input: {
     if (await valid(prefix)) return { binary: commandAt(prefix), nodeDir };
     await host.remove(staging);
     await host.mkdirp(staging);
-    const result = await host.exec(node, [npm, "install", "--global", "--prefix", staging,
+    const result = await input.runNpm(node, [npm, "install", "--global", "--prefix", staging,
       "--no-audit", "--no-fund", "--bin-links=true", "--loglevel=error", `vskill@${VSKILL_VERSION}`], {
       timeoutMs: 120_000,
       env: { [pathKey]: [nodeDir, host.env[pathKey] ?? "", ...(windows ? [] : ["/usr/bin", "/bin"])].filter(Boolean).join(windows ? ";" : ":") },
@@ -62,7 +73,7 @@ export async function prepareManagedVskill(input: {
     await host.rename(staging, prefix);
     return { binary: commandAt(prefix), nodeDir };
   } finally {
-    await host.remove(staging);
-    await release();
+    try { await host.remove(staging); }
+    finally { await release(); }
   }
 }

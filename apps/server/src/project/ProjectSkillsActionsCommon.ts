@@ -71,8 +71,6 @@ export interface ProjectSkillsActionsDeps {
   readonly platform: NodeJS.Platform;
   /** Settings backups; absent, a write keeps none. */
   readonly backupDir: string | undefined;
-  /** Prepare the app-owned dependency when an explicit action needs it. */
-  readonly prepareVskill?: (() => Effect.Effect<{ readonly binary: string; readonly nodeDir: string }, Error>) | undefined;
   /** The row named `skill` in the folder, read as the Skills view reads it. */
   readonly resolveRow: (
     input: SkillTarget,
