@@ -5282,6 +5282,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             },
           },
           { type: "emit_inbound", label: "turn/interrupt accepted", frame: { id: 6, result: {} } },
+          {
+            type: "emit_inbound",
+            label: "the native turn ends",
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: BG_NATIVE_THREAD,
+                turn: makeCodexReplayTurn({ id: BG_NATIVE_TURN, status: "interrupted" }),
+              },
+            },
+          },
         ],
       });
       const requests: string[] = [];
@@ -5400,6 +5411,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               label: "turn/interrupt accepted",
               frame: { id: 5, result: {} },
             },
+            {
+              type: "emit_inbound",
+              label: "the native turn ends",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: BG_NATIVE_THREAD,
+                  turn: makeCodexReplayTurn({ id: BG_NATIVE_TURN, status: "interrupted" }),
+                },
+              },
+            },
           ],
         });
         const requests: string[] = [];
@@ -5448,7 +5470,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const appThreadId = harness.providerThread.appThreadId;
         assert.isNotNull(appThreadId);
         assert.isTrue(stopTeardownPending(appThreadId!));
-        // Its retry (the folder flow's Stop) interrupts the native turn again.
+        // Its retry interrupts the native turn again and waits for Codex to report it ended.
         assert.isTrue(yield* Effect.promise(() => retryFailedStopTeardown(appThreadId!)));
         assert.equal(requests.filter((method) => method === "turn/interrupt").length, 2);
         assert.isFalse(stopTeardownPending(appThreadId!));
@@ -7166,11 +7188,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.isDefined(lastBoundaryUpdate);
         assert.equal(lastBoundaryUpdate.turnItem.status, "interrupted");
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        // Codex never said the native turn ended, and its foreground command has no
+        // terminal: the folder change waits for the native completion.
+        const appThreadId = harness.providerThread.appThreadId;
+        assert.isNotNull(appThreadId);
+        assert.isTrue(stopTeardownPending(appThreadId!));
 
         yield* TestClock.adjust("20 seconds");
         for (let attempt = 0; attempt < 100; attempt++) {
           yield* Effect.yieldNow;
         }
+        assert.isTrue(yield* Effect.promise(() => retryFailedStopTeardown(appThreadId!)));
+        assert.isFalse(stopTeardownPending(appThreadId!));
         assert.lengthOf(harness.terminalEvents(), 1);
         assert.lengthOf(
           harness.events.filter(

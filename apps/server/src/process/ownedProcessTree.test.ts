@@ -735,6 +735,116 @@ describe("OwnedProcessTree.end", () => {
     expect(await tree.end()).toEqual({ found: 1, survivors: 0, unknown: false });
     expect(kills).toEqual([[201], [202]]);
   });
+
+  describe("POSIX Stop while the group winds down", () => {
+    const group = 200;
+    const entry = (
+      pid: number,
+      ppid: number,
+      pgid: number,
+      started = "original",
+    ): ProcessEntry => ({
+      pid,
+      ppid,
+      pgid,
+      started,
+      command: `p${pid}`,
+    });
+    const fixture = (
+      read: (time: number) => ProcessEntry[] | undefined,
+      live: (pid: number) => boolean,
+      apply: (pid: number, signal: NodeJS.Signals) => void,
+    ) => {
+      let time = 0;
+      const signals: string[] = [];
+      const host: TreeHost = {
+        platform: "darwin",
+        selfPid: 100,
+        readProcessList: async () => read(time),
+        signal: (pid, signal) => {
+          if (signal === 0) {
+            if (live(pid)) return;
+            throw Object.assign(new Error("No such process"), { code: "ESRCH" });
+          }
+          signals.push(`${signal} ${pid}`);
+          apply(pid, signal);
+        },
+        killVerified: async () => {
+          throw new Error("no Windows kill on POSIX");
+        },
+        sleep: async (ms) => {
+          time += ms;
+        },
+        now: () => time,
+      };
+      return {
+        tree: new OwnedProcessTree({ pid: group, spawnedAt: 0, alive: () => false }, host),
+        signals,
+        now: () => time,
+      };
+    };
+
+    it.each(["parent exits during grace", "escalation read fails"] as const)(
+      "ends a detached helper a member starts on SIGTERM (%s)",
+      async (variant) => {
+        let peer = true;
+        let helper = false;
+        let parentExitAt = Infinity;
+        const f = fixture(
+          (now) => {
+            if (variant === "escalation read fails" && now >= 4_000 && peer) return undefined;
+            return [
+              ...(now < parentExitAt ? [entry(201, 1, group)] : []),
+              ...(peer ? [entry(203, 1, group)] : []),
+              ...(helper ? [entry(202, now < parentExitAt ? 201 : 1, 202)] : []),
+            ];
+          },
+          (pid) => pid === -group && (peer || f.now() < parentExitAt),
+          (pid, signal) => {
+            if (pid === -group && signal === "SIGTERM") {
+              helper = true;
+              if (variant === "parent exits during grace") parentExitAt = 2_000;
+            }
+            if (pid === -group && signal === "SIGKILL") {
+              peer = false;
+              parentExitAt = Math.min(parentExitAt, f.now());
+            }
+            if (pid === 202) helper = false;
+          },
+        );
+        const result = await f.tree.end();
+        expect(helper).toBe(false);
+        expect(f.signals).toContain("SIGKILL 202");
+        expect(result.survivors).toBe(0);
+      },
+    );
+
+    it("never signals a group whose id was recycled during a retry, nor its child", async () => {
+      const original = entry(201, 1, group);
+      const unrelated = entry(group, 1, group, "reused");
+      const child = entry(211, group, 211, "reused");
+      let table = [original];
+      let attempt = 1;
+      let reads = 0;
+      const f = fixture(
+        () => {
+          if (attempt === 2 && ++reads === 2) table = [unrelated, child];
+          return table;
+        },
+        (pid) => pid === -group && table.some((row) => row.pgid === group),
+        () => {},
+      );
+      expect(await f.tree.end(1_000)).toEqual({ found: 1, survivors: 1, unknown: false });
+      attempt = 2;
+      const before = f.signals.length;
+      const retry = await f.tree.end(1_000);
+      const sent = f.signals.slice(before);
+      expect(sent).not.toContain("SIGKILL 211");
+      expect(sent).not.toContain("SIGTERM 211");
+      expect(sent).not.toContain("SIGKILL -200");
+      expect(retry.unknown).toBe(true);
+    });
+  });
 });
 
 function alive(pid: number) {

@@ -547,23 +547,51 @@ export class OwnedProcessTree {
     // The group's members this end saw: one that leaves the group (setsid on SIGTERM)
     // empties it without ending, so an empty group is checked against them by identity.
     const seenMembers = groupUsable ? (members ?? []) : [];
+    // The group id still names the CLI's group only while a member this end saw is in it;
+    // once they are all gone the id may be recycled, so the group is no longer walked or
+    // signalled.
+    const ownsGroup = (now: ReadonlyArray<ProcessEntry>) =>
+      groupUsable &&
+      !this.groupRetired &&
+      now.some(
+        (entry) => entry.pgid === this.root.pid && this.groupSeen.get(entry.pid) === entry.started,
+      );
+    // Reads the table: members that left the group, and what any known process started
+    // since (a helper launched on SIGTERM), become escapees while their parents still run.
+    const refresh = (now: ReadonlyArray<ProcessEntry>) => {
+      const pgids = new Map(now.map((entry) => [entry.pid, entry.pgid]));
+      const leavers = stillRunning(seenMembers, now).filter(
+        (entry) => entry.pid !== host.selfPid && pgids.get(entry.pid) !== this.root.pid,
+      );
+      const owned = ownsGroup(now);
+      // Members joined since (forked by a seen member) carry the group's continuity on.
+      if (owned) {
+        for (const entry of now) {
+          if (entry.pgid === this.root.pid && entry.pid !== host.selfPid) {
+            this.groupSeen.set(entry.pid, entry.started);
+          }
+        }
+      }
+      if (!owned && groupUsable && !this.groupRetired && groupAlive()) {
+        // Members are listed in the group, but none this end saw: not provably the CLI's.
+        groupUsable = false;
+        unknown = true;
+      }
+      escapees = withDescendants(now, leavers, owned);
+    };
     const settled = async (until: number) => {
       while (host.now() < until) {
-        if (!groupAlive()) {
-          if (escapees.length === 0 && seenMembers.length === 0) return true;
-          const now = await this.read(Math.min(until, deadline));
-          if (now === undefined) {
-            // Nothing tells whether a member left the group instead of ending.
-            if (seenMembers.length > 0) unknown = true;
-            if (escapees.length === 0) return true;
-          } else {
-            const pgids = new Map(now.map((entry) => [entry.pid, entry.pgid]));
-            const leavers = stillRunning(seenMembers, now).filter(
-              (entry) => entry.pid !== host.selfPid && pgids.get(entry.pid) !== this.root.pid,
-            );
-            escapees = withDescendants(now, leavers);
-            if (escapees.length === 0) return true;
-          }
+        const alive = groupAlive();
+        if (!alive && escapees.length === 0 && seenMembers.length === 0) return true;
+        const now = await this.read(Math.min(until, deadline));
+        if (now === undefined) {
+          // Nothing tells whether a member left the group, or started a helper, instead
+          // of ending.
+          if (seenMembers.length > 0 || escapees.length > 0) unknown = true;
+          if (!groupAlive() && escapees.length === 0) return true;
+        } else {
+          refresh(now);
+          if (!groupAlive() && escapees.length === 0) return true;
         }
         await host.sleep(Math.max(0, Math.min(200, until - host.now())));
       }
@@ -577,8 +605,10 @@ export class OwnedProcessTree {
       // What a member started on SIGTERM outside the group (a detached helper) is read
       // while the member still runs: once SIGKILL ends it, the helper names no parent.
       const now = await this.read(deadline);
-      if (now !== undefined) escapees = withDescendants(now, [], groupUsable);
-      this.signalGroup("SIGKILL");
+      if (now === undefined) {
+        if (seenMembers.length > 0) unknown = true;
+      } else refresh(now);
+      if (groupAlive()) this.signalGroup("SIGKILL");
     }
     await signalEscapees("SIGKILL");
     if (await settled(deadline)) return settle(0);

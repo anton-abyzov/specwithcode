@@ -2103,6 +2103,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           new Map<string, Map<string, CodexDynamicToolItem>>(),
         );
         const interruptingNativeTurns = yield* Ref.make(new Set<string>());
+        // Native turns Codex reported ended, even after a local finalizer forgot them: a
+        // Stop that Codex never confirmed holds the folder change until its turn is here.
+        const nativelyEndedTurns = new Set<string>();
         const terminalizedNonCompletedNativeTurns = yield* Ref.make(new Set<string>());
         // Keep the run event stream open until descendant provider state is
         // terminal, otherwise the root terminal can strand child projections.
@@ -6110,6 +6113,10 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
 
         yield* client.handleServerNotification("turn/completed", (payload) =>
           Effect.gen(function* () {
+            nativelyEndedTurns.add(payload.turn.id);
+            if (nativelyEndedTurns.size > 1_000) {
+              nativelyEndedTurns.delete(nativelyEndedTurns.values().next().value!);
+            }
             const context = (yield* Ref.get(activeTurns)).get(payload.turn.id);
             if (context === undefined) {
               return;
@@ -7075,6 +7082,57 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   ),
                 );
               };
+              // A native turn Codex never confirmed ended may still run a foreground command,
+              // which has no terminal to end. The folder change waits until Codex reports
+              // the turn ended, says it has no such turn, or its app-server is gone; an
+              // accepted interrupt alone proves nothing.
+              const holdUntilNativeTurnEnds = (context: ActiveCodexTurnContext) => {
+                if (appThreadId === null) return;
+                const nativeTurnId = context.nativeTurnId;
+                holdFailedStopTeardown(appThreadId, () =>
+                  Effect.runPromise(
+                    Effect.gen(function* () {
+                      if (nativelyEndedTurns.has(nativeTurnId)) return true;
+                      const nativeThreadId = yield* getNativeThreadId(context.providerThread).pipe(
+                        Effect.option,
+                      );
+                      if (Option.isNone(nativeThreadId)) return false;
+                      const answer = yield* client
+                        .request("turn/interrupt", {
+                          threadId: nativeThreadId.value,
+                          turnId: nativeTurnId,
+                        })
+                        .pipe(
+                          Effect.as("accepted" as const),
+                          Effect.catchTags({
+                            CodexAppServerProcessExitedError: () =>
+                              Effect.succeed("ended" as const),
+                            CodexAppServerInputStreamEndedError: () =>
+                              Effect.succeed("ended" as const),
+                            // The native turn has ended, or the thread was unloaded, which
+                            // ends its work too.
+                            CodexAppServerRequestError: (error) =>
+                              Effect.succeed(
+                                error.code === -32600 &&
+                                  (error.errorMessage.startsWith("no active turn") ||
+                                    error.errorMessage.startsWith("thread not found:"))
+                                  ? ("ended" as const)
+                                  : ("refused" as const),
+                              ),
+                          }),
+                          Effect.orElseSucceed(() => "refused" as const),
+                        );
+                      if (answer === "ended") return true;
+                      if (answer === "refused") return false;
+                      for (let waited = 0; waited < 5_000; waited += 100) {
+                        if (nativelyEndedTurns.has(nativeTurnId)) return true;
+                        yield* Effect.sleep("100 millis");
+                      }
+                      return nativelyEndedTurns.has(nativeTurnId);
+                    }),
+                  ),
+                );
+              };
               // Set once the terminal cleanup below has run; until then a failed Stop ends
               // the tracked terminals itself, before the lineage finalizer forgets them.
               let terminalsHandled = false;
@@ -7117,43 +7175,13 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 );
                 // A native turn Codex never confirmed ended (its interrupt was refused) may
                 // still run a foreground command, which has no terminal to end. The finalizer
-                // below forgets it, so the folder change waits until Codex takes an
-                // interrupt for it or its app-server is gone.
+                // below forgets it, so the folder change waits until Codex reports it ended.
                 if (appThreadId !== null) {
                   const live = yield* Ref.get(activeTurns);
                   for (const target of interruptTargets) {
                     const context = target.context;
                     if (live.get(context.nativeTurnId) !== context) continue;
-                    const nativeThreadId = yield* getNativeThreadId(context.providerThread).pipe(
-                      Effect.option,
-                    );
-                    holdFailedStopTeardown(appThreadId, () =>
-                      Option.isNone(nativeThreadId)
-                        ? Promise.resolve(false)
-                        : Effect.runPromise(
-                            client
-                              .request("turn/interrupt", {
-                                threadId: nativeThreadId.value,
-                                turnId: context.nativeTurnId,
-                              })
-                              .pipe(
-                                Effect.as(true),
-                                Effect.catchTags({
-                                  CodexAppServerProcessExitedError: () => Effect.succeed(true),
-                                  CodexAppServerInputStreamEndedError: () => Effect.succeed(true),
-                                  // The native turn has ended (its command with it), or the
-                                  // thread was unloaded, which ends its work too.
-                                  CodexAppServerRequestError: (error) =>
-                                    Effect.succeed(
-                                      error.code === -32600 &&
-                                        (error.errorMessage.startsWith("no active turn") ||
-                                          error.errorMessage.startsWith("thread not found:")),
-                                    ),
-                                }),
-                                Effect.orElseSucceed(() => false),
-                              ),
-                          ),
-                    );
+                    holdUntilNativeTurnEnds(context);
                   }
                 }
               }).pipe(Effect.catchCause(() => Effect.void));
@@ -7386,6 +7414,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                       providerTurnId: context.providerTurnId,
                       nativeTurnId: context.nativeTurnId,
                     });
+                    // The finalizer below settles the turn here; Codex never said it ended.
+                    holdUntilNativeTurnEnds(context);
                   }
                 }
 
