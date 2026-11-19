@@ -91,6 +91,12 @@ export interface Machine {
      * between two reads of one pass.
      */
     beforeRevisionsRead: Effect.Effect<void> | null;
+    /**
+     * Runs once, just before this machine next reads every runner record: where
+     * a change lands between a list's read of the rows and its read of what
+     * each row is to its runner.
+     */
+    beforeRecordsRead: Effect.Effect<void> | null;
   };
   readonly sql: SqlClient.SqlClient;
   readonly service: Service.ScheduledTaskService["Service"];
@@ -231,6 +237,7 @@ export const fleet = (
           listFails: false,
           unlinked: new Set(),
           beforeRevisionsRead: null,
+          beforeRecordsRead: null,
         };
         // The binding this copy's project row carries, as the release before wrote it.
         const binding = () =>
@@ -348,11 +355,20 @@ export const fleet = (
           apply: (target, self, args: Array<unknown>) => {
             const statement = Reflect.apply(target as never, self, args) as Effect.Effect<unknown>;
             const text = Array.isArray(args[0]) ? args[0].join("?") : "";
-            if (!/SELECT task_id, revision FROM scheduled_task_revisions\s*$/.test(text))
+            const records =
+              /FROM scheduled_task_runners r\s+LEFT JOIN scheduled_task_copy_definitions d ON d\.task_id = r\.task_id\s*$/.test(
+                text,
+              );
+            if (
+              !records &&
+              !/SELECT task_id, revision FROM scheduled_task_revisions\s*$/.test(text)
+            )
               return statement;
             return Effect.suspend(() => {
-              const hook = state.beforeRevisionsRead ?? Effect.void;
-              state.beforeRevisionsRead = null;
+              const hook =
+                (records ? state.beforeRecordsRead : state.beforeRevisionsRead) ?? Effect.void;
+              if (records) state.beforeRecordsRead = null;
+              else state.beforeRevisionsRead = null;
               return hook;
             }).pipe(Effect.andThen(statement));
           },

@@ -8,12 +8,14 @@ import { assert, it } from "@effect/vitest";
 import type { ScheduledTask } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
-import { readRunStates } from "../project/CoordinatorPlannedHandover.ts";
+import { readRunStates, writeRunStates } from "../project/CoordinatorPlannedHandover.ts";
+import { routineCopyOf } from "./ScheduledTaskCopies.ts";
 import { receiver379, wouldFire379 } from "./ScheduledTaskRunner.release379.testkit.ts";
 import { fleet, type Machine, ROUTINE } from "./ScheduledTaskRunner.testkit.ts";
 import { taskInput } from "./ScheduledTaskService.coordinatorGate.testkit.ts";
@@ -297,4 +299,246 @@ it.effect(
       assert.equal(alpha.fires(), 0);
       assert.equal(gamma.fires(), 0);
     }),
+);
+
+// --- what a list shows is one read ---------------------------------------------------------
+
+it.effect("a list never shows one definition's fields with another's hash", () =>
+  Effect.gen(function* () {
+    yield* at(NOON);
+    const { machines } = yield* fleet(["alpha", "beta"]);
+    const [alpha, beta] = machines as [Machine, Machine];
+    yield* alpha.seed();
+    yield* beta.seed();
+    yield* settle(alpha);
+    yield* alpha.service.upsert(
+      taskInput({ id: ROUTINE, projectId: alpha.projectId, prompt: NEW_PROMPT }),
+    );
+    // The runner's new definition reaches beta after beta's list read its rows
+    // and before it reads what each row is to its runner. It runs on its own,
+    // as another request does.
+    const refresh: { fiber: Fiber.Fiber<unknown, unknown> | null } = { fiber: null };
+    beta.state.beforeRecordsRead = Effect.gen(function* () {
+      const fiber = yield* Effect.forkDetach(settle(alpha));
+      refresh.fiber = fiber;
+      for (let turn = 0; turn < 2_000 && fiber.pollUnsafe() === undefined; turn++)
+        yield* Effect.yieldNow;
+    });
+    const form = yield* listed(beta);
+    assert.isNotNull(refresh.fiber);
+    yield* Fiber.await(refresh.fiber!);
+    const after = yield* listed(beta);
+    assert.equal(after.prompt, NEW_PROMPT);
+    // Old fields with the old hash, or new with new: never one of each.
+    assert.equal(form.prompt === after.prompt, form.definitionHash === after.definitionHash);
+    // So a title changed on that form never puts the old prompt back.
+    yield* beta.service
+      .upsert(
+        taskInput({
+          id: ROUTINE,
+          projectId: beta.projectId,
+          title: "Only the title",
+          prompt: form.prompt,
+          ...seenOn(form),
+        }),
+      )
+      .pipe(Effect.result);
+    assert.equal((yield* listed(alpha)).prompt, NEW_PROMPT);
+  }),
+);
+
+// --- a rename from a capped copy -----------------------------------------------------------
+
+/** A title-only save as each client builds it from the routine its list showed. */
+const renameFrom = (client: "mcp" | "mobile", machine: Machine, shown: ScheduledTask) =>
+  machine.service
+    .upsert(
+      client === "mcp"
+        ? {
+            // update_scheduled_task: every field it was not given comes from its read.
+            id: shown.id,
+            title: "Renamed",
+            prompt: shown.prompt,
+            enabled: shown.enabled,
+            schedule: shown.schedule as never,
+            projectId: shown.projectId,
+            threadId: shown.threadId,
+            workspaceStrategy: shown.workspaceStrategy,
+            modelSelection: shown.modelSelection,
+            runtimeMode: shown.runtimeMode,
+            interactionMode: shown.interactionMode,
+            createdBy: shown.createdBy,
+            creationSource: shown.creationSource,
+            ...seenOn(shown),
+          }
+        : {
+            // The mobile form: the draft it opened on, saved whole.
+            id: shown.id,
+            requireExisting: true,
+            title: "Renamed",
+            prompt: shown.prompt,
+            projectId: shown.projectId,
+            modelSelection: shown.modelSelection,
+            schedule: shown.schedule as never,
+            enabled: shown.enabled,
+            threadId: shown.threadId,
+            workspaceStrategy: shown.workspaceStrategy,
+            runtimeMode: shown.runtimeMode,
+            interactionMode: shown.interactionMode,
+            creationSource: shown.creationSource,
+            ...seenOn(shown),
+          },
+    )
+    .pipe(Effect.result);
+
+for (const client of ["mcp", "mobile"] as const)
+  it.effect(`a rename from a capped copy keeps how its runner runs the routine (${client})`, () =>
+    Effect.gen(function* () {
+      yield* at(NOON);
+      const { machines, network } = yield* fleet(["alpha", "beta"]);
+      const [alpha, beta] = machines as [Machine, Machine];
+      (network as { ceiling?: (from: string, to: string) => string }).ceiling = (from, to) =>
+        from === "alpha" && to === "beta" ? "auto-accept-edits" : "full-access";
+      yield* alpha.seed();
+      yield* beta.seed();
+      yield* settle(alpha);
+      const shown = yield* listed(beta);
+      assert.equal(shown.runtimeMode, "auto-accept-edits");
+      assert.equal((yield* renameFrom(client, beta, shown))._tag, "Success");
+      const runner = yield* listed(alpha);
+      assert.equal(runner.title, "Renamed");
+      // The copy showed its own ceiling; the caller changed the title and nothing else.
+      assert.equal(runner.runtimeMode, "full-access");
+      // A mode the caller did change is taken.
+      yield* settle(alpha);
+      const again = yield* listed(beta);
+      const lowered = yield* renameFrom(client, beta, {
+        ...again,
+        runtimeMode: "approval-required",
+      });
+      assert.equal(lowered._tag, "Success");
+      assert.equal((yield* listed(alpha)).runtimeMode, "approval-required");
+    }),
+  );
+
+// --- a copy that became the runner ---------------------------------------------------------
+
+it.effect("a delete made on an older definition is refused once the copy runs the routine", () =>
+  Effect.gen(function* () {
+    yield* at(NOON);
+    const { machines } = yield* fleet(["alpha", "beta"]);
+    const [alpha, beta] = machines as [Machine, Machine];
+    yield* alpha.seed();
+    yield* beta.seed();
+    yield* settle(alpha);
+    // Listed on beta while alpha runs it.
+    const seen = yield* listed(beta);
+    yield* alpha.service.upsert(
+      taskInput({ id: ROUTINE, projectId: alpha.projectId, prompt: NEW_PROMPT }),
+    );
+    const task = yield* listed(alpha);
+    const moved = yield* alpha.transfer!.moveOut({
+      task,
+      target: beta.environmentId,
+      targetLabel: beta.name,
+      copy: routineCopyOf({ ...task, ownThread: true })!,
+      boundThreadId: null,
+    });
+    assert.equal(moved.kind, "moved");
+    assert.equal((yield* listed(beta)).prompt, NEW_PROMPT);
+    // The delete names what beta showed before the change, and no revision.
+    const stale = yield* beta.service
+      .delete({ id: ROUTINE, expectedDefinition: seen.definitionHash })
+      .pipe(Effect.result);
+    assert.isTrue(yield* found(beta));
+    assert.equal(messageOf(stale), STALE);
+    const off = yield* beta.service
+      .setEnabled({ id: ROUTINE, enabled: false, expectedDefinition: seen.definitionHash })
+      .pipe(Effect.result);
+    assert.equal(messageOf(off), STALE);
+    assert.isTrue((yield* listed(beta)).enabled);
+    // One that names nothing is this machine's own change, as before.
+    assert.equal((yield* beta.service.delete({ id: ROUTINE }).pipe(Effect.result))._tag, "Success");
+  }),
+);
+
+// --- a handover to a machine that keeps runner records -------------------------------------
+
+/** Alpha collects answers: beta rests its copy, gamma's answer is lost. The slot is due. */
+const collecting = Effect.gen(function* () {
+  yield* at(NOON);
+  const made = yield* fleet(["alpha", "beta", "gamma"]);
+  const [alpha, beta, gamma] = made.machines as [Machine, Machine, Machine];
+  for (const machine of made.machines) yield* machine.seed();
+  made.network.dropAnswer = (_from, to, op) => to === "gamma" && op === "runner-disarm";
+  yield* settle(alpha);
+  assert.equal((yield* alpha.record)?.state, "settling");
+  assert.equal((yield* beta.record)?.state, "disarmed");
+  made.network.dropAnswer = () => false;
+  yield* alpha.makeDue(DUE);
+  return { ...made, alpha, beta, gamma };
+});
+const handoverSnapshot = (alpha: Machine, beta: Machine) =>
+  Effect.gen(function* () {
+    const copies = yield* alpha.service.routineCopies!();
+    return yield* copies.snapshot({
+      projectId: alpha.projectId,
+      logicalProjectId: "logical-a",
+      recipient: beta.environmentId,
+      handover: true,
+    } as Parameters<typeof copies.snapshot>[0]);
+  });
+
+it.effect("a handover leaves the routine running when the old coordinator goes at once", () =>
+  Effect.gen(function* () {
+    const { alpha, beta, gamma, network } = yield* collecting;
+    const snapshot = yield* handoverSnapshot(alpha, beta);
+    // Beta takes the handover as this release does: the routines, then their run states.
+    const copies = yield* beta.service.routineCopies!();
+    yield* copies.replace({
+      projectId: beta.projectId,
+      logicalProjectId: "logical-a",
+      routines: snapshot?.routines ?? [],
+    });
+    yield* writeRunStates(
+      beta.projectId,
+      yield* readRunStates(alpha.projectId, [ROUTINE]).pipe(
+        Effect.provideService(SqlClient.SqlClient, alpha.sql),
+        Effect.orDie,
+      ),
+    ).pipe(Effect.provideService(SqlClient.SqlClient, beta.sql), Effect.orDie);
+    // Acknowledged. Alpha is gone before it looks at anything again.
+    network.offline.add("alpha");
+    alpha.state.role = { active: false, epoch: 2, state: "transferred" };
+    beta.state.role = { active: true, epoch: 2, state: "active" };
+    yield* beta.due;
+    yield* gamma.due;
+    assert.equal(beta.fires(), 1);
+    assert.equal(gamma.fires(), 0);
+    assert.isNull(yield* beta.record);
+    assert.equal((yield* beta.row)?.enabled, 1);
+  }),
+);
+
+it.effect("a handover is not gathered while the recipient may still rest its copy", () =>
+  Effect.gen(function* () {
+    const { alpha, beta, network } = yield* collecting;
+    // Beta is told to follow the coordinator again; whether it did is not known.
+    network.dropAnswer = (_from, to, op) => to === "beta" && op === "runner-rearm";
+    const unknown = yield* handoverSnapshot(alpha, beta).pipe(Effect.result);
+    assert.equal(unknown._tag, "Failure");
+    // Not told at all: the same, and beta still rests for alpha.
+    network.dropAnswer = () => false;
+    network.offline.add("beta");
+    const unreached = yield* handoverSnapshot(alpha, beta).pipe(Effect.result);
+    assert.equal(unreached._tag, "Failure");
+    network.offline.delete("beta");
+    // Reached again, the routine goes on, and beta follows the coordinator.
+    const sent = yield* handoverSnapshot(alpha, beta);
+    assert.deepEqual(
+      (sent?.routines ?? []).map((routine) => routine.enabled),
+      [true],
+    );
+    assert.isNull(yield* beta.record);
+  }),
 );
