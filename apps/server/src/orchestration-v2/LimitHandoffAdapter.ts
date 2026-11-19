@@ -25,9 +25,11 @@ import {
   type ThreadId,
 } from "@specweave-studio/contracts";
 import { formatModelSlugName } from "@specweave-studio/shared/model";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { handoffLine } from "../handoff/handoffLine.ts";
 import { HandoffMode } from "../handoff/HandoffMode.ts";
 import { type HandoffPeerError, HandoffPeers } from "../handoff/handoffPeers.ts";
 import type { PeerCheckRequest, PeerCheckResponse } from "../handoff/handoffPlan.ts";
@@ -74,15 +76,20 @@ export interface LimitHandoffAdapterDeps {
  * M4 · continued on Minis with Claude Opus 5.5", then what 0967 reported
  * (files not carried over). Pure, for tests.
  */
-export function limitHandoffNote(request: LimitHandoffRequest, result: HandOffResult): string {
+export function limitHandoffNote(
+  request: LimitHandoffRequest,
+  result: HandOffResult,
+  at: { readonly atMs: number; readonly timeZone?: DateTime.TimeZone },
+): string {
   const started = result.modelSelection ?? request.modelSelection;
   const model =
     started.model === request.modelSelection.model && request.modelLabel !== undefined
       ? request.modelLabel
       : formatModelSlugName(started.model);
+  // The same line the destination writes (1390 AC-28), then the model and 0967's notice.
   const parts = [
-    request.sourceSummary,
-    `continued on ${result.machineLabel} with ${model}`,
+    handoffLine({ machineLabel: result.machineLabel, reason: request.sourceSummary, ...at }),
+    `with ${model}`,
     ...(result.notice === null ? [] : [result.notice]),
   ];
   const note = parts.join(" · ").trim();
@@ -250,7 +257,9 @@ export function makeLimitHandoffPort(deps: LimitHandoffAdapterDeps): LimitHandof
             yield* deps.recordNote({
               threadId: request.threadId,
               continuation: answer.success.threadId,
-              note: limitHandoffNote(request, answer.success),
+              note: limitHandoffNote(request, answer.success, {
+                atMs: DateTime.toEpochMillis(yield* DateTime.now),
+              }),
             });
           }
           return {

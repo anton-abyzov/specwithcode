@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - disposable real Git fixtures only.
 /**
  * The line an automatic hand off leaves in the thread on both machines (1390
  * AC-28): "Handed off to M5 at 14:02: Claude usage limit on m4". The source
