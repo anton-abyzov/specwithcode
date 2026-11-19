@@ -348,23 +348,61 @@ describe("OwnedProcessTree.end", () => {
     );
     expect(await tree.end(1_000)).toMatchObject({ unknown: true });
     expect(calls).toEqual([]);
-    // A retry that lists a member started before the exit ends the group: the CLI held
-    // the id then, so the member is the tree's.
+  });
+
+  it.each([
+    ["a member started before the exit, a minute after it", false],
+    ["a member seen while the CLI ran, a minute after the exit", true],
+  ] as const)("signals a reaped CLI's group only on proof: %s", async (_, rememberedFirst) => {
+    const exitedAt = Date.UTC(2026, 10, 19, 12);
     const member = {
-      ...posix(202, 1, 200, "member"),
+      ...posix(202, 200, 200, "member"),
       started: new Date(exitedAt - 5_000).toString(),
     };
-    let live = [member];
-    Object.assign(host, {
+    let rootAlive = true;
+    let live = [posix(200, 100, 200, "claude"), member];
+    const calls: string[] = [];
+    let clock = 0;
+    const host: TreeHost = {
+      platform: "darwin",
+      selfPid: 100,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+      epochNow: () => exitedAt + 60_000,
       readProcessList: async () => live,
-      signal: (pid: number, action: NodeJS.Signals | 0) => {
+      signal: (pid, action) => {
         if (action !== 0) calls.push(`${action} ${pid}`);
-        if (live.length === 0) throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+        if (!live.some((entry) => entry.pgid === -pid)) {
+          throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+        }
         if (action === "SIGTERM") live = [];
       },
-    });
-    expect(await tree.end(1_000)).toMatchObject({ found: 1, survivors: 0 });
-    expect(calls).toEqual(["SIGTERM -200"]);
+      killVerified: async () => {},
+    };
+    const tree = new OwnedProcessTree(
+      {
+        pid: 200,
+        spawnedAt: 0,
+        alive: () => rootAlive,
+        exitedAtEpochMs: () => (rootAlive ? null : exitedAt),
+      },
+      host,
+    );
+    // Stop reads the group right before it closes the CLI.
+    if (rememberedFirst) expect(await tree.remember(1_000, true)).toBe(true);
+    rootAlive = false;
+    live = [member];
+    // A minute on, a start time alone no longer proves the id is still the CLI's group.
+    const result = await tree.end(1_000);
+    if (rememberedFirst) {
+      expect(result).toEqual({ found: 1, survivors: 0, unknown: false });
+      expect(calls).toEqual(["SIGTERM -200"]);
+    } else {
+      expect(result).toMatchObject({ unknown: true });
+      expect(calls).toEqual([]);
+    }
   });
 
   it.each(["darwin", "linux"] as const)(
@@ -1404,8 +1442,8 @@ describe("OwnedProcessTree.end after a lost parent", () => {
 
   it("still signals the CLI's group when a reading from before its exit lists it", async () => {
     const f = fake("darwin");
-    const exitedAt = Date.UTC(2026, 10, 19, 12);
-    // `ps` caught the CLI in the second it exited; Node has reaped it since.
+    const exitedAt = Date.now() - 100;
+    // `ps` caught the CLI in the second it exited; Node reaped it just now.
     const cli = { ...processRow(rootPid), started: new Date(exitedAt).toString() };
     const tool = processRow(201, rootPid);
     f.setTable([cli, tool]);

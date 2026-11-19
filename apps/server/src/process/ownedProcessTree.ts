@@ -332,7 +332,16 @@ export interface TreeHost {
   readonly killVerified: (entries: ReadonlyArray<ProcessEntry>, timeoutMs: number) => Promise<void>;
   readonly sleep: (ms: number) => Promise<void>;
   readonly now: () => number;
+  /** Wall-clock time, to compare with the CLI's exit time. Defaults to `Date.now`. */
+  readonly epochNow?: () => number;
 }
+
+/**
+ * How soon after the CLI's exit a member's start time alone may prove the group the CLI's.
+ * Another job can take the id only once the group has emptied and the pid counter has come
+ * round to it again, which takes far longer than this.
+ */
+const START_PROOF_WINDOW_MS = 5_000;
 
 export interface TreeEndResult {
   /** Processes of the tree that were still running when the end began. */
@@ -397,7 +406,8 @@ export class OwnedProcessTree {
    * a tool started since the last reading cannot be found once its parent is gone.
    */
   async remember(timeoutMs = STEP_TIMEOUT_MS, required = false): Promise<boolean> {
-    if (this.host.platform !== "win32" || this.root.pid <= 1) return true;
+    if (this.root.pid <= 1) return true;
+    if (this.host.platform !== "win32") return required ? this.rememberGroup(timeoutMs) : true;
     const table = await this.host.readProcessList(timeoutMs).catch(() => undefined);
     const known =
       table === undefined ? [] : windowsTree(table, this.root, this.host.selfPid, this.remembered);
@@ -417,6 +427,24 @@ export class OwnedProcessTree {
       if (ok && !this.root.alive()) this.coveredToExit = true;
     }
     return ok;
+  }
+
+  /**
+   * POSIX, right before Stop closes the CLI: who is in its group while it runs. These are
+   * the members that later prove the group is still the CLI's once it has exited.
+   */
+  private async rememberGroup(timeoutMs: number): Promise<boolean> {
+    if (!this.root.alive()) return false;
+    const table = await this.host.readProcessList(timeoutMs).catch(() => undefined);
+    // Still running once the reading came back, so it ran while the reading was taken:
+    // the group then was the CLI's alone.
+    if (table === undefined || !this.root.alive()) return false;
+    for (const entry of table) {
+      if (entry.pgid !== this.root.pid || entry.pid === this.host.selfPid) continue;
+      this.groupSeen.set(entry.pid, entry.started);
+      if (entry.pid === this.root.pid) this.rootStarted = entry.started;
+    }
+    return true;
   }
 
   private recall(known: Known) {
@@ -530,15 +558,18 @@ export class OwnedProcessTree {
       groupUsable = false;
     }
     // With the CLI reaped, its group id may be another job's: the group is signalled only
-    // with a member that proves it the CLI's, one an earlier end saw or one that started
-    // before the CLI exited (while the CLI held the id, no other job could have it).
-    // `ps` gives whole seconds, so a start in the exit's second still counts.
+    // with a member that proves it the CLI's. One seen in the group while the CLI ran, or
+    // by an earlier end, does. So, right after the exit, does one that started before it:
+    // the CLI held the id then, and the id cannot have emptied and gone round to another
+    // job since. `ps` gives whole seconds, so a start in the exit's own second counts too.
+    const exitRecent =
+      exitedAt !== null && (this.host.epochNow ?? Date.now)() - exitedAt <= START_PROOF_WINDOW_MS;
     const startedBeforeExit = (entry: ProcessEntry) => {
       const started = Date.parse(entry.started);
       return exitedAt !== null && Number.isFinite(started) && started <= exitedAt;
     };
     const provesGroup = (entry: ProcessEntry) =>
-      this.groupSeen.get(entry.pid) === entry.started || startedBeforeExit(entry);
+      this.groupSeen.get(entry.pid) === entry.started || (exitRecent && startedBeforeExit(entry));
     if (groupUsable && !this.root.alive() && exitedAt !== null) {
       if (members === undefined || (members.length > 0 && !members.some(provesGroup))) {
         // Neither signalled nor taken as gone: whoever is in it may be the tree's.
