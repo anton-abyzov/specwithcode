@@ -115,7 +115,9 @@ export type NetworkVerdict =
   | "lose-answer"
   | "hang"
   | "deliver-then-hang"
-  | { readonly wait: Effect.Effect<void> };
+  | { readonly wait: Effect.Effect<void> }
+  /** The other machine refuses at its door, before its receiver reads anything. */
+  | { readonly refuse: HandoffReceiver.HandoffRefusal };
 
 export interface RigThread {
   readonly title: string;
@@ -537,6 +539,9 @@ export const makeRig = (
         const verdict = network.rule?.(call) ?? "pass";
         if (verdict === "lose-request") return Effect.fail(silent(to.label));
         if (verdict === "hang") return Effect.never;
+        if (typeof verdict === "object" && "refuse" in verdict) {
+          return Effect.fail(refused(verdict.refuse));
+        }
         const answered = (
           to.previous && path !== "replicate"
             ? previousAnswer(from, to, path, request)

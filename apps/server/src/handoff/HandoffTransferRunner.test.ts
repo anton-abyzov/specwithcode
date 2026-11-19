@@ -23,7 +23,8 @@ import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 
 import { unscopedGrant } from "../fleet/workGrantPolicy.ts";
-import { continuationThreadId } from "./HandoffReceiver.ts";
+import { ThreadLaunchError } from "../orchestration-v2/ThreadLaunchService.ts";
+import { continuationThreadId, HandoffRefusal } from "./HandoffReceiver.ts";
 import { findIncoming } from "./handoffState.ts";
 import { makeRig, type Rig, type RigMachine } from "./handoffTransfer.test.fixture.ts";
 import { putTransfer } from "./HandoffTransferStore.ts";
@@ -295,6 +296,65 @@ describe("the transfer record of a handoff", () => {
       expect(acceptancesOf(b)[0]).toMatchObject({ verdict: "accepted", launched: true });
       expect(continuedOn(a, t1)?.threadId).toBe(b.launches[0]?.threadId);
       expect(new Set(takeovers(rig, b).map((request) => request.operationId)).size).toBe(1);
+    }),
+  );
+
+  it.effect("answers a definite no when the thread could not even be asked for", () =>
+    Effect.gen(function* () {
+      const rig = yield* makeRig(temporary);
+      const [a, b] = rig.machines as [RigMachine, RigMachine];
+      rig.addThread(a, t1);
+      // The project is paused there: the launch stops before any thread is created.
+      b.onLaunch = (input) =>
+        Effect.fail(
+          new ThreadLaunchError({
+            operation: "resolve-project",
+            commandId: input.commandId,
+            projectId: input.projectId,
+            cause: "Resume or restore the project before starting new threads.",
+          }),
+        );
+
+      const failure = yield* handOff(a, t1, b).pipe(Effect.flip);
+
+      expect(failure.code).toBe("failed");
+      expect(acceptancesOf(b)[0]?.verdict).toBe("not-accepted");
+      expect(b.launches).toHaveLength(0);
+      // The source runs it again; the hold does not wait for a launch that can never work.
+      expect(leaseOf(a, t1)?.state).toBe("active");
+      expect(transferOf(a, t1)?.state).toBe("failed");
+      expect(turnRefusal(a.document, t1, a.environmentId)).toBeNull();
+    }),
+  );
+
+  it.effect("keeps the hold when a repeat is refused at the door of a machine that accepted", () =>
+    Effect.gen(function* () {
+      const rig = yield* makeRig(temporary);
+      const [a, b] = rig.machines as [RigMachine, RigMachine];
+      rig.addThread(a, t1);
+      rig.network.rule = (call) => (call.path === "takeover" ? "lose-answer" : undefined);
+      yield* handOff(a, t1, b).pipe(Effect.flip);
+      expect(b.launches).toHaveLength(1);
+      expect(transferOf(a, t1)?.state).toBe("unknown");
+
+      // It is updating: every call is refused before its records are read.
+      const updating = new HandoffRefusal({
+        status: 503,
+        code: "busy",
+        message: "This machine is updating; try again in a minute.",
+      });
+      rig.network.rule = () => ({ refuse: updating });
+      yield* a.moves.tick;
+      expect(leaseOf(a, t1)?.state).toBe("handing-off");
+      expect(transferOf(a, t1)?.state).toBe("unknown");
+      expect(turnRefusal(a.document, t1, a.environmentId)).not.toBeNull();
+
+      // Only the repeat is refused: what it says of the operation settles it.
+      rig.network.rule = (call) => (call.path === "takeover" ? { refuse: updating } : undefined);
+      yield* a.moves.tick;
+      expect(leaseOf(a, t1)?.state).toBe("fenced");
+      expect(continuedOn(a, t1)?.threadId).toBe(b.launches[0]?.threadId);
+      expect(b.launches).toHaveLength(1);
     }),
   );
 
