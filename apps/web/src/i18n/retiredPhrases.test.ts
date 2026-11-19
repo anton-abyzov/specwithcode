@@ -98,6 +98,16 @@ const RETIRED_PHRASES: readonly string[] = [
   "Send delivers your message to {machine}'s coordinator and opens its page, where the answer comes.",
   "Send delivers your message to main's coordinator and opens its page, where the answer comes.",
   "Files stay on this machine. Remove them to send the text to main, or open main's page to attach them there.",
+  // 1390 AC-36: sleep and silence never start a handoff, so their settings are gone.
+  "Continue automatically when a machine stops answering",
+  "Threads in handoff mode continue on your chosen Mac after this long. Off means they wait for your click. Coordinator threads never move this way.",
+  "Automatic takeover",
+  "Grace time",
+  "Hands work to the Away target when this Mac sleeps. The target waits the grace time first, and nothing moves if you're back sooner. Mac only.",
+  "How long the target waits after the lid closes before it takes over.",
+  "Leave automatically when the lid closes",
+  "Where Away sends your threads, routines and coordinators. Also used when this machine sleeps; locking the screen doesn't count.",
+  "After work left while it slept. Ask shows one button to bring it back.",
 ];
 
 /** Retired words that were plain text in a component, matched anywhere in the source. */

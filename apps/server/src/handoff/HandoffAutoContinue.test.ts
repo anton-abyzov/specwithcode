@@ -1,7 +1,11 @@
 /**
- * Automatic continuation of handoff-mode threads (AC-10): the pure rules,
- * then the source and the designated machine through HandoffMoves with stub
- * peers, a stub receiver and an injected monotonic clock.
+ * Silence never starts a handoff (1390 AC-36, T-23). No heartbeat names a
+ * machine to continue on its own, and a named machine continues nothing. A
+ * machine an earlier release armed is drained: it keeps its protective fence
+ * until it answers a heartbeat that names no delay. The pure rules first,
+ * then the source and the armed machine through HandoffMoves with stub peers
+ * and a stub receiver, then both directions against the previous release
+ * (`previousRelease.test.fixture.ts`).
  */
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -23,12 +27,6 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import {
   AUTO_CONTINUE_FENCE_MARGIN_MS,
-  AutoContinueMonotonicClock,
-  autoContinueCandidates,
-  autoContinueMinutes,
-  designatedMachine,
-  makeAutoContinueWatch,
-  noteAnnounced,
   noteAnswered,
   peerPastFence,
   planSourceFence,
@@ -44,6 +42,8 @@ import {
   emptyThreadRecord,
   heartbeatContinued,
   incomingKey,
+  markContinued,
+  pendingDisarm,
 } from "./handoffState.ts";
 import { turnRefusal } from "./HandoffTurnGate.ts";
 import {
@@ -51,6 +51,12 @@ import {
   type HeartbeatRequest,
   type TakeoverRequest,
 } from "./handoffWire.ts";
+import {
+  PREVIOUS_RELEASE,
+  previousAutoContinueCandidates,
+  previousAutoContinueMinutes,
+  previousHeartbeatContinued,
+} from "./previousRelease.test.fixture.ts";
 
 const MINUTE = 60_000;
 const T0 = Date.parse("2026-10-26T14:00:00.000Z");
@@ -180,97 +186,49 @@ const reloaded = (document: HandoffDocument): HandoffDocument =>
     JSON.parse(JSON.stringify(Schema.encodeSync(HandoffDocument)(document))),
   );
 
-describe("automatic continuation rules", () => {
-  it("is off at 0 and waits at least five minutes", () => {
-    expect(autoContinueMinutes({ autoTakeoverMinutes: 0 })).toBeNull();
-    expect(autoContinueMinutes({ autoTakeoverMinutes: 1 })).toBe(5);
-    expect(autoContinueMinutes({ autoTakeoverMinutes: 15 })).toBe(15);
-  });
-
-  it("names the sleep target, else the active coordinator's standby, never a coordinator thread", () => {
-    const standbyProject = {
-      id: project,
-      workspaceSettings: {
-        coordinatorThreadId: coordinatorThread,
-        coordinatorBinding: {
-          epoch: 2,
-          state: "active" as const,
-          standby: {
-            member: {
-              environmentId: m3,
-              projectId: ProjectId.make("project-m3"),
-              coordinatorThreadId: ThreadId.make("project-coordinator:project-m3"),
-            },
-            afterMinutes: 15 as const,
-            enabledAt: iso(T0),
-          },
-        },
-      },
-    };
-    const base = { project: standbyProject, threadId: thread, self: m4 };
-    expect(designatedMachine({ ...base, config: { sleepTarget: m1 } })).toBe(m1);
-    expect(designatedMachine({ ...base, config: { sleepTarget: null } })).toBe(m3);
-    expect(
-      designatedMachine({
-        ...base,
-        config: { sleepTarget: null },
-        project: {
-          ...standbyProject,
-          workspaceSettings: {
-            ...standbyProject.workspaceSettings,
-            coordinatorBinding: {
-              ...standbyProject.workspaceSettings.coordinatorBinding,
-              state: "transferred" as const,
-            },
-          },
-        },
-      }),
-    ).toBeNull();
-    expect(
-      designatedMachine({ ...base, threadId: coordinatorThread, config: { sleepTarget: m1 } }),
-    ).toBeNull();
-    expect(designatedMachine({ ...base, config: { sleepTarget: m4 }, project: null })).toBeNull();
-  });
-
-  it("keeps the designation only on the copies the latest heartbeat named with a delay", () => {
+describe("silence rules", () => {
+  it("a heartbeat that names a delay arms nothing here", () => {
     const document = destinationDocument({ autoContinueMinutes: null, lastSeenMs: T0 });
     const named: HeartbeatRequest = {
       sourceEnvironmentId: m4,
       sourceLabel: "M4",
       leases: [{ sourceThreadId: thread, epoch: 1, autoContinueMinutes: 15 }],
     };
-    const [, designated] = heartbeatContinued(document, named, iso(T0 + MINUTE));
-    expect(designated.incomingDetails?.[incomingKey(m4, thread)]?.autoContinueMinutes).toBe(15);
-    // The source switched its sleep target to another machine: this copy is no longer named.
-    const [, dropped] = heartbeatContinued(
-      designated,
-      { ...named, leases: [{ sourceThreadId: thread, epoch: 1 }] },
-      iso(T0 + 2 * MINUTE),
-    );
-    expect(dropped.incomingDetails?.[incomingKey(m4, thread)]?.autoContinueMinutes).toBeNull();
-    // A heartbeat that leaves the thread out drops it too.
-    const [, omitted] = heartbeatContinued(
-      designated,
-      { ...named, leases: [] },
-      iso(T0 + 2 * MINUTE),
-    );
-    expect(omitted.incomingDetails?.[incomingKey(m4, thread)]?.autoContinueMinutes).toBeNull();
+    const [, heard] = heartbeatContinued(document, named, iso(T0 + MINUTE));
+    expect(heard.incomingDetails?.[incomingKey(m4, thread)]?.autoContinueMinutes).toBeNull();
+    // A designation an earlier release saved here is dropped by the next heartbeat,
+    // whether or not that heartbeat still names the delay.
+    const saved = destinationDocument({ autoContinueMinutes: 15, lastSeenMs: T0 });
+    for (const leases of [named.leases, [{ sourceThreadId: thread, epoch: 1 }], []]) {
+      const [, dropped] = heartbeatContinued(saved, { ...named, leases }, iso(T0 + 2 * MINUTE));
+      expect(dropped.incomingDetails?.[incomingKey(m4, thread)]?.autoContinueMinutes).toBeNull();
+    }
   });
 
-  it("counts the source's silence from the first announcement and the shortest delay", () => {
-    let peers = noteAnnounced({}, m1, 15, iso(T0));
-    peers = noteAnnounced(peers, m1, 30, iso(T0 + MINUTE));
-    expect(peers[m1]).toEqual({ minutes: 15, baselineAt: iso(T0) });
-    peers = noteAnnounced(peers, m1, 5, iso(T0 + 2 * MINUTE));
-    expect(peers[m1]).toEqual({ minutes: 5, baselineAt: iso(T0) });
+  it("an armed machine fences from its last answer until it answers a heartbeat with no delay", () => {
+    const peers = { [m1]: { minutes: 5, baselineAt: iso(T0) } };
     // Five minutes less the margin: 170 seconds.
     expect(5 * MINUTE - AUTO_CONTINUE_FENCE_MARGIN_MS).toBe(170_000);
     expect(peerPastFence(peers[m1], T0 + 169_999)).toBe(false);
     expect(peerPastFence(peers[m1], T0 + 170_000)).toBe(true);
-    // An answer restarts the count; an answer to a heartbeat without a delay forgets the peer.
-    peers = noteAnswered(peers, m1, 5, iso(T0 + 3 * MINUTE));
-    expect(peerPastFence(peers[m1], T0 + 3 * MINUTE + 169_999)).toBe(false);
-    expect(noteAnswered(peers, m1, null, iso(T0 + 4 * MINUTE))[m1]).toBeUndefined();
+    expect(noteAnswered(peers, m1)[m1]).toBeUndefined();
+    expect(noteAnswered(peers, m3)).toEqual(peers);
+  });
+
+  it("lists the machines still to confirm, by the name their copy carries", () => {
+    expect(pendingDisarm(sourceDocument())).toEqual([]);
+    expect(
+      pendingDisarm({
+        ...sourceDocument(),
+        autoContinuePeers: {
+          [m1]: { minutes: 5, baselineAt: iso(T0) },
+          "env-gone": { minutes: 15, baselineAt: iso(T0 + MINUTE) },
+        },
+      }),
+    ).toEqual([
+      { environmentId: m1, machineLabel: "M1", since: iso(T0) },
+      { environmentId: "env-gone", machineLabel: "env-gone", since: iso(T0 + MINUTE) },
+    ]);
   });
 
   it("fences only threads the quiet machine could continue, and lifts once it answers", () => {
@@ -336,74 +294,6 @@ describe("automatic continuation rules", () => {
     expect(decoded.threads[thread]?.autoFence).toBeNull();
     expect(turnRefusal(decoded, thread, m4)).toBeNull();
   });
-
-  it("continues only a named, running copy after the full delay heard while awake", () => {
-    const at = (document: HandoffDocument, nowMs: number, watchingSinceMs = T0) =>
-      autoContinueCandidates(document, { nowMs, watchingSinceMs, projectOf: noProject });
-    const named = destinationDocument({ autoContinueMinutes: 5, lastSeenMs: T0 });
-    expect(at(named, T0 + 5 * MINUTE - 1)).toEqual([]);
-    expect(at(named, T0 + 5 * MINUTE)).toEqual([
-      { sourceEnvironmentId: m4, sourceThreadId: thread },
-    ]);
-    // A delay under five minutes is clamped.
-    const short = destinationDocument({ autoContinueMinutes: 1, lastSeenMs: T0 });
-    expect(at(short, T0 + 4 * MINUTE)).toEqual([]);
-    // Not named, or named with no delay: never.
-    expect(
-      at(destinationDocument({ autoContinueMinutes: null, lastSeenMs: T0 }), T0 + 60 * MINUTE),
-    ).toEqual([]);
-    // The source was last heard before this watch began (this machine slept or restarted).
-    expect(at(named, T0 + 60 * MINUTE, T0 + MINUTE)).toEqual([]);
-    // A finished run has nothing to continue.
-    expect(
-      at(
-        destinationDocument({ autoContinueMinutes: 5, lastSeenMs: T0, runEnding: "completed" }),
-        T0 + 60 * MINUTE,
-      ),
-    ).toEqual([]);
-    // Coordinator threads, by id or by the member's recorded coordinator thread.
-    expect(
-      at(
-        destinationDocument({
-          autoContinueMinutes: 5,
-          lastSeenMs: T0,
-          sourceThreadId: coordinatorThread,
-        }),
-        T0 + 60 * MINUTE,
-      ),
-    ).toEqual([]);
-    const renamed = ThreadId.make("thread:coordinator-renamed");
-    expect(
-      autoContinueCandidates(
-        destinationDocument({ autoContinueMinutes: 5, lastSeenMs: T0, sourceThreadId: renamed }),
-        {
-          nowMs: T0 + 60 * MINUTE,
-          watchingSinceMs: T0,
-          projectOf: () => ({
-            workspaceSettings: {
-              logicalProject: {
-                members: [{ environmentId: m4, coordinatorThreadId: renamed }],
-              },
-            },
-          }),
-        },
-      ),
-    ).toEqual([]);
-  });
-
-  it("starts the watch again after sleep or a clock stepped backwards", () => {
-    let mono = 0;
-    const watch = makeAutoContinueWatch({ nowMs: () => mono }, T0);
-    mono += 30_000;
-    expect(watch.observe(T0 + 30_000)).toBe(T0);
-    // Asleep for an hour: the wall clock ran on, the monotonic clock did not.
-    mono += 30_000;
-    expect(watch.observe(T0 + 60 * MINUTE)).toBe(T0 + 60 * MINUTE);
-    mono += 30_000;
-    expect(watch.observe(T0 + 60 * MINUTE + 30_000)).toBe(T0 + 60 * MINUTE);
-    mono += 30_000;
-    expect(watch.observe(T0 + 59 * MINUTE)).toBe(T0 + 59 * MINUTE);
-  });
 });
 
 // Through HandoffMoves
@@ -415,7 +305,6 @@ interface Rig {
   readonly dispatched: Array<{ readonly type: string }>;
   readonly down: Set<EnvironmentId>;
   activeRunId: string | null;
-  mono: number;
 }
 
 const rig = (document: HandoffDocument, self: EnvironmentId) =>
@@ -428,7 +317,6 @@ const rig = (document: HandoffDocument, self: EnvironmentId) =>
       dispatched: [],
       down: new Set(),
       activeRunId: "run-1",
-      mono: 0,
     };
     const handoff = {
       environmentId: self,
@@ -502,96 +390,91 @@ const rig = (document: HandoffDocument, self: EnvironmentId) =>
       Layer.succeed(ProjectionStore.ProjectionStoreV2, {
         getThreadShell: (id: ThreadId) => Effect.succeed(id === thread ? shell() : null),
       } as never),
-      Layer.succeed(AutoContinueMonotonicClock, { nowMs: () => state.mono }),
     );
     const moves = yield* HandoffMoves.make.pipe(Effect.provide(services));
-    /** Thirty awake seconds: both clocks move. */
-    const awake = (ms: number) =>
-      Effect.gen(function* () {
-        state.mono += ms;
-        yield* TestClock.adjust(`${ms} millis`);
-      });
+    /** Time this machine was awake for. */
+    const awake = (ms: number) => TestClock.adjust(`${ms} millis`);
     return { state, moves, awake };
   });
 
-describe("automatic continuation between machines", () => {
-  it.effect("names only the designated machine in heartbeats, with the delay", () =>
+const delays = (state: Rig) =>
+  state.heartbeats.flatMap((entry) =>
+    entry.request.leases.map((lease) => lease.autoContinueMinutes ?? null),
+  );
+
+/** The source's document as an earlier release left it: M1 armed, last heard at T0. */
+const armedSourceDocument = (): HandoffDocument => ({
+  ...sourceDocument(),
+  autoContinuePeers: { [m1]: { minutes: 5, baselineAt: iso(T0) } },
+});
+
+describe("silence never starts a handoff (AC-36)", () => {
+  it.effect("names no machine in heartbeats, whatever the saved settings say", () =>
     Effect.gen(function* () {
+      // Saved by an earlier release: a sleep target and a five-minute automatic takeover.
       const { state, moves } = yield* rig(sourceDocument(), m4);
+      expect(state.document.config).toMatchObject({ sleepTarget: m1, autoTakeoverMinutes: 5 });
       yield* moves.heartbeat;
-      const toM1 = state.heartbeats.find((entry) => entry.peer === m1)?.request.leases;
-      const toM3 = state.heartbeats.find((entry) => entry.peer === m3)?.request.leases;
-      expect(toM1).toEqual([{ sourceThreadId: thread, epoch: 1, autoContinueMinutes: 5 }]);
-      expect(toM3).toEqual([{ sourceThreadId: thread, epoch: 1 }]);
+      expect(state.heartbeats.map((entry) => entry.peer).sort()).toEqual([m1, m3]);
+      expect(delays(state)).toEqual([null, null]);
+      expect(state.document.autoContinuePeers).toEqual({});
+      expect(pendingDisarm(state.document)).toEqual([]);
     }),
   );
 
-  it.effect("names no one when the setting is off or the thread is not in handoff mode", () =>
+  it.effect("drains a machine an earlier release armed once it answers", () =>
     Effect.gen(function* () {
-      const off = sourceDocument();
-      const { state, moves } = yield* rig(
-        { ...off, config: { ...off.config, autoTakeoverMinutes: 0 } },
-        m4,
-      );
+      const { state, moves, awake } = yield* rig(armedSourceDocument(), m4);
+      yield* awake(30_000);
       yield* moves.heartbeat;
-      expect(
-        state.heartbeats.every((entry) =>
-          entry.request.leases.every((lease) => lease.autoContinueMinutes === undefined),
-        ),
-      ).toBe(true);
-      const notOn = sourceDocument();
-      const other = yield* rig(
-        {
-          ...notOn,
-          threads: { [thread]: { ...notOn.threads[thread]!, mode: "off" } },
-        },
-        m4,
-      );
-      yield* other.moves.heartbeat;
-      expect(
-        other.state.heartbeats.every((entry) =>
-          entry.request.leases.every((lease) => lease.autoContinueMinutes === undefined),
-        ),
-      ).toBe(true);
+      // The heartbeat names no delay, so M1 dropped its designation before it answered.
+      expect(delays(state)).toEqual([null, null]);
+      expect(state.document.autoContinuePeers).toEqual({});
+      expect(state.document.threads[thread]?.autoFence ?? null).toBeNull();
+      expect(state.dispatched).toEqual([]);
     }),
   );
 
-  it.effect("fences and interrupts the source once the designated machine goes quiet", () =>
+  it.effect("keeps the protective fence while an armed machine is unreachable", () =>
     Effect.gen(function* () {
-      const { state, moves, awake } = yield* rig(sourceDocument(), m4);
-      yield* moves.heartbeat;
+      const { state, moves, awake } = yield* rig(armedSourceDocument(), m4);
       state.down.add(m1);
       // M3 still answers, so the older all-replicas-silent fence never fires here.
       for (let elapsed = 30_000; elapsed < 170_000; elapsed += 30_000) {
         yield* awake(30_000);
         yield* moves.heartbeat;
       }
+      expect(delays(state).every((delay) => delay === null)).toBe(true);
       expect(state.document.threads[thread]?.autoFence ?? null).toBeNull();
       expect(state.dispatched).toEqual([]);
       yield* awake(20_000);
       yield* moves.heartbeat;
+      // M1 may still act on what it was told earlier: this copy stops, and the wait is shown.
       expect(state.document.threads[thread]?.autoFence).toMatchObject({
         environmentId: m1,
         machineLabel: "M1",
       });
-      expect(state.document.threads[thread]?.fencedBy).toBe("sleep");
       expect(state.dispatched).toEqual([
         expect.objectContaining({ type: "run.interrupt", threadId: thread, runId: "run-1" }),
       ]);
       expect(turnRefusal(state.document, thread, m4)).toContain("M1 is not answering");
-      // M1 answers again: the fence lifts and turns start here once more.
+      expect(pendingDisarm(state.document)).toEqual([
+        { environmentId: m1, machineLabel: "M1", since: iso(T0) },
+      ]);
+      // M1 answers the heartbeat that names no delay: disarmed, and turns start here again.
       state.down.delete(m1);
       yield* awake(30_000);
       yield* moves.heartbeat;
+      expect(state.document.autoContinuePeers).toEqual({});
       expect(state.document.threads[thread]?.autoFence).toBeNull();
       expect(turnRefusal(state.document, thread, m4)).toBeNull();
+      expect(pendingDisarm(state.document)).toEqual([]);
     }),
   );
 
-  it.effect("keeps the fence across a restart with M1 still quiet", () =>
+  it.effect("keeps the fence across a restart with the armed machine still quiet", () =>
     Effect.gen(function* () {
-      const first = yield* rig(sourceDocument(), m4);
-      yield* first.moves.heartbeat;
+      const first = yield* rig(armedSourceDocument(), m4);
       first.state.down.add(m1);
       yield* first.awake(3 * MINUTE);
       yield* first.moves.heartbeat;
@@ -604,58 +487,160 @@ describe("automatic continuation between machines", () => {
       yield* second.moves.heartbeat;
       expect(second.state.document.threads[thread]?.autoFence).not.toBeNull();
       expect(turnRefusal(second.state.document, thread, m4)).toContain("M1 is not answering");
+      expect(pendingDisarm(second.state.document)).toHaveLength(1);
     }),
   );
 
-  it.effect("continues on the designated machine as an automatic takeover", () =>
+  it.effect("an armed machine with no copy left to watch still hears it is disarmed", () =>
+    Effect.gen(function* () {
+      // The thread it was armed for is gone from here; nothing else would heartbeat M1.
+      const { state, moves } = yield* rig({ ...armedSourceDocument(), threads: {} }, m4);
+      yield* moves.heartbeat;
+      expect(state.heartbeats).toEqual([
+        { peer: m1, request: { sourceEnvironmentId: m4, sourceLabel: "M4", leases: [] } },
+      ]);
+      expect(state.document.autoContinuePeers).toEqual({});
+    }),
+  );
+
+  it.effect("a copy named by an earlier heartbeat is never continued on silence", () =>
     Effect.gen(function* () {
       const { state, moves, awake } = yield* rig(
         destinationDocument({ autoContinueMinutes: 5, lastSeenMs: T0 }),
         m1,
       );
       state.down.add(m4);
-      yield* awake(4 * MINUTE);
-      yield* moves.replicate;
+      for (let minute = 0; minute < 60; minute += 5) {
+        yield* awake(5 * MINUTE);
+        yield* moves.replicate;
+      }
       expect(state.takeovers).toEqual([]);
-      yield* awake(MINUTE);
-      yield* moves.replicate;
-      expect(state.takeovers).toEqual([
-        expect.objectContaining({
-          sourceEnvironmentId: m4,
-          sourceThreadId: thread,
-          reason: "auto-takeover",
-          epoch: 2,
-        }),
+    }),
+  );
+});
+
+describe(`against the previous release (${PREVIOUS_RELEASE})`, () => {
+  /** What this version's source sends M1 on its first heartbeat after the update. */
+  const heartbeatAfterUpdate = Effect.gen(function* () {
+    const { state, moves } = yield* rig(armedSourceDocument(), m4);
+    yield* moves.heartbeat;
+    const sent = state.heartbeats.find((entry) => entry.peer === m1)?.request;
+    if (sent === undefined) throw new Error("no heartbeat reached M1");
+    return sent;
+  });
+  /** M1 on the previous release, armed by the source's last heartbeat before it updated. */
+  const armedReceiver = (lastSeenMs = T0) =>
+    destinationDocument({ autoContinueMinutes: 5, lastSeenMs });
+  const candidates = (document: HandoffDocument, nowMs: number, watchingSinceMs = T0) =>
+    previousAutoContinueCandidates(document, { nowMs, watchingSinceMs, projectOf: noProject });
+
+  it.effect(
+    "this source, an armed receiver on the previous release: the heartbeat disarms it",
+    () =>
+      Effect.gen(function* () {
+        expect(PREVIOUS_RELEASE).toBe("v1.0.378");
+        // Armed, it would continue the copy after five quiet minutes.
+        expect(candidates(armedReceiver(), T0 + 5 * MINUTE)).toHaveLength(1);
+        const sent = yield* heartbeatAfterUpdate;
+        expect(sent.leases).toEqual([{ sourceThreadId: thread, epoch: 1 }]);
+        const [continued, disarmed] = previousHeartbeatContinued(
+          armedReceiver(),
+          sent,
+          iso(T0 + 30_000),
+        );
+        expect(continued).toEqual([]);
+        expect(disarmed.incomingDetails?.[incomingKey(m4, thread)]?.autoContinueMinutes).toBeNull();
+        // The lid closes right after: however long the silence, it starts nothing.
+        expect(candidates(disarmed, T0 + 24 * 60 * MINUTE)).toEqual([]);
+      }),
+  );
+
+  it.effect(
+    "an armed receiver offline through the update and the lid close: held, shown, never run twice",
+    () =>
+      Effect.gen(function* () {
+        const { state, moves, awake } = yield* rig(armedSourceDocument(), m4);
+        // M1 hears nothing from the updated source: no heartbeat can disarm it.
+        state.down.add(m1);
+        yield* awake(170_000);
+        yield* moves.heartbeat;
+        // Before M1 could act (five minutes), this copy already stopped and says why.
+        expect(turnRefusal(state.document, thread, m4)).toContain("M1 is not answering");
+        expect(pendingDisarm(state.document)).toEqual([
+          { environmentId: m1, machineLabel: "M1", since: iso(T0) },
+        ]);
+        expect(candidates(armedReceiver(), T0 + 170_000)).toEqual([]);
+        // A receiver that was asleep or restarted while offline starts nothing on its own.
+        expect(candidates(armedReceiver(), T0 + 60 * MINUTE, T0 + 10 * MINUTE)).toEqual([]);
+        // One that stayed awake behind a partition may still continue: this version
+        // cannot retract that from here, so it promises a hold, not zero starts.
+        expect(candidates(armedReceiver(), T0 + 5 * MINUTE)).toEqual([
+          { sourceEnvironmentId: m4, sourceThreadId: thread },
+        ]);
+        expect(state.document.threads[thread]?.autoFence).not.toBeNull();
+      }),
+  );
+
+  it.effect("a receiver that already continued before its answer was lost still says so", () =>
+    Effect.gen(function* () {
+      const request: TakeoverRequest = {
+        sourceEnvironmentId: m4,
+        sourceThreadId: thread,
+        epoch: 2,
+        sequence: 3,
+        reason: "auto-takeover",
+        modelSelection: null,
+      };
+      const acted = markContinued(
+        armedReceiver(),
+        request,
+        {
+          threadId: ThreadId.make("thread:continued"),
+          machineLabel: "M1",
+          modelSelection: null,
+          resumed: true,
+          notice: null,
+        },
+        iso(T0 + 5 * MINUTE),
+      );
+      // The updated source's heartbeat names no delay; the old receiver answers what it did.
+      const sent = yield* heartbeatAfterUpdate;
+      expect(sent.leases).toEqual([{ sourceThreadId: thread, epoch: 1 }]);
+      const [continued] = previousHeartbeatContinued(acted, sent, iso(T0 + 6 * MINUTE));
+      expect(continued).toEqual([
+        { sourceThreadId: thread, epoch: 2, threadId: "thread:continued" },
       ]);
+      // And this version, as that receiver, answers the same for a takeover it made earlier.
+      const [here] = heartbeatContinued(acted, sent, iso(T0 + 6 * MINUTE));
+      expect(here).toEqual(continued);
     }),
   );
 
-  it.effect("does not continue while the source still answers a direct probe", () =>
-    Effect.gen(function* () {
-      const { state, moves, awake } = yield* rig(
-        destinationDocument({ autoContinueMinutes: 5, lastSeenMs: T0 }),
-        m1,
-      );
-      yield* awake(10 * MINUTE);
-      yield* moves.replicate;
-      expect(state.takeovers).toEqual([]);
-    }),
-  );
-
-  it.effect("never continues after sleeping through the source's silence", () =>
-    Effect.gen(function* () {
-      const { state, moves, awake } = yield* rig(
-        destinationDocument({ autoContinueMinutes: 5, lastSeenMs: T0 }),
-        m1,
-      );
-      yield* awake(MINUTE);
-      yield* moves.replicate;
-      // The lid closed: an hour passes on the wall clock alone.
-      yield* TestClock.adjust("60 minutes");
-      yield* moves.replicate;
-      yield* awake(30 * MINUTE);
-      yield* moves.replicate;
-      expect(state.takeovers).toEqual([]);
-    }),
+  it.effect(
+    "a source on the previous release names this machine: nothing is armed or started",
+    () =>
+      Effect.gen(function* () {
+        const minutes = previousAutoContinueMinutes({ autoTakeoverMinutes: 5 });
+        expect(minutes).toBe(5);
+        const named: HeartbeatRequest = {
+          sourceEnvironmentId: m4,
+          sourceLabel: "M4",
+          leases: [{ sourceThreadId: thread, epoch: 1, autoContinueMinutes: minutes! }],
+        };
+        const { state, moves, awake } = yield* rig(
+          destinationDocument({ autoContinueMinutes: null, lastSeenMs: T0 }),
+          m1,
+        );
+        const [, heard] = heartbeatContinued(state.document, named, iso(T0));
+        expect(heard.incomingDetails?.[incomingKey(m4, thread)]?.autoContinueMinutes).toBeNull();
+        // The previous release would have armed itself on the same heartbeat.
+        const [, armed] = previousHeartbeatContinued(state.document, named, iso(T0));
+        expect(armed.incomingDetails?.[incomingKey(m4, thread)]?.autoContinueMinutes).toBe(5);
+        state.document = heard;
+        state.down.add(m4);
+        yield* awake(30 * MINUTE);
+        yield* moves.replicate;
+        expect(state.takeovers).toEqual([]);
+      }),
   );
 });

@@ -44,13 +44,11 @@ import { target as workerMachine } from "../fleet/fleetMachine.testkit.ts";
 import { allow, eventually, rows, setup } from "../fleet/remoteWorkers.testkit.ts";
 import { applyEpochClaim, epochAdmits, type WorkerEpochRecord } from "../fleet/WorkerEpochStore.ts";
 import type { EffectiveWorkGrant } from "../fleet/workGrantPolicy.ts";
+import { peerPastFence } from "../handoff/HandoffAutoContinue.ts";
 import {
-  autoContinueCandidates,
-  autoContinueMinutes,
-  designatedMachine,
-  peerPastFence,
-  noteAnnounced,
-} from "../handoff/HandoffAutoContinue.ts";
+  previousAutoContinueCandidates,
+  previousAutoContinueMinutes,
+} from "../handoff/previousRelease.test.fixture.ts";
 import type { HandoffRefusal, ReceiverCaller } from "../handoff/HandoffReceiver.ts";
 import { HandoffPeerError } from "../handoff/handoffPeers.ts";
 import {
@@ -1002,39 +1000,19 @@ describe("automatic coordinator takeover, end to end", () => {
     for (const f of [slept, ahead, behind]) expectNoTwoCoordinators(f);
   });
 
-  it("with two machines holding handoff copies, only the standby continues the thread", async () => {
+  it("with two machines holding handoff copies, silence continues the thread on neither", async () => {
     const f = await fleet();
-    const project = f.machines.m4.projects.get(f.members.m4.projectId)!;
     const thread = ThreadId.make("thread:fix-build");
-    const config = { sleepTarget: null, autoTakeoverMinutes: 1 };
-    const minutes = autoContinueMinutes(config);
-    // The delay is clamped to five minutes, and only M1, the standby, is named.
+    // What a source on the previous release still sends its standby: a delay to act after.
+    const minutes = previousAutoContinueMinutes({ autoTakeoverMinutes: 1 });
     expect(minutes).toBe(5);
-    const designated = designatedMachine({
-      config,
-      project,
-      threadId: thread,
-      self: f.members.m4.environmentId,
-    });
-    expect(designated).toBe("m1");
-    // The coordinator thread never moves this way.
-    expect(
-      designatedMachine({
-        config,
-        project,
-        threadId: f.members.m4.coordinatorThreadId,
-        self: f.members.m4.environmentId,
-      }),
-    ).toBeNull();
-
-    // M4's heartbeat to each machine holding a copy, as HandoffMoves builds it.
     const heartbeatTo = (peer: string) => ({
       sourceEnvironmentId: "m4",
       leases: [
         {
           sourceThreadId: thread,
           epoch: 1,
-          ...(peer === designated ? { autoContinueMinutes: minutes! } : {}),
+          ...(peer === "m1" ? { autoContinueMinutes: minutes! } : {}),
         },
       ],
     });
@@ -1064,28 +1042,26 @@ describe("automatic coordinator takeover, end to end", () => {
       };
     };
     const heardAt = T0 + MINUTE;
-    const [, onM1] = heartbeatContinued(
-      copyOn(f.members.m1.projectId),
-      heartbeatTo("m1"),
-      iso(heardAt),
-    );
-    const [, onM3] = heartbeatContinued(
-      copyOn(f.members.m3.projectId),
-      heartbeatTo("m3"),
-      iso(heardAt),
-    );
-    const due = (document: typeof onM1, nowMs: number) =>
-      autoContinueCandidates(document, { nowMs, watchingSinceMs: T0, projectOf: () => null });
-    expect(due(onM1, heardAt + 5 * MINUTE - 1)).toEqual([]);
-    expect(due(onM1, heardAt + 5 * MINUTE)).toEqual([
-      { sourceEnvironmentId: "m4", sourceThreadId: thread },
-    ]);
-    // M3 holds a copy too, but was never named: it waits however long M4 is quiet.
-    expect(due(onM3, heardAt + 24 * 60 * MINUTE)).toEqual([]);
-    // M4 fences its own copy 130 seconds before M1 may continue it.
-    const announced = noteAnnounced({}, "m1", minutes!, iso(heardAt));
-    expect(peerPastFence(announced.m1, heardAt + 5 * MINUTE - 130_000 - 1)).toBe(false);
-    expect(peerPastFence(announced.m1, heardAt + 5 * MINUTE - 130_000)).toBe(true);
+    // Neither the standby M1, named with a delay, nor M3 keeps a designation.
+    for (const member of ["m1", "m3"] as const) {
+      const [, heard] = heartbeatContinued(
+        copyOn(f.members[member].projectId),
+        heartbeatTo(member),
+        iso(heardAt),
+      );
+      expect(heard.incomingDetails?.[incomingKey("m4", thread)]?.autoContinueMinutes).toBeNull();
+      expect(
+        previousAutoContinueCandidates(heard, {
+          nowMs: heardAt + 24 * 60 * MINUTE,
+          watchingSinceMs: T0,
+          projectOf: () => null,
+        }),
+      ).toEqual([]);
+    }
+    // A standby an earlier release armed still fences this copy 130 seconds before it may act.
+    const armed = { minutes: minutes!, baselineAt: iso(heardAt) };
+    expect(peerPastFence(armed, heardAt + 5 * MINUTE - 130_000 - 1)).toBe(false);
+    expect(peerPastFence(armed, heardAt + 5 * MINUTE - 130_000)).toBe(true);
   });
 
   it("M4 restarting during a partition keeps counting from its last confirmed lease", async () => {

@@ -1,7 +1,10 @@
 /**
- * Away mode's sleep trigger on the machine going away (1267 AC-09, D-01, D-02):
- * the trigger decides, the intent goes to the target with the grace and the
- * ids, and waking either cancels it (nothing moved) or asks to bring work back.
+ * The sleep notice on the machine going to sleep (1390 AC-36, T-23). A lid
+ * close never starts a handoff, whatever a saved setting says. What an
+ * earlier release left behind (a session, a hold, an intent on the target)
+ * is still drained: waking cancels the intent (nothing moved) or asks to
+ * bring work back. The earlier release is `previousRelease.awaySleep.test.fixture.ts`,
+ * run on the same stores before this version takes over.
  */
 import {
   AWAY_INTENT_CANCEL_PATH,
@@ -9,23 +12,20 @@ import {
   AWAY_INTENT_STATUS_PATH,
   type AwayConfig,
   EnvironmentId,
-  type OrchestrationV2ThreadShell,
-  type Project,
   ProjectId,
+  awayConfigOf,
 } from "@specweave-studio/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
+import { EMPTY_HANDOFF_DOCUMENT, HandoffDocument } from "../handoff/handoffState.ts";
 import type { AwayPeerPost } from "./awayPeerCall.ts";
 import { AwayPeerError } from "./awayPeerCall.ts";
 import { memoryWakeHoldStore } from "./AwayWakeHold.ts";
-import {
-  makeAwaySleep,
-  memorySleepStore,
-  sleepIntentIds,
-  sleepTriggerFires,
-} from "./awaySleepRoute.ts";
+import { makeAwaySleep, memorySleepStore } from "./awaySleepRoute.ts";
+import * as Previous from "./previousRelease.awaySleep.test.fixture.ts";
 
 const M4 = EnvironmentId.make("m4");
 const MS = EnvironmentId.make("ministorm");
@@ -60,6 +60,10 @@ const movedAnswer = (path: string): Effect.Effect<unknown, AwayPeerError> =>
         : {},
   );
 
+const noAnswer = Effect.fail(
+  new AwayPeerError({ message: "Ministorm did not answer.", refused: false, uncertain: true }),
+);
+
 const peer = (answer: (path: string) => Effect.Effect<unknown, AwayPeerError> = movedAnswer) => {
   const sent: Sent[] = [];
   const post: AwayPeerPost = (_target, path, body) =>
@@ -70,6 +74,10 @@ const peer = (answer: (path: string) => Effect.Effect<unknown, AwayPeerError> = 
   return { sent, post };
 };
 
+/**
+ * One machine, before and after its update: `before` is the previous
+ * release, `away` this version, on the same session, hold and network.
+ */
 const setup = (
   patch: Partial<AwayConfig> = {},
   answer?: (path: string) => Effect.Effect<unknown, AwayPeerError>,
@@ -81,7 +89,7 @@ const setup = (
     const remote = peer(answer);
     const gaveWay: string[] = [];
     let current = config(patch);
-    const away = yield* makeAwaySleep({
+    const deps = {
       self: M4,
       store,
       hold,
@@ -89,116 +97,111 @@ const setup = (
       ids: () =>
         Effect.succeed({ projectIds: [ProjectId.make("easychamp")], threadIds: ["thread-1"] }),
       post: remote.post,
-      giveWay: (input) =>
+      giveWay: (input: { readonly projectId: ProjectId }) =>
         Effect.sync(() => {
           gaveWay.push(input.projectId);
           return true;
         }),
-    });
+    };
+    const before = yield* Previous.makeAwaySleep(deps);
+    const away = yield* makeAwaySleep(deps);
     return {
+      before,
       away,
       store,
       hold,
       remote,
       gaveWay,
       setConfig: (next: AwayConfig) => void (current = next),
+      intentsSent: () => remote.sent.filter((call) => call.path === AWAY_INTENT_PATH).length,
     };
   });
 
-describe("sleepTriggerFires (D-01)", () => {
-  it("stays off until a target is set, and never targets this machine", () => {
-    assert.isFalse(sleepTriggerFires(config({ target: null }), M4, true));
-    assert.isFalse(sleepTriggerFires(config({ target: M4 }), M4, true));
-  });
+/** A `handoff-mode.json` an earlier release saved, read back as a restart reads it. */
+const savedConfig = (sleepTrigger: "always" | "on-battery"): AwayConfig => {
+  const saved = JSON.parse(
+    JSON.stringify(
+      Schema.encodeSync(HandoffDocument)({
+        ...EMPTY_HANDOFF_DOCUMENT,
+        config: {
+          ...EMPTY_HANDOFF_DOCUMENT.config,
+          sleepTarget: MS,
+          autoTakeoverMinutes: 15,
+          sleepTrigger,
+          graceMinutes: 2,
+        },
+      }),
+    ),
+  );
+  const document = Schema.decodeUnknownSync(HandoffDocument)(saved);
+  // The saved values still read: nothing is rewritten, they only start nothing.
+  assert.strictEqual(document.config.sleepTrigger, sleepTrigger);
+  assert.strictEqual(document.config.autoTakeoverMinutes, 15);
+  return awayConfigOf(document.config);
+};
 
-  it("on battery fires only on battery; always fires on power too; off never", () => {
-    assert.isTrue(sleepTriggerFires(config(), M4, true));
-    assert.isFalse(sleepTriggerFires(config(), M4, false));
-    assert.isTrue(sleepTriggerFires(config({ sleepTrigger: "always" }), M4, false));
-    assert.isFalse(sleepTriggerFires(config({ sleepTrigger: "off" }), M4, true));
-  });
-});
-
-describe("the sleep notice", () => {
-  it.effect("on power with On battery: skipped, nothing sent, no session", () =>
+describe("a lid close never starts a handoff (AC-36)", () => {
+  it.effect("with both saved sleep settings and no window open: zero new handoffs", () =>
     Effect.gen(function* () {
-      const { away, store, remote } = yield* setup();
-      const decision = yield* away.sleep({ onBattery: false });
+      for (const [sleepTrigger, onBattery] of [
+        ["always", false],
+        ["always", true],
+        ["on-battery", true],
+      ] as const) {
+        const { away, store, hold, remote, setConfig } = yield* setup();
+        setConfig(savedConfig(sleepTrigger));
+        // Only the main process's notice reaches the server; no window is involved.
+        const decision = yield* away.sleep({ onBattery });
+        yield* decision.send;
+        assert.deepEqual(decision.answer, { outcome: "skipped" }, sleepTrigger);
+        assert.deepEqual(remote.sent, [], sleepTrigger);
+        assert.isNull(store.current(), sleepTrigger);
+        assert.isNull(hold.current(), sleepTrigger);
+      }
+    }),
+  );
+
+  it.effect("a move authorized before the lid close stays recoverable", () =>
+    Effect.gen(function* () {
+      const { before, away, store, hold, gaveWay, setConfig, intentsSent } = yield* setup();
+      setConfig(savedConfig("always"));
+      // The earlier release left for the target: its intent is there, the work is held here.
+      yield* (yield* before.sleep({ onBattery: true })).send;
+      const left = store.current();
+      assert.strictEqual(left?.state, "pending-intent");
+      assert.isNotNull(hold.current());
+      // Updated, then the lid closes again: nothing new starts, and nothing is let go.
+      const decision = yield* away.sleep({ onBattery: true });
       yield* decision.send;
       assert.deepEqual(decision.answer, { outcome: "skipped" });
-      assert.deepEqual(remote.sent, []);
-      assert.isNull(store.current());
-    }),
-  );
-
-  it.effect(
-    "on battery: answers left, sends the intent with grace and ids, records the session",
-    () =>
-      Effect.gen(function* () {
-        const { away, store, remote } = yield* setup();
-        const decision = yield* away.sleep({ onBattery: true });
-        assert.deepEqual(decision.answer, { outcome: "left" });
-        // Recorded before the send, so a sleep mid-send still knows it left.
-        assert.strictEqual(store.current()?.state, "pending-intent");
-        yield* decision.send;
-        assert.deepEqual(remote.sent, [
-          {
-            path: AWAY_INTENT_PATH,
-            body: {
-              sourceEnvironmentId: M4,
-              graceMinutes: 2,
-              projectIds: ["easychamp"],
-              threadIds: ["thread-1"],
-            },
-          },
-        ]);
-        assert.strictEqual(store.current()?.dueAt, "2026-11-09T22:02:00.000Z");
-      }),
-  );
-
-  it.effect("a refused send leaves the session as send-failed; the next wake clears it", () =>
-    Effect.gen(function* () {
-      const { away, store, hold, remote } = yield* setup({}, () =>
-        Effect.fail(
-          new AwayPeerError({
-            message: "Ministorm: no work grant",
-            refused: true,
-            uncertain: false,
-            status: 403,
-          }),
-        ),
-      );
-      const decision = yield* away.sleep({ onBattery: true });
+      assert.strictEqual(intentsSent(), 1);
+      assert.deepEqual(store.current(), left);
       assert.isNotNull(hold.current());
-      yield* decision.send;
-      assert.strictEqual(store.current()?.state, "send-failed");
-      // The target never recorded it: the coordinator runs here again at once.
+      // The target acted on the earlier intent: this machine gives way and offers Bring back.
+      yield* TestClock.adjust(10 * MINUTE);
+      assert.deepEqual(yield* away.wake({ onBattery: true }), { outcome: "prompt" });
+      assert.deepEqual(gaveWay, ["easychamp"]);
       assert.isNull(hold.current());
-      const woke = yield* away.wake({ onBattery: true });
-      assert.deepEqual(woke, { outcome: "none" });
-      assert.isNull(store.current());
-      assert.lengthOf(remote.sent, 1);
     }),
   );
 
   it.effect(
-    "an unanswered send is send-uncertain: the hold stays and the wake asks the target",
+    "a target that acted before its answer was lost is asked, never told nothing moved",
     () =>
       Effect.gen(function* () {
-        let failIntent = true;
-        const { away, store, hold, remote, gaveWay } = yield* setup({}, (path) =>
-          path === AWAY_INTENT_PATH && failIntent
-            ? Effect.fail(
-                new AwayPeerError({
-                  message: "Ministorm did not answer.",
-                  refused: false,
-                  uncertain: true,
-                }),
-              )
-            : movedAnswer(path),
+        let lost = true;
+        const { before, away, store, hold, remote, gaveWay, setConfig, intentsSent } = yield* setup(
+          {},
+          (path) => (path === AWAY_INTENT_PATH && lost ? noAnswer : movedAnswer(path)),
         );
+        setConfig(savedConfig("on-battery"));
+        yield* (yield* before.sleep({ onBattery: true })).send;
+        lost = false;
+        assert.strictEqual(store.current()?.state, "send-uncertain");
+        assert.isNotNull(hold.current());
+        // Updated: the lid closes again and sends nothing new.
         yield* (yield* away.sleep({ onBattery: true })).send;
-        failIntent = false;
+        assert.strictEqual(intentsSent(), 1);
         assert.strictEqual(store.current()?.state, "send-uncertain");
         assert.isNotNull(hold.current());
         yield* TestClock.adjust(10 * MINUTE);
@@ -211,15 +214,71 @@ describe("the sleep notice", () => {
         assert.isNull(hold.current());
       }),
   );
+
+  it.effect(
+    "a target armed earlier and offline through the update and the lid close: the hold waits",
+    () =>
+      Effect.gen(function* () {
+        let offline = false;
+        const { before, away, store, hold, gaveWay, setConfig, intentsSent } = yield* setup(
+          {},
+          (path) => (offline ? noAnswer : movedAnswer(path)),
+        );
+        setConfig(savedConfig("always"));
+        yield* (yield* before.sleep({ onBattery: true })).send;
+        assert.strictEqual(store.current()?.state, "pending-intent");
+        // The target goes offline; this machine updates and starts again.
+        offline = true;
+        assert.deepEqual(yield* away.boot, { outcome: "none" });
+        // No answer is no proof: the work stays held and the session says since when.
+        assert.isNotNull(hold.current());
+        assert.isDefined(store.current()?.unreachableSince);
+        // The lid closes: no new intent, and the hold is not released on a guess.
+        yield* (yield* away.sleep({ onBattery: true })).send;
+        assert.strictEqual(intentsSent(), 1);
+        assert.isNotNull(hold.current());
+        assert.strictEqual(yield* away.retry, "unresolved");
+        assert.deepEqual(gaveWay, []);
+        // The target is back and says it took the project over: this machine gives way.
+        offline = false;
+        yield* TestClock.adjust(10 * MINUTE);
+        assert.deepEqual(yield* away.wake({ onBattery: true }), { outcome: "prompt" });
+        assert.deepEqual(gaveWay, ["easychamp"]);
+        assert.isNull(hold.current());
+        assert.strictEqual(store.current()?.state, "wake-prompt");
+      }),
+  );
+
+  it.effect("a send the earlier release saw refused: the next wake clears it", () =>
+    Effect.gen(function* () {
+      const { before, away, store, hold, remote } = yield* setup({}, () =>
+        Effect.fail(
+          new AwayPeerError({
+            message: "Ministorm: no work grant",
+            refused: true,
+            uncertain: false,
+            status: 403,
+          }),
+        ),
+      );
+      yield* (yield* before.sleep({ onBattery: true })).send;
+      assert.strictEqual(store.current()?.state, "send-failed");
+      // The target never recorded it: the coordinator runs here again at once.
+      assert.isNull(hold.current());
+      assert.deepEqual(yield* away.wake({ onBattery: true }), { outcome: "none" });
+      assert.isNull(store.current());
+      assert.lengthOf(remote.sent, 1);
+    }),
+  );
 });
 
-describe("waking (D-02)", () => {
+describe("waking after an earlier release left (D-02)", () => {
   it.effect("back before the grace: cancels on the target, nothing moved, no prompt", () =>
     Effect.gen(function* () {
-      const { away, store, remote } = yield* setup({}, (path) =>
+      const { before, away, store, remote } = yield* setup({}, (path) =>
         Effect.succeed(path === AWAY_INTENT_CANCEL_PATH ? { cancelled: 1 } : {}),
       );
-      yield* (yield* away.sleep({ onBattery: true })).send;
+      yield* (yield* before.sleep({ onBattery: true })).send;
       yield* TestClock.adjust(MINUTE);
       assert.deepEqual(yield* away.wake({ onBattery: true }), { outcome: "none" });
       assert.strictEqual(remote.sent[1]?.path, AWAY_INTENT_CANCEL_PATH);
@@ -230,8 +289,8 @@ describe("waking (D-02)", () => {
 
   it.effect("back after the grace with the work moved: prompts once, then stays quiet", () =>
     Effect.gen(function* () {
-      const { away, store } = yield* setup();
-      yield* (yield* away.sleep({ onBattery: true })).send;
+      const { before, away, store } = yield* setup();
+      yield* (yield* before.sleep({ onBattery: true })).send;
       yield* TestClock.adjust(10 * MINUTE);
       assert.deepEqual(yield* away.wake({ onBattery: true }), { outcome: "prompt" });
       assert.strictEqual(store.current()?.state, "wake-prompt");
@@ -244,10 +303,10 @@ describe("waking (D-02)", () => {
 
   it.effect("after the grace, the target still waiting: the cancel wins and nothing moved", () =>
     Effect.gen(function* () {
-      const { away, store } = yield* setup({}, (path) =>
+      const { before, away, store } = yield* setup({}, (path) =>
         Effect.succeed(path === AWAY_INTENT_CANCEL_PATH ? { cancelled: 1 } : {}),
       );
-      yield* (yield* away.sleep({ onBattery: true })).send;
+      yield* (yield* before.sleep({ onBattery: true })).send;
       yield* TestClock.adjust(10 * MINUTE);
       assert.deepEqual(yield* away.wake({ onBattery: true }), { outcome: "none" });
       assert.isNull(store.current());
@@ -256,10 +315,10 @@ describe("waking (D-02)", () => {
 
   it.effect("Bring back automatically on power runs the registered bring back, on power only", () =>
     Effect.gen(function* () {
-      const { away } = yield* setup({ bringBack: "auto-on-power", sleepTrigger: "always" });
+      const { before, away } = yield* setup({ bringBack: "auto-on-power", sleepTrigger: "always" });
       let brought = 0;
       yield* away.onAutoBringBack(Effect.sync(() => void brought++));
-      yield* (yield* away.sleep({ onBattery: false })).send;
+      yield* (yield* before.sleep({ onBattery: false })).send;
       yield* TestClock.adjust(10 * MINUTE);
       assert.deepEqual(yield* away.wake({ onBattery: false }), { outcome: "auto" });
       yield* Effect.yieldNow;
@@ -271,12 +330,12 @@ describe("waking (D-02)", () => {
     Effect.gen(function* () {
       const auto = yield* setup({ bringBack: "auto-on-power" });
       yield* auto.away.onAutoBringBack(Effect.void);
-      yield* (yield* auto.away.sleep({ onBattery: true })).send;
+      yield* (yield* auto.before.sleep({ onBattery: true })).send;
       yield* TestClock.adjust(10 * MINUTE);
       assert.deepEqual(yield* auto.away.wake({ onBattery: true }), { outcome: "prompt" });
 
       const manual = yield* setup({ bringBack: "manual" });
-      yield* (yield* manual.away.sleep({ onBattery: true })).send;
+      yield* (yield* manual.before.sleep({ onBattery: true })).send;
       yield* TestClock.adjust(10 * MINUTE);
       assert.deepEqual(yield* manual.away.wake({ onBattery: true }), { outcome: "none" });
       // The session still waits for Bring back from the menu.
@@ -291,82 +350,4 @@ describe("waking (D-02)", () => {
       assert.deepEqual(remote.sent, []);
     }),
   );
-});
-
-describe("sleepIntentIds", () => {
-  const project = (
-    id: string,
-    patch: { coordinated?: boolean; linked?: boolean; personal?: boolean } = {},
-  ): Project =>
-    ({
-      id: ProjectId.make(id),
-      title: id,
-      deletedAt: null,
-      workspaceSettings: {
-        ...(patch.personal ? { personalAssistant: true } : {}),
-        coordinatorBinding: {
-          epoch: 1,
-          state: patch.coordinated === false ? "transferred" : "active",
-        },
-        logicalProject: {
-          id: `lp-${id}`,
-          title: id,
-          members: [
-            { environmentId: M4, projectId: id },
-            ...(patch.linked === false ? [] : [{ environmentId: MS, projectId: `${id}-ms` }]),
-          ],
-        },
-      },
-    }) as unknown as Project;
-
-  const running = (id: string, projectId: string) =>
-    ({
-      id,
-      projectId: ProjectId.make(projectId),
-      status: "running",
-      activityRunStatus: "running",
-      activeRunId: "run-1",
-      archivedAt: null,
-      deletedAt: null,
-      lineage: { relationshipToParent: null },
-      heldQueuedCount: 0,
-      executionMachineId: null,
-    }) as unknown as OrchestrationV2ThreadShell;
-
-  it("live scope: coordinated, linked projects with work or a routine; their live threads", () => {
-    const ids = sleepIntentIds({
-      self: M4,
-      target: MS,
-      coordinatorScope: "live",
-      projects: [
-        project("busy"),
-        project("routine"),
-        project("idle"),
-        project("unlinked", { linked: false }),
-        project("elsewhere", { coordinated: false }),
-      ],
-      shells: [running("t-busy", "busy"), running("t-unlinked", "unlinked")],
-      tasks: [{ projectId: ProjectId.make("routine"), enabled: true }],
-    });
-    assert.deepEqual(
-      ids.projectIds,
-      ["busy", "routine"].map((id) => ProjectId.make(id)),
-    );
-    assert.deepEqual(ids.threadIds, ["t-busy", "t-unlinked"]);
-  });
-
-  it("all scope adds idle coordinated projects", () => {
-    const ids = sleepIntentIds({
-      self: M4,
-      target: MS,
-      coordinatorScope: "all",
-      projects: [project("busy"), project("idle")],
-      shells: [],
-      tasks: [],
-    });
-    assert.deepEqual(
-      ids.projectIds,
-      ["busy", "idle"].map((id) => ProjectId.make(id)),
-    );
-  });
 });
