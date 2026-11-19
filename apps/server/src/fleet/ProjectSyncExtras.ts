@@ -90,7 +90,10 @@ export async function snapshotLeftOut(root: string): Promise<Array<ProjectSyncLe
     runGit(root, ["diff", "--name-only", "-z", "--no-renames", "HEAD"], { allowFailure: true }),
     runGit(root, ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"]),
   ]);
-  const untrackedPaths = untracked.stdout.split("\0").filter(Boolean).toSorted();
+  const untrackedPaths = untracked.stdout
+    .split("\0")
+    .filter((path) => path.length > 0 && !ProjectSync.inCloneStaging(path))
+    .toSorted();
   const out: Array<Omit<ProjectSyncLeftOutFile, "modifiedAtMs">> = [];
   const toCheck: Array<string> = [];
   for (const path of changed.stdout.split("\0").filter(Boolean).toSorted()) {
@@ -121,21 +124,27 @@ export async function snapshotLeftOut(root: string): Promise<Array<ProjectSyncLe
 /**
  * Removes the hidden refs of sends that never finished (the server stopped
  * mid-way): every ref under `refs/specwithcode/extras/` whose operation is not
- * in `active`, the sends under way in this server.
+ * a send under way in this server. `isActive` is asked for each ref at the
+ * moment it would be removed, never from a list made earlier: a send that
+ * began after the refs were listed keeps its ref. A ref is removed only while
+ * it still holds the commit it was listed with.
  */
 export async function sweepStaleExtraRefs(
   root: string,
-  active: ReadonlySet<string>,
+  isActive: (operation: string) => boolean,
 ): Promise<void> {
-  const listed = await runGit(root, ["for-each-ref", "--format=%(refname)", EXTRAS_REF_PREFIX], {
-    allowFailure: true,
-  });
+  const listed = await runGit(
+    root,
+    ["for-each-ref", "--format=%(refname) %(objectname)", EXTRAS_REF_PREFIX],
+    { allowFailure: true },
+  );
   if (listed.code !== 0) return;
-  for (const ref of listed.stdout.split("\n")) {
-    if (!ref.startsWith(EXTRAS_REF_PREFIX)) continue;
+  for (const line of listed.stdout.split("\n")) {
+    const [ref, commit] = line.split(" ");
+    if (ref === undefined || commit === undefined || !ref.startsWith(EXTRAS_REF_PREFIX)) continue;
     const operation = ref.slice(EXTRAS_REF_PREFIX.length).split("/")[0] ?? "";
-    if (active.has(operation)) continue;
-    await runGit(root, ["update-ref", "-d", ref], { allowFailure: true });
+    if (isActive(operation)) continue;
+    await runGit(root, ["update-ref", "-d", ref, commit], { allowFailure: true });
   }
 }
 
@@ -174,7 +183,10 @@ export async function inventoryRepository(
     else notPushed.push({ branch, head, commits });
   }
   const status = await runGit(root, ["status", "--porcelain=v1", "--untracked-files=all"]);
-  const entries = lines(status.stdout);
+  // A folder a clone is being made in is no work of this repository.
+  const entries = lines(status.stdout).filter(
+    (entry) => !(entry.startsWith("??") && ProjectSync.inCloneStaging(entry.slice(3))),
+  );
   const untrackedFiles = entries.filter((entry) => entry.startsWith("??")).length;
   const stashes = await runGit(root, ["stash", "list"], { allowFailure: true });
   const leftOut = capped(await snapshotLeftOut(root));
@@ -560,7 +572,7 @@ const make = Effect.gen(function* () {
         if (!swept.has(repository.cwd)) {
           swept.add(repository.cwd);
           yield* attempt(() =>
-            sweepStaleExtraRefs(repository.cwd, new Set(activeOperations.keys())),
+            sweepStaleExtraRefs(repository.cwd, (operation) => activeOperations.has(operation)),
           ).pipe(Effect.uninterruptible);
         }
         items.push(

@@ -22,6 +22,7 @@ import {
   cleanUp,
   commit,
   git,
+  gitHooks,
   gitCommandsNotAllowed,
   isolateGit,
   recordedGit,
@@ -178,7 +179,13 @@ describe("landing a Sync extra (1390 AC-13)", () => {
     const { bytes } = await bundleOf(f.a, "feature", [first.tip]);
     const bundle = NodePath.join(f.base, "next.bundle");
     NodeFS.writeFileSync(bundle, bytes);
-    git(f.b, "fetch", "-q", bundle, "refs/heads/feature:refs/test/next");
+    git(
+      f.b,
+      "fetch",
+      "-q",
+      bundle,
+      "refs/heads/feature:refs/specwithcode/extras-incoming/test/next",
+    );
     // The gap: the worktrees were listed, then the branch is checked out in a linked worktree.
     const worktree = NodePath.join(f.base, "b-late");
     git(f.b, "worktree", "add", "-q", worktree, "swc/from-M4/feature");
@@ -188,6 +195,7 @@ describe("landing a Sync extra (1390 AC-13)", () => {
         root: f.b,
         branch: "swc/from-M4/feature",
         commit: next,
+        via: "refs/specwithcode/extras-incoming/test/next",
         from: first.tip,
       }),
     ).toBe(false);
@@ -200,6 +208,7 @@ describe("landing a Sync extra (1390 AC-13)", () => {
         root: f.b,
         branch: "swc/from-M4/feature",
         commit: next,
+        via: "refs/specwithcode/extras-incoming/test/next",
         from: next,
       }),
     ).toBe(false);
@@ -208,10 +217,58 @@ describe("landing a Sync extra (1390 AC-13)", () => {
         root: f.b,
         branch: "swc/from-M4/feature",
         commit: next,
+        via: "refs/specwithcode/extras-incoming/test/next",
         from: first.tip,
       }),
     ).toBe(true);
     expect(git(f.b, "rev-parse", "refs/heads/swc/from-M4/feature")).toBe(next);
+  });
+
+  it("does not move a branch that changed after its head was read (P2-13)", async () => {
+    const f = twoMachines();
+    git(f.a, "checkout", "-q", "-b", "feature");
+    commit(f.a, "feature.ts", "export const feature = 1;\n");
+    const first = await send(f, "feature");
+    const next = commit(f.a, "feature.ts", "export const feature = 2;\n");
+    const { bytes } = await bundleOf(f.a, "feature", [first.tip]);
+    const bundle = NodePath.join(f.base, "next.bundle");
+    NodeFS.writeFileSync(bundle, bytes);
+    git(
+      f.b,
+      "fetch",
+      "-q",
+      bundle,
+      "refs/heads/feature:refs/specwithcode/extras-incoming/test/next",
+    );
+    // Work of this machine's own that lands on the branch between the read and the move.
+    const rival = git(
+      f.b,
+      "commit-tree",
+      "-m",
+      "rival",
+      "-p",
+      first.tip,
+      git(f.b, "rev-parse", `${first.tip}^{tree}`),
+    );
+    const branch = "refs/heads/swc/from-M4/feature";
+    let moves = 0;
+    gitHooks.before = (command) => {
+      if (command.cwd !== f.b || !["branch", "fetch"].includes(command.args[0] ?? "")) return;
+      moves += 1;
+      git(f.b, "update-ref", branch, rival);
+    };
+    expect(
+      await moveBranchForward({
+        root: f.b,
+        branch: "swc/from-M4/feature",
+        commit: next,
+        via: "refs/specwithcode/extras-incoming/test/next",
+        from: first.tip,
+      }),
+    ).toBe(false);
+    expect(moves).toBe(1);
+    // The other work is still the branch's head: nothing was written over it.
+    expect(git(f.b, "rev-parse", branch)).toBe(rival);
   });
 
   it("names one lock for a repository however its folder is reached", async () => {
