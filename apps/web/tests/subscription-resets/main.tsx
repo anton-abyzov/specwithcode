@@ -118,7 +118,12 @@ const accounts: LimitAccount[] = empty
           subscriptionKey: copilotKey,
           windows: [
             {
-              ...window("premium_interactions", "monthly", "Premium requests", 0, 59, 16 * DAY),
+              // Copilot reports no window length, as its reader publishes it.
+              id: "premium_interactions",
+              kind: "monthly",
+              label: "Premium requests",
+              usedPercent: 59,
+              resetsAt: iso(now + 16 * DAY),
               used: 885,
               limit: 1500,
               unit: "premium requests",
