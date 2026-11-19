@@ -2,8 +2,10 @@ import { createContext, use, useMemo, type ReactNode } from "react";
 
 import { renderRich } from "../i18n/rich";
 import { useTx } from "../i18n";
-import { usePrimaryEnvironmentId } from "../state/environments";
-import { machineColorProps, useMachineIdentity, type MachineIdentity } from "./machineIdentity";
+import type { EnvironmentId } from "@specweave-studio/contracts";
+
+import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
+import { machineColorProps, useMachineIdentities, type MachineIdentity } from "./machineIdentity";
 
 /**
  * The machine a card, button or alert acts on, when it is not the window's own
@@ -11,7 +13,10 @@ import { machineColorProps, useMachineIdentity, type MachineIdentity } from "./m
  */
 export type ActionMachine = Pick<MachineIdentity, "name" | "color">;
 
-/** The machine a thread runs on: where it was handed off to, else where it lives. */
+/**
+ * The machine a thread runs on: where it was handed off to, else where it lives.
+ * Alerts name it; a control names its dispatch environment instead (actionMachineAt).
+ */
 export function threadActionMachineId(thread: {
   readonly executionMachineId?: string | null | undefined;
   readonly environmentId: string;
@@ -36,16 +41,44 @@ export function useActionMachine(): ActionMachine | null {
   return use(ActionMachineContext);
 }
 
-/** A machine by its id, as the cards name it: null when it is the window's own. */
+/**
+ * The machine a control names: the environment its callback dispatches to (an
+ * answer's RPC destination, the provider setup it opens), never the thread's
+ * execution machine, which can differ after a hand off. The name falls back
+ * only to that environment's own label. Null on the window's own machine.
+ */
+export function actionMachineAt(input: {
+  readonly dispatchEnvironmentId: string | null | undefined;
+  readonly windowEnvironmentId: string | null | undefined;
+  readonly identityOf: (
+    environmentId: string,
+    fallbackLabel?: string | null,
+  ) => ActionMachine & { readonly environmentId: string };
+  readonly labelOf: (environmentId: string) => string | null | undefined;
+}): ActionMachine | null {
+  const id = input.dispatchEnvironmentId;
+  if (!id) return null;
+  return actionMachineFor(input.identityOf(id, input.labelOf(id)), input.windowEnvironmentId);
+}
+
+/** {@link actionMachineAt} for one dispatch environment, as a hook. */
 export function useActionMachineFor(
-  machineId: string | null | undefined,
-  fallbackLabel?: string | null,
+  dispatchEnvironmentId: EnvironmentId | null | undefined,
 ): ActionMachine | null {
-  const identity = useMachineIdentity(machineId, fallbackLabel);
+  const environment = useEnvironment(dispatchEnvironmentId ?? null);
+  const identityOf = useMachineIdentities();
   const windowEnvironmentId = usePrimaryEnvironmentId();
+  const label = environment?.label;
   return useMemo(
-    () => actionMachineFor(identity, windowEnvironmentId),
-    [identity, windowEnvironmentId],
+    () =>
+      actionMachineAt({
+        dispatchEnvironmentId,
+        windowEnvironmentId,
+        identityOf,
+        // The environment looked up is the dispatched one, so its label is that machine's.
+        labelOf: (id) => (id === dispatchEnvironmentId ? label : undefined),
+      }),
+    [dispatchEnvironmentId, windowEnvironmentId, identityOf, label],
   );
 }
 

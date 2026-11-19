@@ -47,6 +47,7 @@ import { WorkLogRow } from "./WorkLog";
 import {
   ActionMachineName,
   OnActionMachine,
+  useActionMachineFor,
   type ActionMachine,
 } from "../../studio/actionMachine";
 import {
@@ -139,9 +140,9 @@ export function PendingAccessRequestPanel(props: {
   readonly agentLabel: string | null;
   /** A viewer who cannot operate the thread sees the card but cannot answer it. */
   readonly disabled?: boolean;
-  /** The thread's machine when it is not the window's own (1427 AC-07). */
-  readonly machine?: ActionMachine | null | undefined;
 }) {
+  // The answer goes to props.environmentId, which stores an Always grant, so the card names it.
+  const machine = useActionMachineFor(props.environmentId);
   const answer = useAtomCommand(serverEnvironment.answerAccessRequest, {
     label: "answer access request",
     reportFailure: false,
@@ -166,7 +167,7 @@ export function PendingAccessRequestPanel(props: {
       agentLabel={props.agentLabel}
       onAnswer={onAnswer}
       disabled={props.disabled === true}
-      machine={props.machine ?? null}
+      machine={machine}
       {...(permission && local ? { onOpenSystemSettings: fullDiskAccess.openSettings } : {})}
     />
   );

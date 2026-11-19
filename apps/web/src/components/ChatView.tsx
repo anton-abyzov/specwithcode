@@ -831,11 +831,7 @@ import {
 import type { ThreadOrigin } from "./chat/ThreadMetaRow";
 import { ProjectedThreadMetaRow } from "./chat/ProjectedThreadMetaRow";
 import { useThreadMachine } from "./chat/threadMachine";
-import {
-  ActionMachineContext,
-  actionMachineFor,
-  threadActionMachineId,
-} from "../studio/actionMachine";
+import { ActionMachineContext, useActionMachineFor } from "../studio/actionMachine";
 import {
   machineColorProps,
   MachineSendTargetContext,
@@ -5125,18 +5121,10 @@ function useChatViewState(props: ChatViewProps) {
         : null,
     [composerMachine, primaryEnvironmentId],
   );
-  // The machine the thread's cards and buttons act on: where it runs now, named
-  // only when that is not this window's machine (1427 AC-07).
-  const actionMachineIdentity = useMachineIdentity(
-    activeThreadShell
-      ? threadActionMachineId(activeThreadShell)
-      : (activeEnvironment?.environmentId ?? null),
-    activeThreadShell?.executionMachineLabel ?? activeEnvironment?.label,
-  );
-  const actionMachine = useMemo(
-    () => actionMachineFor(actionMachineIdentity, primaryEnvironmentId),
-    [actionMachineIdentity, primaryEnvironmentId],
-  );
+  // The machine the thread's cards and buttons act on: the route's environment,
+  // where their answers, Continue and provider setup go. Named only when that is
+  // not this window's machine (1427 AC-07).
+  const actionMachine = useActionMachineFor(environmentId);
   const threadPullRequests = activeThreadShell?.pullRequests ?? [];
 
   const manualCompactionProviderAvailable = useMemo(
@@ -15504,7 +15492,6 @@ export default function ChatView(props: ChatViewProps) {
         item={pendingAccessRequest}
         agentLabel={pendingAccessRequestAgentLabel}
         disabled={!canOperateThread}
-        machine={actionMachine}
       />
     ) : null;
 
