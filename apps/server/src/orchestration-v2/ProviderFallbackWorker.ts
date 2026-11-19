@@ -2091,12 +2091,22 @@ export const makeSweep = Effect.gen(function* () {
         Effect.gen(function* () {
           if (yield* stopHoldsThread(current, true)) return false;
           const at = DateTime.toEpochMillis(yield* DateTime.now);
+          // The sign-ins are read again too: one that reset here while a machine
+          // answered keeps the thread (1390 AC-37).
+          yield* rereadProviders;
           const own = teamRulesFilterProviders(
             yield* teamRulesForFolder(current.worktreePath ?? currentProject.workspaceRoot),
             providersFor(current, currentProject),
           );
           const local = providerLimitStep(current, own, rule, at, options)?.type ?? null;
-          return triggerFor(current, own, rule, local, at)?.key === trigger?.key;
+          const fresh = triggerFor(current, own, rule, local, at);
+          // The same stop, and the same track still out here: a move is for both.
+          return (
+            fresh !== null &&
+            fresh.key === trigger?.key &&
+            fresh.track?.track === trigger.track?.track &&
+            fresh.track?.outHere === trigger.track?.outHere
+          );
         }),
       ).pipe(
         Effect.map((admitted) => admitted === true),

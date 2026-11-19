@@ -37,6 +37,7 @@ import { describeFallbackOrder, usageResetAt } from "@specweave-studio/shared/pr
 import * as DateTime from "effect/DateTime";
 
 import { checkAnswer, type PeerCheckEvidence } from "../handoff/handoffPlan.ts";
+import { sourceReviewLock } from "../handoff/handoffReviewLock.ts";
 import { providerUsageSummary } from "../usage/providerUsageSummary.ts";
 
 /** A wait with no reset time is checked again once the readings behind it are old. */
@@ -46,7 +47,7 @@ export const TRACK_RECHECK_UNREACHED_MS = 2 * 60_000;
 /** The transfer record's limit for a reason. */
 const REASON_MAX = 120;
 /** The most account pools one check names. */
-const MAX_FINGERPRINTS = 16;
+export const MAX_FINGERPRINTS = 16;
 
 /** A track an automatic start can move a thread on. A review thread keeps its reviewer. */
 export type StartTrack = Exclude<ModelTrack, "review">;
@@ -68,7 +69,7 @@ export type ThreadTrackState =
     };
 
 type TrackThread = Pick<OrchestrationV2ThreadShell, "providerInstanceId" | "modelSelection"> &
-  Partial<Pick<OrchestrationV2ThreadShell, "routing" | "usageLimitResetAt">>;
+  Partial<Pick<OrchestrationV2ThreadShell, "routing" | "usageLimitResetAt" | "title">>;
 
 type TrackRule = Pick<
   ServerSettings,
@@ -102,7 +103,13 @@ export function limitHandoffTrackState(input: {
   const { thread, rule, providers, nowMs } = input;
   if (rule.threadModelMode !== "tracks") return { kind: "none" };
   const routing = thread.routing ?? null;
-  if (routing?.reviewFamily !== undefined || routing?.taskClass === "review")
+  // A review by its routing marker or, with none, by its title: the same rule the
+  // reviewer lock reads, asked before any track is inferred from the model.
+  if (
+    routing?.reviewFamily !== undefined ||
+    routing?.taskClass === "review" ||
+    sourceReviewLock(thread).kind !== "none"
+  )
     return { kind: "held", reason: "A review thread stays with its reviewer." };
   const model = thread.modelSelection.model;
   let track: StartTrack;
@@ -156,7 +163,7 @@ export function limitHandoffTrackState(input: {
       entry.unavailable === "limited";
     if (!spent) continue;
     const fingerprint = providerUsageSummary(entry.provider, nowMs).accountFingerprint;
-    if (fingerprint !== null && fingerprints.size < MAX_FINGERPRINTS) fingerprints.add(fingerprint);
+    if (fingerprint !== null) fingerprints.add(fingerprint);
     const read =
       entry.resetAt ?? usageResetAt(entry.provider, threshold, nowMs, entry.selection.model);
     const resetMs =
@@ -165,6 +172,13 @@ export function limitHandoffTrackState(input: {
     if (resetMs !== null && resetMs > nowMs)
       earliestResetMs = earliestResetMs === null ? resetMs : Math.min(earliestResetMs, resetMs);
   }
+  // A machine is told every pool the track ran out on, so it never answers with one
+  // of them. More than a check can name would leave one unnamed: nothing starts.
+  if (fingerprints.size > MAX_FINGERPRINTS)
+    return {
+      kind: "held",
+      reason: `Its track ran out on more than ${MAX_FINGERPRINTS} accounts here, so no machine can be told them all.`,
+    };
   return {
     kind: "track",
     track,

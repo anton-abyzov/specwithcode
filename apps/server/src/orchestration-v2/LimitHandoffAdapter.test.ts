@@ -158,6 +158,8 @@ describe("LimitHandoffAdapter", () => {
             kind: "automatic",
             key: request.idempotencyKey,
             reason: "Claude limit reached on M4",
+            // No run was named, so only the disposition it was admitted with is checked.
+            disposition: "resume",
           },
         },
       ]);

@@ -288,7 +288,16 @@ export function confirmTarget(input: {
     read.find((entry) => entry.automatic) ??
     (input.start === "manual" ? read.find((entry) => entry.byHand) : undefined);
   if (confirmed !== undefined) return { failures: base, evidence: wire(confirmed) };
-  const first = read[0];
+  // No sign-in has room: the one that resets first says when the track is back (AC-39).
+  const resetOf = (entry: (typeof read)[number]) => {
+    const at = entry.resetsAt === null ? Number.NaN : Date.parse(entry.resetsAt);
+    return Number.isFinite(at) && at > input.nowMs ? at : Number.POSITIVE_INFINITY;
+  };
+  const first = read.reduce<(typeof read)[number] | undefined>(
+    (earliest, entry) =>
+      earliest === undefined || resetOf(entry) < resetOf(earliest) ? entry : earliest,
+    undefined,
+  );
   if (first !== undefined) {
     return {
       failures: [...base, { check: "provider", message: at(first.line) }],

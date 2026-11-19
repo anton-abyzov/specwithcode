@@ -70,6 +70,7 @@ import {
   type ReviewStays,
   sourceReviewLock,
 } from "../handoff/handoffReviewLock.ts";
+import { AUTOMATIC_OFF } from "../handoff/HandoffTransferRunner.ts";
 import { HandoffTurnGate } from "../handoff/HandoffTurnGate.ts";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
@@ -123,8 +124,10 @@ export interface LimitHandoffRequest {
   readonly modelLabel?: string;
   /** The track that is out here, when that is why the thread leaves (1390). */
   readonly track?: ModelTrack;
-  /** The usage window an idle move belongs to, for the transfer record. */
+  /** When the usage window that set the move off resets, for the transfer record. */
   readonly usageWindowKey?: string;
+  /** The run the move was admitted for; with `resume`, what the transfer is fenced to. */
+  readonly runId?: string;
 }
 
 /** What a machine is asked before an automatic track start; the port adds this machine's identity. */
@@ -319,6 +322,14 @@ interface State {
   /** Per thread. */
   readonly tracks: ReadonlyMap<string, Tracked>;
 }
+
+/** A wait on a track is kept until the machines are asked again, however far that is. */
+const pruneTracks = (tracks: ReadonlyMap<string, Tracked>, nowMs: number): Map<string, Tracked> =>
+  new Map(
+    [...tracks].filter(
+      ([, value]) => nowMs - value.atMs < STATE_MAX_AGE_MS || nowMs < value.recheckAtMs,
+    ),
+  );
 
 const prune = <V extends { readonly atMs?: number; readonly sinceMs?: number }>(
   map: ReadonlyMap<string, V>,
@@ -720,6 +731,14 @@ export const make = Effect.gen(function* () {
     const localLabel = typeof list === "string" ? "this machine" : list.local.label;
     // Refusals worth asking again later still name their reason in the wait text.
     const transient = new Map<string, Refusal>();
+    // When the window that sends the thread away resets: the track's first reset here, or
+    // the stop's own. A thread sent for it is not sent straight back before then.
+    const windowEndMs =
+      tracked !== null ? tracked.earliestResetMs : Date.parse(thread.usageLimitResetAt ?? "");
+    const windowEnd =
+      windowEndMs !== null && Number.isFinite(windowEndMs)
+        ? DateTime.formatIso(DateTime.makeUnsafe(windowEndMs))
+        : null;
     /** Asks one target to take the thread; "next" when it refused and nothing moved. */
     const moveTo = Effect.fnUntraced(function* (
       attempt: {
@@ -730,7 +749,22 @@ export const make = Effect.gen(function* () {
       track?: ModelTrack,
     ) {
       // The last check before sending: the trigger, and with it the track's state here, read afresh.
-      if (doubt === undefined && !(yield* input.admit)) return "skipped" as const;
+      if (doubt === undefined) {
+        if (!(yield* input.admit)) return "skipped" as const;
+        // The destination was approved under settings that may have changed since.
+        const saved = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
+        const targets =
+          saved === null
+            ? []
+            : resolveProjectSettings(saved, thread.projectId).settings.providerLimitMachineTargets;
+        if (!targets.some((target) => target.environmentId === attempt.target.environmentId))
+          return "skipped" as const;
+        // Off may have been chosen while a machine answered; unreadable counts as Off.
+        if (port.optedOut !== undefined && (yield* port.optedOut(thread.id))) {
+          yield* setWaiting(AUTOMATIC_OFF);
+          return "skipped" as const;
+        }
+      }
       yield* Ref.update(state, (s) => ({
         ...s,
         inDoubt: new Map(s.inDoubt).set(trigger.key, {
@@ -753,6 +787,8 @@ export const make = Effect.gen(function* () {
           ? {}
           : { modelLabel: attempt.target.modelLabel }),
         ...(track === undefined ? {} : { track }),
+        ...(thread.latestRunId === null ? {} : { runId: thread.latestRunId }),
+        ...(windowEnd === null ? {} : { usageWindowKey: windowEnd }),
       };
       // Interrupting 0967 mid-takeover would leave the lease "handing-off" with nobody to
       // settle it, so the move runs detached and the timeout (or a stopping sweep) only
@@ -840,8 +876,10 @@ export const make = Effect.gen(function* () {
     });
 
     if (tracked !== null) {
+      // A review keeps its reviewer: no machine is asked for a track on its behalf.
+      if (sourceReviewLock(thread).kind !== "none") return "skipped" as const;
       if (port.optedOut !== undefined && (yield* port.optedOut(thread.id))) {
-        yield* setWaiting("Hand off automatically is off for this thread.");
+        yield* setWaiting(AUTOMATIC_OFF);
         return "skipped" as const;
       }
       const held = current.tracks.get(thread.id);
@@ -861,7 +899,7 @@ export const make = Effect.gen(function* () {
       const remember = (decision: LimitHandoffTrackDecision) =>
         Ref.update(state, (s) => ({
           ...s,
-          tracks: prune(s.tracks, nowMs).set(thread.id, {
+          tracks: pruneTracks(s.tracks, nowMs).set(thread.id, {
             key: trigger.key,
             runId: thread.latestRunId,
             decision,
@@ -1070,7 +1108,7 @@ export const make = Effect.gen(function* () {
       track:
         tracked !== undefined &&
         tracked.runId === thread.latestRunId &&
-        nowMs - tracked.atMs < STATE_MAX_AGE_MS
+        (nowMs - tracked.atMs < STATE_MAX_AGE_MS || nowMs < tracked.recheckAtMs)
           ? tracked.decision
           : null,
       checkedAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs)),
