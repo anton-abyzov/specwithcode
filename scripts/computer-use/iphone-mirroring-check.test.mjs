@@ -574,7 +574,7 @@ describe("dry run", () => {
     let typed = false;
     let covered = 0;
     phone.deps.call = async (tool, args) => {
-      if (tool === "computer_type") typed = args.text === "hbbd";
+      if (tool === "computer_type") typed = args.text === "hbbt";
       if (tool === "computer_screenshot" && typed && covered === 0) {
         covered++;
         phone.state.front = "Google Chrome";
@@ -585,11 +585,11 @@ describe("dry run", () => {
     expect(covered).toBe(1);
     expect(
       result.lines.some((entry) =>
-        /^NOTE \S+ paused type "hbbd": Google Chrome was in front in the screenshot/.test(entry),
+        /^NOTE \S+ paused type "hbbt": Google Chrome was in front in the screenshot/.test(entry),
       ),
     ).toBe(true);
     expect(
-      result.lines.find((entry) => entry.includes('type "hbbd"') && !entry.startsWith("NOTE")),
+      result.lines.find((entry) => entry.includes('type "hbbt"') && !entry.startsWith("NOTE")),
     ).toMatch(/^PASS/);
     expect(result.lines.at(-1)).toMatch(/^Result: PASS/);
   });
@@ -833,6 +833,75 @@ describe("dry run", () => {
     expect(result.lines.at(-1)).toMatch(/^Result: INVALID \(could not judge type "x@y#h"/);
   });
 
+  it("reads a typed sample again after the cursor blinks, and passes it only when read as typed", async () => {
+    const phone = simulatedPhone({ cursorBends: ["hbbt"] });
+    const result = await runCheck(phone.deps);
+    expect(result.lines).toContain(
+      'PASS type "hbbt": shown on the phone on reading 2 of 3, the cursor\'s blink apart; frontmost iPhone Mirroring',
+    );
+    expect(result.lines.at(-1)).toMatch(/^Result: PASS/);
+    // A wrong key reads wrong every time.
+    const wrong = simulatedPhone();
+    const call = wrong.deps.call;
+    wrong.deps.call = (tool, args) =>
+      call(tool, tool === "computer_type" && args.text === "hbbt" ? { text: "hbba" } : args);
+    const failed = await runCheck(wrong.deps);
+    expect(failed.lines).toContainEqual(
+      expect.stringMatching(/^FAIL type "hbbt": not shown as typed in 3 readings/),
+    );
+  });
+
+  it("opens Spotlight again to open Clock when the phone shows only its home screen", async () => {
+    // cmd+3 number 8 opens Spotlight for Clock (1 is the path probe, 2-6 the samples, 7 the repeat).
+    const phone = simulatedPhone({ spotlightMisses: (n) => n === 8 });
+    const result = await runCheck(phone.deps);
+    expect(result.lines).toContainEqual(
+      expect.stringMatching(
+        /^NOTE .* opening Clock: after typing "Clock" the phone showed only its home screen, no search field \(try 1 of 3\)/,
+      ),
+    );
+    expect(result.lines.at(-1)).toMatch(/^Result: PASS/);
+  });
+
+  it("calls tabs unsure, never failed, when Clock never opens", async () => {
+    const phone = simulatedPhone({ spotlightMisses: (n) => n >= 8 && n <= 10 });
+    const result = await runCheck(phone.deps);
+    expect(result.lines).toContainEqual(
+      expect.stringMatching(
+        /^UNSURE tabs: Clock could not be opened, so no tab was tried: the phone showed no Spotlight after typing "Clock" on 3 tries/,
+      ),
+    );
+    expect(result.lines.some((entry) => entry.startsWith("FAIL "))).toBe(false);
+    expect(result.lines.at(-1)).toMatch(/^Result: INVALID \(could not judge tabs/);
+    // Return and the tap open nothing: Clock did not open either.
+    const dead = simulatedPhone({ deadReturn: true });
+    const call = dead.deps.call;
+    dead.deps.call = (tool, args) =>
+      tool === "computer_click" && dead.state.app === "spotlight"
+        ? call("computer_screenshot", {})
+        : call(tool, args);
+    const stuck = await runCheck(dead.deps);
+    expect(stuck.lines).toContainEqual(
+      expect.stringMatching(
+        /^UNSURE tabs: Clock did not open, so no tab was tried: after Return and a tap on its result Spotlight still showed "Clock"/,
+      ),
+    );
+    expect(stuck.lines.some((entry) => entry.startsWith("FAIL "))).toBe(false);
+  });
+
+  it("calls scroll unsure, never failed, when Settings never opens", async () => {
+    // With no misses, cmd+3 number 9 opens Spotlight for Settings.
+    const phone = simulatedPhone({ spotlightMisses: (n) => n >= 9 });
+    const result = await runCheck(phone.deps);
+    expect(result.lines).toContainEqual(
+      expect.stringMatching(/^UNSURE scroll: Settings could not be opened, so no scroll was tried/),
+    );
+    expect(result.lines.some((entry) => entry.startsWith("FAIL "))).toBe(false);
+    expect(result.lines.at(-1)).toMatch(
+      /^Result: INVALID \(could not judge scroll; 20 clicks landed\)/,
+    );
+  });
+
   it("opens Spotlight again for the key repeat measurement", async () => {
     const phone = simulatedPhone({ spotlightMisses: (n) => n === 7 });
     const result = await runCheck(phone.deps);
@@ -955,7 +1024,13 @@ describe("dry run", () => {
     };
     const result = await runCheck(phone.deps);
     expect(looked).toBe(0);
-    expect(result.lines).toContainEqual(expect.stringMatching(/^FAIL tabs: could not find/));
+    // Clock never opened, so no tab was tried: never a product failure.
+    expect(result.lines).toContainEqual(
+      expect.stringMatching(
+        /^UNSURE tabs: Clock did not open, so no tab was tried: .*Spotlight still showed "Clock"/,
+      ),
+    );
+    expect(result.lines.some((entry) => entry.startsWith("FAIL "))).toBe(false);
   });
 
   it("never counts an icon tap made from a page read as neither tab", async () => {

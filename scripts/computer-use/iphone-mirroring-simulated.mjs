@@ -13,7 +13,8 @@ import { MIRRORING_APP, PATH_REFUSAL } from "./iphone-mirroring-check.mjs";
  * result under the field still opens it when tapped. iconTabs: Clock shows its
  * tabs as unlabelled icons in a column at the lower right, and each page its
  * title. behind: text of other windows showing in the window's margins, the
- * same in every reading.
+ * same in every reading. cursorBends: typed texts whose first reading after
+ * typing shows the last letter bent by the text cursor, as "a".
  */
 export function simulatedPhone({
   missClick,
@@ -29,6 +30,7 @@ export function simulatedPhone({
   deadReturn = false,
   iconTabs = false,
   behind = [],
+  cursorBends = [],
   // Called with the number of each input call: "refuse" puts SpecWithCode in
   // front first (the product refuses, nothing sent); "partway" sends it, then
   // reports that iPhone Mirroring left the front.
@@ -86,7 +88,9 @@ export function simulatedPhone({
     if (state.app === "home") return [line("Clock", 640, 300), line("Settings", 760, 300)];
     if (state.app === "spotlight") {
       if (state.query === "") return [line("Search", 640, 160)];
-      const field = line(`${state.query}${state.inline ? "- Ask Siri" : ""}`, 640, 160);
+      const shown = state.bent ? `${state.query.slice(0, -1)}a` : state.query;
+      state.bent = false;
+      const field = line(`${shown}${state.inline ? "- Ask Siri" : ""}`, 640, 160);
       // An app's name shows its result under the field.
       return APPS.has(state.query) ? [field, line(state.query, 640, 260)] : [field];
     }
@@ -180,6 +184,7 @@ export function simulatedPhone({
         if (state.app === "spotlight") {
           state.query += args.text;
           state.inline = suggestion;
+          state.bent = cursorBends.includes(args.text);
         }
         return done();
       case "computer_click": {
