@@ -14,7 +14,13 @@ import {
   type FileClass,
 } from "./classify.ts";
 import { FolderGitError, gitList, runGit } from "./git.ts";
-import { isSafeRelativePath, linkTargetOnWire } from "./paths.ts";
+import {
+  destinationPathKey,
+  isSafeDestinationPath,
+  isSafeRelativePath,
+  linkTargetOnWire,
+  MAX_RELATIVE_PATH,
+} from "./paths.ts";
 
 /** Fixed chunk size: large files move and resume in 8 MiB pieces. */
 export const CHUNK_SIZE = 8 * 1024 * 1024;
@@ -268,9 +274,7 @@ async function readRepository(
   const keepsOtherRefs =
     otherRefs !== null &&
     (otherRefs.code !== 0 ||
-      otherRefs.stdout
-        .split("\n")
-        .some((ref) => ref.length > 0 && !CLONE_CARRIED_REF.test(ref)));
+      otherRefs.stdout.split("\n").some((ref) => ref.length > 0 && !CLONE_CARRIED_REF.test(ref)));
   // Unreadable counts as local work: such a repository is copied, never cloned.
   const localOnlyCommits =
     localOnly === null
@@ -1078,6 +1082,74 @@ export interface ManifestHeader {
 export interface Manifest {
   readonly header: ManifestHeader;
   readonly entries: ReadonlyArray<ManifestEntry>;
+}
+
+export interface ManifestRefusal {
+  readonly path: string;
+  readonly reason:
+    | "unsafe-path"
+    | "alias"
+    | "not-a-folder"
+    | "link-in-path"
+    | "unsafe-link"
+    | "bad-size";
+}
+
+/**
+ * What a destination refuses in a received manifest, before it asks for a chunk:
+ * a path that leaves the folder or that this system maps to another name, two
+ * entries that land on one name under the volume's rules, an entry below a file
+ * or a link, a link whose target is not path text, a size that is not a whole
+ * number. One bad entry refuses the whole manifest; null means none was found.
+ */
+export function validateManifestEntries(
+  entries: ReadonlyArray<ManifestEntry>,
+  volume: { readonly platform: NodeJS.Platform; readonly caseInsensitive: boolean },
+): ManifestRefusal | null {
+  /** The one spelling seen for each name on the volume, entries and their folders alike. */
+  const spellings = new Map<string, string>();
+  const kinds = new Map<string, EntryType>();
+  for (const entry of entries) {
+    const path = entry?.path;
+    if (typeof path !== "string" || !isSafeDestinationPath(path, volume.platform))
+      return { path: String(path), reason: "unsafe-path" };
+    if (!Number.isSafeInteger(entry.size) || entry.size < 0) return { path, reason: "bad-size" };
+    if (entry.type === "symlink") {
+      const target = entry.target;
+      if (
+        typeof target !== "string" ||
+        target.length === 0 ||
+        target.length > MAX_RELATIVE_PATH ||
+        // eslint-disable-next-line no-control-regex -- Control bytes are never valid in a link target.
+        /[\u0000-\u001f\u007f]/.test(target)
+      )
+        return { path, reason: "unsafe-link" };
+    }
+    if (kinds.has(path)) return { path, reason: "alias" };
+    kinds.set(path, entry.type);
+    let prefix = "";
+    for (const part of path.split("/")) {
+      prefix = prefix ? `${prefix}/${part}` : part;
+      const key = destinationPathKey(prefix, volume);
+      const seen = spellings.get(key);
+      if (seen === undefined) spellings.set(key, prefix);
+      else if (seen !== prefix) return { path, reason: "alias" };
+    }
+  }
+  // Nothing is written through a file or a link, whichever order the entries came in.
+  const folders = new Set<string>();
+  for (const entry of entries) {
+    const parts = entry.path.split("/");
+    for (let index = parts.length - 1; index > 0; index -= 1) {
+      const ancestor = parts.slice(0, index).join("/");
+      if (folders.has(ancestor)) break;
+      const kind = kinds.get(ancestor);
+      if (kind === "symlink") return { path: entry.path, reason: "link-in-path" };
+      if (kind === "file") return { path: entry.path, reason: "not-a-folder" };
+      folders.add(ancestor);
+    }
+  }
+  return null;
 }
 
 /** Entries the destination receives: selected classes, plus the folders that hold them. */

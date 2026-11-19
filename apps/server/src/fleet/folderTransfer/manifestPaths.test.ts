@@ -65,13 +65,20 @@ describe("isSafeDestinationPath", () => {
     expect(safe(`a/${"é".repeat(128)}`, "linux")).toBe(false);
   });
 
-  it.each(["CON", "nul.txt", "a/COM1", "a/lpt9.log", "a/Aux", "a/name.", "a/name ", "C:/x", "a\\b"])(
-    "refuses %j on Windows only",
-    (path) => {
-      expect(safe(path, "win32")).toBe(false);
-      expect(safe(path, "linux")).toBe(true);
-    },
-  );
+  it.each([
+    "CON",
+    "nul.txt",
+    "a/COM1",
+    "a/lpt9.log",
+    "a/Aux",
+    "a/name.",
+    "a/name ",
+    "C:/x",
+    "a\\b",
+  ])("refuses %j on Windows only", (path) => {
+    expect(safe(path, "win32")).toBe(false);
+    expect(safe(path, "linux")).toBe(true);
+  });
 });
 
 describe("validateManifestEntries", () => {
@@ -140,9 +147,9 @@ describe("validateManifestEntries", () => {
   });
 
   it("applies the Windows names only on Windows", () => {
-    expect(validate([file("a/NUL.txt")], { platform: "win32", caseInsensitive: true })).toMatchObject(
-      { reason: "unsafe-path" },
-    );
+    expect(
+      validate([file("a/NUL.txt")], { platform: "win32", caseInsensitive: true }),
+    ).toMatchObject({ reason: "unsafe-path" });
     expect(validate([file("a/NUL.txt")])).toBeNull();
   });
 });

@@ -10,7 +10,11 @@ interface Readers {
   windowsAccess: (
     sddl: string,
     userSid: string,
-  ) => { readonly owner: "user" | "trusted" | "other"; readonly othersMayWrite: boolean };
+  ) => {
+    readonly owner: "user" | "trusted" | "other";
+    readonly othersMayWrite: boolean;
+    readonly othersMayReplace: boolean;
+  };
 }
 // Loaded per test, so each one fails on its own while the module does not exist.
 const readers = async () => (await import("./confinement.ts" as string)) as Readers;
@@ -22,9 +26,9 @@ const OTHER_SID = "S-1-5-21-1111111111-2222222222-3333333333-1002";
 describe("macOS ACL entries", () => {
   it("a folder with no ACL grants nothing", async () => {
     const { darwinAclGrantsOthers } = await readers();
-    expect(darwinAclGrantsOthers("drwx------  5 sam  staff  160 Jan  1 10:00 /folder\n", "sam")).toBe(
-      false,
-    );
+    expect(
+      darwinAclGrantsOthers("drwx------  5 sam  staff  160 Jan  1 10:00 /folder\n", "sam"),
+    ).toBe(false);
   });
 
   it("a deny entry never fails a folder: every home folder carries one", async () => {
@@ -41,9 +45,9 @@ describe("macOS ACL entries", () => {
 
   it("another principal's read-only entry grants nothing", async () => {
     const { darwinAclGrantsOthers } = await readers();
-    expect(
-      darwinAclGrantsOthers(`${HEAD} 0: user:alex allow list,search,readattr\n`, "sam"),
-    ).toBe(false);
+    expect(darwinAclGrantsOthers(`${HEAD} 0: user:alex allow list,search,readattr\n`, "sam")).toBe(
+      false,
+    );
   });
 
   it.each([
@@ -71,8 +75,11 @@ describe("Windows owner and DACL", () => {
   it("the user, SYSTEM and Administrators may hold every right", async () => {
     const { windowsAccess } = await readers();
     expect(
-      windowsAccess(`O:${USER_SID}G:DUD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;${USER_SID})`, USER_SID),
-    ).toEqual({ owner: "user", othersMayWrite: false });
+      windowsAccess(
+        `O:${USER_SID}G:DUD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;${USER_SID})`,
+        USER_SID,
+      ),
+    ).toMatchObject({ owner: "user", othersMayWrite: false });
     expect(windowsAccess("O:BAG:SYD:(A;;FA;;;SY)", USER_SID).owner).toBe("trusted");
   });
 
@@ -86,6 +93,15 @@ describe("Windows owner and DACL", () => {
     expect(
       windowsAccess(`O:${USER_SID}D:(A;OICI;0x1200a9;;;BU)(A;;FR;;;WD)`, USER_SID).othersMayWrite,
     ).toBe(false);
+  });
+
+  it("the right to add a folder is not the right to replace one", async () => {
+    const { windowsAccess } = await readers();
+    expect(windowsAccess("O:BAD:(A;;LC;;;AU)(A;OICIIO;GA;;;CO)", USER_SID)).toEqual({
+      owner: "trusted",
+      othersMayWrite: true,
+      othersMayReplace: false,
+    });
   });
 
   it("a deny entry never fails a folder", async () => {

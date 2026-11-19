@@ -7,7 +7,7 @@ import { FOLDER_COPY_ALL_CONFLICTS_PREFIX } from "@specweave-studio/contracts";
 import { applyPlan, ApplyRefusedError, bytesNeeded, type RepositoryCheck } from "./apply.ts";
 import { DEFAULT_SELECTION, FILE_CLASSES, type FileClass } from "./classify.ts";
 import * as Messages from "./copyMessages.ts";
-import { repositoryRelations, scanDestination } from "./destinationScan.ts";
+import { caseInsensitiveAt, repositoryRelations, scanDestination } from "./destinationScan.ts";
 import { reachableOrigin } from "./git.ts";
 import { deviceOf, exists, freeBytes, privateDirectory, readJson, writeJson } from "./durable.ts";
 import {
@@ -18,7 +18,12 @@ import {
   lanPathFor,
   NO_LAN_STATE,
 } from "./lanDestination.ts";
-import { readManifestFile, writeManifest, type Manifest } from "./manifest.ts";
+import {
+  readManifestFile,
+  validateManifestEntries,
+  writeManifest,
+  type Manifest,
+} from "./manifest.ts";
 import { batchChunksFor, finalPass, pullFiles, type PullProgress } from "./pullWorker.ts";
 import {
   machineSlug,
@@ -1133,17 +1138,32 @@ export class DestinationCopies {
     return manifest;
   }
 
+  /** A manifest of this copy's scope whose every path this machine can take, before any chunk is asked for. */
+  private async safeManifest(record: DestinationRecord, manifest: Manifest): Promise<Manifest> {
+    this.checkedManifest(record, manifest);
+    const refusal = validateManifestEntries(manifest.entries, {
+      platform: process.platform,
+      caseInsensitive: await caseInsensitiveAt(record.targetFolder),
+    });
+    if (refusal)
+      throw new CopyError(
+        "refused",
+        `The source manifest has a path this machine cannot take safely (${refusal.reason}): ${refusal.path.slice(0, 200)}`,
+      );
+    return manifest;
+  }
+
   private async fetchManifest(record: DestinationRecord, signal: AbortSignal) {
     const client = this.client(record, signal);
     const paths = this.paths(record.operationId);
     if (await exists(paths.manifest))
-      return this.checkedManifest(record, await readManifestFile(paths.manifest));
+      return this.safeManifest(record, await readManifestFile(paths.manifest));
     await client.requestManifest(record.selection);
     for (;;) {
       signal.throwIfAborted();
       const result = await client.manifest();
       if ("entries" in result) {
-        this.checkedManifest(record, result);
+        await this.safeManifest(record, result);
         await writeManifest(paths.manifest, result);
         return result;
       }
@@ -1339,13 +1359,18 @@ export class DestinationCopies {
       leftBehind: leftBehind(manifest, unstable),
       unstable,
     });
-    const warnings = [...record.warnings, ...result.warnings].slice(0, 200);
+    // Apply's lines first: they name any folder it refused, and the list is cut.
+    const warnings = [...result.warnings, ...record.warnings].slice(0, 200);
     const differing = result.checks.filter((check) => !check.ok);
     // Files Apply put back to the Git snapshot: the source has newer work there.
     const restored = result.restored ?? [];
     if (
       record.mode === "copy-and-move" &&
-      (differing.length > 0 || unstable.size > 0 || restored.length > 0)
+      // An entry refused for its folder did not arrive: the source keeps the work.
+      (differing.length > 0 ||
+        unstable.size > 0 ||
+        restored.length > 0 ||
+        result.refused.length > 0)
     ) {
       // The source keeps the coordinator until the person looks: no commit, no move.
       await this.update(op, {
@@ -1358,6 +1383,7 @@ export class DestinationCopies {
             differing,
             [...unstable].filter((path) => !restored.includes(path)).length,
             restored,
+            result.refused.length,
           ),
         },
         checks: result.checks,
@@ -1571,8 +1597,13 @@ function checksFailedMessage(
   differing: ReadonlyArray<RepositoryCheck>,
   unstable: number,
   restored: ReadonlyArray<string> = [],
+  refused = 0,
 ) {
   const parts: Array<string> = [];
+  if (refused > 0)
+    parts.push(
+      `${refused === 1 ? "1 entry was" : `${refused} entries were`} not copied because a folder on the way is not yours alone (see the warnings)`,
+    );
   if (differing.length > 0)
     parts.push(
       `${differing.length === 1 ? "1 repository differs" : `${differing.length} repositories differ`} from the source (${differing

@@ -382,7 +382,9 @@ describe.skipIf(!posix)("Add into a target that does not exist", () => {
         lstat: async (asked) => {
           const stat = await realLstat(asked);
           if (stat && created.includes(asked))
-            seen.push(`${NodePath.relative(target, asked) || "."}:${(stat.mode & 0o777n).toString(8)}`);
+            seen.push(
+              `${NodePath.relative(target, asked) || "."}:${(stat.mode & 0o777n).toString(8)}`,
+            );
           return stat;
         },
       };

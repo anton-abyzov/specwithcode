@@ -22,6 +22,31 @@ export function isSafeRelativePath(value: string, platform: NodeJS.Platform = pr
   return value.split("/").every((part) => part !== "" && part !== "." && part !== "..");
 }
 
+/** The longest name a destination takes, in UTF-8 bytes: the bound of byte-limited file systems. */
+export const MAX_PART_BYTES = 255;
+
+/** Names Windows gives to devices, with or without an extension. */
+const WINDOWS_DEVICE_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
+
+/**
+ * The rule a destination applies to a path it is about to create. On top of
+ * `isSafeRelativePath`: no part over 255 bytes, and on Windows no device name and
+ * no part ending in a dot or a space, which Windows silently maps to another name.
+ */
+export function isSafeDestinationPath(
+  value: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  if (!isSafeRelativePath(value, platform)) return false;
+  return value
+    .split("/")
+    .every(
+      (part) =>
+        Buffer.byteLength(part) <= MAX_PART_BYTES &&
+        (platform !== "win32" || !(WINDOWS_DEVICE_NAME.test(part) || /[. ]$/.test(part))),
+    );
+}
+
 /** Every proper ancestor of a relative path, outermost first: `a/b/c` gives `a`, `a/b`. */
 export function ancestorsOf(relative: string): Array<string> {
   const parts = relative.split("/");
@@ -37,6 +62,18 @@ export function ancestorsOf(relative: string): Array<string> {
  */
 export function foldedPathKey(relative: string): string {
   return relative.normalize("NFC").toLowerCase();
+}
+
+/**
+ * The key two names share on the destination volume. macOS volumes treat the
+ * composed and decomposed spelling of a name as one file even when case matters.
+ */
+export function destinationPathKey(
+  relative: string,
+  volume: { readonly platform: NodeJS.Platform; readonly caseInsensitive: boolean },
+): string {
+  if (volume.caseInsensitive) return foldedPathKey(relative);
+  return volume.platform === "darwin" ? relative.normalize("NFC") : relative;
 }
 
 /**
