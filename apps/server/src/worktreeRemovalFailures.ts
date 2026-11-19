@@ -87,6 +87,58 @@ export function openFileHolders(
   });
 }
 
+const OPEN_FILES_TIMEOUT_MS = 30_000;
+const OPEN_FILES_MAX_OUTPUT_BYTES = 256 * 1024 * 1024;
+
+/** Processes in `lsof -F pcn` output with a file, folder or cwd at or under `folder`. */
+export function parseLsofHoldersUnder(stdout: string, folder: string): ReadonlyArray<string> {
+  const holders: Array<string> = [];
+  const prefix = folder.endsWith("/") ? folder : `${folder}/`;
+  let pid: string | null = null;
+  let command = "";
+  for (const line of stdout.split("\n")) {
+    if (line.startsWith("p")) {
+      pid = /^\d+$/.test(line.slice(1)) ? line.slice(1) : null;
+      command = "";
+    } else if (line.startsWith("c")) command = line.slice(1).trim();
+    else if (line.startsWith("n") && pid !== null) {
+      const name = line.slice(1);
+      if (name !== folder && !name.startsWith(prefix)) continue;
+      const holder = `${command === "" ? "a process" : command} (pid ${pid})`;
+      if (!holders.includes(holder)) holders.push(holder);
+    }
+  }
+  return holders;
+}
+
+/**
+ * Processes with anything open at or under `folder`, from one listing of
+ * every open file on the machine (`lsof` without `+D`, so its time does not
+ * grow with the folder); null when that cannot be told. Windows refuses to
+ * delete a file that is open, so there it answers none.
+ */
+export function openFilesUnder(
+  folder: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<ReadonlyArray<string> | null> {
+  if (platform === "win32") return Promise.resolve([]);
+  return new Promise((resolve) => {
+    NodeChildProcess.execFile(
+      "lsof",
+      ["-n", "-P", "-w", "-F", "pcn"],
+      { timeout: OPEN_FILES_TIMEOUT_MS, maxBuffer: OPEN_FILES_MAX_OUTPUT_BYTES, encoding: "utf8" },
+      (error, stdout) => {
+        if (error === null) return resolve(parseLsofHoldersUnder(stdout, folder));
+        const failure = error as { readonly killed?: boolean; readonly code?: unknown };
+        // Exit 1 with output: some files could not be read, the rest were listed.
+        if (failure.killed !== true && failure.code === 1 && stdout.length > 0)
+          return resolve(parseLsofHoldersUnder(stdout, folder));
+        resolve(null);
+      },
+    );
+  });
+}
+
 /** Names of what is left in a folder, without reading into it; null when unreadable. */
 export function leftBehind(folder: string): ReadonlyArray<string> | null {
   try {

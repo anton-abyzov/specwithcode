@@ -21,6 +21,7 @@ import {
   describeRemovalFailure,
   leftBehind,
   openFileHolders,
+  openFilesUnder,
   type WorktreeRemovalFailure,
 } from "./worktreeRemovalFailures.ts";
 import {
@@ -218,6 +219,81 @@ export function makeRemoval(deps: {
     Effect.orElseSucceed(() => false),
   );
 
+  /** Unique commits a recovery ref can keep at most; past it the worktree stays. */
+  const REFLOG_KEPT_MAX = 5_000;
+
+  /**
+   * Points `refs/specwithcode/retired-worktrees/<name>` at one commit whose
+   * parents are every commit the worktree's HEAD reflog reaches, so none
+   * becomes unreachable when Git removes the worktree and its reflog. False
+   * when that could not be done; the worktree then stays.
+   */
+  const keepReflog = Effect.fn("WorktreeCleanupSweep.keepReflog")(
+    function* (state: MemberState, at: string) {
+      const reflog = yield* git.execute({
+        operation: "WorktreeCleanupSweep.reflogToKeep",
+        cwd: at,
+        args: ["log", "-g", "--format=%H", "HEAD"],
+        maxOutputBytes: 8 * 1024 * 1024,
+        allowNonZeroExit: true,
+        timeoutMs: 30_000,
+      });
+      if (reflog.exitCode !== 0 || reflog.stdoutTruncated) return false;
+      const commits = [...new Set(reflog.stdout.split("\n").map((line) => line.trim()))].filter(
+        (line) => /^[0-9a-f]{40,64}$/.test(line),
+      );
+      if (commits.length === 0) return true;
+      if (commits.length > REFLOG_KEPT_MAX) return false;
+      const tree = yield* git.execute({
+        operation: "WorktreeCleanupSweep.reflogTree",
+        cwd: at,
+        args: ["rev-parse", "--verify", `${commits[0]}^{tree}`],
+        maxOutputBytes: 4096,
+        allowNonZeroExit: true,
+        timeoutMs: 15_000,
+      });
+      if (tree.exitCode !== 0) return false;
+      const keeper = yield* git.execute({
+        operation: "WorktreeCleanupSweep.reflogKeeper",
+        cwd: at,
+        args: [
+          "-c",
+          "user.name=SpecWithCode storage cleanup",
+          "-c",
+          "user.email=storage-cleanup@specwithcode.invalid",
+          "commit-tree",
+          tree.stdout.trim(),
+          ...commits.flatMap((commit) => ["-p", commit]),
+          "-m",
+          `HEAD reflog of the retired worktree ${state.path}`,
+        ],
+        maxOutputBytes: 4096,
+        allowNonZeroExit: true,
+        timeoutMs: 30_000,
+      });
+      if (keeper.exitCode !== 0) return false;
+      const name = `${path.basename(state.path)}-${evidenceStamp(DateTime.toEpochMillis(yield* DateTime.now))}`.replace(
+        /[^A-Za-z0-9._-]/g,
+        "-",
+      );
+      const ref = yield* git.execute({
+        operation: "WorktreeCleanupSweep.reflogRef",
+        cwd: at,
+        args: [
+          "update-ref",
+          `refs/specwithcode/retired-worktrees/${name}`,
+          keeper.stdout.trim(),
+          "",
+        ],
+        maxOutputBytes: 4096,
+        allowNonZeroExit: true,
+        timeoutMs: 15_000,
+      });
+      return ref.exitCode === 0;
+    },
+    Effect.orElseSucceed(() => false),
+  );
+
   /**
    * Removes the members deepest first without force, stopping at the first
    * that changed or that Git could not remove, then removes the folders left
@@ -284,35 +360,52 @@ export function makeRemoval(deps: {
           };
         return { stopped: "changed" as const, member: "", gone, failure: null };
       }
-      if (!(yield* memberUnchanged(assessment, state, true, target))) {
-        const back = yield* git
-          .execute({
-            operation: "WorktreeCleanupSweep.moveBack",
-            cwd: state.repository,
-            args: ["worktree", "move", target, state.path],
-            maxOutputBytes: 64 * 1024,
-            allowNonZeroExit: true,
-            timeoutMs: 60_000,
-          })
-          .pipe(
-            Effect.map((result) => result.exitCode === 0),
-            Effect.orElseSucceed(() => false),
-          );
-        if (back) return { stopped: "changed" as const, member: "", gone, failure: null };
-        return {
-          stopped: "refused" as const,
-          member: target,
-          gone,
-          failure: {
-            folder: assessment.group.folder,
-            member: state.member.relativePath === "" ? "the folder" : state.member.relativePath,
-            at: DateTime.formatIso(yield* DateTime.now),
-            what: `It changed after it was set aside at ${target}, and Git could not move it back`,
-            holders: null,
-            removedBefore: gone,
-          } satisfies WorktreeRemovalFailure,
-        };
-      }
+      // Kept, moved back where it was: anything it found changed, a writer
+      // with a file still open in it, history that could not be kept.
+      const keepAside = (why: string) =>
+        Effect.gen(function* () {
+          const back = yield* git
+            .execute({
+              operation: "WorktreeCleanupSweep.moveBack",
+              cwd: state.repository,
+              args: ["worktree", "move", target, state.path],
+              maxOutputBytes: 64 * 1024,
+              allowNonZeroExit: true,
+              timeoutMs: 60_000,
+            })
+            .pipe(
+              Effect.map((result) => result.exitCode === 0),
+              Effect.orElseSucceed(() => false),
+            );
+          if (back) return { stopped: "changed" as const, member: "", gone, failure: null };
+          return {
+            stopped: "refused" as const,
+            member: target,
+            gone,
+            failure: {
+              folder: assessment.group.folder,
+              member: state.member.relativePath === "" ? "the folder" : state.member.relativePath,
+              at: DateTime.formatIso(yield* DateTime.now),
+              what: `${why} after it was set aside at ${target}, and Git could not move it back`,
+              holders: null,
+              removedBefore: gone,
+            } satisfies WorktreeRemovalFailure,
+          };
+        });
+      if (!(yield* memberUnchanged(assessment, state, true, target)))
+        return yield* keepAside("It changed");
+      // Every commit its HEAD reflog reaches is kept by one ref of the
+      // repository before Git deletes that reflog with the worktree, so a
+      // branch deleted elsewhere meanwhile loses nothing.
+      if (!(yield* keepReflog(state, target))) return yield* keepAside("Its history could not be kept");
+      // Last: a process holding a file open in it, even one started outside
+      // the folder, could still write after the readings above.
+      const realTarget = (yield* realOrNull(target)) ?? target;
+      const holders = yield* Effect.promise(() => openFilesUnder(realTarget, deps.platform));
+      if (holders === null || holders.length > 0)
+        return yield* keepAside(
+          holders === null ? "Which process has files open in it is not known" : `${holders.join(", ")} had files open in it`,
+        );
       // Files Git leaves behind were checked by nobody: they stay, and so does the rest.
       const removal = yield* git
         .removeWorktree({

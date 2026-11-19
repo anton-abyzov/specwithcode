@@ -11,6 +11,7 @@ import {
   leftBehind,
   openFileHolders,
   parseLsofHolders,
+  parseLsofHoldersUnder,
   REMOVAL_RETRY_AFTER_MS,
   removalFailureDetail,
   removalFailureStands,
@@ -53,6 +54,17 @@ describe("worktree removal failures", () => {
     ]);
     expect(parseLsofHolders("")).toEqual([]);
     expect(parseLsofHolders("pnot-a-pid\ncFinder\n")).toEqual([]);
+  });
+
+  it("finds processes with anything open at or under a folder, and only those", () => {
+    const listing = [
+      "p10", "cnode", "n/work/a/src/log.txt",
+      "p11", "cvim", "n/work/ab/notes.md",
+      "p12", "czsh", "n/work/a",
+      "p13", "ctail", "n/elsewhere",
+    ].join("\n");
+    expect(parseLsofHoldersUnder(listing, "/work/a")).toEqual(["node (pid 10)", "zsh (pid 12)"]);
+    expect(parseLsofHoldersUnder(listing, "/nothing")).toEqual([]);
   });
 
   it("does not ask which process holds a folder on Windows", async () => {
