@@ -131,7 +131,9 @@ import {
 } from "@specweave-studio/shared/teamRules";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import { apiCreditDetourResumeRefused } from "./providerOpenFailure.ts";
+import { preswitchMoveRefusal } from "./limitPreswitchGuard.ts";
 import {
+  LIMIT_PRESWITCH_COMMAND_PREFIX,
   launchFallbackAfterMove,
   limitPreswitchAfterMove,
 } from "@specweave-studio/shared/threadModelIdentity";
@@ -3307,6 +3309,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandType: command.type,
         cause: `Thread ${command.threadId} is deleted.`,
       });
+    }
+    // The move before the limit (1089) is judged again here, on the thread as
+    // it is when the move lands: the sweep's checks run before this command
+    // is applied, and a person's pick, Stop or new turn can land in between.
+    if (
+      command.type === "thread.model-selection.set" &&
+      command.commandId.startsWith(LIMIT_PRESWITCH_COMMAND_PREFIX)
+    ) {
+      const refusal = yield* preswitchRefusal(command, thread);
+      if (refusal !== null)
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: refusal,
+        });
     }
     if (
       command.type === "thread.pull-request.watch" &&
@@ -10566,6 +10583,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         Effect.map(({ turnItems }) => turnItems.length > 0),
         mapDispatchError(command),
       );
+
+  /** `preswitchMoveRefusal`, then a person's Stop on the latest turn. */
+  const preswitchRefusal = (
+    command: Extract<OrchestrationV2ServerCommand, { type: "thread.model-selection.set" }>,
+    thread: OrchestrationV2AppThread,
+  ) =>
+    Effect.gen(function* () {
+      const { runs } = yield* loadProjectionForCommand(command, ["runs"]);
+      const { refusal, latest } = preswitchMoveRefusal(thread, runs);
+      if (refusal !== null || latest === null) return refusal;
+      if (yield* stopHoldsLimitResume(command, { thread }, latest.id)) return STOPPED_THREAD_REFUSAL;
+      return null;
+    });
 
   /**
    * Whether a person's Stop holds a run that recovery or provider fallback

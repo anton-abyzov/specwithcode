@@ -113,6 +113,8 @@ interface Thread {
   stopped: boolean;
   /** A subagent the provider spawned, which takes no messages. */
   providerSubagent?: boolean;
+  /** Background work the provider session still hosts. */
+  background?: boolean;
   lastError?: string;
 }
 
@@ -122,6 +124,10 @@ interface World {
   threads: Thread[];
   /** Dispatches fail with this error while set. */
   failDispatch: boolean;
+  /** When Codex's usage was last read; null reads it fresh at every sweep. */
+  codexReadAt: number | null;
+  /** Instances the sweep asked to read again. */
+  readonly refreshed: string[];
   /** Called on each shell re-read (the admission re-check reads the shell again). */
   onReread?: (thread: Thread) => void;
   readonly dispatched: OrchestrationV2ServerCommand[];
@@ -146,6 +152,8 @@ const world = (overrides: Partial<World> = {}): World => ({
   settings,
   threads: [idleThread()],
   failDispatch: false,
+  codexReadAt: null,
+  refreshed: [],
   dispatched: [],
   ...overrides,
 });
@@ -176,6 +184,9 @@ function shellOf(thread: Thread) {
     activeRunId: thread.activeRunId === null ? null : RunId.make(thread.activeRunId),
     pendingRuntimeRequest: null,
     settledOverride: thread.settledOverride,
+    ...(thread.background === true
+      ? { pendingBackgroundTasks: [{ kind: "command", taskId: "task-1" }] }
+      : {}),
     ...(thread.providerSubagent === true
       ? {
           creationSource: "provider",
@@ -210,10 +221,15 @@ function layers(state: World) {
         const ms = DateTime.toEpochMillis(now);
         return [
           withWindow(provider(claudeId, "claudeAgent", ms), opus, state.claudeUsed),
-          withWindow(provider(codexId, "codex", ms), "gpt-6", 30),
+          withWindow(provider(codexId, "codex", state.codexReadAt ?? ms), "gpt-6", 30),
         ];
       }),
-      refreshInstance: () => Effect.succeed([]),
+      refreshInstance: (instanceId) =>
+        Effect.sync(() => {
+          state.refreshed.push(instanceId);
+          if (instanceId === codexId) state.codexReadAt = null;
+          return [];
+        }),
     }),
     Layer.mock(Instances.ProviderInstanceRegistry)({
       getInstance: () => Effect.succeed(undefined),
@@ -391,6 +407,16 @@ describe("the idle move before the limit, from the sweep (1089)", () => {
     }),
   );
 
+  it.effect("reads an old fallback reading again, then moves", () =>
+    Effect.gen(function* () {
+      // Codex was last read 20 minutes ago: too old to count as room.
+      const state = world({ codexReadAt: at - 20 * 60_000 });
+      yield* once(state);
+      expect(state.refreshed).toEqual([codexId]);
+      expect(ids(state)).toEqual([preswitchId]);
+    }),
+  );
+
   it.effect("sends nothing when a turn starts before the move commits", () =>
     Effect.gen(function* () {
       const state = world({
@@ -443,6 +469,9 @@ describe("what the idle move leaves alone (1089)", () => {
         ],
       }),
     ),
+  );
+  it.effect("a session still hosting background work", () =>
+    nothing(world({ threads: [idleThread({ background: true })] })),
   );
   it.effect("a subagent the provider spawned", () =>
     nothing(world({ threads: [idleThread({ providerSubagent: true })] })),

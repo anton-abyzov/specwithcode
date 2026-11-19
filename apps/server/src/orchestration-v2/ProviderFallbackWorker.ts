@@ -84,6 +84,7 @@ import {
   limitResetAt,
   preswitchReturnBlock,
   preswitchReturnCommand,
+  hostsBackgroundWork,
   queuedRunsPinnedTo,
   reachedLimitWindow,
   usageWindowKey,
@@ -667,8 +668,9 @@ export function providerLimitStep(
  * "Switch before the limit" for a thread that did not stop (1089): under
  * `switch`, an idle thread whose provider reached the threshold moves to the
  * fallback before its next turn, once per usage window (the `limit-preswitch:`
- * id names the window). Only after a turn that completed: a failed one is
- * the retry's or the recovery's to answer. A person's pick wins: a selection that differs from
+ * id names the window). Only after a turn that completed, with no background
+ * work left in the session: a failed one is the retry's or the recovery's to
+ * answer. A person's pick wins: a selection that differs from
  * the latest run's is theirs, unless an earlier pre-switch set it. Without
  * the latest run to compare, nothing moves early.
  */
@@ -687,6 +689,8 @@ function idlePreswitchCommand(
   },
 ): Extract<OrchestrationV2ServerCommand, { type: "thread.model-selection.set" }> | null {
   if (rule.providerLimitAction !== "switch" || thread.status !== "completed") return null;
+  // A session still hosting background work would be cut off from it by a move.
+  if (thread.activityRunStatus != null || hostsBackgroundWork(thread)) return null;
   const run = options.latestRun;
   if (run == null || run.id !== thread.latestRunId) return null;
   if (pickedSinceStop(thread, run) && thread.modelIdentity?.preswitched !== true) return null;
@@ -1424,22 +1428,25 @@ export const makeSweep = Effect.gen(function* () {
     });
     return true;
   });
-  // Only a thread stopped under the `switch` rule has targets to read; every
-  // other swept thread is answered here, without a span for each one.
+  // Only a thread stopped under the `switch` rule, or an idle one the move
+  // before the limit could take (1089), has targets to read; every other swept
+  // thread is answered here, without a span for each one.
   const refreshStaleTargets = (
     thread: FallbackThread,
     candidates: ReadonlyArray<ServerProvider>,
     rule: ProviderFallbackRule,
     nowMs: number,
     unopenable: UnopenableStop | null = null,
+    idleAtThreshold = false,
   ) => {
     if (rule.providerLimitAction !== "switch") return Effect.succeed(false);
     const stopped =
       unopenable !== null
         ? unopenableStopIsLive(thread, unopenable, nowMs)
-        : stoppedOnLimit(thread) &&
-          !waitsForReset(thread, rule, nowMs) &&
-          limitStopIsCurrent(thread, nowMs);
+        : idleAtThreshold ||
+          (stoppedOnLimit(thread) &&
+            !waitsForReset(thread, rule, nowMs) &&
+            limitStopIsCurrent(thread, nowMs));
     return stopped ? readStaleTargets(thread, candidates, rule, nowMs) : Effect.succeed(false);
   };
   // refreshStaleTargets skips providers that report no usage, so a cached
@@ -1741,6 +1748,8 @@ export const makeSweep = Effect.gen(function* () {
           thread.settledOverride === "settled" ||
           stoppedOnLimit(thread) ||
           !threadIsFree(thread) ||
+          thread.activityRunStatus != null ||
+          hostsBackgroundWork(thread) ||
           !shouldSwitchBeforeTurn({
             provider: providers.find((entry) => entry.instanceId === thread.providerInstanceId),
             model: thread.modelSelection.model,
@@ -1944,11 +1953,24 @@ export const makeSweep = Effect.gen(function* () {
       // run whatever its status: a person's Stop keeps the thread where it is.
       const idleMove = step?.type === "switch" && step.command.type === "thread.model-selection.set";
       if (idleMove && (yield* stopHoldsLatestRun(thread))) continue;
+      // An idle thread at the threshold with no target to move to (1089): its
+      // fallbacks' readings may only be old. One whose move already went out
+      // this window has a target, so it reads nothing.
+      const idleWithoutTarget =
+        options.latestRun != null &&
+        providerLimitStep(thread, providersFor(thread), resolved, now, options) === null;
       // A context stop reads stale providers before it moves, even when a
       // target is found: home with an old reading may have room again.
       if (
         (step === null || failedOpen?.cause === "context") &&
-        (yield* refreshStaleTargets(thread, providersFor(thread), resolved, now, failedOpen))
+        (yield* refreshStaleTargets(
+          thread,
+          providersFor(thread),
+          resolved,
+          now,
+          failedOpen,
+          idleWithoutTarget,
+        ))
       ) {
         providers = yield* registry.getProviders;
         step = stepFor(thread);
