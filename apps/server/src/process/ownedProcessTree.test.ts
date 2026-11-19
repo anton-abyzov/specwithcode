@@ -72,7 +72,12 @@ describe("process lists", () => {
       { pid: 10, ppid: 4, pgid: null, started: "133780123456789010", command: "claude.exe" },
       { pid: 11, ppid: 4, pgid: null, started: "", command: "" },
     ]);
-    expect(parseWindowsProcessList("not json")).toEqual([]);
+    // A failed or partial read is not an empty table.
+    expect(parseWindowsProcessList("not json")).toBeUndefined();
+    expect(parseWindowsProcessList("")).toBeUndefined();
+    // One row comes as a bare object; a row without a parent is dropped. (A read whose
+    // rows lack the server itself is refused by readProcessList.)
+    expect(parseWindowsProcessList('{"ProcessId":10}')).toEqual([]);
   });
 });
 
@@ -102,13 +107,16 @@ describe("windowsTree", () => {
     expect(windowsTree(table, root(200, true), 100).map((k) => k.entry.pid)).toEqual([200, 201]);
   });
 
-  it("finds orphans of the exited CLI, but not children of a newer process with its pid", () => {
+  it("keeps a remembered tool of the exited CLI, but not children of a newer process with its pid", () => {
     const spawnedAt = 1_800_000_000_000;
     const created = BigInt(filetimeFromEpochMs(spawnedAt)) + 10n;
-    // The CLI's creation time, read while it ran.
-    const remembered = new Map([[200, { entry: win(200, 100, created, "claude.exe"), created }]]);
+    // The CLI and its tool, read while the CLI ran.
+    const remembered = new Map([
+      [200, { entry: win(200, 100, created, "claude.exe"), created }],
+      [201, { entry: win(201, 200, created + 50n, "bash"), created: created + 50n }],
+    ]);
     const table = [
-      // The CLI exited; its tool still runs and still names it as parent.
+      // The CLI exited; its tool still runs.
       win(201, 200, created + 50n, "bash -c npm run dev"),
       // Windows gave pid 200 to a newer process, which started a child of its own.
       win(200, 1, created + 100n, "newer process"),
@@ -117,6 +125,16 @@ describe("windowsTree", () => {
     expect(
       windowsTree(table, root(200, false, spawnedAt), 100, remembered).map((k) => k.entry.pid),
     ).toEqual([201]);
+  });
+
+  it("never takes a child of a pid owner that came and went after the CLI exited", () => {
+    const spawnedAt = 1_800_000_000_000;
+    const created = BigInt(filetimeFromEpochMs(spawnedAt)) + 10n;
+    const remembered = new Map([[200, { entry: win(200, 100, created, "claude.exe"), created }]]);
+    // The CLI exited, a later owner of pid 200 started 201 and exited too: 201 names
+    // 200 as parent and is newer than the CLI, yet nothing ties it to the CLI.
+    const table = [win(201, 200, created + 500n, "later owner's child")];
+    expect(windowsTree(table, root(200, false, spawnedAt), 100, remembered)).toEqual([]);
   });
 
   it("takes nothing below an exited CLI whose creation time was never read", () => {
@@ -149,9 +167,10 @@ describe("windowsTree", () => {
 
   it("kills only by pid and creation time together", () => {
     const script = windowsKillScript([win(201, 200, t(11)), { ...win(9, 1, 0n), started: "" }]);
-    expect(script).toContain("foreach ($i in @(@(201,1000110))) {");
-    expect(script).toContain("-eq [long]$i[1]");
-    expect(script).not.toContain("@(9,");
+    // One flat string per process, so a single entry is never unrolled into two.
+    expect(script).toContain("foreach ($i in @('201:1000110')) {");
+    expect(script).toContain("-eq [long]$f[1]");
+    expect(script).not.toContain("'9:");
   });
 });
 

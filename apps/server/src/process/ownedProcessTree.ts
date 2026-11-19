@@ -64,13 +64,15 @@ function microsecondFiletime(value: unknown): string {
 }
 
 /** `Get-CimInstance Win32_Process` rows as JSON: ProcessId, ParentProcessId, Start, CommandLine. */
-export function parseWindowsProcessList(text: string): ProcessEntry[] {
+export function parseWindowsProcessList(text: string): ProcessEntry[] | undefined {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    return [];
+    // Empty or broken output is a failed read, never an empty table.
+    return undefined;
   }
+  if (typeof parsed !== "object" || parsed === null) return undefined;
   const rows = Array.isArray(parsed) ? parsed : [parsed];
   const entries: ProcessEntry[] = [];
   for (const row of rows) {
@@ -98,7 +100,7 @@ export function filetimeFromEpochMs(ms: number): string {
 /** The root of a tree: the CLI this server spawned. */
 export interface OwnedRoot {
   readonly pid: number;
-  /** When the spawn was asked for, in epoch milliseconds: the CLI was created after it. */
+  /** When the spawn was asked for, on the host's monotonic clock. */
   readonly spawnedAt: number;
   /** Whether the CLI has not exited yet; while it has not, its pid is still its own. */
   readonly alive: () => boolean;
@@ -110,9 +112,13 @@ interface Known {
 }
 
 /**
- * The Windows processes below `root` in `table`: each created after its parent, the
- * parent being the root or a process already in the tree. `remembered` holds processes
- * read earlier that may have exited since, so their children are still found.
+ * The Windows processes of `root`'s tree in `table`. Only a parent that is alive in the
+ * table, as the same process, passes its pid on: while it runs, Windows cannot give that
+ * pid to anyone else, so a process naming it as parent and created after it is its child.
+ * The live CLI (its handle keeps its pid) and processes attributed by an earlier reading
+ * (`remembered`) that still run as themselves are the starting points. What an exited
+ * parent started is taken only if an earlier reading already attributed it: its pid may
+ * have belonged to someone else since.
  */
 export function windowsTree(
   table: ReadonlyArray<ProcessEntry>,
@@ -128,38 +134,34 @@ export function windowsTree(
     if (list === undefined) children.set(entry.ppid, [entry]);
     else list.push(entry);
   }
-  const rootRow = byPid.get(root.pid);
-  const rootLive = root.alive() && rootRow !== undefined && rootRow.started.length > 0;
-  // The CLI's own creation time, read while it ran. Without it, a process naming its pid
-  // as parent may be a child of an earlier owner of that pid, so none is taken from it.
-  const rootCreated = rootLive ? BigInt(rootRow.started) : remembered.get(root.pid)?.created;
   const tree: Known[] = [];
-  const seen = new Set<number>([selfPid, root.pid]);
-  const queue: Array<{ pid: number; created: bigint }> =
-    rootCreated === undefined ? [] : [{ pid: root.pid, created: rootCreated }];
-  if (rootLive && rootCreated !== undefined) tree.push({ entry: rootRow, created: rootCreated });
-  // Remembered processes that exited are parents too: what they started is still here.
+  const seen = new Set<number>([selfPid]);
+  const queue: Known[] = [];
+  const add = (entry: ProcessEntry, created: bigint) => {
+    seen.add(entry.pid);
+    const known = { entry, created };
+    tree.push(known);
+    queue.push(known);
+  };
+  const rootRow = byPid.get(root.pid);
+  if (root.alive() && rootRow !== undefined && rootRow.started.length > 0) {
+    add(rootRow, BigInt(rootRow.started));
+  } else {
+    // The CLI exited: whatever holds its pid now is someone else.
+    seen.add(root.pid);
+  }
   for (const known of remembered.values()) {
-    if (known.entry.pid === root.pid || seen.has(known.entry.pid)) continue;
+    if (seen.has(known.entry.pid)) continue;
     const now = byPid.get(known.entry.pid);
-    if (now !== undefined && now.started === known.entry.started) continue;
-    queue.push({ pid: known.entry.pid, created: known.created });
+    if (now !== undefined && now.started === known.entry.started) add(now, known.created);
   }
   while (queue.length > 0) {
     const parent = queue.shift()!;
-    // The pid now belongs to a newer process: only children created before it were its.
-    const holder = byPid.get(parent.pid);
-    const holderCreated =
-      holder !== undefined && holder.started.length > 0 ? BigInt(holder.started) : null;
-    const reused = holderCreated !== null && holderCreated !== parent.created;
-    for (const child of children.get(parent.pid) ?? []) {
+    for (const child of children.get(parent.entry.pid) ?? []) {
       if (seen.has(child.pid)) continue;
       const created = BigInt(child.started);
       if (created < parent.created) continue;
-      if (reused && holderCreated !== null && created >= holderCreated) continue;
-      seen.add(child.pid);
-      tree.push({ entry: child, created });
-      queue.push({ pid: child.pid, created });
+      add(child, created);
     }
   }
   return tree;
@@ -248,6 +250,8 @@ const STEP_TIMEOUT_MS = 15_000;
  */
 export class OwnedProcessTree {
   private readonly remembered = new Map<number, Known>();
+  /** POSIX tools seen outside the CLI's group, kept until an end confirms them gone. */
+  private readonly escapees = new Map<number, ProcessEntry>();
   private ending: Promise<TreeEndResult> | null = null;
   readonly root: OwnedRoot;
   private readonly host: TreeHost;
@@ -322,7 +326,14 @@ export class OwnedProcessTree {
     const table = await this.read(deadline);
     // Without a table the group is still signalled, but tools that left it cannot be found.
     let unknown = table === undefined;
-    let escapees = table === undefined ? [] : posixEscapees(table, this.root, host.selfPid);
+    if (table !== undefined) {
+      // Tools that left the group are kept across ends, so a retry still knows them.
+      for (const entry of posixEscapees(table, this.root, host.selfPid)) {
+        this.escapees.set(entry.pid, entry);
+      }
+    }
+    let escapees = [...this.escapees.values()];
+    if (table !== undefined) escapees = stillRunning(escapees, table);
     const groupMembers =
       table === undefined
         ? this.groupAlive()
@@ -331,7 +342,14 @@ export class OwnedProcessTree {
         : table.filter((entry) => entry.pgid === this.root.pid && entry.pid !== host.selfPid)
             .length;
     const found = groupMembers + escapees.length;
-    if (found === 0) return { found: 0, survivors: 0, unknown };
+    const settle = (survivors: number): TreeEndResult => {
+      if (!unknown) {
+        this.escapees.clear();
+        for (const entry of escapees) this.escapees.set(entry.pid, entry);
+      }
+      return { found, survivors, unknown };
+    };
+    if (found === 0) return settle(0);
     // Each escapee is signalled only right after a read shows it is still the same process.
     const signalEscapees = async (signal: NodeJS.Signals) => {
       if (escapees.length === 0) return;
@@ -357,43 +375,54 @@ export class OwnedProcessTree {
           if (now !== undefined) escapees = stillRunning(escapees, now);
           if (escapees.length === 0) return true;
         }
-        await host.sleep(200);
+        await host.sleep(Math.max(0, Math.min(200, until - host.now())));
       }
       return false;
     };
     if (this.groupAlive()) this.signalGroup("SIGTERM");
     await signalEscapees("SIGTERM");
     const grace = host.now() + Math.max(0, (deadline - host.now()) / 2);
-    if (await settled(grace)) return { found, survivors: 0, unknown };
+    if (await settled(grace)) return settle(0);
     if (this.groupAlive()) this.signalGroup("SIGKILL");
     await signalEscapees("SIGKILL");
-    if (await settled(deadline)) return { found, survivors: 0, unknown };
-    return { found, survivors: (this.groupAlive() ? 1 : 0) + escapees.length, unknown };
+    if (await settled(deadline)) return settle(0);
+    return settle((this.groupAlive() ? 1 : 0) + escapees.length);
   }
 
   private async endWindows(deadline: number): Promise<TreeEndResult> {
     const { host } = this;
+    // Without the CLI's own identity nothing below it can be attributed, so an empty
+    // tree proves nothing.
+    const rootKnown = () => this.root.alive() || this.remembered.has(this.root.pid);
+    // The last reading is kept inside the deadline: it is what the result reports.
+    const verifyBy = deadline;
+    const killBy = host.now() + Math.max(0, (deadline - host.now()) * 0.7);
     let found = -1;
-    while (host.now() < deadline) {
-      const table = await this.read(deadline);
+    let left: Known[] = [];
+    while (host.now() < killBy) {
+      const table = await this.read(killBy);
       if (table === undefined) return { found: Math.max(found, 0), survivors: 0, unknown: true };
-      const tree = windowsTree(table, this.root, host.selfPid, this.remembered);
-      for (const known of tree) this.remembered.set(known.entry.pid, known);
-      if (found === -1) found = tree.length;
-      if (tree.length === 0) return { found, survivors: 0, unknown: false };
-      const budget = this.budget(deadline);
+      left = windowsTree(table, this.root, host.selfPid, this.remembered);
+      for (const known of left) this.remembered.set(known.entry.pid, known);
+      if (found === -1) found = left.length;
+      if (left.length === 0) return { found, survivors: 0, unknown: !rootKnown() };
+      const budget = this.budget(killBy);
       if (budget <= 0) break;
       // The CLI first, then by depth, so nothing is left to start a replacement.
       await host.killVerified(
-        tree.map((known) => known.entry),
+        left.map((known) => known.entry),
         budget,
       );
-      await host.sleep(250);
+      await host.sleep(Math.max(0, Math.min(250, killBy - host.now())));
     }
-    const table = await this.read(deadline + 2_000);
+    const table = await this.read(verifyBy);
     if (table === undefined) return { found: Math.max(found, 0), survivors: 0, unknown: true };
-    const left = windowsTree(table, this.root, host.selfPid, this.remembered).length;
-    return { found: Math.max(found, 0), survivors: left, unknown: false };
+    left = windowsTree(table, this.root, host.selfPid, this.remembered);
+    return {
+      found: Math.max(found, 0),
+      survivors: left.length,
+      unknown: left.length === 0 && !rootKnown(),
+    };
   }
 }
 
@@ -423,21 +452,25 @@ function run(
 }
 
 const WINDOWS_PROCESS_LIST =
+  "$ErrorActionPreference='Stop';" +
   "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId," +
   "@{n='Start';e={if ($_.CreationDate) { $_.CreationDate.ToFileTimeUtc().ToString() } else { $null }}}," +
   "CommandLine | ConvertTo-Json -Compress";
 
-/** One PowerShell step per batch: each pid is killed only while its creation time matches. */
+/**
+ * One PowerShell step per batch: each pid is killed only while its creation time matches.
+ * Items are "pid:time" strings, so a batch of one stays a list of one.
+ */
 export function windowsKillScript(entries: ReadonlyArray<ProcessEntry>): string {
   const items = entries
     .filter((entry) => /^\d+$/u.test(entry.started))
-    .map((entry) => `@(${Math.trunc(entry.pid)},${entry.started})`)
+    .map((entry) => `'${Math.trunc(entry.pid)}:${entry.started}'`)
     .join(",");
   return (
     "$ErrorActionPreference='SilentlyContinue';" +
     `foreach ($i in @(${items})) {` +
-    " $p = Get-Process -Id $i[0];" +
-    " if ($p) { $t = $p.StartTime.ToFileTimeUtc(); if (($t - ($t % 10)) -eq [long]$i[1]) { $p.Kill() } }" +
+    " $f = $i.Split(':'); $p = Get-Process -Id ([int]$f[0]);" +
+    " if ($p) { $t = $p.StartTime.ToFileTimeUtc(); if (($t - ($t % 10)) -eq [long]$f[1]) { $p.Kill() } }" +
     "}"
   );
 }
@@ -453,7 +486,9 @@ export async function readProcessList(
       ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_PROCESS_LIST],
       timeoutMs,
     );
-    return text === undefined ? undefined : parseWindowsProcessList(text);
+    const rows = text === undefined ? undefined : parseWindowsProcessList(text);
+    // A table without this server itself was not a complete reading.
+    return rows !== undefined && rows.some((row) => row.pid === process.pid) ? rows : undefined;
   }
   const text = await run(
     platform === "darwin" ? "/bin/ps" : "ps",
@@ -480,7 +515,8 @@ export const nodeTreeHost = (): TreeHost => ({
     );
   },
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-  now: () => Date.now(),
+  // Monotonic: a clock change never stretches or cuts a deadline.
+  now: () => performance.now(),
 });
 
 /** What the Claude Agent SDK passes its `spawnClaudeCodeProcess` hook. */

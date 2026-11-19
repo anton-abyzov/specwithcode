@@ -47,7 +47,11 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
-import { stopTeardownPending } from "../process/stopTeardowns.ts";
+import {
+  retryFailedStopTeardown,
+  stopTeardownFailed,
+  stopTeardownPending,
+} from "../process/stopTeardowns.ts";
 import {
   claudeHomeFromContinuationKey,
   relocateClaudeTranscript,
@@ -901,45 +905,71 @@ export const make = Effect.gen(function* () {
         });
         continue;
       }
-      // One command id per thread and run, whichever branch it takes, so a replay of
-      // this request is answered from the first dispatch instead of acting again.
+      // Its run settled, but processes of the stopped CLI outlived every try to end
+      // them: try again instead of stopping anything else.
+      if (stopTeardownFailed(thread.id)) {
+        const ended = yield* Effect.promise(() => retryFailedStopTeardown(thread.id));
+        if (ended) stopped.push(thread.id);
+        else
+          failed.push({
+            id: thread.id,
+            title: thread.title,
+            message: `"${thread.title}" left processes that could not be ended. Restart SpecWithCode on that machine, or end them by hand, then check again.`,
+          });
+        continue;
+      }
+      // One command id per thread and run, so a replay of this request is answered from
+      // the first dispatch instead of acting again.
       const operation = `${input.commandId}:${thread.id}:${runId ?? "no-run"}`;
-      const interrupted =
-        runId === null
-          ? null
-          : yield* threads
-              .dispatch({
+      if (runId === null) {
+        // Queued or waiting work with no run: read the thread again right before the
+        // stop, and leave it alone if a run started meanwhile.
+        const fresh = yield* projectThreads(input.projectId).pipe(
+          Effect.map((shells) => shells.find((shell) => shell.id === thread.id)),
+        );
+        if ((fresh?.activeRunId ?? null) !== null) {
+          failed.push({
+            id: thread.id,
+            title: thread.title,
+            message: `"${thread.title}" started other work after the check; press Stop again to stop it.`,
+          });
+          continue;
+        }
+      }
+      // A run id binds the stop to that run: the orchestrator refuses it once the run is
+      // over, so a run that started since is never stopped by this request.
+      const result = yield* threads
+        .dispatch(
+          runId === null
+            ? {
+                type: "thread.stop",
+                commandId: CommandId.make(operation),
+                threadId: thread.id,
+                reason,
+              }
+            : {
                 type: "run.interrupt",
                 commandId: CommandId.make(operation),
                 threadId: thread.id,
                 runId,
                 reason,
                 holdQueue: true,
-              })
-              .pipe(Effect.exit);
-      const result =
-        interrupted !== null && Exit.isSuccess(interrupted)
-          ? interrupted
-          : yield* threads
-              .dispatch({
-                type: "thread.stop",
-                commandId: CommandId.make(runId === null ? operation : `${operation}:thread`),
-                threadId: thread.id,
-                reason,
-              })
-              .pipe(Effect.exit);
+              },
+        )
+        .pipe(Effect.exit);
       if (Exit.isSuccess(result)) {
         stopped.push(thread.id);
       } else {
         yield* Effect.logWarning("project.folder-stop.failed", {
           projectId: input.projectId,
           threadId: thread.id,
+          runId,
           cause: result.cause,
         });
         failed.push({
           id: thread.id,
           title: thread.title,
-          message: `"${thread.title}" could not be stopped. Open it and press Stop there.`,
+          message: `"${thread.title}" could not be stopped. Check again; if it still runs, open it and press Stop there.`,
         });
       }
     }

@@ -193,7 +193,11 @@ import {
 } from "../ProviderAdapterDriver.ts";
 import { type BackgroundWorkReport, backgroundWorkNotification } from "../Notification.ts";
 import { retryTreeEnd, spawnOwnedProcess } from "../../process/ownedProcessTree.ts";
-import { beginStopTeardown, withStopTeardown } from "../../process/stopTeardowns.ts";
+import {
+  beginStopTeardown,
+  holdFailedStopTeardown,
+  withStopTeardown,
+} from "../../process/stopTeardowns.ts";
 import * as ProviderContinuationRequests from "../ProviderContinuationRequests.ts";
 import * as PromptSuggestions from "../PromptSuggestions.ts";
 import * as SubagentLaunchCheckpoints from "../SubagentLaunchCheckpoints.ts";
@@ -825,24 +829,53 @@ export const layerQueryRunner: Layer.Layer<
                 stderr: redactProviderFailureText(stderrTail()),
               });
             }
-            const release = beginStopTeardown(input.threadId);
-            const result = yield* Effect.promise(() => tree.end());
-            const log = {
-              threadId: input.threadId,
-              providerSessionId: input.providerSessionId,
-              pid: tree.root.pid,
-              ...result,
-            };
-            if (result.survivors === 0 && !result.unknown) {
-              release();
-              if (result.found > 0) {
-                yield* Effect.logInfo("orchestration-v2.claude-process-tree-ended", log);
-              }
-              return;
-            }
-            yield* Effect.logWarning("orchestration-v2.claude-process-tree-unconfirmed", log);
-            // Tried again in the background, holding the folder change meanwhile.
-            void retryTreeEnd(tree).finally(release);
+            // Held and settled without interruption (the end has its own deadline), so a
+            // caller's timeout can never drop the hold or leave it behind.
+            yield* Effect.uninterruptible(
+              Effect.gen(function* () {
+                const release = beginStopTeardown(input.threadId);
+                const result = yield* Effect.promise(() => tree.end());
+                const log = {
+                  threadId: input.threadId,
+                  providerSessionId: input.providerSessionId,
+                  pid: tree.root.pid,
+                  ...result,
+                };
+                if (result.survivors === 0 && !result.unknown) {
+                  release();
+                  if (result.found > 0) {
+                    yield* Effect.logInfo("orchestration-v2.claude-process-tree-ended", log);
+                  }
+                  return;
+                }
+                yield* Effect.logWarning("orchestration-v2.claude-process-tree-unconfirmed", log);
+                // Tried again in the background, holding the folder change meanwhile.
+                yield* Effect.promise(() => retryTreeEnd(tree)).pipe(
+                  Effect.flatMap((last) => {
+                    const confirmed = last !== null && last.survivors === 0 && !last.unknown;
+                    if (!confirmed && last !== null && last.survivors > 0) {
+                      // Known processes still run: the folder change stays blocked until
+                      // a retry (the folder flow's Stop runs one) ends them.
+                      holdFailedStopTeardown(input.threadId, () =>
+                        tree.end().then((retry) => retry.survivors === 0 && !retry.unknown),
+                      );
+                    }
+                    return confirmed
+                      ? Effect.logInfo("orchestration-v2.claude-process-tree-ended", {
+                          ...log,
+                          ...last,
+                        })
+                      : Effect.logWarning("orchestration-v2.claude-process-tree-not-ended", {
+                          ...log,
+                          ...(last ?? {}),
+                          held: last !== null && last.survivors > 0,
+                        });
+                  }),
+                  Effect.ensuring(Effect.sync(release)),
+                  Effect.forkDetach,
+                );
+              }),
+            );
           });
         });
         yield* logProtocolEvent({
@@ -3601,6 +3634,11 @@ interface ClaudeLiveQueryContext {
   // is gone and never reports their end; any later task_started replaces the
   // entry, so an entry still in this set runs nowhere.
   readonly subagentsFromEarlierProcesses: ReadonlySet<ActiveClaudeSubagent>;
+}
+
+/** Read again after a wait: a Stop may have claimed the process meanwhile. */
+function isStopping(context: Pick<ClaudeLiveQueryContext, "stopping">): boolean {
+  return context.stopping;
 }
 
 interface ActiveClaudeToolCall {
@@ -8540,7 +8578,9 @@ export function makeClaudeAdapterV2(
             existing.deferredSelectionKey = null;
             existing.deferredSelectionNotice = null;
             yield* reconnectStudioMcp(existing);
-            return existing;
+            // A Stop can claim the process while the reconnect waits; it then gets
+            // replaced below like any process Stop is closing.
+            if (!isStopping(existing)) return existing;
           }
 
           // Background agents and shells run inside the CLI process, so a
@@ -8600,13 +8640,14 @@ export function makeClaudeAdapterV2(
                 existing.permissionMode = existing.openedPermissionMode;
               }
               yield* reconnectStudioMcp(existing);
-              return existing;
+              if (!isStopping(existing)) return existing;
+            } else {
+              const blockedBy = (yield* liveProcessBackgroundWork(existing))?.label;
+              return yield* new ClaudeBackgroundWorkBlocksQueryReplacementError({
+                change: modelChanged ? "model_and_settings" : "settings",
+                ...(blockedBy === undefined ? {} : { blockedBy }),
+              });
             }
-            const blockedBy = (yield* liveProcessBackgroundWork(existing))?.label;
-            return yield* new ClaudeBackgroundWorkBlocksQueryReplacementError({
-              change: modelChanged ? "model_and_settings" : "settings",
-              ...(blockedBy === undefined ? {} : { blockedBy }),
-            });
           }
 
           // openQuery owns one live process. Closing it for another native

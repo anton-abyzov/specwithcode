@@ -24,7 +24,11 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
-import { beginStopTeardown } from "../process/stopTeardowns.ts";
+import {
+  beginStopTeardown,
+  holdFailedStopTeardown,
+  stopTeardownPending,
+} from "../process/stopTeardowns.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { encodeClaudeProjectDir } from "../usage/projectFolderSessions.ts";
@@ -436,10 +440,113 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
             {
               id: ThreadId.make("coordinator"),
               title: "Write project memory",
-              message: '"Write project memory" could not be stopped. Open it and press Stop there.',
+              message:
+                '"Write project memory" could not be stopped. Check again; if it still runs, open it and press Stop there.',
             },
           ],
         });
+      }),
+    ),
+  );
+
+  it.effect("never falls back to a thread-wide stop when the seen run cannot be interrupted", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent } = yield* makeScenario;
+        scenario.threads[0] = shell("coordinator", {
+          title: "Coordinator",
+          activeRunId: RunId.make("run-1"),
+          status: "running",
+        });
+        // run-1 ended and run-2 started between the check and the dispatch: the
+        // orchestrator refuses the interrupt for run-1.
+        scenario.failCommand = (command) => command.type === "run.interrupt";
+        const result = yield* withFolders(scenario, (folders) =>
+          folders.stop({
+            commandId,
+            projectId,
+            workspaceRoot: parent,
+            threads: [{ id: ThreadId.make("coordinator"), runId: RunId.make("run-1") }],
+          }),
+        );
+        expect(result.stopped).toEqual([]);
+        expect(result.failed.map((entry) => entry.id)).toEqual([ThreadId.make("coordinator")]);
+        expect(scenario.dispatched).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("leaves queued work alone when a run starts on it during Stop", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent } = yield* makeScenario;
+        scenario.threads[0] = shell("coordinator", {
+          title: "Coordinator",
+          activeRunId: RunId.make("run-1"),
+          status: "running",
+        });
+        scenario.threads.push(shell("queued", { title: "Queued", status: "queued" }));
+        scenario.afterDispatch = (command) => {
+          if (command.type !== "run.interrupt") return;
+          const index = scenario.threads.findIndex((thread) => thread.id === "queued");
+          scenario.threads[index] = shell("queued", {
+            title: "Queued",
+            activeRunId: RunId.make("run-9"),
+            status: "running",
+          });
+        };
+        const result = yield* withFolders(scenario, (folders) =>
+          folders.stop({
+            commandId,
+            projectId,
+            workspaceRoot: parent,
+            threads: [
+              { id: ThreadId.make("coordinator"), runId: RunId.make("run-1") },
+              { id: ThreadId.make("queued"), runId: null },
+            ],
+          }),
+        );
+        expect(result.stopped).toEqual([ThreadId.make("coordinator")]);
+        expect(result.failed).toEqual([
+          {
+            id: ThreadId.make("queued"),
+            title: "Queued",
+            message: '"Queued" started other work after the check; press Stop again to stop it.',
+          },
+        ]);
+        expect(scenario.dispatched.map((command) => command.type)).toEqual(["run.interrupt"]);
+      }),
+    ),
+  );
+
+  it.effect("retries a Stop that left processes running instead of stopping anything", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent } = yield* makeScenario;
+        let gone = false;
+        holdFailedStopTeardown("worker", () => Promise.resolve(gone));
+        const first = yield* withFolders(scenario, (folders) =>
+          folders.stop({
+            commandId,
+            projectId,
+            workspaceRoot: parent,
+            threads: [{ id: ThreadId.make("worker"), runId: null }],
+          }),
+        );
+        expect(first.failed[0]?.message).toContain("left processes that could not be ended");
+        expect(stopTeardownPending("worker")).toBe(true);
+        gone = true;
+        const second = yield* withFolders(scenario, (folders) =>
+          folders.stop({
+            commandId,
+            projectId,
+            workspaceRoot: parent,
+            threads: [{ id: ThreadId.make("worker"), runId: null }],
+          }),
+        );
+        expect(second).toEqual({ stopped: [ThreadId.make("worker")], failed: [] });
+        expect(stopTeardownPending("worker")).toBe(false);
+        expect(scenario.dispatched).toEqual([]);
       }),
     ),
   );
