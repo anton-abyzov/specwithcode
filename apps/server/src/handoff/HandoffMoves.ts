@@ -84,7 +84,7 @@ import * as HandoffFollow from "./handoffFollow.ts";
 import { type HandoffContinueHereOptions, HandoffMode } from "./HandoffMode.ts";
 import { HandoffPeerError, HandoffPeers, layer as HandoffPeersLayer } from "./handoffPeers.ts";
 import { shouldResume } from "./handoffPreflight.ts";
-import { outgoingReviewLock, reviewTakeover, sameReview } from "./handoffReviewLock.ts";
+import { outgoingReviewLock } from "./handoffReviewLock.ts";
 import * as Resume from "./handoffResume.ts";
 import { HandoffReceiver, type HandoffRefusal, type ReceiverCaller } from "./HandoffReceiver.ts";
 import { makeTransferRunner } from "./HandoffTransferRunner.ts";

@@ -121,6 +121,8 @@ const TIMEOUT_MS: Record<PeerPath, number> = {
   "transfer-status": 15_000,
   // The source stops its turn (up to 45 seconds) and waits for this machine's takeover.
   "transfer-pull": 300_000,
+  "review-replicate": 120_000,
+  "review-takeover": 180_000,
 };
 /** A memory page, a coordinator's content or a plan answers with up to the link cap; the rest is small. */
 const answerLimit = (path: PeerPath) =>
@@ -548,6 +550,15 @@ export const make = Effect.gen(function* () {
           check: "version",
           uncertain: false,
           needsUpdate: true,
+        });
+      }
+      // A machine from before the reviewer lock has no such path: it answered, and took nothing.
+      if (answer.status === 404 && (path === "review-replicate" || path === "review-takeover")) {
+        return yield* new HandoffPeerError({
+          code: "invalid",
+          message: `${reviewStaysText("update_needed", target.label)}.`,
+          check: "provider",
+          uncertain: false,
         });
       }
       if (!answer.ok) {

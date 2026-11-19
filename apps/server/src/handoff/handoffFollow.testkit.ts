@@ -320,8 +320,7 @@ export function stage(
   const peers = {
     target: () => Effect.succeed(there),
     targets: Effect.sync(() => (network.fleetUnread ? [] : [there, ...network.ungranted])),
-    negotiate: (_: unknown, request: never) =>
-      asked((built) => built.negotiate(asSource, request)),
+    negotiate: (_: unknown, request: never) => asked((built) => built.negotiate(asSource, request)),
     replicate: (_: unknown, meta: never, bundle: never) =>
       asked((built) => built.replicate(asSource, meta, bundle)),
     preflight: (environmentId: unknown, request: never) =>
@@ -352,8 +351,7 @@ export function stage(
         Effect.filterOrFail(() => !network.dropTakeoverAnswer, noAnswer),
       );
     },
-    heartbeat: (_: unknown, request: never) =>
-      asked((built) => built.heartbeat(asSource, request)),
+    heartbeat: (_: unknown, request: never) => asked((built) => built.heartbeat(asSource, request)),
     transferStatus: (_: unknown, request: never) =>
       asked((built) => built.transferStatus(asSource, request)),
     transferPull: (_: unknown, request: never) =>

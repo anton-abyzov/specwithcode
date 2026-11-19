@@ -261,6 +261,8 @@ export const TakeoverRequest = Schema.Struct({
    */
   operationId: Schema.optional(HandoffTransferOperationId),
   trigger: Schema.optional(HandoffTransferTrigger),
+  /** The thread is a review: it is taken over only through `review-takeover`. */
+  review: Schema.optional(Schema.Boolean),
 });
 export type TakeoverRequest = typeof TakeoverRequest.Type;
 export const TakeoverResponse = Schema.Struct({
@@ -448,7 +450,9 @@ export type PeerPath =
   | "extras-negotiate"
   | "extras-replicate"
   | "transfer-status"
-  | "transfer-pull";
+  | "transfer-pull"
+  | "review-replicate"
+  | "review-takeover";
 export const PEER_PATHS: ReadonlySet<string> = new Set<PeerPath>([
   "negotiate",
   "replicate",
@@ -470,6 +474,8 @@ export const PEER_PATHS: ReadonlySet<string> = new Set<PeerPath>([
   "extras-replicate",
   "transfer-status",
   "transfer-pull",
+  "review-replicate",
+  "review-takeover",
 ]);
 
 /**
