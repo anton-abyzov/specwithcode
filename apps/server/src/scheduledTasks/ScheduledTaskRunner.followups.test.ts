@@ -30,6 +30,8 @@ const STALE =
   "This routine changed since you opened it, so your change was not saved. Open it again and repeat the change.";
 const NOT_SAFE =
   "The machine taking over still rests a routine that this machine has not settled, and did not confirm it follows the coordinator again.";
+const OLDER_RUNNER =
+  "The machine that runs this routine has an older version of the app, and this save would change the mode or model the routine runs with there. Update the app on that machine, then save again.";
 const at = (iso: string) => TestClock.setTime(Date.parse(iso));
 const settle = (machine: Machine) => machine.runner.reconcile({ force: true });
 const listed = (machine: Machine) =>
@@ -428,6 +430,42 @@ for (const client of ["mcp", "mobile"] as const)
     }),
   );
 
+// A runner on the release before reads a save as its `kind` and `routine`, and writes
+// the mode and model it was sent. A capped copy shows its own, so it cannot send them.
+for (const client of ["mcp", "mobile"] as const)
+  it.effect(
+    `a rename from a capped copy never lowers a runner on the release before (${client})`,
+    () =>
+      Effect.gen(function* () {
+        yield* at(NOON);
+        const { machines, network } = yield* fleet(["alpha", "beta"]);
+        const [alpha, beta] = machines as [Machine, Machine];
+        network.previous = new Set(["alpha"]);
+        network.ceiling = (from, to) =>
+          from === "alpha" && to === "beta" ? "auto-accept-edits" : "full-access";
+        yield* alpha.seed();
+        yield* beta.seed();
+        yield* settle(alpha);
+        const shown = yield* listed(beta);
+        assert.equal(shown.runtimeMode, "auto-accept-edits");
+        const renamed = yield* renameFrom(client, beta, shown);
+        // Whatever the copy did, the runner runs the routine as it did.
+        assert.equal((yield* listed(alpha)).runtimeMode, "full-access");
+        assert.equal(messageOf(renamed), OLDER_RUNNER);
+        assert.notEqual((yield* listed(alpha)).title, "Renamed");
+        assert.notEqual((yield* listed(beta)).title, "Renamed");
+        // A copy that shows the routine as its runner holds it sends nothing the runner lacks.
+        network.ceiling = undefined;
+        yield* settle(alpha);
+        const whole = yield* listed(beta);
+        assert.equal(whole.runtimeMode, "full-access");
+        assert.equal((yield* renameFrom(client, beta, whole))._tag, "Success");
+        const runner = yield* listed(alpha);
+        assert.equal(runner.title, "Renamed");
+        assert.equal(runner.runtimeMode, "full-access");
+      }),
+  );
+
 // --- a copy that became the runner ---------------------------------------------------------
 
 it.effect("a delete made on an older definition is refused once the copy runs the routine", () =>
@@ -471,20 +509,28 @@ it.effect("a delete made on an older definition is refused once the copy runs th
 
 // --- a handover to a machine that keeps runner records -------------------------------------
 
-/** Alpha collects answers: beta rests its copy, gamma's answer is lost. The slot is due. */
-const collecting = Effect.gen(function* () {
-  yield* at(NOON);
-  const made = yield* fleet(["alpha", "beta", "gamma"]);
-  const [alpha, beta, gamma] = made.machines as [Machine, Machine, Machine];
-  for (const machine of made.machines) yield* machine.seed();
-  made.network.dropAnswer = (_from, to, op) => to === "gamma" && op === "runner-disarm";
-  yield* settle(alpha);
-  assert.equal((yield* alpha.record)?.state, "settling");
-  assert.equal((yield* beta.record)?.state, "disarmed");
-  made.network.dropAnswer = () => false;
-  yield* alpha.makeDue(DUE);
-  return { ...made, alpha, beta, gamma };
-});
+/**
+ * Alpha collects answers, and the answer of `lost` never arrives: beta rests its
+ * copy either way, confirmed to alpha or only asked by it. The slot is due.
+ */
+const collectingWithout = (lost: "beta" | "gamma") =>
+  Effect.gen(function* () {
+    yield* at(NOON);
+    const made = yield* fleet(["alpha", "beta", "gamma"]);
+    const [alpha, beta, gamma] = made.machines as [Machine, Machine, Machine];
+    for (const machine of made.machines) yield* machine.seed();
+    made.network.dropAnswer = (_from, to, op) => to === lost && op === "runner-disarm";
+    yield* settle(alpha);
+    const record = yield* alpha.record;
+    assert.equal(record?.state, "settling");
+    assert.equal((yield* beta.record)?.state, "disarmed");
+    // Beta's rest counts for alpha by its answer, or only by having been asked.
+    assert.equal(record?.acked.includes(beta.environmentId), lost !== "beta");
+    assert.isTrue((record?.asked ?? []).includes(beta.environmentId) || lost !== "beta");
+    made.network.dropAnswer = () => false;
+    yield* alpha.makeDue(DUE);
+    return { ...made, alpha, beta, gamma };
+  });
 const handoverSnapshot = (alpha: Machine, beta: Machine) =>
   Effect.gen(function* () {
     const copies = yield* alpha.service.routineCopies!();
@@ -496,57 +542,63 @@ const handoverSnapshot = (alpha: Machine, beta: Machine) =>
     } as Parameters<typeof copies.snapshot>[0]);
   });
 
-it.effect("a handover leaves the routine running when the old coordinator goes at once", () =>
-  Effect.gen(function* () {
-    const { alpha, beta, gamma, network } = yield* collecting;
-    const snapshot = yield* handoverSnapshot(alpha, beta);
-    // Beta takes the handover as this release does: the routines, then their run states.
-    const copies = yield* beta.service.routineCopies!();
-    yield* copies.replace({
-      projectId: beta.projectId,
-      logicalProjectId: "logical-a",
-      routines: snapshot?.routines ?? [],
-    });
-    yield* writeRunStates(
-      beta.projectId,
-      yield* readRunStates(alpha.projectId, [ROUTINE]).pipe(
-        Effect.provideService(SqlClient.SqlClient, alpha.sql),
-        Effect.orDie,
-      ),
-    ).pipe(Effect.provideService(SqlClient.SqlClient, beta.sql), Effect.orDie);
-    // Acknowledged. Alpha is gone before it looks at anything again.
-    network.offline.add("alpha");
-    alpha.state.role = { active: false, epoch: 2, state: "transferred" };
-    beta.state.role = { active: true, epoch: 2, state: "active" };
-    yield* beta.due;
-    yield* gamma.due;
-    assert.equal(beta.fires(), 1);
-    assert.equal(gamma.fires(), 0);
-    assert.isNull(yield* beta.record);
-    assert.equal((yield* beta.row)?.enabled, 1);
-  }),
-);
+for (const lost of ["gamma", "beta"] as const) {
+  it.effect(
+    `a handover leaves the routine running when the old coordinator goes at once (${lost}'s answer lost)`,
+    () =>
+      Effect.gen(function* () {
+        const { alpha, beta, gamma, network } = yield* collectingWithout(lost);
+        const snapshot = yield* handoverSnapshot(alpha, beta);
+        // Beta takes the handover as this release does: the routines, then their run states.
+        const copies = yield* beta.service.routineCopies!();
+        yield* copies.replace({
+          projectId: beta.projectId,
+          logicalProjectId: "logical-a",
+          routines: snapshot?.routines ?? [],
+        });
+        yield* writeRunStates(
+          beta.projectId,
+          yield* readRunStates(alpha.projectId, [ROUTINE]).pipe(
+            Effect.provideService(SqlClient.SqlClient, alpha.sql),
+            Effect.orDie,
+          ),
+        ).pipe(Effect.provideService(SqlClient.SqlClient, beta.sql), Effect.orDie);
+        // Acknowledged. Alpha is gone before it looks at anything again.
+        network.offline.add("alpha");
+        alpha.state.role = { active: false, epoch: 2, state: "transferred" };
+        beta.state.role = { active: true, epoch: 2, state: "active" };
+        yield* beta.due;
+        yield* gamma.due;
+        assert.equal(beta.fires(), 1);
+        assert.equal(gamma.fires(), 0);
+        assert.isNull(yield* beta.record);
+        assert.equal((yield* beta.row)?.enabled, 1);
+      }),
+  );
 
-it.effect("a handover is not gathered while the recipient may still rest its copy", () =>
-  Effect.gen(function* () {
-    const { alpha, beta, network } = yield* collecting;
-    // Beta is told to follow the coordinator again; whether it did is not known.
-    network.dropAnswer = (_from, to, op) => to === "beta" && op === "runner-rearm";
-    const unknown = yield* handoverSnapshot(alpha, beta).pipe(Effect.result);
-    // Word for word: the handover reads this sentence to know it must not go on.
-    assert.equal(messageOf(unknown), NOT_SAFE);
-    // Not told at all: the same, and beta still rests for alpha.
-    network.dropAnswer = () => false;
-    network.offline.add("beta");
-    const unreached = yield* handoverSnapshot(alpha, beta).pipe(Effect.result);
-    assert.equal(messageOf(unreached), NOT_SAFE);
-    network.offline.delete("beta");
-    // Reached again, the routine goes on, and beta follows the coordinator.
-    const sent = yield* handoverSnapshot(alpha, beta);
-    assert.deepEqual(
-      (sent?.routines ?? []).map((routine) => routine.enabled),
-      [true],
-    );
-    assert.isNull(yield* beta.record);
-  }),
-);
+  it.effect(
+    `a handover is not gathered while the recipient may still rest its copy (${lost}'s answer lost)`,
+    () =>
+      Effect.gen(function* () {
+        const { alpha, beta, network } = yield* collectingWithout(lost);
+        // Beta is told to follow the coordinator again; whether it did is not known.
+        network.dropAnswer = (_from, to, op) => to === "beta" && op === "runner-rearm";
+        const unknown = yield* handoverSnapshot(alpha, beta).pipe(Effect.result);
+        // Word for word: the handover reads this sentence to know it must not go on.
+        assert.equal(messageOf(unknown), NOT_SAFE);
+        // Not told at all: the same, and beta still rests for alpha.
+        network.dropAnswer = () => false;
+        network.offline.add("beta");
+        const unreached = yield* handoverSnapshot(alpha, beta).pipe(Effect.result);
+        assert.equal(messageOf(unreached), NOT_SAFE);
+        network.offline.delete("beta");
+        // Reached again, the routine goes on, and beta follows the coordinator.
+        const sent = yield* handoverSnapshot(alpha, beta);
+        assert.deepEqual(
+          (sent?.routines ?? []).map((routine) => routine.enabled),
+          [true],
+        );
+        assert.isNull(yield* beta.record);
+      }),
+  );
+}

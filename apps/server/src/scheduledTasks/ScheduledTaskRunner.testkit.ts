@@ -146,6 +146,12 @@ export interface Network {
   during?: ((from: string, to: string, op: string) => Effect.Effect<void>) | undefined;
   /** What `from`'s routines may do on `to`; absent, anything. */
   ceiling?: ((from: string, to: string) => RuntimeMode) | undefined;
+  /**
+   * Machines that read a change and answer as 1.0.387 did: that tag's edit
+   * schema has `kind` and `routine` only, so what else a save carries is dropped
+   * on decode, and its answers name `routine-runner.v1` alone.
+   */
+  previous?: ReadonlySet<string> | undefined;
   /** Every request sent, as `from>to:op`. */
   readonly log: Array<string>;
 }
@@ -160,6 +166,20 @@ const grantFor = (source: EnvironmentId): EffectiveWorkGrant => ({
   routines: true,
   kind: "own",
 });
+
+/** A request as the 1.0.387 schema decodes it: a save is its `kind` and `routine`. */
+const asRead387 = (wire: unknown): unknown => {
+  const request = wire as { readonly op?: string; readonly edit?: Record<string, unknown> };
+  if (request.op !== "runner-edit" || request.edit?.kind !== "save") return wire;
+  return { ...request, edit: { kind: "save", routine: request.edit.routine } };
+};
+/** An answer as 1.0.387 gives it: the one capability that release names. */
+const asAnswered387 = (answer: unknown): unknown => {
+  const given = answer as { readonly capabilities?: ReadonlyArray<string> };
+  return given?.capabilities === undefined
+    ? answer
+    : { ...given, capabilities: given.capabilities.filter((name) => name === "routine-runner.v1") };
+};
 
 /**
  * `names` are the machines, in member order; each one's project is
@@ -187,9 +207,12 @@ export const fleet = (
       (self: EnvironmentId): AwayPeerPost =>
       (target, _path, body) =>
         Effect.gen(function* () {
-          const wire = overTheWire(body) as { readonly op?: string };
           const from = nameOf(self);
           const to = nameOf(target);
+          const previous = network.previous?.has(to) === true;
+          const wire = (previous ? asRead387(overTheWire(body)) : overTheWire(body)) as {
+            readonly op?: string;
+          };
           network.log.push(`${from}>${to}:${wire.op ?? "?"}`);
           if (network.before !== undefined) yield* network.before(from, to, wire.op ?? "?");
           const route = routes.get(target);
@@ -221,7 +244,10 @@ export const fleet = (
               uncertain: false,
               status: answered.failure.status,
             });
-          return { status: 200, json: overTheWire(answered.success) };
+          return {
+            status: 200,
+            json: overTheWire(previous ? asAnswered387(answered.success) : answered.success),
+          };
         });
 
     const machine = (name: string, index: number) =>
