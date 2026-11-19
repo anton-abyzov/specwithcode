@@ -109,7 +109,11 @@ function GuideKnots({ view }: { readonly view: GuideView }) {
             className="grid min-w-0 justify-items-center gap-1.5 pb-1 text-xs font-medium text-muted-foreground data-[state=now]:text-foreground"
           >
             <span aria-hidden data-slot="setup-knot" data-motion="setup" />
-            <span className="max-w-full truncate">
+            {/* The label names the step the person is on: on a phone it wraps, never cut. */}
+            <span
+              data-slot="first-feature-knot-label"
+              className="max-w-full text-center text-balance wrap-break-word"
+            >
               {tx(GUIDE_STEP_LABELS[knot.id])}
               {knot.state === "done" ? <span className="sr-only">{` (${tx("done")})`}</span> : null}
               {knot.state === "skipped" ? (

@@ -1,6 +1,6 @@
 # Your first feature
 
-The first feature guide walks you through one small feature from start to finish on a sample project: SpecWeave turned on, one request to the coordinator, the plan on the Board, a review by a model from another family, and the card in Done. It takes about as long as your agents need to build a dark mode switch for one page.
+The first feature guide walks you through one small feature from start to finish on a sample project: SpecWeave turned on, one request to the coordinator, the plan on the Board, a review by a model from another family, and the card in Done.
 
 ## Start it
 
@@ -24,15 +24,15 @@ The card shows three knots on one line, **Turn SpecWeave on**, **Ask for it whol
 
 The card reads "That is the loop: plan, board, work, review, done." and offers two actions; neither is chosen for you:
 
-- **Review finished features in all projects on this Mac** turns on automatic review for every project on this machine. Each review uses the reviewer's plan.
+- **Review finished features in all projects on this Mac** turns on automatic review on this machine, for every project that has no review setting of its own. The sample keeps its own setting off. Each review uses the reviewer's plan.
 - **Remove the sample project** removes the sample from SpecWithCode. Its folder and files stay on disk.
 
 After a guide finishes, the Overview no longer offers the card on that machine, also after the sample is removed.
 
 ## Open it again
 
-- On the sample's page, after you left the guide or closed its end, the project's **⋯** menu has **First feature guide**.
-- The command palette has **First feature guide**. It opens the sample in progress, or makes a new one, also after a guide has finished.
+- On the sample's page, after you left the guide or closed its end, the project's menu (**More project actions**) has **First feature guide**. It opens the guide where you left it.
+- The command palette has **First feature guide**. It opens a sample whose guide is still running, or else makes a new sample, also after a guide has finished. A guide you left is not reopened from here: use the project's menu.
 - While a sample is in progress, the Overview card reads **Continue your first feature** with **Open it**.
 
 The close button on the Overview card hides the card on this device. The palette entry stays.

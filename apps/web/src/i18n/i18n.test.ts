@@ -341,10 +341,16 @@ describe.each(Object.entries(PHRASE_CATALOGS))("%s first-run phrases", (_locale,
   });
 });
 
-// The first feature guide and its offer (1398 AC-17): every phrase they show, read from the
-// logic's phrase constants and any literal `tx("...")` in the folder, is in every catalog. The
-// request itself stays English, word for word (AC-22), so it is not a phrase.
+// The first feature guide and its offer (1398 AC-17): every phrase they show is in every
+// catalog. Read from the logic's phrase constants and, in the folder's components, the literals
+// given to `tx`, `txNow` and `setError` (both arms of a ternary too) and the error strings a
+// component returns to show later through `tx`. The request itself stays English, word for word
+// (AC-22), so it is not a phrase.
 const FIRST_FEATURE_DIR = NodePath.join(SRC_DIR, "components", "studio", "firstFeature");
+const FIRST_FEATURE_SOURCES = NodeFS.readdirSync(FIRST_FEATURE_DIR)
+  .filter((file) => /\.tsx$/.test(file) && !file.includes(".test."))
+  .map((file) => NodeFS.readFileSync(NodePath.join(FIRST_FEATURE_DIR, file), "utf8"));
+const FIRST_FEATURE_LITERAL = String.raw`("(?:[^"\\]|\\.)*")`;
 const FIRST_FEATURE_PHRASES = [
   ...new Set([
     ...Object.entries(FirstFeatureLogic)
@@ -352,15 +358,25 @@ const FIRST_FEATURE_PHRASES = [
         ([name, value]) => typeof value === "string" && !name.startsWith("FIRST_FEATURE_REQUEST"),
       )
       .map(([, value]) => value as string),
-    ...NodeFS.readdirSync(FIRST_FEATURE_DIR)
-      .filter((file) => /\.tsx?$/.test(file) && !file.includes(".test."))
-      .flatMap((file) =>
-        [
-          ...NodeFS.readFileSync(NodePath.join(FIRST_FEATURE_DIR, file), "utf8").matchAll(
-            /\btx\(\s*("(?:[^"\\]|\\.)*")/g,
+    ...FIRST_FEATURE_SOURCES.flatMap((source) => [
+      ...[
+        ...source.matchAll(
+          new RegExp(String.raw`\b(?:tx|txNow|setError)\(\s*` + FIRST_FEATURE_LITERAL, "g"),
+        ),
+        ...source.matchAll(new RegExp(String.raw`\breturn\s+` + FIRST_FEATURE_LITERAL, "g")),
+      ].map((match) => JSON.parse(match[1]!) as string),
+      ...[
+        ...source.matchAll(
+          new RegExp(
+            String.raw`\b(?:tx|txNow)\(\s*[^"'\x60()]*?\?\s*` +
+              FIRST_FEATURE_LITERAL +
+              String.raw`\s*:\s*` +
+              FIRST_FEATURE_LITERAL,
+            "g",
           ),
-        ].map((match) => JSON.parse(match[1]!) as string),
-      ),
+        ),
+      ].flatMap((match) => [JSON.parse(match[1]!) as string, JSON.parse(match[2]!) as string]),
+    ]),
   ]),
 ];
 
