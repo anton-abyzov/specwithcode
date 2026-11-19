@@ -40,7 +40,6 @@ import {
   encodePreviousPreflightRequest,
   encodePreviousTakeoverRequest,
   overTheWire,
-  previousHeartbeatContinued,
   previousMarkContinued,
   previousReadAnswer,
   previousTakeoverFailure,
@@ -138,7 +137,7 @@ describe(`this build with a machine on ${PREVIOUS_RELEASE}`, () => {
       }),
     );
 
-    it.effect("keeps an old hold until that machine shows twice it did not continue it", () =>
+    it.effect("keeps an old hold, however often that machine says it did not continue it", () =>
       Effect.gen(function* () {
         const rig = yield* makeRig(temporary, withPrevious);
         const [a, , old] = rig.machines as [RigMachine, RigMachine, RigMachine];
@@ -179,11 +178,17 @@ describe(`this build with a machine on ${PREVIOUS_RELEASE}`, () => {
         );
         expect(stale).toMatchObject({ kind: "refuse", code: "fenced" });
 
-        // A takeover that was already running there has had time to finish.
+        // Its "not continued" is no proof, however long it keeps saying it: that release
+        // launches before it writes that it continued.
         yield* TestClock.adjust("201 seconds");
         yield* a.moves.tick;
-        expect(leaseOf(a)).toMatchObject({ state: "active", epoch: 2 });
-        expect(transferOf(a)?.state).toBe("failed");
+        yield* TestClock.adjust("1 hour");
+        yield* a.moves.tick;
+        expect(leaseOf(a)).toMatchObject({ state: "handing-off", epoch: 1 });
+        expect(transferOf(a)?.state).toBe("unknown");
+        expect(a.document.threads[t1]?.lastError).toContain("needs an update");
+        expect(turnRefusal(a.document, t1, a.environmentId)).not.toBeNull();
+        expect(rig.callsOf("takeover", old)).toHaveLength(0);
         expect(old.launches).toHaveLength(0);
       }),
     );
@@ -257,7 +262,7 @@ describe(`this build with a machine on ${PREVIOUS_RELEASE}`, () => {
         };
       });
 
-    it.effect("sends the takeover an old hold kept on file again, to that machine only", () =>
+    it.effect("never sends that machine the takeover an old hold kept on file", () =>
       Effect.gen(function* () {
         const rig = yield* makeRig(temporary, withPrevious);
         const [a, b, old] = rig.machines as [RigMachine, RigMachine, RigMachine];
@@ -266,55 +271,44 @@ describe(`this build with a machine on ${PREVIOUS_RELEASE}`, () => {
         yield* holdWithRequest(a, old);
 
         yield* a.moves.tick;
+        yield* a.moves.tick;
 
-        // That machine never got it: it takes the thread now, by its own rules.
-        expect(old.launches).toHaveLength(1);
-        expect(leaseOf(a)?.state).toBe("fenced");
-        expect(a.document.threads[t1]?.continuedOn).toMatchObject({
-          environmentId: old.environmentId,
-          threadId: continuationThreadId(a.environmentId, t1, 2),
-        });
-        expect(transferOf(a)).toMatchObject({ legacy: true, state: "resumed" });
+        // It would start the thread with nothing on file to answer for it. It is asked
+        // whether it continued the thread, and nothing else.
+        expect(rig.callsOf("takeover")).toHaveLength(0);
+        expect(old.launches).toHaveLength(0);
         expect(b.launches).toHaveLength(0);
-        expect(rig.callsOf("takeover", b)).toHaveLength(0);
+        expect(leaseOf(a)?.state).toBe("handing-off");
+        expect(transferOf(a)).toMatchObject({ legacy: true, state: "unknown", sequence: null });
+        expect(transferOf(a)?.candidates).toMatchObject([
+          { environmentId: old.environmentId, verdict: "fenced" },
+        ]);
+        expect(turnRefusal(a.document, t1, a.environmentId)).not.toBeNull();
       }),
     );
 
-    it.effect("does not stay held when that machine calls the kept takeover stale", () =>
+    it.effect("stays held when that machine launched the thread and could not write that it did", () =>
       Effect.gen(function* () {
         const rig = yield* makeRig(temporary, withPrevious);
         const [a, , old] = rig.machines as [RigMachine, RigMachine, RigMachine];
         rig.addThread(a, t1);
         yield* holdWithRequest(a, old);
-        // It was already told this epoch, and did not continue the thread.
-        old.document = previousHeartbeatContinued(
-          old.document,
-          {
-            sourceEnvironmentId: a.environmentId,
-            leases: [{ sourceThreadId: t1, epoch: 2 }],
-          },
-          "2026-11-19T14:00:00.000Z",
-        )[1];
+        // The release launches the continuation, then writes that it continued. That
+        // last write failed: the thread runs there, and every heartbeat says "not continued".
+        old.launches.push({ threadId: continuationThreadId(a.environmentId, t1, 2) } as never);
 
         yield* a.moves.tick;
-        // "Stale" is not "never continued", and it cannot answer for a transfer: the
-        // hold stays, and from here it is asked by heartbeat like a hold with nothing on file.
-        expect(leaseOf(a)?.state).toBe("handing-off");
-        expect(rig.callsOf("transfer-status", old)).toHaveLength(1);
-        expect(transferOf(a)).toMatchObject({ state: "unknown", sequence: null });
-        expect(transferOf(a)?.candidates.map((candidate) => candidate.environmentId)).toEqual([
-          old.environmentId,
-        ]);
-
         yield* a.moves.tick;
-        expect(transferOf(a)?.candidates[0]).toMatchObject({ verdict: "fenced" });
-        expect(leaseOf(a)?.state).toBe("handing-off");
-
         yield* TestClock.adjust("201 seconds");
         yield* a.moves.tick;
-        expect(leaseOf(a)).toMatchObject({ state: "active", epoch: 2 });
-        expect(transferOf(a)?.state).toBe("failed");
-        expect(old.launches).toHaveLength(0);
+        yield* rig.restart(a);
+        yield* a.moves.tick;
+
+        expect(rig.callsOf("heartbeat", old).length).toBeGreaterThan(1);
+        expect(leaseOf(a)).toMatchObject({ state: "handing-off", epoch: 1 });
+        expect(transferOf(a)?.state).toBe("unknown");
+        expect(turnRefusal(a.document, t1, a.environmentId)).not.toBeNull();
+        expect(old.launches).toHaveLength(1);
       }),
     );
   });

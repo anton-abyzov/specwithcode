@@ -329,6 +329,81 @@ describe("the transfer record of a handoff", () => {
     }),
   );
 
+  it.effect("keeps the hold when the destination could not write that it took its acceptance back", () =>
+    Effect.gen(function* () {
+      const rig = yield* makeRig(temporary);
+      const [a, b] = rig.machines as [RigMachine, RigMachine];
+      rig.addThread(a, t1);
+      b.onLaunch = (input) =>
+        Effect.fail(
+          new ThreadLaunchError({
+            operation: "resolve-project",
+            commandId: input.commandId,
+            projectId: input.projectId,
+            cause: "Resume or restore the project before starting new threads.",
+          }),
+        );
+      // Its records take the acceptance and then cannot be written again.
+      b.transfers.failWrite = (next) =>
+        Object.values(next.acceptances).some((entry) => entry.verdict === "not-accepted");
+
+      yield* handOff(a, t1, b).pipe(Effect.flip);
+
+      // The acceptance is still on file there, so a repeat would launch: not a "no".
+      expect(acceptancesOf(b)[0]).toMatchObject({ verdict: "accepted", launched: false });
+      expect(leaseOf(a, t1)?.state).toBe("handing-off");
+      expect(transferOf(a, t1)?.state).toBe("unknown");
+      expect(turnRefusal(a.document, t1, a.environmentId)).not.toBeNull();
+
+      // The project is resumed there: the repeat launches once, and the source is fenced.
+      b.onLaunch = null;
+      b.transfers.failWrite = null;
+      yield* a.moves.tick;
+      expect(b.launches).toHaveLength(1);
+      expect(leaseOf(a, t1)?.state).toBe("fenced");
+    }),
+  );
+
+  it.effect("keeps the hold when it could not write that the handoff was refused", () =>
+    Effect.gen(function* () {
+      const rig = yield* makeRig(temporary);
+      const [a, b] = rig.machines as [RigMachine, RigMachine];
+      rig.addThread(a, t1);
+      // The destination refuses the first send: its grant was withdrawn.
+      const withdrawn = new HandoffRefusal({
+        status: 409,
+        code: "busy",
+        message: "B no longer accepts work from this machine.",
+        check: "grant",
+      });
+      rig.network.rule = (call) => (call.path === "takeover" ? { refuse: withdrawn } : undefined);
+      // Only the write that ends the record fails.
+      a.transfers.failWrite = (next) =>
+        Object.values(next.transfers).some((record) => record.state === "failed");
+
+      yield* handOff(a, t1, b).pipe(Effect.flip);
+
+      // The record is still open, so it will be sent again: the thread is not run here.
+      expect(transferOf(a, t1)?.state).toBe("sent");
+      expect(leaseOf(a, t1)).toMatchObject({ state: "handing-off", epoch: 1 });
+      expect(turnRefusal(a.document, t1, a.environmentId)).not.toBeNull();
+      yield* rig.restart(a);
+      yield* a.moves.tick;
+      expect(leaseOf(a, t1)?.state).toBe("handing-off");
+      expect(turnRefusal(a.document, t1, a.environmentId)).not.toBeNull();
+      expect(b.launches).toHaveLength(0);
+
+      // The disk is back: the destination says once more it never accepted, that is
+      // written, and only then does the thread run here again. Nothing started there.
+      rig.network.rule = null;
+      a.transfers.failWrite = null;
+      yield* a.moves.tick;
+      expect(transferOf(a, t1)?.state).toBe("failed");
+      expect(leaseOf(a, t1)).toMatchObject({ state: "active", epoch: 2 });
+      expect(b.launches).toHaveLength(0);
+    }),
+  );
+
   it.effect("keeps the hold when a repeat is refused at the door of a machine that accepted", () =>
     Effect.gen(function* () {
       const rig = yield* makeRig(temporary);

@@ -30,6 +30,7 @@ import {
   CommandId,
   type EnvironmentId,
   HANDOFF_LEASE_RENEW_MS,
+  hasHandoffV2,
   HANDOFF_LEASE_STALE_MS,
   type HandOffInput,
   type HandOffMachineInput,
@@ -620,6 +621,21 @@ export const make = Effect.gen(function* () {
     localCheckpoint: (threadId) =>
       handoff.checkpoint(threadId, "handoff").pipe(Effect.orElseSucceed(() => null)),
     prepare,
+    keepsRecords: (destination) =>
+      destination === self
+        ? Effect.succeed(true)
+        : peers
+            .preflight(destination, {
+              sourceEnvironmentId: self,
+              protocolVersion: HANDOFF_PROTOCOL_VERSION,
+              appVersion: HANDOFF_APP_VERSION,
+              capabilities: HANDOFF_CAPABILITIES,
+              threads: [],
+            })
+            .pipe(
+              Effect.map((response) => hasHandoffV2(response.capabilities)),
+              Effect.mapError(fromPeer),
+            ),
     peerPreflight,
     preflightError,
     interruptRun,

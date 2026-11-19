@@ -69,8 +69,6 @@ import type {
   TransferStatusResponse,
 } from "./handoffWire.ts";
 
-/** A machine from before transfer records answers a takeover within this long, or not at all. */
-const LEGACY_TAKEOVER_SETTLE_MS = 200_000;
 /** A move a restart cut before it was sent carries on by itself only this long after it was asked. */
 const UNSENT_REPLAY_WINDOW_MS = 15 * 60_000;
 
@@ -82,6 +80,10 @@ const NO_MACHINE_ACCEPTED =
   "No machine accepted this handoff, so the thread runs here again.";
 const LEGACY_HOLD_WAITS =
   "This thread was being handed off when SpecWithCode was updated. It stays paused until every machine that holds a copy confirms it did not continue it.";
+const NOT_RECORDED =
+  "This machine could not save how the handoff ended, so the thread stays paused until it can.";
+const needsUpdateWaits = (label: string) =>
+  `${label} needs an update before it can say whether it continued this thread. The thread stays paused until then.`;
 const ARRIVED_FOR_THIS_RUN =
   "This thread arrived from that machine for this run, so it is not sent back automatically.";
 const BATCH_CUT = "The handoff was cut before this thread was held, so it stays here.";
@@ -124,6 +126,11 @@ export interface TransferRunnerDeps {
     { readonly shell: OrchestrationV2ThreadShell; readonly checkpoint: HandoffCheckpoint },
     HandoffModeError
   >;
+  /**
+   * Does that machine keep transfer records? Asked before a takeover is sent
+   * again; it fails when the machine does not answer.
+   */
+  readonly keepsRecords: (destination: EnvironmentId) => Effect.Effect<boolean, HandoffModeError>;
   readonly peerPreflight: (
     destination: EnvironmentId,
     threads: ReadonlyArray<{
@@ -191,7 +198,10 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       store.update((document) => transitionTransfer(document, operationId, from, change, now)),
     );
 
-  /** Ends a record; a store that cannot be written keeps whatever the record said. */
+  /**
+   * Ends a record, and says whether that was written. A hold is given back
+   * only after it was: a record left open would be sent again later.
+   */
   const finish = (
     operationId: string,
     state: "stayed" | "failed" | "resumed" | "ready",
@@ -202,7 +212,9 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       state,
       detail: detail === null ? null : detail.slice(0, 1000),
       ...(receipt === null ? {} : { receipt }),
-    }).pipe(Effect.ignore);
+    }).pipe(
+      Effect.match({ onFailure: () => false, onSuccess: (written) => written !== null }),
+    );
 
   /** Gives back a hold nothing was sent under: the epoch was never used. */
   const releaseUnsent = (threadId: ThreadId, lastError: string | null) =>
@@ -336,7 +348,13 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         error !== null && destinationRefused(error) && error.check === "grant"
           ? `Not moved: ${error.message}`.slice(0, 1000)
           : null;
-      yield* finish(record.operationId, "failed", grant ?? refusal.message);
+      if (!(yield* finish(record.operationId, "failed", grant ?? refusal.message))) {
+        // Still open on file, so it will be sent again: the thread stays held.
+        yield* deps
+          .updateRecord(threadId, (current) => ({ ...current, lastError: NOT_RECORDED }))
+          .pipe(Effect.ignore);
+        return yield* failed(refusal.code, refusal.message);
+      }
       yield* releaseRefused(threadId, epoch, grant);
       yield* onRefused;
       return yield* failed(refusal.code, refusal.message);
@@ -388,8 +406,10 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
    * A hold from before records, with no request on file: ask each machine that
    * holds a copy. One that keeps records writes "not accepted" before saying
    * it. One that does not is told the epoch in a heartbeat, which makes a late
-   * takeover stale there, and must still say "not continued" once a takeover
-   * already on its way has had time to finish.
+   * takeover stale there, and is asked whether it continued the thread. Its
+   * "yes" fences the thread here. Its "no" proves nothing: that release
+   * launches before it writes that it continued, so the hold waits until that
+   * machine is updated and can answer for the transfer.
    */
   const settleLegacy = (
     record: HandoffTransferRecord,
@@ -398,9 +418,9 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
     Effect.gen(function* () {
       const threadId = record.lineage.sourceThreadId;
       const epoch = record.lineage.epoch;
-      const now = yield* Clock.currentTimeMillis;
       const nowText = yield* deps.nowIso;
       const next: Array<HandoffTransferCandidate> = [];
+      let outdated: string | null = null;
       for (const candidate of record.candidates) {
         if (candidate.verdict === "not-accepted") {
           next.push(candidate);
@@ -455,25 +475,25 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
           yield* deps.fenceSource(shell, peer, receipt, continued.epoch, "handoff");
           return receipt;
         }
-        const fencedAt = candidate.fencedAt === null ? Number.NaN : Date.parse(candidate.fencedAt);
+        outdated = beat.success.machineLabel;
         next.push(
-          candidate.verdict === "fenced" && now - fencedAt >= LEGACY_TAKEOVER_SETTLE_MS
-            ? { ...candidate, verdict: "not-accepted" }
-            : candidate.verdict === "fenced"
-              ? candidate
-              : { ...candidate, verdict: "fenced", fencedAt: nowText },
+          candidate.verdict === "fenced"
+            ? candidate
+            : { ...candidate, verdict: "fenced", fencedAt: nowText },
         );
       }
+      const waits = outdated === null ? LEGACY_HOLD_WAITS : needsUpdateWaits(outdated);
       if (next.every((candidate) => candidate.verdict === "not-accepted")) {
-        yield* finish(record.operationId, "failed", NO_MACHINE_ACCEPTED);
-        yield* releaseRefused(threadId, epoch, null);
-        return null;
+        if (yield* finish(record.operationId, "failed", NO_MACHINE_ACCEPTED)) {
+          yield* releaseRefused(threadId, epoch, null);
+          return null;
+        }
       }
       yield* patch(record.operationId, ["unknown"], { state: "unknown", candidates: next }).pipe(
         Effect.ignore,
       );
       yield* deps
-        .updateRecord(threadId, (current) => ({ ...current, lastError: LEGACY_HOLD_WAITS }))
+        .updateRecord(threadId, (current) => ({ ...current, lastError: waits }))
         .pipe(Effect.ignore);
       return null;
     });
@@ -502,7 +522,28 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       if (record.targetEnvironmentId === null || record.sequence === null) {
         return yield* settleLegacy(record, shell);
       }
-      return yield* dispatch(record, record.targetEnvironmentId, shell, false, Effect.void);
+      const destination = record.targetEnvironmentId;
+      // A takeover goes only to a machine that keeps transfer records, the repeat
+      // as much as the first send: one that does not would start the thread
+      // without anything on file to answer for it. No answer leaves the hold as it is.
+      const keeps = yield* deps.keepsRecords(destination).pipe(Effect.result);
+      if (keeps._tag === "Failure") {
+        yield* patch(record.operationId, ["sent", "unknown", "accepted"], {
+          state: "unknown",
+          detail: keeps.failure.message.slice(0, 1000),
+        }).pipe(Effect.ignore);
+        return null;
+      }
+      if (!keeps.success) {
+        // It may confirm a continuation it has; it is never asked to make one.
+        const asked = yield* patch(record.operationId, ["sent", "unknown", "accepted"], {
+          state: "unknown",
+          sequence: null,
+          candidates: [{ environmentId: destination, verdict: "unasked", fencedAt: null }],
+        });
+        return asked === null ? null : yield* settleLegacy(asked, shell);
+      }
+      return yield* dispatch(record, destination, shell, false, Effect.void);
     });
 
   /** One thread's move, start to finish, under the thread's lock. */
@@ -536,7 +577,9 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         planned === undefined
           ? Effect.void
           : finish(planned.operationId, "stayed", error.message).pipe(
-              Effect.andThen(resuming ? releaseUnsent(threadId, error.message) : Effect.void),
+              Effect.andThen((ended) =>
+                resuming && ended ? releaseUnsent(threadId, error.message) : Effect.void,
+              ),
             );
       if (current?.continuedOn != null) {
         if (current.continuedOn.environmentId === destination) {
@@ -686,15 +729,15 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       const holding = yield* patch(operationId, ["pending", "held"], {
         state: "held",
         lineage: { ...written.lineage, epoch },
-      }).pipe(Effect.tapError(() => releaseUnsent(threadId, null)));
+      });
       if (holding === null) {
         yield* releaseUnsent(threadId, null);
         return yield* failed("busy", RESUMED_HERE);
       }
       /** Nothing was sent: the thread is given back, and the record says why it stayed. */
       const staysHeld = (message: string | null, detail: string) =>
-        releaseUnsent(threadId, message).pipe(
-          Effect.andThen(finish(operationId, "stayed", detail)),
+        finish(operationId, "stayed", detail).pipe(
+          Effect.andThen((ended) => (ended ? releaseUnsent(threadId, message) : Effect.void)),
         );
       // Read the run after the hold: a turn that started before it is the one to stop.
       const heldShell = yield* deps
@@ -955,8 +998,9 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
             return;
           }
           if (unsent && now - Date.parse(record.createdAt) > UNSENT_REPLAY_WINDOW_MS) {
-            yield* finish(record.operationId, "stayed", UNSENT_TOO_OLD);
-            yield* releaseUnsent(threadId, UNSENT_TOO_OLD);
+            if (yield* finish(record.operationId, "stayed", UNSENT_TOO_OLD)) {
+              yield* releaseUnsent(threadId, UNSENT_TOO_OLD);
+            }
             return;
           }
           yield* settle(record);

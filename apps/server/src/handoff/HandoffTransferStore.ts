@@ -144,6 +144,8 @@ export interface HandoffTransferMemory {
   document: HandoffTransferDocument;
   /** Set to make every read and write fail, as an unreadable file does. */
   unreadable?: boolean;
+  /** Return true to make that one write fail and leave the document as it was. */
+  failWrite?: ((next: HandoffTransferDocument) => boolean) | null;
 }
 
 export const makeMemory = (
@@ -160,10 +162,13 @@ export const makeMemory = (
       read: lock.withPermits(1)(current),
       update: (change) =>
         lock.withPermits(1)(
-          Effect.map(current, (document) => {
+          Effect.flatMap(current, (document) => {
             const [result, next] = change(document);
+            if (next !== document && holder.failWrite?.(next) === true) {
+              return Effect.fail(storageFailed(TRANSFER_RECORDS_UNREADABLE));
+            }
             holder.document = next;
-            return result;
+            return Effect.succeed(result);
           }),
         ),
     };
