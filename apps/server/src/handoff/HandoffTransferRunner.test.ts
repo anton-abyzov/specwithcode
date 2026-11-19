@@ -320,6 +320,8 @@ describe("the transfer record of a handoff", () => {
       expect(failure.code).toBe("failed");
       expect(acceptancesOf(b)[0]?.verdict).toBe("not-accepted");
       expect(b.launches).toHaveLength(0);
+      // No lease is left there for a thread that was never created.
+      expect(b.document.threads[continuationThreadId(a.environmentId, t1, 2)]).toBeUndefined();
       // The source runs it again; the hold does not wait for a launch that can never work.
       expect(leaseOf(a, t1)?.state).toBe("active");
       expect(transferOf(a, t1)?.state).toBe("failed");
