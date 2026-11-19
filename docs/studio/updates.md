@@ -142,6 +142,25 @@ release=$(/usr/bin/python3 -c 'import json, pathlib; print(json.loads((pathlib.P
 
 The checkout's `scripts/studio-fleet/update_agent.py` installs the same way; it belongs to no release, so the next update or fleet request replaces it.
 
+### A failed install that holds every later release
+
+A failed automatic install holds automatic installs until a person asks: the agent writes `error` and "SpecWithCode X did not install automatically; choose Install now to retry." on every pass (`update_agent_recovery.automatic_retry`). The bounded retries above are bound to the settings they started under, so a cancel written meanwhile (`installCancelledAt`) voids them. A newer release gets one automatic attempt of its own after a complete rollback, and, since 1414, after a refusal that changed nothing (`refused_unchanged`: a preflight receipt with only `identity`, `phase`, `result`, `error` and `pointers`, `pointers` `unchanged` and a retryable `AssertionError`); if it fails too, the hold moves to it.
+
+The sidebar and Settings offer the service update for that state (`isFailedInstallHeld`): Restart to update becomes Update now, which asks before it stops running work (Restart now, wait for the work to finish, or Later), holds the service, installs it and then the app. Before 1414 nothing offered it: the only button installed the app alone, and the desktop refused that because the service was behind.
+
+On M4 on November 18, 2026, a 5-minute routine rewrote its `scheduled_tasks` row during an unheld automatic install of 1.0.344 (`Guarded prestate changed: rows`); 1.0.345 makes the scheduler wait for an automatic install (#559), but that is service code, so a service older than 1.0.345 races its routines on every automatic install. A held install does not race: the scheduler skips every tick while the service is held, in every release that has `service prepare-update`.
+
+A Mac already stuck this way runs old desktop, service and agent code, so no newer release's fix reaches it until one install succeeds. Recover M4 with the rollout from the newest helper tree its agent already downloaded, run in Terminal, never from a SpecWithCode thread (the thread counts as running work, and a process beneath the service fails the helper's descendant check):
+
+```sh
+version=$(/usr/bin/python3 -c 'import json, pathlib; print(json.loads((pathlib.Path.home() / ".specwithcode/m4/updates/state.json").read_text())["downloadedVersion"])')
+helpers=$(ls -d "$HOME/.specwithcode/m4/updates/helpers/$version"/*/scripts/studio-fleet)
+/usr/bin/python3 -B "$helpers/fleet_rollout.py" --version "$version" --only m4 --dry-run
+/usr/bin/python3 -B "$helpers/fleet_rollout.py" --version "$version" --only m4 --wait-for-idle
+```
+
+`--wait-for-idle` stops nothing: the service holds itself only once nothing runs (no turn, queued message or open question), then the forced request installs held; the rollout gives up after `--m4-deadline-minutes` (115) and can be run again. Without the flag the rollout drains the service the way Update now does (running turns stop and continue after the restart, queued messages are cancelled, terminals close), but only when the machine's "Pause running work for updates" is on; off or unread, it is held only when idle as well. Either way the install reads the whole database twice, minutes on a large one. Once the service runs the new release, the desktop's own Restart to update installs the app. M1 and M3 get a plain version-bound request from `--only workers`, which the failure hold does not block.
+
 ### A restart asked for from inside the service (Linux)
 
 `specweave-studio update`, `service install` and `service restart` stop and start `studio.service`. Run from inside it (an agent's terminal, a routine's check command, an agent's tool call), the stop used to take the command with it under `KillMode=mixed`, so the start never ran and the service stayed down until someone started it by hand; with no service, the desktop then opened an empty home of its own. `BootService` now reads `/proc/self/cgroup`: inside the unit it does not stop the service, writes the new files while it runs, exactly as a declined restart does (`.restart-pending` names the version), and hands the start to a transient unit, `systemd-run --user --collect --unit=studio-restart systemctl --user restart studio.service`, which has its own cgroup and outlives the stop. The launcher removes `.restart-pending` once it runs that version. A failed hand-off leaves the service running its old version.
