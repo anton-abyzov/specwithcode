@@ -3270,6 +3270,10 @@ const make = Effect.gen(function* () {
           ...(input.check === undefined ? {} : { check: input.check }),
           ...(input.brief === undefined ? {} : { brief: input.brief }),
           ...(input.ownThread === undefined ? {} : { ownThread: input.ownThread }),
+          // The definition this change was made on, from the read above.
+          ...(existing.definitionHash === undefined
+            ? {}
+            : { expectedDefinition: existing.definitionHash }),
         };
         const grant = yield* routineGrantOf(work, limits, upsertInput.modelSelection);
         // Own-machine work edits the owner's routine as the owner: it keeps whose it is.

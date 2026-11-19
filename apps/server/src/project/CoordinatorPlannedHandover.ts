@@ -155,7 +155,12 @@ export interface PlannedHandoverDeps {
   /** The target's name for messages. */
   readonly labelOf: (environmentId: EnvironmentId) => Effect.Effect<string>;
   /** What travels: workers on other machines, routines and their run state. */
-  readonly gather: (project: Project, logicalProjectId: string) => Effect.Effect<HandoverGathered>;
+  readonly gather: (
+    project: Project,
+    logicalProjectId: string,
+    /** The machine that takes over: its routines go as that machine must keep them. */
+    target: string,
+  ) => Effect.Effect<HandoverGathered>;
   readonly send: (
     environmentId: EnvironmentId,
     request: PlannedHandoverRequest,
@@ -271,7 +276,7 @@ export const makePlannedHandover = (deps: PlannedHandoverDeps) => {
       if (gave._tag === "Failure")
         return result("failed", `Not handed over: ${linkErrorText(gave.failure)}`);
       // Gathered once this copy rests and refuses changes, so no edit made meanwhile is left behind.
-      const gathered = yield* deps.gather(project, identity.id);
+      const gathered = yield* deps.gather(project, identity.id, input.targetEnvironmentId);
       const { coordinatorBinding, self, successor } = gave.success;
       const request: PlannedHandoverRequest = {
         protocolVersion: PLANNED_HANDOVER_PROTOCOL_VERSION,
@@ -531,6 +536,14 @@ export const readRunStates = (projectId: ProjectId, ids: ReadonlyArray<string>) 
 export const writeRunStates = (projectId: ProjectId, states: ReadonlyArray<RoutineRunState>) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    // A routine this machine runs itself, whatever the coordinator binding, keeps its own
+    // run state (ScheduledTaskRunner):
+    // the source's copy only rested, so its slot may be one this machine already fired.
+    const notRunHere = sql`NOT EXISTS (
+      SELECT 1 FROM scheduled_task_runners
+      WHERE scheduled_task_runners.task_id = scheduled_tasks.task_id
+        AND scheduled_task_runners.state IN ('settled', 'staged', 'moving')
+    )`;
     yield* Effect.forEach(
       states,
       (state) =>
@@ -542,6 +555,7 @@ export const writeRunStates = (projectId: ProjectId, states: ReadonlyArray<Routi
                 run_policy_json = json_set(COALESCE(run_policy_json, '{}'), '$.onceGeneration', ${state.onceGeneration})
               WHERE task_id = ${state.id} AND project_id = ${projectId}
                 AND last_run_status <> 'running'
+                AND ${notRunHere}
             `
           : sql`
               UPDATE scheduled_tasks
@@ -549,6 +563,7 @@ export const writeRunStates = (projectId: ProjectId, states: ReadonlyArray<Routi
                 run_count = ${state.runCount}
               WHERE task_id = ${state.id} AND project_id = ${projectId}
                 AND last_run_status <> 'running'
+                AND ${notRunHere}
             `,
       { concurrency: 1, discard: true },
     );
@@ -614,7 +629,7 @@ export const make = Effect.gen(function* () {
         Effect.map((target) => target.label),
         Effect.orElseSucceed(() => "The other machine"),
       ),
-    gather: (project, logicalProjectId) =>
+    gather: (project, logicalProjectId, recipient) =>
       Effect.gen(function* () {
         const rows = yield* workers.list.pipe(Effect.orElseSucceed(() => []));
         const shadowWorkers = rows
@@ -633,7 +648,7 @@ export const make = Effect.gen(function* () {
           }));
         if (routineCopies === undefined) return { shadowWorkers };
         const snapshot = yield* routineCopies
-          .snapshot({ projectId: project.id, logicalProjectId })
+          .snapshot({ projectId: project.id, logicalProjectId, recipient })
           .pipe(Effect.orElseSucceed(() => null));
         if (snapshot === null) return { shadowWorkers };
         const runStates = yield* withSql(

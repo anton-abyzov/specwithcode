@@ -56,6 +56,7 @@ describe("V2 preview upgrade", () => {
         [73, "TeamRulesRecords"],
         [74, "ShellReadIndexes"],
         [75, "DevicePairingCreators"],
+        [76, "ScheduledTaskRunners"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -154,6 +155,7 @@ describe("V2 preview upgrade", () => {
         [73, "TeamRulesRecords"],
         [74, "ShellReadIndexes"],
         [75, "DevicePairingCreators"],
+        [76, "ScheduledTaskRunners"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

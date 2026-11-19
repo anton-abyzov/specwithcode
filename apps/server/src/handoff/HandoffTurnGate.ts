@@ -26,6 +26,11 @@ export interface HandoffTurnGateShape {
    * turn, or null. Never fails. Absent means none (test gates).
    */
   readonly pendingSeed?: (threadId: ThreadId) => Effect.Effect<string | null>;
+  /**
+   * The machine this thread was handed off to, when this copy no longer runs
+   * it; null otherwise. Never fails. Absent means none (test gates).
+   */
+  readonly continuedOn?: (threadId: ThreadId) => Effect.Effect<string | null>;
 }
 
 export class HandoffTurnGate extends Context.Reference<HandoffTurnGateShape>(
@@ -97,6 +102,11 @@ export const layer = Layer.effect(
               cause,
             }).pipe(Effect.as(null)),
           ),
+        ),
+      continuedOn: (threadId: ThreadId) =>
+        store.read.pipe(
+          Effect.map((document) => document.threads[threadId]?.continuedOn?.machineLabel ?? null),
+          Effect.catchCause(() => Effect.succeed(null)),
         ),
     };
   }),

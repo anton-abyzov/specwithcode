@@ -17,7 +17,10 @@ import {
 } from "@specweave-studio/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
 
+import { routineCopyOf } from "../scheduledTasks/ScheduledTaskCopies.ts";
+import { fleet, type Machine, ROUTINE } from "../scheduledTasks/ScheduledTaskRunner.testkit.ts";
 import type { AwayReturnRequest, AwayReturnResponse } from "./awayReturnRoute.ts";
 import {
   awaySessionOf,
@@ -183,7 +186,6 @@ describe("AwayRunner leaving", () => {
         "pause:r-hook",
         "transfer:r-free:-",
         "moveThreads:t1,t2",
-        "transfer:r-bound:t1-on-target",
       ]);
       const done = h.saved()!;
       expect(done.stage).toBe("done");
@@ -201,7 +203,12 @@ describe("AwayRunner leaving", () => {
         wasEnabled: true,
       });
       expect(item(done, "routine", "r-free")).toMatchObject({ outcome: "moved", via: "transfer" });
-      expect(item(done, "routine", "r-bound")).toMatchObject({ outcome: "moved", via: "transfer" });
+      // Its worker moved; the schedule stays with its runner (1390 AC-45).
+      expect(item(done, "routine", "r-bound")).toMatchObject({
+        outcome: "stayed",
+        detail: "Its thread was handed off to Ministorm. The routine stays on this machine.",
+      });
+      expect(item(done, "routine", "r-bound").via).toBeUndefined();
       expect(item(done, "thread", "t1")).toMatchObject({
         outcome: "moved",
         targetId: "t1-on-target",
@@ -245,7 +252,7 @@ describe("AwayRunner leaving", () => {
       const h = harness({ saved: partway });
       const resumed = yield* makeAwayRunner(h.deps).start({ targetEnvironmentId: TARGET });
       expect(resumed.sessionId).toBe("s1");
-      expect(h.log).toEqual(["moveThreads:t1,t2", "transfer:r-bound:t1-on-target"]);
+      expect(h.log).toEqual(["moveThreads:t1,t2"]);
       expect(h.saved()!.stage).toBe("done");
     }),
   );
@@ -282,6 +289,66 @@ describe("AwayRunner leaving", () => {
   );
 });
 
+describe("AwayRunner with a real routine and two machines", () => {
+  it.effect("a worker moved through Away leaves its routine on its runner", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-11-03T12:00:00.000Z"));
+      const { machines, network, fires, everyoneLooks } = yield* fleet(["alpha", "beta"]);
+      const [alpha, beta] = machines as [Machine, Machine];
+      yield* alpha.sql`INSERT INTO orchestration_v2_projection_threads ${alpha.sql.insert({ thread_id: "t1", project_id: alpha.projectId, title: "Synthetic", default_provider: "codex", runtime_mode: "full-access", interaction_mode: "default", created_at: "2026-10-09T00:00:00Z", updated_at: "2026-10-09T00:00:00Z", deleted_at: null, payload_json: "{}" })}`;
+      yield* alpha.seed({ threadId: "t1" });
+      yield* alpha.makeDue("2026-11-03T11:59:00.000Z");
+      const h = harness({});
+      const plan: AwayPlan = {
+        ...PLAN,
+        targetEnvironmentId: beta.environmentId,
+        targetLabel: "beta",
+        items: [
+          { kind: "thread", id: "t1", title: "Thread 1", action: "move", reason: "Moves." },
+          {
+            kind: "routine",
+            id: ROUTINE,
+            title: "Synthetic review",
+            projectId: alpha.projectId,
+            action: "move",
+            reason: "Moves.",
+          },
+        ] as AwayPlan["items"],
+      };
+      const runner = makeAwayRunner({
+        ...h.deps,
+        plan: () => Effect.succeed(plan),
+        routines: alpha.service.list().pipe(
+          Effect.map((list) => list.tasks),
+          Effect.orDie,
+        ),
+        routineCopy: (entry) => routineCopyOf({ ...entry, ownThread: true }),
+        // The scheduler's own move, over the two machines' real route.
+        transferOut: alpha.transfer!.moveOut,
+        moveThreads: (target, threadIds) =>
+          h.deps.moveThreads(target, threadIds).pipe(
+            Effect.map((results) => results.filter((result) => result.threadId === "t1")),
+            // The worker continues on the other machine: this copy of it runs no more.
+            Effect.tap(() => Effect.sync(() => alpha.state.movedThreads.set("t1", "beta"))),
+          ),
+      });
+      yield* runner.start({ targetEnvironmentId: beta.environmentId });
+      const done = h.saved()!;
+      expect(item(done, "thread", "t1")).toMatchObject({ outcome: "moved" });
+      expect(item(done, "routine", ROUTINE)).toMatchObject({ outcome: "stayed" });
+      // No schedule on the other machine, and nothing asked of it.
+      expect(network.log.filter((entry) => !entry.endsWith(":status"))).toEqual([]);
+      expect(yield* beta.row).toBeUndefined();
+      // The schedule is still this machine's, on, with the note a person reads.
+      yield* everyoneLooks;
+      expect(fires()).toBe(0);
+      const row = yield* alpha.row;
+      expect(Number(row?.enabled)).toBe(1);
+      expect(row?.last_run_error).toBe("Its thread was handed off to beta.");
+    }),
+  );
+});
+
 describe("AwayRunner Bring back", () => {
   it.effect("returns threads, then routines, then coordinators, and re-arms the standby", () =>
     Effect.gen(function* () {
@@ -294,7 +361,7 @@ describe("AwayRunner Bring back", () => {
         "askReturn:t1-on-target:-",
         "resume:r-hook",
         "transferBack:r-free",
-        "transferBack:r-bound",
+        // Never moved, so nothing to bring back: it follows its thread's new id here.
         "rebind:r-bound:t1-on-target-back",
         "askReturn:-:p1",
         "rearm:p1:env-ministorm:15",

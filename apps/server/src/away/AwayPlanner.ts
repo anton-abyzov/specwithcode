@@ -88,6 +88,8 @@ export interface AwayRoutineFact {
   readonly title: string;
   readonly projectId: ProjectId;
   readonly webhook: boolean;
+  /** Bound to a worker thread: it stays with its runner when that thread moves (1390 AC-45). */
+  readonly bound?: boolean;
 }
 
 export interface AwayPlanFacts {
@@ -308,6 +310,13 @@ export function routineItem(
       reason: "Its URL belongs to this machine, so it pauses here while you are away.",
     };
   }
+  if (routine.bound === true) {
+    return {
+      ...base,
+      action: "stay",
+      reason: "Stays on this machine, also when its thread moves.",
+    };
+  }
   if (project === undefined || project.targetProjectId === null) {
     return {
       ...base,
@@ -459,9 +468,13 @@ export function buildAwayPlan(facts: AwayPlanFacts): AwayPlan {
   // Every routine that can leave (not paused, not the assistant's) needs its
   // project linked and in the grant, and the target's routines permission,
   // asked once per project. One that stays only for a missing link counts too.
+  const bound = new Set(
+    facts.routines.filter((routine) => routine.bound === true).map((routine) => routine.id),
+  );
   const leaving = routines.filter(
     (item) =>
       item.projectId !== undefined &&
+      !bound.has(item.id) &&
       (item.action === "move" ||
         (item.action === "stay" && projects.get(item.projectId)?.personal !== true)),
   );
@@ -749,6 +762,7 @@ export const make = Effect.gen(function* () {
         title: task.title,
         projectId: task.projectId,
         webhook: isWebhookRoutine(task),
+        ...(task.threadId !== null && task.ownThread !== true ? { bound: true } : {}),
       }));
 
       const grantRead = usable ? yield* access.targetGrant(target.environmentId) : null;
