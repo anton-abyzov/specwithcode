@@ -122,6 +122,14 @@ export const ProjectSyncRepositoryFacts = Schema.Struct({
    */
   upstreamGone: Schema.optional(Schema.Boolean),
   /**
+   * True when the branch's tracking ref here is not at the commit `origin` listed for that
+   * branch to this machine's Sync fetch (the branch moved on `origin` right after, or
+   * something else fetched since). `ahead` and `behind` are then counted against a commit
+   * this Sync did not fetch, so the checkout is never moved; the plan says so in `detail`.
+   * Absent when they agree, and from a machine on an older version.
+   */
+  upstreamMoved: Schema.optional(Schema.Boolean),
+  /**
    * True when Git could not read the checkout's state (`git status` failed). `uncommitted`
    * is then 0, not a count: nobody saw the files. Such a checkout is never moved; the plan
    * holds it with reason `uncommitted` and says so in `detail`. Absent when the state was
@@ -198,6 +206,50 @@ export const PROJECT_SYNC_REFUSED_UNASKED_DETAIL =
  */
 export const PROJECT_SYNC_STATE_UNREAD_DETAIL = "Its state could not be read, so it was not moved.";
 
+/**
+ * The `detail` of a level checkout (`up-to-date` or `not-pushed`) whose state could not be
+ * read: there is nothing to move, and nobody saw its files.
+ */
+export const PROJECT_SYNC_STATE_UNREAD_LEVEL_DETAIL = "Its state could not be read.";
+
+/**
+ * The `detail` of a fast-forward refused because `origin` now lists the branch at another
+ * commit than the one this Sync fetched.
+ */
+export const PROJECT_SYNC_ORIGIN_MOVED_DETAIL =
+  "origin's branch moved since the fetch. Sync again.";
+/**
+ * The `detail` of a step not moved because the branch's tracking ref here is no longer at
+ * the commit `origin` listed to this Sync's fetch (see `upstreamMoved`).
+ */
+export const PROJECT_SYNC_NOT_AS_FETCHED_DETAIL =
+  "This checkout's copy of origin's branch is not at the commit this Sync fetched. Sync again.";
+/**
+ * The `fetchError` of a repository whose `origin` did not list its branches in time (or was
+ * not asked, the call's time for asking being used up). Such a repository is not fetched:
+ * nothing is planned on a list nobody got.
+ */
+export const PROJECT_SYNC_NOT_LISTED_DETAIL =
+  "origin did not list its branches in time, so nothing was fetched. Sync again.";
+
+/** The `detail` of a fast-forward declined because the checkout changed while Sync asked `origin`. */
+export const PROJECT_SYNC_CHANGED_BRANCH_DETAIL =
+  "The checkout switched to another branch while Sync asked origin, so it was not moved.";
+export const PROJECT_SYNC_CHANGED_HEAD_DETAIL =
+  "The checkout's commit changed while Sync asked origin, so it was not moved.";
+export const PROJECT_SYNC_CHANGED_UPSTREAM_DETAIL =
+  "The branch's upstream changed while Sync asked origin, so it was not moved.";
+export const PROJECT_SYNC_CHANGED_FILES_DETAIL =
+  "Files changed in the checkout while Sync asked origin, so it was not moved.";
+
+/**
+ * The `detail` of a fast-forward whose outcome could not be read back: Git was asked to
+ * move the checkout and may have. The step keeps `fast-forward` with `moved` 0 and
+ * `downgraded` true; it is never reported as refused.
+ */
+export const PROJECT_SYNC_UNVERIFIED_DETAIL =
+  "Git was asked to move this checkout forward, but the result could not be read. Check the checkout before working in it.";
+
 /** The `detail` of a step whose upstream branch is gone from `origin`. */
 export const projectSyncUpstreamGoneDetail = (upstream: string) =>
   `The branch ${upstream} is no longer on origin.`;
@@ -246,7 +298,15 @@ export function planProjectSyncRepository(
     );
   if (facts.upstreamGone === true)
     return step("none", "no-upstream", projectSyncUpstreamGoneDetail(facts.upstream));
-  if (facts.behind === 0) return step("none", facts.ahead > 0 ? "not-pushed" : "up-to-date");
+  if (facts.upstreamMoved === true)
+    return step("none", "refused", PROJECT_SYNC_NOT_AS_FETCHED_DETAIL);
+  if (facts.behind === 0)
+    return step(
+      "none",
+      facts.ahead > 0 ? "not-pushed" : "up-to-date",
+      // Nothing to move, and still not a bare "Up to date": nobody saw its files.
+      facts.stateUnread === true ? PROJECT_SYNC_STATE_UNREAD_LEVEL_DETAIL : null,
+    );
   if (facts.ahead > 0) return step("fetch", "diverged");
   if (facts.stateUnread === true)
     return step("fetch", "uncommitted", PROJECT_SYNC_STATE_UNREAD_DETAIL);

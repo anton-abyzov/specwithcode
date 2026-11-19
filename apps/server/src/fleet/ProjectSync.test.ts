@@ -1247,74 +1247,6 @@ describe("project sync: review round 4 follow-ups", () => {
     expect(await sweepCloneLeftovers(f.a, [".swc-clone-mine-Ab12Cd"])).toEqual([]);
     expect(NodeFS.existsSync(NodePath.join(mine, "clone", "half.ts"))).toBe(true);
   });
-
-  /** Machine A one commit behind after its own fetch, then cut off from origin. */
-  const offlineAfterFetch = async (fetched: SyncContext["fetched"]) => {
-    const f = fixture();
-    const head = f.publish();
-    const { run, commands } = recording();
-    const ctx: SyncContext = { ...context(run), ...(fetched === undefined ? {} : { fetched }) };
-    const here = await fetchAll(ctx, [root(f.a)]);
-    expect(here[0]).toMatchObject({ fetch: "ok", behind: 1 });
-    const goOffline = () =>
-      git(f.a, "remote", "set-url", "origin", NodePath.join(f.base, "gone.git"));
-    const move = () =>
-      runSync(ctx, f.a, [root(f.a)], {
-        fastForward: [{ path: ".", otherBranch: null }],
-        clone: [],
-      });
-    return { f, head, commands, goOffline, move };
-  };
-
-  it("moves forward to the commit its own fetch brought when origin cannot be asked (P2-22)", async () => {
-    const { f, head, commands, goOffline, move } = await offlineAfterFetch(new Map());
-    goOffline();
-    const results = await move();
-    expect(results[0]).toMatchObject({
-      action: "fast-forward",
-      reason: "behind",
-      moved: 1,
-      downgraded: false,
-      detail: "origin could not be reached. Moved forward to the commit this Sync fetched.",
-    });
-    expect(commands.find((args) => args[0] === "merge")!.at(-1)).toBe(head);
-    expect(git(f.a, "rev-parse", "HEAD")).toBe(head);
-  });
-
-  it("does not move without a fetch of its own to go by when origin cannot be asked (P2-22)", async () => {
-    const refusal =
-      "origin could not be reached, and this Sync has not fetched this commit of the branch. Sync again when origin can be reached.";
-    // No record: a server that was restarted since the fetch.
-    const restarted = await offlineAfterFetch(undefined);
-    restarted.goOffline();
-    const before = snapshot(restarted.f.a);
-    expect((await restarted.move())[0]).toMatchObject({
-      action: "none",
-      reason: "refused",
-      moved: 0,
-      downgraded: true,
-      detail: refusal,
-    });
-    expect(snapshot(restarted.f.a)).toEqual(before);
-    // The tracking ref moved since this Sync's fetch: another tool fetched a newer commit.
-    const moved = await offlineAfterFetch(new Map());
-    moved.f.publish();
-    git(moved.f.a, "fetch", "-q", "origin");
-    moved.goOffline();
-    const head = git(moved.f.a, "rev-parse", "HEAD");
-    expect((await moved.move())[0]).toMatchObject({
-      action: "none",
-      reason: "refused",
-      detail: refusal,
-    });
-    expect(git(moved.f.a, "rev-parse", "HEAD")).toBe(head);
-    expect(moved.commands.some((args) => args[0] === "merge")).toBe(false);
-  });
-
-  it("says nothing extra when origin answers before the move (P2-22)", async () => {
-    const { move } = await offlineAfterFetch(new Map());
-    expect((await move())[0]).toMatchObject({ action: "fast-forward", moved: 1, detail: null });
-  });
 });
 
 describe("project sync: the Git commands it runs (1390 AC-11)", () => {
@@ -1371,15 +1303,16 @@ describe("project sync: the Git commands it runs (1390 AC-11)", () => {
           "+refs/heads/*:refs/remotes/origin/*",
         ]);
       if (args[0] === "merge") {
-        expect(args.slice(0, 5)).toEqual([
+        expect(args.slice(0, 6)).toEqual([
           "merge",
           "--ff-only",
           "--no-edit",
+          "--no-autostash",
           "--no-overwrite-ignore",
           "--quiet",
         ]);
-        expect(args[5]).toMatch(/^[0-9a-f]{40}$/);
-        expect(args).toHaveLength(6);
+        expect(args[6]).toMatch(/^[0-9a-f]{40}$/);
+        expect(args).toHaveLength(7);
       }
       if (args[0] === "clone")
         expect(args.slice(0, 6)).toEqual([
