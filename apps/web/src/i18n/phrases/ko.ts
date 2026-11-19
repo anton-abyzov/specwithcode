@@ -5042,8 +5042,8 @@ export const ko: PhraseCatalog = {
     "스레드는 더 강한 모델에 접근 방식을 검토해 달라고 요청한 뒤 계속 작업할 수 있습니다. 상담할 때마다 어드바이저 모델의 사용량이 소모됩니다.",
   advisor: "어드바이저",
   "Advisor model": "어드바이저 모델",
-  "A thread is never advised by its own model; the next model in the order answers instead.":
-    "스레드는 자신과 같은 모델에게 조언받지 않습니다. 대신 순서상 다음 모델이 답합니다.",
+  "Claude's own advisor can be the thread's own model. A brief always goes to another model, the next one in the order.":
+    "Claude 자체 어드바이저는 스레드와 같은 모델일 수 있습니다. 요약은 항상 다른 모델, 즉 순서상 다음 모델로 보내집니다.",
   "advisor model": "어드바이저 모델",
   "Use the default advisor order": "기본 어드바이저 순서 사용",
   "The Complex track": "Complex 트랙",

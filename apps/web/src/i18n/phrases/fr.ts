@@ -5147,8 +5147,8 @@ export const fr: PhraseCatalog = {
     "Un fil peut demander à un modèle plus puissant de relire son approche, puis continuer son travail. Chaque consultation consomme l'usage du modèle conseiller.",
   advisor: "conseiller",
   "Advisor model": "Modèle conseiller",
-  "A thread is never advised by its own model; the next model in the order answers instead.":
-    "Un fil n'est jamais conseillé par son propre modèle ; le modèle suivant dans l'ordre répond à sa place.",
+  "Claude's own advisor can be the thread's own model. A brief always goes to another model, the next one in the order.":
+    "Le conseiller propre à Claude peut être le modèle du fil lui-même. Un résumé va toujours à un autre modèle, le suivant dans l'ordre.",
   "advisor model": "modèle conseiller",
   "Use the default advisor order": "Utiliser l'ordre des conseillers par défaut",
   "The Complex track": "La piste Complex",

@@ -5106,8 +5106,8 @@ export const pt: PhraseCatalog = {
     "Uma thread pode pedir a um modelo mais forte que revise sua abordagem e depois continuar trabalhando. Cada consulta gasta uso do modelo consultor.",
   advisor: "consultor",
   "Advisor model": "Modelo consultor",
-  "A thread is never advised by its own model; the next model in the order answers instead.":
-    "Uma thread nunca é aconselhada pelo próprio modelo; o próximo modelo da ordem responde no lugar dele.",
+  "Claude's own advisor can be the thread's own model. A brief always goes to another model, the next one in the order.":
+    "O consultor do próprio Claude pode ser o mesmo modelo da thread. Um resumo sempre vai para outro modelo, o próximo da ordem.",
   "advisor model": "modelo consultor",
   "Use the default advisor order": "Usar a ordem padrão de consultores",
   "The Complex track": "A trilha Complex",

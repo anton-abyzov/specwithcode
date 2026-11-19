@@ -5102,8 +5102,8 @@ export const ja: PhraseCatalog = {
     "スレッドはより強いモデルに進め方の確認を頼み、そのまま作業を続けられます。相談のたびにアドバイザーモデルの使用量を消費します。",
   advisor: "アドバイザー",
   "Advisor model": "アドバイザーモデル",
-  "A thread is never advised by its own model; the next model in the order answers instead.":
-    "スレッドが自分と同じモデルから助言を受けることはありません。代わりに順序の次のモデルが答えます。",
+  "Claude's own advisor can be the thread's own model. A brief always goes to another model, the next one in the order.":
+    "Claude 自身のアドバイザーは、スレッドと同じモデルの場合があります。要約は常に別のモデル、つまり順序の次のモデルに送られます。",
   "advisor model": "アドバイザーモデル",
   "Use the default advisor order": "既定のアドバイザー順序を使う",
   "The Complex track": "Complex トラック",

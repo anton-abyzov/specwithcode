@@ -229,7 +229,7 @@ export function AdvisorSettings(props: {
         id="advisor-model"
         aria-disabled={off || undefined}
         title="Advisor model"
-        description="A thread is never advised by its own model; the next model in the order answers instead."
+        description="Claude's own advisor can be the thread's own model. A brief always goes to another model, the next one in the order."
         resetAction={reset("model", tx("advisor model"), advisor.model !== null, {
           model: null,
         })}

@@ -5128,8 +5128,8 @@ export const es: PhraseCatalog = {
     "Un hilo puede pedir a un modelo más potente que revise su enfoque y luego seguir trabajando. Cada consulta gasta uso del modelo asesor.",
   advisor: "asesor",
   "Advisor model": "Modelo asesor",
-  "A thread is never advised by its own model; the next model in the order answers instead.":
-    "Un hilo nunca recibe consejo de su propio modelo; en su lugar responde el siguiente modelo del orden.",
+  "Claude's own advisor can be the thread's own model. A brief always goes to another model, the next one in the order.":
+    "El asesor propio de Claude puede ser el mismo modelo del hilo. Un resumen siempre va a otro modelo, el siguiente del orden.",
   "advisor model": "modelo asesor",
   "Use the default advisor order": "Usar el orden de asesores predeterminado",
   "The Complex track": "La pista Complex",
