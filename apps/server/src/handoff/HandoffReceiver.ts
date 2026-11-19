@@ -89,6 +89,7 @@ import { HandoffMode } from "./HandoffMode.ts";
 import * as HandoffTransferStore from "./HandoffTransferStore.ts";
 import {
   checkArrivedSet,
+  isLandedSet,
   makeSetOffers,
   materializeSet,
   setOwnerTag,
@@ -372,10 +373,17 @@ export const make = Effect.gen(function* () {
       typeof config.stateDir === "string"
         ? NodePath.join(config.stateDir, "handoff-sets")
         : undefined,
-    stored: (from, thread, commit) =>
+    stored: (landing) =>
       Effect.runPromise(
         handoff.document.pipe(
-          Effect.map((held) => findIncoming(held, from, thread)?.checkpoint.commit === commit),
+          Effect.map((held) =>
+            isLandedSet(
+              (held.incomingDetails ?? {})[
+                incomingKey(landing.sourceEnvironmentId, landing.sourceThreadId)
+              ]?.set,
+              landing,
+            ),
+          ),
         ),
       ),
   });
@@ -697,10 +705,11 @@ export const make = Effect.gen(function* () {
               peerLabel: "The source machine",
               capabilities: request.capabilities,
             }));
-      // A set is agreed to only with a source that can send one. Any other
-      // source reads an answer without the capability, and its frames are refused.
+      // A set is agreed to only with a source that passes every check a move
+      // needs and can send one. Any other source reads an answer without the
+      // capability, and its frames are refused.
       const offered = request.setOffer;
-      const agreed = mismatch === null && hasWorktreeSets(request.capabilities);
+      const agreed = unfit === null && hasWorktreeSets(request.capabilities);
       if (offered !== undefined && agreed) {
         yield* Effect.promise(() =>
           setOffers.open(request.sourceEnvironmentId, offered.sourceThreadId, offered.id),

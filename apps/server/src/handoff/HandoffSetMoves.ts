@@ -531,9 +531,12 @@ async function memberRoots<Member extends Pick<ReplicateSetMember, "repositoryPa
 }
 
 /** The refs one set's last frame writes, kept on disk while they are written. */
-interface SetLanding {
+export interface SetLanding {
   readonly sourceEnvironmentId: string;
   readonly sourceThreadId: string;
+  /** The offer the set arrived under, and each member's commit: together, this very send. */
+  readonly offer: string;
+  readonly members: ReadonlyArray<Pick<ReplicateSetMember, "repositoryPath" | "commit">>;
   readonly commit: string;
   readonly targetRef: string;
   readonly refs: Array<{
@@ -571,12 +574,12 @@ export function makeSetOffers(
   at: {
     /** A folder that outlives the process. Without one, a private temporary folder. */
     readonly directory?: string | undefined;
-    /** Whether this machine stored the thread's record for that checkpoint. */
-    readonly stored?: (
-      sourceEnvironmentId: string,
-      sourceThreadId: string,
-      commit: string,
-    ) => boolean | Promise<boolean>;
+    /**
+     * Whether the record this machine holds for the thread is of this very
+     * send. The thread's own commit does not say: a resend whose other members
+     * changed carries the same one.
+     */
+    readonly stored?: (landing: SetLanding) => boolean | Promise<boolean>;
     /** Runs after each ref is written. A test stops a receiver here. */
     readonly afterRef?: () => Promise<void>;
   } = {},
@@ -618,9 +621,7 @@ export function makeSetOffers(
           () => null,
         );
         if (landing !== null && Array.isArray(landing.refs)) {
-          const kept = await Promise.resolve(
-            at.stored?.(landing.sourceEnvironmentId, landing.sourceThreadId, landing.commit),
-          ).catch(() => null);
+          const kept = await Promise.resolve(at.stored?.(landing)).catch(() => null);
           // Not known either way: left for the next start.
           if (kept === null) continue;
           if (kept !== true) await takeBack(landing);
@@ -711,6 +712,8 @@ export function makeSetOffers(
     const landing: SetLanding = {
       sourceEnvironmentId: input.sourceEnvironmentId,
       sourceThreadId: input.sourceThreadId,
+      offer: id,
+      members: set.members.map(({ repositoryPath, commit }) => ({ repositoryPath, commit })),
       commit: input.commit,
       targetRef: input.targetRef,
       refs: [],
@@ -858,6 +861,19 @@ export async function startedSetFolder(input: {
   return null;
 }
 
+/** True when the set a machine stored for a thread is the one this landing was writing. */
+export const isLandedSet = (held: ReplicateSet | undefined, landing: SetLanding) =>
+  held !== undefined &&
+  typeof landing.offer === "string" &&
+  held.offer === landing.offer &&
+  Array.isArray(landing.members) &&
+  held.members.length === landing.members.length &&
+  held.members.every(
+    (member, index) =>
+      member.repositoryPath === landing.members[index]?.repositoryPath &&
+      member.commit === landing.members[index]?.commit,
+  );
+
 /** The part of a set's folder name that tells one handoff's folder from another's. */
 export const setOwnerTag = (owner: string) =>
   NodeCrypto.createHash("sha256").update(owner).digest("hex").slice(0, 8);
@@ -971,8 +987,9 @@ async function checkoutTree(path: string, except: ReadonlyArray<string>): Promis
  * True when the checkout holds nothing but what this build put there. Its
  * index and its files must be one of the three states a build passes through:
  * both at the base, both at the checkpoint, or the index at the base under the
- * checkpoint's files. A staged edit, or a file Git ignores that the build did
- * not copy, is someone's work: removing the checkout would lose it.
+ * checkpoint's files. A staged edit, a file Git ignores that the build did
+ * not copy, or a copied file edited since is someone's work: removing the
+ * checkout would lose it.
  */
 async function asBuilt(
   path: string,
@@ -981,9 +998,26 @@ async function asBuilt(
     readonly checkpoint: string;
     /** Other members checked out inside this one. */
     readonly inside: ReadonlyArray<string>;
+    /** Files the build copied in from `copiedFrom`, the member's repository here. */
     readonly secrets: ReadonlyArray<string>;
+    readonly copiedFrom: string;
   },
 ): Promise<boolean> {
+  // A copied file is this build's only while it is still the file that was
+  // copied. Compared by digest: what either one holds is never read out.
+  const digest = (file: string) =>
+    NodeFSP.readFile(file).then(
+      (bytes) => NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
+      () => null,
+    );
+  for (const secret of expected.secrets) {
+    const segments = secret.split("/").filter((each) => each.length > 0 && each !== ".");
+    if (NodePath.isAbsolute(secret) || segments.includes("..")) continue;
+    const here = await digest(NodePath.join(path, ...segments));
+    if (here !== null && here !== (await digest(NodePath.join(expected.copiedFrom, ...segments)))) {
+      return false;
+    }
+  }
   const staged = await runGit(path, ["write-tree"], { allowFailure: true });
   if (staged.code !== 0) return false;
   const index = staged.stdout.trim();
@@ -1111,6 +1145,7 @@ export async function materializeSet(input: {
           checkpoint: await gitTree(root, member.commit),
           inside,
           secrets,
+          copiedFrom: root,
         }));
       if (!untouched) {
         throw new BundleError(
