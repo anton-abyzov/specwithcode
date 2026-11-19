@@ -39,9 +39,8 @@ import { fetchAll, inParallel, runSync, type SyncContext, type SyncGit } from ".
 import {
   askBudget,
   listOrigin,
-  ORIGIN_ASK_FETCH_FAILED_TOTAL_MS,
   ORIGIN_ASK_MS,
-  ORIGIN_ASK_RUN_TOTAL_MS,
+  originHost,
   type OriginRecords,
   originRecordsOf,
 } from "./projectSyncOrigin.ts";
@@ -301,28 +300,71 @@ describe("project sync: how long it may wait on origin (P2-36)", () => {
     expect(again[0]!.timeoutMs).toBeLessThanOrEqual(ORIGIN_ASK_MS);
   });
 
-  it("stops asking when a call's time for asks is used up", async () => {
-    const budget = askBudget(ORIGIN_ASK_RUN_TOTAL_MS);
-    expect([ORIGIN_ASK_RUN_TOTAL_MS, ORIGIN_ASK_FETCH_FAILED_TOTAL_MS]).toEqual([30_000, 30_000]);
-    expect(budget.next()).toBe(10_000);
-    budget.spend(10_000, true);
-    budget.spend(15_000, false);
-    expect(budget.next()).toBe(5_000);
-    budget.spend(5_000, true);
-    expect(budget.next()).toBe(0);
-    // A fetch counts only the asks that got no list.
-    const failed = askBudget(ORIGIN_ASK_FETCH_FAILED_TOTAL_MS, { failedOnly: true });
-    for (let ask = 0; ask < 128; ask += 1) failed.spend(9_999, true);
-    expect(failed.next()).toBe(10_000);
-    failed.spend(25_000, false);
-    expect(failed.next()).toBe(5_000);
-    let asked = 0;
-    const never: SyncGit = async () => {
-      asked += 1;
-      return { code: 0, stdout: "", stderr: "" };
+  it("does not ask a host again in a call once one ask of it did not come back", async () => {
+    const budget = askBudget();
+    const asked: Array<string> = [];
+    const hangs: SyncGit = async (cwd) => {
+      asked.push(cwd);
+      if (cwd.startsWith("/down/")) throw new Error("git ls-remote timed out");
+      // An error Git answers with is an answer: the host is there.
+      return { code: 128, stdout: "", stderr: "fatal: repository not found" };
     };
-    expect(await listOrigin(never, "/nowhere", { budget })).toEqual({ ok: false, reason: null });
-    expect(asked).toBe(0);
+    const ask = (cwd: string, host: string) => listOrigin(hangs, cwd, { budget, host });
+    expect(await ask("/up/1", "up.example")).toEqual({
+      ok: false,
+      reason: "fatal: repository not found",
+    });
+    expect(await ask("/down/1", "down.example")).toEqual({ ok: false, reason: null });
+    expect(await ask("/down/2", "down.example")).toEqual({ ok: false, reason: null });
+    expect(await ask("/up/2", "up.example")).toMatchObject({ ok: false });
+    expect(asked).toEqual(["/up/1", "/down/1", "/up/2"]);
+    expect(budget.next("down.example")).toBe(0);
+    expect(budget.next("up.example")).toBe(10_000);
+    // The host is the address's host, or the whole address of a folder.
+    expect([
+      originHost("git@GitHub.com:owner/one.git"),
+      originHost("https://github.com/owner/two.git"),
+      originHost("ssh://git@host.example:2222/owner/three.git"),
+      originHost("/srv/git/one.git"),
+      originHost("/srv/git/two.git"),
+    ]).toEqual([
+      "github.com",
+      "github.com",
+      originHost("ssh://git@host.example:2222/owner/four.git"),
+      "/srv/git/one.git",
+      "/srv/git/two.git",
+    ]);
+  });
+
+  it("fetches the repositories whose origin answers when another host is silent", async () => {
+    const f = behind();
+    // Five checkouts on a host that never answers come first, then the one that is fine.
+    const down = Array.from({ length: 5 }, (_, index) => {
+      const cwd = NodePath.join(f.base, `down-${index}`);
+      git(f.base, "clone", "-q", f.remote, cwd);
+      git(cwd, "remote", "set-url", "origin", `https://down.invalid/owner/r${index}.git`);
+      return { path: `down-${index}`, cwd };
+    });
+    const w = watching();
+    const run: SyncGit = (cwd, args, options) =>
+      args[0] === "ls-remote" && cwd.includes("down-")
+        ? (w.commands.push({ cwd, args: [...args], timeoutMs: options?.timeoutMs }),
+          Promise.reject(new Error("git ls-remote timed out")))
+        : w.run(cwd, args, options);
+    const here = await fetchAll(context(new Map(), run, { asks: askBudget() }), [
+      ...down,
+      { path: "b", cwd: f.b },
+    ]);
+    // At most one round of four on the silent host (those under way when the first one
+    // failed); the rest of it is not asked, and none of it is fetched.
+    const silent = w.ran("ls-remote").filter((ask) => ask.cwd.includes("down-")).length;
+    expect(silent).toBeGreaterThanOrEqual(1);
+    expect(silent).toBeLessThanOrEqual(4);
+    expect(w.ran("fetch").map((fetch) => fetch.cwd)).toEqual([f.b]);
+    expect(here.slice(0, 5).map((facts) => `${facts.fetch} ${facts.fetchError}`)).toEqual(
+      Array.from({ length: 5 }, () => `failed ${PROJECT_SYNC_NOT_LISTED_DETAIL}`),
+    );
+    expect(here[5]).toMatchObject({ path: "b", fetch: "ok", behind: 1, fetchError: null });
   });
 
   it("thirty repositories whose origin never answers hold a fetch for 10 s of asks, and fetch nothing", async () => {
@@ -355,14 +397,9 @@ describe("project sync: how long it may wait on origin (P2-36)", () => {
       path: `r${index}`,
       cwd: `/nowhere/r${index}`,
     }));
-    const here = await fetchAll(
-      context(new Map(), silent, {
-        asks: askBudget(ORIGIN_ASK_FETCH_FAILED_TOTAL_MS, { failedOnly: true }),
-      }),
-      repositories,
-    );
+    const here = await fetchAll(context(new Map(), silent, { asks: askBudget() }), repositories);
     const asks = ran.filter((command) => command.verb === "ls-remote");
-    // One round of four, ten seconds: 30 s of failed asks are used up, and no ask follows.
+    // One round of four, ten seconds: the host is silent, and no further ask of it follows.
     expect(asks).toHaveLength(4);
     expect(asks.every((ask) => ask.timeoutMs === 10_000)).toBe(true);
     expect(clock - 1_000_000).toBe(10_000);
@@ -375,7 +412,8 @@ describe("project sync: how long it may wait on origin (P2-36)", () => {
     );
   });
 
-  it("five moves with origin gone ask three times, then go by their records", async () => {
+  /** Five checkouts of one origin as a project's repositories, each one commit behind, fetched. */
+  const fiveBehind = async () => {
     const f = twoMachines();
     const folders = ["one", "two", "three", "four", "five"].map((name) => {
       const cwd = NodePath.join(f.base, "project", name);
@@ -383,37 +421,66 @@ describe("project sync: how long it may wait on origin (P2-36)", () => {
       git(f.base, "clone", "-q", f.remote, cwd);
       return { path: name, cwd: NodeFS.realpathSync(cwd) };
     });
+    const was = git(f.a, "rev-parse", "HEAD");
     const head = commit(f.a, "app.ts", "export const a = 2;\n");
     git(f.a, "push", "-q", "origin", "main");
     const origin: OriginRecords = new Map();
     await fetchAll(context(origin), folders);
-    let clock = Date.now();
-    vi.spyOn(Date, "now").mockImplementation(() => clock);
+    const moveAll = (run: SyncGit) =>
+      runSync(
+        context(origin, run, { asks: askBudget() }),
+        NodePath.join(f.base, "project"),
+        folders,
+        {
+          fastForward: folders.map((folder) => ({ path: folder.path, otherBranch: null })),
+          clone: [],
+        },
+      );
+    return { ...f, folders, was, head, moveAll };
+  };
+
+  it("five moves with their one origin silent ask once, then go by their records", async () => {
+    const f = await fiveBehind();
     let asks = 0;
     const silent: SyncGit = async (cwd, args, options) => {
       if (args[0] !== "ls-remote") return real(cwd, args, options);
       asks += 1;
       expect(options?.timeoutMs).toBe(10_000);
-      clock += options?.timeoutMs ?? 0;
       throw new Error("git ls-remote timed out");
     };
-    const results = await runSync(
-      context(origin, silent, { asks: askBudget(ORIGIN_ASK_RUN_TOTAL_MS) }),
-      NodePath.join(f.base, "project"),
-      folders,
-      {
-        fastForward: folders.map((folder) => ({ path: folder.path, otherBranch: null })),
-        clone: [],
-      },
-    );
-    expect(asks).toBe(3);
+    const results = await f.moveAll(silent);
+    expect(asks).toBe(1);
     expect(results.map((result) => `${result.path} ${say(result)} ${result.moved}`)).toEqual(
-      folders.map((folder) => `${folder.path} fast-forward:behind 1`),
+      f.folders.map((folder) => `${folder.path} fast-forward:behind 1`),
     );
     expect(results.every((result) => result.detail === PROJECT_SYNC_MOVED_UNASKED_DETAIL)).toBe(
       true,
     );
-    for (const folder of folders) expect(git(folder.cwd, "rev-parse", "HEAD")).toBe(head);
+    for (const folder of f.folders) expect(git(folder.cwd, "rev-parse", "HEAD")).toBe(f.head);
+  });
+
+  it("asks for every move while origin answers, however slowly, and so sees a force-push", async () => {
+    const f = await fiveBehind();
+    git(f.a, "commit", "-q", "--amend", "-m", "rewritten");
+    git(f.a, "push", "-q", "--force", "origin", "main");
+    // Every answer takes just under the limit of one ask.
+    let clock = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+    let asks = 0;
+    const slow: SyncGit = async (cwd, args, options) => {
+      const result = await real(cwd, args, options);
+      if (args[0] === "ls-remote") {
+        asks += 1;
+        clock += 9_900;
+      }
+      return result;
+    };
+    const results = await f.moveAll(slow);
+    expect(asks).toBe(5);
+    expect(results.map((result) => `${result.path} ${say(result)} ${result.detail}`)).toEqual(
+      f.folders.map((folder) => `${folder.path} none:refused ${PROJECT_SYNC_ORIGIN_MOVED_DETAIL}`),
+    );
+    for (const folder of f.folders) expect(git(folder.cwd, "rev-parse", "HEAD")).toBe(f.was);
   });
 });
 

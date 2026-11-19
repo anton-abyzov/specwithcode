@@ -11,6 +11,7 @@
 import * as NodeFSP from "node:fs/promises";
 
 import type { GitResult } from "./folderTransfer/git.ts";
+import { canonicalOrigin } from "./handoffGitTypes.ts";
 
 type Git = (
   cwd: string,
@@ -24,15 +25,6 @@ type Git = (
 
 /** How long one ask of `origin` for its branches may take. */
 export const ORIGIN_ASK_MS = 10_000;
-/** How long the asks of one fast-forward call may take together (they run one at a time). */
-export const ORIGIN_ASK_RUN_TOTAL_MS = 30_000;
-/**
- * How long the asks of one fetch call that got no list may take together. An ask that is
- * answered is not counted there: a project with many repositories is not cut short for
- * having many, and each answer still comes within the limit of one ask.
- */
-export const ORIGIN_ASK_FETCH_FAILED_TOTAL_MS = 30_000;
-
 const LOCAL_MS = 30_000;
 const LISTED = /^([0-9a-f]{40}(?:[0-9a-f]{24})?)\t(refs\/heads\/\S.*)$/;
 
@@ -63,27 +55,30 @@ export function originRecordsOf(projectId: string): OriginRecords {
 }
 
 /**
- * The time the asks of one call may take together. An ask is charged what it
- * took (with `failedOnly`, only one that got no list); when the time is used
- * up no further ask is made, so a call never waits on `origin` for longer
- * than its total plus the asks under way.
+ * The hosts one call has found silent. An ask that does not come back within
+ * its limit closes its host for the rest of the call: the other repositories
+ * of that host are not asked, so a host that is down costs a call one round
+ * of asks and not one per repository. Another host is never closed by it, and
+ * an ask that is answered (also with an error) closes nothing.
  */
 export interface AskBudget {
-  /** The limit for the next ask in ms: 0 when the time is used up. */
-  readonly next: () => number;
-  readonly spend: (ms: number, answered: boolean) => void;
+  /** The limit for the next ask of this host in ms: 0 once the host is closed. */
+  readonly next: (host: string) => number;
+  readonly close: (host: string) => void;
 }
-export function askBudget(
-  totalMs: number,
-  options: { readonly failedOnly?: boolean } = {},
-): AskBudget {
-  let left = totalMs;
+export function askBudget(): AskBudget {
+  const closed = new Set<string>();
   return {
-    next: () => Math.max(0, Math.min(ORIGIN_ASK_MS, left)),
-    spend: (ms, answered) => {
-      if (!(answered && options.failedOnly === true)) left -= Math.max(0, ms);
-    },
+    next: (host) => (closed.has(host) ? 0 : ORIGIN_ASK_MS),
+    close: (host) => void closed.add(host),
   };
+}
+
+/** What tells one origin's host from another's: its name, or the whole address of a folder. */
+export function originHost(address: string): string {
+  const canonical = canonicalOrigin(address);
+  if (canonical === null || canonical.startsWith("file://")) return address;
+  return canonical.split("/")[0] ?? address;
 }
 
 export type Listed =
@@ -101,13 +96,15 @@ export async function listOrigin(
   cwd: string,
   options: {
     readonly ref?: string;
+    /** The call's silent hosts, and the host this ask goes to. */
     readonly budget?: AskBudget;
+    readonly host?: string;
     readonly signal?: AbortSignal;
   } = {},
 ): Promise<Listed> {
-  const timeoutMs = options.budget === undefined ? ORIGIN_ASK_MS : options.budget.next();
+  const host = options.host ?? cwd;
+  const timeoutMs = options.budget === undefined ? ORIGIN_ASK_MS : options.budget.next(host);
   if (timeoutMs <= 0) return { ok: false, reason: null };
-  const started = Date.now();
   const listed = await git(
     cwd,
     ["ls-remote", "--heads", "origin", ...(options.ref === undefined ? [] : [options.ref])],
@@ -117,8 +114,11 @@ export async function listOrigin(
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     },
   ).catch(() => null);
-  options.budget?.spend(Date.now() - started, listed !== null && listed.code === 0);
-  if (listed === null) return { ok: false, reason: null };
+  if (listed === null) {
+    // It did not come back in time (or Git could not be started): the host is not asked again.
+    options.budget?.close(host);
+    return { ok: false, reason: null };
+  }
   if (listed.code !== 0) return { ok: false, reason: listed.stderr };
   const heads = new Map<string, string>();
   for (const line of listed.stdout.split("\n")) {

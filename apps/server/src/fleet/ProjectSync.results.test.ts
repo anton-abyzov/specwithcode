@@ -284,6 +284,18 @@ describe("project sync: a clone's staging folder in the list of extras (P2-34)",
     expect(extras).toMatchObject({ changedFiles: 1, untrackedFiles: 0 });
   });
 
+  it("counts a file renamed without being staged once", async () => {
+    const f = twoMachines();
+    NodeFS.renameSync(NodePath.join(f.a, "app.ts"), NodePath.join(f.a, "moved app.ts"));
+    git(f.a, "add", "-N", "moved app.ts");
+    // The rename is in the second column: nothing is staged.
+    expect(git(f.a, "status", "--porcelain=v1", "--branch")).toContain("\n R app.ts -> ");
+    const extras = await inventoryRepository({ path: ".", cwd: f.a });
+    expect(extras).toMatchObject({ changedFiles: 1, untrackedFiles: 0 });
+    const here = await fetchAll(context(), [{ path: ".", cwd: f.a }]);
+    expect(here[0]).toMatchObject({ uncommitted: 1 });
+  });
+
   it("lists no ignored secret that lies in a staging folder", async () => {
     const f = twoMachines();
     commit(f.a, ".gitignore", "ignored.log\n.env\n");

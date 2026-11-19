@@ -236,7 +236,7 @@ export async function inventoryRepository(
   for (let index = 0; index < fields.length; index += 1) {
     const entry = fields[index]!;
     if (entry.length < 4) continue;
-    if (entry[0] === "R" || entry[0] === "C") index += 1;
+    if (/[RC]/.test(entry.slice(0, 2))) index += 1;
     if (!(entry.startsWith("??") && (await staging.has(entry.slice(3))))) entries.push(entry);
   }
   const untrackedFiles = entries.filter((entry) => entry.startsWith("??")).length;

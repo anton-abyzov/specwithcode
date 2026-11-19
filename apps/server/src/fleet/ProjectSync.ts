@@ -63,8 +63,7 @@ import {
   dropOrigin,
   listOrigin,
   noteOrigin,
-  ORIGIN_ASK_FETCH_FAILED_TOTAL_MS,
-  ORIGIN_ASK_RUN_TOTAL_MS,
+  originHost,
   originRecord,
   type OriginRecords,
   originRecordsOf,
@@ -103,7 +102,7 @@ export interface SyncContext {
    * and a fast-forward that cannot ask `origin` once more goes by it alone.
    */
   readonly origin?: OriginRecords;
-  /** The time this call's asks of `origin` may take together; without it, each has its own limit. */
+  /** The hosts this call found silent: a host that did not answer one ask is not asked again. */
   readonly asks?: AskBudget;
 }
 
@@ -338,8 +337,8 @@ async function countUncommitted(git: SyncGit, cwd: string): Promise<number | nul
     const entry = fields[index]!;
     if (entry.length < 4) continue;
     entries.push(entry);
-    // A rename or a copy is followed by the name it came from.
-    if (entry[0] === "R" || entry[0] === "C") index += 1;
+    // A rename or a copy, in either column, is followed by the name it came from.
+    if (/[RC]/.test(entry.slice(0, 2))) index += 1;
   }
   const files = (await withoutCloneStaging(git, cwd, entries)).length;
   // An unfinished merge, rebase, cherry-pick, revert or bisect is not clean, also with no file changed.
@@ -454,6 +453,7 @@ export async function readRepositoryFacts(
   // so it holds the call for the ask's short limit and not for a fetch's long one.
   if (fetch === "not-run" && options.fetch) {
     const listed = await listOrigin(git, cwd, {
+      host: originHost(address),
       ...(context.asks === undefined ? {} : { budget: context.asks }),
       ...(context.signal === undefined ? {} : { signal: context.signal }),
     });
@@ -634,8 +634,11 @@ export async function fastForwardRepository(
   // origin is asked once more where the branch is, by its commit: only that very commit
   // is moved to. A branch deleted there since the fetch keeps its tracking ref here, and
   // one force-pushed keeps its name; neither is what this Sync was asked to bring in.
+  const urls = await read(git, cwd, ["config", "--get-all", "remote.origin.url"]);
+  const address = urls.ok ? (urls.text.split("\n")[0] ?? "").trim() : "";
   const asked = await listOrigin(git, cwd, {
     ref,
+    host: originHost(address),
     ...(context.asks === undefined ? {} : { budget: context.asks }),
     ...(context.signal === undefined ? {} : { signal: context.signal }),
   });
@@ -659,10 +662,8 @@ export async function fastForwardRepository(
     // origin could not be asked (no connection): the move still goes to the commit origin
     // listed for this very branch to this project's own Sync fetch of this very checkout
     // and origin, and to nothing else. Without such a record nothing moves; it is kept.
-    const urls = await read(git, cwd, ["config", "--get-all", "remote.origin.url"]);
-    const record = urls.ok
-      ? await originRecord(context.origin, git, cwd, (urls.text.split("\n")[0] ?? "").trim())
-      : undefined;
+    const record =
+      address.length > 0 ? await originRecord(context.origin, git, cwd, address) : undefined;
     if (record?.heads.get(ref) !== target) return refuse(PROJECT_SYNC_REFUSED_UNASKED_DETAIL);
   }
   const unasked = !asked.ok;
@@ -1280,7 +1281,7 @@ const make = Effect.gen(function* () {
         input.projectId,
         Effect.gen(function* () {
           const found = yield* repositories(input.projectId);
-          const asks = askBudget(ORIGIN_ASK_FETCH_FAILED_TOTAL_MS, { failedOnly: true });
+          const asks = askBudget();
           return {
             // A cancelled fetch is stopped; the lock is held until Git has ended.
             repositories: yield* stoppedWhenCancelled((signal) =>
@@ -1296,7 +1297,7 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const found = yield* repositories(input.projectId);
           const out: Array<ProjectSyncStepResult> = [];
-          const asks = askBudget(ORIGIN_ASK_RUN_TOTAL_MS);
+          const asks = askBudget();
           // What a clone that never finished left behind goes first, under the lock: no
           // clone of this project is under way now. A folder that stays is said so.
           const kept = yield* attempt(async () =>
