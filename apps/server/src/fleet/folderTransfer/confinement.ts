@@ -173,6 +173,11 @@ function sddlMask(rights: string): bigint {
   return mask;
 }
 
+/** The Administrators group, by alias and by SID. */
+const WINDOWS_ADMINISTRATORS = new Set(["BA", "S-1-5-32-544"]);
+/** A machine's or domain's built-in administrator account: relative id 500. */
+const WINDOWS_BUILT_IN_ADMINISTRATOR = /^S-1-5-21(?:-\d+)+-500$/;
+
 const SDDL_SID = "(?:S-[\\d-]+|[A-Z]{2})";
 /** Owner, group, then the DACL's flags and entries; the SACL after it grants nothing. */
 const SDDL_SHAPE = new RegExp(
@@ -183,10 +188,16 @@ const SDDL_SHAPE = new RegExp(
  * Owner and effective write grants from a folder's security descriptor (SDDL).
  * No DACL at all (a null DACL) lets everyone do everything; a DACL with no
  * entries lets nobody do anything. A descriptor this cannot read counts as open.
+ *
+ * Windows writes the built-in administrator account as `LA`: that is the user
+ * only when the user is that account. What an elevated administrator makes is
+ * owned by the Administrators group, so for that user (`elevated`) the group's
+ * ownership is their own.
  */
 export function windowsAccess(
   sddl: string,
   userSid: string,
+  elevated = false,
 ): {
   readonly owner: "user" | "trusted" | "other";
   readonly othersMayWrite: boolean;
@@ -196,8 +207,15 @@ export function windowsAccess(
   const shape = SDDL_SHAPE.exec(sddl.trim());
   if (!shape)
     return { owner: "other", othersMayWrite: true, othersMayReplace: true, childrenOpen: true };
+  const isUser = (sid: string) =>
+    sid === userSid || (sid === "LA" && WINDOWS_BUILT_IN_ADMINISTRATOR.test(userSid));
   const ownerSid = shape[1]!;
-  const owner = ownerSid === userSid ? "user" : WINDOWS_TRUSTED.has(ownerSid) ? "trusted" : "other";
+  const owner =
+    isUser(ownerSid) || (elevated && WINDOWS_ADMINISTRATORS.has(ownerSid))
+      ? "user"
+      : WINDOWS_TRUSTED.has(ownerSid)
+        ? "trusted"
+        : "other";
   if (shape[2] === undefined || shape[2].includes("NO_ACCESS_CONTROL"))
     return { owner, othersMayWrite: true, othersMayReplace: true, childrenOpen: true };
   let othersMayWrite = false;
@@ -206,7 +224,7 @@ export function windowsAccess(
   for (const ace of (shape[3] ?? "").matchAll(/\(([^)]*)\)/g)) {
     const [type, flags, rights, , , sid] = ace[1]!.split(";");
     if (!["A", "OA", "XA", "ZA"].includes(type ?? "")) continue;
-    if (sid === userSid || WINDOWS_TRUSTED.has(sid ?? "") || WINDOWS_OWNER_ALIASES.has(sid ?? ""))
+    if (isUser(sid ?? "") || WINDOWS_TRUSTED.has(sid ?? "") || WINDOWS_OWNER_ALIASES.has(sid ?? ""))
       continue;
     const mask = sddlMask(rights ?? "");
     const inherited = /CI|OI/.test(flags ?? "");
@@ -304,13 +322,16 @@ async function linuxAccess(paths: ReadonlyArray<string>): Promise<Map<string, Fo
 }
 
 const WINDOWS_SCRIPT = [
-  "$sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
+  "$me=[System.Security.Principal.WindowsIdentity]::GetCurrent()",
+  "$sid=$me.User.Value",
+  "$role=[System.Security.Principal.WindowsBuiltInRole]::Administrator",
+  "$up=[int]([System.Security.Principal.WindowsPrincipal]$me).IsInRole($role)",
   "[Console]::InputEncoding=[Text.Encoding]::UTF8",
   "[Console]::OutputEncoding=[Text.Encoding]::UTF8",
   "while(($p=[Console]::In.ReadLine()) -ne $null){",
   "try{$i=Get-Item -LiteralPath $p -Force -ErrorAction Stop;",
   "$s=(Get-Acl -LiteralPath $p -ErrorAction Stop).Sddl;",
-  '[Console]::Out.WriteLine("ok`t$sid`t$([int]$i.Attributes)`t$s")}',
+  '[Console]::Out.WriteLine("ok`t$sid`t$up`t$([int]$i.Attributes)`t$s")}',
   'catch{[Console]::Out.WriteLine("fail")}}',
 ].join("\n");
 const FILE_ATTRIBUTE_REPARSE_POINT = 0x400;
@@ -325,10 +346,10 @@ async function windowsAccessOf(paths: ReadonlyArray<string>): Promise<Map<string
   if (!ok) return result;
   const lines = output.split(/\r?\n/);
   paths.forEach((path, index) => {
-    const [state, sid, attributes, sddl] = (lines[index] ?? "").split("\t");
+    const [state, sid, elevated, attributes, sddl] = (lines[index] ?? "").split("\t");
     if (state !== "ok" || !sid || !sddl) return;
     result.set(path, {
-      ...windowsAccess(sddl, sid),
+      ...windowsAccess(sddl, sid, elevated === "1"),
       reparsePoint: (Number(attributes) & FILE_ATTRIBUTE_REPARSE_POINT) !== 0,
     });
   });
