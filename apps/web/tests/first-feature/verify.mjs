@@ -189,6 +189,16 @@ try {
           );
           return {
             sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+            // The page can clip what overflows, so measure the guide and the card themselves.
+            outside: all(
+              '[data-slot="first-feature-guide"], [data-slot="first-feature-guide"] *, [data-first-feature-offer], [data-first-feature-offer] *',
+            )
+              .filter((node) => {
+                const box = node.getBoundingClientRect();
+                return box.width > 0 && (box.left < -1 || box.right > window.innerWidth + 1);
+              })
+              .map((node) => node.textContent?.trim().slice(0, 40) || node.tagName)
+              .slice(0, 5),
             dialog: all('[role="dialog"]').length,
             offer:
               document
@@ -232,6 +242,11 @@ try {
         });
         check(`${label}: no page errors`, errors.length === 0, errors.join("; "));
         check(`${label}: nothing runs off the side`, !seen.sideways);
+        check(
+          `${label}: the guide and the card fit the window`,
+          seen.outside.length === 0,
+          JSON.stringify(seen.outside),
+        );
         check(`${label}: never a dialog`, seen.dialog === 0 || state === "sample-review-warning");
         check(`${label}: no time is named`, !/minute/i.test(seen.text), seen.text.slice(0, 200));
         if (want.absent) check(`${label}: absent`, seen.offer === null);

@@ -336,6 +336,8 @@ function GuideEnd(props: FirstFeatureGuideViewProps) {
               <Button
                 size="sm"
                 variant="outline"
+                // The longest action here: on a phone it wraps instead of pushing the card wide.
+                className="h-auto min-h-8 whitespace-normal py-1 text-left sm:min-h-7"
                 disabled={props.disabled === true || reviewAll !== "offered"}
                 onClick={props.onReviewAll}
               >
