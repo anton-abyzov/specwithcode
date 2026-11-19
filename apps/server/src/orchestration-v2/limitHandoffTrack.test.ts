@@ -30,6 +30,7 @@ import {
 import {
   HANDOFF_CAPABILITIES,
   HANDOFF_PROTOCOL_VERSION,
+  HANDOFF_WORKTREE_SET_CAPABILITY,
   PeerPreflightRequest,
   TakeoverRequest,
 } from "../handoff/handoffWire.ts";
@@ -583,6 +584,7 @@ describe(`the automatic track start with a machine on ${PREVIOUS_RELEASE}, and w
       HANDOFF_V2_CAPABILITY,
       HANDOFF_PLAN_CAPABILITY,
       HANDOFF_TRACK_START_CAPABILITY,
+      HANDOFF_WORKTREE_SET_CAPABILITY,
     ]);
   });
 
