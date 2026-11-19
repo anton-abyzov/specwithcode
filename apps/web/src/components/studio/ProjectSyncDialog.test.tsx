@@ -3,8 +3,11 @@ import type {
   ProjectSyncFetchResult,
   ProjectSyncInventoryResult,
   ProjectSyncRepositoryFacts,
+  ProjectSyncStatusResult,
+  ProjectSyncStepResult,
 } from "@specweave-studio/contracts";
 import { act, StrictMode } from "react";
+import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
@@ -85,14 +88,59 @@ const WORK: ProjectSyncInventoryResult = {
   ],
 };
 
-/** An API that answers from the given facts and records every call. */
+const step = (path: string, extra: Partial<ProjectSyncStepResult> = {}): ProjectSyncStepResult => ({
+  path,
+  action: "fast-forward",
+  reason: "behind",
+  branch: "main",
+  otherBranch: "main",
+  ahead: 0,
+  behind: 0,
+  uncommitted: 0,
+  inUseBy: null,
+  remote: null,
+  detail: null,
+  moved: 1,
+  downgraded: false,
+  ...extra,
+});
+const checkout = (path: string, branch: string | null = "main", head = "a".repeat(40)) => ({
+  path,
+  branch,
+  head,
+  clean: true,
+});
+
+/**
+ * An API that answers from the given facts and records every call. After a run each
+ * machine's status is what its fetch said, unless the test says what it is then.
+ */
 function scripted(input: {
   fetch: Record<string, ProjectSyncFetchResult | { cause: unknown }>;
   inventory?: Record<string, ProjectSyncInventoryResult>;
+  status?: Record<string, ProjectSyncStatusResult | { cause: unknown }>;
 }) {
   const calls: string[] = [];
   const api: ProjectSyncApi = {
-    status: vi.fn(),
+    status: vi.fn<ProjectSyncApi["status"]>(async (on) => {
+      const said = input.status?.[on.label];
+      if (said)
+        return "cause" in said ? { ok: false, cause: said.cause } : { ok: true, value: said };
+      const answer = input.fetch[on.label]!;
+      if ("cause" in answer) return { ok: false, cause: answer.cause };
+      return {
+        ok: true,
+        value: {
+          scanLimited: answer.scanLimited,
+          repositories: answer.repositories.map((item) => ({
+            path: item.path,
+            branch: item.branch,
+            head: item.head,
+            clean: item.uncommitted === 0,
+          })),
+        },
+      };
+    }),
     fetch: vi.fn<ProjectSyncApi["fetch"]>(async (on) => {
       calls.push(`fetch ${on.label}`);
       const answer = input.fetch[on.label]!;
@@ -164,24 +212,61 @@ const target = (on: SyncMachine, blocked: SyncTarget["blocked"] = null): SyncTar
   blocked,
 });
 
+type Handlers = {
+  onClose?: () => void;
+  onCompare?: (machine: SyncMachine) => void;
+  shownBlocked?: SyncTarget["blocked"];
+};
+const dialog = (api: ProjectSyncApi, targets: SyncTarget[], handlers: Handlers) => (
+  <ProjectSyncDialog
+    projectTitle="Atlas"
+    shown={M4}
+    shownBlocked={handlers.shownBlocked ?? null}
+    targets={targets}
+    onClose={handlers.onClose ?? vi.fn()}
+    onCompare={handlers.onCompare ?? vi.fn()}
+    api={api}
+  />
+);
 async function render(
   api: ProjectSyncApi,
   targets: SyncTarget[] = [target(M5)],
-  handlers: { onClose?: () => void; onCompare?: (machine: SyncMachine) => void } = {},
+  handlers: Handlers = {},
 ) {
-  await act(async () =>
-    root.render(
-      <ProjectSyncDialog
-        projectTitle="Atlas"
-        shown={M4}
-        targets={targets}
-        onClose={handlers.onClose ?? vi.fn()}
-        onCompare={handlers.onCompare ?? vi.fn()}
-        api={api}
-      />,
-    ),
-  );
+  await act(async () => root.render(dialog(api, targets, handlers)));
 }
+const READ_ONLY = (on: SyncMachine): SyncTarget["blocked"] => ({
+  text: "This window can only read {machine}",
+  values: { machine: on.label },
+});
+const extraStates = (side: "a" | "b") =>
+  [
+    ...document.querySelectorAll(`[data-sync-extra-results="${side}"] [data-sync-extra-result]`),
+  ].map((item) => item.getAttribute("data-sync-extra-result"));
+const count = (list: readonly (string | null)[], state: string) =>
+  list.filter((item) => item === state).length;
+/** Repositories with 150 branches only on M4 each: 200 go in one call. */
+const branches = (...paths: string[]): ProjectSyncInventoryResult => ({
+  scanLimited: false,
+  repositories: paths.map((path) => ({
+    ...WORK.repositories[0]!,
+    path,
+    notPushed: [],
+    onlyHere: Array.from({ length: 150 }, (_, at) => ({
+      branch: `try/${at}`,
+      head: "c".repeat(40),
+      commits: 1,
+    })),
+    leftOut: [],
+    stashes: 0,
+  })),
+});
+const tickAll = async () => {
+  for (const box of document.querySelectorAll<HTMLElement>(
+    '[data-sync-extra="only-here"] [data-slot="checkbox"]',
+  ))
+    await act(async () => box.click());
+};
 
 const stage = () =>
   document.querySelector("[data-project-sync]")?.getAttribute("data-project-sync");
@@ -275,29 +360,14 @@ it("ends its check under StrictMode, which mounts every effect twice", async () 
   expect(stage()).toBe("plan");
 });
 
-it("says the rest was not sent when a later send fails, and that an answer could not be read", async () => {
-  // Two repositories with 150 branches each: more than one call carries.
-  const two: ProjectSyncInventoryResult = {
-    scanLimited: false,
-    repositories: [".", "apps/site"].map((path) => ({
-      ...WORK.repositories[0]!,
-      path,
-      notPushed: [],
-      onlyHere: Array.from({ length: 150 }, (_, at) => ({
-        branch: `try/${at}`,
-        head: "c".repeat(40),
-        commits: 1,
-      })),
-      leftOut: [],
-      stashes: 0,
-    })),
-  };
+it("keeps apart what a receipt confirms, what was sent with no answer, and what never left", async () => {
+  const paths = [".", "apps/site", "tools/cli"];
   const { api } = scripted({
     fetch: {
-      M4: fetched(facts("."), facts("apps/site")),
-      M5: fetched(facts("."), facts("apps/site")),
+      M4: fetched(...paths.map((path) => facts(path))),
+      M5: fetched(...paths.map((path) => facts(path))),
     },
-    inventory: { M4: two },
+    inventory: { M4: branches(...paths) },
   });
   const send = api.sendExtras;
   let sends = 0;
@@ -308,20 +378,226 @@ it("says the rest was not sent when a later send fails, and that an answer could
       : { ok: false as const, cause: { _tag: "SchemaError", message: "Expected one of…" } };
   });
   await render(api);
-  for (const box of document.querySelectorAll<HTMLElement>(
-    '[data-sync-extra="only-here"] [data-slot="checkbox"]',
-  ))
-    await act(async () => box.click());
+  await tickAll();
   await click("[data-sync-run]");
-  const results = document.querySelector('[data-sync-extra-results="a"]')?.textContent ?? "";
+  // 450 branches: 200 answered, 200 sent with an answer that could not be read, 50 never asked.
   expect(sends).toBe(2);
-  expect(results).toContain("The rest of the extras from M4 were not sent.");
-  expect(results).toContain("M4 answered in a way this version does not read.");
-  expect(results).not.toContain("Expected one of");
+  const states = extraStates("a");
+  expect([count(states, "sent"), count(states, "unknown"), count(states, "not-sent")]).toEqual([
+    200, 200, 50,
+  ]);
+  const results = document.querySelector('[data-sync-extra-results="a"]')!;
+  const text = results.textContent ?? "";
+  expect(results.querySelector("[data-sync-extras-outcome]")?.textContent).toBe(
+    "M4 sent extras and no answer came back. They may have arrived: check M5 before sending again.",
+  );
+  expect(text).not.toContain("were not sent");
+  expect(text).toContain("M4 answered in a way this version does not read.");
+  expect(text).not.toContain("Expected one of");
+  // Each line keeps its branch, so the person knows which to look for on M5.
+  const unknown = results.querySelector('[data-sync-extra-result="unknown"]')?.textContent ?? "";
+  expect(unknown).toMatch(/^try\/\d+ · /);
+  expect(unknown).toContain(
+    "No answer came back. It may have arrived on M5: check M5 before sending again.",
+  );
+  expect(results.querySelector('[data-sync-extra-result="not-sent"]')?.textContent).toContain(
+    "Not sent.",
+  );
   expect(document.querySelector("h2")?.textContent).toBe("Sync Atlas: M4 and M5");
   expect(document.querySelector("[data-sync-live]")?.textContent).toBe(
-    "Sync ended, and not everything was moved or sent. Each repository says why.",
+    "Sync ended, and not every answer came back. Each line says what to check.",
   );
+});
+
+it("says not sent only for a call the machine refused before sending anything", async () => {
+  const { api } = scripted({
+    fetch: { M4: fetched(facts(".")), M5: fetched(facts(".")) },
+    inventory: { M4: WORK },
+  });
+  api.sendExtras = vi.fn<ProjectSyncApi["sendExtras"]>(async () => ({
+    ok: false as const,
+    cause: { _tag: "ProjectSyncError", code: "not_found", message: "M5 is not linked." },
+  }));
+  await render(api);
+  await tick("not-pushed");
+  await click("[data-sync-run]");
+  expect(extraStates("a")).toEqual(["not-sent"]);
+  expect(document.querySelector("[data-sync-extras-outcome]")?.textContent).toBe(
+    "The extras from M4 were not sent.",
+  );
+});
+
+it("drops the plan and its ticks when a machine can no longer sync", async () => {
+  const { api, calls } = scripted({
+    fetch: { M4: fetched(facts(".", { behind: 3 })), M5: fetched(facts(".")) },
+    inventory: { M4: WORK },
+  });
+  await render(api);
+  await tick("not-pushed");
+  expect(button("[data-sync-run]").disabled).toBe(false);
+
+  // The grant on the other machine changes while the plan is on screen.
+  await render(api, [target(M5, READ_ONLY(M5))]);
+  expect(stage()).toBe("failed");
+  expect(document.querySelector('[data-sync-failure="blocked"]')?.textContent).toBe(
+    "This window can only read M5",
+  );
+  expect(document.querySelector("[data-sync-run]")).toBeNull();
+  expect(api.run).not.toHaveBeenCalled();
+
+  // Allowed again: nothing comes back by itself, and a new check starts with nothing ticked.
+  await render(api);
+  expect(stage()).toBe("failed");
+  await click("[data-sync-again]");
+  expect(stage()).toBe("plan");
+  expect(calls.filter((item) => item === "fetch M5")).toHaveLength(2);
+  expect(document.querySelectorAll('[data-slot="checkbox"][data-checked]')).toHaveLength(0);
+});
+
+it("drops the plan when the machine shown can no longer sync", async () => {
+  const { api } = scripted({
+    fetch: { M4: fetched(facts(".", { behind: 3 })), M5: fetched(facts(".")) },
+  });
+  await render(api);
+  expect(stage()).toBe("plan");
+  await render(api, [target(M5)], { shownBlocked: READ_ONLY(M4) });
+  expect(stage()).toBe("failed");
+  expect(document.querySelector('[data-sync-failure="blocked"]')?.textContent).toBe(
+    "This window can only read M4",
+  );
+  expect(api.run).not.toHaveBeenCalled();
+});
+
+it("stops between two calls when a grant changes during the run", async () => {
+  const paths = [".", "apps/site"];
+  const { api } = scripted({
+    fetch: {
+      M4: fetched(...paths.map((path) => facts(path))),
+      M5: fetched(...paths.map((path) => facts(path))),
+    },
+    inventory: { M4: branches(...paths) },
+  });
+  const send = api.sendExtras;
+  api.sendExtras = vi.fn<ProjectSyncApi["sendExtras"]>(async (...args) => {
+    const answer = await send(...args);
+    // The first call is answered, then the window loses its grant on M5.
+    flushSync(() => root.render(dialog(api, [target(M5, READ_ONLY(M5))], {})));
+    return answer;
+  });
+  await render(api);
+  await tickAll();
+  await click("[data-sync-run]");
+  expect(api.sendExtras).toHaveBeenCalledTimes(1);
+  const states = extraStates("a");
+  expect([count(states, "sent"), count(states, "not-sent")]).toEqual([200, 100]);
+  const results = document.querySelector('[data-sync-extra-results="a"]')?.textContent ?? "";
+  expect(results).toContain("The rest of the extras from M4 were not sent.");
+  expect(results).toContain("This window can only read M5");
+});
+
+it("does not move a checkout when the pair is blocked by the time Sync is pressed", async () => {
+  const { api } = scripted({
+    fetch: { M4: fetched(facts(".", { behind: 3 })), M5: fetched(facts(".")) },
+  });
+  await render(api);
+  const run = button("[data-sync-run]");
+  // The same commit that greys the dialog also carries the press: the gate still holds.
+  await act(async () => {
+    flushSync(() => root.render(dialog(api, [target(M5, READ_ONLY(M5))], {})));
+    run.click();
+  });
+  expect(api.run).not.toHaveBeenCalled();
+  expect(stage()).toBe("failed");
+});
+
+it("never says in sync for a clone that landed on another branch", async () => {
+  const { api } = scripted({
+    fetch: {
+      M4: fetched(facts("."), facts("tools/cli", { branch: "release", head: "b".repeat(40) })),
+      M5: fetched(facts(".")),
+    },
+    status: {
+      M4: {
+        scanLimited: false,
+        repositories: [checkout("."), checkout("tools/cli", "release", "b".repeat(40))],
+      },
+      // The clone checked out the remote's default branch.
+      M5: {
+        scanLimited: false,
+        repositories: [checkout("."), checkout("tools/cli", "main", "c".repeat(40))],
+      },
+    },
+  });
+  api.run = vi.fn<ProjectSyncApi["run"]>(async (_on, plan) => ({
+    ok: true as const,
+    value: {
+      repositories: plan.clone.map((item) =>
+        step(item.path, { action: "clone", reason: "missing", moved: 0 }),
+      ),
+    },
+  }));
+  await render(api);
+  await click("[data-sync-run]");
+  expect(stage()).toBe("result");
+  expect(cell("tools/cli", "b")).toContain("main");
+  expect(document.querySelector("h2")?.textContent).toBe("Sync finished for Atlas: M4 and M5");
+});
+
+it("never says in sync for two machines that moved forward on different upstreams", async () => {
+  const { api } = scripted({
+    fetch: {
+      M4: fetched(facts(".", { behind: 2, upstream: "origin/main" })),
+      M5: fetched(facts(".", { behind: 4, upstream: "fork/main" })),
+    },
+    status: {
+      M4: { scanLimited: false, repositories: [checkout(".", "main", "d".repeat(40))] },
+      M5: { scanLimited: false, repositories: [checkout(".", "main", "e".repeat(40))] },
+    },
+  });
+  await render(api);
+  await click("[data-sync-run]");
+  expect(stage()).toBe("result");
+  expect(document.querySelector("h2")?.textContent).toBe("Sync finished for Atlas: M4 and M5");
+});
+
+it("never says in sync when a machine did not say where it is after the run", async () => {
+  const { api } = scripted({
+    fetch: { M4: fetched(facts(".", { behind: 3 })), M5: fetched(facts(".")) },
+    status: { M5: { cause: new Error("socket closed") } },
+  });
+  await render(api);
+  await click("[data-sync-run]");
+  expect(document.querySelector("h2")?.textContent).toBe("Sync finished for Atlas: M4 and M5");
+});
+
+it("shows the branch the answer names, also when it names none", async () => {
+  const { api } = scripted({
+    fetch: {
+      M4: fetched(facts(".", { behind: 3 }), facts("tools/cli")),
+      M5: fetched(facts(".")),
+    },
+  });
+  api.run = vi.fn<ProjectSyncApi["run"]>(async (on) =>
+    on.label === "M4"
+      ? {
+          ok: true as const,
+          // Detached between the plan and the run: the machine is on no branch.
+          value: {
+            repositories: [
+              step(".", { action: "none", reason: "detached", branch: null, moved: 0 }),
+            ],
+          },
+        }
+      : { ok: false as const, cause: new Error("socket closed") },
+  );
+  await render(api);
+  expect(cell(".", "a")).toContain("main");
+  await click("[data-sync-run]");
+  expect(cell(".", "a")).not.toContain("main");
+  // A clone was asked for and no answer came: nobody knows whether it is there.
+  expect(
+    document.querySelector('[data-sync-row="tools/cli"] [data-sync-cell="b"] [data-sync-missing]'),
+  ).toBeNull();
 });
 
 it("lists extras unticked and sends only what is ticked, from the machine that has it", async () => {
@@ -385,14 +661,21 @@ it("starts with a machine picker when several machines have the project", async 
     fetch: { M4: fetched(facts(".")), Mini: fetched(facts(".")) },
   });
   await render(api, [
-    target(M5, { text: "{machine} offline", values: { machine: "M5" } }),
+    {
+      ...target(M5, { text: "{machine} offline", values: { machine: "M5" } }),
+      note: { text: "Offline" },
+    },
     target(MINI),
+    target(machine("m1", "M1"), { text: "Separate project" }),
   ]);
   expect(stage()).toBe("pick");
   expect(calls).toEqual([]);
   expect(document.querySelector("h2")?.textContent).toBe("Sync Atlas");
   expect(button('[data-sync-target="m5:m5-p"]').disabled).toBe(true);
-  expect(button('[data-sync-target="m5:m5-p"]').textContent).toBe("M5M5 offline");
+  // The row already names the machine: the reason is said without it.
+  expect(button('[data-sync-target="m5:m5-p"]').textContent).toBe("M5Offline");
+  expect(button('[data-sync-target="m1:m1-p"]').disabled).toBe(true);
+  expect(button('[data-sync-target="m1:m1-p"]').textContent).toBe("M1Separate project");
   await click('[data-sync-target="mini:mini-p"]');
   expect(stage()).toBe("plan");
   expect(document.querySelector("h2")?.textContent).toBe("Sync Atlas: M4 and Mini");
