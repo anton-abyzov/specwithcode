@@ -202,7 +202,8 @@ export function windowsTree(
 export function unidentifiedChildren(
   table: ReadonlyArray<ProcessEntry>,
   tree: ReadonlyArray<Known>,
-  remembered: ReadonlyMap<number, Known> = new Map(),
+  /** Each pid's identities attributed by earlier readings, oldest first. */
+  remembered: ReadonlyMap<number, ReadonlyArray<Known>> = new Map(),
   /** Pids already in doubt: what they started is in doubt too. */
   doubtful: ReadonlySet<number> = new Set(),
 ): number[] {
@@ -214,14 +215,19 @@ export function unidentifiedChildren(
   const doubt = new Set<number>();
   for (const entry of table) {
     if (parents.has(entry.pid)) continue;
-    if (parents.has(entry.ppid)) {
-      if (startOf(entry) === null) doubt.add(entry.pid);
+    const start = startOf(entry);
+    if (parents.has(entry.ppid) && start === null) {
+      doubt.add(entry.pid);
       continue;
     }
-    const parent = remembered.get(entry.ppid);
-    if (parent === undefined || live.has(`${parent.entry.pid}:${parent.entry.started}`)) continue;
-    const start = startOf(entry);
-    if (start === null || start >= parent.created) doubt.add(entry.pid);
+    // An earlier owner of the parent pid that no longer runs, created before this row:
+    // the row may be what it started, even if the pid now names another of the tree's.
+    const exitedOwner = (remembered.get(entry.ppid) ?? []).some(
+      (parent) =>
+        !live.has(`${parent.entry.pid}:${parent.entry.started}`) &&
+        (start === null || start >= parent.created),
+    );
+    if (exitedOwner) doubt.add(entry.pid);
   }
   // Doubt passes down: a process started by one in doubt may be the tree's as well. A pid
   // in doubt since an earlier reading passes it to its children, live or exited.
@@ -336,6 +342,8 @@ const STEP_TIMEOUT_MS = 15_000;
  */
 export class OwnedProcessTree {
   private readonly remembered = new Map<number, Known>();
+  /** Every identity a pid had in the tree: a reused pid must not erase its older owner. */
+  private readonly history = new Map<number, Known[]>();
   /** POSIX tools seen outside the CLI's group, kept until an end confirms them gone. */
   private readonly escapees = new Map<number, ProcessEntry>();
   /** POSIX members of the CLI's group seen by an earlier end, by pid and start. */
@@ -381,7 +389,7 @@ export class OwnedProcessTree {
     const table = await this.host.readProcessList(timeoutMs).catch(() => undefined);
     const known =
       table === undefined ? [] : windowsTree(table, this.root, this.host.selfPid, this.remembered);
-    for (const entry of known) this.remembered.set(entry.entry.pid, entry);
+    for (const entry of known) this.recall(entry);
     if (table !== undefined) this.noteUnidentified(table, known);
     // The reading must list the CLI itself: while it runs, or as the CLI an earlier
     // reading identified (it exited after this reading caught it).
@@ -399,6 +407,13 @@ export class OwnedProcessTree {
     return ok;
   }
 
+  private recall(known: Known) {
+    this.remembered.set(known.entry.pid, known);
+    const past = this.history.get(known.entry.pid);
+    if (past === undefined) this.history.set(known.entry.pid, [known]);
+    else if (!past.some((entry) => entry.entry.started === known.entry.started)) past.push(known);
+  }
+
   private noteUnidentified(table: ReadonlyArray<ProcessEntry>, tree: ReadonlyArray<Known>) {
     const before = new Set(this.unidentified);
     const listed = new Set(table.map((entry) => entry.pid));
@@ -406,7 +421,7 @@ export class OwnedProcessTree {
     for (const pid of this.unidentified) {
       if (!listed.has(pid) || attributed.has(pid)) this.unidentified.delete(pid);
     }
-    for (const pid of unidentifiedChildren(table, tree, this.remembered, before)) {
+    for (const pid of unidentifiedChildren(table, tree, this.history, before)) {
       this.unidentified.add(pid);
     }
   }
@@ -454,13 +469,14 @@ export class OwnedProcessTree {
     return this.host.readProcessList(budget).catch(() => undefined);
   }
 
-  private groupAlive(): boolean {
+  private groupState(): "alive" | "gone" | "denied" {
     try {
       this.host.signal(-this.root.pid, 0);
-      return true;
-    } catch {
-      // ESRCH: no member left. EPERM: a group of another user, so not this CLI's.
-      return false;
+      return "alive";
+    } catch (error) {
+      // ESRCH: no member left. EPERM: members run that this server may not signal (one
+      // that changed user, or another user's job): not gone, and not endable from here.
+      return (error as { code?: unknown } | null)?.code === "EPERM" ? "denied" : "gone";
     }
   }
 
@@ -524,8 +540,10 @@ export class OwnedProcessTree {
     }
     const groupAlive = () => {
       if (!groupUsable || this.groupRetired) return false;
-      if (this.groupAlive()) return true;
-      this.groupRetired = true;
+      const state = this.groupState();
+      if (state === "alive") return true;
+      if (state === "denied") unknown = true;
+      else this.groupRetired = true;
       return false;
     };
     if (table !== undefined) {
@@ -704,7 +722,7 @@ export class OwnedProcessTree {
       const table = await this.read(killBy);
       if (table === undefined) return { found: Math.max(found, 0), survivors: 0, unknown: true };
       left = windowsTree(table, this.root, host.selfPid, this.remembered);
-      for (const known of left) this.remembered.set(known.entry.pid, known);
+      for (const known of left) this.recall(known);
       this.noteUnidentified(table, left);
       if (found === -1) found = left.length;
       // A live CLI missing from the table, or a child of the tree listed without its
@@ -725,7 +743,7 @@ export class OwnedProcessTree {
     if (table === undefined) return { found: Math.max(found, 0), survivors: 0, unknown: true };
     left = windowsTree(table, this.root, host.selfPid, this.remembered);
     // Kept like every reading's: a retry still knows a survivor once its parent exits.
-    for (const known of left) this.remembered.set(known.entry.pid, known);
+    for (const known of left) this.recall(known);
     this.noteUnidentified(table, left);
     return {
       found: Math.max(found, 0),

@@ -1125,6 +1125,52 @@ describe("OwnedProcessTree.end after a lost parent", () => {
     expect((await f.tree.end()).unknown).toBe(true);
   });
 
+  it("never takes a POSIX group it may not signal for an empty one", async () => {
+    const member: ProcessEntry = {
+      pid: 201,
+      ppid: 1,
+      pgid: 200,
+      started: "Thu Nov 19 17:00:00 2026",
+      command: "elevated helper",
+    };
+    let clock = 0;
+    const host: TreeHost = {
+      platform: "darwin",
+      selfPid: 100,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+      readProcessList: async () => [member],
+      signal: () => {
+        throw Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+      },
+      killVerified: async () => {
+        throw new Error("no Windows kill on POSIX");
+      },
+    };
+    const tree = new OwnedProcessTree({ pid: 200, spawnedAt: 0, alive: () => false }, host);
+    expect((await tree.end()).unknown).toBe(true);
+    expect((await tree.end()).unknown).toBe(true);
+  });
+
+  it("keeps doubt on a Windows worker whose parent pid now names another of the tree", async () => {
+    const f = fake("win32");
+    const server = windowsRow(100, 1, 1_000);
+    const cli = windowsRow(200, 100, 2_000);
+    const oldParent = windowsRow(201, 200, 3_000);
+    const sibling = windowsRow(202, 200, 3_200);
+    const worker = windowsRow(203, 201, 4_000);
+    const replacement = windowsRow(201, 202, 5_000);
+    f.setTable([server, cli, oldParent, sibling]);
+    expect(await f.tree.remember(15_000, true)).toBe(true);
+    f.exitRootAt(3_600);
+    // The old 201 started a worker and exited; 202 started a new process given pid 201.
+    f.setTable([server, sibling, replacement, worker]);
+    expect((await f.tree.end()).unknown).toBe(true);
+    expect(f.kills).not.toContain(203);
+  });
+
   it("keeps a POSIX Stop unconfirmed on retry after its first reading failed", async () => {
     const f = fake("darwin");
     const member = processRow(201);
