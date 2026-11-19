@@ -516,12 +516,14 @@ describe("a worker handed off to another machine", () => {
     updatedAt: "2026-10-12T00:00:00.000Z",
     handoff: { sourceThreadId: "thread-1", epoch: 2, awaiting },
   });
-  const follow = (row: RemoteWorkerStore.RemoteWorkerRecord) =>
+  const follow = (row: RemoteWorkerStore.RemoteWorkerRecord, start: "follow" | "restart" = "follow") =>
     Effect.gen(function* () {
       yield* allow();
       const store = yield* RemoteWorkerStore.RemoteWorkerStore;
       yield* store.modify(row.id, () => row);
-      yield* (yield* RemoteWorkerFollower.RemoteWorkerFollower).follow(row.id);
+      const follower = yield* RemoteWorkerFollower.RemoteWorkerFollower;
+      // A restart finds the row in the file and picks it up without being asked.
+      yield* start === "restart" ? follower.resume : follower.follow(row.id);
     });
 
   const recent = (...runs: ReadonlyArray<readonly [string, string]>) => ({
@@ -575,7 +577,8 @@ describe("a worker handed off to another machine", () => {
       },
     });
     return Effect.gen(function* () {
-      yield* follow(handedOff("continuation"));
+      // The server restarted while the takeover was open: the row alone restarts the follow.
+      yield* follow(handedOff("continuation"), "restart");
       yield* eventually(
         Effect.sync(() => polls),
         (count) => count >= 3,

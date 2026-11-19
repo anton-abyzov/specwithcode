@@ -166,7 +166,7 @@ const scenario = (world: ReturnType<typeof setup>["world"], other: OtherMachine)
     const handoffFor = (side: "source" | "destination") =>
       ({
         environmentId: side === "source" ? here : there,
-        machineLabel: side === "source" ? "M4" : "M1",
+        machineLabel: side === "source" ? "Source" : "Other",
         document: Effect.sync(() => documents[side]),
         updateDocument: <A>(change: (document: HandoffDocument) => readonly [A, HandoffDocument]) =>
           Effect.sync(() => {
@@ -205,7 +205,7 @@ const scenario = (world: ReturnType<typeof setup>["world"], other: OtherMachine)
               sideEffects: [],
               sourceRoot: {
                 environmentId: here,
-                machineLabel: "M4",
+                machineLabel: "Source",
                 projectId: sourceProject,
                 threadId: worker,
                 workspaceRoot: written.root,
@@ -298,7 +298,7 @@ const scenario = (world: ReturnType<typeof setup>["world"], other: OtherMachine)
       takeovers: 0,
     };
     const noAnswer = () =>
-      new HandoffPeerError({ code: "unreachable", message: "M1 did not answer.", uncertain: true });
+      new HandoffPeerError({ code: "unreachable", message: "No answer.", uncertain: true });
     const fromReceiver = <A>(effect: Effect.Effect<A, HandoffReceiver.HandoffRefusal>) =>
       effect.pipe(
         Effect.mapError(
@@ -312,8 +312,8 @@ const scenario = (world: ReturnType<typeof setup>["world"], other: OtherMachine)
         ),
       );
     const peers = {
-      target: () => Effect.succeed({ machineId: "m1", environmentId: there, label: "M1" }),
-      targets: Effect.succeed([{ machineId: "m1", environmentId: there, label: "M1" }]),
+      target: () => Effect.succeed({ machineId: "m1", environmentId: there, label: "Other" }),
+      targets: Effect.succeed([{ machineId: "m1", environmentId: there, label: "Other" }]),
       negotiate: (_: unknown, request: never) =>
         fromReceiver(destinationReceiver.negotiate(asSource, request)),
       replicate: (_: unknown, meta: never, bundle: never) =>
@@ -326,7 +326,7 @@ const scenario = (world: ReturnType<typeof setup>["world"], other: OtherMachine)
           return Effect.fail(
             new HandoffPeerError({
               code: "busy",
-              message: "M1 refused the takeover.",
+              message: "The other machine refused the takeover.",
               uncertain: false,
             }),
           );
@@ -411,7 +411,7 @@ const scenario = (world: ReturnType<typeof setup>["world"], other: OtherMachine)
           mode: "on",
           lease: {
             holderEnvironmentId: here,
-            holderLabel: "M4",
+            holderLabel: "Source",
             holderThreadId: worker,
             epoch: 1,
             renewedAt: "2026-10-20T14:00:00.000Z",
@@ -677,6 +677,25 @@ describe("a handed-off worker's result", () => {
         expect(local.wakes.map((wake) => wake.commandId)).toEqual([
           `remote-worker-wake:${row?.id}:there-run-2`,
         ]);
+      }).pipe(Effect.provide(layer));
+    },
+    LIVE,
+  );
+
+  it.live(
+    "wakes a launcher that was settled meanwhile, once, as a worker on this machine does",
+    () => {
+      const { other, world: local, layer } = world();
+      return Effect.gen(function* () {
+        yield* allow();
+        const { handOff } = yield* scenario(local, other);
+        yield* handOff;
+        // A settled thread still takes a message; only an archived or deleted one does not.
+        local.caller.settled = true;
+        yield* finish(other);
+        yield* eventually(rows, (current) => current[0]?.state === "idle");
+        expect(local.wakes).toHaveLength(1);
+        expect(local.wakes[0]?.text).toContain("finished: completed");
       }).pipe(Effect.provide(layer));
     },
     LIVE,
