@@ -13,7 +13,11 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import { describeTrack, savedBuiltInTrack, type TrackRow } from "./modelTrackRules.ts";
-import { followsBuiltInFamily, launchTrackLanes } from "./modelTracks.ts";
+import {
+  followsBuiltInFamily,
+  launchTrackLanes,
+  projectDraftModelSelection,
+} from "./modelTracks.ts";
 import { reviewerChain } from "./adversarialReview.ts";
 import { reviewOnlyModel } from "./regularTrack.ts";
 
@@ -193,5 +197,35 @@ describe("a built-in track saved by an effort change", () => {
     expect(slugs(after).slice(0, 3)).toEqual(slugs(builtIn).slice(0, 3));
     expect(after[0]?.options).toEqual([{ id: "reasoningEffort", value: "high" }]);
     expect(after[1]?.options).toEqual(builtIn[1]?.options);
+  });
+
+  it("starts new threads on a listed entry where the maker's harness is missing", () => {
+    // Codex only: Opus and Sonnet are kept under Claude Code, which is not here.
+    const providers = [codex];
+    const { saved } = saveEffort("daily", providers, "GPT-6.1-Sol", "high");
+    expect(saved.slice(0, 2).map((entry) => entry.instanceId)).toEqual([
+      "claudeAgent",
+      "claudeAgent",
+    ]);
+    const settings = {
+      threadModelMode: "tracks" as const,
+      defaultModelSelection: null,
+      modelLanes: { routine: [...saved], complex: [] },
+    };
+    expect(projectDraftModelSelection(settings, providers)).toEqual({
+      instanceId: "codex",
+      model: "gpt-6.1-sol",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    });
+  });
+
+  it("makes a hand-saved entry spelled like a built-in one follow its family", () => {
+    // A behaviour change for existing lists: `gpt-6.2-sol` saved by hand on Codex,
+    // which lists only GPT-6.1 Sol, now runs there instead of being skipped.
+    const routine = launchTrackLanes(
+      { routine: [{ instanceId: codex.instanceId, model: "gpt-6.2-sol" }], complex: [] },
+      [codex],
+    ).routine;
+    expect(slugs(routine)).toEqual(["codex/gpt-6.1-sol"]);
   });
 });

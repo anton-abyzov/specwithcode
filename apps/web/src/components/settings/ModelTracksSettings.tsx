@@ -447,7 +447,10 @@ function TrackCard(props: {
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="truncate text-sm font-medium">{row.name}</span>
                 {row.selection !== null &&
-                rows.findIndex((entry) => entry.selection !== null) === index ? (
+                rows.findIndex(
+                  (entry) =>
+                    entry.selection !== null && entry.sources.some((source) => source.used),
+                ) === index ? (
                   <Badge variant="outline" size="sm">
                     {tx(TRACK_FIRST[track])}
                   </Badge>

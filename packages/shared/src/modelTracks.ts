@@ -505,8 +505,19 @@ export function projectDraftModelSelection(
   providers: ReadonlyArray<TrackProvider>,
 ): ModelSelection | null {
   if (settings.threadModelMode !== "tracks") return settings.defaultModelSelection;
+  // The first entry a source here lists: a saved entry can name a source this
+  // machine lacks (a built-in list saved where its maker is not set up).
+  const listed = (entry: ModelSelection) =>
+    providers.some(
+      (provider) =>
+        provider.instanceId === entry.instanceId &&
+        provider.models.some((model) => model.slug === entry.model),
+    );
   return (
-    effectiveModelLanes(settings.modelLanes, providers, settings.defaultModelProviders).lanes
-      .routine[0] ?? settings.defaultModelSelection
+    effectiveModelLanes(
+      settings.modelLanes,
+      providers,
+      settings.defaultModelProviders,
+    ).lanes.routine.find(listed) ?? settings.defaultModelSelection
   );
 }
