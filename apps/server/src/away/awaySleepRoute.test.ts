@@ -67,6 +67,22 @@ const movedAnswer = (path: string): Effect.Effect<unknown, AwayPeerError> =>
         : {},
   );
 
+/** The target stopped the intent that waited there, and nothing of the source's runs on it. */
+const cancelledAnswer = (path: string): Effect.Effect<unknown, AwayPeerError> =>
+  Effect.succeed(
+    path === AWAY_INTENT_CANCEL_PATH
+      ? { cancelled: 1, state: "cancelled", takenOver: [] }
+      : path === AWAY_INTENT_STATUS_PATH
+        ? {
+            intentState: "cancelled",
+            projects: [{ projectId: "easychamp", takenOver: false }],
+            threads: [{ threadId: "thread-1", continuedThreadId: null }],
+            threadsSettled: true,
+            receivedAt: "2026-11-09T22:10:00.000Z",
+          }
+        : {},
+  );
+
 const noAnswer = Effect.fail(
   new AwayPeerError({ message: "Ministorm did not answer.", refused: false, uncertain: true }),
 );
@@ -95,6 +111,7 @@ const setup = (
     const hold = memoryWakeHoldStore();
     const remote = peer(answer);
     const gaveWay: string[] = [];
+    const resumed: string[] = [];
     let current = config(patch);
     const deps = {
       self: M4,
@@ -109,6 +126,8 @@ const setup = (
           gaveWay.push(input.projectId);
           return true;
         }),
+      resumeQueues: (threadIds: ReadonlyArray<string>) =>
+        Effect.sync(() => void resumed.push(...threadIds)),
     };
     const before = yield* Previous.makeAwaySleep(deps);
     const away = yield* makeAwaySleep(deps);
@@ -119,6 +138,7 @@ const setup = (
       hold,
       remote,
       gaveWay,
+      resumed,
       setConfig: (next: AwayConfig) => void (current = next),
       intentsSent: () => remote.sent.filter((call) => call.path === AWAY_INTENT_PATH).length,
     };
@@ -282,9 +302,7 @@ describe("a lid close never starts a handoff (AC-36)", () => {
 describe("waking after an earlier release left (D-02)", () => {
   it.effect("back before the grace: cancels on the target, nothing moved, no prompt", () =>
     Effect.gen(function* () {
-      const { before, away, store, remote } = yield* setup({}, (path) =>
-        Effect.succeed(path === AWAY_INTENT_CANCEL_PATH ? { cancelled: 1 } : {}),
-      );
+      const { before, away, store, remote } = yield* setup({}, cancelledAnswer);
       yield* (yield* before.sleep({ onBattery: true })).send;
       yield* TestClock.adjust(MINUTE);
       assert.deepEqual(yield* away.wake({ onBattery: true }), { outcome: "none" });
@@ -310,9 +328,7 @@ describe("waking after an earlier release left (D-02)", () => {
 
   it.effect("after the grace, the target still waiting: the cancel wins and nothing moved", () =>
     Effect.gen(function* () {
-      const { before, away, store } = yield* setup({}, (path) =>
-        Effect.succeed(path === AWAY_INTENT_CANCEL_PATH ? { cancelled: 1 } : {}),
-      );
+      const { before, away, store } = yield* setup({}, cancelledAnswer);
       yield* (yield* before.sleep({ onBattery: true })).send;
       yield* TestClock.adjust(10 * MINUTE);
       assert.deepEqual(yield* away.wake({ onBattery: true }), { outcome: "none" });
@@ -396,6 +412,36 @@ describe("a wake check lets go only of what the target answered for", () => {
         threads: [{ threadId: "thread-1", continuedThreadId: null }],
       };
       assert.strictEqual(yield* away.retry, "moved");
+      assert.isNull(hold.current());
+    }),
+  );
+
+  it.effect("one delivery acted and a second still waited: the cancel lets go of nothing", () =>
+    Effect.gen(function* () {
+      // The lid close's intent reached the target twice. The first delivery continued the
+      // thread; the second was still waiting, and the wake's cancel stops only that one.
+      const { before, away, store, hold, resumed } = yield* setup({}, (path) =>
+        Effect.succeed(
+          path === AWAY_INTENT_CANCEL_PATH
+            ? { cancelled: 1, state: "cancelled", takenOver: [] }
+            : path === AWAY_INTENT_STATUS_PATH
+              ? {
+                  intentState: "cancelled",
+                  projects: [{ projectId: "easychamp", takenOver: false }],
+                  threads: [{ threadId: "thread-1", continuedThreadId: "thread-1-ms" }],
+                  threadsSettled: true,
+                  receivedAt: "2026-11-09T22:10:00.000Z",
+                }
+              : {},
+        ),
+      );
+      yield* (yield* before.sleep({ onBattery: true })).send;
+      assert.strictEqual(hold.current()?.since, store.current()?.sentAt);
+      yield* TestClock.adjust(MINUTE);
+      // The thread runs on the target: it is fenced here and its queue never starts.
+      assert.deepEqual(yield* away.wake({ onBattery: true }), { outcome: "prompt" });
+      assert.deepEqual(resumed, []);
+      assert.strictEqual(store.current()?.state, "wake-prompt");
       assert.isNull(hold.current());
     }),
   );

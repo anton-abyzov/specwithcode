@@ -392,6 +392,38 @@ describe("away intent route", () => {
     }),
   );
 
+  it.effect("one delivery acted, a second still waits: the cancel counts nothing stopped", () =>
+    Effect.gen(function* () {
+      const f = yield* fleet;
+      yield* f.recordedEarlier();
+      const [waiting] = f.store.current().intents;
+      // The same lid close reached the earlier release twice; only the first delivery acted.
+      yield* f.store.write({
+        version: 1,
+        intents: [
+          {
+            ...waiting!,
+            state: "done",
+            results: [{ projectId: "easychamp-m4", outcome: "handed-over", detail: "", epoch: 2 }],
+          },
+          { ...waiting!, intentId: "intent-2" },
+        ],
+      } as never);
+      const told = yield* cancelIntent(f.intents, callerFrom("m4"), { sourceEnvironmentId: "m4" });
+      // A count would tell an earlier release's source that nothing moved, and it would
+      // run the work the first delivery took. It hears what was taken and asks for status.
+      expect(told).toEqual({
+        status: 200,
+        body: { cancelled: 0, state: "done", takenOver: ["easychamp-m4"] },
+      });
+      // The delivery that waited is stopped all the same.
+      expect(f.store.current().intents.map((intent) => intent.state)).toEqual([
+        "done",
+        "cancelled",
+      ]);
+    }),
+  );
+
   it.effect("unknown: an intent cut off while acting settles from what was really taken", () =>
     Effect.gen(function* () {
       // The process stopped after marking it acting, before any takeover.
