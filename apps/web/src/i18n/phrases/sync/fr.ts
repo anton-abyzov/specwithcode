@@ -312,4 +312,8 @@ export const syncFr: PhraseCatalog = {
   "Its state could not be read after the run": "Son état n'a pas pu être lu après l'exécution",
   "Could not compare: a repository could not be read":
     "Comparaison impossible : un dépôt n'a pas pu être lu",
+  "Over your local network": "Par votre réseau local",
+  "Over SpecWithCode Connect": "Par SpecWithCode Connect",
+  "Partly over your local network, the rest over SpecWithCode Connect":
+    "En partie par votre réseau local, le reste par SpecWithCode Connect",
 };

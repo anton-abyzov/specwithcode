@@ -55,6 +55,7 @@ import {
   type SecretsSender,
   undecidedCloneRows,
 } from "./handoffCopyAuto";
+import { useSyncOffer } from "./useSyncOffer";
 import { copyProblem, groupCopyNotices, skippedWorktreeParts } from "./handoffCopyNotices";
 
 const WATCH_MS = 2000;
@@ -295,9 +296,7 @@ export function HandoffFolderCopyWatcher({
   const sourceStatus = useAtomCommand(machineHandoff.copySourceStatus, {
     reportFailure: false,
   });
-  const offerCopy = useAtomCommand(machineHandoff.copyOffer, {
-    reportFailure: false,
-  });
+  const offerCopy = useSyncOffer();
   const start = useAtomCommand(machineHandoff.copyStart, {
     reportFailure: false,
   });

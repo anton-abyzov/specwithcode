@@ -58,6 +58,11 @@ export const FolderCopyCapabilities = Schema.Struct({
    * and honors `staleCopy` on start (1326).
    */
   existingCopyUpdate: Schema.optional(Schema.Literal(1)),
+  /**
+   * Knows the direct local-network path for the measured Sync copy and Add's whole-folder
+   * copy (1390 T-17). It says the code is present, never that the setting is on.
+   */
+  lanTransport: Schema.optional(Schema.Literal(1)),
 });
 const scopeFields = {
   /** Canonical source folder explicitly selected for this operation. */
@@ -221,6 +226,11 @@ export const FolderCopyOfferInput = Schema.Struct({
   mode: FolderCopyMode,
   destinationEnvironmentId: EnvironmentId,
   copyRoot: Schema.optional(bounded(4096)),
+  /**
+   * Which of the two copies that may use the local network this is. The destination
+   * checks it against its own record, so a wrong value only keeps the copy on Connect.
+   */
+  lanPurpose: Schema.optional(Schema.Literals(["sync-measured", "add-whole-folder"])),
 });
 export type FolderCopyOfferInput = typeof FolderCopyOfferInput.Type;
 /** What the destination needs to pull. The browser relays it once; the token expires with the copy. */
@@ -516,6 +526,17 @@ export const FolderCopyStatus = Schema.Struct({
       }),
     ),
   ),
+  /**
+   * Which route the file bytes took: the local network, SpecWithCode Connect, or both
+   * after a switch. Byte counts only; no address ever reaches a window.
+   */
+  transport: Schema.optional(
+    Schema.Struct({
+      path: Schema.Literals(["lan", "connect", "mixed"]),
+      bytesLan: count,
+      bytesConnect: count,
+    }),
+  ),
   /** When the person approved the copy and files started to move. Older machines omit it. */
   startedAt: Schema.optional(bounded(64)),
   /** When Apply finished on this machine. Older machines omit it. */
@@ -585,3 +606,126 @@ export class FolderCopyError extends Schema.TaggedError<FolderCopyError>()("Fold
     return this.detail ? `${base} ${this.detail}` : base;
   }
 }
+
+/*
+ * The local-network path of a folder copy (1390 T-17, design in 1334 S-1 to S-11).
+ * These shapes travel only in the body of two machine-to-machine calls
+ * (`lanCheck` and `lanOffer` of studio_folder_copy_receive). `FolderCopyOffer`,
+ * which a window relays, never carries them.
+ */
+const sha256Hex = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/));
+const lanGeneration = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 2 ** 31 }));
+const lanHost = Schema.String.check(Schema.isMaxLength(45));
+
+/** The two copies that may use the local network. */
+export const FolderCopyLanPurpose = Schema.Literals(["sync-measured", "add-whole-folder"]);
+export type FolderCopyLanPurpose = typeof FolderCopyLanPurpose.Type;
+
+/** The capability a machine answers `lanCheck` with; absent means the copy runs on Connect. */
+export const FOLDER_COPY_LAN_CAPABILITY = "folderCopyLan" as const;
+export const FOLDER_COPY_LAN_VERSION = 1 as const;
+
+/** Source to destination, before anything is bound: no port, no key, no token. */
+export const FolderCopyLanCheck = Schema.Struct({
+  operationId: MachineHandoffOperationId,
+  generation: lanGeneration,
+  purpose: FolderCopyLanPurpose,
+  candidates: Schema.Array(Schema.Struct({ host: lanHost })).check(Schema.isMaxLength(4)),
+});
+export type FolderCopyLanCheck = typeof FolderCopyLanCheck.Type;
+
+/**
+ * Asked before any address is named: does the destination know this path and has it
+ * opted in for this copy? Only a yes is followed by `lanCheck` with candidates.
+ */
+export const FolderCopyLanProbe = Schema.Struct({
+  operationId: MachineHandoffOperationId,
+  purpose: FolderCopyLanPurpose,
+});
+export type FolderCopyLanProbe = typeof FolderCopyLanProbe.Type;
+
+/** The source ended a generation: the destination drops its key and its connections. */
+export const FolderCopyLanRetire = Schema.Struct({
+  operationId: MachineHandoffOperationId,
+  generation: lanGeneration,
+});
+export type FolderCopyLanRetire = typeof FolderCopyLanRetire.Type;
+
+/** The destination's answer: `lan: null` when it will not use the local network. */
+export const FolderCopyLanCheckAnswer = Schema.Struct({
+  lan: Schema.NullOr(
+    Schema.Struct({
+      version: Schema.Literal(FOLDER_COPY_LAN_VERSION),
+      generation: lanGeneration,
+      recipientCertificateSha256: sha256Hex,
+      /**
+       * The recipient's one-time certificate, DER in base64. The source makes it the
+       * listener's only trust anchor, so the TLS layer itself checks who connects. It
+       * names nothing and is useless without its key, which never leaves the destination.
+       */
+      recipientCertificate: Schema.String.check(
+        Schema.isPattern(/^[A-Za-z0-9+/]{200,2700}={0,2}$/),
+      ),
+      targetSha256: sha256Hex,
+      /** Indexes into `candidates` that are directly attached for the destination. */
+      usable: Schema.Array(Schema.Int).check(Schema.isMaxLength(4)),
+    }),
+  ),
+});
+export type FolderCopyLanCheckAnswer = typeof FolderCopyLanCheckAnswer.Type;
+
+/** The `lan` block, version 1. It carries certificate hashes only; no key and no certificate. */
+export const FolderCopyLanOffer = Schema.Struct({
+  version: Schema.Literal(FOLDER_COPY_LAN_VERSION),
+  generation: lanGeneration,
+  purpose: FolderCopyLanPurpose,
+  expiresAt: count,
+  addresses: Schema.Array(
+    Schema.Struct({
+      host: lanHost,
+      port: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 })),
+    }),
+  ).check(Schema.isMinLength(1), Schema.isMaxLength(4)),
+  sourceCertificateSha256: sha256Hex,
+  recipientCertificateSha256: sha256Hex,
+  scopeSha256: sha256Hex,
+  targetSha256: sha256Hex,
+  lanToken: Schema.String.check(Schema.isPattern(/^swclan_[A-Za-z0-9_-]{43}$/)),
+  bindingSha256: sha256Hex,
+});
+export type FolderCopyLanOffer = typeof FolderCopyLanOffer.Type;
+
+/**
+ * The review gate of the setting (1334 S-11). The setting takes effect on an operating
+ * system only when every line here is true for it. Each line is turned on by a commit
+ * that names its evidence, never by a person's settings.
+ */
+export const FOLDER_COPY_LAN_GATE = {
+  /** A design review said DESIGN OK (security-review-lan-listener-4). */
+  designReview: true,
+  /** An implementation review confirmed findings 1 to 4 are fixed in code. */
+  implementationReview: false,
+  /** Test-relay records show no part of the block (S-10). */
+  relayRecords: false,
+  /** Risks R-01 to R-03: accepted November 19, 2026 (1334 reports/lan-risk-acceptance.md). */
+  risksAccepted: true,
+  /** Per-OS evidence on signed builds (AC-34). */
+  osEvidence: { darwin: false, win32: false, linux: false } as Readonly<Record<string, boolean>>,
+} as const;
+
+/** Whether the setting may take effect on this operating system. */
+export const folderCopyLanGateOpen = (
+  platform: string,
+  gate: {
+    readonly designReview: boolean;
+    readonly implementationReview: boolean;
+    readonly relayRecords: boolean;
+    readonly risksAccepted: boolean;
+    readonly osEvidence: Readonly<Record<string, boolean>>;
+  } = FOLDER_COPY_LAN_GATE,
+): boolean =>
+  gate.designReview &&
+  gate.implementationReview &&
+  gate.relayRecords &&
+  gate.risksAccepted &&
+  gate.osEvidence[platform] === true;

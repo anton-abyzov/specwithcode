@@ -324,6 +324,7 @@ export const make = Effect.gen(function* () {
       pullRequests: true,
       teamRulesCarried: true,
       handoffReviewLock: true,
+      folderCopyLan: true,
       deviceApproval: true,
       pullRequestChecks: true,
       inlineMessageContext: true,

@@ -282,4 +282,8 @@ export const syncZh: PhraseCatalog = {
     "无法读取 {repository} 的哪些分支只在 {machine} 上",
   "Its state could not be read after the run": "运行后无法读取其状态",
   "Could not compare: a repository could not be read": "无法比较：有仓库无法读取",
+  "Over your local network": "通过本地网络",
+  "Over SpecWithCode Connect": "通过 SpecWithCode Connect",
+  "Partly over your local network, the rest over SpecWithCode Connect":
+    "部分通过本地网络，其余通过 SpecWithCode Connect",
 };

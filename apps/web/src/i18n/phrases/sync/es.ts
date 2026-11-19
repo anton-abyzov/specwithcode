@@ -313,4 +313,8 @@ export const syncEs: PhraseCatalog = {
   "Its state could not be read after the run": "Su estado no se pudo leer después de la ejecución",
   "Could not compare: a repository could not be read":
     "No se pudo comparar: no se pudo leer un repositorio",
+  "Over your local network": "Por tu red local",
+  "Over SpecWithCode Connect": "Por SpecWithCode Connect",
+  "Partly over your local network, the rest over SpecWithCode Connect":
+    "En parte por tu red local, el resto por SpecWithCode Connect",
 };

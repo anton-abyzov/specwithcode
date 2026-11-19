@@ -316,4 +316,8 @@ export const syncJa: PhraseCatalog = {
   "Its state could not be read after the run": "実行後にその状態を読み取れませんでした",
   "Could not compare: a repository could not be read":
     "比較できません: リポジトリを読み取れませんでした",
+  "Over your local network": "ローカルネットワーク経由",
+  "Over SpecWithCode Connect": "SpecWithCode Connect 経由",
+  "Partly over your local network, the rest over SpecWithCode Connect":
+    "一部はローカルネットワーク経由、残りは SpecWithCode Connect 経由",
 };
