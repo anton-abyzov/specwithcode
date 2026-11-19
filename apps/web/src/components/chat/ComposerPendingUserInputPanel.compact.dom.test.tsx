@@ -108,6 +108,56 @@ describe("compact question options", () => {
     await act(async () => option("C").click());
     expect(picked).toEqual(["Skip both"]);
   });
+
+  it("never opens a row on hover, so nothing under the pointer moves", async () => {
+    vi.useFakeTimers();
+    try {
+      await render();
+      const row = option("B");
+      await act(async () => {
+        row.dispatchEvent(new PointerEvent("pointerover", { bubbles: true, pointerType: "mouse" }));
+        row.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }));
+        vi.advanceTimersByTime(1000);
+      });
+      expect(row.dataset.expanded).toBe("false");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stays one line per option when the card cannot be measured", async () => {
+    await render();
+    expect(
+      container.querySelector<HTMLElement>("[data-question-card]")!.dataset.questionOptions,
+    ).toBe("compact");
+  });
+});
+
+describe("question options with room for every description", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("opens every description at once, with no toggles, so nothing moves on hover", async () => {
+    vi.spyOn(Element.prototype, "clientHeight", "get").mockReturnValue(300);
+    vi.spyOn(Element.prototype, "scrollHeight", "get").mockReturnValue(200);
+    await render();
+    const card = container.querySelector<HTMLElement>("[data-question-card]")!;
+    expect(card.dataset.questionOptions).toBe("all");
+    for (const letter of ["A", "B", "C"]) expect(option(letter).dataset.expanded).toBe("true");
+    expect(container.querySelector("[data-question-option-details]")).toBeNull();
+    await act(async () => option("B").click());
+    expect(picked).toEqual(["Machine list first"]);
+  });
+
+  it("falls back to one line per option when the descriptions overflow", async () => {
+    vi.spyOn(Element.prototype, "clientHeight", "get").mockReturnValue(120);
+    vi.spyOn(Element.prototype, "scrollHeight", "get").mockReturnValue(400);
+    await render();
+    expect(
+      container.querySelector<HTMLElement>("[data-question-card]")!.dataset.questionOptions,
+    ).toBe("compact");
+    expect(option("A").dataset.expanded).toBe("false");
+    expect(container.querySelectorAll("[data-question-option-details]")).toHaveLength(3);
+  });
 });
 
 describe("folding the question card", () => {
