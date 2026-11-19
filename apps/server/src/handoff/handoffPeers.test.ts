@@ -15,7 +15,8 @@ import * as FleetTargets from "../fleet/FleetTargets.ts";
 import { makeFleetLink } from "../fleet/fleetTransport.ts";
 import * as FleetWorkerGrants from "../fleet/FleetWorkerGrants.ts";
 import { nodePath as NodePath } from "../nodePath.ts";
-import { HANDOFF_PEER_PREFIX } from "./handoffWire.ts";
+import * as PreviousRelease from "./handoffReviewLock.previousRelease.test.fixture.ts";
+import { HANDOFF_PEER_PREFIX, type ReplicateMeta } from "./handoffWire.ts";
 import { HandoffPeers, layer as handoffPeersLayer } from "./handoffPeers.ts";
 
 const machine = { ...target, connectUrl: CONNECT_ORIGIN };
@@ -34,7 +35,14 @@ interface Sent {
 /** The worker on both addresses, the tailnet one down; peer calls need a valid proof. */
 function worker(
   grant: string,
-  options: { readonly offline: Set<string>; readonly refuse?: boolean | undefined },
+  options: {
+    readonly offline: Set<string>;
+    readonly refuse?: boolean | undefined;
+    /** What the machine answers its identity check with; a bare older one by default. */
+    readonly descriptor?: unknown;
+    /** Whether the machine runs the previous release right now, read at each call. */
+    readonly previousRelease?: (() => boolean) | undefined;
+  },
 ) {
   const sent: Sent[] = [];
   const fetcher = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
@@ -47,13 +55,17 @@ function worker(
     });
     if (options.offline.has(url.origin)) throw new TypeError("fetch failed");
     if (url.pathname === "/.well-known/studio/environment")
-      return Response.json({
-        environmentId: "env-m1",
-        label: "M1",
-        platform: { os: "darwin", arch: "arm64" },
-        serverVersion: "0.2.11",
-        capabilities: { repositoryIdentity: true },
-      });
+      return Response.json(
+        (typeof options.descriptor === "function"
+          ? (options.descriptor as () => unknown)()
+          : options.descriptor) ?? {
+          environmentId: "env-m1",
+          label: "M1",
+          platform: { os: "darwin", arch: "arm64" },
+          serverVersion: "0.2.11",
+          capabilities: { repositoryIdentity: true },
+        },
+      );
     const proven =
       options.refuse !== true &&
       headers.get("authorization") === `DPoP ${grant}` &&
@@ -69,6 +81,15 @@ function worker(
     // This worker is from before Sync extras: it has no such path.
     if (url.pathname.includes("/extras-"))
       return Response.json({ error: "not_found", code: "not_found" }, { status: 404 });
+    // The previous release answers only the paths it had.
+    if (
+      options.previousRelease?.() === true &&
+      !PreviousRelease.PEER_PATHS.has(url.pathname.slice(HANDOFF_PEER_PREFIX.length + 1))
+    )
+      return Response.json(PreviousRelease.unknownPath.body, {
+        status: PreviousRelease.unknownPath.status,
+      });
+    if (url.pathname.endsWith("replicate")) return Response.json({ sequence: 1 });
     return Response.json({ machineLabel: "M1", continued: [] });
   }) as typeof fetch;
   return { fetcher, sent };
@@ -79,6 +100,8 @@ const withPeers = <A, E>(
     readonly grant: (thumbprint: string) => string;
     readonly offline: Set<string>;
     readonly refuse?: boolean;
+    readonly descriptor?: unknown;
+    readonly previousRelease?: () => boolean;
   },
   body: (
     peers: HandoffPeers["Service"],
@@ -89,7 +112,12 @@ const withPeers = <A, E>(
     const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-peers-connect-"));
     const key = yield* Effect.promise(() => loadOrCreateFleetProofKey(baseDir));
     const grant = input.grant(key.thumbprint);
-    const remote = worker(grant, { offline: input.offline, refuse: input.refuse });
+    const remote = worker(grant, {
+      offline: input.offline,
+      refuse: input.refuse,
+      descriptor: input.descriptor,
+      previousRelease: input.previousRelease,
+    });
     const rejected: string[] = [];
     const layer = handoffPeersLayer.pipe(
       Layer.provide(
@@ -245,5 +273,167 @@ describe("handoff peers over SpecWithCode Connect", () => {
           expect(rejected).toHaveLength(1);
         }),
     ),
+  );
+});
+
+/** A checkpoint message for one thread, with or without a reviewer lock. */
+const checkpointMessage = (reviewLock: ReplicateMeta["reviewLock"]): ReplicateMeta =>
+  ({
+    sourceEnvironmentId: EnvironmentId.make("env-m4"),
+    sourceLabel: "M4",
+    sourceProjectId: ProjectId.make("project-m4"),
+    sourceThreadId: "thread-1",
+    repositoryPath: "",
+    title: "Review the fix",
+    modelSelection: { instanceId: "codex", model: "gpt-5.5" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    checkpoint: {
+      sequence: 1,
+      commit: "a".repeat(40),
+      baseCommit: "b".repeat(40),
+      branch: "feat/x",
+      ref: "refs/specwithcode/handoff/thread-1",
+      createdAt: "2026-10-20T14:00:00.000Z",
+      reason: "turn-end",
+      skipped: [],
+      excludedSecretCount: 0,
+      transcriptMessageCount: 0,
+      note: null,
+      pushedToOrigin: false,
+      epoch: 1,
+      latestRunId: null,
+      turnKey: "thread-1/run-1",
+      runEnding: "usage-limit",
+      sideEffects: [],
+      sourceRoot: {
+        environmentId: EnvironmentId.make("env-m4"),
+        projectId: ProjectId.make("project-m4"),
+        threadId: "thread-1",
+        workspaceRoot: "/repo",
+        branch: "feat/x",
+      },
+    },
+    lease: null,
+    transcript: [],
+    execution: null,
+    reviewLock,
+  }) as unknown as ReplicateMeta;
+
+const openaiLock = {
+  marker: "routing" as const,
+  families: ["openai" as const],
+  policy: {},
+};
+
+describe("a reviewer lock and the machine it is sent to (1390 AC-40)", () => {
+  const replicatePosts = (sent: ReadonlyArray<Sent>) =>
+    sent.filter((call) => call.url.endsWith(`${HANDOFF_PEER_PREFIX}/replicate`));
+
+  it.effect(
+    `a machine on the previous release (${PreviousRelease.PREVIOUS_RELEASE}) is never sent a review: nothing is posted`,
+    () =>
+      withPeers(
+        {
+          grant: (jkt) => studioToken({ sid: "grant", jkt }),
+          offline: new Set([ORIGIN]),
+          descriptor: PreviousRelease.descriptor("env-m1", "M1"),
+        },
+        (peers, { sent }) =>
+          Effect.gen(function* () {
+            const refused = yield* Effect.flip(
+              peers.replicate(machine.environmentId, checkpointMessage(openaiLock), null),
+            );
+            expect(refused).toMatchObject({ code: "invalid", uncertain: false, local: true });
+            expect(refused.message).toBe("Review stays here: update SpecWithCode on M1.");
+            expect(replicatePosts(sent)).toHaveLength(0);
+            // A thread that is no review still goes to that machine.
+            yield* peers.replicate(machine.environmentId, checkpointMessage(null), null);
+            expect(replicatePosts(sent)).toHaveLength(1);
+          }),
+      ),
+  );
+
+  it.effect("a machine that says it keeps the lock is sent the review", () =>
+    withPeers(
+      {
+        grant: (jkt) => studioToken({ sid: "grant", jkt }),
+        offline: new Set([ORIGIN]),
+        descriptor: {
+          ...PreviousRelease.descriptor("env-m1", "M1"),
+          capabilities: { ...PreviousRelease.descriptorCapabilities, handoffReviewLock: true },
+        },
+      },
+      (peers, { sent }) =>
+        Effect.gen(function* () {
+          yield* peers.replicate(machine.environmentId, checkpointMessage(openaiLock), null);
+          // On the path only a machine that keeps the lock answers, never the ordinary one.
+          expect(
+            sent.filter((call) => call.url.endsWith(`${HANDOFF_PEER_PREFIX}/review-replicate`)),
+          ).toHaveLength(1);
+          expect(replicatePosts(sent)).toHaveLength(0);
+        }),
+    ),
+  );
+
+  it.effect(
+    "T24R1-04: a machine downgraded after it said it keeps the lock is sent no review",
+    () => {
+      // One machine at one address; the sender's cached answer about it is never aged.
+      const peer = { downgraded: false };
+      const keeps = {
+        ...PreviousRelease.descriptor("env-m1", "M1"),
+        capabilities: { ...PreviousRelease.descriptorCapabilities, handoffReviewLock: true },
+      };
+      const ordinary = (sent: ReadonlyArray<Sent>, path: string) =>
+        sent.filter((call) => call.url.endsWith(`${HANDOFF_PEER_PREFIX}/${path}`));
+      return withPeers(
+        {
+          grant: (jkt) => studioToken({ sid: "grant", jkt }),
+          offline: new Set([ORIGIN]),
+          descriptor: () => (peer.downgraded ? PreviousRelease.descriptor("env-m1", "M1") : keeps),
+          previousRelease: () => peer.downgraded,
+        },
+        (peers, { sent }) =>
+          Effect.gen(function* () {
+            yield* peers.replicate(machine.environmentId, checkpointMessage(openaiLock), null);
+            const before = sent.length;
+            peer.downgraded = true;
+            const replicated = yield* Effect.result(
+              peers.replicate(machine.environmentId, checkpointMessage(openaiLock), null),
+            );
+            expect(ordinary(sent.slice(before), "replicate")).toHaveLength(0);
+            expect(replicated._tag).toBe("Failure");
+            if (replicated._tag === "Failure") {
+              expect(replicated.failure.message).toBe(
+                "Review stays here: update SpecWithCode on M1.",
+              );
+              // The machine answered, so the source takes the thread back.
+              expect(replicated.failure.uncertain).toBe(false);
+            }
+            const taken = yield* Effect.result(
+              peers.takeover(machine.environmentId, {
+                sourceEnvironmentId: EnvironmentId.make("env-m4"),
+                sourceThreadId: "thread-1",
+                epoch: 2,
+                sequence: 1,
+                reason: "handoff",
+                modelSelection: null,
+                review: true,
+              } as never),
+            );
+            expect(ordinary(sent.slice(before), "takeover")).toHaveLength(0);
+            expect(taken._tag).toBe("Failure");
+            if (taken._tag === "Failure") {
+              expect(taken.failure.message).toBe("Review stays here: update SpecWithCode on M1.");
+              expect(taken.failure).toMatchObject({ uncertain: false });
+              expect(taken.failure.local).not.toBe(true);
+            }
+            // A thread that is no review still goes to that machine.
+            yield* peers.replicate(machine.environmentId, checkpointMessage(null), null);
+            expect(ordinary(sent.slice(before), "replicate")).toHaveLength(1);
+          }),
+      );
+    },
   );
 });

@@ -136,7 +136,7 @@ export const layer = HttpRouter.add(
     };
 
     const limit =
-      path === "replicate" || path === "extras-replicate"
+      path === "replicate" || path === "review-replicate" || path === "extras-replicate"
         ? MAX_BODY_BYTES
         : path === "coordinator-replica"
           ? COORDINATOR_REPLICA_MAX_BYTES
@@ -178,7 +178,8 @@ export const layer = HttpRouter.add(
           ? invalid
           : yield* answer(receiver.preflight(caller, input.value));
       }
-      case "takeover": {
+      case "takeover":
+      case "review-takeover": {
         const input = decodeJson(TakeoverRequest, body.value);
         return Option.isNone(input)
           ? invalid
@@ -274,7 +275,8 @@ export const layer = HttpRouter.add(
           ? invalid
           : yield* answer((yield* ExtrasReceiver).replicate(caller, meta.value, frame.bundle));
       }
-      case "replicate": {
+      case "replicate":
+      case "review-replicate": {
         let frame: { meta: unknown; bundle: Uint8Array };
         try {
           frame = decodeFrame(body.value);

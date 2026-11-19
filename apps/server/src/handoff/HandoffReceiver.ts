@@ -52,6 +52,7 @@ import * as Layer from "effect/Layer";
 
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveHandoffPlacement } from "./handoffPlacement.ts";
+import { arrivedReview, sentAsReview } from "./handoffReviewLock.ts";
 import * as ServerConfig from "../config.ts";
 import { clampRuntimeMode } from "../fleet/remoteWorkerMatching.ts";
 import {
@@ -94,6 +95,7 @@ import {
 import {
   emptyThreadRecord,
   findIncoming,
+  type HandoffIncomingDetail,
   heartbeatContinued,
   incomingKey,
   ambiguousLinkMessage,
@@ -399,6 +401,29 @@ export const make = Effect.gen(function* () {
       Effect.map((provider) => (provider === null ? null : toPreflightProvider(provider))),
     );
 
+  /** What an arriving thread continues on here: inside its reviewer lock when it has one. */
+  const reviewOf = (
+    caller: ReceiverCaller,
+    replica: { readonly title: string; readonly sourceLabel: string } | undefined,
+    detail: Pick<HandoffIncomingDetail, "reviewLock" | "modelSelection"> | undefined,
+    requested: ModelSelection | null,
+  ) =>
+    Effect.gen(function* () {
+      if (replica === undefined || detail === undefined) return { kind: "unlocked" } as const;
+      return arrivedReview({
+        carried: detail.reviewLock,
+        title: replica.title,
+        stored: detail.modelSelection,
+        requested,
+        providers: yield* providers.getProviders,
+        allowed: (instanceId) =>
+          caller.grant === null || accountInGrant(caller.grant.accounts, instanceId),
+        machineLabel: label,
+        sourceLabel: replica.sourceLabel,
+        now: yield* nowIso,
+      });
+    });
+
   /** Every failing check for one thread, worded for the user. */
   const threadFailures = (
     caller: ReceiverCaller,
@@ -416,7 +441,14 @@ export const make = Effect.gen(function* () {
         incomingKey(caller.sourceEnvironmentId, input.sourceThreadId)
       ];
       const project = yield* localProject(caller.sourceEnvironmentId, input.sourceProjectId);
-      const modelSelection = input.modelSelection ?? detail?.modelSelection ?? null;
+      const review = yield* reviewOf(caller, replica, detail, input.modelSelection);
+      // A check an older source reads; the message is the row it shows, so it stands alone.
+      if (review.kind === "refused")
+        return [{ check: "provider" as const, message: review.message }];
+      const modelSelection =
+        review.kind === "locked"
+          ? review.modelSelection
+          : (input.modelSelection ?? detail?.modelSelection ?? null);
       let missing: ReadonlyArray<string> = [];
       if (project !== null && replica !== undefined && detail !== undefined) {
         const required = replica.checkpoint.requiredSecretPaths ?? [];
@@ -624,6 +656,12 @@ export const make = Effect.gen(function* () {
           refuse(500, "failed", at("could not read destination worktree settings")),
         ),
       );
+      // Asked again before the workspace changes, so a reviewer gone since the checks leaves nothing here.
+      const still = sentAsReview(
+        request,
+        yield* reviewOf(caller, replica, detail, request.modelSelection),
+      );
+      if (still.kind === "refused") return yield* refuse(409, "invalid", still.message, "provider");
       const name = `${refComponent(project.title).slice(0, 32)}-handoff-${refComponent(
         request.sourceThreadId,
       ).slice(-16)}-e${request.epoch}`;
@@ -695,7 +733,17 @@ export const make = Effect.gen(function* () {
         request.epoch,
       );
       const now = yield* nowIso;
-      const modelSelection = request.modelSelection ?? detail.modelSelection;
+      // And once more now that the workspace is ready: this is the answer the launch runs on.
+      const review = sentAsReview(
+        request,
+        yield* reviewOf(caller, replica, detail, request.modelSelection),
+      );
+      if (review.kind === "refused")
+        return yield* refuse(409, "invalid", review.message, "provider");
+      const modelSelection =
+        review.kind === "locked"
+          ? review.modelSelection
+          : (request.modelSelection ?? detail.modelSelection);
       const resume = shouldResume(checkpoint.runEnding);
       const ceiling = caller.runtimeCeiling ?? null;
       const clamped =
@@ -794,6 +842,7 @@ export const make = Effect.gen(function* () {
             ...(resume ? { initialMessage: { text: seed, attachments: [] } } : {}),
             createdBy: "system",
             creationSource: "server",
+            ...(review.kind === "locked" ? { routing: review.routing } : {}),
             ...(carried === undefined
               ? {}
               : {
@@ -879,6 +928,7 @@ export const make = Effect.gen(function* () {
             ? null
             : `Runs at ${runtimeMode} here (lowered from ${loweredFrom}) under this machine's limits for ${replica.sourceLabel}.`,
           workspaceNotice,
+          review.kind === "locked" ? review.notice : null,
           checkpoint.skipped.length > 0
             ? `Not carried over: ${checkpoint.skipped
                 .slice(0, 5)

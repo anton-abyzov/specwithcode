@@ -103,6 +103,32 @@ describe("LimitHandoffCandidateList", () => {
     expect(html).toContain("<li>M3: offline</li>");
   });
 
+  it("shows a review that stays once per machine, in its own sentence", () => {
+    const stays = (label: string, review: "no_reviewer" | "update_needed", text: string) =>
+      ({ ...candidate(label, text, false), reason: "refused", review }) as ReturnType<
+        typeof candidate
+      >;
+    const html = renderToStaticMarkup(
+      <LimitHandoffCandidateList
+        result={result({
+          candidates: [
+            stays("Minis", "no_reviewer", "Review stays here: no permitted reviewer on Minis"),
+            stays("M3", "update_needed", "Review stays here: update SpecWithCode on M3"),
+          ],
+          waiting:
+            "Review stays here: no permitted reviewer on Minis. Review stays here: update SpecWithCode on M3.",
+        })}
+        onMove={noop}
+      />,
+    );
+    expect(html).not.toContain("<button");
+    expect(html).toContain("<li>Review stays here: no permitted reviewer on Minis</li>");
+    expect(html).toContain("<li>Review stays here: update SpecWithCode on M3</li>");
+    // Once: the wait text above the list would repeat it, and is left out.
+    expect(html.split("no permitted reviewer on Minis")).toHaveLength(2);
+    expect(html).not.toContain("No other machine");
+  });
+
   it("names the same-machine-first order in the tooltip", () => {
     expect(
       limitHandoffOrderTip(

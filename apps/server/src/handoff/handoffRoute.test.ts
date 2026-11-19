@@ -53,6 +53,7 @@ const credentials: Record<
 function api() {
   const callers: Array<ReceiverCaller> = [];
   const extras: Array<{ readonly meta: unknown; readonly bundle: Uint8Array | null }> = [];
+  const takeovers: Array<unknown> = [];
   const token = (headers: Record<string, string | undefined>) =>
     (headers.authorization ?? "").replace(/^Bearer /, "");
   // Route handlers read their services per request, so they stay in the output.
@@ -121,6 +122,18 @@ function api() {
               callers.push(caller);
               return { known: [] };
             }),
+          takeover: (caller, request) =>
+            Effect.sync(() => {
+              callers.push(caller);
+              takeovers.push(request);
+              return {
+                threadId: ThreadId.make("thread-continued"),
+                machineLabel: "Mini",
+                modelSelection: null,
+                resumed: false,
+                notice: null,
+              };
+            }),
         }),
       ),
     ),
@@ -172,7 +185,7 @@ function api() {
         body: body as never,
       }),
     );
-  return { negotiate, post, frame, callers, extras, dispose };
+  return { negotiate, post, frame, callers, extras, takeovers, dispose };
 }
 
 describe("handoff route", () => {
@@ -254,6 +267,27 @@ describe("handoff route", () => {
       expect(answer.status).toBe(413);
       expect(await answer.json()).toMatchObject({ code: "too_large" });
       expect(app.callers).toEqual([]);
+    } finally {
+      await app.dispose();
+    }
+  });
+
+  it("T24R1-04: takes a review's takeover on its own path, with the caller its grant names", async () => {
+    const app = api();
+    try {
+      const request = {
+        sourceEnvironmentId: m4,
+        sourceThreadId: "thread-m4",
+        epoch: 2,
+        sequence: 1,
+        reason: "handoff",
+        modelSelection: null,
+        review: true,
+      };
+      const answer = await app.post("review-takeover", "limited", JSON.stringify(request));
+      expect(answer.status).toBe(200);
+      expect(app.callers[0]?.sourceEnvironmentId).toBe(m4);
+      expect(app.takeovers).toEqual([request]);
     } finally {
       await app.dispose();
     }

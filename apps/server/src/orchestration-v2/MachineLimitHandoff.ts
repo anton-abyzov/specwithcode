@@ -28,6 +28,7 @@ import {
 } from "@specweave-studio/shared/personalAssistant";
 import {
   type EnvironmentId,
+  type ProviderLimitMachineTarget,
   WS_METHODS,
   WsLimitHandoffRpcGroup,
   type LimitHandoffCandidate,
@@ -59,6 +60,13 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as RemoteWorkers from "../fleet/RemoteWorkers.ts";
+import {
+  describeReviewWait,
+  machineReviewTarget,
+  REVIEW_FAMILY_UNKNOWN,
+  type ReviewStays,
+  sourceReviewLock,
+} from "../handoff/handoffReviewLock.ts";
 import { HandoffTurnGate } from "../handoff/HandoffTurnGate.ts";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
@@ -324,7 +332,10 @@ export class MachineLimitHandoff extends Context.Reference<MachineLimitHandoffSh
   { defaultValue: () => disabled },
 ) {}
 
-const verdictToCandidate = (verdict: MachineCandidateVerdict): LimitHandoffCandidate => ({
+/** A verdict, and for a review thread that stays, what about this machine keeps it. */
+type Verdict = MachineCandidateVerdict & { readonly review?: ReviewStays };
+
+const verdictToCandidate = (verdict: Verdict): LimitHandoffCandidate => ({
   environmentId: verdict.target.environmentId,
   machineLabel: verdict.machineLabel,
   modelSelection: verdict.target.modelSelection,
@@ -333,6 +344,7 @@ const verdictToCandidate = (verdict: MachineCandidateVerdict): LimitHandoffCandi
   text: verdict.text,
   usedPercent: verdict.usedPercent,
   resetsAt: verdict.resetsAt,
+  ...(verdict.review === undefined ? {} : { review: verdict.review }),
 });
 
 /**
@@ -394,7 +406,7 @@ export const make = Effect.gen(function* () {
       OrchestrationV2ThreadShell,
       "projectId" | "providerInstanceId" | "worktreePath"
     > &
-      Partial<Pick<OrchestrationV2ThreadShell, "routing">>;
+      Partial<Pick<OrchestrationV2ThreadShell, "routing" | "title" | "modelSelection">>;
     readonly rule: ServerSettingsValue;
     readonly source: ServerProvider | undefined;
     readonly projectTitle: string | null;
@@ -405,7 +417,7 @@ export const make = Effect.gen(function* () {
       // A machine target is a fallback too, so it stays inside this machine's list.
       // Reach rules decide first: no target at all when work may not cross machines.
       if (teamRulesMachines(yield* currentTeamRules) === "none") {
-        return [] as ReadonlyArray<MachineCandidateVerdict>;
+        return [] as ReadonlyArray<Verdict>;
       }
       // The list is the one for this thread's folder, which a zone or repository can narrow.
       const folderProject = yield* projects
@@ -414,11 +426,11 @@ export const make = Effect.gen(function* () {
       const teamRules = yield* teamRulesForFolder(
         input.thread.worktreePath ?? Option.getOrUndefined(folderProject)?.workspaceRoot,
       );
-      // A review delegation (TaskRoutingDecision.reviewFamily) stays on this
-      // machine: a handoff does not carry its reviewer lock, so another
-      // machine's fallback could continue it on the author's family. It waits.
-      if (input.thread.routing?.reviewFamily !== undefined)
-        return [] as ReadonlyArray<MachineCandidateVerdict>;
+      // A review thread carries its reviewer lock (1390 AC-40): a machine is a
+      // target only when it keeps the lock and offers a reviewer inside it.
+      // One whose reviewer has no known family cannot be locked, so it waits.
+      const review = sourceReviewLock(input.thread);
+      if (review.kind === "unknown-family") return [] as ReadonlyArray<Verdict>;
       const targets = input.rule.providerLimitMachineTargets.filter(
         (target) =>
           teamRulesSelectionRefusal(teamRules, {
@@ -426,10 +438,10 @@ export const make = Effect.gen(function* () {
             model: target.modelSelection.model,
           }) === null,
       );
-      if (targets.length === 0) return [] as ReadonlyArray<MachineCandidateVerdict>;
+      if (targets.length === 0) return [] as ReadonlyArray<Verdict>;
       const list = yield* machinesFor(input.thread.projectId, input.nowMs);
       if (typeof list === "string")
-        return targets.map((target): MachineCandidateVerdict => {
+        return targets.map((target): Verdict => {
           const machineLabel = targetMachineLabel(target, undefined);
           return {
             target,
@@ -456,8 +468,49 @@ export const make = Effect.gen(function* () {
         driverKind: input.source?.driver ?? "",
         accountFingerprint: sourceUsage?.accountFingerprint ?? null,
       };
-      return targets.map((target) => {
-        const machine = list.machines.find((row) => row.environmentId === target.environmentId);
+      const judgeOn = (
+        target: ProviderLimitMachineTarget,
+        machine: (typeof list.machines)[number] | undefined,
+      ) =>
+        judgeMachineCandidate({
+          target,
+          machine,
+          source,
+          projectTitle: input.projectTitle,
+          linkedEnvironmentIds,
+          thresholdPercent: input.rule.providerLimitSwitchAtPercent,
+          unknownUsageEligible: input.rule.providerLimitUnknownUsageEligible,
+          nowMs: input.nowMs,
+          excludedModels: input.rule.providerLimitExcludedModels,
+        });
+      return targets.map((saved): Verdict => {
+        const machine = list.machines.find((row) => row.environmentId === saved.environmentId);
+        const locked =
+          review.kind !== "lock" || machine?.teamRulesRefused !== undefined
+            ? null
+            : machineReviewTarget({
+                lock: review.lock,
+                target: saved,
+                machine,
+                machineLabel: targetMachineLabel(saved, machine),
+                allowed: (driver, model) =>
+                  teamRulesSelectionRefusal(teamRules, { driver, model }) === null,
+                usable: (target) => judgeOn(target, machine).eligible,
+              });
+        if (locked?.kind === "stays") {
+          const reason = locked.review === "update_needed" ? "update_needed" : "refused";
+          return {
+            target: saved,
+            machineLabel: targetMachineLabel(saved, machine),
+            eligible: false,
+            reason,
+            text: locked.text,
+            usedPercent: null,
+            resetsAt: null,
+            review: locked.review,
+          };
+        }
+        const target = locked?.target ?? saved;
         if (machine?.teamRulesRefused !== undefined) {
           const machineLabel = targetMachineLabel(target, machine);
           return {
@@ -470,17 +523,9 @@ export const make = Effect.gen(function* () {
             resetsAt: null,
           } satisfies MachineCandidateVerdict;
         }
-        const verdict = judgeMachineCandidate({
-          target,
-          machine,
-          source,
-          projectTitle: input.projectTitle,
-          linkedEnvironmentIds,
-          thresholdPercent: input.rule.providerLimitSwitchAtPercent,
-          unknownUsageEligible: input.rule.providerLimitUnknownUsageEligible,
-          nowMs: input.nowMs,
-          excludedModels: input.rule.providerLimitExcludedModels,
-        });
+        const judged = judgeOn(target, machine);
+        // A review moves only to a machine that was read and keeps its lock.
+        const verdict = locked !== null && !locked.proven ? { ...judged, eligible: false } : judged;
         // A personal assistant's threads never continue on another machine.
         if (Option.isSome(project) && isPersonalAssistantProject(project.value))
           return {
@@ -684,7 +729,16 @@ export const make = Effect.gen(function* () {
       nowMs,
       refusals: new Map([...transient, ...(latest.refused.get(trigger.key) ?? [])]),
     });
-    yield* setWaiting(describeMachineWait(shown));
+    const unlockable =
+      sourceReviewLock(thread).kind === "unknown-family" &&
+      input.rule.providerLimitMachineTargets.length > 0;
+    // A review that stays is told once, by its own row.
+    yield* setWaiting(
+      unlockable
+        ? REVIEW_FAMILY_UNKNOWN
+        : (describeReviewWait(shown) ??
+            describeMachineWait(shown.filter((verdict) => verdict.review === undefined))),
+    );
     yield* Effect.logInfo("orchestration-v2.limit-handoff.no-machine", {
       threadId: thread.id,
       key: trigger.key,

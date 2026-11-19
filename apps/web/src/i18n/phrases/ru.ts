@@ -5936,4 +5936,8 @@ export const ru: PhraseCatalog = {
     "Это самая новая копия инкремента. Копия в папке проекта старее или отсутствует.",
   "This copy's files could not be read on this machine.":
     "Файлы этой копии не удалось прочитать на этом компьютере.",
+  "Review stays here: no permitted reviewer on {machine}":
+    "Ревью остаётся здесь: на {machine} нет разрешённого ревьюера",
+  "Review stays here: update SpecWithCode on {machine}":
+    "Ревью остаётся здесь: обновите SpecWithCode на {machine}",
 };

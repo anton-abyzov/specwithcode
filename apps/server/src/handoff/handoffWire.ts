@@ -35,6 +35,7 @@ import {
 
 import packageJson from "../../package.json" with { type: "json" };
 import { CoordinatorStandbyShadowWorker } from "../project/CoordinatorStandbyStore.ts";
+import { HandoffReviewLock } from "./handoffReviewLock.ts";
 
 export const HANDOFF_PEER_PREFIX = "/api/handoff/v1";
 /**
@@ -132,6 +133,12 @@ export const ReplicateMeta = Schema.Struct({
   carried: Schema.optional(TeamRulesCarried),
   /** Who waits for the result of a continuation that arrived on the sender. */
   launcher: Schema.optional(HandoffLauncher),
+  /**
+   * A review thread's reviewer lock; null for a thread that is no review, and
+   * absent from a sender older than the lock. Sent only to a machine with the
+   * `handoffReviewLock` capability.
+   */
+  reviewLock: Schema.optional(Schema.NullOr(HandoffReviewLock)),
 });
 export type ReplicateMeta = typeof ReplicateMeta.Type;
 export const ReplicateResponse = Schema.Struct({ sequence: NonNegativeInt });
@@ -218,6 +225,8 @@ export const TakeoverRequest = Schema.Struct({
   modelSelection: Schema.NullOr(ModelSelection),
   /** Set while a thread waits for the result. Older receivers ignore it. */
   launcher: Schema.optional(HandoffLauncher),
+  /** The thread is a review: it is taken over only through `review-takeover`. */
+  review: Schema.optional(Schema.Boolean),
 });
 export type TakeoverRequest = typeof TakeoverRequest.Type;
 export const TakeoverResponse = Schema.Struct({
@@ -365,7 +374,9 @@ export type PeerPath =
   | "plan-export"
   | "plan-merge"
   | "extras-negotiate"
-  | "extras-replicate";
+  | "extras-replicate"
+  | "review-replicate"
+  | "review-takeover";
 export const PEER_PATHS: ReadonlySet<string> = new Set<PeerPath>([
   "negotiate",
   "replicate",
@@ -385,7 +396,17 @@ export const PEER_PATHS: ReadonlySet<string> = new Set<PeerPath>([
   "plan-merge",
   "extras-negotiate",
   "extras-replicate",
+  "review-replicate",
+  "review-takeover",
 ]);
+
+/**
+ * A review thread's checkpoint and takeover have paths of their own. A server
+ * from before the reviewer lock has neither, so it can never take a review as
+ * an ordinary thread, whatever this machine last read about it.
+ */
+export const reviewPath = (path: "replicate" | "takeover", review: boolean): PeerPath =>
+  review ? `review-${path}` : path;
 
 export class FrameError extends Error {}
 

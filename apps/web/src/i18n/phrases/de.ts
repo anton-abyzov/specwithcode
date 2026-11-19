@@ -5983,4 +5983,8 @@ export const de: PhraseCatalog = {
     "Das ist die neueste Kopie des Inkrements. Die Kopie im Projektordner ist älter oder fehlt.",
   "This copy's files could not be read on this machine.":
     "Die Dateien dieser Kopie konnten auf diesem Rechner nicht gelesen werden.",
+  "Review stays here: no permitted reviewer on {machine}":
+    "Das Review bleibt hier: kein zugelassener Reviewer auf {machine}",
+  "Review stays here: update SpecWithCode on {machine}":
+    "Das Review bleibt hier: SpecWithCode auf {machine} aktualisieren",
 };
