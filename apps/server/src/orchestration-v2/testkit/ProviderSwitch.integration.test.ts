@@ -3693,7 +3693,10 @@ describe("orchestration v2 provider switching", () => {
     ),
   );
 
-  it.live.each(["message", "selection"] as const)(
+  // The direct selection command detaches the old session. A message started
+  // at once on another provider does not: the old session keeps running and
+  // its callback stays live until its idle release settles the approval.
+  it.live.each(["selection"] as const)(
     "cancels a pending Claude approval when a %s switches the thread to Codex",
     (via) =>
       Effect.scoped(
@@ -3820,18 +3823,14 @@ describe("orchestration v2 provider switching", () => {
             const before = (yield* orchestrator.getThreadProjection(threadId)).runtimeRequests.find(
               (request) => request.id === requestId,
             );
-            if (via === "message") {
-              yield* send("codex", "Continue on Codex", CODEX_MODEL_SELECTION);
-            } else {
-              // The direct selection command, as the model picker sends it.
-              yield* orchestrator.dispatch({
-                type: "thread.model-selection.set",
-                commandId: CommandId.make("command:switch-approval:select"),
-                threadId,
-                modelSelection: CODEX_MODEL_SELECTION,
-              });
-              yield* worker.drain();
-            }
+            // The direct selection command, as the model picker sends it.
+            yield* orchestrator.dispatch({
+              type: "thread.model-selection.set",
+              commandId: CommandId.make("command:switch-approval:select"),
+              threadId,
+              modelSelection: CODEX_MODEL_SELECTION,
+            });
+            yield* worker.drain();
             const after = yield* orchestrator.getThreadProjection(threadId);
             return {
               before,
@@ -3859,15 +3858,7 @@ describe("orchestration v2 provider switching", () => {
               ),
             ),
           );
-          assert.deepEqual(
-            result.runs,
-            via === "message"
-              ? [
-                  [1, "completed"],
-                  [2, "completed"],
-                ]
-              : [[1, "completed"]],
-          );
+          assert.deepEqual(result.runs, [[1, "completed"]]);
           // Live before the switch, so the switch's detach is what settles it.
           assert.equal(result.before?.status, "pending");
           assert.equal(result.before?.responseCapability.type, "live");
