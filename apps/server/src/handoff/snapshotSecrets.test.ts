@@ -407,6 +407,18 @@ describe("a snapshot with the content check (1390 AC-14, AC-31)", () => {
     }
   });
 
+  it("asks for no ignored secret that lies in a clone's staging folder (P2-34)", async () => {
+    const { a } = twoMachines();
+    commit(a, ".gitignore", "ignored.log\n.env\n");
+    const staging = stagingFolder(a, ".swc-clone-lib-Ab12Cd", { repository: false });
+    write(staging, "clone/.env", "API_KEY=abc\n");
+    const mine = stagingFolder(a, ".swc-clone-mine-Ab12Cd", { mark: false, repository: false });
+    write(mine, "clone/.env", "API_KEY=abc\n");
+    write(a, ".env", "API_KEY=abc\n");
+    const written = await writeCheckpoint({ cwd: a, threadId: "sync-test" });
+    expect(written.requiredSecretPaths).toEqual([".env", ".swc-clone-mine-Ab12Cd/clone/.env"]);
+  });
+
   it("leaves a thread's checkpoint as it is today: no content check unless asked for", async () => {
     const a = dirtyRepository();
     const written = await writeCheckpoint({ cwd: a, threadId: "thread-1" });

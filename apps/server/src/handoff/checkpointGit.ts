@@ -156,19 +156,21 @@ export async function writeCheckpoint(input: {
         { env },
       ),
     ]);
+    // A folder a Sync clone is being made in (it carries the clone step's mark) is not
+    // this checkout's work: neither its mark nor the half-made clone is ever carried, and
+    // no ignored secret in it is asked for.
+    const staging = cloneStagingIn(root);
     const secretPaths = new Set<string>();
     for (const entry of ignored.stdout.split("\0")) {
       if (
         entry &&
         !entry.endsWith("/") &&
-        (isSecretLikeProjectPath(entry) || isUntrackedSecretConfigPath(entry))
+        (isSecretLikeProjectPath(entry) || isUntrackedSecretConfigPath(entry)) &&
+        !(await staging.has(entry))
       )
         secretPaths.add(entry);
     }
     const candidates = new Set<string>();
-    // A folder a Sync clone is being made in (it carries the clone step's mark) is not
-    // this checkout's work: neither its mark nor the half-made clone is ever carried.
-    const staging = cloneStagingIn(root);
     const untrackedPaths = new Set<string>();
     for (const entry of untracked.stdout.split("\0"))
       if (entry && !(await staging.has(entry))) untrackedPaths.add(entry);

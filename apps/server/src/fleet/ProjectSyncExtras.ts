@@ -58,6 +58,7 @@ import {
 import { runGit } from "./folderTransfer/git.ts";
 import { cloneStagingIn } from "./cloneStaging.ts";
 import * as ProjectSync from "./ProjectSync.ts";
+import { originRecord, type OriginRecords, originRecordsOf } from "./projectSyncOrigin.ts";
 
 const EXTRAS_REF_PREFIX = "refs/specwithcode/extras/";
 /** Branches that arrived from another machine are that machine's work, not this one's. */
@@ -111,7 +112,7 @@ export async function snapshotLeftOut(root: string): Promise<Array<ProjectSyncLe
   // Ignored secrets (a `.env` under `.gitignore`) are never in a snapshot; they are listed so
   // the sealed route can offer them.
   for (const path of ignored.stdout.split("\0").filter(Boolean).toSorted()) {
-    if (path.endsWith("/")) continue;
+    if (path.endsWith("/") || (await staging.has(path))) continue;
     if (isSecretLikeProjectPath(path) || isUntrackedSecretConfigPath(path))
       out.push({ path, reason: "name", kind: null });
   }
@@ -151,25 +152,66 @@ export async function sweepStaleExtraRefs(
   }
 }
 
-/** The work in one repository that Git does not carry. Reads only. */
+/** More branches on `origin` than this are not passed to one Git command. */
+const LIVE_HEADS_MAX = 2000;
+const ORIGIN_TRACKING = "refs/remotes/origin/";
+
+/**
+ * The work in one repository that Git does not carry. Reads only. `origin` is
+ * what the project's Sync fetches learned: a branch `origin` no longer lists
+ * is counted against the branches it does list, not against its own tracking
+ * ref, which the fetch (it never prunes) leaves where it was.
+ */
 export async function inventoryRepository(
   repository: ProjectSync.SyncRepository,
+  origin?: OriginRecords,
 ): Promise<ProjectSyncRepositoryExtras> {
   const root = repository.cwd;
   const refs = await runGit(root, [
     "for-each-ref",
-    "--format=%(refname:short)%09%(objectname)%09%(upstream:short)",
+    "--format=%(refname:short)%09%(objectname)%09%(upstream:short)%09%(upstream)",
     "refs/heads",
   ]);
+  let listed: ReadonlyMap<string, string> | null = null;
+  if (origin !== undefined && origin.size > 0) {
+    const urls = await runGit(root, ["config", "--get-all", "remote.origin.url"], {
+      allowFailure: true,
+    });
+    const url = urls.code === 0 ? (urls.stdout.split("\n")[0] ?? "").trim() : "";
+    const record =
+      url.length === 0
+        ? undefined
+        : await originRecord(origin, (cwd, args, options) => runGit(cwd, args, options), root, url);
+    if (record !== undefined && record.heads.size <= LIVE_HEADS_MAX) listed = record.heads;
+  }
+  const live = listed === null ? [] : [...new Set(listed.values())];
   const notPushed: Array<ProjectSyncBranchExtra> = [];
   const onlyHere: Array<ProjectSyncBranchExtra> = [];
   let branchesNotListed = 0;
   for (const line of lines(refs.stdout)) {
-    const [branch, head, upstream] = line.split("\t");
+    const [branch, head, upstream, upstreamRef] = line.split("\t");
     if (branch === undefined || head === undefined || !isCommitSha(head)) continue;
     if (branch.startsWith(ARRIVED_PREFIX) || branch.length > 255) continue;
     const sameName = await refCommit(root, `refs/remotes/origin/${branch}`);
     const against = upstream !== undefined && upstream.length > 0 ? upstream : null;
+    // The branch of origin this one is counted against, when it is one of origin's.
+    const onOrigin =
+      against === null
+        ? sameName === null
+          ? null
+          : `refs/heads/${branch}`
+        : upstreamRef?.startsWith(ORIGIN_TRACKING) === true
+          ? `refs/heads/${upstreamRef.slice(ORIGIN_TRACKING.length)}`
+          : null;
+    if (listed !== null && onOrigin !== null && !listed.has(onOrigin)) {
+      // Gone from origin: its own commits are those no branch origin still has holds.
+      // A commit origin listed that is not here yet is passed over.
+      const commits = await count(root, ["--ignore-missing", head, "--not", ...live]);
+      if (commits === 0) continue;
+      if (onlyHere.length >= PROJECT_SYNC_MAX_LISTED) branchesNotListed += 1;
+      else onlyHere.push({ branch, head, commits });
+      continue;
+    }
     if (against === null && sameName === null) {
       if (onlyHere.length >= PROJECT_SYNC_MAX_LISTED) branchesNotListed += 1;
       else
@@ -185,12 +227,18 @@ export async function inventoryRepository(
     if (notPushed.length >= PROJECT_SYNC_MAX_LISTED) branchesNotListed += 1;
     else notPushed.push({ branch, head, commits });
   }
-  const status = await runGit(root, ["status", "--porcelain=v1", "--untracked-files=all"]);
+  // `-z`: each path as it is, never in quotes, and a rename or copy followed by its old name.
+  const status = await runGit(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
   // A folder a clone is being made in is no work of this repository.
   const staging = cloneStagingIn(root);
   const entries: Array<string> = [];
-  for (const entry of lines(status.stdout))
+  const fields = status.stdout.split("\0");
+  for (let index = 0; index < fields.length; index += 1) {
+    const entry = fields[index]!;
+    if (entry.length < 4) continue;
+    if (entry[0] === "R" || entry[0] === "C") index += 1;
     if (!(entry.startsWith("??") && (await staging.has(entry.slice(3))))) entries.push(entry);
+  }
   const untrackedFiles = entries.filter((entry) => entry.startsWith("??")).length;
   const stashes = await runGit(root, ["stash", "list"], { allowFailure: true });
   const leftOut = capped(await snapshotLeftOut(root));
@@ -538,7 +586,9 @@ const make = Effect.gen(function* () {
       const found = yield* sync.repositories(input.projectId);
       const repositories: Array<ProjectSyncRepositoryExtras> = [];
       for (const repository of found.repositories)
-        repositories.push(yield* attempt(() => inventoryRepository(repository)));
+        repositories.push(
+          yield* attempt(() => inventoryRepository(repository, originRecordsOf(input.projectId))),
+        );
       return { repositories, scanLimited: found.scanLimited };
     }),
     sendExtras: Effect.fn("ProjectSyncExtras.sendExtras")(function* (input) {

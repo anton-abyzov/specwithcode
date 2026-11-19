@@ -90,38 +90,41 @@ export function gitCommandsNotAllowed(): Array<string> {
         ? false
         : READS.has(verb)
           ? true
-          : PRIVATE_INDEX_ONLY.has(verb)
-            ? privateIndex
-            : verb === "commit-tree"
-              ? true
-              : verb === "stash"
-                ? rest.join(" ") === "list"
-                : verb === "worktree"
-                  ? rest.join(" ") === "list --porcelain"
-                  : verb === "bundle"
-                    ? ["create", "verify", "list-heads"].includes(rest[0] ?? "")
-                    : verb === "update-ref"
-                      ? rest[0] === "-d"
-                        ? // With the commit it was listed at, or without: only ever a hidden ref.
-                          (rest.length === 2 || rest.length === 3) && HIDDEN.test(rest[1] ?? "")
-                        : HIDDEN.test(rest[0] ?? "") ||
-                          // An arrival branch is created only where no ref of that name exists.
-                          (ARRIVAL.test(rest[0] ?? "") && rest.length === 3 && rest[2] === "")
-                      : verb === "fetch"
-                        ? (rest.length === 5 &&
-                            rest.slice(0, 3).join(" ") ===
-                              "--quiet --no-tags --no-write-fetch-head" &&
-                            /^(\/|[A-Za-z]:[\\/])/.test(rest[3] ?? "") &&
-                            /:refs\/specwithcode\/extras-incoming\//.test(rest[4] ?? "")) ||
-                          // An arrival branch is moved forward from a hidden ref of this very
-                          // repository, with no `+`: Git refuses anything but a fast-forward.
-                          (rest.length === 8 &&
-                            rest.slice(0, 7).join(" ") ===
-                              "--quiet --no-tags --no-prune --no-recurse-submodules --no-write-fetch-head --refmap= ." &&
-                            /^refs\/specwithcode\/extras-incoming\/[^:+]+:refs\/heads\/swc\/from-[^:]+$/.test(
-                              rest[7] ?? "",
-                            ))
-                        : false;
+          : verb === "config"
+            ? // origin's address is read, to tell whose list of branches the inventory goes by.
+              rest.join(" ") === "--get-all remote.origin.url"
+            : PRIVATE_INDEX_ONLY.has(verb)
+              ? privateIndex
+              : verb === "commit-tree"
+                ? true
+                : verb === "stash"
+                  ? rest.join(" ") === "list"
+                  : verb === "worktree"
+                    ? rest.join(" ") === "list --porcelain"
+                    : verb === "bundle"
+                      ? ["create", "verify", "list-heads"].includes(rest[0] ?? "")
+                      : verb === "update-ref"
+                        ? rest[0] === "-d"
+                          ? // With the commit it was listed at, or without: only ever a hidden ref.
+                            (rest.length === 2 || rest.length === 3) && HIDDEN.test(rest[1] ?? "")
+                          : HIDDEN.test(rest[0] ?? "") ||
+                            // An arrival branch is created only where no ref of that name exists.
+                            (ARRIVAL.test(rest[0] ?? "") && rest.length === 3 && rest[2] === "")
+                        : verb === "fetch"
+                          ? (rest.length === 5 &&
+                              rest.slice(0, 3).join(" ") ===
+                                "--quiet --no-tags --no-write-fetch-head" &&
+                              /^(\/|[A-Za-z]:[\\/])/.test(rest[3] ?? "") &&
+                              /:refs\/specwithcode\/extras-incoming\//.test(rest[4] ?? "")) ||
+                            // An arrival branch is moved forward from a hidden ref of this very
+                            // repository, with no `+`: Git refuses anything but a fast-forward.
+                            (rest.length === 8 &&
+                              rest.slice(0, 7).join(" ") ===
+                                "--quiet --no-tags --no-prune --no-recurse-submodules --no-write-fetch-head --refmap= ." &&
+                              /^refs\/specwithcode\/extras-incoming\/[^:+]+:refs\/heads\/swc\/from-[^:]+$/.test(
+                                rest[7] ?? "",
+                              ))
+                          : false;
     if (!ok) out.push(args.join(" ").slice(0, 300));
   }
   return out;

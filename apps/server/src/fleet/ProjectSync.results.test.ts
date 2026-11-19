@@ -10,7 +10,10 @@ import * as NodePath from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "@effect/vitest";
 import {
   planProjectSync,
+  planProjectSyncRepository,
   PROJECT_SYNC_STATE_UNREAD_DETAIL,
+  PROJECT_SYNC_STATE_UNREAD_LEVEL_DETAIL,
+  type ProjectSyncRepositoryFacts,
   type ProjectSyncStep,
 } from "@specweave-studio/contracts";
 
@@ -21,11 +24,14 @@ import {
   isolateGit,
   restoreGit,
   snapshot,
+  stagingFolder,
   twoMachines,
+  write,
 } from "../handoff/extrasTestKit.ts";
 import { runGit } from "./folderTransfer/git.ts";
 import { fetchAll, runSync, type SyncContext, type SyncGit } from "./ProjectSync.ts";
 import { inventoryRepository } from "./ProjectSyncExtras.ts";
+import type { OriginRecords } from "./projectSyncOrigin.ts";
 
 beforeAll(isolateGit);
 afterAll(restoreGit);
@@ -70,11 +76,13 @@ describe("project sync: one repository's failure is its own result (P2-25)", () 
     });
     expect(results.map((result) => `${result.path} ${say(result)} ${result.moved}`)).toEqual([
       "one fast-forward:behind 1",
-      "two none:refused 0",
+      "two fetch:refused 0",
       "three fast-forward:behind 1",
     ]);
-    expect(results[1]).toMatchObject({ downgraded: true, branch: null });
-    expect(results[1]!.detail).toContain("git merge timed out");
+    // Read after the failure: nothing moved there, so it is a refusal, with Git's words.
+    expect(results[1]).toMatchObject({ downgraded: true, branch: "main" });
+    expect(results[1]!.detail).toBe("Git did not finish: git merge timed out");
+    expect(git(two.cwd, "rev-parse", "HEAD")).not.toBe(f.head);
     expect(git(one.cwd, "rev-parse", "HEAD")).toBe(f.head);
     expect(git(three.cwd, "rev-parse", "HEAD")).toBe(f.head);
   });
@@ -107,10 +115,14 @@ describe("project sync: one repository's failure is its own result (P2-25)", () 
       });
       expect(results.map((result) => `${result.path} ${say(result)}`)).toEqual([
         "first none:refused",
-        "second none:refused",
+        // In its place before the read failed: a clone that was made, its branch not known.
+        "second clone:missing",
         "third clone:missing",
       ]);
-      expect(results[1]!.detail).toContain("git did not answer");
+      expect(results[1]).toMatchObject({ branch: null, detail: null, downgraded: false });
+      expect(NodeFS.existsSync(NodePath.join(root, "first"))).toBe(false);
+      expect(git(NodePath.join(root, "second"), "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
+      expect(NodeFS.readdirSync(root).filter((name) => name.startsWith(".swc-clone-"))).toEqual([]);
       expect(NodeFS.existsSync(NodePath.join(root, "third", ".git"))).toBe(true);
     } finally {
       process.env.GIT_CONFIG_GLOBAL = "/dev/null";
@@ -200,5 +212,148 @@ describe("project sync: a branch gone from origin with nothing behind (P2-27)", 
     const here = await fetchAll(context(), [{ path: ".", cwd: f.a }]);
     expect(here[0]!.upstreamGone ?? false).toBe(false);
     expect(say(planProjectSync(here, [])[0]!)).toBe("none:up-to-date");
+  });
+});
+
+describe("project sync: the work on a branch that just went from origin (P2-31)", () => {
+  /** Machine A on `feature` with one commit of its own, pushed; level with origin. */
+  const level = () => {
+    const f = twoMachines();
+    git(f.a, "checkout", "-q", "-b", "feature");
+    const head = commit(f.a, "feature.ts", "export const feature = 1;\n");
+    git(f.a, "push", "-q", "-u", "origin", "feature");
+    return { ...f, head };
+  };
+  const fetched = async (cwd: string) => {
+    const origin: OriginRecords = new Map();
+    const here = await fetchAll({ ...context(), origin }, [{ path: ".", cwd }]);
+    return { origin, facts: here[0]! };
+  };
+
+  it("offers a branch that was level when it was deleted, with no further commit", async () => {
+    const f = level();
+    git(f.b, "push", "-q", "origin", "--delete", "feature");
+    const { origin, facts } = await fetched(f.a);
+    expect(facts).toMatchObject({ ahead: 0, behind: 0, upstreamGone: true });
+    // The tracking ref still says "level": counted against it, the commit is nobody's.
+    expect(git(f.a, "rev-parse", "refs/remotes/origin/feature")).toBe(f.head);
+    const extras = await inventoryRepository({ path: ".", cwd: f.a }, origin);
+    expect(extras.onlyHere).toEqual([{ branch: "feature", head: f.head, commits: 1 }]);
+    expect(extras.notPushed).toEqual([]);
+  });
+
+  it("offers nothing when the deleted branch's commits are on a branch origin still has", async () => {
+    const f = level();
+    // Merged on origin, then deleted there.
+    git(f.b, "fetch", "-q", "origin");
+    git(f.b, "merge", "-q", "--ff-only", "origin/feature");
+    git(f.b, "push", "-q", "origin", "main");
+    git(f.b, "push", "-q", "origin", "--delete", "feature");
+    const { origin, facts } = await fetched(f.a);
+    expect(facts).toMatchObject({ upstreamGone: true });
+    const extras = await inventoryRepository({ path: ".", cwd: f.a }, origin);
+    expect(extras.onlyHere).toEqual([]);
+    expect(extras.notPushed).toEqual([]);
+  });
+
+  it("counts a branch origin still has as before", async () => {
+    const f = level();
+    const own = commit(f.a, "feature.ts", "export const feature = 'mine';\n");
+    const { origin } = await fetched(f.a);
+    const extras = await inventoryRepository({ path: ".", cwd: f.a }, origin);
+    expect(extras.notPushed).toEqual([{ branch: "feature", head: own, commits: 1 }]);
+    expect(extras.onlyHere).toEqual([]);
+  });
+});
+
+describe("project sync: a clone's staging folder in the list of extras (P2-34)", () => {
+  it("is not counted when its name is one Git writes in quotes", async () => {
+    const f = twoMachines();
+    stagingFolder(f.a, ".swc-clone-caf\u00e9 \u043b\u0438\u0431-Ab12Cd", { repository: false });
+    // A person's own file with such a name is still theirs.
+    write(f.a, "caf\u00e9 notes.txt", "mine\n");
+    const extras = await inventoryRepository({ path: ".", cwd: f.a });
+    expect(extras.untrackedFiles).toBe(1);
+    expect(extras.changedFiles).toBe(0);
+  });
+
+  it("counts a renamed file once", async () => {
+    const f = twoMachines();
+    git(f.a, "mv", "app.ts", "moved app.ts");
+    const extras = await inventoryRepository({ path: ".", cwd: f.a });
+    expect(extras).toMatchObject({ changedFiles: 1, untrackedFiles: 0 });
+  });
+
+  it("lists no ignored secret that lies in a staging folder", async () => {
+    const f = twoMachines();
+    commit(f.a, ".gitignore", "ignored.log\n.env\n");
+    const staging = stagingFolder(f.a, ".swc-clone-lib-Ab12Cd", { repository: false });
+    write(staging, "clone/.env", "API_KEY=abc\n");
+    // The person's own, in a folder that only has such a name, and at the top.
+    const mine = stagingFolder(f.a, ".swc-clone-mine-Ab12Cd", { mark: false, repository: false });
+    write(mine, "clone/.env", "API_KEY=abc\n");
+    write(f.a, ".env", "API_KEY=abc\n");
+    const extras = await inventoryRepository({ path: ".", cwd: f.a });
+    expect(
+      extras.leftOut.filter((file) => file.path.endsWith(".env")).map((file) => file.path),
+    ).toEqual([".env", ".swc-clone-mine-Ab12Cd/clone/.env"]);
+  });
+});
+
+describe("project sync: a level checkout whose state could not be read (P2-37)", () => {
+  const facts = (change: Partial<ProjectSyncRepositoryFacts>): ProjectSyncRepositoryFacts => ({
+    path: ".",
+    branch: "main",
+    head: "a".repeat(40),
+    upstream: "origin/main",
+    otherUpstream: null,
+    ahead: 0,
+    behind: 0,
+    uncommitted: 0,
+    inUseBy: null,
+    remote: null,
+    fetch: "ok",
+    fetchError: null,
+    ...change,
+  });
+  const plan = (change: Partial<ProjectSyncRepositoryFacts>) => {
+    const step = planProjectSyncRepository(facts(change), null);
+    return `${say(step)} ${step.detail}`;
+  };
+
+  it("keeps its action and reason, and says its state could not be read", () => {
+    expect(PROJECT_SYNC_STATE_UNREAD_LEVEL_DETAIL).toBe("Its state could not be read.");
+    expect(plan({ stateUnread: true })).toBe("none:up-to-date Its state could not be read.");
+    expect(plan({ ahead: 2, stateUnread: true })).toBe(
+      "none:not-pushed Its state could not be read.",
+    );
+  });
+
+  it("says nothing when the state was read, or the fact is absent", () => {
+    expect(plan({})).toBe("none:up-to-date null");
+    expect(plan({ ahead: 2 })).toBe("none:not-pushed null");
+    expect(plan({ stateUnread: false })).toBe("none:up-to-date null");
+    expect(plan({ ahead: 2, stateUnread: false })).toBe("none:not-pushed null");
+  });
+
+  it("keeps the other sentence for a checkout that was going to move", () => {
+    expect(plan({ behind: 1, stateUnread: true })).toBe(
+      `fetch:uncommitted ${PROJECT_SYNC_STATE_UNREAD_DETAIL}`,
+    );
+  });
+
+  it("reaches the plan from a real checkout Git could not read", async () => {
+    const f = twoMachines();
+    const blind: SyncGit = async (cwd, args, options) =>
+      args[0] === "status"
+        ? { code: 128, stdout: "", stderr: "fatal: unable to read the index" }
+        : real(cwd, args, options);
+    const here = await fetchAll(context(blind), [{ path: ".", cwd: f.a }]);
+    expect(here[0]).toMatchObject({ behind: 0, ahead: 0, stateUnread: true });
+    expect(planProjectSync(here, [])[0]).toMatchObject({
+      action: "none",
+      reason: "up-to-date",
+      detail: "Its state could not be read.",
+    });
   });
 });
