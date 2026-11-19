@@ -720,6 +720,7 @@ export const de: PhraseCatalog = {
   "Its machine": "Sein Rechner",
   Machine: "Rechner",
   "Move to project…": "In Projekt verschieben…",
+  "Chat settings": "Chat-Einstellungen",
   "New chat": "Neuer Chat",
   "New project": "Neues Projekt",
   "No chats on {machine} match this filter.": "Keine Chats auf {machine} passen zu diesem Filter.",

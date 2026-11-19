@@ -281,6 +281,8 @@ import { ThreadSearchMatchExcerpt } from "./ThreadSearchMatch";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
+import { requestChatSettings } from "../studio/chatSettingsRequest";
+import { isScratchProject } from "@specweave-studio/client-runtime/state/projects";
 import {
   deriveProviderEntriesByEnvironment,
   shouldShowInstanceBadge,
@@ -4598,9 +4600,14 @@ export default function Sidebar() {
               ref.environmentId === session.environmentId && ref.projectId === session.projectId,
           ),
         );
-        const workspacePath =
-          session.worktreePath ??
-          projectByKey.get(`${session.environmentId}:${session.projectId}`)?.workspaceRoot;
+        const draftProject = projectByKey.get(`${session.environmentId}:${session.projectId}`);
+        const workspacePath = session.worktreePath ?? draftProject?.workspaceRoot;
+        const draftIsChat =
+          draftProject !== undefined &&
+          isScratchProject(
+            draftProject,
+            serverConfigs.get(session.environmentId)?.scratchWorkspaceRoot,
+          );
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildDraftActionMenuItems({
@@ -4608,6 +4615,7 @@ export default function Sidebar() {
               hasBranch: Boolean(session.branch),
               hasProject: projectGroup != null,
               canOpenProjectWindow: canOpenProjectWindowFor(projectGroup?.projectKey),
+              isChat: draftIsChat,
             }),
             position,
           ),
@@ -4625,6 +4633,9 @@ export default function Sidebar() {
           case "project-settings":
             if (projectGroup) openProjectSettings(projectGroup);
             return;
+          case "chat-settings":
+            requestChatSettings({ environmentId: session.environmentId, threadRef: null });
+            return;
           case "copy-path":
             if (workspacePath) copyPathToClipboard(workspacePath, { path: workspacePath });
             return;
@@ -4641,7 +4652,7 @@ export default function Sidebar() {
         }
       })();
     },
-    [copyBranchToClipboard, copyPathToClipboard, openProjectSettings, projectByKey],
+    [copyBranchToClipboard, copyPathToClipboard, openProjectSettings, projectByKey, serverConfigs],
   );
 
   const handleThreadContextMenu = useCallback(
@@ -4711,6 +4722,16 @@ export default function Sidebar() {
                   }
                 : null,
               isPinned,
+              isChat: (() => {
+                const project = projectByKey.get(`${thread.environmentId}:${thread.projectId}`);
+                return (
+                  project !== undefined &&
+                  isScratchProject(
+                    project,
+                    serverConfigs.get(thread.environmentId)?.scratchWorkspaceRoot,
+                  )
+                );
+              })(),
               isPersonal: isPersonalAssistantProject(
                 projectByKey.get(`${thread.environmentId}:${thread.projectId}`),
               ),
@@ -4785,6 +4806,9 @@ export default function Sidebar() {
             return;
           case "project-settings":
             if (threadProjectGroup) openProjectSettings(threadProjectGroup);
+            return;
+          case "chat-settings":
+            requestChatSettings({ environmentId: thread.environmentId, threadRef });
             return;
           case "new-thread-on-branch": {
             // Explicit branch carry-over: reuse the thread's worktree when it

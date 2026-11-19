@@ -641,6 +641,7 @@ import {
   publishChatPanelHeight,
 } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
+import { requestChatSettings } from "../studio/chatSettingsRequest";
 import { limitFallbackPairing } from "../studio/runIdentity";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
@@ -15659,9 +15660,20 @@ export default function ChatView(props: ChatViewProps) {
               rightPanelOpen={inlineRightPanelOwnsTitleBar}
               artifactsCwd={gitCwd}
               onNewThreadInProject={handleNewThreadInActiveProject}
-              {...(activeDraftLogicalProjectKey
-                ? { onOpenProjectSettings: handleOpenDraftProjectSettings }
-                : {})}
+              {...(activeProjectIsScratch
+                ? {
+                    isChat: true,
+                    onOpenProjectSettings: () =>
+                      requestChatSettings({
+                        environmentId: activeThread.environmentId,
+                        threadRef: isServerThread
+                          ? scopeThreadRef(activeThread.environmentId, activeThread.id)
+                          : null,
+                      }),
+                  }
+                : activeDraftLogicalProjectKey
+                  ? { onOpenProjectSettings: handleOpenDraftProjectSettings }
+                  : {})}
             />
           </header>
         )}

@@ -80,6 +80,11 @@ import { INCREMENT_SIZING_RULE } from "./launchIncrement.ts";
 import * as SpecweaveSetup from "./SpecweaveSetup.ts";
 import { discoverProjectRepositories } from "./ProjectRepositoryDiscovery.ts";
 import { projectEnvironmentContext } from "./projectEnvironmentContext.ts";
+import {
+  CHAT_CONTEXT_ROLE,
+  CHAT_MEMORY_REFUSAL,
+  isScratchWorkspaceRoot,
+} from "./scratchProject.ts";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import * as ServerSettings from "../serverSettings.ts";
 import { projectUsesWorktrees } from "../mcp/toolkits/project/launchWorkspace.ts";
@@ -370,6 +375,22 @@ const make = Effect.gen(function* () {
     Option.isSome(knowledge) ? knowledge.value.markDirty(projectId) : Effect.void;
   const fail = (projectId: ProjectId, code: ProjectWorkspaceError["code"]) =>
     new ProjectWorkspaceError({ projectId, code });
+  /** A chat's Scratch project ("No project") shares nothing between its chats. */
+  const isChatProject = (project: { readonly workspaceRoot: string }) =>
+    Option.isSome(serverConfig) &&
+    isScratchWorkspaceRoot(serverConfig.value.baseDir, project.workspaceRoot);
+  const refuseChatMemory = (projectId: ProjectId) =>
+    new ProjectWorkspaceError({ projectId, code: "invalid", detail: CHAT_MEMORY_REFUSAL });
+  /** A chat has no knowledge to search: its Scratch project's index would span every chat. */
+  const chatKnowledgeGuard = (projectId: ProjectId) =>
+    projects.get(projectId).pipe(
+      Effect.orElseSucceed(() => Option.none()),
+      Effect.flatMap((project) =>
+        Option.isSome(project) && isChatProject(project.value)
+          ? Effect.fail(new ProjectKnowledgeError({ projectId, code: "unavailable" }))
+          : Effect.void,
+      ),
+    );
   const requireProject = (projectId: ProjectId) =>
     projects.get(projectId).pipe(
       Effect.mapError(() => fail(projectId, "operation_failed")),
@@ -389,7 +410,8 @@ const make = Effect.gen(function* () {
   const readWorkspace = ({ projectId }: { projectId: ProjectId }) =>
     Effect.gen(function* () {
       const project = yield* requireProject(projectId);
-      const files = yield* summaries(projectId);
+      // Rows an older build let a chat write stay stored, but no chat lists them.
+      const files = isChatProject(project) ? [] : yield* summaries(projectId);
       const settings = project.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
       return {
         settings,
@@ -437,7 +459,8 @@ const make = Effect.gen(function* () {
     }).pipe(mapProjectFailure(projectId, "workspace.read"));
   const readMemory = ({ projectId, name }: { projectId: ProjectId; name: string }) =>
     Effect.gen(function* () {
-      yield* requireProject(projectId);
+      if (isChatProject(yield* requireProject(projectId)))
+        return yield* refuseChatMemory(projectId);
       if (!validName(name)) return yield* fail(projectId, "invalid");
       const found = yield* file(projectId, name);
       if (!found) return yield* fail(projectId, "not_found");
@@ -453,7 +476,8 @@ const make = Effect.gen(function* () {
       .withTransaction(
         Effect.gen(function* () {
           const { projectId, name, content, expectedRevision } = input;
-          yield* requireProject(projectId);
+          if (isChatProject(yield* requireProject(projectId)))
+            return yield* refuseChatMemory(projectId);
           if (!validateProjectMemory(name, content)) return yield* fail(projectId, "invalid");
           const current = yield* summaries(projectId);
           const previous = current.find((entry) => entry.name === name);
@@ -483,6 +507,8 @@ const make = Effect.gen(function* () {
     sql
       .withTransaction(
         Effect.gen(function* () {
+          if (isChatProject(yield* requireProject(input.projectId)))
+            return yield* refuseChatMemory(input.projectId);
           const stored = yield* readMemory(input);
           if (stored.revision !== input.expectedRevision)
             return yield* fail(input.projectId, "conflict");
@@ -575,6 +601,9 @@ const make = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       const project = yield* requireProject(projectId);
+      // A chat gets no project's goal, instructions, memory or knowledge: they would be
+      // shared with every other chat on this machine.
+      if (isChatProject(project)) return projectContextSnapshot([["role", CHAT_CONTEXT_ROLE]]);
       const settings = project.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
       if (settings.archived && !restoring) return yield* fail(projectId, "archived");
       if (!restoring && settings.paused && settings.coordinatorThreadId === threadId)
@@ -763,8 +792,14 @@ const make = Effect.gen(function* () {
         .pipe(Effect.tap(() => knowledgeChanged(input.projectId))),
     assertAdmission,
     knowledgeStatus: (input) => withKnowledge(input.projectId, (service) => service.status(input)),
-    searchKnowledge: (input) => withKnowledge(input.projectId, (service) => service.search(input)),
-    readKnowledge: (input) => withKnowledge(input.projectId, (service) => service.read(input)),
+    searchKnowledge: (input) =>
+      chatKnowledgeGuard(input.projectId).pipe(
+        Effect.andThen(withKnowledge(input.projectId, (service) => service.search(input))),
+      ),
+    readKnowledge: (input) =>
+      chatKnowledgeGuard(input.projectId).pipe(
+        Effect.andThen(withKnowledge(input.projectId, (service) => service.read(input))),
+      ),
     reindexKnowledge: (input) =>
       withKnowledge(input.projectId, (service) => service.reindex(input)),
     contextSnapshot,

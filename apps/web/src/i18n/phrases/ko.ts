@@ -707,6 +707,7 @@ export const ko: PhraseCatalog = {
   "Its machine": "해당 컴퓨터",
   Machine: "컴퓨터",
   "Move to project…": "프로젝트로 이동…",
+  "Chat settings": "채팅 설정",
   "New chat": "새 채팅",
   "New project": "새 프로젝트",
   "No chats on {machine} match this filter.": "{machine}에 이 필터와 일치하는 채팅이 없습니다.",

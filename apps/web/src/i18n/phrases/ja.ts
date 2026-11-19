@@ -713,6 +713,7 @@ export const ja: PhraseCatalog = {
   "Its machine": "そのマシン",
   Machine: "マシン",
   "Move to project…": "プロジェクトに移動…",
+  "Chat settings": "チャットの設定",
   "New chat": "新しいチャット",
   "New project": "新しいプロジェクト",
   "No chats on {machine} match this filter.":
