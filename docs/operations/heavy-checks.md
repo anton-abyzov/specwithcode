@@ -50,6 +50,10 @@ Dependencies are installed only when the lockfile's hash differs from the one re
 
 The copy changes only under the gate: `checks copy` takes the gate itself for a checkout or an install, and refuses when someone else holds it, unless it runs inside that holder's command. It never discards work: a copy with uncommitted or untracked files is left as it is and the files are listed.
 
+### Copies nobody uses
+
+A copy with its install holds several gigabytes. The hourly storage sweep removes one that no `checks copy` or `checks run` used for 7 days (the newest of its `.git/specwithcode-last-used` marker, its last fetch, its last checkout and its last install). It keeps a copy while the gate is held from inside it, while a process has its working directory in it, when it has uncommitted or untracked files, a stash, or a commit made in it, and when any of that cannot be read. The next `checks copy` clones it again from the checkout, so nothing is lost but the install time. There is never more than one copy per repository: the folder is named after it.
+
 ### What the copy cleans by itself
 
 One copy once held 440 files named `tmp_pack_*` of about 198 MB each, 79 GiB in all. Its refs pointed at objects it did not have, so the `git gc --auto` that every `git fetch` starts failed (`fatal: unable to read <sha>`, then `fatal: failed to run repack`) and left a full-size temporary pack behind on every call.
