@@ -11,6 +11,7 @@ import type {
 } from "@specweave-studio/contracts";
 import { useTx } from "../../i18n";
 import { retentionMovedText } from "./handoffRetention";
+import { sayLinkReason } from "../../studio/linkRefusals";
 import type { CopyLinkOutcome } from "../../studio/projectLink";
 import { copiedProjectFolder, copyDurationText, formatBytes } from "../../studio/folderCopy";
 import { statusProgressView } from "../../studio/copyProgress";
@@ -251,9 +252,7 @@ export function HandoffCopyDone({
                   target: targetLabel,
                 })
               : tx("Not linked yet. {reason}", {
-                  reason: link.words.verbatim
-                    ? link.words.text
-                    : tx(link.words.text, link.words.values),
+                  reason: link.words ? sayLinkReason(link.words, tx) : link.reason,
                 })}
         </p>
       )}

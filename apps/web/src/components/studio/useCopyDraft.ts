@@ -49,7 +49,14 @@ export function useCopyDraft({
   readonly project: { readonly environmentId: string; readonly id: string };
   readonly machines: ReadonlyArray<CopyMachine>;
   /** The machine the dialog was opened for ("Make X main"); it wins over a draft's. */
-  readonly explicit: { readonly machine: boolean };
+  readonly explicit: {
+    readonly machine: boolean;
+    /**
+     * "Add to another machine…": a new copy to a machine without the project. An unfinished
+     * copy or move saved for another machine is neither opened nor changed here.
+     */
+    readonly fresh?: boolean;
+  };
   /**
    * Opened plainly for a copy (no machine asked for, not a move): a finished copy is shown
    * as done, with the form one click away, instead of a form that reads as "copy again".
@@ -86,7 +93,9 @@ export function useCopyDraft({
   };
 
   useEffect(() => {
-    const saved = readPendingCopy(pendingKey);
+    const kept = readPendingCopy(pendingKey);
+    // Add never adopts unfinished work: its machine, folder and mode stay with its pointer.
+    const saved = explicit.fresh && kept?.doneSeen !== true ? null : kept;
     // A finished copy whose Done was seen becomes the last copy when the dialog was opened
     // for something else (a move, a named machine); a plain open shows that copy as done.
     const archived =

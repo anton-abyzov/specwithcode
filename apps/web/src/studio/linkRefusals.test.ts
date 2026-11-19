@@ -52,6 +52,10 @@ describe("reasons this window composes", () => {
       "m4",
     )!.text,
     "A move to another machine is not finished. Finish or cancel it, then add a machine.",
+    "A copy to {machine} is not finished. Finish or cancel it, then add another machine.",
+    "A copy is not finished. Finish or cancel it, then add another machine.",
+    "Open the unfinished copy",
+    "Finish handoff",
   ];
 
   it("are sentences with values, never English put together here", () => {

@@ -293,4 +293,10 @@ export const syncFr: PhraseCatalog = {
   "the check of Root failed": "la vérification du dépôt racine a échoué",
   "the check of {repository} failed": "la vérification de {repository} a échoué",
   "the checks of {n} repositories failed": "les vérifications de {n} dépôts ont échoué",
+  "A copy to {machine} is not finished. Finish or cancel it, then add another machine.":
+    "Une copie vers {machine} n'est pas terminée. Terminez-la ou annulez-la, puis ajoutez une autre machine.",
+  "A copy is not finished. Finish or cancel it, then add another machine.":
+    "Une copie n'est pas terminée. Terminez-la ou annulez-la, puis ajoutez une autre machine.",
+  "Open the unfinished copy": "Ouvrir la copie inachevée",
+  "Finish handoff": "Terminer le transfert",
 };

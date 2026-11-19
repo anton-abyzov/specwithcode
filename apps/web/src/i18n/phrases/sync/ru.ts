@@ -290,4 +290,10 @@ export const syncRu: PhraseCatalog = {
   "the check of Root failed": "проверка корневого репозитория не прошла",
   "the check of {repository} failed": "проверка {repository} не прошла",
   "the checks of {n} repositories failed": "проверки {n} репозиториев не прошли",
+  "A copy to {machine} is not finished. Finish or cancel it, then add another machine.":
+    "Копирование на {machine} не завершено. Завершите или отмените его, затем добавьте другую машину.",
+  "A copy is not finished. Finish or cancel it, then add another machine.":
+    "Копирование не завершено. Завершите или отмените его, затем добавьте другую машину.",
+  "Open the unfinished copy": "Открыть незавершённое копирование",
+  "Finish handoff": "Завершить передачу",
 };

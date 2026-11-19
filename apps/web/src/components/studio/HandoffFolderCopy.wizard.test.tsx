@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { linkRefusalsForTest, resetLinkRefusalsForTest } from "../../studio/linkRefusals";
 import {
   copyHandlers,
   CopyFixture,
@@ -138,6 +139,7 @@ beforeEach(() => {
   root = createRoot(container);
 });
 afterEach(async () => {
+  resetLinkRefusalsForTest();
   await act(async () => root.unmount());
   container.remove();
 });
@@ -554,6 +556,8 @@ it("does not mark Done seen while the copy still needs linking", async () => {
   await click("Copy to M3");
   expect(stageNow()).toBe("done");
   expect(pageText()).toContain("Not linked yet. Notes differ.");
+  // Kept for the machine menu, which says it after this dialog is closed.
+  expect(linkRefusalsForTest()).toEqual([{ text: "Notes differ.", verbatim: true }]);
   expect(pointerNow()?.doneSeen).toBeUndefined();
   // The reopen checks the copy again and links it, instead of archiving it unlinked.
   statuses = [copyStatus("applied", { rows })];

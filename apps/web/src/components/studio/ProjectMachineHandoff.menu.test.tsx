@@ -6,6 +6,9 @@ import type { ComponentProps } from "react";
 import type { MachineHandoffDialog } from "./MachineHandoffDialog";
 import { machineHandoffStorageKey } from "../../studio/machineHandoffPending";
 import { ProjectMachineHandoff } from "./ProjectMachineHandoff";
+import { AddHeldByCopy } from "./AddHeldByCopy";
+import { HandoffFolderCopy, folderCopyStorageKey } from "./HandoffFolderCopy";
+import { toastManager } from "../ui/toast";
 
 vi.mock("../../state/filesystem", () => ({
   filesystemEnvironment: { browse: (input: unknown) => input },
@@ -330,6 +333,88 @@ describe("Add from the machine menu", () => {
     state.environments = machineEnvironments;
     await mount("as-opened");
     expect(offered()).toEqual(["m1", "m3", "m2"]);
+  });
+
+  it("leaves an unfinished copy to another machine alone, and opens it only when asked", async () => {
+    state.environments = machineEnvironments;
+    const copyKey = folderCopyStorageKey("m4", "source");
+    const saved = JSON.stringify({
+      operationId,
+      environmentId: "m1",
+      mode: "copy-and-move",
+      targetFolder: "/work/atlas",
+      projectId: null,
+    });
+    localStorage.setItem(copyKey, saved);
+    await add();
+    expect(props().open).toBe(true);
+    // Add, on no machine: never the move, never its machine, and no copy flow that could
+    // open or replace the saved one.
+    expect(props().intent).toBe("copy");
+    expect(props().selected).toBe("");
+    const flow = props().copyFlow as { type: unknown; props: Record<string, unknown> };
+    expect(flow.type).toBe(AddHeldByCopy);
+    expect(flow.props.machine).toBe("M1");
+    expect(localStorage.getItem(copyKey)).toBe(saved);
+    // Its own button is the separate way back to that copy.
+    await act(async () => (flow.props.onOpen as () => void)());
+    expect((props().copyFlow as { type: unknown }).type).toBe(HandoffFolderCopy);
+    expect(localStorage.getItem(copyKey)).toBe(saved);
+  });
+
+  it("starts Add after a move that completed, without a refusal", async () => {
+    const toast = vi.spyOn(toastManager, "add");
+    await mount();
+    await act(async () => props().onReview());
+    await act(async () => props().onContinue());
+    await act(async () => props().onConsent(true));
+    await act(async () => props().onContinue());
+    expect(props().phase).toBe("complete");
+    await act(async () => props().onOpenChange(false));
+    toast.mockClear();
+    // The same mounted page: the finished move's result is still in memory.
+    await add();
+    expect(toast).not.toHaveBeenCalled();
+    expect(props().open).toBe(true);
+    expect(props().phase).toBe("choose");
+    expect(props().intent).toBe("copy");
+    expect(props().preview).toBeNull();
+    toast.mockRestore();
+  });
+
+  it("refuses Add while a published move is unfinished, and offers to finish it", async () => {
+    const toast = vi.spyOn(toastManager, "add");
+    await mount();
+    await act(async () => props().onReview());
+    await act(async () => props().onContinue());
+    await act(async () => props().onConsent(true));
+    // The destination does not take it: the published move stays unfinished.
+    state.receive.mockImplementation(async ({ input }) =>
+      input.mode === "start"
+        ? { _tag: "Failure", error: new Error("The destination did not answer.") }
+        : { _tag: "Success", value: ready },
+    );
+    await act(async () => props().onContinue());
+    expect(props().phase).not.toBe("complete");
+    await act(async () => props().onOpenChange(false));
+    const before = props().open;
+    toast.mockClear();
+    await add();
+    expect(toast).toHaveBeenCalledTimes(1);
+    const refusal = toast.mock.calls[0]![0] as {
+      title: string;
+      actionProps: { children: string; onClick: () => void };
+    };
+    expect(refusal.title).toBe(
+      "A move to another machine is not finished. Finish or cancel it, then add a machine.",
+    );
+    expect(refusal.actionProps.children).toBe("Finish handoff");
+    expect(props().open).toBe(before);
+    // The refusal's button opens the move itself, with what it published.
+    await act(async () => refusal.actionProps.onClick());
+    expect(props().open).toBe(true);
+    expect(props().intent).not.toBe("copy");
+    toast.mockRestore();
   });
 
   it("copies the whole folder for a project with no Git remote: the only way", async () => {

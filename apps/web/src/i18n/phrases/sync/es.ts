@@ -294,4 +294,10 @@ export const syncEs: PhraseCatalog = {
   "the check of Root failed": "la comprobación del repositorio raíz falló",
   "the check of {repository} failed": "la comprobación de {repository} falló",
   "the checks of {n} repositories failed": "las comprobaciones de {n} repositorios fallaron",
+  "A copy to {machine} is not finished. Finish or cancel it, then add another machine.":
+    "Hay una copia a {machine} sin terminar. Termínala o cancélala y luego añade otro equipo.",
+  "A copy is not finished. Finish or cancel it, then add another machine.":
+    "Hay una copia sin terminar. Termínala o cancélala y luego añade otro equipo.",
+  "Open the unfinished copy": "Abrir la copia sin terminar",
+  "Finish handoff": "Terminar el traspaso",
 };

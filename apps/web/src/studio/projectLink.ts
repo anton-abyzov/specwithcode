@@ -673,7 +673,7 @@ export type CopyLinkOutcome =
       /** In English, for a place that is not translated yet. */
       readonly reason: string;
       /** The same reason as a sentence and its values, or what a machine said, as said. */
-      readonly words: LinkReason;
+      readonly words?: LinkReason;
     };
 
 const refused = (text: string, values?: Record<string, string>): CopyLinkOutcome => {

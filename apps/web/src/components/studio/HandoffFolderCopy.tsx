@@ -126,6 +126,7 @@ export function HandoffFolderCopy({
   savedProject,
   preferredMachine = null,
   machineRequested = false,
+  addOnly = false,
   defaultMode,
   onChoicesChange,
   canMove,
@@ -150,6 +151,7 @@ export function HandoffFolderCopy({
   readonly preferredMachine?: EnvironmentId | null;
   /** True when the dialog was opened for that machine (Move coordinator to X): a draft keeps it. */
   readonly machineRequested?: boolean;
+  readonly addOnly?: boolean; // Add: an unfinished copy saved for another machine stays unopened.
   /** Move or copy, as the dialog was opened; it wins over a draft, a resumed copy keeps its own. */
   readonly defaultMode?: FolderCopyMode;
   /** The live choices and stage, so the dialog can title itself and remember the machine. */
@@ -702,7 +704,7 @@ export function HandoffFolderCopy({
   const draft = useCopyDraft({
     project,
     machines,
-    explicit: { machine: machineRequested },
+    explicit: { machine: machineRequested, fresh: addOnly },
     showFinished: !machineRequested && defaultMode !== "copy-and-move",
     form: { machine, folderDraft, mode, chooseFirst, secrets: secrets.chosen },
     latestPending,
