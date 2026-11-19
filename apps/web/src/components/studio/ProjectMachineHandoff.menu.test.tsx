@@ -74,7 +74,9 @@ vi.mock("../../state/environments", () => ({
 }));
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: () =>
-    new Map([["deskB", { environment: { defaultWorktreesDirectory: "/target/managed/worktrees" } }]]),
+    new Map([
+      ["deskB", { environment: { defaultWorktreesDirectory: "/target/managed/worktrees" } }],
+    ]),
 }));
 vi.mock("../../state/server", () => ({ environmentServerConfigsAtom: {} }));
 vi.mock("../../state/entities", () => ({
@@ -84,7 +86,11 @@ vi.mock("../../state/entities", () => ({
 vi.mock("../../state/session", () => ({
   useEnvironmentsWithScope: (_environments: unknown, scope: string) =>
     new Set(
-      state.denied.has(scope) ? (state.sourceDenied ? [] : ["laptopE"]) : ["laptopE", "deskB", "kioskD", "hubC"],
+      state.denied.has(scope)
+        ? state.sourceDenied
+          ? []
+          : ["laptopE"]
+        : ["laptopE", "deskB", "kioskD", "hubC"],
     ),
 }));
 vi.mock("../../lib/utils", async (importOriginal) => ({
@@ -414,6 +420,13 @@ describe("Add from the machine menu", () => {
     await act(async () => refusal.actionProps.onClick());
     expect(props().open).toBe(true);
     expect(props().intent).not.toBe("copy");
+    // And the move finishes from there once the destination takes it.
+    state.receive.mockImplementation(async ({ input }) => ({
+      _tag: "Success",
+      value: input.mode === "start" ? started : ready,
+    }));
+    await act(async () => props().onContinue());
+    expect(props().phase).toBe("complete");
     toast.mockRestore();
   });
 

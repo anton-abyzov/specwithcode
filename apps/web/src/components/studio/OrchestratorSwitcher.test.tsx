@@ -16,7 +16,22 @@ import { copyRoleLabel } from "../../studio/workersOnlyCopy";
 /** The project shown in `renderSwitcher`. */
 const CURRENT = "laptopE:p";
 
-vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+// Commands answer by name where a test gives one; the menu's own get a bare stub.
+const commands = vi.hoisted(() => ({
+  handlers: {} as Record<string, (input: unknown) => unknown>,
+}));
+vi.mock("../../studio/machineHandoff", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../studio/machineHandoff")>()),
+  machineHandoff: new Proxy({}, { get: (_target, name) => name }),
+}));
+vi.mock("../../state/use-atom-command", () => ({
+  useAtomCommand: (name: unknown) => {
+    const handler = typeof name === "string" ? commands.handlers[name] : undefined;
+    return handler
+      ? async (request: unknown) => ({ _tag: "Success", value: await handler(request) })
+      : vi.fn();
+  },
+}));
 vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 const linkCopy = vi.hoisted(() => vi.fn());
 vi.mock("../../studio/projectLink", async (importOriginal) => ({
@@ -26,6 +41,7 @@ vi.mock("../../studio/projectLink", async (importOriginal) => ({
 
 import * as switcherModule from "./OrchestratorSwitcher";
 import { linkKeeper, OrchestratorSwitcher, type MachineRowReach } from "./OrchestratorSwitcher";
+import { HandoffFolderCopyWatcher } from "./HandoffFolderCopyWatcher";
 import { useCopyLink } from "./useCopyLink";
 
 /** The end of Add's own dialog: the copy is done and is linked as the dialog links it. */
@@ -134,7 +150,11 @@ async function renderSwitcher(
         copies={[copy("laptopE:p", "Laptop E"), copy("towerH:p", "Tower H", "copy", true)]}
         unknown={[]}
         savedMachineMissing={false}
-        mainOffers={[offer("towerH:p", "Tower H"), offer("deskB:p", "Desk B"), offer("rackF:a", "Rack F")]}
+        mainOffers={[
+          offer("towerH:p", "Tower H"),
+          offer("deskB:p", "Desk B"),
+          offer("rackF:a", "Rack F"),
+        ]}
         {...props}
       />,
     ),
@@ -375,7 +395,11 @@ it("tells two checkouts on one machine apart by their folders", async () => {
       { ...copy("deskB:b", "Desk B", "copy"), folder: "/w/b" },
     ],
   });
-  expect(rows().map((row) => row.textContent)).toEqual(["Laptop ECoordinator", "Desk B · /w/a", "Desk B · /w/b"]);
+  expect(rows().map((row) => row.textContent)).toEqual([
+    "Laptop ECoordinator",
+    "Desk B · /w/a",
+    "Desk B · /w/b",
+  ]);
 });
 
 it("notes a machine that kept its old coordinator conversation, and views it on a click", async () => {
@@ -396,7 +420,11 @@ it("notes a machine that kept its old coordinator conversation, and views it on 
 const onTowerH = (extra: Partial<SwitcherProps> = {}) => ({
   label: "Tower H",
   current: "towerH:p",
-  copies: [copy("laptopE:p", "Laptop E"), copy("towerH:p", "Tower H", "copy"), copy("deskB:p", "Desk B", "copy")],
+  copies: [
+    copy("laptopE:p", "Laptop E"),
+    copy("towerH:p", "Tower H", "copy"),
+    copy("deskB:p", "Desk B", "copy"),
+  ],
   mainOffers: [offer("towerH:p", "Tower H"), offer("deskB:p", "Desk B")],
   ...extra,
 });
@@ -474,7 +502,10 @@ it("offers no Continue on the coordinator's own machine, nor without an offer or
   });
   expect(continueItems()).toEqual([]);
   await act(async () => root.render(<></>));
-  await renderSwitcher({ ...handlers(), ...onTowerH({ mainOffers: [offer("deskB:p", "Desk B")] }) });
+  await renderSwitcher({
+    ...handlers(),
+    ...onTowerH({ mainOffers: [offer("deskB:p", "Desk B")] }),
+  });
   expect(continueItems()).toEqual([]);
   await act(async () => root.render(<></>));
   await renderSwitcher({ ...handlers(), ...onTowerH(), onMakeMain: null });
@@ -715,7 +746,10 @@ const showInfo = async () => {
 };
 const unlinkedNote = () =>
   document.querySelector("[data-orchestrator-unlinked-note]")?.textContent ?? null;
-const separate = [copy("laptopE:p", "Laptop E", "independent"), copy("deskB:p", "Desk B", "independent")];
+const separate = [
+  copy("laptopE:p", "Laptop E", "independent"),
+  copy("deskB:p", "Desk B", "independent"),
+];
 
 it("keeps what viewing means behind the label's info button, opened without closing the menu", async () => {
   await renderSwitcher({ ...handlers(), copies: separate });
@@ -799,7 +833,10 @@ it("keeps that note off linked projects and off a group with a linked machine", 
     ...handlers(),
     copies: [copy("laptopE:p", "Laptop E"), copy("deskB:p", "Desk B", "independent")],
   });
-  expect(rows().map((row) => row.textContent)).toEqual(["Laptop ECoordinator", "Desk BSeparate project"]);
+  expect(rows().map((row) => row.textContent)).toEqual([
+    "Laptop ECoordinator",
+    "Desk BSeparate project",
+  ]);
   await showInfo();
   expect(unlinkedNote()).toBeNull();
 });
@@ -843,7 +880,9 @@ it("says under Link why the last try to link failed, until the two are linked", 
   );
   // A failure for another pair of projects is not this row's.
   await act(async () => resetLinkRefusalsForTest());
-  await act(async () => rememberLinkRefusal(CURRENT, "rackF:other", { text: "No.", verbatim: true }));
+  await act(async () =>
+    rememberLinkRefusal(CURRENT, "rackF:other", { text: "No.", verbatim: true }),
+  );
   expect(refusal()).toBeUndefined();
   await act(async () => rememberLinkRefusal(CURRENT, "rackF:old", { text: "No.", verbatim: true }));
   expect(refusal()).toBe("Not linked yet. No.");
@@ -867,6 +906,60 @@ it("says under Link why linking threw, after Add was closed and the menu opened 
   );
 });
 
+it("says under Link why a copy finished in the background could not be linked", async () => {
+  // The copy to Rack F finished with Add closed; the watcher links it and the link throws.
+  vi.useFakeTimers();
+  try {
+    linkCopy.mockRejectedValue(new Error("The two notes could not be merged."));
+    localStorage.setItem(
+      "specwithcode:folder-copy:laptopE:p",
+      JSON.stringify({
+        operationId: "00000000-0000-4000-8000-000000000009",
+        environmentId: "rackF",
+        mode: "copy-only",
+        targetFolder: "/home/sam/projects/atlas",
+        projectId: null,
+      }),
+    );
+    commands.handlers = {
+      copyStatus: () => ({
+        state: "applied",
+        mode: "copy-only",
+        committed: true,
+        projectId: "old",
+        rows: [],
+        checks: [],
+        unstable: [],
+      }),
+    };
+    await act(async () =>
+      root.render(
+        <HandoffFolderCopyWatcher
+          environmentId={"laptopE" as never}
+          projectId="p"
+          projectName="Atlas"
+          machineLabel={() => "Rack F"}
+        />,
+      ),
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(linkCopy).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+    commands.handlers = {};
+    localStorage.clear();
+  }
+  // Nothing of the copy is on screen, and nothing was put in the menu's memory here.
+  await renderSwitcher({
+    ...handlers(),
+    onLink: vi.fn(),
+    links: [{ key: "rackF:old", machine: "Rack F" }],
+  });
+  expect(document.querySelector("[data-orchestrator-link-refusal]")?.textContent).toBe(
+    "Not linked yet. The two notes could not be merged.",
+  );
+});
+
 it("gives a separate project Link, never Continue or a coordinator move", async () => {
   // Shown on Rack F, a separate project, even with an offer for Rack F itself: it has no coordinator
   // of this project to continue.
@@ -875,7 +968,10 @@ it("gives a separate project Link, never Continue or a coordinator move", async 
     label: "Rack F",
     current: "rackF:old",
     onLink: vi.fn<(key: string) => void>(),
-    copies: [copy("laptopE:p", "Laptop E", "independent"), copy("rackF:old", "Rack F", "independent")],
+    copies: [
+      copy("laptopE:p", "Laptop E", "independent"),
+      copy("rackF:old", "Rack F", "independent"),
+    ],
     links: [{ key: "laptopE:p", machine: "Laptop E" }],
     mainOffers: [offer("rackF:old", "Rack F"), offer("laptopE:p", "Laptop E")],
   });
