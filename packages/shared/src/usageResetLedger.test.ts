@@ -7,6 +7,7 @@ import {
   ledgerWindowLengthMs,
   lossIsUpperBound,
   mergeResetPeriods,
+  type ResetPeriod,
   resetPeriods,
 } from "./usageResetLedger.ts";
 
@@ -145,7 +146,12 @@ describe("resetPeriods", () => {
 });
 
 describe("mergeResetPeriods", () => {
-  const period = (endedAt: number, lastReadAt: number, used: number, startedAt: number | null) => ({
+  const period = (
+    endedAt: number,
+    lastReadAt: number,
+    used: number,
+    startedAt: number | null,
+  ): ResetPeriod => ({
     accountKey: "codex:a@x.dev",
     windowId: "weekly",
     startedAt,
