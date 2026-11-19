@@ -21,7 +21,7 @@ import {
   laterKey,
   makeSeenNotices,
   noticeMessage,
-  requestsToPrompt,
+  requestsToShow,
 } from "../../studio/connectDevices";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
@@ -219,7 +219,8 @@ export function useConnectDevicesActions(
 /**
  * Pops up on this machine's own app as soon as a device asks: every waiting
  * device, one code box, a Deny per device. Later hides it until a device that
- * was not listed asks. It closes by itself when nothing waits (1406).
+ * was not listed asks. Once open it stays open until nothing waits or the owner
+ * presses Later or closes it (1406).
  */
 export function DeviceApprovalPromptHost() {
   const environmentId = usePrimaryEnvironmentId();
@@ -231,11 +232,16 @@ export function DeviceApprovalPromptHost() {
   const later = environmentId === null ? NO_LATER : laterStore.keys(environmentId);
   // Devices allowed while this pop-up is open, so it can say which one a code let in.
   const [allowed, setAllowed] = useState<ReadonlyArray<ConnectDevice>>([]);
+  // The machine whose pop-up is open, so a device put off earlier keeps it open
+  // after a new one is allowed, instead of Later closing it over the success line.
+  const [openFor, setOpenFor] = useState<EnvironmentId | null>(null);
   const requests =
     environmentId === null || snapshot === null || !snapshot.canApprove
       ? []
-      : requestsToPrompt(snapshot.pending, later);
+      : requestsToShow(snapshot.pending, later, openFor === environmentId);
   const open = requests.length > 0;
+  const nowOpenFor = open ? environmentId : null;
+  if (nowOpenFor !== openFor) setOpenFor(nowOpenFor);
   // A closed pop-up forgets whom it allowed, so the next one starts clean.
   if (!open && allowed.length > 0) setAllowed([]);
   if (environmentId === null || snapshot === null || !open) return null;
@@ -251,6 +257,7 @@ export function DeviceApprovalPromptHost() {
       }
       onLater={() => {
         laterStore.add(environmentId, requests.map(laterKey));
+        setOpenFor(null);
         setLaterVersion((version) => version + 1);
       }}
     />
@@ -313,7 +320,6 @@ function DeviceApprovalPromptWithAccount(
 export function DeviceWaitingForApprovalHost() {
   const { environments } = useEnvironments();
   useSyncExternalStore(subscribeInlineCodes, inlineCodesVersion);
-  const deviceId = useOwnDeviceShortId();
   const waiting = environments.flatMap((environment) =>
     environment.connection.deviceApprovalCode !== undefined &&
     !inlineCodeShown(environment.environmentId)
@@ -327,6 +333,19 @@ export function DeviceWaitingForApprovalHost() {
       : [],
   );
   if (waiting.length === 0) return null;
+  return <FloatingWaitingCard waiting={waiting} />;
+}
+
+/**
+ * Mounted only while a machine waits, so this device's ID is read then: a key
+ * made at sign-in after the window opened still shows (1406).
+ */
+function FloatingWaitingCard({
+  waiting,
+}: {
+  waiting: Parameters<typeof DeviceWaitingList>[0]["waiting"];
+}) {
+  const deviceId = useOwnDeviceShortId();
   return (
     <div className={FLOATING_CODE_LAYER_CLASS}>
       <div className="pointer-events-auto">
