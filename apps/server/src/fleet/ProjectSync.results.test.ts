@@ -7,12 +7,12 @@
  */
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "@effect/vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "@effect/vitest";
 import {
   planProjectSync,
   planProjectSyncRepository,
+  PROJECT_SYNC_FETCHED_UNREAD_DETAIL,
   PROJECT_SYNC_STATE_UNREAD_DETAIL,
-  PROJECT_SYNC_STATE_UNREAD_LEVEL_DETAIL,
   type ProjectSyncRepositoryFacts,
   type ProjectSyncStep,
 } from "@specweave-studio/contracts";
@@ -31,15 +31,18 @@ import {
 import { runGit } from "./folderTransfer/git.ts";
 import { fetchAll, runSync, type SyncContext, type SyncGit } from "./ProjectSync.ts";
 import { inventoryRepository } from "./ProjectSyncExtras.ts";
-import { newFetchRecord } from "./projectSyncOrigin.ts";
+import { newFetchRecord } from "./projectSyncRecord.ts";
 
 beforeAll(isolateGit);
 afterAll(restoreGit);
 afterEach(cleanUp);
 
 const real: SyncGit = (cwd, args, options) => runGit(cwd, args, options);
-/** One fetch for the whole file: every test works in folders of its own. */
-const fetched = newFetchRecord("project-test");
+/** This test's fetch, as one fetch call's record. */
+let fetched = newFetchRecord("project-test");
+beforeEach(() => {
+  fetched = newFetchRecord("project-test");
+});
 const context = (run: SyncGit = real): SyncContext => ({
   git: run,
   inUse: async () => null,
@@ -70,10 +73,10 @@ describe("project sync: one repository's failure is its own result (P2-25)", () 
       (typeof f.folders)[0],
     ];
     await fetchAll(context(), f.folders);
-    // Git does not come back on the second repository's merge.
+    // Git does not come back on the second repository's tree write, under the lock.
     const failing: SyncGit = (cwd, args, options) => {
-      if (cwd === two.cwd && args[0] === "merge")
-        return Promise.reject(new Error("git merge timed out"));
+      if (cwd === two.cwd && args.includes("read-tree"))
+        return Promise.reject(new Error("git read-tree timed out"));
       return real(cwd, args, options);
     };
     const results = await runSync(context(failing), f.root, f.folders, {
@@ -82,12 +85,14 @@ describe("project sync: one repository's failure is its own result (P2-25)", () 
     });
     expect(results.map((result) => `${result.path} ${say(result)} ${result.moved}`)).toEqual([
       "one fast-forward:behind 1",
-      "two fetch:refused 0",
+      "two none:refused 0",
       "three fast-forward:behind 1",
     ]);
-    // Read after the failure: nothing moved there, so it is a refusal, with Git's words.
+    // Read after the failure: neither the branch nor a file moved there, so it is a refusal,
+    // with Git's words.
     expect(results[1]).toMatchObject({ downgraded: true, branch: "main" });
-    expect(results[1]!.detail).toBe("Git did not finish: git merge timed out");
+    expect(results[1]!.detail).toContain("git read-tree timed out");
+    expect(results[1]!.movedUnverified ?? false).toBe(false);
     expect(git(two.cwd, "rev-parse", "HEAD")).not.toBe(f.head);
     expect(git(one.cwd, "rev-parse", "HEAD")).toBe(f.head);
     expect(git(three.cwd, "rev-parse", "HEAD")).toBe(f.head);
@@ -150,9 +155,9 @@ describe("project sync: a state that could not be read (P2-26)", () => {
     expect(here[0]).toMatchObject({ behind: 1, uncommitted: 0, stateUnread: true });
     const step = planProjectSync(here, [])[0]!;
     expect(say(step)).toBe("fetch:uncommitted");
-    expect(step).toMatchObject({ uncommitted: 0, detail: PROJECT_SYNC_STATE_UNREAD_DETAIL });
-    expect(PROJECT_SYNC_STATE_UNREAD_DETAIL).toBe(
-      "Its state could not be read, so it was not moved.",
+    expect(step).toMatchObject({ uncommitted: 0, detail: PROJECT_SYNC_FETCHED_UNREAD_DETAIL });
+    expect(PROJECT_SYNC_FETCHED_UNREAD_DETAIL).toBe(
+      "Fetched, but its state could not be read, so it was not moved.",
     );
     // Asked to move it anyway, the server holds it for the same reason.
     const results = await runSync(context(blind), f.b, [{ path: ".", cwd: f.b }], {
@@ -165,10 +170,19 @@ describe("project sync: a state that could not be read (P2-26)", () => {
       uncommitted: 0,
       moved: 0,
       downgraded: true,
-      detail: PROJECT_SYNC_STATE_UNREAD_DETAIL,
+      detail: PROJECT_SYNC_FETCHED_UNREAD_DETAIL,
     });
     expect(snapshot(f.b)).toEqual(before);
-    // Readable again, it moves.
+    // Readable again, it still does not move by that fetch: its row was unread.
+    const still = await runSync(context(), f.b, [{ path: ".", cwd: f.b }], {
+      fastForward: [{ path: ".", otherBranch: null }],
+      clone: [],
+    });
+    expect(still[0]).toMatchObject({ moved: 0, downgraded: true });
+    expect(snapshot(f.b)).toEqual(before);
+    // A new fetch that reads it moves it.
+    fetched = newFetchRecord("project-test");
+    await fetchAll(context(), [{ path: ".", cwd: f.b }]);
     const moved = await runSync(context(), f.b, [{ path: ".", cwd: f.b }], {
       fastForward: [{ path: ".", otherBranch: null }],
       clone: [],
@@ -207,7 +221,8 @@ describe("project sync: a branch gone from origin with nothing behind (P2-27)", 
     const f = levelThenGone();
     const own = commit(f.a, "feature.ts", "export const feature = 'mine';\n");
     const here = await fetchAll(context(), [{ path: ".", cwd: f.a }]);
-    expect(here[0]).toMatchObject({ ahead: 1, behind: 0, upstreamGone: true });
+    // Nothing was brought to count against: the inventory lists the commits.
+    expect(here[0]).toMatchObject({ behind: 0, upstreamGone: true });
     expect(say(planProjectSync(here, [])[0]!)).toBe("none:no-upstream");
     const extras = await inventoryRepository({ path: ".", cwd: f.a });
     expect(extras.notPushed).toEqual([{ branch: "feature", head: own, commits: 1 }]);
@@ -234,7 +249,7 @@ describe("project sync: the work on a branch that just went from origin (P2-31)"
   const fetchedAt = async (cwd: string) => {
     const record = newFetchRecord("project-test");
     const here = await fetchAll({ ...context(), fetched: record }, [{ path: ".", cwd }]);
-    return { origin: record.repositories.get(cwd)?.heads, facts: here[0]! };
+    return { origin: record.rows.get("."), facts: here[0]! };
   };
 
   it("offers a branch that was level when it was deleted, with no further commit", async () => {
@@ -275,12 +290,15 @@ describe("project sync: the work on a branch that just went from origin (P2-31)"
     git(f.b, "push", "-q", "origin", "--delete", "feature");
     const { origin } = await fetchedAt(f.a);
     // origin with 2,500 branches, as a fetch of it would have brought them.
-    const many = new Map(origin);
-    const main = origin!.get("refs/heads/main")!;
+    const many = new Map(origin!.originHeads);
+    const main = origin!.originHeads.get("refs/heads/main")!;
     for (let index = 0; index < 2500; index += 1) many.set(`refs/heads/topic-${index}`, main);
     // One of them at a commit this checkout does not have yet.
     many.set("refs/heads/not-here-yet", "1".repeat(40));
-    const extras = await inventoryRepository({ path: ".", cwd: f.a }, many);
+    const extras = await inventoryRepository(
+      { path: ".", cwd: f.a },
+      { ...origin!, originHeads: many },
+    );
     expect(extras.onlyHere).toEqual([{ branch: "feature", head: f.head, commits: 1 }]);
   });
 
@@ -361,11 +379,18 @@ describe("project sync: a level checkout whose state could not be read (P2-37)",
     return `${say(step)} ${step.detail}`;
   };
 
-  it("keeps its action and reason, and says its state could not be read", () => {
-    expect(PROJECT_SYNC_STATE_UNREAD_LEVEL_DETAIL).toBe("Its state could not be read.");
-    expect(plan({ stateUnread: true })).toBe("none:up-to-date Its state could not be read.");
+  it("puts the unread sentence first, whatever the counts say (D4-06)", () => {
+    expect(plan({ stateUnread: true })).toBe(
+      `fetch:uncommitted ${PROJECT_SYNC_STATE_UNREAD_DETAIL}`,
+    );
     expect(plan({ ahead: 2, stateUnread: true })).toBe(
-      "none:not-pushed Its state could not be read.",
+      `fetch:uncommitted ${PROJECT_SYNC_STATE_UNREAD_DETAIL}`,
+    );
+    expect(plan({ behind: 1, stateUnread: true })).toBe(
+      `fetch:uncommitted ${PROJECT_SYNC_STATE_UNREAD_DETAIL}`,
+    );
+    expect(plan({ behind: 1, unreadDetail: PROJECT_SYNC_FETCHED_UNREAD_DETAIL })).toBe(
+      `fetch:uncommitted ${PROJECT_SYNC_FETCHED_UNREAD_DETAIL}`,
     );
   });
 
@@ -374,12 +399,6 @@ describe("project sync: a level checkout whose state could not be read (P2-37)",
     expect(plan({ ahead: 2 })).toBe("none:not-pushed null");
     expect(plan({ stateUnread: false })).toBe("none:up-to-date null");
     expect(plan({ ahead: 2, stateUnread: false })).toBe("none:not-pushed null");
-  });
-
-  it("keeps the other sentence for a checkout that was going to move", () => {
-    expect(plan({ behind: 1, stateUnread: true })).toBe(
-      `fetch:uncommitted ${PROJECT_SYNC_STATE_UNREAD_DETAIL}`,
-    );
   });
 
   it("reaches the plan from a real checkout Git could not read", async () => {
@@ -391,9 +410,9 @@ describe("project sync: a level checkout whose state could not be read (P2-37)",
     const here = await fetchAll(context(blind), [{ path: ".", cwd: f.a }]);
     expect(here[0]).toMatchObject({ behind: 0, ahead: 0, stateUnread: true });
     expect(planProjectSync(here, [])[0]).toMatchObject({
-      action: "none",
-      reason: "up-to-date",
-      detail: "Its state could not be read.",
+      action: "fetch",
+      reason: "uncommitted",
+      detail: PROJECT_SYNC_FETCHED_UNREAD_DETAIL,
     });
   });
 });

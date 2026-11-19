@@ -5,11 +5,11 @@
  * only behind; a repository it lacks is cloned. This module runs exactly these
  * Git commands that change anything: a fetch of `origin`'s branches into
  * `refs/remotes/origin/` (never the destinations the repository's settings
- * name) and into `refs/specwithcode/sync/`, a folder of refs only Sync writes
- * and removes again before the fetch returns; `merge --ff-only`; and `clone`.
- * It never resets, rebases, merges with a merge commit, stashes, switches a
- * branch, deletes a branch or a tag, pushes or commits, and it never calls the
- * folder copy's reconcile paths, which can stash and reset.
+ * name, never pruned); a guarded fast-forward (a ref transaction on HEAD and
+ * the branch it names, held while `read-tree -m -u` moves the files); and
+ * `clone`. It never merges, resets, rebases, stashes, switches a branch,
+ * deletes a branch or a tag, pushes or commits, and it never calls the folder
+ * copy's reconcile paths, which can stash and reset.
  */
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -59,19 +59,13 @@ import {
   gitReason,
   isLinkedWorktree,
   read,
+  SYNC_ENV,
   type SyncContext,
   type SyncGit,
   type SyncRepository,
 } from "./projectSyncGit.ts";
-import {
-  type AskBudget,
-  askBudget,
-  type FetchRecord,
-  keepFetch,
-  keptFetch,
-  newFetchRecord,
-} from "./projectSyncOrigin.ts";
-import { fastForwardRepository } from "./projectSyncRun.ts";
+import { fastForwardRepository } from "./projectSyncMove.ts";
+import { type FetchRecord, keepFetch, keptFetch, newFetchRecord } from "./projectSyncRecord.ts";
 
 export {
   readRepositoryFacts,
@@ -80,7 +74,7 @@ export {
 } from "./projectSyncFacts.ts";
 export { isLinkedWorktree } from "./projectSyncGit.ts";
 export type { SyncContext, SyncGit, SyncRepository } from "./projectSyncGit.ts";
-export { fastForwardRepository } from "./projectSyncRun.ts";
+export { fastForwardRepository } from "./projectSyncMove.ts";
 
 const CLONE_MS = 30 * 60_000;
 const PARALLEL = 4;
@@ -329,7 +323,6 @@ export async function cloneRepository(
     // for the result when Git answers, and nothing kept of an earlier folder at this
     // path is gone by.
     await NodeFSP.rm(staging, { recursive: true, force: true }).catch(() => undefined);
-    context.fetched?.repositories.delete(target);
     const branch = await branchAndHead(context.git, target).then(
       (read) => read.branch,
       () => null,
@@ -418,9 +411,10 @@ export async function fetchAll(
   return inParallel(repositories, async (repository) =>
     repository.unread === true
       ? unreadFacts(repository.path, PROJECT_SYNC_PATH_UNREAD_DETAIL)
-      : readRepositoryFacts(context, repository, { fetch: true }).catch(
+      : readRepositoryFacts(context, repository).catch(
           async (cause: unknown): Promise<ProjectSyncRepositoryFacts> => {
-            context.fetched?.repositories.delete(repository.cwd);
+            // No row is written for it: nothing of this repository moves by this fetch.
+            context.fetched?.rows.delete(repository.path);
             return {
               path: repository.path,
               branch: null,
@@ -510,7 +504,9 @@ const failedStep = (
   downgraded: true,
 });
 
-const defaultGit: SyncGit = (cwd, args, options) => runGit(cwd, args, options);
+// Replacement objects never stand in for the commits Sync compares and moves to.
+const defaultGit: SyncGit = (cwd, args, options) =>
+  runGit(cwd, args, { ...options, env: SYNC_ENV });
 
 export class ProjectSync extends Context.Service<
   ProjectSync,
@@ -671,16 +667,22 @@ const make = Effect.gen(function* () {
     }
     return null;
   };
-  /** A call's context: the one fetch it goes by, and its time for asking origin. */
+  /**
+   * A call's context. A fetch writes its rows into `fetched`; a run looks the named
+   * fetch up again on every read (`record`), so a record that expired or was dropped
+   * meanwhile stops the move at its admission point.
+   */
   const syncContext = (
-    fetched: FetchRecord | undefined,
-    asks: AskBudget,
+    options: {
+      readonly fetched?: FetchRecord;
+      readonly record?: () => FetchRecord | undefined;
+    },
     signal?: AbortSignal,
   ): SyncContext => ({
     git: defaultGit,
     inUse,
-    asks,
-    ...(fetched === undefined ? {} : { fetched }),
+    ...(options.fetched === undefined ? {} : { fetched: options.fetched }),
+    ...(options.record === undefined ? {} : { record: options.record }),
     ...(signal === undefined ? {} : { signal }),
   });
 
@@ -703,11 +705,18 @@ const make = Effect.gen(function* () {
           const record = newFetchRecord(input.projectId);
           // A cancelled fetch is stopped; the lock is held until Git has ended.
           const facts = yield* stoppedWhenCancelled((signal) =>
-            fetchAll(syncContext(record, askBudget(), signal), found.repositories),
+            fetchAll(syncContext({ fetched: record }, signal), found.repositories),
           );
           // Kept only now, every repository's fetch having ended.
           keepFetch(record);
-          return { repositories: facts, scanLimited: found.scanLimited, fetchId: record.id };
+          return {
+            repositories: facts,
+            scanLimited: found.scanLimited,
+            fetchId: record.id,
+            // This server moves a checkout only by a guarded fast-forward to what this
+            // fetch brought: a window may offer "Sync" to it.
+            guardedFastForward: true,
+          };
         }),
       ),
     run: (input) =>
@@ -716,10 +725,9 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const found = yield* repositories(input.projectId);
           const out: Array<ProjectSyncStepResult> = [];
-          const asks = askBudget();
-          // The fetch the window names, when it is this project's and still kept. Nothing
-          // else is gone by: without it no checkout moves.
-          const fetched = keptFetch(input.projectId, input.fetchId);
+          // The fetch the window names, when it is this project's and still kept, looked
+          // up on every read. Nothing else is gone by: without it no checkout moves.
+          const record = () => keptFetch(input.projectId, input.fetchId);
           // What a clone that never finished left behind goes first, under the lock: no
           // clone of this project is under way now. A folder that stays is said so.
           const kept = yield* attempt(async () =>
@@ -748,11 +756,12 @@ const make = Effect.gen(function* () {
               moved: 0,
               downgraded: false,
             });
-          // A merge is never cut short. A cancelled call ends between two repositories.
+          // A move is never cut short once Git holds its locks. A cancelled call ends
+          // between two repositories.
           for (const wanted of input.fastForward) {
             out.push(
               ...(yield* attempt(() =>
-                runSync(syncContext(fetched, asks), found.root, found.repositories, {
+                runSync(syncContext({ record }), found.root, found.repositories, {
                   fastForward: [wanted],
                   clone: [],
                 }),
@@ -763,7 +772,7 @@ const make = Effect.gen(function* () {
           for (const wanted of input.clone) {
             out.push(
               ...(yield* stoppedWhenCancelled((signal) =>
-                runSync(syncContext(fetched, asks, signal), found.root, found.repositories, {
+                runSync(syncContext({ record }, signal), found.root, found.repositories, {
                   fastForward: [],
                   clone: [wanted],
                 }),

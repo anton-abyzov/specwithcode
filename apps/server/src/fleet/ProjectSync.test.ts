@@ -4,17 +4,23 @@ import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "@effect/vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "@effect/vitest";
 
-import { planProjectSync, type ProjectSyncStep } from "@specweave-studio/contracts";
+import {
+  PROJECT_SYNC_CHANGED_BRANCH_DETAIL,
+  PROJECT_SYNC_NO_FETCH_DETAIL,
+  planProjectSync,
+  projectSyncInTheWayDetail,
+  type ProjectSyncStep,
+} from "@specweave-studio/contracts";
 
 import { runGit } from "./folderTransfer/git.ts";
-import { newFetchRecord } from "./projectSyncOrigin.ts";
+import { cloneAddress } from "./projectSyncFacts.ts";
+import { newFetchRecord } from "./projectSyncRecord.ts";
 import {
   cloneRepository,
   fastForwardRepository,
   fetchAll,
-  readRepositoryFacts,
   isLinkedWorktree,
   runSync,
   statusOf,
@@ -88,8 +94,11 @@ function recording() {
   return { run, commands };
 }
 
-/** One fetch for the whole file: every test works in folders of its own. */
-const fetched = newFetchRecord("project-test");
+/** This test's fetch, as one fetch call's record: a move goes by the rows it wrote. */
+let fetched = newFetchRecord("project-test");
+beforeEach(() => {
+  fetched = newFetchRecord("project-test");
+});
 const context = (run: SyncGit, inUse: SyncContext["inUse"] = async () => null): SyncContext => ({
   fetched,
   git: run,
@@ -159,7 +168,11 @@ async function sync(
   const { run, commands } = recording();
   const ctx = context(run, options.inUse);
   const here = await fetchAll(ctx, [root(machine)]);
-  const there = await fetchAll(context(recording().run), [root(other)]);
+  // The other machine's fetch is its own.
+  const there = await fetchAll(
+    { ...context(recording().run), fetched: newFetchRecord("project-test") },
+    [root(other)],
+  );
   const plan = planProjectSync(here, there);
   const step = plan[0]!;
   const results = await runSync(ctx, machine, [root(machine)], {
@@ -280,7 +293,13 @@ describe("project sync on real repositories (1390 AC-11)", () => {
     const { step, result } = await sync(f.a, f.b, { force: true });
     expect(say(step)).toBe("fetch:other-branch");
     expect([step.branch, step.otherBranch]).toEqual(["feature", "main"]);
-    expect(result).toMatchObject({ action: "fetch", reason: "other-branch", downgraded: true });
+    // Asked to move anyway, it answers with the step its fetch showed, and moves nothing.
+    expect(result).toMatchObject({
+      action: "none",
+      reason: "up-to-date",
+      moved: 0,
+      downgraded: true,
+    });
     // The other machine's branch came with the fetch.
     expect(git(f.a, "rev-parse", "refs/remotes/origin/main")).toBe(tip);
     expect(snapshot(f.a)).toEqual(before);
@@ -468,7 +487,13 @@ describe("project sync: the plan is a proposal (1390 AC-10)", () => {
     git(f.a, "checkout", "-q", "-b", "elsewhere");
     const before = snapshot(f.a);
     const [result] = await runSync(ctx, f.a, [root(f.a)], ask);
-    expect(result).toMatchObject({ action: "fetch", reason: "other-branch", downgraded: true });
+    expect(result).toMatchObject({
+      action: "none",
+      reason: "refused",
+      detail: PROJECT_SYNC_CHANGED_BRANCH_DETAIL,
+      moved: 0,
+      downgraded: true,
+    });
     expect(snapshot(f.a)).toEqual(before);
   });
 
@@ -484,7 +509,13 @@ describe("project sync: the plan is a proposal (1390 AC-10)", () => {
     await fetchAll(ctx, [root(f.a)]);
     const before = snapshot(f.a);
     const [result] = await runSync(ctx, f.a, [root(f.a)], ask);
-    expect(result).toMatchObject({ action: "fetch", reason: "refused", downgraded: true });
+    expect(result).toMatchObject({
+      action: "none",
+      reason: "refused",
+      detail: projectSyncInTheWayDetail("ignored.log"),
+      moved: 0,
+      downgraded: true,
+    });
     expect(NodeFS.readFileSync(NodePath.join(f.a, "ignored.log"), "utf8")).toBe("local log\n");
     expect(snapshot(f.a)).toEqual(before);
   });
@@ -731,8 +762,14 @@ describe("project sync: the fetch never follows the repository's own settings (P
       fastForward: [{ path: ".", otherBranch: "scratch" }],
       clone: [],
     });
-    expect(results[0]).toMatchObject({ reason: "fetch-config", moved: 0 });
-    expect(commands.some((args) => args[0] === "fetch" || args[0] === "merge")).toBe(false);
+    // Its fetch wrote no row: nothing of it moves.
+    expect(results[0]).toMatchObject({
+      action: "none",
+      reason: "refused",
+      detail: PROJECT_SYNC_NO_FETCH_DETAIL,
+      moved: 0,
+    });
+    expect(commands.some((args) => args[0] === "fetch" || args[0] === "read-tree")).toBe(false);
     expect({ refs: refs(f.a), state: snapshot(f.a) }).toEqual(before);
   });
 
@@ -829,7 +866,7 @@ describe("project sync: what counts as clean and as a clone address", () => {
     expect(say(step)).toBe("fetch:uncommitted");
     expect(step.uncommitted).toBeGreaterThan(0);
     expect(result).toMatchObject({ action: "fetch", reason: "uncommitted", moved: 0 });
-    expect(commands.some((args) => args[0] === "merge")).toBe(false);
+    expect(commands.some((args) => args[0] === "read-tree")).toBe(false);
     expect(snapshot(f.a)).toEqual(before);
     expect((await statusOf(recording().run, [root(f.a)]))[0]).toMatchObject({ clean: false });
   });
@@ -859,7 +896,7 @@ describe("project sync: what counts as clean and as a clone address", () => {
     const { step, result, commands } = await sync(f.a, f.b, { force: true });
     expect(step.uncommitted).toBeGreaterThan(0);
     expect(result).toMatchObject({ moved: 0 });
-    expect(commands.some((args) => args[0] === "merge")).toBe(false);
+    expect(commands.some((args) => args[0] === "read-tree")).toBe(false);
     expect(snapshot(f.a)).toEqual(before);
   });
 
@@ -893,12 +930,7 @@ describe("project sync: what counts as clean and as a clone address", () => {
       "127.0.0.1:acme/app.git",
     ]) {
       git(nested, "remote", "set-url", "origin", local);
-      const facts = await readRepositoryFacts(
-        context(run),
-        { path: "repositories/lib", cwd: nested },
-        { fetch: false },
-      );
-      expect(facts.remote, local).toBeNull();
+      expect(cloneAddress(local), local).toBeNull();
       expect(
         await cloneRepository(context(run), f.a, { path: "repositories/local", remote: local }),
         local,
@@ -927,7 +959,7 @@ describe("project sync: in use is read live (P2-02)", () => {
       moved: 0,
       downgraded: true,
     });
-    expect(commands.some((args) => args[0] === "merge")).toBe(false);
+    expect(commands.some((args) => args[0] === "read-tree")).toBe(false);
     expect(snapshot(f.a)).toEqual(before);
   });
 });
@@ -947,7 +979,7 @@ describe("project sync: review round 2 follow-ups", () => {
     expect(say(step)).toBe("none:no-upstream");
     expect(step.detail).toContain("base");
     expect(result).toMatchObject({ action: "none", reason: "no-upstream", moved: 0 });
-    expect(commands.some((args) => args[0] === "merge")).toBe(false);
+    expect(commands.some((args) => args[0] === "read-tree")).toBe(false);
     expect(snapshot(f.a)).toEqual(before);
   });
 
@@ -963,7 +995,7 @@ describe("project sync: review round 2 follow-ups", () => {
     expect(say(step)).toBe("none:no-upstream");
     expect(step.detail).toContain("second/main");
     expect(result).toMatchObject({ moved: 0 });
-    expect(commands.some((args) => args[0] === "merge")).toBe(false);
+    expect(commands.some((args) => args[0] === "read-tree")).toBe(false);
     expect(snapshot(f.a)).toEqual(before);
   });
 
@@ -977,7 +1009,7 @@ describe("project sync: review round 2 follow-ups", () => {
     expect(facts.otherUpstream ?? null).toBeNull();
     expect(say(step)).toBe("fast-forward:behind");
     expect(result).toMatchObject({ action: "fast-forward", moved: 1 });
-    expect(commands.find((args) => args[0] === "merge")!.at(-1)).toBe(head);
+    expect(commands.find((args) => args.includes("read-tree"))!.at(-1)).toBe(head);
     expect(git(f.a, "rev-parse", "HEAD")).toBe(head);
   });
 
@@ -998,8 +1030,7 @@ describe("project sync: review round 2 follow-ups", () => {
       "git://0/acme/app.git",
     ]) {
       git(f.a, "remote", "set-url", "origin", local);
-      const facts = await readRepositoryFacts(context(run), root(f.a), { fetch: false });
-      expect(facts.remote, local).toBeNull();
+      expect(cloneAddress(local), local).toBeNull();
       expect(
         await cloneRepository(context(run), f.b, { path: "repositories/local", remote: local }),
         local,
@@ -1008,8 +1039,7 @@ describe("project sync: review round 2 follow-ups", () => {
     // Another machine's address still crosses, also one that only looks numeric in part.
     for (const far of ["git://10.0.0.7/acme/app.git", "git@build.local:acme/app.git"]) {
       git(f.a, "remote", "set-url", "origin", far);
-      const facts = await readRepositoryFacts(context(run), root(f.a), { fetch: false });
-      expect(facts.remote, far).toBe(far);
+      expect(cloneAddress(far), far).toBe(far);
     }
   });
 
@@ -1174,36 +1204,33 @@ describe("project sync: review round 3 follow-ups", () => {
     git(f.publisher, "push", "-q", "origin", "--delete", "feature");
     const before = snapshot(f.a);
     const { step, facts, result, commands } = await sync(f.a, f.b, { force: true });
-    // The fetch does not prune: the tracking ref still reads one commit behind.
-    expect(facts).toMatchObject({ upstream: "origin/feature", behind: 1, upstreamGone: true });
+    // Counted against what the fetch brought, which is nothing: the tracking ref it does not
+    // prune is not gone by.
+    expect(facts).toMatchObject({ upstream: "origin/feature", behind: 0, upstreamGone: true });
     expect(say(step)).toBe("none:no-upstream");
     expect(step.detail).toBe("The branch origin/feature is no longer on origin.");
     expect(result).toMatchObject({ action: "none", reason: "no-upstream", moved: 0 });
-    expect(commands.some((args) => args[0] === "merge")).toBe(false);
+    expect(commands.some((args) => args[0] === "read-tree")).toBe(false);
     expect(snapshot(f.a)).toEqual(before);
   });
 
-  it("asks origin once more before the move: a branch deleted after the fetch stays (P2-20)", async () => {
+  it("moves by its fetch alone: origin is not asked again before the move (P3-05)", async () => {
     const f = deletedUpstream();
     const { run, commands } = recording();
     const here = await fetchAll(context(run), [root(f.a)]);
     expect(here[0]!.upstreamGone ?? false).toBe(false);
     expect(say(planProjectSync(here, [])[0]!)).toBe("fast-forward:behind");
+    const target = here[0]!.upstreamCommit;
     git(f.publisher, "push", "-q", "origin", "--delete", "feature");
-    const before = snapshot(f.a);
+    commands.length = 0;
     const results = await runSync(context(run), f.a, [root(f.a)], {
       fastForward: [{ path: ".", otherBranch: null }],
       clone: [],
     });
-    expect(results[0]).toMatchObject({
-      action: "none",
-      reason: "no-upstream",
-      detail: "The branch origin/feature is no longer on origin.",
-      moved: 0,
-      downgraded: true,
-    });
-    expect(commands.some((args) => args[0] === "merge")).toBe(false);
-    expect(snapshot(f.a)).toEqual(before);
+    // The person approved what that fetch showed: the commit it brought.
+    expect(results[0]).toMatchObject({ action: "fast-forward", moved: 1, downgraded: false });
+    expect(git(f.a, "rev-parse", "HEAD")).toBe(target);
+    expect(commands.some((args) => args[0] === "ls-remote" || args[0] === "fetch")).toBe(false);
   });
 
   it("keeps an empty folder that appears at the target of a finished clone (P2-21)", async () => {
@@ -1260,22 +1287,33 @@ describe("project sync: the Git commands it runs (1390 AC-11)", () => {
   // Runs last: every test above recorded what the module ran.
   it("never runs a command that resets, rebases, stashes, switches, deletes, pushes or commits", () => {
     expect(everyCommand.length).toBeGreaterThan(100);
+    const verbOf = (args: ReadonlyArray<string>) => (args[0] === "-c" ? args[2]! : args[0]!);
     const READS = new Set([
+      "version",
       "config",
       "symbolic-ref",
       "rev-parse",
       "rev-list",
       "status",
-      "ls-remote",
       "ls-files",
       "for-each-ref",
+      "cat-file",
+      "merge-base",
+      "diff-tree",
+      "diff-index",
+      "diff",
+      "check-attr",
+      "worktree",
+      // Refreshes the index's stat data only, under the move's lock.
+      "update-index",
     ]);
-    // `update-ref` only ever removes Sync's own refs again (checked below).
-    const WRITES = new Set(["fetch", "merge", "clone", "update-ref"]);
-    const verbs = new Set(everyCommand.map((args) => args[0]!));
+    // The ref transaction is its own process (refTransaction.ts), never through this runner.
+    const WRITES = new Set(["fetch", "read-tree", "clone"]);
+    const verbs = new Set(everyCommand.map(verbOf));
     expect([...verbs].filter((verb) => !READS.has(verb) && !WRITES.has(verb))).toEqual([]);
     for (const verb of WRITES) expect(verbs.has(verb), verb).toBe(true);
     for (const forbidden of [
+      "merge",
       "reset",
       "rebase",
       "stash",
@@ -1287,7 +1325,6 @@ describe("project sync: the Git commands it runs (1390 AC-11)", () => {
       "pull",
       "clean",
       "restore",
-      "worktree",
       "cherry-pick",
       "revert",
       "add",
@@ -1295,15 +1332,19 @@ describe("project sync: the Git commands it runs (1390 AC-11)", () => {
       "tag",
       "gc",
       "prune",
+      "update-ref",
+      "ls-remote",
     ])
       expect(verbs.has(forbidden), forbidden).toBe(false);
     for (const args of everyCommand) {
-      // The fetch names its own destinations: never the repository's configured ones.
-      // And into a folder of refs of Sync's own, made for this one fetch.
-      if (args[0] === "fetch") {
-        expect(args.slice(0, 8)).toEqual([
-          "fetch",
-          "--quiet",
+      // The fetch names its own destinations, never the repository's configured ones.
+      if (args[0] === "fetch")
+        expect([
+          ["fetch", "--porcelain", "--verbose"],
+          ["fetch", "--quiet"],
+        ]).toContainEqual(args.slice(0, args[1] === "--quiet" ? 2 : 3));
+      if (args[0] === "fetch")
+        expect(args.slice(args[1] === "--quiet" ? 2 : 3)).toEqual([
           "--no-prune",
           "--no-prune-tags",
           "--no-recurse-submodules",
@@ -1311,41 +1352,23 @@ describe("project sync: the Git commands it runs (1390 AC-11)", () => {
           "origin",
           "+refs/heads/*:refs/remotes/origin/*",
         ]);
-        expect(args[8]).toMatch(/^\+refs\/heads\/\*:refs\/specwithcode\/sync\/[0-9a-f-]{36}\/\*$/);
-        expect(args).toHaveLength(9);
-      }
-      // The merge moves forward or does nothing: every option a setting could turn on is off.
-      if (args[0] === "merge") {
-        expect(args.slice(0, 13)).toEqual([
-          "merge",
-          "--ff-only",
-          "--no-squash",
-          "--commit",
-          "--no-edit",
-          "--no-autostash",
-          "--no-verify",
-          "--no-verify-signatures",
-          "--no-signoff",
-          "--no-log",
-          "--no-stat",
-          "--no-progress",
-          "--no-overwrite-ignore",
+      // The files move from the recorded commit to the recorded target, submodules untouched.
+      if (verbOf(args) === "read-tree") {
+        expect(args.slice(0, 7)).toEqual([
+          "-c",
+          "submodule.recurse=false",
+          "read-tree",
+          "-m",
+          "-u",
+          "--no-recurse-submodules",
+          args[6],
         ]);
-        expect(args[13]).toMatch(/^[0-9a-f]{40}$/);
-        expect(args).toHaveLength(14);
+        expect(args[6]).toMatch(/^[0-9a-f]{40}$/);
+        expect(args[7]).toMatch(/^[0-9a-f]{40}$/);
+        expect(args).toHaveLength(8);
       }
-      // Refs are listed, never changed, by `for-each-ref`; `update-ref` takes its work on
-      // standard input only, and that is nothing but the removal of Sync's own refs.
-      if (args[0] === "update-ref") expect(args).toEqual(["update-ref", "--no-deref", "--stdin"]);
-      // origin is asked for its address as Git reads it, or for one branch.
-      if (args[0] === "ls-remote")
-        expect(
-          args.join(" ") === "ls-remote --get-url origin" ||
-            (args.length === 4 &&
-              args.slice(0, 3).join(" ") === "ls-remote --heads origin" &&
-              args[3]!.startsWith("refs/heads/")),
-          args.join(" "),
-        ).toBe(true);
+      if (args[0] === "update-index") expect(args).toEqual(["update-index", "-q", "--refresh"]);
+      if (args[0] === "worktree") expect(args).toEqual(["worktree", "list", "--porcelain", "-z"]);
       if (args[0] === "clone")
         expect(args.slice(0, 6)).toEqual([
           "clone",
@@ -1368,11 +1391,7 @@ describe("project sync: the Git commands it runs (1390 AC-11)", () => {
         args.filter((arg) => /^(-d|-D|-f|--delete|--force|--hard|--prune)$/.test(arg)),
       ).toEqual([]);
     }
-    expect(everyInput.length).toBeGreaterThan(10);
-    for (const { args, input } of everyInput) {
-      expect(args[0]).toBe("update-ref");
-      for (const line of input.split("\n").filter((entry) => entry.length > 0))
-        expect(line).toMatch(/^delete refs\/specwithcode\/sync\/[0-9a-f-]{36}\/\S.* [0-9a-f]{40}$/);
-    }
+    // Standard input carries object names and paths to read, nothing else.
+    for (const { args } of everyInput) expect(["cat-file", "check-attr"]).toContain(args[0]);
   });
 });

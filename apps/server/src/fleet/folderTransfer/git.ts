@@ -26,7 +26,7 @@ export interface GitResult {
   readonly stderr: string;
 }
 
-const SAFE_CONFIG = [
+export const SAFE_CONFIG = [
   "-c",
   "core.hooksPath=/dev/null",
   "-c",
@@ -37,6 +37,27 @@ const SAFE_CONFIG = [
   "protocol.file.allow=always",
   "-c",
   "advice.detachedHead=false",
+];
+
+/** The environment every Git call of this module runs with, `extra` on top. */
+export const gitEnvironment = (extra?: Readonly<Record<string, string>>) =>
+  withGitHubSpawnEnvironment({
+    ...process.env,
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_OPTIONAL_LOCKS: "0",
+    GIT_NO_LAZY_FETCH: "1",
+    GIT_LITERAL_PATHSPECS: "1",
+    LC_ALL: "C",
+    ...extra,
+  });
+
+/** The arguments of a Git call in `cwd`, as `runGit` passes them. */
+export const gitArguments = (cwd: string, args: ReadonlyArray<string>) => [
+  "--no-optional-locks",
+  ...SAFE_CONFIG,
+  "-C",
+  cwd,
+  ...args,
 ];
 
 export function runGit(
@@ -60,22 +81,14 @@ export function runGit(
     let killed = false;
     const child = NodeChildProcess.execFile(
       "git",
-      ["--no-optional-locks", ...SAFE_CONFIG, "-C", cwd, ...args],
+      gitArguments(cwd, args),
       {
         cwd,
         encoding: "buffer",
         maxBuffer: 256 * 1024 * 1024,
         ...(killTree ? {} : { timeout: timeoutMs }),
         ...(options.signal && !killTree ? { signal: options.signal } : {}),
-        env: withGitHubSpawnEnvironment({
-          ...process.env,
-          GIT_TERMINAL_PROMPT: "0",
-          GIT_OPTIONAL_LOCKS: "0",
-          GIT_NO_LAZY_FETCH: "1",
-          GIT_LITERAL_PATHSPECS: "1",
-          LC_ALL: "C",
-          ...options.env,
-        }),
+        env: gitEnvironment(options.env),
       },
       (error, stdout, stderr) => {
         stopWatching();

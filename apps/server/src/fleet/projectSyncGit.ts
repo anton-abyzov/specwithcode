@@ -6,7 +6,8 @@ import * as NodePath from "node:path";
 import { UNFINISHED_OPERATION_MARKS } from "../handoff/bundleGit.ts";
 import { cloneStagingIn } from "./cloneStaging.ts";
 import type { GitResult } from "./folderTransfer/git.ts";
-import type { AskBudget, FetchRecord } from "./projectSyncOrigin.ts";
+import type { FetchRecord } from "./projectSyncRecord.ts";
+import type { RefTransactionFactory } from "./refTransaction.ts";
 
 export const LOCAL_MS = 30_000;
 export const FETCH_MS = 5 * 60_000;
@@ -26,6 +27,13 @@ export type SyncGit = (
   },
 ) => Promise<GitResult>;
 
+/**
+ * Settings and environment every Sync read and write runs with: replacement objects
+ * are not used (`git replace` could make a fetched commit look related to a local one),
+ * and nothing is fetched behind Sync's back (the runner sets `GIT_NO_LAZY_FETCH`).
+ */
+export const SYNC_ENV = { GIT_NO_REPLACE_OBJECTS: "1" } as const;
+
 export interface SyncContext {
   readonly git: SyncGit;
   /**
@@ -37,14 +45,25 @@ export interface SyncContext {
   /** Stops a fetch or a clone that is under way when the call is cancelled. A merge is never stopped. */
   readonly signal?: AbortSignal;
   /**
-   * The one fetch this call goes by. A fetch writes into it what it brought,
-   * per checkout; a move reads from it the commit to move to, and moves
-   * nothing without it.
+   * The fetch a `fetch` call fills, one row per checkout, published only once
+   * the call has ended. A `run` reads the row it moves by from `record`.
    */
   readonly fetched?: FetchRecord;
-  /** The time this call has left for asking `origin` before its moves. */
-  readonly asks?: AskBudget;
+  /**
+   * The fetch the `run` names, looked up each time it is asked: before a move,
+   * and again under Git's lock right before the write. Undefined once it has
+   * expired or been dropped. Without it, `fetched` is gone by.
+   */
+  readonly record?: () => FetchRecord | undefined;
+  /** How a move opens its ref transaction; tests wrap it. */
+  readonly transaction?: RefTransactionFactory;
 }
+
+/** A read Git answered with a value, one Git itself says is absent, or one that could not be read. */
+export type Read<A> =
+  | { readonly kind: "value"; readonly value: A }
+  | { readonly kind: "absent" }
+  | { readonly kind: "unread" };
 
 /**
  * The marks of an unfinished operation, plus the one Git keeps while a
@@ -94,14 +113,49 @@ export async function isLinkedWorktree(git: SyncGit, cwd: string): Promise<boole
   return gitDir !== common;
 }
 
+/**
+ * The branch HEAD names, in full (`refs/heads/main`). Absent only on the one
+ * answer Git gives for a detached HEAD: exit 1 with nothing printed.
+ */
+export async function headBranch(git: SyncGit, cwd: string): Promise<Read<string>> {
+  const named = await git(cwd, ["symbolic-ref", "-q", "HEAD"], {
+    allowFailure: true,
+    timeoutMs: LOCAL_MS,
+  }).catch(() => null);
+  if (named === null) return { kind: "unread" };
+  const text = named.stdout.trim();
+  if (named.code === 0 && text.startsWith("refs/heads/") && !text.includes("\n"))
+    return { kind: "value", value: text };
+  if (named.code === 1 && text.length === 0) return { kind: "absent" };
+  return { kind: "unread" };
+}
+
+/** The commit a ref is at. Absent only when Git says it names no commit (exit 1, nothing printed). */
+export async function commitOf(git: SyncGit, cwd: string, ref: string): Promise<Read<string>> {
+  const found = await git(cwd, ["rev-parse", "-q", "--verify", `${ref}^{commit}`], {
+    allowFailure: true,
+    timeoutMs: LOCAL_MS,
+  }).catch(() => null);
+  if (found === null) return { kind: "unread" };
+  const text = found.stdout.trim();
+  if (found.code === 0 && SHA.test(text)) return { kind: "value", value: text };
+  if (found.code === 1 && text.length === 0) return { kind: "absent" };
+  return { kind: "unread" };
+}
+
+export const shortBranch = (ref: string) =>
+  ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : ref;
+
+/**
+ * The branch (short) and head commit for a reader, and whether either could
+ * not be read. `branch` null with `unread` false is Git's own "detached".
+ */
 export async function branchAndHead(git: SyncGit, cwd: string) {
-  const [symbolic, head] = await Promise.all([
-    read(git, cwd, ["symbolic-ref", "-q", "--short", "HEAD"]),
-    read(git, cwd, ["rev-parse", "-q", "--verify", "HEAD^{commit}"]),
-  ]);
+  const [branch, head] = await Promise.all([headBranch(git, cwd), commitOf(git, cwd, "HEAD")]);
   return {
-    branch: symbolic.ok && symbolic.text.length > 0 ? symbolic.text : null,
-    head: head.ok && SHA.test(head.text) ? head.text : null,
+    branch: branch.kind === "value" ? shortBranch(branch.value) : null,
+    head: head.kind === "value" ? head.value : null,
+    unread: branch.kind === "unread" || head.kind === "unread",
   };
 }
 
@@ -131,8 +185,11 @@ async function countUncommitted(git: SyncGit, cwd: string): Promise<number | nul
     if (/[RC]/.test(entry.slice(0, 2))) index += 1;
   }
   const files = (await withoutCloneStaging(git, cwd, entries)).length;
-  // An unfinished merge, rebase, cherry-pick, revert or bisect is not clean, also with no file changed.
-  return files === 0 && (await operationUnfinished(git, cwd)) ? 1 : files;
+  // An unfinished merge, rebase, cherry-pick, revert or bisect is not clean, also with no
+  // file changed; one that could not be read is no count at all.
+  if (files > 0) return files;
+  const unfinished = await operationUnfinished(git, cwd);
+  return unfinished === null ? null : unfinished ? 1 : 0;
 }
 
 /**
@@ -175,15 +232,31 @@ async function withoutCloneStaging(
   return kept.filter((entry) => !(untracked(entry) && onlyStaging.has(entry.slice(3))));
 }
 
-async function operationUnfinished(git: SyncGit, cwd: string): Promise<boolean> {
-  const gitDir = await read(git, cwd, ["rev-parse", "--absolute-git-dir"]);
-  // A Git folder that cannot be found is never taken for a finished state.
-  if (!gitDir.ok || gitDir.text.length === 0) return true;
+/**
+ * Whether a merge, rebase, cherry-pick, revert or bisect is under way, or null
+ * when that could not be read: a Git folder Git does not name, or a mark the
+ * file system cannot say is there or not.
+ */
+export async function operationUnfinished(git: SyncGit, cwd: string): Promise<boolean | null> {
+  const gitDir = await read(git, cwd, ["rev-parse", "--absolute-git-dir"]).catch(() => null);
+  if (gitDir === null || !gitDir.ok || gitDir.text.length === 0) return null;
   for (const mark of UNFINISHED_MARKS) {
-    if ((await NodeFSP.lstat(NodePath.join(gitDir.text, mark)).catch(() => null)) !== null)
-      return true;
+    const found = await present(NodePath.join(gitDir.text, mark));
+    if (found !== false) return found;
   }
   return false;
+}
+
+/** Whether something is at `path` (a link is not followed), or null when the file system did not say. */
+export async function present(path: string): Promise<boolean | null> {
+  return NodeFSP.lstat(path).then(
+    () => true,
+    (cause: unknown) =>
+      (cause as { readonly code?: unknown }).code === "ENOENT" ||
+      (cause as { readonly code?: unknown }).code === "ENOTDIR"
+        ? false
+        : null,
+  );
 }
 
 export const didNotFinish = (cause: unknown) =>

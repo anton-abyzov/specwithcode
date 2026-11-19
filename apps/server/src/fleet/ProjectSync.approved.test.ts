@@ -1,8 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - disposable real Git fixtures only.
 /**
  * Which fetch a move goes by (1390), through the service a window calls: a
- * `run` moves a checkout only to the commit the fetch it names brought, and
- * says what it found when the checkout is not where its own move left it.
+ * `run` moves a checkout only by the row and to the commit the fetch it names
+ * showed, under Git's lock on HEAD and the branch it names, and says what it
+ * found when the checkout is not where its own move left it.
  */
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -13,14 +14,10 @@ import {
   type Project,
   ProjectId,
   PROJECT_SYNC_CHANGED_BRANCH_DETAIL,
-  PROJECT_SYNC_FETCH_STALE_DETAIL,
+  PROJECT_SYNC_CHANGED_HEAD_DETAIL,
   PROJECT_SYNC_FETCHED_UNREAD_DETAIL,
   PROJECT_SYNC_NO_FETCH_DETAIL,
-  PROJECT_SYNC_NOT_AS_FETCHED_DETAIL,
-  PROJECT_SYNC_ORIGIN_MOVED_DETAIL,
   PROJECT_SYNC_PATH_UNREAD_DETAIL,
-  projectSyncMergeOptionsDetail,
-  projectSyncObservedDetail,
   projectSyncUpstreamMappingDetail,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
@@ -90,8 +87,13 @@ function behind() {
   return { ...f, was, head: publish(), publish };
 }
 const outage = (f: { readonly remote: string }) => NodeFS.renameSync(f.remote, `${f.remote}.away`);
+/** The commands of `verb` run in `cwd`, also behind `-c` settings. */
 const ran = (verb: string, cwd: string) =>
-  recordedGit().filter((command) => command.cwd === cwd && command.args[0] === verb);
+  recordedGit().filter(
+    (command) =>
+      command.cwd === cwd &&
+      (command.args[0] === verb || (command.args[0] === "-c" && command.args[2] === verb)),
+  );
 const syncRefs = (cwd: string) => git(cwd, "for-each-ref", "refs/specwithcode/sync/");
 
 describe("project sync: a move needs the fetch it names (P2-38)", () => {
@@ -126,7 +128,7 @@ describe("project sync: a move needs the fetch it names (P2-38)", () => {
           detail: PROJECT_SYNC_NO_FETCH_DETAIL,
         });
         expect(snapshot(f.b)).toEqual(before);
-        expect(ran("merge", f.b)).toEqual([]);
+        expect(ran("read-tree", f.b)).toEqual([]);
         // With its own fetch named, it moves.
         const fetched = yield* sync.fetch(one);
         expect(typeof fetched.fetchId).toBe("string");
@@ -156,6 +158,8 @@ describe("project sync: a move needs the fetch it names (P2-38)", () => {
           ran("ls-remote", f.b).filter((command) => !command.args.includes("--get-url")),
         ).toEqual([]);
         expect(ran("fetch", f.b)).toHaveLength(1);
+        // The machine's answer says it moves only by a guarded fast-forward (D4-07).
+        expect(fetched.guardedFastForward).toBe(true);
         expect(syncRefs(f.b)).toBe("");
         // A fetch that fails leaves none either, and gives no fetch to go by.
         outage(f);
@@ -176,7 +180,7 @@ describe("project sync: a move needs the fetch it names (P2-38)", () => {
 });
 
 describe("project sync: each window moves by its own fetch (P2-40)", () => {
-  it.effect("does not move the first window to what a second window fetched later", () => {
+  it.effect("moves the first window only to the commit it approved, never a later fetch's", () => {
     const f = behind();
     return withSync(f.b, (sync) =>
       Effect.gen(function* () {
@@ -184,29 +188,32 @@ describe("project sync: each window moves by its own fetch (P2-40)", () => {
         const newer = f.publish();
         const second = yield* sync.fetch(one);
         expect(second.fetchId).not.toBe(first.fetchId);
-        expect(second.repositories[0]).toMatchObject({ behind: 2 });
-        // The first window approved one commit; origin and this checkout know a newer one.
-        const stale = yield* sync.run({
+        expect(first.repositories[0]).toMatchObject({ behind: 1, upstreamCommit: f.head });
+        expect(second.repositories[0]).toMatchObject({ behind: 2, upstreamCommit: newer });
+        // The first window approved one commit: it moves there, though origin and this
+        // checkout know a newer one.
+        const firstRun = yield* sync.run({
           ...one,
           fetchId: first.fetchId,
           fastForward: root,
           clone: [],
         });
-        expect(stale.repositories[0]).toMatchObject({
-          action: "none",
-          reason: "refused",
-          moved: 0,
-          detail: PROJECT_SYNC_ORIGIN_MOVED_DETAIL,
-        });
-        expect(git(f.b, "rev-parse", "HEAD")).toBe(f.was);
-        const moved = yield* sync.run({
+        expect(firstRun.repositories[0]).toMatchObject({ action: "fast-forward", moved: 1 });
+        expect(git(f.b, "rev-parse", "HEAD")).toBe(f.head);
+        // The second window's row no longer matches the checkout: it declines.
+        const secondRun = yield* sync.run({
           ...one,
           fetchId: second.fetchId,
           fastForward: root,
           clone: [],
         });
-        expect(moved.repositories[0]).toMatchObject({ action: "fast-forward", moved: 2 });
-        expect(git(f.b, "rev-parse", "HEAD")).toBe(newer);
+        expect(secondRun.repositories[0]).toMatchObject({
+          action: "none",
+          reason: "refused",
+          moved: 0,
+          detail: PROJECT_SYNC_CHANGED_HEAD_DETAIL,
+        });
+        expect(git(f.b, "rev-parse", "HEAD")).toBe(f.head);
       }),
     );
   });
@@ -239,38 +246,6 @@ describe("project sync: each window moves by its own fetch (P2-40)", () => {
           expect(own.repositories[0]).toMatchObject({ action: "fast-forward", moved: 1 });
         }),
       [project(projectA, f.b), project(projectB, f.b)],
-    );
-  });
-});
-
-describe("project sync: the fetch is bound to where origin leads (P2-39)", () => {
-  it.effect("does not go by a fetch once a rewrite sends origin's address elsewhere", () => {
-    const f = behind();
-    return withSync(f.b, (sync) =>
-      Effect.gen(function* () {
-        const fetched = yield* sync.fetch(one);
-        // The address in the settings stays; a rewrite rule now leads it to another place,
-        // which does not answer.
-        git(f.b, "config", `url.${f.base}/elsewhere/.insteadOf`, `${f.base}/`);
-        expect(git(f.b, "config", "--get", "remote.origin.url")).toBe(f.remote);
-        const run = yield* sync.run({
-          ...one,
-          fetchId: fetched.fetchId,
-          fastForward: root,
-          clone: [],
-        });
-        expect(run.repositories[0]).toMatchObject({
-          action: "none",
-          reason: "refused",
-          moved: 0,
-          detail: PROJECT_SYNC_FETCH_STALE_DETAIL,
-        });
-        expect(PROJECT_SYNC_FETCH_STALE_DETAIL).toBe(
-          "The checkout or origin's address changed since the fetch. Sync again.",
-        );
-        expect(ran("merge", f.b)).toEqual([]);
-        expect(git(f.b, "rev-parse", "HEAD")).toBe(f.was);
-      }),
     );
   });
 });
@@ -326,11 +301,11 @@ describe("project sync: the upstream's branch on origin, not its name here (P2-4
   );
 });
 
-describe("project sync: only what the fetch itself brought (P2-42)", () => {
-  it.effect("goes by the commit the fetch wrote, never one origin listed before it", () => {
+describe("project sync: only what the fetch itself brought (P2-42, P3-04)", () => {
+  it.effect("goes by the commit the fetch wrote, whatever the tracking ref says after", () => {
     const f = behind();
     let published: string | null = null;
-    // origin moves on between the moment it is first asked and the fetch.
+    // origin moves on between the moment the fetch starts and the moment it reads origin.
     gitHooks.before = (command) => {
       if (command.cwd === f.b && command.args[0] === "fetch" && published === null)
         published = f.publish();
@@ -340,10 +315,13 @@ describe("project sync: only what the fetch itself brought (P2-42)", () => {
         const fetched = yield* sync.fetch(one);
         gitHooks.before = null;
         expect(published).not.toBe(null);
-        expect(git(f.b, "rev-parse", "refs/remotes/origin/main")).toBe(published);
-        expect(fetched.repositories[0]).toMatchObject({ fetch: "ok", behind: 2 });
-        expect(fetched.repositories[0]!.upstreamMoved ?? false).toBe(false);
-        // Something puts the tracking ref back at the older commit; origin is then out of reach.
+        expect(fetched.repositories[0]).toMatchObject({
+          fetch: "ok",
+          behind: 2,
+          upstreamCommit: published,
+        });
+        // Something puts the tracking ref back at the older commit; origin is then out of
+        // reach. Neither is gone by: the fetch's own output named the commit.
         git(f.b, "update-ref", "refs/remotes/origin/main", f.head);
         outage(f);
         const run = yield* sync.run({
@@ -352,47 +330,65 @@ describe("project sync: only what the fetch itself brought (P2-42)", () => {
           fastForward: root,
           clone: [],
         });
-        expect(run.repositories[0]).toMatchObject({
-          action: "none",
-          reason: "refused",
-          moved: 0,
-          detail: PROJECT_SYNC_NOT_AS_FETCHED_DETAIL,
-        });
-        expect(ran("merge", f.b)).toEqual([]);
-        expect(git(f.b, "rev-parse", "HEAD")).toBe(f.was);
+        expect(run.repositories[0]).toMatchObject({ action: "fast-forward", moved: 2 });
+        expect(git(f.b, "rev-parse", "HEAD")).toBe(published);
       }),
     );
   });
 });
 
 describe("project sync: the last reads and the write (P2-43)", () => {
-  it.effect("reads branch and commit after the slow status read, right before the merge", () => {
+  it.effect(
+    "a switch during the last status walk, under the lock, fails and the move goes on",
+    () => {
+      const f = behind();
+      return withSync(f.b, (sync) =>
+        Effect.gen(function* () {
+          const fetched = yield* sync.fetch(one);
+          // The person switches to another branch while the last status walk runs: by then
+          // Git holds HEAD and the branch for the move.
+          const statuses: Array<string> = [];
+          let attempt = "not tried";
+          gitHooks.before = (command) => {
+            if (command.cwd !== f.b || command.args[0] !== "status") return;
+            statuses.push(command.args[0]);
+            if (statuses.length !== 2) return;
+            try {
+              git(f.b, "checkout", "-q", "-b", "other");
+              attempt = "ok";
+            } catch {
+              attempt = "failed";
+            }
+          };
+          const run = yield* sync.run({
+            ...one,
+            fetchId: fetched.fetchId,
+            fastForward: root,
+            clone: [],
+          });
+          expect(statuses).toHaveLength(2);
+          expect(attempt).toBe("failed");
+          expect(run.repositories[0]).toMatchObject({ action: "fast-forward", moved: 1 });
+          expect(git(f.b, "symbolic-ref", "HEAD")).toBe("refs/heads/main");
+          expect(git(f.b, "rev-parse", "main")).toBe(f.head);
+        }),
+      );
+    },
+  );
+
+  /** B fetched and behind; `act` runs at the very entry of the command `verb`. */
+  const atEntry = (verb: string, act: (f: ReturnType<typeof behind>) => void) => {
     const f = behind();
     return withSync(f.b, (sync) =>
       Effect.gen(function* () {
         const fetched = yield* sync.fetch(one);
-        // The person switches to another clean branch at the same commit while the last
-        // status walk runs, once every read that started before it has ended.
-        let statuses = 0;
-        let open = 0;
-        let idle: (() => void) | null = null;
-        const quick = (verb: string | undefined) => verb === "symbolic-ref" || verb === "rev-parse";
-        gitHooks.before = async (command) => {
-          if (command.cwd !== f.b) return;
-          if (quick(command.args[0])) open += 1;
-          if (command.args[0] !== "status") return;
-          statuses += 1;
-          if (statuses !== 2) return;
-          if (open > 0)
-            await new Promise<void>((resolve) => {
-              idle = resolve;
-            });
-          git(f.b, "checkout", "-q", "-b", "other");
-        };
-        gitHooks.after = (command) => {
-          if (command.cwd !== f.b || !quick(command.args[0])) return;
-          open -= 1;
-          if (open === 0) idle?.();
+        let done = false;
+        gitHooks.before = (command) => {
+          if (done || command.cwd !== f.b) return;
+          if (command.args[0] === verb || (command.args[0] === "-c" && command.args[2] === verb)) {
+            done = true;
+            act(f);
+          }
         };
         const run = yield* sync.run({
           ...one,
@@ -400,72 +396,65 @@ describe("project sync: the last reads and the write (P2-43)", () => {
           fastForward: root,
           clone: [],
         });
-        expect(statuses).toBeGreaterThanOrEqual(2);
-        expect(run.repositories[0]).toMatchObject({
+        return { f, step: run.repositories[0]! };
+      }),
+    );
+  };
+  /** Runs Git by hand as a person would; its exit is what the test reads. */
+  const tries = (cwd: string, ...args: Array<string>) => {
+    try {
+      git(cwd, ...args);
+      return "ok";
+    } catch {
+      return "failed";
+    }
+  };
+
+  it.effect(
+    "switched to another branch at the same commit just before the lock: both branches keep their tips (P3-02)",
+    () =>
+      Effect.gen(function* () {
+        // The last read before the transaction is prepared: the checkout of another
+        // worktree list. HEAD then names `other`, whose tip is the recorded commit too,
+        // so Git's own old-value check passes; the branch check under the lock does not.
+        let other = "";
+        const { f, step } = yield* atEntry("worktree", (f) => {
+          git(f.b, "checkout", "-q", "-b", "other");
+          other = git(f.b, "rev-parse", "other");
+        });
+        expect(other).toBe(f.was);
+        expect(step).toMatchObject({
           action: "none",
           reason: "refused",
           moved: 0,
           detail: PROJECT_SYNC_CHANGED_BRANCH_DETAIL,
         });
-        expect(ran("merge", f.b)).toEqual([]);
         expect(git(f.b, "rev-parse", "other")).toBe(f.was);
         expect(git(f.b, "rev-parse", "main")).toBe(f.was);
+        expect(git(f.b, "symbolic-ref", "HEAD")).toBe("refs/heads/other");
+        expect(ran("read-tree", f.b)).toEqual([]);
       }),
-    );
-  });
-
-  /** B fetched and behind; `act` runs at the very entry of the merge command. */
-  const atMergeEntry = (act: (f: ReturnType<typeof behind>) => void) => {
-    const f = behind();
-    return withSync(f.b, (sync) =>
-      Effect.gen(function* () {
-        const fetched = yield* sync.fetch(one);
-        gitHooks.before = (command) => {
-          if (command.cwd === f.b && command.args[0] === "merge") act(f);
-        };
-        const run = yield* sync.run({
-          ...one,
-          fetchId: fetched.fetchId,
-          fastForward: root,
-          clone: [],
-        });
-        expect(ran("merge", f.b)).toHaveLength(1);
-        return { f, step: run.repositories[0]! };
-      }),
-    );
-  };
-
-  it.effect("does not call a move its own when another writer got the branch there first", () =>
-    Effect.gen(function* () {
-      const { f, step } = yield* atMergeEntry((f) => git(f.b, "merge", "-q", "--ff-only", f.head));
-      expect(step).toMatchObject({
-        action: "fast-forward",
-        reason: "behind",
-        branch: "main",
-        moved: 0,
-        downgraded: true,
-        detail: projectSyncObservedDetail("main", f.head),
-      });
-      expect(step.detail).toBe(
-        `The checkout changed while Sync was moving it, so Sync does not count this as its own move. It is on main at ${f.head.slice(0, 12)} now. Check it before working in it.`,
-      );
-      expect(git(f.b, "rev-parse", "HEAD")).toBe(f.head);
-    }),
   );
 
-  it.effect("reports the branch it finds when the checkout switched at the merge's entry", () =>
-    Effect.gen(function* () {
-      const { f, step } = yield* atMergeEntry((f) => git(f.b, "checkout", "-q", "-b", "other"));
-      // Git moved the branch that was checked out by then: said as found, not as Sync's move.
-      expect(step).toMatchObject({
-        action: "fast-forward",
-        branch: "other",
-        moved: 0,
-        downgraded: true,
-        detail: projectSyncObservedDetail("other", f.head),
-      });
-      expect(git(f.b, "rev-parse", "main")).toBe(f.was);
-    }),
+  it.effect(
+    "holds HEAD and the branch while the files move: a switch or commit then fails (P3-02)",
+    () =>
+      Effect.gen(function* () {
+        const attempts: Array<string> = [];
+        const { f, step } = yield* atEntry("read-tree", (f) => {
+          attempts.push(tries(f.b, "checkout", "-q", "-b", "other"));
+          attempts.push(tries(f.b, "commit", "-q", "--allow-empty", "-m", "racing"));
+          attempts.push(tries(f.b, "update-ref", "refs/heads/main", f.head));
+        });
+        // HEAD.lock and the branch's lock are Git's own: every writer that needs them fails.
+        expect(attempts).toEqual(["failed", "failed", "failed"]);
+        expect(step).toMatchObject({ action: "fast-forward", moved: 1, downgraded: false });
+        expect(git(f.b, "symbolic-ref", "HEAD")).toBe("refs/heads/main");
+        expect(git(f.b, "rev-parse", "main")).toBe(f.head);
+        // `checkout -b` made its branch before it failed on HEAD: that branch keeps its tip.
+        expect(git(f.b, "rev-parse", "other")).toBe(f.was);
+        expect(git(f.b, "status", "--porcelain=v1")).toBe("");
+      }),
   );
 });
 
@@ -488,20 +477,25 @@ describe("project sync: Git settings cannot turn the move into something else (P
     );
   };
 
-  it.effect.each(["--squash", "--no-ff", "--no-commit --squash --autostash --stat"])(
-    "moves forward and nothing else with %s in the branch's merge options",
-    (options) =>
-      Effect.gen(function* () {
-        const { f, step } = yield* withMergeOptions(options);
-        expect(step).toMatchObject({ action: "fast-forward", moved: 1, downgraded: false });
-        expect(git(f.b, "rev-parse", "HEAD")).toBe(f.head);
-        // No merge commit, nothing staged, nothing changed in the files.
-        expect(git(f.b, "rev-list", "--count", "--merges", "HEAD")).toBe("0");
-        expect(git(f.b, "status", "--porcelain=v1")).toBe("");
-        expect(NodeFS.readFileSync(NodePath.join(f.b, "app.ts"), "utf8")).toBe(
-          "export const a = 2;\n",
-        );
-      }),
+  // No merge runs at all: merge settings have nothing to act on.
+  it.effect.each([
+    "--squash",
+    "--no-ff",
+    "--no-commit --squash --autostash --stat",
+    "-s ours",
+    "-X theirs",
+  ])("moves forward and nothing else with %s in the branch's merge options", (options) =>
+    Effect.gen(function* () {
+      const { f, step } = yield* withMergeOptions(options);
+      expect(step).toMatchObject({ action: "fast-forward", moved: 1, downgraded: false });
+      expect(git(f.b, "rev-parse", "HEAD")).toBe(f.head);
+      // No merge commit, nothing staged, nothing changed in the files.
+      expect(git(f.b, "rev-list", "--count", "--merges", "HEAD")).toBe("0");
+      expect(git(f.b, "status", "--porcelain=v1")).toBe("");
+      expect(NodeFS.readFileSync(NodePath.join(f.b, "app.ts"), "utf8")).toBe(
+        "export const a = 2;\n",
+      );
+    }),
   );
 
   it.effect("runs none of the checkout's hooks, in the fetch or in the move", () => {
@@ -536,26 +530,6 @@ describe("project sync: Git settings cannot turn the move into something else (P
       }),
     );
   });
-
-  it.effect.each(["-s ours", "--strategy=ours", "-X theirs", "--quiet", '"--squash"'])(
-    "declines before any write with %s in the branch's merge options",
-    (options) =>
-      Effect.gen(function* () {
-        const { f, before, step } = yield* withMergeOptions(options);
-        expect(step).toMatchObject({
-          action: "none",
-          reason: "refused",
-          moved: 0,
-          downgraded: true,
-          detail: projectSyncMergeOptionsDetail("main"),
-        });
-        expect(step.detail).toBe(
-          "The branch main has merge options set in Git (branch.main.mergeOptions) that Sync cannot switch off, so it was not moved.",
-        );
-        expect(ran("merge", f.b)).toEqual([]);
-        expect(snapshot(f.b)).toEqual(before);
-      }),
-  );
 });
 
 describe("project sync: a fetch that went through stays a fetch that went through (P2-47)", () => {
