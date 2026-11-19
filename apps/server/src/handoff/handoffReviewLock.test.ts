@@ -38,7 +38,7 @@ import { provider as fixtureProvider } from "../studio/fixtures.ts";
 import { writeCheckpoint } from "./checkpointGit.ts";
 import { HandoffMode } from "./HandoffMode.ts";
 import * as HandoffReceiver from "./HandoffReceiver.ts";
-import { arrivedReview, machineReviewTarget } from "./handoffReviewLock.ts";
+import { arrivedReview, machineReviewTarget, outgoingReviewLock } from "./handoffReviewLock.ts";
 import * as Previous from "./handoffReviewLock.previousRelease.test.fixture.ts";
 import {
   EMPTY_HANDOFF_DOCUMENT,
@@ -123,6 +123,8 @@ const receiving = (signIns: ReadonlyArray<ReturnType<typeof signIn>>) =>
       writeCheckpoint({ cwd: root, threadId: sourceThread }),
     );
     let document: Document = EMPTY_HANDOFF_DOCUMENT;
+    /** The sign-ins this machine has right now, and a hook on its settings read mid-takeover. */
+    const live = { signIns, onSettingsRead: () => {} };
     const launches: Array<ThreadLaunchService.ThreadLaunchInput> = [];
     const project = {
       id: localProject,
@@ -151,11 +153,14 @@ const receiving = (signIns: ReadonlyArray<ReturnType<typeof signIn>>) =>
           }),
       } as unknown as HandoffMode["Service"]),
       Layer.succeed(ServerSettings.ServerSettingsService, {
-        getSettings: Effect.succeed({
-          ...DEFAULT_SERVER_SETTINGS,
-          projectSettingsOverrides: {
-            [localProject]: { defaultThreadEnvMode: "worktree" as const },
-          },
+        getSettings: Effect.sync(() => {
+          live.onSettingsRead();
+          return {
+            ...DEFAULT_SERVER_SETTINGS,
+            projectSettingsOverrides: {
+              [localProject]: { defaultThreadEnvMode: "worktree" as const },
+            },
+          };
         }),
       } as never),
       Layer.succeed(ServerConfig.ServerConfig, {
@@ -165,7 +170,7 @@ const receiving = (signIns: ReadonlyArray<ReturnType<typeof signIn>>) =>
         snapshot: Effect.succeed({ projects: [project] }),
       } as never),
       Layer.succeed(ProviderRegistry.ProviderRegistry, {
-        getProviders: Effect.succeed(signIns),
+        getProviders: Effect.sync(() => live.signIns),
       } as never),
       Layer.succeed(ThreadLaunchService.ThreadLaunchService, {
         launch: (input: ThreadLaunchService.ThreadLaunchInput) =>
@@ -280,6 +285,7 @@ const receiving = (signIns: ReadonlyArray<ReturnType<typeof signIn>>) =>
       preflight,
       takeOver,
       launches,
+      live,
       document: () => document,
     };
   });
@@ -697,4 +703,271 @@ describe("picking a reviewer inside the lock", () => {
       }),
     ).toEqual({ kind: "refused", message: STAYS });
   });
+});
+
+describe("a review starts on a machine only with a permitted reviewer there (review round 1)", () => {
+  const claudeId = ProviderInstanceId.make("claudeAgent");
+  const codexId = ProviderInstanceId.make("codex");
+  const workId = ProviderInstanceId.make("codexWork");
+  const low = [{ id: "reasoningEffort", value: "low" }];
+  const review = { title: "Review the fix", modelSelection: codex, reviewLock: openaiLock };
+  const withWindow = (base: ServerProvider, slug: string, usedPercent: number): ServerProvider => ({
+    ...base,
+    models: [{ slug, name: slug, isCustom: false, isDefault: true, capabilities: null }],
+    usageLimits: {
+      ...base.usageLimits!,
+      windows: [
+        {
+          id: "five_hour",
+          kind: "session",
+          label: "Session",
+          usedPercent,
+          resetsAt: "2026-10-20T18:00:00.000Z",
+        },
+      ],
+    },
+  });
+  const claudeFree = withWindow(
+    fixtureProvider(claudeId, "claudeAgent", nowMs),
+    "claude-opus-5-5",
+    10,
+  );
+  // This sign-in lists Sonnet only; the coordinator still works on Opus through it.
+  const claudeSonnet = withWindow(
+    fixtureProvider(claudeId, "claudeAgent", nowMs),
+    "claude-sonnet-5-5",
+    10,
+  );
+  const codexSpent = withWindow(fixtureProvider(codexId, "codex", nowMs), "gpt-5.5", 100);
+  const workFree = withWindow(fixtureProvider(workId, "codex", nowMs), "gpt-5.5", 20);
+  const opus = { instanceId: claudeId, model: "claude-opus-5-5" } as ModelSelection;
+  const rule = {
+    providerLimitAction: "switch" as const,
+    providerLimitFallbackModelSelection: opus,
+    providerLimitFallbackModels: [opus, { instanceId: workId, model: "gpt-5.5" }],
+    providerLimitSwitchAtPercent: 90,
+    defaultModelSelection: opus,
+  };
+
+  /** The review as this machine started it after the handoff, stopped on Codex. */
+  const stoppedReview = Effect.gen(function* () {
+    const minisHas = yield* receiving([
+      signIn("claudeAgent", "claude-opus-5-5"),
+      signIn("codex", "gpt-5.5"),
+      signIn("codexWork", "gpt-5.5"),
+    ]);
+    yield* minisHas.receiver.replicate(minisHas.caller("peer"), minisHas.meta(review), null);
+    yield* minisHas.takeOver(claude);
+    const launched = minisHas.launches[0]!;
+    const onLimit = {
+      id: launched.threadId,
+      providerInstanceId: launched.modelSelection.instanceId,
+      modelSelection: launched.modelSelection,
+      routing: launched.routing,
+      status: "failed" as const,
+      lastErrorClass: "usage_limit" as const,
+      latestRunId: RunId.make("r1"),
+      activeRunId: null,
+      pendingRuntimeRequest: null,
+      settledOverride: null,
+    };
+    // The same thread when its sign-in could not open instead.
+    const couldNotOpen = { ...onLimit, lastErrorClass: "provider_unavailable" as const };
+    const stop = {
+      runId: RunId.make("r1"),
+      instanceId: onLimit.providerInstanceId,
+      selection: onLimit.modelSelection,
+      failedAtMs: nowMs - 1000,
+      userMessageId: "m1",
+      failure: { code: "provider_unavailable" },
+      originRunId: RunId.make("r1"),
+      nextHop: 0,
+      originIsLimit: false,
+    };
+    return { onLimit, couldNotOpen, stop };
+  });
+
+  it.effect(
+    "T24R1-01: a reviewer that goes away while the workspace is prepared stops the takeover",
+    () =>
+      Effect.gen(function* () {
+        const minisHas = yield* receiving(BOTH);
+        yield* minisHas.receiver.replicate(minisHas.caller("peer"), minisHas.meta(review), null);
+        // The first decision passes: both families are signed in.
+        expect(yield* minisHas.preflight(claude)).toEqual([]);
+        minisHas.live.onSettingsRead = () => {
+          minisHas.live.signIns = CLAUDE_ONLY;
+        };
+        const taken = yield* Effect.result(minisHas.takeOver(claude));
+        expect(minisHas.launches).toHaveLength(0);
+        expect(taken._tag).toBe("Failure");
+        if (taken._tag === "Failure") {
+          expect(taken.failure).toMatchObject({ status: 409, code: "invalid", check: "provider" });
+          expect(taken.failure.message).toBe(STAYS);
+        }
+        // No continuation and no lease for one.
+        expect(Object.keys(minisHas.document().threads)).toEqual([]);
+        expect(JSON.stringify(minisHas.document())).not.toMatch(/"continuedThreadId":"/);
+      }),
+  );
+
+  it.effect(
+    "T24R1-02: no fallback leaves the lock for the model the coordinator runs, listed or not",
+    () =>
+      Effect.gen(function* () {
+        const { onLimit, couldNotOpen, stop } = yield* stoppedReview;
+        const bare = {
+          ...rule,
+          providerLimitFallbackModelSelection: null,
+          providerLimitFallbackModels: [],
+          defaultModelSelection: null,
+        };
+        const providers = [claudeSonnet, codexSpent];
+        for (const tried of [rule, bare]) {
+          expect(
+            providerLimitStep(onLimit as never, providers, tried as never, nowMs, {
+              resetAttempted: true,
+              proven: opus,
+            }),
+          ).toBeNull();
+          expect(
+            providerLimitStep(couldNotOpen as never, providers, tried as never, nowMs, {
+              resetAttempted: true,
+              proven: opus,
+              unopenable: stop as never,
+            }),
+          ).toBeNull();
+        }
+      }),
+  );
+
+  it.effect(
+    "T24R1-03: a review by its title on a model of no known family starts nowhere, this machine included",
+    () =>
+      Effect.gen(function* () {
+        const unknown = { instanceId: "codex", model: "qwen3.6-35b" } as unknown as ModelSelection;
+        const titled = { title: "Adversarial review: 1390", modelSelection: unknown };
+        // Leaving for this same machine, it is still a review that cannot be locked.
+        expect((yield* Effect.result(outgoingReviewLock(titled, true)))._tag).toBe("Failure");
+        // And a destination told "no review" reads the title for itself.
+        const here = yield* receiving(BOTH);
+        yield* here.receiver.replicate(
+          here.caller("self"),
+          here.meta({ ...titled, reviewLock: null }),
+          null,
+        );
+        expect((yield* here.preflight(claude, "self")).map((failure) => failure.check)).toEqual([
+          "provider",
+        ]);
+        const taken = yield* Effect.result(here.takeOver(claude, "self"));
+        expect(here.launches).toHaveLength(0);
+        expect(taken._tag).toBe("Failure");
+        expect(Object.keys(here.document().threads)).toEqual([]);
+      }),
+  );
+
+  it.effect("T24R1-05: a sign-in that lists no models is no proof of a permitted reviewer", () =>
+    Effect.gen(function* () {
+      const listsNothing = [
+        signIn("claudeAgent", "claude-opus-5-5"),
+        { ...signIn("codex", "gpt-5.5"), models: [] },
+      ];
+      const minisHas = yield* receiving(listsNothing);
+      yield* minisHas.receiver.replicate(minisHas.caller("peer"), minisHas.meta(review), null);
+      for (const asked of [null, codex, claude])
+        expect(yield* minisHas.preflight(asked)).toEqual([{ check: "provider", message: STAYS }]);
+      const taken = yield* Effect.result(minisHas.takeOver(null));
+      expect(minisHas.launches).toHaveLength(0);
+      expect(taken._tag).toBe("Failure");
+      if (taken._tag === "Failure") expect(taken.failure.message).toBe(STAYS);
+      // A thread that is no review still moves to a sign-in that lists nothing.
+      const plain = yield* receiving(listsNothing);
+      yield* plain.receiver.replicate(
+        plain.caller("peer"),
+        plain.meta({ title: "Fix the build", modelSelection: codex, reviewLock: null }),
+        null,
+      );
+      expect(yield* plain.preflight(null)).toEqual([]);
+    }),
+  );
+
+  it.effect("T24R1-06: on arrival the carried effort wins over the one asked for", () =>
+    Effect.gen(function* () {
+      const minisHas = yield* receiving(BOTH);
+      yield* minisHas.receiver.replicate(minisHas.caller("peer"), minisHas.meta(review), null);
+      yield* minisHas.takeOver({ ...codex, options: low } as ModelSelection);
+      expect(minisHas.launches[0]?.modelSelection).toEqual({ ...codex, options: high });
+      const arrive = (options: ReadonlyArray<{ id: string; value: unknown }>) =>
+        arrivedReview({
+          carried: openaiLock,
+          title: "Review the fix",
+          stored: codex,
+          requested: { ...codex, options } as unknown as ModelSelection,
+          providers: BOTH as unknown as ReadonlyArray<ServerProvider>,
+          allowed: () => true,
+          machineLabel: "Minis",
+          sourceLabel: "M4",
+          now,
+        });
+      // An empty list asked for does not drop it; an unrelated option stays beside it.
+      expect(arrive([])).toMatchObject({ modelSelection: { ...codex, options: high } });
+      const beside = arrive([{ id: "fastMode", value: true }, ...low]);
+      expect(beside).toMatchObject({ kind: "locked" });
+      if (beside.kind === "locked")
+        expect(
+          [...(beside.modelSelection.options ?? [])].sort((a, b) => a.id.localeCompare(b.id)),
+        ).toEqual([{ id: "fastMode", value: true }, ...high]);
+      // The sender asks for the review's effort too, whatever its saved target says.
+      expect(
+        machineReviewTarget({
+          lock: openaiLock,
+          target: {
+            environmentId: minis,
+            modelSelection: { ...codex, options: low } as ModelSelection,
+          },
+          machine: {
+            label: "Minis",
+            handoffReviewLock: true,
+            providers: [
+              {
+                providerInstanceId: "codex",
+                driverKind: "codex",
+                models: ["gpt-5.5"],
+                available: true,
+              },
+            ] as never,
+          },
+          machineLabel: "Minis",
+          allowed: () => true,
+        }),
+      ).toMatchObject({ kind: "target", target: { modelSelection: { ...codex, options: high } } });
+    }),
+  );
+
+  it.effect("T24R1-06: a same-model fallback keeps the review's effort over a saved one", () =>
+    Effect.gen(function* () {
+      const { onLimit, couldNotOpen, stop } = yield* stoppedReview;
+      const providers = [claudeFree, codexSpent, workFree];
+      const kept = {
+        command: { modelSelection: { instanceId: workId, model: "gpt-5.5", options: high } },
+      };
+      const saved = {
+        ...rule,
+        providerLimitFallbackModels: [opus, { instanceId: workId, model: "gpt-5.5", options: low }],
+      };
+      for (const tried of [rule, saved]) {
+        expect(
+          providerLimitStep(onLimit as never, providers, tried as never, nowMs, {
+            resetAttempted: true,
+          }),
+        ).toMatchObject(kept);
+        expect(
+          providerLimitStep(couldNotOpen as never, providers, tried as never, nowMs, {
+            resetAttempted: true,
+            unopenable: stop as never,
+          }),
+        ).toMatchObject(kept);
+      }
+    }),
+  );
 });
