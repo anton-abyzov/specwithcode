@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  type HandoffBatchInput,
   HandoffModeError,
   type HandoffModeSnapshot,
   type OrchestrationV2ThreadShell,
@@ -131,7 +132,7 @@ const setup = (
             ? { kind: "fenced", message: "Mac mini continues this thread; this copy is fenced." }
             : { kind: "unleased" },
         ),
-      handOffBatch: (input) =>
+      handOffBatch: (input: HandoffBatchInput) =>
         Effect.suspend(() => {
           calls.push({ method: "handOffBatch", input });
           return failOr({

@@ -514,6 +514,7 @@ export const scenario = (
       planMerge: () => Effect.die("unused"),
       extrasNegotiate: () => Effect.die("unused"),
       extrasReplicate: () => Effect.die("unused"),
+      folderWork: () => Effect.die("unused"),
       // A receiver from before transfer records has no such route.
       transferStatus: (_, request) =>
         wire.destination === destinationReceiver

@@ -31,6 +31,7 @@ import {
   type HandoffModeErrorCode,
   type HandoffPreflightFailure,
   type HandoffTransferCandidate,
+  type HandoffTransferDisposition,
   type HandoffTransferRecord,
   type HandoffTransferTrigger,
   isHandoffTransferFinished,
@@ -189,6 +190,13 @@ export interface TransferStart {
   readonly trigger?: HandoffTransferTrigger | undefined;
   /** A record a batch wrote for this thread before its first hold. */
   readonly operationId?: string | undefined;
+  /** What the plan asked the destination to do; absent, the thread's own state decides. */
+  readonly disposition?: HandoffTransferDisposition | undefined;
+  /**
+   * The batch this move belongs to. Its takeover names the disposition and the
+   * revision handed over, which only a destination with the batch capability reads.
+   */
+  readonly batchId?: string | undefined;
 }
 
 const MANUAL: HandoffTransferTrigger = { kind: "manual" };
@@ -312,6 +320,15 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
     modelSelection: record.modelSelection,
     operationId: record.operationId,
     trigger: record.trigger,
+    ...(record.batchId === null || record.context === undefined
+      ? {}
+      : {
+          batch: {
+            batchId: record.batchId,
+            disposition: record.disposition,
+            context: record.context,
+          },
+        }),
   });
 
   /**
@@ -784,9 +801,10 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       }
 
       const disposition =
-        first.shell.activeRunId !== null || shouldResume(first.checkpoint.runEnding)
+        start.disposition ??
+        (first.shell.activeRunId !== null || shouldResume(first.checkpoint.runEnding)
           ? "resume"
-          : "ready";
+          : "ready");
       // An automatic move is for the run, the disposition and the preference it was
       // admitted with. Read here, after the checkpoint and before the hold, so a turn
       // that started since, or Off chosen since, is never stopped for it.
@@ -807,7 +825,7 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       const operationId = planned?.operationId ?? NodeCrypto.randomUUID();
       const written: HandoffTransferRecord = {
         operationId,
-        batchId: planned?.batchId ?? null,
+        batchId: planned?.batchId ?? start.batchId ?? null,
         lineage: {
           sourceEnvironmentId: self,
           sourceThreadId: threadId,
@@ -958,6 +976,10 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         // In the same write: a repeat after a stop names the same waiting machine.
         launcher: waits ?? null,
         review: reviewTakeover(first.shell, {}).review === true,
+        // A batch hands the thread over at this revision of its context, by name.
+        ...(start.batchId === undefined
+          ? {}
+          : { context: { sequence: checkpoint.sequence, commit: checkpoint.commit } }),
       });
       if (sent === null) return yield* failed("busy", RESUMED_HERE);
       yield* deps
@@ -990,10 +1012,12 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       )
       .pipe(Effect.forkDetach, Effect.flatMap(Fiber.join));
 
+  /** One thread's move, with the destination's own answer beside the result. */
+  const move = (input: HandOffInput, reason: TakeoverReason, start: TransferStart = {}) =>
+    owned(input.threadId, run(input, reason, start, false));
+
   const handOff = (input: HandOffInput, reason: TakeoverReason, start: TransferStart = {}) =>
-    owned(input.threadId, run(input, reason, start, false)).pipe(
-      Effect.map((moved) => moved.result),
-    );
+    move(input, reason, start).pipe(Effect.map((moved) => moved.result));
 
   /**
    * Before the first hold of a batch: one record per thread, with its
@@ -1004,14 +1028,20 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
     destination: EnvironmentId,
     reason: TakeoverReason,
     trigger: HandoffTransferTrigger = MANUAL,
-    /** The asking window's name for the batch; a name already taken is not used twice. */
-    named?: string,
+    options: {
+      /** The batch these records join; it is on file already and keeps its own fields. */
+      readonly batchId?: string;
+      /** The asking window's name for the batch; a name already taken is not used twice. */
+      readonly named?: string;
+      readonly dispositions?: ReadonlyMap<ThreadId, HandoffTransferDisposition>;
+    } = {},
   ): Effect.Effect<ReadonlyMap<ThreadId, string>, HandoffModeError> =>
     Effect.gen(function* () {
       const document = yield* deps.document;
       const now = yield* deps.nowIso;
+      const named = options.named;
       const taken = named === undefined || (yield* store.read).batches[named] !== undefined;
-      const batchId = taken ? NodeCrypto.randomUUID() : named;
+      const batchId = options.batchId ?? (taken ? NodeCrypto.randomUUID() : named);
       const records: Array<HandoffTransferRecord> = [];
       for (const threadId of threadIds) {
         const record = document.threads[threadId];
@@ -1032,10 +1062,11 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
           targetEnvironmentId: destination,
           sequence: checkpoint?.sequence ?? null,
           disposition:
-            shell.value.activeRunId !== null ||
+            options.dispositions?.get(threadId) ??
+            (shell.value.activeRunId !== null ||
             (checkpoint !== null && shouldResume(checkpoint.runEnding))
               ? "resume"
-              : "ready",
+              : "ready"),
           state: "pending",
           legacy: false,
           candidates: [],
@@ -1060,11 +1091,12 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
           batches: {
             ...current.batches,
             [batchId]: {
+              createdAt: now,
+              ...current.batches[batchId],
               batchId,
               targetEnvironmentId: destination,
               trigger,
               operationIds: fresh.map((record) => record.operationId),
-              createdAt: now,
             },
           },
         });
@@ -1276,5 +1308,5 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       ),
     );
 
-  return { handOff, planBatch, endBatch, resumeHere, resumeUnsent, reconcile, pull, servePull };
+  return { handOff, move, planBatch, endBatch, resumeHere, resumeUnsent, reconcile, pull, servePull };
 }

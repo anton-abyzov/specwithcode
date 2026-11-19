@@ -145,6 +145,7 @@ import type {
   TransferStatusRequest,
   TransferStatusResponse,
 } from "./handoffWire.ts";
+import { batchArrival, REVISION_MISMATCH } from "./HandoffBatch.ts";
 import {
   capabilityFailure,
   HANDOFF_APP_VERSION,
@@ -1041,7 +1042,17 @@ export const make = Effect.gen(function* () {
         review.kind === "locked"
           ? review.modelSelection
           : (request.modelSelection ?? detail.modelSelection);
-      const resume = shouldResume(checkpoint.runEnding);
+      // A batch names what happens on arrival and the revision it hands over.
+      const arrival = batchArrival({
+        batch: request.batch,
+        sequence: request.sequence,
+        checkpoint,
+        resumable: shouldResume(checkpoint.runEnding),
+      });
+      if (arrival.kind === "refuse") {
+        return yield* refuse(409, "invalid", at(REVISION_MISMATCH), "checkpoint");
+      }
+      const resume = arrival.resume;
       const ceiling = caller.runtimeCeiling ?? null;
       const clamped =
         ceiling === null

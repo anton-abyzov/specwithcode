@@ -25,6 +25,7 @@ export const WORKTREE_SET_HANDOFF_MESSAGE =
   "This thread works in a worktree set across several repositories, and a handoff carries one repository. Finish it on this machine, or push each repository's branch and continue on the other machine from there.";
 
 import {
+  isProjectCoordinatorThreadId,
   CommandId,
   type EnvironmentId,
   HANDOFF_LEASE_RENEW_MS,
@@ -35,8 +36,6 @@ import {
   type HandOffResult,
   type HandoffCheckpoint,
   type HandoffContinueHereInput,
-  type HandoffMachineRun,
-  type HandoffMachineThreadResult,
   HandoffModeError,
   type HandoffModeErrorCode,
   type HandoffPreflightFailure,
@@ -80,7 +79,7 @@ import { outgoingReviewLock } from "./handoffReviewLock.ts";
 import * as Resume from "./handoffResume.ts";
 import { HandoffReceiver, type HandoffRefusal, type ReceiverCaller } from "./HandoffReceiver.ts";
 import { readSourceSet, SET_COPY_ON_HANDOFF, shipSetTo } from "./HandoffSetMoves.ts";
-import { makeHandoffBatch } from "./HandoffBatch.ts";
+import { HandoffFolderWork, makeFolderWorkSender, makeHandoffBatch } from "./HandoffBatch.ts";
 import { makeTransferRunner } from "./HandoffTransferRunner.ts";
 import * as HandoffTransferStore from "./HandoffTransferStore.ts";
 import {
@@ -731,91 +730,98 @@ export const make = Effect.gen(function* () {
       });
     });
 
-  const handOffMachineOwned = (input: HandOffMachineInput) =>
+  const folder = yield* Effect.serviceOption(HandoffFolderWork);
+  const batch = makeHandoffBatch({
+    self,
+    selfLabel,
+    store: transferStore,
+    nowIso,
+    peerLabel,
+    capabilities: (destination) =>
+      peers
+        .preflight(destination, {
+          sourceEnvironmentId: self,
+          protocolVersion: HANDOFF_PROTOCOL_VERSION,
+          appVersion: HANDOFF_APP_VERSION,
+          capabilities: HANDOFF_CAPABILITIES,
+          threads: [],
+        })
+        .pipe(
+          Effect.mapError(fromPeer),
+          Effect.flatMap((response) => {
+            const mismatch = versionFailure({
+              peerLabel: response.machineLabel,
+              peerProtocolVersion: response.protocolVersion,
+              peerAppVersion: response.appVersion,
+              selfLabel,
+            });
+            return mismatch === null
+              ? Effect.succeed(response.capabilities)
+              : Effect.fail(failed("invalid", mismatch.message));
+          }),
+        ),
+    thread: (threadId) =>
+      Effect.gen(function* () {
+        const shell = yield* shellOf(threadId);
+        const project = yield* projects.getById(shell.projectId).pipe(
+          Effect.map(Option.getOrNull),
+          Effect.orElseSucceed(() => null),
+        );
+        return {
+          shell,
+          coordinator: project !== null && isProjectCoordinatorThreadId(shell.id, project),
+          personal: isPersonalAssistantProject(project?.workspaceSettings),
+        };
+      }),
+    planBatch: transfers.planBatch,
+    endBatch: transfers.endBatch,
+    move: transfers.move,
+    folderWork: Option.isNone(folder)
+      ? null
+      : makeFolderWorkSender({
+          selfEnvironmentId: self,
+          selfLabel,
+          inventory: folder.value.inventory,
+          sendExtras: folder.value.sendExtras,
+          apply: peers.folderWork,
+        }),
+    projectTitle: (projectId) =>
+      projects.getById(projectId).pipe(
+        Effect.map((found) => Option.getOrNull(found)?.title ?? String(projectId)),
+        Effect.orElseSucceed(() => String(projectId)),
+      ),
+  });
+
+  /** The machine handoff older callers ask for: the same batch, saved as the last machine run. */
+  const handOffMachine = (input: HandOffMachineInput) =>
     Effect.gen(function* () {
-      const destination = input.destinationEnvironmentId;
-      if (destination === self) {
-        return yield* failed("invalid", "Pick another machine to hand this machine's threads to.");
-      }
       if (input.reason === "sleep") return yield* failed("invalid", Drain.SLEEP_MOVES_NOTHING);
-      const label = yield* peerLabel(destination);
-      const startedAt = yield* nowIso;
-      const document = yield* handoff.document;
-      const threadIds = input.threadIds ?? (yield* runningHandoffThreads(document));
+      const threadIds =
+        input.threadIds ?? (yield* runningHandoffThreads(yield* handoff.document));
       // Away mode names its threads, whatever their handoff mode, and their queues go too.
       const carriesQueue = input.reason === "away" || input.reason === "back";
-      // Every thread's record is written before the first of them is held.
-      const planned = yield* transfers.planBatch(
-        threadIds,
-        destination,
-        "machine-handoff",
-        undefined,
-        input.batchId,
+      const run = yield* batch.handOffMachine(
+        { ...input, threadIds },
+        carriesQueue
+          ? {
+              aroundMove: (threadId) =>
+                queuedMessagesOf(threadId).pipe(
+                  Effect.map(
+                    (queued) => (continued: ThreadId) =>
+                      queued.length === 0
+                        ? Effect.succeed(null)
+                        : carryQueue(threadId, input.destinationEnvironmentId, continued, queued),
+                  ),
+                ),
+            }
+          : {},
       );
-      const results: Array<HandoffMachineThreadResult> = [];
-      yield* Effect.addFinalizer(() => transfers.endBatch(planned));
-      for (const threadId of threadIds) {
-        const shell = yield* shellOf(threadId).pipe(Effect.option);
-        const title = Option.isSome(shell) ? shell.value.title.slice(0, 500) : String(threadId);
-        const queued = carriesQueue ? yield* queuedMessagesOf(threadId) : [];
-        const moved = yield* handOffAs(
-          { threadId, destinationEnvironmentId: destination },
-          "machine-handoff",
-          {
-            operationId: planned.get(threadId),
-          },
-        ).pipe(Effect.result);
-        if (moved._tag === "Success") {
-          const carried =
-            queued.length === 0
-              ? null
-              : yield* carryQueue(threadId, destination, moved.success.threadId, queued);
-          results.push({
-            threadId,
-            title,
-            outcome: "moved",
-            detail:
-              [moved.success.notice, carried]
-                .filter((part): part is string => part !== null && part !== "")
-                .join(" ")
-                .slice(0, 500) || null,
-            continuedThreadId: moved.success.threadId,
-            resumed: Option.isSome(shell) && shell.value.activeRunId !== null,
-          });
-        } else {
-          results.push({
-            threadId,
-            title,
-            outcome: moved.failure.code === "fenced" ? "skipped" : "stayed",
-            // A destination whose work grant does not allow the thread (its sign-in, its
-            // project) says so, so the user sees why it stayed on a Mac about to sleep.
-            detail: (moved.failure.code === "needs_grant"
-              ? `Not moved: ${moved.failure.message}`
-              : moved.failure.message
-            ).slice(0, 500),
-            continuedThreadId: null,
-            resumed: false,
-          });
-        }
-      }
-      const run: HandoffMachineRun = {
-        destinationEnvironmentId: destination,
-        destinationLabel: label.slice(0, 120),
-        // The saved run keeps the reason older servers read; Away keeps its own session.
-        reason: "manual",
-        startedAt,
-        finishedAt: yield* nowIso,
-        results,
-      };
       yield* handoff.updateDocument(
         (current) => [undefined, { ...current, machineRun: run }] as const,
       );
       return run;
-    }).pipe(Effect.scoped);
-
-  /** The batch runs in a fiber of this server: a window that closes stops waiting, not the moves. */
-  const handOffMachine = (input: HandOffMachineInput) =>
-    handOffMachineOwned(input).pipe(Effect.forkDetach, Effect.flatMap(Fiber.join));
+      // In a fiber of this server: a window that closes stops waiting, not the moves.
+    }).pipe(Effect.forkDetach, Effect.flatMap(Fiber.join));
 
   const preflight = (input: HandoffPreflightInput) =>
     Effect.gen(function* () {
@@ -1266,7 +1272,6 @@ export const make = Effect.gen(function* () {
 
   const tick = heartbeat.pipe(Effect.andThen(repairFollows), Effect.andThen(replicate));
 
-  const batch = makeHandoffBatch({});
   return {
     handOff: (input: HandOffInput) => handOffAs(input, "handoff", { trigger: input.trigger }),
     handOffMachine,

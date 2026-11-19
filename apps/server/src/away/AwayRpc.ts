@@ -37,6 +37,9 @@ export const layerRpcHandlers = WsAwayRpcGroup.middleware(RpcInstrumentation).to
       [WS_METHODS.awaySnapshot]: () => runner.snapshot,
       [WS_METHODS.awayUpdateConfig]: (input) => runner.updateConfig(input),
       [WS_METHODS.awayForceLocal]: (input) => runner.forceLocal(input),
+      // The hand off batch (1390): the server runs it; a window only starts and reads it.
+      [WS_METHODS.handoffBatchStart]: (input) => handoff.handOffBatch(input),
+      [WS_METHODS.handoffBatchRead]: (input) => handoff.readBatches(input),
     };
   }),
 );

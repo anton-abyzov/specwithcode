@@ -296,6 +296,7 @@ const scenario = (options: { readonly modeOn: boolean }) =>
         viaNetwork(destinationReceiver.transferStatus(asSource, request)),
       transferPull: () => Effect.die("unused"),
       check: (_, request) => viaNetwork(destinationReceiver.check(asSource, request)),
+      folderWork: () => Effect.die("unused"),
     });
     const moves = yield* Effect.gen(function* () {
       const receiver = yield* HandoffReceiver.make;

@@ -749,8 +749,15 @@ describe("project folder work (AC-20)", () => {
     git(destination, "fetch", "-q", source, `snapshot:${branch}`);
     return { destination, branch };
   };
+  // Not through `git`, which trims: a status line starts with a space.
   const statusOf = (root: string) =>
-    git(root, "status", "--porcelain=v1", "--untracked-files=all").split("\n").toSorted();
+    NodeChildProcess.execFileSync("git", ["status", "--porcelain=v1", "--untracked-files=all"], {
+      cwd: root,
+      encoding: "utf8",
+    })
+      .split("\n")
+      .filter((line) => line !== "")
+      .toSorted();
 
   it("puts the files into a folder at the parent commit with no changes of its own, as uncommitted files", async () => {
     const { destination, branch } = folders();
@@ -796,7 +803,7 @@ describe("project folder work (AC-20)", () => {
 
     expect(done.applied).toBe(false);
     expect(done.reason).toContain("another commit");
-    expect(statusOf(destination)).toEqual([""]);
+    expect(statusOf(destination)).toEqual([]);
   });
 
   const extra = (change: Record<string, unknown>) => ({
@@ -936,10 +943,12 @@ describe("project folder work (AC-20)", () => {
 });
 
 describe("the batch's window calls (AC-33)", () => {
-  const tested = [WS_METHODS.handoffBatchStart, WS_METHODS.handoffBatchRead] as const;
+  type AwayTag = Parameters<typeof WsAwayRpcGroup.omit>[number];
+  type Tested = typeof WS_METHODS.handoffBatchStart | typeof WS_METHODS.handoffBatchRead;
   const group = WsAwayRpcGroup.omit(
     ...[...WsAwayRpcGroup.requests.keys()].filter(
-      (tag) => !(tested as ReadonlyArray<string>).includes(tag),
+      (tag): tag is Exclude<AwayTag, Tested> =>
+        tag !== WS_METHODS.handoffBatchStart && tag !== WS_METHODS.handoffBatchRead,
     ),
   );
   const startInput = {
@@ -947,23 +956,26 @@ describe("the batch's window calls (AC-33)", () => {
     start: "manual" as const,
     threads: [],
   };
-  const clientWith = (scopes: ReadonlyArray<string>, handled: Array<string>) =>
-    RpcTest.makeClient(group as never).pipe(
+  const clientWith = (
+    scopes: Parameters<typeof RpcAuthorization.layer>[0],
+    handled: Array<string>,
+  ) =>
+    RpcTest.makeClient(group).pipe(
       Effect.provide(
         Layer.mergeAll(
-          (group as any).toLayerHandler(WS_METHODS.handoffBatchStart, () =>
+          group.toLayerHandler(WS_METHODS.handoffBatchStart, () =>
             Effect.sync(() => handled.push("start")).pipe(Effect.andThen(Effect.never)),
           ),
-          (group as any).toLayerHandler(WS_METHODS.handoffBatchRead, () =>
+          group.toLayerHandler(WS_METHODS.handoffBatchRead, () =>
             Effect.sync(() => {
               handled.push("read");
               return [];
             }),
           ),
-          RpcAuthorization.layer(scopes as never),
-        ) as never,
+          RpcAuthorization.layer(scopes),
+        ),
       ),
-    ) as Effect.Effect<Record<string, (input: unknown) => Effect.Effect<unknown, unknown>>>;
+    );
 
   it("gives each call one scope from the existing set", () => {
     expect(RpcAuthorization.requiredScopeForRpcMethod(WS_METHODS.handoffBatchStart)).toBe(
@@ -977,11 +989,14 @@ describe("the batch's window calls (AC-33)", () => {
   it.effect("the server refuses to start a batch for a window that can only read", () =>
     Effect.gen(function* () {
       const handled: Array<string> = [];
-      const client = yield* clientWith([AuthOrchestrationReadScope, AuthFilesystemReadScope], handled);
+      const client = yield* clientWith(
+        [AuthOrchestrationReadScope, AuthFilesystemReadScope],
+        handled,
+      );
 
-      expect(yield* client[WS_METHODS.handoffBatchRead]!({})).toEqual([]);
+      expect(yield* client[WS_METHODS.handoffBatchRead]({})).toEqual([]);
       expect(
-        yield* client[WS_METHODS.handoffBatchStart]!(startInput).pipe(Effect.flip),
+        yield* client[WS_METHODS.handoffBatchStart](startInput).pipe(Effect.flip),
       ).toMatchObject({
         _tag: "EnvironmentAuthorizationError",
         requiredPermission: AuthOrchestrationOperateScope,
@@ -995,7 +1010,7 @@ describe("the batch's window calls (AC-33)", () => {
       const handled: Array<string> = [];
       const client = yield* clientWith([AuthOrchestrationOperateScope], handled);
 
-      expect(yield* client[WS_METHODS.handoffBatchRead]!({}).pipe(Effect.flip)).toMatchObject({
+      expect(yield* client[WS_METHODS.handoffBatchRead]({}).pipe(Effect.flip)).toMatchObject({
         _tag: "EnvironmentAuthorizationError",
         requiredPermission: AuthFilesystemReadScope,
       });
