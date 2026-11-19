@@ -5,11 +5,20 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { CLONE_STAGING_MARK, cloneStagingMarkText } from "../fleet/cloneStaging.ts";
+
+/** The id of a process that has ended. */
+const endedPid = () => NodeChildProcess.spawnSync("true").pid ?? 999_999;
+
 /** One Git command the code under test ran: where, its arguments, and whether on a private index. */
 export interface RecordedGit {
   readonly cwd: string;
   readonly args: ReadonlyArray<string>;
   readonly privateIndex: boolean;
+  /** The Git folder the command was pinned to (`GIT_DIR`), null when it found its own. */
+  readonly gitDir: string | null;
+  /** The environment the code under test gave the command, on top of this process's. */
+  readonly env: Readonly<Record<string, string | undefined>>;
 }
 const recorded: Array<RecordedGit> = [];
 export const recordedGit = (): ReadonlyArray<RecordedGit> => recorded;
@@ -35,6 +44,8 @@ export function recordingGit(actual: GitModule): GitModule {
       cwd,
       args: [...args],
       privateIndex: options?.env?.GIT_INDEX_FILE !== undefined,
+      gitDir: options?.env?.GIT_DIR ?? null,
+      env: { ...options?.env },
     };
     recorded.push(command);
     await gitHooks.before?.(command);
@@ -98,30 +109,33 @@ export function gitCommandsNotAllowed(): Array<string> {
                 ? rest.join(" ") === "list"
                 : verb === "worktree"
                   ? rest.join(" ") === "list --porcelain"
-                  : verb === "bundle"
-                    ? ["create", "verify", "list-heads"].includes(rest[0] ?? "")
-                    : verb === "update-ref"
-                      ? rest[0] === "-d"
-                        ? // With the commit it was listed at, or without: only ever a hidden ref.
-                          (rest.length === 2 || rest.length === 3) && HIDDEN.test(rest[1] ?? "")
-                        : HIDDEN.test(rest[0] ?? "") ||
-                          // An arrival branch is created only where no ref of that name exists.
-                          (ARRIVAL.test(rest[0] ?? "") && rest.length === 3 && rest[2] === "")
-                      : verb === "fetch"
-                        ? (rest.length === 5 &&
-                            rest.slice(0, 3).join(" ") ===
-                              "--quiet --no-tags --no-write-fetch-head" &&
-                            /^(\/|[A-Za-z]:[\\/])/.test(rest[3] ?? "") &&
-                            /:refs\/specwithcode\/extras-incoming\//.test(rest[4] ?? "")) ||
-                          // An arrival branch is moved forward from a hidden ref of this very
-                          // repository, with no `+`: Git refuses anything but a fast-forward.
-                          (rest.length === 8 &&
-                            rest.slice(0, 7).join(" ") ===
-                              "--quiet --no-tags --no-prune --no-recurse-submodules --no-write-fetch-head --refmap= ." &&
-                            /^refs\/specwithcode\/extras-incoming\/[^:+]+:refs\/heads\/swc\/from-[^:]+$/.test(
-                              rest[7] ?? "",
-                            ))
-                        : false;
+                  : verb === "init"
+                    ? // Only the send's own private repository, made bare and without templates.
+                      /^--bare -q --template= --object-format=(sha1|sha256)$/.test(rest.join(" "))
+                    : verb === "bundle"
+                      ? ["create", "verify", "list-heads"].includes(rest[0] ?? "")
+                      : verb === "update-ref"
+                        ? rest[0] === "-d"
+                          ? // With the commit it was listed at, or without: only ever a hidden ref.
+                            (rest.length === 2 || rest.length === 3) && HIDDEN.test(rest[1] ?? "")
+                          : HIDDEN.test(rest[0] ?? "") ||
+                            // An arrival branch is created only where no ref of that name exists.
+                            (ARRIVAL.test(rest[0] ?? "") && rest.length === 3 && rest[2] === "")
+                        : verb === "fetch"
+                          ? (rest.length === 5 &&
+                              rest.slice(0, 3).join(" ") ===
+                                "--quiet --no-tags --no-write-fetch-head" &&
+                              /^(\/|[A-Za-z]:[\\/])/.test(rest[3] ?? "") &&
+                              /:refs\/specwithcode\/extras-incoming\//.test(rest[4] ?? "")) ||
+                            // An arrival branch is moved forward from a hidden ref of this very
+                            // repository, with no `+`: Git refuses anything but a fast-forward.
+                            (rest.length === 8 &&
+                              rest.slice(0, 7).join(" ") ===
+                                "--quiet --no-tags --no-prune --no-recurse-submodules --no-write-fetch-head --refmap= ." &&
+                              /^refs\/specwithcode\/extras-incoming\/[^:+]+:refs\/heads\/swc\/from-[^:]+$/.test(
+                                rest[7] ?? "",
+                              ))
+                          : false;
     if (!ok) out.push(args.join(" ").slice(0, 300));
   }
   return out;
@@ -171,6 +185,31 @@ export const fakeToken = () => ["gh", "p_", "A1b2C3d4E5f6".repeat(3)].join("");
 export const fakeKeyHeader = () => ["-----BEGIN ", "PRIVATE KEY-----"].join("");
 
 const temporary: Array<string> = [];
+/**
+ * A clone's staging folder as a server that stopped mid-clone leaves it: the
+ * mark (its owner gone), and the half-made clone. `mark: false` makes a person's own folder
+ * that merely has such a name; `repository: false` leaves the clone without
+ * its `.git` (stopped before Git made it, or half removed).
+ */
+export function stagingFolder(
+  root: string,
+  relative: string,
+  options: { readonly mark?: boolean; readonly repository?: boolean } = {},
+): string {
+  const folder = NodePath.join(root, ...relative.split("/"));
+  const clone = NodePath.join(folder, "clone");
+  NodeFS.mkdirSync(clone, { recursive: true });
+  if (options.mark !== false)
+    NodeFS.writeFileSync(
+      NodePath.join(folder, CLONE_STAGING_MARK),
+      // Owned by a server process that has ended.
+      cloneStagingMarkText({ pid: endedPid(), started: 1, token: "0".repeat(32) }),
+    );
+  if (options.repository !== false) git(root, "init", "-q", clone);
+  NodeFS.writeFileSync(NodePath.join(clone, "half.ts"), "export const half = 1;\n");
+  return folder;
+}
+
 export function cleanUp(): void {
   gitHooks.before = null;
   gitHooks.after = null;
