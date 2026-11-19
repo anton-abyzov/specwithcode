@@ -165,7 +165,22 @@ export const ACP_PROTOCOL = "acp.ndjson-jsonrpc" as const;
  * the hydrated tool frame; two seconds split that tail into a second synthetic
  * wake. Longer floors (4–20s) only prolonged Working. No per-model carveouts.
  */
+
 const ACP_DEFERRED_FINALIZE_DEBOUNCE: Duration.Input = "3000 millis";
+
+/**
+ * A failed ACP process-group teardown: the agent's processes may still run, so the
+ * folder change stays blocked until the runtime's teardown recovers (a replacement
+ * closes the old scope, whose finalizer force-kills the group) or the server restarts.
+ * ACP exposes no liveness probe for the old group, so the teardown state is the evidence.
+ */
+function holdFolderUntilTeardownRecovers(
+  appThreadId: string | null,
+  readState: () => Promise<{ readonly _tag: string }>,
+): void {
+  if (appThreadId === null) return;
+  holdFailedStopTeardown(appThreadId, () => readState().then((state) => state._tag !== "Failed"));
+}
 
 export interface AcpAdapterV2RuntimeInput {
   readonly cwd: string;
@@ -8137,6 +8152,10 @@ export function makeAcpAdapterV2(
                             });
                             yield* Ref.set(runtimeTeardownState, { _tag: "Failed", error });
                             yield* Deferred.fail(teardownBarrier, error).pipe(Effect.ignore);
+                            holdFolderUntilTeardownRecovers(
+                              turnInput.providerThread.appThreadId,
+                              () => Effect.runPromise(Ref.get(runtimeTeardownState)),
+                            );
                             return yield* error;
                           }
                           const teardownExit = yield* runtime.terminateProcessGroup.pipe(
@@ -8151,6 +8170,10 @@ export function makeAcpAdapterV2(
                             });
                             yield* Ref.set(runtimeTeardownState, { _tag: "Failed", error });
                             yield* Deferred.fail(teardownBarrier, error).pipe(Effect.ignore);
+                            holdFolderUntilTeardownRecovers(
+                              turnInput.providerThread.appThreadId,
+                              () => Effect.runPromise(Ref.get(runtimeTeardownState)),
+                            );
                             return yield* error;
                           }
                           yield* Ref.set(runtimeRestartRequired, true);
@@ -8208,16 +8231,9 @@ export function makeAcpAdapterV2(
                       });
                       yield* Ref.set(runtimeTeardownState, { _tag: "Failed", error });
                       yield* Deferred.fail(teardownBarrier!, error).pipe(Effect.ignore);
-                      // The agent's processes may still run: the folder change stays
-                      // blocked until a later teardown of this runtime succeeds.
-                      const appThreadId = turnInput.providerThread.appThreadId;
-                      if (appThreadId !== null) {
-                        holdFailedStopTeardown(appThreadId, () =>
-                          Effect.runPromise(Ref.get(runtimeTeardownState)).then(
-                            (state) => state._tag !== "Failed",
-                          ),
-                        );
-                      }
+                      holdFolderUntilTeardownRecovers(turnInput.providerThread.appThreadId, () =>
+                        Effect.runPromise(Ref.get(runtimeTeardownState)),
+                      );
                       return error;
                     });
                     const runTransition = Effect.gen(function* () {

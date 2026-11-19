@@ -456,7 +456,9 @@ export function ProjectFolderChange({
           id: thread.id,
           runId: thread.runId ?? null,
           // Absent from an older server's check: the server then binds to its own reading.
-          ...(thread.latestRunId === undefined ? {} : { latestRunId: thread.latestRunId }),
+          ...(thread.latestExecutedRunId === undefined
+            ? {}
+            : { latestExecutedRunId: thread.latestExecutedRunId }),
         })),
       },
     }).then((result) => {

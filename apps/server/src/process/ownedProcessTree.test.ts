@@ -300,22 +300,41 @@ describe("OwnedProcessTree.end", () => {
     expect(calls).toEqual([]);
   });
 
-  it("never signals the CLI's group id on a later try once nobody it saw is in it", async () => {
-    // The CLI exited; a tool stayed in its group and survived SIGKILL (stuck in the kernel).
-    const stuck = [posix(202, 1, 200, "stuck tool")];
-    const { host, calls } = fakeHost("linux", [stuck, stuck, stuck]);
-    const tree = new OwnedProcessTree(root(200, false), host);
+  it("never acts on the CLI's group id, or what it starts, once another job leads it", async () => {
+    let cliRuns = true;
+    const cli = posix(200, 100, 200, "claude");
+    // A tool in the CLI's group survives SIGKILL (stuck in the kernel).
+    const stuck = posix(202, 1, 200, "stuck tool");
+    const { host, calls } = fakeHost("linux", [[cli, stuck], [stuck]]);
+    const tree = new OwnedProcessTree({ pid: 200, spawnedAt: 0, alive: () => cliRuns }, host);
     expect((await tree.end(1_000)).survivors).toBe(1);
     expect(calls).toEqual(["SIGTERM -200", "SIGKILL -200"]);
+    cliRuns = false;
     // Still the same tool: the retry signals the group again.
     calls.length = 0;
     await tree.end(1_000);
     expect(calls).toEqual(["SIGTERM -200", "SIGKILL -200"]);
-    // The tool ended unseen and the id went to another job's group: left alone.
+    // The tool ended unseen and a new process with the CLI's pid leads group 200 now,
+    // with a child in a group of its own: neither is touched.
     calls.length = 0;
-    const reused = fakeHost("linux", [[posix(300, 1, 200, "another job")]]);
-    Object.assign(host, { readProcessList: reused.host.readProcessList });
+    const later = [
+      { ...posix(200, 1, 200, "another job"), started: "later" },
+      posix(302, 200, 302, "its child"),
+    ];
+    Object.assign(host, { readProcessList: async () => later });
     expect(await tree.end(1_000)).toEqual({ found: 0, survivors: 0, unknown: false });
+    expect(calls).toEqual([]);
+  });
+
+  it("neither signals nor gives up a later group it cannot tie to the CLI", async () => {
+    // The first end could not read the table, so it never saw who was in the group.
+    const { host, calls } = fakeHost("linux", [null]);
+    const tree = new OwnedProcessTree(root(200, false), host);
+    expect(await tree.end(1_000)).toMatchObject({ survivors: 1, unknown: true });
+    calls.length = 0;
+    // A later end sees the group occupied by someone it cannot place: it stays unconfirmed.
+    Object.assign(host, { readProcessList: async () => [posix(202, 1, 200, "member")] });
+    expect(await tree.end(1_000)).toMatchObject({ unknown: true });
     expect(calls).toEqual([]);
   });
 
@@ -325,9 +344,7 @@ describe("OwnedProcessTree.end", () => {
     const tree = new OwnedProcessTree(root(200, false), host);
     await tree.end(1_000);
     calls.length = 0;
-    // The first read of this try fails: nothing ties the group to the CLI any more.
-    const tables = [null];
-    Object.assign(host, { readProcessList: async () => tables[0] ?? undefined });
+    Object.assign(host, { readProcessList: async () => undefined });
     expect((await tree.end(1_000)).unknown).toBe(true);
     expect(calls).toEqual([]);
   });
@@ -356,13 +373,21 @@ describe("OwnedProcessTree.end", () => {
     expect(await good.tree.remember(1_000, true)).toBe(true);
     good.close();
     expect(await good.tree.end()).toEqual({ found: 0, survivors: 0, unknown: false });
+    // A reading that lists other processes but not the running CLI covers nothing.
+    const partial = closing([cli, [win(201, 200, t(11), "tool")], []]);
+    await partial.tree.remember();
+    expect(await partial.tree.remember(1_000, true)).toBe(false);
+    partial.close();
+    expect((await partial.tree.end()).unknown).toBe(true);
   });
 
   it("kills the tree on Windows and reads again until it is gone", async () => {
     const t = (n: number) => 1_000_000n + BigInt(n) * 10n;
     const running = [win(200, 100, t(10)), win(201, 200, t(11))];
     const { host, calls } = fakeHost("win32", [running, [win(201, 200, t(11))], []]);
-    expect(await new OwnedProcessTree(root(200, true), host).end()).toEqual({
+    // The CLI runs until the first kill.
+    const cli = { pid: 200, spawnedAt: 0, alive: () => calls.length === 0 };
+    expect(await new OwnedProcessTree(cli, host).end()).toEqual({
       found: 2,
       survivors: 0,
       unknown: false,

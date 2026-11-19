@@ -3880,8 +3880,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
     cause: Schema.optional(OrchestrationV2RunInterruptCause),
     /**
      * Stop only while nothing newer ran: refused when the thread's latest executed run
-     * (queued runs excluded, as in the shell's `latestRunId`) is no longer this one, and
-     * when a run is preparing, starting or running. Checked inside the serialized dispatch,
+     * (its last run that is not queued) is no longer this one, and when a run is
+     * preparing, starting or running. Checked inside the serialized dispatch,
      * so work that started after the sender looked is left alone.
      */
     expectedLatestRunId: Schema.optional(Schema.NullOr(RunId)),

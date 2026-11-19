@@ -190,6 +190,10 @@ export function posixEscapees(
   table: ReadonlyArray<ProcessEntry>,
   root: OwnedRoot,
   selfPid: number,
+  /** False once the group id may belong to another job: its members are then not walked. */
+  groupOwned = true,
+  /** Tools known to be the CLI's (verified still the same process), walked for their children. */
+  from: ReadonlyArray<number> = [],
 ): ProcessEntry[] {
   const children = new Map<number, ProcessEntry[]>();
   for (const entry of table) {
@@ -199,8 +203,11 @@ export function posixEscapees(
     else list.push(entry);
   }
   const seen = new Set<number>([selfPid]);
-  const queue = table.filter((entry) => entry.pgid === root.pid).map((entry) => entry.pid);
+  const queue = groupOwned
+    ? table.filter((entry) => entry.pgid === root.pid).map((entry) => entry.pid)
+    : [];
   if (root.alive()) queue.push(root.pid);
+  queue.push(...from);
   const escapees: ProcessEntry[] = [];
   while (queue.length > 0) {
     const pid = queue.shift()!;
@@ -256,6 +263,8 @@ export class OwnedProcessTree {
   private readonly groupSeen = new Map<number, string>();
   /** The CLI's group was seen empty: its id may now belong to another job. */
   private groupRetired = false;
+  /** The CLI's own start, read while it ran, to tell a new leader of its group id. */
+  private rootStarted: string | null = null;
   private endedOnce = false;
   /** A reading meant to catch what the CLI started failed, so an empty tree proves nothing. */
   private unconfirmed = false;
@@ -279,10 +288,21 @@ export class OwnedProcessTree {
     const known =
       table === undefined ? [] : windowsTree(table, this.root, this.host.selfPid, this.remembered);
     for (const entry of known) this.remembered.set(entry.entry.pid, entry);
-    // A live CLI missing from the reading means it did not capture the CLI either.
-    const ok = table !== undefined && (!this.root.alive() || this.remembered.has(this.root.pid));
-    if (!ok && required) this.unconfirmed = true;
+    const ok = table !== undefined && this.root.alive() && this.listsLiveRoot(table);
+    // Before a close, only a reading that lists the running CLI itself covers what it
+    // started; a cached identity from an earlier reading does not.
+    // The last such reading decides: one that succeeds right before the close covers
+    // everything then running.
+    if (required) this.unconfirmed = !ok;
     return ok;
+  }
+
+  /** Whether `table` lists the CLI as the process it was when first read. */
+  private listsLiveRoot(table: ReadonlyArray<ProcessEntry>): boolean {
+    const row = table.find((entry) => entry.pid === this.root.pid);
+    if (row === undefined) return false;
+    const known = this.remembered.get(this.root.pid);
+    return known === undefined || known.entry.started === row.started;
   }
 
   end(deadlineMs = 8_000): Promise<TreeEndResult> {
@@ -348,12 +368,29 @@ export class OwnedProcessTree {
     // A later try with the CLI gone: its group id is free for reuse once the group empties,
     // so the group is acted on only while a member an earlier end saw is still in it.
     let groupUsable = !this.groupRetired;
+    if (members !== undefined && this.root.alive()) {
+      const cli = members.find((entry) => entry.pid === this.root.pid);
+      if (cli !== undefined) this.rootStarted = cli.started;
+    }
     if (groupUsable && this.endedOnce && !this.root.alive()) {
       if (members === undefined) {
         groupUsable = false;
         unknown = true;
-      } else if (!members.some((entry) => this.groupSeen.get(entry.pid) === entry.started)) {
+      } else if (members.length === 0) {
         this.groupRetired = true;
+        groupUsable = false;
+      } else if (!members.some((entry) => this.groupSeen.get(entry.pid) === entry.started)) {
+        // Nobody seen before: either a new job leads the id now (a leader with the CLI's
+        // pid but another start), or members this tree never read. Only the first is
+        // certain; the second is neither signalled nor taken as gone.
+        const newLeader = members.some(
+          (entry) =>
+            entry.pid === this.root.pid &&
+            this.rootStarted !== null &&
+            entry.started !== this.rootStarted,
+        );
+        if (newLeader) this.groupRetired = true;
+        else unknown = true;
         groupUsable = false;
       }
     }
@@ -370,7 +407,9 @@ export class OwnedProcessTree {
     };
     if (table !== undefined) {
       // Tools that left the group are kept across ends, so a retry still knows them.
-      for (const entry of posixEscapees(table, this.root, host.selfPid)) {
+      // Walked from the group only while it is the CLI's, and from tools already known.
+      const known = stillRunning([...this.escapees.values()], table).map((entry) => entry.pid);
+      for (const entry of posixEscapees(table, this.root, host.selfPid, groupUsable, known)) {
         this.escapees.set(entry.pid, entry);
       }
     }
@@ -447,8 +486,10 @@ export class OwnedProcessTree {
       left = windowsTree(table, this.root, host.selfPid, this.remembered);
       for (const known of left) this.remembered.set(known.entry.pid, known);
       if (found === -1) found = left.length;
+      // A live CLI missing from the table is a reading that cannot be trusted.
+      const partial = this.root.alive() && !this.listsLiveRoot(table);
       if (left.length === 0)
-        return { found, survivors: 0, unknown: !rootKnown() || this.unconfirmed };
+        return { found, survivors: 0, unknown: !rootKnown() || this.unconfirmed || partial };
       const budget = this.budget(killBy);
       if (budget <= 0) break;
       // The CLI first, then by depth, so nothing is left to start a replacement.
@@ -464,7 +505,9 @@ export class OwnedProcessTree {
     return {
       found: Math.max(found, 0),
       survivors: left.length,
-      unknown: left.length === 0 && (!rootKnown() || this.unconfirmed),
+      unknown:
+        left.length === 0 &&
+        (!rootKnown() || this.unconfirmed || (this.root.alive() && !this.listsLiveRoot(table))),
     };
   }
 }

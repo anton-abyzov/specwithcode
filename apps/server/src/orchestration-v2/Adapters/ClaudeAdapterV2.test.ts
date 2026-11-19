@@ -8045,7 +8045,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           providerTurnId,
         });
         // The CLI's output ended, so the runner ended its tree; no second end here.
-        assert.deepEqual(calls, ["remember held=true", "close held=true"]);
+        assert.deepEqual(calls, ["remember held=true", "remember held=true", "close held=true"]);
         assert.equal(stopTeardownPending(harness.threadId), false);
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),

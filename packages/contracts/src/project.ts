@@ -367,8 +367,8 @@ export const ProjectFolderStopInput = Schema.Struct({
     Schema.Struct({
       id: ThreadId,
       runId: Schema.NullOr(RunId),
-      /** The check's `latestRunId`; binds a Stop of queued or background work to it. */
-      latestRunId: Schema.optional(Schema.NullOr(RunId)),
+      /** The check's `latestExecutedRunId`; binds a Stop of queued or background work to it. */
+      latestExecutedRunId: Schema.optional(Schema.NullOr(RunId)),
     }),
   ),
 });
@@ -410,8 +410,12 @@ export const ProjectFolderCheck = Schema.Struct({
       title: Schema.String,
       /** The run that keeps it busy, or null for queued or background work; absent from older servers. */
       runId: Schema.optional(Schema.NullOr(RunId)),
-      /** Its latest executed run (queued runs excluded), or null; absent from older servers. */
-      latestRunId: Schema.optional(Schema.NullOr(RunId)),
+      /**
+       * For a thread with no active run: its latest executed run (queued runs excluded, as
+       * the orchestrator picks it for `thread.stop`), or null. Absent when it could not be
+       * read, or from older servers.
+       */
+      latestExecutedRunId: Schema.optional(Schema.NullOr(RunId)),
     }),
   ),
   /**

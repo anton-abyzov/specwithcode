@@ -69,6 +69,8 @@ interface Scenario {
   readonly released: Array<string>;
   /** Thread → its Claude session, for the transcript relocation case. */
   readonly claudeSessions: Map<ThreadId, { sessionId: string; cwd: string }>;
+  /** Thread → its runs, oldest first, as the orchestrator's records list them. */
+  readonly runs: Map<string, Array<{ id: RunId; status: string }>>;
   readonly claudeHome: string;
   /** Every thread command fails, as when the orchestrator is unavailable. */
   failDispatch: boolean;
@@ -108,6 +110,7 @@ const makeScenario = Effect.gen(function* () {
     dispatched: [],
     released: [],
     claudeSessions: new Map(),
+    runs: new Map(),
     claudeHome,
     failDispatch: false,
     failCommand: null,
@@ -176,6 +179,7 @@ const layerFor = (scenario: Scenario) =>
           getThreadRecords: (threadId) => {
             const session = scenario.claudeSessions.get(threadId);
             return Effect.succeed({
+              runs: scenario.runs.get(threadId) ?? [],
               providerThreads:
                 session === undefined
                   ? []
@@ -476,29 +480,40 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
     ),
   );
 
-  it.effect("binds a Stop of queued work to the latest run the check saw", () =>
+  it.effect("binds a Stop of queued work to the latest run the orchestrator would pick", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const { scenario, parent } = yield* makeScenario;
+        // run-4 finished and run-5 waits in the (unheld) queue: the shell's latest run can be
+        // run-5, but the orchestrator binds to the last run that is not queued.
         scenario.threads.push(
-          shell("queued", {
-            title: "Queued",
-            status: "queued",
-            latestRunId: RunId.make("run-4"),
-          }),
+          shell("queued", { title: "Queued", status: "queued", latestRunId: RunId.make("run-5") }),
         );
-        scenario.threads.push(
-          shell("newer", { title: "Newer", status: "queued", latestRunId: RunId.make("run-8") }),
+        scenario.runs.set("queued", [
+          { id: RunId.make("run-4"), status: "completed" },
+          { id: RunId.make("run-5"), status: "queued" },
+        ]);
+        scenario.threads.push(shell("newer", { title: "Newer", status: "queued" }));
+        scenario.runs.set("newer", [{ id: RunId.make("run-8"), status: "completed" }]);
+        const check = yield* withFolders(scenario, (folders) =>
+          folders.check({ projectId, workspaceRoot: parent }),
         );
+        expect(check.activeThreads.find((thread) => thread.id === "queued")).toMatchObject({
+          latestExecutedRunId: "run-4",
+        });
         const result = yield* withFolders(scenario, (folders) =>
           folders.stop({
             commandId,
             projectId,
             workspaceRoot: parent,
             threads: [
-              { id: ThreadId.make("queued"), runId: null, latestRunId: RunId.make("run-4") },
+              {
+                id: ThreadId.make("queued"),
+                runId: null,
+                latestExecutedRunId: RunId.make("run-4"),
+              },
               // Its check showed run-7; run-8 ran since.
-              { id: ThreadId.make("newer"), runId: null, latestRunId: RunId.make("run-7") },
+              { id: ThreadId.make("newer"), runId: null, latestExecutedRunId: RunId.make("run-7") },
             ],
           }),
         );
@@ -512,6 +527,40 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
             expectedLatestRunId: "run-4",
           }),
         ]);
+      }),
+    ),
+  );
+
+  it.effect("stops the current run even while an earlier Stop's processes are retried", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent } = yield* makeScenario;
+        scenario.threads[0] = shell("coordinator", {
+          title: "Coordinator",
+          activeRunId: RunId.make("run-b"),
+          status: "running",
+        });
+        let earlierGone = false;
+        holdFailedStopTeardown("coordinator", () => Promise.resolve(earlierGone));
+        const stopB = (id: string) =>
+          withFolders(scenario, (folders) =>
+            folders.stop({
+              commandId: CommandId.make(id),
+              projectId,
+              workspaceRoot: parent,
+              threads: [{ id: ThreadId.make("coordinator"), runId: RunId.make("run-b") }],
+            }),
+          );
+        const first = yield* stopB("stop-1");
+        // run-b is interrupted now; the folder stays blocked by run-a's processes.
+        expect(scenario.dispatched).toEqual([
+          expect.objectContaining({ type: "run.interrupt", runId: "run-b" }),
+        ]);
+        expect(first.failed[0]?.message).toContain("may still have processes running");
+        earlierGone = true;
+        const second = yield* stopB("stop-2");
+        expect(second).toEqual({ stopped: [ThreadId.make("coordinator")], failed: [] });
+        expect(stopTeardownPending("coordinator")).toBe(false);
       }),
     ),
   );
@@ -560,7 +609,7 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
             folders.check({ projectId, workspaceRoot: parent }),
           );
           expect(check.activeThreads).toEqual([
-            { id: "worker", title: "worker", runId: null, latestRunId: null },
+            { id: "worker", title: "worker", runId: null, latestExecutedRunId: null },
           ]);
         } finally {
           release();

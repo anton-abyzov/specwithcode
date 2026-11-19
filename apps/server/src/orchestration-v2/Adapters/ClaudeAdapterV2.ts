@@ -9288,6 +9288,9 @@ export function makeClaudeAdapterV2(
                 providerTurnId: turnInput.providerTurnId,
               });
             }
+            // Read again right before the close: a tool the busy CLI started during the
+            // wait is found only while the CLI, its parent, still runs (Windows).
+            yield* existing.query.rememberProcessTree ?? Effect.void;
             yield* existing.query.close.pipe(Effect.ignore);
             yield* retireRunningSubagents();
             // The runner ends the CLI's process tree before the stream reports its
