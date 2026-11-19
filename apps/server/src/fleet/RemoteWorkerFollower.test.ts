@@ -516,7 +516,10 @@ describe("a worker handed off to another machine", () => {
     updatedAt: "2026-10-12T00:00:00.000Z",
     handoff: { sourceThreadId: "thread-1", epoch: 2, awaiting },
   });
-  const follow = (row: RemoteWorkerStore.RemoteWorkerRecord, start: "follow" | "restart" = "follow") =>
+  const follow = (
+    row: RemoteWorkerStore.RemoteWorkerRecord,
+    start: "follow" | "restart" = "follow",
+  ) =>
     Effect.gen(function* () {
       yield* allow();
       const store = yield* RemoteWorkerStore.RemoteWorkerStore;
