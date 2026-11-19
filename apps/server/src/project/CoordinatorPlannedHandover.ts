@@ -284,6 +284,8 @@ export const makePlannedHandover = (deps: PlannedHandoverDeps) => {
       // Gathered once this copy rests and refuses changes, so no edit made meanwhile is left behind.
       const gathered = yield* deps.gather(project, identity.id, input.targetEnvironmentId);
       if (gathered.notSafe !== undefined) {
+        // A call of an earlier try may have reached the target: never reverted here.
+        if (resuming) return result("in-doubt", inDoubtDetail(label));
         const reverted = yield* deps
           .revert({ projectId: project.id, operationId })
           .pipe(Effect.result);

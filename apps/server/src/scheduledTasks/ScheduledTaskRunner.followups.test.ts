@@ -28,6 +28,8 @@ const UNSEEN =
   "This routine runs on another machine, and this change did not say which version of it was shown, so nothing was changed. Reload the routines, or update the app, and try again.";
 const STALE =
   "This routine changed since you opened it, so your change was not saved. Open it again and repeat the change.";
+const NOT_SAFE =
+  "The machine taking over still rests a routine that this machine has not settled, and did not confirm it follows the coordinator again.";
 const at = (iso: string) => TestClock.setTime(Date.parse(iso));
 const settle = (machine: Machine) => machine.runner.reconcile({ force: true });
 const listed = (machine: Machine) =>
@@ -531,12 +533,13 @@ it.effect("a handover is not gathered while the recipient may still rest its cop
     // Beta is told to follow the coordinator again; whether it did is not known.
     network.dropAnswer = (_from, to, op) => to === "beta" && op === "runner-rearm";
     const unknown = yield* handoverSnapshot(alpha, beta).pipe(Effect.result);
-    assert.equal(unknown._tag, "Failure");
+    // Word for word: the handover reads this sentence to know it must not go on.
+    assert.equal(messageOf(unknown), NOT_SAFE);
     // Not told at all: the same, and beta still rests for alpha.
     network.dropAnswer = () => false;
     network.offline.add("beta");
     const unreached = yield* handoverSnapshot(alpha, beta).pipe(Effect.result);
-    assert.equal(unreached._tag, "Failure");
+    assert.equal(messageOf(unreached), NOT_SAFE);
     network.offline.delete("beta");
     // Reached again, the routine goes on, and beta follows the coordinator.
     const sent = yield* handoverSnapshot(alpha, beta);

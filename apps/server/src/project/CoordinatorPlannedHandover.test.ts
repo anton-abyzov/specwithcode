@@ -361,6 +361,23 @@ describe("planned coordinator handover", () => {
     }),
   );
 
+  it.effect("never takes the coordinator back for that once a call may have arrived", () =>
+    Effect.gen(function* () {
+      const fleet = yield* pair;
+      fleet.network.answers.push("lose", "lose");
+      expect((yield* fleet.handOver()).outcome).toBe("in-doubt");
+      fleet.gathering.notSafe = "Ministorm still rests a routine this machine has not settled.";
+      const again = yield* fleet.handOver();
+      expect(again.outcome).toBe("in-doubt");
+      expect(fleet.seen.some((state) => state.step === "revert")).toBe(false);
+      expect(isActive(fleet.source())).toBe(false);
+      // Safe again, the same handover finishes.
+      fleet.gathering.notSafe = undefined;
+      expect((yield* fleet.handOver()).outcome).toBe("handed-over");
+      expect(isActive(fleet.target())).toBe(true);
+    }),
+  );
+
   it.effect("tries once more without an answer, and the target replays", () =>
     Effect.gen(function* () {
       const fleet = yield* pair;
