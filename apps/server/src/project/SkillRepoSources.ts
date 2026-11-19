@@ -581,7 +581,29 @@ export const makeSkillRepoSources = Effect.fn("SkillRepoSources.make")(function*
       return answer(yield* connected());
     });
 
-  return { repos, connected, readRepo, readSkill };
+  /** The connected repos' ids, from the saved list alone, without reading GitHub. */
+  const connectedIds: Effect.Effect<ReadonlyArray<string>> = readStore.pipe(
+    Effect.map((stored) => stored.map((entry) => entry.repo)),
+  );
+
+  /** One file of a repo at one commit, through the sign-in when there is one; null when unread. */
+  const readText = (repo: string, filePath: string, commit: string): Effect.Effect<string | null> =>
+    Effect.gen(function* () {
+      if (
+        !COMMIT_SHA.test(commit) ||
+        !/^[A-Za-z0-9._/-]{1,400}$/.test(filePath) ||
+        filePath.includes("..")
+      )
+        return null;
+      const opened = yield* open(repo);
+      if ("state" in opened) return null;
+      const answer = yield* opened.session.file(opened.repo, commit, filePath);
+      return answer.status === 200 && answer.body.length <= MAX_SKILL_FILE_BYTES
+        ? answer.body
+        : null;
+    });
+
+  return { repos, connected, connectedIds, readRepo, readSkill, readText };
 });
 
 export type SkillRepoSources = Effect.Success<ReturnType<typeof makeSkillRepoSources>>;

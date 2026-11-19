@@ -54,6 +54,7 @@ import { type ReactNode, useState } from "react";
 import { useTx } from "../../i18n";
 import { cn } from "../../lib/utils";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
+import { savedModelTracks } from "../../onboarding/firstRunModels.logic";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -69,7 +70,12 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { clock } from "./FallbackOrderList";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { SETTINGS_PICKER_TRIGGER_CLASSNAME, useRelativeTimeTick } from "./settingsLayout";
+import {
+  PolicyTooltip,
+  SETTINGS_PICKER_TRIGGER_CLASSNAME,
+  useRelativeTimeTick,
+} from "./settingsLayout";
+import { ADVERSARIAL_REVIEW_TIME_NOTE, SLOWER_WORK_NOTE_LABEL } from "./slowerWorkNotes";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -636,14 +642,10 @@ export function ModelTracksSettings({ sources = true }: { readonly sources?: boo
   const mixedLanes = useScopedSettingsMixed(["modelLanes"]);
   const mixedReview = useScopedSettingsMixed(["adversarialReview"]);
 
-  const lanes = settings.modelLanes ?? { complex: [], routine: [] };
   const review = settings.adversarialReview;
   const sourceOrder = settings.defaultModelProviders ?? [];
-  const saved: Record<ModelTrack, ReadonlyArray<ModelSelection>> = {
-    daily: lanes.routine ?? [],
-    complex: lanes.complex ?? [],
-    review: review.reviewers,
-  };
+  // The same lists the first-run Models block reads (`modelTrackLists` fits them).
+  const saved = savedModelTracks(settings);
   const save = (track: ModelTrack, models: ReadonlyArray<ModelSelection>) =>
     track === "review"
       ? updateSettings({ adversarialReview: { reviewers: [...models] } })
@@ -706,23 +708,33 @@ export function ModelTracksSettings({ sources = true }: { readonly sources?: boo
           }
           control={
             track === "review" ? (
-              <label
-                className="flex items-center gap-2 text-xs text-muted-foreground"
-                title={tx(
-                  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.",
-                )}
-              >
-                {tx("Review each finished increment")}
-                <Switch
-                  size="sm"
-                  mixed={mixedReview}
-                  checked={review.autoOnFeatureComplete}
-                  aria-label={tx("Review each finished increment automatically")}
-                  onCheckedChange={(checked) =>
-                    updateSettings({ adversarialReview: { autoOnFeatureComplete: checked } })
-                  }
-                />
-              </label>
+              // The note sits outside the label: a button inside it would take the label's click.
+              <span className="flex items-center gap-1">
+                <label
+                  className="flex items-center gap-2 text-xs text-muted-foreground"
+                  title={tx(
+                    "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.",
+                  )}
+                >
+                  {tx("Review each finished increment")}
+                  <Switch
+                    size="sm"
+                    mixed={mixedReview}
+                    checked={review.autoOnFeatureComplete}
+                    aria-label={tx("Review each finished increment automatically")}
+                    onCheckedChange={(checked) =>
+                      updateSettings({ adversarialReview: { autoOnFeatureComplete: checked } })
+                    }
+                  />
+                </label>
+                <PolicyTooltip
+                  label={tx(SLOWER_WORK_NOTE_LABEL, {
+                    setting: tx("Review each finished increment automatically"),
+                  })}
+                >
+                  {tx(ADVERSARIAL_REVIEW_TIME_NOTE)}
+                </PolicyTooltip>
+              </span>
             ) : undefined
           }
         />

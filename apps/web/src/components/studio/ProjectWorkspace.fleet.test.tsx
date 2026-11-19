@@ -234,45 +234,44 @@ describe("a workers-only copy whose coordinator runs on another machine", () => 
   }
   const notice = () => container.querySelector<HTMLElement>("[data-workers-only]");
 
-  it("names the coordinator's machine and opens its checkout from the notice", async () => {
+  it("says where the coordinator is, with Continue here off while this window can only read it", async () => {
     // This copy never ran a coordinator, so it has no conversation to keep.
     state.shells = [shell("worker")];
     try {
       await viewCopy();
       expect(notice()?.dataset.workersOnly).toBe("m4:main");
-      expect(notice()?.textContent).toContain(
-        "Main for Atlas is m4. This copy takes work from there.",
+      expect(notice()?.querySelector("[data-box-line]")?.textContent).toBe(
+        "The coordinator for Atlas is on m4. Send opens it there.",
       );
       expect(container.textContent).not.toContain("kept as history");
-      expect(sendButton().disabled).toBe(true);
-      // This window has no write access on m4, so the switch says what to do instead of
-      // opening a move m4 would refuse. It never offers a second coordinator here.
-      const makeMain = notice()!.querySelector<HTMLButtonElement>("[data-make-main]")!;
-      expect(makeMain.textContent).toBe("Make host main");
-      expect(makeMain.disabled).toBe(true);
-      expect(notice()?.textContent).toContain(
-        "This window can only read m4, so it cannot move main from there.",
+      // This window has no write access on m4, so "Continue here" is off with its reason
+      // instead of opening a move m4 would refuse. It never offers a second coordinator here.
+      const continueHere = notice()!.querySelector<HTMLButtonElement>("[data-continue-here]")!;
+      expect(continueHere.textContent).toBe("Continue here");
+      expect(continueHere.disabled).toBe(true);
+      expect(notice()?.querySelector("[data-continue-here-note]")?.textContent).toBe(
+        "This window can only read m4, so it cannot hand the coordinator off from there. Open SpecWithCode on m4, or connect to it with full access.",
       );
-      expect(notice()?.textContent).not.toMatch(/again/i);
-      await click("Write to m4's coordinator");
-      // The page now views m4's coordinator, where work for this copy is started.
-      expect(state.savedMachines.atlas).toBe("m4:main");
+      // Send goes to the coordinator on m4: the box is not off, it waits for text.
+      expect(notice()?.getAttribute("data-box-state")).toBe("routes");
+      expect(sendButton().getAttribute("data-send-label")).toBeNull();
+      expect(notice()?.textContent).not.toMatch(/again|\bmain\b|this copy/i);
     } finally {
       delete (state.project as { workspaceSettings?: unknown }).workspaceSettings;
     }
   });
 
-  it("makes this copy main through main's own confirmed move, then returns here", async () => {
+  it("continues the coordinator here through its own confirmed move, then returns here", async () => {
     state.shells = [shell("worker")];
     // This window may operate and write on m4, so the move can start from there.
     state.recoveryHosts = ["m4"];
     try {
       await viewCopy();
-      const makeMain = notice()!.querySelector<HTMLButtonElement>("[data-make-main]")!;
-      expect(makeMain.disabled).toBe(false);
-      expect(notice()?.textContent).toContain(
-        "Making host main moves the coordinator and its conversation here from m4, which becomes a copy.",
+      const makeMain = notice()!.querySelector<HTMLButtonElement>("[data-continue-here]")!;
+      expect(notice()?.querySelector("[data-continue-here-note]")?.textContent).toBe(
+        "Continue here syncs host, then moves the coordinator conversation here from m4.",
       );
+      expect(makeMain.disabled).toBe(false);
       await act(async () => makeMain.click());
       // The conversation to move is on m4: its page is shown, and its move dialog opens.
       expect(state.savedMachines.atlas).toBe("m4:main");
@@ -294,7 +293,7 @@ describe("a workers-only copy whose coordinator runs on another machine", () => 
     try {
       await viewCopy();
       expect(notice()?.textContent).toContain(
-        "Main for Atlas is m4. This copy takes work from there. The conversation here is kept as history.",
+        "The coordinator for Atlas is on m4. Send opens it there. The conversation here is kept as history.",
       );
     } finally {
       delete (state.project as { workspaceSettings?: unknown }).workspaceSettings;

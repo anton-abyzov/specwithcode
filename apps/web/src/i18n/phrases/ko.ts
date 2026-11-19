@@ -1049,23 +1049,16 @@ export const ko: PhraseCatalog = {
   Copy: "복사",
   "This device cannot read that machine's settings.":
     "이 기기에서는 해당 컴퓨터의 설정을 읽을 수 없습니다.",
-  "1. Install the SpecWithCode Browser extension": "1. SpecWithCode Browser 확장 프로그램 설치",
   "Add to Chrome": "Chrome에 추가",
   "(opens the Chrome Web Store)": "(Chrome 웹 스토어가 열립니다)",
   "Chrome Web Store link": "Chrome 웹 스토어 링크",
   "Install it in Chrome on {machine}: copy the link and open it there, in the profile agents should use.":
     "{machine}의 Chrome에 설치하세요. 링크를 복사해 에이전트가 사용할 프로필에서 여세요.",
-  "Open the link in the Chrome profile agents should use. Chrome keeps the extension up to date.":
-    "에이전트가 사용할 Chrome 프로필에서 링크를 여세요. 확장 프로그램은 Chrome이 최신 상태로 유지합니다.",
-  "2. Pair it with {machine}": "2. {machine}과(와) 페어링",
   "This code works only in Chrome on {machine}, not in Chrome on {thisComputer}.":
     "이 코드는 {machine}의 Chrome에서만 작동하며 {thisComputer}의 Chrome에서는 작동하지 않습니다.",
-  "Show pairing code": "페어링 코드 표시",
   "Pairing code": "페어링 코드",
   "pairing code": "페어링 코드",
   "Reset code": "코드 재설정",
-  "The code lets a Chrome profile act for agents on {machine}. Keep it private.":
-    "이 코드를 사용하면 Chrome 프로필이 {machine}의 에이전트를 대신해 동작할 수 있습니다. 비공개로 유지하세요.",
   "You are on {b}. This sets up Chrome on {b2}, a different computer; its pairing code does not work in Chrome here.":
     "지금은 {b}에 있습니다. 여기서는 다른 컴퓨터인 {b2}의 Chrome을 설정합니다. 그 페어링 코드는 이곳의 Chrome에서 작동하지 않습니다.",
   "Set up Chrome on {thisComputer}": "{thisComputer}에서 Chrome 설정",
@@ -2299,19 +2292,6 @@ export const ko: PhraseCatalog = {
   "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.":
     "이 기기에서 {name}({host})의 이전 기록을 제거할까요?\n이 머신은 새 머신으로 다시 참여해 계속 작동합니다. 여기의 사용하지 않는 기록과 캐시된 스레드만 사라집니다.",
   "Use 2 or 3 characters.": "2~3자를 사용하세요.",
-  "Not shared": "공유 안 함",
-  "{machine} is main now, with machines not yet following it":
-    "{machine}이(가) 메인이 되었지만 아직 따르지 않는 머신이 있습니다",
-  "These machines did not take the new main yet: {machines}. They keep refusing work from the old main only once they do.":
-    "이 머신들은 아직 새 메인을 받아들이지 않았습니다: {machines}. 받아들인 뒤에야 이전 메인의 작업을 거부합니다.",
-  "Not linked · also on {machine}": "연결 안 됨 · {machine}에도 있음",
-  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.":
-    "이 복사본은 {machine}의 복사본과 연결되어 있지 않습니다. 프로젝트 메뉴에서 연결하면 코디네이터를 공유할 수 있습니다.",
-  "No other machine has a copy of this project.":
-    "다른 어떤 머신에도 이 프로젝트의 복사본이 없습니다.",
-  "Connect to see its role": "연결하면 역할이 보입니다",
-  "This app cannot see this machine, so it cannot tell what this copy does.":
-    "이 앱에서 이 머신이 보이지 않아 이 복사본의 역할을 알 수 없습니다.",
   "{name} wears {color}": "{name}의 색은 {color}",
   "Change the color of {name}, now {color}": "{name}의 색 변경, 현재 {color}",
   "Change color": "색 변경",
@@ -3048,6 +3028,10 @@ export const ko: PhraseCatalog = {
   "Supplied patch": "제공된 패치",
   "Previous file path": "이전 파일 경로",
   "Show the question and its options": "질문과 옵션 보기",
+  "Question:": "질문:",
+  "Can't steer now": "지금은 방향 전환 불가",
+  "Show the full description": "전체 설명 보기",
+  "Hide the full description": "전체 설명 숨기기",
   "Hide the question and its options": "질문과 옵션 숨기기",
   "+{waitingCount} more": "+{waitingCount}개 더",
   "Dismiss question without answering": "답하지 않고 질문 닫기",
@@ -3593,11 +3577,6 @@ export const ko: PhraseCatalog = {
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
     "코디네이터와 워커의 모든 요청에 함께 전송되는 나만의 규칙으로, 모든 공급자와 선택한 각 환경의 모든 프로젝트에 적용됩니다. 기본값은 비어 있음입니다.",
   "Effective instructions for {label}": "{label}의 적용 지침",
-  "Click the SpecWithCode icon in Chrome's toolbar.":
-    "Chrome 도구 모음에서 SpecWithCode 아이콘을 클릭하세요.",
-  "Paste the pairing code.": "페어링 코드를 붙여 넣으세요.",
-  "Name the profile, for example Work or Marketing.": "프로필 이름을 지정하세요(예: 업무, 마케팅).",
-  "Click Pair.": "페어링을 클릭하세요.",
   "Ask Google for {service}": "Google에 요청: {service}",
   "Edit shortcut for {command}: {shortcut}": "{command} 단축키 편집: {shortcut}",
   "Edit when clause for {command}": "{command} 조건 편집",
@@ -4393,6 +4372,7 @@ export const ko: PhraseCatalog = {
   "Not finished": "완료되지 않음",
   "Setup can be closed once the import finishes.": "가져오기가 끝나면 설정을 닫을 수 있습니다.",
   "Add a folder on this machine": "이 컴퓨터의 폴더 추가",
+  "Start with SpecWeave, for plans and a board": "SpecWeave로 시작하기(계획과 보드용)",
   "Type a path, browse or drop a folder": "경로를 입력하거나 찾아보거나 폴더를 끌어다 놓기",
   "Starting from nothing?": "처음부터 시작하시나요?",
   "New empty project or clone a repository": "새 빈 프로젝트 또는 저장소 복제",
@@ -4509,17 +4489,10 @@ export const ko: PhraseCatalog = {
   "Older releases were not counted.": "이전 릴리스는 포함되지 않았습니다.",
   "Installs from npm could not be read.": "npm 설치 수를 읽지 못했습니다.",
   "Installs from npm": "npm 설치",
-  "View this project on": "이 프로젝트를 볼 컴퓨터",
-  "coordinator paused": "코디네이터 일시 중지됨",
   "Machine access settings": "컴퓨터 접근 설정",
   "{machine} offline": "{machine} 오프라인",
   "workers only": "워커 전용",
   coordinator: "코디네이터",
-  "not linked": "따로 등록됨",
-  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
-    "따로 등록됨: {machine}은(는) 이 저장소에 대해 자체 코디네이터, 스레드, 메모리를 사용합니다.",
-  "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them.":
-    "따로 등록됨: 이 저장소에 대한 별개의 프로젝트들이며, 각각 자체 코디네이터, 스레드, 메모리를 사용합니다. 그래도 각 프로젝트를 보고 메시지를 보낼 수 있습니다.",
   "Link them below to make one project.": "아래에서 연결하면 하나의 프로젝트가 됩니다.",
   "{value}Messages go to Percy. {value2}": "{value}메시지는 Percy에게 전달됩니다. {value2}",
   "Show only topics that need you in {project}": "{project}에서 응답이 필요한 주제만 보기",
@@ -4749,8 +4722,6 @@ export const ko: PhraseCatalog = {
     "{machine}이(가) 다음에 여기서 작업을 시작할 때 설정합니다. 여기서 시작한 스레드가 묻지 않고 할 수 있는 최대 범위입니다.",
   "{title} (archived)": "{title} (보관됨)",
   "{title} (automated)": "{title} (자동화됨)",
-  "This app isn't connected to {machine}, so its copy can't be shown. Connect it in Settings > Machines.":
-    "이 앱이 {machine}에 연결되어 있지 않아 해당 사본을 표시할 수 없습니다. 설정 > 컴퓨터에서 연결하세요.",
   "This window is signed out": "이 창은 로그아웃되었습니다",
   "Quit and reopen the app to sign in again.": "앱을 종료한 뒤 다시 열어 로그인하세요.",
   "SpecWithCode on this machine stopped answering": "이 컴퓨터의 SpecWithCode가 응답하지 않습니다",
@@ -4776,13 +4747,10 @@ export const ko: PhraseCatalog = {
   "Last synced {age}.": "마지막 동기화: {age}.",
   "Synced just now.": "방금 동기화했습니다.",
   "Hide details": "세부 정보 숨기기",
-  "Runs on {machine}": "{machine}에서 실행",
   connected: "연결됨",
   "Last viewed machine not listed": "마지막으로 본 컴퓨터가 목록에 없음",
   "Viewing {machine}. Choose a machine to view": "{machine} 보는 중. 볼 컴퓨터 선택",
   "{machine}: this project's machines": "{machine}: 이 프로젝트의 컴퓨터",
-  "Viewing moves nothing: work stays on each machine. Adding or moving the project asks first.":
-    "보기만으로는 아무것도 옮기지 않습니다. 작업은 각 컴퓨터에 남습니다. 프로젝트 추가나 이동은 먼저 확인합니다.",
   "Nothing is sent to another machine.": "다른 컴퓨터로는 아무것도 보내지 않습니다.",
   "Your draft stays here until it reconnects.": "다시 연결될 때까지 초안은 여기에 남습니다.",
   "You can start these once it reconnects.": "다시 연결되면 시작할 수 있습니다.",
@@ -4836,8 +4804,6 @@ export const ko: PhraseCatalog = {
     "설치되어 있지 않습니다. 공식 사이트에서 받거나, 이 컴퓨터를 관리할 수 있는 사람에게 여기서 설치해 달라고 요청하세요.",
   "Browse…": "찾아보기…",
   "Add to this machine…": "이 컴퓨터에 추가…",
-  "Runs on {machine}. No copy on this device.":
-    "{machine}에서 실행됩니다. 이 기기에는 사본이 없습니다.",
   "Agent status": "에이전트 상태",
   "Last time it was not signed in.": "지난번에는 로그인되어 있지 않았습니다.",
   "Last time it was signed in as {account}.":
@@ -5034,16 +5000,6 @@ export const ko: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "AppImage 경로를 명령에 쓸 수 없습니다. AppImage를 더 단순한 폴더로 옮긴 뒤 거기서 여세요.",
   "Could not write {path} ({error}).": "{path}를 쓰지 못했습니다({error}).",
-  Main: "메인",
-  "Moving main": "메인 이동 중",
-  "Copy · main on {machine}": "복사본 · 메인은 {machine}",
-  "Work for this project starts here. Copies on other machines take work from it.":
-    "이 프로젝트의 작업은 여기서 시작됩니다. 다른 머신의 복사본은 여기서 작업을 받습니다.",
-  "Main is on {machine}. This copy can also start work of its own.":
-    "메인은 {machine}에 있습니다. 이 복사본도 자체 작업을 시작할 수 있습니다.",
-  "Work starts on {machine}. This copy takes work from there.":
-    "작업은 {machine}에서 시작됩니다. 이 복사본은 거기서 작업을 받습니다.",
-  "Main is moving between machines right now.": "메인이 지금 머신 간에 이동 중입니다.",
   "{there} can start work here": "{there}은(는) 여기서 작업을 시작할 수 있습니다",
   "{there} can't start work here": "{there}은(는) 여기서 작업을 시작할 수 없습니다",
   "This machine can start work on {there}": "이 머신은 {there}에서 작업을 시작할 수 있습니다",
@@ -5114,6 +5070,8 @@ export const ko: PhraseCatalog = {
   "Follow project (off)": "프로젝트 설정 따름 (끔)",
   "Lets this thread ask a stronger model to check its work.":
     "이 스레드가 더 강한 모델에게 작업 검토를 요청할 수 있게 합니다.",
+  "Has a model from another family review this thread's work when its feature is finished.":
+    "이 스레드의 기능이 완성되면 다른 계열의 모델이 작업을 검토하게 합니다.",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "채팅이 해결되었거나 보관되었고 이 일수 동안 비활성인 워크트리를 삭제합니다. 브랜치와 채팅 기록은 유지됩니다.",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
@@ -5184,73 +5142,22 @@ export const ko: PhraseCatalog = {
   "Waiting for the install. This page updates by itself.":
     "설치를 기다리는 중입니다. 이 페이지는 자동으로 업데이트됩니다.",
   "After it installs, choose Check again.": "설치가 끝나면 다시 확인을 선택하세요.",
-  "{main} must be unreachable for 10 minutes before {machine} can become main. That unlocks in {minutes} min.":
-    "{main}에 10분 동안 연결할 수 없어야 {machine}을(를) 메인으로 만들 수 있습니다. {minutes}분 후에 가능합니다.",
   "in {minutes} min": "{minutes}분 후",
-  "This window can only read {main}, so it cannot move main from there. Open SpecWithCode on {main}, or connect to it with full access, to make {machine} main.":
-    "이 창은 {main}을(를) 읽기만 할 수 있어 거기서 메인을 옮길 수 없습니다. {machine}을(를) 메인으로 만들려면 {main}에서 SpecWithCode를 열거나 전체 접근 권한으로 연결하세요.",
   "read-only on {main}": "{main}은(는) 읽기 전용",
-  "Connect {machine} first to make it main.": "메인으로 만들려면 먼저 {machine}을(를) 연결하세요.",
-  "{machine} cannot take over yet. Update SpecWithCode there, or connect to it with permission to change settings and run work.":
-    "{machine}은(는) 아직 넘겨받을 수 없습니다. 거기서 SpecWithCode를 업데이트하거나 설정 변경과 작업 실행 권한으로 연결하세요.",
   "not ready": "준비 안 됨",
-  "Main cannot move from this machine yet.": "아직 이 컴퓨터에서 메인을 옮길 수 없습니다.",
   "Send this project its first message here, then try again.":
     "여기서 이 프로젝트에 첫 메시지를 보낸 뒤 다시 시도하세요.",
-  "{machine} cannot become main yet.": "{machine}은(는) 아직 메인이 될 수 없습니다.",
-  "{machine} is main now": "이제 {machine}이(가) 메인입니다",
   "It starts from the shared goal, memory and plan. The conversation on {main} stays there as history, and {main} gives way when it is back.":
     "공유된 목표, 메모리, 계획에서 시작합니다. {main}의 대화는 기록으로 거기에 남고, {main}은(는) 돌아오면 메인을 넘겨줍니다.",
-  "{machine} did not become main": "{machine}이(가) 메인이 되지 못했습니다",
   "Retry it.": "다시 시도하세요.",
-  "the old main": "이전 메인",
-  "Make {machine} main?": "{machine}을(를) 메인으로 만들까요?",
-  "{main} has been unreachable for 10 minutes or more. {machine} becomes main and starts from the shared goal, memory and plan. The conversation on {main} stays there as history. Until {main} is back it can still start work on its own machine; then it gives way and lists what it ran meanwhile.":
-    "{main}에 10분 이상 연결할 수 없습니다. {machine}이(가) 메인이 되어 공유된 목표, 메모리, 계획에서 시작합니다. {main}의 대화는 기록으로 거기에 남습니다. {main}은(는) 돌아올 때까지 자기 컴퓨터에서 작업을 시작할 수 있지만, 돌아오면 메인을 넘겨주고 그동안 실행한 작업을 보여 줍니다.",
   "Switching…": "전환 중…",
-  "Make {machine} main": "{machine}을(를) 메인으로",
-  "Make {machine} main for {project}": "{project}의 메인을 {machine}(으)로",
-  "Main for {project} is {machine}. This copy takes work from there.":
-    "{project}의 메인은 {machine}입니다. 이 복사본은 거기서 작업을 받습니다.",
-  "Main for {project} is on another machine. This copy takes work from there.":
-    "{project}의 메인은 다른 컴퓨터에 있습니다. 이 복사본은 거기서 작업을 받습니다.",
   "The conversation here is kept as history.": "여기의 대화는 기록으로 남습니다.",
-  "Write to {machine}'s coordinator": "{machine}의 코디네이터에게 쓰기",
-  "Write to main's coordinator": "메인의 코디네이터에게 쓰기",
-  "Write opens {machine}'s page for this project, where its coordinator answers. Nothing is sent from here.":
-    "쓰기를 누르면 이 프로젝트의 {machine} 페이지가 열리고, 거기서 코디네이터가 답합니다. 여기서는 아무것도 보내지 않습니다.",
-  "Write opens main's page for this project, where its coordinator answers. Nothing is sent from here.":
-    "쓰기를 누르면 이 프로젝트의 메인 페이지가 열리고, 거기서 코디네이터가 답합니다. 여기서는 아무것도 보내지 않습니다.",
-  "{main} has been unreachable for 10 minutes or more. Making {machine} main starts from the shared goal, memory and plan; the conversation on {main} stays there as history.":
-    "{main}에 10분 이상 연결할 수 없습니다. {machine}을(를) 메인으로 만들면 공유된 목표, 메모리, 계획에서 시작하며, {main}의 대화는 기록으로 거기에 남습니다.",
-  "Making {machine} main moves the coordinator and its conversation here from {main}, which becomes a copy.":
-    "{machine}을(를) 메인으로 만들면 코디네이터와 그 대화가 {main}에서 여기로 옮겨지고, {main}은(는) 복사본이 됩니다.",
-  "{machine} became main while {main} was unreachable. It started from the shared goal, memory and plan; the earlier conversation stays on {main} as history.":
-    "{main}에 연결할 수 없는 동안 {machine}이(가) 메인이 되었습니다. 공유된 목표, 메모리, 계획에서 시작했으며, 이전 대화는 기록으로 {main}에 남아 있습니다.",
-  "{machine} became main while the old main was unreachable. It started from the shared goal, memory and plan; the earlier conversation stays on the old machine as history.":
-    "이전 메인에 연결할 수 없는 동안 {machine}이(가) 메인이 되었습니다. 공유된 목표, 메모리, 계획에서 시작했으며, 이전 대화는 기록으로 이전 컴퓨터에 남아 있습니다.",
   "Got it": "확인",
   "{machine} kept its coordinator conversation from before as history. View it to read that conversation.":
     "{machine}은(는) 이전 코디네이터 대화를 기록으로 보관하고 있습니다. 열어서 그 대화를 읽으세요.",
-  "Makes the project on {machine} part of this one. Main does not change, and threads and files stay where they are. You confirm what {machine} gives up first.":
-    "{machine}의 프로젝트를 이 프로젝트의 일부로 만듭니다. 메인은 바뀌지 않으며 스레드와 파일은 그대로 있습니다. {machine}이(가) 포기하는 것을 먼저 확인합니다.",
   "Link {machine} to this project…": "{machine}을(를) 이 프로젝트에 연결…",
-  "{main} is unreachable: {machine} takes over and starts from the shared goal, memory and plan. You confirm first.":
-    "{main}에 연결할 수 없습니다. {machine}이(가) 넘겨받아 공유된 목표, 메모리, 계획에서 시작합니다. 먼저 확인합니다.",
-  "Moves the coordinator and its conversation from {main} to {machine}. {main} becomes a copy. You confirm first.":
-    "코디네이터와 그 대화를 {main}에서 {machine}(으)로 옮깁니다. {main}은(는) 복사본이 됩니다. 먼저 확인합니다.",
   "Link {machine} to this project": "{machine}을(를) 이 프로젝트에 연결",
-  "{machine} joins {project} as a copy. Main stays on {main}: linking does not change it.":
-    "{machine}이(가) 복사본으로 {project}에 참여합니다. 메인은 {main}에 그대로 있으며, 연결해도 바뀌지 않습니다.",
   "Link {machine}": "{machine} 연결",
-  "Main stays on {main}. To have main on {machine}, make {machine} main after linking.":
-    "메인은 {main}에 그대로 있습니다. 메인을 {machine}에 두려면 연결한 뒤 {machine}을(를) 메인으로 만드세요.",
-  "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if it becomes main. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. Main stays on {main}. Files are not copied.":
-    "{machine}을(를) 이 프로젝트에 연결합니다. {machine}은(는) 자체 목표와 지침을 포기하고 지금부터 이 프로젝트의 것을 따르며, 메인이 되면 자체 목표와 지침은 대체됩니다. 자체 코디네이터는 멈추고 그 대화는 기록으로 {machine}에 남습니다. 워커는 계속 실행됩니다. 메인은 {main}에 그대로 있습니다. 파일은 복사되지 않습니다.",
-  "Work for {project} starts on {machine}.": "{project} 작업은 {machine}에서 시작합니다.",
-  "Work for {project} starts on another machine.": "{project} 작업은 다른 컴퓨터에서 시작합니다.",
-  "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.":
-    "먼저 {main}을(를) 연결하세요. 이 창은 {main}의 메인 사본을 불러오지 않아 아직 {machine}을(를) 메인으로 만들 수 없습니다.",
   "connect {main} first": "먼저 {main} 연결",
   "Review each finished increment automatically": "완료된 인크리먼트마다 자동으로 리뷰",
   "Review each finished increment": "완료된 인크리먼트마다 리뷰",
@@ -5265,57 +5172,17 @@ export const ko: PhraseCatalog = {
   "Nothing on {machine} is replaced without asking.":
     "{machine}에 있는 것은 묻지 않고 바꾸지 않습니다.",
   "the other machine": "다른 기기",
-  "From {source}. Main stays on {main}.": "{source}에서. 메인은 {main}에 그대로 있습니다.",
-  "From {source}. Main stays where it is.": "{source}에서. 메인은 지금 있는 곳에 그대로 있습니다.",
-  "From {source}. Main moves to {machine}.": "{source}에서. 메인이 {machine}(으)로 옮겨집니다.",
-  "From {source}. Main moves to the machine you choose.":
-    "{source}에서. 메인이 선택한 기기로 옮겨집니다.",
-  "From {source}. {source}'s copy is not linked to the project {machine} belongs to (Main: {main}).":
-    "{source}에서. {source}의 복사본은 {machine}이(가) 속한 프로젝트에 연결되어 있지 않습니다(메인: {main}).",
-  "From {source}. {source}'s copy is not linked to the project {machine} belongs to.":
-    "{source}에서. {source}의 복사본은 {machine}이(가) 속한 프로젝트에 연결되어 있지 않습니다.",
-  "Only files are copied into {machine}'s copy. Main stays on {main}, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.":
-    "{machine}의 복사본에는 파일만 복사됩니다. 메인은 {main}에 그대로 있고, {source}은(는) 그 프로젝트에 연결되지 않습니다. 하나의 프로젝트로 만들려면 기기 메뉴에서 {source}을(를) 연결하세요.",
-  "Only files are copied into {machine}'s copy. Its Main does not change, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.":
-    "{machine}의 복사본에는 파일만 복사됩니다. 그 메인은 바뀌지 않고, {source}은(는) 그 프로젝트에 연결되지 않습니다. 하나의 프로젝트로 만들려면 기기 메뉴에서 {source}을(를) 연결하세요.",
-  "Main cannot move to {machine} from here: {source} is not linked to the project {machine} belongs to. Link {source} to it from the machine menu first, or copy the files instead.":
-    "여기서는 메인을 {machine}(으)로 옮길 수 없습니다. {source}은(는) {machine}이(가) 속한 프로젝트에 연결되어 있지 않습니다. 먼저 기기 메뉴에서 {source}을(를) 연결하거나 파일을 복사하세요.",
-  "Not available: that machine already has Main.":
-    "사용할 수 없음: 그 기기에 이미 메인이 있습니다.",
-  "Not available: it would move Main into a project this copy is not linked to.":
-    "사용할 수 없음: 이 복사본이 연결되지 않은 프로젝트로 메인이 옮겨집니다.",
-  "{machine} has a copy. Main stays on {main}.":
-    "{machine}에 복사본이 있습니다. 메인은 {main}에 그대로 있습니다.",
-  "Not linked: the copy on {machine} belongs to a project whose Main is {main}, and {source} is not part of it. Nothing was linked.":
-    "연결되지 않음: {machine}의 복사본은 메인이 {main}인 프로젝트에 속하며, {source}은(는) 그 일부가 아닙니다. 아무것도 연결되지 않았습니다.",
-  "Not linked: the copy on {machine} belongs to another project, and {source} is not part of it. Nothing was linked.":
-    "연결되지 않음: {machine}의 복사본은 다른 프로젝트에 속하며, {source}은(는) 그 일부가 아닙니다. 아무것도 연결되지 않았습니다.",
   "Link with a project on another machine": "다른 머신의 프로젝트와 연결",
-  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator; Main stays on {main} and you can switch it any time.":
-    "다른 머신에 있는 {project}의 복사본을 고르세요. 각 복사본은 자체 코디네이터를 유지합니다. 메인은 {main}에 그대로 있으며 언제든지 바꿀 수 있습니다.",
-  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator, and you can switch Main any time.":
-    "다른 머신에 있는 {project}의 복사본을 고르세요. 각 복사본은 자체 코디네이터를 유지하며, 메인은 언제든지 바꿀 수 있습니다.",
-  "Other copy": "다른 복사본",
   "No project on another connected machine. Add the folder on that machine first, then link it here.":
     "연결된 다른 머신에 프로젝트가 없습니다. 먼저 그 머신에서 폴더를 추가한 다음 여기에서 연결하세요.",
   "{project} on {machine}": "{machine}의 {project}",
   "Not a copy:": "복사본 아님:",
   "Compared when you review the link.": "연결을 검토할 때 비교합니다.",
   "Reading folders…": "폴더를 읽는 중…",
-  "No copy of {project} was found on another machine.":
-    "다른 머신에서 {project}의 복사본을 찾지 못했습니다.",
   "Other projects ({count})": "다른 프로젝트 ({count})",
   "Not copies of {project} as far as their folders show. Pick one only if it is a renamed or re-cloned copy.":
     "폴더로 보면 {project}의 복사본이 아닙니다. 이름을 바꿨거나 다시 클론한 복사본일 때만 고르세요.",
   "Review link": "연결 검토",
-  "Message {machine}'s coordinator for {project}.":
-    "{project}의 {machine} 코디네이터에게 메시지를 보내세요.",
-  "Send delivers your message to {machine}'s coordinator and opens its page, where the answer comes.":
-    "보내기를 누르면 {machine}의 코디네이터에게 메시지가 전달되고, 답이 오는 그 페이지가 열립니다.",
-  "Send delivers your message to main's coordinator and opens its page, where the answer comes.":
-    "보내기를 누르면 메인 코디네이터에게 메시지가 전달되고, 답이 오는 그 페이지가 열립니다.",
-  "Files stay on this machine. Remove them to send the text to main, or open main's page to attach them there.":
-    "파일은 이 기기에 남습니다. 텍스트를 메인으로 보내려면 파일을 빼거나, 메인 페이지를 열어 그곳에서 첨부하세요.",
   "1 device waiting": "기기 1대 대기 중",
   "A Linux computer": "Linux 컴퓨터",
   "A Mac": "Mac",
@@ -5553,4 +5420,435 @@ export const ko: PhraseCatalog = {
   "Manage profiles": "프로필 관리",
   "Profiles: {count}": "프로필: {count}",
   "Device hosts: {count}": "기기 호스트: {count}",
+  "Let this machine continue a coordinator": "이 컴퓨터에서 코디네이터를 이어서 진행",
+  "Separate project · also on {machine}": "별도 프로젝트 · {machine}에도 있음",
+  "{machine} has this repository as a separate project. Link them from the project menu to share one coordinator, plan and memory.":
+    "{machine}에는 이 저장소가 별도 프로젝트로 있습니다. 프로젝트 메뉴에서 연결하면 코디네이터, 계획, 메모리를 하나로 공유합니다.",
+  "Only on this machine": "이 컴퓨터에만 있음",
+  "No other machine has this project.": "다른 컴퓨터에는 이 프로젝트가 없습니다.",
+  "Connect to see its state": "연결하면 상태가 보입니다",
+  "This app cannot see this machine, so it cannot tell what it does for this project.":
+    "이 앱에서 이 컴퓨터가 보이지 않아 이 프로젝트에서 어떤 일을 하는지 알 수 없습니다.",
+  "Continue here": "여기서 계속",
+  "The coordinator continued on {machine} while {main} was offline. It started from the shared goal, memory and plan; the earlier conversation stays on {main} as history.":
+    "{main}이(가) 오프라인인 동안 코디네이터가 {machine}에서 이어졌습니다. 공유된 목표, 메모리, 계획에서 시작했으며, 이전 대화는 기록으로 {main}에 남아 있습니다.",
+  "The coordinator continued on {machine} while its old machine was offline. It started from the shared goal, memory and plan; the earlier conversation stays on the old machine as history.":
+    "이전 컴퓨터가 오프라인인 동안 코디네이터가 {machine}에서 이어졌습니다. 공유된 목표, 메모리, 계획에서 시작했으며, 이전 대화는 기록으로 이전 컴퓨터에 남아 있습니다.",
+  "{project} is on {machine}. The coordinator stays on {main}.":
+    "{project}이(가) {machine}에 있습니다. 코디네이터는 {main}에 그대로 있습니다.",
+  "{machine} has this repository as a separate project whose coordinator is on {main}. Nothing was linked.":
+    "{machine}에는 이 저장소가 별도 프로젝트로 있으며, 그 코디네이터는 {main}에 있습니다. 아무것도 연결되지 않았습니다.",
+  "{machine} has this repository as a separate project. Nothing was linked.":
+    "{machine}에는 이 저장소가 별도 프로젝트로 있습니다. 아무것도 연결되지 않았습니다.",
+  "Continue the coordinator on {machine}": "{machine}에서 코디네이터 이어 가기",
+  "{project} on your machines": "내 컴퓨터의 {project}",
+  "Separate project: {machine} added this repository on its own, with its own coordinator, threads and memory.":
+    "별도 프로젝트: {machine}이(가) 이 저장소를 따로 추가했으며, 자체 코디네이터, 스레드, 메모리를 사용합니다.",
+  "Pick a machine to see its threads and files. Nothing moves until you sync or hand off.":
+    "컴퓨터를 고르면 스레드와 파일이 보입니다. 동기화하거나 넘기기 전에는 아무것도 옮겨지지 않습니다.",
+  "These are separate projects for this repository, each with its own coordinator, threads and memory. You can still open and message each one.":
+    "이 저장소에 대한 별도 프로젝트들이며, 각각 자체 코디네이터, 스레드, 메모리를 사용합니다. 그래도 각 프로젝트를 열고 메시지를 보낼 수 있습니다.",
+  "Fix…": "수정…",
+  "Connect…": "연결…",
+  "Makes the project on {machine} part of this one. The coordinator stays where it is, and threads and files stay where they are. You confirm what {machine} gives up first.":
+    "{machine}의 프로젝트를 이 프로젝트의 일부로 만듭니다. 코디네이터는 지금 있는 곳에 그대로 있고, 스레드와 파일도 그대로 있습니다. {machine}이(가) 포기하는 것을 먼저 확인합니다.",
+  "Work on {machine}": "{machine}의 작업",
+  "{main} is offline: the coordinator starts on {machine} from the shared goal, memory and plan. You confirm first.":
+    "{main}이(가) 오프라인입니다. 코디네이터가 {machine}에서 공유된 목표, 메모리, 계획을 바탕으로 시작합니다. 먼저 확인합니다.",
+  "Syncs {machine}, then moves the coordinator conversation here from {main}. You confirm first.":
+    "{machine}을(를) 동기화한 뒤 코디네이터 대화를 {main}에서 여기로 옮깁니다. 먼저 확인합니다.",
+  "Continue the coordinator here": "여기서 코디네이터 이어 가기",
+  "Pick {project} on another machine. Linking makes them one project with one coordinator.":
+    "다른 컴퓨터의 {project}을(를) 고르세요. 연결하면 코디네이터가 하나인 한 프로젝트가 됩니다.",
+  "Pick {project} on another machine. The coordinator stays on {main}; you can continue it on another machine any time.":
+    "다른 컴퓨터의 {project}을(를) 고르세요. 코디네이터는 {main}에 그대로 있으며, 언제든지 다른 컴퓨터에서 이어 갈 수 있습니다.",
+  "Other machine": "다른 컴퓨터",
+  "{project} was not found on another machine.": "다른 컴퓨터에서 {project}을(를) 찾지 못했습니다.",
+  "Preparing the machine that keeps its coordinator…": "코디네이터를 유지할 컴퓨터를 준비하는 중…",
+  "Joining the other machine…": "다른 컴퓨터를 합치는 중…",
+  "Copying notes and listing both machines…": "노트를 복사하고 두 컴퓨터를 등록하는 중…",
+  "{machine} joins {project}. The coordinator stays on {main}: linking does not move it.":
+    "{machine}이(가) {project}에 참여합니다. 코디네이터는 {main}에 그대로 있으며, 연결해도 옮겨지지 않습니다.",
+  "Reading both machines…": "두 컴퓨터를 읽는 중…",
+  "The coordinator stays on {main}. To continue it on {machine}, use Continue here after linking.":
+    "코디네이터는 {main}에 그대로 있습니다. {machine}에서 이어 가려면 연결한 뒤 여기서 계속을 사용하세요.",
+  "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if the coordinator continues there. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. The coordinator stays on {main}. Files are not copied.":
+    "{machine}을(를) 이 프로젝트에 연결합니다. {machine}은(는) 자체 목표와 지침을 포기하고 지금부터 이 프로젝트의 것을 따르며, 코디네이터가 거기서 이어지면 자체 목표와 지침은 대체됩니다. 자체 코디네이터는 멈추고 그 대화는 기록으로 {machine}에 남습니다. 워커는 계속 실행됩니다. 코디네이터는 {main}에 그대로 있습니다. 파일은 복사되지 않습니다.",
+  "The coordinator cannot continue on {machine}: it has this repository as a separate project. Link it first.":
+    "{machine}에서는 코디네이터를 이어 갈 수 없습니다. 이 저장소가 별도 프로젝트로 있기 때문입니다. 먼저 연결하세요.",
+  "Continues in a folder already saved there, which updates from origin. Always moves the coordinator there.":
+    "거기에 이미 저장된 폴더에서 이어 가며, 이 폴더는 origin에서 업데이트됩니다. 코디네이터는 항상 거기로 옮겨집니다.",
+  "Not available: that machine already has the coordinator.":
+    "사용할 수 없음: 그 컴퓨터에 이미 코디네이터가 있습니다.",
+  "Not available: it would move the coordinator into a separate project.":
+    "사용할 수 없음: 코디네이터가 별도 프로젝트로 옮겨집니다.",
+  "Goes to the coordinator on {machine} and opens it there":
+    "{machine}의 코디네이터에게 전달하고 거기서 엽니다",
+  "On {machine}. Not on this device.": "{machine}에 있습니다. 이 기기에는 없습니다.",
+  "The coordinator cannot be handed off from this machine yet.":
+    "아직 이 컴퓨터에서 코디네이터를 넘길 수 없습니다.",
+  "The coordinator cannot continue on {machine} yet.":
+    "아직 {machine}에서 코디네이터를 이어 갈 수 없습니다.",
+  "The coordinator continues on {machine}": "코디네이터가 {machine}에서 이어집니다",
+  "The coordinator continues on {machine}. {names} have not confirmed it yet.":
+    "코디네이터가 {machine}에서 이어집니다. {names}은(는) 아직 확인하지 않았습니다.",
+  "They refuse work from the old coordinator only once they have confirmed the new one.":
+    "새 코디네이터를 확인한 뒤에야 이전 코디네이터의 작업을 거부합니다.",
+  "The coordinator stayed on {main}": "코디네이터가 {main}에 그대로 있습니다",
+  "Continue the coordinator on {machine}?": "{machine}에서 코디네이터를 이어 갈까요?",
+  "{main} has been offline for 10 minutes or more. The coordinator starts on {machine} from the shared goal, memory and plan. The conversation on {main} stays there as history. Until {main} is back it can still start work on its own machine; then it gives way and lists what it ran meanwhile.":
+    "{main}이(가) 10분 이상 오프라인입니다. 코디네이터가 {machine}에서 공유된 목표, 메모리, 계획을 바탕으로 시작합니다. {main}의 대화는 기록으로 거기에 남습니다. {main}은(는) 돌아올 때까지 자기 컴퓨터에서 작업을 시작할 수 있지만, 돌아오면 코디네이터를 넘겨주고 그동안 실행한 작업을 보여 줍니다.",
+  "Starting the coordinator…": "코디네이터를 시작하는 중…",
+  "The coordinator's machine is not reachable from here.":
+    "여기서는 코디네이터가 있는 컴퓨터에 연결할 수 없습니다.",
+  "The coordinator's machine did not confirm the message. It may not have arrived.":
+    "코디네이터가 있는 컴퓨터가 메시지를 확인하지 않았습니다. 도착하지 않았을 수 있습니다.",
+  "Nothing was sent.": "아무것도 보내지 않았습니다.",
+  "The coordinator continues here. Send your message again.":
+    "코디네이터가 여기서 이어집니다. 메시지를 다시 보내세요.",
+  "{main} must be silent for 10 minutes before the coordinator can continue on {machine}. That unlocks in {minutes} min.":
+    "{main}이(가) 10분 동안 응답이 없어야 {machine}에서 코디네이터를 이어 갈 수 있습니다. {minutes}분 후에 가능합니다.",
+  "This window can only read {main}, so it cannot hand the coordinator off from there. Open SpecWithCode on {main}, or connect to it with full access.":
+    "이 창은 {main}을(를) 읽기만 할 수 있어 거기서 코디네이터를 넘길 수 없습니다. {main}에서 SpecWithCode를 열거나 전체 접근 권한으로 연결하세요.",
+  "Connect {machine} first to continue the coordinator there.":
+    "{machine}에서 코디네이터를 이어 가려면 먼저 {machine}을(를) 연결하세요.",
+  "{machine} cannot continue the coordinator yet. Update SpecWithCode there, or connect to it with permission to change settings and run work.":
+    "{machine}은(는) 아직 코디네이터를 이어 갈 수 없습니다. 거기서 SpecWithCode를 업데이트하거나 설정 변경과 작업 실행 권한으로 연결하세요.",
+  "Connect {main} first. This window has not opened {project} on {main}, so it cannot hand the coordinator off yet.":
+    "먼저 {main}을(를) 연결하세요. 이 창에서 {main}의 {project}을(를) 열지 않아 아직 코디네이터를 넘길 수 없습니다.",
+  "The coordinator continued on another machine. This one gives way once it is reachable; Send opens the newer one.":
+    "코디네이터가 다른 컴퓨터에서 이어졌습니다. 이 컴퓨터는 연결되면 자리를 넘겨줍니다. 보내기를 누르면 새 코디네이터가 열립니다.",
+  "The coordinator is on another machine. Send opens it there.":
+    "코디네이터는 다른 컴퓨터에 있습니다. 보내기를 누르면 거기서 열립니다.",
+  "This machine has not confirmed where the coordinator is yet. Reconnect it to send messages.":
+    "이 컴퓨터는 아직 코디네이터의 위치를 확인하지 못했습니다. 메시지를 보내려면 다시 연결하세요.",
+  "Separate project": "별도 프로젝트",
+  "Continue here and send": "여기서 계속하고 보내기",
+  "Files stay on this machine. Remove them to send the text, or open {project} on {machine} to attach them there.":
+    "파일은 이 컴퓨터에 남습니다. 텍스트만 보내려면 파일을 빼거나, {machine}에서 {project}을(를) 열어 그곳에서 첨부하세요.",
+  "From {source}. {machine} has this repository as a separate project (coordinator on {main}).":
+    "{source}에서. {machine}에는 이 저장소가 별도 프로젝트로 있습니다(코디네이터: {main}).",
+  "From {source}. {machine} has this repository as a separate project.":
+    "{source}에서. {machine}에는 이 저장소가 별도 프로젝트로 있습니다.",
+  "From {source}. The coordinator continues on {machine}.":
+    "{source}에서. 코디네이터가 {machine}에서 이어집니다.",
+  "From {source}. The coordinator continues on the machine you choose.":
+    "{source}에서. 코디네이터가 선택한 컴퓨터에서 이어집니다.",
+  "From {source}. The coordinator stays on {main}.":
+    "{source}에서. 코디네이터는 {main}에 그대로 있습니다.",
+  "From {source}.": "{source}에서.",
+  "Only files go into {machine}'s folder. Its coordinator stays on {main}. To make them one project, link {source} to it from the machine menu.":
+    "{machine}의 폴더에는 파일만 들어갑니다. 그 코디네이터는 {main}에 그대로 있습니다. 하나의 프로젝트로 만들려면 컴퓨터 메뉴에서 {source}을(를) 연결하세요.",
+  "Only files go into {machine}'s folder. Its coordinator does not change. To make them one project, link {source} to it from the machine menu.":
+    "{machine}의 폴더에는 파일만 들어갑니다. 그 코디네이터는 바뀌지 않습니다. 하나의 프로젝트로 만들려면 컴퓨터 메뉴에서 {source}을(를) 연결하세요.",
+  "The coordinator stays where it is.": "코디네이터는 지금 있는 곳에 그대로 있습니다.",
+  "Extra coordinator": "중복 코디네이터",
+  "Handing off the coordinator…": "코디네이터를 넘기는 중…",
+  "The coordinator conversation is on this machine.": "코디네이터 대화는 이 컴퓨터에 있습니다.",
+  "The coordinator is on {machine}. This machine also runs a coordinator of its own, which should be fixed.":
+    "코디네이터는 {machine}에 있습니다. 이 컴퓨터도 자체 코디네이터를 실행하고 있으니 수정해야 합니다.",
+  "The coordinator is on {machine}. Messages typed here go to it.":
+    "코디네이터는 {machine}에 있습니다. 여기서 입력한 메시지는 그 코디네이터에게 갑니다.",
+  "The coordinator is being handed off right now.": "지금 코디네이터를 넘기는 중입니다.",
+  "Unlink {project} on {machine}?": "{machine}의 {project} 연결을 해제할까요?",
+  "Extra coordinator on {machine}": "{machine}의 중복 코디네이터",
+  "It becomes its own project again, with an active coordinator and a copy of this project's notes. {main} stops sending it work. Threads and files stay where they are.":
+    "다시 독립된 프로젝트가 되며, 활성 코디네이터와 이 프로젝트의 노트를 복사해 갖습니다. {main}은(는) 더 이상 작업을 보내지 않습니다. 스레드와 파일은 그대로 있습니다.",
+  "{machine} also runs a coordinator for {project}. The project's coordinator is on {main}.":
+    "{machine}도 {project}의 코디네이터를 실행하고 있습니다. 이 프로젝트의 코디네이터는 {main}에 있습니다.",
+  "To make {machine} part of this project again, link it afterwards. Linking makes it give way to the coordinator on {main}.":
+    "{machine}을(를) 다시 이 프로젝트에 포함하려면 나중에 연결하세요. 연결하면 {main}의 코디네이터에게 자리를 넘겨줍니다.",
+  "{other} still follows the coordinator on {machine}. Continue the coordinator on another machine first.":
+    "{other}은(는) 아직 {machine}의 코디네이터를 따릅니다. 먼저 다른 컴퓨터에서 코디네이터를 이어 가세요.",
+  "{machine} cannot be unlinked from this window.":
+    "이 창에서는 {machine}의 연결을 해제할 수 없습니다.",
+  "Unlink {project} on {machine}": "{machine}의 {project} 연결 해제",
+  "The coordinator for {project} is on another machine.":
+    "{project}의 코디네이터는 다른 컴퓨터에 있습니다.",
+  "Ask the coordinator for {project} (on {machine}).":
+    "{project}의 코디네이터({machine})에게 물어보세요.",
+  "The coordinator for {project} is on {machine}, which is not answering.":
+    "{project}의 코디네이터는 {machine}에 있지만, {machine}이(가) 응답하지 않습니다.",
+  "Continue here syncs {machine}, then moves the coordinator conversation here from {main}.":
+    "여기서 계속을 누르면 {machine}을(를) 동기화한 뒤 코디네이터 대화를 {main}에서 여기로 옮깁니다.",
+  "{main} has been offline for 10 minutes or more. Continue here: the coordinator starts on {machine} from the shared goal, memory and plan. Its conversation on {main} stays readable there, and {main} gives way when it is back.":
+    "{main}이(가) 10분 이상 오프라인입니다. 여기서 계속을 누르면 코디네이터가 {machine}에서 공유된 목표, 메모리, 계획을 바탕으로 시작합니다. {main}의 대화는 거기서 계속 읽을 수 있으며, {main}은(는) 돌아오면 자리를 넘겨줍니다.",
+  "{main} has been offline for {n} minutes. Continue here: the coordinator starts on {machine} from the shared goal, memory and plan. Its conversation on {main} stays readable there, and {main} gives way when it is back.":
+    "{main}이(가) {n}분 동안 오프라인입니다. 여기서 계속을 누르면 코디네이터가 {machine}에서 공유된 목표, 메모리, 계획을 바탕으로 시작합니다. {main}의 대화는 거기서 계속 읽을 수 있으며, {main}은(는) 돌아오면 자리를 넘겨줍니다.",
+  "{machine} is not answering. Continue here unlocks in {m} min.":
+    "{machine}이(가) 응답하지 않습니다. {m}분 후에 여기서 계속을 사용할 수 있습니다.",
+  "This window can only read {machine}, so it cannot send there. Open SpecWithCode on {machine}, or connect to it with full access.":
+    "이 창은 {machine}을(를) 읽기만 할 수 있어 거기로 보낼 수 없습니다. {machine}에서 SpecWithCode를 열거나 전체 접근 권한으로 연결하세요.",
+  "The coordinator moved to {new}. Nothing was sent.":
+    "코디네이터가 {new}(으)로 옮겨졌습니다. 아무것도 보내지 않았습니다.",
+  "{machine} did not take the message: {reason}. Nothing was sent.":
+    "{machine}이(가) 메시지를 받지 않았습니다: {reason}. 아무것도 보내지 않았습니다.",
+  "The coordinator for {project} is on {machine}. Send opens it there.":
+    "{project}의 코디네이터는 {machine}에 있습니다. 보내기를 누르면 거기서 열립니다.",
+  "The coordinator for {project} is on another machine that this window cannot reach.":
+    "{project}의 코디네이터는 이 창에서 연결할 수 없는 다른 컴퓨터에 있습니다.",
+  "This window cannot open {machine}": "이 창에서 {machine}을(를) 열 수 없습니다",
+  "Offline · last seen {time}": "오프라인 · 마지막 접속: {time}",
+  "Old conversation kept": "이전 대화 보관됨",
+  "this project": "이 프로젝트",
+  "its machine": "해당 컴퓨터",
+  "the old machine": "이전 컴퓨터",
+  Send: "보내기",
+  "{machine} has not confirmed where the coordinator is yet. Reconnect it to send messages.":
+    "{machine}이(가) 아직 코디네이터의 위치를 확인하지 못했습니다. 메시지를 보내려면 다시 연결하세요.",
+  "Coordinator conversations": "코디네이터 대화",
+  Threads: "스레드",
+  "another machine": "다른 컴퓨터",
+  "Coordinator on {machine}": "코디네이터: {machine}",
+  "On {here} and {machines}": "{here} 및 {machines}에서",
+  "On {machines} and {last}": "{machines} 및 {last}에서",
+  "On {coordinator} (coordinator) and {last}": "{coordinator}(코디네이터) 및 {last}에서",
+  "On {coordinator} (coordinator), {machines} and {last}":
+    "{coordinator}(코디네이터), {machines} 및 {last}에서",
+  "Fix the extra coordinator on {machine}": "{machine}의 중복 코디네이터 수정",
+  "Connect {machine}": "{machine} 연결",
+  "Project on another machine": "다른 컴퓨터의 프로젝트",
+  "Not reachable from here": "여기서 연결할 수 없음",
+  "Sign in to reach {machine}": "{machine}에 연결하려면 로그인",
+  "Can't reach {machine} from this window": "이 창에서 {machine}에 연결할 수 없습니다",
+  "Signed out of SpecWithCode Connect": "SpecWithCode Connect에서 로그아웃됨",
+  "This machine is not affected.": "이 컴퓨터는 영향을 받지 않습니다.",
+  "Needs sign-in. Sign in to SpecWithCode Connect to reach it from this window":
+    "로그인 필요. 이 창에서 연결하려면 SpecWithCode Connect에 로그인하세요",
+  "Sign in to SpecWithCode Connect to reach it from this window.":
+    "이 창에서 연결하려면 SpecWithCode Connect에 로그인하세요.",
+  "This window reaches it through SpecWithCode Connect and is signed out. Sign in to reach it again.":
+    "이 창은 SpecWithCode Connect를 통해 연결되며 로그아웃 상태입니다. 로그인하면 다시 연결할 수 있습니다.",
+  "{machines} can't be reached from this window until you sign in.":
+    "{machines}은(는) 로그인할 때까지 이 창에서 연결할 수 없습니다.",
+  "Still connected: {machines}.": "연결됨: {machines}.",
+  "Some of your machines can't be reached from this window until you sign in. This machine is not affected.":
+    "일부 컴퓨터는 로그인할 때까지 이 창에서 연결할 수 없습니다. 이 컴퓨터는 영향을 받지 않습니다.",
+  "{machine} is running, but this window can't reach it until you sign in.":
+    "{machine}은(는) 실행 중이지만 로그인할 때까지 이 창에서 연결할 수 없습니다.",
+  "{machines} are running, but this window can't reach them until you sign in.":
+    "{machines}은(는) 실행 중이지만 로그인할 때까지 이 창에서 연결할 수 없습니다.",
+  "Sign in to reach this machine": "이 컴퓨터에 연결하려면 로그인",
+  // First-run setup: the Access step, its rows and the shared Chrome steps.
+  "Chrome and Safari profiles and history": "Chrome 및 Safari 프로필과 방문 기록",
+  Mail: "Mail",
+  Messages: "메시지",
+  "Photos library": "사진 보관함",
+  "Time Machine backups": "Time Machine 백업",
+  "Other apps' data": "다른 앱의 데이터",
+  "Screen Recording": "화면 기록",
+  Accessibility: "손쉬운 사용",
+  "Every agent on {machine}, in every project and with every provider, gets this until you turn it off in System Settings.":
+    "{machine}의 모든 에이전트가 모든 프로젝트와 모든 제공업체에서, 시스템 설정에서 끌 때까지 이 권한을 갖습니다.",
+  "Setup works without Connect, and you can add it later in Settings > Machines.":
+    "설정은 Connect 없이도 됩니다. 나중에 설정 > 머신에서 추가할 수 있습니다.",
+  "Each row has its own button. Change any of it later in Settings.":
+    "각 행마다 버튼이 따로 있습니다. 나중에 설정에서 언제든 바꿀 수 있습니다.",
+  "Continue changes nothing.": "계속을 눌러도 아무것도 바뀌지 않습니다.",
+  "On {machines}.": "{machines}에서.",
+  "Full access: agents edit and run without asking each time.":
+    "전체 권한: 에이전트가 매번 묻지 않고 편집하고 실행합니다.",
+  "What it allows": "허용되는 작업",
+  "New chats start with Full access.": "새 채팅은 전체 권한으로 시작합니다.",
+  "New chats stay Supervised.": "새 채팅은 감독 상태로 유지됩니다.",
+  "New chats keep their current access.": "새 채팅은 현재 권한을 유지합니다.",
+  "Change it in Settings > General.": "설정 > 일반에서 바꿀 수 있습니다.",
+  "Files and commands": "파일과 명령",
+  "Not changed": "변경 안 함",
+  Change: "변경",
+  "Checking Chrome…": "Chrome 확인 중…",
+  "{machine} is offline.": "{machine}이(가) 오프라인입니다.",
+  "Turned off by your team's rules.": "팀 규칙에 따라 꺼져 있습니다.",
+  "This window cannot pair a browser with {machine}.":
+    "이 창에서는 브라우저를 {machine}과(와) 페어링할 수 없습니다.",
+  "Chrome is not installed on {machine}.": "{machine}에 Chrome이 설치되어 있지 않습니다.",
+  "{asking} asks to use this Chrome for its threads.":
+    "{asking}이(가) 스레드에서 이 Chrome을 사용하려고 요청합니다.",
+  "{asking} asks to use this Chrome for its threads. This window cannot answer it: answer in Settings > Chrome where you can change access.":
+    "{asking}이(가) 스레드에서 이 Chrome을 사용하려고 요청합니다. 이 창에서는 응답할 수 없습니다. 권한을 바꿀 수 있는 설정 > Chrome에서 응답하세요.",
+  "Paired, not answering. Open Chrome, or reconnect.":
+    "페어링됨, 응답 없음. Chrome을 열거나 다시 연결하세요.",
+  "{profiles}: an older extension.": "{profiles}: 이전 버전의 확장 프로그램입니다.",
+  "Update the extension": "확장 프로그램 업데이트",
+  "{profiles}: not from the Chrome Web Store.":
+    "{profiles}: Chrome 웹 스토어에서 받은 것이 아닙니다.",
+  "{profiles}: give it a name agents can tell apart.":
+    "{profiles}: 에이전트가 구별할 수 있는 이름을 붙이세요.",
+  "Paired: {names}": "페어링됨: {names}",
+  "Pair another profile": "다른 프로필 페어링",
+  "Your browser": "브라우저",
+  "That did not go through. Try again.": "처리되지 않았습니다. 다시 시도하세요.",
+  "Screen Recording and Accessibility are allowed.": "화면 기록과 손쉬운 사용이 허용되어 있습니다.",
+  "Partly allowed: {missing} is still off.": "일부만 허용됨: {missing}이(가) 아직 꺼져 있습니다.",
+  "Needs reopening: macOS applies Screen Recording after SpecWithCode reopens.":
+    "다시 열어야 함: macOS는 SpecWithCode를 다시 연 뒤에 화면 기록을 적용합니다.",
+  "Could not check the Mac's permissions.": "Mac의 권한을 확인할 수 없습니다.",
+  "Agents see the screen and click and type in any app.":
+    "에이전트가 화면을 보고 어떤 앱에서든 클릭하고 입력합니다.",
+  "Mac apps": "Mac 앱",
+  "Agents use only the Chrome profiles you pair, and only while they are paired.":
+    "에이전트는 페어링한 Chrome 프로필만, 페어링된 동안에만 사용합니다.",
+  "They work in the live browser, in a blue tab group you can pull a tab out of. They never read Chrome's files on disk, which Full Disk Access would open to every agent.":
+    "에이전트는 실행 중인 브라우저의 파란색 탭 그룹 안에서 작업하며, 탭을 그룹 밖으로 끌어낼 수 있습니다. 디스크에 있는 Chrome 파일은 읽지 않습니다. 전체 디스크 접근 권한은 그 파일을 모든 에이전트에게 열어 줍니다.",
+  "SpecWithCode reads Chrome's profile names to show this list.":
+    "이 목록을 보여 주기 위해 SpecWithCode가 Chrome 프로필 이름을 읽습니다.",
+  "Pick the profile where the accounts agents need are signed in.":
+    "에이전트에게 필요한 계정이 로그인된 프로필을 고르세요.",
+  "One profile is enough when everything agents need is signed in there. Pair a second one for a work account or another brand's accounts. The browser tools never reach a profile you did not pair.":
+    "에이전트에게 필요한 모든 것이 한 프로필에 로그인되어 있다면 프로필 하나로 충분합니다. 업무 계정이나 다른 브랜드의 계정에는 두 번째 프로필을 페어링하세요. 페어링하지 않은 프로필에는 브라우저 도구가 닿지 않습니다.",
+  "Agents use the profile you name.": "에이전트는 지정한 프로필을 사용합니다.",
+  "It opens in the Chrome profile you used last. To pair another, switch to it in Chrome first.":
+    "마지막으로 사용한 Chrome 프로필에서 열립니다. 다른 프로필을 페어링하려면 먼저 Chrome에서 그 프로필로 전환하세요.",
+  "Anyone with this code can pair a browser with this computer.":
+    "이 코드가 있으면 누구나 브라우저를 이 컴퓨터와 페어링할 수 있습니다.",
+  "Chrome profile": "Chrome 프로필",
+  "Pick a profile above first.": "먼저 위에서 프로필을 선택하세요.",
+  "Opens the store page in {profile}.": "{profile}에서 스토어 페이지를 엽니다.",
+  "Opens the store page in Chrome.": "Chrome에서 스토어 페이지를 엽니다.",
+  "Paste it in the extension's page, or click its icon in Chrome's toolbar and paste it there.":
+    "확장 프로그램 페이지에 붙여 넣거나, Chrome 도구 모음의 아이콘을 클릭해 그곳에 붙여 넣으세요.",
+  "Waiting for Chrome…": "Chrome을 기다리는 중…",
+  "The pairing code could not be read. Try again.":
+    "페어링 코드를 읽을 수 없습니다. 다시 시도하세요.",
+  "The code could not be copied. Press Show instead.":
+    "코드를 복사할 수 없습니다. 대신 표시를 누르세요.",
+  "Developer: allow copies not from the Chrome Web Store":
+    "개발자: Chrome 웹 스토어에서 받지 않은 사본 허용",
+  "Off, only the SpecWithCode Browser from the Chrome Web Store can connect to {machine}. On, any other extension id can connect too, such as a copy loaded by hand in chrome://extensions, but still only with the pairing code, and it is marked not from the Chrome Web Store. Turning it off disconnects those copies.":
+    "끄면 Chrome 웹 스토어의 SpecWithCode Browser만 {machine}에 연결할 수 있습니다. 켜면 chrome://extensions에서 직접 불러온 사본 같은 다른 확장 프로그램 ID도 연결할 수 있지만, 여전히 페어링 코드가 있어야 하며 Chrome 웹 스토어에서 받지 않은 것으로 표시됩니다. 끄면 그 사본들의 연결이 끊깁니다.",
+  "Give it a name agents can tell apart": "에이전트가 구별할 수 있는 이름을 붙이세요",
+  "What agents can use on this {machine}": "이 {machine}에서 에이전트가 사용할 수 있는 것",
+  "What agents can use": "에이전트가 사용할 수 있는 것",
+  "Some tasks need it: listing Chrome profiles, reading Mail or Messages, searching Safari history, or working with another app's files. macOS blocks these for every app until you allow it.":
+    "Chrome 프로필 목록 보기, Mail이나 메시지 읽기, Safari 방문 기록 검색, 다른 앱의 파일 작업 같은 일에 필요합니다. 허용하기 전까지 macOS는 모든 앱에서 이를 막습니다.",
+  "What it unlocks": "사용할 수 있게 되는 것",
+  "A prompt hidden in a web page or file could ask an agent to read your mail. Turn it on only if you need it.":
+    "웹 페이지나 파일에 숨은 지시가 에이전트에게 메일을 읽으라고 시킬 수 있습니다. 필요할 때만 켜세요.",
+  "In System Settings › Privacy & Security › Full Disk Access, turn on":
+    "시스템 설정 › 개인정보 보호 및 보안 › 전체 디스크 접근 권한에서 다음을 켜세요:",
+  "Agents here run under a background service, so macOS asks about it, not the app. In System Settings › Privacy & Security › Full Disk Access, add":
+    "여기서는 에이전트가 백그라운드 서비스에서 실행되므로 macOS는 앱이 아니라 그 서비스에 대해 묻습니다. 시스템 설정 › 개인정보 보호 및 보안 › 전체 디스크 접근 권한에 다음을 추가하세요:",
+  "How Full Disk Access works and how to turn it off":
+    "전체 디스크 접근 권한의 작동 방식과 끄는 방법",
+  "Full Disk Access for agents: allowed, restart running threads":
+    "에이전트의 전체 디스크 접근 권한: 허용됨, 실행 중인 스레드를 다시 시작하세요",
+  "Full Disk Access for agents: allowed": "에이전트의 전체 디스크 접근 권한: 허용됨",
+  "Full Disk Access for agents: could not be checked":
+    "에이전트의 전체 디스크 접근 권한: 확인할 수 없음",
+  "Full Disk Access for agents: off": "에이전트의 전체 디스크 접근 권한: 꺼짐",
+  "Privacy access": "개인정보 접근",
+  "Restart needed": "다시 시작 필요",
+  Optional: "선택 사항",
+  "New agent runs have it. Threads that were already running get it after they restart.":
+    "새로 실행하는 에이전트에는 적용됩니다. 이미 실행 중이던 스레드는 다시 시작한 뒤에 적용됩니다.",
+  "Optional. Agents on": "선택 사항입니다.",
+  "can't read Chrome or Safari profiles, Mail, Messages, Notes or other apps' data.":
+    "의 에이전트는 Chrome이나 Safari 프로필, Mail, 메시지, 메모, 다른 앱의 데이터를 읽을 수 없습니다.",
+  "What this allows": "이 설정으로 허용되는 것",
+  "Open System Settings": "시스템 설정 열기",
+  "Open SpecWithCode on": "SpecWithCode를",
+  "to allow it there.": "에서 열고 그곳에서 허용하세요.",
+  "Full Disk Access for agents (optional)": "에이전트의 전체 디스크 접근 권한 (선택 사항)",
+  "Already allowed on this Mac.": "이 Mac에서는 이미 허용되어 있습니다.",
+  "You can skip this. It is also in Settings › Machines, and agents ask when a task needs it.":
+    "건너뛰어도 됩니다. 설정 › 머신에도 있으며, 작업에 필요하면 에이전트가 묻습니다.",
+  "Use claude, codex and specweave in Terminal too. Adds one marked block to your shell startup file; turn it off any time in Settings > General.":
+    "터미널에서도 claude, codex, specweave를 사용하세요. 셸 시작 파일에 표시된 블록 하나를 추가하며, 설정 > 일반에서 언제든 끌 수 있습니다.",
+  "Your Connect sign-in ends at {time}": "Connect 로그인이 {time}에 끝납니다",
+  "Sign in again to keep reaching {machines} from this window.":
+    "이 창에서 {machines}에 계속 접근하려면 다시 로그인하세요.",
+  "Sign in again now": "지금 다시 로그인",
+  "SpecWithCode Connect did not accept this sign-in":
+    "SpecWithCode Connect가 이 로그인을 받아들이지 않았습니다",
+  "Sign in again to reach your machines through SpecWithCode Connect.":
+    "SpecWithCode Connect를 통해 머신에 접근하려면 다시 로그인하세요.",
+  "Sign in again": "다시 로그인",
+  first: "먼저",
+  "None of the ready agents runs a model on this list.":
+    "준비된 에이전트 중 이 목록의 모델을 쓰는 에이전트가 없습니다.",
+  "No reviewer yet.": "아직 리뷰어가 없습니다.",
+  "A review needs a model from a second family, such as {first} or {second}.":
+    "리뷰에는 {first} 또는 {second} 같은 다른 계열의 모델이 필요합니다.",
+  "Add one": "추가하기",
+  "+{n} more": "+{n}개 더",
+  "Ready once an agent is signed in.": "에이전트가 로그인하면 준비됩니다.",
+  // 1398: the first feature guide and its offer.
+  "Your first feature": "첫 기능",
+  "Turn SpecWeave on": "SpecWeave 켜기",
+  "Ask for it whole": "한 번에 요청하기",
+  "Read the review": "리뷰 읽기",
+  "This project has no plans or board yet. Turn SpecWeave on.":
+    "이 프로젝트에는 아직 계획과 보드가 없습니다. SpecWeave를 켜세요.",
+  "Show me": "위치 보기",
+  "Ask for the whole feature in one request. Your agents plan it, build it, review it and close it.":
+    "기능 전체를 요청 한 번으로 맡기세요. 에이전트가 계획하고, 만들고, 리뷰하고, 마무리합니다.",
+  "Ask for the whole feature in one request. Your agents plan it, build it and close it.":
+    "기능 전체를 요청 한 번으로 맡기세요. 에이전트가 계획하고, 만들고, 마무리합니다.",
+  "Write it for me": "대신 써 주기",
+  "Open the thread": "스레드 열기",
+  Planning: "계획 중",
+  "Working: {done} of {total} tasks": "작업 중: 작업 {total}개 중 {done}개",
+  "In review": "리뷰 중",
+  "Fixing what the review found": "리뷰에서 찾은 문제 수정 중",
+  "When the card is in Done, open it and read what the review found.":
+    "카드가 완료로 옮겨지면 열어서 리뷰 내용을 읽으세요.",
+  "Open the review": "리뷰 열기",
+  Ship: "출시 가능",
+  "Fix first": "먼저 수정",
+  "No verdict": "판정 없음",
+  "A reviewer": "리뷰어",
+  "Reviewed by {model}, the same family that built it.":
+    "{model}이(가) 리뷰했습니다. 만든 쪽과 같은 계열입니다.",
+  "No review ran. A review needs a model from a second family, such as {codex} or {muse}.":
+    "리뷰가 실행되지 않았습니다. 리뷰에는 {codex}나 {muse}처럼 다른 계열의 모델이 필요합니다.",
+  "No review is recorded for this feature.": "이 기능에 기록된 리뷰가 없습니다.",
+  "Skip this step": "이 단계 건너뛰기",
+  "Leave the guide": "가이드 닫기",
+  "Waiting on this step. The Board tab says what went wrong.":
+    "이 단계에서 멈췄습니다. 보드 탭에서 원인을 확인하세요.",
+  "Waiting on this step. The coordinator's last message says why.":
+    "이 단계에서 멈췄습니다. 코디네이터의 마지막 메시지에 이유가 있습니다.",
+  "That is the loop: plan, board, work, review, done.":
+    "이것이 전체 흐름입니다: 계획, 보드, 작업, 리뷰, 완료.",
+  "Review finished features in all projects on this Mac":
+    "이 Mac의 모든 프로젝트에서 완성된 기능 리뷰하기",
+  "Each review uses the reviewer's plan.": "리뷰마다 리뷰어의 요금제를 사용합니다.",
+  "On for all projects on this Mac. Each review uses the reviewer's plan.":
+    "이 Mac의 모든 프로젝트에서 켜졌습니다. 리뷰마다 리뷰어의 요금제를 사용합니다.",
+  "Remove the sample project": "샘플 프로젝트 제거",
+  "Remove {name} from SpecWithCode? Its folder and files stay on disk.":
+    "SpecWithCode에서 {name}을(를) 제거할까요? 폴더와 파일은 디스크에 남습니다.",
+  "Build a first feature": "첫 기능 만들기",
+  "Your agents plan and build one small feature and another model reviews it, on your own plans.":
+    "에이전트가 작은 기능 하나를 계획하고 만들면, 다른 모델이 리뷰합니다. 내 요금제로 실행됩니다.",
+  "Try a first feature": "첫 기능 시작하기",
+  "Sign in an agent first": "먼저 에이전트에 로그인하세요",
+  "Continue your first feature": "첫 기능 계속하기",
+  "Your sample project is where you left it.": "샘플 프로젝트가 멈춘 곳 그대로 있습니다.",
+  "Open it": "열기",
+  "Dismiss Build a first feature": "첫 기능 만들기 닫기",
+  "First feature guide": "첫 기능 가이드",
+  "Automatic review is still on for the sample": "샘플의 자동 리뷰가 아직 켜져 있습니다",
+  done: "완료",
+  skipped: "건너뜀",
+  Reviews: "리뷰",
+  "Removed {name}": "{name} 제거됨",
+  "Its folder and files stay on disk.": "폴더와 파일은 디스크에 남아 있습니다.",
+  "The guide could not be updated. Try again.":
+    "가이드를 업데이트하지 못했습니다. 다시 시도하세요.",
+  "The setting was not saved. Try again.": "설정이 저장되지 않았습니다. 다시 시도하세요.",
+  "The sample project was not removed. Try again.":
+    "샘플 프로젝트가 제거되지 않았습니다. 다시 시도하세요.",
+  "Could not make the sample project": "샘플 프로젝트를 만들지 못했습니다",
+  "The sample project has no first commit": "샘플 프로젝트에 첫 커밋이 없습니다",
+  "The sample project is ready": "샘플 프로젝트가 준비되었습니다",
+  "It appears in the sidebar once this window catches up.":
+    "이 창이 갱신되면 사이드바에 나타납니다.",
+  "This connection cannot change the settings of this Mac.":
+    "이 연결로는 이 Mac의 설정을 바꿀 수 없습니다.",
+  "How much longer work takes with {setting}": "'{setting}' 사용 시 작업이 얼마나 더 걸리는지",
+  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.":
+    "작업 완료까지 시간이 훨씬 오래 걸릴 수 있습니다. 측정 결과 리뷰한 작업은 리뷰 전 같은 작업보다 중앙값 2.6배의 시간이 걸렸습니다(실행의 절반은 1.6~3.6배). 리뷰 라운드와 그 수정에 시간이 들기 때문입니다.",
+  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.":
+    "작업 시간이 늘어날 수 있습니다. 상담 한 번에 약 2분이 걸립니다. 측정 결과 상담한 스레드는 약 1.1배의 시간이 걸렸고, 10개 중 1개는 1.4배 이상 걸렸습니다.",
 };

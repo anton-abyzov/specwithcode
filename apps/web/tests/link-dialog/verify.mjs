@@ -4,7 +4,7 @@
 // playwright-core; STUDIO_CHROMIUM_EXECUTABLE picks a browser binary.
 // Checks and shoots, light and dark, the first step of "Link with a project on another
 // machine": the copies with the best one selected, "Other projects" open, no copy found,
-// and a project that is already linked (the subtitle names Main).
+// and a project that is already linked (the subtitle names where the coordinator is).
 import * as NodeAssert from "node:assert/strict";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeHttp from "node:http";
@@ -91,7 +91,7 @@ try {
     let page = await open(`theme=${theme}`);
     NodeAssert.equal(
       await subtitle(page),
-      "Pick the copy of Atlas on another machine. Each copy keeps its own coordinator, and you can switch Main any time.",
+      "Pick Atlas on another machine. Linking makes them one project with one coordinator.",
     );
     NodeAssert.deepEqual(await rows(page), COPIES);
     NodeAssert.deepEqual(await picked(page), ["Atlas on m3"]);
@@ -99,7 +99,7 @@ try {
     NodeAssert.match(body, /Same root repository; 34 of 36 repositories match, 2 missing here\./);
     NodeAssert.match(body, /Same root repository; 32 of 36 repositories match, 4 missing here\./);
     NodeAssert.match(body, /Connect linux-mini first\./);
-    NodeAssert.doesNotMatch(body, /sketchbook|One coordinator stays|No copy of Atlas/);
+    NodeAssert.doesNotMatch(body, /sketchbook|One coordinator stays|Atlas was not found/);
     NodeAssert.equal(await fold(page).textContent(), "Other projects (6)");
     NodeAssert.equal(await fold(page).getAttribute("aria-expanded"), "false");
     NodeAssert.equal(await page.getByRole("button", { name: "Review link" }).isEnabled(), true);
@@ -128,7 +128,7 @@ try {
     page = await open(`theme=${theme}&case=empty`);
     NodeAssert.equal(
       await page.locator("[data-link-no-copy]").textContent(),
-      "No copy of Atlas was found on another machine.",
+      "Atlas was not found on another machine.",
     );
     NodeAssert.equal(await fold(page).getAttribute("aria-expanded"), "true");
     NodeAssert.deepEqual(await rows(page), OTHERS);
@@ -138,16 +138,16 @@ try {
     results.push({ theme, case: "no copy found", file });
     await page.close();
 
-    // Already linked with m5: the subtitle names the real Main.
+    // Already linked with m5: the subtitle names where the coordinator is.
     page = await open(`theme=${theme}&case=linked`);
     NodeAssert.equal(
       await subtitle(page),
-      "Pick the copy of Atlas on another machine. Each copy keeps its own coordinator; Main stays on m5 and you can switch it any time.",
+      "Pick Atlas on another machine. The coordinator stays on m5; you can continue it on another machine any time.",
     );
     NodeAssert.deepEqual(await rows(page), ["Atlas on m1"]);
     NodeAssert.deepEqual(await picked(page), ["Atlas on m1"]);
-    file = await shot(page, `link-dialog-linked-main-${theme}`);
-    results.push({ theme, case: "linked project names Main", file });
+    file = await shot(page, `link-dialog-linked-coordinator-${theme}`);
+    results.push({ theme, case: "linked project names the coordinator's machine", file });
     await page.close();
   }
 

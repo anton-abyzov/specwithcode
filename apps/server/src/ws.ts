@@ -119,6 +119,7 @@ import {
   WsRpcGroup,
   WsCoreRpcGroup,
   ModsError,
+  firstFeatureGuideFinishedIn,
 } from "@specweave-studio/contracts";
 import { resolveServerBackgroundActivitySettings } from "@specweave-studio/shared/backgroundActivitySettings";
 import {
@@ -1883,6 +1884,16 @@ const layerWsRpc = (
           const auth = yield* serverAuth.getDescriptor();
           const scratchWorkspaceRoot = yield* managedFolders.scratchRoot;
           const teamRules = yield* ServerSettings.currentTeamRulesSummary;
+          // Removed projects too: a finished sample a person removed still ends the offer (1398 AC-21).
+          const firstFeatureFinished = yield* projectStore.list({ includeDeleted: true }).pipe(
+            Effect.map(firstFeatureGuideFinishedIn),
+            // The config still loads; the offer may show again, so the reason is logged.
+            Effect.catch((cause) =>
+              Effect.logWarning("Failed to read projects for the first feature offer", {
+                detail: String(cause),
+              }).pipe(Effect.as(false)),
+            ),
+          );
           const editorConfig = yield* resolveEditorConfig(
             yield* resolveAvailableEditorsForConfig(externalLauncher.resolveAvailableEditors()),
             resolveFileManagerRevealKindForConfig(externalLauncher.resolveFileManagerRevealKind()),
@@ -1925,6 +1936,8 @@ const layerWsRpc = (
             threadResumeCompletionMarker: true,
             threadSnapshotPagination: true,
             specweaveSetUp: true,
+            firstFeatureSample: true,
+            ...(firstFeatureFinished ? { firstFeatureFinished: true } : {}),
             ...Option.match(scratchWorkspaceRoot, {
               onNone: () => ({}),
               onSome: (root) => ({ scratchWorkspaceRoot: root }),

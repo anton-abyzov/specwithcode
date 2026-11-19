@@ -186,15 +186,17 @@ it("lists each machine's copy with its role and links a project that has none", 
   await render([kept, joined]);
   const rows = [...document.querySelectorAll("[data-project-copy]")];
   expect(rows.map((row) => row.textContent)).toEqual([
-    expect.stringContaining("Coordinator. Plans the work"),
-    expect.stringContaining("Runs workers. Its own coordinator is read-only history until"),
+    expect.stringContaining("Coordinator. Plans the work and can start it on every machine."),
+    expect.stringContaining(
+      "The coordinator is on another machine. An older conversation here is read-only history.",
+    ),
   ]);
 });
 
 it("unlinks on the member first, with the kept notes, then removes it from the coordinator", async () => {
   await render([kept, joined]);
   await click(button("Unlink"));
-  expect(text()).toContain("Unlink the copy on M4?");
+  expect(text()).toContain("Unlink EasyChamp on M4?");
   const confirm = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(
     (node) => node.textContent?.trim() === "Unlink",
   )!;
@@ -224,7 +226,7 @@ it("unlinks while the coordinator is away and offers to remove the departed copy
   expect(state.calls.map((call) => [call.tag, call.environmentId])).toEqual([
     ["projectLink.unlink", "m4"],
   ]);
-  expect(text()).toContain("Connect M3 and remove the copy there.");
+  expect(text()).toContain("Connect M3 and remove M4 there.");
 
   state.problems = {};
   const left = copy("m4", "joined", identity("logical:2", [ref("m4", "joined")]), "active");
@@ -261,15 +263,17 @@ it("offers a takeover only after the coordinator is away 10 minutes, with one co
   state.problems = { m3: "Connect M3 first." };
   state.lastSeen = { m3: Date.now() - 3 * 60_000 };
   await render([kept, joined]);
-  expect(text()).toContain("M3 is unreachable. This copy can take over the coordinator in 7 min");
-  expect(button("Take over coordinator here").disabled).toBe(true);
+  expect(text()).toContain("M3 is offline. The coordinator can continue here in 7 min");
+  expect(button("Continue the coordinator here").disabled).toBe(true);
 
   state.lastSeen = { m3: Date.now() - 11 * 60_000 };
   await render([kept, { ...joined }]);
-  expect(text()).toContain("M3 has been unreachable for 10 minutes or more.");
-  await click(button("Take over coordinator here"));
-  expect(text()).toContain("Take over the coordinator on M4?");
-  await click(dialogButton("Take over"));
+  expect(text()).toContain(
+    "M3 has been offline for 10 minutes or more. The coordinator can continue here.",
+  );
+  await click(button("Continue the coordinator here"));
+  expect(text()).toContain("Continue the coordinator on M4?");
+  await click(dialogButton("Continue here"));
   const takeovers = state.calls.filter((call) => call.tag === "projectLink.takeover");
   expect(takeovers).toEqual([
     {
@@ -297,15 +301,15 @@ it("after a takeover, disarms standbys registered below the new epoch on machine
   // M3 is away and M1 cannot hold a re-arm consent: nothing is sent.
   state.rearm = ["m3", "m4"];
   await render([coordinatorCopy, takingOver, old]);
-  await click(button("Take over coordinator here"));
-  await click(dialogButton("Take over"));
+  await click(button("Continue the coordinator here"));
+  await click(dialogButton("Continue here"));
   expect(state.calls.filter((call) => call.tag === "projectLink.acceptStandby")).toEqual([]);
 
   state.calls = [];
   state.rearm = ["m3", "m4", "m1"];
   await render([coordinatorCopy, { ...takingOver }, old]);
-  await click(button("Take over coordinator here"));
-  await click(dialogButton("Take over"));
+  await click(button("Continue the coordinator here"));
+  await click(dialogButton("Continue here"));
   expect(state.calls.filter((call) => call.tag === "projectLink.acceptStandby")).toEqual([
     {
       tag: "projectLink.acceptStandby",
@@ -317,14 +321,14 @@ it("after a takeover, disarms standbys registered below the new epoch on machine
 
 it("keeps the takeover off while the coordinator is connected or this copy's app is old", async () => {
   await render([kept, joined]);
-  expect(text()).not.toContain("Take over coordinator here");
+  expect(text()).not.toContain("Continue the coordinator here");
   state.problems = { m3: "Connect M3 first." };
   state.lastSeen = { m3: Date.now() - 20 * 60_000 };
   state.old = ["m4"];
   await render([kept, { ...joined }]);
-  expect(button("Take over coordinator here").disabled).toBe(true);
-  expect(button("Take over coordinator here").title).toBe(
-    "Update SpecWithCode on M4 to take over.",
+  expect(button("Continue the coordinator here").disabled).toBe(true);
+  expect(button("Continue the coordinator here").title).toBe(
+    "Update SpecWithCode on M4 to continue the coordinator there.",
   );
 });
 
@@ -355,25 +359,30 @@ it("lists the turns a superseded coordinator ran while disconnected", async () =
   expect(text()).toContain("Ship the release notes");
 });
 
-it("starts a second coordinator on a machine that supports it, with no takeover wait", async () => {
+it("offers Continue the coordinator here on a machine that can run its own", async () => {
+  // Every current server says it can run a coordinator per machine; the takeover stays.
+  state.perMachine = ["m3", "m4"];
+  state.problems = { m3: "Connect M3 first." };
+  state.lastSeen = { m3: Date.now() - 12 * 60_000 };
+  await render([kept, joined]);
+  expect(button("Continue the coordinator here").disabled).toBe(false);
+  await click(button("Continue the coordinator here"));
+  expect(text()).toContain("Continue the coordinator on M4?");
+});
+
+it("offers no Start a coordinator here, even on a machine that supports one", async () => {
+  // D-06: a second coordinator is never started from settings; the coordinator continues instead.
   state.perMachine = ["m4"];
   await render([kept, joined]);
-  expect(text()).not.toContain("Take over coordinator here");
-  await click(button("Start a coordinator here"));
-  expect(state.calls.filter((call) => call.tag === "projectLink.startCoordinator")).toEqual([
-    {
-      tag: "projectLink.startCoordinator",
-      environmentId: "m4",
-      input: {
-        operationId: "7307ab55-fc59-4e07-abeb-de54be69215f",
-        projectId: "joined",
-        knownEpoch: 0,
-      },
-    },
-  ]);
-  expect(text()).toContain("M4 now runs its own coordinator next to the others.");
-  expect(state.calls.some((call) => call.tag === "projectLink.takeover")).toBe(false);
+  expect(
+    [...document.querySelectorAll("button")].some((node) =>
+      /Start a coordinator/u.test(node.textContent ?? ""),
+    ),
+  ).toBe(false);
+  expect(text()).not.toContain("Start a coordinator here");
+  expect(state.calls.some((call) => call.tag === "projectLink.startCoordinator")).toBe(false);
 
+  // Two active coordinators already there still read as coordinators.
   const both = copy("m4", "joined", shared, "active", { predecessor: null });
   state.projects = [kept, both];
   await render([kept, both]);
@@ -399,8 +408,8 @@ it("unlinks a coordinator started beside main, and only that one", async () => {
   );
   // The plain copy and the side coordinator can leave; main cannot.
   expect(unlinks.map((node) => node.getAttribute("aria-label"))).toEqual([
-    "Unlink the copy on M4",
-    "Unlink the copy on M1",
+    "Unlink EasyChamp on M4",
+    "Unlink EasyChamp on M1",
   ]);
   await click(unlinks[1]!);
   const confirm = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(
@@ -420,7 +429,7 @@ it("unlinks a coordinator started beside main, and only that one", async () => {
   state.oldUnlink = ["m1"];
   state.calls = [];
   const rows = [...document.querySelectorAll<HTMLButtonElement>("button")].filter(
-    (node) => node.getAttribute("aria-label") === "Unlink the copy on M1",
+    (node) => node.getAttribute("aria-label") === "Unlink EasyChamp on M1",
   );
   await click(rows[0]!);
   await click(
@@ -428,7 +437,7 @@ it("unlinks a coordinator started beside main, and only that one", async () => {
       (node) => node.textContent?.trim() === "Unlink",
     )!,
   );
-  expect(text()).toContain("Update SpecWithCode on M1 to unlink this copy.");
+  expect(text()).toContain("Update SpecWithCode on M1 to unlink it.");
   expect(
     state.calls
       .filter((call) => call.tag === "projectLink.unlink")
@@ -450,10 +459,10 @@ it("offers no Unlink on a side coordinator another copy works for, or one alone"
     [...document.querySelectorAll<HTMLButtonElement>("button")]
       .filter((node) => node.textContent?.trim() === "Unlink")
       .map((node) => node.getAttribute("aria-label"));
-  expect(labels()).not.toContain("Unlink the copy on M1");
+  expect(labels()).not.toContain("Unlink EasyChamp on M1");
   const alone = copy("m1", "side", identity("logical:1", [ref("m1", "side")]), "active", {
     epoch: 2,
   });
   await render([main, copy("m4", "joined", roster, "transferred"), alone]);
-  expect(labels()).not.toContain("Unlink the copy on M1");
+  expect(labels()).not.toContain("Unlink EasyChamp on M1");
 });

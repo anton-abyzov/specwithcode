@@ -701,19 +701,24 @@ function ProjectList({
       {projects.map((project) => (
         <li key={project.key} className="contents">
           <HoverText text={project.title} className="truncate text-foreground" />
-          <Tooltip>
-            <TooltipTrigger
-              delay={200}
-              render={<span className="inline-flex justify-self-start" />}
-            >
-              <Badge size="sm" variant={project.role ? ROLE_BADGE[project.role] : "secondary"}>
-                {tx(project.roleLabel, project.roleValues)}
-              </Badge>
-            </TooltipTrigger>
-            <TooltipPopup side="top" className="max-w-72">
-              {tx(project.roleHelp, project.roleValues)}
-            </TooltipPopup>
-          </Tooltip>
+          {project.roleLabel ? (
+            <Tooltip>
+              <TooltipTrigger
+                delay={200}
+                render={<span className="inline-flex justify-self-start" />}
+              >
+                <Badge size="sm" variant={project.role ? ROLE_BADGE[project.role] : "secondary"}>
+                  {tx(project.roleLabel, project.roleValues)}
+                </Badge>
+              </TooltipTrigger>
+              <TooltipPopup side="top" className="max-w-72">
+                {tx(project.roleHelp, project.roleValues)}
+              </TooltipPopup>
+            </Tooltip>
+          ) : (
+            // A machine with nothing to say about the coordinator has no badge.
+            <span />
+          )}
           <ProjectWhere project={project} here={here} />
         </li>
       ))}

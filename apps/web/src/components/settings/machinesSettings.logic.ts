@@ -91,9 +91,9 @@ export type MachineSeenState =
   | "not-connected";
 
 /**
- * A shared copy's part in its project, from `copyRoles`. "coordinator": Main.
- * "also-coordinator": runs a coordinator of its own too (each machine may), but Main is
- * another copy. "runs-workers": work for it starts from Main (shown "Copy · main on m4").
+ * A shared copy's part in its project, from `copyRoles`. "coordinator": the coordinator.
+ * "also-coordinator": runs a coordinator of its own too (each machine may), but the
+ * coordinator is on another machine. "runs-workers": the coordinator is on another machine.
  */
 export type SharedProjectRole =
   | "coordinator"
@@ -106,7 +106,8 @@ export interface MachineProject {
   readonly title: string;
   /** Null when this app cannot see that copy, so its role is unknown here. */
   readonly role: SharedProjectRole | "only-here" | null;
-  /** An English phrase ("Main", "Copy · main on {machine}"), translated with `roleValues`. */
+  /** An English phrase ("Coordinator", "Separate project · also on {machine}"),
+   * translated with `roleValues`. */
   readonly roleLabel: string;
   /** The role in a sentence, for the label's tooltip; translated with `roleValues`. */
   readonly roleHelp: string;
@@ -495,21 +496,23 @@ function projectsOn(
         continue;
       const shared = isSharedProject(project);
       const unlinked = shared ? [] : unlinkedElsewhereCopies(project, projects);
-      const unlinkedNames = [...new Set(unlinked.map((copy) => machineOf(copy.environmentId).name))];
+      const unlinkedNames = [
+        ...new Set(unlinked.map((copy) => machineOf(copy.environmentId).name)),
+      ];
       const words = shared
         ? roleWords(project, projects, (id) => machineOf(id).name, retired)
         : unlinked.length > 0
           ? {
               role: "only-here" as const,
-              roleLabel: "Not linked · also on {machine}",
+              roleLabel: "Separate project · also on {machine}",
               roleHelp:
-                "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.",
+                "{machine} has this repository as a separate project. Link them from the project menu to share one coordinator, plan and memory.",
               roleValues: { machine: unlinkedNames.join(", ") },
             }
           : {
               role: "only-here" as const,
-              roleLabel: "Not shared",
-              roleHelp: "No other machine has a copy of this project.",
+              roleLabel: "Only on this machine",
+              roleHelp: "No other machine has this project.",
             };
       const elsewhere = shared
         ? otherCopies(environmentId, project, projects, machineOf, retired)
@@ -551,8 +554,9 @@ function projectsOn(
         key: logical.id,
         title: logicalProjectTitle(project),
         role: null,
-        roleLabel: "Connect to see its role",
-        roleHelp: "This app cannot see this machine, so it cannot tell what this copy does.",
+        roleLabel: "Connect to see its state",
+        roleHelp:
+          "This app cannot see this machine, so it cannot tell what it does for this project.",
         alsoOn: elsewhere.map((copy) => copy.name),
         elsewhere,
         folder: null,

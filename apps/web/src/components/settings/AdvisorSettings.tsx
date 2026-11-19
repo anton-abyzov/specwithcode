@@ -33,12 +33,14 @@ import { Switch } from "../ui/switch";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { planScopedSettingFieldClear, scopedSettingFieldMixed } from "./scopedSettings";
 import {
+  PolicyTooltip,
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
   SettingResetButton,
   SettingsRow,
   SettingsSection,
   type SettingsReach,
 } from "./settingsLayout";
+import { ADVISOR_TIME_NOTE, SLOWER_WORK_NOTE_LABEL } from "./slowerWorkNotes";
 import { useRunScopedPlan, useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
 /** What an unset advisor model resolves to: the built-in order. */
@@ -180,12 +182,7 @@ export function AdvisorSettings(props: {
   const builtInOff = off || (!mixed.claudeBuiltIn && !advisor.claudeBuiltIn);
   // At project scope the row's own reset removes the field from the override;
   // here it restores the default.
-  const reset = (
-    field: AdvisorField,
-    label: string,
-    show: boolean,
-    change: AdvisorSettingsPatch,
-  ) =>
+  const reset = (field: AdvisorField, label: string, show: boolean, change: AdvisorSettingsPatch) =>
     !isProjectScope && !mixed[field] && show ? (
       <SettingResetButton label={label} onClick={() => save(change)} />
     ) : null;
@@ -209,6 +206,13 @@ export function AdvisorSettings(props: {
         {...shared("enabled")}
         id="advisor-enabled"
         title="Let threads ask a stronger model"
+        titleInfo={
+          <PolicyTooltip
+            label={tx(SLOWER_WORK_NOTE_LABEL, { setting: tx("Let threads ask a stronger model") })}
+          >
+            {tx(ADVISOR_TIME_NOTE)}
+          </PolicyTooltip>
+        }
         description="A thread can ask a stronger model to review its approach, then keep working. Each consult spends the advisor model's usage."
         resetAction={reset("enabled", tx("advisor"), advisor.enabled, { enabled: false })}
         control={

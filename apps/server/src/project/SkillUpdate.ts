@@ -168,7 +168,8 @@ export function skillReadiness(
 }
 
 /** `owner/repo` when the lock records a plain GitHub source this page can reinstall from. */
-function lockRepo(lock: ProjectSkillLock): string | null {
+/** The `owner/repo` a GitHub-sourced lock entry came from, or null. */
+export function lockRepo(lock: ProjectSkillLock): string | null {
   const match = /^github:([^/#\s]+\/[^/#\s]+?)(?:\.git)?$/.exec(lock.source ?? "");
   return match && lock.skillId && lock.name && lock.skillId === `${match[1]}/${lock.name}`
     ? match[1]!
@@ -285,7 +286,14 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
       if (lock === null) return null;
       const installed = installedOf(lock);
       const repo = lockRepo(lock);
-      const base = { skill: row.name, lockScope: lock.lockScope, installed };
+      const base = {
+        skill: row.name,
+        lockScope: lock.lockScope,
+        installed,
+        ...(lock.sourceSkillPath && lock.sourceBranch
+          ? { installedSource: { path: lock.sourceSkillPath, branch: lock.sourceBranch } }
+          : {}),
+      };
       if (repo === null)
         return {
           lock,

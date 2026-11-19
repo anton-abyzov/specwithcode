@@ -2,7 +2,11 @@ import { TeamRulesCarried } from "./teamRules.ts";
 import { LifecycleReceipt, LifecycleReceiptReport } from "./threadLifecycleEvidence.ts";
 import { ThreadRuntimeModeSetCommand } from "./threadRuntimeModeCommand.ts";
 import { ManualCodexCreditIntent } from "./manualCodexCredits.ts";
-import { StartAdversarialReviewInput, StartAdversarialReviewResult } from "./adversarialReview.ts";
+import {
+  StartAdversarialReviewInput,
+  StartAdversarialReviewResult,
+  ThreadReviewMode,
+} from "./adversarialReview.ts";
 import { AdvisorTaskPurpose, ThreadAdvisorMode } from "./advisor.ts";
 export {
   ManualCodexCreditIntent,
@@ -513,6 +517,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   /** The thread's own advisor choice; absent or null follows the project. */
   advisorMode: Schema.optional(Schema.NullOr(ThreadAdvisorMode)),
+  /** The thread's own adversarial review choice; absent or null follows the project. */
+  reviewMode: Schema.optional(Schema.NullOr(ThreadReviewMode)),
   /** Set on a child that exists only to advise its parent; never changed. */
   purpose: Schema.optional(AdvisorTaskPurpose),
   // Fractional-index slot in the user-arranged pinned order. Optional so
@@ -2321,6 +2327,12 @@ export const OrchestrationV2PendingRuntimeRequestSummary = Schema.Struct({
   reopenedFromAskedAt: Schema.optional(Schema.NullOr(Schema.String)),
   /** What a waiting access request asks for; absent for every other request. */
   access: Schema.optional(OrchestrationV2PendingAccessRequest),
+  /**
+   * A question card in a row's words ("MCP sign-in: Ship without it or I will
+   * sign in once"), at most 160 characters. Absent for other requests and from
+   * older servers, whose rows then say only "Answer needed".
+   */
+  prompt: Schema.optional(Schema.String),
 });
 export type OrchestrationV2PendingRuntimeRequestSummary =
   typeof OrchestrationV2PendingRuntimeRequestSummary.Type;
@@ -2474,6 +2486,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   /** The thread's own advisor choice; absent or null follows the project. */
   advisorMode: Schema.optional(Schema.NullOr(ThreadAdvisorMode)),
+  /** The thread's own adversarial review choice; absent or null follows the project. */
+  reviewMode: Schema.optional(Schema.NullOr(ThreadReviewMode)),
   /** Set on a child that exists only to advise its parent; never changed. */
   purpose: Schema.optional(AdvisorTaskPurpose),
   /** Slot in the user-arranged pinned order; omitted by pre-reorder servers. */
@@ -3451,6 +3465,13 @@ export const OrchestrationV2Command = Schema.Union([
     advisorMode: Schema.NullOr(ThreadAdvisorMode),
   }),
   Schema.Struct({
+    type: Schema.Literal("thread.review-mode.set"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    /** null follows the project again. */
+    reviewMode: Schema.NullOr(ThreadReviewMode),
+  }),
+  Schema.Struct({
     type: Schema.Literal("provider-session.detach"),
     commandId: CommandId,
     threadId: ThreadId,
@@ -3929,6 +3950,12 @@ export type OrchestrationV2ServerCommand =
        * provider sessions stay attached.
        */
       readonly sameWorkingFolder?: true;
+      /**
+       * Server only: an agent moves its own thread into a worktree and has
+       * queued the prompt that continues its work there, so the turn it stops
+       * is a pause: a delegated task's parent is not told the child stopped.
+       */
+      readonly continuesInWorktree?: true;
       readonly limitRecoveryAffinity?: NonNullable<OrchestrationV2LimitAvailability["affinity"]>;
       readonly limitAvailability?: {
         readonly runId: RunId;

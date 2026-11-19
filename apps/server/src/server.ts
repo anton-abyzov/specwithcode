@@ -126,7 +126,7 @@ import * as StudioCapacity from "./studio/Capacity.ts";
 import * as StudioNativeRoute from "./studio/NativeRoute.ts";
 import * as StudioHttp from "./studio/http.ts";
 import * as StudioFleetHttp from "./studioFleetHttp.ts";
-import * as FleetSkills from "./fleet/fleetSkills.ts";
+import * as FleetSkills from "./fleet/fleetSkillsGithubLive.ts";
 import * as FleetWorkers from "./fleet/fleetDiskRoom.ts";
 import * as RemoteWorkers from "./fleet/RemoteWorkers.ts";
 import * as SealedSecretsPeer from "./fleet/folderTransfer/sealedSecretsPeer.ts";
@@ -259,6 +259,10 @@ import * as ImportedThreadTitleRepair from "./project/ImportedThreadTitleRepair.
 import * as HandoffMoves from "./handoff/HandoffMoves.ts";
 import * as HandoffPeers from "./handoff/handoffPeers.ts";
 import * as HandoffReceiver from "./handoff/HandoffReceiver.ts";
+import * as ExtrasReceiver from "./handoff/ExtrasReceiver.ts";
+import * as ProjectSync from "./fleet/ProjectSync.ts";
+import * as ProjectSyncExtras from "./fleet/ProjectSyncExtras.ts";
+import * as ProjectSyncRpc from "./fleet/ProjectSyncRpc.ts";
 import * as LinkedMemoryPeers from "./project/LinkedMemoryPeers.ts";
 import * as LinkedPeerRoute from "./project/LinkedPeerRoute.ts";
 import * as LinkedPeerSync from "./project/LinkedPeerSync.ts";
@@ -777,6 +781,13 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.provideMerge(HandoffReceiver.layer),
     Layer.provide(Layer.merge(RemoteWorkers.layerFleetWorkers, ProjectionStoreV2.layer)),
   ),
+  // Project sync (1390): its handlers, and the receiver the peer route lands extras with.
+  ProjectSyncRpc.layerRpcHandlers.pipe(
+    Layer.provideMerge(ExtrasReceiver.layer),
+    Layer.provide(ProjectSyncExtras.layer.pipe(Layer.provideMerge(ProjectSync.layer))),
+    Layer.provide(HandoffPeers.layer),
+    Layer.provide(RemoteWorkers.layerFleetWorkers),
+  ),
   // Folder copy: the source's line to a copy's destination machine, for secrets sent sealed.
   SealedSecretsPeer.layer.pipe(Layer.provide(RemoteWorkers.layerFleetWorkers)),
   // Away mode: the read-only preflight, and access requests between machines.
@@ -1091,7 +1102,7 @@ const layerMakeRoutes = Layer.mergeAll(
           StudioHttp.layer,
           StudioFleetHttp.layer.pipe(
             Layer.provide(FleetWorkers.workerLayer.pipe(Layer.provide(ProcessRunner.layer))),
-            Layer.provide(FleetSkills.layer.pipe(Layer.provide(ProcessRunner.layer))),
+            Layer.provide(FleetSkills.fleetSkillsLayer.pipe(Layer.provide(ProcessRunner.layer))),
           ),
         ),
       ),

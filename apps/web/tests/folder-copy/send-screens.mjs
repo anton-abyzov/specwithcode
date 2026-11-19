@@ -1,7 +1,7 @@
 // Headless screenshots of Copy to another machine… (increments 1326, 1372) on the copy flow:
-// what the chosen machine holds (a copy, Main, several copies, nothing), the header naming the
-// real Main, a source not linked to the destination's project, the plan, and the done screen
-// with "Make {machine} main".
+// what the chosen machine holds (the project, the coordinator, several folders, nothing), the
+// header naming where the coordinator is, a destination that has the repository as a separate
+// project, the plan, and the done screen with "Continue the coordinator on {machine}".
 // Build first: node node_modules/vite-plus/bin/vp build --config apps/web/tests/folder-copy/vite.config.ts
 // Run from the repository root: node apps/web/tests/folder-copy/send-screens.mjs /absolute/report-dir
 import * as NodeFS from "node:fs";
@@ -90,7 +90,7 @@ try {
     await page.locator('[data-slot="send-summary"]').waitFor();
     const dialog = await page.locator('[data-slot="dialog-popup"]').textContent();
     NodeAssert.match(dialog, name === "move" ? /Move specweave to m5/ : /Copy specweave to m5/);
-    // A folder copy asks nothing about Main.
+    // A folder copy asks nothing about the coordinator.
     NodeAssert.equal(await page.locator('[data-slot="handoff-coordinator"]').count(), 0);
     NodeAssert.doesNotMatch(dialog, /Copy or move/);
     const header = await text(page, "dialog-description");
@@ -104,50 +104,50 @@ try {
       );
     if (name === "move") {
       await page.getByRole("button", { name: "Copy and move to m5", exact: true }).waitFor();
-      NodeAssert.match(header, /^From m4\. Main moves to m5\./);
+      NodeAssert.match(header, /^From m4\. The coordinator continues on m5\./);
       NodeAssert.equal(
         await text(page, "send-plan"),
-        `Copy 18 changed local files into m5's copy at ${UMBRELLA}, then move Main there. Work continues on m5, and this copy stops starting work.`,
+        `Copy 18 changed local files into ${UMBRELLA} on m5, then continue the coordinator there. The coordinator continues on m5.`,
       );
     }
     if (name.startsWith("copy")) {
       NodeAssert.equal(
         header,
-        "From m4. Main stays on m4. Nothing on m5 is replaced without asking.",
+        "From m4. The coordinator stays on m4. Nothing on m5 is replaced without asking.",
       );
       NodeAssert.equal(
         await text(page, "send-plan"),
-        `Copy 18 changed local files into m5's copy at ${UMBRELLA}. Main stays on m4.`,
+        `Copy 18 changed local files into ${UMBRELLA} on m5. The coordinator stays on m4.`,
       );
       await page.getByRole("button", { name: "Copy to m5", exact: true }).waitFor();
     }
     if (name.startsWith("unlinked")) {
       NodeAssert.equal(
         header,
-        "From m1. m1's copy is not linked to the project m5 belongs to (Main: m4). Nothing on m5 is replaced without asking.",
+        "From m1. m5 has this repository as a separate project (coordinator on m4). Nothing on m5 is replaced without asking.",
       );
       NodeAssert.equal(
         await text(page, "send-unlinked"),
-        "Only files are copied into m5's copy. Main stays on m4, and m1 is not linked to that project. To make them one project, link m1 to it from the machine menu.",
+        "Only files go into m5's folder. Its coordinator stays on m4. To make them one project, link m1 to it from the machine menu.",
       );
-      NodeAssert.match(await text(page, "send-plan"), /Main stays on m4\.$/);
-      // Git only would move m1's Main into that project: off, with the reason.
+      NodeAssert.match(await text(page, "send-plan"), /The coordinator stays on m4\.$/);
+      // Git only would move m1's coordinator into that project: off, with the reason.
       const git = page.getByRole("radio", { name: /Git only, no file copy/ });
       if (!(await git.isVisible())) await page.getByRole("button", { name: "Details" }).click();
       await git.scrollIntoViewIfNeeded();
       NodeAssert.equal(await git.getAttribute("aria-disabled"), "true");
       NodeAssert.match(
         await page.locator('[data-slot="handoff-method"]').textContent(),
-        /Not available: it would move Main into a project this copy is not linked to\./,
+        /Not available: it would move the coordinator into a separate project\./,
       );
     }
     if (name === "main") {
-      NodeAssert.match(await text(page, "send-existing-copy"), /m5 already has Main/);
-      NodeAssert.match(header, /^From m4\. Main stays on m5\./);
-      NodeAssert.match(await text(page, "send-plan"), /Main stays on m5\.$/);
+      NodeAssert.match(await text(page, "send-existing-copy"), /m5 already has the coordinator/);
+      NodeAssert.match(header, /^From m4\. The coordinator stays on m5\./);
+      NodeAssert.match(await text(page, "send-plan"), /The coordinator stays on m5\.$/);
     }
     if (name === "several") {
-      NodeAssert.match(await text(page, "send-existing-copy"), /m5 has 2 copies/);
+      NodeAssert.match(await text(page, "send-existing-copy"), /m5 has this project in 2 folders/);
       NodeAssert.equal(await text(page, "send-plan"), null);
       NodeAssert.equal(
         await page.getByRole("button", { name: "Copy to m5", exact: true }).isDisabled(),
@@ -155,9 +155,12 @@ try {
       );
     }
     if (name === "several-main")
-      NodeAssert.match(await text(page, "send-plan"), /Main stays on m5\.$/);
+      NodeAssert.match(await text(page, "send-plan"), /The coordinator stays on m5\.$/);
     if (name === "none")
-      NodeAssert.equal(await text(page, "send-plan"), "Copy the folder to m5. Main stays on m4.");
+      NodeAssert.equal(
+        await text(page, "send-plan"),
+        "Copy the folder to m5. The coordinator stays on m4.",
+      );
     await shot(page, `copy-dialog-${name}`);
     await page.close();
   }
@@ -181,14 +184,14 @@ try {
       NodeAssert.equal(await makeMain.count(), 0, "no switch into a project it is not linked to");
       NodeAssert.match(
         await text(page, "copy-not-linked"),
-        /^Not linked: the copy on m5 belongs to a project whose Main is m4, and m1 is not part of it\./,
+        /^m5 has this repository as a separate project whose coordinator is on m4\. Nothing was linked\./,
       );
     } else {
-      NodeAssert.equal((await makeMain.textContent()).trim(), "Make m5 main");
+      NodeAssert.equal((await makeMain.textContent()).trim(), "Continue the coordinator on m5");
       NodeAssert.equal(await makeMain.isDisabled(), name === "done-make-main-blocked");
       NodeAssert.match(
         await page.locator('[data-slot="dialog-popup"]').textContent(),
-        /m5 has a copy\. Main stays on m4\./,
+        /SpecWeave is on m5\. The coordinator stays on m4\./,
       );
     }
     await shot(page, `copy-dialog-${name}`);

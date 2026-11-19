@@ -36,7 +36,12 @@ const ENVIRONMENTS = {
 };
 vi.mock("../../../state/environments", () => ({ useEnvironments: () => ENVIRONMENTS }));
 const NONE = new Set<string>();
-vi.mock("../../../studio/unreachableHosts", () => ({ useUnreachableHosts: () => NONE }));
+const NO_NOTES = new Map();
+vi.mock("../../../studio/unreachableHosts", () => ({
+  useUnreachableHosts: () => NONE,
+  useHostReachStates: () => NO_NOTES,
+  useHostDownNotes: () => NO_NOTES,
+}));
 const nickname = (id: string, label?: string | null) => label ?? id;
 vi.mock("../../../studio/machineNickname", () => ({ useMachineNicknames: () => nickname }));
 const identity = (id: string) => ({ color: id === "host" ? "violet" : "teal" });

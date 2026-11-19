@@ -166,7 +166,7 @@ it("measures, previews and applies a copy that leaves the coordinator on the sou
   await click("Copy to M3");
   expect(names()).not.toContain("prepare");
   expect(container.textContent).toContain(
-    "M3 has a copy. The coordinator stays here.In /Users/me/Projects/project",
+    "Project is on M3. The coordinator stays here.In /Users/me/Projects/project",
   );
   // Copy files only ends linked: the coordinator stays on M4 and can send the copy work.
   expect(state.link).toHaveBeenCalledOnce();
@@ -174,7 +174,7 @@ it("measures, previews and applies a copy that leaves the coordinator on the sou
     kept: { environmentId: "m4", projectId: "source" },
     joining: { environmentId: "m3", projectId: "copied" },
   });
-  expect(container.textContent).toContain("Linked: M4 can send work to the copy on M3.");
+  expect(container.textContent).toContain("Linked: M4 can start work on M3.");
   // The dialog learns which copy was filled: that is the copy "Make M3 main" would switch to.
   expect(onChoices).toHaveBeenLastCalledWith(
     expect.objectContaining({ mode: "copy-only", machine: "m3", done: true, projectId: "copied" }),
@@ -1672,7 +1672,7 @@ it("copies into an empty destination in one click without a preview", async () =
   expect(stages.seen).not.toContain("select");
   expect(container.querySelector('[data-slot="copy-preview"]')).toBeNull();
   expect(container.textContent).toContain(
-    "M3 has a copy. The coordinator stays here.In /Users/me/Projects/project",
+    "Project is on M3. The coordinator stays here.In /Users/me/Projects/project",
   );
   expect(stepState()).toEqual(["Where:done", "Copy:done", "Done:current"]);
   // The pointer written by measuring kept the one-click choice and the selection.
@@ -1737,7 +1737,7 @@ it("shows only what would be replaced and copies with Replace all", async () => 
   });
   expect(names().filter((name) => name === "copyApprove")).toHaveLength(1);
   expect(names().indexOf("copyDecide")).toBeLessThan(names().indexOf("copyApprove"));
-  expect(container.textContent).toContain("M3 has a copy. The coordinator stays here.");
+  expect(container.textContent).toContain("Project is on M3. The coordinator stays here.");
 });
 
 const filesConflict = (
@@ -1904,7 +1904,7 @@ it("continues the clone method's choice and one-click approval for a copy closed
   });
   expect(names().indexOf("copyDecide")).toBeLessThan(names().indexOf("copyApprove"));
   expect(names().filter((name) => name === "copyApprove")).toHaveLength(1);
-  expect(container.textContent).toContain("M3 has a copy. The coordinator stays here.");
+  expect(container.textContent).toContain("Project is on M3. The coordinator stays here.");
 });
 
 it("keeps the person's clone choices when a decided clone copy is reopened", async () => {
@@ -2164,7 +2164,7 @@ it("keeps Replace all when the dialog closes during the re-compare and approves 
   await settle();
   expect(names()).not.toContain("copyDecide");
   expect(names().filter((name) => name === "copyApprove")).toHaveLength(1);
-  expect(container.textContent).toContain("M3 has a copy. The coordinator stays here.");
+  expect(container.textContent).toContain("Project is on M3. The coordinator stays here.");
 });
 
 it("drops a pending Replace all when the re-compared plan still needs a choice", async () => {
@@ -2209,7 +2209,7 @@ it("carries on when an approval landed although its answer was lost", async () =
   await mount();
   await click("Copy to M3");
   expect(container.querySelector('[role="alert"]')).toBeNull();
-  expect(container.textContent).toContain("M3 has a copy. The coordinator stays here.");
+  expect(container.textContent).toContain("Project is on M3. The coordinator stays here.");
 });
 
 it("shows the approval error only when the plan is still waiting", async () => {

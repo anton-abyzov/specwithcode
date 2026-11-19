@@ -46,7 +46,13 @@ const plan: AwayPlan = {
       action: "pause",
       reason: "Its URL belongs to this machine, so it pauses here while you are away.",
     },
-    { kind: "coordinator", id: "p1", title: "Insta", action: "move", reason: "Hands over." },
+    {
+      kind: "coordinator",
+      id: "p1",
+      title: "Insta",
+      action: "move",
+      reason: "Continues on Ministorm.",
+    },
   ],
   missingGrants: [
     {

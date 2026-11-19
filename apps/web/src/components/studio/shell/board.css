@@ -402,9 +402,21 @@ button.sws-board-legend-entry:hover {
 .sws-board-machine-arrow {
   color: var(--muted-foreground);
 }
+/* The tab without a board (1396): the explainer, and beside it the example
+   board when there is room; below it otherwise. */
+.sws-board-setup-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 16px;
+  margin: 12px 0;
+}
+.sws-board-setup-wrap[data-kind="unfinished"] {
+  justify-content: center;
+}
 .sws-board-setup {
+  flex: 1 1 320px;
   max-width: 560px;
-  margin: 12px auto;
   padding: 16px;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -417,9 +429,85 @@ button.sws-board-legend-entry:hover {
   font-size: var(--text-base);
   font-weight: 600;
 }
-.sws-board-setup > p {
+.sws-board-setup > p,
+.sws-board-setup-adds {
   color: var(--muted-foreground);
   font-size: var(--text-sm);
+}
+.sws-board-setup-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 18px;
+  list-style: disc;
+  font-size: var(--text-sm);
+}
+.sws-board-setup-adds ul {
+  margin: 2px 0 4px;
+  padding-left: 18px;
+  list-style: disc;
+}
+.sws-board-setup-label {
+  color: var(--foreground);
+  font-weight: 500;
+}
+.sws-board-setup > .sws-board-setup-status {
+  color: var(--foreground);
+}
+.sws-board-setup > .sws-board-setup-reason {
+  color: var(--destructive-foreground);
+  overflow-wrap: anywhere;
+}
+.sws-board-setup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 4px;
+}
+/* The example board: the real groups and cards, never pressed, marked Example. */
+.sws-board-example {
+  position: relative;
+  flex: 1 1 420px;
+  min-width: 0;
+  padding: 28px 10px 10px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-lg);
+  user-select: none;
+}
+.sws-board-example-label {
+  position: absolute;
+  top: 6px;
+  left: 12px;
+  font-size: var(--text-compact);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.sws-board-example-card[data-moved] {
+  animation: sws-board-example-arrive 360ms ease-out;
+}
+@keyframes sws-board-example-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sws-board-example-card[data-moved] {
+    animation: none;
+  }
+}
+/* A board with SpecWeave and no increments yet. */
+.sws-board-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
 }
 /* Side by side (BoardPane measures the board): Blocked is a band across the top,
    then Planned, Active, In review and Done as columns. A folded column is a rail.

@@ -16,6 +16,7 @@ import {
   composerAccessRecommendationFor,
   type ComposerAccessRecommendation,
 } from "./AccessRecommendation";
+import { composerNotice } from "./composerNotice.logic";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useMachineNickname } from "../../studio/machineNickname";
@@ -1675,6 +1676,8 @@ export interface ChatComposerProps {
   // Pending approvals / inputs
   /** The pending access request card, shown above the composer in place of its approval row. */
   accessRequestCard?: ReactNode;
+  /** The coordinator's SpecWeave line (1396); the Full access recommendation wins over it. */
+  specweaveOffer?: ReactNode;
   activePendingApproval: PendingApproval | null;
   pendingApprovals: PendingApproval[];
   pendingUserInputs: PendingUserInput[];
@@ -3282,6 +3285,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           title: activeThread?.title,
           isCoordinator: projectRouting?.coordinatorThreadId === activeThreadId,
         });
+  // Folding the question card is remembered per thread.
+  const pendingQuestionCollapseKey =
+    activeThreadId === null ? undefined : `${environmentId}:${activeThreadId}`;
   const isChoiceOnlyPendingQuestion =
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
   const showComposerTopDrawer =
@@ -7244,6 +7250,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             restingControlsHost,
           )
         : null}
+      {composerNotice({
+        accessRecommended: accessRecommendation !== null,
+        specweaveOffered: props.specweaveOffer != null,
+      }) === "specweave"
+        ? props.specweaveOffer
+        : null}
       {props.accessRequestCard ? (
         <div data-chat-composer-access-request="true" className="mb-3 min-w-0">
           {props.accessRequestCard}
@@ -7330,6 +7342,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onReplyInChat={replyToPendingQuestionInChat}
                     askedBy={pendingQuestionAsker}
                     renderText={renderPendingQuestionText}
+                    collapseKey={pendingQuestionCollapseKey}
                   />
                 ) : !isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan ? (
                   <ComposerPlanFollowUpBanner
@@ -7355,6 +7368,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       onReplyInChat={replyToPendingQuestionInChat}
                       askedBy={pendingQuestionAsker}
                       renderText={renderPendingQuestionText}
+                      collapseKey={pendingQuestionCollapseKey}
                     />
                     {!isChoiceOnlyPendingQuestion ? (
                       // Multi-select steps live in the card's own footer above.

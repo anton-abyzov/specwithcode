@@ -1,9 +1,9 @@
 /* Synthetic data only. One page per popup, opened by its trigger, so verify.mjs can measure
    and shoot it at any window size.
    `?case=` machine | machine-linked | menu | submenu | popover | dialog | alert | select | toast
-   `?theme=dark`, `?palette=none` for the unthemed tokens. The machine cases render the real OrchestratorSwitcher (the "Runs on"
+   `?theme=dark`, `?palette=none` for the unthemed tokens. The machine cases render the real OrchestratorSwitcher (the "On {machine}"
    menu) at the coordinator's foot: `machine` is two checkouts that were never linked, as on
-   the M5 screenshot of November 18, 2026; `machine-linked` a main and two copies. The other
+   the M5 screenshot of November 18, 2026; `machine-linked` the coordinator and two other machines. The other
    cases render the shared primitives with the longest content call sites give them. */
 import { createRoot } from "react-dom/client";
 import { useState } from "react";
@@ -76,7 +76,7 @@ if (params.get("palette") !== "none") applyThemePalette("studio-chat", dark ? "d
 const view = params.get("case") ?? "machine";
 
 const LONG =
-  "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them.";
+  "These are separate projects for this repository, each with its own coordinator, threads and memory. You can still open and message each one.";
 
 const copy = (
   machine: string,
@@ -88,12 +88,13 @@ const copy = (
   folder: "/w/atlas",
   role: role === "main" ? "coordinator" : role === "copy" ? "workers" : "independent",
   main: role === "main",
+  rowRole: role === "main" ? "main" : role === "copy" ? "copy" : "independent",
   label:
     role === "main"
-      ? { text: "Main" }
+      ? { text: "Coordinator" }
       : role === "copy"
-        ? { text: "Copy · main on {machine}", values: { machine: "m4" } }
-        : { text: "not linked" },
+        ? { text: "" }
+        : { text: "Separate project" },
   canStart,
 });
 
@@ -107,6 +108,7 @@ function MachineMenu({ linked }: { linked: boolean }) {
       <OrchestratorSwitcher
         identity={{ color: "rose" } as never}
         label="m4"
+        projectTitle="atlas"
         connected
         statusDetail=""
         current={current}

@@ -178,6 +178,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       serves the studio-code `advisor` tool. Absent on older servers, so clients
       hide the Advisor controls there. */
   advisor: Schema.optionalKey(Schema.Boolean),
+  /** Server understands thread.review-mode.set and reads a thread's own review
+      choice before the project's. Absent on older servers, so clients hide the
+      Adversarial review row there. */
+  threadReviewMode: Schema.optionalKey(Schema.Boolean),
   /** Server understands regenerateTitle on thread.meta.update. Absent on
       older servers, so clients hide the action instead of sending it. */
   threadTitleRegeneration: Schema.optionalKey(Schema.Boolean),
@@ -215,6 +219,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server takes its fleet primary's skill installs at `/api/studio/fleet/skills`.
       Absent on older servers: the primary reports `unsupported` for them. */
   fleetSkillUpdate: Schema.optionalKey(Schema.Boolean),
+  /** Skill installs from a connected GitHub repo at one commit, with preview, Undo and the
+      npx fallback (increment 1399). Absent on older servers: the primary lists the machine
+      as needing an update and sends it nothing. */
+  fleetSkillGithubSource: Schema.optionalKey(Schema.Boolean),
   /** Server lets a coordinator's management token add and allow that coordinator at
       `/api/studio/fleet/workers/self-allow`. Absent on older servers: the
       coordinator asks the owner to add it there by hand. */

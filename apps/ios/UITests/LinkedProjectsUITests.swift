@@ -34,7 +34,7 @@ final class LinkedProjectsUITests: SWCUITestCase {
   func testUnreachableCoordinatorOffersTakeoverAfterTheWait() throws {
     launchLinked("coordinator-away")
     waitFor(element(containing: "M4 unreachable · last synced"), "Settings should say the coordinator's machine is unreachable")
-    let takeover = button("Take over coordinator here")
+    let takeover = button("Continue the coordinator here")
     scroll(to: takeover)
     waitForHittable(takeover, "A reachable copy should offer to take over")
     XCTAssertTrue(takeover.isEnabled, "M4 has been away for 25 minutes, past the 10-minute wait")
@@ -44,7 +44,7 @@ final class LinkedProjectsUITests: SWCUITestCase {
     capture("linked-coordinator-away-standby")
 
     tap(takeover)
-    let confirm = app.buttons.matching(NSPredicate(format: "label == %@", "Take over")).firstMatch
+    let confirm = app.buttons.matching(NSPredicate(format: "label == %@", "Continue here")).firstMatch
     waitForHittable(confirm, "Taking over asks once")
     capture("linked-takeover-confirm")
     confirm.tap()
@@ -59,14 +59,14 @@ final class LinkedProjectsUITests: SWCUITestCase {
     waitFor(element(containing: "M4 unreachable · last synced"), "The chat should warn that the coordinator's machine is unreachable")
     capture("linked-unreachable-banner")
     tap(hittableButton("Machines"))
-    let takeover = button("Take over coordinator here")
+    let takeover = button("Continue the coordinator here")
     scroll(to: takeover)
     waitForHittable(takeover, "Machines should reach the copy that can take over")
     XCTAssertFalse(element(containing: "Couldn't load settings").exists, "Machines opened the away copy's settings")
     XCTAssertTrue(takeover.isEnabled, "M4 has been away for 25 minutes, past the 10-minute wait")
     capture("linked-machines-link-takeover")
     tap(takeover)
-    let confirm = app.buttons.matching(NSPredicate(format: "label == %@", "Take over")).firstMatch
+    let confirm = app.buttons.matching(NSPredicate(format: "label == %@", "Continue here")).firstMatch
     waitForHittable(confirm, "Taking over asks once")
     confirm.tap()
     waitFor(element(containing: "Minis now coordinates this project."), "The phone should say who coordinates now")
@@ -77,7 +77,7 @@ final class LinkedProjectsUITests: SWCUITestCase {
     launchLinked("coordinator-away", route: "coordinator")
     let capsule = hittableButton(NSPredicate(format: "label BEGINSWITH %@", "SpecWeave, Coordinator"))
     capsule.tap()
-    let takeover = button("Take over coordinator here")
+    let takeover = button("Continue the coordinator here")
     scroll(to: takeover)
     waitForHittable(takeover, "The title should open settings that list the machines")
     XCTAssertFalse(element(containing: "Couldn't load settings").exists, "The title opened the away copy's settings")
@@ -85,7 +85,7 @@ final class LinkedProjectsUITests: SWCUITestCase {
 
   func testSettingsThatCannotLoadStillListTheMachines() throws {
     launchLinked("coordinator-away")
-    let takeover = button("Take over coordinator here")
+    let takeover = button("Continue the coordinator here")
     scroll(to: takeover)
     waitForHittable(takeover, "Settings of any copy should list the machines")
     capture("linked-settings-machines")

@@ -99,7 +99,7 @@ export function HandoffCopyDone({
   // Inside the dialog its title says it; standalone, the panel does.
   const dialog = useProjectMoveDialog();
   const titled = dialog !== null;
-  // Where Main is, as the dialog's header named it; the other project's when not linked to it.
+  // Where the coordinator is, as the dialog's header named it; the other project's when not linked to it.
   const other = dialog?.send?.otherProject ?? null;
   const main = other ? other.main : (dialog?.send?.mainLabel ?? null);
   const moved = mode === "copy-and-move" && contextTransferred;
@@ -142,8 +142,12 @@ export function HandoffCopyDone({
                     ? "The coordinator stays here until you copy again."
                     : "Files are copied. Hand off the coordinator once work here is idle."
               : main
-                ? tx("{machine} has a copy. Main stays on {main}.", { machine: targetLabel, main })
-                : `${targetLabel} has a copy. The coordinator stays here.`}
+                ? tx("{project} is on {machine}. The coordinator stays on {main}.", {
+                    project: project.title,
+                    machine: targetLabel,
+                    main,
+                  })
+                : `${project.title} is on ${targetLabel}. The coordinator stays here.`}
         </p>
         <p className="text-xs text-muted-foreground wrap-anywhere">
           In{" "}
@@ -211,13 +215,13 @@ export function HandoffCopyDone({
         <p className="text-muted-foreground text-xs wrap-anywhere" data-slot="copy-not-linked">
           {other.main
             ? tx(
-                "Not linked: the copy on {machine} belongs to a project whose Main is {main}, and {source} is not part of it. Nothing was linked.",
+                "{machine} has this repository as a separate project whose coordinator is on {main}. Nothing was linked.",
                 { machine: targetLabel, main: other.main, source: sourceLabel },
               )
-            : tx(
-                "Not linked: the copy on {machine} belongs to another project, and {source} is not part of it. Nothing was linked.",
-                { machine: targetLabel, source: sourceLabel },
-              )}
+            : tx("{machine} has this repository as a separate project. Nothing was linked.", {
+                machine: targetLabel,
+                source: sourceLabel,
+              })}
         </p>
       )}
       {mode === "copy-only" && link && (
@@ -227,9 +231,9 @@ export function HandoffCopyDone({
           data-slot="copy-link"
         >
           {link.status === "linking"
-            ? `Linking the copy on ${targetLabel} to ${sourceLabel}…`
+            ? `Linking ${targetLabel}…`
             : link.status === "linked"
-              ? `Linked: ${sourceLabel} can send work to the copy on ${targetLabel}.`
+              ? `Linked: ${sourceLabel} can start work on ${targetLabel}.`
               : `Not linked yet. ${link.reason}`}
         </p>
       )}
@@ -586,7 +590,7 @@ export function HandoffCopyFailedActions({
 /**
  * The finished copy's buttons: Open on {machine} leads, unless Copy again (files changed
  * while copying or a check failed) or moving the coordinator comes first. A copy-only copy
- * offers Copy changes again, which leads to the form, and "Make {machine} main" where the
+ * offers Copy changes again, which leads to the form, and "Continue the coordinator on {machine}" where the
  * copy is linked and is not Main: the page's own switch, one click, confirmed there. Undo…
  * sits left; the ⋯ menu holds the rest.
  */
@@ -668,7 +672,7 @@ export function HandoffCopyDoneActions({
           }
           onClick={makeMain.run}
         >
-          {tx("Make {machine} main", { machine: makeMain.offer.machine })}
+          {tx("Continue the coordinator on {machine}", { machine: makeMain.offer.machine })}
         </Button>
       )}
       {changes && (

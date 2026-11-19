@@ -11,6 +11,7 @@
  */
 import {
   CommandId,
+  FIRST_FEATURE_SAMPLE,
   PERSONAL_ASSISTANT_PROJECT_ICON,
   ProjectCreateFailureReason,
   ProjectId,
@@ -41,8 +42,10 @@ import { homedir } from "node:os";
 import * as ServerConfig from "../config.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as FirstFeatureSample from "./firstFeatureSample.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as SpecweaveSetup from "./SpecweaveSetup.ts";
+import * as SpecweaveSetupRequests from "./SpecweaveSetupRequests.ts";
 import * as WorkspaceSensitivePaths from "../workspace/WorkspaceSensitivePaths.ts";
 import {
   isGitSpawnFailure,
@@ -226,12 +229,24 @@ export class ManagedProjectFolders extends Context.Service<
      * commit (no Git identity, a signing prompt) keeps the project and returns
      * why in `commitError`. The folder is removed when the create fails or is
      * cancelled before the project exists, never once another project owns it.
+     * With `sample`, a code project is the first feature guide's sample
+     * (1398): always a new folder, named "First feature" (numbered when
+     * taken) whatever `name` says, holding the sample's files, with SpecWeave
+     * off and its own automatic review off. While this machine has a sample
+     * whose guide has not ended, that one is returned with `existing: true`.
      */
     readonly createNamedProject: (input: {
       readonly name: string;
       readonly parentPath?: string | undefined;
       readonly kind?: "code" | "personal" | undefined;
       readonly specweave?: boolean | undefined;
+      /**
+       * `specweave` only for a folder this create makes or an empty one it
+       * takes, decided under the create's lock; a folder it binds as it is
+       * gets none (studio_project_create, 1396 D-02).
+       */
+      readonly specweaveOnlyIfNew?: boolean | undefined;
+      readonly sample?: "first-feature" | undefined;
     }) => Effect.Effect<
       {
         readonly projectId: ProjectId;
@@ -243,6 +258,8 @@ export class ManagedProjectFolders extends Context.Service<
         readonly specweaveNeedsNode?: boolean;
         /** SpecWeave was set up in a folder that already existed and had none. */
         readonly specweaveAdded?: boolean;
+        /** With `sample`: why its own automatic review could not be turned off. */
+        readonly sampleAutoReviewError?: string;
       },
       NamedProjectError
     >;
@@ -672,6 +689,21 @@ const make = Effect.gen(function* () {
             ),
           ),
     });
+  // A setup that failed while the project was made is remembered for it, so the
+  // Board shows the reason after the toast is gone (1396 AC-08). Soft.
+  const rememberFailure = (
+    projectId: ProjectId,
+    failure: { readonly detail: string; readonly needsNode: boolean } | undefined,
+  ) =>
+    failure === undefined
+      ? Effect.void
+      : Effect.tryPromise(() =>
+          SpecweaveSetupRequests.recordSetupFailure(
+            SpecweaveSetupRequests.specweaveSetupFile(config.stateDir),
+            projectId,
+            failure,
+          ),
+        ).pipe(Effect.asVoid, Effect.ignore);
   const specweaveFailure = (
     failure: { readonly detail: string; readonly needsNode: boolean } | undefined,
   ) =>
@@ -688,6 +720,7 @@ const make = Effect.gen(function* () {
     cwd: string,
     name: string,
     specweave: boolean,
+    sample = false,
   ) {
     const branch =
       (yield* git
@@ -724,7 +757,12 @@ const make = Effect.gen(function* () {
         cause: detail,
       });
     }
-    yield* fileSystem.writeFileString(path.join(cwd, "README.md"), namedProjectReadme(name));
+    const starters = sample
+      ? FirstFeatureSample.firstFeatureSampleFiles(name)
+      : [{ path: "README.md", contents: namedProjectReadme(name) }];
+    for (const file of starters) {
+      yield* fileSystem.writeFileString(path.join(cwd, ...file.path.split("/")), file.contents);
+    }
     yield* fileSystem.makeDirectory(path.join(cwd, "assets"));
     yield* fileSystem.writeFileString(
       path.join(cwd, "assets", "icon.svg"),
@@ -734,7 +772,7 @@ const make = Effect.gen(function* () {
     yield* git.execute({
       operation: "ManagedProjectFolders.add",
       cwd,
-      args: ["add", "--force", "--", "README.md", "assets/icon.svg"],
+      args: ["add", "--force", "--", ...starters.map((file) => file.path), "assets/icon.svg"],
       timeoutMs: 10_000,
     });
     const setupError = specweave ? yield* setUpSpecweave(cwd) : undefined;
@@ -815,7 +853,7 @@ const make = Effect.gen(function* () {
   // SpecWeave for a folder that was already there: `specweave init` only. Its
   // files are left for the person to commit, since the repository is theirs.
   const addSpecweaveToExisting = Effect.fn("ManagedProjectFolders.addSpecweaveToExisting")(
-    function* (workspaceRoot: string, wanted: boolean) {
+    function* (projectId: ProjectId, workspaceRoot: string, wanted: boolean) {
       if (!wanted) return {};
       const present = yield* fileSystem
         .exists(path.join(workspaceRoot, ".specweave"))
@@ -824,6 +862,7 @@ const make = Effect.gen(function* () {
       // Ticking Use SpecWeave asks for Git too when the folder has none; git
       // init stages nothing, so the person's files stay theirs to commit.
       const failure = yield* setUpSpecweave(workspaceRoot, { initGit: true });
+      yield* rememberFailure(projectId, failure);
       return failure === undefined ? { specweaveAdded: true } : specweaveFailure(failure);
     },
   );
@@ -841,7 +880,7 @@ const make = Effect.gen(function* () {
         projectId: owner.value.id,
         workspaceRoot,
         existing: true,
-        ...(yield* addSpecweaveToExisting(workspaceRoot, specweave)),
+        ...(yield* addSpecweaveToExisting(owner.value.id, workspaceRoot, specweave)),
       };
     }
     const id = yield* crypto.randomUUIDv4.pipe(
@@ -860,7 +899,7 @@ const make = Effect.gen(function* () {
       projectId: project.id,
       workspaceRoot,
       existing: true,
-      ...(yield* addSpecweaveToExisting(workspaceRoot, specweave)),
+      ...(yield* addSpecweaveToExisting(project.id, workspaceRoot, specweave)),
     };
   });
 
@@ -890,6 +929,13 @@ const make = Effect.gen(function* () {
   const createNamedProject: ManagedProjectFolders["Service"]["createNamedProject"] = Effect.fn(
     "ManagedProjectFolders.createNamedProject",
   )(function* (input) {
+    // A sample is a code project; asking for a personal one is a client bug, not an assistant.
+    if (input.kind === "personal" && input.sample !== undefined) {
+      return yield* new NamedProjectFolderError({
+        folder: namedProjectsRoot,
+        cause: "The first feature sample is a code project.",
+      });
+    }
     if (input.kind === "personal") {
       const existing = yield* existingAssistant;
       if (existing) return { projectId: existing.id, workspaceRoot: existing.workspaceRoot };
@@ -897,8 +943,27 @@ const make = Effect.gen(function* () {
       if (!(yield* ProjectService.personalAssistantEnabled))
         return yield* new PersonalAssistantDisabledError();
     }
+    const sample = input.sample === "first-feature";
+    let name = input.name;
+    if (sample) {
+      // One sample per machine at a time (AC-12), decided under the create's lock.
+      const listed = yield* projects.snapshot.pipe(
+        Effect.mapError(
+          (cause) => new NamedProjectCreateError({ workspaceRoot: namedProjectsRoot, cause }),
+        ),
+      );
+      const current = FirstFeatureSample.activeFirstFeatureSample(listed.projects);
+      if (current !== undefined) {
+        return { projectId: current.id, workspaceRoot: current.workspaceRoot, existing: true };
+      }
+      name = FirstFeatureSample.firstFeatureSampleName(
+        listed.projects.filter((project) => project.deletedAt === null).map((p) => p.title),
+      );
+    }
     let emptyFolder: string | undefined;
-    if (input.kind !== "personal" && input.parentPath !== undefined) {
+    // A sample always gets a new folder: a removed sample leaves its folder,
+    // which must never be taken back as the next one.
+    if (!sample && input.kind !== "personal" && input.parentPath !== undefined) {
       const existing = yield* existingProjectFolder(input.name, input.parentPath);
       if (Option.isSome(existing)) {
         // A folder New folder refuses is never bound as a project either, by
@@ -914,16 +979,17 @@ const make = Effect.gen(function* () {
           });
         if (yield* isUnclaimedEmptyFolder(existing.value)) emptyFolder = existing.value;
         else {
-          return yield* bindExistingFolder(input.name, existing.value, input.specweave === true);
+          return yield* bindExistingFolder(
+            input.name,
+            existing.value,
+            input.specweave === true && input.specweaveOnlyIfNew !== true,
+          );
         }
       }
     }
     const workspaceRoot =
       emptyFolder ??
-      (yield* claimNamedFolder(
-        input.name,
-        input.kind === "personal" ? undefined : input.parentPath,
-      ));
+      (yield* claimNamedFolder(name, input.kind === "personal" ? undefined : input.parentPath));
     // A folder the person made themselves is never removed or emptied: only the
     // starter files written here are taken back, so nothing that appeared in it
     // meanwhile is lost. Anything SpecWeave wrote stays for the next attempt.
@@ -947,7 +1013,7 @@ const make = Effect.gen(function* () {
     const prepared = yield* Effect.all([
       (input.kind === "personal"
         ? Effect.succeed({ commitError: undefined, specweave: undefined })
-        : scaffoldRepository(workspaceRoot, input.name, input.specweave === true)
+        : scaffoldRepository(workspaceRoot, name, input.specweave === true && !sample, sample)
       ).pipe(
         Effect.mapError((cause) =>
           Schema.is(NamedProjectFolderError)(cause)
@@ -960,13 +1026,22 @@ const make = Effect.gen(function* () {
       ),
     ]).pipe(Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : removeFolder)));
     const [{ commitError, specweave: specweaveResult }, id] = prepared;
+    const startedAt = sample ? DateTime.formatIso(yield* DateTime.now) : undefined;
     const project = yield* projects
       .create({
         commandId: CommandId.make(`named-project:${id}`),
         projectId: ProjectId.make(id),
-        title: input.name,
+        title: name,
         ...(input.kind === undefined ? {} : { kind: input.kind }),
         workspaceRoot,
+        ...(startedAt === undefined
+          ? {}
+          : {
+              sample: {
+                kind: FIRST_FEATURE_SAMPLE,
+                firstFeatureGuide: { started: startedAt },
+              },
+            }),
       })
       .pipe(
         // A rejected create leaves the folder unused, so remove it. An
@@ -1011,7 +1086,12 @@ const make = Effect.gen(function* () {
         })
         .pipe(Effect.ignore);
     }
+    const sampleAutoReviewError = sample
+      ? yield* FirstFeatureSample.turnOffSampleAutoReview(project.id)
+      : undefined;
+    yield* rememberFailure(project.id, specweaveResult);
     return {
+      ...(sampleAutoReviewError === undefined ? {} : { sampleAutoReviewError }),
       projectId: project.id,
       workspaceRoot,
       ...(commitError === undefined ? {} : { commitError }),

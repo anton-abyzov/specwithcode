@@ -123,6 +123,39 @@ export type ReplicateMeta = typeof ReplicateMeta.Type;
 export const ReplicateResponse = Schema.Struct({ sequence: NonNegativeInt });
 export type ReplicateResponse = typeof ReplicateResponse.Type;
 
+/**
+ * Sync extras (1390): work Git does not carry, sent as a bundle and landed as
+ * a branch `swc/from-{machine}/…`. They have no thread, so they have their own
+ * messages; a machine from before them answers 404 for both paths.
+ */
+export const ExtrasNegotiateRequest = Schema.Struct({
+  sourceEnvironmentId: EnvironmentId,
+  sourceProjectId: ProjectId,
+  repositoryPath,
+  candidates: Schema.Array(sha).check(Schema.isMaxLength(48)),
+});
+export type ExtrasNegotiateRequest = typeof ExtrasNegotiateRequest.Type;
+
+export const ExtrasReplicateMeta = Schema.Struct({
+  sourceEnvironmentId: EnvironmentId,
+  sourceLabel: text(120),
+  sourceProjectId: ProjectId,
+  repositoryPath,
+  /** The Sync run this extra belongs to; six characters of it name a branch that must sit beside another. */
+  operationId: text(64),
+  /** The branch's name on the source, or `uncommitted-{yyyymmdd-hhmmss}-{id}` for a snapshot. */
+  leaf: text(255),
+  commit: sha,
+});
+export type ExtrasReplicateMeta = typeof ExtrasReplicateMeta.Type;
+export const ExtrasReplicateResponse = Schema.Struct({
+  machineLabel: text(120),
+  /** The branch the extra arrived as. */
+  branch: text(512),
+  landed: Schema.Literals(["created", "moved-forward", "unchanged", "beside", "checked-out"]),
+});
+export type ExtrasReplicateResponse = typeof ExtrasReplicateResponse.Type;
+
 export const PeerPreflightRequest = Schema.Struct({
   sourceEnvironmentId: EnvironmentId,
   protocolVersion: Schema.optional(NonNegativeInt),
@@ -314,7 +347,9 @@ export type PeerPath =
   | "linked-supersede"
   | "linked-members"
   | "plan-export"
-  | "plan-merge";
+  | "plan-merge"
+  | "extras-negotiate"
+  | "extras-replicate";
 export const PEER_PATHS: ReadonlySet<string> = new Set<PeerPath>([
   "negotiate",
   "replicate",
@@ -332,6 +367,8 @@ export const PEER_PATHS: ReadonlySet<string> = new Set<PeerPath>([
   "linked-members",
   "plan-export",
   "plan-merge",
+  "extras-negotiate",
+  "extras-replicate",
 ]);
 
 export class FrameError extends Error {}

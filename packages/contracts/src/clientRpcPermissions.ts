@@ -17,6 +17,7 @@ import { WS_METHODS } from "./rpc.ts";
 import { PROVISION_RPC_METHODS } from "./provision.ts";
 import { MACHINE_TOOLS_RPC_METHODS } from "./machineTools.ts";
 import { PROJECT_CREDENTIALS_RPC_METHODS } from "./projectCredentials.ts";
+import { PROJECT_SYNC_RPC_METHODS } from "./projectSync.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
@@ -49,6 +50,9 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.projectsSkillRepos]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsSkillsSearch]: AuthFilesystemReadScope,
   [WS_METHODS.projectsSkillsUpdate]: AuthFilesystemWriteScope,
+  // "Keep updated on these machines" records and Adopt. Each widens per operation below.
+  [WS_METHODS.projectsSkillsRolloutKeep]: AuthOrchestrationReadScope,
+  [WS_METHODS.projectsSkillsAdopt]: AuthFilesystemReadScope,
   [WS_METHODS.managedUpdatesEnroll]: AuthAccessWriteScope,
   [WS_METHODS.managedUpdatesRevoke]: AuthAccessWriteScope,
   [WS_METHODS.managedUpdatesCheck]: AuthEnvironmentMaintainScope,
@@ -65,6 +69,15 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [PROJECT_CREDENTIALS_RPC_METHODS.projectCredentialsSave]: AuthFilesystemWriteScope,
   // Sign-in state says which services a person uses and runs their tools: operate, not read.
   [PROJECT_CREDENTIALS_RPC_METHODS.projectCredentialsProbe]: AuthOrchestrationOperateScope,
+  // Project sync (1390). The status is a local Git read: path, branch, head commit, clean or not.
+  [PROJECT_SYNC_RPC_METHODS.projectSyncStatus]: AuthFilesystemReadScope,
+  // Names branches, counts and the files a snapshot would leave out.
+  [PROJECT_SYNC_RPC_METHODS.projectSyncInventory]: AuthOrchestrationOperateScope,
+  // `git fetch origin`, then a fast-forward or a clone, on this machine.
+  [PROJECT_SYNC_RPC_METHODS.projectSyncFetch]: AuthSourceControlWriteScope,
+  [PROJECT_SYNC_RPC_METHODS.projectSyncRun]: AuthSourceControlWriteScope,
+  // Writes hidden refs here and sends bundles to the other machine, like a checkpoint.
+  [PROJECT_SYNC_RPC_METHODS.projectSyncSendExtras]: AuthSourceControlWriteScope,
   // The cleanup list names folders and chats; running it removes folders, like the settings that switch it on.
   [WS_METHODS.serverGetStorageCleanupPlan]: AuthSettingsWriteScope,
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
@@ -148,6 +161,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.projectsLibraryAddArtifact]: AuthFilesystemWriteScope,
   // Runs `specweave init`, which writes SpecWeave's files into the project folder.
   [WS_METHODS.projectsSpecweaveSetUp]: AuthFilesystemWriteScope,
+  [WS_METHODS.projectsSpecweaveAnswer]: AuthOrchestrationOperateScope,
+  [WS_METHODS.projectsFirstFeatureGuide]: AuthOrchestrationOperateScope,
   // Designs are files in the project checkout or the app's Playground folder.
   [WS_METHODS.designList]: AuthFilesystemReadScope,
   [WS_METHODS.designGet]: AuthFilesystemReadScope,
@@ -450,6 +465,18 @@ export function clientRpcRequiredScopes(
     return operation === "status"
       ? [AuthOrchestrationReadScope]
       : [AuthFilesystemWriteScope, AuthTerminalOperateScope];
+  // The record is this machine's own setting; reading it is like reading the page.
+  if (method === WS_METHODS.projectsSkillsRolloutKeep)
+    return operation === "read"
+      ? [AuthOrchestrationReadScope]
+      : [AuthOrchestrationReadScope, AuthSettingsWriteScope];
+  // Adopt writes the skill locks; a proposal opens a pull request on GitHub.
+  if (method === WS_METHODS.projectsSkillsAdopt)
+    return operation === "check" || operation === "propose-preview"
+      ? [AuthFilesystemReadScope]
+      : operation === "adopt"
+        ? [AuthFilesystemReadScope, AuthFilesystemWriteScope]
+        : [AuthFilesystemReadScope, AuthSourceControlWriteScope, AuthTerminalOperateScope];
   // Writes another tool's configuration, which that tool then runs as commands.
   if (method === WS_METHODS.nativeConnectionApply)
     return [AuthFilesystemWriteScope, AuthTerminalOperateScope];

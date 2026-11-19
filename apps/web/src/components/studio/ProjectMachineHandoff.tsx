@@ -727,7 +727,7 @@ export function ProjectMachineHandoff({
         input: {
           projectId: project.id,
           operationId,
-          reason: "Main stays here: the copy there could not fast-forward.",
+          reason: `The coordinator stays here: ${project.title} there could not fast-forward.`,
         },
       });
       if (released._tag === "Failure") throw squashAtomCommandFailure(released);
@@ -740,7 +740,7 @@ export function ProjectMachineHandoff({
         setConsent(false);
         setPhase("choose");
         setError(
-          "That move is no longer waiting on this machine. Check where Main is now before moving again.",
+          "That hand off is no longer waiting on this machine. Check where the coordinator is now before trying again.",
         );
         return;
       }
@@ -1004,7 +1004,7 @@ export function ProjectMachineHandoff({
         : undefined;
     // A sync whose copy is gone has no folder to fill in; it never falls back to a guess.
     if (mode === "sync" && !syncCandidate) {
-      toastManager.add({ type: "warning", title: "That machine's copy of this project is gone." });
+      toastManager.add({ type: "warning", title: "That machine no longer has this project." });
       return;
     }
     const machine = syncCandidate?.environmentId ?? requestedMachineId;

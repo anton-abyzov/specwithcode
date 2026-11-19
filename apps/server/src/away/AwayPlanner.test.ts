@@ -384,7 +384,7 @@ describe("an in-doubt handover in the next plan (N1)", () => {
     expect(item(plan, "coordinator", P1)).toMatchObject({
       action: "move",
       reason:
-        "Finishes the handover to Ministorm, which it has not confirmed yet. No machine coordinates it until then.",
+        "Finishes the hand off to Ministorm, which it has not confirmed yet. No machine coordinates it until then.",
     });
   });
 

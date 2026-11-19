@@ -196,8 +196,16 @@ it.effect("starts an advisor child read-only and marked, without the parent's ad
 
     // An advisor child keeps no advisor choice of its own.
     yield* setAdvisorMode(task.childThreadId!, "child-on", "on");
+    // Nor a review choice: it is not the author of the work it advises on.
+    yield* orchestrator.dispatch({
+      type: "thread.review-mode.set",
+      commandId: CommandId.make("advisor-child-review-on"),
+      threadId: task.childThreadId!,
+      reviewMode: "on",
+    });
     const after = (yield* projections.getThreadProjection(task.childThreadId!)).thread;
     assert.isUndefined(after.advisorMode);
+    assert.isUndefined(after.reviewMode);
     assert.equal(after.purpose, "advisor");
   }).pipe(Effect.provide(layerTest)),
 );

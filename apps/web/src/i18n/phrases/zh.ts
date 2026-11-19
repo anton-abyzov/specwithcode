@@ -1022,23 +1022,16 @@ export const zh: PhraseCatalog = {
     "使用 feature/，后接问题 ID 和简短描述。",
   Copy: "复制",
   "This device cannot read that machine's settings.": "此设备无法读取那台电脑的设置。",
-  "1. Install the SpecWithCode Browser extension": "1. 安装 SpecWithCode Browser 扩展",
   "Add to Chrome": "添加到 Chrome",
   "(opens the Chrome Web Store)": "（打开 Chrome 应用商店）",
   "Chrome Web Store link": "Chrome 应用商店链接",
   "Install it in Chrome on {machine}: copy the link and open it there, in the profile agents should use.":
     "在 {machine} 的 Chrome 中安装：复制链接并在那里打开，使用智能体应使用的配置文件。",
-  "Open the link in the Chrome profile agents should use. Chrome keeps the extension up to date.":
-    "在智能体应使用的 Chrome 配置文件中打开链接。Chrome 会自动更新扩展。",
-  "2. Pair it with {machine}": "2. 与 {machine} 配对",
   "This code works only in Chrome on {machine}, not in Chrome on {thisComputer}.":
     "此代码只在 {machine} 的 Chrome 中有效，在 {thisComputer} 的 Chrome 中无效。",
-  "Show pairing code": "显示配对码",
   "Pairing code": "配对码",
   "pairing code": "配对码",
   "Reset code": "重置代码",
-  "The code lets a Chrome profile act for agents on {machine}. Keep it private.":
-    "此代码让 Chrome 配置文件可以代表 {machine} 上的智能体操作。请妥善保密。",
   "You are on {b}. This sets up Chrome on {b2}, a different computer; its pairing code does not work in Chrome here.":
     "你当前在 {b} 上。这里设置的是另一台电脑 {b2} 上的 Chrome；它的配对码在这里的 Chrome 中无效。",
   "Set up Chrome on {thisComputer}": "在 {thisComputer} 上设置 Chrome",
@@ -2238,18 +2231,6 @@ export const zh: PhraseCatalog = {
   "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.":
     "要从此设备删除 {name}（{host}）的旧记录吗？\n这台机器已作为新机器重新加入并继续工作；只会删除失效的记录及其在此缓存的线程。",
   "Use 2 or 3 characters.": "请使用 2 或 3 个字符。",
-  "Not shared": "未共享",
-  "{machine} is main now, with machines not yet following it":
-    "{machine} 现已为主副本，但有些机器尚未跟随",
-  "These machines did not take the new main yet: {machines}. They keep refusing work from the old main only once they do.":
-    "这些机器尚未接受新的主副本：{machines}。接受后才会拒绝旧主副本的工作。",
-  "Not linked · also on {machine}": "未关联 · {machine} 上也有",
-  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.":
-    "此副本未与 {machine} 上的副本关联。从项目菜单关联后可共享一个协调器。",
-  "No other machine has a copy of this project.": "没有其他机器有这个项目的副本。",
-  "Connect to see its role": "连接后可查看角色",
-  "This app cannot see this machine, so it cannot tell what this copy does.":
-    "此应用看不到这台机器，因此无法判断这个副本的作用。",
   "{name} wears {color}": "{name} 的颜色是{color}",
   "Change the color of {name}, now {color}": "更改 {name} 的颜色，当前为{color}",
   "Change color": "更改颜色",
@@ -2970,6 +2951,10 @@ export const zh: PhraseCatalog = {
   "Supplied patch": "提供的补丁",
   "Previous file path": "原文件路径",
   "Show the question and its options": "显示问题及其选项",
+  "Question:": "问题：",
+  "Can't steer now": "暂时无法引导",
+  "Show the full description": "显示完整说明",
+  "Hide the full description": "隐藏完整说明",
   "Hide the question and its options": "隐藏问题及其选项",
   "+{waitingCount} more": "还有 {waitingCount} 个",
   "Dismiss question without answering": "不回答并关闭问题",
@@ -3500,10 +3485,6 @@ export const zh: PhraseCatalog = {
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
     "你自己的规则，会随协调者和 worker 的每个请求发送，适用于每个提供方、每个所选环境中的每个项目。默认为空。",
   "Effective instructions for {label}": "{label} 的生效指令",
-  "Click the SpecWithCode icon in Chrome's toolbar.": "点击 Chrome 工具栏中的 SpecWithCode 图标。",
-  "Paste the pairing code.": "粘贴配对码。",
-  "Name the profile, for example Work or Marketing.": "为配置文件命名，例如“工作”或“营销”。",
-  "Click Pair.": "点击“配对”。",
   "Ask Google for {service}": "向 Google 请求：{service}",
   "Edit shortcut for {command}: {shortcut}": "编辑 {command} 的快捷键：{shortcut}",
   "Edit when clause for {command}": "编辑 {command} 的条件",
@@ -4271,6 +4252,7 @@ export const zh: PhraseCatalog = {
   "Not finished": "未完成",
   "Setup can be closed once the import finishes.": "导入完成后即可关闭设置。",
   "Add a folder on this machine": "添加这台电脑上的文件夹",
+  "Start with SpecWeave, for plans and a board": "从 SpecWeave 开始，用于计划和看板",
   "Type a path, browse or drop a folder": "输入路径、浏览或拖入文件夹",
   "Starting from nothing?": "从零开始？",
   "New empty project or clone a repository": "新建空项目或克隆仓库",
@@ -4384,17 +4366,10 @@ export const zh: PhraseCatalog = {
   "Older releases were not counted.": "更早的版本未计入。",
   "Installs from npm could not be read.": "无法读取 npm 安装量。",
   "Installs from npm": "npm 安装量",
-  "View this project on": "查看此项目的电脑",
-  "coordinator paused": "协调器已暂停",
   "Machine access settings": "电脑访问设置",
   "{machine} offline": "{machine} 离线",
   "workers only": "仅工作节点",
   coordinator: "协调者",
-  "not linked": "未关联",
-  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
-    "未关联：{machine} 为此仓库运行自己的协调者、线程和记忆。",
-  "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them.":
-    "未关联：这些是此仓库的独立项目，各有自己的协调者、线程和记忆。这不影响查看其中任何一个或向其发送消息。",
   "Link them below to make one project.": "在下方关联即可合并为一个项目。",
   "{value}Messages go to Percy. {value2}": "{value}消息会发送给 Percy。{value2}",
   "Show only topics that need you in {project}": "只显示 {project} 中需要你处理的主题",
@@ -4617,8 +4592,6 @@ export const zh: PhraseCatalog = {
     "{machine} 下次在这里开始工作时会设置它。这是它在这里启动的会话无需询问即可做的最多事情。",
   "{title} (archived)": "{title}（已归档）",
   "{title} (automated)": "{title}（自动项目）",
-  "This app isn't connected to {machine}, so its copy can't be shown. Connect it in Settings > Machines.":
-    "此应用未连接到 {machine}，因此无法显示它的副本。请在“设置 > 电脑”中连接。",
   "This window is signed out": "此窗口已退出登录",
   "Quit and reopen the app to sign in again.": "退出并重新打开应用以重新登录。",
   "SpecWithCode on this machine stopped answering": "此机器上的 SpecWithCode 已停止响应",
@@ -4643,13 +4616,10 @@ export const zh: PhraseCatalog = {
   "Last synced {age}.": "上次同步：{age}。",
   "Synced just now.": "刚刚已同步。",
   "Hide details": "隐藏详情",
-  "Runs on {machine}": "在 {machine} 上运行",
   connected: "已连接",
   "Last viewed machine not listed": "上次查看的机器不在列表中",
   "Viewing {machine}. Choose a machine to view": "正在查看 {machine}。选择要查看的机器",
   "{machine}: this project's machines": "{machine}：此项目的机器",
-  "Viewing moves nothing: work stays on each machine. Adding or moving the project asks first.":
-    "查看不会移动任何内容：工作留在各自的机器上。添加或移动项目前会先询问。",
   "Nothing is sent to another machine.": "不会发送到其他机器。",
   "Your draft stays here until it reconnects.": "重新连接前，草稿会保留在这里。",
   "You can start these once it reconnects.": "重新连接后即可开始。",
@@ -4702,7 +4672,6 @@ export const zh: PhraseCatalog = {
     "未安装。请从其官网获取，或请能维护这台机器的人从这里安装。",
   "Browse…": "浏览…",
   "Add to this machine…": "添加到此机器…",
-  "Runs on {machine}. No copy on this device.": "在 {machine} 上运行。此设备上没有副本。",
   "Agent status": "智能体状态",
   "Last time it was not signed in.": "上次未登录。",
   "Last time it was signed in as {account}.": "上次以 {account} 登录。",
@@ -4896,16 +4865,6 @@ export const zh: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "无法把 AppImage 的路径写入命令。请把 AppImage 移到更简单的文件夹，再从那里打开。",
   "Could not write {path} ({error}).": "无法写入 {path}（{error}）。",
-  Main: "主副本",
-  "Moving main": "主副本迁移中",
-  "Copy · main on {machine}": "副本 · 主副本在 {machine}",
-  "Work for this project starts here. Copies on other machines take work from it.":
-    "此项目的工作从这里开始。其他机器上的副本从这里接收工作。",
-  "Main is on {machine}. This copy can also start work of its own.":
-    "主副本在 {machine}。此副本也可以开始自己的工作。",
-  "Work starts on {machine}. This copy takes work from there.":
-    "工作从 {machine} 开始。此副本从那里接收工作。",
-  "Main is moving between machines right now.": "主副本正在机器之间迁移。",
   "{there} can start work here": "{there} 可以在这里开始工作",
   "{there} can't start work here": "{there} 不能在这里开始工作",
   "This machine can start work on {there}": "此机器可以在 {there} 上开始工作",
@@ -4975,6 +4934,8 @@ export const zh: PhraseCatalog = {
   "Follow project (on)": "跟随项目（开）",
   "Follow project (off)": "跟随项目（关）",
   "Lets this thread ask a stronger model to check its work.": "允许此会话请更强的模型检查其工作。",
+  "Has a model from another family review this thread's work when its feature is finished.":
+    "此会话的功能完成后，由另一家族的模型审查其工作。",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "删除其聊天已解决或已归档且已闲置这么多天的工作树。分支和聊天记录会保留。",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
@@ -5036,73 +4997,22 @@ export const zh: PhraseCatalog = {
   "Run in terminal": "在终端中运行",
   "Waiting for the install. This page updates by itself.": "正在等待安装。此页面会自动更新。",
   "After it installs, choose Check again.": "安装完成后，选择“重新检查”。",
-  "{main} must be unreachable for 10 minutes before {machine} can become main. That unlocks in {minutes} min.":
-    "{main} 需连续 10 分钟无法连接，{machine} 才能成为主副本。还需 {minutes} 分钟。",
   "in {minutes} min": "{minutes} 分钟后",
-  "This window can only read {main}, so it cannot move main from there. Open SpecWithCode on {main}, or connect to it with full access, to make {machine} main.":
-    "此窗口只能读取 {main}，因此无法从那里移动主副本。要将 {machine} 设为主副本，请在 {main} 上打开 SpecWithCode，或以完全访问权限连接它。",
   "read-only on {main}": "{main} 为只读",
-  "Connect {machine} first to make it main.": "请先连接 {machine}，才能将其设为主副本。",
-  "{machine} cannot take over yet. Update SpecWithCode there, or connect to it with permission to change settings and run work.":
-    "{machine} 暂时无法接管。请在那里更新 SpecWithCode，或以可更改设置并运行工作的权限连接它。",
   "not ready": "未就绪",
-  "Main cannot move from this machine yet.": "暂时无法从这台机器移动主副本。",
   "Send this project its first message here, then try again.":
     "请先在这里向此项目发送第一条消息，然后重试。",
-  "{machine} cannot become main yet.": "{machine} 暂时无法成为主副本。",
-  "{machine} is main now": "{machine} 现在是主副本",
   "It starts from the shared goal, memory and plan. The conversation on {main} stays there as history, and {main} gives way when it is back.":
     "它从共享的目标、记忆和计划开始。{main} 上的对话作为历史留在那里，{main} 恢复后会让出主副本。",
-  "{machine} did not become main": "{machine} 未能成为主副本",
   "Retry it.": "请重试。",
-  "the old main": "原主副本",
-  "Make {machine} main?": "将 {machine} 设为主副本？",
-  "{main} has been unreachable for 10 minutes or more. {machine} becomes main and starts from the shared goal, memory and plan. The conversation on {main} stays there as history. Until {main} is back it can still start work on its own machine; then it gives way and lists what it ran meanwhile.":
-    "{main} 已有 10 分钟或更久无法连接。{machine} 将成为主副本，并从共享的目标、记忆和计划开始。{main} 上的对话作为历史留在那里。在 {main} 恢复之前，它仍可在自己的机器上开始工作；恢复后它会让出主副本，并列出期间运行的内容。",
   "Switching…": "正在切换…",
-  "Make {machine} main": "将 {machine} 设为主副本",
-  "Make {machine} main for {project}": "将 {machine} 设为 {project} 的主副本",
-  "Main for {project} is {machine}. This copy takes work from there.":
-    "{project} 的主副本是 {machine}。此副本从那里接收工作。",
-  "Main for {project} is on another machine. This copy takes work from there.":
-    "{project} 的主副本在另一台机器上。此副本从那里接收工作。",
   "The conversation here is kept as history.": "这里的对话作为历史保留。",
-  "Write to {machine}'s coordinator": "写给 {machine} 的协调器",
-  "Write to main's coordinator": "写给主副本的协调器",
-  "Write opens {machine}'s page for this project, where its coordinator answers. Nothing is sent from here.":
-    "“写给”会打开此项目在 {machine} 上的页面，由那里的协调器回答。这里不会发送任何内容。",
-  "Write opens main's page for this project, where its coordinator answers. Nothing is sent from here.":
-    "“写给”会打开此项目在主副本机器上的页面，由那里的协调器回答。这里不会发送任何内容。",
-  "{main} has been unreachable for 10 minutes or more. Making {machine} main starts from the shared goal, memory and plan; the conversation on {main} stays there as history.":
-    "{main} 已有 10 分钟或更久无法连接。将 {machine} 设为主副本后，它会从共享的目标、记忆和计划开始；{main} 上的对话作为历史留在那里。",
-  "Making {machine} main moves the coordinator and its conversation here from {main}, which becomes a copy.":
-    "将 {machine} 设为主副本后，协调器及其对话会从 {main} 移到这里，{main} 变为副本。",
-  "{machine} became main while {main} was unreachable. It started from the shared goal, memory and plan; the earlier conversation stays on {main} as history.":
-    "在 {main} 无法连接期间，{machine} 成为了主副本。它从共享的目标、记忆和计划开始；之前的对话作为历史留在 {main} 上。",
-  "{machine} became main while the old main was unreachable. It started from the shared goal, memory and plan; the earlier conversation stays on the old machine as history.":
-    "在原主副本无法连接期间，{machine} 成为了主副本。它从共享的目标、记忆和计划开始；之前的对话作为历史留在原来的机器上。",
   "Got it": "知道了",
   "{machine} kept its coordinator conversation from before as history. View it to read that conversation.":
     "{machine} 保留了之前的协调器对话作为历史。查看它以阅读那段对话。",
-  "Makes the project on {machine} part of this one. Main does not change, and threads and files stay where they are. You confirm what {machine} gives up first.":
-    "让 {machine} 上的项目成为此项目的一部分。主副本不变，会话和文件保持原位。你会先确认 {machine} 放弃的内容。",
   "Link {machine} to this project…": "将 {machine} 关联到此项目…",
-  "{main} is unreachable: {machine} takes over and starts from the shared goal, memory and plan. You confirm first.":
-    "{main} 无法连接：{machine} 将接管，并从共享的目标、记忆和计划开始。你会先确认。",
-  "Moves the coordinator and its conversation from {main} to {machine}. {main} becomes a copy. You confirm first.":
-    "将协调器及其对话从 {main} 移到 {machine}。{main} 变为副本。你会先确认。",
   "Link {machine} to this project": "将 {machine} 关联到此项目",
-  "{machine} joins {project} as a copy. Main stays on {main}: linking does not change it.":
-    "{machine} 作为副本加入 {project}。主副本仍在 {main}：关联不会改变它。",
   "Link {machine}": "关联 {machine}",
-  "Main stays on {main}. To have main on {machine}, make {machine} main after linking.":
-    "主副本仍在 {main}。若要让主副本在 {machine} 上，请在关联后将 {machine} 设为主副本。",
-  "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if it becomes main. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. Main stays on {main}. Files are not copied.":
-    "将 {machine} 关联到此项目。{machine} 放弃自己的目标和指令：今后遵循此项目的目标和指令，如果它成为主副本，自己的会被替换。它自己的协调器会停止，那段对话作为历史留在 {machine} 上。它的 worker 继续运行。主副本仍在 {main}。不会复制文件。",
-  "Work for {project} starts on {machine}.": "{project} 的工作从 {machine} 开始。",
-  "Work for {project} starts on another machine.": "{project} 的工作从另一台机器开始。",
-  "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.":
-    "请先连接 {main}。此窗口尚未加载 {main} 上的主副本，因此还不能将 {machine} 设为主副本。",
   "connect {main} first": "请先连接 {main}",
   "Review each finished increment automatically": "自动审查每个完成的增量",
   "Review each finished increment": "审查每个完成的增量",
@@ -5116,52 +5026,17 @@ export const zh: PhraseCatalog = {
   "Move {project} to another machine": "将 {project} 移到另一台机器",
   "Nothing on {machine} is replaced without asking.": "{machine} 上的内容不会未经询问就被替换。",
   "the other machine": "另一台机器",
-  "From {source}. Main stays on {main}.": "来自 {source}。主副本仍在 {main}。",
-  "From {source}. Main stays where it is.": "来自 {source}。主副本留在原处。",
-  "From {source}. Main moves to {machine}.": "来自 {source}。主副本移到 {machine}。",
-  "From {source}. Main moves to the machine you choose.": "来自 {source}。主副本移到你选择的机器。",
-  "From {source}. {source}'s copy is not linked to the project {machine} belongs to (Main: {main}).":
-    "来自 {source}。{source} 的副本未关联到 {machine} 所属的项目(主副本:{main})。",
-  "From {source}. {source}'s copy is not linked to the project {machine} belongs to.":
-    "来自 {source}。{source} 的副本未关联到 {machine} 所属的项目。",
-  "Only files are copied into {machine}'s copy. Main stays on {main}, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.":
-    "只把文件复制到 {machine} 的副本。主副本仍在 {main},{source} 不会关联到该项目。若要合为一个项目,请在机器菜单中关联 {source}。",
-  "Only files are copied into {machine}'s copy. Its Main does not change, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.":
-    "只把文件复制到 {machine} 的副本。它的主副本不变,{source} 不会关联到该项目。若要合为一个项目,请在机器菜单中关联 {source}。",
-  "Main cannot move to {machine} from here: {source} is not linked to the project {machine} belongs to. Link {source} to it from the machine menu first, or copy the files instead.":
-    "无法从这里把主副本移到 {machine}:{source} 未关联到 {machine} 所属的项目。请先在机器菜单中关联 {source},或改为复制文件。",
-  "Not available: that machine already has Main.": "不可用:那台机器已有主副本。",
-  "Not available: it would move Main into a project this copy is not linked to.":
-    "不可用:这会把主副本移入此副本未关联的项目。",
-  "{machine} has a copy. Main stays on {main}.": "{machine} 已有副本。主副本仍在 {main}。",
-  "Not linked: the copy on {machine} belongs to a project whose Main is {main}, and {source} is not part of it. Nothing was linked.":
-    "未关联:{machine} 上的副本属于主副本在 {main} 的项目,{source} 不在其中。未关联任何内容。",
-  "Not linked: the copy on {machine} belongs to another project, and {source} is not part of it. Nothing was linked.":
-    "未关联:{machine} 上的副本属于另一个项目,{source} 不在其中。未关联任何内容。",
   "Link with a project on another machine": "与另一台机器上的项目关联",
-  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator; Main stays on {main} and you can switch it any time.":
-    "选择另一台机器上的 {project} 副本。每个副本保留自己的协调器；主副本仍在 {main}，可以随时切换。",
-  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator, and you can switch Main any time.":
-    "选择另一台机器上的 {project} 副本。每个副本保留自己的协调器，主副本可以随时切换。",
-  "Other copy": "另一个副本",
   "No project on another connected machine. Add the folder on that machine first, then link it here.":
     "其他已连接的机器上没有项目。请先在那台机器上添加文件夹，然后在这里关联。",
   "{project} on {machine}": "{machine} 上的 {project}",
   "Not a copy:": "不是副本：",
   "Compared when you review the link.": "检查关联时进行比较。",
   "Reading folders…": "正在读取文件夹…",
-  "No copy of {project} was found on another machine.": "在其他机器上没有找到 {project} 的副本。",
   "Other projects ({count})": "其他项目（{count}）",
   "Not copies of {project} as far as their folders show. Pick one only if it is a renamed or re-cloned copy.":
     "从文件夹来看，它们不是 {project} 的副本。只有在它是重命名或重新克隆的副本时才选择。",
   "Review link": "检查关联",
-  "Message {machine}'s coordinator for {project}.": "给 {machine} 上 {project} 的协调者发消息。",
-  "Send delivers your message to {machine}'s coordinator and opens its page, where the answer comes.":
-    "发送会把你的消息交给 {machine} 的协调者，并打开它的页面，回复会出现在那里。",
-  "Send delivers your message to main's coordinator and opens its page, where the answer comes.":
-    "发送会把你的消息交给主协调者，并打开它的页面，回复会出现在那里。",
-  "Files stay on this machine. Remove them to send the text to main, or open main's page to attach them there.":
-    "文件留在这台机器上。移除文件即可把文字发到主机器，或打开主机器的页面在那里附加。",
   "1 device waiting": "1 台设备在等待",
   "A Linux computer": "一台 Linux 电脑",
   "A Mac": "一台 Mac",
@@ -5388,4 +5263,412 @@ export const zh: PhraseCatalog = {
   "Manage profiles": "管理配置文件",
   "Profiles: {count}": "配置文件：{count}",
   "Device hosts: {count}": "设备主机：{count}",
+  "Let this machine continue a coordinator": "让这台电脑接手协调者",
+  "Separate project · also on {machine}": "独立项目 · {machine} 上也有",
+  "{machine} has this repository as a separate project. Link them from the project menu to share one coordinator, plan and memory.":
+    "{machine} 把此仓库作为独立项目添加。从项目菜单关联后，可共享同一个协调者、计划和记忆。",
+  "Only on this machine": "仅在这台电脑上",
+  "No other machine has this project.": "没有其他电脑有这个项目。",
+  "Connect to see its state": "连接后可查看状态",
+  "This app cannot see this machine, so it cannot tell what it does for this project.":
+    "此应用看不到这台电脑，因此无法判断它在此项目中的作用。",
+  "Continue here": "在这里继续",
+  "The coordinator continued on {machine} while {main} was offline. It started from the shared goal, memory and plan; the earlier conversation stays on {main} as history.":
+    "{main} 离线期间，协调者在 {machine} 上继续。它从共享的目标、记忆和计划开始；之前的对话作为历史留在 {main} 上。",
+  "The coordinator continued on {machine} while its old machine was offline. It started from the shared goal, memory and plan; the earlier conversation stays on the old machine as history.":
+    "原来的电脑离线期间，协调者在 {machine} 上继续。它从共享的目标、记忆和计划开始；之前的对话作为历史留在原来的电脑上。",
+  "{project} is on {machine}. The coordinator stays on {main}.":
+    "{machine} 上有 {project}。协调者仍在 {main}。",
+  "{machine} has this repository as a separate project whose coordinator is on {main}. Nothing was linked.":
+    "{machine} 把此仓库作为独立项目添加，其协调者在 {main}。未关联任何内容。",
+  "{machine} has this repository as a separate project. Nothing was linked.":
+    "{machine} 把此仓库作为独立项目添加。未关联任何内容。",
+  "Continue the coordinator on {machine}": "在 {machine} 上继续协调者",
+  "{project} on your machines": "你各台电脑上的 {project}",
+  "Separate project: {machine} added this repository on its own, with its own coordinator, threads and memory.":
+    "独立项目：{machine} 单独添加了此仓库，有自己的协调者、会话和记忆。",
+  "Pick a machine to see its threads and files. Nothing moves until you sync or hand off.":
+    "选择一台电脑，查看它的会话和文件。在你同步或交接之前，什么都不会移动。",
+  "These are separate projects for this repository, each with its own coordinator, threads and memory. You can still open and message each one.":
+    "这些是此仓库的独立项目，各有自己的协调者、会话和记忆。你仍可以打开其中任何一个并发送消息。",
+  "Fix…": "修复…",
+  "Connect…": "连接…",
+  "Makes the project on {machine} part of this one. The coordinator stays where it is, and threads and files stay where they are. You confirm what {machine} gives up first.":
+    "让 {machine} 上的项目成为此项目的一部分。协调者留在原处，会话和文件也保持原位。你会先确认 {machine} 放弃的内容。",
+  "Work on {machine}": "{machine} 上的工作",
+  "{main} is offline: the coordinator starts on {machine} from the shared goal, memory and plan. You confirm first.":
+    "{main} 已离线：协调者将在 {machine} 上从共享的目标、记忆和计划开始。你会先确认。",
+  "Syncs {machine}, then moves the coordinator conversation here from {main}. You confirm first.":
+    "先同步 {machine}，再把协调者对话从 {main} 移到这里。你会先确认。",
+  "Continue the coordinator here": "在这里继续协调者",
+  "Pick {project} on another machine. Linking makes them one project with one coordinator.":
+    "选择另一台电脑上的 {project}。关联后它们会合为一个项目，共用一个协调者。",
+  "Pick {project} on another machine. The coordinator stays on {main}; you can continue it on another machine any time.":
+    "选择另一台电脑上的 {project}。协调者仍在 {main}；你可以随时在另一台电脑上继续它。",
+  "Other machine": "另一台电脑",
+  "{project} was not found on another machine.": "在其他电脑上没有找到 {project}。",
+  "Preparing the machine that keeps its coordinator…": "正在准备保留协调者的电脑…",
+  "Joining the other machine…": "正在加入另一台电脑…",
+  "Copying notes and listing both machines…": "正在复制笔记并列出两台电脑…",
+  "{machine} joins {project}. The coordinator stays on {main}: linking does not move it.":
+    "{machine} 加入 {project}。协调者仍在 {main}：关联不会移动它。",
+  "Reading both machines…": "正在读取两台电脑…",
+  "The coordinator stays on {main}. To continue it on {machine}, use Continue here after linking.":
+    "协调者仍在 {main}。若要在 {machine} 上继续，请在关联后使用“在这里继续”。",
+  "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if the coordinator continues there. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. The coordinator stays on {main}. Files are not copied.":
+    "将 {machine} 关联到此项目。{machine} 放弃自己的目标和指令：今后遵循此项目的目标和指令，如果协调者在那里继续，它自己的会被替换。它自己的协调者会停止，那段对话作为历史留在 {machine} 上。它的 worker 继续运行。协调者仍在 {main}。不会复制文件。",
+  "The coordinator cannot continue on {machine}: it has this repository as a separate project. Link it first.":
+    "协调者无法在 {machine} 上继续：它把此仓库作为独立项目添加。请先关联它。",
+  "Continues in a folder already saved there, which updates from origin. Always moves the coordinator there.":
+    "在那里已保存的文件夹中继续，该文件夹会从 origin 更新。协调者总会移到那里。",
+  "Not available: that machine already has the coordinator.": "不可用：那台电脑已有协调者。",
+  "Not available: it would move the coordinator into a separate project.":
+    "不可用：这会把协调者移入一个独立项目。",
+  "Goes to the coordinator on {machine} and opens it there":
+    "发给 {machine} 上的协调者，并在那里打开",
+  "On {machine}. Not on this device.": "在 {machine} 上。此设备上没有。",
+  "The coordinator cannot be handed off from this machine yet.": "暂时无法从这台电脑交接协调者。",
+  "The coordinator cannot continue on {machine} yet.": "协调者暂时无法在 {machine} 上继续。",
+  "The coordinator continues on {machine}": "协调者在 {machine} 上继续",
+  "The coordinator continues on {machine}. {names} have not confirmed it yet.":
+    "协调者在 {machine} 上继续。{names} 尚未确认。",
+  "They refuse work from the old coordinator only once they have confirmed the new one.":
+    "确认新的协调者后，它们才会拒绝旧协调者的工作。",
+  "The coordinator stayed on {main}": "协调者仍在 {main}",
+  "Continue the coordinator on {machine}?": "在 {machine} 上继续协调者？",
+  "{main} has been offline for 10 minutes or more. The coordinator starts on {machine} from the shared goal, memory and plan. The conversation on {main} stays there as history. Until {main} is back it can still start work on its own machine; then it gives way and lists what it ran meanwhile.":
+    "{main} 已离线 10 分钟或更久。协调者将在 {machine} 上从共享的目标、记忆和计划开始。{main} 上的对话作为历史留在那里。在 {main} 恢复之前，它仍可在自己的电脑上开始工作；恢复后它会让出，并列出期间运行的内容。",
+  "Starting the coordinator…": "正在启动协调者…",
+  "The coordinator's machine is not reachable from here.": "从这里无法连接协调者所在的电脑。",
+  "The coordinator's machine did not confirm the message. It may not have arrived.":
+    "协调者所在的电脑未确认这条消息。它可能没有送达。",
+  "Nothing was sent.": "未发送任何内容。",
+  "The coordinator continues here. Send your message again.":
+    "协调者在这里继续。请重新发送你的消息。",
+  "{main} must be silent for 10 minutes before the coordinator can continue on {machine}. That unlocks in {minutes} min.":
+    "{main} 需连续 10 分钟无响应，协调者才能在 {machine} 上继续。还需 {minutes} 分钟。",
+  "This window can only read {main}, so it cannot hand the coordinator off from there. Open SpecWithCode on {main}, or connect to it with full access.":
+    "此窗口只能读取 {main}，因此无法从那里交接协调者。请在 {main} 上打开 SpecWithCode，或以完全访问权限连接它。",
+  "Connect {machine} first to continue the coordinator there.":
+    "请先连接 {machine}，才能在那里继续协调者。",
+  "{machine} cannot continue the coordinator yet. Update SpecWithCode there, or connect to it with permission to change settings and run work.":
+    "{machine} 暂时无法继续协调者。请在那里更新 SpecWithCode，或以可更改设置并运行工作的权限连接它。",
+  "Connect {main} first. This window has not opened {project} on {main}, so it cannot hand the coordinator off yet.":
+    "请先连接 {main}。此窗口尚未打开 {main} 上的 {project}，因此还不能交接协调者。",
+  "The coordinator continued on another machine. This one gives way once it is reachable; Send opens the newer one.":
+    "协调者已在另一台电脑上继续。这台恢复连接后会让出；发送会打开较新的那台。",
+  "The coordinator is on another machine. Send opens it there.":
+    "协调者在另一台电脑上。发送会在那里打开它。",
+  "This machine has not confirmed where the coordinator is yet. Reconnect it to send messages.":
+    "这台电脑尚未确认协调者在哪里。请重新连接后再发送消息。",
+  "Separate project": "独立项目",
+  "Continue here and send": "在这里继续并发送",
+  "Files stay on this machine. Remove them to send the text, or open {project} on {machine} to attach them there.":
+    "文件留在这台电脑上。移除文件即可发送文字，或打开 {machine} 上的 {project} 在那里附加。",
+  "From {source}. {machine} has this repository as a separate project (coordinator on {main}).":
+    "来自 {source}。{machine} 把此仓库作为独立项目添加（协调者在 {main}）。",
+  "From {source}. {machine} has this repository as a separate project.":
+    "来自 {source}。{machine} 把此仓库作为独立项目添加。",
+  "From {source}. The coordinator continues on {machine}.":
+    "来自 {source}。协调者在 {machine} 上继续。",
+  "From {source}. The coordinator continues on the machine you choose.":
+    "来自 {source}。协调者在你选择的电脑上继续。",
+  "From {source}. The coordinator stays on {main}.": "来自 {source}。协调者仍在 {main}。",
+  "From {source}.": "来自 {source}。",
+  "Only files go into {machine}'s folder. Its coordinator stays on {main}. To make them one project, link {source} to it from the machine menu.":
+    "只把文件放入 {machine} 的文件夹。它的协调者仍在 {main}。若要合为一个项目，请在电脑菜单中关联 {source}。",
+  "Only files go into {machine}'s folder. Its coordinator does not change. To make them one project, link {source} to it from the machine menu.":
+    "只把文件放入 {machine} 的文件夹。它的协调者不变。若要合为一个项目，请在电脑菜单中关联 {source}。",
+  "The coordinator stays where it is.": "协调者留在原处。",
+  "Extra coordinator": "多余的协调者",
+  "Handing off the coordinator…": "正在交接协调者…",
+  "The coordinator conversation is on this machine.": "协调者对话在这台电脑上。",
+  "The coordinator is on {machine}. This machine also runs a coordinator of its own, which should be fixed.":
+    "协调者在 {machine} 上。这台电脑也在运行自己的协调者，需要修复。",
+  "The coordinator is on {machine}. Messages typed here go to it.":
+    "协调者在 {machine} 上。在这里输入的消息会发给它。",
+  "The coordinator is being handed off right now.": "协调者正在交接中。",
+  "Unlink {project} on {machine}?": "要取消关联 {machine} 上的 {project} 吗？",
+  "Extra coordinator on {machine}": "{machine} 上有多余的协调者",
+  "It becomes its own project again, with an active coordinator and a copy of this project's notes. {main} stops sending it work. Threads and files stay where they are.":
+    "它会重新成为独立的项目，有一个正在运行的协调者和此项目笔记的一份拷贝。{main} 不再给它派发工作。会话和文件保持原位。",
+  "{machine} also runs a coordinator for {project}. The project's coordinator is on {main}.":
+    "{machine} 也在为 {project} 运行一个协调者。该项目的协调者在 {main}。",
+  "To make {machine} part of this project again, link it afterwards. Linking makes it give way to the coordinator on {main}.":
+    "若要让 {machine} 重新成为此项目的一部分，之后再关联它。关联后它会让位给 {main} 上的协调者。",
+  "{other} still follows the coordinator on {machine}. Continue the coordinator on another machine first.":
+    "{other} 仍在跟随 {machine} 上的协调者。请先在另一台电脑上继续协调者。",
+  "{machine} cannot be unlinked from this window.": "无法从此窗口取消关联 {machine}。",
+  "Unlink {project} on {machine}": "取消关联 {machine} 上的 {project}",
+  "The coordinator for {project} is on another machine.": "{project} 的协调者在另一台电脑上。",
+  "Ask the coordinator for {project} (on {machine}).":
+    "询问 {project} 的协调者（在 {machine} 上）。",
+  "The coordinator for {project} is on {machine}, which is not answering.":
+    "{project} 的协调者在 {machine} 上，但它没有响应。",
+  "Continue here syncs {machine}, then moves the coordinator conversation here from {main}.":
+    "“在这里继续”会先同步 {machine}，再把协调者对话从 {main} 移到这里。",
+  "{main} has been offline for 10 minutes or more. Continue here: the coordinator starts on {machine} from the shared goal, memory and plan. Its conversation on {main} stays readable there, and {main} gives way when it is back.":
+    "{main} 已离线 10 分钟或更久。“在这里继续”：协调者将在 {machine} 上从共享的目标、记忆和计划开始。它在 {main} 上的对话仍可在那里查看，{main} 恢复后会让出。",
+  "{main} has been offline for {n} minutes. Continue here: the coordinator starts on {machine} from the shared goal, memory and plan. Its conversation on {main} stays readable there, and {main} gives way when it is back.":
+    "{main} 已离线 {n} 分钟。“在这里继续”：协调者将在 {machine} 上从共享的目标、记忆和计划开始。它在 {main} 上的对话仍可在那里查看，{main} 恢复后会让出。",
+  "{machine} is not answering. Continue here unlocks in {m} min.":
+    "{machine} 没有响应。“在这里继续”将在 {m} 分钟后可用。",
+  "This window can only read {machine}, so it cannot send there. Open SpecWithCode on {machine}, or connect to it with full access.":
+    "此窗口只能读取 {machine}，因此无法发送到那里。请在 {machine} 上打开 SpecWithCode，或以完全访问权限连接它。",
+  "The coordinator moved to {new}. Nothing was sent.": "协调者已移到 {new}。未发送任何内容。",
+  "{machine} did not take the message: {reason}. Nothing was sent.":
+    "{machine} 未接收这条消息：{reason}。未发送任何内容。",
+  "The coordinator for {project} is on {machine}. Send opens it there.":
+    "{project} 的协调者在 {machine} 上。发送会在那里打开它。",
+  "The coordinator for {project} is on another machine that this window cannot reach.":
+    "{project} 的协调者在另一台电脑上，此窗口无法连接到它。",
+  "This window cannot open {machine}": "此窗口无法打开 {machine}",
+  "Offline · last seen {time}": "离线 · 上次活动 {time}",
+  "Old conversation kept": "已保留旧对话",
+  "this project": "此项目",
+  "its machine": "它所在的电脑",
+  "the old machine": "原来的电脑",
+  Send: "发送",
+  "{machine} has not confirmed where the coordinator is yet. Reconnect it to send messages.":
+    "{machine} 尚未确认协调者在哪里。请重新连接后再发送消息。",
+  "Coordinator conversations": "协调者对话",
+  Threads: "会话",
+  "another machine": "另一台电脑",
+  "Coordinator on {machine}": "协调者在 {machine} 上",
+  "On {here} and {machines}": "在 {here} 和 {machines} 上",
+  "On {machines} and {last}": "在 {machines} 和 {last} 上",
+  "On {coordinator} (coordinator) and {last}": "在 {coordinator}（协调者）和 {last} 上",
+  "On {coordinator} (coordinator), {machines} and {last}":
+    "在 {coordinator}（协调者）、{machines} 和 {last} 上",
+  "Fix the extra coordinator on {machine}": "修复 {machine} 上多余的协调者",
+  "Connect {machine}": "连接 {machine}",
+  "Project on another machine": "另一台电脑上的项目",
+  "Not reachable from here": "无法从此处访问",
+  "Sign in to reach {machine}": "登录以访问 {machine}",
+  "Can't reach {machine} from this window": "无法从此窗口访问 {machine}",
+  "Signed out of SpecWithCode Connect": "已退出 SpecWithCode Connect",
+  "This machine is not affected.": "此电脑不受影响。",
+  "Needs sign-in. Sign in to SpecWithCode Connect to reach it from this window":
+    "需要登录。登录 SpecWithCode Connect 后即可从此窗口访问",
+  "Sign in to SpecWithCode Connect to reach it from this window.":
+    "登录 SpecWithCode Connect 后即可从此窗口访问。",
+  "This window reaches it through SpecWithCode Connect and is signed out. Sign in to reach it again.":
+    "此窗口通过 SpecWithCode Connect 访问它，但尚未登录。登录后即可重新访问。",
+  "{machines} can't be reached from this window until you sign in.":
+    "登录前无法从此窗口访问 {machines}。",
+  "Still connected: {machines}.": "仍已连接：{machines}。",
+  "Some of your machines can't be reached from this window until you sign in. This machine is not affected.":
+    "登录前无法从此窗口访问你的部分电脑。此电脑不受影响。",
+  "{machine} is running, but this window can't reach it until you sign in.":
+    "{machine} 正在运行，但登录前此窗口无法访问它。",
+  "{machines} are running, but this window can't reach them until you sign in.":
+    "{machines} 正在运行，但登录前此窗口无法访问它们。",
+  "Sign in to reach this machine": "登录以访问此电脑",
+  // First-run setup: the Access step, its rows and the shared Chrome steps.
+  "Chrome and Safari profiles and history": "Chrome 和 Safari 的配置文件与历史记录",
+  Mail: "邮件",
+  Messages: "信息",
+  "Photos library": "照片图库",
+  "Time Machine backups": "时间机器备份",
+  "Other apps' data": "其他应用的数据",
+  "Screen Recording": "屏幕录制",
+  Accessibility: "辅助功能",
+  "Every agent on {machine}, in every project and with every provider, gets this until you turn it off in System Settings.":
+    "{machine} 上的每个智能体，在每个项目中、使用每个提供方，都会获得此权限，直到你在系统设置中关闭它。",
+  "Setup works without Connect, and you can add it later in Settings > Machines.":
+    "设置无需 Connect 也能完成，之后可以在 设置 > 机器 中添加。",
+  "Each row has its own button. Change any of it later in Settings.":
+    "每一行都有自己的按钮。之后都可以在设置中更改。",
+  "Continue changes nothing.": "“继续”不会更改任何设置。",
+  "On {machines}.": "在 {machines} 上。",
+  "Full access: agents edit and run without asking each time.":
+    "完全访问：智能体编辑和运行时不再每次询问。",
+  "What it allows": "允许的内容",
+  "New chats start with Full access.": "新聊天以完全访问开始。",
+  "New chats stay Supervised.": "新聊天保持受监督。",
+  "New chats keep their current access.": "新聊天保持当前权限。",
+  "Change it in Settings > General.": "可在 设置 > 通用 中更改。",
+  "Files and commands": "文件和命令",
+  "Not changed": "未更改",
+  Change: "更改",
+  "Checking Chrome…": "正在检查 Chrome…",
+  "{machine} is offline.": "{machine} 已离线。",
+  "Turned off by your team's rules.": "已被团队规则关闭。",
+  "This window cannot pair a browser with {machine}.": "此窗口无法将浏览器与 {machine} 配对。",
+  "Chrome is not installed on {machine}.": "{machine} 上未安装 Chrome。",
+  "{asking} asks to use this Chrome for its threads.": "{asking} 请求在其会话中使用此 Chrome。",
+  "{asking} asks to use this Chrome for its threads. This window cannot answer it: answer in Settings > Chrome where you can change access.":
+    "{asking} 请求在其会话中使用此 Chrome。此窗口无法回应：请在可以更改权限的 设置 > Chrome 中回应。",
+  "Paired, not answering. Open Chrome, or reconnect.": "已配对，无响应。请打开 Chrome 或重新连接。",
+  "{profiles}: an older extension.": "{profiles}：扩展程序版本较旧。",
+  "Update the extension": "更新扩展程序",
+  "{profiles}: not from the Chrome Web Store.": "{profiles}：并非来自 Chrome 应用商店。",
+  "{profiles}: give it a name agents can tell apart.":
+    "{profiles}：请为它起一个智能体能区分的名称。",
+  "Paired: {names}": "已配对：{names}",
+  "Pair another profile": "配对另一个配置文件",
+  "Your browser": "你的浏览器",
+  "That did not go through. Try again.": "操作未完成。请重试。",
+  "Screen Recording and Accessibility are allowed.": "屏幕录制和辅助功能均已允许。",
+  "Partly allowed: {missing} is still off.": "部分允许：{missing} 仍未开启。",
+  "Needs reopening: macOS applies Screen Recording after SpecWithCode reopens.":
+    "需要重新打开：macOS 会在 SpecWithCode 重新打开后应用屏幕录制权限。",
+  "Could not check the Mac's permissions.": "无法检查 Mac 的权限。",
+  "Agents see the screen and click and type in any app.":
+    "智能体可以看到屏幕，并在任何应用中点击和输入。",
+  "Mac apps": "Mac 应用",
+  "Agents use only the Chrome profiles you pair, and only while they are paired.":
+    "智能体只使用你配对的 Chrome 配置文件，且仅在配对期间使用。",
+  "They work in the live browser, in a blue tab group you can pull a tab out of. They never read Chrome's files on disk, which Full Disk Access would open to every agent.":
+    "它们在正在运行的浏览器中、一个蓝色标签页组里工作，你可以把标签页拖出该组。它们从不读取 Chrome 在磁盘上的文件，而完全磁盘访问权限会向所有智能体开放这些文件。",
+  "SpecWithCode reads Chrome's profile names to show this list.":
+    "SpecWithCode 读取 Chrome 的配置文件名称以显示此列表。",
+  "Pick the profile where the accounts agents need are signed in.":
+    "选择已登录智能体所需账户的配置文件。",
+  "One profile is enough when everything agents need is signed in there. Pair a second one for a work account or another brand's accounts. The browser tools never reach a profile you did not pair.":
+    "如果智能体需要的一切都已在一个配置文件中登录，一个就够了。工作账户或其他品牌的账户可以再配对一个。浏览器工具永远不会触及你未配对的配置文件。",
+  "Agents use the profile you name.": "智能体使用你指定的配置文件。",
+  "It opens in the Chrome profile you used last. To pair another, switch to it in Chrome first.":
+    "它会在你上次使用的 Chrome 配置文件中打开。要配对其他配置文件，请先在 Chrome 中切换到它。",
+  "Anyone with this code can pair a browser with this computer.":
+    "任何拥有此代码的人都能将浏览器与这台电脑配对。",
+  "Chrome profile": "Chrome 配置文件",
+  "Pick a profile above first.": "请先在上方选择一个配置文件。",
+  "Opens the store page in {profile}.": "在 {profile} 中打开商店页面。",
+  "Opens the store page in Chrome.": "在 Chrome 中打开商店页面。",
+  "Paste it in the extension's page, or click its icon in Chrome's toolbar and paste it there.":
+    "将其粘贴到扩展程序的页面中，或点击 Chrome 工具栏中的扩展程序图标并粘贴到那里。",
+  "Waiting for Chrome…": "正在等待 Chrome…",
+  "The pairing code could not be read. Try again.": "无法读取配对码。请重试。",
+  "The code could not be copied. Press Show instead.": "无法复制代码。请改为点按“显示”。",
+  "Developer: allow copies not from the Chrome Web Store":
+    "开发者：允许并非来自 Chrome 应用商店的副本",
+  "Off, only the SpecWithCode Browser from the Chrome Web Store can connect to {machine}. On, any other extension id can connect too, such as a copy loaded by hand in chrome://extensions, but still only with the pairing code, and it is marked not from the Chrome Web Store. Turning it off disconnects those copies.":
+    "关闭时，只有来自 Chrome 应用商店的 SpecWithCode Browser 能连接到 {machine}。开启时，其他任何扩展程序 ID 也能连接，例如在 chrome://extensions 中手动加载的副本，但仍然需要配对码，并会标记为并非来自 Chrome 应用商店。关闭后这些副本会断开连接。",
+  "Give it a name agents can tell apart": "请为它起一个智能体能区分的名称",
+  "What agents can use on this {machine}": "智能体可以在这台{machine}上使用什么",
+  "What agents can use": "智能体可以使用什么",
+  "Some tasks need it: listing Chrome profiles, reading Mail or Messages, searching Safari history, or working with another app's files. macOS blocks these for every app until you allow it.":
+    "有些任务需要它：列出 Chrome 配置文件、读取邮件或信息、搜索 Safari 历史记录，或处理其他应用的文件。在你允许之前，macOS 会对所有应用阻止这些操作。",
+  "What it unlocks": "可解锁的内容",
+  "A prompt hidden in a web page or file could ask an agent to read your mail. Turn it on only if you need it.":
+    "隐藏在网页或文件中的指令可能会让智能体读取你的邮件。请仅在需要时开启。",
+  "In System Settings › Privacy & Security › Full Disk Access, turn on":
+    "在 系统设置 › 隐私与安全性 › 完全磁盘访问权限 中开启：",
+  "Agents here run under a background service, so macOS asks about it, not the app. In System Settings › Privacy & Security › Full Disk Access, add":
+    "这里的智能体在后台服务下运行，因此 macOS 询问的是该服务而不是应用。在 系统设置 › 隐私与安全性 › 完全磁盘访问权限 中添加：",
+  "How Full Disk Access works and how to turn it off": "完全磁盘访问权限如何运作以及如何关闭",
+  "Full Disk Access for agents: allowed, restart running threads":
+    "智能体的完全磁盘访问权限：已允许，请重启正在运行的会话",
+  "Full Disk Access for agents: allowed": "智能体的完全磁盘访问权限：已允许",
+  "Full Disk Access for agents: could not be checked": "智能体的完全磁盘访问权限：无法检查",
+  "Full Disk Access for agents: off": "智能体的完全磁盘访问权限：已关闭",
+  "Privacy access": "隐私访问",
+  "Restart needed": "需要重启",
+  Optional: "可选",
+  "New agent runs have it. Threads that were already running get it after they restart.":
+    "新的智能体运行会获得它。已在运行的会话需重启后才会获得。",
+  "Optional. Agents on": "可选。",
+  "can't read Chrome or Safari profiles, Mail, Messages, Notes or other apps' data.":
+    "上的智能体无法读取 Chrome 或 Safari 配置文件、邮件、信息、备忘录或其他应用的数据。",
+  "What this allows": "这允许什么",
+  "Open System Settings": "打开系统设置",
+  "Open SpecWithCode on": "在",
+  "to allow it there.": "上打开 SpecWithCode 并在那里允许。",
+  "Full Disk Access for agents (optional)": "智能体的完全磁盘访问权限（可选）",
+  "Already allowed on this Mac.": "此 Mac 上已允许。",
+  "You can skip this. It is also in Settings › Machines, and agents ask when a task needs it.":
+    "可以跳过。它也在 设置 › 机器 中，任务需要时智能体会询问。",
+  "Use claude, codex and specweave in Terminal too. Adds one marked block to your shell startup file; turn it off any time in Settings > General.":
+    "在终端中也可以使用 claude、codex 和 specweave。会在你的 shell 启动文件中添加一个带标记的块；随时可在 设置 > 通用 中关闭。",
+  "Your Connect sign-in ends at {time}": "你的 Connect 登录将于 {time} 结束",
+  "Sign in again to keep reaching {machines} from this window.":
+    "请重新登录，以便继续从此窗口访问 {machines}。",
+  "Sign in again now": "立即重新登录",
+  "SpecWithCode Connect did not accept this sign-in": "SpecWithCode Connect 未接受此次登录",
+  "Sign in again to reach your machines through SpecWithCode Connect.":
+    "请重新登录，以便通过 SpecWithCode Connect 访问你的机器。",
+  "Sign in again": "重新登录",
+  first: "优先",
+  "None of the ready agents runs a model on this list.": "已就绪的智能体都没有使用此列表中的模型。",
+  "No reviewer yet.": "还没有审查者。",
+  "A review needs a model from a second family, such as {first} or {second}.":
+    "审查需要另一系列的模型，例如 {first} 或 {second}。",
+  "Add one": "添加一个",
+  "+{n} more": "另外 {n} 个",
+  "Ready once an agent is signed in.": "智能体登录后即可使用。",
+  // 1398: the first feature guide and its offer.
+  "Your first feature": "你的第一个功能",
+  "Turn SpecWeave on": "开启 SpecWeave",
+  "Ask for it whole": "一次提出完整需求",
+  "Read the review": "阅读评审",
+  "This project has no plans or board yet. Turn SpecWeave on.":
+    "这个项目还没有计划和看板。请开启 SpecWeave。",
+  "Show me": "带我去",
+  "Ask for the whole feature in one request. Your agents plan it, build it, review it and close it.":
+    "用一次请求提出整个功能。你的智能体会规划、实现、评审并完成它。",
+  "Ask for the whole feature in one request. Your agents plan it, build it and close it.":
+    "用一次请求提出整个功能。你的智能体会规划、实现并完成它。",
+  "Write it for me": "帮我写好",
+  "Open the thread": "打开会话",
+  Planning: "规划中",
+  "Working: {done} of {total} tasks": "进行中：{done}/{total} 个任务",
+  "In review": "评审中",
+  "Fixing what the review found": "正在修复评审发现的问题",
+  "When the card is in Done, open it and read what the review found.":
+    "卡片进入“已完成”后，打开它并阅读评审发现的问题。",
+  "Open the review": "打开评审",
+  Ship: "可以发布",
+  "Fix first": "先修复",
+  "No verdict": "无结论",
+  "A reviewer": "一位评审者",
+  "Reviewed by {model}, the same family that built it.":
+    "由 {model} 评审，与实现它的模型属于同一系列。",
+  "No review ran. A review needs a model from a second family, such as {codex} or {muse}.":
+    "没有进行评审。评审需要另一系列的模型，例如 {codex} 或 {muse}。",
+  "No review is recorded for this feature.": "这个功能没有评审记录。",
+  "Skip this step": "跳过这一步",
+  "Leave the guide": "退出指南",
+  "Waiting on this step. The Board tab says what went wrong.":
+    "这一步在等待。看板标签页会说明出了什么问题。",
+  "Waiting on this step. The coordinator's last message says why.":
+    "这一步在等待。协调者的最后一条消息说明了原因。",
+  "That is the loop: plan, board, work, review, done.":
+    "这就是完整流程：计划、看板、工作、评审、完成。",
+  "Review finished features in all projects on this Mac": "评审这台 Mac 上所有项目中完成的功能",
+  "Each review uses the reviewer's plan.": "每次评审使用评审者的套餐。",
+  "On for all projects on this Mac. Each review uses the reviewer's plan.":
+    "已为这台 Mac 上的所有项目开启。每次评审使用评审者的套餐。",
+  "Remove the sample project": "移除示例项目",
+  "Remove {name} from SpecWithCode? Its folder and files stay on disk.":
+    "要从 SpecWithCode 中移除 {name} 吗？它的文件夹和文件会保留在磁盘上。",
+  "Build a first feature": "构建第一个功能",
+  "Your agents plan and build one small feature and another model reviews it, on your own plans.":
+    "你的智能体规划并实现一个小功能，再由另一个模型评审，全部使用你自己的套餐。",
+  "Try a first feature": "试做第一个功能",
+  "Sign in an agent first": "请先登录一个智能体",
+  "Continue your first feature": "继续你的第一个功能",
+  "Your sample project is where you left it.": "示例项目停在你离开的地方。",
+  "Open it": "打开",
+  "Dismiss Build a first feature": "关闭“构建第一个功能”",
+  "First feature guide": "第一个功能指南",
+  "Automatic review is still on for the sample": "示例项目的自动评审仍处于开启状态",
+  done: "已完成",
+  skipped: "已跳过",
+  Reviews: "评审",
+  "Removed {name}": "已移除 {name}",
+  "Its folder and files stay on disk.": "它的文件夹和文件保留在磁盘上。",
+  "The guide could not be updated. Try again.": "无法更新指南。请重试。",
+  "The setting was not saved. Try again.": "设置未保存。请重试。",
+  "The sample project was not removed. Try again.": "示例项目未被移除。请重试。",
+  "Could not make the sample project": "无法创建示例项目",
+  "The sample project has no first commit": "示例项目没有首次提交",
+  "The sample project is ready": "示例项目已就绪",
+  "It appears in the sidebar once this window catches up.": "窗口更新后，它会出现在侧边栏中。",
+  "This connection cannot change the settings of this Mac.": "此连接无法更改这台 Mac 的设置。",
+  "How much longer work takes with {setting}": "开启“{setting}”后工作会多花多少时间",
+  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.":
+    "可能让工作耗时大幅增加：实测中，经过审查的工作耗时中位数是审查前同样工作的 2.6 倍（一半的运行在 1.6 到 3.6 倍之间），因为每轮审查及其修复都会增加时间。",
+  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.":
+    "可能让工作耗时增加：每次咨询约增加 2 分钟。实测中，咨询过的会话耗时约为 1.1 倍，每 10 个中有 1 个达到 1.4 倍或更多。",
 };

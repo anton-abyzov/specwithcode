@@ -1,11 +1,10 @@
+import "./shell/composer-foot.css";
 import {
   machineColorProps,
   useMachineIdentity,
   type MachineIdentity,
 } from "../../studio/machineIdentity";
-import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
-import type { EnvironmentId } from "@specweave-studio/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowRightLeftIcon,
@@ -18,20 +17,27 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTx } from "../../i18n";
-import { randomUUID } from "../../lib/utils";
-import { useAtomCommand } from "../../state/use-atom-command";
 import { useProjects } from "../../state/entities";
-import { highestEpoch, projectLink, sameRepositoryLinkOffers } from "../../studio/projectLink";
+import { useEnvironments } from "../../state/environments";
+import { machineLastSeenAt, useMachineLastSeenVersion } from "../../lib/machineLastSeen";
+import { formatAgo } from "../../studio/hostLimitsModel";
+import { sameRepositoryLinkOffers } from "../../studio/projectLink";
 import type { MainOffer } from "../../studio/makeMain";
 import {
   checkoutKeyEnvironmentId,
   type OrchestratorCopy,
 } from "../../studio/projectCoordinatorMachine";
 import { isProjectFolder } from "../../studio/projectMachineFolders";
+import {
+  machineReach,
+  machineRowState,
+  type MachineReach,
+  type MachineRowKind,
+} from "../../studio/machineRowState";
 import { useMachineNickname, useMachineNicknames } from "../../studio/machineNickname";
 import { requestAway } from "../../studio/awayRequest";
 import { requestMigrateProjectThreads } from "../handoff/HandOffMachineDialog";
-import { toastManager } from "../ui/toast";
+import { ExtraCoordinatorFix } from "./ExtraCoordinatorFix";
 import { ProjectLinkDialog, type ProjectLinkTarget } from "./ProjectLinkDialog";
 import { Button } from "../ui/button";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
@@ -77,22 +83,40 @@ function AfterUnmount({ pending }: { pending: { current: (() => void) | null } }
   return null;
 }
 
+/** What this window can show of a machine with a row, and when it last saw it. */
+export interface MachineRowReach {
+  readonly reach: MachineReach;
+  /** When this window last saw an offline machine, in words; null when unknown. */
+  readonly lastSeen?: string | null;
+}
+
+const OPEN: MachineRowReach = { reach: "open" };
+
+const PILL: Record<MachineRowKind, string> = {
+  coordinator: "border-transparent bg-secondary text-foreground",
+  "extra-coordinator": "border-warning/40 bg-warning/10 text-warning-foreground",
+  "handing-off": "border-border text-muted-foreground",
+  separate: "border-border text-muted-foreground",
+  "cannot-open": "",
+  plain: "",
+};
+
 /**
- * Which machine's copy of the project this page shows, then what can be done
- * with the project (copy it, and one coordinator action per other machine) and
- * with the viewed machine (move its running threads, leave). Viewing reads that
+ * The machines that have this project, then what can be done with the project (send it to
+ * another machine, link a separate project) and with the machine shown (continue the
+ * coordinator here, move its running threads, leave). Picking a machine reads that
  * machine's server and moves nothing; every move is its own confirmed action.
  *
- * Each machine appears once, in the view list, with a note naming its state:
- * the badge Settings > Machines shows for it (Main, Copy · main on X, Moving
- * main), coordinator paused (it kept its conversation from before, as history),
- * or not linked. The only coordinator item below is "Make X main", one per
- * linked machine that is not main, off with its reason while it cannot run.
- * A machine that is not linked gets "Link X to this project…" instead.
+ * Each machine appears once, with the one state `machineRowState` gives it: "Coordinator"
+ * on the machine that holds the coordinator conversation, "Extra coordinator" with "Fix…"
+ * on a linked machine that still runs one of its own, "Separate project" for the same
+ * repository added on its own, and a greyed row with its reason for a machine this window
+ * cannot open. No row names a role. The chip names the machine shown.
  */
 export function OrchestratorSwitcher({
   label,
   hostLabel,
+  projectTitle,
   connected,
   statusDetail,
   current,
@@ -100,8 +124,10 @@ export function OrchestratorSwitcher({
   unknown,
   savedMachineMissing,
   onView,
+  reachOf = () => OPEN,
   mainOffers = [],
   onMakeMain = null,
+  onFix = null,
   onAllowWorkers,
   onMigrate = null,
   onCopy = null,
@@ -109,48 +135,38 @@ export function OrchestratorSwitcher({
   onLink = null,
   onLeave = null,
   identity = null,
-  runsOn = null,
 }: {
   identity?: MachineIdentity | null;
-  /**
-   * Where this page's coordinator runs when that is another machine than the viewed copy's
-   * (main's, for a copy whose main is elsewhere). Only the chip's face names it, in its color
-   * and connection state, as Send does; the menu still names and acts on the viewed copy.
-   */
-  runsOn?: {
-    readonly label: string;
-    readonly hostLabel?: string;
-    readonly connected: boolean;
-    readonly statusDetail: string;
-    readonly identity: MachineIdentity | null;
-  } | null;
-  /** The viewed machine's name: its nickname, else its short host label. */
+  /** The name of the machine shown: its nickname, else its short host label. */
   label: string;
   /** Its full host label for the tooltip; defaults to `label`. */
   hostLabel?: string;
+  /** The project's name, for the menu's first group. */
+  projectTitle: string;
   connected: boolean;
-  /** One word for screen readers while the viewed machine is not connected ("Reconnecting"). */
+  /** One word for screen readers while the machine shown is not connected ("Reconnecting"). */
   statusDetail: string;
   current: string;
   copies: readonly OrchestratorCopy[];
-  /** Linked machines this device never synced; viewing one says Unknown. */
+  /** Linked machines this window never opened: each is a greyed row. */
   unknown: ReadonlyArray<{ key: string; machine: string }>;
   savedMachineMissing: boolean;
   onView: ((key: string) => void) | null;
+  /** This window's reach of a listed machine; every machine is open when left out. */
+  reachOf?: (key: string) => MachineRowReach;
   /**
-   * "Make X main" for each linked copy that is not main (`useMakeMain`): pressable, or off
-   * with its reason. Main itself and copies that are not linked have none.
+   * "Continue the coordinator here" per machine that can take it (`useMakeMain`): pressable,
+   * or off with its reason. The menu offers the one for the machine shown.
    */
   mainOffers?: readonly MainOffer[];
-  /** Runs that switch behind its own confirmation; null when it cannot be offered. */
+  /** Runs it behind its own confirmation; null when it cannot be offered. */
   onMakeMain?: ((key: string) => void) | null;
+  /** Opens "Fix…" for a linked machine that still runs a coordinator of its own. */
+  onFix?: ((key: string) => void) | null;
   onAllowWorkers: (() => void) | null;
-  /** Opens "Move running threads" for the viewed machine's threads; null while it is offline. */
+  /** Opens "Move running threads" for the threads of the machine shown; null while it is offline. */
   onMigrate?: (() => void) | null;
-  /**
-   * "Send to another machine…": the one way to bring this project to another machine. The
-   * dialog offers Copy or Move, so adding, moving and syncing all start here.
-   */
+  /** "Send to another machine…": the one way to bring this project to another machine. */
   onCopy?: (() => void) | null;
   /**
    * Projects on other machines that track the same repository and are not part of this
@@ -167,26 +183,24 @@ export function OrchestratorSwitcher({
   // as an invisible layer that catches clicks.
   const pendingView = useRef<(() => void) | null>(null);
   const tx = useTx();
-  const face = runsOn ?? { label, hostLabel, connected, statusDetail, identity };
-  const runsOnText = tx("Runs on {machine}", { machine: face.label });
-  // The chip names the machine and shows its state by the dot alone, in the machine's own
+  const onText = tx("On {machine}", { machine: label });
+  // The chip names the machine shown and its state by the dot alone, in the machine's own
   // color while connected (never a status green that reads as another machine). While it is not
   // connected, the line above the message box says so once, with what happens next.
   const status = (
     <>
-      <span className="sws-dot" data-tone={face.connected ? "machine" : "failed"} aria-hidden />
-      <span
-        className="sws-host-name"
-        title={
-          face.hostLabel && face.hostLabel !== face.label
-            ? `${runsOnText} (${face.hostLabel})`
-            : runsOnText
-        }
-      >
-        {runsOnText}
-      </span>
+      <span className="sws-dot" data-tone={connected ? "machine" : "failed"} aria-hidden />
+      {/* No native title: the system tooltip floated over the message above the composer,
+          outside the popup standard (docs/studio/design-guidelines.md, Popups). The computer's
+          own name goes to assistive technology instead. */}
+      <span className="sws-host-name">{onText}</span>
+      {hostLabel && hostLabel !== label ? (
+        <span className="sr-only" data-orchestrator-host="">
+          {` (${hostLabel})`}
+        </span>
+      ) : null}
       <span className="sr-only" data-orchestrator-status="">
-        {face.connected ? `, ${tx("connected")}` : `, ${tx(face.statusDetail)}`}
+        {connected ? `, ${tx("connected")}` : `, ${tx(statusDetail)}`}
       </span>
       {savedMachineMissing ? (
         <span aria-hidden> · {tx("Last viewed machine not listed")}</span>
@@ -201,7 +215,7 @@ export function OrchestratorSwitcher({
     return (
       <span
         className="project-muted sws-host sws-execution-control machine-chip"
-        {...machineColorProps(face.identity)}
+        {...machineColorProps(identity)}
       >
         {status}
       </span>
@@ -213,53 +227,85 @@ export function OrchestratorSwitcher({
   const nameOf = (copy: OrchestratorCopy) =>
     ambiguous(copy.machine) ? `${copy.machine} · ${copy.folder}` : copy.machine;
   const others = listed.filter((copy) => copy.key !== current);
-  // One "Make X main" per machine at most, the viewed machine included. A machine where a
-  // copy runs a coordinator gets none: main is already there, or that copy would have to
-  // give its own up first. A copy that is not linked has no main to become: it gets Link.
-  const hostOf = (copy: OrchestratorCopy) => checkoutKeyEnvironmentId(copy.key);
-  const coordinating = new Set(copies.filter((copy) => copy.role === "coordinator").map(hostOf));
-  const mainActions: Array<{ copy: OrchestratorCopy; offer: MainOffer }> = [];
-  for (const host of new Set(listed.map(hostOf))) {
-    if (coordinating.has(host) || !onMakeMain) continue;
-    for (const copy of listed) {
-      if (hostOf(copy) !== host || copy.role !== "workers") continue;
-      const offer = mainOffers.find((item) => item.key === copy.key);
-      if (!offer) continue;
-      mainActions.push({ copy, offer });
-      break;
-    }
-  }
+  // One coordinator item, for the machine shown: it is there only while the coordinator is
+  // on another machine and this one could take it (`makeMainPath`).
+  const viewed = listed.find((copy) => copy.key === current);
+  // Never on the machine that already holds the coordinator, nor on a separate project,
+  // which has no coordinator of this project to continue.
+  const continueOffer =
+    onMakeMain && viewed && (viewed.rowRole === "copy" || viewed.rowRole === "also-main")
+      ? (mainOffers.find((offer) => offer.key === current) ?? null)
+      : null;
   // Linking is what makes two projects for one repository one project; nothing is copied.
   const linkActions = onLink ? links : [];
-  // Every copy registered on its own: "not linked" is about the projects, and reads like a broken
-  // connection unless the menu says what it leaves alone. With a linked copy in the group (listed,
-  // or known only as a machine this app never loaded) an unlinked one can be held back, so the
-  // sentence is for the all-unlinked case only. It promises viewing and messaging, nothing about
-  // agents: a machine may let another one's agents work only in linked projects.
-  const allUnlinked =
+  // Every machine added the repository on its own: the menu says once that they are separate
+  // projects and what that leaves alone. With a linked machine in the group (listed, or known
+  // only as one this window never opened) the sentence does not hold for every row.
+  const allSeparate =
     listed.length > 1 &&
     unknown.length === 0 &&
     copies.every((copy) => copy.role === "independent");
   // "Link them below" only when every other row has its link item: a second checkout on the
-  // viewed machine, or one at another place in the repository, is listed but gets no offer.
+  // machine shown, or one at another place in the repository, is listed but gets no offer.
   const linkCoversRows =
-    allUnlinked &&
+    allSeparate &&
     others.length > 0 &&
     others.every((copy) => linkActions.some((link) => link.key === copy.key));
-  // Copy, link and the coordinator actions act on this project; threads and Leave on the machine.
-  const projectActions = onCopy !== null || mainActions.length > 0 || linkActions.length > 0;
+  const projectActions = onCopy !== null || linkActions.length > 0;
+  const groupLabel = tx("{project} on your machines", { project: projectTitle });
+  const rows = [
+    ...listed.map((copy) => {
+      const name = nameOf(copy);
+      const reach = reachOf(copy.key);
+      return {
+        key: copy.key,
+        name,
+        state: machineRowState({
+          machine: name,
+          role: copy.rowRole,
+          reach: reach.reach,
+          lastSeen: reach.lastSeen ?? null,
+          keptConversation: copy.canStart,
+        }),
+        hint: copy.canStart
+          ? tx(
+              "{machine} kept its coordinator conversation from before as history. View it to read that conversation.",
+              { machine: name },
+            )
+          : copy.role === "independent"
+            ? tx(
+                "Separate project: {machine} added this repository on its own, with its own coordinator, threads and memory.",
+                { machine: name },
+              )
+            : name,
+      };
+    }),
+    // The project lists the machine, but this window never opened it: nothing to show.
+    ...unknown.map((ref) => ({
+      key: ref.key,
+      name: ref.machine,
+      state: machineRowState({ machine: ref.machine, role: "copy", reach: "never-opened" }),
+      hint: ref.machine,
+    })),
+  ];
+  // Machines of this project first; the same repository as separate projects after them.
+  const ordered = [
+    ...rows.filter((row) => row.state.kind !== "separate"),
+    ...rows.filter((row) => row.state.kind === "separate"),
+  ];
+  const firstSeparate = ordered.findIndex((row) => row.state.kind === "separate");
   return (
     <Menu>
       <span className="project-muted sws-host sws-execution-control">
-        {/* No tooltip: one opened from this chip covered the message box. What viewing
-            means is said inside the menu, which opens only when asked. */}
+        {/* No tooltip: one opened from this chip covered the message box. What picking a
+            machine means is said inside the menu, which opens only when asked. */}
         <MenuTrigger
           render={
             <Button
               variant="ghost-muted"
               size="xs"
               className="min-w-0 max-w-full machine-chip"
-              {...machineColorProps(face.identity)}
+              {...machineColorProps(identity)}
               data-coordinator-machine=""
               aria-label={
                 viewable
@@ -278,19 +324,19 @@ export function OrchestratorSwitcher({
         <AfterUnmount pending={pendingView} />
         {viewable && onView ? (
           <MenuInfoGroup
-            label={tx("View this project on")}
-            infoLabel={`${tx("About")}: ${tx("View this project on")}`}
+            label={groupLabel}
+            infoLabel={`${tx("About")}: ${groupLabel}`}
             info={
               <>
                 <MenuHint data-orchestrator-note="">
                   {tx(
-                    "Viewing moves nothing: work stays on each machine. Adding or moving the project asks first.",
+                    "Pick a machine to see its threads and files. Nothing moves until you sync or hand off.",
                   )}
                 </MenuHint>
-                {allUnlinked ? (
+                {allSeparate ? (
                   <MenuHint data-orchestrator-unlinked-note="">
                     {tx(
-                      "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them.",
+                      "These are separate projects for this repository, each with its own coordinator, threads and memory. You can still open and message each one.",
                     )}
                     {linkCoversRows ? ` ${tx("Link them below to make one project.")}` : null}
                   </MenuHint>
@@ -298,140 +344,165 @@ export function OrchestratorSwitcher({
               </>
             }
           >
-            {/* What viewing means sits behind the label's info button: the lines are too long
-                to stand in a menu, and the menu should open on its machines. */}
+            {/* What picking a machine means sits behind the label's info button: the lines are
+                too long to stand in a menu, and the menu should open on its machines. */}
             <MenuRadioGroup
               value={current}
               onValueChange={(value) => {
                 pendingView.current = () => onView(value as string);
               }}
             >
-              {[
-                ...listed.map((copy) => ({
-                  key: copy.key,
-                  name: nameOf(copy),
-                  // A copy that kept its coordinator from before says so: it is paused, not
-                  // gone. Every other copy shows the badge Settings > Machines shows for it;
-                  // a checkout registered on its own reads "not linked".
-                  note: copy.canStart
-                    ? tx("coordinator paused")
-                    : copy.label.text
-                      ? tx(copy.label.text, copy.label.values)
-                      : "",
-                  hint: copy.canStart
-                    ? tx(
-                        "{machine} kept its coordinator conversation from before as history. View it to read that conversation.",
-                        { machine: nameOf(copy) },
-                      )
-                    : copy.role === "independent"
-                      ? tx(
-                          "Not linked: {machine} runs its own coordinator, threads and memory for this repository.",
-                          { machine: nameOf(copy) },
-                        )
-                      : nameOf(copy),
-                })),
-                // Linked, but this app has no connection to it, so it has no copy to show.
-                ...unknown.map((ref) => ({
-                  key: ref.key,
-                  name: ref.machine,
-                  note: tx("not connected"),
-                  hint: tx(
-                    "This app isn't connected to {machine}, so its copy can't be shown. Connect it in Settings > Machines.",
-                    { machine: ref.machine },
-                  ),
-                })),
-              ].map((row) => (
-                <MenuRadioItem
-                  key={row.key}
-                  value={row.key}
-                  data-orchestrator-view={row.key}
-                  closeOnClick
-                  title={row.hint}
-                >
-                  <span className="flex w-full items-center gap-2">
-                    <MachineRowIcon checkoutKey={row.key} name={row.name} />
-                    <span className="min-w-0 truncate">{row.name}</span>
-                    {row.note ? (
-                      <span className="shrink-0 text-muted-foreground text-xs">{row.note}</span>
+              {ordered.map((row, index) => (
+                <div key={row.key}>
+                  {index > 0 && index === firstSeparate ? <MenuSeparator /> : null}
+                  <div className="flex items-start gap-1">
+                    <MenuRadioItem
+                      className="min-w-0 flex-1"
+                      value={row.key}
+                      data-orchestrator-view={row.key}
+                      data-row-state={row.state.kind}
+                      // A machine this window cannot open is greyed: a click would only lead
+                      // to a page with nothing on it.
+                      disabled={!row.state.pressable}
+                      closeOnClick
+                      title={
+                        row.state.pressable || !row.state.label
+                          ? row.hint
+                          : tx(row.state.label.text, row.state.label.values)
+                      }
+                    >
+                      <span className="flex w-full items-start gap-2">
+                        <span className="flex h-5 items-center">
+                          <MachineRowIcon checkoutKey={row.key} name={row.name} />
+                        </span>
+                        <span className="flex min-w-0 flex-1 flex-col">
+                          {/* The pill drops under the name when both do not fit one line. */}
+                          <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+                            <span className="max-w-full truncate">{row.name}</span>
+                            {row.state.label && row.state.pressable ? (
+                              <span
+                                className={`shrink-0 rounded-full border px-1.5 text-xs ${PILL[row.state.kind]}`}
+                                data-row-pill=""
+                              >
+                                {tx(row.state.label.text, row.state.label.values)}
+                              </span>
+                            ) : null}
+                          </span>
+                          {row.state.label && !row.state.pressable ? (
+                            <span className="text-muted-foreground text-xs" data-row-reason="">
+                              {tx(row.state.label.text, row.state.label.values)}
+                            </span>
+                          ) : null}
+                          {row.state.notes.map((note) => (
+                            <span
+                              key={note.text}
+                              className="text-muted-foreground text-xs"
+                              data-row-note=""
+                            >
+                              {tx(note.text, note.values)}
+                            </span>
+                          ))}
+                        </span>
+                        <MenuRadioItemIndicator className="ms-auto ps-2" />
+                      </span>
+                    </MenuRadioItem>
+                    {row.state.action === "fix" && onFix ? (
+                      <MenuItem
+                        className="shrink-0 rounded-md border border-border px-2 text-xs"
+                        data-orchestrator-fix={row.key}
+                        aria-label={tx("Fix the extra coordinator on {machine}", {
+                          machine: row.name,
+                        })}
+                        onClick={() => {
+                          // Its own action: it never picks the row beside it.
+                          pendingView.current = () => onFix(row.key);
+                        }}
+                      >
+                        {tx("Fix…")}
+                      </MenuItem>
                     ) : null}
-                    <MenuRadioItemIndicator className="ms-auto ps-4" />
-                  </span>
-                </MenuRadioItem>
+                    {row.state.action === "connect" && onAllowWorkers ? (
+                      <MenuItem
+                        className="shrink-0 rounded-md border border-border px-2 text-xs"
+                        data-orchestrator-connect={row.key}
+                        aria-label={tx("Connect {machine}", { machine: row.name })}
+                        onClick={onAllowWorkers}
+                      >
+                        {tx("Connect…")}
+                      </MenuItem>
+                    ) : null}
+                  </div>
+                </div>
               ))}
             </MenuRadioGroup>
           </MenuInfoGroup>
         ) : null}
         {projectActions ? (
-          <>
-            {viewable ? <MenuSeparator /> : null}
-            <MenuGroup>
-              <MenuGroupLabel>{tx("This project")}</MenuGroupLabel>
-              {onCopy ? (
-                <MenuItem
-                  data-machine-action="send"
-                  onClick={() => {
-                    pendingView.current = onCopy;
-                  }}
-                >
-                  <CopyPlusIcon aria-hidden />
-                  {tx("Send to another machine…")}
-                </MenuItem>
-              ) : null}
-              {linkActions.map((link) => (
-                <MenuItem
-                  key={link.key}
-                  data-orchestrator-link={link.key}
-                  title={tx(
-                    "Makes the project on {machine} part of this one. Main does not change, and threads and files stay where they are. You confirm what {machine} gives up first.",
-                    { machine: link.machine },
-                  )}
-                  onClick={() => {
-                    pendingView.current = () => onLink?.(link.key);
-                  }}
-                >
-                  <Link2Icon aria-hidden />
-                  {tx("Link {machine} to this project…", { machine: link.machine })}
-                </MenuItem>
-              ))}
-              {mainActions.map(({ copy, offer }) => (
-                <MenuItem
-                  key={copy.key}
-                  data-orchestrator-make-main={copy.key}
-                  disabled={offer.kind === "blocked"}
-                  title={
-                    offer.reason
-                      ? tx(offer.reason.text, offer.reason.values)
-                      : offer.kind === "takeover"
-                        ? tx(
-                            "{main} is unreachable: {machine} takes over and starts from the shared goal, memory and plan. You confirm first.",
-                            { machine: nameOf(copy), main: offer.main },
-                          )
-                        : tx(
-                            "Moves the coordinator and its conversation from {main} to {machine}. {main} becomes a copy. You confirm first.",
-                            { machine: nameOf(copy), main: offer.main },
-                          )
-                  }
-                  onClick={() => {
-                    // After the menu has left: the switch may show main's page or open a dialog.
-                    if (offer.kind !== "blocked")
-                      pendingView.current = () => onMakeMain?.(copy.key);
-                  }}
-                >
-                  <ArrowRightLeftIcon aria-hidden />
-                  {tx("Make {machine} main", { machine: nameOf(copy) })}
-                  {offer.note ? (
-                    <span className="ms-auto ps-4 text-muted-foreground text-xs">
-                      {tx(offer.note.text, offer.note.values)}
-                    </span>
-                  ) : null}
-                </MenuItem>
-              ))}
-            </MenuGroup>
-          </>
+          <MenuGroup>
+            {onCopy ? (
+              <MenuItem
+                data-machine-action="send"
+                onClick={() => {
+                  pendingView.current = onCopy;
+                }}
+              >
+                <CopyPlusIcon aria-hidden />
+                {tx("Send to another machine…")}
+              </MenuItem>
+            ) : null}
+            {linkActions.map((link) => (
+              <MenuItem
+                key={link.key}
+                data-orchestrator-link={link.key}
+                title={tx(
+                  "Makes the project on {machine} part of this one. The coordinator stays where it is, and threads and files stay where they are. You confirm what {machine} gives up first.",
+                  { machine: link.machine },
+                )}
+                onClick={() => {
+                  pendingView.current = () => onLink?.(link.key);
+                }}
+              >
+                <Link2Icon aria-hidden />
+                {tx("Link {machine} to this project…", { machine: link.machine })}
+              </MenuItem>
+            ))}
+          </MenuGroup>
         ) : null}
         {viewable || projectActions ? <MenuSeparator /> : null}
         <MenuGroup>
-          <MenuGroupLabel>{tx("On {machine}", { machine: label })}</MenuGroupLabel>
+          <MenuGroupLabel>{tx("Work on {machine}", { machine: label })}</MenuGroupLabel>
+          {continueOffer ? (
+            <MenuItem
+              data-orchestrator-continue={continueOffer.key}
+              disabled={continueOffer.kind === "blocked"}
+              title={
+                continueOffer.reason
+                  ? tx(continueOffer.reason.text, continueOffer.reason.values)
+                  : continueOffer.kind === "takeover"
+                    ? tx(
+                        "{main} is offline: the coordinator starts on {machine} from the shared goal, memory and plan. You confirm first.",
+                        { machine: continueOffer.machine, main: continueOffer.main },
+                      )
+                    : tx(
+                        "Syncs {machine}, then moves the coordinator conversation here from {main}. You confirm first.",
+                        { machine: continueOffer.machine, main: continueOffer.main },
+                      )
+              }
+              onClick={() => {
+                // After the menu has left: it may show the coordinator's page or open a dialog.
+                if (continueOffer.kind !== "blocked")
+                  pendingView.current = () => onMakeMain?.(continueOffer.key);
+              }}
+            >
+              <ArrowRightLeftIcon aria-hidden />
+              {tx("Continue the coordinator here")}
+              {continueOffer.note ? (
+                <span className="ms-auto ps-4 text-muted-foreground text-xs">
+                  {tx(continueOffer.note.text, continueOffer.note.values)}
+                </span>
+              ) : null}
+            </MenuItem>
+          ) : null}
           <MenuItem
             disabled={!onMigrate}
             data-orchestrator-migrate=""
@@ -474,10 +545,10 @@ export function OrchestratorSwitcher({
 }
 
 /**
- * The project that keeps main when another is linked to it: the viewed copy, or main when it is
- * elsewhere. Linking never changes main, so the dialog opens on that copy and it stays main.
- * Null while a linked project's main is not loaded here: a copy that takes work from main must
- * never be the side that keeps it, so nothing is offered.
+ * The project that keeps the coordinator when another is linked to it: the one shown, or the
+ * coordinator's when it is elsewhere. Linking never moves the coordinator, so the dialog opens
+ * on that project. Null while a linked project's coordinator is not loaded here: a machine
+ * that follows a coordinator must never be the side that keeps it, so nothing is offered.
  */
 export function linkKeeper(
   project: EnvironmentProject,
@@ -491,13 +562,14 @@ export function linkKeeper(
 }
 
 /**
- * The switcher on a project page, with its actions wired: viewing changes only
- * what this page shows, "Make X main" runs the page's confirmed switch, linking
- * opens its confirmation. A machine that is not connected shows a red dot; the
+ * The switcher on a project page, with its actions wired: picking a machine changes only
+ * what this page shows, "Continue the coordinator here" runs the page's confirmed switch,
+ * linking opens its confirmation. A machine that is not connected shows a red dot; the
  * status line above the message box says what that means.
  */
 export function ProjectOrchestratorSwitcher({
   project,
+  projectTitle,
   label,
   connected,
   isThisDevice,
@@ -510,23 +582,14 @@ export function ProjectOrchestratorSwitcher({
   mainOffers = [],
   onMakeMain = null,
   onCopy = null,
-  runsOn = null,
+  onOpenSettings = null,
 }: {
   project: EnvironmentProject;
+  projectTitle: string;
   label: string;
   connected: boolean;
   isThisDevice: boolean;
   disconnectedLabel: string;
-  /**
-   * Where this page's coordinator runs when that is not the viewed copy's machine: main's,
-   * for a copy whose main is elsewhere (`composerMachines`). The chip names it, as Send does.
-   */
-  runsOn?: {
-    readonly environmentId: EnvironmentId;
-    readonly label: string;
-    readonly connected: boolean;
-    readonly disconnectedLabel: string;
-  } | null;
   current: string;
   copies: readonly OrchestratorCopy[];
   unknown: ReadonlyArray<{ key: string; machine: string }>;
@@ -535,16 +598,29 @@ export function ProjectOrchestratorSwitcher({
   mainOffers?: readonly MainOffer[];
   onMakeMain?: ((key: string) => void) | null;
   onCopy?: (() => void) | null;
+  /** Opens this project's settings on its machines, for a machine "Fix…" cannot unlink. */
+  onOpenSettings?: (() => void) | null;
 }) {
   const navigate = useNavigate();
   // A nickname shows as typed; only a host label drops its owner.
   const name = useMachineNickname(project.environmentId, label);
   const identity = useMachineIdentity(project.environmentId, label);
-  // Where the coordinator runs, when that is another machine (`runsOn`): the chip's face.
-  const mainId = runsOn?.environmentId ?? project.environmentId;
-  const mainName = useMachineNickname(mainId, runsOn?.label ?? label);
-  const mainIdentity = useMachineIdentity(mainId, runsOn?.label ?? label);
+  // What this window can show of each listed machine: an offline one opens what was last
+  // saved, and one that refuses this window is greyed.
+  const { environments } = useEnvironments();
+  useMachineLastSeenVersion();
+  const [now] = useState(Date.now);
+  const reachOf = (key: string): MachineRowReach => {
+    const environmentId = checkoutKeyEnvironmentId(key);
+    // A listed machine this window holds no connection record for is shown as it was:
+    // only machines the project names and this window never opened are greyed.
+    const known = environments.find((item) => item.environmentId === environmentId);
+    const reach = known ? machineReach(known.connection) : "open";
+    const seen = reach === "offline" ? machineLastSeenAt(environmentId) : null;
+    return { reach, lastSeen: seen === null ? null : formatAgo(seen, now) };
+  };
   const [linkTarget, setLinkTarget] = useState<ProjectLinkTarget | null>(null);
+  const [fixKey, setFixKey] = useState<string | null>(null);
   const projects = useProjects();
   const nickname = useMachineNicknames();
   // Linking needs what copying needs: a project this person can operate, not a private one.
@@ -554,6 +630,17 @@ export function ProjectOrchestratorSwitcher({
     [onCopy, projects, project],
   );
   const linkProject = linkKeeper(project, projects, copies);
+  // "Fix…": the machines of this project, the one with the extra coordinator, and the one
+  // that holds the project's coordinator.
+  const identityId = project.workspaceSettings?.logicalProject?.id;
+  const shared =
+    identityId === undefined
+      ? []
+      : projects.filter((item) => item.workspaceSettings?.logicalProject?.id === identityId);
+  const keyOf = (item: EnvironmentProject) => `${item.environmentId}:${item.id}`;
+  const fixMember = shared.find((item) => keyOf(item) === fixKey);
+  const mainKey = copies.find((copy) => copy.main)?.key;
+  const fixCoordinator = shared.find((item) => keyOf(item) === mainKey);
   const linkOffers = linkProject === null ? [] : offers;
   return (
     <>
@@ -561,20 +648,11 @@ export function ProjectOrchestratorSwitcher({
         identity={identity}
         label={name}
         hostLabel={label}
+        projectTitle={projectTitle}
+        reachOf={reachOf}
         connected={connected}
         // The line above the message box says the rest once; the chip names the state.
         statusDetail={disconnectedLabel}
-        runsOn={
-          runsOn
-            ? {
-                label: mainName,
-                hostLabel: runsOn.label,
-                connected: runsOn.connected,
-                statusDetail: runsOn.disconnectedLabel,
-                identity: mainIdentity,
-              }
-            : null
-        }
         current={current}
         copies={copies}
         unknown={unknown}
@@ -582,6 +660,7 @@ export function ProjectOrchestratorSwitcher({
         onView={onView}
         mainOffers={mainOffers}
         onMakeMain={onMakeMain}
+        onFix={setFixKey}
         onCopy={onCopy}
         links={linkOffers.map((offer) => ({
           key: `${offer.environmentId}:${offer.id}`,
@@ -612,61 +691,21 @@ export function ProjectOrchestratorSwitcher({
           }}
           project={linkProject}
           initialCandidate={linkTarget}
-          // "Link X to this project…": X joins, this project keeps main, and the dialog
-          // opens on what X gives up.
+          // "Link X to this project…": X joins, the coordinator stays where it is, and the
+          // dialog opens on what X gives up.
           joining
         />
       )}
+      {fixMember && fixCoordinator ? (
+        <ExtraCoordinatorFix
+          member={fixMember}
+          coordinator={fixCoordinator}
+          shared={shared}
+          projectTitle={projectTitle}
+          onOpenSettings={onOpenSettings}
+          onClose={() => setFixKey(null)}
+        />
+      ) : null}
     </>
   );
-}
-
-// Projects with a coordinator start in flight. Shared by every caller (the
-// switcher and the composer notice) so two buttons never start two at once.
-const startingProjects = new Set<string>();
-
-/**
- * Runs again the coordinator a linked workers-only copy kept from before, next to
- * the one that runs now; each keeps the threads it started. One start per project
- * runs at a time. Resolves true when that coordinator runs. Kept for the
- * Settings revival path (1372 D-07); the copy's message box no longer offers it.
- */
-export function useStartCoordinator(
-  members: readonly EnvironmentProject[],
-  copies: readonly OrchestratorCopy[],
-) {
-  const startCoordinator = useAtomCommand(projectLink.startCoordinator, { reportFailure: false });
-  return async (key: string): Promise<boolean> => {
-    const member = members.find((item) => `${item.environmentId}:${item.id}` === key);
-    const copy = copies.find((item) => item.key === key);
-    const project = member?.workspaceSettings?.logicalProject?.id ?? key;
-    if (!member || !copy || startingProjects.has(project)) return false;
-    startingProjects.add(project);
-    try {
-      const result = await startCoordinator({
-        environmentId: member.environmentId,
-        input: {
-          operationId: randomUUID(),
-          projectId: member.id,
-          knownEpoch: highestEpoch(members),
-        },
-      });
-      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      toastManager.add({
-        type: "success",
-        title: `${copy.machine}'s coordinator runs again`,
-        description: "Each coordinator keeps the threads it started. Nothing moved.",
-      });
-      return true;
-    } catch (cause) {
-      toastManager.add({
-        type: "error",
-        title: `${copy.machine} did not start a coordinator`,
-        description: cause instanceof Error && cause.message ? cause.message : "Retry it.",
-      });
-      return false;
-    } finally {
-      startingProjects.delete(project);
-    }
-  };
 }

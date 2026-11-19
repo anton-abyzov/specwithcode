@@ -75,10 +75,11 @@ function GitFixture() {
 }
 /**
  * `?holding=copy|main|several|several-main|none`: what the chosen machine already holds, as
- * Copy to another machine… reads it. Main is on m4 (this machine) unless m5 holds it.
- * `?unlinked=1`: opened from m1, whose copy is not linked to the project m5's copy belongs
- * to (Main: m4). `?makemain=1|blocked`: the done screen offers the page's Make main switch.
- * `?move=1`, or a `fixture-move` event: a move asked for with "Make X main".
+ * Copy to another machine… reads it. The coordinator is on m4 (this machine) unless m5 holds it.
+ * `?unlinked=1`: opened from m1, while m5 has this repository as a separate project
+ * (coordinator on m4). `?makemain=1|blocked`: the done screen offers the page's
+ * "Continue the coordinator on {machine}" switch.
+ * `?move=1`, or a `fixture-move` event: a move asked for with "Continue the coordinator here".
  */
 // `?method=clone`: the method the real dialog opens on, so Details starts closed.
 const METHOD = params.get("method") === "clone" ? ("clone" as const) : ("copy" as const);
@@ -118,7 +119,7 @@ function Fixture() {
   const [intent, setIntent] = useState<"move" | "copy">(moveAsked ? "move" : "copy");
   const [doneOn, setDoneOn] = useState<string | null>(null);
   const [doneAt, setDoneAt] = useState<string | null>(null);
-  // As "Make X main" does when the move needs the copy flow: a fresh flow, set to move.
+  // As "Continue the coordinator here" does when the move needs the copy flow: a fresh flow, set to move.
   const askMove = () => {
     setMoveAsked(true);
     setIntent("move");
@@ -173,11 +174,12 @@ function Fixture() {
                   machine: doneOn,
                   main: SOURCE,
                   kind: MAKE_MAIN === "blocked" ? "blocked" : "move",
+                  block: MAKE_MAIN === "blocked" ? "unloaded" : null,
                   reason:
                     MAKE_MAIN === "blocked"
                       ? {
-                          text: "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.",
-                          values: { machine: doneOn, main: SOURCE },
+                          text: "Connect {main} first. This window has not opened {project} on {main}, so it cannot hand the coordinator off yet.",
+                          values: { machine: doneOn, main: SOURCE, project: "SpecWeave" },
                         }
                       : null,
                   note: null,
@@ -208,7 +210,7 @@ function Fixture() {
             method={METHOD}
             machines={MACHINES}
             preferredMachine={(params.has("short") ? "m5" : "linux") as never}
-            // A move names its machine, as "Make X main" does.
+            // A move names its machine, as "Continue the coordinator here" does.
             machineRequested={moveAsked}
             savedFolder={() =>
               holding.kind === "main" || holding.kind === "copy"

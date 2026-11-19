@@ -54,6 +54,16 @@ const shot = async (page, name) => {
   await page.screenshot({ path: file });
   receipt.screenshots.push(file);
 };
+// True when the top element at the centre of the first match is that element or inside it.
+const uncovered = (page, selector) =>
+  page
+    .locator(selector)
+    .first()
+    .evaluate((node) => {
+      const box = node.getBoundingClientRect();
+      const top = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+      return top !== null && (top === node || node.contains(top));
+    });
 const log = (page) => page.locator("[data-fixture-log]").getAttribute("data-fixture-log");
 try {
   for (const theme of ["light", "dark"]) {
@@ -78,6 +88,8 @@ try {
       // The code box has focus as soon as the pop-up opens.
       await page.keyboard.type("k7q-x2m");
       assert.equal(await allow.isDisabled(), false);
+      // Typed in lowercase, shown in capitals like the code on the device (1416).
+      assert.equal(await prompt.getByRole("textbox").inputValue(), "K7Q-X2M");
       await shot(page, `popup-${theme}.png`);
       await allow.click();
       await page.waitForFunction(() =>
@@ -86,7 +98,7 @@ try {
           ?.getAttribute("data-fixture-log")
           ?.includes("approve"),
       );
-      assert.equal(await log(page), "approve k7q-x2m");
+      assert.equal(await log(page), "approve K7Q-X2M");
       assert.deepEqual(errors, []);
       receipt.checks.push({ theme, scene: "popup", ok: true });
       await page.close();
@@ -233,6 +245,182 @@ try {
       assert.equal(await log(page), "deny request-iphone|remove jkt:macbook");
       assert.deepEqual(errors, []);
       receipt.checks.push({ theme, scene: "device-list", ok: true });
+      await page.close();
+    }
+    // 4. The joining Mac's setup dialog (1416): the waiting row shows its code, the machine and this device's ID.
+    for (const size of [
+      [1280, 800],
+      [390, 844],
+    ]) {
+      const { page, errors } = await open("scene=join-dialog", theme, size);
+      const row = page.locator('[data-fixture-row="m4"]');
+      await row.waitFor();
+      assert.equal(await page.getByRole("dialog").count(), 1);
+      assert.match(await row.textContent(), /Waiting for approval/);
+      assert.doesNotMatch(await row.textContent(), /Reconnecting/);
+      const inline = row.locator("[data-inline-device-approval]");
+      assert.equal(
+        await inline.locator("[data-device-waiting-line]").textContent(),
+        "Open SpecWithCode on Work Mac and type this code:",
+      );
+      assert.equal(await inline.locator("[data-device-waiting-code]").textContent(), "K7QX2M");
+      assert.match(await inline.locator("[data-own-device-id]").textContent(), /ID is R2DK/);
+      assert.equal(await inline.getByRole("button", { name: "Copy" }).count(), 1);
+      assert.ok(
+        await uncovered(page, '[data-fixture-row="m4"] [data-device-waiting-code]'),
+        "the row's code is not covered",
+      );
+      await shot(page, `join-dialog-${theme}-${size[0]}.png`);
+      assert.deepEqual(errors, []);
+      receipt.checks.push({ theme, scene: "join-dialog", width: size[0], ok: true });
+      await page.close();
+    }
+    // 5. Another machine's floating card stays above the open dialog and its backdrop (1416).
+    {
+      const { page, errors } = await open("scene=join-dialog&floating=1", theme, [1280, 800]);
+      const card = page.locator("[data-fixture-floating] section[data-device-waiting]");
+      await card.waitFor();
+      await page.getByRole("dialog").waitFor();
+      assert.equal(await card.locator("[data-device-waiting-code]").textContent(), "D8HJ3N");
+      assert.ok(
+        await uncovered(page, "[data-fixture-floating] [data-device-waiting-code]"),
+        "the floating code is above the dialog",
+      );
+      assert.ok(
+        await uncovered(page, "[data-fixture-floating] button"),
+        "the floating Copy button can be pressed",
+      );
+      assert.ok(
+        await uncovered(page, '[data-fixture-row="m4"] [data-device-waiting-code]'),
+        "the row's code is still readable",
+      );
+      await shot(page, `join-dialog-floating-${theme}.png`);
+      assert.deepEqual(errors, []);
+      receipt.checks.push({ theme, scene: "join-dialog-floating", ok: true });
+      await page.close();
+    }
+    // 6. First run's collapsed Connect panel keeps the row mounted: the floating card stays up
+    // until the row's code is on screen, then leaves, and comes back when it is collapsed (1416).
+    {
+      const { page, errors } = await open("scene=first-run-collapsed", theme, [1280, 800]);
+      const shown = () =>
+        page.locator("[data-fixture-inline-shown]").getAttribute("data-fixture-inline-shown");
+      await page.locator("[data-fixture-toggle]").waitFor();
+      await page.waitForFunction(
+        () =>
+          document
+            .querySelector("[data-fixture-inline-shown]")
+            ?.getAttribute("data-fixture-inline-shown") === "false",
+      );
+      assert.ok(
+        await uncovered(page, "[data-fixture-floating] [data-device-waiting-code]"),
+        "collapsed: the floating card shows the code",
+      );
+      await shot(page, `first-run-collapsed-${theme}.png`);
+      await page.locator("[data-fixture-toggle]").click();
+      await page.waitForFunction(
+        () =>
+          document
+            .querySelector("[data-fixture-inline-shown]")
+            ?.getAttribute("data-fixture-inline-shown") === "true",
+      );
+      assert.equal(await page.locator("[data-fixture-floating]").count(), 0);
+      assert.ok(
+        await uncovered(page, "[data-inline-device-approval] [data-device-waiting-code]"),
+        "expanded: the row's code is on screen",
+      );
+      await shot(page, `first-run-expanded-${theme}.png`);
+      await page.locator("[data-fixture-toggle]").click();
+      await page.waitForFunction(
+        () =>
+          document
+            .querySelector("[data-fixture-inline-shown]")
+            ?.getAttribute("data-fixture-inline-shown") === "false",
+      );
+      assert.equal(await shown(), "false");
+      assert.ok(
+        await uncovered(page, "[data-fixture-floating] [data-device-waiting-code]"),
+        "collapsed again: the floating card is back",
+      );
+      assert.deepEqual(errors, []);
+      receipt.checks.push({ theme, scene: "first-run-collapsed", ok: true });
+      await page.close();
+    }
+    // 1c. Escape and the close button put the pop-up off like Later, so a restart remembers it (1416).
+    for (const how of ["Escape", "close"]) {
+      const { page, errors } = await open("scene=prompt", theme, [1280, 800]);
+      await page.locator("[data-device-approval-prompt]").waitFor();
+      if (how === "Escape") await page.keyboard.press("Escape");
+      else await page.getByRole("button", { name: "Close" }).click();
+      await page.waitForFunction(() =>
+        document
+          .querySelector("[data-fixture-log]")
+          ?.getAttribute("data-fixture-log")
+          ?.includes("later"),
+      );
+      assert.equal(await log(page), "later");
+      assert.deepEqual(errors, []);
+      receipt.checks.push({ theme, scene: `popup-${how.toLowerCase()}-is-later`, ok: true });
+      await page.close();
+    }
+    // 7. A row's code on a page, then a dialog opened over it: the code is covered, so the
+    // floating card comes up above the dialog, and leaves once the dialog closes (1416).
+    {
+      const { page, errors } = await open("scene=page-row-under-dialog", theme, [1280, 800]);
+      const shownIs = (value) =>
+        page.waitForFunction(
+          (expected) =>
+            document
+              .querySelector("[data-fixture-inline-shown]")
+              ?.getAttribute("data-fixture-inline-shown") === expected,
+          value,
+        );
+      await page.locator("[data-fixture-open]").waitFor();
+      await shownIs("true");
+      assert.equal(await page.locator("[data-fixture-floating]").count(), 0);
+      assert.ok(
+        await uncovered(page, "[data-inline-device-approval] [data-device-waiting-code]"),
+        "no dialog: the row's code is readable",
+      );
+      await page.locator("[data-fixture-open]").click();
+      await page.getByRole("dialog").waitFor();
+      await shownIs("false");
+      await page.locator("[data-fixture-floating] [data-device-waiting-code]").waitFor();
+      assert.equal(
+        await uncovered(page, "[data-inline-device-approval] [data-device-waiting-code]"),
+        false,
+        "the dialog covers the row's code",
+      );
+      assert.ok(
+        await uncovered(page, "[data-fixture-floating] [data-device-waiting-code]"),
+        "dialog open: the floating card's code is above it",
+      );
+      await shot(page, `page-row-under-dialog-${theme}.png`);
+      await page.keyboard.press("Escape");
+      await page.getByRole("dialog").waitFor({ state: "detached" });
+      await shownIs("true");
+      assert.equal(await page.locator("[data-fixture-floating]").count(), 0);
+      assert.deepEqual(errors, []);
+      receipt.checks.push({ theme, scene: "page-row-under-dialog", ok: true });
+      await page.close();
+    }
+    // The same card in the dialog's own layer, as before 1416, is covered: the check sees the bug.
+    {
+      const { page } = await open("scene=join-dialog&floating=1&layer=old", theme, [1280, 800]);
+      await page.locator("[data-fixture-floating] [data-device-waiting-code]").waitFor();
+      await page.getByRole("dialog").waitFor();
+      assert.equal(
+        await uncovered(page, "[data-fixture-floating] [data-device-waiting-code]"),
+        false,
+        "the old layer is covered by the dialog's backdrop",
+      );
+      await shot(page, `join-dialog-floating-old-layer-${theme}.png`);
+      receipt.checks.push({
+        theme,
+        scene: "join-dialog-floating-old-layer",
+        covered: true,
+        ok: true,
+      });
       await page.close();
     }
   }

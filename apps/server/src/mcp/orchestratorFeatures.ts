@@ -13,6 +13,8 @@ export const orchestratorFeatures = (limits: {
   scheduledTasks: true,
   // studio_project_create takes machine, parentPath and github.
   projectCreateOptions: true,
+  // studio_project_create takes specweave and says how SpecWeave setup went (1396).
+  projectCreateSpecweave: true,
   maxBatchThreads: 20,
   maxLiveChildTasks: limits.maxLiveChildTasks,
   maxDelegationDepth: limits.maxDepth,

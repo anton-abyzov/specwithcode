@@ -169,6 +169,7 @@ const layerSkillsActionsRpcHandlers = WsProjectSkillsActionsRpcGroup.middleware(
         stateDir: config.stateDir,
         skills,
         registry,
+        machineName: environment.getDescriptor.pipe(Effect.map((descriptor) => descriptor.label)),
       }).pipe(
         Effect.provide(ProcessRunner.layer),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -254,6 +255,7 @@ const layerSkillsActionsRpcHandlers = WsProjectSkillsActionsRpcGroup.middleware(
           ),
         coordinatorEnvironmentId: environment.getEnvironmentId,
         runInstalls: runFleetSkillInstalls,
+        verifyGithubSource: management.verifyGithubSource,
         registryVersions: actions.registryVersions,
         lockedVersions: (projectId: SkillTarget["projectId"]) =>
           skills.read({ projectId }).pipe(
@@ -280,9 +282,11 @@ const layerSkillsActionsRpcHandlers = WsProjectSkillsActionsRpcGroup.middleware(
         [WS_METHODS.projectsSkillsVersions]: actions.versions,
         [WS_METHODS.projectsSkillsAction]: actions.action,
         [WS_METHODS.projectsSkillsFleetPush]: (input: ProjectSkillsFleetPushInput) =>
-          pushSkillToFleet(fleet, input),
+          pushSkillToFleet(fleet, input).pipe(
+            Effect.tap((result) => management.afterPush(input, result).pipe(Effect.forkDetach)),
+          ),
         [WS_METHODS.projectsSkillsStudioLink]: studio.link,
-        ...management,
+        ...management.handlers,
       };
     }),
   )

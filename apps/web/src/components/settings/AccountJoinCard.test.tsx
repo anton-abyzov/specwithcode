@@ -776,6 +776,7 @@ describe("the join card on its own", () => {
       authPrompt: null,
       openAuthPrompt,
       openSetupAuthPrompt: vi.fn(),
+      openRenewAuthPrompt: vi.fn(),
     });
     const signedOut = await mount(<AccountJoinCard environmentId={here} />);
     // A pending Clerk session is not "signed out": the card must not ask to sign in again.

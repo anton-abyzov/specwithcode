@@ -52,7 +52,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import {
   evidencedRoots,
-  isSpecweaveProject,
+  specweaveState as readSpecweaveState,
   linkedIncrementRoot,
   queryProjectIncrements,
   readThreadIncrementProgress,
@@ -900,8 +900,14 @@ export const make = Effect.gen(function* () {
       }
       const threadsRead =
         sources.length === 0 ? [] : yield* readProgress(project.workspaceRoot, sources);
-      const specweave = yield* Effect.promise(() => isSpecweaveProject(project.workspaceRoot));
-      if (!specweave) return { projectId: input.projectId, threads: threadsRead, specweave };
+      const specweaveState = yield* Effect.promise(() =>
+        readSpecweaveState(project.workspaceRoot, {
+          personal: project.workspaceSettings?.kind === "personal",
+        }),
+      );
+      const specweave = specweaveState === "on";
+      if (!specweave)
+        return { projectId: input.projectId, threads: threadsRead, specweave, specweaveState };
       const bound = new Set<string>(threadsRead.map((entry) => entry.threadId));
       const { unplanned, documentation } = yield* unplannedOf(
         new Map(
@@ -920,6 +926,7 @@ export const make = Effect.gen(function* () {
         projectId: input.projectId,
         threads: threadsRead,
         specweave,
+        specweaveState,
         unplanned,
         ...(documentation.length === 0 ? {} : { documentation }),
       };
