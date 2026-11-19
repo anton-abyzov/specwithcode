@@ -20,8 +20,8 @@ beforeAll(() => {
 });
 afterAll(() => NodeFS.rmSync(base, { recursive: true, force: true }));
 
-/** A commit whose tree holds `dir/<name>/file`, with `name` given as raw bytes. */
-function commitWith(repo: string, name: Buffer): string {
+/** A commit whose tree holds `<top>/<name>/file`, with `name` given as raw bytes. */
+function commitWith(repo: string, name: Buffer, top = "dir"): string {
   const run = (args: Array<string>, input?: Buffer) =>
     NodeChildProcess.execFileSync("git", ["-C", repo, ...args], { input })
       .toString()
@@ -32,14 +32,14 @@ function commitWith(repo: string, name: Buffer): string {
     ["mktree"],
     Buffer.concat([Buffer.from(`040000 tree ${inner}\t`), name, Buffer.from("\n")]),
   );
-  const top = run(["mktree"], Buffer.from(`040000 tree ${named}\tdir\n`));
+  const tree = run(["mktree"], Buffer.from(`040000 tree ${named}\t${top}\n`));
   return run([
     "-c",
     "user.name=T",
     "-c",
     "user.email=t@example.invalid",
     "commit-tree",
-    top,
+    tree,
     "-m",
     "c",
   ]);
@@ -60,5 +60,13 @@ describe("gitTouchedPaths", () => {
     git(repo, "init", "-q");
     const commit = commitWith(repo, Buffer.from([0x61, 0xff, 0x62]));
     expect(await gitTouchedPaths(repo, null, commit)).toBeNull();
+  });
+
+  it("keeps a byte order mark that starts the first path: it is part of the name", async () => {
+    const repo = NodePath.join(base, "bom");
+    NodeFS.mkdirSync(repo);
+    git(repo, "init", "-q");
+    const commit = commitWith(repo, Buffer.from("inner"), "\uFEFFdir");
+    expect(await gitTouchedPaths(repo, null, commit)).toEqual(["\uFEFFdir/inner/file"]);
   });
 });

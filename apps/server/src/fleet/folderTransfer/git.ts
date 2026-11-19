@@ -31,7 +31,8 @@ export interface GitResult {
   readonly invalidUtf8?: true;
 }
 
-const strictUtf8 = new TextDecoder("utf-8", { fatal: true });
+// A byte order mark that starts the output is the first name's own first character: kept.
+const strictUtf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 /** The text of Git's output, and whether any of it was not UTF-8. */
 const decoded = (bytes: Buffer): { readonly text: string; readonly invalid: boolean } => {
   try {
