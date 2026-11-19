@@ -252,6 +252,13 @@ export class OwnedProcessTree {
   private readonly remembered = new Map<number, Known>();
   /** POSIX tools seen outside the CLI's group, kept until an end confirms them gone. */
   private readonly escapees = new Map<number, ProcessEntry>();
+  /** POSIX members of the CLI's group seen by an earlier end, by pid and start. */
+  private readonly groupSeen = new Map<number, string>();
+  /** The CLI's group was seen empty: its id may now belong to another job. */
+  private groupRetired = false;
+  private endedOnce = false;
+  /** A reading meant to catch what the CLI started failed, so an empty tree proves nothing. */
+  private unconfirmed = false;
   private ending: Promise<TreeEndResult> | null = null;
   readonly root: OwnedRoot;
   private readonly host: TreeHost;
@@ -261,13 +268,21 @@ export class OwnedProcessTree {
     this.host = host;
   }
 
-  async remember(timeoutMs = STEP_TIMEOUT_MS): Promise<void> {
-    if (this.host.platform !== "win32" || this.root.pid <= 1) return;
+  /**
+   * Reads the tree while the CLI runs; false when the reading failed. With `required`
+   * (the reading right before Stop closes the CLI) a failure marks the tree unconfirmed:
+   * a tool started since the last reading cannot be found once its parent is gone.
+   */
+  async remember(timeoutMs = STEP_TIMEOUT_MS, required = false): Promise<boolean> {
+    if (this.host.platform !== "win32" || this.root.pid <= 1) return true;
     const table = await this.host.readProcessList(timeoutMs).catch(() => undefined);
-    if (table === undefined) return;
-    for (const known of windowsTree(table, this.root, this.host.selfPid, this.remembered)) {
-      this.remembered.set(known.entry.pid, known);
-    }
+    const known =
+      table === undefined ? [] : windowsTree(table, this.root, this.host.selfPid, this.remembered);
+    for (const entry of known) this.remembered.set(entry.entry.pid, entry);
+    // A live CLI missing from the reading means it did not capture the CLI either.
+    const ok = table !== undefined && (!this.root.alive() || this.remembered.has(this.root.pid));
+    if (!ok && required) this.unconfirmed = true;
+    return ok;
   }
 
   end(deadlineMs = 8_000): Promise<TreeEndResult> {
@@ -294,7 +309,8 @@ export class OwnedProcessTree {
 
   /** What is left of the deadline for one step, never more than a step may take. */
   private budget(deadline: number): number {
-    return Math.max(0, Math.min(STEP_TIMEOUT_MS, deadline - this.host.now()));
+    // Whole milliseconds: subprocess timeouts refuse fractions.
+    return Math.max(0, Math.floor(Math.min(STEP_TIMEOUT_MS, deadline - this.host.now())));
   }
 
   private read(deadline: number) {
@@ -326,6 +342,32 @@ export class OwnedProcessTree {
     const table = await this.read(deadline);
     // Without a table the group is still signalled, but tools that left it cannot be found.
     let unknown = table === undefined;
+    const members = table?.filter(
+      (entry) => entry.pgid === this.root.pid && entry.pid !== host.selfPid,
+    );
+    // A later try with the CLI gone: its group id is free for reuse once the group empties,
+    // so the group is acted on only while a member an earlier end saw is still in it.
+    let groupUsable = !this.groupRetired;
+    if (groupUsable && this.endedOnce && !this.root.alive()) {
+      if (members === undefined) {
+        groupUsable = false;
+        unknown = true;
+      } else if (!members.some((entry) => this.groupSeen.get(entry.pid) === entry.started)) {
+        this.groupRetired = true;
+        groupUsable = false;
+      }
+    }
+    this.endedOnce = true;
+    if (members !== undefined && groupUsable) {
+      if (members.length === 0) this.groupRetired = true;
+      for (const entry of members) this.groupSeen.set(entry.pid, entry.started);
+    }
+    const groupAlive = () => {
+      if (!groupUsable || this.groupRetired) return false;
+      if (this.groupAlive()) return true;
+      this.groupRetired = true;
+      return false;
+    };
     if (table !== undefined) {
       // Tools that left the group are kept across ends, so a retry still knows them.
       for (const entry of posixEscapees(table, this.root, host.selfPid)) {
@@ -334,13 +376,13 @@ export class OwnedProcessTree {
     }
     let escapees = [...this.escapees.values()];
     if (table !== undefined) escapees = stillRunning(escapees, table);
-    const groupMembers =
-      table === undefined
-        ? this.groupAlive()
+    const groupMembers = !groupUsable
+      ? 0
+      : members === undefined
+        ? groupAlive()
           ? 1
           : 0
-        : table.filter((entry) => entry.pgid === this.root.pid && entry.pid !== host.selfPid)
-            .length;
+        : members.length;
     const found = groupMembers + escapees.length;
     const settle = (survivors: number): TreeEndResult => {
       if (!unknown) {
@@ -369,7 +411,7 @@ export class OwnedProcessTree {
     };
     const settled = async (until: number) => {
       while (host.now() < until) {
-        if (!this.groupAlive()) {
+        if (!groupAlive()) {
           if (escapees.length === 0) return true;
           const now = await this.read(Math.min(until, deadline));
           if (now !== undefined) escapees = stillRunning(escapees, now);
@@ -379,14 +421,14 @@ export class OwnedProcessTree {
       }
       return false;
     };
-    if (this.groupAlive()) this.signalGroup("SIGTERM");
+    if (groupAlive()) this.signalGroup("SIGTERM");
     await signalEscapees("SIGTERM");
     const grace = host.now() + Math.max(0, (deadline - host.now()) / 2);
     if (await settled(grace)) return settle(0);
-    if (this.groupAlive()) this.signalGroup("SIGKILL");
+    if (groupAlive()) this.signalGroup("SIGKILL");
     await signalEscapees("SIGKILL");
     if (await settled(deadline)) return settle(0);
-    return settle((this.groupAlive() ? 1 : 0) + escapees.length);
+    return settle((groupAlive() ? 1 : 0) + escapees.length);
   }
 
   private async endWindows(deadline: number): Promise<TreeEndResult> {
@@ -405,7 +447,8 @@ export class OwnedProcessTree {
       left = windowsTree(table, this.root, host.selfPid, this.remembered);
       for (const known of left) this.remembered.set(known.entry.pid, known);
       if (found === -1) found = left.length;
-      if (left.length === 0) return { found, survivors: 0, unknown: !rootKnown() };
+      if (left.length === 0)
+        return { found, survivors: 0, unknown: !rootKnown() || this.unconfirmed };
       const budget = this.budget(killBy);
       if (budget <= 0) break;
       // The CLI first, then by depth, so nothing is left to start a replacement.
@@ -421,7 +464,7 @@ export class OwnedProcessTree {
     return {
       found: Math.max(found, 0),
       survivors: left.length,
-      unknown: left.length === 0 && !rootKnown(),
+      unknown: left.length === 0 && (!rootKnown() || this.unconfirmed),
     };
   }
 }
@@ -438,7 +481,7 @@ function run(
         file,
         [...args],
         {
-          timeout: timeoutMs,
+          timeout: Math.max(1, Math.floor(timeoutMs)),
           windowsHide: true,
           maxBuffer: 64 * 1024 * 1024,
           ...(env === undefined ? {} : { env }),
@@ -575,7 +618,15 @@ export function spawnOwnedProcess(
     },
     host,
   );
-  void tree.remember();
+  // The CLI's own identity is what lets a later end find its orphans: try again while
+  // it runs if the first reading fails (a busy Windows host can be slow to answer).
+  void (async () => {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (await tree.remember()) return;
+      if (!tree.root.alive()) return;
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+    }
+  })();
   return { child, tree, stderrTail: () => tail };
 }
 

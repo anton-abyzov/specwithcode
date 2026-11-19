@@ -11,11 +11,12 @@ import * as Effect from "effect/Effect";
 
 const pending = new Map<string, number>();
 /**
- * Threads whose Stop could not end everything: processes known to belong to the stopped
- * CLI still ran after every try. They block the folder change until a retry (the folder
- * flow's Stop runs one) confirms them gone, or the server restarts.
+ * Threads whose Stop could not end everything: processes of a stopped CLI that still ran,
+ * or could not be confirmed gone, after every try. One entry per teardown, so a second
+ * failed Stop of the thread never hides the first. They block the folder change until
+ * a retry (the folder flow's Stop runs one) confirms each gone, or the server restarts.
  */
-const failed = new Map<string, () => Promise<boolean>>();
+const failed = new Map<string, Set<() => Promise<boolean>>>();
 
 /** Holds `threadId` until the returned release is called (once; later calls do nothing). */
 export function beginStopTeardown(threadId: string): () => void {
@@ -34,23 +35,29 @@ export function stopTeardownPending(threadId: string): boolean {
   return pending.has(threadId) || failed.has(threadId);
 }
 
-/** Whether Stop gave up on processes of this thread that still run. */
+/** Whether Stop gave up on processes of this thread that may still run. */
 export function stopTeardownFailed(threadId: string): boolean {
   return failed.has(threadId);
 }
 
-/** Keeps `threadId` blocked until `retry` resolves true. */
+/** Keeps `threadId` blocked until `retry` resolves true (on a later retry). */
 export function holdFailedStopTeardown(threadId: string, retry: () => Promise<boolean>): void {
-  failed.set(threadId, retry);
+  const entries = failed.get(threadId) ?? new Set();
+  entries.add(retry);
+  failed.set(threadId, entries);
 }
 
-/** Tries a failed teardown again; true once nothing of it is left. */
+/** Tries every failed teardown of the thread again; true once nothing of any is left. */
 export async function retryFailedStopTeardown(threadId: string): Promise<boolean> {
-  const retry = failed.get(threadId);
-  if (retry === undefined) return true;
-  const done = await retry().catch(() => false);
-  if (done && failed.get(threadId) === retry) failed.delete(threadId);
-  return done;
+  const entries = failed.get(threadId);
+  if (entries === undefined) return true;
+  for (const retry of [...entries]) {
+    const done = await retry().catch(() => false);
+    if (done) entries.delete(retry);
+  }
+  if (entries.size > 0) return false;
+  if (failed.get(threadId) === entries) failed.delete(threadId);
+  return true;
 }
 
 /** Runs `effect` with `threadId` held, released however it ends. */

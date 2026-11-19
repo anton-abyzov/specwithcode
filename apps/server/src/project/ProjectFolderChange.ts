@@ -607,6 +607,7 @@ export const make = Effect.gen(function* () {
             id: thread.id,
             title: thread.title || "Untitled thread",
             runId: thread.activeRunId ?? null,
+            latestRunId: thread.latestRunId ?? null,
           })),
         heldThreads: shells
           .filter(movesWithFolder(project, keep, rebound))
@@ -890,14 +891,19 @@ export const make = Effect.gen(function* () {
       projectId: input.projectId,
       workspaceRoot: input.workspaceRoot,
     });
-    const seen = new Map(input.threads.map((thread) => [thread.id, thread.runId] as const));
+    const seen = new Map(input.threads.map((thread) => [thread.id, thread] as const));
     const stopped: ThreadId[] = [];
     const failed: Array<{ id: ThreadId; title: string; message: string }> = [];
     const reason = "Stopped to change the project folder.";
     for (const thread of current.activeThreads) {
-      if (!seen.has(thread.id)) continue;
+      const saw = seen.get(thread.id);
+      if (saw === undefined) continue;
       const runId = thread.runId ?? null;
-      if (seen.get(thread.id) !== runId) {
+      const latestRunId = thread.latestRunId ?? null;
+      if (
+        saw.runId !== runId ||
+        (saw.latestRunId !== undefined && saw.latestRunId !== latestRunId)
+      ) {
         failed.push({
           id: thread.id,
           title: thread.title,
@@ -914,30 +920,17 @@ export const make = Effect.gen(function* () {
           failed.push({
             id: thread.id,
             title: thread.title,
-            message: `"${thread.title}" left processes that could not be ended. Restart SpecWithCode on that machine, or end them by hand, then check again.`,
+            message: `"${thread.title}" may still have processes running that Stop could not end. Press Stop again to retry; if it keeps failing, restart SpecWithCode on that machine.`,
           });
         continue;
       }
       // One command id per thread and run, so a replay of this request is answered from
       // the first dispatch instead of acting again.
       const operation = `${input.commandId}:${thread.id}:${runId ?? "no-run"}`;
-      if (runId === null) {
-        // Queued or waiting work with no run: read the thread again right before the
-        // stop, and leave it alone if a run started meanwhile.
-        const fresh = yield* projectThreads(input.projectId).pipe(
-          Effect.map((shells) => shells.find((shell) => shell.id === thread.id)),
-        );
-        if ((fresh?.activeRunId ?? null) !== null) {
-          failed.push({
-            id: thread.id,
-            title: thread.title,
-            message: `"${thread.title}" started other work after the check; press Stop again to stop it.`,
-          });
-          continue;
-        }
-      }
-      // A run id binds the stop to that run: the orchestrator refuses it once the run is
-      // over, so a run that started since is never stopped by this request.
+      // Both commands are bound inside the orchestrator's serialized dispatch: a run id to
+      // that run (refused once it is over), and queued or background work to the thread's
+      // latest executed run (refused once another started), so work that started since is
+      // never stopped by this request.
       const result = yield* threads
         .dispatch(
           runId === null
@@ -946,6 +939,7 @@ export const make = Effect.gen(function* () {
                 commandId: CommandId.make(operation),
                 threadId: thread.id,
                 reason,
+                expectedLatestRunId: saw.latestRunId ?? latestRunId,
               }
             : {
                 type: "run.interrupt",

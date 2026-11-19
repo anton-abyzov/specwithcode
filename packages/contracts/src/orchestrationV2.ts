@@ -3878,6 +3878,13 @@ const OrchestrationV2InternalCommand = Schema.Union([
     threadId: ThreadId,
     reason: Schema.optional(Schema.String),
     cause: Schema.optional(OrchestrationV2RunInterruptCause),
+    /**
+     * Stop only while nothing newer ran: refused when the thread's latest executed run
+     * (queued runs excluded, as in the shell's `latestRunId`) is no longer this one, and
+     * when a run is preparing, starting or running. Checked inside the serialized dispatch,
+     * so work that started after the sender looked is left alone.
+     */
+    expectedLatestRunId: Schema.optional(Schema.NullOr(RunId)),
   }),
   /**
    * Records or updates a secret an agent asked the user for. Internal so no

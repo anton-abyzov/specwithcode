@@ -452,7 +452,12 @@ export function ProjectFolderChange({
         commandId: CommandId.make(`folder-stop:${randomUUID()}`),
         projectId: project.id,
         workspaceRoot: targetRoot,
-        threads: stopping.map((thread) => ({ id: thread.id, runId: thread.runId ?? null })),
+        threads: stopping.map((thread) => ({
+          id: thread.id,
+          runId: thread.runId ?? null,
+          // Absent from an older server's check: the server then binds to its own reading.
+          ...(thread.latestRunId === undefined ? {} : { latestRunId: thread.latestRunId }),
+        })),
       },
     }).then((result) => {
       if (run !== generation.current) return;

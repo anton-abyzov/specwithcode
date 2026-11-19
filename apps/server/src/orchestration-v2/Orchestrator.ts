@@ -10646,7 +10646,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const { runs } = yield* loadProjectionForCommand(command, ["runs"]);
       const { refusal, latest } = preswitchMoveRefusal(runs);
       if (refusal !== null || latest === null) return refusal;
-      if (yield* stopHoldsLimitResume(command, { thread }, latest.id)) return STOPPED_THREAD_REFUSAL;
+      if (yield* stopHoldsLimitResume(command, { thread }, latest.id))
+        return STOPPED_THREAD_REFUSAL;
       return null;
     });
 
@@ -11432,6 +11433,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (projection.thread.deletedAt !== null) return undefined;
       // Queued messages never started and cannot own background work.
       const latestRun = projection.runs.findLast((run) => run.status !== "queued");
+      if (command.expectedLatestRunId !== undefined) {
+        const live = projection.runs.some(
+          (run) =>
+            run.status === "preparing" || run.status === "starting" || run.status === "running",
+        );
+        if (live || (latestRun?.id ?? null) !== command.expectedLatestRunId) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Thread ${command.threadId} started other work after the sender looked.`,
+          });
+        }
+      }
       const target =
         projection.runs.findLast(
           (run) =>

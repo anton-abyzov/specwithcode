@@ -10,6 +10,7 @@ import {
   parsePosixProcessList,
   parseWindowsProcessList,
   posixEscapees,
+  readProcessList,
   spawnOwnedProcess,
   stillRunning,
   windowsKillScript,
@@ -299,6 +300,64 @@ describe("OwnedProcessTree.end", () => {
     expect(calls).toEqual([]);
   });
 
+  it("never signals the CLI's group id on a later try once nobody it saw is in it", async () => {
+    // The CLI exited; a tool stayed in its group and survived SIGKILL (stuck in the kernel).
+    const stuck = [posix(202, 1, 200, "stuck tool")];
+    const { host, calls } = fakeHost("linux", [stuck, stuck, stuck]);
+    const tree = new OwnedProcessTree(root(200, false), host);
+    expect((await tree.end(1_000)).survivors).toBe(1);
+    expect(calls).toEqual(["SIGTERM -200", "SIGKILL -200"]);
+    // Still the same tool: the retry signals the group again.
+    calls.length = 0;
+    await tree.end(1_000);
+    expect(calls).toEqual(["SIGTERM -200", "SIGKILL -200"]);
+    // The tool ended unseen and the id went to another job's group: left alone.
+    calls.length = 0;
+    const reused = fakeHost("linux", [[posix(300, 1, 200, "another job")]]);
+    Object.assign(host, { readProcessList: reused.host.readProcessList });
+    expect(await tree.end(1_000)).toEqual({ found: 0, survivors: 0, unknown: false });
+    expect(calls).toEqual([]);
+  });
+
+  it("holds back a later try on the CLI's group when the table cannot be read", async () => {
+    const stuck = [posix(202, 1, 200, "stuck tool")];
+    const { host, calls } = fakeHost("linux", [stuck, stuck, null]);
+    const tree = new OwnedProcessTree(root(200, false), host);
+    await tree.end(1_000);
+    calls.length = 0;
+    // The first read of this try fails: nothing ties the group to the CLI any more.
+    const tables = [null];
+    Object.assign(host, { readProcessList: async () => tables[0] ?? undefined });
+    expect((await tree.end(1_000)).unknown).toBe(true);
+    expect(calls).toEqual([]);
+  });
+
+  it("stays unconfirmed when the reading right before Stop closed the CLI failed", async () => {
+    const t = (n: number) => 1_000_000n + BigInt(n) * 10n;
+    const cli = [win(200, 100, t(10), "claude.exe")];
+    // Read at spawn, then the reading before the close fails, then the CLI is gone.
+    const closing = (tables: Array<ReadonlyArray<ProcessEntry> | null>) => {
+      let running = true;
+      const fake = fakeHost("win32", tables);
+      const tree = new OwnedProcessTree(
+        { pid: 200, spawnedAt: 0, alive: () => running },
+        fake.host,
+      );
+      return { tree, close: () => (running = false) };
+    };
+    const failed = closing([cli, null, []]);
+    expect(await failed.tree.remember()).toBe(true);
+    expect(await failed.tree.remember(1_000, true)).toBe(false);
+    failed.close();
+    expect(await failed.tree.end()).toEqual({ found: 0, survivors: 0, unknown: true });
+    // The same end with a good reading before the close is confirmed.
+    const good = closing([cli, cli, []]);
+    await good.tree.remember();
+    expect(await good.tree.remember(1_000, true)).toBe(true);
+    good.close();
+    expect(await good.tree.end()).toEqual({ found: 0, survivors: 0, unknown: false });
+  });
+
   it("kills the tree on Windows and reads again until it is gone", async () => {
     const t = (n: number) => 1_000_000n + BigInt(n) * 10n;
     const running = [win(200, 100, t(10)), win(201, 200, t(11))];
@@ -331,6 +390,11 @@ async function until(check: () => boolean, ms: number) {
 }
 
 describe("on this machine", () => {
+  it("reads the process table with a fractional budget", async () => {
+    const table = await readProcessList(process.platform, 14_999.75);
+    expect(table?.some((entry) => entry.pid === process.pid)).toBe(true);
+  }, 30_000);
+
   it("ends the tool process the spawned CLI left running when it was killed alone", async () => {
     const abort = new AbortController();
     // Stands in for the CLI: it starts a long-running tool, reports its pid and waits.
@@ -372,7 +436,8 @@ describe("on this machine", () => {
       const result = await tree.end();
       // Where the OS had not ended the tool with the CLI, the tree end found it.
       if (leftBehind) expect(result.found).toBeGreaterThanOrEqual(1);
-      expect(result.survivors).toBe(0);
+      // The real reads ran (a fractional budget once kept them from starting).
+      expect(result).toMatchObject({ survivors: 0, unknown: false });
       expect(await until(() => !alive(toolPid), 10_000)).toBe(true);
     } finally {
       abort.abort();

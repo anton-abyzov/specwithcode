@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import { withStopTeardown } from "../../process/stopTeardowns.ts";
+import { holdFailedStopTeardown, withStopTeardown } from "../../process/stopTeardowns.ts";
 import * as NodePath from "node:path";
 
 import {
@@ -8208,6 +8208,16 @@ export function makeAcpAdapterV2(
                       });
                       yield* Ref.set(runtimeTeardownState, { _tag: "Failed", error });
                       yield* Deferred.fail(teardownBarrier!, error).pipe(Effect.ignore);
+                      // The agent's processes may still run: the folder change stays
+                      // blocked until a later teardown of this runtime succeeds.
+                      const appThreadId = turnInput.providerThread.appThreadId;
+                      if (appThreadId !== null) {
+                        holdFailedStopTeardown(appThreadId, () =>
+                          Effect.runPromise(Ref.get(runtimeTeardownState)).then(
+                            (state) => state._tag !== "Failed",
+                          ),
+                        );
+                      }
                       return error;
                     });
                     const runTransition = Effect.gen(function* () {
@@ -8285,10 +8295,23 @@ export function makeAcpAdapterV2(
                               turnInput.providerThread.appThreadId,
                             ).pipe(
                               Effect.catchCause((cause) =>
-                                Effect.logWarning(
-                                  "ACP Stop could not replace a runtime that ignored the cancel",
-                                  { driver, providerTurnId: turnInput.providerTurnId, cause },
-                                ).pipe(Effect.as(false)),
+                                Effect.gen(function* () {
+                                  yield* Effect.logWarning(
+                                    "ACP Stop could not replace a runtime that ignored the cancel",
+                                    { driver, providerTurnId: turnInput.providerTurnId, cause },
+                                  );
+                                  // The busy agent still runs: the folder change stays
+                                  // blocked until a later turn replaces the runtime.
+                                  const appThreadId = turnInput.providerThread.appThreadId;
+                                  if (appThreadId !== null) {
+                                    holdFailedStopTeardown(appThreadId, () =>
+                                      Effect.runPromise(Ref.get(runtimeRestartRequired)).then(
+                                        (required) => !required,
+                                      ),
+                                    );
+                                  }
+                                  return false;
+                                }),
                               ),
                             );
                             if (replaced) return;

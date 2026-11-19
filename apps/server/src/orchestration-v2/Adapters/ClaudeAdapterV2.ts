@@ -853,9 +853,10 @@ export const layerQueryRunner: Layer.Layer<
                 yield* Effect.promise(() => retryTreeEnd(tree)).pipe(
                   Effect.flatMap((last) => {
                     const confirmed = last !== null && last.survivors === 0 && !last.unknown;
-                    if (!confirmed && last !== null && last.survivors > 0) {
-                      // Known processes still run: the folder change stays blocked until
-                      // a retry (the folder flow's Stop runs one) ends them.
+                    if (!confirmed) {
+                      // Processes may still run (some were seen, or the table could not
+                      // be read): the folder change stays blocked until a retry (the folder
+                      // flow's Stop runs one) confirms them gone.
                       holdFailedStopTeardown(input.threadId, () =>
                         tree.end().then((retry) => retry.survivors === 0 && !retry.unknown),
                       );
@@ -868,7 +869,7 @@ export const layerQueryRunner: Layer.Layer<
                       : Effect.logWarning("orchestration-v2.claude-process-tree-not-ended", {
                           ...log,
                           ...(last ?? {}),
-                          held: last !== null && last.survivors > 0,
+                          held: true,
                         });
                   }),
                   Effect.ensuring(Effect.sync(release)),
@@ -905,7 +906,10 @@ export const layerQueryRunner: Layer.Layer<
             const spawned: ReturnType<typeof spawnOwnedProcess> | null = owned;
             return spawned === null
               ? Effect.void
-              : Effect.promise(() => spawned.tree.remember(CLAUDE_TREE_REMEMBER_TIMEOUT_MS));
+              : // Right before Stop closes the CLI: a failed reading leaves the end unconfirmed.
+                Effect.promise(() =>
+                  spawned.tree.remember(CLAUDE_TREE_REMEMBER_TIMEOUT_MS, true),
+                ).pipe(Effect.asVoid);
           }),
           offer: (message) =>
             Queue.offer(promptQueue, message).pipe(
@@ -9217,6 +9221,9 @@ export function makeClaudeAdapterV2(
               // Claimed before any wait: a turn admitted meanwhile opens its own
               // process instead of reusing this one, and only this one is closed.
               existing.stopping = true;
+              // Read what the live CLI started before closing it (Windows): a tool it
+              // started since the last reading is found only while its parent runs.
+              yield* existing.query.rememberProcessTree ?? Effect.void;
               yield* closeLiveQuery(
                 existing,
                 "orchestration-v2.claude-query-close-timeout-on-stop",

@@ -363,7 +363,14 @@ export const ProjectFolderStopInput = Schema.Struct({
   commandId: CommandId,
   projectId: ProjectId,
   workspaceRoot: TrimmedNonEmptyString,
-  threads: Schema.Array(Schema.Struct({ id: ThreadId, runId: Schema.NullOr(RunId) })),
+  threads: Schema.Array(
+    Schema.Struct({
+      id: ThreadId,
+      runId: Schema.NullOr(RunId),
+      /** The check's `latestRunId`; binds a Stop of queued or background work to it. */
+      latestRunId: Schema.optional(Schema.NullOr(RunId)),
+    }),
+  ),
 });
 export type ProjectFolderStopInput = typeof ProjectFolderStopInput.Type;
 
@@ -403,6 +410,8 @@ export const ProjectFolderCheck = Schema.Struct({
       title: Schema.String,
       /** The run that keeps it busy, or null for queued or background work; absent from older servers. */
       runId: Schema.optional(Schema.NullOr(RunId)),
+      /** Its latest executed run (queued runs excluded), or null; absent from older servers. */
+      latestRunId: Schema.optional(Schema.NullOr(RunId)),
     }),
   ),
   /**
