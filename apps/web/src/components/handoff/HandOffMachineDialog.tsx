@@ -1,5 +1,3 @@
-import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
-import { threadRuntimeIsActive } from "@specweave-studio/client-runtime/state/shell";
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import type {
   EnvironmentId,
@@ -14,17 +12,22 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { create } from "zustand";
 
 import { englishPhrase, useTx, type TranslatePhrase } from "../../i18n";
-import { readThreadShell, useProjects } from "../../state/entities";
+import { useProjects, useThreadShells } from "../../state/entities";
 import { randomUUID } from "../../lib/utils";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import {
-  handoffMachineCandidates,
   handoffMode,
   refreshHandoffMode,
   runHandoffMode,
   useHandoffModeSnapshot,
 } from "../../studio/handoffMode";
 import { useMachineNicknames } from "../../studio/machineNickname";
+import {
+  handoffMachineRows,
+  tickableHandoffRows,
+  type HandoffMachineGroup,
+  type HandoffMachineThreadRow,
+} from "./handOffMachineRows";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
@@ -113,10 +116,23 @@ export function HandOffMachineDialogHost() {
   );
 }
 
-export interface HandoffMachineThreadRow {
-  readonly threadId: ThreadId;
-  readonly title: string;
-}
+export type { HandoffMachineThreadRow } from "./handOffMachineRows";
+
+/** Each group's legend and list name, in the order AC-17 lists them. */
+const GROUPS: ReadonlyArray<{
+  readonly group: HandoffMachineGroup;
+  readonly legend: string;
+  readonly list: string;
+}> = [
+  { group: "running", legend: "Running ({n})", list: "Running threads" },
+  { group: "queued", legend: "Queued ({n})", list: "Queued threads" },
+  {
+    group: "waiting",
+    legend: "Waiting for your next message ({n})",
+    list: "Waiting for your next message",
+  },
+  { group: "stays", legend: "Stays ({n})", list: "Stays here" },
+];
 
 export interface HandOffMachineDialogViewProps {
   machineName: string;
@@ -200,6 +216,7 @@ export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
       (thread) => isSelected(thread.threadId) && resultFor(thread.threadId)?.ok === false,
     );
   const noneOnline = !props.destinations.some((item) => item.state === "reachable");
+  const canGo = props.threads.filter((thread) => groupOf(thread) !== "stays").length;
   const destinationName = props.destinationName || tx("the other machine");
   // Once the machine has records of this hand off, the view shows them; the server finishes
   // the hand off without this window, so the dialog can be closed.
@@ -268,82 +285,56 @@ export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
                     </p>
                   ) : null}
                 </fieldset>
-                <fieldset className="flex min-w-0 flex-col gap-1.5" disabled={props.submitting}>
-                  <legend className="mb-1.5 text-sm font-medium">
-                    {tx("Running ({n})", { n: props.threads.length })}
-                  </legend>
-                  {props.threads.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">
-                      {props.projectName
-                        ? tx("Nothing running in {project} on {machine} can go.", {
-                            project: props.projectName,
-                            machine: props.machineName,
-                          })
-                        : tx("Nothing running here can go.")}
-                    </p>
-                  ) : (
-                    <ul className="flex flex-col gap-1.5" aria-label={tx("Running threads")}>
-                      {props.threads.map((thread) => {
-                        const on = isSelected(thread.threadId);
-                        const result = on ? resultFor(thread.threadId) : undefined;
-                        return (
-                          <li
-                            key={thread.threadId}
-                            data-thread-status={threadStatus(props, on, result)}
-                          >
-                            <label className="flex items-start gap-2.5 rounded-lg border border-border px-3 py-2 text-sm">
-                              <Checkbox
-                                className="mt-0.5"
-                                checked={on}
-                                disabled={props.submitting}
-                                onCheckedChange={(checked) =>
-                                  props.onToggle(thread.threadId, checked === true)
-                                }
-                              />
-                              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                {canGo === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    {props.projectName
+                      ? tx("Nothing in {project} on {machine} can go.", {
+                          project: props.projectName,
+                          machine: props.machineName,
+                        })
+                      : tx("Nothing here can go.")}
+                  </p>
+                ) : null}
+                {GROUPS.map(({ group, legend, list }) => {
+                  const rows = props.threads.filter((thread) => groupOf(thread) === group);
+                  if (rows.length === 0) return null;
+                  return (
+                    <fieldset
+                      key={group}
+                      className="flex min-w-0 flex-col gap-1.5"
+                      disabled={props.submitting}
+                    >
+                      <legend className="mb-1.5 text-sm font-medium">
+                        {tx(legend, { n: rows.length })}
+                      </legend>
+                      <ul className="flex flex-col gap-1.5" aria-label={tx(list)}>
+                        {rows.map((thread) =>
+                          group === "stays" ? (
+                            <li key={thread.threadId} data-thread-status="stays">
+                              <div className="flex min-w-0 flex-col gap-0.5 rounded-lg border border-border px-3 py-2 text-sm">
                                 <span className="truncate font-medium">{thread.title}</span>
-                                {result && !result.ok ? (
-                                  <>
-                                    <span
-                                      role="status"
-                                      className="flex items-center gap-1.5 text-xs text-destructive-foreground"
-                                    >
-                                      <XIcon className="size-3.5 shrink-0" aria-hidden />
-                                      {preflightSummary(result, destinationName)}
-                                    </span>
-                                    <HandoffPreflightFailures result={result} />
-                                  </>
-                                ) : result ? (
-                                  <span className="text-xs text-muted-foreground">
-                                    {result.resume
-                                      ? "The current turn keeps running there."
-                                      : "It will wait there for your next message."}
-                                  </span>
-                                ) : null}
-                              </span>
-                              {result?.ok ? (
-                                <span
-                                  role="status"
-                                  className="flex shrink-0 items-center gap-1 text-xs text-success-foreground"
-                                >
-                                  <CheckIcon className="size-3.5" aria-hidden />
-                                  {tx("Goes")}
+                                <span className="text-xs text-muted-foreground">
+                                  {thread.reason ? tx(thread.reason) : null}
                                 </span>
-                              ) : on && props.checking ? (
-                                <span
-                                  role="status"
-                                  className="shrink-0 text-xs text-muted-foreground"
-                                >
-                                  Checking…
-                                </span>
-                              ) : null}
-                            </label>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  )}
-                </fieldset>
+                              </div>
+                            </li>
+                          ) : (
+                            <ThreadRow
+                              key={thread.threadId}
+                              thread={thread}
+                              props={props}
+                              on={isSelected(thread.threadId)}
+                              result={
+                                isSelected(thread.threadId) ? resultFor(thread.threadId) : undefined
+                              }
+                              destinationName={destinationName}
+                            />
+                          ),
+                        )}
+                      </ul>
+                    </fieldset>
+                  );
+                })}
                 {props.destinationUpdate}
                 {props.preflightError ? (
                   <p role="alert" className="text-xs text-destructive-foreground">
@@ -419,6 +410,71 @@ export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
   );
 }
 
+const groupOf = (thread: HandoffMachineThreadRow): HandoffMachineGroup => thread.group ?? "running";
+
+/** One row that can go: its tick, and once checked, whether it goes and how. */
+function ThreadRow({
+  thread,
+  props,
+  on,
+  result,
+  destinationName,
+}: {
+  thread: HandoffMachineThreadRow;
+  props: HandOffMachineDialogViewProps;
+  on: boolean;
+  result: HandoffPreflightResult | undefined;
+  destinationName: string;
+}) {
+  const tx = useTx();
+  return (
+    <li data-thread-status={threadStatus(props, on, result)}>
+      <label className="flex items-start gap-2.5 rounded-lg border border-border px-3 py-2 text-sm">
+        <Checkbox
+          className="mt-0.5"
+          checked={on}
+          disabled={props.submitting}
+          onCheckedChange={(checked) => props.onToggle(thread.threadId, checked === true)}
+        />
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="truncate font-medium">{thread.title}</span>
+          {result && !result.ok ? (
+            <>
+              <span
+                role="status"
+                className="flex items-center gap-1.5 text-xs text-destructive-foreground"
+              >
+                <XIcon className="size-3.5 shrink-0" aria-hidden />
+                {preflightSummary(result, destinationName)}
+              </span>
+              <HandoffPreflightFailures result={result} />
+            </>
+          ) : result ? (
+            <span className="text-xs text-muted-foreground">
+              {result.resume
+                ? "The current turn keeps running there."
+                : "It will wait there for your next message."}
+            </span>
+          ) : null}
+        </span>
+        {result?.ok ? (
+          <span
+            role="status"
+            className="flex shrink-0 items-center gap-1 text-xs text-success-foreground"
+          >
+            <CheckIcon className="size-3.5" aria-hidden />
+            {tx("Goes")}
+          </span>
+        ) : on && props.checking ? (
+          <span role="status" className="shrink-0 text-xs text-muted-foreground">
+            Checking…
+          </span>
+        ) : null}
+      </label>
+    </li>
+  );
+}
+
 function threadStatus(
   props: HandOffMachineDialogViewProps,
   selected: boolean,
@@ -455,30 +511,14 @@ function HandOffMachineDialog({
   // The name this window gave its batch: only that batch's records are its progress.
   const [batchId, setBatchId] = useState<string | null>(null);
   const projects = useProjects();
-  const threads = useMemo<HandoffMachineThreadRow[]>(
-    () =>
-      handoffMachineCandidates(snapshot, (threadId) => {
-        const shell = readThreadShell(scopeThreadRef(environmentId, threadId));
-        if (shell === null || !threadRuntimeIsActive(shell.runtime)) return false;
-        // A personal assistant's threads stay on their machine.
-        const owner = projects.find(
-          (candidate) =>
-            candidate.environmentId === environmentId && candidate.id === shell.projectId,
-        );
-        return !isPersonalAssistantProject(owner);
-      })
-        .filter((thread) => projectId === null || thread.projectId === projectId)
-        .map((thread) => ({
-          threadId: thread.threadId,
-          title:
-            readThreadShell(scopeThreadRef(environmentId, thread.threadId))?.title ||
-            "Untitled thread",
-        })),
-    [environmentId, projectId, projects, snapshot],
+  const shells = useThreadShells();
+  const threads = useMemo(
+    () => handoffMachineRows({ environmentId, shells, snapshot, projects, projectId }),
+    [environmentId, projectId, projects, shells, snapshot],
   );
   const [deselected, setDeselected] = useState<ReadonlySet<ThreadId>>(new Set());
   const selected = useMemo(
-    () => new Set(threads.map((thread) => thread.threadId).filter((id) => !deselected.has(id))),
+    () => new Set([...tickableHandoffRows(threads)].filter((id) => !deselected.has(id))),
     [deselected, threads],
   );
   const [preflight, setPreflight] = useState<ReadonlyMap<ThreadId, HandoffPreflightResult>>(
