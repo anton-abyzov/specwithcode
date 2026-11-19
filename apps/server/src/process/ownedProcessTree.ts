@@ -194,16 +194,28 @@ export function windowsTree(
 }
 
 /**
- * Children of the tree's processes that the reading lists without a usable creation time:
- * they cannot be attributed (or killed by identity) from this reading.
+ * Processes the reading cannot attribute, or rule out, from what it lists: children of the
+ * tree without a usable creation time, and children of a process an earlier reading
+ * attributed that has exited since (its pid alone proves nothing, so they are never
+ * killed, but nothing proves they are not the tree's either).
  */
 export function unidentifiedChildren(
   table: ReadonlyArray<ProcessEntry>,
   tree: ReadonlyArray<Known>,
+  remembered: ReadonlyMap<number, Known> = new Map(),
 ): number[] {
   const parents = new Set(tree.map((known) => known.entry.pid));
+  const live = new Set(table.map((entry) => `${entry.pid}:${entry.started}`));
   return table
-    .filter((entry) => parents.has(entry.ppid) && !/^\d+$/u.test(entry.started))
+    .filter((entry) => {
+      if (parents.has(entry.pid)) return false;
+      if (parents.has(entry.ppid)) return !/^\d+$/u.test(entry.started);
+      const parent = remembered.get(entry.ppid);
+      if (parent === undefined || live.has(`${parent.entry.pid}:${parent.entry.started}`)) {
+        return false;
+      }
+      return !/^\d+$/u.test(entry.started) || BigInt(entry.started) >= parent.created;
+    })
     .map((entry) => entry.pid);
 }
 
@@ -366,7 +378,9 @@ export class OwnedProcessTree {
     for (const pid of this.unidentified) {
       if (!listed.has(pid) || attributed.has(pid)) this.unidentified.delete(pid);
     }
-    for (const pid of unidentifiedChildren(table, tree)) this.unidentified.add(pid);
+    for (const pid of unidentifiedChildren(table, tree, this.remembered)) {
+      this.unidentified.add(pid);
+    }
   }
 
   /**
@@ -433,7 +447,8 @@ export class OwnedProcessTree {
   private async endPosix(deadline: number): Promise<TreeEndResult> {
     const { host } = this;
     const table = await this.read(deadline);
-    // Without a table the group is still signalled, but tools that left it cannot be found.
+    // Without a table the group is still signalled, but tools that left it cannot be found,
+    // then or by a later end once the signal ended their parents.
     let unknown = table === undefined;
     const members = table?.filter(
       (entry) => entry.pgid === this.root.pid && entry.pid !== host.selfPid,
@@ -538,10 +553,12 @@ export class OwnedProcessTree {
       if (escapees.length === 0) return;
       const now = await this.read(deadline);
       if (now === undefined) {
+        // An escapee may start a helper and exit before the next reading: lost for good.
         unknown = true;
+        this.coverageLost = true;
         return;
       }
-      escapees = withDescendants(now);
+      refresh(now);
       for (const entry of escapees) {
         try {
           host.signal(entry.pid, signal);
@@ -610,7 +627,10 @@ export class OwnedProcessTree {
       }
       return false;
     };
-    if (groupAlive()) this.signalGroup("SIGTERM");
+    if (groupAlive()) {
+      if (table === undefined) this.coverageLost = true;
+      this.signalGroup("SIGTERM");
+    }
     await signalEscapees("SIGTERM");
     const grace = host.now() + Math.max(0, (deadline - host.now()) / 2);
     if (await settled(grace)) return settle(0);

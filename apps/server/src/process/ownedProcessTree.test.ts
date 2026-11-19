@@ -944,6 +944,157 @@ async function until(check: () => boolean, ms: number) {
   return true;
 }
 
+describe("OwnedProcessTree.end after a lost parent", () => {
+  const rootPid = 200;
+  const processRow = (pid: number, ppid = 1, pgid = rootPid): ProcessEntry => ({
+    pid,
+    ppid,
+    pgid,
+    started: `start-${pid}`,
+    command: `tool-${pid}`,
+  });
+  const windowsRow = (pid: number, ppid: number, created: number): ProcessEntry => ({
+    ...processRow(pid, ppid),
+    pgid: null,
+    started: filetimeFromEpochMs(created),
+  });
+  const fake = (platform: "darwin" | "win32") => {
+    let now = 0;
+    let rootAlive = platform === "win32";
+    let rootExit: number | null = null;
+    let table: ProcessEntry[] = [];
+    const signals: string[] = [];
+    const kills: number[] = [];
+    let read = (): ProcessEntry[] | undefined => table;
+    let signal = (_pid: number, _signal: NodeJS.Signals) => {};
+    const host: TreeHost = {
+      platform,
+      selfPid: 100,
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
+      readProcessList: async () => read(),
+      signal: (pid, action) => {
+        if (action === 0) {
+          if (!table.some((row) => row.pgid === rootPid)) {
+            throw Object.assign(new Error("No such process"), { code: "ESRCH" });
+          }
+          return;
+        }
+        signals.push(`${action} ${pid}`);
+        signal(pid, action);
+      },
+      killVerified: async (entries) => {
+        const killed = new Set(entries.map((row) => row.pid));
+        kills.push(...killed);
+        table = table.filter((row) => !killed.has(row.pid));
+      },
+    };
+    const tree = new OwnedProcessTree(
+      { pid: rootPid, spawnedAt: 0, alive: () => rootAlive, exitedAtEpochMs: () => rootExit },
+      host,
+    );
+    return {
+      tree,
+      signals,
+      kills,
+      now: () => now,
+      setTable: (rows: ProcessEntry[]) => {
+        table = rows;
+      },
+      getTable: () => table,
+      setRead: (fn: typeof read) => {
+        read = fn;
+      },
+      onSignal: (fn: typeof signal) => {
+        signal = fn;
+      },
+      exitRootAt: (timestamp: number) => {
+        rootAlive = false;
+        rootExit = timestamp;
+      },
+    };
+  };
+
+  it("keeps a Windows Stop unconfirmed while a child of an exited known tool runs", async () => {
+    const f = fake("win32");
+    const server = windowsRow(100, 1, 1000);
+    const cli = windowsRow(200, 100, 2000);
+    const tool = windowsRow(201, 200, 3000);
+    const worker = windowsRow(202, 201, 4000);
+    f.setTable([server, cli, tool]);
+    expect(await f.tree.remember()).toBe(true);
+    // The known tool starts a worker and exits before Stop.
+    f.setTable([server, cli, worker]);
+    expect(await f.tree.remember(15_000, true)).toBe(false);
+    f.setTable([server, worker]);
+    f.exitRootAt(5_000);
+    expect((await f.tree.end()).unknown).toBe(true);
+    // A pid alone never authorizes a kill.
+    expect(f.kills).toEqual([]);
+  });
+
+  it("keeps a POSIX Stop unconfirmed on retry after its first reading failed", async () => {
+    const f = fake("darwin");
+    const member = processRow(201);
+    const worker = processRow(202, 201, 202);
+    f.setTable([member, worker]);
+    let reads = 0;
+    f.setRead(() => (++reads === 1 ? undefined : f.getTable()));
+    f.onSignal((pid, action) => {
+      if (pid === -rootPid && action === "SIGTERM") f.setTable([{ ...worker, ppid: 1 }]);
+    });
+    expect((await f.tree.end()).unknown).toBe(true);
+    expect((await f.tree.end()).unknown).toBe(true);
+  });
+
+  it("ends the worker of a member that left the group, seen before signalling escapees", async () => {
+    const f = fake("darwin");
+    const member = processRow(201);
+    const escapee = processRow(210, 201, 210);
+    const worker = processRow(202, 201, 202);
+    f.setTable([member, escapee]);
+    let reads = 0;
+    f.setRead(() => {
+      if (++reads === 3) f.setTable(f.getTable().filter((row) => row.pid === 202));
+      return f.getTable().map((row) => (row.pid === 202 && reads >= 3 ? { ...row, ppid: 1 } : row));
+    });
+    f.onSignal((pid, action) => {
+      if (pid === -rootPid && action === "SIGTERM") {
+        f.setTable([{ ...member, pgid: 201 }, escapee, worker]);
+      }
+      if (pid === 202) f.setTable(f.getTable().filter((row) => row.pid !== 202));
+    });
+    await f.tree.end();
+    expect(f.signals).toContain("SIGTERM 202");
+    expect(f.getTable().some((row) => row.pid === 202)).toBe(false);
+  });
+
+  it("keeps a POSIX Stop unconfirmed on retry after the escapee reading failed", async () => {
+    const f = fake("darwin");
+    const member = processRow(201);
+    const escapee = processRow(210, 201, 210);
+    const worker = processRow(202, 210, 202);
+    f.setTable([member, escapee]);
+    let failed = false;
+    f.setRead(() => {
+      if (f.now() >= 4_000 && !failed) {
+        failed = true;
+        f.setTable([escapee, worker]);
+        return undefined;
+      }
+      if (failed) f.setTable([{ ...worker, ppid: 1 }]);
+      return f.getTable();
+    });
+    f.onSignal((pid, action) => {
+      if (pid === -rootPid && action === "SIGTERM") f.setTable([{ ...escapee, ppid: 1 }]);
+    });
+    expect((await f.tree.end()).unknown).toBe(true);
+    expect((await f.tree.end()).unknown).toBe(true);
+  });
+});
+
 describe("on this machine", () => {
   it("reads the process table with a fractional budget", async () => {
     const table = await readProcessList(process.platform, 14_999.75);
