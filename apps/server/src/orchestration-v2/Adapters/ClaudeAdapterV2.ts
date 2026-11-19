@@ -192,6 +192,7 @@ import {
   type ProviderAdapterDriverCreateInput,
 } from "../ProviderAdapterDriver.ts";
 import { type BackgroundWorkReport, backgroundWorkNotification } from "../Notification.ts";
+import { MarkedProcessTree, type ProcessEntry } from "../../process/markedProcessTree.ts";
 import * as ProviderContinuationRequests from "../ProviderContinuationRequests.ts";
 import * as PromptSuggestions from "../PromptSuggestions.ts";
 import * as SubagentLaunchCheckpoints from "../SubagentLaunchCheckpoints.ts";
@@ -9100,8 +9101,17 @@ export function makeClaudeAdapterV2(
                 return;
               }
               // The background shells belong to the CLI process, so closing
-              // its query is what stops them.
+              // its query is what stops them; what outlives the CLI (the SDK
+              // ends it alone) is ended from the tree read before the close.
+              const processTree = yield* MarkedProcessTree;
+              const treeSnapshot = yield* processTree
+                .snapshot(nativeThreadId)
+                .pipe(
+                  Effect.timeoutOption(CLAUDE_INTERRUPT_ACK_TIMEOUT),
+                  Effect.map(Option.getOrElse((): ReadonlyArray<ProcessEntry> => [])),
+                );
               yield* closeLiveQueryForNativeThread(nativeThreadId);
+              yield* processTree.endSurvivors(treeSnapshot).pipe(Effect.timeoutOption("5 seconds"));
               yield* retireRunningSubagents();
               // A turn started while the close was pending may have opened a
               // replacement process. Its Waiting and wake state are its own.
@@ -9132,9 +9142,34 @@ export function makeClaudeAdapterV2(
               return next;
             });
             // A CLI that stopped answering never acknowledges the interrupt; closing
-            // the query below still ends its process, so the wait is bounded.
-            const acknowledged = yield* existing.query.interrupt.pipe(
-              Effect.timeoutOption(CLAUDE_INTERRUPT_ACK_TIMEOUT),
+            // the query below still ends its process, so the wait is bounded. The
+            // CLI's process tree is read meanwhile: the SDK ends the CLI alone (on
+            // Windows with TerminateProcess), so what its tools started is ended
+            // below once the query has closed.
+            const processTree = yield* MarkedProcessTree;
+            const [acknowledged, treeSnapshot] = yield* Effect.all(
+              [
+                existing.query.interrupt.pipe(Effect.timeoutOption(CLAUDE_INTERRUPT_ACK_TIMEOUT)),
+                processTree
+                  .snapshot(existing.nativeThreadId)
+                  .pipe(
+                    Effect.timeoutOption(CLAUDE_INTERRUPT_ACK_TIMEOUT),
+                    Effect.map(Option.getOrElse((): ReadonlyArray<ProcessEntry> => [])),
+                  ),
+              ],
+              { concurrency: "unbounded" },
+            );
+            const endLeftoverProcesses = processTree.endSurvivors(treeSnapshot).pipe(
+              Effect.timeoutOption("5 seconds"),
+              Effect.tap((ended) =>
+                Option.isSome(ended) && ended.value > 0
+                  ? Effect.logInfo("orchestration-v2.claude-stop-ended-leftover-processes", {
+                      providerSessionId: input.providerSessionId,
+                      providerTurnId: turnInput.providerTurnId,
+                      ended: ended.value,
+                    })
+                  : Effect.void,
+              ),
             );
             if (Option.isNone(acknowledged)) {
               yield* Effect.logWarning("orchestration-v2.claude-query-interrupt-unanswered", {
@@ -9148,6 +9183,7 @@ export function makeClaudeAdapterV2(
             const closed = yield* Deferred.await(existing.closed).pipe(
               Effect.timeoutOption("10 seconds"),
             );
+            yield* endLeftoverProcesses;
             if (Option.isSome(closed)) {
               return;
             }

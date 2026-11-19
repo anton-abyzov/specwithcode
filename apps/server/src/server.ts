@@ -151,6 +151,7 @@ import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as ProviderProcessSupervisor from "./process/ProviderProcessSupervisor.ts";
+import * as MarkedProcessTree from "./process/markedProcessTree.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
@@ -1643,6 +1644,8 @@ const layerMakeServer = Layer.unwrap(
       Layer.provideMerge(FetchHttpClient.layer),
       // Provider runtimes run below the server and are reaped with their sessions.
       Layer.provide(ProviderProcessSupervisor.layer),
+      // Stop ends the tool processes a provider CLI spawned by its SDK leaves running.
+      Layer.provide(MarkedProcessTree.layer),
       // PR reads, Git operations, and WebSocket discovery share one process limiter.
       Layer.provide(VcsProcess.layer),
       Layer.provideMerge(layerPlatformServices),

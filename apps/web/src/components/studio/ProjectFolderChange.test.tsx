@@ -128,7 +128,9 @@ describe("ProjectFolderChange", () => {
       environmentId: "host",
       input: { projectId: "easychamp", workspaceRoot: parent },
     });
-    expect(container.textContent).toContain("Different repository");
+    expect(container.textContent).toContain(
+      "The current folder has no Git remote; the new one is github.com/easychamp/easychamp. The current folder is inside the new one.",
+    );
     expect(container.textContent).toContain("14 threads move with the project");
     expect(container.textContent).not.toMatch(/Import SpecWeave|workspace/u);
     expect(button("Change folder").disabled).toBe(true);
@@ -162,34 +164,142 @@ describe("ProjectFolderChange", () => {
     expect(button("Change folder").disabled).toBe(true);
   });
 
-  it("stops running work on request and checks again", async () => {
-    state.folderCheck
-      .mockResolvedValueOnce({
+  it("stops running work, waits until it has stopped and keeps what was ticked", async () => {
+    vi.useFakeTimers();
+    try {
+      const running = check({
+        activeThreads: [
+          { id: "t1", title: "Coordinator" },
+          { id: "t2", title: "Worker" },
+        ],
+      } as unknown as Partial<ProjectFolderCheck>);
+      state.folderCheck
+        .mockResolvedValueOnce({ _tag: "Success", value: running })
+        // Stop is asynchronous: the first check after it still sees one run.
+        .mockResolvedValueOnce({
+          _tag: "Success",
+          value: check({
+            activeThreads: [{ id: "t2", title: "Worker" }],
+          } as unknown as Partial<ProjectFolderCheck>),
+        })
+        .mockResolvedValueOnce({ _tag: "Success", value: check() });
+      state.interrupt.mockResolvedValue({ _tag: "Success", value: {} });
+      render();
+      await typeFolder(parent);
+      await click("Check");
+      expect(container.textContent).toContain(
+        'Stop the running work first: "Coordinator", "Worker".',
+      );
+      await act(async () => {
+        container.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click();
+      });
+      expect(button("Change folder").disabled).toBe(true);
+      await click("Stop 2 runs");
+      expect(state.interrupt).toHaveBeenCalledTimes(2);
+      expect(state.interrupt).toHaveBeenCalledWith({
+        environmentId: "host",
+        input: { threadId: "t1" },
+      });
+      // While it stops, the box says so and the button shows progress.
+      expect(container.textContent).toContain('Stopping "Coordinator", "Worker".');
+      expect(button("Stopping…").getAttribute("aria-busy")).toBe("true");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+      expect(state.folderCheck).toHaveBeenCalledTimes(2);
+      expect(container.textContent).toContain('Stopping "Worker".');
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+      expect(state.folderCheck).toHaveBeenCalledTimes(3);
+      expect(container.querySelector("[data-folder-stopped]")?.textContent).toBe(
+        'Stopped "Coordinator", "Worker". Nothing blocks the change now.',
+      );
+      expect(container.querySelector("[data-folder-active-work]")).toBeNull();
+      // The confirmation ticked before Stop still holds, so the change is ready.
+      expect(container.querySelector<HTMLInputElement>('input[type="checkbox"]')!.checked).toBe(
+        true,
+      );
+      expect(button("Change folder").disabled).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("says which run is still going when Stop has not taken effect in time", async () => {
+    vi.useFakeTimers();
+    try {
+      const running = check({
+        sameRepository: true,
+        activeThreads: [{ id: "t1", title: "Write project memory" }],
+      } as unknown as Partial<ProjectFolderCheck>);
+      state.folderCheck.mockResolvedValue({ _tag: "Success", value: running });
+      state.interrupt.mockResolvedValue({
+        _tag: "Failure",
+        error: new Error("Run run-1 is not interruptible."),
+      });
+      render();
+      await typeFolder(parent);
+      await click("Check");
+      await click("Stop 1 run");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(62_000);
+      });
+      expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+        '"Write project memory" is still running 60 seconds after Stop. Run run-1 is not interruptible. Open the thread to see what it is doing, or press Stop again.',
+      );
+      expect(button("Stop 1 run").disabled).toBe(false);
+      expect(button("Change folder").disabled).toBe(true);
+      const checks = state.folderCheck.mock.calls.length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+      expect(state.folderCheck.mock.calls.length).toBe(checks);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops waiting on Stop once the person types another folder", async () => {
+    vi.useFakeTimers();
+    try {
+      state.folderCheck.mockResolvedValue({
         _tag: "Success",
         value: check({
           sameRepository: true,
-          activeThreads: [
-            { id: "t1", title: "Coordinator" },
-            { id: "t2", title: "Worker" },
-          ],
+          activeThreads: [{ id: "t1", title: "Worker" }],
         } as unknown as Partial<ProjectFolderCheck>),
-      })
-      .mockResolvedValueOnce({ _tag: "Success", value: check({ sameRepository: true }) });
-    state.interrupt.mockResolvedValue({ _tag: "Success", value: {} });
+      });
+      state.interrupt.mockResolvedValue({ _tag: "Success", value: {} });
+      render();
+      await typeFolder(parent);
+      await click("Check");
+      await click("Stop 1 run");
+      act(() => root.unmount());
+      root = createRoot(container);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+      expect(state.folderCheck).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not block on held messages and says where they will run", async () => {
+    state.folderCheck.mockResolvedValue({
+      _tag: "Success",
+      value: check({
+        sameRepository: true,
+        heldThreads: [{ id: "t1", title: "Write project memory", messageCount: 2 }],
+      } as unknown as Partial<ProjectFolderCheck>),
+    });
     render();
     await typeFolder(parent);
     await click("Check");
-    expect(container.textContent).toContain(
-      'Stop the running work first: "Coordinator", "Worker".',
+    expect(container.querySelector("[data-folder-held]")?.textContent).toBe(
+      '"Write project memory" has 2 held messages. They run in the new folder when you resume the thread.',
     );
-    expect(button("Change folder").disabled).toBe(true);
-    await click("Stop 2 runs");
-    expect(state.interrupt).toHaveBeenCalledTimes(2);
-    expect(state.interrupt).toHaveBeenCalledWith({
-      environmentId: "host",
-      input: { threadId: "t1" },
-    });
-    expect(state.folderCheck).toHaveBeenCalledTimes(2);
     expect(button("Change folder").disabled).toBe(false);
   });
 

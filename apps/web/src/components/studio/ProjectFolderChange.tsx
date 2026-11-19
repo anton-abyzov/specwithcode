@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   CircleCheckIcon,
   CircleXIcon,
@@ -57,8 +57,37 @@ function CheckLine({ tone, children }: { tone: Tone; children: ReactNode }) {
   );
 }
 
-function repositoryLabel(repository: string | null) {
-  return repository ?? "no Git remote";
+/** A folder path compared without case, trailing separators or Windows backslashes. */
+function comparablePath(folder: string) {
+  return folder.replaceAll("\\", "/").replace(/\/+$/u, "").toLowerCase();
+}
+
+/**
+ * How the new folder's repository compares with the current one, as one sentence.
+ * Two folders without a Git remote cannot be told apart, so that case says so instead
+ * of calling them different. Exported for tests.
+ */
+export function repositorySummary(
+  check: Pick<
+    ProjectFolderCheck,
+    "sameRepository" | "currentRepository" | "targetRepository" | "currentRoot" | "targetRoot"
+  >,
+): string {
+  const current = check.currentRepository;
+  const target = check.targetRepository;
+  if (check.sameRepository) return `Same repository: ${target ?? current ?? "no Git remote"}.`;
+  const inside = comparablePath(check.currentRoot).startsWith(
+    `${comparablePath(check.targetRoot)}/`,
+  )
+    ? " The current folder is inside the new one."
+    : "";
+  if (current === null && target === null)
+    return `Neither folder has a Git remote, so the app cannot tell whether they hold the same code.${inside}`;
+  if (target === null)
+    return `The new folder has no Git remote; the current one is ${current}.${inside}`;
+  if (current === null)
+    return `The current folder has no Git remote; the new one is ${target}.${inside}`;
+  return `Different repository: the new folder is ${target}, the current one ${current}.${inside}`;
 }
 
 const LAYOUT_LABEL = {
@@ -177,6 +206,26 @@ export function workspaceRecommendationLine(
   return { recommended: recommendation.on ? "worktree" : "local", text: recommendation.text };
 }
 
+/** How long Stop may take before the flow says the work is still running. */
+export const STOP_WAIT_MS = 60_000;
+/** Pause between checks while Stop takes effect. */
+export const STOP_POLL_MS = 2_000;
+
+function quotedTitles(threads: ReadonlyArray<{ readonly title: string }>) {
+  return threads.map((thread) => `"${thread.title}"`).join(", ");
+}
+
+/**
+ * Held messages do not block the change; said so the person knows where they will run.
+ * Exported for tests.
+ */
+export function heldThreadsSummary(check: Pick<ProjectFolderCheck, "heldThreads">): string | null {
+  const held = check.heldThreads ?? [];
+  if (held.length === 0) return null;
+  const count = held.reduce((sum, thread) => sum + thread.messageCount, 0);
+  return `${quotedTitles(held)} ${held.length === 1 ? "has" : "have"} ${plural(count, "held message")}. ${count === 1 ? "It runs" : "They run"} in the new folder when you resume ${held.length === 1 ? "the thread" : "those threads"}.`;
+}
+
 /** The line shown once the folder changed, built from the check the change was applied with. */
 export function changedSummary(
   check: Pick<
@@ -252,6 +301,17 @@ export function ProjectFolderChange({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  const [phase, setPhase] = useState<"idle" | "checking" | "stopping" | "changing">("idle");
+  const [stopped, setStopped] = useState<string | null>(null);
+  // Bumped whenever the folder or the check changes, so a Stop still waiting on its runs
+  // stops polling once the person moved on, and after unmount.
+  const generation = useRef(0);
+  useEffect(
+    () => () => {
+      generation.current += 1;
+    },
+    [],
+  );
   const runCheck = useAtomCommand(projectEnvironment.folderCheck);
   const changeFolder = useAtomCommand(projectEnvironment.changeFolder);
   const interrupt = useAtomCommand(threadEnvironment.interruptTurn);
@@ -270,14 +330,19 @@ export function ProjectFolderChange({
   async function inspect(path = folder) {
     const workspaceRoot = path.trim();
     if (locked || workspaceRoot.length === 0) return;
+    const run = ++generation.current;
     setBusy(true);
+    setPhase("checking");
     setError(null);
     setDone(null);
+    setStopped(null);
     const result = await runCheck({
       environmentId: project.environmentId,
       input: { projectId: project.id, workspaceRoot },
     });
+    if (run !== generation.current) return;
     setBusy(false);
+    setPhase("idle");
     if (result._tag === "Failure") {
       setCheck(null);
       failed(result, "The folder could not be checked. Try again.");
@@ -298,26 +363,84 @@ export function ProjectFolderChange({
     await inspect(picked);
   }
 
+  /**
+   * Stop ends a run asynchronously: the provider winds the turn down and the server
+   * settles it, which can take half a minute. So the flow checks the folder again until
+   * the stopped threads are idle, keeping what the person already ticked, and says
+   * plainly when they are, or which are still running once the wait runs out.
+   */
   async function stopRuns() {
     if (locked || !check) return;
+    const run = ++generation.current;
+    const targetRoot = check.targetRoot;
+    const stopping = check.activeThreads;
+    const stoppingIds = new Set(stopping.map((thread) => thread.id));
     setBusy(true);
+    setPhase("stopping");
     setError(null);
+    setDone(null);
+    setStopped(null);
     const results = await Promise.all(
-      check.activeThreads.map((thread) =>
+      stopping.map((thread) =>
         interrupt({ environmentId: project.environmentId, input: { threadId: thread.id } }),
       ),
     );
-    setBusy(false);
     const failure = results.find((result) => result._tag === "Failure");
-    if (failure) failed(failure, "Some work could not be stopped. Stop it from its thread.");
-    await inspect(check.targetRoot);
+    const deadline = Date.now() + STOP_WAIT_MS;
+    let latest: ProjectFolderCheck | null = null;
+    let checkFailure: Parameters<typeof squashAtomCommandFailure>[0] | null = null;
+    for (;;) {
+      await new Promise((resolve) => setTimeout(resolve, STOP_POLL_MS));
+      if (run !== generation.current) return;
+      const result = await runCheck({
+        environmentId: project.environmentId,
+        input: { projectId: project.id, workspaceRoot: targetRoot },
+      });
+      if (run !== generation.current) return;
+      if (result._tag === "Failure") {
+        checkFailure = result;
+        break;
+      }
+      latest = result.value;
+      setCheck(latest);
+      const still = latest.activeThreads.filter((thread) => stoppingIds.has(thread.id));
+      if (still.length === 0 || Date.now() >= deadline) break;
+    }
+    setBusy(false);
+    setPhase("idle");
+    if (checkFailure !== null) {
+      setCheck(null);
+      failed(checkFailure, "The folder could not be checked after Stop. Check it again.");
+      return;
+    }
+    const still = (latest?.activeThreads ?? []).filter((thread) => stoppingIds.has(thread.id));
+    if (still.length === 0) {
+      const others = latest?.activeThreads.length ?? 0;
+      setStopped(
+        `Stopped ${quotedTitles(stopping)}.${others === 0 ? " Nothing blocks the change now." : ""}`,
+      );
+      return;
+    }
+    const reason =
+      failure === undefined
+        ? null
+        : (() => {
+            const cause = squashAtomCommandFailure(failure);
+            return cause instanceof Error ? cause.message : null;
+          })();
+    setError(
+      `${quotedTitles(still)} ${still.length === 1 ? "is" : "are"} still running ${Math.round(STOP_WAIT_MS / 1000)} seconds after Stop.${reason ? ` ${reason}` : ""} Open ${still.length === 1 ? "the thread" : "each thread"} to see what it is doing, or press Stop again.`,
+    );
   }
 
   async function apply() {
     if (locked || !check) return;
     const applied = check;
+    ++generation.current;
     setBusy(true);
+    setPhase("changing");
     setError(null);
+    setStopped(null);
     const result = await changeFolder({
       environmentId: project.environmentId,
       input: {
@@ -328,6 +451,7 @@ export function ProjectFolderChange({
       },
     });
     setBusy(false);
+    setPhase("idle");
     if (result._tag === "Failure") {
       failed(result, "The folder did not change. Check it again and retry.");
       return;
@@ -348,6 +472,7 @@ export function ProjectFolderChange({
   const refusal = check === null ? null : refusalSummary(check);
   const nested = check === null ? null : nestedProjectsSummary(check);
   const emptyTarget = check === null ? null : emptyTargetSummary(check);
+  const held = check === null ? null : heldThreadsSummary(check);
   const repositoriesFound = check?.layout ? repositoriesFoundLine(check.layout) : null;
   const workspaceAdvice = check?.layout ? workspaceRecommendationLine(check.layout) : null;
   const switchDiffers =
@@ -404,9 +529,13 @@ export function ProjectFolderChange({
             value={folder}
             disabled={locked}
             onChange={(e) => {
+              generation.current += 1;
               setFolder(e.target.value);
               setCheck(null);
               setDone(null);
+              setStopped(null);
+              setBusy(false);
+              setPhase("idle");
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter") void inspect();
@@ -429,7 +558,7 @@ export function ProjectFolderChange({
             disabled={locked || folder.trim().length === 0}
             onClick={() => void inspect()}
           >
-            {busy ? (
+            {phase === "checking" ? (
               <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
             ) : (
               <ScanSearchIcon aria-hidden="true" />
@@ -444,6 +573,11 @@ export function ProjectFolderChange({
         ) : null}
         {error ? <CheckLine tone="error">{error}</CheckLine> : null}
         {done ? <CheckLine tone="ok">{done}</CheckLine> : null}
+        {stopped ? (
+          <CheckLine tone="ok">
+            <span data-folder-stopped>{stopped}</span>
+          </CheckLine>
+        ) : null}
         {check ? (
           <div aria-label="Folder check">
             {check.unchanged ? (
@@ -466,9 +600,7 @@ export function ProjectFolderChange({
             ) : (
               <>
                 <CheckLine tone={check.sameRepository ? "ok" : "warn"}>
-                  {check.sameRepository
-                    ? `Same repository: ${repositoryLabel(check.targetRepository)}.`
-                    : `Different repository: the new folder has ${repositoryLabel(check.targetRepository)}, the current one ${repositoryLabel(check.currentRepository)}.`}{" "}
+                  {repositorySummary(check)}{" "}
                   {check.keptInPlaceCount > 0
                     ? `${plural(check.threadCount, "thread")} stay in the project. ${pluralVerb(check.keptInPlaceCount, "thread", "keep")} running in ${check.currentRoot}, so their files and sessions do not change; new threads and the coordinator use the new folder`
                     : `${plural(check.threadCount, "thread")} move with the project`}
@@ -555,20 +687,33 @@ export function ProjectFolderChange({
                     </label>
                   </>
                 ) : null}
+                {held ? (
+                  <CheckLine tone="info">
+                    <span data-folder-held>{held}</span>
+                  </CheckLine>
+                ) : null}
                 {check.activeThreads.length > 0 ? (
-                  <div className="project-notice">
+                  <div className="project-notice" data-folder-active-work>
                     <p>
-                      Stop the running work first:{" "}
-                      {check.activeThreads.map((thread) => `"${thread.title}"`).join(", ")}.
+                      {phase === "stopping"
+                        ? `Stopping ${quotedTitles(check.activeThreads)}. This can take up to half a minute; the folder can change once ${check.activeThreads.length === 1 ? "it has" : "they have"} stopped.`
+                        : `Stop the running work first: ${quotedTitles(check.activeThreads)}.`}
                     </p>
                     <button
                       type="button"
                       className="project-control"
                       disabled={locked}
+                      aria-busy={phase === "stopping"}
                       onClick={() => void stopRuns()}
                     >
-                      <SquareIcon aria-hidden="true" />
-                      Stop {plural(check.activeThreads.length, "run")}
+                      {phase === "stopping" ? (
+                        <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
+                      ) : (
+                        <SquareIcon aria-hidden="true" />
+                      )}
+                      {phase === "stopping"
+                        ? "Stopping…"
+                        : `Stop ${plural(check.activeThreads.length, "run")}`}
                     </button>
                   </div>
                 ) : null}
@@ -580,10 +725,15 @@ export function ProjectFolderChange({
                   type="button"
                   className="project-control project-control-strong"
                   disabled={locked || blocked}
+                  aria-busy={phase === "changing"}
                   onClick={() => void apply()}
                 >
-                  <FolderInputIcon aria-hidden="true" />
-                  Change folder
+                  {phase === "changing" ? (
+                    <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
+                  ) : (
+                    <FolderInputIcon aria-hidden="true" />
+                  )}
+                  {phase === "changing" ? "Changing folder…" : "Change folder"}
                 </button>
               </div>
             ) : null}

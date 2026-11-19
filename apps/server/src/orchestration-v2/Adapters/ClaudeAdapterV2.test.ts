@@ -1,3 +1,4 @@
+import { MarkedProcessTree } from "../../process/markedProcessTree.ts";
 import { DesignScreenshotToolkit, DesignToolkit } from "../../mcp/toolkits/design/tools.ts";
 import { ProjectPlanToolkit } from "../../mcp/toolkits/projectPlan/tools.ts";
 import { ProjectMemoryToolkit } from "../../mcp/toolkits/projectMemory/tools.ts";
@@ -7994,6 +7995,55 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* Fiber.join(stopped);
         yield* awaitUntil(() => harness.terminalEvents().length === 1, "interrupted terminal");
         assert.equal(harness.terminalEvents()[0]?.status, "interrupted");
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("ends what the CLI's tools left running once Stop has closed it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: (sdkMessages) => Queue.shutdown(sdkMessages),
+        });
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const now = yield* DateTime.now;
+        const attemptId = RunAttemptId.make("attempt-claude-stop-ends-tools");
+        const providerTurnId = idAllocator.derive.providerTurn({
+          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+          nativeTurnId: `turn:${attemptId}`,
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId,
+            text: "Run the tests.",
+            attachments: [],
+          }),
+        );
+        const tree = [{ pid: 4242, ppid: 1, command: "bash -c npm test" }];
+        const calls: string[] = [];
+        yield* harness.runtime
+          .interruptTurn({ providerThread: harness.providerThread, providerTurnId })
+          .pipe(
+            Effect.provideService(MarkedProcessTree, {
+              snapshot: (marker) =>
+                Effect.sync(() => {
+                  calls.push(`snapshot ${marker}`);
+                  return tree;
+                }),
+              endSurvivors: (snapshot) =>
+                Effect.sync(() => {
+                  calls.push(`end ${snapshot.map((entry) => entry.pid).join(",")}`);
+                  return snapshot.length;
+                }),
+            }),
+          );
+        assert.deepEqual(calls, [
+          `snapshot ${harness.providerThread.nativeThreadRef?.nativeId}`,
+          "end 4242",
+        ]);
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );

@@ -120,20 +120,22 @@ const PENDING_RUN_STATUSES: ReadonlySet<string> = new Set([
 
 /**
  * True while a thread holds work the folder must not move under: what
- * ProjectService.threadHasActiveWork counts, plus a queued or waiting run and
- * messages held in its queue. The run that asked for this change through
- * `approvalRequestId` waits on the change itself, so its status does not count.
+ * ProjectService.threadHasActiveWork counts, plus a queued or waiting run. The
+ * run that asked for this change through `approvalRequestId` waits on the
+ * change itself, so its status does not count. Messages held in a queue (after
+ * Stop) do not count: nothing runs them until someone resumes the thread, and
+ * then they run in the new folder like any next turn. Stop holds the queue, so
+ * counting them would leave the change blocked after every Stop.
  * Local on purpose: deleting and archiving keep the narrower rule.
  */
 export function threadBlocksFolderChange(
   thread: Pick<
     OrchestrationV2ThreadShell,
-    "activeRunId" | "pendingRuntimeRequest" | "status" | "activityRunStatus" | "heldQueuedCount"
+    "activeRunId" | "pendingRuntimeRequest" | "status" | "activityRunStatus"
   >,
   approvalRequestId?: RuntimeRequestId,
 ): boolean {
   if (ProjectService.threadHasActiveWork(thread, approvalRequestId)) return true;
-  if ((thread.heldQueuedCount ?? 0) > 0) return true;
   const asking =
     approvalRequestId !== undefined && thread.pendingRuntimeRequest?.id === approvalRequestId;
   if (asking) return thread.status === "queued";
@@ -195,7 +197,7 @@ export function folderChangeRefusal(
   if (check.activeThreads.length > 0)
     return {
       reason: "active_work",
-      detail: `Stop the running work first: ${titles(check.activeThreads)}. ${check.activeThreads.length === 1 ? "It runs" : "They run"} in the folder this change moves, so the folder can change once ${check.activeThreads.length === 1 ? "it has" : "they have"} nothing queued, running or waiting for an answer. Threads on their own checkouts, or kept in the current folder, can go on working.`,
+      detail: `Stop the running work first: ${titles(check.activeThreads)}. ${check.activeThreads.length === 1 ? "It runs" : "They run"} in the folder this change moves, so the folder can change once ${check.activeThreads.length === 1 ? "it has" : "they have"} nothing running, about to start or waiting for an answer. Messages held after Stop can stay; they run in the new folder when the thread resumes. Threads on their own checkouts, or kept in the current folder, can go on working.`,
     };
   if (!check.sameRepository && !confirmDifferentRepository)
     return {
@@ -588,6 +590,18 @@ export const make = Effect.gen(function* () {
           .filter(movesWithFolder(project, keep, rebound))
           .filter((thread) => threadBlocksFolderChange(thread, input.approvalRequestId))
           .map((thread) => ({ id: thread.id, title: thread.title || "Untitled thread" })),
+        heldThreads: shells
+          .filter(movesWithFolder(project, keep, rebound))
+          .filter(
+            (thread) =>
+              (thread.heldQueuedCount ?? 0) > 0 &&
+              !threadBlocksFolderChange(thread, input.approvalRequestId),
+          )
+          .map((thread) => ({
+            id: thread.id,
+            title: thread.title || "Untitled thread",
+            messageCount: thread.heldQueuedCount ?? 0,
+          })),
         threadCount: shells.length,
         reboundWorktreeCount: rebound.length,
         keptInPlaceCount: keep ? rootThreads(shells, project).length : 0,

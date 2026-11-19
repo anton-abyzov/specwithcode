@@ -371,8 +371,18 @@ export const ProjectFolderCheck = Schema.Struct({
       archived: Schema.Boolean,
     }),
   ),
-  /** Threads with a queued or running turn, or a pending request. They must stop first. */
+  /** Threads with a queued, running or waiting turn, or a pending request. They must stop first. */
   activeThreads: Schema.Array(Schema.Struct({ id: ThreadId, title: Schema.String })),
+  /**
+   * Threads that move with the folder and hold queued messages after a Stop. They do not
+   * block the change; the messages run in the new folder when the thread resumes.
+   * Omitted by servers that predate it.
+   */
+  heldThreads: Schema.optional(
+    Schema.Array(
+      Schema.Struct({ id: ThreadId, title: Schema.String, messageCount: NonNegativeInt }),
+    ),
+  ),
   threadCount: NonNegativeInt,
   /** Threads bound to a checkout inside the current folder, rebound to the same place in the new one. */
   reboundWorktreeCount: NonNegativeInt,

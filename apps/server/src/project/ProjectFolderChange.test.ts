@@ -1191,7 +1191,7 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
     ),
   );
 
-  it.effect("counts queued runs, held messages and waiting runs as active work", () =>
+  it.effect("counts queued and waiting runs as active work, and reports held messages", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const { scenario, parent } = yield* makeScenario;
@@ -1217,10 +1217,10 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
         const check = yield* withFolders(scenario, (folders) =>
           folders.check({ projectId, workspaceRoot: parent, approvalRequestId }),
         );
-        expect(check.activeThreads.map((thread) => thread.id)).toEqual([
-          "queued",
-          "held",
-          "waiting",
+        expect(check.activeThreads.map((thread) => thread.id)).toEqual(["queued", "waiting"]);
+        // Stop holds the queue; held messages wait for a resume and then run in the new folder.
+        expect(check.heldThreads).toEqual([
+          { id: "held", title: expect.any(String), messageCount: 2 },
         ]);
         const refused = yield* withFolders(scenario, (folders) =>
           folders.change({
