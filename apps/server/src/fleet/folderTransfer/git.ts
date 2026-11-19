@@ -54,9 +54,12 @@ export const SAFE_CONFIG = [
   "advice.detachedHead=false",
 ];
 
-/** The environment every Git call of this module runs with, `extra` on top. */
-export const gitEnvironment = (extra?: Readonly<Record<string, string>>) =>
-  withGitHubSpawnEnvironment({
+/**
+ * The environment every Git call of this module runs with, `extra` on top. A
+ * variable `extra` gives as undefined is removed, also when this process has it.
+ */
+export const gitEnvironment = (extra?: Readonly<Record<string, string | undefined>>) => {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     GIT_TERMINAL_PROMPT: "0",
     GIT_OPTIONAL_LOCKS: "0",
@@ -64,7 +67,10 @@ export const gitEnvironment = (extra?: Readonly<Record<string, string>>) =>
     GIT_LITERAL_PATHSPECS: "1",
     LC_ALL: "C",
     ...extra,
-  });
+  };
+  for (const [key, value] of Object.entries(extra ?? {})) if (value === undefined) delete env[key];
+  return withGitHubSpawnEnvironment(env);
+};
 
 /** The arguments of a Git call in `cwd`, as `runGit` passes them. */
 export const gitArguments = (cwd: string, args: ReadonlyArray<string>) => [
@@ -81,7 +87,7 @@ export function runGit(
   options: {
     readonly allowFailure?: boolean;
     readonly timeoutMs?: number;
-    readonly env?: Readonly<Record<string, string>>;
+    readonly env?: Readonly<Record<string, string | undefined>>;
     /** Kills Git when aborted; the call then rejects with a FolderGitError. */
     readonly signal?: AbortSignal;
     /** Written to Git's standard input, which is then closed. */

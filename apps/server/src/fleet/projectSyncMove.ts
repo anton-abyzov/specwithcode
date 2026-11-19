@@ -56,7 +56,7 @@ import {
   LOCAL_MS,
   present,
   shortBranch,
-  SYNC_ENV,
+  MOVE_ENV,
   type SyncContext,
   type SyncGit,
   type SyncRepository,
@@ -340,7 +340,7 @@ export async function fastForwardRepository(
   if (ready !== null) return decline(...ready);
 
   const transaction = (context.transaction ?? refTransaction)(cwd, "sync: fast-forward", {
-    env: { ...SYNC_ENV, GIT_DIR: row.gitDir, GIT_WORK_TREE: cwd },
+    env: { ...MOVE_ENV, GIT_DIR: row.gitDir, GIT_WORK_TREE: cwd },
   });
   // From its start the transaction is this call's: whatever happens, also a `prepare` that
   // throws, it is closed before this returns (an `abort` after a `commit` or an `abort`

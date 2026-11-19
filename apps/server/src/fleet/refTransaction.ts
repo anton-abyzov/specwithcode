@@ -32,7 +32,7 @@ export interface RefTransaction {
 
 export interface RefTransactionOptions {
   /** On top of the runner's environment: the move passes its Git folder and checkout. */
-  readonly env?: Readonly<Record<string, string>>;
+  readonly env?: Readonly<Record<string, string | undefined>>;
   /** How long the answer to `commit` may take; tests shorten it. */
   readonly commitMs?: number;
 }

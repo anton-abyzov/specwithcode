@@ -63,7 +63,7 @@ import { runGit } from "./folderTransfer/git.ts";
 import { cloneStagingIn } from "./cloneStaging.ts";
 import * as ProjectSync from "./ProjectSync.ts";
 import { gitFolders } from "./projectSyncFacts.ts";
-import { commitOf, type SyncGit } from "./projectSyncGit.ts";
+import { commitOf, exactLines, type SyncGit } from "./projectSyncGit.ts";
 import { keptFetch, type Row } from "./projectSyncRecord.ts";
 
 const EXTRAS_REF_PREFIX = "refs/specwithcode/extras/";
@@ -419,9 +419,19 @@ export async function sendExtra(input: {
   const where = await gitFolders(syncGit, root).catch(() => null);
   if (where === null) return stays("failed", "The checkout's Git folder could not be read.");
   const pinned = { GIT_DIR: where.gitDir, GIT_WORK_TREE: where.cwd };
+  // Which directories hold that repository's refs, by device and inode: a repository put
+  // back at the same path (restored from a copy) is another one, whatever it holds.
+  const store = await refStore(root, pinned).catch(() => null);
+  if (store === null) return stays("failed", "The checkout's Git folder could not be read.");
+  const sameStore = async () => (await refStore(root, pinned).catch(() => null)) === store;
   const stillHere = async () => {
     const now = await gitFolders(syncGit, root).catch(() => null);
-    if (now === null || now.cwd !== where.cwd || now.gitDir !== where.gitDir)
+    if (
+      now === null ||
+      now.cwd !== where.cwd ||
+      now.gitDir !== where.gitDir ||
+      !(await sameStore())
+    )
       throw new Error("The checkout's Git folder changed during the send, so it stays.");
   };
   // The commit this call wrote the hidden ref at, once Git created it; null while it has not.
@@ -472,7 +482,8 @@ export async function sendExtra(input: {
         });
         // Its own only once the pinned repository has it, as a direct ref at that commit.
         await stillHere();
-        if ((await directRef(root, pinned, hidden)) === snapshot.commit) created = snapshot.commit;
+        const written = await refState(root, pinned, hidden);
+        if (written.kind === "direct" && written.oid === snapshot.commit) created = snapshot.commit;
         else throw new Error("The snapshot's ref could not be read back, so it stays.");
         const leftOutAll: Array<ProjectSyncLeftOutFile> = await Promise.all(
           [
@@ -580,16 +591,22 @@ export async function sendExtra(input: {
   // is still a direct ref at the commit written; never through a symbolic ref. One whose
   // ownership cannot be shown any more is left, and said.
   if (created === null) return outcome;
-  let left = true;
-  if ((await directRef(root, pinned, hidden).catch(() => undefined)) === created) {
-    const deleted = await runGit(root, ["update-ref", "--no-deref", "-d", hidden, created], {
-      env: pinned,
-      allowFailure: true,
-    }).catch(() => null);
-    left = deleted === null || deleted.code !== 0;
+  // Removed, or already gone (another program removed it): nothing to say. Anything else,
+  // a store that is not the one written in included, is left, and said.
+  let done = false;
+  if (await sameStore()) {
+    const found = await refState(root, pinned, hidden).catch(() => null);
+    if (found?.kind === "absent") done = true;
+    else if (found?.kind === "direct" && found.oid === created) {
+      const deleted = await runGit(root, ["update-ref", "--no-deref", "-d", hidden, created], {
+        env: pinned,
+        allowFailure: true,
+      }).catch(() => null);
+      done = deleted !== null && deleted.code === 0;
+    }
   }
-  if (!left) return outcome;
-  const note = `A temporary ref, ${hidden}, was left in the repository: Sync could not show it is still its own.`;
+  if (done) return outcome;
+  const note = `A temporary ref, ${hidden}, was left in the repository: cleanup could not confirm ownership.`;
   return {
     ...outcome,
     detail: (outcome.detail === null ? note : `${outcome.detail} ${note}`).slice(0, 1900),
@@ -597,27 +614,57 @@ export async function sendExtra(input: {
 }
 
 /**
- * The commit `ref` names in the repository `env` pins when it is a direct ref,
- * null when it is absent, symbolic or not one ref; rejects when Git failed.
+ * What `ref` is in the repository `env` pins: a direct ref at a commit, absent
+ * (Git lists no such ref and no symbolic ref of that name), or anything else
+ * (symbolic, dangling, not one ref). Rejects when Git failed.
  */
-async function directRef(
+async function refState(
   root: string,
   env: Readonly<Record<string, string>>,
   ref: string,
-): Promise<string | null> {
+): Promise<
+  { readonly kind: "direct"; readonly oid: string } | { readonly kind: "absent" | "other" }
+> {
   const listed = await runGit(
     root,
     ["for-each-ref", "--format=%(refname) %(objectname) %(symref)", ref],
-    {
-      env,
-    },
+    { env },
   );
   const lines = listed.stdout.split("\n").filter((line) => line.length > 0);
-  if (lines.length !== 1) return null;
+  if (lines.length === 0) {
+    // No ref listed: absent only when no symbolic ref of that name (one whose target is
+    // gone is not listed) is there either.
+    const symbolic = await runGit(root, ["symbolic-ref", "-q", ref], { env, allowFailure: true });
+    return symbolic.code === 1 && symbolic.stdout.length === 0
+      ? { kind: "absent" }
+      : { kind: "other" };
+  }
+  if (lines.length !== 1) return { kind: "other" };
   const [name, oid, symref] = lines[0]!.split(" ");
   return name === ref && oid !== undefined && /^[0-9a-f]{40,64}$/.test(oid) && symref === ""
-    ? oid
-    : null;
+    ? { kind: "direct", oid }
+    : { kind: "other" };
+}
+
+/**
+ * The identity of a repository's ref store: device and inode of its Git folder
+ * and of the `refs` folder of its common Git folder. Rejects when unread.
+ */
+async function refStore(root: string, env: Readonly<Record<string, string>>): Promise<string> {
+  const common = await exactLines(
+    (cwd, args, options) => runGit(cwd, args, { ...options, env }),
+    root,
+    ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    1,
+  );
+  if (common === null) throw new Error("The repository's Git folder could not be read.");
+  const ids = await Promise.all(
+    [env.GIT_DIR!, NodePath.join(common[0]!, "refs")].map(async (folder) => {
+      const stat = await NodeFSP.stat(folder, { bigint: true });
+      return `${stat.dev}:${stat.ino}`;
+    }),
+  );
+  return ids.join(" ");
 }
 
 export class ProjectSyncExtras extends Context.Service<

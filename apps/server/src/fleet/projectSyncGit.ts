@@ -25,7 +25,7 @@ export type SyncGit = (
     /** Written to Git's standard input. */
     readonly input?: string;
     /** On top of `SYNC_ENV`: a move binds every command to one Git folder and checkout. */
-    readonly env?: Readonly<Record<string, string>>;
+    readonly env?: Readonly<Record<string, string | undefined>>;
   },
 ) => Promise<GitResult>;
 
@@ -35,15 +35,36 @@ export type SyncGit = (
  * a local one, wherever the graft file is named), and nothing is fetched behind Sync's
  * back (the runner sets `GIT_NO_LAZY_FETCH`).
  */
-export const SYNC_ENV = { GIT_NO_REPLACE_OBJECTS: "1", GIT_GRAFT_FILE: "/dev/null" } as const;
+export const SYNC_ENV = {
+  GIT_NO_REPLACE_OBJECTS: "1",
+  GIT_GRAFT_FILE: "/dev/null",
+  // `git config` would read only the file this names, every other command the
+  // repository's own settings: a check could then pass on settings the writer never reads.
+  GIT_CONFIG: undefined,
+} as const;
 
-/** A runner whose every command opens `gitDir` with `workTree` as its checkout. */
+/**
+ * On top of `SYNC_ENV` for every Git child of a move (its reads, the ref
+ * transaction, the tree writer, the readback): no transport at all, whatever a
+ * setting or a partial clone asks for. `GIT_ALLOW_PROTOCOL` allows no protocol,
+ * and `protocol.allow=never` is set through Git's own environment pair.
+ */
+export const MOVE_ENV = {
+  ...SYNC_ENV,
+  GIT_ALLOW_PROTOCOL: "none",
+  GIT_CONFIG_COUNT: "1",
+  GIT_CONFIG_KEY_0: "protocol.allow",
+  GIT_CONFIG_VALUE_0: "never",
+} as const;
+
+/** A runner whose every command opens `gitDir` with `workTree` as its checkout, and cannot fetch. */
 export const boundGit =
   (git: SyncGit, gitDir: string, workTree: string): SyncGit =>
   (cwd, args, options) =>
     git(cwd, args, {
       ...options,
-      env: { ...options?.env, GIT_DIR: gitDir, GIT_WORK_TREE: workTree },
+      // The move's own settings last: no caller turns transport back on.
+      env: { ...options?.env, GIT_DIR: gitDir, GIT_WORK_TREE: workTree, ...MOVE_ENV },
     });
 
 export interface SyncContext {
