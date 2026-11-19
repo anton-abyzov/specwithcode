@@ -933,8 +933,13 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // telemetry instead of waiting for the next status probe.
   ProviderUsageLimitsIngestion.layer,
   // Quota over time for burn rates and run-out estimates on the pooled limits view,
-  // and the opt-in team summary (0898) that reads it.
-  TeamUsageReporter.layer.pipe(Layer.provideMerge(UsageLimitHistory.layer)),
+  // and the opt-in team summary (0898) that reads it. Its RPC handlers are
+  // registered here, not in ws.ts, which sits at TypeScript's instantiation limit;
+  // connections read handlers from the request context.
+  TeamUsageReporter.layerRpcHandlers.pipe(
+    Layer.provideMerge(TeamUsageReporter.layer),
+    Layer.provideMerge(UsageLimitHistory.layer),
+  ),
   // What each subscription window had used when it reset, kept for a year.
   UsageResetLedger.layer,
   // Posts announcing a limits reset, read from the public feed every half hour.
