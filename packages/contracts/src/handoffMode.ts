@@ -538,6 +538,11 @@ export const HandOffMachineInput = Schema.Struct({
    * own records among every window's. A machine that keeps no records ignores it.
    */
   batchId: Schema.optional(HandoffTransferOperationId),
+  /**
+   * Projects whose folder work goes along (1390 AC-17), as the plan listed it.
+   * A machine from before the plan ignores it, and its folder work stays.
+   */
+  folderWork: Schema.optional(Schema.Array(ProjectId).check(Schema.isMaxLength(20))),
 });
 export type HandOffMachineInput = typeof HandOffMachineInput.Type;
 

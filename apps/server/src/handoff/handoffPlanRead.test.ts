@@ -160,7 +160,7 @@ describe("the Hand off dialog's plan (AC-17)", () => {
       });
 
       a.folderSource = {
-        ...a.folderSource!,
+        ...(a.folderSource as object),
         inventory: () =>
           Effect.succeed({
             scanLimited: false,

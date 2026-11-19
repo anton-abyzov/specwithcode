@@ -137,6 +137,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // does; reading one shows rows a window that can only read this machine may see.
   [WS_METHODS.handoffBatchStart]: AuthOrchestrationOperateScope,
   [WS_METHODS.handoffBatchRead]: AuthFilesystemReadScope,
+  // Its rows name branches and folders, as a started batch's do; asking it weighs what would travel.
+  [WS_METHODS.handoffBatchPlan]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectLinkDigest]: AuthOrchestrationReadScope,
   [WS_METHODS.projectLinkSyncStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.projectLinkMemoryExport]: AuthOrchestrationReadScope,

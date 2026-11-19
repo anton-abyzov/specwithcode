@@ -1,9 +1,11 @@
 import type { PhraseCatalog } from "../phrases";
 import { syncFr } from "./sync/fr";
+import { handoffFr } from "./handoff/fr";
 
 /** French Settings titles and labels. "fil" for thread, as in the message catalog. */
 export const fr: PhraseCatalog = {
   ...syncFr,
+  ...handoffFr,
   About: "À propos",
   "Accent color": "Couleur d’accent",
   Account: "Compte",

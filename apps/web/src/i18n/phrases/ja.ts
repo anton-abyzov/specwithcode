@@ -1,9 +1,11 @@
 import type { PhraseCatalog } from "../phrases";
 import { syncJa } from "./sync/ja";
+import { handoffJa } from "./handoff/ja";
 
 /** Japanese Settings titles and labels. "スレッド" for thread, as in the message catalog. */
 export const ja: PhraseCatalog = {
   ...syncJa,
+  ...handoffJa,
   About: "このアプリについて",
   "Accent color": "アクセントカラー",
   Account: "アカウント",

@@ -28,6 +28,7 @@ import {
   threadTurnKey,
 } from "@specweave-studio/contracts";
 import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -455,7 +456,7 @@ export const makeRig = (
           getProviders: Clock.currentTimeMillis.pipe(
             Effect.map((nowMs) => {
               const account = target.providerAccount;
-              const at = (ms: number) => new Date(ms).toISOString();
+              const at = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
               return [
                 {
                   instanceId: "claudeAgent",
@@ -538,7 +539,7 @@ export const makeRig = (
           getShellSnapshot: () =>
             Effect.sync(() => ({
               threads: [...target.threads.keys()].flatMap((id) => {
-                const shell = shellOf(target, id);
+                const shell = shellOf(target, id as ThreadId);
                 return shell === null ? [] : [shell];
               }),
             })),

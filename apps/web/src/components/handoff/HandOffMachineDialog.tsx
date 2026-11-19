@@ -1,10 +1,12 @@
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
-import type {
-  EnvironmentId,
-  HandoffMachineRun,
-  HandoffPreflightResult,
-  ProjectId,
-  ThreadId,
+import {
+  AuthOrchestrationOperateScope,
+  type EnvironmentId,
+  type HandoffMachineRun,
+  type HandoffPlanView,
+  type HandoffPreflightResult,
+  type ProjectId,
+  type ThreadId,
 } from "@specweave-studio/contracts";
 import { useRouter } from "@tanstack/react-router";
 import { CheckIcon, XIcon } from "lucide-react";
@@ -15,6 +17,8 @@ import { englishPhrase, useTx, type TranslatePhrase } from "../../i18n";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { randomUUID } from "../../lib/utils";
 import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useEnvironmentScopeAccess } from "../../state/session";
+import { handoffBatch } from "../../studio/handoffBatch";
 import {
   handoffMode,
   refreshHandoffMode,
@@ -32,6 +36,12 @@ import {
   type HandoffMachineGroup,
   type HandoffMachineThreadRow,
 } from "./handOffMachineRows";
+import {
+  folderWorkTicked,
+  handoffUsageLines,
+  planHandoffRows,
+  threadsTicked,
+} from "./handOffMachinePlan";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
@@ -129,11 +139,18 @@ const GROUPS: ReadonlyArray<{
   readonly list: string;
 }> = [
   { group: "running", legend: "Running ({n})", list: "Running threads" },
+  { group: "queued", legend: "Queued ({n})", list: "Queued" },
   {
     group: "waiting",
     legend: "Waiting for your next message ({n})",
     list: "Waiting for your next message",
   },
+  {
+    group: "unsaved",
+    legend: "Not running with unsaved work ({n})",
+    list: "Not running with unsaved work",
+  },
+  { group: "folder-work", legend: "Project folder work ({n})", list: "Project folder work" },
   { group: "stays", legend: "Stays ({n})", list: "Stays here" },
 ];
 
@@ -144,6 +161,8 @@ export interface HandOffMachineDialogViewProps {
   destinations: readonly HandoffDestination[];
   destinationId: EnvironmentId | null;
   onDestination: (environmentId: EnvironmentId) => void;
+  /** What each machine adds per provider, as its plan said (AC-22); absent when not read. */
+  usage?: ReadonlyMap<EnvironmentId, readonly string[]>;
   threads: readonly HandoffMachineThreadRow[];
   selected: ReadonlySet<ThreadId>;
   /** More rows are ticked than one hand off takes: the first ones go. */
@@ -212,8 +231,11 @@ export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
   // While a check runs, earlier results are stale: nothing counts as ready until it finishes.
   const resultFor = (threadId: ThreadId) =>
     props.checking ? undefined : props.preflight.get(threadId);
+  // Folder work needs no thread check: ticked, it goes with the hand off.
   const movable = props.threads.filter(
-    (thread) => isSelected(thread.threadId) && resultFor(thread.threadId)?.ok,
+    (thread) =>
+      isSelected(thread.threadId) &&
+      (thread.kind === "folder-work" ? !props.checking : resultFor(thread.threadId)?.ok),
   ).length;
   const failed =
     props.preflightError !== null ||
@@ -221,7 +243,9 @@ export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
       (thread) => isSelected(thread.threadId) && resultFor(thread.threadId)?.ok === false,
     );
   const noneOnline = !props.destinations.some((item) => item.state === "reachable");
-  const canGo = props.threads.filter((thread) => groupOf(thread) !== "stays").length;
+  const canGo = props.threads.filter(
+    (thread) => groupOf(thread) !== "stays" && thread.canTick !== false,
+  ).length;
   const destinationName = props.destinationName || tx("the other machine");
   // Once the machine has records of this hand off, the view shows them; the server finishes
   // the hand off without this window, so the dialog can be closed.
@@ -278,7 +302,7 @@ export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
                   {props.destinations.length > 0 ? (
                     <MachineOptionRows
                       aria-label={tx("Hand off to")}
-                      options={destinationOptions(props.destinations)}
+                      options={destinationOptions(props.destinations, props.usage)}
                       value={props.destinationId}
                       disabled={props.submitting}
                       onChange={(value) => props.onDestination(value as EnvironmentId)}
@@ -314,8 +338,11 @@ export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
                       </legend>
                       <ul className="flex flex-col gap-1.5" aria-label={tx(list)}>
                         {rows.map((thread) =>
-                          group === "stays" ? (
-                            <li key={thread.threadId} data-thread-status="stays">
+                          group === "stays" || thread.canTick === false ? (
+                            <li
+                              key={thread.threadId}
+                              data-thread-status={group === "stays" ? "stays" : "listed"}
+                            >
                               <div className="flex min-w-0 flex-col gap-0.5 rounded-lg border border-border px-3 py-2 text-sm">
                                 <span className="truncate font-medium">{thread.title}</span>
                                 <span className="text-xs text-muted-foreground">
@@ -469,6 +496,8 @@ function ThreadRow({
                 ? "The current turn keeps running there."
                 : "It will wait there for your next message."}
             </span>
+          ) : thread.reason ? (
+            <span className="text-xs text-muted-foreground">{tx(thread.reason)}</span>
           ) : null}
         </span>
         {result?.ok ? (
@@ -526,17 +555,34 @@ function HandOffMachineDialog({
   const [batchId, setBatchId] = useState<string | null>(null);
   const projects = useProjects();
   const shells = useThreadShells();
-  const threads = useMemo(
+  const clientRows = useMemo(
     () => handoffMachineRows({ environmentId, shells, snapshot, projects, projectId }),
     [environmentId, projectId, projects, shells, snapshot],
   );
+  // The source's own plan (AC-17, AC-22): its rows for the chosen machine, and every
+  // machine's usage lines. Without the call, or when it fails, the window's rows stand.
+  const canPlan =
+    useEnvironmentScopeAccess(environmentId, AuthOrchestrationOperateScope) === "granted";
+  const [plans, setPlans] = useState<ReadonlyMap<EnvironmentId, HandoffPlanView>>(new Map());
+  const [planFailed, setPlanFailed] = useState(false);
+  const reachable = destinations
+    .filter((item) => item.state === "reachable")
+    .map((item) => item.environmentId);
+  const reachableKey = JSON.stringify(reachable);
+  const chosen = pickDestination(destinations, destinationId);
+  const chosenPlan = chosen === null ? undefined : plans.get(chosen);
+  const threads = useMemo(
+    () => (chosenPlan === undefined ? clientRows : planHandoffRows(chosenPlan)),
+    [chosenPlan, clientRows],
+  );
+  const planSettled = !canPlan || planFailed || chosen === null || chosenPlan !== undefined;
   // The ticks are decided once, from the first rows the dialog shows; after that
   // only the person's own ticks change them, and a freed slot stays empty.
   const [ticked, setTicked] = useState<{
     readonly ticks: ReadonlySet<ThreadId>;
     readonly overLimit: boolean;
   } | null>(null);
-  if (ticked === null && threads.length > 0) setTicked(initialHandoffTicks(threads));
+  if (ticked === null && planSettled && threads.length > 0) setTicked(initialHandoffTicks(threads));
   const ticks = ticked?.ticks ?? EMPTY_TICKS;
   const selected = useMemo(() => sentHandoffRows(threads, ticks), [threads, ticks]);
   const [preflight, setPreflight] = useState<ReadonlyMap<ThreadId, HandoffPreflightResult>>(
@@ -548,9 +594,34 @@ function HandOffMachineDialog({
   const [error, setError] = useState<string | null>(null);
   const [run, setRun] = useState<HandoffMachineRun | null>(null);
 
-  const destination = pickDestination(destinations, destinationId);
+  const destination = chosen;
+  const [recheckPlan, setRecheckPlan] = useState(0);
+  useEffect(() => {
+    if (!canPlan || run) return;
+    let live = true;
+    for (const target of JSON.parse(reachableKey) as EnvironmentId[]) {
+      void runHandoffMode(handoffBatch.plan, {
+        environmentId,
+        input: { destinationEnvironmentId: target, projectId, measure: target === destination },
+      }).then((next) => {
+        if (!live) return;
+        if (!next.ok) {
+          if (target === destination) setPlanFailed(true);
+          return;
+        }
+        setPlans((current) => new Map(current).set(target, next.value));
+      });
+    }
+    return () => {
+      live = false;
+    };
+  }, [canPlan, destination, environmentId, projectId, reachableKey, recheckPlan, run]);
+  const usage = useMemo(
+    () => new Map([...plans].map(([id, plan]) => [id, handoffUsageLines(plan)] as const)),
+    [plans],
+  );
   // The ids go to the check as an array; the key only tells the effect the set changed.
-  const selectedKey = handoffCheckRequest(selected).key;
+  const selectedKey = handoffCheckRequest(new Set(threadsTicked(selected))).key;
   const [recheck, setRecheck] = useState(0);
 
   useEffect(() => {
@@ -608,6 +679,7 @@ function HandOffMachineDialog({
       projectName={project === null ? null : project.title || "This project"}
       destinations={destinations}
       destinationId={destination}
+      usage={usage}
       onDestination={(next) => {
         setDestinationId(next);
         setPreflight(new Map());
@@ -625,7 +697,10 @@ function HandOffMachineDialog({
       checking={checking}
       preflight={preflight}
       preflightError={preflightError}
-      onRecheck={() => setRecheck((count) => count + 1)}
+      onRecheck={() => {
+        setRecheck((count) => count + 1);
+        setRecheckPlan((count) => count + 1);
+      }}
       destinationUpdate={
         <>
           {destinationUpdateRows(
@@ -677,9 +752,17 @@ function HandOffMachineDialog({
       }
       onSubmit={() => {
         if (destination === null) return;
-        const threadIds = threads
-          .map((thread) => thread.threadId)
-          .filter((threadId) => selected.has(threadId) && preflight.get(threadId)?.ok);
+        const threadIds = threadsTicked(
+          threads
+            .map((thread) => thread.threadId)
+            .filter((threadId) => selected.has(threadId) && preflight.get(threadId)?.ok),
+        );
+        const folderWork = folderWorkTicked(
+          threads
+            .filter((thread) => thread.kind === "folder-work")
+            .map((thread) => thread.threadId)
+            .filter((threadId) => selected.has(threadId)),
+        );
         setSubmitting(true);
         setError(null);
         const batch = randomUUID();
@@ -692,6 +775,7 @@ function HandOffMachineDialog({
             reason: "manual",
             threadIds,
             batchId: batch,
+            ...(folderWork.length === 0 ? {} : { folderWork }),
           },
         }).then((next) => {
           setSubmitting(false);
