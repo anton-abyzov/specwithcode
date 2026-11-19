@@ -23,13 +23,16 @@ import {
   type HandoffBatchRun,
   HandoffTransferDocument,
   ProjectId,
+  RpcScopeAuthorization,
   ThreadId,
   WS_METHODS,
   WsAwayRpcGroup,
+  handoffBatchRpcs,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcTest from "effect/rpc/RpcTest";
 import * as Schema from "effect/Schema";
 
@@ -161,6 +164,7 @@ describe("each thread's disposition in a batch (AC-41)", () => {
     reviewStay: null,
     worktreeSet: false,
     brokenFolder: null,
+    trackAmbiguous: false,
     check: {
       kind: "checked",
       failures: [],
@@ -943,14 +947,8 @@ describe("project folder work (AC-20)", () => {
 });
 
 describe("the batch's window calls (AC-33)", () => {
-  type AwayTag = Parameters<typeof WsAwayRpcGroup.omit>[number];
-  type Tested = typeof WS_METHODS.handoffBatchStart | typeof WS_METHODS.handoffBatchRead;
-  const group = WsAwayRpcGroup.omit(
-    ...[...WsAwayRpcGroup.requests.keys()].filter(
-      (tag): tag is Exclude<AwayTag, Tested> =>
-        tag !== WS_METHODS.handoffBatchStart && tag !== WS_METHODS.handoffBatchRead,
-    ),
-  );
+  // The two calls under the middleware `WsAwayRpcGroup` puts them behind.
+  const group = RpcGroup.make(...handoffBatchRpcs).middleware(RpcScopeAuthorization);
   const startInput = {
     destinationEnvironmentId: EnvironmentId.make("env-b"),
     start: "manual" as const,
@@ -978,6 +976,8 @@ describe("the batch's window calls (AC-33)", () => {
     );
 
   it("gives each call one scope from the existing set", () => {
+    expect(WsAwayRpcGroup.requests.has(WS_METHODS.handoffBatchStart)).toBe(true);
+    expect(WsAwayRpcGroup.requests.has(WS_METHODS.handoffBatchRead)).toBe(true);
     expect(RpcAuthorization.requiredScopeForRpcMethod(WS_METHODS.handoffBatchStart)).toBe(
       AuthOrchestrationOperateScope,
     );
