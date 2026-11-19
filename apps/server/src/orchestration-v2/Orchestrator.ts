@@ -208,6 +208,7 @@ import {
   queuedRunStartSelection,
   wakesLeftOnAnotherInstance,
 } from "./QueueFollowsThread.ts";
+import { failedRunBreakerRefusal, isBreakerGuardedRun } from "./RunFailureBreaker.ts";
 import {
   cancelledForUpdate,
   holdForPerson,
@@ -5820,6 +5821,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandId: command.commandId,
           commandType: command.type,
           cause: handoffRefusal,
+        });
+      }
+      // A thread whose last runs all failed stops re-running itself.
+      const breakerRefusal = failedRunBreakerRefusal(isBreakerGuardedRun(command), projection.runs);
+      if (breakerRefusal !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: breakerRefusal,
         });
       }
       // Provider fallback continues a stopped thread by itself, on the same
