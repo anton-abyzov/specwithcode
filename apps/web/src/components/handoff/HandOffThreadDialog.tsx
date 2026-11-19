@@ -8,7 +8,7 @@ import type {
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import { useRouter } from "@tanstack/react-router";
 import { ChevronDownIcon, TriangleAlertIcon } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { create } from "zustand";
 
 import { readThreadShell } from "../../state/entities";
@@ -29,6 +29,8 @@ import {
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   HandoffPreflightPanel,
+  destinationNeedsUpdate,
+  destinationsNeedingUpdate,
   preflightBlockedHere,
   type HandoffDestination,
   type PreflightView,
@@ -346,7 +348,13 @@ function HandOffThreadDialog({
   const router = useRouter();
   const name = useMachineNicknames();
   const [thread] = useState(() => readThreadShell(threadRef));
-  const destinations = useHandoffDestinations(threadRef.environmentId, mode === "switch-model");
+  const paired = useHandoffDestinations(threadRef.environmentId, mode === "switch-model");
+  // Machines a check found without transfer records: shown as "Needs update", never a target.
+  const [needsUpdate, setNeedsUpdate] = useState<ReadonlySet<EnvironmentId>>(new Set());
+  const destinations = useMemo(
+    () => destinationsNeedingUpdate(paired, needsUpdate),
+    [needsUpdate, paired],
+  );
   const [destinationId, setDestinationId] = useState<EnvironmentId | null>(initialDestinationId);
   const [model, setModel] = useState<ModelSelection | null>(
     () => initialModel ?? thread?.modelSelection ?? null,
@@ -393,6 +401,8 @@ function HandOffThreadDialog({
       },
     }).then((next) => {
       if (!live) return;
+      if (next.ok && destinationNeedsUpdate(next.value))
+        setNeedsUpdate((current) => new Set(current).add(destination));
       setPreflight(
         next.ok ? { state: "done", results: next.value } : { state: "error", message: next.error },
       );

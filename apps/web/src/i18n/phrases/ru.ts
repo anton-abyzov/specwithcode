@@ -6018,13 +6018,13 @@ export const ru: PhraseCatalog = {
     "Отметьте, что уходит. Работа продолжится на выбранной машине. Всё, что уйти не может, останется здесь без изменений, с указанием причины.",
   "Hand off to": "Передать на",
   "Running ({n})": "Выполняются ({n})",
-  "Nothing unfinished in {project} on {machine}.":
-    "В {project} на {machine} нет незавершённой работы.",
-  "Nothing unfinished here.": "Здесь нет незавершённой работы.",
   "Running threads": "Выполняющиеся треды",
   Goes: "Уходит",
   "{machine} finishes this hand off by itself. You can close this.":
     "{machine} завершит эту передачу сама. Это окно можно закрыть.",
   "This machine can't hand threads off yet.": "Эта машина пока не умеет передавать треды.",
   "Show hand off progress": "Показать ход передачи",
+  "Nothing running in {project} on {machine} can go.":
+    "Из того, что выполняется в {project} на {machine}, передать нечего.",
+  "Nothing running here can go.": "Из того, что выполняется здесь, передать нечего.",
 };

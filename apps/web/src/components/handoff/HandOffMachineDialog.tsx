@@ -255,11 +255,11 @@ export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
                   {props.threads.length === 0 ? (
                     <p className="text-sm text-muted-foreground">
                       {props.projectName
-                        ? tx("Nothing unfinished in {project} on {machine}.", {
+                        ? tx("Nothing running in {project} on {machine} can go.", {
                             project: props.projectName,
                             machine: props.machineName,
                           })
-                        : tx("Nothing unfinished here.")}
+                        : tx("Nothing running here can go.")}
                     </p>
                   ) : (
                     <ul className="flex flex-col gap-1.5" aria-label={tx("Running threads")}>
@@ -521,16 +521,17 @@ function HandOffMachineDialog({
     return () => window.clearInterval(timer);
   }, [awaitingRecords, environmentId]);
 
-  const group =
+  // One batch can cover several projects: each is its own card.
+  const shown =
     before === null
-      ? null
-      : (groups.find(
+      ? []
+      : groups.filter(
           (candidate) =>
             candidate.rows.some(
               (row) => !before.operations.has(row.operationId) && before.threads.has(row.threadId),
             ) &&
             (projectId === null || candidate.projectId === projectId),
-        ) ?? null);
+        );
 
   const destinationName = destination
     ? (destinations.find((item) => item.environmentId === destination)?.label ?? name(destination))
@@ -590,8 +591,17 @@ function HandOffMachineDialog({
       error={error}
       run={run}
       progress={
-        group ? (
-          <HandOffProgress environmentId={environmentId} group={group} onLeave={close} />
+        shown.length > 0 ? (
+          <div className="flex flex-col gap-6">
+            {shown.map((group) => (
+              <HandOffProgress
+                key={group.key}
+                environmentId={environmentId}
+                group={group}
+                onLeave={close}
+              />
+            ))}
+          </div>
         ) : null
       }
       destinationName={

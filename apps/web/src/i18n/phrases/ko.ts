@@ -5955,13 +5955,13 @@ export const ko: PhraseCatalog = {
     "보낼 항목을 선택하세요. 고른 컴퓨터에서 계속됩니다. 보낼 수 없는 항목은 이유와 함께 그대로 여기에 남습니다.",
   "Hand off to": "넘길 대상",
   "Running ({n})": "실행 중 ({n})",
-  "Nothing unfinished in {project} on {machine}.":
-    "{machine}의 {project}에 끝나지 않은 작업이 없습니다.",
-  "Nothing unfinished here.": "여기에 끝나지 않은 작업이 없습니다.",
   "Running threads": "실행 중인 스레드",
   Goes: "이동",
   "{machine} finishes this hand off by itself. You can close this.":
     "{machine}이(가) 이 넘기기를 스스로 마칩니다. 이 창은 닫아도 됩니다.",
   "This machine can't hand threads off yet.": "이 컴퓨터는 아직 스레드를 넘길 수 없습니다.",
   "Show hand off progress": "넘기기 진행 상황 보기",
+  "Nothing running in {project} on {machine} can go.":
+    "{machine}의 {project}에서 실행 중인 것 중 보낼 수 있는 것이 없습니다.",
+  "Nothing running here can go.": "여기서 실행 중인 것 중 보낼 수 있는 것이 없습니다.",
 };

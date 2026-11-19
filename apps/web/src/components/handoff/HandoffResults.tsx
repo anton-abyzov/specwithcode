@@ -286,7 +286,7 @@ export function HandoffMachineResults(props: {
 }) {
   const { run } = props;
   if (run.results.length === 0)
-    return <p className="text-sm text-muted-foreground">Nothing unfinished here.</p>;
+    return <p className="text-sm text-muted-foreground">Nothing running here can go.</p>;
   return (
     <ul className="flex flex-col gap-2" aria-label="Results">
       {run.results.map((result) => (

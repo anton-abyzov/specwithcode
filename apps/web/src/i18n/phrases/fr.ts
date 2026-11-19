@@ -6075,8 +6075,6 @@ export const fr: PhraseCatalog = {
     "Cochez ce qui part. Cela continue sur la machine que vous choisissez. Ce qui ne peut pas partir reste ici, intact, avec sa raison.",
   "Hand off to": "Transmettre à",
   "Running ({n})": "En cours ({n})",
-  "Nothing unfinished in {project} on {machine}.": "Rien d'inachevé dans {project} sur {machine}.",
-  "Nothing unfinished here.": "Rien d'inachevé ici.",
   "Running threads": "Fils en cours",
   Goes: "Part",
   "{machine} finishes this hand off by itself. You can close this.":
@@ -6084,4 +6082,7 @@ export const fr: PhraseCatalog = {
   "This machine can't hand threads off yet.":
     "Cette machine ne peut pas encore transmettre de fils.",
   "Show hand off progress": "Afficher la progression de la transmission",
+  "Nothing running in {project} on {machine} can go.":
+    "Rien de ce qui tourne dans {project} sur {machine} ne peut partir.",
+  "Nothing running here can go.": "Rien de ce qui tourne ici ne peut partir.",
 };

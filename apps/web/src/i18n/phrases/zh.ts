@@ -5767,12 +5767,13 @@ export const zh: PhraseCatalog = {
     "勾选要交接的内容。它会在你选择的电脑上继续。无法交接的内容会原样留在这里，并附上原因。",
   "Hand off to": "交接到",
   "Running ({n})": "运行中 ({n})",
-  "Nothing unfinished in {project} on {machine}.": "{machine} 上的 {project} 没有未完成的内容。",
-  "Nothing unfinished here.": "这里没有未完成的内容。",
   "Running threads": "运行中的会话",
   Goes: "交接",
   "{machine} finishes this hand off by itself. You can close this.":
     "{machine} 会自行完成这次交接。你可以关闭此窗口。",
   "This machine can't hand threads off yet.": "这台电脑还不能交接会话。",
   "Show hand off progress": "显示交接进度",
+  "Nothing running in {project} on {machine} can go.":
+    "{machine} 上的 {project} 中没有可交接的运行中内容。",
+  "Nothing running here can go.": "这里没有可交接的运行中内容。",
 };

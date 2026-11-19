@@ -94,7 +94,8 @@ describe("rowStateOf", () => {
 describe("progressRow", () => {
   it("offers Resume here only for a hold that was never sent", () => {
     expect(progressRow(record("held")).action).toBe("resume-here");
-    expect(progressRow(record("pending")).action).toBe("cancel");
+    // Not held yet: the batch that planned it still owns it, so the row offers nothing.
+    expect(progressRow(record("pending")).action).toBeNull();
     for (const state of ["sent", "accepted", "unknown"] as const)
       expect(progressRow(record(state)).action, state).toBe("wait");
   });

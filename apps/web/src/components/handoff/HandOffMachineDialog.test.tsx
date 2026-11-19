@@ -119,12 +119,12 @@ it("keeps the whole-machine wording without a project", async () => {
   expect(text).toContain("Hand off work from M4");
   expect(text).toContain("Scope: every project on M4");
   expect(text).not.toContain("coordinator");
-  expect(text).toContain("Nothing unfinished here.");
+  expect(text).toContain("Nothing running here can go.");
 });
 
 it("says when the project has nothing running that can move", async () => {
   await act(async () => root.render(<HandOffMachineDialogView {...props({ threads: [] })} />));
-  expect(document.body.textContent).toContain("Nothing unfinished in atlas on M4.");
+  expect(document.body.textContent).toContain("Nothing running in atlas on M4 can go.");
 });
 
 it("disables the primary as 'Nothing can go' when no selected thread passed", async () => {

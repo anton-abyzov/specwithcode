@@ -1,8 +1,8 @@
 /**
  * Slash commands the app runs itself, without a model turn: stop or continue
  * this thread or every thread in the project, a one-line project status, and
- * Hand off (`/handoff` hands work to another machine, `/away` hands off
- * everything on this machine, `/back` brings its work back).
+ * Hand off and Away mode (`/handoff` hands work to another machine, `/away`
+ * leaves this machine, `/back` brings its work back).
  * Anything else that starts with `/` still reaches the agent.
  */
 export type ComposerAppCommand =
@@ -40,7 +40,11 @@ export const COMPOSER_APP_COMMANDS: ReadonlyArray<ComposerAppCommandEntry> = [
     description: "Count running, interrupted and idle threads",
   },
   { command: "handoff", label: "/handoff", description: "Hand off work to another machine" },
-  { command: "away", label: "/away", description: "Hand off everything on this machine" },
+  {
+    command: "away",
+    label: "/away",
+    description: "Leave this machine: hand its threads, routines and coordinator on",
+  },
   { command: "back", label: "/back", description: "Bring work back to this machine" },
 ];
 

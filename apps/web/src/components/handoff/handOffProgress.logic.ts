@@ -29,7 +29,7 @@ export type HandOffRowState =
  * A row's one next step. `wait` is shown as a word, never as a control: a
  * thread that was sent is not released by hand.
  */
-export type HandOffRowAction = "cancel" | "resume-here" | "wait" | "open" | "try-again";
+export type HandOffRowAction = "resume-here" | "wait" | "open" | "try-again";
 
 /** `sent`, `accepted` and `unknown` all wait for the destination's answer. */
 export function rowStateOf(state: HandoffTransferState): HandOffRowState {
@@ -63,7 +63,8 @@ export function progressRow(record: HandoffTransferRecord): HandOffProgressRow {
   const action = ((): HandOffRowAction | null => {
     switch (state) {
       case "pending":
-        return "cancel";
+        // The batch that planned it may reach it at any moment, and would send it anyway.
+        return null;
       case "held":
         return "resume-here";
       case "waiting":
@@ -204,11 +205,6 @@ export function threadTransfer(
       .filter((record) => record.lineage.sourceThreadId === threadId)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null
   );
-}
-
-/** The group a record is shown in. */
-export function groupKeyOf(record: HandoffTransferRecord): string {
-  return `${record.batchId ?? record.operationId}:${record.projectId}`;
 }
 
 export interface HandOffProgressNames {

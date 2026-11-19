@@ -188,7 +188,7 @@ describe("HandoffMachineResults", () => {
       renderToStaticMarkup(
         <HandoffMachineResults run={{ ...run, results: [] }} destinationName="Minis" />,
       ),
-    ).toContain("Nothing unfinished here.");
+    ).toContain("Nothing running here can go.");
   });
 });
 
@@ -256,7 +256,7 @@ describe("HandOffProgressView", () => {
       state === "held"
         ? "resume-here"
         : state === "pending"
-          ? "cancel"
+          ? null
           : state === "waiting"
             ? "wait"
             : state === "failed"
@@ -316,7 +316,7 @@ describe("HandOffProgressView", () => {
   it("offers Resume here on a hold never sent, and only a word on a thread that was sent", () => {
     const html = render([row("held", "Held"), row("waiting", "Sent"), row("pending", "Later")]);
     expect(rowHtml(html, "held")).toContain(">Resume here</button>");
-    expect(rowHtml(html, "pending")).toContain(">Cancel</button>");
+    expect(rowHtml(html, "pending")).not.toContain("<button");
     const waiting = rowHtml(html, "waiting");
     expect(waiting).toContain("Waiting for confirmation");
     expect(waiting).toContain(">Wait</span>");

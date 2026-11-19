@@ -6052,12 +6052,13 @@ export const es: PhraseCatalog = {
     "Marca lo que se va. Continúa en la máquina que elijas. Lo que no puede irse se queda aquí, intacto, con su motivo.",
   "Hand off to": "Traspasar a",
   "Running ({n})": "En ejecución ({n})",
-  "Nothing unfinished in {project} on {machine}.": "Nada sin terminar en {project} en {machine}.",
-  "Nothing unfinished here.": "Nada sin terminar aquí.",
   "Running threads": "Hilos en ejecución",
   Goes: "Se va",
   "{machine} finishes this hand off by itself. You can close this.":
     "{machine} termina este traspaso por sí sola. Puedes cerrar esto.",
   "This machine can't hand threads off yet.": "Esta máquina aún no puede traspasar hilos.",
   "Show hand off progress": "Ver el progreso del traspaso",
+  "Nothing running in {project} on {machine} can go.":
+    "Nada de lo que se ejecuta en {project} en {machine} puede irse.",
+  "Nothing running here can go.": "Nada de lo que se ejecuta aquí puede irse.",
 };

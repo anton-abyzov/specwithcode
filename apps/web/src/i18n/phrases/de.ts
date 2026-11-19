@@ -6067,12 +6067,13 @@ export const de: PhraseCatalog = {
     "Hake an, was geht. Es läuft auf dem Rechner weiter, den du auswählst. Was nicht gehen kann, bleibt unverändert hier, mit dem Grund.",
   "Hand off to": "Übergeben an",
   "Running ({n})": "Läuft ({n})",
-  "Nothing unfinished in {project} on {machine}.": "Nichts Unfertiges in {project} auf {machine}.",
-  "Nothing unfinished here.": "Hier ist nichts unfertig.",
   "Running threads": "Laufende Threads",
   Goes: "Geht",
   "{machine} finishes this hand off by itself. You can close this.":
     "{machine} schließt diese Übergabe selbst ab. Du kannst das hier schließen.",
   "This machine can't hand threads off yet.": "Dieser Rechner kann Threads noch nicht übergeben.",
   "Show hand off progress": "Fortschritt der Übergabe anzeigen",
+  "Nothing running in {project} on {machine} can go.":
+    "Nichts, was in {project} auf {machine} läuft, kann gehen.",
+  "Nothing running here can go.": "Nichts, was hier läuft, kann gehen.",
 };

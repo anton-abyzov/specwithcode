@@ -6029,13 +6029,13 @@ export const ja: PhraseCatalog = {
     "移すものにチェックを入れてください。選んだマシンで続行されます。移せないものは理由とともに、そのままここに残ります。",
   "Hand off to": "引き継ぎ先",
   "Running ({n})": "実行中 ({n})",
-  "Nothing unfinished in {project} on {machine}.":
-    "{machine} の {project} に未完了のものはありません。",
-  "Nothing unfinished here.": "ここに未完了のものはありません。",
   "Running threads": "実行中のスレッド",
   Goes: "移動",
   "{machine} finishes this hand off by itself. You can close this.":
     "{machine} がこの引き継ぎを自分で完了します。これは閉じてかまいません。",
   "This machine can't hand threads off yet.": "このマシンはまだスレッドを引き継げません。",
   "Show hand off progress": "引き継ぎの進行状況を表示",
+  "Nothing running in {project} on {machine} can go.":
+    "{machine} の {project} で実行中のもので、移せるものはありません。",
+  "Nothing running here can go.": "ここで実行中のもので、移せるものはありません。",
 };

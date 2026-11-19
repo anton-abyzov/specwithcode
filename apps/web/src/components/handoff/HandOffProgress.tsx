@@ -68,7 +68,7 @@ export interface HandOffProgressViewProps {
   readonly busyOperationId?: string | null;
   /** What the machine answered to the last press, under its row. */
   readonly rowNotice?: { readonly operationId: string; readonly text: string } | null;
-  /** "Cancel" and "Resume here": releases a hold nothing was sent under. */
+  /** "Resume here": releases a hold nothing was sent under. */
   readonly onRelease?: (row: HandOffProgressViewRow) => void;
   readonly onOpen?: (row: HandOffProgressViewRow) => void;
   readonly onRetry?: (row: HandOffProgressViewRow) => void;
@@ -298,15 +298,14 @@ export function HandOffProgressView(props: HandOffProgressViewProps) {
                       >
                         {tx("Try again")}
                       </button>
-                    ) : (row.action === "cancel" || row.action === "resume-here") &&
-                      props.onRelease ? (
+                    ) : row.action === "resume-here" && props.onRelease ? (
                       <button
                         type="button"
                         className={linkClass}
                         disabled={busy}
                         onClick={() => props.onRelease?.(row)}
                       >
-                        {row.action === "cancel" ? tx("Cancel") : tx("Resume here")}
+                        {tx("Resume here")}
                       </button>
                     ) : null}
                   </span>

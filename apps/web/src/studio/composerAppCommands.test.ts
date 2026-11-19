@@ -56,10 +56,7 @@ describe("matchComposerAppCommands", () => {
       "continue-all",
     ]);
     expect(matchComposerAppCommands("")).toHaveLength(8);
-    expect(matchComposerAppCommands("hand").map((entry) => entry.command)).toEqual([
-      "handoff",
-      "away",
-    ]);
+    expect(matchComposerAppCommands("handoff").map((entry) => entry.command)).toEqual(["handoff"]);
     expect(parseComposerAppCommand("/handoff")).toBe("handoff");
     // `$handoff` stays a skill name: only the slash form is the app's.
     expect(parseComposerAppCommand("$handoff")).toBeNull();
