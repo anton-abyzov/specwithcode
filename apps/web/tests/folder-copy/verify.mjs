@@ -656,10 +656,7 @@ const move = async (page, w) => {
     }),
     { tone: "failed", coloured: true },
   );
-  NodeAssert.match(
-    await body(),
-    /Nothing in \/home\/sam\/Projects\/github\/specweave-umb changed/,
-  );
+  NodeAssert.match(await body(), /Nothing in \/home\/sam\/Projects\/github\/specweave-umb changed/);
   // Nothing changed before Apply, so Retry runs the same copy again from measuring.
   await fixture(() => {
     window.__folderCopyFixture.failCopy = false;
