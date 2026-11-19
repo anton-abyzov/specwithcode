@@ -76,7 +76,12 @@ export const DEFAULTS = {
   suggestMs: 2_500,
   // About half the text cursor's blink: one of two readings this far apart misses it.
   blinkMs: 600,
+  // Clock's floating tab pill animates after a switch; a tap during it can expand the pill instead.
+  tabPauseMs: 1_000,
   minScrollPx: 20,
+  // Wheel notches per computer_scroll: iPhone Mirroring moved a list about 2.6 px per notch on
+  // iOS 27.2.1 (run pr746-1: 5 notches, 13 px), and the call allows at most 50.
+  scrollAmount: 25,
 };
 /** A failed run that started above this 1-minute load average is invalid (three times 16 cores). */
 export const MAX_FAIL_LOAD = 48;
@@ -951,6 +956,29 @@ export async function runCheck(deps, options = {}) {
     ]),
   );
   const anchorOf = (label, page) => anchorIn(page, anchors[label]);
+  // A page compared with its first view by its words only: text recognition
+  // reads a big stopwatch's digits differently each time ("00:00.00", "•:0", "o").
+  const words = (page) => page.filter((text) => /\p{L}\p{L}/u.test(text));
+  // Clock's floating pill, expanded: two or more tab names read beside its icons.
+  const pillExpanded = (reading) => {
+    const pitch = 2 * bar.half;
+    const names = config.barLabels.map(normalize);
+    const near = reading.lines.filter((line) => {
+      const point = center(line);
+      return (
+        Math.abs(point.x - bar.at) <= pitch &&
+        point.y >= bar.from - pitch &&
+        point.y <= bar.to + pitch
+      );
+    });
+    const shown = names.filter((name) =>
+      near.some((line) => {
+        const text = normalize(line.text);
+        return text.length >= 4 && (name.startsWith(text) || text.startsWith(name));
+      }),
+    );
+    return shown.length >= 2;
+  };
 
   // Not counted: makes the first tab current, so every counted tap changes the page.
   let warm;
@@ -1003,8 +1031,19 @@ export async function runCheck(deps, options = {}) {
             }
           }
         }
+        // Clock's pill animates after the last switch; a tap waits it out.
+        if (located.icons) await deps.sleep(config.tabPauseMs);
         const result = await tap(target);
-        const page = signature(seen);
+        let page = signature(seen);
+        // The pill expanded under the tap and the page did not switch: read once
+        // more with no input, since the switch may follow the pill's animation.
+        let expanded;
+        if (located.icons && anchorOf(target, page) === undefined && pillExpanded(seen)) {
+          await deps.sleep(config.settleMs);
+          seen = await look();
+          page = signature(seen);
+          expanded = pillExpanded(seen);
+        }
         const where = `"${target}" at (${result.point.x}, ${result.point.y}); ${result.before ?? "unknown"} -> ${lastFrontmost ?? "unknown"}`;
         // Landed: the page changed, shows the target tab's own words, and not the other tab's.
         // With icon tabs the title decides "changed": the page before did not show
@@ -1015,7 +1054,8 @@ export async function runCheck(deps, options = {}) {
           : jaccard(page, result.pageBefore) < 0.5;
         const anchor = anchorOf(target, page);
         const foreign = anchorOf(other, page);
-        const same = refs[target] === undefined ? undefined : jaccard(page, refs[target]);
+        const same =
+          refs[target] === undefined ? undefined : jaccard(words(page), words(refs[target]));
         const ok =
           changed &&
           anchor !== undefined &&
@@ -1025,7 +1065,7 @@ export async function runCheck(deps, options = {}) {
         check(
           name,
           ok,
-          `${where}; ${changed ? "page changed" : "page did not change"}, ${anchor === undefined ? "no" : `"${anchor}"`} ${target} word${foreign === undefined ? "" : `, but shows "${foreign}" from ${other}`}, ${same === undefined ? "first view of this page" : `matched ${same.toFixed(2)}`}${ok ? "" : `; before the tap it showed ${anchorOf(other, result.pageBefore) === undefined ? "no" : `"${anchorOf(other, result.pageBefore)}"`} ${other} word, after it reads ${page.slice(0, 8).join(" | ") || "nothing"}`}`,
+          `${where}; ${changed ? "page changed" : "page did not change"}, ${anchor === undefined ? "no" : `"${anchor}"`} ${target} word${foreign === undefined ? "" : `, but shows "${foreign}" from ${other}`}, ${same === undefined ? "first view of this page" : `matched ${same.toFixed(2)}`}${expanded === undefined ? "" : ok ? "; the tab pill showed expanded with its labels after the tap, and the page had switched by the next reading" : `; the tap reached the tab pill, which expanded to show its labels instead of switching tabs (${expanded ? "still expanded" : "collapsed"} on the next reading)`}${ok ? "" : `; before the tap it showed ${anchorOf(other, result.pageBefore) === undefined ? "no" : `"${anchorOf(other, result.pageBefore)}"`} ${other} word, after it reads ${page.slice(0, 8).join(" | ") || "nothing"}`}`,
         );
       });
     } catch (error) {
@@ -1047,7 +1087,7 @@ export async function runCheck(deps, options = {}) {
         x: Math.round(seen.window.x + seen.window.width / 2),
         y: Math.round(seen.window.y + seen.window.height * 0.6),
       };
-      await call("computer_scroll", { ...point, direction: "down", amount: 5 });
+      await call("computer_scroll", { ...point, direction: "down", amount: config.scrollAmount });
       await deps.sleep(config.settleMs);
       seen = await look();
       // Text behind the window's margins shows at the same place on the home screen.
@@ -1057,7 +1097,7 @@ export async function runCheck(deps, options = {}) {
       check(
         "scroll down",
         down.ok,
-        `${down.replaced ? "page replaced" : `shared text moved ${down.median}px (${down.common} lines)`}; ${front()}`,
+        `${config.scrollAmount} wheel notches: ${down.replaced ? "page replaced" : `shared text moved ${down.median}px (${down.common} lines)`}; ${front()}`,
       );
       if (!down.ok) {
         // Not counted: tells the next fix whether a swipe moves the list where the wheel did not.
@@ -1083,7 +1123,7 @@ export async function runCheck(deps, options = {}) {
         seen = probe;
       }
       const before = seen.lines;
-      await call("computer_scroll", { ...point, direction: "up", amount: 5 });
+      await call("computer_scroll", { ...point, direction: "up", amount: config.scrollAmount });
       await deps.sleep(config.settleMs);
       seen = await look();
       const up = scrolled(before, seen.lines, seen.window, "up", config.minScrollPx, background);
@@ -1093,7 +1133,7 @@ export async function runCheck(deps, options = {}) {
       check(
         "scroll up",
         up.ok || back,
-        `${up.replaced ? "page replaced" : `shared text moved ${up.median}px (${up.common} lines)`}${back ? "; back at the top" : ""}; ${front()}`,
+        `${config.scrollAmount} wheel notches: ${up.replaced ? "page replaced" : `shared text moved ${up.median}px (${up.common} lines)`}${back ? "; back at the top" : ""}; ${front()}`,
       );
     });
   } catch (error) {
