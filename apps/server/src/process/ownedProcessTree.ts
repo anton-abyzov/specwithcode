@@ -144,8 +144,19 @@ export function windowsTree(
     queue.push(known);
   };
   const rootRow = byPid.get(root.pid);
-  if (root.alive() && rootRow !== undefined && rootRow.started.length > 0) {
-    add(rootRow, BigInt(rootRow.started));
+  // The CLI's row counts while the CLI runs, or when it is the CLI an earlier reading
+  // identified (same pid and creation time): the reading caught it alive, so what it lists
+  // as its children are, even if the CLI exited before the reading came back.
+  const rootKnown = remembered.get(root.pid);
+  if (
+    rootRow !== undefined &&
+    rootRow.started.length > 0 &&
+    (root.alive() || rootKnown?.entry.started === rootRow.started)
+  ) {
+    add(
+      rootRow,
+      rootKnown?.entry.started === rootRow.started ? rootKnown.created : BigInt(rootRow.started),
+    );
   } else {
     // The CLI exited: whatever holds its pid now is someone else.
     seen.add(root.pid);
@@ -308,11 +319,9 @@ export class OwnedProcessTree {
       table === undefined ? [] : windowsTree(table, this.root, this.host.selfPid, this.remembered);
     for (const entry of known) this.remembered.set(entry.entry.pid, entry);
     if (table !== undefined) this.noteUnidentified(table, known);
-    const ok =
-      table !== undefined &&
-      this.root.alive() &&
-      this.listsLiveRoot(table) &&
-      this.unidentified.size === 0;
+    // The reading must list the CLI itself: while it runs, or as the CLI an earlier
+    // reading identified (it exited after this reading caught it).
+    const ok = table !== undefined && this.listsRoot(table) && this.unidentified.size === 0;
     // Before a close, only a reading that lists the running CLI itself covers what it
     // started; a cached identity from an earlier reading does not.
     // The last such reading decides: one that succeeds right before the close covers
@@ -330,12 +339,15 @@ export class OwnedProcessTree {
     for (const pid of unidentifiedChildren(table, tree)) this.unidentified.add(pid);
   }
 
-  /** Whether `table` lists the CLI as the process it was when first read. */
-  private listsLiveRoot(table: ReadonlyArray<ProcessEntry>): boolean {
+  /**
+   * Whether `table` lists the CLI: as the process an earlier reading identified, or, with
+   * no such reading, while it still runs.
+   */
+  private listsRoot(table: ReadonlyArray<ProcessEntry>): boolean {
     const row = table.find((entry) => entry.pid === this.root.pid);
     if (row === undefined) return false;
     const known = this.remembered.get(this.root.pid);
-    return known === undefined || known.entry.started === row.started;
+    return known === undefined ? this.root.alive() : known.entry.started === row.started;
   }
 
   end(deadlineMs = 8_000): Promise<TreeEndResult> {
@@ -559,8 +571,7 @@ export class OwnedProcessTree {
       if (found === -1) found = left.length;
       // A live CLI missing from the table, or a child of the tree listed without its
       // creation time, is a reading that cannot confirm the end.
-      const partial =
-        (this.root.alive() && !this.listsLiveRoot(table)) || this.unidentified.size > 0;
+      const partial = (this.root.alive() && !this.listsRoot(table)) || this.unidentified.size > 0;
       if (left.length === 0)
         return { found, survivors: 0, unknown: !rootKnown() || this.unconfirmed || partial };
       const budget = this.budget(killBy);
@@ -584,7 +595,7 @@ export class OwnedProcessTree {
         (!rootKnown() ||
           this.unconfirmed ||
           this.unidentified.size > 0 ||
-          (this.root.alive() && !this.listsLiveRoot(table))),
+          (this.root.alive() && !this.listsRoot(table))),
     };
   }
 }

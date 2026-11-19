@@ -7115,6 +7115,39 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                     ),
                   { concurrency: "unbounded", discard: true },
                 );
+                // A native turn Codex never confirmed ended (its interrupt was refused) may
+                // still run a foreground command, which has no terminal to end. The finalizer
+                // below forgets it, so the folder change waits until Codex takes an
+                // interrupt for it or its app-server is gone.
+                if (appThreadId !== null) {
+                  const live = yield* Ref.get(activeTurns);
+                  for (const target of interruptTargets) {
+                    const context = target.context;
+                    if (live.get(context.nativeTurnId) !== context) continue;
+                    const nativeThreadId = yield* getNativeThreadId(context.providerThread).pipe(
+                      Effect.option,
+                    );
+                    holdFailedStopTeardown(appThreadId, () =>
+                      Option.isNone(nativeThreadId)
+                        ? Promise.resolve(false)
+                        : Effect.runPromise(
+                            client
+                              .request("turn/interrupt", {
+                                threadId: nativeThreadId.value,
+                                turnId: context.nativeTurnId,
+                              })
+                              .pipe(
+                                Effect.as(true),
+                                Effect.catchTags({
+                                  CodexAppServerProcessExitedError: () => Effect.succeed(true),
+                                  CodexAppServerInputStreamEndedError: () => Effect.succeed(true),
+                                }),
+                                Effect.orElseSucceed(() => false),
+                              ),
+                          ),
+                    );
+                  }
+                }
               }).pipe(Effect.catchCause(() => Effect.void));
               const finalizeRemainingInterruptLineage = Effect.gen(function* () {
                 while (true) {

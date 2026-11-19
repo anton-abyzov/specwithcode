@@ -410,6 +410,29 @@ describe("OwnedProcessTree.end", () => {
     expect(calls).toContain("SIGKILL 202");
   });
 
+  it("keeps what a Windows reading saw under the CLI when the CLI exits before it returns", async () => {
+    const t = (n: number) => 1_000_000n + BigInt(n) * 10n;
+    const cli = win(200, 100, t(10), "claude.exe");
+    const tool = win(201, 200, t(11), "npm run build");
+    let running = true;
+    const fake = fakeHost("win32", [[cli], [cli, tool], [tool], []]);
+    const read = fake.host.readProcessList;
+    const tree = new OwnedProcessTree({ pid: 200, spawnedAt: 0, alive: () => running }, fake.host);
+    expect(await tree.remember()).toBe(true);
+    // The CLI exits after the reading captured it and the tool, before the rows come back.
+    Object.assign(fake.host, {
+      readProcessList: async (ms: number) => {
+        const table = await read(ms);
+        running = false;
+        return table;
+      },
+    });
+    expect(await tree.remember(1_000, true)).toBe(true);
+    Object.assign(fake.host, { readProcessList: read });
+    expect(await tree.end()).toEqual({ found: 1, survivors: 0, unknown: false });
+    expect(fake.calls).toEqual(["kill 201"]);
+  });
+
   it("stays unconfirmed when a Windows child of the tree is listed without its start", async () => {
     const t = (n: number) => 1_000_000n + BigInt(n) * 10n;
     const cli = win(200, 100, t(10), "claude.exe");
