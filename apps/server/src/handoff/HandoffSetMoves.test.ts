@@ -24,6 +24,7 @@ import * as Schema from "effect/Schema";
 
 import { unscopedGrant } from "../fleet/workGrantPolicy.ts";
 import { worktreeSetManifestPath } from "../worktreeSet.ts";
+import { resolveRepositoryPath } from "./bundleGit.ts";
 import { writeCheckpoint } from "./checkpointGit.ts";
 import {
   bundleSetMember,
@@ -53,11 +54,18 @@ import {
   PeerPreflightResponse,
   ReplicateMeta,
   type ReplicateSet,
+  TakeoverRequest,
 } from "./handoffWire.ts";
 import {
+  PREVIOUS_PROTOCOL_VERSION,
   PreviousPeerPreflightRequest,
   PreviousPeerPreflightResponse,
+  PreviousTakeoverResponse,
+  encodePreviousPreflightRequest,
+  encodePreviousTakeoverRequest,
   overTheWire,
+  previousReadAnswer,
+  previousTakeoverFailure,
 } from "./previousRelease383.test.fixture.ts";
 
 const temporary: Array<string> = [];
@@ -103,8 +111,14 @@ const encodeProbe = Schema.encodeSync(PeerPreflightRequest);
 const encodeAnswer = Schema.encodeSync(PeerPreflightResponse);
 const encodeMeta = Schema.encodeSync(ReplicateMeta);
 const decodeMeta = Schema.decodeUnknownSync(ReplicateMeta);
+const readAsRequest = Schema.decodeUnknownOption(PeerPreflightRequest);
+const readAsTakeover = Schema.decodeUnknownOption(TakeoverRequest);
+const readAsPreviousTakeover = Schema.decodeUnknownOption(PreviousTakeoverResponse);
 const readAsPreviousRequest = Schema.decodeUnknownOption(PreviousPeerPreflightRequest);
 const readAsPreviousResponse = Schema.decodeUnknownOption(PreviousPeerPreflightResponse);
+/** Every ref this app keeps in a repository. */
+const appRefs = (root: string) =>
+  git(root, "for-each-ref", "--format=%(refname)", "refs/specwithcode/incoming");
 const replicated = (rig: Rig, to?: RigMachine) =>
   rig.callsOf("replicate", to).map((call) => call.request as ReplicateMeta);
 
@@ -282,6 +296,117 @@ describe("a thread in a worktree set", () => {
       // The project's own member is built first; it is not left there alone.
       expect(git(b.root, "worktree", "list").split("\n")).toHaveLength(1);
       expect(git(b.root, "branch", "--format=%(refname:short)")).toBe("main");
+    }),
+  );
+
+  it.effect("leaves no ref on the other machine when the connection drops between frames", () =>
+    Effect.gen(function* () {
+      const rig = yield* makeRig(temporary);
+      const [a, b] = rig.machines as [RigMachine, RigMachine];
+      withSet(rig, t1, { running: true });
+      // The other member's frame arrives; the thread's own, which names the set, is lost.
+      rig.network.rule = (call) =>
+        call.path === "replicate" && (call.request as ReplicateMeta).set !== undefined
+          ? "lose-request"
+          : undefined;
+
+      const row = yield* batchOf(a, b, t1);
+
+      expect(row.outcome).toBe("stayed");
+      expect(replicated(rig, b).some((frame) => frame.setPart !== undefined)).toBe(true);
+      // The member that arrived is pinned nowhere: its repository holds no ref of this thread.
+      expect(appRefs(NodePath.join(b.root, LIB))).toBe("");
+      expect(appRefs(b.root)).toBe("");
+      expect(b.document.incoming).toHaveLength(0);
+      expect(leaseOf(a, t1)?.state).toBe("active");
+      // Handed off again with the connection back, the whole set arrives.
+      rig.network.rule = null;
+      const result = yield* handOffSet(a, b);
+      expect(b.launches.map((launch) => launch.threadId)).toEqual([result.threadId]);
+    }),
+  );
+
+  it.effect("asks again at the run: a machine rolled back after the check gets no frame", () =>
+    Effect.gen(function* () {
+      const rig = yield* makeRig(temporary);
+      const [a, b] = rig.machines as [RigMachine, RigMachine];
+      withSet(rig, t1, { running: true });
+      const checked = yield* a.moves.preflight({
+        destinationEnvironmentId: b.environmentId,
+        threadIds: [t1],
+      });
+      expect(checked[0]?.failures).toEqual([]);
+      // Between the check and the run the other machine goes back to a build without sets.
+      const current = b.receiver;
+      b.receiver = {
+        ...current,
+        preflight: (from, request) =>
+          current
+            .preflight(from, request)
+            .pipe(Effect.map((answer) => ({ ...answer, capabilities: [HANDOFF_V2_CAPABILITY] }))),
+      };
+      rig.network.calls.length = 0;
+
+      const row = yield* batchOf(a, b, t1);
+
+      expect(row.outcome).toBe("stayed");
+      expect(row.detail).toContain("Update SpecWithCode on B");
+      expect(replicated(rig, b)).toHaveLength(0);
+      expect(rig.callsOf("takeover", b)).toHaveLength(0);
+      expect(b.launches).toHaveLength(0);
+    }),
+  );
+
+  it.effect("refuses a set frame it never agreed to take, before it imports anything", () =>
+    Effect.gen(function* () {
+      const rig = yield* makeRig(temporary);
+      const [a, b] = rig.machines as [RigMachine, RigMachine];
+      withSet(rig, t1);
+      rig.addThread(a, t2);
+      yield* a.moves.preflight({ destinationEnvironmentId: b.environmentId, threadIds: [t2] });
+      const plain = replicated(rig, b)[0]!;
+      const there = NodePath.join(b.root, LIB);
+      const commit = git(there, "rev-parse", "HEAD");
+      const frame = {
+        ...plain,
+        sourceThreadId: t1,
+        repositoryPath: LIB,
+        setPart: { offer: "never-offered", repositoryPath: LIB, commit },
+      } as ReplicateMeta;
+
+      const refusal = yield* b.receiver.replicate(caller(a), frame, null).pipe(Effect.flip);
+
+      expect(refusal.message).toContain("did not agree");
+      expect(appRefs(there)).toBe("");
+      // The thread's own frame is held to the same rule.
+      const whole = {
+        ...plain,
+        sourceThreadId: t1,
+        set: { offer: "never-offered", members: [] },
+      } as ReplicateMeta;
+      const second = yield* b.receiver.replicate(caller(a), whole, null).pipe(Effect.flip);
+      expect(second.message).toContain("did not agree");
+      expect(findIncoming(b.document, a.environmentId, t1)).toBeUndefined();
+    }),
+  );
+
+  it.effect("sends frames a one-repository receiver cannot place, whatever it answered", () =>
+    Effect.gen(function* () {
+      const rig = yield* makeRig(temporary);
+      const [a, b] = rig.machines as [RigMachine, RigMachine];
+      withSet(rig, t1);
+      yield* handOffSet(a, b);
+
+      const frames = replicated(rig, b);
+      expect(frames.length).toBeGreaterThan(1);
+      // A build from before sets reads only `repositoryPath`, and refuses each of these there.
+      for (const frame of frames) {
+        yield* Effect.promise(() =>
+          expect(resolveRepositoryPath(b.root, frame.repositoryPath)).rejects.toThrow(
+            /does not map into this project/,
+          ),
+        );
+      }
     }),
   );
 
@@ -475,6 +600,72 @@ describe("the worktree set capability with a machine that does not name it", () 
     }),
   );
 
+  it.effect(
+    "the latest release as the source: refused in words it reads, and it keeps its thread",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* makeRig(temporary);
+        const [a, b] = rig.machines as [RigMachine, RigMachine];
+        rig.addThread(a, t2);
+        // That release's own bodies, as its sender writes them: no capabilities, no operation id.
+        yield* a.moves.preflight({ destinationEnvironmentId: b.environmentId, threadIds: [t2] });
+        const sequence = a.document.threads[t2]!.checkpoint!.sequence;
+        const asked = readAsRequest(
+          overTheWire(
+            encodePreviousPreflightRequest({
+              sourceEnvironmentId: a.environmentId,
+              protocolVersion: PREVIOUS_PROTOCOL_VERSION,
+              appVersion: "1.0.383",
+              threads: [
+                {
+                  sourceThreadId: t2,
+                  sourceProjectId: a.projectId,
+                  sequence,
+                  modelSelection: null,
+                },
+              ],
+            }),
+          ),
+        );
+        const answer = yield* b.receiver.preflight(caller(a), Option.getOrThrow(asked));
+        const check = previousReadAnswer(
+          200,
+          overTheWire(encodeAnswer(answer)),
+          readAsPreviousResponse,
+        );
+        expect(check.kind).toBe("ok");
+        const failures = check.kind === "ok" ? (check.value.results[0]?.failures ?? []) : [];
+        expect(failures.map((failure) => failure.check)).toContain("version");
+        // It sends its takeover all the same; the answer is a definite no it can read.
+        const takeover = readAsTakeover(
+          overTheWire(
+            encodePreviousTakeoverRequest({
+              sourceEnvironmentId: a.environmentId,
+              sourceThreadId: t2,
+              epoch: 2,
+              sequence,
+              reason: "handoff",
+              modelSelection: null,
+            }),
+          ),
+        );
+        const refusal = yield* b.receiver
+          .takeover(caller(a), Option.getOrThrow(takeover))
+          .pipe(Effect.flip);
+        const read = previousReadAnswer(
+          refusal.status,
+          { error: refusal.message, code: refusal.code, check: refusal.check },
+          readAsPreviousTakeover,
+        );
+        expect(read).toMatchObject({ kind: "refused", uncertain: false });
+        // Its disposition: the hold is released there, and nothing started here.
+        expect(read.kind === "refused" ? previousTakeoverFailure(read) : null).toBe("released");
+        expect(b.launches).toHaveLength(0);
+        expect(Object.values(b.transfers.document.acceptances)).toHaveLength(0);
+        expect(findIncoming(b.document, a.environmentId, t2)?.continuedThreadId).toBeNull();
+      }),
+  );
+
   it.effect("with the latest release: nothing of a set moves, and its bodies still decode", () =>
     Effect.gen(function* () {
       const rig = yield* makeRig(temporary, [
@@ -616,6 +807,31 @@ describe("the members of a set, each measured on its own", () => {
     expect(await bundleSetMember(members[1]!, [members[1]!.commit], limits)).toBeNull();
   });
 
+  it("stops at an oversized file in the first member that the capped list never showed", async () => {
+    const at = project();
+    // 200 nested repositories sort ahead of the file and fill the list a checkpoint keeps.
+    const nested = NodePath.join(at.folder, "a000");
+    NodeFS.mkdirSync(nested);
+    git(nested, "init", "-q", "-b", "main");
+    write(nested, "x.ts", "export {};\n");
+    git(nested, "add", "-A");
+    git(nested, "commit", "-q", "-m", "nested");
+    for (let index = 1; index < 200; index += 1) {
+      NodeFS.cpSync(nested, NodePath.join(at.folder, `a${String(index).padStart(3, "0")}`), {
+        recursive: true,
+      });
+    }
+    write(at.folder, "zz-video.bin", ELEVEN_MB);
+    const own = await writeCheckpoint({ cwd: at.folder, threadId: "thread-1" });
+    // What the thread's stored checkpoint holds: the first 200 skips, none of them the file.
+    expect(own.skipped).toHaveLength(200);
+    expect(own.skipped.some((file) => file.path === "zz-video.bin")).toBe(false);
+
+    await expect(prepare(at)).rejects.toThrow(
+      /^The project folder's own repository: zz-video\.bin is 11 MB/,
+    );
+  });
+
   it("does not read a broken list of repositories as a thread in one repository", async () => {
     const at = project();
     const manifest = worktreeSetManifestPath(at.folder, NodePath);
@@ -646,13 +862,15 @@ describe("the members of a set, each measured on its own", () => {
         git(root, "fetch", "-q", member.root, `${member.ref}:refs/specwithcode/incoming/test`);
       }
       const set: ReplicateSet = {
+        offer: "offer-1",
         members: members.map(({ root: _root, ref: _ref, ...member }) => member),
       };
       const folder = NodePath.join(at.base, "arrived", "work-handoff");
-      const build = (with_: ReplicateSet = set) =>
+      const build = (with_: ReplicateSet = set, owner = "source-1/thread-1/2") =>
         materializeSet({
           projectRoot: there,
           folder,
+          owner,
           set: with_,
           sourceLabel: "Source",
           sourceThreadId: "thread-1",
@@ -719,6 +937,54 @@ describe("the members of a set, each measured on its own", () => {
         await startedSetFolder({ projectRoot: there, set: nested, name: "work-handoff" }),
       ).toBe(folder);
       expect(await build(nested)).toEqual(built);
+    });
+
+    it("does not launch a set one of whose checkouts is gone since it was built", async () => {
+      const { there, folder, build } = await arrived();
+      const built = await build();
+      // Built whole, and then the nested member's checkout was removed.
+      git(NodePath.join(there, LIB), "worktree", "remove", "--force", NodePath.join(folder, LIB));
+
+      await expect(build()).rejects.toThrow(/^packages\/lib: /);
+      // The member that is left is not touched.
+      expect(read(built.worktreePath, "app.ts")).toBe("export const one = 2;\n");
+    });
+
+    it("never removes a checkout it cannot prove this handoff made", async () => {
+      const { there, set, folder, build } = await arrived();
+      // Someone else's worktree sits where the set would go, with work in it.
+      git(there, "worktree", "add", "-q", "-b", "theirs", folder, set.members[0]!.baseCommit);
+      write(folder, "theirs.ts", "export const theirs = true;\n");
+
+      await expect(build()).rejects.toThrow(/not this handoff's/);
+
+      expect(read(folder, "theirs.ts")).toBe("export const theirs = true;\n");
+      expect(branches(there)).toContain("theirs");
+      expect(NodeFS.existsSync(NodePath.join(folder, LIB))).toBe(false);
+    });
+
+    it("leaves another handoff's set alone, though the folder has the same name", async () => {
+      const { folder, build } = await arrived();
+      await build();
+      write(folder, "typed-there.ts", "export {};\n");
+
+      await expect(build(undefined, "source-2/thread-1/2")).rejects.toThrow(/another handoff/);
+
+      expect(read(folder, "typed-there.ts")).toBe("export {};\n");
+      expect(read(NodePath.join(folder, LIB), "draft.ts")).toBe("export {};\n");
+    });
+
+    it("keeps an attempt that was cut when a member in it was edited since", async () => {
+      const { folder, build } = await arrived();
+      await build();
+      // As a cut leaves it: every member built, the set never marked whole.
+      NodeFS.rmSync(worktreeSetManifestPath(folder, NodePath));
+      write(NodePath.join(folder, LIB), "typed-since.ts", "export {};\n");
+
+      await expect(build()).rejects.toThrow(/^packages\/lib: /);
+
+      expect(read(NodePath.join(folder, LIB), "typed-since.ts")).toBe("export {};\n");
+      expect(read(folder, "app.ts")).toBe("export const one = 2;\n");
     });
 
     it("keeps no copy of the thread while one member's work is missing", async () => {
