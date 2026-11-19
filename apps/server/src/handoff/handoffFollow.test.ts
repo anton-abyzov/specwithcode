@@ -90,8 +90,6 @@ function otherMachine(): OtherMachine {
     unreachable: false,
     waits: 0,
     wait: async (args) => {
-      // A running turn holds the real wait open; a short pause stands in for it.
-      await new Promise((resolve) => setTimeout(resolve, 2));
       other.waits += 1;
       if (other.unreachable) return { raw: new Response("down", { status: 503 }) };
       const threadId = String(args.threadId);
@@ -314,9 +312,7 @@ const scenario = (world: ReturnType<typeof setup>["world"], other: OtherMachine)
         }
         if (network.dropTakeoverRequest) return Effect.fail(noAnswer());
         return fromReceiver(destinationReceiver.takeover(asSource, request)).pipe(
-          Effect.flatMap((answer) =>
-            network.dropTakeoverAnswer ? Effect.fail(noAnswer()) : Effect.succeed(answer),
-          ),
+          Effect.filterOrFail(() => !network.dropTakeoverAnswer, noAnswer),
         );
       },
       heartbeat: (_: unknown, request: never) =>

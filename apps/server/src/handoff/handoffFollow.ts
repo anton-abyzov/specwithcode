@@ -113,16 +113,18 @@ export const make = (dependencies: HandoffFollowDependencies): HandoffFollowShap
         )
       : Effect.succeed(undefined);
 
-  const quiet = (what: string, threadId: string) => (effect: Effect.Effect<void, unknown>) =>
-    effect.pipe(
-      // Following is best effort: it never fails or delays the handoff itself.
-      Effect.catchCause((cause) =>
-        Effect.logWarning(`Handoff could not ${what} the thread's launcher follow.`, {
-          threadId,
-          cause,
-        }),
-      ),
-    );
+  // Following is best effort: it never fails or delays the handoff itself.
+  const quiet =
+    (what: string, threadId: string) =>
+    (effect: Effect.Effect<void, RemoteWorkerStore.RemoteWorkerStoreError>) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning(`Handoff could not ${what} the thread's launcher follow.`, {
+            threadId,
+            cause,
+          }),
+        ),
+      );
 
   const ensure = (
     input: HandoffFollowInput,
