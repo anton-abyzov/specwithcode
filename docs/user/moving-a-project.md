@@ -40,6 +40,12 @@ offline, the plan is dropped, nothing is moved, and the dialog says why.
 Sync is Git first. Each machine fetches from its own remote and moves its checked
 out branch forward where that is a plain fast-forward. Nothing is fetched from the
 other machine, nothing is pushed, and no branch is checked out or merged for you.
+A machine moves a branch only to the commit its own fetch for this Sync brought.
+A machine on an older SpecWithCode only fetches, and its rows say **Needs update**.
+A folder or checkout a machine could not read is never moved and reads **Could not
+be read**, with the machine's reason. When Git was asked to move a checkout and the
+result could not be read back, the row says it may have moved and to check it
+before working in it; it never counts as done.
 
 The dialog first shows what it would do, one row per repository with a cell for
 each machine. Nothing changes until you choose **Sync**. A cell says one of:
@@ -274,11 +280,8 @@ working folders must be copied separately.
 
 ## Coordinators on different machines
 
-A project has one coordinator, on one of its machines; every linked machine runs
-its own threads. The machine menu marks that machine **Coordinator**. A second
-machine that still runs a coordinator for the same project is marked **Extra
-coordinator**, with **Fix…** beside it. Viewing another machine just changes what
-you see.
+Each linked machine can have its own coordinator, conversation and local
+execution. Viewing another machine’s coordinator just changes what you see.
 Copying files does not migrate running threads or provider sessions.
 
 Transferring coordinator context is a deliberate continuation of one coordinator
