@@ -330,6 +330,20 @@ it("keeps Continue as the Access step's one neutral control, also while an answe
   expect(contract().step).toBe("import");
 });
 
+it("keeps focus on the neutral control when projects finish loading, so Enter imports nothing", async () => {
+  world.scansPending = true;
+  await render();
+  for (let index = 0; index < 3; index++) await act(async () => contract().neutral[0]!.click());
+  expect(contract().step).toBe("import");
+  // The scans finish in the same mounted step: its footer is drawn again with Import enabled.
+  world.scansPending = false;
+  await render();
+  expect(button("Import 1 project")).toBeDefined();
+  expect(document.activeElement?.textContent?.trim()).toBe("Do not import projects");
+  expect(document.activeElement?.hasAttribute("data-wizard-neutral")).toBe(true);
+  expect(world.importThreads).not.toHaveBeenCalled();
+});
+
 it("keeps the import step's neutral control while projects load, and none while an import runs", async () => {
   world.scansPending = true;
   await render();
