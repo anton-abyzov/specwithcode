@@ -25,6 +25,51 @@ the machine's GitHub login, without changing the remote.
 Both machines must be in your private fleet. If they are not yet, follow
 [Add a machine](./add-a-machine.md) first.
 
+## Sync a project that is on two machines
+
+**Sync…** in the machine menu opens a dialog for the machine shown and one other
+machine that has the project. With several, you pick the other machine first.
+
+Sync is Git first. Each machine fetches from its own remote and moves its checked
+out branch forward where that is a plain fast-forward. Nothing is fetched from the
+other machine, nothing is pushed, and no branch is checked out or merged for you.
+
+The dialog first shows what it would do, one row per repository with a cell for
+each machine. Nothing changes until you choose **Sync**. A cell says one of:
+
+- **Up to date**, or **Moves forward N commits**.
+- **Clones it from &lt;remote&gt;**, when only the other machine has the repository.
+- Why it stays as it is: uncommitted files, a thread using it, another branch
+  checked out, no branch, no upstream, an upstream that is not a branch of origin
+  or is gone from origin, a fetch that failed, or no Git remote at all.
+
+After the run each cell says what happened. A repository that could not be moved
+says why, and the others continue. If no answer came for a repository, the row
+says so and that it may have moved; **Check again** shows where it stands. The
+title says the project is in sync only when nothing is left on either machine.
+
+Below the repositories, **Only on &lt;machine&gt;** lists what Git does not carry:
+commits that were never pushed, branches that exist only there, and uncommitted
+files. Each line is unticked. A ticked line is sent straight to the other machine
+over the link between the two, never to GitHub, and arrives there as a branch
+named `swc/from-<machine>/…`, not as files in its folder. To use it there, check
+that branch out or merge it. Stashes stay where they are.
+
+Uncommitted files are checked before they are sent, by file name and, for
+untracked files, by their first 64 KB. A file that looks like a secret is left
+out and listed. One flagged by its content, or one that could not be checked, has
+**Send anyway**, which applies once that repository's uncommitted files are
+ticked. A file that is a secret by its name, such as `.env`, always stays: Sync
+does not send secrets.
+
+**Compare all files…** opens the folder copy described below for the same two
+machines. Use it for what Sync leaves: repositories with no Git remote, stashes,
+ignored files, files over the size limit, and secrets.
+
+A window that can only read a machine sees whether the two machines match, and
+**Sync…** is greyed there. A machine whose app is older than Sync shows **Needs
+update**; **Compare all files…** works with it meanwhile.
+
 ## Copy a project
 
 1. Open the project on the machine that has it now (the **source**).
@@ -65,13 +110,12 @@ copy root.
 
 For a machine that already has the project, a finished copy offers
 **Continue the coordinator on &lt;machine&gt;**, and that machine's own message
-box offers **Continue the coordinator here**, next to **Write to
-&lt;machine&gt;'s coordinator**. While the machine with the coordinator is
-connected it copies nothing and moves only the coordinator and its
+box offers **Continue the coordinator here**. While the machine with the
+coordinator is connected it copies nothing and moves only the coordinator and its
 conversation, through Git, after you confirm. If that machine has been
-unreachable for 10 minutes or more, the copy takes over instead: it starts from
-the shared goal, memory and plan, and the earlier conversation stays on the old
-machine as history. In between, the item is off and says when it unlocks. A
+unreachable for 10 minutes or more, the coordinator can continue on this machine
+instead: it starts from the shared goal, memory and plan, and the earlier
+conversation stays on the old machine as history. In between, the item is off and says when it unlocks. A
 machine whose project is not linked gets **Link &lt;machine&gt; to this
 project…** instead (see [Shared projects](shared-projects.md)).
 
@@ -214,8 +258,11 @@ working folders must be copied separately.
 
 ## Coordinators on different machines
 
-Each linked machine can have its own coordinator, conversation and local
-execution. Viewing another machine’s coordinator just changes what you see.
+A project has one coordinator, on one of its machines; every linked machine runs
+its own threads. The machine menu marks that machine **Coordinator**. A second
+machine that still runs a coordinator for the same project is marked **Extra
+coordinator**, with **Fix…** beside it. Viewing another machine just changes what
+you see.
 Copying files does not migrate running threads or provider sessions.
 
 Transferring coordinator context is a deliberate continuation of one coordinator
@@ -325,7 +372,7 @@ yours as `swc/from-<machine>/<branch>`, so you can merge them when you are ready
 
 For each conflict, pick one:
 
-- **Keep this machine's version**
+- **Keep this machine’s version**
 - **Take the source version (back up this one)**
 - **Leave both untouched**
 - **Keep both (source copy beside it)**: the source file is written next to
