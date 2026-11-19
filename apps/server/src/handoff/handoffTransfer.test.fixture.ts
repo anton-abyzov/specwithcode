@@ -158,6 +158,8 @@ export interface RigMachine {
   threadLookupFails: boolean;
   /** How many times this machine was started. */
   boots: number;
+  /** Where this machine keeps what must outlive a restart. */
+  readonly stateDir: string;
   receiver: HandoffReceiver.HandoffReceiver["Service"];
   moves: Effect.Success<typeof HandoffMoves.make>;
 }
@@ -251,6 +253,7 @@ export const makeRig = (
         onDocument: null,
         threadLookupFails: false,
         boots: 0,
+        stateDir: NodeFS.mkdtempSync(NodePath.join(base, "state-")),
         receiver: undefined as never,
         moves: undefined as never,
       };
@@ -365,7 +368,7 @@ export const makeRig = (
         Layer.succeed(ServerConfig.ServerConfig, {
           worktreesDir,
           // Each machine keeps its own state, as two installs do.
-          stateDir: NodeFS.mkdtempSync(NodePath.join(base, "state-")),
+          stateDir: target.stateDir,
         } as never),
         Layer.succeed(ProjectService.ProjectService, {
           getById: (id: ProjectId) =>

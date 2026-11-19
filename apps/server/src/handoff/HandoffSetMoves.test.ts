@@ -24,7 +24,7 @@ import * as Schema from "effect/Schema";
 
 import { unscopedGrant } from "../fleet/workGrantPolicy.ts";
 import { worktreeSetManifestPath } from "../worktreeSet.ts";
-import { resolveRepositoryPath } from "./bundleGit.ts";
+import { incomingRef, resolveRepositoryPath } from "./bundleGit.ts";
 import { writeCheckpoint } from "./checkpointGit.ts";
 import {
   bundleSetMember,
@@ -38,7 +38,7 @@ import {
   SET_LIMITS,
   startedSetFolder,
 } from "./HandoffSetMoves.ts";
-import { findIncoming } from "./handoffState.ts";
+import { findIncoming, incomingKey } from "./handoffState.ts";
 import {
   makeRig,
   modelSelection,
@@ -414,6 +414,12 @@ describe("a thread in a worktree set", () => {
           protocolVersion: HANDOFF_PROTOCOL_VERSION - 1,
           capabilities: HANDOFF_CAPABILITIES,
         },
+        // Names sets, yet keeps no transfer records: no thread moves from it at all.
+        {
+          id: "offer-no-records",
+          protocolVersion: HANDOFF_PROTOCOL_VERSION,
+          capabilities: [SET_CAPABILITY],
+        },
       ];
       for (const source of sources) {
         const answer = yield* b.receiver.preflight(caller(a), {
@@ -443,6 +449,90 @@ describe("a thread in a worktree set", () => {
       }
       expect(appRefs(there)).toBe("");
       expect(findIncoming(b.document, a.environmentId, t1)).toBeUndefined();
+    }),
+  );
+
+  it.effect("after a restart, a resend that stopped halfway is not read as the stored set", () =>
+    Effect.gen(function* () {
+      const rig = yield* makeRig(temporary);
+      const [a, b] = rig.machines as [RigMachine, RigMachine];
+      withSet(rig, t1, { running: true });
+      const there = NodePath.join(b.root, LIB);
+      const target = incomingRef(a.environmentId, t1);
+      const storedSet = (machine: RigMachine) =>
+        (machine.document.incomingDetails ?? {})[incomingKey(a.environmentId, t1)]?.set;
+      const seen: {
+        held?: ReplicateSet;
+        landed?: string;
+        record?: ReplicateSet | undefined;
+        refs?: ReadonlyArray<string>;
+      } = {};
+      // Run while the takeover is on its way: the whole set is stored on the
+      // other machine by then, its record and a ref in each repository.
+      const resendStopsHalfway = Effect.gen(function* () {
+        const held = storedSet(b)!;
+        seen.held = held;
+        // A resend: the thread's own checkpoint is the same commit, the other member's is new.
+        const newer = git(there, "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "newer");
+        let written = 0;
+        let reached = () => {};
+        const stopped = new Promise<void>((resolve) => (reached = resolve));
+        const stopping = makeSetOffers(undefined, {
+          directory: NodePath.join(b.stateDir, "handoff-sets"),
+          // The receiver stops once the member's new ref is written and before the record is.
+          afterRef: () =>
+            (written += 1) < 2 ? Promise.resolve() : (reached(), new Promise(() => {})),
+        });
+        const sent = {
+          sourceEnvironmentId: a.environmentId,
+          sourceThreadId: t1,
+          self: false,
+          projectRoot: b.root,
+          targetRef: target,
+          commit: held.members[0]!.commit,
+          bundle: null,
+        };
+        yield* Effect.promise(async () => {
+          await stopping.open(a.environmentId, t1, "offer-resend");
+          const part = { offer: "offer-resend", repositoryPath: LIB, commit: newer };
+          await stopping.take({ ...sent, part, set: undefined });
+          const set = {
+            offer: "offer-resend",
+            members: [held.members[0]!, { ...held.members[1]!, commit: newer }],
+          };
+          await Promise.race([stopped, stopping.take({ ...sent, part: undefined, set })]);
+        });
+        seen.landed = git(there, "rev-parse", target) === newer ? "newer" : "earlier";
+
+        yield* rig.restart(b);
+        // The first thing the restarted receiver is asked settles what the stopped one left.
+        yield* b.receiver
+          .preflight(caller(a), {
+            sourceEnvironmentId: a.environmentId,
+            protocolVersion: HANDOFF_PROTOCOL_VERSION,
+            appVersion: "1.0.999",
+            capabilities: HANDOFF_CAPABILITIES,
+            setOffer: { id: "offer-after", sourceThreadId: t2 },
+            threads: [],
+          } as PeerPreflightRequest)
+          .pipe(Effect.orDie);
+        seen.record = storedSet(b);
+        seen.refs = [git(b.root, "rev-parse", target), git(there, "rev-parse", target)];
+      });
+      let ran = false;
+      rig.network.rule = (call) => {
+        if (call.path !== "takeover" || ran) return undefined;
+        ran = true;
+        return { wait: resendStopsHalfway };
+      };
+
+      yield* batchOf(a, b, t1);
+
+      expect(seen.held?.members).toHaveLength(2);
+      expect(seen.landed).toBe("newer");
+      // The record still names the earlier set, so each ref is that set's again.
+      expect(seen.record).toEqual(seen.held);
+      expect(seen.refs).toEqual(seen.held?.members.map((member) => member.commit));
     }),
   );
 
@@ -1100,6 +1190,49 @@ describe("the members of a set, each measured on its own", () => {
       await expect(build()).rejects.toThrow(/^packages\/lib: /);
 
       expect(read(lib, "notes.local")).toBe("kept by hand\n");
+    });
+
+    it("keeps a cut attempt whose member holds an edited copy of a file it needs", async () => {
+      const { there, set, folder, build } = await arrived();
+      // A file the member needs and Git ignores: the build copies it from the repository here.
+      NodeFS.appendFileSync(NodePath.join(there, LIB, ".git", "info", "exclude"), ".env.local\n");
+      write(NodePath.join(there, LIB), ".env.local", "PORT=1\n");
+      const needing: ReplicateSet = {
+        ...set,
+        members: [set.members[0]!, { ...set.members[1]!, requiredSecretPaths: [".env.local"] }],
+      };
+      await build(needing);
+      NodeFS.rmSync(worktreeSetManifestPath(folder, NodePath));
+      const lib = NodePath.join(folder, LIB);
+      expect(read(lib, ".env.local")).toBe("PORT=1\n");
+      write(lib, ".env.local", "PORT=2\n");
+
+      const refused = await build(needing).then(
+        () => null,
+        (cause: Error) => cause.message,
+      );
+
+      expect(refused ?? "built again").toMatch(/^packages\/lib: /);
+      // What the file holds is never part of the answer.
+      expect(refused ?? "").not.toContain("PORT");
+      expect(read(lib, ".env.local")).toBe("PORT=2\n");
+    });
+
+    it("builds again over a cut attempt whose copied files are as they were copied", async () => {
+      const { there, set, folder, build } = await arrived();
+      NodeFS.appendFileSync(NodePath.join(there, LIB, ".git", "info", "exclude"), ".env.local\n");
+      write(NodePath.join(there, LIB), ".env.local", "PORT=1\n");
+      const needing: ReplicateSet = {
+        ...set,
+        members: [set.members[0]!, { ...set.members[1]!, requiredSecretPaths: [".env.local"] }],
+      };
+      await build(needing);
+      NodeFS.rmSync(worktreeSetManifestPath(folder, NodePath));
+
+      const built = await build(needing);
+
+      expect(built.worktreePath).toBe(folder);
+      expect(read(NodePath.join(folder, LIB), ".env.local")).toBe("PORT=1\n");
     });
 
     const TARGET = "refs/specwithcode/incoming/source-1/thread-1";
