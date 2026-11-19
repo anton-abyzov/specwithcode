@@ -58,7 +58,12 @@ const claude = provider(
   "effort",
 );
 // Codex lists only the older Sol release here.
-const codex = provider("codex", "codex", [{ slug: "gpt-6.1-sol", name: "GPT-6.1-Sol" }], "reasoningEffort");
+const codex = provider(
+  "codex",
+  "codex",
+  [{ slug: "gpt-6.1-sol", name: "GPT-6.1-Sol" }],
+  "reasoningEffort",
+);
 const codex62 = provider(
   "codex",
   "codex",
@@ -110,9 +115,17 @@ describe("a built-in track saved by an effort change", () => {
   it("keeps every built-in entry by its maker's name, unlisted ones on the maker's harness", () => {
     const { saved } = saveEffort("daily", [claude, codex], "GPT-6.1-Sol", "high");
     expect(saved).toEqual([
-      { instanceId: "claudeAgent", model: "claude-opus-5-5", options: [{ id: "effort", value: "medium" }] },
+      {
+        instanceId: "claudeAgent",
+        model: "claude-opus-5-5",
+        options: [{ id: "effort", value: "medium" }],
+      },
       { instanceId: "claudeAgent", model: "claude-sonnet-5-5" },
-      { instanceId: "codex", model: "gpt-6.2-sol", options: [{ id: "reasoningEffort", value: "high" }] },
+      {
+        instanceId: "codex",
+        model: "gpt-6.2-sol",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      },
       { instanceId: "codex", model: "gpt-6-luna" },
     ]);
   });

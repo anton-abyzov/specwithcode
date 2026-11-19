@@ -96,13 +96,15 @@ describe("launchReturnCommand", () => {
     const unread = { ...claude(40), usageLimits: undefined };
     const unmetered = {
       ...claude(40),
-      usageLimits: { ...claude(40).usageLimits!, windows: [], unavailable: { reason: "unsupported", unmetered: true } },
+      usageLimits: {
+        ...claude(40).usageLimits!,
+        windows: [],
+        unavailable: { reason: "unsupported", unmetered: true },
+      },
     } as ServerProvider;
     // At launch the pick was held (a limit stop no read shows): it stays.
     const held = new Set<string>([claudeId]);
-    expect(
-      launchReturnCommand(thread, home, providers(unread), rule, nowMs, 0, held),
-    ).toBeNull();
+    expect(launchReturnCommand(thread, home, providers(unread), rule, nowMs, 0, held)).toBeNull();
     // A denial the provider reports keeps it too.
     const denied = {
       ...claude(40),
@@ -111,9 +113,9 @@ describe("launchReturnCommand", () => {
     expect(launchReturnCommand(thread, home, providers(denied), rule, nowMs)).toBeNull();
     // Once the hold clears, the idle thread goes back.
     for (const pick of [unread, unmetered])
-      expect(launchReturnCommand(thread, home, providers(pick), rule, nowMs)?.modelSelection).toEqual(
-        home,
-      );
+      expect(
+        launchReturnCommand(thread, home, providers(pick), rule, nowMs)?.modelSelection,
+      ).toEqual(home);
     // Never onto a pick that cannot take a turn.
     const notReady = { ...unread, status: "error" } as ServerProvider;
     expect(launchReturnCommand(thread, home, providers(notReady), rule, nowMs)).toBeNull();

@@ -126,7 +126,12 @@ describe("withEffortForModel", () => {
   it("moves a level saved under another id to the model's own id, at the nearest level", () => {
     expect(
       withEffortForModel(
-        { options: [{ id: "effort", value: "xhigh" }, { id: "fastMode", value: true }] },
+        {
+          options: [
+            { id: "effort", value: "xhigh" },
+            { id: "fastMode", value: true },
+          ],
+        },
         codex,
       ).options,
     ).toEqual([

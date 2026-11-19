@@ -455,13 +455,19 @@ describe("scheduled task model defaults", () => {
       driver: "claudeAgent",
       displayName: "Claude",
       models: [
-        { slug: "claude-opus-5-5", name: "Opus", isDefault: true, isCustom: false, capabilities: null },
+        {
+          slug: "claude-opus-5-5",
+          name: "Opus",
+          isDefault: true,
+          isCustom: false,
+          capabilities: null,
+        },
       ],
     };
     const settings = { ...config.settings, defaultModelSelection: null };
-    expect(resolve({ ...config, settings, providers: [muse, claude] } as ServerConfig, null)).toEqual(
-      { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" },
-    );
+    expect(
+      resolve({ ...config, settings, providers: [muse, claude] } as ServerConfig, null),
+    ).toEqual({ instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" });
     // With only Muse there is no regular default to guess.
     expect(resolve({ ...config, settings, providers: [muse] } as ServerConfig, null)).toBeNull();
     // A Muse model the person put on Daily is a regular model again.

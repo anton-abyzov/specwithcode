@@ -233,9 +233,17 @@ describe("ModelTracksSettings effort", () => {
     // Luna, which nothing here lists, stay on their makers' harnesses, and the
     // Sol row keeps following the newest Sol release.
     expect(saved).toEqual([
-      { instanceId: claude.instanceId, model: "claude-opus-5-5", options: [{ id: "effort", value: "medium" }] },
+      {
+        instanceId: claude.instanceId,
+        model: "claude-opus-5-5",
+        options: [{ id: "effort", value: "medium" }],
+      },
       { instanceId: claude.instanceId, model: "claude-sonnet-5-5" },
-      { instanceId: codex.instanceId, model: "gpt-6.2-sol", options: [{ id: "reasoningEffort", value: "high" }] },
+      {
+        instanceId: codex.instanceId,
+        model: "gpt-6.2-sol",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      },
       { instanceId: codex.instanceId, model: "gpt-6-luna" },
     ]);
   });
@@ -257,7 +265,8 @@ describe("ModelTracksSettings effort", () => {
     state.providers = [claude, muse];
     const root = render();
     act(() => picker(root, "Muse Wonder Full 1.0", "Review").props["data-on-change"]("high"));
-    const reviewers = state.update.mock.calls[0]![0].adversarialReview.reviewers as ModelSelection[];
+    const reviewers = state.update.mock.calls[0]![0].adversarialReview
+      .reviewers as ModelSelection[];
     expect(reviewers.map((entry) => entry.model)).toEqual([
       "muse-wonder-full-1.0",
       "muse-wonder-1.0",
@@ -376,7 +385,11 @@ describe("ModelTracksSettings effort", () => {
     // Claude Code lists Opus without levels here; Cursor lists it with its own `reasoning` id.
     const plainClaude = provider("claudeAgent", "claudeAgent", [
       { slug: "claude-opus-5-5", name: "Claude Opus 5.5", capabilities: null },
-      { slug: "claude-sonnet-5-5", name: "Claude Sonnet 5.5", capabilities: claude.models[0]!.capabilities },
+      {
+        slug: "claude-sonnet-5-5",
+        name: "Claude Sonnet 5.5",
+        capabilities: claude.models[0]!.capabilities,
+      },
     ]);
     const cursor = provider("cursor", "cursor", [
       {

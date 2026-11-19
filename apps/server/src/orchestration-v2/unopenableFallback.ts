@@ -77,8 +77,7 @@ export type FallbackThread = Pick<
 export const isReviewWork = (thread: FallbackThread): boolean =>
   thread.routing?.taskClass === "review" ||
   thread.routing?.reviewFamily !== undefined ||
-  (thread.routing == null &&
-    thread.title?.startsWith(ADVERSARIAL_REVIEW_TITLE_PREFIX) === true);
+  (thread.routing == null && thread.title?.startsWith(ADVERSARIAL_REVIEW_TITLE_PREFIX) === true);
 
 /** Nothing holds the thread: no turn running and no question that really waits. */
 export const threadIsFree = (thread: FallbackThread): boolean =>
