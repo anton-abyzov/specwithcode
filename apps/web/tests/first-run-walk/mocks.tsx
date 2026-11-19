@@ -3,7 +3,7 @@
 // one project to import. The steps, the frame and their footers are the app's own.
 import { DEFAULT_SERVER_SETTINGS } from "@specweave-studio/contracts";
 import { Atom } from "effect/reactivity";
-import type { ReactNode } from "react";
+import { useSyncExternalStore, type ReactNode } from "react";
 
 const params = new URLSearchParams(location.search);
 export const fixture = {
@@ -110,7 +110,28 @@ export const useFullAccessRecommendation = () => ({
 // onboarding/firstRun
 export const useCompleteOnboarding = () => record("completeOnboarding");
 
-// onboarding/useProjectScans: one project with history.
+// onboarding/useProjectScans: one project with history. With ?scans=late the scan
+// stays pending until the page calls window.finishScans(), so a check can end it
+// while the Projects step is open.
+let scansReady = params.get("scans") !== "late";
+const scanListeners = new Set<() => void>();
+Object.assign(window, {
+  finishScans: () => {
+    scansReady = true;
+    for (const listener of scanListeners) listener();
+  },
+});
+const subscribeScans = (listener: () => void) => {
+  scanListeners.add(listener);
+  return () => scanListeners.delete(listener);
+};
+const pendingScan = (environmentId: string) => ({
+  environmentId,
+  isPending: true,
+  error: null,
+  refresh: record("refreshScan"),
+  data: null,
+});
 const scan = (environmentId: string) => ({
   environmentId,
   isPending: false,
@@ -130,7 +151,10 @@ const scan = (environmentId: string) => ({
     ],
   },
 });
-export const useProjectScans = (ids: readonly string[]) => ids.map(scan);
+export const useProjectScans = (ids: readonly string[]) => {
+  const ready = useSyncExternalStore(subscribeScans, () => scansReady);
+  return ids.map(ready ? scan : pendingScan);
+};
 
 // Parts with their own fixtures and tests draw nothing here.
 const Nothing = () => null;
