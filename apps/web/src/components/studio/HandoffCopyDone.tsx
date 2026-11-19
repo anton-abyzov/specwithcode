@@ -19,7 +19,7 @@ import { EllipsisIcon } from "lucide-react";
 import { MachineReadinessChecklist } from "../settings/MachineReadinessChecklist";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
-import { checkLabel, copyProblem } from "./handoffCopyNotices";
+import { checkLabel, copyProblem, copyProblemWords } from "./handoffCopyNotices";
 import { CopyUndoPreview } from "./HandoffCopyPreview";
 import { ProjectLinkDialog } from "./ProjectLinkDialog";
 import { useProjectMoveDialog } from "./ProjectMoveOptions";
@@ -95,7 +95,9 @@ export function HandoffCopyDone({
   readonly onLinked: () => void;
 }) {
   const tx = useTx();
-  const problem = copyProblem(copy, sourceLabel);
+  // Said in the reader's language: the clause is this window's own.
+  const problemWords = copyProblemWords(copy, sourceLabel);
+  const problem = problemWords ? tx(problemWords.text, problemWords.values) : null;
   // Inside the dialog its title says it; standalone, the panel does.
   const dialog = useProjectMoveDialog();
   const titled = dialog !== null;
@@ -248,7 +250,11 @@ export function HandoffCopyDone({
                   source: sourceLabel,
                   target: targetLabel,
                 })
-              : tx("Not linked yet. {reason}", { reason: link.reason })}
+              : tx("Not linked yet. {reason}", {
+                  reason: link.words.verbatim
+                    ? link.words.text
+                    : tx(link.words.text, link.words.values),
+                })}
         </p>
       )}
       {copy.secrets && copy.secrets.length > 0 && (

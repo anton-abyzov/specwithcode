@@ -43,6 +43,7 @@ import { ExtraCoordinatorFix } from "./ExtraCoordinatorFix";
 import { ProjectSyncDialog } from "./ProjectSyncDialog";
 import { useProjectSyncMenu, type SyncAsk } from "./useProjectSyncMenu";
 import { ProjectLinkDialog, type ProjectLinkTarget } from "./ProjectLinkDialog";
+import { useLinkRefusals } from "../../studio/linkRefusals";
 import { Button } from "../ui/button";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import {
@@ -214,6 +215,8 @@ export function OrchestratorSwitcher({
   // as an invisible layer that catches clicks.
   const pendingView = useRef<(() => void) | null>(null);
   const tx = useTx();
+  // Why linking a copy last failed, kept after the Add dialog was closed.
+  const refusalOf = useLinkRefusals();
   const onText = tx("On {machine}", { machine: label });
   // The chip names the machine shown and its state by the dot alone, in the machine's own
   // color while connected (never a status green that reads as another machine). While it is not
@@ -269,6 +272,8 @@ export function OrchestratorSwitcher({
       : null;
   // Linking is what makes two projects for one repository one project; nothing is copied.
   const linkActions = onLink ? links : [];
+  const refusalWords = (reason: NonNullable<ReturnType<typeof refusalOf>>) =>
+    reason.verbatim ? reason.text : tx(reason.text, reason.values);
   // Every machine added the repository on its own: the menu says once that they are separate
   // projects and what that leaves alone. With a linked machine in the group (listed, or known
   // only as one this window never opened) the sentence does not hold for every row.
@@ -526,7 +531,20 @@ export function OrchestratorSwitcher({
                 }}
               >
                 <Link2Icon aria-hidden />
-                {tx("Link {machine} to this project…", { machine: link.machine })}
+                <span className="flex min-w-0 flex-col">
+                  {tx("Link {machine} to this project…", { machine: link.machine })}
+                  {refusalOf(current, link.key) ? (
+                    // Why the last try to link it failed, kept after Add was closed.
+                    <span
+                      className="text-muted-foreground text-xs wrap-anywhere"
+                      data-orchestrator-link-refusal=""
+                    >
+                      {tx("Not linked yet. {reason}", {
+                        reason: refusalWords(refusalOf(current, link.key)!),
+                      })}
+                    </span>
+                  ) : null}
+                </span>
               </MenuItem>
             ))}
           </MenuGroup>
@@ -790,6 +808,7 @@ export function ProjectOrchestratorSwitcher({
         <ProjectSyncDialog
           projectTitle={projectTitle}
           shown={files.dialog.shown}
+          shownBlocked={files.dialog.shownBlocked}
           targets={files.dialog.targets}
           onClose={files.dialog.onClose}
           onCompare={files.dialog.onCompare}

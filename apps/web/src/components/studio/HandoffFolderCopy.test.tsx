@@ -2,6 +2,8 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+
+import { linkRefusal } from "../../studio/linkRefusals";
 import { DEFAULT_COPY_SELECTION } from "../../studio/folderCopy";
 import {
   copyHandlers,
@@ -476,11 +478,17 @@ it("offers the link review when a copy cannot be linked on its own", async () =>
   state.link = vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({
     status: "review",
     reason: "Project notes differ on M3.",
+    words: { text: "Project notes differ on {machine}.", values: { machine: "M3" } },
   }));
   await mount();
   await click("Copy to M3");
   await click("Copy to M3");
   expect(container.textContent).toContain("Not linked yet. Project notes differ on M3.");
+  // Kept for the machine menu, which says it after this dialog is closed.
+  expect(linkRefusal("m4:source", "m3:copied")).toEqual({
+    text: "Project notes differ on {machine}.",
+    values: { machine: "M3" },
+  });
   await openMore();
   await click("Link…");
   expect(container.querySelector('[data-slot="link-dialog"]')?.textContent).toBe(

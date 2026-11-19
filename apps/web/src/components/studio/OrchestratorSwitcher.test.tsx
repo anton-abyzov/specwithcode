@@ -6,7 +6,15 @@ import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/
 import type { MainOffer } from "../../studio/makeMain";
 import type { MachineRowRole } from "../../studio/machineRowState";
 import type { OrchestratorCopy } from "../../studio/projectCoordinatorMachine";
+import {
+  forgetLinkRefusal,
+  rememberLinkRefusal,
+  resetLinkRefusalsForTest,
+} from "../../studio/linkRefusals";
 import { copyRoleLabel } from "../../studio/workersOnlyCopy";
+
+/** The project shown in `renderSwitcher`. */
+const CURRENT = "m4:p";
 
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
@@ -27,6 +35,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
   await act(async () => root.unmount());
+  resetLinkRefusalsForTest();
   container.remove();
   document.body.innerHTML = "";
 });
@@ -792,6 +801,32 @@ it("offers to link each same-repository project on another machine, from its own
   await vi.waitFor(() => expect(onLink).toHaveBeenCalledWith("m5:old"));
   expect(calls.onView).not.toHaveBeenCalled();
   expect(calls.onMakeMain).not.toHaveBeenCalled();
+});
+
+it("says under Link why the last try to link failed, until the two are linked", async () => {
+  const menu = { ...handlers(), onLink: vi.fn(), links: [{ key: "m5:old", machine: "M5" }] };
+  const refusal = () => document.querySelector("[data-orchestrator-link-refusal]")?.textContent;
+  await renderSwitcher(menu);
+  expect(refusal()).toBeUndefined();
+  // Add ended without linking and its dialog was closed: the menu still says why.
+  await act(async () =>
+    rememberLinkRefusal(CURRENT, "m5:old", {
+      text: "Project notes differ on {machine}.",
+      values: { machine: "M5" },
+    }),
+  );
+  expect(refusal()).toBe("Not linked yet. Project notes differ on M5.");
+  expect(document.querySelector("[data-orchestrator-link]")?.textContent).toContain(
+    "Link M5 to this project…",
+  );
+  // A failure for another pair of projects is not this row's.
+  await act(async () => resetLinkRefusalsForTest());
+  await act(async () => rememberLinkRefusal(CURRENT, "m5:other", { text: "No.", verbatim: true }));
+  expect(refusal()).toBeUndefined();
+  await act(async () => rememberLinkRefusal(CURRENT, "m5:old", { text: "No.", verbatim: true }));
+  expect(refusal()).toBe("Not linked yet. No.");
+  await act(async () => forgetLinkRefusal("m5:old", CURRENT));
+  expect(refusal()).toBeUndefined();
 });
 
 it("gives a separate project Link, never Continue or a coordinator move", async () => {

@@ -544,7 +544,12 @@ it("does not mark Done seen while the copy still needs linking", async () => {
   measuredWithoutSecrets();
   const rows = [newRow(".")];
   statuses = [copyStatus("previewed", { rows }), copyStatus("applied", { rows })];
-  state.link = vi.fn(async () => ({ status: "review", reason: "Notes differ." }));
+  state.link = vi.fn(async () => ({
+    status: "review",
+    reason: "Notes differ.",
+    // What a machine said is shown as it said it.
+    words: { text: "Notes differ.", verbatim: true },
+  }));
   await mount();
   await click("Copy to M3");
   expect(stageNow()).toBe("done");
