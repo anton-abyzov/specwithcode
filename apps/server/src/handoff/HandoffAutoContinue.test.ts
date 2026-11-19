@@ -19,6 +19,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -49,6 +50,7 @@ import { turnRefusal } from "./HandoffTurnGate.ts";
 import {
   HANDOFF_PROTOCOL_VERSION,
   type HeartbeatRequest,
+  type HeartbeatResponse,
   type TakeoverRequest,
 } from "./handoffWire.ts";
 import {
@@ -132,6 +134,28 @@ const sourceDocument = (
         replicaStatus(m1, overrides.acknowledged === undefined ? 3 : overrides.acknowledged),
         replicaStatus(m3, 3),
       ],
+    },
+  },
+});
+
+const other = ThreadId.make("thread:other");
+
+/** As an earlier release left a thread when the lid closed: handed to M1, no answer yet. */
+const sleepPending = (
+  record: HandoffDocument["threads"][string],
+  epoch = 2,
+): HandoffDocument["threads"][string] => ({
+  ...record,
+  lease: { ...record.lease!, state: "handing-off" },
+  pendingTakeover: {
+    destinationEnvironmentId: m1,
+    request: {
+      sourceEnvironmentId: m4,
+      sourceThreadId: thread,
+      epoch,
+      sequence: 3,
+      reason: "sleep",
+      modelSelection: null,
     },
   },
 });
@@ -228,6 +252,40 @@ describe("silence rules", () => {
       { environmentId: m1, machineLabel: "M1", since: iso(T0) },
       { environmentId: "env-gone", machineLabel: "env-gone", since: iso(T0 + MINUTE) },
     ]);
+    // Also a machine a thread here is still fenced for, and the destination of an
+    // unanswered takeover a sleep started: either may still move a thread.
+    const record = sourceDocument().threads[thread]!;
+    expect(
+      pendingDisarm({
+        ...sourceDocument(),
+        threads: {
+          [thread]: {
+            ...record,
+            autoFence: { environmentId: m3, machineLabel: "M3", at: iso(T0 + 2 * MINUTE) },
+          },
+          [other]: sleepPending(record),
+        },
+      }),
+    ).toEqual([
+      { environmentId: m3, machineLabel: "M3", since: iso(T0 + 2 * MINUTE) },
+      { environmentId: m1, machineLabel: "M1", since: iso(T0) },
+    ]);
+    // A takeover someone asked for is no hold from sleep or silence.
+    const manual = sleepPending(record);
+    expect(
+      pendingDisarm({
+        ...sourceDocument(),
+        threads: {
+          [other]: {
+            ...manual,
+            pendingTakeover: {
+              ...manual.pendingTakeover!,
+              request: { ...manual.pendingTakeover!.request, reason: "machine-handoff" },
+            },
+          },
+        },
+      }),
+    ).toEqual([]);
   });
 
   it("fences only threads the quiet machine could continue, and lifts once it answers", () => {
@@ -267,6 +325,28 @@ describe("silence rules", () => {
     });
   });
 
+  it("keeps a fence when the quiet machine then acknowledges a finished checkpoint", () => {
+    const quiet = { [m1]: { minutes: 5, baselineAt: iso(T0) } };
+    const finished = sourceDocument({ runEnding: "completed" });
+    const fenced: HandoffDocument = {
+      ...finished,
+      autoContinuePeers: quiet,
+      threads: {
+        [thread]: {
+          ...finished.threads[thread]!,
+          autoFence: { environmentId: m1, machineLabel: "M1", at: iso(T0) },
+        },
+      },
+    };
+    // M1 may have started on an older copy before it took this one: still fenced.
+    expect(planSourceFence(fenced, m4, T0 + 3 * MINUTE)).toEqual({ fence: [], lift: [] });
+    // Once M1's own answer disarms it, the fence lifts.
+    expect(planSourceFence({ ...fenced, autoContinuePeers: {} }, m4, T0 + 3 * MINUTE)).toEqual({
+      fence: [],
+      lift: [thread],
+    });
+  });
+
   it("refuses turns on a fenced copy, and the fence survives a restart", () => {
     const document: HandoffDocument = {
       ...sourceDocument(),
@@ -301,6 +381,13 @@ interface Rig {
   document: HandoffDocument;
   readonly heartbeats: Array<{ peer: EnvironmentId; request: HeartbeatRequest }>;
   readonly takeovers: Array<TakeoverRequest>;
+  /** Takeovers this machine sent another one. */
+  readonly sent: Array<{ peer: EnvironmentId; request: TakeoverRequest }>;
+  /**
+   * How a machine answers a heartbeat. By default as this release does when nothing
+   * started there: every operation asked about is not started.
+   */
+  answer: (peer: EnvironmentId, request: HeartbeatRequest) => HeartbeatResponse;
   readonly dispatched: Array<{ readonly type: string }>;
   readonly down: Set<EnvironmentId>;
   activeRunId: string | null;
@@ -313,6 +400,12 @@ const rig = (document: HandoffDocument, self: EnvironmentId) =>
       document,
       heartbeats: [],
       takeovers: [],
+      sent: [],
+      answer: (peer, request) => ({
+        machineLabel: peer === m1 ? "M1" : "M3",
+        continued: [],
+        notStarted: request.settle ?? [],
+      }),
       dispatched: [],
       down: new Set(),
       activeRunId: "run-1",
@@ -339,8 +432,19 @@ const rig = (document: HandoffDocument, self: EnvironmentId) =>
           ? Effect.fail(
               new HandoffPeerError({ code: "unreachable", message: "No answer.", uncertain: true }),
             )
-          : Effect.succeed({ machineLabel: labels[peer]!, continued: [] });
+          : Effect.sync(() => state.answer(peer, request));
       },
+      takeover: (peer: EnvironmentId, request: TakeoverRequest) =>
+        Effect.sync(() => {
+          state.sent.push({ peer, request });
+          return {
+            threadId: ThreadId.make("thread:continued"),
+            machineLabel: labels[peer]!,
+            modelSelection: null,
+            resumed: true,
+            notice: null,
+          };
+        }),
       // Continuing asks the source directly first: any answer means it still runs.
       negotiate: (peer: EnvironmentId) =>
         state.down.has(peer)
@@ -375,8 +479,9 @@ const rig = (document: HandoffDocument, self: EnvironmentId) =>
       Layer.succeed(HandoffMode, handoff),
       Layer.succeed(HandoffPeers, peers),
       Layer.succeed(HandoffReceiver, receiver),
+      // No project here, so a fence never runs Git in a folder of this test.
       Layer.succeed(ProjectService.ProjectService, {
-        getById: (id: ProjectId) => Effect.succeedSome({ id, workspaceSettings: {} }),
+        getById: () => Effect.succeed(Option.none()),
       } as never),
       Layer.succeed(Orchestrator.OrchestratorV2, {
         dispatch: (command: { type: string }) =>
@@ -388,6 +493,7 @@ const rig = (document: HandoffDocument, self: EnvironmentId) =>
       } as never),
       Layer.succeed(ProjectionStore.ProjectionStoreV2, {
         getThreadShell: (id: ThreadId) => Effect.succeed(id === thread ? shell() : null),
+        getThread: () => Effect.succeed({ execution: null }),
       } as never),
     );
     const moves = yield* HandoffMoves.make.pipe(Effect.provide(services));
@@ -514,6 +620,218 @@ describe("silence never starts a handoff (AC-36)", () => {
         yield* moves.replicate;
       }
       expect(state.takeovers).toEqual([]);
+    }),
+  );
+});
+
+const continuedHere = {
+  threadId: ThreadId.make("thread:continued"),
+  machineLabel: "M1",
+  modelSelection: null,
+  resumed: true,
+  notice: null,
+};
+
+/** M1 on the previous release answering from `remote()`, as its receiver does. */
+const previousReceiver =
+  (remote: () => HandoffDocument, keep: (next: HandoffDocument) => void) =>
+  (peer: EnvironmentId, request: HeartbeatRequest): HeartbeatResponse => {
+    if (peer !== m1) return { machineLabel: "M3", continued: [], notStarted: [] };
+    // An earlier release decodes no `settle` and answers no `notStarted`.
+    const { settle: _settle, ...heard } = request;
+    const [continued, next] = previousHeartbeatContinued(remote(), heard, iso(T0));
+    keep(next);
+    return { machineLabel: "M1", continued };
+  };
+
+/** The source's document with `count` threads held here, each copied to M1. */
+const manyThreads = (
+  count: number,
+  build: (record: HandoffDocument["threads"][string]) => HandoffDocument["threads"][string],
+): HandoffDocument => {
+  const record = { ...sourceDocument().threads[thread]!, replicas: [replicaStatus(m1, 3)] };
+  const threads: Record<string, HandoffDocument["threads"][string]> = {};
+  // The thread that matters comes last, past one full page.
+  for (let index = 0; index < count - 1; index += 1) {
+    threads[`thread:filler-${index}`] = build(record);
+  }
+  threads[thread] = build(record);
+  return { ...sourceDocument(), threads };
+};
+
+describe("a hold from sleep or silence lifts only on its own answer (1390 AC-36)", () => {
+  const sleepRequest: TakeoverRequest = {
+    sourceEnvironmentId: m4,
+    sourceThreadId: thread,
+    epoch: 2,
+    sequence: 3,
+    reason: "sleep",
+    modelSelection: null,
+  };
+  const heldBySleep = (): HandoffDocument => ({
+    ...sourceDocument(),
+    threads: { [thread]: sleepPending(sourceDocument().threads[thread]!) },
+  });
+
+  it.effect(
+    "a heartbeat reaching the previous-release receiver mid-takeover keeps the source held; the next one fences it",
+    () =>
+      Effect.gen(function* () {
+        const { state, moves, awake } = yield* rig(heldBySleep(), m4);
+        state.activeRunId = null;
+        // M1 received the takeover and saved its lease; it has not recorded it continued yet.
+        let remote = destinationDocument({ autoContinueMinutes: null, lastSeenMs: T0 });
+        state.answer = previousReceiver(
+          () => remote,
+          (next) => (remote = next),
+        );
+        yield* moves.heartbeat;
+        const held = state.document.threads[thread];
+        expect(held?.lease?.state).toBe("handing-off");
+        expect(held?.pendingTakeover?.request).toEqual(sleepRequest);
+        expect(pendingDisarm(state.document)).toEqual([
+          { environmentId: m1, machineLabel: "M1", since: iso(T0) },
+        ]);
+        // Never sent again: a receiver on that release would start it.
+        expect(state.sent).toEqual([]);
+        // M1 finishes: the continuation is recorded, and the next heartbeat hears of it.
+        remote = markContinued(remote, sleepRequest, continuedHere, iso(T0 + 10_000));
+        yield* awake(30_000);
+        yield* moves.heartbeat;
+        const fenced = state.document.threads[thread];
+        expect(fenced?.continuedOn?.threadId).toBe("thread:continued");
+        expect(fenced?.lease?.state).toBe("fenced");
+        expect(fenced?.pendingTakeover).toBeNull();
+        expect(pendingDisarm(state.document)).toEqual([]);
+        expect(state.sent).toEqual([]);
+      }),
+  );
+
+  it.effect("this release's receiver: not started for that takeover gives the thread back", () =>
+    Effect.gen(function* () {
+      const { state, moves, awake } = yield* rig(heldBySleep(), m4);
+      state.activeRunId = null;
+      // Not started, but for another epoch than the one held here: nothing changes.
+      state.answer = (peer) => ({
+        machineLabel: peer === m1 ? "M1" : "M3",
+        continued: [],
+        notStarted: [{ sourceThreadId: thread, epoch: 3 }],
+      });
+      yield* moves.heartbeat;
+      expect(state.heartbeats.find((entry) => entry.peer === m1)?.request.settle).toEqual([
+        { sourceThreadId: thread, epoch: 2 },
+      ]);
+      expect(state.document.threads[thread]?.lease?.state).toBe("handing-off");
+      // The answer for exactly the takeover held here releases it.
+      state.answer = (peer, request) => ({
+        machineLabel: peer === m1 ? "M1" : "M3",
+        continued: [],
+        notStarted: request.settle ?? [],
+      });
+      yield* awake(30_000);
+      yield* moves.heartbeat;
+      const record = state.document.threads[thread];
+      expect(record?.lease?.state).toBe("active");
+      expect(record?.pendingTakeover).toBeNull();
+      expect(record?.continuedOn).toBeNull();
+      expect(state.sent).toEqual([]);
+      expect(pendingDisarm(state.document)).toEqual([]);
+    }),
+  );
+
+  it.effect(
+    "an armed machine that answers after it may have acted keeps its fence until it settles the thread",
+    () =>
+      Effect.gen(function* () {
+        const { state, moves, awake } = yield* rig(armedSourceDocument(), m4);
+        state.down.add(m1);
+        yield* awake(170_000);
+        yield* moves.heartbeat;
+        expect(state.document.threads[thread]?.autoFence?.environmentId).toBe(m1);
+        // M1 comes back on the previous release: it answers, but cannot say it started nothing.
+        state.down.delete(m1);
+        let remote = destinationDocument({ autoContinueMinutes: 5, lastSeenMs: T0 });
+        state.answer = previousReceiver(
+          () => remote,
+          (next) => (remote = next),
+        );
+        yield* awake(30_000);
+        yield* moves.heartbeat;
+        const asked = state.heartbeats.filter((entry) => entry.peer === m1).at(-1);
+        expect(asked?.request.settle).toEqual([{ sourceThreadId: thread, epoch: 2 }]);
+        expect(state.document.autoContinuePeers?.[m1]).toBeDefined();
+        expect(state.document.threads[thread]?.autoFence?.environmentId).toBe(m1);
+        expect(turnRefusal(state.document, thread, m4)).toContain("M1 is not answering");
+        expect(pendingDisarm(state.document).map((entry) => entry.environmentId)).toEqual([m1]);
+        // Updated, M1 says nothing started for it there: disarmed, and turns start here again.
+        state.answer = (peer, request) => ({
+          machineLabel: peer === m1 ? "M1" : "M3",
+          continued: [],
+          notStarted: request.settle ?? [],
+        });
+        yield* awake(30_000);
+        yield* moves.heartbeat;
+        expect(state.document.autoContinuePeers).toEqual({});
+        expect(state.document.threads[thread]?.autoFence).toBeNull();
+        expect(turnRefusal(state.document, thread, m4)).toBeNull();
+        expect(pendingDisarm(state.document)).toEqual([]);
+      }),
+  );
+
+  it.effect("thread 501, acted on by the previous release, is asked about and ends fenced", () =>
+    Effect.gen(function* () {
+      const document = manyThreads(501, sleepPending);
+      const { state, moves, awake } = yield* rig(document, m4);
+      state.activeRunId = null;
+      let remote = markContinued(
+        destinationDocument({ autoContinueMinutes: null, lastSeenMs: T0 }),
+        sleepRequest,
+        continuedHere,
+        iso(T0),
+      );
+      state.answer = previousReceiver(
+        () => remote,
+        (next) => (remote = next),
+      );
+      yield* moves.heartbeat;
+      const first = state.heartbeats.find((entry) => entry.peer === m1)!.request;
+      expect(first.leases).toHaveLength(500);
+      expect(first.leases.some((lease) => lease.sourceThreadId === thread)).toBe(false);
+      // Not asked about, so not released: it never runs here while M1 runs it.
+      expect(state.document.threads[thread]?.lease?.state).toBe("handing-off");
+      yield* awake(30_000);
+      yield* moves.heartbeat;
+      const second = state.heartbeats.filter((entry) => entry.peer === m1)[1]!.request;
+      expect(second.leases.some((lease) => lease.sourceThreadId === thread)).toBe(true);
+      const record = state.document.threads[thread];
+      expect(record?.continuedOn?.threadId).toBe("thread:continued");
+      expect(record?.lease?.state).toBe("fenced");
+      // The others were never answered for: each keeps its hold.
+      expect(
+        Object.entries(state.document.threads).filter(
+          ([, entry]) => entry.lease?.state === "active",
+        ),
+      ).toEqual([]);
+      expect(state.sent).toEqual([]);
+    }),
+  );
+
+  it.effect("more threads than a page: each is asked about in turn", () =>
+    Effect.gen(function* () {
+      const { state, moves, awake } = yield* rig(
+        manyThreads(501, (record) => record),
+        m4,
+      );
+      yield* moves.heartbeat;
+      yield* awake(30_000);
+      yield* moves.heartbeat;
+      const asked = new Set(
+        state.heartbeats
+          .filter((entry) => entry.peer === m1)
+          .flatMap((entry) => entry.request.leases.map((lease) => lease.sourceThreadId)),
+      );
+      expect(asked.size).toBe(501);
+      expect(asked.has(thread)).toBe(true);
     }),
   );
 });
