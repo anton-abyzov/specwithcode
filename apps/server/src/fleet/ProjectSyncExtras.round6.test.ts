@@ -134,3 +134,59 @@ describe("a send removes only its own direct ref, in its own repository (R6-03)"
     expect(result).toMatchObject({ status: "stays", stays: "failed" });
   });
 });
+
+describe("a repository replaced at the same path keeps its ref (R7-02)", () => {
+  /** Puts a copy of the Git folder in its place: same path, same refs, another directory. */
+  const replace = (cwd: string) => {
+    const gitDir = NodePath.join(cwd, ".git");
+    const copy = `${gitDir}-copy`;
+    NodeFS.cpSync(gitDir, copy, { recursive: true });
+    NodeFS.rmSync(gitDir, { recursive: true, force: true });
+    NodeFS.renameSync(copy, gitDir);
+  };
+
+  it("a branch send", async () => {
+    const f = twoMachines();
+    commit(f.a, "app.ts", "export const a = 2;\n");
+    const tip = git(f.a, "rev-parse", "HEAD");
+    const result = await send(
+      f.a,
+      { kind: "branch", path: ".", branch: "main" },
+      peerOn(f.b, () => replace(f.a)),
+    );
+    expect(refAt(f.a, HIDDEN)).toBe(tip);
+    expect(result.detail ?? "").toContain("cleanup could not confirm ownership");
+  });
+
+  it("a snapshot send", async () => {
+    const f = twoMachines();
+    write(f.a, "app.ts", "export const a = 'edited';\n");
+    let snapshot = "";
+    const result = await send(
+      f.a,
+      { kind: "uncommitted", path: ".", sendAnyway: [] },
+      peerOn(f.b, () => {
+        snapshot = git(f.a, "rev-parse", HIDDEN);
+        replace(f.a);
+      }),
+    );
+    expect(snapshot).not.toBe("");
+    expect(refAt(f.a, HIDDEN)).toBe(snapshot);
+    expect(result.detail ?? "").toContain("cleanup could not confirm ownership");
+  });
+});
+
+describe("a ref already gone is not said to be left (follow-up 2)", () => {
+  it("another program removed the hidden ref: nothing is reported as left", async () => {
+    const f = twoMachines();
+    commit(f.a, "app.ts", "export const a = 2;\n");
+    const result = await send(
+      f.a,
+      { kind: "branch", path: ".", branch: "main" },
+      peerOn(f.b, () => git(f.a, "update-ref", "-d", HIDDEN)),
+    );
+    expect(refAt(f.a, HIDDEN)).toBe("");
+    expect(result.detail ?? "").not.toContain("left in the repository");
+    expect(result.detail ?? "").not.toContain("could not confirm ownership");
+  });
+});

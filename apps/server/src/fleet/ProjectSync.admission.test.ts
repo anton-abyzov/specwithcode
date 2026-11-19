@@ -45,7 +45,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { runGit } from "./folderTransfer/git.ts";
 import * as ProjectSync from "./ProjectSync.ts";
-import { uncommittedCount } from "./projectSyncGit.ts";
+import { boundGit, uncommittedCount } from "./projectSyncGit.ts";
 import { keepFetch, keptFetch, newFetchRecord } from "./projectSyncRecord.ts";
 import { refTransaction, type RefTransactionFactory } from "./refTransaction.ts";
 
@@ -266,6 +266,79 @@ describe("a partial clone on a Git that could fetch behind Sync's back (R5-02)",
     expect(missing()).toBe(true);
     expect(git(c, "rev-parse", "refs/heads/main")).toBe(was);
     expect(step).toMatchObject({ moved: 0, detail: PROJECT_SYNC_PARTIAL_CLONE_DETAIL });
+  });
+});
+
+describe("no Git child of the move can reach origin (R7-01)", () => {
+  /** A blob-filtered clone of origin, one commit behind, without the new commit's blob. */
+  const filtered = () => {
+    const f = twoMachines();
+    git(f.remote, "config", "uploadpack.allowFilter", "true");
+    const c = NodePath.join(f.base, "c");
+    git(f.base, "clone", "-q", "--filter=blob:none", `file://${f.remote}`, c);
+    const was = git(c, "rev-parse", "HEAD");
+    write(f.a, "app.ts", "export const a = 'a blob c does not have';\n");
+    git(f.a, "commit", "-q", "-am", "published");
+    git(f.a, "push", "-q", "origin", "main");
+    const blob = git(f.a, "rev-parse", "HEAD:app.ts");
+    const missing = () =>
+      NodeChildProcess.spawnSync("git", ["-C", c, "cat-file", "-e", blob], {
+        env: { ...process.env, GIT_CONFIG: "", GIT_NO_LAZY_FETCH: "1" },
+      }).status !== 0;
+    return { ...f, c, was, blob, missing };
+  };
+
+  it("a GIT_CONFIG that hides the promisor: still declined as a partial clone, no request to origin", async () => {
+    const f = filtered();
+    // `git config` reads only this file; every other Git command reads the repository's.
+    const hiding = NodePath.join(f.base, "hiding.config");
+    // The repository's own settings, without the lines that make it a partial clone.
+    NodeFS.writeFileSync(
+      hiding,
+      NodeFS.readFileSync(NodePath.join(f.c, ".git", "config"), "utf8")
+        .split("\n")
+        .filter((line) => !/promisor|partialclonefilter/i.test(line))
+        .join("\n"),
+    );
+    setEnv("GIT_CONFIG", hiding);
+    const record = newFetchRecord("project-admission");
+    const [facts] = await ProjectSync.fetchAll(
+      { git: real, inUse: async () => null, fetched: record },
+      [{ path: ".", cwd: f.c }],
+    );
+    keepFetch(record);
+    expect(facts).toMatchObject({ fetch: "ok", behind: 1 });
+    const trace = NodePath.join(f.base, "packet.trace");
+    setEnv("GIT_TRACE_PACKET", trace);
+    const step = await ProjectSync.fastForwardRepository(
+      {
+        git: real,
+        inUse: async () => null,
+        record: () => keptFetch("project-admission", record.id),
+      },
+      { path: ".", cwd: f.c },
+      null,
+    );
+    expect(NodeFS.existsSync(trace) ? NodeFS.readFileSync(trace, "utf8") : "").toBe("");
+    expect(f.missing()).toBe(true);
+    expect(git(f.c, "rev-parse", "refs/heads/main")).toBe(f.was);
+    expect(step.moved).toBe(0);
+    expect(step.movedUnverified ?? false).toBe(false);
+    expect(step.detail).toBe(PROJECT_SYNC_PARTIAL_CLONE_DETAIL);
+  });
+
+  it("a move's Git cannot fetch, even where a lazy fetch is switched back on", async () => {
+    const f = filtered();
+    const gitDir = NodeFS.realpathSync(NodePath.join(f.c, ".git"));
+    const trace = NodePath.join(f.base, "packet.trace");
+    setEnv("GIT_TRACE_PACKET", trace);
+    const read = await boundGit(real, gitDir, f.c)(f.c, ["cat-file", "-p", f.blob], {
+      allowFailure: true,
+      env: { GIT_NO_LAZY_FETCH: "0" },
+    });
+    expect(read.code).not.toBe(0);
+    expect(f.missing()).toBe(true);
+    expect(NodeFS.existsSync(trace) ? NodeFS.readFileSync(trace, "utf8") : "").toBe("");
   });
 });
 
