@@ -1019,9 +1019,19 @@ export function ProjectMachineHandoff({
       return;
     }
     const machine = syncCandidate?.environmentId ?? requestedMachineId;
-    // Only the menu's Add filters; the page's own button keeps every machine. A Git handoff
-    // under way (a review, or one left unfinished) keeps its own machine instead.
-    let adding = mode === "add" && fromMenu && !snapshot;
+    // Only the menu's Add filters; the page's own button keeps every machine. Add is always
+    // Add: it never turns into the move that was left unfinished, whose pointer stays.
+    const adding = mode === "add" && fromMenu;
+    if (adding && snapshot) {
+      // A move this window already published holds the dialog until it ends.
+      toastManager.add({
+        type: "warning",
+        title: tx(
+          "A move to another machine is not finished. Finish or cancel it, then add a machine.",
+        ),
+      });
+      return;
+    }
     changeOpen(true);
     setMoveAsked(mode === "move");
     setSyncKey(syncCandidate ? syncTarget! : null);
@@ -1030,13 +1040,14 @@ export function ProjectMachineHandoff({
     let gitPending = false;
     if (!snapshot) {
       try {
-        const pending = parsePendingMachineHandoff(localStorage.getItem(storageKey));
+        const pending = adding
+          ? null
+          : parsePendingMachineHandoff(localStorage.getItem(storageKey));
         // An unfinished Git handoff resumes in the method that started it, an
         // unfinished copy in the current one; otherwise every opening starts fresh.
         const copyPending =
           localStorage.getItem(folderCopyStorageKey(project.environmentId, project.id)) !== null;
         gitPending = pending !== null;
-        if (gitPending) adding = false;
         setIntent(pending ? "move" : "copy");
         if (pending) setMethod("folder");
         else if (!copyPending) setMethod(DEFAULT_COPY_METHOD);
