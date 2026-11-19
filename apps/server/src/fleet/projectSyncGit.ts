@@ -6,7 +6,7 @@ import * as NodePath from "node:path";
 import { UNFINISHED_OPERATION_MARKS } from "../handoff/bundleGit.ts";
 import { cloneStagingIn } from "./cloneStaging.ts";
 import type { GitResult } from "./folderTransfer/git.ts";
-import type { AskBudget, OriginRecords } from "./projectSyncOrigin.ts";
+import type { AskBudget, FetchRecord } from "./projectSyncOrigin.ts";
 
 export const LOCAL_MS = 30_000;
 export const FETCH_MS = 5 * 60_000;
@@ -21,6 +21,8 @@ export type SyncGit = (
     readonly allowFailure?: boolean;
     readonly timeoutMs?: number;
     readonly signal?: AbortSignal;
+    /** Written to Git's standard input. */
+    readonly input?: string;
   },
 ) => Promise<GitResult>;
 
@@ -35,12 +37,12 @@ export interface SyncContext {
   /** Stops a fetch or a clone that is under way when the call is cancelled. A merge is never stopped. */
   readonly signal?: AbortSignal;
   /**
-   * What `origin` listed to this project's Sync fetches, by checkout: every
-   * branch and the commit it was listed at. The plan and the move go by it,
-   * and a fast-forward that cannot ask `origin` once more goes by it alone.
+   * The one fetch this call goes by. A fetch writes into it what it brought,
+   * per checkout; a move reads from it the commit to move to, and moves
+   * nothing without it.
    */
-  readonly origin?: OriginRecords;
-  /** The hosts this call found silent: a host that did not answer one ask is not asked again. */
+  readonly fetched?: FetchRecord;
+  /** The time this call has left for asking `origin` before its moves. */
   readonly asks?: AskBudget;
 }
 
@@ -55,6 +57,8 @@ export interface SyncRepository {
   /** Relative to the project folder with `/` separators; "." is the folder itself. */
   readonly path: string;
   readonly cwd: string;
+  /** Git could not say what this folder is: it is listed, said to be unread, and left alone. */
+  readonly unread?: true;
 }
 
 export const read = async (git: SyncGit, cwd: string, args: ReadonlyArray<string>) => {
@@ -71,16 +75,23 @@ export const gitReason = (stderr: string) =>
       .join(" ") || "Git gave no reason."
   ).slice(0, 1900);
 
-/** A linked worktree: its Git directory differs from the repository's common one. */
-export async function isLinkedWorktree(git: SyncGit, cwd: string): Promise<boolean> {
+/**
+ * Whether the folder is a linked worktree (its Git directory differs from the
+ * repository's common one), or null when Git did not say: it failed, or never
+ * came back. Null is never taken for "it is not one".
+ */
+export async function isLinkedWorktree(git: SyncGit, cwd: string): Promise<boolean | null> {
   const dirs = await read(git, cwd, [
     "rev-parse",
     "--path-format=absolute",
     "--git-dir",
     "--git-common-dir",
-  ]);
+  ]).catch(() => null);
+  if (dirs === null || !dirs.ok) return null;
   const [gitDir, common] = dirs.text.split("\n");
-  return dirs.ok && gitDir !== undefined && common !== undefined && gitDir !== common;
+  if (gitDir === undefined || common === undefined || gitDir.length === 0 || common.length === 0)
+    return null;
+  return gitDir !== common;
 }
 
 export async function branchAndHead(git: SyncGit, cwd: string) {

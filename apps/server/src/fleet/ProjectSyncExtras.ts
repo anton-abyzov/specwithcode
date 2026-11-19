@@ -58,15 +58,18 @@ import {
 import { runGit } from "./folderTransfer/git.ts";
 import { cloneStagingIn } from "./cloneStaging.ts";
 import * as ProjectSync from "./ProjectSync.ts";
-import { originRecord, type OriginRecords, originRecordsOf } from "./projectSyncOrigin.ts";
+import { latestHeads } from "./projectSyncOrigin.ts";
 
 const EXTRAS_REF_PREFIX = "refs/specwithcode/extras/";
 /** Branches that arrived from another machine are that machine's work, not this one's. */
 const ARRIVED_PREFIX = "swc/from-";
 
 const lines = (text: string) => text.split("\n").filter((line) => line.length > 0);
-const count = async (root: string, args: ReadonlyArray<string>) => {
-  const result = await runGit(root, ["rev-list", "--count", ...args], { allowFailure: true });
+const count = async (root: string, args: ReadonlyArray<string>, input?: string) => {
+  const result = await runGit(root, ["rev-list", "--count", ...args], {
+    allowFailure: true,
+    ...(input === undefined ? {} : { input }),
+  });
   const value = Number(result.stdout.trim());
   return result.code === 0 && Number.isInteger(value) ? value : 0;
 };
@@ -152,44 +155,33 @@ export async function sweepStaleExtraRefs(
   }
 }
 
-/** More branches on `origin` than this are not passed to one Git command. */
-const LIVE_HEADS_MAX = 2000;
-const ORIGIN_TRACKING = "refs/remotes/origin/";
-
 /**
- * The work in one repository that Git does not carry. Reads only. `origin` is
- * what the project's Sync fetches learned: a branch `origin` no longer lists
- * is counted against the branches it does list, not against its own tracking
- * ref, which the fetch (it never prunes) leaves where it was.
+ * The work in one repository that Git does not carry. Reads only. `brought` is
+ * what the project's newest Sync fetch brought for this checkout, branch of
+ * `origin` to commit: a branch `origin` no longer has is counted against the
+ * branches it does have, not against its own tracking ref, which the fetch (it
+ * never prunes) leaves where it was. It is listed as a branch that exists only
+ * here, also when all its commits are on another branch.
  */
 export async function inventoryRepository(
   repository: ProjectSync.SyncRepository,
-  origin?: OriginRecords,
+  brought?: ReadonlyMap<string, string>,
 ): Promise<ProjectSyncRepositoryExtras> {
   const root = repository.cwd;
   const refs = await runGit(root, [
     "for-each-ref",
-    "--format=%(refname:short)%09%(objectname)%09%(upstream:short)%09%(upstream)",
+    "--format=%(refname:short)%09%(objectname)%09%(upstream:short)%09%(upstream:remotename)%09%(upstream:remoteref)",
     "refs/heads",
   ]);
-  let listed: ReadonlyMap<string, string> | null = null;
-  if (origin !== undefined && origin.size > 0) {
-    const urls = await runGit(root, ["config", "--get-all", "remote.origin.url"], {
-      allowFailure: true,
-    });
-    const url = urls.code === 0 ? (urls.stdout.split("\n")[0] ?? "").trim() : "";
-    const record =
-      url.length === 0
-        ? undefined
-        : await originRecord(origin, (cwd, args, options) => runGit(cwd, args, options), root, url);
-    if (record !== undefined && record.heads.size <= LIVE_HEADS_MAX) listed = record.heads;
-  }
-  const live = listed === null ? [] : [...new Set(listed.values())];
+  const listed = brought ?? null;
+  // Passed to Git on its standard input: however many branches origin has.
+  const live =
+    listed === null ? "" : [...new Set(listed.values())].map((oid) => `^${oid}\n`).join("");
   const notPushed: Array<ProjectSyncBranchExtra> = [];
   const onlyHere: Array<ProjectSyncBranchExtra> = [];
   let branchesNotListed = 0;
   for (const line of lines(refs.stdout)) {
-    const [branch, head, upstream, upstreamRef] = line.split("\t");
+    const [branch, head, upstream, remote, source] = line.split("\t");
     if (branch === undefined || head === undefined || !isCommitSha(head)) continue;
     if (branch.startsWith(ARRIVED_PREFIX) || branch.length > 255) continue;
     const sameName = await refCommit(root, `refs/remotes/origin/${branch}`);
@@ -200,16 +192,20 @@ export async function inventoryRepository(
         ? sameName === null
           ? null
           : `refs/heads/${branch}`
-        : upstreamRef?.startsWith(ORIGIN_TRACKING) === true
-          ? `refs/heads/${upstreamRef.slice(ORIGIN_TRACKING.length)}`
+        : // As Git names it: the remote and the branch there, not the ref it is kept in here.
+          remote === "origin" && source?.startsWith("refs/heads/") === true
+          ? source
           : null;
     if (listed !== null && onOrigin !== null && !listed.has(onOrigin)) {
       // Gone from origin: its own commits are those no branch origin still has holds.
       // A commit origin listed that is not here yet is passed over.
-      const commits = await count(root, ["--ignore-missing", head, "--not", ...live]);
-      if (commits === 0) continue;
       if (onlyHere.length >= PROJECT_SYNC_MAX_LISTED) branchesNotListed += 1;
-      else onlyHere.push({ branch, head, commits });
+      else
+        onlyHere.push({
+          branch,
+          head,
+          commits: await count(root, ["--ignore-missing", "--stdin"], `${head}\n${live}`),
+        });
       continue;
     }
     if (against === null && sameName === null) {
@@ -587,7 +583,9 @@ const make = Effect.gen(function* () {
       const repositories: Array<ProjectSyncRepositoryExtras> = [];
       for (const repository of found.repositories)
         repositories.push(
-          yield* attempt(() => inventoryRepository(repository, originRecordsOf(input.projectId))),
+          yield* attempt(() =>
+            inventoryRepository(repository, latestHeads(input.projectId, repository.cwd)),
+          ),
         );
       return { repositories, scanLimited: found.scanLimited };
     }),

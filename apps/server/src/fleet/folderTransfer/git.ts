@@ -48,6 +48,8 @@ export function runGit(
     readonly env?: Readonly<Record<string, string>>;
     /** Kills Git when aborted; the call then rejects with a FolderGitError. */
     readonly signal?: AbortSignal;
+    /** Written to Git's standard input, which is then closed. */
+    readonly input?: string;
   } = {},
 ): Promise<GitResult> {
   const timeoutMs = options.timeoutMs ?? 10 * 60_000;
@@ -93,6 +95,12 @@ export function runGit(
         else reject(new FolderGitError(args, code, result.stderr.slice(0, 2000)));
       },
     );
+    if (options.input !== undefined) {
+      // Git may end before it has read everything: that is its own exit code, never a
+      // stream error nobody handles.
+      child.stdin?.on("error", () => undefined);
+      child.stdin?.end(options.input);
+    }
     const stop = () => {
       if (killed || child.exitCode !== null || child.pid === undefined) return;
       killed = true;

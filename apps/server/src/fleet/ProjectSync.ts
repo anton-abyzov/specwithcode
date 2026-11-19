@@ -5,15 +5,18 @@
  * only behind; a repository it lacks is cloned. This module runs exactly these
  * Git commands that change anything: a fetch of `origin`'s branches into
  * `refs/remotes/origin/` (never the destinations the repository's settings
- * name), `merge --ff-only` and `clone`. It never resets, rebases, merges with a merge commit, stashes,
- * switches a branch, deletes, pushes or commits, and it never calls the folder
- * copy's reconcile paths, which can stash and reset.
+ * name) and into `refs/specwithcode/sync/`, a folder of refs only Sync writes
+ * and removes again before the fetch returns; `merge --ff-only`; and `clone`.
+ * It never resets, rebases, merges with a merge commit, stashes, switches a
+ * branch, deletes a branch or a tag, pushes or commits, and it never calls the
+ * folder copy's reconcile paths, which can stash and reset.
  */
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import {
   type ProjectId,
+  PROJECT_SYNC_PATH_UNREAD_DETAIL,
   ProjectSyncError,
   type ProjectSyncFetchResult,
   type ProjectSyncProjectInput,
@@ -44,7 +47,12 @@ import {
 import { runGit } from "./folderTransfer/git.ts";
 import * as HandoffGit from "./handoffGit.ts";
 import { safeRelativePath } from "./handoffGitTypes.ts";
-import { cloneAddress, readRepositoryFacts, readRepositoryStatus } from "./projectSyncFacts.ts";
+import {
+  cloneAddress,
+  readRepositoryFacts,
+  readRepositoryStatus,
+  unreadFacts,
+} from "./projectSyncFacts.ts";
 import {
   branchAndHead,
   didNotFinish,
@@ -55,7 +63,14 @@ import {
   type SyncGit,
   type SyncRepository,
 } from "./projectSyncGit.ts";
-import { type AskBudget, askBudget, dropOrigin, originRecordsOf } from "./projectSyncOrigin.ts";
+import {
+  type AskBudget,
+  askBudget,
+  type FetchRecord,
+  keepFetch,
+  keptFetch,
+  newFetchRecord,
+} from "./projectSyncOrigin.ts";
 import { fastForwardRepository } from "./projectSyncRun.ts";
 
 export {
@@ -141,8 +156,11 @@ export async function syncRepositories(
   for (const path of relativePaths) if (!(await staging.has(path))) listed.push(path);
   for (const path of listed.slice(0, PROJECT_SYNC_MAX_REPOSITORIES)) {
     const cwd = path === "." ? root : NodePath.join(root, ...path.split("/"));
-    if (path !== "." && (await isLinkedWorktree(git, cwd))) continue;
-    out.push({ path, cwd });
+    const linked = path === "." ? false : await isLinkedWorktree(git, cwd);
+    if (linked === true) continue;
+    // Git did not say what the folder is: it is neither dropped nor taken for a
+    // repository to move. It is listed as unread, and the others are read as ever.
+    out.push(linked === null ? { path, cwd, unread: true } : { path, cwd });
   }
   return out;
 }
@@ -311,7 +329,7 @@ export async function cloneRepository(
     // for the result when Git answers, and nothing kept of an earlier folder at this
     // path is gone by.
     await NodeFSP.rm(staging, { recursive: true, force: true }).catch(() => undefined);
-    await dropOrigin(context.origin, target).catch(() => undefined);
+    context.fetched?.repositories.delete(target);
     const branch = await branchAndHead(context.git, target).then(
       (read) => read.branch,
       () => null,
@@ -397,27 +415,29 @@ export async function fetchAll(
   repositories: ReadonlyArray<SyncRepository>,
 ): Promise<Array<ProjectSyncRepositoryFacts>> {
   // A failure on one repository is that repository's facts: the others keep theirs.
-  return inParallel(repositories, (repository) =>
-    readRepositoryFacts(context, repository, { fetch: true }).catch(
-      async (cause: unknown): Promise<ProjectSyncRepositoryFacts> => {
-        await dropOrigin(context.origin, repository.cwd).catch(() => undefined);
-        return {
-          path: repository.path,
-          branch: null,
-          head: null,
-          upstream: null,
-          otherUpstream: null,
-          ahead: 0,
-          behind: 0,
-          uncommitted: 0,
-          stateUnread: true,
-          inUseBy: null,
-          remote: null,
-          fetch: "failed",
-          fetchError: didNotFinish(cause),
-        };
-      },
-    ),
+  return inParallel(repositories, async (repository) =>
+    repository.unread === true
+      ? unreadFacts(repository.path, PROJECT_SYNC_PATH_UNREAD_DETAIL)
+      : readRepositoryFacts(context, repository, { fetch: true }).catch(
+          async (cause: unknown): Promise<ProjectSyncRepositoryFacts> => {
+            context.fetched?.repositories.delete(repository.cwd);
+            return {
+              path: repository.path,
+              branch: null,
+              head: null,
+              upstream: null,
+              otherUpstream: null,
+              ahead: 0,
+              behind: 0,
+              uncommitted: 0,
+              stateUnread: true,
+              inUseBy: null,
+              remote: null,
+              fetch: "failed",
+              fetchError: didNotFinish(cause),
+            };
+          },
+        ),
   );
 }
 
@@ -651,16 +671,16 @@ const make = Effect.gen(function* () {
     }
     return null;
   };
-  /** A call's context: its project's own records of origin, and its time for asking origin. */
+  /** A call's context: the one fetch it goes by, and its time for asking origin. */
   const syncContext = (
-    projectId: ProjectId,
+    fetched: FetchRecord | undefined,
     asks: AskBudget,
     signal?: AbortSignal,
   ): SyncContext => ({
     git: defaultGit,
     inUse,
-    origin: originRecordsOf(projectId),
     asks,
+    ...(fetched === undefined ? {} : { fetched }),
     ...(signal === undefined ? {} : { signal }),
   });
 
@@ -678,14 +698,16 @@ const make = Effect.gen(function* () {
         input.projectId,
         Effect.gen(function* () {
           const found = yield* repositories(input.projectId);
-          const asks = askBudget();
-          return {
-            // A cancelled fetch is stopped; the lock is held until Git has ended.
-            repositories: yield* stoppedWhenCancelled((signal) =>
-              fetchAll(syncContext(input.projectId, asks, signal), found.repositories),
-            ),
-            scanLimited: found.scanLimited,
-          };
+          // Every fetch call is its own record under its own id: a second window's fetch
+          // never replaces what the first one's person approved.
+          const record = newFetchRecord(input.projectId);
+          // A cancelled fetch is stopped; the lock is held until Git has ended.
+          const facts = yield* stoppedWhenCancelled((signal) =>
+            fetchAll(syncContext(record, askBudget(), signal), found.repositories),
+          );
+          // Kept only now, every repository's fetch having ended.
+          keepFetch(record);
+          return { repositories: facts, scanLimited: found.scanLimited, fetchId: record.id };
         }),
       ),
     run: (input) =>
@@ -695,6 +717,9 @@ const make = Effect.gen(function* () {
           const found = yield* repositories(input.projectId);
           const out: Array<ProjectSyncStepResult> = [];
           const asks = askBudget();
+          // The fetch the window names, when it is this project's and still kept. Nothing
+          // else is gone by: without it no checkout moves.
+          const fetched = keptFetch(input.projectId, input.fetchId);
           // What a clone that never finished left behind goes first, under the lock: no
           // clone of this project is under way now. A folder that stays is said so.
           const kept = yield* attempt(async () =>
@@ -727,7 +752,7 @@ const make = Effect.gen(function* () {
           for (const wanted of input.fastForward) {
             out.push(
               ...(yield* attempt(() =>
-                runSync(syncContext(input.projectId, asks), found.root, found.repositories, {
+                runSync(syncContext(fetched, asks), found.root, found.repositories, {
                   fastForward: [wanted],
                   clone: [],
                 }),
@@ -738,15 +763,10 @@ const make = Effect.gen(function* () {
           for (const wanted of input.clone) {
             out.push(
               ...(yield* stoppedWhenCancelled((signal) =>
-                runSync(
-                  syncContext(input.projectId, asks, signal),
-                  found.root,
-                  found.repositories,
-                  {
-                    fastForward: [],
-                    clone: [wanted],
-                  },
-                ),
+                runSync(syncContext(fetched, asks, signal), found.root, found.repositories, {
+                  fastForward: [],
+                  clone: [wanted],
+                }),
               )),
             );
           }

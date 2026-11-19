@@ -1,17 +1,21 @@
 // @effect-diagnostics nodeBuiltinImport:off - plain promises over real Git, like ProjectSync.ts.
 /**
- * What `origin` listed to a Sync fetch (1390). Sync moves a checkout only to a
- * commit `origin` itself listed for the branch, by object id: never to a branch
- * by its name, and never to wherever a tracking ref reads later. One list is
- * taken per repository per fetch and kept as a record, bound to the checkout
- * (its real path and the identity of its Git folder) and to `origin`'s address.
- * A record is never handed on: not to another project on the same checkout,
- * not to a clone made again at the same path, not across a changed address.
+ * What a Sync fetch brought (1390). Sync moves a checkout only to the commit
+ * one named fetch of its own brought for the branch, by object id. A fetch
+ * writes `origin`'s branches twice: into the usual tracking refs, and into a
+ * namespace of refs nothing but Sync writes. What it reads back from that
+ * namespace is the record of the fetch, so no other fetch can supply it; the
+ * namespace is emptied again before the fetch returns. A record is bound to
+ * the checkout (its real path and the identity of its Git folder) and to the
+ * address Git fetches `origin` from. It is kept in memory under the fetch's
+ * id, for a time and up to a count, and nothing else ever stands in for it.
  */
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 
+import { PROJECT_SYNC_FETCH_KEPT_MS, PROJECT_SYNC_FETCHES_KEPT } from "@specweave-studio/contracts";
+
 import type { GitResult } from "./folderTransfer/git.ts";
-import { canonicalOrigin } from "./handoffGitTypes.ts";
 
 type Git = (
   cwd: string,
@@ -20,122 +24,223 @@ type Git = (
     readonly allowFailure?: boolean;
     readonly timeoutMs?: number;
     readonly signal?: AbortSignal;
+    readonly input?: string;
   },
 ) => Promise<GitResult>;
 
-/** How long one ask of `origin` for its branches may take. */
+/** How long one ask of `origin` before a move may take. */
 export const ORIGIN_ASK_MS = 10_000;
+/** How long the asks of one `run` may take together; past it, the rest is not tried. */
+export const ORIGIN_ASK_TOTAL_MS = 60_000;
 const LOCAL_MS = 30_000;
-const LISTED = /^([0-9a-f]{40}(?:[0-9a-f]{24})?)\t(refs\/heads\/\S.*)$/;
+const FETCH_MS = 5 * 60_000;
+const OID = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+/** The refs only Sync writes: one folder per fetch under way, gone when the fetch returns. */
+export const SYNC_REFS = "refs/specwithcode/sync/";
+const TRACKING = "refs/remotes/origin/";
+const HEADS = "refs/heads/";
 
-export interface OriginRecord {
+/** One checkout as one fetch left it. */
+export interface RepositoryRecord {
   /** The checkout's real path. */
   readonly checkout: string;
   /** Its Git folder: device, inode and time of birth. A clone made again has another. */
   readonly identity: string;
-  /** `origin`'s address as the repository's settings had it at the fetch. */
-  readonly url: string;
-  /** Every branch `origin` listed, `refs/heads/…` to the commit it listed it at. */
+  /** False where the file system keeps no time of birth: the identity is then no proof. */
+  readonly sure: boolean;
+  /** The address Git fetched `origin` from, with every rewrite applied. */
+  readonly fetchUrl: string;
+  /** Every branch the fetch brought, `refs/heads/…` on `origin` to its commit. */
   readonly heads: ReadonlyMap<string, string>;
+  /** Branches learned since to be gone from `origin`, or elsewhere: never moved to by this record. */
+  readonly revoked: Map<string, "gone" | "moved">;
+}
+
+/** One fetch call: what it brought, per checkout. */
+export interface FetchRecord {
+  readonly id: string;
+  readonly projectId: string;
   readonly atMs: number;
+  readonly repositories: Map<string, RepositoryRecord>;
 }
 
-/** The records of one project on this server, by the checkout's real path. */
-export type OriginRecords = Map<string, OriginRecord>;
-
-const byProject = new Map<string, OriginRecords>();
-/** One project's records, kept for as long as the server runs. Another project has its own. */
-export function originRecordsOf(projectId: string): OriginRecords {
-  let records = byProject.get(projectId);
-  if (records === undefined) {
-    records = new Map();
-    byProject.set(projectId, records);
-  }
-  return records;
-}
-
-/**
- * The hosts one call has found silent. An ask that does not come back within
- * its limit closes its host for the rest of the call: the other repositories
- * of that host are not asked, so a host that is down costs a call one round
- * of asks and not one per repository. Another host is never closed by it, and
- * an ask that is answered (also with an error) closes nothing.
- */
-export interface AskBudget {
-  /** The limit for the next ask of this host in ms: 0 once the host is closed. */
-  readonly next: (host: string) => number;
-  readonly close: (host: string) => void;
-}
-export function askBudget(): AskBudget {
-  const closed = new Set<string>();
+export function newFetchRecord(projectId: string): FetchRecord {
   return {
-    next: (host) => (closed.has(host) ? 0 : ORIGIN_ASK_MS),
-    close: (host) => void closed.add(host),
+    id: NodeCrypto.randomUUID(),
+    projectId,
+    // @effect-diagnostics-next-line globalDate:off - a plain helper; a fetch's age is wall-clock time.
+    atMs: Date.now(),
+    repositories: new Map(),
   };
 }
 
-/** What tells one origin's host from another's: its name, or the whole address of a folder. */
-export function originHost(address: string): string {
-  const canonical = canonicalOrigin(address);
-  if (canonical === null || canonical.startsWith("file://")) return address;
-  return canonical.split("/")[0] ?? address;
+const kept = new Map<string, FetchRecord>();
+const fresh = (record: FetchRecord, nowMs: number) =>
+  nowMs - record.atMs <= PROJECT_SYNC_FETCH_KEPT_MS;
+
+/** Keeps a finished fetch for the moves that name it. The oldest go when there are too many. */
+export function keepFetch(record: FetchRecord, nowMs: number = record.atMs): void {
+  for (const [id, other] of kept) if (!fresh(other, nowMs)) kept.delete(id);
+  kept.set(record.id, record);
+  while (kept.size > PROJECT_SYNC_FETCHES_KEPT) {
+    const oldest = kept.keys().next();
+    if (oldest.done === true) break;
+    kept.delete(oldest.value);
+  }
 }
 
-export type Listed =
-  | { readonly ok: true; readonly heads: Map<string, string> }
-  /** `reason` is Git's own words, or null when the ask did not end in time or was not made. */
-  | { readonly ok: false; readonly reason: string | null };
+/** The fetch a `run` names, only when it is this project's and still kept. */
+export function keptFetch(
+  projectId: string,
+  id: string | undefined,
+  // @effect-diagnostics-next-line globalDate:off - a plain helper; a fetch's age is wall-clock time.
+  nowMs: number = Date.now(),
+): FetchRecord | undefined {
+  if (id === undefined) return undefined;
+  const record = kept.get(id);
+  if (record === undefined) return undefined;
+  if (!fresh(record, nowMs)) {
+    kept.delete(id);
+    return undefined;
+  }
+  return record.projectId === projectId ? record : undefined;
+}
 
 /**
- * The branches `origin` lists right now, each with its commit: all of them, or
- * the one `ref` names. A read of the remote; it writes nothing here. One
- * request, under a short limit.
+ * What the newest kept fetch of the project brought for a checkout. For the
+ * list of work Git does not carry only: it never permits a move.
  */
-export async function listOrigin(
-  git: Git,
-  cwd: string,
-  options: {
-    readonly ref?: string;
-    /** The call's silent hosts, and the host this ask goes to. */
-    readonly budget?: AskBudget;
-    readonly host?: string;
-    readonly signal?: AbortSignal;
-  } = {},
-): Promise<Listed> {
-  const host = options.host ?? cwd;
-  const timeoutMs = options.budget === undefined ? ORIGIN_ASK_MS : options.budget.next(host);
-  if (timeoutMs <= 0) return { ok: false, reason: null };
-  const listed = await git(
-    cwd,
-    ["ls-remote", "--heads", "origin", ...(options.ref === undefined ? [] : [options.ref])],
-    {
-      allowFailure: true,
-      timeoutMs,
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    },
-  ).catch(() => null);
-  if (listed === null) {
-    // It did not come back in time (or Git could not be started): the host is not asked again.
-    options.budget?.close(host);
-    return { ok: false, reason: null };
-  }
-  if (listed.code !== 0) return { ok: false, reason: listed.stderr };
-  const heads = new Map<string, string>();
-  for (const line of listed.stdout.split("\n")) {
-    if (line.length === 0) continue;
-    const match = LISTED.exec(line);
-    // A list that is not one is no list: nothing is planned on a guess.
-    if (match === null) return { ok: false, reason: null };
-    heads.set(match[2]!, match[1]!);
-  }
-  return { ok: true, heads };
+export function latestHeads(
+  projectId: string,
+  checkout: string,
+): ReadonlyMap<string, string> | undefined {
+  let newest: FetchRecord | undefined;
+  for (const record of kept.values())
+    if (
+      record.projectId === projectId &&
+      record.repositories.has(checkout) &&
+      (newest === undefined || record.atMs >= newest.atMs)
+    )
+      newest = record;
+  return newest?.repositories.get(checkout)?.heads;
 }
 
-/** The checkout's real path and what tells its Git folder from one made again there. */
-async function identityOf(
+/**
+ * Takes a branch out of every kept record of a checkout that has it at another
+ * commit than `origin` is now known to (`now`; undefined when it is gone
+ * there). Permission is per fetch; what the server learned of `origin` holds
+ * for all of them.
+ */
+export function revokeElsewhere(checkout: string, ref: string, now: string | undefined): void {
+  for (const record of kept.values()) {
+    const repository = record.repositories.get(checkout);
+    if (repository !== undefined) revoke(repository, ref, now);
+  }
+}
+/** Every branch any kept record of a checkout holds. */
+export function everKnown(checkout: string): Set<string> {
+  const out = new Set<string>();
+  for (const record of kept.values())
+    for (const ref of record.repositories.get(checkout)?.heads.keys() ?? []) out.add(ref);
+  return out;
+}
+export function revoke(repository: RepositoryRecord, ref: string, now: string | undefined): void {
+  const had = repository.heads.get(ref);
+  if (had !== undefined && had !== now)
+    repository.revoked.set(ref, now === undefined ? "gone" : "moved");
+}
+
+/**
+ * The time one `run` has for asking `origin`. Each ask has its own short
+ * limit and is charged what it took; once the total is used up no further
+ * ask is made, and a checkout that was not asked for is not moved.
+ */
+export interface AskBudget {
+  /** The limit for the next ask in ms: 0 when the time is used up. */
+  readonly next: () => number;
+  readonly spend: (ms: number) => void;
+}
+export function askBudget(totalMs: number = ORIGIN_ASK_TOTAL_MS): AskBudget {
+  let left = totalMs;
+  return {
+    next: () => (left <= 0 ? 0 : ORIGIN_ASK_MS),
+    spend: (ms) => {
+      left -= Math.max(0, ms);
+    },
+  };
+}
+
+export type Asked =
+  /** `tip` is where `origin` has the branch now; undefined when it has none of that name. */
+  | { readonly kind: "answered"; readonly tip: string | undefined }
+  /** `origin` did not answer in time, or Git could not reach it. */
+  | { readonly kind: "unreachable" }
+  /** The call's time for asking was used up: nothing was asked. */
+  | { readonly kind: "not-tried" };
+
+/**
+ * Where `origin` has one branch right now. A read of the remote; it writes
+ * nothing here. One request, under a short limit.
+ */
+export async function askOrigin(
   git: Git,
   cwd: string,
-): Promise<{ readonly checkout: string; readonly identity: string } | null> {
+  ref: string,
+  options: { readonly budget?: AskBudget; readonly signal?: AbortSignal } = {},
+): Promise<Asked> {
+  const timeoutMs = options.budget === undefined ? ORIGIN_ASK_MS : options.budget.next();
+  if (timeoutMs <= 0) return { kind: "not-tried" };
+  // @effect-diagnostics-next-line globalDate:off - a plain helper; the time an ask took is wall-clock time.
+  const started = Date.now();
+  const listed = await git(cwd, ["ls-remote", "--heads", "origin", ref], {
+    allowFailure: true,
+    timeoutMs,
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  }).catch(() => null);
+  // @effect-diagnostics-next-line globalDate:off - a plain helper; the time an ask took is wall-clock time.
+  options.budget?.spend(Date.now() - started);
+  if (listed === null || listed.code !== 0) return { kind: "unreachable" };
+  let tip: string | undefined;
+  for (const line of listed.stdout.split("\n")) {
+    if (line.length === 0) continue;
+    const [oid, name, ...rest] = line.split("\t");
+    // An answer that is not a list of branches is no answer.
+    if (oid === undefined || name === undefined || rest.length > 0 || !OID.test(oid))
+      return { kind: "unreachable" };
+    if (name === ref) tip = oid;
+  }
+  return { kind: "answered", tip };
+}
+
+/** The address Git fetches `origin` from, every `insteadOf` rewrite applied; null when Git gives none. */
+export async function fetchAddress(git: Git, cwd: string): Promise<string | null> {
+  const url = await git(cwd, ["ls-remote", "--get-url", "origin"], {
+    allowFailure: true,
+    timeoutMs: LOCAL_MS,
+  }).catch(() => null);
+  const text = url === null || url.code !== 0 ? "" : url.stdout.trim();
+  // Without an `origin`, Git echoes the name back.
+  return text.length === 0 || text === "origin" || text.includes("\n") ? null : text;
+}
+
+type Stat = (path: string) => Promise<{
+  readonly dev: bigint;
+  readonly ino: bigint;
+  readonly birthtimeNs: bigint;
+  readonly isDirectory: () => boolean;
+} | null>;
+const lstat: Stat = (path) => NodeFSP.lstat(path, { bigint: true }).catch(() => null);
+
+/** The checkout's real path and what tells its Git folder from one made again there. */
+export async function checkoutIdentity(
+  git: Git,
+  cwd: string,
+  stat: Stat = lstat,
+): Promise<{
+  readonly checkout: string;
+  readonly identity: string;
+  readonly sure: boolean;
+} | null> {
   const [checkout, gitDir] = await Promise.all([
     NodeFSP.realpath(cwd).catch(() => null),
     git(cwd, ["rev-parse", "--absolute-git-dir"], {
@@ -144,51 +249,148 @@ async function identityOf(
     }).catch(() => null),
   ]);
   if (checkout === null || gitDir === null || gitDir.code !== 0) return null;
-  const stat = await NodeFSP.lstat(gitDir.stdout.trim(), { bigint: true }).catch(() => null);
-  if (stat === null || !stat.isDirectory()) return null;
-  return { checkout, identity: `${stat.dev}:${stat.ino}:${stat.birthtimeNs}` };
+  const found = await stat(gitDir.stdout.trim());
+  if (found === null || !found.isDirectory()) return null;
+  return {
+    checkout,
+    identity: `${found.dev}:${found.ino}:${found.birthtimeNs}`,
+    sure: found.birthtimeNs > 0n,
+  };
 }
 
-/** Keeps what `origin` just listed for this checkout, in place of what was kept before. */
-export async function noteOrigin(
-  records: OriginRecords | undefined,
+export type Upstream =
+  /** A branch of `origin`, kept here where Sync's own fetch writes it. `ref` is its name there. */
+  | {
+      readonly kind: "origin";
+      readonly name: string;
+      readonly ref: string;
+      readonly tracking: string;
+    }
+  /** A local branch, or a branch of another remote: `name` is for the reason only. */
+  | { readonly kind: "other"; readonly name: string }
+  /** A branch of `origin` kept here under another name than its own. */
+  | { readonly kind: "mapped"; readonly name: string; readonly source: string };
+
+/**
+ * The branch's upstream as Git itself names it: the remote, the branch on
+ * that remote, and the ref it is kept in here. Never rebuilt from the name of
+ * the tracking ref. Null without an upstream; `undefined` when Git did not say.
+ */
+export async function upstreamOf(
   git: Git,
   cwd: string,
-  url: string,
-  heads: ReadonlyMap<string, string>,
-): Promise<void> {
-  if (records === undefined) return;
-  const at = await identityOf(git, cwd);
-  if (at === null) return dropOrigin(records, cwd);
-  // @effect-diagnostics-next-line globalDate:off - a plain async helper; when origin listed is wall-clock time.
-  records.set(at.checkout, { ...at, url, heads, atMs: Date.now() });
+  branch: string,
+): Promise<Upstream | null | undefined> {
+  const listed = await git(
+    cwd,
+    [
+      "for-each-ref",
+      "--format=%(refname)%00%(upstream)%00%(upstream:remotename)%00%(upstream:remoteref)",
+      `${HEADS}${branch}`,
+    ],
+    { allowFailure: true, timeoutMs: LOCAL_MS },
+  );
+  if (listed.code !== 0) return undefined;
+  for (const line of listed.stdout.split("\n")) {
+    const [refname, tracking, remote, source] = line.split("\0");
+    if (refname !== `${HEADS}${branch}`) continue;
+    if (tracking === undefined || tracking.length === 0) return null;
+    // For the reader only: the ref without its folder, whatever else is named like it.
+    const name = tracking.replace(/^refs\/(heads|remotes)\//, "");
+    if (remote !== "origin" || source === undefined) return { kind: "other", name };
+    if (!source.startsWith(HEADS) || tracking !== `${TRACKING}${source.slice(HEADS.length)}`)
+      return { kind: "mapped", name, source: source.replace(HEADS, "") };
+    return { kind: "origin", name, ref: source, tracking };
+  }
+  return undefined;
+}
+
+const deleteRefs = async (git: Git, cwd: string, prefix: string): Promise<void> => {
+  const listed = await git(cwd, ["for-each-ref", "--format=%(objectname) %(refname)", prefix], {
+    allowFailure: true,
+    timeoutMs: LOCAL_MS,
+  });
+  if (listed.code !== 0) return;
+  const lines: Array<string> = [];
+  for (const line of listed.stdout.split("\n")) {
+    const at = line.indexOf(" ");
+    const ref = line.slice(at + 1);
+    // Only ever a ref of Sync's own namespace, and only where it was read to be.
+    if (at > 0 && ref.startsWith(SYNC_REFS)) lines.push(`delete ${ref} ${line.slice(0, at)}`);
+  }
+  if (lines.length > 0)
+    await git(cwd, ["update-ref", "--no-deref", "--stdin"], {
+      allowFailure: true,
+      timeoutMs: LOCAL_MS,
+      input: `${lines.join("\n")}\n`,
+    });
+};
+
+export type Fetched =
+  | { readonly ok: true; readonly heads: Map<string, string> }
+  | { readonly ok: false; readonly reason: string };
+
+/**
+ * Fetches `origin`'s branches: one network step. They go into the tracking
+ * refs (never the destinations the repository's settings name, never pruned)
+ * and into a folder of Sync's own refs made for this fetch; that folder is
+ * read for what the fetch brought, and removed again whatever happened, also
+ * when the call was cancelled. Call it with the checkout held.
+ */
+export async function fetchOrigin(
+  git: Git,
+  cwd: string,
+  options: { readonly signal?: AbortSignal } = {},
+): Promise<Fetched> {
+  const mine = `${SYNC_REFS}${NodeCrypto.randomUUID()}/`;
+  try {
+    // What a server that stopped mid-fetch left behind goes first: nothing else writes here.
+    await deleteRefs(git, cwd, SYNC_REFS);
+    const fetched = await git(cwd, fetchArgs(mine), {
+      allowFailure: true,
+      timeoutMs: FETCH_MS,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    }).catch((cause: unknown) => ({
+      code: -1,
+      stdout: "",
+      stderr: cause instanceof Error ? cause.message : "The fetch did not finish.",
+    }));
+    if (fetched.code !== 0) return { ok: false, reason: fetched.stderr };
+    const listed = await git(cwd, ["for-each-ref", "--format=%(objectname) %(refname)", mine], {
+      allowFailure: true,
+      timeoutMs: LOCAL_MS,
+    });
+    if (listed.code !== 0) return { ok: false, reason: listed.stderr };
+    const heads = new Map<string, string>();
+    for (const line of listed.stdout.split("\n")) {
+      if (line.length === 0) continue;
+      const at = line.indexOf(" ");
+      const oid = line.slice(0, at);
+      const ref = line.slice(at + 1);
+      if (at < 0 || !OID.test(oid) || !ref.startsWith(mine))
+        return { ok: false, reason: "What the fetch brought could not be read." };
+      heads.set(`${HEADS}${ref.slice(mine.length)}`, oid);
+    }
+    return { ok: true, heads };
+  } finally {
+    await deleteRefs(git, cwd, mine).catch(() => undefined);
+  }
 }
 
 /**
- * The record of this checkout, only while it is still that checkout and still
- * has that `origin`: one that no longer fits is dropped here and never used.
+ * The fetch names its own destinations (`--refmap=` switches the configured
+ * ones off) and never prunes, whatever `fetch.prune`, `fetch.pruneTags` or
+ * `remote.origin.prune` say. Tags come as Git brings them by default: new ones
+ * that point into the fetched history, and none that would replace a tag here.
  */
-export async function originRecord(
-  records: OriginRecords | undefined,
-  git: Git,
-  cwd: string,
-  url: string,
-): Promise<OriginRecord | undefined> {
-  if (records === undefined || records.size === 0) return undefined;
-  const at = await identityOf(git, cwd);
-  if (at === null) return undefined;
-  const record = records.get(at.checkout);
-  if (record === undefined) return undefined;
-  if (record.identity !== at.identity || record.url !== url) {
-    records.delete(at.checkout);
-    return undefined;
-  }
-  return record;
-}
-
-export async function dropOrigin(records: OriginRecords | undefined, cwd: string): Promise<void> {
-  if (records === undefined) return;
-  records.delete(cwd);
-  const real = await NodeFSP.realpath(cwd).catch(() => null);
-  if (real !== null) records.delete(real);
-}
+export const fetchArgs = (namespace: string): Array<string> => [
+  "fetch",
+  "--quiet",
+  "--no-prune",
+  "--no-prune-tags",
+  "--no-recurse-submodules",
+  "--refmap=",
+  "origin",
+  `+${HEADS}*:${TRACKING}*`,
+  `+${HEADS}*:${namespace}*`,
+];

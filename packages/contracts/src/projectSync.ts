@@ -130,6 +130,20 @@ export const ProjectSyncRepositoryFacts = Schema.Struct({
    */
   upstreamMoved: Schema.optional(Schema.Boolean),
   /**
+   * Why the branch's upstream, though a branch of `origin`, is not one Sync moves by: the
+   * sentence to show (see `projectSyncUpstreamMappingDetail`). `upstream` is then null and the
+   * plan is `none` / `no-upstream` with this as its `detail`. Absent otherwise, and from a
+   * machine on an older version.
+   */
+  upstreamUnusual: Schema.optional(bounded(2000)),
+  /**
+   * Set when the folder, or the checkout after its fetch, could not be read at all: the
+   * sentence to show. `stateUnread` is then true and nothing of the checkout is known; it is
+   * never moved, and the plan holds it with reason `uncommitted` and this as its `detail`
+   * (action `fetch` when its fetch went through, else `none`). Absent otherwise.
+   */
+  unreadDetail: Schema.optional(bounded(2000)),
+  /**
    * True when Git could not read the checkout's state (`git status` failed). `uncommitted`
    * is then 0, not a count: nobody saw the files. Such a checkout is never moved; the plan
    * holds it with reason `uncommitted` and says so in `detail`. Absent when the state was
@@ -158,6 +172,15 @@ export const ProjectSyncFetchResult = Schema.Struct({
   repositories: Schema.Array(ProjectSyncRepositoryFacts).check(
     Schema.isMaxLength(PROJECT_SYNC_MAX_REPOSITORIES),
   ),
+  /**
+   * Names this fetch on the machine that ran it: opaque, and of no meaning to another
+   * machine. A `run` on that machine passes it back, and moves each checkout only to the
+   * commit this very fetch brought for its branch. Kept for
+   * `PROJECT_SYNC_FETCH_KEPT_MS` and for the newest `PROJECT_SYNC_FETCHES_KEPT` fetches of
+   * the server, in memory: after that, or after a restart, a `run` with it moves nothing and
+   * says to sync again. Absent from a machine on an older version.
+   */
+  fetchId: Schema.optional(bounded(64)),
   scanLimited: Schema.Boolean,
 });
 export type ProjectSyncFetchResult = typeof ProjectSyncFetchResult.Type;
@@ -194,11 +217,66 @@ export type ProjectSyncStep = typeof ProjectSyncStep.Type;
 export const PROJECT_SYNC_MOVED_UNASKED_DETAIL =
   "origin could not be reached. Moved forward to the commit this Sync fetched.";
 /**
- * The `detail` of a fast-forward refused because `origin` could not be asked and no
- * Sync fetch of this server brought the commit the branch's tracking ref is at.
+ * The `detail` of a fast-forward refused because `origin` could not be asked and the
+ * checkout cannot be told from one made again at the same place (its file system keeps no
+ * time of creation), so what the fetch brought is not gone by without `origin`.
  */
-export const PROJECT_SYNC_REFUSED_UNASKED_DETAIL =
-  "origin could not be reached, and this Sync has not fetched this commit of the branch. Sync again when origin can be reached.";
+export const PROJECT_SYNC_OFFLINE_UNSURE_DETAIL =
+  "origin could not be reached, and this checkout cannot be told from one made again in its place. Sync again when origin can be reached.";
+
+/** How long a fetch is kept for a `run` to go by, and how many fetches a server keeps. */
+export const PROJECT_SYNC_FETCH_KEPT_MS = 60 * 60_000;
+export const PROJECT_SYNC_FETCHES_KEPT = 32;
+
+/**
+ * The `detail` of a fast-forward refused because the `run` named no fetch, or one this
+ * server does not keep (it restarted, the fetch is older than `PROJECT_SYNC_FETCH_KEPT_MS`),
+ * or one that did not fetch this checkout. Nothing else stands in for a fetch.
+ */
+export const PROJECT_SYNC_NO_FETCH_DETAIL =
+  "Sync has no fetch of its own to go by for this checkout. Sync again.";
+/**
+ * The `detail` of a fast-forward refused because the checkout is not the one that was
+ * fetched (made again at the same place) or `origin` now leads somewhere else.
+ */
+export const PROJECT_SYNC_FETCH_STALE_DETAIL =
+  "The checkout or origin's address changed since the fetch. Sync again.";
+/**
+ * The `detail` of a fast-forward that was not tried: the time one `run` has for asking
+ * `origin` was used up before this checkout's turn. It is not moved without the ask.
+ */
+export const PROJECT_SYNC_NOT_TRIED_DETAIL =
+  "Not tried: the time for asking origin ran out before this checkout's turn. Sync again.";
+/** The `unreadDetail` of a checkout whose fetch went through and whose state then could not be read. */
+export const PROJECT_SYNC_FETCHED_UNREAD_DETAIL =
+  "Fetched, but its state could not be read, so it was not moved.";
+/** The `unreadDetail` of a folder Sync could not read at all, and so left alone. */
+export const PROJECT_SYNC_PATH_UNREAD_DETAIL = "This folder could not be read, so Sync skipped it.";
+/** The `detail` of a fast-forward declined because the branch carries merge options Sync cannot switch off. */
+export const projectSyncMergeOptionsDetail = (branch: string) =>
+  `The branch ${branch} has merge options set in Git (branch.${branch}.mergeOptions) that Sync cannot switch off, so it was not moved.`.slice(
+    0,
+    1900,
+  );
+/** The `upstreamUnusual` of a branch that follows a branch of `origin` kept here under another name. */
+export const projectSyncUpstreamMappingDetail = (upstream: string, source: string) =>
+  `The branch follows ${source} of origin through ${upstream}, a mapping Sync does not move by.`.slice(
+    0,
+    1900,
+  );
+/**
+ * The `detail` of a fast-forward after which the checkout is not where Sync's own move
+ * would have left it: something else changed it meanwhile. The step keeps `fast-forward`
+ * with `moved` 0 and `downgraded` true, and `branch` is the branch read after; it is never
+ * reported as moved by Sync and never as refused.
+ */
+export const projectSyncObservedDetail = (branch: string | null, head: string | null) =>
+  `The checkout changed while Sync was moving it, so Sync does not count this as its own move. It is ${
+    branch === null ? "on no branch" : `on ${branch}`
+  }${head === null ? "" : ` at ${head.slice(0, 12)}`} now. Check it before working in it.`.slice(
+    0,
+    1900,
+  );
 
 /**
  * The `detail` of a step held with reason `uncommitted` because the checkout's state could
@@ -224,14 +302,6 @@ export const PROJECT_SYNC_ORIGIN_MOVED_DETAIL =
  */
 export const PROJECT_SYNC_NOT_AS_FETCHED_DETAIL =
   "This checkout's copy of origin's branch is not at the commit this Sync fetched. Sync again.";
-/**
- * The `fetchError` of a repository whose `origin` did not list its branches in time (or was
- * not asked, the call's time for asking being used up). Such a repository is not fetched:
- * nothing is planned on a list nobody got.
- */
-export const PROJECT_SYNC_NOT_LISTED_DETAIL =
-  "origin did not list its branches in time, so nothing was fetched. Sync again.";
-
 /** The `detail` of a fast-forward declined because the checkout changed while Sync asked `origin`. */
 export const PROJECT_SYNC_CHANGED_BRANCH_DETAIL =
   "The checkout switched to another branch while Sync asked origin, so it was not moved.";
@@ -285,6 +355,9 @@ export function planProjectSyncRepository(
   if (facts.fetch === "unusual-config") return step("none", "fetch-config", facts.fetchError);
   if (facts.fetch === "failed") return step("none", "fetch-failed", facts.fetchError);
   if (facts.fetch === "no-remote") return step("none", "no-remote");
+  // Nothing of the checkout is known: it is held, and said so, whatever else reads empty.
+  if (facts.unreadDetail != null)
+    return step(facts.fetch === "ok" ? "fetch" : "none", "uncommitted", facts.unreadDetail);
   if (facts.branch === null) return step("fetch", "detached");
   if (other !== null && other.branch !== null && other.branch !== facts.branch)
     return step("fetch", "other-branch");
@@ -292,9 +365,10 @@ export function planProjectSyncRepository(
     return step(
       "none",
       "no-upstream",
-      facts.otherUpstream == null
-        ? null
-        : `The branch follows ${facts.otherUpstream}, which is not a branch of origin.`,
+      facts.upstreamUnusual ??
+        (facts.otherUpstream == null
+          ? null
+          : `The branch follows ${facts.otherUpstream}, which is not a branch of origin.`),
     );
   if (facts.upstreamGone === true)
     return step("none", "no-upstream", projectSyncUpstreamGoneDetail(facts.upstream));
@@ -354,6 +428,13 @@ export function planProjectSync(
  */
 export const ProjectSyncRunInput = Schema.Struct({
   projectId: ProjectId,
+  /**
+   * The `fetchId` of the fetch the person approved, from this same machine's `fetch`
+   * answer. Needed for every fast-forward: without it, or with one the server no longer
+   * keeps, each asked checkout answers `none` / `refused` with
+   * `PROJECT_SYNC_NO_FETCH_DETAIL` and nothing moves. A clone needs none.
+   */
+  fetchId: Schema.optional(bounded(64)),
   fastForward: Schema.Array(
     Schema.Struct({
       path: repositoryPath,
