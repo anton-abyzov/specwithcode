@@ -496,8 +496,9 @@ function liveLayers(state: LiveWorld) {
   );
 }
 
-// The sweep itself sends no pre-switch (providerLimitStep acts on limit
-// stops only), so these apply one as the orchestrator records it.
+// These apply a pre-switch by hand, as the orchestrator records it, so each
+// test sets the move it needs (the sweep's own move is covered in 1089's
+// ProviderFallbackWorker.idlePreswitch.test.ts).
 function preswitchOnto(state: LiveWorld, commandId: string) {
   const to = { instanceId: codexId, model: "gpt-6" };
   const next = limitPreswitchAfterMove(state.preswitch, state.selection, to, true, commandId);
