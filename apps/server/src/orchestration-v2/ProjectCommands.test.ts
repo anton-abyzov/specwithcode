@@ -861,14 +861,9 @@ describe("explicit link ownership modes", () => {
     );
   });
 
-  it("joins a standalone copy as a member whose coordinator is relinquished", () => {
+  it("joins a standalone copy as a member that keeps its own active coordinator", () => {
     const joined = { ...shared, members: [other, self] };
-    const relinquished = {
-      epoch: 4,
-      state: "transferred" as const,
-      operationId: "link-op",
-      successor: other,
-    };
+    const relinquished = { epoch: 4, state: "active" as const, operationId: "link-op" };
     const ownership = {
       mode: "join-as-member",
       joinExpectedLogicalProjectId: standalone.id,
@@ -902,11 +897,12 @@ describe("explicit link ownership modes", () => {
       ),
       "coordinator handoff",
     );
+    // A joining copy never gives way: it follows, replaces and awaits nobody.
     for (const binding of [
-      { ...relinquished, state: "active" },
+      { ...relinquished, state: "transferred", successor: other },
+      { ...relinquished, state: "transferring" },
       { ...relinquished, operationId: undefined },
-      { ...relinquished, successor: self },
-      { ...relinquished, successor: { ...other, projectId: ProjectId.make("stranger") } },
+      { ...relinquished, successor: other },
       { ...relinquished, predecessor: other },
     ])
       failureOf(apply(current, { ...ownership, coordinatorBinding: binding }));
@@ -914,7 +910,7 @@ describe("explicit link ownership modes", () => {
     failureOf(apply(current, { ...ownership, logicalProject: { ...joined, members: [other] } }));
   });
 
-  it("unlinks only a relinquished member, to a fresh standalone active coordinator", () => {
+  it("unlinks a member, to a fresh standalone active coordinator", () => {
     const member = {
       logicalProject: { ...shared, members: [other, self] },
       coordinatorBinding: {
@@ -938,15 +934,26 @@ describe("explicit link ownership modes", () => {
       logicalProject: fresh,
       coordinatorBinding: active,
     });
-    assert.include(
-      failureText(
-        apply(
-          { ...member, coordinatorBinding: { epoch: 0, state: "active" } },
-          { mode: "unlink", logicalProject: fresh, coordinatorBinding: active },
-        ),
+    // An equal coordinator leaves the same way; one in a handoff, or alone, does not.
+    payloadOf(
+      apply(
+        { ...member, coordinatorBinding: { epoch: 0, state: "active" } },
+        { mode: "unlink", logicalProject: fresh, coordinatorBinding: active },
       ),
-      "Only a member whose coordinator was relinquished",
     );
+    for (const current of [
+      { ...member, coordinatorBinding: { epoch: 0, state: "transferring", operationId: "h" } },
+      {
+        logicalProject: { ...shared, members: [self] },
+        coordinatorBinding: { epoch: 0, state: "active" },
+      },
+    ])
+      assert.include(
+        failureText(
+          apply(current, { mode: "unlink", logicalProject: fresh, coordinatorBinding: active }),
+        ),
+        "Only a member of a shared project can unlink",
+      );
     for (const ownership of [
       { logicalProject: { ...fresh, id: shared.id } },
       { logicalProject: { ...fresh, members: [self, other] } },
@@ -963,27 +970,52 @@ describe("explicit link ownership modes", () => {
       );
   });
 
-  it("unlinks a coordinator started beside main, never main or one alone", () => {
-    const fresh = {
-      id: "logical:fresh",
-      title: "EasyChamp",
-      coordinatorId: "coordinator:logical:fresh",
-      members: [self],
-    };
-    const active = { epoch: 0, state: "active" as const, operationId: "unlink-op" };
-    const leave = { mode: "unlink", logicalProject: fresh, coordinatorBinding: active };
-    const side = { epoch: 2, state: "active" as const, operationId: "start-op" };
+  it("makes a copy from before an equal coordinator, and ends its open role operation", () => {
     const roster = { ...shared, members: [other, self] };
-    payloadOf(apply({ logicalProject: roster, coordinatorBinding: side }, leave));
-    // Main after a takeover or a move, main at epoch 0, and one alone are refused.
-    for (const current of [
-      { logicalProject: roster, coordinatorBinding: { ...side, predecessor: other } },
-      { logicalProject: roster, coordinatorBinding: { ...side, epoch: 0 } },
-      { logicalProject: { ...shared, members: [self] }, coordinatorBinding: side },
+    const equal = (binding: Record<string, unknown>, next: Record<string, unknown>) =>
+      apply(
+        { logicalProject: roster, coordinatorBinding: binding },
+        { mode: "equal-coordinators", logicalProject: roster, coordinatorBinding: next },
+      );
+    const gaveWay = { epoch: 4, state: "transferred", operationId: "link-op", successor: other };
+    payloadOf(equal(gaveWay, { epoch: 4, state: "active", operationId: "link-op" }));
+    const moving = { epoch: 4, state: "transferring", operationId: "move-op", successor: other };
+    const ended = { epoch: 4, state: "active", retiredOperationIds: ["move-op"] };
+    payloadOf(equal(moving, ended));
+    // The open operation must be retired, the epoch kept, and nobody followed or awaited.
+    for (const next of [
+      { epoch: 4, state: "active" },
+      { epoch: 5, state: "active", retiredOperationIds: ["move-op"] },
+      { ...ended, successor: other },
+      { ...ended, predecessor: other },
+      { ...ended, state: "transferred" },
     ])
+      failureOf(equal(moving, next));
+    // Identity and members never change with it.
+    failureOf(
+      apply(
+        { logicalProject: roster, coordinatorBinding: gaveWay },
+        {
+          mode: "equal-coordinators",
+          logicalProject: { ...roster, members: [self] },
+          coordinatorBinding: { epoch: 4, state: "active" },
+        },
+      ),
+    );
+    // A late write under the retired operation never fences the copy again.
+    for (const state of ["transferring", "transferred"])
       assert.include(
-        failureText(apply(current, leave)),
-        "Only a member whose coordinator was relinquished",
+        failureText(
+          apply(
+            { logicalProject: roster, coordinatorBinding: ended },
+            {
+              mode: "handoff",
+              logicalProject: roster,
+              coordinatorBinding: { epoch: 4, state, operationId: "move-op", successor: other },
+            },
+          ),
+        ),
+        "ended when every machine got its own coordinator",
       );
   });
 
@@ -1416,20 +1448,20 @@ describe("explicit link ownership modes", () => {
       payloadOf(sync([other, self]));
     });
 
-    it("rejects an active copy", () => {
+    it("lets an equal coordinator add members, never remove one", () => {
       const active = { epoch: 4, state: "active" as const };
-      assert.include(
-        failureText(
-          apply(
-            { logicalProject: memberSide, coordinatorBinding: active },
-            {
-              mode: "sync-members",
-              logicalProject: { ...memberSide, members: [other, self, later] },
-              coordinatorBinding: active,
-            },
-          ),
+      const three = { ...memberSide, members: [other, self, later] };
+      payloadOf(
+        apply(
+          { logicalProject: memberSide, coordinatorBinding: active },
+          { mode: "sync-members", logicalProject: three, coordinatorBinding: active },
         ),
-        "relinquished",
+      );
+      failureOf(
+        apply(
+          { logicalProject: three, coordinatorBinding: active },
+          { mode: "sync-members", logicalProject: memberSide, coordinatorBinding: active },
+        ),
       );
     });
 

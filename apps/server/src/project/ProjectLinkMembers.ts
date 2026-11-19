@@ -1,5 +1,9 @@
 /**
- * Member lists of linked copies follow the coordinator. A copy that joined
+ * Member lists of linked copies. Every copy runs its own coordinator, so an
+ * equal (active) copy takes from any other listed copy only the members it
+ * does not list yet, never a removal, and never one it unlinked itself
+ * (`adoptEqualMembers`). The rest is what copies from before equal
+ * coordinators still do with each other. A copy that joined
  * learns machines linked after it from the copy it gave way to (additions and
  * removals), which relays its own coordinator's list when it gave way too; the
  * owner's app may also send a coordinator one takeover later (additions only).
@@ -120,6 +124,48 @@ const listId = (members: ReadonlyArray<LogicalProjectMember>) =>
 export const makeProjectLinkMembers = (deps: ProjectLinkMembersDeps) => {
   const { admission, fail, load } = deps;
 
+  /**
+   * An equal coordinator adds the members another listed copy holds. The
+   * caller holds the project lock. Nothing is removed and no entry this copy
+   * holds is rewritten; a member this copy unlinked stays unlinked.
+   */
+  const adoptEqualMembers = (
+    project: Project,
+    identity: LogicalProject,
+    self: LogicalProjectMember,
+    input: AdoptMembersInput,
+  ) =>
+    Effect.gen(function* () {
+      const binding = project.workspaceSettings?.coordinatorBinding;
+      const fromKey = logicalProjectMemberKey(input.from);
+      if (
+        !identity.members.some(
+          (member) =>
+            logicalProjectMemberKey(member) === fromKey &&
+            member.environmentId !== self.environmentId,
+        )
+      )
+        return yield* fail("not_member");
+      const held = new Set(identity.members.map(logicalProjectMemberKey));
+      const removed = new Set((binding?.removedMembers ?? []).map(logicalProjectMemberKey));
+      const added = byKey(input.members)
+        .filter(
+          (member) =>
+            !held.has(logicalProjectMemberKey(member)) &&
+            !removed.has(logicalProjectMemberKey(member)) &&
+            member.environmentId !== self.environmentId,
+        )
+        .slice(0, Math.max(0, MAX_MEMBERS - identity.members.length));
+      if (added.length === 0) return { replayed: true, changed: false };
+      const members = [...identity.members, ...added];
+      yield* deps.writeOwnership(project, "project-link-members", listId(members), {
+        mode: "sync-members",
+        logicalProject: { ...identity, members },
+        coordinatorBinding: binding ?? { epoch: 0, state: "active" },
+      });
+      return { replayed: false, changed: true };
+    });
+
   const adoptMembers = (input: AdoptMembersInput) =>
     admission.withLock(
       input.projectId,
@@ -131,8 +177,10 @@ export const makeProjectLinkMembers = (deps: ProjectLinkMembersDeps) => {
         const binding = project.workspaceSettings?.coordinatorBinding;
         if (identity?.id !== input.logicalProjectId) return yield* fail("not_linked");
         if (project.workspaceSettings?.archived) return yield* fail("archived");
-        // An active or moving copy never takes another copy's list.
-        if (binding?.state !== "transferred") return yield* fail("not_member");
+        // A moving copy never takes another copy's list; an equal one only adds from it.
+        if (binding === undefined || binding.state === "active")
+          return yield* adoptEqualMembers(project, identity, self, input);
+        if (binding.state !== "transferred") return yield* fail("not_member");
         const fromKey = logicalProjectMemberKey(input.from);
         const from = identity.members.find(
           (member) =>

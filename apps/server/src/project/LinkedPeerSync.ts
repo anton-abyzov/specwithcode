@@ -583,7 +583,16 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
           peer.binding?.state === "transferred" &&
           peer.binding.successor !== undefined &&
           logicalProjectMemberKey(peer.binding.successor) === logicalProjectMemberKey(input.self);
-        if (!pull && !push) return;
+        // Two equal coordinators: each adds what the other lists. This side takes the
+        // peer's list here, and sends its own when the peer lacks one of its members.
+        const equals =
+          !pull &&
+          !push &&
+          isPeer &&
+          (own.binding === null || own.binding?.state === "active") &&
+          peer.binding?.state === "active" &&
+          !project.workspaceSettings?.archived;
+        if (!pull && !push && !equals) return;
         const key = pairKey(input.pair);
         const lists = stringifyJson([
           memberRefs(held),
@@ -594,8 +603,33 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
         const now = yield* Clock.currentTimeMillis;
         const hold = memberHolds.get(key);
         if (hold !== undefined && hold.lists === lists && hold.until > now) return;
+        const peerKeys = new Set(peer.members.map(logicalProjectMemberKey));
+        const sendOwn = peers
+          .linkedMembers(input.member.environmentId, {
+            ...input.ref,
+            from: input.self,
+            fromEpoch: own.binding?.epoch ?? 0,
+            members: held,
+          })
+          .pipe(Effect.as({ changed: false }));
         const call: Effect.Effect<{ readonly changed: boolean }, LocalError | HandoffPeerError> =
-          pull
+          equals
+            ? deps
+                .adoptMembers({
+                  projectId: project.id,
+                  logicalProjectId: input.identityId,
+                  from: input.member,
+                  fromEpoch: peer.binding!.epoch,
+                  members: peer.members,
+                })
+                .pipe(
+                  Effect.tap(() =>
+                    held.every((member) => peerKeys.has(logicalProjectMemberKey(member)))
+                      ? Effect.void
+                      : sendOwn,
+                  ),
+                )
+            : pull
             ? deps.adoptMembers({
                 projectId: project.id,
                 logicalProjectId: input.identityId,
@@ -632,7 +666,7 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
         }
         memberHolds.delete(key);
         // New pairs start at once rather than after the next link watch.
-        if (pull && outcome.success.changed) yield* state.wake;
+        if ((pull || equals) && outcome.success.changed) yield* state.wake;
       }).pipe(
         Effect.catch((error) => Effect.logDebug("linked member list sync failed", { error })),
       );

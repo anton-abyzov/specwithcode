@@ -121,24 +121,27 @@ export const ProjectCoordinatorBinding = Schema.Struct({
       Schema.isMaxLength(256),
     ),
   ),
+  /**
+   * Role operations that were under way when this copy became an equal coordinator. A late
+   * write under one of them never fences this copy again. Machines from before equal
+   * coordinators ignore it.
+   */
+  retiredOperationIds: Schema.optional(
+    Schema.Array(Schema.String.check(Schema.isMaxLength(128))).check(Schema.isMaxLength(16)),
+  ),
 });
 export type ProjectCoordinatorBinding = typeof ProjectCoordinatorBinding.Type;
 
-/** Started beside main (`startCoordinator`): active above epoch 0, with no predecessor. */
-export function coordinatorStartedBeside(binding: ProjectCoordinatorBinding | undefined): boolean {
-  return binding?.state === "active" && binding.epoch > 0 && binding.predecessor === undefined;
-}
-
 /**
- * A coordinator started beside main may leave its shared project like a plain copy, unless it
- * is alone in its list. Main never matches. Like a plain copy's unlink, this cannot see a
- * copy that names it as its coordinator; the caller checks the copies it can see.
+ * Every machine runs its own coordinator, so any of them may leave its shared project,
+ * unless it is alone in its list or a role operation from before equal coordinators is
+ * still open on it.
  */
 export function coordinatorMayLeave(
   binding: ProjectCoordinatorBinding | undefined,
   memberCount: number,
 ): boolean {
-  return coordinatorStartedBeside(binding) && memberCount > 1;
+  return (binding === undefined || binding.state === "active") && memberCount > 1;
 }
 
 export function projectCoordinatorIsFenced(
