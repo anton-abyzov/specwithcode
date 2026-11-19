@@ -4,6 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import type {
+  ProjectSyncExtraItem,
   ProjectSyncExtraResult,
   ProjectSyncFetchResult,
   ProjectSyncInventoryResult,
@@ -27,9 +28,12 @@ import { pt } from "../../i18n/phrases/pt";
 import { ru } from "../../i18n/phrases/ru";
 import { zh } from "../../i18n/phrases/zh";
 import {
-  arrivalPrefix,
+  extraBatchLines,
   extraItems,
   extrasRemain,
+  extrasSendOutcome,
+  statusesProveInSync,
+  type ExtraResultLine,
   extraResultLine,
   isUnknownSyncCall,
   KNOWN_REFUSAL_DETAILS,
@@ -465,11 +469,26 @@ describe("syncPlan", () => {
     });
     expect(done[0]!.a.line.detail).toBe("Moved main from 1a2b3c4 to 5d6e7f8.");
     const title = (rows: typeof done, extra: Partial<Parameters<typeof syncResultTitle>[0]> = {}) =>
-      syncResultTitle({ rows, scanLimited: false, failed: false, workRemains: false, ...extra });
-    expect(title(done)).toBe("in-sync");
-    expect(title(done, { scanLimited: true })).toBe("finished");
-    expect(title(done, { workRemains: true })).toBe("finished");
-    expect(title(done, { failed: true })).toBe("open");
+      syncResultTitle({
+        rows,
+        scanLimited: false,
+        failed: false,
+        workRemains: false,
+        proven: true,
+        ...extra,
+      });
+    // Something the machine said beside a done step keeps the title neutral.
+    expect(title(done)).toBe("finished");
+    const plain = syncResultRows(behind(), {
+      a: {
+        results: [{ ...step("behind", { path: ".", behind: 2 }), moved: 2, downgraded: false }],
+      },
+      b: { results: [] },
+    });
+    expect(title(plain)).toBe("in-sync");
+    expect(title(plain, { scanLimited: true })).toBe("finished");
+    expect(title(plain, { workRemains: true })).toBe("finished");
+    expect(title(plain, { failed: true })).toBe("open");
     // A repository no machine answered for is not in sync, and neither is one with files left.
     expect(title(syncResultRows(behind(), { a: { results: [] }, b: { results: [] } }))).toBe(
       "open",
@@ -572,10 +591,10 @@ describe("extras", () => {
       ["not-listed", "3 more branches in Atlas are not listed", false],
     ]);
     expect(readSyncText(extras.lines[0]!.helper!)).toBe(
-      "Sent straight to M5 over the link between the machines, as branch swc/from-M4/fix/menu. Nothing goes to GitHub.",
+      "Sent straight to M5 over the link between the machines, as a branch under swc/from-…/. Nothing goes to GitHub.",
     );
     expect(readSyncText(extras.lines[2]!.helper!)).toBe(
-      "Arrives on M5 as a branch under swc/from-M4/, not as files in its folder. Nothing is committed on M4.",
+      "Arrives on M5 as a branch under swc/from-…/, not as files in its folder. Nothing is committed on M4.",
     );
     expect(readSyncText(extras.lines[3]!.helper!)).toBe(
       "Stashes stay. Compare all files… can bring them",
@@ -630,11 +649,11 @@ describe("extras", () => {
     ]);
   });
 
-  it("spells the branch prefix only for a machine name Git keeps as it is", () => {
-    expect(arrivalPrefix("m4")).toBe("swc/from-m4/");
-    expect(arrivalPrefix("linux-mini.local")).toBe("swc/from-linux-mini.local/");
-    expect(arrivalPrefix("Build Mac 2")).toBe("swc/from-…/");
-    expect(arrivalPrefix("m4.lock")).toBe("swc/from-…/");
+  it("never builds a branch name from the name this window shows for a machine", () => {
+    // The sender names itself and the receiver makes that name safe: only a receipt has the ref.
+    const named = syncExtras(inventory, { ...names, source: "m4" });
+    for (const line of named.lines)
+      expect(readSyncText(line.helper ?? { text: "" })).not.toContain("swc/from-m4");
   });
 });
 
@@ -667,8 +686,9 @@ describe("extraResultLine", () => {
     );
     expect(extraResultLine(sent(), names).size).toBe("4.1 MB");
     expect(read({ landed: "unchanged" })).toBe("M5 already has it as branch swc/from-M4/fix/menu.");
+    // The answer does not say which branch is checked out there: only the receipt's ref is named.
     expect(read({ landed: "checked-out", arrivedAs: "swc/from-M4/fix/menu-a3f9c1" })).toBe(
-      "fix/menu is checked out on M5, so this arrived beside it as swc/from-M4/fix/menu-a3f9c1. To use it there, check it out or merge it.",
+      "The branch it would arrive as is checked out on M5, so this arrived beside it as swc/from-M4/fix/menu-a3f9c1. To use it there, check it out or merge it.",
     );
     expect(read({ landed: "beside", arrivedAs: "swc/from-M4/fix/menu-a3f9c1" })).toBe(
       "M5 has other work under that name, so this arrived beside it as swc/from-M4/fix/menu-a3f9c1. To use it there, check it out or merge it.",
@@ -698,6 +718,26 @@ describe("extraResultLine", () => {
     );
     expect(stays("needs-update")).toBe("Stays on M4: update SpecWithCode on M5 first.");
     expect(stays("unreachable")).toBe("Stays on M4: M5 could not be reached.");
+    // What the other machine said goes under the summary once, as sent.
+    const told = (reason: "needs-update" | "unreachable", detail: string | null) =>
+      extraResultLine(
+        sent({ status: "stays", arrivedAs: null, landed: null, stays: reason, detail, bytes: 0 }),
+        names,
+      ).detail;
+    expect(told("unreachable", "M5 closed the link: timed out after 30 s.")).toBe(
+      "M5 closed the link: timed out after 30 s.",
+    );
+    expect(told("needs-update", "M5 runs 1.4.2, which has no receiver for extras.")).toBe(
+      "M5 runs 1.4.2, which has no receiver for extras.",
+    );
+    expect(told("unreachable", null)).toBeNull();
+    expect(told("unreachable", "  ")).toBeNull();
+    expect(told("unreachable", "Stays on M4: M5 could not be reached.")).toBeNull();
+    // A reason already inside the sentence is not repeated under it.
+    expect(
+      extraResultLine(sent({ status: "stays", stays: "refused", detail: "No grant." }), names)
+        .detail,
+    ).toBeNull();
     expect(stays("nothing-to-send")).toBe("Nothing to send: M5 would get no new work.");
     expect(stays("missing-branch")).toBe("Stays on M4: the branch is no longer there.");
     expect(stays("refused", "M5: no work grant for Atlas")).toBe(
@@ -725,6 +765,167 @@ describe("extraResultLine", () => {
     expect(extraResultLine(sent({ bytes: 0 }), names).size).toBeNull();
     expect(read({ arrivedAs: null, landed: null })).toBe("Sent to M5.");
     expect(read({ arrivedAs: null, landed: "merged" as never })).toBe("Sent to M5: merged.");
+  });
+});
+
+describe("extras that were asked for", () => {
+  const branch = (name: string): ProjectSyncExtraItem => ({
+    kind: "branch",
+    path: ".",
+    branch: name,
+  });
+  const files: ProjectSyncExtraItem = { kind: "uncommitted", path: ".", sendAnyway: [] };
+  const states = (lines: readonly ExtraResultLine[]) => lines.map((line) => line.state);
+
+  it("keeps every item: a receipt, no answer, or never sent", () => {
+    const answered = extraBatchLines(
+      [branch("fix/menu"), branch("try/one"), files],
+      [sent(), sent({ branch: "try/one", status: "stays", stays: "failed", arrivedAs: null })],
+      names,
+      "unknown",
+    );
+    // The reply named two of three: the third has no receipt, which is not a refusal.
+    expect(states(answered)).toEqual(["sent", "stays", "unknown"]);
+    expect(readSyncText(answered[2]!.sentence)).toBe(
+      "No answer came back. It may have arrived on M5: check M5 before sending again.",
+    );
+    expect(answered[2]!.branch).toBeNull();
+    const lost = extraBatchLines([branch("fix/menu"), files], null, names, "unknown");
+    expect(states(lost)).toEqual(["unknown", "unknown"]);
+    expect(lost[0]!.branch).toBe("fix/menu");
+    const never = extraBatchLines([branch("fix/menu")], null, names, "not-sent");
+    expect(states(never)).toEqual(["not-sent"]);
+    expect(readSyncText(never[0]!.sentence)).toBe("Not sent.");
+    // The same branch name in two repositories is two items.
+    const two = extraBatchLines(
+      [branch("main"), { kind: "branch", path: "apps/site", branch: "main" }],
+      [sent({ branch: "main", path: "apps/site" })],
+      names,
+      "unknown",
+    );
+    expect(states(two)).toEqual(["unknown", "sent"]);
+  });
+
+  it("calls a send refused only when the machine answered before sending anything", () => {
+    expect(extrasSendOutcome("Unknown request tag: projectSync.sendExtras")).toBe("not-sent");
+    expect(extrasSendOutcome({ _tag: "EnvironmentAuthorizationError" })).toBe("not-sent");
+    expect(extrasSendOutcome({ _tag: "ProjectSyncError", code: "not_found", reason: "x" })).toBe(
+      "not-sent",
+    );
+    expect(extrasSendOutcome({ _tag: "ProjectSyncError", code: "invalid", reason: "x" })).toBe(
+      "not-sent",
+    );
+    // Git stopped part way, the link dropped, or the answer could not be read: unknown.
+    expect(extrasSendOutcome({ _tag: "ProjectSyncError", code: "failed", reason: "x" })).toBe(
+      "unknown",
+    );
+    expect(extrasSendOutcome({ _tag: "EnvironmentRpcUnavailableError" })).toBe("unknown");
+    expect(extrasSendOutcome({ _tag: "SchemaError" })).toBe("unknown");
+    expect(extrasSendOutcome(undefined)).toBe("unknown");
+  });
+});
+
+describe("what the result may claim", () => {
+  const HEAD = "a".repeat(40);
+  const at = (branch: string | null, head = HEAD, clean = true, path = ".") => ({
+    path,
+    branch,
+    head,
+    clean,
+  });
+  const status = (...repositories: ReturnType<typeof at>[]) => ({
+    repositories,
+    scanLimited: false,
+  });
+
+  it("is proven in sync only by the same branch at the same commit, clean, on both", () => {
+    expect(statusesProveInSync(status(at("main")), status(at("main")))).toBe(true);
+    // A clone that landed on the default branch while the source is on another one.
+    expect(statusesProveInSync(status(at("release")), status(at("main", "b".repeat(40))))).toBe(
+      false,
+    );
+    expect(statusesProveInSync(status(at("release")), status(at("main")))).toBe(false);
+    // Two fast-forwards on different upstreams end at different commits.
+    expect(statusesProveInSync(status(at("main")), status(at("main", "c".repeat(40))))).toBe(false);
+    expect(statusesProveInSync(status(at("main", HEAD, false)), status(at("main")))).toBe(false);
+    expect(statusesProveInSync(status(at(null)), status(at(null)))).toBe(false);
+    expect(
+      statusesProveInSync(status(at("main")), status(at("main"), at("main", HEAD, true, "docs"))),
+    ).toBe(false);
+    expect(
+      statusesProveInSync({ ...status(at("main")), scanLimited: true }, status(at("main"))),
+    ).toBe(false);
+    expect(statusesProveInSync(status(), status())).toBe(false);
+    // No answer after the run is no proof.
+    expect(statusesProveInSync(null, status(at("main")))).toBe(false);
+  });
+
+  it("never says in sync without that proof, or beside something a machine said", () => {
+    const level = syncPlan(
+      { a: fetched(facts(".")), b: fetched(facts(".")) },
+      { project: "Atlas", a: "m4", b: "m5" },
+    );
+    const rows = syncResultRows(level, { a: null, b: null });
+    const title = (extra: Partial<Parameters<typeof syncResultTitle>[0]> = {}) =>
+      syncResultTitle({
+        rows,
+        scanLimited: false,
+        failed: false,
+        workRemains: false,
+        proven: true,
+        ...extra,
+      });
+    expect(title()).toBe("in-sync");
+    expect(title({ proven: false })).toBe("finished");
+    // Level by its commits, and the machine says its state could not be read: a zero count
+    // alone is not "in sync".
+    const told = syncResultRows(level, {
+      a: {
+        results: [
+          {
+            ...step("up-to-date", { path: ".", detail: "Its state could not be read." }),
+            moved: 0,
+            downgraded: false,
+          },
+        ],
+      },
+      b: null,
+    });
+    expect(readStepLine(told[0]!.a.line)).toBe("Up to date");
+    expect(told[0]!.a.line.detail).toBe("Its state could not be read.");
+    expect(title({ rows: told })).toBe("finished");
+  });
+
+  it("takes the branch an answer returns as the truth, and leaves an unanswered one unknown", () => {
+    const behindPlan = syncPlan(
+      { a: fetched(facts(".", { behind: 2 })), b: fetched(facts("."), facts("apps/site")) },
+      { project: "Atlas", a: "m4", b: "m5" },
+    );
+    // Detached before the run: the answer has no branch, and the plan's "main" is not shown.
+    const detached = syncResultRows(behindPlan, {
+      a: {
+        results: [
+          {
+            ...step("detached", { path: ".", branch: null }),
+            moved: 0,
+            downgraded: true,
+          },
+        ],
+      },
+      b: null,
+    });
+    expect(detached[0]!.a.branch).toBeNull();
+    expect(detached[0]!.a.present).toBe(true);
+    // The clone was asked for and no answer came: it may be there, so not "Not there".
+    const lost = syncResultRows(behindPlan, { a: { results: null }, b: null });
+    const site = lost.find((row) => row.path === "apps/site")!;
+    expect(site.a.present).toBeNull();
+    expect(site.a.branch).toBeNull();
+    // A fast-forward with no answer is still there, on a branch nobody confirmed.
+    expect(lost[0]!.a.present).toBe(true);
+    expect(lost[0]!.a.branch).toBeNull();
+    // Never asked: the plan's row stands.
+    expect(lost[0]!.b.branch).toBe("main");
   });
 });
 

@@ -21,6 +21,7 @@ import {
   type ProjectSyncRepositoryFacts,
   type ProjectSyncRepositoryExtras,
   type ProjectSyncRunInput,
+  type ProjectSyncStatusResult,
   type ProjectSyncStep,
   type ProjectSyncStepResult,
 } from "@specweave-studio/contracts";
@@ -55,6 +56,8 @@ export type SyncFailureKind =
   | "personal"
   | "not-git"
   | "unreadable"
+  /** The window may no longer sync this pair: the line is the menu's own reason. */
+  | "blocked"
   | "failed";
 
 export interface SyncFailure {
@@ -470,12 +473,46 @@ export function syncResultTitle(input: {
   readonly failed: boolean;
   /** Work is still listed under "Only on {machine}", or a machine's list could not be read. */
   readonly workRemains: boolean;
+  /** Both machines answered after the run, and the answers match (`statusesProveInSync`). */
+  readonly proven: boolean;
 }): SyncResultTitle {
   const cells = input.rows.flatMap((row) => [row.a, row.b]);
   if (input.failed || cells.some((cell) => !cell.done)) return "open";
-  return input.scanLimited || input.workRemains || cells.some((cell) => cell.line.facts.length > 0)
-    ? "finished"
-    : "in-sync";
+  // Done steps prove nothing about equal checkouts: a clone lands on the default branch, and
+  // two fast-forwards can follow different upstreams. Something a machine said beside a
+  // step, such as a state it could not read, also keeps the title from claiming it.
+  return input.proven &&
+    !input.scanLimited &&
+    !input.workRemains &&
+    cells.every((cell) => cell.line.facts.length === 0 && cell.line.detail === null)
+    ? "in-sync"
+    : "finished";
+}
+
+/**
+ * Whether two statuses read after a run prove the machines are in sync: the same
+ * repositories, each on the same branch at the same commit, with nothing uncommitted, and
+ * both folders scanned in full. A status that did not come proves nothing.
+ */
+export function statusesProveInSync(
+  a: ProjectSyncStatusResult | null,
+  b: ProjectSyncStatusResult | null,
+): boolean {
+  if (!a || !b || a.scanLimited || b.scanLimited) return false;
+  if (a.repositories.length === 0 || a.repositories.length !== b.repositories.length) return false;
+  const there = new Map(b.repositories.map((item) => [item.path, item]));
+  return a.repositories.every((mine) => {
+    const other = there.get(mine.path);
+    return (
+      other !== undefined &&
+      mine.branch !== null &&
+      mine.branch === other.branch &&
+      mine.head !== null &&
+      mine.head === other.head &&
+      mine.clean &&
+      other.clean
+    );
+  });
 }
 
 /** Whether a machine still has work Git does not carry after its ticked extras were sent. */
@@ -583,26 +620,18 @@ export interface SyncExtras {
 }
 
 /**
- * The branch prefix extras arrive under. The receiver keeps a machine's name as it is when
- * Git allows it in a branch name and derives one otherwise, so only a plain name is spelled
- * out; any other reads `swc/from-…/`.
+ * The family of branches extras arrive under. The sender names itself and the receiver makes
+ * that name safe for Git and may add a suffix, so the exact ref is known only from a receipt:
+ * before sending, the name this window shows for a machine is never put into a branch name.
  */
-export function arrivalPrefix(machine: string): string {
-  const plain =
-    machine.length <= 120 &&
-    /^[A-Za-z0-9_-][A-Za-z0-9_.-]*$/u.test(machine) &&
-    !machine.includes("..") &&
-    !machine.endsWith(".") &&
-    !machine.endsWith(".lock");
-  return `swc/from-${plain ? machine : "…"}/`;
-}
+const ARRIVAL_FAMILY = "swc/from-…/";
 
 const repositoryExtras = (
   item: ProjectSyncRepositoryExtras,
   names: { readonly project: string; readonly source: string; readonly target: string },
 ): { lines: ExtraLine[]; leftOut: LeftOutLine[] } => {
   const repository = repositoryName(item.path, names.project);
-  const prefix = arrivalPrefix(names.source);
+  const prefix = ARRIVAL_FAMILY;
   const base = { path: item.path, repository, branches: [] as readonly string[] };
   const lines: ExtraLine[] = [];
   for (const branch of item.notPushed)
@@ -620,8 +649,8 @@ const repositoryExtras = (
         code: ["branch"],
       },
       helper: {
-        text: "Sent straight to {target} over the link between the machines, as branch {name}. Nothing goes to GitHub.",
-        values: { target: names.target, name: `${prefix}${branch.branch}` },
+        text: "Sent straight to {target} over the link between the machines, as a branch under {name}. Nothing goes to GitHub.",
+        values: { target: names.target, name: prefix },
         code: ["name"],
       },
       tickable: true,
@@ -779,7 +808,9 @@ export function extraItems(
 // ---------------------------------------------------------------------------
 
 export interface SyncResultCell {
-  readonly present: boolean;
+  /** Null when a clone was asked for and no answer came: it may be there or not. */
+  readonly present: boolean | null;
+  /** The branch the machine's answer names; null also when nobody confirmed one. */
   readonly branch: string | null;
   readonly line: StepLine;
   /** Whether this repository is as Sync leaves a synced one: moved, cloned or up to date. */
@@ -801,11 +832,20 @@ export interface SyncResultRow {
 export function syncResultRows(
   plan: SyncPlan,
   ran: Readonly<
-    Record<SyncSide, { readonly results: readonly ProjectSyncStepResult[] | null } | null>
+    Record<
+      SyncSide,
+      {
+        readonly results: readonly ProjectSyncStepResult[] | null;
+        /** False when the call was never made: its rows keep the plan's sentence. */
+        readonly sent?: boolean;
+      } | null
+    >
   >,
 ): SyncResultRow[] {
   const cell = (side: SyncSide, planned: SyncCell): SyncResultCell => {
-    const asked = planned.step.action === "fast-forward" || planned.step.action === "clone";
+    const asked =
+      ran[side]?.sent !== false &&
+      (planned.step.action === "fast-forward" || planned.step.action === "clone");
     const answer = ran[side]?.results?.find((item) => item.path === planned.step.path);
     if (answer) {
       const line = stepLine(
@@ -818,15 +858,17 @@ export function syncResultRows(
       return {
         // A clone leaves the repository there, on the branch it checked out.
         present: planned.present || answer.reason === "missing",
-        branch: answer.branch ?? planned.branch,
+        // What the machine read at the run is the truth, also when it is on no branch now.
+        branch: answer.branch,
         line,
         done: line.tone === "done",
       };
     }
     if (asked)
       return {
-        present: planned.present,
-        branch: planned.branch,
+        // A clone may have finished before its answer was lost: unknown, never "Not there".
+        present: planned.step.action === "clone" ? null : planned.present,
+        branch: null,
         line: {
           tone: "failed",
           // The call failed or timed out; a repository asked before it may have moved.
@@ -853,8 +895,15 @@ export function syncResultRows(
   }));
 }
 
+/**
+ * sent: a receipt says it arrived. stays: a receipt says it did not travel, with why.
+ * unknown: it was sent and no answer came back, so it may have arrived. not-sent: it never
+ * left the machine.
+ */
+export type ExtraResultState = "sent" | "stays" | "unknown" | "not-sent";
+
 export interface ExtraResultLine {
-  readonly sent: boolean;
+  readonly state: ExtraResultState;
   /** What was asked for: a branch name, or null for uncommitted work. */
   readonly branch: string | null;
   readonly repository: string;
@@ -862,6 +911,68 @@ export interface ExtraResultLine {
   readonly facts: readonly SyncText[];
   /** The size of what travelled, such as "4.1 MB"; null when nothing did. */
   readonly size: string | null;
+  /** What the other machine said, shown under the sentence as sent; null when it holds it. */
+  readonly detail: string | null;
+}
+
+/** Why a send that failed as a whole did or did not leave the machine. */
+export function extrasSendOutcome(cause: unknown): "unknown" | "not-sent" {
+  // The machine answered before it sent anything: it does not know the call, this window
+  // may not ask it, or it refused the request as a whole.
+  if (isUnknownSyncCall(cause)) return "not-sent";
+  const tag = tagOf(cause);
+  if (tag === "EnvironmentAuthorizationError") return "not-sent";
+  const code = (cause as { code?: unknown } | null)?.code;
+  if (tag === "ProjectSyncError" && code !== "failed") return "not-sent";
+  // Git stopped part way, the link dropped or the answer could not be read: it may have arrived.
+  return "unknown";
+}
+
+const extraKey = (item: {
+  readonly kind: string;
+  readonly path: string;
+  readonly branch?: string | null;
+}) => `${item.kind}\u0000${item.path}\u0000${item.branch ?? ""}`;
+
+/**
+ * One line per item of a call, in the order asked. An item the reply names reads as its
+ * receipt. One it does not name, or a call with no reply (`receipts` null), reads by
+ * `without`: "unknown" when the call left the machine, "not-sent" when it never did.
+ */
+export function extraBatchLines(
+  items: readonly ProjectSyncExtraItem[],
+  receipts: readonly ProjectSyncExtraResult[] | null,
+  names: { readonly project: string; readonly source: string; readonly target: string },
+  without: "unknown" | "not-sent",
+): ExtraResultLine[] {
+  const left = new Map<string, ProjectSyncExtraResult[]>();
+  for (const receipt of receipts ?? []) {
+    const key = extraKey(receipt);
+    left.set(key, [...(left.get(key) ?? []), receipt]);
+  }
+  const lines = items.map((item): ExtraResultLine => {
+    const receipt = left.get(extraKey(item))?.shift();
+    if (receipt) return extraResultLine(receipt, names);
+    return {
+      state: without,
+      branch: item.kind === "branch" ? item.branch : null,
+      repository: repositoryName(item.path, names.project),
+      sentence:
+        without === "unknown"
+          ? {
+              text: "No answer came back. It may have arrived on {target}: check {target} before sending again.",
+              values: { target: names.target },
+            }
+          : { text: "Not sent." },
+      facts: [],
+      size: null,
+      detail: null,
+    };
+  });
+  // A receipt for something that was not asked is still shown: nothing a machine says is dropped.
+  for (const rest of left.values())
+    for (const receipt of rest) lines.push(extraResultLine(receipt, names));
+  return lines;
 }
 
 const KNOWN_STAYS = new Set([
@@ -912,7 +1023,8 @@ export function extraResultLine(
     if (name === "")
       return {
         ...base,
-        sent: true,
+        state: "sent",
+        detail: null,
         sentence: result.landed
           ? { text: "Sent to {target}: {reason}.", values: { target, reason: result.landed } }
           : { text: "Sent to {target}.", values: { target } },
@@ -926,13 +1038,15 @@ export function extraResultLine(
             values: { target, name },
             code: ["name"],
           }
-        : result.landed === "checked-out" && result.branch !== null
+        : result.landed === "checked-out"
           ? {
-              text: "{branch} is checked out on {target}, so this arrived beside it as {name}. To use it there, check it out or merge it.",
-              values: { branch: result.branch, target, name },
-              code: ["branch", "name"],
+              // The answer does not say which branch is checked out there: it is the one
+              // this would have arrived as, never the source's own name.
+              text: "The branch it would arrive as is checked out on {target}, so this arrived beside it as {name}. To use it there, check it out or merge it.",
+              values: { target, name },
+              code: ["name"],
             }
-          : result.landed === "beside" || result.landed === "checked-out"
+          : result.landed === "beside"
             ? {
                 text: "{target} has other work under that name, so this arrived beside it as {name}. To use it there, check it out or merge it.",
                 values: { target, name },
@@ -943,20 +1057,37 @@ export function extraResultLine(
                 values: { target, name },
                 code: ["name"],
               };
-    return { ...base, sent: true, sentence, facts, size: megabytes(result.bytes) };
+    return {
+      ...base,
+      state: "sent",
+      sentence,
+      facts,
+      size: megabytes(result.bytes),
+      detail: null,
+    };
   }
   facts.push(...leftOutFact);
   // A reason this version does not know is shown as the machine sent it.
   const detail =
     reasonSlot(result.detail) ||
     (KNOWN_STAYS.has(String(result.stays)) ? "" : String(result.stays ?? ""));
-  const stays = (text: string, values: Record<string, string> = {}): ExtraResultLine => ({
-    ...base,
-    sent: false,
-    sentence: { text, values: { source, target, ...values } },
-    facts,
-    size: null,
-  });
+  // `told`: the sentence has no slot for what the other machine said, so it goes under it.
+  const stays = (
+    text: string,
+    values: Record<string, string> = {},
+    told = false,
+  ): ExtraResultLine => {
+    const sentence: SyncText = { text, values: { source, target, ...values } };
+    const sent = told && result.detail?.trim() ? result.detail : null;
+    return {
+      ...base,
+      state: "stays",
+      sentence,
+      facts,
+      size: null,
+      detail: sent !== null && sameWords(sent) !== sameWords(readSyncText(sentence)) ? sent : null,
+    };
+  };
   switch (result.stays) {
     case "nothing-to-send":
       return stays("Nothing to send: {target} would get no new work.");
@@ -971,9 +1102,9 @@ export function extraResultLine(
           })
         : stays('Stays on {source}: it is over a size limit. "Compare all files…" can bring it.');
     case "needs-update":
-      return stays("Stays on {source}: update SpecWithCode on {target} first.");
+      return stays("Stays on {source}: update SpecWithCode on {target} first.", {}, true);
     case "unreachable":
-      return stays("Stays on {source}: {target} could not be reached.");
+      return stays("Stays on {source}: {target} could not be reached.", {}, true);
     default:
       return detail
         ? stays("Stays on {source}: {reason}.", { reason: detail })

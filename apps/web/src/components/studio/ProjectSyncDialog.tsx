@@ -1,4 +1,4 @@
-import { CheckIcon, ChevronRightIcon, MinusIcon } from "lucide-react";
+import { CheckIcon, ChevronRightIcon, CircleHelpIcon, MinusIcon } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import { useTx } from "../../i18n";
@@ -24,9 +24,11 @@ import {
 } from "../ui/dialog";
 import { Spinner } from "../ui/spinner";
 import {
+  extraBatchLines,
   extraItems,
-  extraResultLine,
   extrasRemain,
+  extrasSendOutcome,
+  statusesProveInSync,
   otherSide,
   runHasWork,
   syncExtras,
@@ -54,8 +56,10 @@ import type {
 /** Another machine that has the project, and why Sync cannot run with it when it cannot. */
 export interface SyncTarget {
   readonly machine: SyncMachine;
-  /** Offline, read only or from before Sync: the picker greys it with this line. */
+  /** Offline, read only or from before Sync: why Sync cannot run with it, naming it. */
   readonly blocked: SyncText | null;
+  /** The same reason without the machine's name, for a picker row that already shows it. */
+  readonly note?: SyncText | null;
 }
 
 const SIDES = ["a", "b"] as const;
@@ -75,8 +79,11 @@ interface Checked {
 interface SideResult {
   /** Why the machine did not run its part; null when it ran or had nothing to do. */
   readonly failure: SyncFailure | null;
+  /** Every extra that was asked for, with what is known of it. */
   readonly extras: readonly ExtraResultLine[];
   readonly extrasFailure: SyncFailure | null;
+  /** Whether the call that failed had left the machine ("unknown") or never did. */
+  readonly extrasOutcome: "unknown" | "not-sent" | null;
 }
 
 type Stage =
@@ -91,6 +98,8 @@ type Stage =
       readonly rows: readonly SyncResultRow[];
       readonly leftovers: readonly SyncLeftover[];
       readonly sides: Readonly<Record<SyncSide, SideResult>>;
+      /** Both machines' statuses, read after the run, match. */
+      readonly proven: boolean;
     };
 
 /** A phrase with its values; branch and file names stand in the code font. */
@@ -136,7 +145,8 @@ function Cell({
   done,
 }: {
   machine: string;
-  present: boolean;
+  /** Null: a clone was asked for and no answer came, so nobody knows. */
+  present: boolean | null;
   branch: string | null;
   line: StepLine;
   side: SyncSide;
@@ -153,7 +163,7 @@ function Cell({
     >
       {/* Narrow windows stack the two machines, so each cell names its own. */}
       <span className="font-medium text-xs sm:hidden">{machine}</span>
-      {present ? (
+      {present === null ? null : present ? (
         branch ? (
           <code className="font-mono text-xs wrap-anywhere">{branch}</code>
         ) : null
@@ -455,26 +465,40 @@ function Extras({
   );
 }
 
-/** Each extra that was asked for: the branch it arrived as and the next step, or why it stays. */
+/**
+ * Each extra that was asked for: the branch its receipt names and the next step, why it
+ * stays, that it was sent and no answer came back, or that it never left.
+ */
 function ExtraResults({
   side,
   machine,
+  target,
   result,
 }: {
   side: SyncSide;
   machine: string;
+  target: string;
   result: SideResult;
 }) {
   const tx = useTx();
   if (result.extras.length === 0 && !result.extrasFailure) return null;
+  const answered = result.extras.some((line) => line.state === "sent" || line.state === "stays");
   return (
     <section className="flex flex-col gap-2" data-sync-extra-results={side}>
       <h3 className="font-medium text-sm">{tx("Extras from {machine}", { machine })}</h3>
       {result.extrasFailure ? (
         <Notice>
-          {result.extras.length > 0
-            ? tx("The rest of the extras from {machine} were not sent.", { machine })
-            : tx("The extras from {machine} were not sent.", { machine })}{" "}
+          <span data-sync-extras-outcome={result.extrasOutcome ?? ""}>
+            {result.extrasOutcome === "unknown"
+              ? // Sent, and the answer was lost or unreadable: never "not sent", never "sent".
+                tx(
+                  "{machine} sent extras and no answer came back. They may have arrived: check {target} before sending again.",
+                  { machine, target },
+                )
+              : answered
+                ? tx("The rest of the extras from {machine} were not sent.", { machine })
+                : tx("The extras from {machine} were not sent.", { machine })}
+          </span>{" "}
           <Words text={result.extrasFailure.line} />
         </Notice>
       ) : null}
@@ -484,10 +508,15 @@ function ExtraResults({
             // An operation can send the same branch name from two repositories.
             key={`${line.repository}:${line.branch ?? ""}:${index}`}
             className="flex items-start gap-2 text-sm"
-            data-sync-extra-result={line.sent ? "sent" : "stays"}
+            data-sync-extra-result={line.state}
           >
-            {line.sent ? (
+            {line.state === "sent" ? (
               <CheckIcon aria-hidden className="mt-1 size-3.5 shrink-0 text-success-foreground" />
+            ) : line.state === "unknown" ? (
+              <CircleHelpIcon
+                aria-hidden
+                className="mt-1 size-3.5 shrink-0 text-warning-foreground"
+              />
             ) : (
               <MinusIcon aria-hidden className="mt-1 size-3.5 shrink-0 text-muted-foreground" />
             )}
@@ -511,6 +540,14 @@ function ExtraResults({
                   <Words text={fact} />
                 </span>
               ))}
+              {line.detail ? (
+                <span
+                  className="font-mono text-2xs text-muted-foreground wrap-anywhere"
+                  data-sync-extra-detail=""
+                >
+                  {line.detail}
+                </span>
+              ) : null}
             </span>
           </li>
         ))}
@@ -529,6 +566,7 @@ function ExtraResults({
 export function ProjectSyncDialog({
   projectTitle,
   shown,
+  shownBlocked = null,
   targets,
   initialTarget = null,
   onClose,
@@ -538,6 +576,8 @@ export function ProjectSyncDialog({
   projectTitle: string;
   /** The machine whose page is shown: the first of the two. */
   shown: SyncMachine;
+  /** Why Sync cannot run on the machine shown right now, as the menu says it; null when it can. */
+  shownBlocked?: SyncText | null;
   /** The other machines that have the project. With several, the dialog starts with a picker. */
   targets: readonly SyncTarget[];
   initialTarget?: string | null;
@@ -552,7 +592,10 @@ export function ProjectSyncDialog({
     () =>
       initialTarget ?? (targets.length === 1 && open[0] ? syncMachineKey(open[0].machine) : null),
   );
-  const target = targets.find((item) => syncMachineKey(item.machine) === targetKey)?.machine;
+  const live = targets.find((item) => syncMachineKey(item.machine) === targetKey);
+  // The machine picked stays named when it leaves the list: the dialog then says why it stopped.
+  const [picked, setPicked] = useState<SyncMachine | undefined>(live?.machine);
+  const target = live?.machine ?? (targetKey ? picked : undefined);
   const [stage, setStage] = useState<Stage>({ kind: targetKey ? "checking" : "pick" });
   const [ticked, setTicked] = useState<ReadonlySet<string>>(new Set());
   const [anyway, setAnyway] = useState<ReadonlySet<string>>(new Set());
@@ -569,6 +612,20 @@ export function ProjectSyncDialog({
   }, []);
 
   const names = { a: shown.label, b: target?.label ?? "" };
+  // Sync is a decision about two machines: what the menu knows of either one right now
+  // stops it, also after the plan is on screen. A machine that left the list has no project.
+  const block: SyncText | null =
+    shownBlocked ??
+    (target && !live
+      ? { text: "{machine} does not have this project.", values: { machine: target.label } }
+      : (live?.blocked ?? null));
+  const blockKey = block ? `${block.text}\n${JSON.stringify(block.values ?? {})}` : null;
+  // The run is an async job: it asks through this before every call it makes.
+  const gate = useRef<SyncText | null>(block);
+  useEffect(() => {
+    gate.current = block;
+  });
+  const stopped = (line: SyncText): SyncFailure => ({ kind: "blocked", line });
   const machineOf = useCallback(
     (side: SyncSide, other: SyncMachine) => (side === "a" ? shown : other),
     [shown],
@@ -577,9 +634,13 @@ export function ProjectSyncDialog({
   const check = useCallback(
     async (other: SyncMachine) => {
       const id = (run.current += 1);
-      setStage({ kind: "checking" });
       setTicked(new Set());
       setAnyway(new Set());
+      if (gate.current) {
+        setStage({ kind: "failed", failures: [stopped(gate.current)] });
+        return;
+      }
+      setStage({ kind: "checking" });
       const read = await Promise.all(
         SIDES.map(async (side) => {
           const machine = machineOf(side, other);
@@ -631,14 +692,41 @@ export function ProjectSyncDialog({
     void check(target);
   }, [check, target]);
 
+  // A plan on screen is for the two machines as they were allowed then. When either becomes
+  // blocked, the plan and its ticks go, a check under way is dropped, and the reason is shown.
+  useEffect(() => {
+    if (blockKey === null) return;
+    setStage((last) => {
+      if (last.kind !== "plan" && last.kind !== "checking") return last;
+      run.current += 1;
+      setTicked(new Set());
+      setAnyway(new Set());
+      return gate.current ? { kind: "failed", failures: [stopped(gate.current)] } : last;
+    });
+  }, [blockKey]);
+  // The machine shown became another one: what was read of the old one is not shown for it.
+  const shownKey = syncMachineKey(shown);
+  const lastShown = useRef(shownKey);
+  useEffect(() => {
+    if (lastShown.current === shownKey) return;
+    lastShown.current = shownKey;
+    if (target) void check(target);
+  }, [check, shownKey, target]);
+
   const sync = async (checked: Checked, other: SyncMachine) => {
     const id = (run.current += 1);
+    if (gate.current) {
+      setStage({ kind: "failed", failures: [stopped(gate.current)] });
+      return;
+    }
     setStage({ kind: "running", checked, step: "git" });
     const ran = await Promise.all(
       SIDES.map(async (side) => {
         const machine = machineOf(side, other);
         const input = syncRunInput(machine.projectId, checked.plan.steps[side]);
         if (!runHasWork(input)) return { results: null, failure: null };
+        // Asked again right before the call: the pair may no longer be allowed.
+        if (gate.current) return { results: null, failure: stopped(gate.current), sent: false };
         const result = await api.run(machine, {
           fastForward: input.fastForward,
           clone: input.clone,
@@ -654,9 +742,16 @@ export function ProjectSyncDialog({
     if (id !== run.current || !alive.current) return;
     // Extras go after Git has moved, one machine at a time, each sent by the machine that has them.
     setStage({ kind: "running", checked, step: "extras" });
-    const sent: Record<SyncSide, { extras: ExtraResultLine[]; failure: SyncFailure | null }> = {
-      a: { extras: [], failure: null },
-      b: { extras: [], failure: null },
+    const sent: Record<
+      SyncSide,
+      {
+        extras: ExtraResultLine[];
+        failure: SyncFailure | null;
+        outcome: "unknown" | "not-sent" | null;
+      }
+    > = {
+      a: { extras: [], failure: null, outcome: null },
+      b: { extras: [], failure: null, outcome: null },
     };
     for (const side of SIDES) {
       const source = machineOf(side, other);
@@ -667,39 +762,54 @@ export function ProjectSyncDialog({
         new Set(
           [...ids].filter((item) => item.startsWith(`${side}:`)).map((item) => item.slice(2)),
         );
-      for (const items of extraItems(inventory, extras, strip(ticked), strip(anyway))) {
-        const result = await api.sendExtras(source, to, {
-          operationId: randomUUID(),
-          items,
-        });
-        if (!result.ok) {
-          sent[side].failure = syncFailure(result.cause, source.label);
-          break;
+      const route = { project: projectTitle, source: source.label, target: to.label };
+      const calls = extraItems(inventory, extras, strip(ticked), strip(anyway));
+      for (const [at, items] of calls.entries()) {
+        // Every call is its own decision: stop when the pair is no longer allowed.
+        const result = gate.current
+          ? null
+          : await api.sendExtras(source, to, { operationId: randomUUID(), items });
+        if (result?.ok) {
+          // An item the reply does not name was sent all the same: it has no receipt.
+          sent[side].extras.push(...extraBatchLines(items, result.value.items, route, "unknown"));
+          continue;
         }
-        sent[side].extras.push(
-          ...result.value.items.map((item) =>
-            extraResultLine(item, {
-              project: projectTitle,
-              source: source.label,
-              target: to.label,
-            }),
-          ),
-        );
+        const outcome = result ? extrasSendOutcome(result.cause) : "not-sent";
+        sent[side].failure = result
+          ? syncFailure(result.cause, source.label)
+          : stopped(gate.current ?? { text: "Not sent." });
+        sent[side].outcome = outcome;
+        sent[side].extras.push(...extraBatchLines(items, null, route, outcome));
+        // The calls after it were never made.
+        for (const later of calls.slice(at + 1))
+          sent[side].extras.push(...extraBatchLines(later, null, route, "not-sent"));
+        break;
       }
     }
     if (id !== run.current || !alive.current) return;
+    // Only what both machines say now can prove they are in sync: a done step does not.
+    const after = await Promise.all(SIDES.map((side) => api.status(machineOf(side, other))));
+    if (id !== run.current || !alive.current) return;
+    const [statusA, statusB] = after;
     // The rows of both machines changed: the menu reads them again when it next opens.
     forgetSyncStatus([syncMachineKey(shown), syncMachineKey(other)]);
     const [a, b] = ran;
+    const side = (git: typeof a, extras: (typeof sent)[SyncSide]): SideResult => ({
+      failure: git?.failure ?? null,
+      extras: extras.extras,
+      extrasFailure: extras.failure,
+      extrasOutcome: extras.outcome,
+    });
     setStage({
       kind: "result",
       checked,
       rows: syncResultRows(checked.plan, { a: a ?? null, b: b ?? null }),
       leftovers: syncLeftovers(checked.plan, { a: a ?? null, b: b ?? null }),
-      sides: {
-        a: { failure: a?.failure ?? null, extras: sent.a.extras, extrasFailure: sent.a.failure },
-        b: { failure: b?.failure ?? null, extras: sent.b.extras, extrasFailure: sent.b.failure },
-      },
+      sides: { a: side(a, sent.a), b: side(b, sent.b) },
+      proven: statusesProveInSync(
+        statusA?.ok ? statusA.value : null,
+        statusB?.ok ? statusB.value : null,
+      ),
     });
   };
 
@@ -729,7 +839,7 @@ export function ProjectSyncDialog({
               (side) =>
                 stage.sides[side].failure !== null ||
                 stage.sides[side].extrasFailure !== null ||
-                stage.sides[side].extras.some((line) => !line.sent),
+                stage.sides[side].extras.some((line) => line.state !== "sent"),
             ),
           workRemains: SIDES.some(
             (side) =>
@@ -740,8 +850,13 @@ export function ProjectSyncDialog({
                 stage.sides[side].extrasFailure === null,
               ),
           ),
+          proven: stage.proven,
         })
       : null;
+  // Extras were sent and their answer never came: that is neither sent nor failed.
+  const unanswered =
+    stage.kind === "result" &&
+    SIDES.some((side) => stage.sides[side].extras.some((line) => line.state === "unknown"));
   const pair = { project: projectTitle, source: names.a, machine: names.b };
   const title = !target
     ? tx("Sync {project}", { project: projectTitle })
@@ -759,7 +874,9 @@ export function ProjectSyncDialog({
           ? tx("Syncing {source} and {machine}…", { source: names.a, machine: names.b })
           : tx("Sending the ticked extras…")
         : outcome === "open"
-          ? tx("Sync ended, and not everything was moved or sent. Each repository says why.")
+          ? unanswered
+            ? tx("Sync ended, and not every answer came back. Each line says what to check.")
+            : tx("Sync ended, and not everything was moved or sent. Each repository says why.")
           : outcome
             ? title
             : "";
@@ -826,6 +943,7 @@ export function ProjectSyncDialog({
                     data-sync-target={key}
                     onClick={() => {
                       setTargetKey(key);
+                      setPicked(item.machine);
                       started.current = true;
                       void check(item.machine);
                     }}
@@ -834,7 +952,8 @@ export function ProjectSyncDialog({
                       <span className="font-medium wrap-anywhere">{item.machine.label}</span>
                       {item.blocked ? (
                         <span className="font-normal text-xs">
-                          <Words text={item.blocked} />
+                          {/* The row names the machine: the reason is said without it. */}
+                          <Words text={item.note ?? item.blocked} />
                         </span>
                       ) : null}
                     </span>
@@ -912,6 +1031,7 @@ export function ProjectSyncDialog({
                       key={side}
                       side={side}
                       machine={names[side]}
+                      target={names[otherSide(side)]}
                       result={stage.sides[side]}
                     />
                   ))
