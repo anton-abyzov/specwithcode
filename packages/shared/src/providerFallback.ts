@@ -20,7 +20,12 @@ import {
   type ServerProvider,
   type ThreadId,
 } from "@specweave-studio/contracts";
-import { modelSelectionEffortValue, resolveEffort, withEffortSelection } from "./effortLevel.ts";
+import {
+  modelSelectionEffortValue,
+  resolveEffort,
+  withEffortForModel,
+  withEffortSelection,
+} from "./effortLevel.ts";
 import { describeModel, isSameModel, sameModelOn } from "./modelIdentity.ts";
 import {
   chainNamedByPerson,
@@ -752,18 +757,21 @@ export function resolveProviderFallback(
 /**
  * A fallback onto another model runs at the thread's own level, else Medium,
  * matched to the nearest level that model offers. With no level it ran at the
- * provider's default, which is Max on Muse. A move that keeps the model, or a
- * target that names its own level, is left as it is.
+ * provider's default, which is Max on Muse. A move that keeps the model is
+ * left as it is; a target that names its own level keeps it, moved to the
+ * option id its model reads (a track entry saved on another harness).
  */
 function withMovedEffort(
   target: ModelSelection,
   input: Pick<ResolveProviderFallbackInput, "providers" | "currentModel" | "currentOptions">,
 ): ModelSelection {
-  if (modelSelectionEffortValue(target) !== undefined) return target;
-  if (input.currentModel !== undefined && target.model === input.currentModel) return target;
   const descriptors = input.providers
     .find((provider) => provider.instanceId === target.instanceId)
     ?.models.find((model) => model.slug === target.model)?.capabilities?.optionDescriptors;
+  // A target's own level stays, under the option id and at the nearest level its model reads.
+  if (modelSelectionEffortValue(target) !== undefined)
+    return withEffortForModel(target, descriptors);
+  if (input.currentModel !== undefined && target.model === input.currentModel) return target;
   const carried =
     input.currentOptions === undefined
       ? undefined

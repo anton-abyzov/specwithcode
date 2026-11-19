@@ -331,10 +331,46 @@ describe("ModelTracksSettings effort", () => {
     expect(solPicker.props["data-effort-value"]).toBe("medium");
     expect(levelIds(solPicker)).toEqual(["low", "medium", "high"]);
     expect(picker(root, gemini!, "Review").props["data-effort-value"]).toBe("high");
-    // A pick saves under the source's own option id.
+    // A pick saves under the entry's own source's option id (Codex), not Copilot's.
     act(() => solPicker.props["data-on-change"]("low"));
     const reviewers = state.update.mock.calls[0]![0].adversarialReview
       .reviewers as ModelSelection[];
-    expect(reviewers[0]?.options).toEqual([{ id: "reasoning_effort", value: "low" }]);
+    expect(reviewers[0]?.options).toEqual([{ id: "reasoningEffort", value: "low" }]);
+  });
+
+  it("saves a saved entry's pick under its own option id when levels come from elsewhere", () => {
+    // Claude Code lists Opus without levels here; Cursor lists it with its own `reasoning` id.
+    const plainClaude = provider("claudeAgent", "claudeAgent", [
+      { slug: "claude-opus-5-5", name: "Claude Opus 5.5", capabilities: null },
+      { slug: "claude-sonnet-5-5", name: "Claude Sonnet 5.5", capabilities: claude.models[0]!.capabilities },
+    ]);
+    const cursor = provider("cursor", "cursor", [
+      {
+        slug: "claude-opus-5-5",
+        name: "Claude Opus 5.5",
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "reasoning",
+              label: "Reasoning",
+              type: "select",
+              options: ["low", "medium", "high"].map((id) => ({ id, label: id })),
+            },
+          ],
+        },
+      },
+    ]);
+    state.providers = [plainClaude, cursor, codex];
+    state.settings = {
+      ...state.settings,
+      modelLanes: {
+        routine: [{ instanceId: plainClaude.instanceId, model: "claude-opus-5-5" }],
+        complex: [],
+      },
+    };
+    const root = render();
+    act(() => picker(root, "Claude Opus 5.5").props["data-on-change"]("high"));
+    const saved = state.update.mock.calls[0]![0].modelLanes.routine as ModelSelection[];
+    expect(saved[0]?.options).toEqual([{ id: "effort", value: "high" }]);
   });
 });

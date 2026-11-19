@@ -70,7 +70,11 @@ const museHighOnly = provider("muse", "muse", [
 ]);
 const museNoEffort = provider("muse", "muse", [{ slug: "muse-wonder-full-1.0", levels: null }]);
 
-const rule = (target: { instanceId: ProviderInstanceId; model: string; options?: never[] }) =>
+const rule = (target: {
+  instanceId: ProviderInstanceId;
+  model: string;
+  options?: ReadonlyArray<{ id: string; value: string }>;
+}) =>
   ({
     providerLimitAction: "switch",
     providerLimitFallbackModelSelection: null,
@@ -138,5 +142,25 @@ describe("a limit fallback onto another model", () => {
         limitedInstanceIds: new Set([claude.instanceId]),
       }),
     ).toEqual({ instanceId: id("claude-work"), model: "claude-opus-5-5" });
+  });
+
+  it("moves a target's own level saved under another harness's id to the id its model reads", () => {
+    // A track entry saved with Claude's `effort` id now resolved onto Muse (`reasoningEffort`).
+    const target = {
+      instanceId: id("muse"),
+      model: "muse-wonder-full-1.0",
+      options: [{ id: "effort", value: "xhigh" }],
+    };
+    const moved = resolveProviderFallback({
+      providers: [claude, museHighOnly],
+      currentInstanceId: claude.instanceId,
+      currentModel: "claude-opus-5-5",
+      rule: rule(target),
+      nowMs: now,
+      anyReady: true,
+      limitedInstanceIds: new Set([claude.instanceId]),
+    });
+    // Mapped to the nearest level Muse offers here, with no second effort option.
+    expect(moved?.options).toEqual([{ id: "reasoningEffort", value: "high" }]);
   });
 });

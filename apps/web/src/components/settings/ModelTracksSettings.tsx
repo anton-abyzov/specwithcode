@@ -29,6 +29,7 @@ import {
   effortLabel,
   isEffortId,
   findEffortDescriptor,
+  resolveEffort,
   withEffortSelection,
 } from "@specweave-studio/shared/effortLevel";
 import { describeModel } from "@specweave-studio/shared/modelIdentity";
@@ -222,11 +223,23 @@ export function TrackEffortSelect(props: {
       disabled={props.disabled}
       onValueChange={(next) => {
         if (typeof next !== "string" || next === value) return;
+        // Saved under the option id the entry's own source reads, at its nearest
+        // level; the levels shown may come from another source that lists the model.
+        // A source that no longer lists the model still names its option id on its other models.
+        const ownProvider = props.providers.find(
+          (provider) => provider.instanceId === selection.instanceId,
+        );
+        const ownDescriptors =
+          own?.capabilities?.optionDescriptors ??
+          ownProvider?.models.find(
+            (model) => findEffortDescriptor(model.capabilities?.optionDescriptors) !== undefined,
+          )?.capabilities?.optionDescriptors;
+        const ownLevel = resolveEffort(next, ownDescriptors);
         props.onChange({
           ...selection,
           options: withEffortSelection(
             (selection.options ?? []).filter((option) => !isEffortId(option.id)),
-            { optionId: descriptor.id, value: next },
+            ownLevel.ok ? ownLevel : { optionId: descriptor.id, value: next },
           ),
         });
       }}
