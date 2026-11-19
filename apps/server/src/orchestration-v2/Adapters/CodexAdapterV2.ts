@@ -1910,6 +1910,11 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         // reaches the model after the restored snapshot and its receipt stays
         // true; a restore landing after it would replace what it delivered.
         const restoresInFlight = new Map<string, Set<Deferred.Deferred<void>>>();
+        // Native threads whose last restore failed or timed out. A timed-out
+        // injection may still land later, after any prompt, so no prompt there
+        // is acknowledged (each resends the full snapshot) until a restore
+        // completes.
+        const unsettledRestores = new Set<string>();
         const awaitRestores = (threadId: string) =>
           Effect.forEach([...(restoresInFlight.get(threadId) ?? [])], Deferred.await, {
             discard: true,
@@ -1950,11 +1955,13 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   : []),
               ],
             });
+            unsettledRestores.delete(threadId);
           }).pipe(
             Effect.timeout("10 seconds"),
             Effect.catchCause((cause) =>
               Effect.sync(() => {
                 restoredProjectCompactions.delete(key);
+                unsettledRestores.add(threadId);
               }).pipe(
                 Effect.andThen(
                   Effect.logWarning(
@@ -6438,7 +6445,11 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               client.request("turn/start", turnStartParams),
               turnInput,
             );
-            if ((codexInput.length > 0 || commandContext) && turnInput.projectContext)
+            if (
+              (codexInput.length > 0 || commandContext) &&
+              turnInput.projectContext &&
+              !unsettledRestores.has(threadId)
+            )
               yield* turnInput.projectContext.accepted;
             yield* registerRootTurn({
               turnInput,
