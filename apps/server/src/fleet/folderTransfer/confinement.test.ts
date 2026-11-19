@@ -14,6 +14,7 @@ interface Readers {
     readonly owner: "user" | "trusted" | "other";
     readonly othersMayWrite: boolean;
     readonly othersMayReplace: boolean;
+    readonly childrenOpen: boolean;
   };
 }
 // Loaded per test, so each one fails on its own while the module does not exist.
@@ -141,6 +142,7 @@ describe("Windows owner and DACL", () => {
       owner: "other",
       othersMayWrite: true,
       othersMayReplace: true,
+      childrenOpen: true,
     });
   });
 
@@ -162,6 +164,7 @@ describe("Windows owner and DACL", () => {
       owner: "trusted",
       othersMayWrite: true,
       othersMayReplace: false,
+      childrenOpen: false,
     });
   });
 

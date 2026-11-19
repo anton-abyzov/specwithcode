@@ -21,6 +21,7 @@ import {
 import {
   readManifestFile,
   validateManifestEntries,
+  validateManifestRepositories,
   writeManifest,
   type Manifest,
 } from "./manifest.ts";
@@ -1151,10 +1152,12 @@ export class DestinationCopies {
   /** A manifest of this copy's scope whose every path this machine can take, before any chunk is asked for. */
   private async safeManifest(record: DestinationRecord, manifest: Manifest): Promise<Manifest> {
     this.checkedManifest(record, manifest);
-    const refusal = validateManifestEntries(manifest.entries, {
-      platform: process.platform,
-      caseInsensitive: await caseInsensitiveAt(record.targetFolder),
-    });
+    const refusal =
+      validateManifestRepositories(manifest.header.repositories ?? [], process.platform) ??
+      validateManifestEntries(manifest.entries, {
+        platform: process.platform,
+        caseInsensitive: await caseInsensitiveAt(record.targetFolder),
+      });
     if (refusal)
       throw new CopyError(
         "refused",

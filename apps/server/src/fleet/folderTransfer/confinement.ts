@@ -34,6 +34,31 @@ export const CONFINEMENT_REASON_TEXT: Record<ConfinementReason, string> = {
   "acl-unreadable": "one whose access list could not be read",
 };
 
+/** An entry Apply left out because a folder on the way to it is not the user's alone. */
+export interface RefusedEntry {
+  readonly path: string;
+  /** The folder that failed, relative to the target (`.` is the target itself). */
+  readonly folder: string;
+  readonly reason: ConfinementReason;
+}
+
+export const folderName = (folder: string) => (folder === "." ? "the target folder" : folder);
+
+/** One line per folder and reason, for the person: which folder, why, how much was left out. */
+export function refusalLines(refused: ReadonlyArray<RefusedEntry>): Array<string> {
+  const counts = new Map<string, { readonly entry: RefusedEntry; count: number }>();
+  for (const entry of refused) {
+    const key = `${entry.folder}\0${entry.reason}`;
+    const seen = counts.get(key);
+    if (seen) seen.count += 1;
+    else counts.set(key, { entry, count: 1 });
+  }
+  return [...counts.values()].map(
+    ({ entry, count }) =>
+      `Not copied: ${count === 1 ? "1 entry" : `${count} entries`} in ${folderName(entry.folder)}, because that folder is ${CONFINEMENT_REASON_TEXT[entry.reason]}.`,
+  );
+}
+
 type Stat = NodeFS.BigIntStats;
 
 /** What the permission bits do not say about a folder. */
@@ -48,6 +73,12 @@ export interface FolderAccess {
    * which every user has, cannot rename one that exists.
    */
   readonly othersMayReplace?: boolean;
+  /**
+   * Windows only: what is made in the folder would inherit another principal's
+   * right to write. A new entry must be private from its first moment, so such
+   * a folder is refused before anything is made in it.
+   */
+  readonly childrenOpen?: boolean;
   /** Windows only: a reparse point that the stat does not report as a link. */
   readonly reparsePoint?: boolean;
 }
@@ -160,26 +191,33 @@ export function windowsAccess(
   readonly owner: "user" | "trusted" | "other";
   readonly othersMayWrite: boolean;
   readonly othersMayReplace: boolean;
+  readonly childrenOpen: boolean;
 } {
   const shape = SDDL_SHAPE.exec(sddl.trim());
-  if (!shape) return { owner: "other", othersMayWrite: true, othersMayReplace: true };
+  if (!shape)
+    return { owner: "other", othersMayWrite: true, othersMayReplace: true, childrenOpen: true };
   const ownerSid = shape[1]!;
   const owner = ownerSid === userSid ? "user" : WINDOWS_TRUSTED.has(ownerSid) ? "trusted" : "other";
   if (shape[2] === undefined || shape[2].includes("NO_ACCESS_CONTROL"))
-    return { owner, othersMayWrite: true, othersMayReplace: true };
+    return { owner, othersMayWrite: true, othersMayReplace: true, childrenOpen: true };
   let othersMayWrite = false;
   let othersMayReplace = false;
+  let childrenOpen = false;
   for (const ace of (shape[3] ?? "").matchAll(/\(([^)]*)\)/g)) {
     const [type, flags, rights, , , sid] = ace[1]!.split(";");
-    // Allow entries only; an inherit-only entry applies to children, which are checked themselves.
-    if (!["A", "OA", "XA", "ZA"].includes(type ?? "") || (flags ?? "").includes("IO")) continue;
+    if (!["A", "OA", "XA", "ZA"].includes(type ?? "")) continue;
     if (sid === userSid || WINDOWS_TRUSTED.has(sid ?? "") || WINDOWS_OWNER_ALIASES.has(sid ?? ""))
       continue;
     const mask = sddlMask(rights ?? "");
+    const inherited = /CI|OI/.test(flags ?? "");
+    // What a new folder or file here would start with, before anything could restrict it.
+    if (inherited && (mask & WINDOWS_WRITE_MASK) !== 0n) childrenOpen = true;
+    // An inherit-only entry says nothing about the folder itself.
+    if ((flags ?? "").includes("IO")) continue;
     if ((mask & WINDOWS_WRITE_MASK) !== 0n) othersMayWrite = true;
     if ((mask & WINDOWS_REPLACE_MASK) !== 0n) othersMayReplace = true;
   }
-  return { owner, othersMayWrite, othersMayReplace };
+  return { owner, othersMayWrite, othersMayReplace, childrenOpen };
 }
 
 function run(
@@ -445,7 +483,7 @@ export class Confinement {
     const open =
       above && !missing
         ? (access.othersMayReplace ?? access.othersMayWrite)
-        : access.othersMayWrite;
+        : access.othersMayWrite || access.childrenOpen === true;
     return open ? "acl-entry" : null;
   }
 
@@ -567,4 +605,17 @@ export class Confinement {
       if (after.identities.get(prefix) !== identity) return prefix;
     return null;
   }
+}
+
+/**
+ * Creates `folder` and what is missing above it one part at a time, each private
+ * (0700): a recursive mkdir would walk through a link put there meanwhile.
+ */
+export async function makePrivateFolders(folder: string, create: (part: string) => Promise<void>) {
+  const missing: Array<string> = [];
+  for (let current = folder; !(await lstatOrNull(current)); current = NodePath.dirname(current)) {
+    missing.unshift(current);
+    if (NodePath.dirname(current) === current) break;
+  }
+  for (const part of missing) await create(part);
 }

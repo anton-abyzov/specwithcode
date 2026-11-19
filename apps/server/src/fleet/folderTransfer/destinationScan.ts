@@ -61,8 +61,9 @@ const volumeReader: VolumeReader = {
 /**
  * Whether the volume a copy into `target` lands on treats `A` and `a` as one
  * name. Read from an entry that exists, never tested by writing: nothing is
- * created or removed. The entry comes from the target itself, or from a folder
- * above it on the same volume, so a mount point is judged by its own volume.
+ * created or removed. The entry comes from the target itself, or, for a target
+ * not made yet, from the folder it will be made in. A folder above an existing
+ * target is never asked: rules can differ at a mount point and per folder.
  * When no entry can tell, or a read fails, the rules are unknown and the answer
  * is the strict one: names that differ only by case are treated as one.
  */
@@ -73,6 +74,8 @@ export async function volumeNameRules(
   const { lstat, names } = { ...volumeReader, ...reader };
   const unknown = { known: false, caseInsensitive: true };
   try {
+    // The target's own entries when it exists. A target not made yet takes the
+    // rules of the folder it will be made in, which a new folder inherits.
     let folder = target;
     let stat = await lstat(folder);
     while (!stat) {
@@ -82,25 +85,19 @@ export async function volumeNameRules(
       stat = await lstat(folder);
     }
     if (!stat.isDirectory()) return unknown;
-    const volume = stat.dev;
-    for (;;) {
-      for (const name of await names(folder)) {
-        const other = name === name.toUpperCase() ? name.toLowerCase() : name.toUpperCase();
-        if (other === name) continue;
-        const one = await lstat(NodePath.join(folder, name));
-        if (!one) continue;
-        const same = await lstat(NodePath.join(folder, other));
-        return {
-          known: true,
-          caseInsensitive: same !== null && same.dev === one.dev && same.ino === one.ino,
-        };
-      }
-      const parent = NodePath.dirname(folder);
-      if (parent === folder) return unknown;
-      const above = await lstat(parent);
-      if (!above || above.dev !== volume) return unknown;
-      folder = parent;
+    for (const name of await names(folder)) {
+      const other = name === name.toUpperCase() ? name.toLowerCase() : name.toUpperCase();
+      if (other === name) continue;
+      const one = await lstat(NodePath.join(folder, name));
+      if (!one) continue;
+      const same = await lstat(NodePath.join(folder, other));
+      return {
+        known: true,
+        caseInsensitive: same !== null && same.dev === one.dev && same.ino === one.ino,
+      };
     }
+    // No entry there can tell. A folder above may follow other rules, even on one volume.
+    return unknown;
   } catch {
     return unknown;
   }

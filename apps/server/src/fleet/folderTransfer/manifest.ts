@@ -1152,6 +1152,34 @@ export function validateManifestEntries(
   return null;
 }
 
+/**
+ * The repository paths of a manifest header, held to the rule of entry paths:
+ * the root (`.`) or a path inside the copy that this system takes as written.
+ * Apply runs Git in these folders and repairs worktree pointers between them,
+ * so one that leaves the copy refuses the manifest before anything is staged.
+ */
+export function validateManifestRepositories(
+  repositories: ReadonlyArray<{
+    readonly path: string;
+    readonly mainRepository?: string | null;
+    readonly worktrees?: ReadonlyArray<{ readonly path: string | null }>;
+  }>,
+  platform: NodeJS.Platform,
+): ManifestRefusal | null {
+  const inside = (path: unknown) =>
+    path === "." || (typeof path === "string" && isSafeDestinationPath(path, platform));
+  for (const repository of repositories) {
+    if (!inside(repository?.path)) return { path: String(repository?.path), reason: "unsafe-path" };
+    const main = repository.mainRepository;
+    if (main !== null && main !== undefined && !inside(main))
+      return { path: String(main), reason: "unsafe-path" };
+    for (const worktree of repository.worktrees ?? [])
+      if (worktree?.path !== null && worktree?.path !== undefined && !inside(worktree.path))
+        return { path: String(worktree.path), reason: "unsafe-path" };
+  }
+  return null;
+}
+
 /** Entries the destination receives: selected classes, plus the folders that hold them. */
 export function selectEntries(
   entries: ReadonlyArray<ManifestEntry>,
