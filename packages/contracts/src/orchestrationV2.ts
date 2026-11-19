@@ -25,6 +25,8 @@ export {
   OrchestrationV2LimitRecoveryUpdate,
 } from "./orchestrationV2LimitRecovery.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
+import { CoordinatorPeerMessage } from "./coordinatorMessage.ts";
+export * from "./coordinatorMessage.ts";
 import {
   AccessRequestScope,
   AccessRequestSubject,
@@ -1399,6 +1401,7 @@ export const OrchestrationV2ConversationMessage = Schema.Struct({
   scheduledTaskId: Schema.optional(ScheduledTaskId),
   // The sending agent's thread in this environment, separate from the receiving thread.
   senderThreadId: Schema.optional(ThreadId),
+  peerMessage: Schema.optional(CoordinatorPeerMessage), // Another machine's coordinator message.
   id: MessageId,
   threadId: ThreadId,
   runId: Schema.NullOr(RunId),
