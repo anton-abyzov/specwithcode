@@ -1005,18 +1005,27 @@ async function asBuilt(
 ): Promise<boolean> {
   // A copied file is this build's only while it is still the file that was
   // copied. Compared by digest: what either one holds is never read out.
+  // Only a file that is not there proves nothing was lost. One that cannot be
+  // read, or a path that cannot be placed inside the checkout, is not proof.
   const digest = (file: string) =>
     NodeFSP.readFile(file).then(
       (bytes) => NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
-      () => null,
+      (error: NodeJS.ErrnoException) => (error.code === "ENOENT" ? "absent" : "unreadable"),
     );
   for (const secret of expected.secrets) {
     const segments = secret.split("/").filter((each) => each.length > 0 && each !== ".");
-    if (NodePath.isAbsolute(secret) || segments.includes("..")) continue;
-    const here = await digest(NodePath.join(path, ...segments));
-    if (here !== null && here !== (await digest(NodePath.join(expected.copiedFrom, ...segments)))) {
+    if (
+      segments.length === 0 ||
+      NodePath.isAbsolute(secret) ||
+      secret.includes("\0") ||
+      segments.some((each) => each === ".." || each === ".git" || each.includes("\\"))
+    ) {
       return false;
     }
+    const here = await digest(NodePath.join(path, ...segments));
+    if (here === "absent") continue;
+    if (here === "unreadable") return false;
+    if (here !== (await digest(NodePath.join(expected.copiedFrom, ...segments)))) return false;
   }
   const staged = await runGit(path, ["write-tree"], { allowFailure: true });
   if (staged.code !== 0) return false;
