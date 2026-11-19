@@ -13,11 +13,14 @@ import { CheckIcon, XIcon } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { create } from "zustand";
 
+import { englishPhrase, useTx, type TranslatePhrase } from "../../i18n";
 import { readThreadShell, useProjects } from "../../state/entities";
+import { randomUUID } from "../../lib/utils";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import {
   handoffMachineCandidates,
   handoffMode,
+  refreshHandoffMode,
   runHandoffMode,
   useHandoffModeSnapshot,
 } from "../../studio/handoffMode";
@@ -35,18 +38,28 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import {
+  HandOffProgress,
+  HandOffProgressDialogHost,
+  useHandOffProgressGroups,
+} from "./HandOffProgress";
+import {
   HandoffMachineResults,
   HandoffPreflightFailures,
+  destinationNeedsUpdate,
+  destinationsNeedingUpdate,
+  destinationUpdateRows,
+  pickDestination,
   preflightSummary,
   type HandoffDestination,
 } from "./HandoffResults";
 import { HandoffDestinationUpdate } from "./HandoffDestinationUpdate";
+import { submittedGroups } from "./handOffProgress.logic";
 import { destinationOptions, MachineOptionRows } from "./MachineOptionRows";
 import { useHandoffDestinations } from "./useHandoffDestinations";
 
 interface HandOffMachineRequest {
   readonly environmentId: EnvironmentId | null;
-  /** Lists only this project's threads: the switcher's "Move {M}'s running threads…". */
+  /** Lists only this project's threads: the scope the machine menu opens it with. */
   readonly project?: { readonly id: ProjectId; readonly title: string } | undefined;
 }
 
@@ -54,15 +67,16 @@ const useRequest = create<{ request: HandOffMachineRequest | null }>(() => ({
   request: null,
 }));
 
-/** Opens "Move running threads"; without an id it moves threads off the machine this window serves. */
+/** Opens "Hand off work from {machine}"; without an id, for the machine this window serves. */
 export function requestHandOffMachine(environmentId: EnvironmentId | null = null) {
   useRequest.setState({ request: { environmentId } });
 }
 
 /**
- * Opens "Move {project}'s running threads" for one project's running threads
- * that are kept ready to move, on the machine that holds them. Each thread is checked against the chosen
- * destination before anything moves; the coordinator stays where it is.
+ * Opens the same dialog with one project as its scope, on the machine that
+ * holds its threads. Each thread is checked against the chosen destination
+ * before anything goes; coordinator conversations and routines are not listed
+ * and do not move.
  */
 export function requestMigrateProjectThreads(
   environmentId: EnvironmentId,
@@ -73,17 +87,30 @@ export function requestMigrateProjectThreads(
 
 const close = () => useRequest.setState({ request: null });
 
+/** Closes the dialog from outside it. */
+export const closeHandOffMachine = close;
+
+/** The open request outside React, for tests and non-component callers. */
+export function readHandOffMachineRequest(): HandOffMachineRequest | null {
+  return useRequest.getState().request;
+}
+
 export function HandOffMachineDialogHost() {
   const request = useRequest((state) => state.request);
   const primary = usePrimaryEnvironmentId();
   const environmentId = request?.environmentId ?? primary;
-  return request && environmentId ? (
-    <HandOffMachineDialog
-      key={`${environmentId}:${request.project?.id ?? ""}`}
-      environmentId={environmentId}
-      project={request.project ?? null}
-    />
-  ) : null;
+  return (
+    <>
+      {request && environmentId ? (
+        <HandOffMachineDialog
+          key={`${environmentId}:${request.project?.id ?? ""}`}
+          environmentId={environmentId}
+          project={request.project ?? null}
+        />
+      ) : null}
+      <HandOffProgressDialogHost environmentId={primary} />
+    </>
+  );
 }
 
 export interface HandoffMachineThreadRow {
@@ -93,7 +120,7 @@ export interface HandoffMachineThreadRow {
 
 export interface HandOffMachineDialogViewProps {
   machineName: string;
-  /** Set when the dialog migrates one project's threads instead of the whole machine's. */
+  /** The scope: one project's threads, or every project on the machine when absent. */
   projectName?: string | null;
   destinations: readonly HandoffDestination[];
   destinationId: EnvironmentId | null;
@@ -111,31 +138,55 @@ export interface HandOffMachineDialogViewProps {
   submitting: boolean;
   error: string | null;
   run: HandoffMachineRun | null;
+  /**
+   * The progress view of this hand off, once the machine has written its
+   * records. It replaces the form while the hand off runs and after it.
+   */
+  progress?: ReactNode;
   destinationName: string;
   onSubmit: () => void;
   onCancel: () => void;
   onOpenThread: (threadId: ThreadId, environmentId: EnvironmentId) => void;
 }
 
-/** The dialog's title: "Move running threads", or "Move atlas's running threads" for one project. */
-export function handOffMachineTitle(projectName?: string | null): string {
-  return projectName ? `Move ${projectName}'s running threads` : "Move running threads";
+/** The dialog's title: "Hand off work from Laptop". */
+export function handOffMachineTitle(
+  machineName: string,
+  tx: TranslatePhrase = englishPhrase,
+): string {
+  return tx("Hand off work from {machine}", { machine: machineName });
 }
 
-/** The primary button: "Move 2 threads", "Checking…", or "Nothing ready to move" when none passed. */
-export function handOffMachinePrimaryLabel(state: {
-  submitting: boolean;
-  checking: boolean;
-  movable: number;
-}): string {
-  if (state.submitting) return "Moving…";
-  if (state.checking) return "Checking…";
-  if (state.movable === 0) return "Nothing ready to move";
-  return state.movable === 1 ? "Move 1 thread" : `Move ${state.movable} threads`;
+/** The scope line: one project, or every project on the machine. */
+export function handOffMachineScope(
+  machineName: string,
+  projectName: string | null | undefined,
+  tx: TranslatePhrase = englishPhrase,
+): string {
+  return projectName
+    ? tx("Scope: {project}", { project: projectName })
+    : tx("Scope: every project on {machine}", { machine: machineName });
+}
+
+/** The primary button: "Hand off to Desk", "Checking…", or "Nothing can go" when none passed. */
+export function handOffMachinePrimaryLabel(
+  state: {
+    submitting: boolean;
+    checking: boolean;
+    movable: number;
+    machine?: string | null;
+  },
+  tx: TranslatePhrase = englishPhrase,
+): string {
+  if (state.submitting) return tx("Handing off…");
+  if (state.checking) return tx("Checking…");
+  if (state.movable === 0) return tx("Nothing can go");
+  return state.machine ? tx("Hand off to {machine}", { machine: state.machine }) : tx("Hand off");
 }
 
 /** The dialog's body, without data wiring, so fixtures and tests can render each state. */
 export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
+  const tx = useTx();
   const isSelected = (threadId: ThreadId) => props.selected.has(threadId);
   // While a check runs, earlier results are stale: nothing counts as ready until it finishes.
   const resultFor = (threadId: ThreadId) =>
@@ -149,15 +200,18 @@ export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
       (thread) => isSelected(thread.threadId) && resultFor(thread.threadId)?.ok === false,
     );
   const noneOnline = !props.destinations.some((item) => item.state === "reachable");
-  const destinationName = props.destinationName || "the other machine";
+  const destinationName = props.destinationName || tx("the other machine");
+  // Once the machine has records of this hand off, the view shows them; the server finishes
+  // the hand off without this window, so the dialog can be closed.
+  const leaving = props.progress !== undefined && props.progress !== null;
   return (
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open && !props.submitting) props.onCancel();
+        if (!open && (!props.submitting || leaving)) props.onCancel();
       }}
     >
-      <DialogPopup className="sm:max-w-lg" showCloseButton={!props.submitting}>
+      <DialogPopup className="sm:max-w-lg" showCloseButton={!props.submitting || leaving}>
         <form
           className="flex min-h-0 flex-col"
           onSubmit={(event) => {
@@ -166,20 +220,27 @@ export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
           }}
         >
           <DialogHeader>
-            <DialogTitle>{handOffMachineTitle(props.projectName)}</DialogTitle>
-            {props.run ? null : (
+            <DialogTitle>{handOffMachineTitle(props.machineName, tx)}</DialogTitle>
+            {props.run || leaving ? null : (
               <DialogDescription>
-                {
-                  "Review readiness before moving the selected threads. They continue on the machine you pick. Anything that can't move stays here, untouched."
-                }
-                {props.projectName
-                  ? ` ${props.projectName}'s coordinator stays on ${props.machineName}.`
-                  : null}
+                {tx(
+                  "Tick what goes. It continues on the machine you pick. Anything that cannot go stays here, untouched, with its reason.",
+                )}
               </DialogDescription>
             )}
           </DialogHeader>
           <DialogPanel>
-            {props.run ? (
+            {leaving ? (
+              <div className="flex flex-col gap-3">
+                {/* What this window asked may have failed while its records were written. */}
+                {props.error ? (
+                  <p role="alert" className="text-sm text-destructive-foreground">
+                    {props.error}
+                  </p>
+                ) : null}
+                {props.progress}
+              </div>
+            ) : props.run ? (
               <HandoffMachineResults
                 run={props.run}
                 destinationName={props.destinationName}
@@ -187,11 +248,14 @@ export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
               />
             ) : (
               <div className="flex flex-col gap-4">
+                <p className="text-sm text-muted-foreground" data-slot="hand-off-scope">
+                  {handOffMachineScope(props.machineName, props.projectName, tx)}
+                </p>
                 <fieldset className="flex min-w-0 flex-col gap-1.5" disabled={props.submitting}>
-                  <legend className="mb-1.5 text-sm font-medium">Move to</legend>
+                  <legend className="mb-1.5 text-sm font-medium">{tx("Hand off to")}</legend>
                   {props.destinations.length > 0 ? (
                     <MachineOptionRows
-                      aria-label="Move to"
+                      aria-label={tx("Hand off to")}
                       options={destinationOptions(props.destinations)}
                       value={props.destinationId}
                       disabled={props.submitting}
@@ -206,16 +270,19 @@ export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
                 </fieldset>
                 <fieldset className="flex min-w-0 flex-col gap-1.5" disabled={props.submitting}>
                   <legend className="mb-1.5 text-sm font-medium">
-                    {`Threads (${props.threads.length})`}
+                    {tx("Running ({n})", { n: props.threads.length })}
                   </legend>
                   {props.threads.length === 0 ? (
                     <p className="text-sm text-muted-foreground">
                       {props.projectName
-                        ? `Nothing of ${props.projectName} is running on ${props.machineName} that's set to keep ready to move.`
-                        : "Nothing is running here that's set to keep ready to move."}
+                        ? tx("Nothing running in {project} on {machine} can go.", {
+                            project: props.projectName,
+                            machine: props.machineName,
+                          })
+                        : tx("Nothing running here can go.")}
                     </p>
                   ) : (
-                    <ul className="flex flex-col gap-1.5" aria-label="Running threads">
+                    <ul className="flex flex-col gap-1.5" aria-label={tx("Running threads")}>
                       {props.threads.map((thread) => {
                         const on = isSelected(thread.threadId);
                         const result = on ? resultFor(thread.threadId) : undefined;
@@ -260,7 +327,7 @@ export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
                                   className="flex shrink-0 items-center gap-1 text-xs text-success-foreground"
                                 >
                                   <CheckIcon className="size-3.5" aria-hidden />
-                                  Ready
+                                  {tx("Goes")}
                                 </span>
                               ) : on && props.checking ? (
                                 <span
@@ -292,10 +359,19 @@ export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
             )}
           </DialogPanel>
           <DialogFooter>
-            {props.run ? (
-              <Button type="button" onClick={props.onCancel}>
-                Done
-              </Button>
+            {props.run || leaving ? (
+              <>
+                {leaving && !props.run ? (
+                  <p className="mr-auto text-xs text-muted-foreground" role="status">
+                    {tx("{machine} finishes this hand off by itself. You can close this.", {
+                      machine: props.machineName,
+                    })}
+                  </p>
+                ) : null}
+                <Button type="button" onClick={props.onCancel}>
+                  {tx("Done")}
+                </Button>
+              </>
             ) : (
               <>
                 <Button
@@ -324,11 +400,15 @@ export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
                     movable === 0
                   }
                 >
-                  {handOffMachinePrimaryLabel({
-                    submitting: props.submitting,
-                    checking: props.checking,
-                    movable,
-                  })}
+                  {handOffMachinePrimaryLabel(
+                    {
+                      submitting: props.submitting,
+                      checking: props.checking,
+                      movable,
+                      machine: props.destinationName || null,
+                    },
+                    tx,
+                  )}
                 </Button>
               </>
             )}
@@ -361,8 +441,19 @@ function HandOffMachineDialog({
   const router = useRouter();
   const name = useMachineNicknames();
   const { snapshot } = useHandoffModeSnapshot(environmentId);
-  const destinations = useHandoffDestinations(environmentId, false);
+  const paired = useHandoffDestinations(environmentId, false);
+  // Machines a check found without transfer records: shown as "Needs update", never a target.
+  const [needsUpdate, setNeedsUpdate] = useState<
+    ReadonlyMap<EnvironmentId, readonly HandoffPreflightResult[]>
+  >(new Map());
+  const destinations = useMemo(
+    () => destinationsNeedingUpdate(paired, new Set(needsUpdate.keys())),
+    [needsUpdate, paired],
+  );
   const [destinationId, setDestinationId] = useState<EnvironmentId | null>(null);
+  const groups = useHandOffProgressGroups(environmentId);
+  // The name this window gave its batch: only that batch's records are its progress.
+  const [batchId, setBatchId] = useState<string | null>(null);
   const projects = useProjects();
   const threads = useMemo<HandoffMachineThreadRow[]>(
     () =>
@@ -399,8 +490,7 @@ function HandOffMachineDialog({
   const [error, setError] = useState<string | null>(null);
   const [run, setRun] = useState<HandoffMachineRun | null>(null);
 
-  const destination =
-    destinationId ?? destinations.find((item) => item.state === "reachable")?.environmentId ?? null;
+  const destination = pickDestination(destinations, destinationId);
   const selectedKey = [...selected].toSorted().join(",");
   const [recheck, setRecheck] = useState(0);
 
@@ -423,12 +513,30 @@ function HandOffMachineDialog({
         setPreflightError(next.error);
         return;
       }
+      if (destinationNeedsUpdate(next.value)) {
+        // Its row turns into "Needs update" and the next machine that can take work is checked.
+        setNeedsUpdate((current) => new Map(current).set(destination, next.value));
+        setPreflight(new Map());
+        return;
+      }
       setPreflight(new Map(next.value.map((result) => [result.threadId, result])));
     });
     return () => {
       live = false;
     };
   }, [destination, environmentId, recheck, run, selectedKey]);
+
+  // Until the machine has written this hand off's records, look for them often.
+  const awaitingRecords = submitting && batchId !== null;
+  useEffect(() => {
+    if (!awaitingRecords) return;
+    const timer = window.setInterval(() => void refreshHandoffMode(environmentId), 1_500);
+    return () => window.clearInterval(timer);
+  }, [awaitingRecords, environmentId]);
+
+  // One batch can cover several projects: each is its own card. Another window's
+  // hand off of the same threads is not this window's progress.
+  const shown = submittedGroups(groups, batchId, projectId);
 
   const destinationName = destination
     ? (destinations.find((item) => item.environmentId === destination)?.label ?? name(destination))
@@ -460,15 +568,51 @@ function HandOffMachineDialog({
       preflightError={preflightError}
       onRecheck={() => setRecheck((count) => count + 1)}
       destinationUpdate={
-        <HandoffDestinationUpdate
-          environmentId={destination}
-          label={destinationName}
-          results={[...preflight.values()]}
-        />
+        <>
+          {destinationUpdateRows(
+            needsUpdate,
+            destination,
+            [...preflight.values()],
+            (id) => paired.find((item) => item.environmentId === id)?.label ?? name(id),
+          ).map((row) => (
+            <HandoffDestinationUpdate
+              key={row.environmentId}
+              environmentId={row.environmentId}
+              label={row.label}
+              results={row.results}
+              {...(needsUpdate.has(row.environmentId)
+                ? {
+                    onUpdated: () => {
+                      setNeedsUpdate((current) => {
+                        const next = new Map(current);
+                        next.delete(row.environmentId);
+                        return next;
+                      });
+                      setRecheck((count) => count + 1);
+                    },
+                  }
+                : {})}
+            />
+          ))}
+        </>
       }
       submitting={submitting}
       error={error}
       run={run}
+      progress={
+        shown.length > 0 ? (
+          <div className="flex flex-col gap-6">
+            {shown.map((group) => (
+              <HandOffProgress
+                key={group.key}
+                environmentId={environmentId}
+                group={group}
+                onLeave={close}
+              />
+            ))}
+          </div>
+        ) : null
+      }
       destinationName={
         run ? name(run.destinationEnvironmentId, run.destinationLabel) : destinationName
       }
@@ -479,9 +623,17 @@ function HandOffMachineDialog({
           .filter((threadId) => selected.has(threadId) && preflight.get(threadId)?.ok);
         setSubmitting(true);
         setError(null);
+        const batch = randomUUID();
+        setBatchId(batch);
+        void refreshHandoffMode(environmentId);
         void runHandoffMode(handoffMode.handOffMachine, {
           environmentId,
-          input: { destinationEnvironmentId: destination, reason: "manual", threadIds },
+          input: {
+            destinationEnvironmentId: destination,
+            reason: "manual",
+            threadIds,
+            batchId: batch,
+          },
         }).then((next) => {
           setSubmitting(false);
           if (next.ok) setRun(next.value);

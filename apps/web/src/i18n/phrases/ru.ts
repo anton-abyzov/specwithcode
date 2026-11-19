@@ -3187,8 +3187,6 @@ export const ru: PhraseCatalog = {
   "Jump to latest": "К последним",
   "Jump to latest{value}": "К последним{value}",
   New: "Новое",
-  "This server can't move threads to another machine yet.":
-    "Этот сервер пока не умеет переносить треды на другую машину.",
   "No other machine can take this thread now.":
     "Сейчас ни одна другая машина не может принять этот тред.",
   "Link increment": "Связать инкремент",
@@ -5953,4 +5951,84 @@ export const ru: PhraseCatalog = {
   "Checked at {time}.": "Проверено в {time}.",
   "This folder belongs to one terminal session and disappears when it closes. The app looks up the command again on the next check.":
     "Эта папка принадлежит одному сеансу терминала и исчезает, когда он закрывается. Приложение снова найдёт команду при следующей проверке.",
+  Pending: "Ожидает",
+  "Held on {machine}": "Удерживается на {machine}",
+  "Waiting for confirmation": "Ожидает подтверждения",
+  Resumed: "Возобновлён",
+  "Resumed on {machine}": "Возобновлён на {machine}",
+  "Ready on {machine}": "Готов на {machine}",
+  Stayed: "Остался",
+  "Not held yet": "Ещё не удержан",
+  "Paused on {machine}, not sent yet": "Приостановлен на {machine}, ещё не отправлен",
+  "{machine} has not answered yet": "{machine} ещё не ответила",
+  "Sent at {time}. {machine} has not answered yet": "Отправлен в {time}. {machine} ещё не ответила",
+  "Its interrupted run continues there": "Прерванный запуск продолжается там",
+  "Idle. Installed on {machine}; nothing started":
+    "Простаивает. Установлен на {machine}; ничего не запущено",
+  "It stays on {machine}": "Остаётся на {machine}",
+  "{target} did not accept it. It runs on {source} again":
+    "{target} не приняла его. Он снова работает на {source}",
+  "Same-account and unknown-usage machines are never chosen automatically, and no other track is used.":
+    "Машины с тем же аккаунтом или с неизвестным расходом никогда не выбираются автоматически, и другой трек не используется.",
+  "{track} track is out on every machine": "Трек {track} исчерпан на всех машинах",
+  "1 thread stays on {machine}. Nothing moves.":
+    "1 тред остаётся на {machine}. Ничего не переносится.",
+  "{n} threads stay on {machine}. Nothing moves.":
+    "Тредов остаётся на {machine}: {n}. Ничего не переносится.",
+  "Next reset: {machine} at {time}": "Следующий сброс: {machine} в {time}",
+  "Checked again then.": "Тогда проверим снова.",
+  "Reset unknown": "Время сброса неизвестно",
+  "No eligible sign-in reports when it resets.":
+    "Ни один подходящий вход не сообщает, когда он сбросится.",
+  "Threads finished": "Завершённые треды",
+  Wait: "Ждать",
+  "Open on {machine}": "Открыть на {machine}",
+  "Resume here": "Возобновить здесь",
+  "It is being sent now, so it was not released. Nothing changed.":
+    "Он отправляется прямо сейчас, поэтому не был освобождён. Ничего не изменилось.",
+  "Hand off progress": "Ход передачи",
+  "This machine keeps no record of that hand off any more.":
+    "На этой машине больше нет записи об этой передаче.",
+  "All {n} on {machine}": "Все {n} на {machine}",
+  "{f} of {n} finished": "Завершено {f} из {n}",
+  "{f} of {n} finished: {counts}": "Завершено {f} из {n}: {counts}",
+  "{track} track out of tokens on {machine}": "Трек {track} исчерпал токены на {machine}",
+  "Out of tokens on {machine}": "Токены на {machine} исчерпаны",
+  "You asked to hand off": "Вы попросили передать работу",
+  "You asked to continue on {machine}": "Вы попросили продолжить на {machine}",
+  "You asked to hand off to {machine}": "Вы попросили передать работу на {machine}",
+  "Hand off “{project}”": "Передать «{project}»",
+  "Hand off “{project}” to {machine}": "Передать «{project}» на {machine}",
+  "Waiting is not failed. {source} runs none of these threads while {target} has not answered.":
+    "Ожидание не означает сбой. {source} не запускает ни один из этих тредов, пока {target} не ответила.",
+  "Ready means installed idle: nothing starts on {machine} until you write.":
+    "«Готов» значит установлен и простаивает: на {machine} ничего не запустится, пока вы не напишете.",
+  "{n} resumed": "возобновлено: {n}",
+  "{n} ready": "готово: {n}",
+  "{n} stayed": "осталось: {n}",
+  "{n} failed": "не удалось: {n}",
+  "Hand off work from {machine}": "Передать работу с {machine}",
+  "Scope: {project}": "Область: {project}",
+  "Scope: every project on {machine}": "Область: все проекты на {machine}",
+  "Handing off…": "Передача…",
+  "Nothing can go": "Нечего передавать",
+  "Hand off to {machine}": "Передать на {machine}",
+  "Hand off": "Передать",
+  "Tick what goes. It continues on the machine you pick. Anything that cannot go stays here, untouched, with its reason.":
+    "Отметьте, что уходит. Работа продолжится на выбранной машине. Всё, что уйти не может, останется здесь без изменений, с указанием причины.",
+  "Hand off to": "Передать на",
+  "Running ({n})": "Выполняются ({n})",
+  "Running threads": "Выполняющиеся треды",
+  Goes: "Уходит",
+  "{machine} finishes this hand off by itself. You can close this.":
+    "{machine} завершит эту передачу сама. Это окно можно закрыть.",
+  "This machine can't hand threads off yet.": "Эта машина пока не умеет передавать треды.",
+  "Hand off work to another machine": "Передать работу на другую машину",
+  "Hand off every project on this machine": "Передать все проекты этой машины",
+  "{machine} no longer keeps every thread of this hand off, so this list is not all of it.":
+    "{machine} больше не хранит все треды этой передачи, поэтому список неполный.",
+  "Show hand off progress": "Показать ход передачи",
+  "Nothing running in {project} on {machine} can go.":
+    "Из того, что выполняется в {project} на {machine}, передать нечего.",
+  "Nothing running here can go.": "Из того, что выполняется здесь, передать нечего.",
 };

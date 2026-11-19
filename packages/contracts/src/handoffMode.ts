@@ -23,7 +23,12 @@ import {
   DEFAULT_AWAY_GRACE_MINUTES,
   DEFAULT_AWAY_SLEEP_TRIGGER,
 } from "./away.ts";
-import { HandoffTransferTrigger } from "./handoffTransfer.ts";
+import {
+  HandoffTransferBatch,
+  HandoffTransferRecord,
+  HandoffTransferTrigger,
+  HandoffTransferOperationId,
+} from "./handoffTransfer.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import type {
   OrchestrationV2ProviderFailureClass,
@@ -427,6 +432,13 @@ export const HandoffModeSnapshot = Schema.Struct({
       }),
     ),
   ),
+  /**
+   * This machine's transfer records, as the source: the open ones and the
+   * finished ones it still keeps. Absent from a machine that keeps none, which
+   * a window reads as "nothing to show", never as "nothing moved".
+   */
+  transfers: Schema.optional(Schema.Array(HandoffTransferRecord)),
+  transferBatches: Schema.optional(Schema.Array(HandoffTransferBatch)),
 });
 export type HandoffModeSnapshot = typeof HandoffModeSnapshot.Type;
 
@@ -470,6 +482,17 @@ export const HandoffSetProjectModeInput = Schema.Struct({
   mode: Schema.NullOr(HandoffModeSetting),
 });
 export const HandoffThreadInput = Schema.Struct({ threadId: ThreadId });
+/**
+ * "Resume here". With a thread it releases that thread's hold when nothing was
+ * sent under it, and leaves every other thread and the machine's pause alone.
+ * Without one it resumes this machine after a wake: every unsent hold.
+ */
+export const HandoffResumeFencedInput = Schema.Struct({
+  threadId: Schema.optional(ThreadId),
+  /** The record the press was made on: any other open move of the thread is left alone. */
+  operationId: Schema.optional(HandoffTransferOperationId),
+});
+export type HandoffResumeFencedInput = typeof HandoffResumeFencedInput.Type;
 
 export const HandOffInput = Schema.Struct({
   threadId: ThreadId,
@@ -503,6 +526,11 @@ export const HandOffMachineInput = Schema.Struct({
   reason: HandOffMachineReason,
   /** The threads to move; omitted moves every running handoff-mode thread. */
   threadIds: Schema.optional(Schema.Array(ThreadId).check(Schema.isMaxLength(100))),
+  /**
+   * The name the asking window gives this request's batch, so it can find its
+   * own records among every window's. A machine that keeps no records ignores it.
+   */
+  batchId: Schema.optional(HandoffTransferOperationId),
 });
 export type HandOffMachineInput = typeof HandOffMachineInput.Type;
 

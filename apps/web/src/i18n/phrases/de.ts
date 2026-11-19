@@ -3205,8 +3205,6 @@ export const de: PhraseCatalog = {
   "Jump to latest": "Zum Neuesten",
   "Jump to latest{value}": "Zum Neuesten{value}",
   New: "Neu",
-  "This server can't move threads to another machine yet.":
-    "Dieser Server kann Threads noch nicht auf einen anderen Rechner verschieben.",
   "No other machine can take this thread now.":
     "Gerade kann kein anderer Rechner diesen Thread übernehmen.",
   "Link increment": "Inkrement verknüpfen",
@@ -6001,4 +5999,85 @@ export const de: PhraseCatalog = {
   "Checked at {time}.": "Geprüft um {time}.",
   "This folder belongs to one terminal session and disappears when it closes. The app looks up the command again on the next check.":
     "Dieser Ordner gehört zu einer Terminalsitzung und verschwindet, wenn sie endet. Die App sucht den Befehl bei der nächsten Prüfung neu.",
+  Pending: "Ausstehend",
+  "Held on {machine}": "Angehalten auf {machine}",
+  "Waiting for confirmation": "Wartet auf Bestätigung",
+  Resumed: "Fortgesetzt",
+  "Resumed on {machine}": "Auf {machine} fortgesetzt",
+  "Ready on {machine}": "Bereit auf {machine}",
+  Stayed: "Geblieben",
+  "Not held yet": "Noch nicht angehalten",
+  "Paused on {machine}, not sent yet": "Auf {machine} pausiert, noch nicht gesendet",
+  "{machine} has not answered yet": "{machine} hat noch nicht geantwortet",
+  "Sent at {time}. {machine} has not answered yet":
+    "Um {time} gesendet. {machine} hat noch nicht geantwortet",
+  "Its interrupted run continues there": "Der unterbrochene Lauf geht dort weiter",
+  "Idle. Installed on {machine}; nothing started":
+    "Inaktiv. Auf {machine} eingerichtet; nichts gestartet",
+  "It stays on {machine}": "Er bleibt auf {machine}",
+  "{target} did not accept it. It runs on {source} again":
+    "{target} hat ihn nicht angenommen. Er läuft wieder auf {source}",
+  "Same-account and unknown-usage machines are never chosen automatically, and no other track is used.":
+    "Rechner mit demselben Konto oder unbekannter Nutzung werden nie automatisch gewählt, und es wird kein anderer Track verwendet.",
+  "{track} track is out on every machine": "Der Track {track} ist auf jedem Rechner aufgebraucht",
+  "1 thread stays on {machine}. Nothing moves.":
+    "1 Thread bleibt auf {machine}. Nichts wird verschoben.",
+  "{n} threads stay on {machine}. Nothing moves.":
+    "{n} Threads bleiben auf {machine}. Nichts wird verschoben.",
+  "Next reset: {machine} at {time}": "Nächste Zurücksetzung: {machine} um {time}",
+  "Checked again then.": "Dann wird erneut geprüft.",
+  "Reset unknown": "Zurücksetzung unbekannt",
+  "No eligible sign-in reports when it resets.":
+    "Keine geeignete Anmeldung meldet, wann sie zurückgesetzt wird.",
+  "Threads finished": "Abgeschlossene Threads",
+  Wait: "Warten",
+  "Open on {machine}": "Auf {machine} öffnen",
+  "Resume here": "Hier fortsetzen",
+  "It is being sent now, so it was not released. Nothing changed.":
+    "Er wird gerade gesendet und wurde deshalb nicht freigegeben. Nichts hat sich geändert.",
+  "Hand off progress": "Fortschritt der Übergabe",
+  "This machine keeps no record of that hand off any more.":
+    "Dieser Rechner hat keinen Eintrag mehr zu dieser Übergabe.",
+  "All {n} on {machine}": "Alle {n} auf {machine}",
+  "{f} of {n} finished": "{f} von {n} abgeschlossen",
+  "{f} of {n} finished: {counts}": "{f} von {n} abgeschlossen: {counts}",
+  "{track} track out of tokens on {machine}": "Track {track} hat auf {machine} keine Tokens mehr",
+  "Out of tokens on {machine}": "Keine Tokens mehr auf {machine}",
+  "You asked to hand off": "Du hast eine Übergabe angefordert",
+  "You asked to continue on {machine}": "Du wolltest auf {machine} fortfahren",
+  "You asked to hand off to {machine}": "Du hast die Übergabe an {machine} angefordert",
+  "Hand off “{project}”": "„{project}“ übergeben",
+  "Hand off “{project}” to {machine}": "„{project}“ an {machine} übergeben",
+  "Waiting is not failed. {source} runs none of these threads while {target} has not answered.":
+    "Warten ist kein Fehlschlag. {source} führt keinen dieser Threads aus, solange {target} nicht geantwortet hat.",
+  "Ready means installed idle: nothing starts on {machine} until you write.":
+    "Bereit heißt inaktiv eingerichtet: Auf {machine} startet nichts, bis du schreibst.",
+  "{n} resumed": "{n} fortgesetzt",
+  "{n} ready": "{n} bereit",
+  "{n} stayed": "{n} geblieben",
+  "{n} failed": "{n} fehlgeschlagen",
+  "Hand off work from {machine}": "Arbeit von {machine} übergeben",
+  "Scope: {project}": "Umfang: {project}",
+  "Scope: every project on {machine}": "Umfang: jedes Projekt auf {machine}",
+  "Handing off…": "Wird übergeben…",
+  "Nothing can go": "Nichts kann gehen",
+  "Hand off to {machine}": "An {machine} übergeben",
+  "Hand off": "Übergeben",
+  "Tick what goes. It continues on the machine you pick. Anything that cannot go stays here, untouched, with its reason.":
+    "Hake an, was geht. Es läuft auf dem Rechner weiter, den du auswählst. Was nicht gehen kann, bleibt unverändert hier, mit dem Grund.",
+  "Hand off to": "Übergeben an",
+  "Running ({n})": "Läuft ({n})",
+  "Running threads": "Laufende Threads",
+  Goes: "Geht",
+  "{machine} finishes this hand off by itself. You can close this.":
+    "{machine} schließt diese Übergabe selbst ab. Du kannst das hier schließen.",
+  "This machine can't hand threads off yet.": "Dieser Rechner kann Threads noch nicht übergeben.",
+  "Hand off work to another machine": "Arbeit an einen anderen Rechner übergeben",
+  "Hand off every project on this machine": "Jedes Projekt auf diesem Rechner übergeben",
+  "{machine} no longer keeps every thread of this hand off, so this list is not all of it.":
+    "{machine} hat nicht mehr jeden Thread dieser Übergabe gespeichert, diese Liste ist also unvollständig.",
+  "Show hand off progress": "Fortschritt der Übergabe anzeigen",
+  "Nothing running in {project} on {machine} can go.":
+    "Nichts, was in {project} auf {machine} läuft, kann gehen.",
+  "Nothing running here can go.": "Nichts, was hier läuft, kann gehen.",
 };

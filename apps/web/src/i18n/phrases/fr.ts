@@ -3217,8 +3217,6 @@ export const fr: PhraseCatalog = {
   "Jump to latest": "Aller au plus récent",
   "Jump to latest{value}": "Aller au plus récent{value}",
   New: "Nouveau",
-  "This server can't move threads to another machine yet.":
-    "Ce serveur ne peut pas encore déplacer des fils vers une autre machine.",
   "No other machine can take this thread now.":
     "Aucune autre machine ne peut reprendre ce fil pour l’instant.",
   "Link increment": "Lier un incrément",
@@ -6011,4 +6009,84 @@ export const fr: PhraseCatalog = {
   "Checked at {time}.": "Vérifié à {time}.",
   "This folder belongs to one terminal session and disappears when it closes. The app looks up the command again on the next check.":
     "Ce dossier appartient à une session de terminal et disparaît à sa fermeture. L’app recherche la commande à la prochaine vérification.",
+  Pending: "En attente",
+  "Held on {machine}": "Retenu sur {machine}",
+  "Waiting for confirmation": "En attente de confirmation",
+  Resumed: "Repris",
+  "Resumed on {machine}": "Repris sur {machine}",
+  "Ready on {machine}": "Prêt sur {machine}",
+  Stayed: "Resté",
+  "Not held yet": "Pas encore retenu",
+  "Paused on {machine}, not sent yet": "En pause sur {machine}, pas encore envoyé",
+  "{machine} has not answered yet": "{machine} n'a pas encore répondu",
+  "Sent at {time}. {machine} has not answered yet":
+    "Envoyé à {time}. {machine} n'a pas encore répondu",
+  "Its interrupted run continues there": "Son exécution interrompue continue là-bas",
+  "Idle. Installed on {machine}; nothing started":
+    "Inactif. Installé sur {machine} ; rien n'a démarré",
+  "It stays on {machine}": "Il reste sur {machine}",
+  "{target} did not accept it. It runs on {source} again":
+    "{target} ne l'a pas accepté. Il s'exécute de nouveau sur {source}",
+  "Same-account and unknown-usage machines are never chosen automatically, and no other track is used.":
+    "Les machines sur le même compte ou à l'utilisation inconnue ne sont jamais choisies automatiquement, et aucune autre piste n'est utilisée.",
+  "{track} track is out on every machine": "La piste {track} est épuisée sur toutes les machines",
+  "1 thread stays on {machine}. Nothing moves.": "1 fil reste sur {machine}. Rien ne bouge.",
+  "{n} threads stay on {machine}. Nothing moves.": "{n} fils restent sur {machine}. Rien ne bouge.",
+  "Next reset: {machine} at {time}": "Prochaine réinitialisation : {machine} à {time}",
+  "Checked again then.": "Nouvelle vérification à ce moment-là.",
+  "Reset unknown": "Réinitialisation inconnue",
+  "No eligible sign-in reports when it resets.":
+    "Aucune connexion éligible n'indique quand elle se réinitialise.",
+  "Threads finished": "Fils terminés",
+  Wait: "Patienter",
+  "Open on {machine}": "Ouvrir sur {machine}",
+  "Resume here": "Reprendre ici",
+  "It is being sent now, so it was not released. Nothing changed.":
+    "Il est en cours d'envoi, il n'a donc pas été libéré. Rien n'a changé.",
+  "Hand off progress": "Progression de la transmission",
+  "This machine keeps no record of that hand off any more.":
+    "Cette machine ne conserve plus de trace de cette transmission.",
+  "All {n} on {machine}": "Les {n} sur {machine}",
+  "{f} of {n} finished": "{f} sur {n} terminés",
+  "{f} of {n} finished: {counts}": "{f} sur {n} terminés : {counts}",
+  "{track} track out of tokens on {machine}": "La piste {track} n'a plus de tokens sur {machine}",
+  "Out of tokens on {machine}": "Plus de tokens sur {machine}",
+  "You asked to hand off": "Vous avez demandé la transmission",
+  "You asked to continue on {machine}": "Vous avez demandé à continuer sur {machine}",
+  "You asked to hand off to {machine}": "Vous avez demandé la transmission vers {machine}",
+  "Hand off “{project}”": "Transmettre « {project} »",
+  "Hand off “{project}” to {machine}": "Transmettre « {project} » à {machine}",
+  "Waiting is not failed. {source} runs none of these threads while {target} has not answered.":
+    "Attendre n'est pas échouer. {source} n'exécute aucun de ces fils tant que {target} n'a pas répondu.",
+  "Ready means installed idle: nothing starts on {machine} until you write.":
+    "Prêt signifie installé au repos : rien ne démarre sur {machine} tant que vous n'écrivez pas.",
+  "{n} resumed": "{n} repris",
+  "{n} ready": "{n} prêts",
+  "{n} stayed": "{n} restés",
+  "{n} failed": "{n} échoués",
+  "Hand off work from {machine}": "Transmettre le travail depuis {machine}",
+  "Scope: {project}": "Périmètre : {project}",
+  "Scope: every project on {machine}": "Périmètre : tous les projets sur {machine}",
+  "Handing off…": "Transmission…",
+  "Nothing can go": "Rien ne peut partir",
+  "Hand off to {machine}": "Transmettre à {machine}",
+  "Hand off": "Transmettre",
+  "Tick what goes. It continues on the machine you pick. Anything that cannot go stays here, untouched, with its reason.":
+    "Cochez ce qui part. Cela continue sur la machine que vous choisissez. Ce qui ne peut pas partir reste ici, intact, avec sa raison.",
+  "Hand off to": "Transmettre à",
+  "Running ({n})": "En cours ({n})",
+  "Running threads": "Fils en cours",
+  Goes: "Part",
+  "{machine} finishes this hand off by itself. You can close this.":
+    "{machine} termine cette transmission toute seule. Vous pouvez fermer ceci.",
+  "This machine can't hand threads off yet.":
+    "Cette machine ne peut pas encore transmettre de fils.",
+  "Hand off work to another machine": "Transférer le travail vers une autre machine",
+  "Hand off every project on this machine": "Transférer tous les projets de cette machine",
+  "{machine} no longer keeps every thread of this hand off, so this list is not all of it.":
+    "{machine} ne conserve plus tous les fils de ce transfert : cette liste est incomplète.",
+  "Show hand off progress": "Afficher la progression de la transmission",
+  "Nothing running in {project} on {machine} can go.":
+    "Rien de ce qui tourne dans {project} sur {machine} ne peut partir.",
+  "Nothing running here can go.": "Rien de ce qui tourne ici ne peut partir.",
 };

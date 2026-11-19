@@ -8,6 +8,7 @@ import {
   HandoffModeEmptyInput,
   HandoffModeError,
   HandoffModeSnapshot,
+  HandoffResumeFencedInput,
   HandoffSetProjectModeInput,
   HandoffSetThreadModeInput,
   HandoffThreadInput,
@@ -74,7 +75,7 @@ export const handoffModeRpcs = [
     error,
   }),
   Rpc.make(M.handoffModeResumeFenced, {
-    payload: HandoffModeEmptyInput,
+    payload: HandoffResumeFencedInput,
     success: HandoffModeSnapshot,
     error,
   }),

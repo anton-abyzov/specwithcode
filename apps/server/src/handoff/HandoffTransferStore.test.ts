@@ -28,6 +28,7 @@ import {
   EMPTY_HANDOFF_TRANSFER_DOCUMENT,
   HANDOFF_TRANSFER_ACCEPTANCE_MAX,
   HANDOFF_TRANSFER_FINISHED_MAX,
+  HANDOFF_TRANSFER_VIEW_FINISHED_MAX,
   HandoffTransferStore,
   layer,
   markLaunched,
@@ -37,6 +38,7 @@ import {
   revokeAcceptance,
   settleLineage,
   transitionTransfer,
+  sourceTransferView,
 } from "./HandoffTransferStore.ts";
 
 const a = EnvironmentId.make("env-a");
@@ -198,6 +200,115 @@ describe("a source's record of a move", () => {
     expect(resumed).toBeNull();
     expect(afterBoth).toBe(afterSend);
     expect(openTransfer(afterBoth, a, thread)?.state).toBe("sent");
+  });
+
+  it("shows a window this machine's own moves: every open one, the newest finished", () => {
+    let document = putTransfer(EMPTY_HANDOFF_TRANSFER_DOCUMENT, record({ state: "held" }));
+    // A move another machine is the source of is not this machine's to show.
+    document = putTransfer(
+      document,
+      record({ operationId: "theirs", lineage: { ...lineage, sourceEnvironmentId: b } }),
+    );
+    for (let index = 0; index < HANDOFF_TRANSFER_VIEW_FINISHED_MAX + 5; index += 1) {
+      document = putTransfer(
+        document,
+        record({
+          operationId: `done-${index}`,
+          batchId: index === 0 ? "old-batch" : "new-batch",
+          lineage: { ...lineage, sourceThreadId: ThreadId.make(`thread:${index}`) },
+          state: index % 2 === 0 ? "failed" : "resumed",
+          createdAt: `2026-11-19T15:00:${String(index).padStart(2, "0")}.000Z`,
+          updatedAt: `2026-11-19T15:00:${String(index).padStart(2, "0")}.000Z`,
+        }),
+      );
+    }
+    const batch = (batchId: string, operationIds: ReadonlyArray<string>) => ({
+      batchId,
+      targetEnvironmentId: b,
+      trigger: { kind: "manual" as const },
+      operationIds,
+      createdAt: now,
+    });
+    document = {
+      ...document,
+      batches: {
+        "old-batch": batch("old-batch", ["done-0"]),
+        "new-batch": batch("new-batch", ["done-1", `done-${HANDOFF_TRANSFER_VIEW_FINISHED_MAX}`]),
+      },
+    };
+    const view = sourceTransferView(document, a);
+    // The open one, the newest finished ones, and `done-1`, which its batch brings along.
+    expect(view.transfers).toHaveLength(HANDOFF_TRANSFER_VIEW_FINISHED_MAX + 2);
+    const shown = view.transfers.map((item) => item.operationId);
+    expect(shown).toContain("op-1");
+    expect(shown).not.toContain("theirs");
+    // The oldest finished ones are left out, and so is a batch with no record left to show.
+    expect(shown).not.toContain("done-0");
+    expect(shown).not.toContain("done-2");
+    expect(shown).toContain("done-1");
+    expect(shown).toContain(`done-${HANDOFF_TRANSFER_VIEW_FINISHED_MAX + 4}`);
+    expect(view.batches.map((item) => item.batchId)).toEqual(["new-batch"]);
+    expect(sourceTransferView(EMPTY_HANDOFF_TRANSFER_DOCUMENT, a)).toEqual({
+      transfers: [],
+      batches: [],
+    });
+  });
+
+  it("shows a batch whole: a thread that stayed is not cut from one that arrived", () => {
+    // One thread stayed, one arrived, then enough other moves finished to push the first out.
+    let document = putTransfer(
+      EMPTY_HANDOFF_TRANSFER_DOCUMENT,
+      record({
+        operationId: "stayed",
+        batchId: "mixed",
+        state: "stayed",
+        createdAt: "2026-11-19T15:00:00.000Z",
+        updatedAt: "2026-11-19T15:00:01.000Z",
+      }),
+    );
+    document = putTransfer(
+      document,
+      record({
+        operationId: "arrived",
+        batchId: "mixed",
+        lineage: { ...lineage, sourceThreadId: ThreadId.make("thread:two") },
+        state: "ready",
+        createdAt: "2026-11-19T15:00:00.000Z",
+        updatedAt: "2026-11-19T15:00:02.000Z",
+      }),
+    );
+    for (let index = 0; index < HANDOFF_TRANSFER_VIEW_FINISHED_MAX - 1; index += 1) {
+      document = putTransfer(
+        document,
+        record({
+          operationId: `later-${index}`,
+          lineage: { ...lineage, sourceThreadId: ThreadId.make(`thread:later-${index}`) },
+          state: "resumed",
+          createdAt: `2026-11-19T16:00:${String(index).padStart(2, "0")}.000Z`,
+          updatedAt: `2026-11-19T16:00:${String(index).padStart(2, "0")}.000Z`,
+        }),
+      );
+    }
+    document = {
+      ...document,
+      batches: {
+        mixed: {
+          batchId: "mixed",
+          targetEnvironmentId: b,
+          trigger: { kind: "manual" as const },
+          operationIds: ["stayed", "arrived"],
+          createdAt: "2026-11-19T15:00:00.000Z",
+        },
+      },
+    };
+    const view = sourceTransferView(document, a);
+    const shown = view.transfers.map((item) => item.operationId);
+    expect(view.batches.map((item) => item.batchId)).toEqual(["mixed"]);
+    // Every record of a batch that is shown, or none of them.
+    expect(shown.filter((id) => id === "stayed" || id === "arrived")).toEqual([
+      "stayed",
+      "arrived",
+    ]);
   });
 
   it("keeps every open record and only the newest finished ones", () => {

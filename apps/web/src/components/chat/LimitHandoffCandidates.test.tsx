@@ -63,7 +63,7 @@ describe("LimitHandoffCandidateList", () => {
     });
     const buttons = renderer.root.findAllByType("button" as never);
     expect(buttons).toHaveLength(1);
-    expect(buttons[0]!.findByType("span" as never).children).toEqual(["Move to M3"]);
+    expect(buttons[0]!.findByType("span" as never).children).toEqual(["Hand off to M3"]);
     // The order and every machine's verdict live in the Tooltip primitive (hover and
     // keyboard focus), not a native title and not a numbered list.
     expect(buttons[0]!.props.title).toBeUndefined();
@@ -142,7 +142,7 @@ describe("LimitHandoffCandidateList", () => {
     );
   });
 
-  it("says when this server can't move threads yet", () => {
+  it("says when this machine can't hand threads off yet", () => {
     const html = renderToStaticMarkup(
       <LimitHandoffCandidateList
         result={result({
@@ -152,7 +152,7 @@ describe("LimitHandoffCandidateList", () => {
         onMove={noop}
       />,
     );
-    expect(html).toContain("This server can&#x27;t move threads to another machine yet.");
+    expect(html).toContain("This machine can&#x27;t hand threads off yet.");
     expect(html).not.toContain("<button");
   });
 

@@ -1004,11 +1004,14 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
     destination: EnvironmentId,
     reason: TakeoverReason,
     trigger: HandoffTransferTrigger = MANUAL,
+    /** The asking window's name for the batch; a name already taken is not used twice. */
+    named?: string,
   ): Effect.Effect<ReadonlyMap<ThreadId, string>, HandoffModeError> =>
     Effect.gen(function* () {
       const document = yield* deps.document;
       const now = yield* deps.nowIso;
-      const batchId = NodeCrypto.randomUUID();
+      const taken = named === undefined || (yield* store.read).batches[named] !== undefined;
+      const batchId = taken ? NodeCrypto.randomUUID() : named;
       const records: Array<HandoffTransferRecord> = [];
       for (const threadId of threadIds) {
         const record = document.threads[threadId];
@@ -1085,7 +1088,11 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
     });
 
   /** "Resume here": releases a hold nothing was sent under. A sent one is never released by hand. */
-  const resumeHere = (threadId: ThreadId): Effect.Effect<boolean, HandoffModeError> =>
+  const resumeHere = (
+    threadId: ThreadId,
+    /** The record the press was made on; another open move of the thread is left alone. */
+    operationId?: string,
+  ): Effect.Effect<boolean, HandoffModeError> =>
     // A move that runs in this process now is not stuck: it ends by itself.
     running.has(threadId)
       ? Effect.succeed(false)
@@ -1094,6 +1101,7 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
           Effect.gen(function* () {
             const open = openTransfer(yield* store.read, self, threadId);
             if (open === undefined) return false;
+            if (operationId !== undefined && open.operationId !== operationId) return false;
             const released = yield* patch(open.operationId, ["pending", "held"], {
               state: "stayed",
               detail: RESUMED_HERE,
@@ -1268,5 +1276,5 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       ),
     );
 
-  return { handOff, planBatch, endBatch, resumeUnsent, reconcile, pull, servePull };
+  return { handOff, planBatch, endBatch, resumeHere, resumeUnsent, reconcile, pull, servePull };
 }

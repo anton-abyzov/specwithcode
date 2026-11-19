@@ -131,11 +131,29 @@ const SLEEP_START_PHRASES: readonly string[] = [
   "Waiting for {machine} to confirm that silence no longer moves threads. Until it answers, a thread it could continue pauses here when it goes quiet.",
 ];
 
+/**
+ * Strings the Hand off dialog and progress view retired (increment 1390, Phase 3):
+ * a thread is handed off, not moved, and "ready to move" is no longer how a row reads.
+ * Only the strings that change removed are here; an entry that still does its old job
+ * keeps its old name until its own change.
+ */
+const PHASE_3_PHRASES: readonly string[] = [
+  "This server can't move threads to another machine yet.",
+  "Leave this machine: hand its threads, routines and coordinator on",
+  "Nothing ready to move",
+  "Move 1 thread",
+  "Can't move",
+  "Its conversation and file changes go with it. This copy stops and stays here to read.",
+  "Review readiness before moving the selected threads. They continue on the machine you pick. Anything that can't move stays here, untouched.",
+  "Nothing is running here that's set to keep ready to move.",
+];
+
 /** Exact old phrases: never quoted in the source again, and never a catalog key. */
 export const RETIRED_PHRASES: readonly string[] = [
   ...PHASE_1_PHRASES,
   ...PHASE_2_PHRASES,
   ...SLEEP_START_PHRASES,
+  ...PHASE_3_PHRASES,
 ];
 
 /** Phase 1: retired words that were plain text in a component. */
@@ -196,7 +214,20 @@ const PHASE_2_TEXT: readonly string[] = [
 ];
 
 /** Retired words that were plain text in a component, matched anywhere in the source. */
-export const RETIRED_TEXT: readonly string[] = [...PHASE_1_TEXT, ...PHASE_2_TEXT];
+/** Phase 3's template text, matched anywhere in the source. */
+const PHASE_3_TEXT: readonly string[] = [
+  "Move ${projectName}'s running threads",
+  "Move ${state.movable} threads",
+  "'s coordinator stays on ${props.machineName}.",
+  "is running on ${props.machineName} that's set to keep ready to move.",
+  "Nothing was running here that's set to keep ready to move.",
+  "Move to ${best.machineLabel}",
+  "Move to ${props.machine}",
+  "Moved to ${props.result.machine}",
+  'Move "${props.title}"',
+];
+
+export const RETIRED_TEXT: readonly string[] = [...PHASE_1_TEXT, ...PHASE_2_TEXT, ...PHASE_3_TEXT];
 
 /** Phase 1: role words. "Main machine" is a settings label of its own (D-20). */
 const PHASE_1_BANNED: readonly RegExp[] = [

@@ -483,7 +483,7 @@ describe("actual callback integration", () => {
       appCommandsOffered: false,
       composerHasNonPromptContent: false,
       parseAwayAppCommand: () => null,
-      requestAway: vi.fn(),
+      openComposerAppDialog: vi.fn(),
       projectRouting: { send: vi.fn(), coordinatorThreadId: "coordinator" },
       activePendingProgress: null,
       currentCreditRouteRef: { current: { allowed: true } },

@@ -787,8 +787,7 @@ import {
   parseAwayAppCommand,
   parseComposerAppCommand,
 } from "../studio/composerAppCommands";
-import { requestAway } from "../studio/awayRequest";
-import { useComposerAppCommands } from "../studio/useComposerAppCommands";
+import { openComposerAppDialog, useComposerAppCommands } from "../studio/useComposerAppCommands";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { Button } from "./ui/button";
 import {
@@ -12510,8 +12509,8 @@ export default function ChatView(props: ChatViewProps) {
     manualCodexCreditIntent?: ManualCodexCreditIntent,
   ) => {
     e?.preventDefault();
-    // `/away`, `/back`, `$away` and `$back` act on the machine, not a thread: they open the
-    // Away dialog from any draft, before a project check or thread creation.
+    // `/away`, `/back`, `$away` and `$back` act on the machine, not a thread: they open Hand off
+    // (or Bring back) from any draft, before a project check or thread creation.
     const awayCommand =
       !appCommandsOffered && !directAnnotation && !composerHasNonPromptContent
         ? parseAwayAppCommand(promptRef.current)
@@ -12520,7 +12519,7 @@ export default function ChatView(props: ChatViewProps) {
       promptRef.current = "";
       setComposerDraftPrompt(composerDraftTarget, "");
       composerRef.current?.resetCursorState();
-      requestAway(awayCommand);
+      openComposerAppDialog(awayCommand, null);
       return;
     }
     if (projectDraftSendGuard.preventSend()) return;

@@ -595,6 +595,10 @@ describe("the transfer record of a handoff", () => {
       // "Resume this machine" releases only holds that were never sent.
       yield* a.moves.resumeFenced;
       expect(leaseOf(a, t1)?.state).toBe("handing-off");
+      // So does "Resume here" pressed for this one thread.
+      yield* a.moves.resumeThread(t1);
+      expect(leaseOf(a, t1)?.state).toBe("handing-off");
+      expect(transferOf(a, t1)?.operationId).toBe(operationId);
       expect(turnRefusal(a.document, t1, a.environmentId)).not.toBeNull();
       expect(takeovers(rig, c)).toHaveLength(0);
       expect(c.launches).toHaveLength(0);
@@ -608,97 +612,121 @@ describe("the transfer record of a handoff", () => {
     }),
   );
 
-  it.effect.each(["fresh window", "lease tick", "resume here", "too old"] as const)(
-    "a batch cut before the second thread was sent: %s",
-    (next) =>
-      Effect.gen(function* () {
-        const rig = yield* makeRig(temporary);
-        const [a, b] = rig.machines as [RigMachine, RigMachine];
-        rig.addThread(a, t1);
-        rig.addThread(a, t2, { running: true });
-        const cut = yield* Deferred.make<void>();
-        let planned: HandoffTransferDocument | null = null;
-        a.onDocument = (document) =>
-          Effect.sync(() => {
-            if (planned === null && document.threads[t1]?.lease?.state === "handing-off") {
-              planned = a.transfers.document;
-            }
-          });
-        a.onDispatch = (command) =>
-          command.type === "run.interrupt"
-            ? signal(cut).pipe(Effect.andThen(Effect.never))
-            : Effect.void;
-        const input = {
-          destinationEnvironmentId: b.environmentId,
-          reason: "manual" as const,
-          threadIds: [t1, t2],
-        };
-
-        const window = yield* a.moves.handOffMachine(input).pipe(Effect.forkChild);
-        yield* Deferred.await(cut);
-
-        // Before the first hold: the batch, and for each thread its operation, target,
-        // checkpoint and disposition.
-        const atFirstHold = planned as unknown as HandoffTransferDocument;
-        const batch = Object.values(atFirstHold.batches)[0];
-        expect(batch).toMatchObject({ targetEnvironmentId: b.environmentId });
-        expect(batch?.operationIds).toHaveLength(2);
-        const plannedRecords = batch!.operationIds.map((id) => atFirstHold.transfers[id]!);
-        expect(plannedRecords.map((record) => record.lineage.sourceThreadId)).toEqual([t1, t2]);
-        for (const record of plannedRecords) {
-          expect(record).toMatchObject({
-            targetEnvironmentId: b.environmentId,
-            state: "pending",
-            batchId: batch?.batchId,
-          });
-          expect(record.sequence).toBeGreaterThan(0);
-          expect(["resume", "ready"]).toContain(record.disposition);
-        }
-        const second = plannedRecords[1]!.operationId;
-        // Partly successful: the first thread moved, the second is held and was never sent.
-        expect(b.launches).toHaveLength(1);
-        expect(moved(transferOf(a, t1))).toBe(true);
-        expect(transferOf(a, t2)).toMatchObject({ state: "held", operationId: second });
-        expect(takeovers(rig).map((request) => request.sourceThreadId)).toEqual([t1]);
-
-        // The server stops here and starts again; its turn died with it.
-        a.onDispatch = null;
-        a.onDocument = null;
-        a.threads.get(t2)!.activeRunId = null;
-        yield* rig.restart(a);
-        yield* Fiber.interrupt(window);
-        expect(leaseOf(a, t2)?.state).toBe("handing-off");
-
-        if (next === "fresh window" || next === "lease tick") {
-          if (next === "fresh window") {
-            const run = yield* a.moves.handOffMachine(input);
-            expect(run.results.map((result) => result.outcome)).toEqual(["moved", "moved"]);
-          } else {
-            yield* a.moves.tick;
+  it.effect.each([
+    "fresh window",
+    "lease tick",
+    "resume here",
+    "resume this thread",
+    "too old",
+  ] as const)("a batch cut before the second thread was sent: %s", (next) =>
+    Effect.gen(function* () {
+      const rig = yield* makeRig(temporary);
+      const [a, b] = rig.machines as [RigMachine, RigMachine];
+      rig.addThread(a, t1);
+      rig.addThread(a, t2, { running: true });
+      const cut = yield* Deferred.make<void>();
+      let planned: HandoffTransferDocument | null = null;
+      a.onDocument = (document) =>
+        Effect.sync(() => {
+          if (planned === null && document.threads[t1]?.lease?.state === "handing-off") {
+            planned = a.transfers.document;
           }
-          // The same operation, to the same machine; the first thread is not moved twice.
-          const sent = takeovers(rig).filter((request) => request.sourceThreadId === t2);
-          expect(sent.map((request) => request.operationId)).toEqual([second]);
-          expect(b.launches).toHaveLength(2);
-          expect(transfersOf(a, t2)).toHaveLength(1);
-          expect(moved(transferOf(a, t2))).toBe(true);
-          expect(continuedOn(a, t2)?.threadId).toBe(b.launches[1]?.threadId);
-          return;
-        }
-        if (next === "resume here") {
-          yield* a.moves.resumeFenced;
+        });
+      a.onDispatch = (command) =>
+        command.type === "run.interrupt"
+          ? signal(cut).pipe(Effect.andThen(Effect.never))
+          : Effect.void;
+      const input = {
+        destinationEnvironmentId: b.environmentId,
+        reason: "manual" as const,
+        threadIds: [t1, t2],
+        // The window names its batch, so it can tell its own hand off from another window's.
+        batchId: "window-batch",
+      };
+
+      const window = yield* a.moves.handOffMachine(input).pipe(Effect.forkChild);
+      yield* Deferred.await(cut);
+
+      // Before the first hold: the batch, and for each thread its operation, target,
+      // checkpoint and disposition.
+      const atFirstHold = planned as unknown as HandoffTransferDocument;
+      const batch = Object.values(atFirstHold.batches)[0];
+      expect(batch).toMatchObject({
+        batchId: "window-batch",
+        targetEnvironmentId: b.environmentId,
+      });
+      expect(batch?.operationIds).toHaveLength(2);
+      const plannedRecords = batch!.operationIds.map((id) => atFirstHold.transfers[id]!);
+      expect(plannedRecords.map((record) => record.lineage.sourceThreadId)).toEqual([t1, t2]);
+      for (const record of plannedRecords) {
+        expect(record).toMatchObject({
+          targetEnvironmentId: b.environmentId,
+          state: "pending",
+          batchId: batch?.batchId,
+        });
+        expect(record.sequence).toBeGreaterThan(0);
+        expect(["resume", "ready"]).toContain(record.disposition);
+      }
+      const second = plannedRecords[1]!.operationId;
+      // Partly successful: the first thread moved, the second is held and was never sent.
+      expect(b.launches).toHaveLength(1);
+      expect(moved(transferOf(a, t1))).toBe(true);
+      expect(transferOf(a, t2)).toMatchObject({ state: "held", operationId: second });
+      expect(takeovers(rig).map((request) => request.sourceThreadId)).toEqual([t1]);
+
+      // The server stops here and starts again; its turn died with it.
+      a.onDispatch = null;
+      a.onDocument = null;
+      a.threads.get(t2)!.activeRunId = null;
+      yield* rig.restart(a);
+      yield* Fiber.interrupt(window);
+      expect(leaseOf(a, t2)?.state).toBe("handing-off");
+
+      if (next === "fresh window" || next === "lease tick") {
+        if (next === "fresh window") {
+          const run = yield* a.moves.handOffMachine(input);
+          expect(run.results.map((result) => result.outcome)).toEqual(["moved", "moved"]);
         } else {
-          yield* TestClock.adjust("16 minutes");
           yield* a.moves.tick;
         }
-        // Nothing was sent, so the thread runs here again at the epoch it had.
-        expect(leaseOf(a, t2)).toMatchObject({ state: "active", epoch: 1 });
-        expect(transferOf(a, t2)?.state).toBe("stayed");
-        expect(turnRefusal(a.document, t2, a.environmentId)).toBeNull();
+        // The same operation, to the same machine; the first thread is not moved twice.
+        const sent = takeovers(rig).filter((request) => request.sourceThreadId === t2);
+        expect(sent.map((request) => request.operationId)).toEqual([second]);
+        expect(b.launches).toHaveLength(2);
+        expect(transfersOf(a, t2)).toHaveLength(1);
+        expect(moved(transferOf(a, t2))).toBe(true);
+        expect(continuedOn(a, t2)?.threadId).toBe(b.launches[1]?.threadId);
+        return;
+      }
+      if (next === "resume here") {
+        yield* a.moves.resumeFenced;
+      } else if (next === "resume this thread") {
+        // The progress view's row control: the window is shown both records of the batch.
+        const view = yield* a.moves.transfers;
+        expect(view.batches.map((item) => item.batchId)).toEqual([batch?.batchId]);
+        expect(view.transfers.map((record) => record.lineage.sourceThreadId)).toEqual([t1, t2]);
+        // Asked for the thread that arrived, it releases nothing.
+        yield* a.moves.resumeThread(t1);
+        expect(leaseOf(a, t2)?.state).toBe("handing-off");
+        expect(moved(transferOf(a, t1))).toBe(true);
+        // A press on a row another hand off has replaced names an operation that is
+        // not this thread's open one: it changes nothing.
+        yield* a.moves.resumeThread(t2, "an-earlier-operation");
+        expect(leaseOf(a, t2)?.state).toBe("handing-off");
+        expect(transferOf(a, t2)).toMatchObject({ state: "held", operationId: second });
+        yield* a.moves.resumeThread(t2, second);
+      } else {
+        yield* TestClock.adjust("16 minutes");
         yield* a.moves.tick;
-        expect(takeovers(rig).map((request) => request.sourceThreadId)).toEqual([t1]);
-        expect(b.launches).toHaveLength(1);
-      }),
+      }
+      // Nothing was sent, so the thread runs here again at the epoch it had.
+      expect(leaseOf(a, t2)).toMatchObject({ state: "active", epoch: 1 });
+      expect(transferOf(a, t2)?.state).toBe("stayed");
+      expect(turnRefusal(a.document, t2, a.environmentId)).toBeNull();
+      yield* a.moves.tick;
+      expect(takeovers(rig).map((request) => request.sourceThreadId)).toEqual([t1]);
+      expect(b.launches).toHaveLength(1);
+    }),
   );
 
   it.effect("a batch cut after the destination received the second thread", () =>

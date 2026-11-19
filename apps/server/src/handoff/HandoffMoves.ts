@@ -736,7 +736,13 @@ export const make = Effect.gen(function* () {
       // Away mode names its threads, whatever their handoff mode, and their queues go too.
       const carriesQueue = input.reason === "away" || input.reason === "back";
       // Every thread's record is written before the first of them is held.
-      const planned = yield* transfers.planBatch(threadIds, destination, "machine-handoff");
+      const planned = yield* transfers.planBatch(
+        threadIds,
+        destination,
+        "machine-handoff",
+        undefined,
+        input.batchId,
+      );
       const results: Array<HandoffMachineThreadResult> = [];
       yield* Effect.addFinalizer(() => transfers.endBatch(planned));
       for (const threadId of threadIds) {
@@ -1019,6 +1025,13 @@ export const make = Effect.gen(function* () {
     return yield* handoff.snapshot;
   });
 
+  const resumeThread = (threadId: ThreadId, operationId?: string) =>
+    transfers.resumeHere(threadId, operationId).pipe(Effect.andThen(handoff.snapshot));
+
+  const transferView = Effect.map(transferStore.read, (document) =>
+    HandoffTransferStore.sourceTransferView(document, self),
+  );
+
   const autoContinue = Drain.makeAutoContinueLoops({
     self,
     document: handoff.document,
@@ -1249,6 +1262,8 @@ export const make = Effect.gen(function* () {
     handOffMachine,
     continueHere,
     resumeFenced,
+    resumeThread,
+    transfers: transferView,
     preflight,
     heartbeat,
     replicate,

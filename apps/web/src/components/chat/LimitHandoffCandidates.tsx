@@ -10,7 +10,10 @@ import { describeTrackWait } from "@specweave-studio/shared/machineFallback";
 import { useEffect, useState } from "react";
 
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useHandoffModeSnapshot } from "../../studio/handoffMode";
 import { limitHandoff } from "../../studio/limitHandoff";
+import { requestHandOffProgress } from "../handoff/HandOffProgress";
+import { threadTransfer } from "../handoff/handOffProgress.logic";
 import { requestHandOffThread } from "../handoff/HandOffThreadDialog";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -35,7 +38,7 @@ export function limitHandoffOrderText(result: LimitHandoffCandidatesResult): str
 }
 
 /**
- * The tooltip of "Move to {machine}": the order machines are tried in, then
+ * The tooltip of "Hand off to {machine}": the order machines are tried in, then
  * each machine's verdict ("Minis: same Claude account as M4").
  */
 export function limitHandoffOrderTip(result: LimitHandoffCandidatesResult): string {
@@ -52,9 +55,9 @@ const REVIEW_STAYS = {
 } as const;
 
 /**
- * The limit banner's machine target: one "Move to {machine}" button for the
- * first machine that can take the thread, which opens the thread's move
- * dialog on that machine with the model its verdict was for. Why the others
+ * The limit banner's machine target: one "Hand off to {machine}" button for
+ * the first machine that can take the thread, which opens the thread's hand
+ * off dialog on that machine with the model its verdict was for. Why the others
  * can't, and the order they are tried in, sit in the button's tooltip (it
  * opens on hover and on keyboard focus); when none can, the banner says why
  * the thread waits and lists each machine's verdict in plain view.
@@ -101,7 +104,7 @@ export function LimitHandoffCandidateList({
   if (!result.available) {
     return (
       <p className="basis-full text-xs text-muted-foreground">
-        {tx("This server can't move threads to another machine yet.")}
+        {tx("This machine can't hand threads off yet.")}
       </p>
     );
   }
@@ -144,7 +147,9 @@ export function LimitHandoffCandidateList({
               className="max-w-full min-w-0"
               onClick={() => onMove(best)}
             >
-              <span className="truncate">{`Move to ${best.machineLabel}`}</span>
+              <span className="truncate">
+                {tx("Hand off to {machine}", { machine: best.machineLabel })}
+              </span>
             </Button>
           }
         />
@@ -152,6 +157,18 @@ export function LimitHandoffCandidateList({
           {limitHandoffOrderTip(result)}
         </TooltipPopup>
       </Tooltip>
+    </div>
+  );
+}
+
+/** The banner's line for a thread whose hand off this machine has a record of. */
+export function LimitHandoffProgressLink({ onOpen }: { onOpen: () => void }) {
+  const tx = useTx();
+  return (
+    <div className="flex basis-full flex-wrap items-center gap-2 text-xs">
+      <Button size="xs" variant="outline" onClick={onOpen}>
+        {tx("Show hand off progress")}
+      </Button>
     </div>
   );
 }
@@ -187,21 +204,30 @@ export function LimitHandoffCandidates({
       window.clearInterval(timer);
     };
   }, [candidates, environmentId, threadId]);
+  // A hand off of this thread that this machine has a record of: its progress view is one press away.
+  const { snapshot } = useHandoffModeSnapshot(environmentId);
+  const progress = threadTransfer(snapshot?.transfers, threadId) ? (
+    <LimitHandoffProgressLink onOpen={() => requestHandOffProgress(environmentId, { threadId })} />
+  ) : null;
   if (result)
     return (
-      <LimitHandoffCandidateList
-        result={result}
-        onMove={(candidate) =>
-          requestHandOffThread(
-            { environmentId, threadId },
-            {
-              destinationEnvironmentId: candidate.environmentId,
-              modelSelection: candidate.modelSelection,
-            },
-          )
-        }
-      />
+      <>
+        {progress}
+        <LimitHandoffCandidateList
+          result={result}
+          onMove={(candidate) =>
+            requestHandOffThread(
+              { environmentId, threadId },
+              {
+                destinationEnvironmentId: candidate.environmentId,
+                modelSelection: candidate.modelSelection,
+              },
+            )
+          }
+        />
+      </>
     );
+  if (progress) return progress;
   return error ? (
     <p className="basis-full text-xs text-muted-foreground">{`Couldn't check other machines: ${error}`}</p>
   ) : null;
