@@ -2,11 +2,17 @@
 // in a new private home, with a fake agent and a fake `specweave`. Nothing reaches a model, the
 // network, a live store or a credential folder.
 //
-// It goes the way a person does: the offer is there (`firstFeatureSample`), the sample is made,
-// step 1 turns SpecWeave on, step 2 sends AC-22's request to the coordinator, the fake agent does
-// the feature and records a review from a second family, the card lands in Done with that review
-// listed (what step 3 shows), the guide is stored as finished, and the offer is gone
-// (`firstFeatureFinished`), also after the sample is removed.
+// It drives the RPCs the guide's presses call, in a person's order: the offer is there
+// (`firstFeatureSample`), the sample is made and stamped as the sample with its guide started,
+// step 1 turns SpecWeave on, step 2 sends AC-22's request to the coordinator, and the fake agent,
+// working in the folder the coordinator's session was given, writes the feature with a review from
+// a second family. The card reaches Done with that review listed (what step 3 shows), the guide is
+// stored as finished, and the offer is gone (`firstFeatureFinished`), also after removal.
+//
+// What it does not walk, and where that is proven instead: the card arrives already closed, so
+// step 2's Planning, Working, In review and Fixing lines are the guide's unit tests and fixture
+// (PR 641); no real `specweave verify` or `complete` runs; and step 3's "open the review" press and
+// the guide storing finished on its own are the host tests. Here the run marks finished itself.
 //
 //   node scripts/studio-projects/first-feature.mjs [out-dir]
 //   node scripts/studio-projects/first-feature.mjs --fake-agent   (what the server runs)
@@ -84,6 +90,7 @@ function fakeAgent() {
     currentModelId: "default",
   };
   const cwds = new Map();
+  const sessionLog = process.env.FIRST_FEATURE_E2E_SESSIONS;
   let sessions = 0;
   NodeReadline.createInterface({ input: process.stdin }).on("line", (line) => {
     let message;
@@ -111,6 +118,12 @@ function fakeAgent() {
     if (method === "session/new") {
       const sessionId = `first-feature-${process.pid}-${++sessions}`;
       cwds.set(sessionId, params.cwd ?? process.cwd());
+      // The script reads where the server put each session.
+      if (sessionLog)
+        NodeFS.appendFileSync(
+          sessionLog,
+          `${JSON.stringify({ sessionId, cwd: params.cwd ?? null })}\n`,
+        );
       return send({ id, result: { sessionId, models } });
     }
     if (method.startsWith("session/set_") || method === "authenticate")
@@ -119,13 +132,9 @@ function fakeAgent() {
       const text = (params.prompt ?? []).map((part) => part.text ?? "").join(" ");
       let reply = "Fake agent: nothing to do.";
       if (text.includes(FIRST_FEATURE_REQUEST)) {
-        // The project the script made; the coordinator may run in a folder of its own.
-        const target = process.env.FIRST_FEATURE_E2E_TARGET;
-        const projectRoot =
-          target && NodeFS.existsSync(target)
-            ? NodeFS.readFileSync(target, "utf8").trim()
-            : cwds.get(params.sessionId);
-        writeFeatureIncrement(projectRoot);
+        // Where a real agent writes: the folder its session was given. If the server sent the
+        // coordinator somewhere the Board does not read, the card never shows and the run fails.
+        writeFeatureIncrement(cwds.get(params.sessionId));
         reply = `Planned, built, verified, reviewed and closed ${FEATURE_ID}.`;
       }
       send({
@@ -218,7 +227,7 @@ export async function runFirstFeature(out) {
   ])
     NodeFS.mkdirSync(dir, { recursive: true, mode: 0o700 });
   NodeFS.writeFileSync(NodePath.join(bin, "specweave"), fakeSpecweaveSource(), { mode: 0o755 });
-  const target = NodePath.join(home, "first-feature-target");
+  const sessions = NodePath.join(home, "agent-sessions.jsonl");
   const fixture = { instanceId: "fixture", model: "default" };
   const natives = ["codex", "claudeAgent", "cursor", "grok", "pi", "opencode", "antigravity"];
   NodeFS.writeFileSync(
@@ -260,7 +269,7 @@ export async function runFirstFeature(out) {
     GIT_COMMITTER_NAME: "First feature e2e",
     GIT_COMMITTER_EMAIL: "e2e@example.invalid",
     STUDIO_DISABLE_AUTO_UPDATE: "true",
-    FIRST_FEATURE_E2E_TARGET: target,
+    FIRST_FEATURE_E2E_SESSIONS: sessions,
   };
   const receipt = { home, origin, steps: [] };
   const step = (name, data = {}) => {
@@ -332,12 +341,28 @@ export async function runFirstFeature(out) {
     const projectId = made.projectId;
     const read = () => rpc(session, "projects.workspaceRead", { projectId });
     const projectRoot = made.workspaceRoot;
-    // A fresh machine has no other sample, so the name is not numbered.
-    const title = "First feature";
     NodeAssert.ok(projectRoot, "the sample has a folder");
-    NodeFS.writeFileSync(target, projectRoot);
     NodeAssert.equal(made.sampleAutoReviewError, undefined, "the sample's own review is off");
-    step("sample made", { projectId });
+    const fresh = await read();
+    NodeAssert.equal(
+      fresh.settings.sample,
+      "first-feature",
+      "the project is stamped as the sample",
+    );
+    NodeAssert.ok(fresh.settings.firstFeatureGuide?.started, "the guide is stored as started");
+    NodeAssert.equal(fresh.settings.firstFeatureGuide?.ended, undefined, "the guide is running");
+    const override = (await rpc(session, "server.getConfig")).settings.projectSettingsOverrides?.[
+      projectId
+    ];
+    NodeAssert.equal(
+      override?.adversarialReview?.autoOnFeatureComplete,
+      false,
+      "the sample's automatic review is off on record",
+    );
+    // Neither the create result nor the workspace read carries the title; a fresh home has no
+    // other sample, so the name is not numbered. A wrong title fails the removal below.
+    const title = "First feature";
+    step("sample made", { projectId, guide: fresh.settings.firstFeatureGuide });
 
     // Step 1: Turn SpecWeave on.
     await rpc(session, "projects.specweaveSetUp", { projectId });
@@ -373,7 +398,16 @@ export async function runFirstFeature(out) {
       },
       120_000,
     );
-    step("step 2: card in Done");
+    // The coordinator's session ran in the sample's own folder.
+    const cwdsSeen = NodeFS.readFileSync(sessions, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line).cwd);
+    NodeAssert.ok(
+      cwdsSeen.some((cwd) => cwd && NodeFS.realpathSync(cwd) === NodeFS.realpathSync(projectRoot)),
+      `a session ran in the sample's folder: ${JSON.stringify(cwdsSeen)}`,
+    );
+    step("step 2: card in Done", { sessionCwds: cwdsSeen });
 
     // Step 3: Read the review. The guide lists what the board records.
     NodeAssert.deepEqual(
@@ -428,7 +462,10 @@ export async function runFirstFeature(out) {
     if (server.exitCode === null) {
       server.kill("SIGTERM");
       await Promise.race([new Promise((done) => server.once("exit", done)), delay(10_000)]);
-      if (server.exitCode === null) server.kill("SIGKILL");
+      if (server.exitCode === null) {
+        server.kill("SIGKILL");
+        await Promise.race([new Promise((done) => server.once("exit", done)), delay(5_000)]);
+      }
     }
     if (out) {
       NodeFS.mkdirSync(out, { recursive: true });

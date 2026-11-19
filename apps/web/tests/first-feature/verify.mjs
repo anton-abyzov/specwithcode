@@ -259,8 +259,12 @@ try {
           const settled = await page
             .waitForFunction(
               () => {
-                const toast = document.querySelector('[data-slot="toast-viewport"] > *');
-                if (toast === null) return false;
+                const toast = [
+                  ...document.querySelectorAll('[data-slot="toast-viewport"] > *'),
+                ].find((node) =>
+                  node.textContent?.includes("Automatic review is still on for the sample"),
+                );
+                if (toast === undefined) return false;
                 const box = toast.getBoundingClientRect();
                 return (
                   box.left >= 0 &&
