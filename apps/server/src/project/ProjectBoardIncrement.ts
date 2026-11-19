@@ -123,7 +123,7 @@ async function stamp(file: string): Promise<string> {
 }
 
 const listingStamp = (entries: ReadonlyArray<Entry>) =>
-  entries.map((entry) => `${entry.name}:${entry.stamp}`).join("/");
+  entries.map((entry) => `${entry.name}:${entry.file ? "f" : "o"}:${entry.stamp}`).join("/");
 
 /**
  * The mtime and size of every file an answer depends on: the increment's own
@@ -302,7 +302,20 @@ export async function readProjectBoardIncrement(
       : await listEntries(NodePath.join(own, "reports", "reviews"), ownReal);
   const projectReviews = listedReviews === "outside" ? [] : listedReviews;
   const projectContained = listed !== "outside" && listedReviews !== "outside";
-  const signature = `${signed.signature}|${listingStamp(projectReports)}|${listingStamp(projectReviews)}`;
+  // Whether the project folder's report folders are links: the review reader
+  // skips linked ones in another copy, so a change here changes the answer.
+  const linkedDirs =
+    own === null
+      ? ""
+      : (
+          await Promise.all(
+            [NodePath.join(own, "reports"), NodePath.join(own, "reports", "reviews")].map(
+              async (dir) =>
+                (await NodeFSP.lstat(dir).catch(() => null))?.isSymbolicLink() ? "l" : "d",
+            ),
+          )
+        ).join("");
+  const signature = `${signed.signature}|${listingStamp(projectReports)}|${listingStamp(projectReviews)}|${linkedDirs}`;
   const cached = cache.get(key);
   if (cached !== undefined && cached.signature === signature && input.now <= cached.expiresAt) {
     // The card is read on every call: its reviews and source have their own caches.

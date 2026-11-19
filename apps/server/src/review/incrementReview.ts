@@ -227,11 +227,11 @@ async function readReviewRecords(
 
 /** Review files of an increment folder and of other copies of it, newest first. */
 async function listReviewFilesOf(
-  incrementPath: string,
+  incrementPath: string | null,
   alsoFrom: ReadonlyArray<string>,
 ): Promise<ReviewFile[]> {
   const lists = await Promise.all([
-    listReviewFiles(incrementPath),
+    incrementPath === null ? [] : listReviewFiles(incrementPath),
     ...alsoFrom.map((path) => listReviewFiles(path, true)),
   ]);
   return lists
@@ -325,12 +325,17 @@ const canonicalOr = (family: string) => canonicalReviewFamily(family) ?? family;
  * one of them changes.
  */
 export async function readIncrementReviews(
-  incrementPath: string,
+  /** The shown copy's folder; null when only other copies can be read. */
+  incrementPath: string | null,
   ledgerAuthor: string | null,
-  /** Other copies of the same increment whose records count too (readIncrementReview's `alsoFrom`). */
+  /**
+   * Other copies of the same increment whose records count too
+   * (readIncrementReview's `alsoFrom`); their links are never followed.
+   */
   alsoFrom: ReadonlyArray<string> = [],
 ): Promise<ReadonlyArray<ProjectBoardCardReview>> {
-  const paths = [incrementPath, ...alsoFrom];
+  const paths = [...(incrementPath === null ? [] : [incrementPath]), ...alsoFrom];
+  if (paths.length === 0) return [];
   const stamps = await Promise.all(
     paths.map(async (path) => {
       const reportsPath = NodePath.join(path, "reports");
@@ -341,7 +346,7 @@ export async function readIncrementReviews(
     }),
   );
   if (stamps.every((stamp) => stamp === null)) return [];
-  const key = paths.join("\u0000");
+  const key = `${incrementPath === null ? "-" : "+"}\u0000${paths.join("\u0000")}`;
   const folders = stamps.map((stamp) => stamp ?? "-").join("|");
   const cached = reviewListCache.get(key);
   if (cached !== undefined && cached.value.length === 0 && cached.signature === folders) return [];

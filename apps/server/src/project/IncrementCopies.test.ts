@@ -579,6 +579,127 @@ describe("the newest copy of an increment", () => {
     });
   });
 
+  it("never follows the project folder's review links when the shown copy cannot be read", async () => {
+    const id = "0001-unreadable-linked";
+    const outside = await cache();
+    const { root, cacheDir } = await behindProject(
+      async (at) => {
+        const line = eventOf("T-01", "claim");
+        await writeIncrement(at, id, {
+          tasks: 2,
+          ledger: Array.from({ length: Math.ceil((9 * 1_048_576) / line.length) }, () => line),
+          metadata: { status: "active" },
+        });
+      },
+      async (at) => {
+        await writeIncrement(at, id, { metadata: { status: "planned" } });
+        await record(
+          outside,
+          "review-gpt-6.1-sol-1.md",
+          "model=gpt-6.1-sol family=openai author=claude at=2026-11-13T12:00:00Z",
+          "ship",
+        );
+        await NodeFSP.mkdir(NodePath.join(folderOf(at, id), "reports"), { recursive: true });
+        await NodeFSP.symlink(
+          NodePath.join(outside, "reports", "reviews"),
+          NodePath.join(folderOf(at, id), "reports", "reviews"),
+        );
+      },
+    );
+    const card = await cardOf(root, id, cacheDir);
+    expect(card).toMatchObject({ specPath: null, source: { kind: "remote" } });
+    expect(card?.reviews).toBeUndefined();
+  });
+
+  it("updates the view when a project review file becomes a link", async () => {
+    const id = "0001-relinked-review";
+    const { root, cacheDir } = await behindProject(
+      async (at) => {
+        await writeIncrement(at, id, {
+          tasks: 1,
+          ledger: doneLedger(1),
+          metadata: { status: "active" },
+        });
+      },
+      async (at) => {
+        await writeIncrement(at, id, { metadata: { status: "planned" } });
+        const folder = folderOf(at, id);
+        await NodeFSP.mkdir(NodePath.join(folder, "reports"), { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(folder, "reports", "review-approved.md"),
+          "<!-- specweave review: model=gpt-6.1-sol family=openai author=claude at=2026-11-13T12:00:00Z -->\n# Review\nVerdict: ship\n",
+        );
+      },
+    );
+    const open = () => readProjectBoardIncrement(root, { incrementId: id, now: NOW, cacheDir });
+    expect(await open()).toMatchObject({ review: { latest: { verdict: "ship" } } });
+    const folder = folderOf(root, id);
+    await NodeFSP.mkdir(NodePath.join(folder, "archive"));
+    await NodeFSP.rename(
+      NodePath.join(folder, "reports", "review-approved.md"),
+      NodePath.join(folder, "archive", "review-approved.md"),
+    );
+    await NodeFSP.symlink(
+      NodePath.join(folder, "archive", "review-approved.md"),
+      NodePath.join(folder, "reports", "review-approved.md"),
+    );
+    const view = await open();
+    expect(view === "invalid" || view === null ? null : (view.review?.latest ?? null)).toBeNull();
+  });
+
+  it("asks Git for origin/main when the files cannot answer", async () => {
+    const id = "0001-asked-git";
+    const { root, cacheDir, merged } = await behindProject(async (at) => {
+      await writeIncrement(at, id, { tasks: 1, ledger: [] });
+    });
+    // origin/HEAD names a branch that is gone, and origin/main is not in the files.
+    git(root, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/gone");
+    git(root, "update-ref", "-d", "refs/remotes/origin/main");
+    const { execFileSync } = await import("node:child_process");
+    const asked: string[] = [];
+    const answering: BoardGitRun = async (cwd, args, input) => {
+      if (args[0] === "rev-parse" && args.at(-1) === "refs/remotes/origin/main^{commit}") {
+        asked.push("main");
+        return { ok: true, stdout: Buffer.from(`${merged}\n`) };
+      }
+      try {
+        const stdout = execFileSync("git", ["-C", cwd, ...args], {
+          input: input ?? "",
+          maxBuffer: 64 * 1_048_576,
+          stdio: ["pipe", "pipe", "ignore"],
+        });
+        return { ok: true, stdout };
+      } catch {
+        return { ok: false, stdout: Buffer.alloc(0) };
+      }
+    };
+    const board = await readProjectBoard(root, { now: NOW, cacheDir, git: answering });
+    expect(asked).toEqual(["main"]);
+    expect(board.cards.find((card) => card.incrementId === id)).toMatchObject({
+      source: { kind: "remote", name: "origin/main" },
+    });
+  });
+
+  it("counts how far behind a project folder on a branch named with a plus sign is", async () => {
+    const { root, cacheDir } = await behindProject(async (at) => {
+      await writeIncrement(at, "0001-ahead", { tasks: 1, ledger: [] });
+    });
+    git(root, "checkout", "-q", "-b", "fix/board+refs");
+    const board = await readProjectBoard(root, { now: NOW, cacheDir });
+    expect(board.behind).toMatchObject({ ref: "origin/main", count: 1 });
+  });
+
+  it("names the renamed default branch at the same commit", async () => {
+    const id = "0001-renamed";
+    const { root, cacheDir, merged } = await behindProject(async (at) => {
+      await writeIncrement(at, id, { tasks: 1, ledger: [] });
+    });
+    expect((await cardOf(root, id, cacheDir))?.source).toMatchObject({ name: "origin/main" });
+    setRemote(root, merged, "trunk");
+    git(root, "update-ref", "-d", "refs/remotes/origin/main");
+    expect((await cardOf(root, id, cacheDir))?.source).toMatchObject({ name: "origin/trunk" });
+  });
+
   it("answers from the folders alone when Git fails, and runs Git only when the remote commit changes", async () => {
     const { root, cacheDir } = await behindProject(
       async (at) => {

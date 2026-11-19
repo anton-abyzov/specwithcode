@@ -317,16 +317,15 @@ async function buildCard(
   const folder = root === null ? null : NodePath.join(root, INCREMENTS_DIR, id);
   // Review records are often written to the project folder while the spec
   // lives elsewhere: both copies' records count, newest first.
+  // The project folder's copy is always read as the other copy, links not
+  // followed, also when the shown copy's files could not be read.
   const projectFolder = projectReviewFolder(copies, id, copy);
-  const reviewFolders = [
-    ...(folder === null ? [] : [folder]),
-    ...(projectFolder === null ? [] : [projectFolder]),
-  ];
   // After the detail: its ledger author stands in for review records that name none.
-  const reviews =
-    reviewFolders.length === 0
-      ? []
-      : await readIncrementReviews(reviewFolders[0]!, detail.authorFamily, reviewFolders.slice(1));
+  const reviews = await readIncrementReviews(
+    folder,
+    detail.authorFamily,
+    projectFolder === null ? [] : [projectFolder],
+  );
   const meaning = boardStatus(meta.status);
   const closed = meaning === "completed" || meaning === "dropped";
   const paused = !closed && meaning === "paused";

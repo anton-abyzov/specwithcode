@@ -279,38 +279,62 @@ async function refCommit(common: string, ref: string): Promise<string | null> {
   return packedRef(common, ref);
 }
 
-/** Git's own answer for origin/HEAD, when the files could not give one; by common directory. */
+/** Git's own answer for the default branch, when the files could not give one; by common directory. */
 const resolvedDefaults = new Map<
   string,
   { readonly at: number; readonly value: { readonly ref: string; readonly commit: string } | null }
 >();
 
+const DEFAULT_CANDIDATES = ["refs/remotes/origin/main", "refs/remotes/origin/master"];
+
 /**
- * Asks Git for origin/HEAD (read-only, nothing fetched): for ref storage
- * the file reader does not know, such as reftable.
+ * Asks Git (read-only, nothing fetched) for origin/HEAD, then origin/main,
+ * then origin/master, as the files would: for ref storage the file reader
+ * does not know, such as reftable. Remembered for REMOTE_RETRY_MS either
+ * way, so a fetch shows within that time.
  */
 async function resolvedDefault(
   git: BoardGitRun,
   top: string,
   common: string,
 ): Promise<{ readonly ref: string; readonly commit: string } | null> {
-  // Remembered for REMOTE_RETRY_MS either way: a fetch shows within that time.
   const held = resolvedDefaults.get(common);
   if (held !== undefined && Date.now() - held.at < REMOTE_RETRY_MS) return held.value;
-  const head = "refs/remotes/origin/HEAD";
-  const [name, commit] = await Promise.all([
-    git(top, ["rev-parse", "--verify", "--quiet", "--symbolic-full-name", head]),
-    git(top, ["rev-parse", "--verify", "--quiet", `${head}^{commit}`]),
+  const commitOf = async (ref: string) => {
+    const answer = await git(top, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
+    const sha = answer.ok ? answer.stdout.toString("utf8").trim() : "";
+    return COMMIT.test(sha) ? sha : null;
+  };
+  const head = await git(top, [
+    "rev-parse",
+    "--verify",
+    "--quiet",
+    "--symbolic-full-name",
+    "refs/remotes/origin/HEAD",
   ]);
-  const ref = name.ok ? name.stdout.toString("utf8").trim() : "";
-  const sha = commit.ok ? commit.stdout.toString("utf8").trim() : "";
-  const value =
-    ref.startsWith(REMOTE_PREFIX) && REF_NAME.test(ref) && COMMIT.test(sha)
-      ? { ref: ref.slice(REMOTE_PREFIX.length), commit: sha }
-      : null;
+  const named = head.ok ? head.stdout.toString("utf8").trim() : "";
+  let value: { readonly ref: string; readonly commit: string } | null = null;
+  for (const ref of new Set([
+    ...(named.startsWith("refs/remotes/origin/") && REF_NAME.test(named) ? [named] : []),
+    ...DEFAULT_CANDIDATES,
+  ])) {
+    const commit = await commitOf(ref);
+    if (commit !== null) {
+      value = { ref: ref.slice(REMOTE_PREFIX.length), commit };
+      break;
+    }
+  }
   remember(resolvedDefaults, common, { at: Date.now(), value }, 64);
   return value;
 }
+
+/** The target of a symbolic ref file's `ref: <name>` line, when Git would accept the name. */
+const symbolicTarget = (text: string | undefined, prefix: string): string | undefined => {
+  const target = /^ref:\s*(\S+)$/u.exec(text ?? "")?.[1];
+  return target !== undefined && target.startsWith(prefix) && REF_NAME.test(target)
+    ? target
+    : undefined;
+};
 
 /** The remote's default branch as last fetched: its short name and commit. */
 async function remoteDefault(
@@ -319,21 +343,15 @@ async function remoteDefault(
   common: string,
 ): Promise<{ readonly ref: string; readonly commit: string } | null> {
   const head = (await readText(NodePath.join(common, "refs", "remotes", "origin", "HEAD")))?.trim();
-  const target = /^ref:\s*(refs\/remotes\/origin\/\S+)$/u.exec(head ?? "")?.[1];
-  const named = target !== undefined && REF_NAME.test(target) ? target : undefined;
+  const named = symbolicTarget(head, "refs/remotes/origin/");
   // A stale origin/HEAD (a renamed default branch) falls back to main, then master.
-  const candidates = [
-    ...new Set([
-      ...(named === undefined ? [] : [named]),
-      "refs/remotes/origin/main",
-      "refs/remotes/origin/master",
-    ]),
-  ];
+  const candidates = [...new Set([...(named === undefined ? [] : [named]), ...DEFAULT_CANDIDATES])];
   for (const ref of candidates) {
     const commit = await refCommit(common, ref);
     if (commit !== null) return { ref: ref.slice(REMOTE_PREFIX.length), commit };
   }
-  // Only when origin/HEAD exists in some form the files did not answer for.
+  // Only when origin/HEAD exists in a form the files did not answer for,
+  // or the refs are kept in reftable.
   const known =
     head !== undefined ||
     (await NodeFSP.stat(NodePath.join(common, "reftable")).catch(() => null)) !== null;
@@ -353,7 +371,7 @@ async function checkedOutCommit(top: string, common: string): Promise<string | n
   }
   const head = (await readText(NodePath.join(gitDir, "HEAD")))?.trim() ?? "";
   if (COMMIT.test(head)) return head;
-  const ref = /^ref:\s*(refs\/[A-Za-z0-9._/-]+)$/u.exec(head)?.[1];
+  const ref = symbolicTarget(head, "refs/heads/");
   return ref === undefined ? null : refCommit(common, ref);
 }
 
@@ -515,7 +533,9 @@ async function remoteBranch(
   const held = remotes.get(common);
   if (held?.commit === named.commit) {
     const value = await held.value;
-    if (value !== null || Date.now() - held.at < REMOTE_RETRY_MS) return value;
+    // The same commit under a renamed default branch keeps its listing.
+    if (value !== null) return value.ref === named.ref ? value : { ...value, ref: named.ref };
+    if (Date.now() - held.at < REMOTE_RETRY_MS) return value;
   }
   const value = loadRemote(git, top, common, named.ref, named.commit).catch(() => null);
   remember(remotes, common, { commit: named.commit, at: Date.now(), value }, 64);
