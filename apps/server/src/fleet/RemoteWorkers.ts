@@ -1426,11 +1426,11 @@ const make = Effect.gen(function* () {
           ...(row.loweredFrom === undefined ? {} : { loweredFrom: row.loweredFrom }),
           ...(owesResult(row) && row.handoff.awaiting !== undefined
             ? {
-                    awaiting:
-                      row.handoff.awaiting === "continuation"
-                        ? ("handoff" as const)
-                        : ("run" as const),
-                  }
+                awaiting:
+                  row.handoff.awaiting === "continuation"
+                    ? ("handoff" as const)
+                    : ("run" as const),
+              }
             : {}),
         })),
       );
