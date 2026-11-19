@@ -16,6 +16,9 @@ const world = vi.hoisted(() => {
   const listeners = new Set<() => void>();
   const state = {
     pending: [] as ConnectDeviceRequest[],
+    /** The waiting list of a second machine, for a change of primary machine. */
+    otherPending: [] as ConnectDeviceRequest[],
+    primary: "env-m4",
     log: [] as string[],
     key: null as { thumbprint: string } | null,
     environments: [] as Array<{
@@ -29,6 +32,10 @@ const world = vi.hoisted(() => {
     listeners,
     setEnvironments(next: typeof state.environments) {
       state.environments = next;
+      for (const listener of listeners) listener();
+    },
+    setPrimary(next: string) {
+      state.primary = next;
       for (const listener of listeners) listener();
     },
   };
@@ -46,7 +53,12 @@ vi.mock("../ui/toast", () => ({
 }));
 vi.mock("../../state/entities", () => ({
   useServerConfigs: () =>
-    new Map([["env-m4", { environment: { capabilities: { deviceApproval: true } } }]]),
+    new Map(
+      ["env-m4", "env-m5"].map((id) => [
+        id,
+        { environment: { capabilities: { deviceApproval: true } } },
+      ]),
+    ),
 }));
 vi.mock("../../state/environments", async () => {
   const { useSyncExternalStore } = await import("react");
@@ -55,7 +67,7 @@ vi.mock("../../state/environments", async () => {
     return () => world.listeners.delete(listener);
   };
   return {
-    usePrimaryEnvironmentId: () => "env-m4",
+    usePrimaryEnvironmentId: () => useSyncExternalStore(subscribe, () => world.state.primary),
     useEnvironments: () => ({
       environments: useSyncExternalStore(subscribe, () => world.state.environments),
     }),
@@ -68,11 +80,11 @@ vi.mock("../../cloud/dpop", async (importOriginal) => ({
 vi.mock("../../studio/connectDevices", async () => {
   const logic = await import("../../studio/connectDevices.logic");
   const CODES: Record<string, string> = { K7QX2M: "request-a", P4RT9W: "request-b" };
-  const snapshot = (): ConnectDevicesSnapshot => ({
-    machine: "m4",
+  const snapshot = (environmentId: string): ConnectDevicesSnapshot => ({
+    machine: environmentId === "env-m4" ? "m4" : "m5",
     health: "ok",
     devices: [],
-    pending: [...world.state.pending],
+    pending: [...(environmentId === "env-m4" ? world.state.pending : world.state.otherPending)],
     needsReview: false,
     notices: [],
     canApprove: true,
@@ -81,7 +93,7 @@ vi.mock("../../studio/connectDevices", async () => {
   return {
     ...logic,
     connectDevices: {
-      list: async () => snapshot(),
+      list: async (environmentId: string) => snapshot(environmentId),
       approve: async (_environmentId: string, code: string) => {
         const id = CODES[code.replace(/[\s-]/g, "").toUpperCase()];
         const match = world.state.pending.find((request) => request.id === id);
@@ -180,6 +192,8 @@ const type = async (code: string) => {
 
 beforeEach(() => {
   world.state.pending = [];
+  world.state.otherPending = [];
+  world.state.primary = "env-m4";
   world.state.log = [];
   world.state.key = null;
   world.state.environments = [];
@@ -246,7 +260,31 @@ describe("a pop-up a new device reopened stays open while one put off still wait
     await putOffThenNewDevice();
     await type("P4RT9W");
     await press("Allow");
+    expect(rows()).toEqual(["request-a"]);
     world.state.pending = [];
+    await machineChanged();
+    expect(prompt()).toBeNull();
+  });
+
+  it("never opens on one machine from the last machine's list", async () => {
+    // m5 has A waiting, put off with Later.
+    world.state.otherPending = [first];
+    world.state.primary = "env-m5";
+    await mount(() => <DeviceApprovalPromptHost />);
+    await press("Later");
+    expect(prompt()).toBeNull();
+    // On m4 another device waits, and its pop-up opens.
+    world.state.pending = [second];
+    await act(async () => {
+      world.setPrimary("env-m4");
+      await settle();
+    });
+    expect(rows()).toEqual(["request-b"]);
+    // Back on m5 nothing new asked: A stays put off.
+    await act(async () => {
+      world.setPrimary("env-m5");
+      await settle();
+    });
     await machineChanged();
     expect(prompt()).toBeNull();
   });

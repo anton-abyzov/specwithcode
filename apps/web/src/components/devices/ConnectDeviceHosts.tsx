@@ -67,6 +67,12 @@ export function useDeviceApprovalSupported(environmentId: EnvironmentId | null):
   return configs.get(environmentId)?.environment.capabilities.deviceApproval === true;
 }
 
+/** A polled device list with the machine it came from. */
+interface LoadedSnapshot {
+  readonly environmentId: EnvironmentId;
+  readonly snapshot: ConnectDevicesSnapshot;
+}
+
 /** Polls one machine's device list while mounted; faster while the window is in view. */
 export function useConnectDevices(
   environmentId: EnvironmentId | null,
@@ -77,7 +83,11 @@ export function useConnectDevices(
   },
 ) {
   const { visibleMs, hiddenMs } = poll;
-  const [snapshot, setSnapshot] = useState<ConnectDevicesSnapshot | null>(null);
+  // Kept with the machine it came from, so a change of machine never shows the
+  // last machine's list while the new one loads.
+  const [loaded, setLoaded] = useState<LoadedSnapshot | null>(null);
+  const snapshot =
+    enabled && loaded !== null && loaded.environmentId === environmentId ? loaded.snapshot : null;
   const [error, setError] = useState<string | null>(null);
   const generation = useRef(0);
 
@@ -87,7 +97,7 @@ export function useConnectDevices(
     try {
       const next = await connectDevices.list(environmentId);
       if (mine !== generation.current) return;
-      setSnapshot(next);
+      setLoaded({ environmentId, snapshot: next });
       setError(null);
       announceNotices(environmentId, next.notices);
     } catch (cause) {
@@ -98,7 +108,7 @@ export function useConnectDevices(
 
   useEffect(() => {
     if (environmentId === null || !enabled) {
-      setSnapshot(null);
+      setLoaded(null);
       return;
     }
     let timer: number | undefined;
