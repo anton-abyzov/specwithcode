@@ -789,6 +789,9 @@ export const makeSweep = Effect.gen(function* () {
   const sent = yield* Ref.make(new Set<string>());
   // Per thread and instance, how many windows with no reset time have ended (1089).
   const openWindows = yield* Ref.make(new Map<string, number>());
+  // Per thread and instance an idle move went out from, the model it moved off:
+  // that provider's reading ends the hold wherever the thread is now (1089).
+  const idleOrigins = yield* Ref.make(new Map<string, string>());
   const markSent = (id: string) => Ref.update(sent, (current) => new Set(current).add(id));
   /**
    * Whether a person's Stop holds a stopped thread's last run (see
@@ -1894,30 +1897,32 @@ export const makeSweep = Effect.gen(function* () {
       };
       // An idle move already sent this window leaves the thread as one with no
       // step: no Stop read or handoff each sweep, and its way back still runs.
-      // A reading under the threshold ends the window's hold on its moves.
+      // A reading under the threshold ends the window's hold on its moves,
+      // read on the provider each move went out from, wherever the thread is.
       const threshold = resolved.providerLimitSwitchAtPercent;
-      const ownProvider = providersFor(thread).find(
-        (entry) => entry.instanceId === thread.providerInstanceId,
-      );
-      const used =
-        ownProvider === undefined
-          ? null
-          : providerUsedPercent(ownProvider, now, thread.modelSelection.model);
-      if (threshold != null && used !== null && used < threshold) {
-        const prefix = preswitchIdPrefix(thread.id, thread.providerInstanceId);
+      for (const [key, model] of yield* Ref.get(idleOrigins)) {
+        if (threshold == null || !key.startsWith(`${thread.id}:`)) continue;
+        const instanceId = key.slice(thread.id.length + 1);
+        const origin = providersFor(thread).find((entry) => entry.instanceId === instanceId);
+        const used = origin === undefined ? null : providerUsedPercent(origin, now, model);
+        if (used === null || used >= threshold) continue;
+        const prefix = preswitchIdPrefix(thread.id, instanceId);
         const ended = [...(yield* Ref.get(sent))].filter((id) => id.startsWith(prefix));
-        if (ended.length > 0) {
-          yield* Ref.update(sent, (current) => {
-            const without = new Set(current);
-            for (const id of ended) without.delete(id);
-            return without;
-          });
-          // A window with no reset time ended: the next one needs its own id.
-          if (ended.some((id) => preswitchWindowResetAt(id) === null))
-            yield* Ref.update(openWindows, (current) =>
-              new Map(current).set(openKey, (current.get(openKey) ?? 0) + 1),
-            );
-        }
+        yield* Ref.update(sent, (current) => {
+          const without = new Set(current);
+          for (const id of ended) without.delete(id);
+          return without;
+        });
+        yield* Ref.update(idleOrigins, (current) => {
+          const without = new Map(current);
+          without.delete(key);
+          return without;
+        });
+        // A window with no reset time ended: the next one needs its own id.
+        if (ended.some((id) => preswitchWindowResetAt(id) === null))
+          yield* Ref.update(openWindows, (current) =>
+            new Map(current).set(key, (current.get(key) ?? 0) + 1),
+          );
       }
       const sentIds = yield* Ref.get(sent);
       // A move sent this window holds, under whatever id the window has now,
@@ -2246,6 +2251,16 @@ export const makeSweep = Effect.gen(function* () {
           if (step.type === "api-credits") yield* markSent(apiAttemptKey);
           yield* markSent(baseCommandId);
           yield* markSent(command.commandId);
+          if (
+            command.type === "thread.model-selection.set" &&
+            command.commandId.startsWith("limit-preswitch:")
+          )
+            yield* Ref.update(idleOrigins, (current) =>
+              new Map(current).set(
+                `${thread.id}:${thread.providerInstanceId}`,
+                thread.modelSelection.model,
+              ),
+            );
           yield* threads.dispatch(command).pipe(
             Effect.tap(() =>
               Effect.logInfo("orchestration-v2.provider-fallback.dispatched", {

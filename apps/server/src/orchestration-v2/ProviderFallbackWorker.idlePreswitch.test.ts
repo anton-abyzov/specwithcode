@@ -462,6 +462,34 @@ describe("the idle move before the limit, from the sweep (1089)", () => {
     }),
   );
 
+  it.effect("ends a window with no reset time read on the fallback, then moves again", () =>
+    Effect.gen(function* () {
+      const state = world({ claudeResetAt: "" });
+      const open = `limit-preswitch:t1:${claudeId}:open`;
+      yield* sweeps(state, (sweep) =>
+        Effect.gen(function* () {
+          yield* sweep();
+          // A turn runs on Codex; Claude reads under the threshold and the
+          // thread goes home. That reading, taken on Codex, ends the window.
+          const thread = state.threads[0]!;
+          thread.runs = [...thread.runs, { ...run("r2", "t1", onCodex, "completed"), ordinal: 2 }];
+          thread.latestRunId = "r2";
+          state.claudeUsed = 40;
+          yield* nextSweep();
+          yield* sweep();
+          expect(thread.selection).toEqual(onClaude);
+          // Other threads push Claude over again before this thread is read at home.
+          state.claudeUsed = 92;
+          yield* nextSweep();
+          yield* sweep();
+        }),
+      );
+      expect(ids(state)[0]).toBe(open);
+      expect(ids(state).at(-1)).toBe(`${open}-1`);
+      expect(ids(state)).toHaveLength(3);
+    }),
+  );
+
   it.effect("asks no other machine again after a hand switch back", () =>
     Effect.gen(function* () {
       const state = world({
