@@ -12,6 +12,10 @@ import {
 import { makeCodexFileChangeApprovalGuard } from "./codexFileChangeApprovalGuard.ts";
 import { residentCreditPermission } from "./codexManualCredits.ts";
 import * as Clock from "effect/Clock";
+import {
+  subscriptionChangedSince,
+  type SubscriptionRead,
+} from "../../provider/subscriptionIdentity.ts";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
 import { ProviderProcessSupervisor } from "../../process/ProviderProcessSupervisor.ts";
 import { historyResponseItems } from "../ContextHandoffBudget.ts";
@@ -1163,28 +1167,18 @@ export const CODEX_AUTH_CHANGED_RESTART_REASON =
   "Codex was signed in to another account outside SpecWithCode, and its running process still holds the old sign-in.";
 export const CODEX_AUTH_CHANGED_FAILURE_MESSAGE = `${CODEX_AUTH_CHANGED_RESTART_REASON} SpecWithCode restarts Codex for the next message, so send this one again. If it fails again, sign in to Codex again.`;
 
-export interface CodexSubscriptionRead {
-  readonly key?: string | undefined;
-  readonly changedAt?: string | undefined;
-}
+export type CodexSubscriptionRead = SubscriptionRead;
 
 /**
- * Why an idle Codex process must be replaced before its next turn, or null.
- * One opened on a known subscription is replaced when another is read. One
- * opened before any read named it is replaced when a sign-in change is seen
- * after it started, since nothing says which subscription it holds.
+ * Why an idle Codex process must be replaced before its next turn, or null
+ * (see `subscriptionChangedSince`).
  */
 export function codexSubscriptionReplacement(
   opened: CodexSubscriptionRead,
   openedAtMs: number,
   current: CodexSubscriptionRead,
 ): string | null {
-  if (opened.key !== undefined)
-    return current.key !== undefined && current.key !== opened.key
-      ? CODEX_SUBSCRIPTION_CHANGED_REASON
-      : null;
-  const changedMs = Date.parse(current.changedAt ?? "");
-  return Number.isFinite(changedMs) && changedMs > openedAtMs
+  return subscriptionChangedSince(opened, openedAtMs, current)
     ? CODEX_SUBSCRIPTION_CHANGED_REASON
     : null;
 }

@@ -46,6 +46,37 @@ export function subscriptionKeyOf(
     : undefined;
 }
 
+/** The subscription a provider process opened on, or reads now: its key and when it last changed. */
+export interface SubscriptionRead {
+  readonly key?: string | undefined;
+  readonly changedAt?: string | undefined;
+}
+
+/** The subscription a snapshot's usage read names, for `subscriptionChangedSince`. */
+export function subscriptionReadOf(snapshot: ServerProvider): SubscriptionRead {
+  return {
+    key: subscriptionKeyOf(snapshot.usageLimits),
+    changedAt: snapshot.usageLimits?.accountChangedAt,
+  };
+}
+
+/**
+ * Whether a process opened on `opened` (at `openedAtMs`) now serves another
+ * subscription than `current`. One opened on a known subscription has changed
+ * when another is read. One opened before any read named it has changed when
+ * a sign-in change is seen after it started, since nothing says which
+ * subscription it holds.
+ */
+export function subscriptionChangedSince(
+  opened: SubscriptionRead,
+  openedAtMs: number,
+  current: SubscriptionRead,
+): boolean {
+  if (opened.key !== undefined) return current.key !== undefined && current.key !== opened.key;
+  const changedMs = Date.parse(current.changedAt ?? "");
+  return Number.isFinite(changedMs) && changedMs > openedAtMs;
+}
+
 /** A signed-in identity: the subscription key and a hash of the email, either may be unknown. */
 export interface SubscriptionIdentity {
   readonly key?: string | undefined;

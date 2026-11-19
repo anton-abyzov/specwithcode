@@ -2489,6 +2489,16 @@ const layerWsRpc = (
             if (input.instanceId === undefined) {
               yield* usageLimitSources.refresh;
             }
+            // A person pressed Refresh: every instance reads its account past
+            // its probe cache, as a targeted fresh refresh does for one.
+            if (input.fresh === true && input.instanceId === undefined && !input.refreshModels) {
+              const instances = yield* providerInstances.listInstances;
+              yield* Effect.forEach(
+                instances,
+                (instance) => instance.invalidateCaches ?? Effect.void,
+                { concurrency: "unbounded", discard: true },
+              );
+            }
             let providers = yield* input.cwd !== undefined && input.instanceId !== undefined
               ? providerRegistry.refreshWorkspaceSnapshot({
                   instanceId: input.instanceId,

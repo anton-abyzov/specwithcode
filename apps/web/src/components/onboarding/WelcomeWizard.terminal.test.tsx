@@ -985,7 +985,10 @@ describe("the agents step: readiness", () => {
     await enterRemoteAgents();
     state.refresh.mockClear();
     await click("Check again");
-    expect(state.refresh).toHaveBeenCalledExactlyOnceWith({ environmentId: remoteId, input: {} });
+    expect(state.refresh).toHaveBeenCalledExactlyOnceWith({
+      environmentId: remoteId,
+      input: { fresh: true },
+    });
     expect(state.find).toHaveBeenCalledOnce();
   });
 });

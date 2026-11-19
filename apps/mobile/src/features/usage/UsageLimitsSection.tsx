@@ -325,7 +325,8 @@ export function useRefreshLimits(
         connected.map(async ([environmentId, presentation]) => {
           const result = await refreshUsageLimits(
             environmentId,
-            () => refreshProviders({ environmentId, input: {} }),
+            // A pulled refresh reads each account past the server's probe cache.
+            () => refreshProviders({ environmentId, input: automatic ? {} : { fresh: true } }),
             automatic,
             afterPending,
           );
