@@ -134,7 +134,8 @@ export function CloudEnvironmentConnectRows({
       .filter((environment) => environment.relayManaged)
       .map((environment) => [environment.environmentId, environment]),
   );
-  // Saved over another route only: Studio Connect would be an added fallback.
+  // Saved over another route only: Connect would be one more route, ranked
+  // ahead of LAN, Tailscale and SSH (`insertRoute`).
   const savedWithoutRelay = new Set(
     savedEnvironments
       .filter((environment) => !environment.relayManaged)
