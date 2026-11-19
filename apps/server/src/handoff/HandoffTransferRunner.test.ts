@@ -1319,3 +1319,84 @@ describe("an automatic handoff is fenced to what it was admitted for (1390 EC2-0
     }),
   );
 });
+
+describe("an automatic handoff that changes while it starts (1390 round 2)", () => {
+  const admitted = (running: boolean) =>
+    Effect.gen(function* () {
+      const rig = yield* makeRig(temporary);
+      const [a, b] = rig.machines as [RigMachine, RigMachine];
+      rig.addThread(a, t1, { running });
+      if (!running) a.runEnding = "completed";
+      const start = a.moves
+        .handOff({
+          threadId: t1,
+          destinationEnvironmentId: b.environmentId,
+          trigger: {
+            kind: "automatic",
+            key: "limit-handoff:thread:one:run-1",
+            ...(running ? { runId: `run:${t1}` } : {}),
+            disposition: running ? "resume" : "ready",
+          },
+        })
+        .pipe(Effect.result);
+      return { rig, a, b, start };
+    });
+  const interrupts = (machine: RigMachine) =>
+    machine.dispatched.filter((command) => command.type === "run.interrupt");
+
+  it.effect("Off saved after its record was written holds nothing and reads Stayed (AC-25)", () =>
+    Effect.gen(function* () {
+      const { rig, a, b, start } = yield* admitted(true);
+      // The record is written before the hold; Off lands between the two.
+      a.transfers.failWrite = (next) => {
+        if (Object.values(next.transfers).some((record) => record.state === "pending")) {
+          const record = a.document.threads[t1]!;
+          a.document = {
+            ...a.document,
+            threads: { ...a.document.threads, [t1]: { ...record, mode: "off" } },
+          };
+        }
+        return false;
+      };
+
+      const answer = yield* start;
+
+      expect(answer._tag === "Failure" ? answer.failure.message : answer._tag).toBe(
+        "Hand off automatically is off for this thread.",
+      );
+      expect(leaseOf(a, t1)?.state).toBe("active");
+      expect(transferOf(a, t1)?.state).toBe("stayed");
+      expect(interrupts(a)).toEqual([]);
+      expect(a.threads.get(t1)?.activeRunId).toBe(`run:${t1}`);
+      expect(takeovers(rig)).toHaveLength(0);
+      expect(b.launches).toHaveLength(0);
+    }),
+  );
+
+  it.effect.each([
+    ["a running turn", true, "A new turn started here since this hand off was decided."],
+    ["an idle thread", false, "This thread changed since this hand off was decided."],
+  ] as const)(
+    "another turn that starts while the other machine is asked is never stopped, for %s",
+    ([, running, message]) =>
+      Effect.gen(function* () {
+        const { rig, a, b, start } = yield* admitted(running);
+        // No lease is held during the preflight, so the turn gate lets run B start.
+        rig.network.afterDelivery = (call) =>
+          call.path === "preflight"
+            ? Effect.sync(() => void (a.threads.get(t1)!.activeRunId = "run-B"))
+            : Effect.void;
+
+        const answer = yield* start;
+
+        expect(answer._tag === "Failure" ? answer.failure.message : answer._tag).toBe(message);
+        // Run B keeps running here: nothing interrupted it, held it or sent it.
+        expect(interrupts(a)).toEqual([]);
+        expect(a.threads.get(t1)?.activeRunId).toBe("run-B");
+        expect(leaseOf(a, t1)?.state).toBe("active");
+        expect(transferOf(a, t1)?.state).toBe("stayed");
+        expect(takeovers(rig)).toHaveLength(0);
+        expect(b.launches).toHaveLength(0);
+      }),
+  );
+});

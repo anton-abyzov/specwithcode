@@ -358,6 +358,27 @@ describe("the reset a machine with no room names (AC-39)", () => {
     expect(answer.evidence).toMatchObject({ automatic: false, resetsAt: at14 });
   });
 
+  it("takes no reset from a sign-in whose usage is not known", () => {
+    const at14 = "2026-11-19T14:30:00.000Z";
+    const answer = confirm({
+      trackEntries: [fable, astra],
+      signIns: [
+        // A reading too old to act on: its reset is not evidence either.
+        signIn(fable, "claudeAgent", "Claude", {
+          usedPercent: 100,
+          resetsAt: at14,
+          observedAt: stale,
+        }),
+        signIn(astra, "codex", "Codex", { usedPercent: 100, resetsAt: laterReset }),
+      ],
+    });
+    expect(answer.evidence).toMatchObject({
+      kind: "different-account",
+      automatic: false,
+      resetsAt: laterReset,
+    });
+  });
+
   it("skips a reset that has passed and one nobody named", () => {
     const answer = confirm({
       trackEntries: [fable, fableWork, astra],

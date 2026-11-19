@@ -428,3 +428,49 @@ describe("what changes between the check and the send (1390 T-13, round 1)", () 
     }),
   );
 });
+
+describe("what the last check before the send reads again (1390 T-13, round 2)", () => {
+  itEffect.effect("a sibling sign-in's hold that ended while a machine answered (AC-37)", () =>
+    Effect.gen(function* () {
+      // Codex reports no usage; another thread stopped on its limit holds it for a minute.
+      const result = yield* run({
+        settings: onTracks,
+        thread: daily,
+        localUnreported: true,
+        second: {
+          id: ThreadId.make("t2"),
+          providerInstanceId: codexId,
+          modelSelection: { instanceId: codexId, model: "gpt-6" },
+          usageLimitResetAt: DateTime.formatIso(DateTime.makeUnsafe(stoppedAt + 60_000)),
+          ...daily,
+        },
+        machines: [machine(minis, "Minis")],
+        checks: { [minis]: trackAnswer("Minis", trackEvidence()) },
+        duringCheck: () => TestClock.adjust("2 minutes"),
+      });
+      // The track was out here when Minis was asked, and is not once the hold ended.
+      expect(result.checks[0]?.input.threads[0]?.sourceThreadId).toBe("t1");
+      expect(result.requests.filter((request) => request.threadId === "t1")).toEqual([]);
+    }),
+  );
+
+  itEffect.effect("an idle move at the threshold names its sign-in's reset (EC2-08)", () =>
+    Effect.gen(function* () {
+      const result = yield* run({
+        settings: {
+          providerLimitSwitchAtPercent: 95,
+          providerLimitTargetOrder: "other-machine-first",
+        },
+        // Completed a moment ago: no stop, so no reset of its own.
+        thread: { status: "completed", lastErrorClass: null, usageLimitResetAt: null },
+        machines: [machine(minis, "Minis")],
+      });
+      expect(result.requests).toHaveLength(1);
+      expect(result.requests[0]).toMatchObject({
+        reason: "threshold",
+        resume: false,
+        usageWindowKey: resetsAt,
+      });
+    }),
+  );
+});
