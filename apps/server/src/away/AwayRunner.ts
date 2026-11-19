@@ -83,6 +83,7 @@ import {
   type TransferBackOutcome,
   type TransferOutcome,
 } from "../scheduledTasks/ScheduledTaskTransfer.ts";
+import { threadHandedOffNote } from "../scheduledTasks/ScheduledTaskRunnerRecords.ts";
 import { AwayIntents } from "./AwayIntents.ts";
 import { AwayPeerError, type AwayPeerPost, makeAwayPeerPost } from "./awayPeerCall.ts";
 import { AwayPlanner } from "./AwayPlanner.ts";
@@ -446,7 +447,7 @@ export const makeAwayRunner = (deps: AwayRunnerDeps) => {
           }));
           continue;
         }
-        // A routine bound to a worker waits for that worker's move (after threads).
+        // A routine bound to a worker is settled once that worker's move is known (after threads).
         if (task.threadId !== null) continue;
         yield* transferRoutine(session, task, null);
       }
@@ -491,7 +492,9 @@ export const makeAwayRunner = (deps: AwayRunnerDeps) => {
           );
         }
       }
-      // Routines bound to a worker follow it, or stay with it.
+      // A routine bound to a worker stays on its runner, whether the worker moved
+      // or not (1390 AC-45): a thread's hand-off never moves a schedule. Only a
+      // person moving the routine itself does.
       const tasks = new Map((yield* deps.routines).map((task) => [task.id as string, task]));
       for (const item of session.current.items) {
         if (item.kind !== "routine" || item.outcome !== "pending") continue;
@@ -502,18 +505,19 @@ export const makeAwayRunner = (deps: AwayRunnerDeps) => {
             : session.current.items.find(
                 (entry) => entry.kind === "thread" && entry.id === task.threadId,
               );
-        if (task === undefined || thread?.outcome !== "moved" || thread.targetId === undefined) {
-          yield* settle(session, isItem("routine", item.id), (current) => ({
-            ...current,
-            outcome: "stayed",
-            detail:
-              task === undefined
-                ? "This routine is gone."
+        const handedOff = thread?.outcome === "moved" && thread.targetId !== undefined;
+        yield* settle(session, isItem("routine", item.id), (current) => ({
+          ...current,
+          outcome: "stayed",
+          detail:
+            task === undefined
+              ? "This routine is gone."
+              : handedOff
+                ? clip(
+                    `${threadHandedOffNote(session.current.targetLabel)} The routine stays on this machine.`,
+                  )
                 : "Its thread stays on this machine, so it stays too.",
-          }));
-          continue;
-        }
-        yield* transferRoutine(session, task, thread.targetId);
+        }));
       }
       session.current = { ...session.current, stage: "done", finishedAt: yield* deps.now };
       yield* deps.saveSession(session.current);
@@ -769,6 +773,19 @@ export const makeAwayRunner = (deps: AwayRunnerDeps) => {
             back: back(returned.kind === "returned" ? "returned" : "failed", returned.detail, at),
           }));
         }
+      }
+
+      // A routine that stayed while its worker was away follows that thread's new id here.
+      for (const item of session.current.items) {
+        if (item.kind !== "routine" || item.outcome !== "stayed" || item.via !== undefined)
+          continue;
+        const task = tasks.get(item.id);
+        if (task?.threadId == null) continue;
+        const thread = session.current.items.find(
+          (entry) => entry.kind === "thread" && entry.id === task.threadId,
+        );
+        if (thread?.back?.outcome === "returned" && thread.back.localId !== undefined)
+          yield* deps.rebind(item.id, thread.back.localId);
       }
 
       // 3. Coordinators come back by planned handover from the target; its routines ride along.

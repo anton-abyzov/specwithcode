@@ -207,6 +207,22 @@ describe("buildAwayPlan routines", () => {
     expect(plan.ready).toBe(false);
   });
 
+  it("leaves a routine bound to a worker here, and asks no routines access for it", () => {
+    const plan = buildAwayPlan(
+      facts({
+        routines: [
+          { id: "r-bound", title: "Follow up", projectId: P1, webhook: false, bound: true },
+        ],
+        targetGrant: { routines: false, projects: { kind: "linked" }, revoked: false },
+      }),
+    );
+    expect(item(plan, "routine", "r-bound")).toMatchObject({
+      action: "stay",
+      reason: expect.stringContaining("Stays on this machine"),
+    });
+    expect(plan.missingGrants.filter((gap) => gap.kind === "routines")).toEqual([]);
+  });
+
   it("does not guess when the target could not say what its grant allows", () => {
     const plan = buildAwayPlan(
       facts({
