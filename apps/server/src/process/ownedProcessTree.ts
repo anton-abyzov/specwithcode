@@ -332,7 +332,15 @@ export interface TreeHost {
   readonly killVerified: (entries: ReadonlyArray<ProcessEntry>, timeoutMs: number) => Promise<void>;
   readonly sleep: (ms: number) => Promise<void>;
   readonly now: () => number;
+  /** Wall-clock time, to compare with the CLI's exit time. Defaults to `Date.now`. */
+  readonly epochNow?: () => number;
 }
+
+/**
+ * How long after the CLI exited its group may still be signalled with no table to show
+ * who is in it: a group id cannot empty and be handed to another job that fast.
+ */
+const BLIND_GROUP_SIGNAL_MS = 10_000;
 
 export interface TreeEndResult {
   /** Processes of the tree that were still running when the end began. */
@@ -528,6 +536,15 @@ export class OwnedProcessTree {
     if (groupUsable && reused === true) {
       this.groupRetired = true;
       groupUsable = false;
+    }
+    // No table and the CLI reaped: the group is signalled blind only right after the exit.
+    // Later its id may be another job's, and nothing here can tell.
+    if (groupUsable && table === undefined && !this.root.alive()) {
+      const epochNow = (this.host.epochNow ?? Date.now)();
+      if (exitedAt === null || epochNow - exitedAt > BLIND_GROUP_SIGNAL_MS) {
+        groupUsable = false;
+        this.coverageLost = true;
+      }
     }
     if (groupUsable && this.endedOnce && !this.root.alive()) {
       if (members === undefined) {

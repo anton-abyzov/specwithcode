@@ -329,11 +329,33 @@ describe("OwnedProcessTree.end", () => {
   it("neither signals nor gives up a later group it cannot tie to the CLI", async () => {
     // The first end could not read the table, so it never saw who was in the group.
     const { host, calls } = fakeHost("linux", [null]);
-    const tree = new OwnedProcessTree(root(200, false), host);
+    // The CLI exited just now: its group is still signalled blind.
+    const tree = new OwnedProcessTree(
+      { ...root(200, false), exitedAtEpochMs: () => Date.now() },
+      host,
+    );
     expect(await tree.end(1_000)).toMatchObject({ survivors: 1, unknown: true });
     calls.length = 0;
     // A later end sees the group occupied by someone it cannot place: it stays unconfirmed.
     Object.assign(host, { readProcessList: async () => [posix(202, 1, 200, "member")] });
+    expect(await tree.end(1_000)).toMatchObject({ unknown: true });
+    expect(calls).toEqual([]);
+  });
+
+  it("never signals the group blind once the CLI exited a while ago", async () => {
+    const { host, calls } = fakeHost("linux", [null]);
+    // The table cannot be read and the CLI was reaped a minute ago: by now its group id
+    // may lead another job.
+    const exitedAt = Date.UTC(2026, 10, 19, 12);
+    const later = { ...host, epochNow: () => exitedAt + 60_000 };
+    const tree = new OwnedProcessTree(
+      { ...root(200, false), exitedAtEpochMs: () => exitedAt },
+      later,
+    );
+    expect(await tree.end(1_000)).toMatchObject({ unknown: true });
+    expect(calls).toEqual([]);
+    // A retry with a table still cannot tie the group to the CLI.
+    Object.assign(later, { readProcessList: async () => [posix(202, 1, 200, "member")] });
     expect(await tree.end(1_000)).toMatchObject({ unknown: true });
     expect(calls).toEqual([]);
   });
