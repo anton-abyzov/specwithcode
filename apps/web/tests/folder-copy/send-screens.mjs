@@ -1,4 +1,4 @@
-// Headless screenshots of Copy to another machine… (increments 1326, 1372) on the copy flow:
+// Headless screenshots of Add to another machine… (increments 1326, 1372) on the copy flow:
 // what the chosen machine holds (the project, the coordinator, several folders, nothing), the
 // header naming where the coordinator is, a destination that has the repository as a separate
 // project, the plan, and the done screen with "Continue the coordinator on {machine}".
@@ -89,7 +89,7 @@ try {
     );
     await page.locator('[data-slot="send-summary"]').waitFor();
     const dialog = await page.locator('[data-slot="dialog-popup"]').textContent();
-    NodeAssert.match(dialog, name === "move" ? /Move specweave to m5/ : /Copy specweave to m5/);
+    NodeAssert.match(dialog, name === "move" ? /Continue the coordinator on m5/ : /Add specweave to m5/);
     // A folder copy asks nothing about the coordinator.
     NodeAssert.equal(await page.locator('[data-slot="handoff-coordinator"]').count(), 0);
     NodeAssert.doesNotMatch(dialog, /Copy or move/);
@@ -131,14 +131,13 @@ try {
         "Only files go into m5's folder. Its coordinator stays on m4. To make them one project, link m1 to it from the machine menu.",
       );
       NodeAssert.match(await text(page, "send-plan"), /The coordinator stays on m4\.$/);
-      // Git only would move m1's coordinator into that project: off, with the reason.
-      const git = page.getByRole("radio", { name: /Git only, no file copy/ });
-      if (!(await git.isVisible())) await page.getByRole("button", { name: "Details" }).click();
-      await git.scrollIntoViewIfNeeded();
-      NodeAssert.equal(await git.getAttribute("aria-disabled"), "true");
-      NodeAssert.match(
-        await page.locator('[data-slot="handoff-method"]').textContent(),
-        /Not available: it would move the coordinator into a separate project\./,
+      // The Git handoff would move m1's coordinator into that project: it is not on offer.
+      const details = page.getByRole("button", { name: "Details" });
+      if (await details.isVisible()) await details.click();
+      await page.locator('[data-slot="handoff-method"]').waitFor();
+      NodeAssert.equal(
+        await page.getByRole("radio", { name: /Continue the coordinator here/ }).count(),
+        0,
       );
     }
     if (name === "main") {
@@ -198,7 +197,7 @@ try {
     if (name === "done-make-main") {
       // The switch opens the move to that copy: its setup, not the finished copy again.
       await makeMain.click();
-      await page.getByRole("heading", { name: "Move specweave to m5", exact: true }).waitFor();
+      await page.getByRole("heading", { name: "Continue the coordinator on m5", exact: true }).waitFor();
       NodeAssert.equal(await page.evaluate(() => document.body.dataset.madeMain), "m5:m5");
       await footer.getByRole("button", { name: "Copy and move to m5", exact: true }).waitFor();
       NodeAssert.equal(await page.locator('[data-slot="copy-make-main"]').count(), 0);

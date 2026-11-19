@@ -140,7 +140,7 @@ try {
     await page.goto(`${origin}/?theme=${theme}`, { waitUntil: "networkidle" });
     const dialog = page.getByRole("dialog");
     await dialog.waitFor();
-    NodeAssert.ok(await dialog.getByRole("heading", { name: /^Move EasyChamp to / }).isVisible());
+    NodeAssert.ok(await dialog.getByRole("heading", { name: /^Continue the coordinator on / }).isVisible());
     NodeAssert.ok(
       await dialog
         .getByText(
@@ -173,13 +173,13 @@ try {
     const layouts = { choose: await layout(page, dialog, "choose") };
     const screenshots = { choose: await screenshot(page, `${width}-${theme}-choose`) };
     await dialog
-      .getByRole("button", { name: "Move project to MacBook Air M3", exact: true })
+      .getByRole("button", { name: "Continue the coordinator on MacBook Air M3", exact: true })
       .focus();
     await page.keyboard.press("Enter");
     const review = dialog.locator('[data-slot="handoff-git-review"]');
     await review.waitFor();
     const continuation = dialog.getByRole("button", {
-      name: "Move project to MacBook Air M3",
+      name: "Continue the coordinator on MacBook Air M3",
       exact: true,
     });
     NodeAssert.equal(await continuation.isDisabled(), true, "publishing needs explicit consent");
@@ -197,7 +197,7 @@ try {
     await m3.waitFor();
     NodeAssert.equal(await m3.isChecked(), true, "Back keeps the chosen machine");
     await dialog
-      .getByRole("button", { name: "Move project to MacBook Air M3", exact: true })
+      .getByRole("button", { name: "Continue the coordinator on MacBook Air M3", exact: true })
       .click();
     await review.waitFor();
     const details = dialog.locator('[data-slot="handoff-commits"]');
@@ -226,7 +226,7 @@ try {
     await details.scrollIntoViewIfNeeded();
     screenshots.expanded = await screenshot(page, `${width}-${theme}-expanded`);
     const consent = dialog.getByRole("checkbox", {
-      name: "Push these commits to their remotes and continue the project on MacBook Air M3.",
+      name: "Push these commits to their remotes and continue the coordinator on MacBook Air M3.",
     });
     await consent.focus();
     await consent.press("Space");
@@ -255,7 +255,7 @@ try {
     await page.keyboard.press("Enter");
     await dialog.getByRole("heading", { name: "EasyChamp is on MacBook Air M3" }).waitFor();
     NodeAssert.ok(
-      await dialog.getByText("The coordinator now runs on MacBook Air M3.").isVisible(),
+      await dialog.getByText("The coordinator continues on MacBook Air M3.").isVisible(),
     );
     NodeAssert.ok(await dialog.getByRole("status").isVisible());
     NodeAssert.equal(

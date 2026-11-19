@@ -278,7 +278,8 @@ function Switcher({
         }}
         onAllowWorkers={() => record("connect")}
         onMigrate={() => record("migrate")}
-        onCopy={() => record("send-to-machine")}
+        onSync={() => record("sync")}
+        onAdd={() => record("add")}
         onLeave={() => record("leave")}
         links={
           view === "unlinked"

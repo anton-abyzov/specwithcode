@@ -121,7 +121,7 @@ try {
         ["LM", "M1", "WWW"],
         `${tag}: the narrowest chips' short labels`,
       );
-      // The coordinator's Send to another machine: the name with room, the short label without.
+      // The coordinator's machine chip: the name with room, the short label without.
       const sends = await page
         .locator("[data-send-row] button")
         .evaluateAll((buttons) =>

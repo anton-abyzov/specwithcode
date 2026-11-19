@@ -1,4 +1,4 @@
-// Headless screenshots of the one Copy to another machine flow (increments 1325, 1326, 1372):
+// Headless screenshots of the one Add to another machine flow (increments 1325, 1326, 1372):
 // setup in light and dark, a move asked for with "Continue the coordinator here", the review with secrets
 // listed, and the Git only screen.
 // Build first: node node_modules/vite-plus/bin/vp build --config apps/web/tests/folder-copy/vite.config.ts
@@ -67,7 +67,7 @@ try {
   });
   for (const theme of ["light", "dark"]) {
     await page.goto(`${base}?short=1&secrets=1&uncommitted=18&theme=${theme}`);
-    await page.getByRole("heading", { name: "Copy specweave to m5", exact: true }).waitFor();
+    await page.getByRole("heading", { name: "Add specweave to m5", exact: true }).waitFor();
     const text = await page.locator('[data-slot="dialog-popup"]').textContent();
     // With no coordinator named, the header says only where the copy comes from.
     NodeAssert.match(text, /From m4\./);
@@ -79,7 +79,7 @@ try {
     NodeAssert.doesNotMatch(text, /Copy or move|Move to m5/);
     NodeAssert.equal(await page.locator('[data-slot="handoff-coordinator"]').count(), 0);
     NodeAssert.doesNotMatch(text, /Hand off and continue there|Copy local files/);
-    // "Copy everything" is not the default method, so Details opens with it chosen.
+    // "Copy the whole folder" is not the default method, so Details opens with it chosen.
     NodeAssert.equal(
       await page.locator('[data-slot="handoff-workspace-summary"]').isVisible(),
       true,
@@ -89,10 +89,10 @@ try {
   // A move asked for with "Continue the coordinator here" opens the same flow, set to move.
   await page.goto(`${base}?short=1&secrets=1&uncommitted=18&theme=light&move=1`);
   await page.getByRole("button", { name: "Copy and move to m5", exact: true }).waitFor();
-  await page.getByRole("heading", { name: "Move specweave to m5", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Continue the coordinator on m5", exact: true }).waitFor();
   await shot(page, "after-setup-move");
   await page.goto(`${base}?short=1&secrets=1&uncommitted=18&theme=light`);
-  await page.getByRole("heading", { name: "Copy specweave to m5", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Add specweave to m5", exact: true }).waitFor();
   await page.locator('[data-slot="handoff-workspace-summary"]').waitFor();
   await shot(page, "after-setup-details");
   // An empty destination copies in one click; choosing file types first stops on the review.

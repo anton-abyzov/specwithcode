@@ -278,7 +278,8 @@ try {
       );
       const items = await texts(page, '[role="menuitem"]');
       for (const item of [
-        "Send to another machine…",
+        "Sync…",
+        "Add to another machine…",
         "Move running threads…",
         "Leave this machine…",
       ])

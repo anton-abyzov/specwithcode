@@ -100,11 +100,11 @@ const walker = (page, label, flow, viewport) => {
       name,
     );
   const body = () => page.locator('[data-slot="dialog-panel"]').textContent();
-  /** Starts the next copy from Done: Copy changes again when it shows, else the ⋯ menu item. */
+  /** Starts the next copy from Done: Sync again when it shows, else the ⋯ menu item. */
   const startNew = async () => {
-    const again = footer.getByRole("button", { name: "Copy changes again", exact: true });
+    const again = footer.getByRole("button", { name: "Sync again", exact: true });
     if (await again.count()) await again.click();
-    else await menu("Start a new copy");
+    else await menu("Add to another machine");
   };
   /** Opens the ⋯ menu in the footer and picks one of its items. */
   const menu = async (name) => {
@@ -287,20 +287,20 @@ const chooseFirst = async (page) => {
   if (!(await box.isVisible())) await page.getByRole("button", { name: "Details" }).click();
   await box.click();
 };
-/** What the dialog does, from its title: "Copy …" keeps the coordinator, "Move …" moves it. */
+/** What the dialog does, from its title: "Add …" keeps the coordinator, "Continue the coordinator on …" moves it. */
 const intent = async (page) =>
   (await page.getByRole("dialog").getByRole("heading").first().textContent()).trim();
 /** A move asked for with "Continue the coordinator here": the fixture opens a fresh flow set to move. */
 const moveCoordinator = (page) =>
   page.evaluate(() => window.dispatchEvent(new Event("fixture-move")));
-const COPY_TITLE = "Copy SpecWeave to ministorm";
-const MOVE_TITLE = "Move SpecWeave to ministorm";
+const COPY_TITLE = "Add SpecWeave to ministorm";
+const MOVE_TITLE = "Continue the coordinator on ministorm";
 /** The setup screen shows no step line. */
 const NO_STEPS = "none";
 const DONE_TITLE = "SpecWeave is on ministorm";
 // A copy of files only leaves the project here: its Done says copied, not on.
-// A finished copy names when it was copied: "SpecWeave is on ministorm (copied 2h ago)".
-const COPIED_TITLE = /^SpecWeave is on ministorm \(copied [^)]+\)$/;
+// A finished copy names when it was copied: "SpecWeave is on ministorm (added 2h ago)".
+const COPIED_TITLE = /^SpecWeave is on ministorm \(added [^)]+\)$/;
 const COPY_ONLY = ["where", "what", "review", "copy", "done"];
 const ONE_CLICK = ["where", "copy", "done"];
 const MOVE = ["where", "what", "review", "copy", "transfer", "done"];
@@ -321,7 +321,7 @@ const choosing = async (page, w) => {
   NodeAssert.equal(await action("Cancel").count(), 1, "Where offers Cancel");
   NodeAssert.match(
     await intent(page),
-    /^Copy /,
+    /^Add /,
     "the dialog opened as a copy: the coordinator stays",
   );
   await chooseFirst(page);
@@ -369,13 +369,13 @@ const choosing = async (page, w) => {
     window.__folderCopyFixture.scanCurrent = false;
   });
   await page.getByRole("button", { name: "Check for changes", exact: true }).click();
-  await page.getByRole("button", { name: "Measure and compare again", exact: true }).waitFor();
+  await page.getByRole("button", { name: "Compare again", exact: true }).waitFor();
   NodeAssert.equal(await action("Preview on ministorm").isDisabled(), true);
   await check("what-source-changed", { primary: null, leading: "Stop copy" });
   await page.evaluate(() => {
     window.__folderCopyFixture.scanCurrent = true;
   });
-  await page.getByRole("button", { name: "Measure and compare again", exact: true }).click();
+  await page.getByRole("button", { name: "Compare again", exact: true }).click();
   // A new comparison measures again and lands back on What with a fresh scan.
   await page.getByRole("button", { name: "Check for changes", exact: true }).waitFor();
   NodeAssert.equal(await action("Preview on ministorm").isEnabled(), true);
@@ -467,7 +467,7 @@ const choosing = async (page, w) => {
   });
   NodeAssert.match(await body(), /SpecWeave is on ministorm\. The coordinator stays here\./);
 
-  // Done was seen: the reopen still shows the finished copy. Copy changes again archives it
+  // Done was seen: the reopen still shows the finished copy. Sync again archives it
   // and starts at Where with a last-copy strip.
   await close();
   await reopen();
@@ -477,7 +477,7 @@ const choosing = async (page, w) => {
     title: COPIED_TITLE,
   });
   const statuses = await calls("copyStatus");
-  await action("Copy changes again").click();
+  await action("Sync again").click();
   await page.locator('[data-slot="copy-last"]').waitFor();
   // The reopen shows the last copy without scrolling.
   NodeAssert.ok(
@@ -556,7 +556,7 @@ const oneClick = async (page, w) => {
 const move = async (page, w) => {
   const { footer, action, pause, release, calls, body, menu, startNew, check, fixture } = w;
   await moveCoordinator(page);
-  NodeAssert.match(await intent(page), /^Move SpecWeave to ministorm/);
+  NodeAssert.match(await intent(page), /^Continue the coordinator on ministorm/);
   await chooseFirst(page);
   await check("where", {
     primary: "Copy and move to ministorm",
@@ -676,7 +676,7 @@ const move = async (page, w) => {
   await check("review-retry", { primary: "Copy and move to ministorm", leading: "Change setup" });
   await action("Copy and move to ministorm").click();
   await check("deferred", {
-    primary: "Hand off coordinator now",
+    primary: "Continue the coordinator on ministorm",
     steps: bar(["done", "done", "done", "done", "current", "next"], MOVE),
     title: DONE_TITLE,
   });
@@ -688,7 +688,7 @@ const move = async (page, w) => {
     window.__folderCopyFixture.transferReady = true;
   });
   await pause("prepare");
-  await action("Hand off coordinator now").click();
+  await action("Continue the coordinator on ministorm").click();
   await check("transferring", { primary: null });
   const closers = page.getByRole("dialog").getByRole("button", { name: /^(Close|Cancel)$/ });
   for (const closer of await closers.all())
@@ -703,7 +703,7 @@ const move = async (page, w) => {
   });
   NodeAssert.match(
     await page.locator('[data-slot="copy-done"]').textContent(),
-    /The coordinator now runs on ministorm\./,
+    /The coordinator continues on ministorm\./,
   );
   // Running work matters before Apply only: Done never contradicts the finished move.
   NodeAssert.doesNotMatch(await body(), /Work is still running here/);
@@ -736,7 +736,7 @@ const staleRecovery = async (page, w) => {
     ),
   );
   await action("Copy with my choices").click();
-  await check("stale-preview", { primary: "Measure and compare again", leading: "Change setup" });
+  await check("stale-preview", { primary: "Compare again", leading: "Change setup" });
   NodeAssert.equal(await action("Copy with my choices").isDisabled(), true);
   NodeAssert.equal(await action("Replace everything").isDisabled(), true);
   NodeAssert.equal(
@@ -745,14 +745,14 @@ const staleRecovery = async (page, w) => {
   );
   await close();
   await reopen();
-  await check("stale-reopened", { primary: "Measure and compare again", leading: "Change setup" });
+  await check("stale-reopened", { primary: "Compare again", leading: "Change setup" });
   NodeAssert.equal(await action("Copy with my choices").isDisabled(), true);
   NodeAssert.equal(await action("Replace everything").isDisabled(), true);
   NodeAssert.equal(
     await fixture(() => window.__folderCopyFixture.calls.filter((x) => x === "copyApprove").length),
     1,
   );
-  await action("Measure and compare again").click();
+  await action("Compare again").click();
   await action("Preview on ministorm").click();
   await check("fresh-comparison", { primary: "Copy with my choices", leading: "Change setup" });
   await action("Copy with my choices").click();
@@ -821,18 +821,18 @@ const moveWithout = async (page, w) => {
   await moveCoordinator(page);
   await action("Copy and move to ministorm").click();
   await page.locator('[data-slot="source-changes"]').waitFor();
-  await check("source-changes", { primary: "Copy again", title: DONE_TITLE });
+  await check("source-changes", { primary: "Sync again", title: DONE_TITLE });
   NodeAssert.match(
     await page.locator('[data-slot="source-changes"]').textContent(),
     /ledger\.jsonl/,
   );
-  NodeAssert.doesNotMatch(await body(), /The coordinator now runs on ministorm/);
+  NodeAssert.doesNotMatch(await body(), /The coordinator continues on ministorm/);
   await action("Move without this path").click();
   await page.locator('[data-slot="copy-left-on-source"]').waitFor();
   await check("moved-without", { primary: "Open on ministorm", title: DONE_TITLE });
   NodeAssert.match(
     await page.locator('[data-slot="copy-done"]').textContent(),
-    /The coordinator now runs on ministorm\./,
+    /The coordinator continues on ministorm\./,
   );
   NodeAssert.ok(
     (await page.locator('[data-slot="copy-left-on-source"]').textContent()).includes(ledger),
