@@ -153,12 +153,13 @@ const sameChar = (typed, read) =>
   (read !== undefined &&
     SAME_SHAPE.has(typed.toLowerCase()) &&
     typed.toLowerCase() === read.toLowerCase());
-// What may follow the typed text in the field: nothing, the cursor, or
-// Spotlight's inline suggestion, a dash and capitalised words, as the runs show
-// it ("zQ4207- Ask Siri", "hbdt - HDToday", "4207 - Open"). No sample holds a
-// dash or a space, so typing never makes one. Anything else may be typed text.
+// What may follow the typed text in the field: nothing, the cursor, or one of
+// Spotlight's inline suggestions the runs have shown ("zQ4207- Ask Siri",
+// "hbdt - HDToday", "4207 - Open"). Anything else may be typed text, so a new
+// suggestion reads UNSURE until it is added here.
 const NOTHING_AFTER = /^\|?$/;
-const KNOWN_SUGGESTION = /^\|? ?-\s+[A-Z][\w.'&]+(?: [\w.'&]+)*$/;
+export const SUGGESTIONS = ["Ask Siri", "HDToday", "Open"];
+const KNOWN_SUGGESTION = new RegExp(`^\\|? ?-\\s+(?:${SUGGESTIONS.join("|")})$`);
 
 /**
  * A field reading against typed text: undefined when it does not start with
@@ -409,10 +410,14 @@ export async function runCheck(deps, options = {}) {
   const [tabA, tabB] = config.tabs;
   const lines = [];
   const checks = [];
-  const log = (line) => {
+  // While a step runs, its lines wait here: a repeated step's results are
+  // written as not counted, so the log never scores an attempt twice.
+  let pending;
+  const emit = (line) => {
     lines.push(line);
     deps.onLine?.(line);
   };
+  const log = (line) => (pending === undefined ? emit(line) : pending.push(line));
   const check = (name, ok, detail) => {
     // With another app taking the front, a failed step says nothing about the product.
     if (!ok && frontLost !== undefined) return unsure(name, detail) ?? false;
@@ -470,10 +475,29 @@ export async function runCheck(deps, options = {}) {
   const step = async (name, run) => {
     for (let attempt = 1; ; attempt++) {
       const mark = checks.length;
+      const outer = pending;
+      pending = [];
+      const flush = (void_) => {
+        const held = pending;
+        pending = outer;
+        for (const line of held) {
+          log(
+            void_ && /^(PASS|FAIL|UNSURE) /.test(line)
+              ? `NOTE not counted, the step was repeated: ${line}`
+              : line,
+          );
+        }
+      };
       try {
-        return await run();
+        // A repeat starts from what the phone shows now, never from before the change.
+        if (attempt > 1) seen = await look();
+        const value = await run();
+        flush(false);
+        return value;
       } catch (error) {
-        if (!(error instanceof FrontChanged) || frontLost !== undefined) throw error;
+        const repeat = error instanceof FrontChanged && frontLost === undefined;
+        flush(repeat);
+        if (!repeat) throw error;
         checks.length = mark;
         if (attempt >= FRONT_TRIES) {
           throw lose(`${error.message}, ${FRONT_TRIES} times in a row during ${name}`);
@@ -1005,7 +1029,8 @@ export async function runCheck(deps, options = {}) {
     check("scroll", false, `failed: ${error.message}`);
   }
 
-  await call("computer_key", { keys: "cmd+1" }).catch(() => undefined);
+  // Back to the home screen; another app taking the front here still voids the run.
+  await step("the home key", () => call("computer_key", { keys: "cmd+1" })).catch(() => undefined);
   return finish();
 }
 

@@ -616,6 +616,76 @@ describe("dry run", () => {
     expect(result.lines.some((entry) => entry.startsWith("FAIL "))).toBe(false);
   });
 
+  it("never counts a repeated click on the page the interrupted tap already opened", async () => {
+    // Click 1 lands on Stopwatch, Chrome covers its screenshot, and the repeated
+    // tap on Stopwatch is lost: the click must not pass on the first tap's page.
+    for (const how of ["screenshot", "partway"]) {
+      const phone = simulatedPhone();
+      const call = phone.deps.call;
+      let clicks = 0;
+      let covered = false;
+      let dropped = false;
+      phone.deps.call = async (tool, args) => {
+        if (tool === "computer_click") clicks++;
+        if (tool === "computer_click" && covered && !dropped && args.x === 880) {
+          dropped = true;
+          return call("computer_screenshot", {});
+        }
+        if (tool === "computer_click" && clicks === 2 && how === "partway") {
+          await call(tool, args);
+          covered = true;
+          phone.state.front = "Google Chrome";
+          throw new Error("iPhone Mirroring stopped being the app in front partway through.");
+        }
+        if (tool === "computer_screenshot" && clicks === 2 && !covered) {
+          covered = true;
+          phone.state.front = "Google Chrome";
+        }
+        return call(tool, args);
+      };
+      const result = await runCheck(phone.deps);
+      expect(dropped).toBe(true);
+      expect(result.lines.find((entry) => entry.startsWith("FAIL click 1/20"))).toBeDefined();
+      expect(result.lines.some((entry) => entry.startsWith("PASS click 1/20"))).toBe(false);
+    }
+  });
+
+  it("ends INVALID when another app keeps the front at the last home key", async () => {
+    const phone = simulatedPhone();
+    let passed = 0;
+    phone.deps.onLine = (line) => {
+      if (line.startsWith("PASS ")) passed++;
+    };
+    const read = phone.deps.frontmost;
+    phone.deps.frontmost = async () => (passed >= 30 ? "Google Chrome" : read());
+    const result = await runCheck(phone.deps);
+    expect(passed).toBe(30);
+    expect(result.invalid).toBe(true);
+    expect(result.lines.some((entry) => entry.startsWith("Clicks landed"))).toBe(false);
+    expect(result.lines.at(-1)).toMatch(
+      /Google Chrome kept the front for 60 s during the home key/,
+    );
+  });
+
+  it("writes a repeated step's earlier results as not counted", async () => {
+    // Scroll down is scored, then Chrome takes the front before scrolling up.
+    const phone = simulatedPhone();
+    const call = phone.deps.call;
+    let scrolls = 0;
+    phone.deps.call = async (tool, args) => {
+      if (tool === "computer_scroll" && ++scrolls === 2) phone.state.front = "Google Chrome";
+      return call(tool, args);
+    };
+    const result = await runCheck(phone.deps);
+    expect(result.lines.filter((entry) => entry.startsWith("PASS scroll down"))).toHaveLength(1);
+    expect(
+      result.lines.some((entry) =>
+        entry.startsWith("NOTE not counted, the step was repeated: PASS scroll down"),
+      ),
+    ).toBe(true);
+    expect(result.lines.at(-1)).toMatch(/^Result: PASS \(30\/30 checks\)/);
+  });
+
   it("ends INVALID when bringing iPhone Mirroring back fails", async () => {
     const phone = simulatedPhone({ stealFront: (n) => (n === 8 ? "refuse" : undefined) });
     const call = phone.deps.call;
@@ -816,10 +886,11 @@ describe("judging the screen", () => {
     expect(startsWithTyped("hbdt ", "hbdt")).toBe(false);
     expect(startsWithTyped(" hbdt", "hbdt")).toBe(false);
     expect(startsWithTyped("hbdt- incorrect", "hbdt")).toBe(false);
-    // Spotlight's other suggestions: a dash, then capitalised words.
+    expect(startsWithTyped("hbdt- Incorrect", "hbdt")).toBe(false);
+    // The other suggestions Spotlight showed in live runs.
     expect(startsWithTyped("hbdt - HDToday", "hbdt")).toBe(true);
     expect(startsWithTyped("4207 - Open", "4207")).toBe(true);
-    expect(startsWithTyped("hbdt - Search Web", "hbdt")).toBe(true);
+    expect(startsWithTyped("hbdt - Search Web", "hbdt")).toBe(false);
     expect(startsWithTyped("hbdt - A", "hbdt")).toBe(false);
   });
 
