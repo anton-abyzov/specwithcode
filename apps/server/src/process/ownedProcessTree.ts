@@ -224,7 +224,8 @@ export function unidentifiedChildren(
     if (start === null || start >= parent.created) doubt.add(entry.pid);
   }
   // Doubt passes down: a process started by one in doubt may be the tree's as well. A pid
-  // in doubt since an earlier reading that has exited still passes it to its children.
+  // in doubt since an earlier reading passes it to its children, live or exited.
+  for (const pid of doubtful) if (byPid.has(pid) && !parents.has(pid)) doubt.add(pid);
   const queue = [...doubt, ...[...doubtful].filter((pid) => !byPid.has(pid))];
   const seeds = new Set(queue);
   while (queue.length > 0) {
@@ -240,7 +241,6 @@ export function unidentifiedChildren(
       queue.push(entry.pid);
     }
   }
-  for (const pid of doubtful) if (byPid.has(pid) && !parents.has(pid)) doubt.add(pid);
   return [...doubt];
 }
 
@@ -492,6 +492,8 @@ export class OwnedProcessTree {
       if (members === undefined) {
         groupUsable = false;
         unknown = true;
+        // Whoever is in the group now may leave it before a later end can look.
+        this.coverageLost = true;
       } else if (members.length === 0) {
         this.groupRetired = true;
         groupUsable = false;
@@ -506,7 +508,11 @@ export class OwnedProcessTree {
             entry.started !== this.rootStarted,
         );
         if (newLeader) this.groupRetired = true;
-        else unknown = true;
+        else {
+          // Neither attributed nor ruled out, now or once they leave the group.
+          unknown = true;
+          this.coverageLost = true;
+        }
         groupUsable = false;
       }
     }

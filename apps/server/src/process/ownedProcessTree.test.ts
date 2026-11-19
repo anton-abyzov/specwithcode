@@ -1083,6 +1083,48 @@ describe("OwnedProcessTree.end after a lost parent", () => {
     expect((await f.tree.end()).unknown).toBe(true);
   });
 
+  it("keeps doubt on every descendant of a live process already in doubt, across retries", async () => {
+    const f = fake("win32");
+    const server = windowsRow(100, 1, 1_000);
+    const cli = windowsRow(200, 100, 2_000);
+    const known = windowsRow(201, 200, 3_000);
+    const launcher = windowsRow(202, 201, 4_000);
+    const held = windowsRow(203, 202, 4_100);
+    const relay = windowsRow(204, 203, 5_000);
+    const survivor = windowsRow(205, 204, 5_100);
+    f.setTable([server, cli, known]);
+    expect(await f.tree.remember()).toBe(true);
+    expect(await f.tree.remember(15_000, true)).toBe(true);
+    f.exitRootAt(3_500);
+    const ends = [];
+    for (const rows of [[launcher, held], [held], [held, relay, survivor], [survivor]]) {
+      f.setTable([server, ...rows]);
+      ends.push(await f.tree.end());
+    }
+    expect(ends.map((end) => end.unknown)).toEqual([true, true, true, true]);
+    expect(f.kills).toEqual([]);
+  });
+
+  it("keeps a POSIX Stop unconfirmed once a retry met a group with no member it knew", async () => {
+    const f = fake("darwin");
+    const tool = processRow(201);
+    const worker = processRow(202);
+    // The group SIGKILL is refused, so the tool survives the first end.
+    f.onSignal((pid, action) => {
+      if (action === "SIGKILL" && pid === -rootPid) {
+        throw Object.assign(new Error("denied"), { code: "EPERM" });
+      }
+    });
+    f.setTable([tool]);
+    expect(await f.tree.end()).toMatchObject({ survivors: 1 });
+    // The tool started a worker in the group and exited.
+    f.setTable([worker]);
+    expect((await f.tree.end()).unknown).toBe(true);
+    // The worker then left the group.
+    f.setTable([{ ...worker, pgid: worker.pid }]);
+    expect((await f.tree.end()).unknown).toBe(true);
+  });
+
   it("keeps a POSIX Stop unconfirmed on retry after its first reading failed", async () => {
     const f = fake("darwin");
     const member = processRow(201);
