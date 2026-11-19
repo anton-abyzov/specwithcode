@@ -263,11 +263,62 @@ describe("AwayRunner leaving", () => {
 
       const asleep = harness({});
       const slept: Array<string> = [];
-      yield* makeAwayRunner({
-        ...asleep.deps,
-        rememberTarget: (target: EnvironmentId) => Effect.sync(() => void slept.push(target)),
-      }).start({ targetEnvironmentId: TARGET, trigger: "sleep" });
+      const refused = yield* Effect.exit(
+        makeAwayRunner({
+          ...asleep.deps,
+          rememberTarget: (target: EnvironmentId) => Effect.sync(() => void slept.push(target)),
+        }).start({ targetEnvironmentId: TARGET, trigger: "sleep" }),
+      );
+      expect(refused._tag).toBe("Failure");
       expect(slept).toEqual([]);
+    }),
+  );
+
+  it.effect("a start a lid close sent is refused before it reads, plans, saves or moves", () =>
+    Effect.gen(function* () {
+      // An unfinished Leave is open: even resuming it is not a lid close's to do.
+      const open = harness({});
+      yield* makeAwayRunner({ ...open.deps, fork: () => Effect.void }).start({
+        targetEnvironmentId: TARGET,
+      });
+      const partway = open.saved()!;
+      expect(partway.finishedAt).toBeNull();
+      for (const saved of [null, partway]) {
+        const h = harness({ saved });
+        const seen = { loads: 0, saves: 0, forks: 0 };
+        const runner = makeAwayRunner({
+          ...h.deps,
+          loadSession: Effect.suspend(() => {
+            seen.loads += 1;
+            return h.deps.loadSession;
+          }),
+          saveSession: (session) =>
+            Effect.suspend(() => {
+              seen.saves += 1;
+              return h.deps.saveSession(session);
+            }),
+          fork: (effect) =>
+            Effect.suspend(() => {
+              seen.forks += 1;
+              return h.deps.fork(effect);
+            }),
+        });
+        const refused = yield* runner
+          .start({ targetEnvironmentId: TARGET, trigger: "sleep" })
+          .pipe(Effect.result);
+        expect(refused._tag).toBe("Failure");
+        if (refused._tag === "Failure")
+          expect(refused.failure.message).toContain("nothing moves when a machine goes to sleep");
+        expect(seen).toEqual({ loads: 0, saves: 0, forks: 0 });
+        expect(h.log).toEqual([]);
+        expect(h.saved()).toBe(saved);
+
+        // The same machine, the same moment: a person choosing Leave still leaves.
+        const left = yield* runner.start({ targetEnvironmentId: TARGET, trigger: "manual" });
+        expect(left.trigger).toBe("manual");
+        expect(h.log).toContain("moveThreads:t1,t2");
+        expect(h.saved()!.stage).toBe("done");
+      }
     }),
   );
 

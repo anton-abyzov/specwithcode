@@ -179,12 +179,20 @@ const fleet = Effect.gen(function* () {
       if (path === AWAY_INTENT_CANCEL_PATH) return yield* cancelIntent(intents, caller, body);
       if (path === AWAY_INTENT_STATUS_PATH)
         return yield* intentStatus(
-          intents,
+          {
+            latestState: intents.latestState,
+            continuation: (threadId) =>
+              Effect.sync(() => {
+                const continued = continuedOnMs.get(threadId);
+                return continued === undefined
+                  ? ({ kind: "none" } as const)
+                  : ({ kind: "continued", threadId: continued } as const);
+              }),
+          },
           caller,
           body,
-          projectsOnMs(),
+          Effect.sync(projectsOnMs),
           "ministorm",
-          (threadId) => continuedOnMs.get(threadId) ?? null,
         );
       return { status: 404, body: { error: "not found" } };
     });
@@ -725,10 +733,13 @@ describe("acceptAwayTakeover checks the recorded target's member (LOW)", () => {
       yield* TestClock.setTime(T0 + 2 * MINUTE);
       yield* f.intents.tick;
       const status = (yield* intentStatus(
-        f.intents,
+        {
+          latestState: f.intents.latestState,
+          continuation: () => Effect.succeed({ kind: "none" }),
+        },
         callerFrom("m4"),
         { sourceEnvironmentId: "m4", projectIds: [f.m4ProjectId] },
-        [],
+        Effect.succeed([]),
         "ministorm",
       )).body as { projects: ReadonlyArray<{ takenOver: boolean }> };
       expect(status.projects[0]?.takenOver).toBe(false);

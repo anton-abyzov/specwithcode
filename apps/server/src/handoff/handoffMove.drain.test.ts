@@ -19,6 +19,7 @@ import {
   scenario,
   threadId,
 } from "./handoffMove.test.fixture.ts";
+import * as PreviousReceiver from "./previousRelease.handoffReceiver.test.fixture.ts";
 
 registerCleanup();
 
@@ -70,37 +71,48 @@ describe("handoff: lost takeovers, sleep and silence", () => {
     }),
   );
 
-  it.effect("drops an unanswered takeover that sleep started instead of sending it again", () =>
-    Effect.gen(function* () {
-      const { source, destination, moves, network, destinationRoot } = yield* scenario();
-      NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
-      network.dropTakeoverRequest = true;
-      yield* handOff(moves).pipe(Effect.flip);
-      // As an earlier release saved it: the lid closed and the takeover got no answer.
-      const saved = source.document.threads[threadId]!;
-      source.document = {
-        ...source.document,
-        threads: {
-          ...source.document.threads,
-          [threadId]: {
-            ...saved,
-            pendingTakeover: {
-              ...saved.pendingTakeover!,
-              request: { ...saved.pendingTakeover!.request, reason: "sleep" },
-            },
-          },
-        },
-      };
-      // The destination answers heartbeats again without having continued the thread.
-      network.dropTakeoverRequest = false;
-      yield* moves.tick;
-      yield* moves.tick;
-      expect(destination.launches).toEqual([]);
-      const record = source.document.threads[threadId];
-      expect(record?.lease?.state).toBe("active");
-      expect(record?.pendingTakeover).toBeNull();
-      expect(record?.continuedOn).toBeNull();
-    }),
+  it.effect(
+    "never sends a takeover sleep started again, and gives it back only on its own not started",
+    () =>
+      Effect.gen(function* () {
+        const setup = yield* scenario();
+        const { source, destination, moves, network, destinationRoot, wire } = setup;
+        NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
+        network.dropTakeoverRequest = true;
+        yield* handOff(moves).pipe(Effect.flip);
+        // As an earlier release saved it: the lid closed and the takeover got no answer.
+        const saved = source.document.threads[threadId]!;
+        const pendingTakeover = {
+          ...saved.pendingTakeover!,
+          request: { ...saved.pendingTakeover!.request, reason: "sleep" as const },
+        };
+        source.document = {
+          ...source.document,
+          threads: { ...source.document.threads, [threadId]: { ...saved, pendingTakeover } },
+        };
+        network.dropTakeoverRequest = false;
+        // Minis has not updated: it answers every heartbeat, and never says what did not
+        // start. That answer settles nothing, and the takeover is not sent again: a
+        // receiver on that release would start it.
+        wire.destination = yield* PreviousReceiver.make.pipe(
+          Effect.provide(setup.destinationServices),
+        );
+        yield* moves.tick;
+        yield* moves.tick;
+        expect(destination.launches).toEqual([]);
+        expect(source.document.threads[threadId]?.lease?.state).toBe("handing-off");
+        expect(source.document.threads[threadId]?.pendingTakeover).toEqual(pendingTakeover);
+        expect(turnRefusal(source.document, threadId, m4)).not.toBeNull();
+        // Minis updated: it answers, for that takeover, that nothing started there.
+        wire.destination = setup.destinationReceiver;
+        yield* moves.tick;
+        expect(destination.launches).toEqual([]);
+        const record = source.document.threads[threadId];
+        expect(record?.lease?.state).toBe("active");
+        expect(record?.pendingTakeover).toBeNull();
+        expect(record?.continuedOn).toBeNull();
+        expect(turnRefusal(source.document, threadId, m4)).toBeNull();
+      }),
   );
 
   it.effect("keeps a re-sent takeover paused on a fenced refusal and releases it on others", () =>

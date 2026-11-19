@@ -14,7 +14,9 @@ import {
   type RuntimeMode,
   ThreadId,
 } from "@specweave-studio/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -34,6 +36,8 @@ import * as ServerSettings from "../serverSettings.ts";
 import { writeCheckpoint } from "./checkpointGit.ts";
 import { HandoffMode } from "./HandoffMode.ts";
 import * as HandoffReceiver from "./HandoffReceiver.ts";
+// Read through the namespace, so a case for a rule this release adds fails on its own.
+import * as HandoffState from "./handoffState.ts";
 import {
   EMPTY_HANDOFF_DOCUMENT,
   emptyThreadRecord,
@@ -257,48 +261,58 @@ describe("a takeover that sleep or silence started (1390 AC-36)", () => {
 
   it("is refused with a definite answer, whichever older machine sends it", () => {
     for (const reason of ["sleep", "auto-takeover"] as const) {
-      expect(
-        takeoverVerdict(document, takeover({ reason }), "Minis", continuationId),
-        reason,
-      ).toMatchObject({ kind: "refuse", code: "invalid", check: "lease" });
+      expect(takeoverVerdict(document, takeover({ reason }), "Minis"), reason).toMatchObject({
+        kind: "refuse",
+        code: "invalid",
+        check: "lease",
+      });
     }
     // A start a person or the limit rule made still proceeds.
     for (const reason of ["handoff", "machine-handoff", "continue-here"] as const) {
-      expect(
-        takeoverVerdict(document, takeover({ reason }), "Minis", continuationId).kind,
-        reason,
-      ).toBe("proceed");
+      expect(takeoverVerdict(document, takeover({ reason }), "Minis").kind, reason).toBe("proceed");
     }
   });
 
   it("already acted on: the same answer again, never not accepted", () => {
     const request = takeover({ reason: "sleep" });
     const continued = markContinued(document, request, response, now);
-    expect(takeoverVerdict(continued, request, "Minis", continuationId)).toEqual({
-      kind: "repeat",
-      response,
-    });
+    expect(takeoverVerdict(continued, request, "Minis")).toEqual({ kind: "repeat", response });
   });
 
-  it("cut off after its continuation started: it finishes instead of running twice", () => {
+  it("a saved lease alone never lets it proceed: only its thread answers it", () => {
     // The continuation's lease is saved before its thread launches and before the
-    // replica is marked continued. A restart in between leaves only this record.
+    // replica is marked continued. A failed launch or a restart leaves only this record.
     const started: Document = {
       ...document,
-      threads: { [continuationId]: emptyThreadRecord(localProject) },
+      threads: {
+        [continuationId]: {
+          ...emptyThreadRecord(localProject),
+          lease: {
+            holderEnvironmentId: minis,
+            holderLabel: "Minis",
+            holderThreadId: continuationId,
+            epoch: 2,
+            renewedAt: now,
+            state: "active",
+          },
+        },
+      },
     };
+    for (const epoch of [2, 5]) {
+      expect(takeoverVerdict(started, takeover({ reason: "sleep", epoch }), "Minis")).toMatchObject(
+        { kind: "refuse", code: "invalid" },
+      );
+    }
+    // The receiver finds that lease, at the epoch it saved, without being told the epoch.
+    const idFor = (epoch: number) => HandoffReceiver.continuationThreadId(m4, sourceThread, epoch);
+    expect(HandoffState.preparedContinuations(started, idFor)).toEqual([
+      { threadId: continuationId, epoch: 2 },
+    ]);
     expect(
-      takeoverVerdict(started, takeover({ reason: "sleep" }), "Minis", continuationId).kind,
-    ).toBe("proceed");
-    // Another epoch is another start, and that one is refused.
-    expect(
-      takeoverVerdict(
-        started,
-        takeover({ reason: "sleep", epoch: 5 }),
-        "Minis",
-        HandoffReceiver.continuationThreadId(m4, sourceThread, 5),
+      HandoffState.preparedContinuations(started, (epoch) =>
+        HandoffReceiver.continuationThreadId(m4, ThreadId.make("thread-other"), epoch),
       ),
-    ).toMatchObject({ kind: "refuse", code: "invalid" });
+    ).toEqual([]);
   });
 });
 
@@ -493,7 +507,17 @@ const receiving = (
     const launches: Array<ThreadLaunchService.ThreadLaunchInput> = [];
     const origins = new Map<string, WorkOrigin>();
     const grantState = { revoked: false };
-    const launchState = { fail: false };
+    const launchState = {
+      fail: false,
+      /** The thread is created, then the launch fails: an initial message that did not go. */
+      failAfterCreate: false,
+      /** Holds a launch inside the takeover until the case lets it go. */
+      gate: null as { entered: Deferred.Deferred<void>; resume: Deferred.Deferred<void> } | null,
+      /** The thread store cannot be read. */
+      shellsUnreadable: false,
+    };
+    /** Threads the launches created, as the thread store holds them. */
+    const created = new Set<string>();
     const project = {
       id: localProject,
       title: "App",
@@ -555,15 +579,37 @@ const receiving = (
       } as never),
       Layer.succeed(ThreadLaunchService.ThreadLaunchService, {
         launch: (input: ThreadLaunchService.ThreadLaunchInput) =>
-          launchState.fail
-            ? Effect.fail(new LaunchRefusedError({ message: "the provider refused to start" }))
-            : Effect.sync(() => {
-                launches.push(input);
-                return { threadId: input.threadId, projection: {}, resumed: false };
-              }),
+          Effect.gen(function* () {
+            const gate = launchState.gate;
+            if (gate !== null) {
+              yield* Deferred.succeed(gate.entered, undefined);
+              yield* Deferred.await(gate.resume);
+            }
+            if (launchState.fail) {
+              return yield* Effect.fail(
+                new LaunchRefusedError({ message: "the provider refused to start" }),
+              );
+            }
+            launches.push(input);
+            if (input.threadId !== undefined) created.add(input.threadId);
+            if (launchState.failAfterCreate) {
+              return yield* Effect.fail(
+                new LaunchRefusedError({ message: "the first message did not go" }),
+              );
+            }
+            return { threadId: input.threadId, projection: {}, resumed: false };
+          }),
       } as never),
       Layer.succeed(Orchestrator.OrchestratorV2, {
         dispatch: () => Effect.succeed({}),
+        getThreadShell: (threadId: ThreadId) =>
+          launchState.shellsUnreadable
+            ? Effect.die("the thread store cannot be read")
+            : Effect.succeed(
+                created.has(threadId)
+                  ? { id: threadId, projectId: localProject, modelSelection: claude }
+                  : null,
+              ),
       } as never),
       Layer.succeed(WorkGrants.WorkGrants, {
         ...WorkGrants.WorkGrants.defaultValue(),
@@ -626,6 +672,7 @@ const receiving = (
       origins,
       grantState,
       launchState,
+      created,
       root,
       baseCommit: written.baseCommit,
       worktreesDir: NodePath.join(base, "worktrees"),
@@ -784,6 +831,200 @@ describe("takeover under the source's work grant", () => {
       expect(launches).toHaveLength(0);
       expect(origins.size).toBe(0);
       expect(Object.keys(document().threads)).toEqual([]);
+    }),
+  );
+});
+
+/** A heartbeat from M4, holding the thread at `epoch - 1`, asking about its takeover at `epoch`. */
+const asking = (epoch: number) => ({
+  sourceEnvironmentId: m4,
+  sourceLabel: "M4",
+  leases: [{ sourceThreadId: sourceThread, epoch: epoch - 1 }],
+  settle: [{ sourceThreadId: sourceThread, epoch }],
+});
+
+describe("a start an earlier release began here (1390 AC-36)", () => {
+  const continuationId = HandoffReceiver.continuationThreadId(m4, sourceThread, 2);
+
+  it.effect(
+    "a failed launch, then the same epoch from sleep or silence: nothing launches, the sender stays paused",
+    () =>
+      Effect.gen(function* () {
+        for (const reason of ["sleep", "auto-takeover"] as const) {
+          const { receiver, replicate, takeOver, launches, launchState } = yield* receiving();
+          yield* replicate(peer(), claude);
+          launchState.fail = true;
+          // The lease is saved at epoch 2; the launch fails before any thread exists.
+          yield* Effect.result(takeOver(peer()));
+          launchState.fail = false;
+          const answer = yield* Effect.result(
+            receiver.takeover(peer(), takeover({ sequence: 1, reason })),
+          );
+          expect(launches, reason).toHaveLength(0);
+          // The previous release keeps its hold on a fenced refusal alone; any other releases it.
+          expect(answer, reason).toMatchObject({
+            _tag: "Failure",
+            failure: { code: "fenced", check: "lease" },
+          });
+        }
+        // With nothing begun here, the definite refusal: nothing runs here to wait for.
+        const fresh = yield* receiving();
+        yield* fresh.replicate(peer(), claude);
+        const refused = yield* Effect.result(
+          fresh.receiver.takeover(peer(), takeover({ sequence: 1, reason: "sleep" })),
+        );
+        expect(refused).toMatchObject({ _tag: "Failure", failure: { code: "invalid" } });
+        expect(fresh.launches).toHaveLength(0);
+      }),
+  );
+
+  it.effect("a failed launch, then the same epoch by hand: it launches once and continues", () =>
+    Effect.gen(function* () {
+      const { replicate, takeOver, launches, launchState, document } = yield* receiving();
+      yield* replicate(peer(), claude);
+      launchState.fail = true;
+      yield* Effect.result(takeOver(peer()));
+      launchState.fail = false;
+      const response = yield* takeOver(peer());
+      expect(response.threadId).toBe(continuationId);
+      expect(launches).toHaveLength(1);
+      expect(findIncoming(document(), m4, sourceThread)?.continuedThreadId).toBe(continuationId);
+    }),
+  );
+
+  it.effect(
+    "launched but never recorded: the same epoch from sleep gets that thread, with no new launch",
+    () =>
+      Effect.gen(function* () {
+        const { receiver, replicate, takeOver, launches, launchState, document } =
+          yield* receiving();
+        yield* replicate(peer(), claude);
+        // The thread is created, then the takeover stops before it records the continuation.
+        launchState.failAfterCreate = true;
+        yield* Effect.result(takeOver(peer()));
+        launchState.failAfterCreate = false;
+        expect(launches).toHaveLength(1);
+        expect(findIncoming(document(), m4, sourceThread)?.continuedThreadId).toBeNull();
+        const answer = yield* Effect.result(
+          receiver.takeover(peer(), takeover({ sequence: 1, reason: "sleep" })),
+        );
+        expect(launches).toHaveLength(1);
+        expect(answer).toMatchObject({
+          _tag: "Success",
+          success: { threadId: continuationId, projectId: localProject, machineLabel: "Minis" },
+        });
+        // Recorded now: the source's next heartbeat fences it, whatever it asks.
+        const beat = yield* receiver.heartbeat(peer(), {
+          sourceEnvironmentId: m4,
+          sourceLabel: "M4",
+          leases: [{ sourceThreadId: sourceThread, epoch: 1 }],
+        });
+        expect(beat.continued).toEqual([
+          { sourceThreadId: sourceThread, epoch: 2, threadId: continuationId },
+        ]);
+      }),
+  );
+
+  it.effect("a heartbeat asking about a takeover answers from the same evidence", () =>
+    Effect.gen(function* () {
+      // Nothing began: not started, for exactly what was asked.
+      const fresh = yield* receiving();
+      yield* fresh.replicate(peer(), claude);
+      expect(yield* fresh.receiver.heartbeat(peer(), asking(2))).toMatchObject({
+        continued: [],
+        notStarted: [{ sourceThreadId: sourceThread, epoch: 2 }],
+      });
+      // A source that asks nothing hears nothing it would not know what to do with.
+      const { settle: _settle, ...plain } = asking(2);
+      expect((yield* fresh.receiver.heartbeat(peer(), plain)).notStarted).toBeUndefined();
+      // A lease saved for a launch that failed: no thread here, so nothing started.
+      const failed = yield* receiving();
+      yield* failed.replicate(peer(), claude);
+      failed.launchState.fail = true;
+      yield* Effect.result(failed.takeOver(peer()));
+      expect((yield* failed.receiver.heartbeat(peer(), asking(2))).notStarted).toEqual([
+        { sourceThreadId: sourceThread, epoch: 2 },
+      ]);
+      // A thread store it cannot read answers nothing for it: the source keeps its hold.
+      failed.launchState.shellsUnreadable = true;
+      expect(yield* failed.receiver.heartbeat(peer(), asking(2))).toMatchObject({
+        continued: [],
+        notStarted: [],
+      });
+      // Launched and never recorded: its thread answers, it is recorded, nothing launches.
+      const launched = yield* receiving();
+      yield* launched.replicate(peer(), claude);
+      launched.launchState.failAfterCreate = true;
+      yield* Effect.result(launched.takeOver(peer()));
+      expect(yield* launched.receiver.heartbeat(peer(), asking(2))).toMatchObject({
+        continued: [{ sourceThreadId: sourceThread, epoch: 2, threadId: continuationId }],
+        notStarted: [],
+      });
+      expect(findIncoming(launched.document(), m4, sourceThread)?.continuedThreadId).toBe(
+        continuationId,
+      );
+      expect(launched.launches).toHaveLength(1);
+    }),
+  );
+
+  it.effect("a heartbeat during a takeover waits for it, then reports the thread", () =>
+    Effect.gen(function* () {
+      const { receiver, replicate, launchState, launches } = yield* receiving();
+      yield* replicate(peer(), claude);
+      const entered = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      launchState.gate = { entered, resume };
+      const taking = yield* Effect.forkChild(receiver.takeover(peer(), takeover({ sequence: 1 })));
+      yield* Deferred.await(entered);
+      const beating = yield* Effect.forkChild(receiver.heartbeat(peer(), asking(2)));
+      for (let turn = 0; turn < 50; turn++) yield* Effect.yieldNow;
+      // Between the takeover's receipt and its recording, no answer goes out about it.
+      expect(beating.pollUnsafe()).toBeUndefined();
+      yield* Deferred.succeed(resume, undefined);
+      const response = yield* Fiber.join(taking);
+      const beat = yield* Fiber.join(beating);
+      expect(launches).toHaveLength(1);
+      expect(beat.continued).toEqual([
+        { sourceThreadId: sourceThread, epoch: 2, threadId: response.threadId },
+      ]);
+      expect(beat.notStarted).toEqual([]);
+    }),
+  );
+
+  it.effect("tells the status check what continues a thread, and never launches", () =>
+    Effect.gen(function* () {
+      const fresh = yield* receiving();
+      yield* fresh.replicate(peer(), claude);
+      expect(yield* fresh.receiver.continuation(m4, sourceThread)).toEqual({ kind: "none" });
+      const launched = yield* receiving();
+      yield* launched.replicate(peer(), claude);
+      launched.launchState.failAfterCreate = true;
+      yield* Effect.result(launched.takeOver(peer()));
+      expect(yield* launched.receiver.continuation(m4, sourceThread)).toEqual({
+        kind: "continued",
+        threadId: continuationId,
+      });
+      // Recorded, so later heartbeats fence the source; asked again, the same answer.
+      expect(findIncoming(launched.document(), m4, sourceThread)?.continuedThreadId).toBe(
+        continuationId,
+      );
+      expect(yield* launched.receiver.continuation(m4, sourceThread)).toEqual({
+        kind: "continued",
+        threadId: continuationId,
+      });
+      expect(launched.launches).toHaveLength(1);
+      // Prepared, and the thread store unreadable: unresolved, never none.
+      const failed = yield* receiving();
+      yield* failed.replicate(peer(), claude);
+      failed.launchState.fail = true;
+      yield* Effect.result(failed.takeOver(peer()));
+      failed.launchState.shellsUnreadable = true;
+      expect(yield* failed.receiver.continuation(m4, sourceThread)).toEqual({
+        kind: "unresolved",
+      });
+      failed.launchState.shellsUnreadable = false;
+      expect(yield* failed.receiver.continuation(m4, sourceThread)).toEqual({ kind: "none" });
+      expect(failed.launches).toHaveLength(0);
     }),
   );
 });

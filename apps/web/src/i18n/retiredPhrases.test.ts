@@ -108,6 +108,10 @@ const RETIRED_PHRASES: readonly string[] = [
   "Leave automatically when the lid closes",
   "Where Away sends your threads, routines and coordinators. Also used when this machine sleeps; locking the screen doesn't count.",
   "After work left while it slept. Ask shows one button to bring it back.",
+  // Only a lid-close session honoured it, and none starts any more.
+  "Bring back automatically on power",
+  // Replaced by sentences that say what an unconfirmed machine may still do.
+  "Waiting for {machine} to confirm that silence no longer moves threads. Until it answers, a thread it could continue pauses here when it goes quiet.",
 ];
 
 /** Retired words that were plain text in a component, matched anywhere in the source. */

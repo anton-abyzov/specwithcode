@@ -67,7 +67,7 @@ describe("Moving work between machines", () => {
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     expect(html).toContain("existing ones too");
     expect(html).toContain(
-      "Where Away sends your threads, routines and coordinators when you leave this machine. Closing the lid moves nothing.",
+      "Where Away sends your threads, routines and coordinators when you leave this machine.",
     );
     expect(html).toContain("including uncommitted and untracked files");
     expect(html).toContain("Move running threads…");
@@ -145,17 +145,61 @@ describe("sleep and silence start nothing (1390 AC-36)", () => {
     expect(html).not.toContain("Automatic takeover");
     expect(html).not.toContain('id="away-sleep-trigger"');
     expect(html).not.toContain("Also used when this machine sleeps");
-    // Bringing work back after a wake is not a start: that choice stays.
-    expect(html).toMatch(
-      /aria-label="When this machine wakes"[^>]*>[\s\S]*?Bring back automatically on power/,
-    );
+    // Bringing work back is not a start: the wake card choice stays.
+    expect(html).toContain('aria-label="When this machine wakes"');
     expect(html).toContain("After you left with Away. Ask shows one button to bring it back.");
     expect(html).not.toContain("\u2014");
   });
 
+  it("offers only wake choices a Leave honours, showing a saved automatic return as Ask", () => {
+    const html = withSnapshot({
+      sleepTarget: EnvironmentId.make("env-ms"),
+      bringBack: "auto-on-power",
+    });
+    expect(html).not.toContain("Bring back automatically on power");
+    expect(html).toMatch(/aria-label="When this machine wakes"[^>]*>[\s\S]*?>Ask</);
+    const manual = withSnapshot({ sleepTarget: EnvironmentId.make("env-ms"), bringBack: "manual" });
+    expect(manual).toMatch(/aria-label="When this machine wakes"[^>]*>[\s\S]*?>Do nothing</);
+  });
+
+  const GUARANTEE = "Closing the lid moves nothing.";
+  const UNKNOWN =
+    "This machine has not confirmed yet that closing the lid moves nothing. Another machine may still continue a thread when this one goes quiet. This copy pauses when that can happen.";
+
+  it("promises nothing about the lid when the server cannot say what other machines do", () => {
+    const html = withSnapshot({});
+    expect(html).not.toContain(GUARANTEE);
+    expect(html).toContain(UNKNOWN);
+    expect(html).toContain('role="status"');
+  });
+
+  it("promises nothing about the lid while a machine has not confirmed", () => {
+    const html = withSnapshot({}, [
+      {
+        environmentId: EnvironmentId.make("env-m3"),
+        machineLabel: "M3",
+        since: "2026-11-19T10:00:00.000Z",
+      },
+    ]);
+    expect(html).not.toContain(GUARANTEE);
+    expect(html).not.toContain(UNKNOWN);
+    expect(html).toContain(
+      "M3 may still run an older version that continues a thread when this machine goes quiet. Until it confirms, such a thread pauses here. Update M3 to end this.",
+    );
+  });
+
+  it("says closing the lid moves nothing once every machine confirmed", () => {
+    const html = withSnapshot({}, []);
+    expect(html).toContain(
+      "Where Away sends your threads, routines and coordinators when you leave this machine. Closing the lid moves nothing.",
+    );
+    expect(html).not.toContain(UNKNOWN);
+    expect(html).not.toContain('role="status"');
+  });
+
   it("names each machine that has not confirmed yet, and nothing when all have", () => {
-    expect(withSnapshot({})).not.toContain("to confirm that silence no longer moves threads");
-    expect(withSnapshot({}, [])).not.toContain("to confirm that silence no longer moves threads");
+    expect(withSnapshot({})).not.toContain("may still run an older version");
+    expect(withSnapshot({}, [])).not.toContain("may still run an older version");
     const html = withSnapshot({}, [
       {
         environmentId: EnvironmentId.make("env-m3"),
@@ -170,7 +214,7 @@ describe("sleep and silence start nothing (1390 AC-36)", () => {
     ]);
     for (const machine of ["M3", "M5"]) {
       expect(html).toContain(
-        `Waiting for ${machine} to confirm that silence no longer moves threads. Until it answers, a thread it could continue pauses here when it goes quiet.`,
+        `${machine} may still run an older version that continues a thread when this machine goes quiet. Until it confirms, such a thread pauses here. Update ${machine} to end this.`,
       );
     }
     expect(html).toContain('role="status"');

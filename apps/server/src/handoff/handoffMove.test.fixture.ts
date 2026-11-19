@@ -23,6 +23,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSettings from "../serverSettings.ts";
@@ -99,6 +100,34 @@ function machine(environmentId: EnvironmentId, label: string): Machine {
   return { environmentId, label, document: EMPTY_HANDOFF_DOCUMENT, launches: [], dispatched: [] };
 }
 
+class LaunchRefusedError extends Schema.TaggedError<LaunchRefusedError>()("LaunchRefusedError", {
+  message: Schema.String,
+}) {}
+
+/** The receiver calls a source machine makes over the network. */
+type WireReceiver = Pick<
+  HandoffReceiver.HandoffReceiver["Service"],
+  "negotiate" | "replicate" | "preflight" | "takeover" | "heartbeat"
+>;
+
+/** A thread a launch on `target` created, as its thread store reads it. */
+function launchedShell(target: Machine, id: ThreadId) {
+  const launched = target.launches.find((launch) => launch.threadId === id);
+  if (launched === undefined) return null;
+  return {
+    id,
+    projectId: launched.projectId,
+    title: launched.title,
+    worktreePath: null,
+    activeRunId: null,
+    latestRunId: null,
+    modelSelection: launched.modelSelection,
+    runtimeMode: launched.runtimeMode,
+    interactionMode: launched.interactionMode,
+    deletedAt: null,
+  };
+}
+
 export const scenario = (
   options: {
     readonly linked?: boolean;
@@ -136,6 +165,10 @@ export const scenario = (
       sequence: 0,
       /** A turn that keeps running through an interrupt. */
       ignoreInterrupt: false,
+      /** How a launch on the destination ends: before its thread exists, or after. */
+      launch: "starts" as "starts" | "fails" | "fails-after-create",
+      /** The destination's thread store cannot be read. */
+      destinationShellsUnreadable: false,
     };
 
     const handoffFor = (target: Machine) =>
@@ -287,8 +320,18 @@ export const scenario = (
         } as never),
         Layer.succeed(ThreadLaunchService.ThreadLaunchService, {
           launch: (input: ThreadLaunchService.ThreadLaunchInput) =>
-            Effect.sync(() => {
+            Effect.gen(function* () {
+              if (fixture.launch === "fails") {
+                return yield* Effect.fail(
+                  new LaunchRefusedError({ message: "the provider did not start" }),
+                );
+              }
               target.launches.push(input);
+              if (fixture.launch === "fails-after-create") {
+                return yield* Effect.fail(
+                  new LaunchRefusedError({ message: "the first message did not go" }),
+                );
+              }
               return { threadId: input.threadId, projection: {}, resumed: false };
             }),
         } as never),
@@ -301,6 +344,10 @@ export const scenario = (
               }
               return {};
             }),
+          getThreadShell: (id: ThreadId) =>
+            target === destination && fixture.destinationShellsUnreadable
+              ? Effect.die("the thread store cannot be read")
+              : Effect.sync(() => launchedShell(target, id)),
         } as never),
         Layer.succeed(ProjectionStore.ProjectionStoreV2, {
           getThreadShell: (id: ThreadId) => Effect.succeed(id === threadId ? sourceShell() : null),
@@ -320,10 +367,17 @@ export const scenario = (
     const destinationReceiver = yield* HandoffReceiver.make.pipe(
       Effect.provide(destinationServices),
     );
+    /**
+     * What answers for Minis on the network: its receiver, or one a case swaps in on
+     * the same stores (an earlier release's, as before Minis updated).
+     */
+    const wire: { destination: WireReceiver } = { destination: destinationReceiver };
     const asSource = { sourceEnvironmentId: m4, grant: unscopedGrant(m4) };
     const network = {
       down: false,
       dropTakeoverAnswer: false,
+      /** The destination refused the takeover, and that answer never came back. */
+      dropTakeoverRefusal: false,
       dropTakeoverRequest: false,
       refuseTakeover: null as "fenced" | "busy" | null,
       /** A takeover failure that never came from the destination. */
@@ -361,12 +415,12 @@ export const scenario = (
       targets: Effect.succeed([{ machineId: "minis", environmentId: minis, label: "Minis" }]),
       negotiate: (_, request) => {
         network.shipments += 1;
-        return viaNetwork(destinationReceiver.negotiate(asSource, request));
+        return viaNetwork(wire.destination.negotiate(asSource, request));
       },
       replicate: (_, meta, bundle) =>
-        viaNetwork(destinationReceiver.replicate(asSource, meta, bundle)),
+        viaNetwork(wire.destination.replicate(asSource, meta, bundle)),
       preflight: (_, request) =>
-        viaNetwork(destinationReceiver.preflight(asSource, request)).pipe(
+        viaNetwork(wire.destination.preflight(asSource, request)).pipe(
           // A destination from before the version check sends no versions.
           Effect.map(({ protocolVersion: _p, appVersion: _a, ...answer }) =>
             network.olderDestination
@@ -411,7 +465,17 @@ export const scenario = (
                     uncertain: true,
                   }),
                 )
-              : viaNetwork(destinationReceiver.takeover(asSource, request))
+              : viaNetwork(wire.destination.takeover(asSource, request)).pipe(
+                  Effect.mapError((error) =>
+                    network.dropTakeoverRefusal
+                      ? new HandoffPeerError({
+                          code: "unreachable",
+                          message: "Minis did not answer.",
+                          uncertain: true,
+                        })
+                      : error,
+                  ),
+                )
         ).pipe(
           Effect.flatMap((answer) =>
             network.dropTakeoverAnswer
@@ -425,7 +489,7 @@ export const scenario = (
               : Effect.succeed(answer),
           ),
         ),
-      heartbeat: (_, request) => viaNetwork(destinationReceiver.heartbeat(asSource, request)),
+      heartbeat: (_, request) => viaNetwork(wire.destination.heartbeat(asSource, request)),
       coordinatorLease: () => Effect.die("unused"),
       coordinatorReplica: () => Effect.die("unused"),
       memoryExport: () => Effect.die("unused"),
@@ -488,6 +552,9 @@ export const scenario = (
       destinationRoot,
       destinationReceiver,
       destinationServices,
+      sourceServices,
+      peers,
+      wire,
       asSource,
     };
   });
