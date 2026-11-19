@@ -239,12 +239,13 @@ it("lists extras unticked and sends only what is ticked, from the machine that h
   expect(document.querySelector('[data-sync-extras="b"]')).toBeNull();
   // Nothing to move and nothing ticked: Sync has nothing to do.
   expect(button("[data-sync-run]").disabled).toBe(true);
-  // Stashes stay: their line cannot be ticked.
+  // Stashes stay: their line has no box to tick, and the others keep theirs.
+  expect(document.querySelector('[data-sync-extra="stashes"]')?.textContent).toContain("1 stash");
+  expect(document.querySelector('[data-sync-extra="stashes"] [data-slot="checkbox"]')).toBeNull();
+  expect(document.querySelector('[data-sync-extra="stashes"] label')).toBeNull();
   expect(
-    document
-      .querySelector('[data-sync-extra="stashes"] [data-slot="checkbox"]')
-      ?.hasAttribute("data-disabled"),
-  ).toBe(true);
+    document.querySelector('[data-sync-extra="uncommitted"] [data-slot="checkbox"]'),
+  ).not.toBeNull();
   // A secret by its name has no "Send anyway"; a finding has one, off until its files are ticked.
   expect(document.querySelector('[data-sync-left-out="name"] [data-sync-send-anyway]')).toBeNull();
   const anyway = '[data-sync-left-out="content"] [data-sync-send-anyway]';
