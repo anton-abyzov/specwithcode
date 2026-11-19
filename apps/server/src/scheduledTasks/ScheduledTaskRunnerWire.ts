@@ -60,6 +60,11 @@ export const RoutineRunnerRequest = Schema.Union([
     /** Each routine's revision on the caller, in the order of `routineIds`. */
     revisions: Schema.optional(Schema.Array(NonNegativeInt).check(Schema.isMaxLength(400))),
     runnerLabel: Schema.optional(bounded(256)),
+    /**
+     * Only the revisions are news: a copy that rests for another runner keeps
+     * it unless these are newer, so a push queued before a move changes nothing.
+     */
+    refresh: Schema.optional(Schema.Boolean),
   }),
   /** The caller no longer claims these routines: this machine's copies follow the coordinator again. */
   Schema.Struct({

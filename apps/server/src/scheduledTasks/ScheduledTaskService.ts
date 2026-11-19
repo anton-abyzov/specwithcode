@@ -2024,7 +2024,7 @@ export const layer = Layer.effect(
 
     return ScheduledTaskService.of({
       list: () => list().pipe(Effect.flatMap(runner.decorate)),
-      subscribeList,
+      subscribeList: () => subscribeList().pipe(Stream.mapEffect(runner.decorate)),
       upsert: (input, options) => runner.guardUpsert(input, upsert(input, options)),
       setEnabled: (input) => runner.guardSetEnabled(input, setEnabled(input)),
       delete: (input) => runner.guardDelete(input, deleteTask(input)),

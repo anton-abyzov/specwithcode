@@ -7,6 +7,7 @@ import { assert, it } from "@effect/vitest";
 import type { ScheduledTask } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import {
@@ -735,5 +736,125 @@ it.effect("resting copies hear the revision of a change made on the runner", () 
       }),
     );
     assert.equal((yield* alpha.row)?.title, "Changed on the copy");
+  }),
+);
+
+it.effect("a delete whose answer was lost is finished by asking again", () =>
+  Effect.gen(function* () {
+    yield* start;
+    const { machines, network } = yield* fleet(["alpha", "beta"]);
+    const [alpha, beta] = machines as [Machine, Machine];
+    yield* alpha.seed();
+    yield* beta.seed();
+    yield* settle(alpha);
+    network.dropAnswer = (from, _to, op) => from === "beta" && op === "runner-edit";
+    yield* beta.service.delete({ id: ROUTINE }).pipe(Effect.flip);
+    // Deleted on the runner, and the copy never heard.
+    assert.isUndefined(yield* alpha.row);
+    network.dropAnswer = () => false;
+    yield* beta.service.delete({ id: ROUTINE });
+    assert.isUndefined(yield* beta.row);
+    assert.isNull(yield* beta.record);
+  }),
+);
+
+it.effect("a delete on the runner and a change on a copy at once both end", () =>
+  Effect.gen(function* () {
+    yield* start;
+    const { machines } = yield* fleet(["alpha", "beta"]);
+    const [alpha, beta] = machines as [Machine, Machine];
+    yield* alpha.seed();
+    yield* beta.seed();
+    yield* settle(alpha);
+    // Each machine sends to the other while it works; neither waits on the other's lock.
+    yield* Effect.all(
+      [
+        Effect.result(alpha.service.delete({ id: ROUTINE })),
+        Effect.result(
+          beta.service.upsert(
+            taskInput({ id: ROUTINE, projectId: beta.projectId, title: "From the copy" }),
+          ),
+        ),
+      ],
+      { concurrency: "unbounded" },
+    );
+    assert.isUndefined(yield* alpha.row);
+    assert.isUndefined(yield* beta.row);
+    assert.isNull(yield* beta.record);
+  }),
+);
+
+it.effect("a revision push queued before a move never names the old runner again", () =>
+  Effect.gen(function* () {
+    yield* start;
+    const { machines } = yield* fleet(["alpha", "beta", "gamma"]);
+    const [alpha, beta, gamma] = machines as [Machine, Machine, Machine];
+    const task = yield* alpha.seed();
+    yield* beta.seed();
+    yield* gamma.seed();
+    yield* settle(alpha);
+    assert.equal((yield* move(alpha, beta, task)).kind, "moved");
+    yield* settle(beta);
+    assert.equal((yield* gamma.record)?.runnerEnvironmentId, beta.environmentId);
+    const answer = yield* gamma.runner.receive(callerFrom(alpha), {
+      op: "runner-disarm",
+      sourceProjectId: alpha.projectId,
+      routineIds: [ROUTINE],
+      revisions: [0],
+      refresh: true,
+    });
+    assert.deepEqual(answer.refused, [ROUTINE]);
+    assert.equal((yield* gamma.record)?.runnerEnvironmentId, beta.environmentId);
+  }),
+);
+
+it.effect("the list a screen subscribes to carries each routine's revision and runner", () =>
+  Effect.gen(function* () {
+    yield* start;
+    const { machines } = yield* fleet(["alpha", "beta"]);
+    const [alpha, beta] = machines as [Machine, Machine];
+    yield* alpha.seed();
+    yield* beta.seed();
+    yield* settle(alpha);
+    const first = (machine: Machine) =>
+      machine.service
+        .subscribeList()
+        .pipe(Stream.take(1), Stream.runCollect)
+        .pipe(Effect.map((lists) => [...lists][0]!.tasks.find((t) => t.id === ROUTINE)!));
+    assert.deepInclude((yield* first(alpha)).runner, { here: true, revision: 0 });
+    assert.deepInclude((yield* first(beta)).runner, { here: false, label: "alpha" });
+    assert.equal((yield* first(beta)).revision, 0);
+  }),
+);
+
+it.effect("a move cut off after the routine was turned off turns it on again here", () =>
+  Effect.gen(function* () {
+    yield* start;
+    const { machines } = yield* fleet(["alpha", "beta"]);
+    const [alpha, beta] = machines as [Machine, Machine];
+    const task = yield* alpha.seed();
+    yield* beta.seed();
+    yield* settle(alpha);
+    const settled = (yield* alpha.record)!;
+    // As a server that stopped right after turning it off would find it.
+    yield* alpha.runner.records.write({
+      ...settled,
+      state: "moving",
+      operationId: "operation-cut-off",
+      operation: {
+        target: beta.environmentId,
+        targetLabel: "beta",
+        targetProjectId: null,
+        capped: false,
+        phase: "staged",
+        wasEnabled: true,
+        runState: null,
+        prior: settled,
+      },
+    });
+    yield* alpha.sql`UPDATE scheduled_tasks SET enabled = 0 WHERE task_id = ${ROUTINE}`;
+    assert.deepInclude(yield* move(alpha, beta, task), { kind: "failed", offHere: false });
+    assert.equal((yield* alpha.row)?.enabled, 1);
+    assert.equal((yield* alpha.record)?.state, "settled");
   }),
 );

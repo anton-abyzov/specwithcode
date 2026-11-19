@@ -223,6 +223,8 @@ const MoveOperation = Schema.Struct({
   capped: Schema.Boolean,
   /** `staged`: saved there, still on here. `off`: off here, the enable may have been sent. */
   phase: Schema.Literals(["staged", "off"]),
+  /** Whether it was on when the move began; a move cut off after turning it off turns it on again. */
+  wasEnabled: Schema.optional(Schema.Boolean),
   runState: Schema.NullOr(TransferRunState),
   /** The record this routine had before the move, restored when the move is called off. */
   prior: Schema.NullOr(Schema.Unknown),
@@ -375,7 +377,9 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
       // move is called off here whatever the target answers, and starts clean next time.
       const callOffUnsent = Effect.gen(function* () {
         yield* abort(operation.target, record.operationId!, task.id);
-        yield* backHere(task, operation, false);
+        // The server may have stopped between turning it off and recording that.
+        const now = yield* deps.readState(task.id);
+        yield* backHere(task, operation, operation.wasEnabled === true && now?.enabled === false);
         return failed("Stays here: the move was cut off before it began. Try again.", false);
       });
       if (operation.target !== target)
@@ -478,6 +482,7 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
         targetProjectId: staged.success.projectId ?? null,
         capped: staged.success.capped === true,
         phase: "staged",
+        wasEnabled: before.enabled === true,
         runState: null,
         prior: existing,
       };

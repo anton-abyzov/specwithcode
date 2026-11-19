@@ -563,6 +563,7 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
                   sourceProjectId: projectId,
                   routineIds: list.map((task) => task.id),
                   revisions: list.map((task) => counts.get(task.id) ?? 0),
+                  refresh: true,
                 })
                 .pipe(Effect.result);
               if (told._tag === "Success")
@@ -788,18 +789,53 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
             edit,
           })
           .pipe(Effect.result);
-        if (answered._tag === "Failure")
-          return yield* taskError(
-            runsElsewhereRefusal(record.runnerLabel, answered.failure.message),
-            { taskId: existing.id },
+        /** What the runner holds, written only while this is still its resting copy. */
+        const keep = (
+          copy: CoordinatorRoutineCopy | null | undefined,
+          revision: number | undefined,
+        ) =>
+          writing(
+            Effect.gen(function* () {
+              const now = yield* records.read(existing.id);
+              if (
+                now?.state !== "disarmed" ||
+                now.runnerEnvironmentId !== record.runnerEnvironmentId
+              )
+                return;
+              if (copy != null) yield* keepCopy(existing, copy);
+              if (revision !== undefined)
+                yield* records.write({ ...now, revision }).pipe(Effect.ignore);
+            }),
           );
+        const gone = writing(
+          Effect.gen(function* () {
+            yield* deps.remove({ id: existing.id }).pipe(Effect.ignore);
+            yield* records.remove(existing.id).pipe(Effect.ignore);
+            yield* records.dropRevision(existing.id).pipe(Effect.ignore);
+          }),
+        );
+        if (answered._tag === "Failure") {
+          const failure = answered.failure;
+          // The runner no longer has it: an earlier delete was made there and its
+          // answer was lost. This copy goes, or it would rest here for good.
+          if (
+            edit.kind === "delete" &&
+            failure.refused &&
+            !failure.uncertain &&
+            failure.status === 404
+          ) {
+            yield* gone;
+            return null;
+          }
+          return yield* taskError(runsElsewhereRefusal(record.runnerLabel, failure.message), {
+            taskId: existing.id,
+          });
+        }
         const answer = answered.success;
         if (affirmsRunner(answer) && answer.stale === true) {
           // Not made. This copy now shows what the runner holds, and its revision,
           // so the change can be made again against it.
-          if (answer.copy != null) yield* keepCopy(existing, answer.copy);
-          if (answer.revision !== undefined)
-            yield* records.write({ ...record, revision: answer.revision }).pipe(Effect.ignore);
+          yield* keep(answer.copy, answer.revision);
           yield* deps.notifyChanged;
           return yield* taskError(STALE_ROUTINE_EDIT_REFUSAL, { taskId: existing.id });
         }
@@ -809,12 +845,10 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
             { taskId: existing.id },
           );
         if (answer.copy == null) {
-          yield* deps.remove({ id: existing.id }).pipe(Effect.ignore);
-          yield* records.remove(existing.id).pipe(Effect.ignore);
+          yield* gone;
           return null;
         }
-        yield* keepCopy(existing, answer.copy);
-        yield* records.write({ ...record, revision: answer.revision }).pipe(Effect.ignore);
+        yield* keep(answer.copy, answer.revision);
         return yield* deps.findTask(existing.id);
       });
 
@@ -836,6 +870,32 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
           })
         | undefined;
     }): Effect.Effect<A, ScheduledTaskError> =>
+      Effect.gen(function* () {
+        // A change to a routine another machine runs is sent there with this
+        // machine's lock released: the runner takes its own lock for it, and two
+        // machines that each held theirs would wait on each other.
+        const forwarded = input.forwarded;
+        for (const target of input.targets) {
+          if (!("id" in target) || forwarded === undefined) continue;
+          const record = yield* records.read(target.id);
+          if (record?.state !== "disarmed") continue;
+          const existing = yield* deps.findTask(target.id);
+          if (existing === null) continue;
+          const { edit, done } = forwarded(existing);
+          const task = yield* forward(record, existing, edit, input.expectedRevision);
+          yield* deps.notifyChanged;
+          return done(task);
+        }
+        return yield* guardHere(input);
+      });
+
+    const guardHere = <A>(input: {
+      readonly targets: ReadonlyArray<Target>;
+      readonly change: Effect.Effect<A, ScheduledTaskError>;
+      readonly ownRemovable?: boolean | undefined;
+      readonly expectedRevision?: number | undefined;
+      readonly before?: Effect.Effect<void, ScheduledTaskError> | undefined;
+    }): Effect.Effect<A, ScheduledTaskError> =>
       lock.withPermits(1)(
         Effect.gen(function* () {
           const bumped: Array<string> = [];
@@ -848,12 +908,6 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
                 return yield* taskError(MOVING_ROUTINE_CHANGE_REFUSAL, { taskId: target.id });
               if (record.state === "disarmed") {
                 const existing = yield* deps.findTask(target.id);
-                if (existing !== null && input.forwarded !== undefined) {
-                  const { edit, done } = input.forwarded(existing);
-                  const task = yield* forward(record, existing, edit, input.expectedRevision);
-                  yield* deps.notifyChanged;
-                  return done(task);
-                }
                 // A copy that lost its row has nothing to change here.
                 if (existing !== null)
                   return yield* taskError(
@@ -965,7 +1019,15 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
         expectedRevision: input.expectedRevision,
         // The copies that rest for it go first: one left behind would come back with a replica.
         before: Effect.gen(function* () {
-          const record = yield* records.read(input.id);
+          // Unreadable is not "no copies": deleting then would leave them resting for good.
+          const record = yield* records.readStrict(input.id).pipe(
+            Effect.catchCause((cause) =>
+              taskError("Not deleted: this machine could not read its runner.", {
+                taskId: input.id,
+                cause,
+              }),
+            ),
+          );
           if (record === null || !runsHere(record)) return;
           const unreached = yield* tellDeleted(record, input.id, null);
           if (unreached.length > 0)
@@ -1093,6 +1155,18 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
             refused.push(id);
             continue;
           }
+          // A runner that took a routine over continues its count from the next, so a
+          // revision push from another machine that brings nothing newer was queued
+          // before the move: it would name the old runner again.
+          if (
+            request.refresh === true &&
+            record !== null &&
+            record.runnerEnvironmentId !== caller.sourceEnvironmentId &&
+            (request.revisions?.[index] ?? 0) <= record.revision
+          ) {
+            refused.push(id);
+            continue;
+          }
           yield* records.write({
             taskId: id,
             state: "disarmed",
@@ -1122,7 +1196,12 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
             record.runnerEnvironmentId === caller.sourceEnvironmentId
           ) {
             if (request.deleted === true) {
-              yield* deps.remove({ id }).pipe(Effect.ignore);
+              // The record goes only with the row: a row left without it would follow
+              // the coordinator again, and the runner would take it for deleted.
+              const undeleted = () =>
+                refuseTransfer(409, "That routine could not be deleted here.");
+              const held = yield* deps.findTask(id).pipe(Effect.mapError(undeleted));
+              if (held !== null) yield* deps.remove({ id }).pipe(Effect.mapError(undeleted));
               yield* records.dropRevision(id).pipe(Effect.ignore);
             }
             yield* records.remove(id);
@@ -1311,9 +1390,14 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
             .withPermits(1)(disarm(caller, request))
             .pipe(Effect.catchCause((cause) => failOrUnreadable(cause, unreadable)));
         case "runner-rearm":
-          return lock
-            .withPermits(1)(rearmHere(caller, request))
-            .pipe(Effect.catchCause((cause) => failOrUnreadable(cause, unreadable)));
+          // A delete is sent by a runner that holds its own change lock. Taking this
+          // machine's lock too would let two machines wait on each other until the
+          // request timed out, so a delete only removes, in single statements.
+          return (
+            request.deleted === true
+              ? rearmHere(caller, request)
+              : lock.withPermits(1)(rearmHere(caller, request))
+          ).pipe(Effect.catchCause((cause) => failOrUnreadable(cause, unreadable)));
         case "runner-edit":
           return lock
             .withPermits(1)(editHere(caller, request))
