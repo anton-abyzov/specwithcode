@@ -14,6 +14,9 @@ import * as Layer from "effect/Layer";
 import { describe, expect } from "vite-plus/test";
 
 import { HandoffMode } from "../handoff/HandoffMode.ts";
+import { HandoffPeerError, HandoffPeers } from "../handoff/handoffPeers.ts";
+import type { PeerCheckRequest } from "../handoff/handoffPlan.ts";
+import { HANDOFF_CAPABILITIES, HANDOFF_PROTOCOL_VERSION } from "../handoff/handoffWire.ts";
 import { PAUSED_OFFLINE_REFUSAL } from "../handoff/HandoffTurnGate.ts";
 
 import {
@@ -117,6 +120,7 @@ describe("LimitHandoffAdapter", () => {
               }),
             ),
             Layer.provide(Layer.mock(Orchestrator.OrchestratorV2)({})),
+            Layer.provide(Layer.mock(HandoffPeers)({})),
           ),
         ),
       );
@@ -148,8 +152,13 @@ describe("LimitHandoffAdapter", () => {
           threadId,
           destinationEnvironmentId: minis,
           modelSelection: request.modelSelection,
-          // What an automatic move back is weighed against on the other machine.
-          trigger: { kind: "automatic", key: request.idempotencyKey },
+          // What an automatic move back is weighed against on the other machine,
+          // and why it left, for the transfer record and the line on both machines.
+          trigger: {
+            kind: "automatic",
+            key: request.idempotencyKey,
+            reason: "Claude limit reached on M4",
+          },
         },
       ]);
     }),
@@ -397,4 +406,105 @@ describe("limitHandoffNote", () => {
     expect(note.length).toBe(300);
     expect(note.endsWith("…")).toBe(true);
   });
+});
+
+describe("the automatic track start through the adapter (1390 T-13)", () => {
+  const moved = () =>
+    Effect.succeed({
+      environmentId: minis,
+      machineLabel: "Minis",
+      threadId: ThreadId.make("remote-t1"),
+      modelSelection: request.modelSelection,
+      notice: null,
+    });
+
+  it.effect("carries the trigger key, the track's reason and the usage window (EC2-08)", () =>
+    Effect.gen(function* () {
+      const { port, calls, notes } = harness({ answer: moved });
+      yield* port.handOff({
+        ...request,
+        track: "daily",
+        sourceSummary: "Daily track out of tokens on M4",
+        usageWindowKey: "2026-10-20T18:00:00.000Z",
+      });
+      expect(calls[0]?.trigger).toEqual({
+        kind: "automatic",
+        // The key names the run the move is for.
+        key: "limit-handoff:t1:r1",
+        reason: "Daily track out of tokens on M4",
+        usageWindowKey: "2026-10-20T18:00:00.000Z",
+      });
+      // The line on the source thread says why it left (AC-28).
+      expect(notes[0]?.note).toBe("Daily track out of tokens on M4 · continued on Minis with Opus");
+    }),
+  );
+
+  it.effect("asks a machine with this machine's identity and capabilities", () =>
+    Effect.gen(function* () {
+      const asked: Array<PeerCheckRequest> = [];
+      const port = makeLimitHandoffPort({
+        environmentId: m4,
+        machineLabel: "M4",
+        document: Effect.succeed(EMPTY_HANDOFF_DOCUMENT),
+        handOff: () => Effect.die("unused"),
+        check: (environmentId, sent) =>
+          environmentId === minis
+            ? Effect.sync(() => {
+                asked.push(sent);
+                return { machineLabel: "Minis", capabilities: [...HANDOFF_CAPABILITIES], results: [] };
+              })
+            : Effect.fail(
+                new HandoffPeerError({
+                  code: "invalid",
+                  message: "Needs update: OLD runs an older SpecWithCode.",
+                  check: "version",
+                  uncertain: false,
+                  needsUpdate: true,
+                }),
+              ),
+      });
+      const input = {
+        start: "automatic" as const,
+        thresholdPercent: 95,
+        threads: [
+          {
+            sourceThreadId: threadId,
+            sourceProjectId: projectId,
+            modelSelection: request.modelSelection,
+            track: "daily" as const,
+            driverKind: "claudeAgent",
+            accountFingerprints: [`sha256:${"a".repeat(64)}`],
+          },
+        ],
+      };
+      expect(yield* port.check!(minis, input)).toMatchObject({
+        kind: "answered",
+        response: { machineLabel: "Minis" },
+      });
+      expect(asked[0]).toMatchObject({
+        sourceEnvironmentId: m4,
+        sourceLabel: "M4",
+        protocolVersion: HANDOFF_PROTOCOL_VERSION,
+        capabilities: HANDOFF_CAPABILITIES,
+        ...input,
+      });
+      expect(asked[0]?.capabilities).toContain("handoff.track-start");
+      // A machine with no check path is a failure that says so, never an answer.
+      expect(yield* port.check!(EnvironmentId.make("env-old"), input)).toEqual({
+        kind: "failed",
+        error: { message: "Needs update: OLD runs an older SpecWithCode.", needsUpdate: true },
+      });
+    }),
+  );
+
+  it.effect("reads the thread's Hand off automatically: only Off opts out (AC-25)", () =>
+    Effect.gen(function* () {
+      const optedOut = (document: HandoffDocument) =>
+        harness({ document, answer: moved }).port.optedOut!(threadId);
+      expect(yield* optedOut(withRecord({ mode: "off" }))).toBe(true);
+      expect(yield* optedOut(withRecord({ mode: "on" }))).toBe(false);
+      expect(yield* optedOut(withRecord({ mode: "inherit" }))).toBe(false);
+      expect(yield* optedOut(EMPTY_HANDOFF_DOCUMENT)).toBe(false);
+    }),
+  );
 });

@@ -27,6 +27,9 @@ import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vite-plus/test";
 import { PERSONAL_ASSISTANT_PRIVATE_MESSAGE } from "@specweave-studio/shared/personalAssistant";
 
+import type { PeerCheckEvidence } from "../handoff/handoffPlan.ts";
+import { HANDOFF_CAPABILITIES, HANDOFF_PROTOCOL_VERSION } from "../handoff/handoffWire.ts";
+
 import {
   HandoffTurnGate,
   PAUSED_OFFLINE_REFUSAL,
@@ -46,6 +49,7 @@ import { accountFingerprint, accountPoolKey } from "../usage/providerUsageSummar
 import { makeLimitHandoffPort } from "./LimitHandoffAdapter.ts";
 import {
   LIMIT_PREMOVE_RECENT_MS,
+  type LimitHandoffCheckInput,
   type LimitHandoffOutcome,
   type LimitHandoffPortShape,
   type LimitHandoffRequest,
@@ -151,6 +155,60 @@ function machine(
   } as OrchestratorMcpMachine;
 }
 
+const trackEvidence = (patch: Partial<PeerCheckEvidence> = {}): PeerCheckEvidence => ({
+  modelSelection: { instanceId: claudeId, model: "opus" },
+  providerName: "Claude",
+  kind: "different-account",
+  line: "Different Claude account · 70% left",
+  percentLeft: 70,
+  automatic: true,
+  accountFingerprint: otherPool,
+  usedPercent: 30,
+  resetsAt,
+  observedAt: DateTime.formatIso(DateTime.makeUnsafe(stoppedAt)),
+  ...patch,
+});
+
+/** What a machine answers a track check with, as the peer client hands it over. */
+const trackAnswer = (
+  machineLabel: string,
+  evidence: PeerCheckEvidence | null,
+  capabilities: ReadonlyArray<string> = HANDOFF_CAPABILITIES,
+) => ({
+  kind: "answered" as const,
+  response: {
+    machineLabel,
+    protocolVersion: HANDOFF_PROTOCOL_VERSION,
+    appVersion: "1.0.390",
+    capabilities: [...capabilities],
+    results: [
+      {
+        sourceThreadId: limited.id,
+        failures:
+          evidence === null || evidence.automatic
+            ? []
+            : [{ check: "provider" as const, message: `${machineLabel}: ${evidence.line}` }],
+        evidence,
+      },
+    ],
+  },
+});
+
+const noRoom = trackEvidence({ automatic: false, line: "Claude limit reached", usedPercent: 100 });
+
+/** A project on tracks whose Daily track is Opus on Claude, then GPT-6 on Codex. */
+const onTracks: Partial<ServerSettings> = {
+  threadModelMode: "tracks",
+  modelLanes: {
+    routine: [
+      { instanceId: claudeId, model: "opus" },
+      { instanceId: codexId, model: "gpt-6" },
+    ],
+    complex: [],
+  },
+};
+const daily = { routing: { lane: "routine" } };
+
 interface Scenario {
   readonly settings?: Partial<ServerSettings>;
   readonly thread?: Record<string, unknown>;
@@ -171,10 +229,22 @@ interface Scenario {
   readonly before?: (handoff: MachineLimitHandoffShape) => Effect.Effect<void>;
   /** A person's Stop shows from this read of the thread's Stop requests on. */
   readonly stopFromRead?: number;
+  /** What each machine answers a track check with; a missing entry has no room. */
+  readonly checks?: Record<string, TrackAnswer>;
+  /** The thread's "Hand off automatically" is Off. */
+  readonly optedOut?: boolean;
 }
+
+type TrackAnswer = NonNullable<LimitHandoffPortShape["check"]> extends (
+  ...args: never[]
+) => Effect.Effect<infer A>
+  ? A
+  : never;
 
 function run(scenario: Scenario, sweeps = 1) {
   const requests: LimitHandoffRequest[] = [];
+  const checks: Array<{ readonly environmentId: EnvironmentId; readonly input: LimitHandoffCheckInput }> =
+    [];
   const dispatched: OrchestrationV2ServerCommand[] = [];
   let stopReads = 0;
   const settings: ServerSettings = {
@@ -249,6 +319,14 @@ function run(scenario: Scenario, sweeps = 1) {
         listMachines: () => Effect.succeed(list),
         port: scenario.port ?? {
           available: true,
+          optedOut: () => Effect.succeed(scenario.optedOut === true),
+          check: (environmentId, input) => {
+            checks.push({ environmentId, input });
+            return Effect.succeed(
+              scenario.checks?.[environmentId] ??
+                trackAnswer(environmentId === minis ? "Minis" : "M3", noRoom),
+            );
+          },
           handOff: (request) => {
             requests.push(request);
             const answer = scenario.answers?.[request.destinationEnvironmentId];
@@ -272,7 +350,7 @@ function run(scenario: Scenario, sweeps = 1) {
     }
     const held = yield* handoff.holds(thread.id, thread.latestRunId);
     const shown = yield* handoff.candidates(thread.id).pipe(Effect.option);
-    return { requests, dispatched, held, shown: Option.getOrNull(shown) };
+    return { requests, checks, dispatched, held, shown: Option.getOrNull(shown) };
   }).pipe(
     Effect.provide(
       Layer.effect(MachineLimitHandoff, make).pipe(
@@ -1091,6 +1169,264 @@ describe("limit handoff in the fallback sweep", () => {
           [],
         );
       }
+    }),
+  );
+});
+
+describe("the automatic start when a thread's track is out here (1390 T-13)", () => {
+  for (const order of ["other-machine-first", "same-machine-first"] as const) {
+    itEffect.effect(
+      `a track with room on this machine asks no machine, under ${order} (AC-37)`,
+      () =>
+        Effect.gen(function* () {
+          const result = yield* run({
+            settings: { ...onTracks, providerLimitTargetOrder: order },
+            thread: daily,
+            machines: [machine(minis, "Minis"), machine(m3, "M3")],
+          });
+          // The next model of the Daily track runs here; nothing was asked of Minis or M3.
+          expect(result.checks).toEqual([]);
+          expect(result.requests).toEqual([]);
+          expect(result.dispatched[0]).toMatchObject({
+            modelSelection: { instanceId: codexId, model: "gpt-6" },
+          });
+        }),
+    );
+
+    itEffect.effect(`a track out on this machine hands off, under ${order} (AC-37)`, () =>
+      Effect.gen(function* () {
+        const result = yield* run({
+          settings: { ...onTracks, providerLimitTargetOrder: order },
+          thread: daily,
+          localSpent: true,
+          machines: [machine(minis, "Minis"), machine(m3, "M3")],
+          checks: { [minis]: trackAnswer("Minis", trackEvidence()) },
+        });
+        expect(result.requests).toHaveLength(1);
+        expect(result.dispatched).toEqual([]);
+      }),
+    );
+  }
+
+  itEffect.effect(
+    "asks the machine for the thread's own track and moves onto the sign-in it confirmed (AC-38)",
+    () =>
+      Effect.gen(function* () {
+        const confirmed = { instanceId: codexId, model: "gpt-6" };
+        const result = yield* run(
+          {
+            settings: {
+              ...onTracks,
+              providerLimitSwitchAtPercent: 95,
+              // Two saved targets on Minis: the machine is still asked once.
+              providerLimitMachineTargets: [
+                target(minis, "Minis"),
+                { ...target(minis, "Minis"), modelSelection: confirmed },
+                target(m3, "M3"),
+              ],
+              // An unknown reading never qualifies a track move, whatever this says.
+              providerLimitUnknownUsageEligible: true,
+            },
+            thread: daily,
+            localSpent: true,
+            machines: [machine(minis, "Minis"), machine(m3, "M3")],
+            checks: {
+              [minis]: trackAnswer("Minis", trackEvidence({ modelSelection: confirmed })),
+            },
+          },
+          3,
+        );
+        expect(result.checks).toHaveLength(1);
+        expect(result.checks[0]).toMatchObject({
+          environmentId: minis,
+          input: { start: "automatic", thresholdPercent: 95 },
+        });
+        const asked = result.checks[0]!.input.threads[0]!;
+        expect(asked).toMatchObject({
+          sourceThreadId: limited.id,
+          track: "daily",
+          driverKind: "claudeAgent",
+        });
+        // Every pool the track ran out on here, on both providers.
+        expect([...asked.accountFingerprints].sort()).toEqual(
+          [sourcePool, accountFingerprint(accountPoolKey(codex(stoppedAt, 100))!)].sort(),
+        );
+        expect(result.requests).toHaveLength(1);
+        expect(result.requests[0]).toMatchObject({
+          destinationEnvironmentId: minis,
+          modelSelection: confirmed,
+          reason: "usage-limit",
+          resume: true,
+          idempotencyKey: "limit-handoff:t1:r1",
+          sourceSummary: "Daily track out of tokens on M4",
+          track: "daily",
+        });
+        expect(result.held).toBe(true);
+        expect(result.shown?.track).toMatchObject({
+          threadId: limited.id,
+          track: "daily",
+          trackOut: true,
+          reason: "Daily track out of tokens on M4",
+          everyMachineOut: false,
+          target: {
+            environmentId: minis,
+            machineLabel: "Minis",
+            modelSelection: confirmed,
+            disposition: "resume",
+          },
+        });
+      }),
+  );
+
+  itEffect.effect(
+    "a machine on the same depleted pool or with stale usage adds nothing; the next is asked (AC-38)",
+    () =>
+      Effect.gen(function* () {
+        const result = yield* run({
+          settings: { ...onTracks, providerLimitUnknownUsageEligible: true },
+          thread: daily,
+          localSpent: true,
+          machines: [machine(minis, "Minis"), machine(m3, "M3")],
+          checks: {
+            [minis]: trackAnswer(
+              "Minis",
+              trackEvidence({
+                kind: "usage-unknown",
+                automatic: false,
+                line: "Usage unknown",
+                usedPercent: null,
+              }),
+            ),
+            [m3]: trackAnswer("M3", trackEvidence()),
+          },
+        });
+        expect(result.checks.map((check) => check.environmentId)).toEqual([minis, m3]);
+        expect(result.requests.map((request) => request.destinationEnvironmentId)).toEqual([m3]);
+      }),
+  );
+
+  const everyOut = (minisReset: string | null, m3Reset: string | null): Scenario => ({
+    settings: onTracks,
+    thread: daily,
+    localSpent: true,
+    machines: [machine(minis, "Minis"), machine(m3, "M3")],
+    checks: {
+      [minis]: trackAnswer("Minis", { ...noRoom, resetsAt: minisReset }),
+      [m3]: trackAnswer("M3", { ...noRoom, resetsAt: m3Reset }),
+    },
+  });
+
+  itEffect.effect(
+    "no machine has the track: no move, no other track, the earliest reset, asked once (AC-39)",
+    () =>
+      Effect.gen(function* () {
+        const early = DateTime.formatIso(DateTime.makeUnsafe(stoppedAt + 100_000));
+        // Sweeps at +30 s and +90 s: the reset at +100 s has not come.
+        const result = yield* run(everyOut(resetsAt, early), 2);
+        expect(result.requests).toEqual([]);
+        expect(result.dispatched).toEqual([]);
+        expect(result.held).toBe(false);
+        expect(result.checks.map((check) => check.environmentId)).toEqual([minis, m3]);
+        expect(result.shown?.track).toMatchObject({
+          track: "daily",
+          trackOut: true,
+          target: null,
+          everyMachineOut: true,
+          earliestReset: { machineLabel: "M3", at: early },
+          recheckAt: early,
+        });
+        expect(result.shown?.waiting).toBe("Daily track is out on every machine.");
+        // The third sweep, at +150 s, is past that reset: the machines are asked again, once.
+        const later = yield* run(everyOut(resetsAt, early), 3);
+        expect(later.checks.map((check) => check.environmentId)).toEqual([minis, m3, minis, m3]);
+        expect(later.requests).toEqual([]);
+      }),
+  );
+
+  itEffect.effect("with no reset time anywhere it says so, and does not ask each sweep (AC-39)", () =>
+    Effect.gen(function* () {
+      const result = yield* run(
+        {
+          ...everyOut(null, null),
+          // This machine's own windows name no reset either.
+          thread: { ...daily, usageLimitResetAt: null },
+        },
+        3,
+      );
+      expect(result.checks).toHaveLength(2);
+      expect(result.requests).toEqual([]);
+      expect(result.shown?.track).toMatchObject({ everyMachineOut: true, target: null });
+    }),
+  );
+
+  itEffect.effect(
+    "a machine from before the track start is never sent a thread: Needs update (EC2-04)",
+    () =>
+      Effect.gen(function* () {
+        const result = yield* run({
+          settings: { ...onTracks, providerLimitMachineTargets: [target(minis, "Minis")] },
+          thread: daily,
+          localSpent: true,
+          machines: [machine(minis, "Minis")],
+          checks: {
+            // It plans hand offs and says it has room, and names no track start.
+            [minis]: trackAnswer("Minis", trackEvidence(), ["handoff.v2", "handoff.plan"]),
+          },
+        });
+        expect(result.requests).toEqual([]);
+        expect(result.shown?.track?.machines).toMatchObject([
+          { environmentId: minis, state: "needs-update" },
+        ]);
+        expect(result.shown?.track?.everyMachineOut).toBe(false);
+      }),
+  );
+
+  itEffect.effect("a thread with Hand off automatically off is asked of no machine (AC-25)", () =>
+    Effect.gen(function* () {
+      const result = yield* run(
+        {
+          settings: onTracks,
+          thread: daily,
+          localSpent: true,
+          optedOut: true,
+          machines: [machine(minis, "Minis"), machine(m3, "M3")],
+          checks: { [minis]: trackAnswer("Minis", trackEvidence()) },
+        },
+        2,
+      );
+      expect(result.checks).toEqual([]);
+      expect(result.requests).toEqual([]);
+    }),
+  );
+
+  itEffect.effect("a thread whose track is not known starts nothing by itself", () =>
+    Effect.gen(function* () {
+      // No routing decision, and Opus is on both tracks.
+      const result = yield* run({
+        settings: {
+          ...onTracks,
+          modelLanes: { ...onTracks.modelLanes!, complex: [{ instanceId: claudeId, model: "opus" }] },
+        },
+        localSpent: true,
+        machines: [machine(minis, "Minis")],
+        checks: { [minis]: trackAnswer("Minis", trackEvidence()) },
+      });
+      expect(result.checks).toEqual([]);
+      expect(result.requests).toEqual([]);
+    }),
+  );
+
+  itEffect.effect("a project without tracks keeps its saved order and asks no track check", () =>
+    Effect.gen(function* () {
+      const result = yield* run({ machines: [machine(minis, "Minis"), machine(m3, "M3")] });
+      expect(result.checks).toEqual([]);
+      expect(result.requests).toHaveLength(1);
+      expect(result.requests[0]).toMatchObject({
+        destinationEnvironmentId: minis,
+        sourceSummary: "Claude limit reached on M4",
+      });
+      expect(result.requests[0]?.track).toBeUndefined();
+      expect(result.shown?.track ?? null).toBeNull();
     }),
   );
 });
