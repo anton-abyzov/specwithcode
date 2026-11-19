@@ -2626,6 +2626,25 @@ export function claudeAdvisorItemTitle(model: string | undefined): string {
 }
 
 /**
+ * The model that answered Claude's own advisor in one API message, read from
+ * the `advisor_message` entry Claude reports in `usage.iterations`. It is the
+ * model that really answered, also when Claude's own settings chose it.
+ */
+export function claudeAdvisorModelFromUsage(usage: unknown): string | undefined {
+  if (typeof usage !== "object" || usage === null) return undefined;
+  const iterations = Reflect.get(usage, "iterations");
+  if (!Array.isArray(iterations)) return undefined;
+  for (let index = iterations.length - 1; index >= 0; index -= 1) {
+    const entry: unknown = iterations[index];
+    if (typeof entry !== "object" || entry === null) continue;
+    if (Reflect.get(entry, "type") !== "advisor_message") continue;
+    const model = Reflect.get(entry, "model");
+    if (typeof model === "string" && model.trim().length > 0) return model.trim();
+  }
+  return undefined;
+}
+
+/**
  * What the timeline shows for a result of Claude's own advisor: the advice
  * itself, a fixed line when Claude hides it, and the error code when the
  * advisor could not answer. Never the raw block.
@@ -3801,6 +3820,9 @@ export function makeClaudeAdapterV2(
         // The model Claude's own advisor runs on in the live process, when
         // this session passed one; it names the model on advisor items.
         let liveAdvisorModel: string | undefined;
+        // The model Claude reported for the latest advisor answer; it wins
+        // over `liveAdvisorModel`, and is the only name in pass-through.
+        let answeredAdvisorModel: string | undefined;
         const workflowTools = yield* Ref.make<
           ReadonlyMap<string, { observedAt: string; tools: readonly string[] }>
         >(new Map());
@@ -4736,7 +4758,7 @@ export function makeClaudeAdapterV2(
             status: input.status,
             title:
               input.toolName === CLAUDE_ADVISOR_TOOL_NAME
-                ? claudeAdvisorItemTitle(liveAdvisorModel)
+                ? claudeAdvisorItemTitle(answeredAdvisorModel ?? liveAdvisorModel)
                 : readPath !== undefined
                   ? formatReadToolLabel(readPath)
                   : (searchTitle ??
@@ -6904,6 +6926,10 @@ export function makeClaudeAdapterV2(
           if (message.type === "assistant" && input.replayed !== true) {
             const now = yield* DateTime.now;
             yield* completeProviderRetry(context, now);
+            if (message.parent_tool_use_id === null) {
+              answeredAdvisorModel =
+                claudeAdvisorModelFromUsage(message.message.usage) ?? answeredAdvisorModel;
+            }
             if (message.parent_tool_use_id === null && message.message.usage !== undefined) {
               const tokenUsage = claudeProviderTurnTokenUsage(
                 message.message.usage,
@@ -8605,6 +8631,7 @@ export function makeClaudeAdapterV2(
           else advisorRoutes.set(turnInput.threadId, sessionAdvisor.route);
           liveAdvisorModel =
             sessionAdvisor.outcome?.kind === "model" ? sessionAdvisor.outcome.model : undefined;
+          answeredAdvisorModel = undefined;
           if (sessionAdvisor.outcome !== undefined) {
             yield* Effect.logDebug("claude.advisor", {
               threadId: turnInput.threadId,
