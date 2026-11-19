@@ -770,14 +770,14 @@ export const make = Effect.gen(function* () {
       }
 
       // 3. The destination takes over at the next epoch.
-      const followed = yield* follow.register({ shell: first.shell, destination, epoch }).pipe(
+      const here = { told: current?.launcher, self, selfLabel, targets: yield* peers.targets };
+      const moving = { shell: first.shell, destination, epoch };
+      const waits = yield* HandoffFollow.named(follow, moving, here).pipe(
         Effect.mapError(() => failed("failed", HandoffFollow.FOLLOW_NOT_RECORDED)),
         Effect.tapError((error) =>
           releaseHold(input.threadId, error.message).pipe(Effect.andThen(resume)),
         ),
       );
-      const here = { self, selfLabel, targets: yield* peers.targets };
-      const waits = HandoffFollow.launcherFor(current?.launcher, followed === "following", here);
       const request: TakeoverRequest = {
         sourceEnvironmentId: self,
         sourceThreadId: input.threadId,
@@ -1133,8 +1133,8 @@ export const make = Effect.gen(function* () {
         );
       }
       const waits = detail?.launcher;
-      const declined = HandoffFollow.onwardDeclined(waits, self, input.sourceEnvironmentId);
-      if (declined !== null) return yield* failed("unreachable", declined);
+      const out = HandoffFollow.onwardDeclined(waits, self, input.sourceEnvironmentId);
+      if (out !== null) return yield* failed("unreachable", out);
       const response = yield* receiver
         .takeover(
           // Continuing here runs on this machine's own sign-ins: no access ceiling applies.

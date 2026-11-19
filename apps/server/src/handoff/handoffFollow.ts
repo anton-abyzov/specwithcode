@@ -122,27 +122,55 @@ export const onwardDeclined = (
  * What a takeover says about who waits for the result: what this machine was
  * told when the work arrived, or this machine and its own fleet when the
  * thread waiting is here. Undefined when nobody waits.
+ *
+ * Fails when this machine's list does not hold the machine the work is going
+ * to: the fleet could not be read then, and an unread list sent as it is
+ * would have the other machine decline every later move for good.
  */
 export const launcherFor = (
-  arrivedWith: HandoffLauncher | null | undefined,
-  following: boolean,
+  followed: HandoffFollowOutcome,
+  input: Pick<HandoffFollowInput, "shell" | "destination">,
   here: {
+    readonly told: HandoffLauncher | null | undefined;
     readonly self: EnvironmentId;
     readonly selfLabel: string;
     readonly targets: ReadonlyArray<{ readonly environmentId: EnvironmentId }>;
   },
-): HandoffLauncher | undefined =>
-  arrivedWith != null && arrivedWith.environmentId !== here.self
-    ? arrivedWith
-    : following || arrivedWith != null
-      ? {
-          environmentId: here.self,
-          label: here.selfLabel.slice(0, 120),
-          reachable: here.targets
-            .map((target) => target.environmentId)
-            .filter((environmentId) => environmentId !== here.self),
-        }
-      : undefined;
+): Effect.Effect<HandoffLauncher | undefined, HandoffFollowError> => {
+  if (here.told != null && here.told.environmentId !== here.self) return Effect.succeed(here.told);
+  if (followed !== "following" && here.told == null) return Effect.succeed(undefined);
+  const reachable = here.targets
+    .map((target) => target.environmentId)
+    .filter((environmentId) => environmentId !== here.self);
+  return input.destination === here.self || reachable.includes(input.destination)
+    ? Effect.succeed({
+        environmentId: here.self,
+        label: here.selfLabel.slice(0, 120),
+        reachable,
+      })
+    : Effect.fail(
+        new HandoffFollowError({
+          threadId: input.shell.id,
+          cause: "This machine's list of machines could not be read.",
+        }),
+      );
+};
+
+/**
+ * Follows the continuation a takeover will create and says what the takeover
+ * tells the destination about who waits. A follow that cannot be named is
+ * ended again: the move is declined, so nothing is left asking for a thread
+ * that will not exist.
+ */
+export const named = (
+  follow: HandoffFollowShape,
+  input: HandoffFollowInput,
+  here: Parameters<typeof launcherFor>[2],
+) =>
+  follow.register(input).pipe(
+    Effect.flatMap((followed) => launcherFor(followed, input, here)),
+    Effect.tapError(() => follow.retire({ threadId: input.shell.id, epoch: input.epoch })),
+  );
 
 /** Where remote workers are not followed (no fleet): a handoff follows nothing. */
 export const none: HandoffFollowShape = {
