@@ -656,8 +656,6 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
     } satisfies Assessment;
   });
 
-  /** The app's worktree folders that exist, as the running sweep found them. */
-  let managedRoots: ReadonlyArray<string> = [];
   const failures = new WorktreeRemovalFailures(config.stateDir);
   const { copyMedia, discardEvidence, removeMembers } = makeRemoval({
     git,
@@ -666,7 +664,6 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
     path,
     baseDir: config.baseDir,
     platform,
-    managedRoots: () => managedRoots,
     inside,
     realOrNull,
     memberStaysInside,
@@ -767,8 +764,11 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
     }).pipe(Effect.orElseSucceed(() => false));
     const removal = yield* removeMembers(last, stillFree);
     if (removal.stopped !== null) {
-      // Nothing went, so the copies made for this removal are not needed.
-      if (removal.gone === 0 && evidence !== null) yield* discardEvidence(evidence);
+      // Nothing went and Git was never asked, so the copies made for this
+      // removal are not needed. After any attempt they stay: Git may have
+      // deleted an ignored file before it gave up, and the copy is all left.
+      if (removal.stopped === "changed" && removal.gone === 0 && evidence !== null)
+        yield* discardEvidence(evidence);
       if (removal.failure !== null) {
         failures.record(first.group.key, removal.failure);
         yield* Effect.logWarning("storage cleanup left a worktree Git could not remove", {
@@ -822,7 +822,6 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
     if (Option.isNone(read)) return empty;
     const allGroups = yield* readGroups(read.value.snapshot.threads, settings).pipe(Effect.option);
     if (Option.isNone(allGroups)) return empty;
-    managedRoots = roots;
     const only = sweepOptions.onlyThreads;
     const groups = {
       value:

@@ -93,9 +93,11 @@ export function dependencyInstallPaths(stdout: string): ReadonlyArray<string> {
 // them. Only dependency installs retain the existing directory-level exemption.
 const REBUILDABLE_DIRECTORY = /(^|\/)node_modules\/$/;
 const REBUILDABLE_FILE = /(^|\/)(node_modules|\.DS_Store|[^/]+\.tsbuildinfo)$/;
-// Python's bytecode cache, and the marker SpecWeave's state housekeeping
+// Python's bytecode files, and the marker SpecWeave's state housekeeping
 // leaves in every checkout (`.specweave/state/.gc-last`, a time and nothing else).
-const REBUILDABLE_CACHE = /(^|\/)(__pycache__\/|[^/]+\.pyc|\.specweave\/state\/\.gc-last)$/;
+// Only the bytecode files themselves: a `__pycache__/` folder is opened and
+// its files judged one by one, since anything can be put in it.
+const REBUILDABLE_CACHE = /(^|\/)([^/]+\.pyc|\.specweave\/state\/\.gc-last)$/;
 // The hook installer's shims; hooks a person adds beside them stay.
 const HOOK_SHIMS = /^\.vite-hooks\/_\//;
 

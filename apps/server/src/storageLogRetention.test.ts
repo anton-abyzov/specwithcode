@@ -9,9 +9,9 @@ describe("removableLogFile", () => {
     expect(removableLogFile("provider/events.log.2")).toBe(true);
   });
 
-  it("lets the log of one terminal or one agent session go", () => {
-    expect(removableLogFile("terminals/terminal_abc_def.log")).toBe(true);
-    expect(removableLogFile("provider/session-123.log")).toBe(true);
+  it("keeps the log of a terminal or an agent session, which may still be open", () => {
+    expect(removableLogFile("terminals/terminal_abc_def.log")).toBe(false);
+    expect(removableLogFile("provider/events.thread-123.log")).toBe(false);
   });
 
   it("keeps the live logs the app holds open", () => {

@@ -85,9 +85,19 @@ export function isMediaFile(name: string): boolean {
  */
 export function isEvidenceFile(relative: string): boolean {
   const name = relative.slice(relative.lastIndexOf("/") + 1);
+  // A credential is never evidence, wherever it lies: it keeps the folder.
+  if (mayHoldSecret(name)) return false;
   return (
     isMediaFile(name) || /(^|\/)reports\/[^/]/.test(relative) || relative.startsWith(".specweave/")
   );
+}
+
+/** Names credentials and keys go by: `.env*`, `*.pem`, `*.key`, SSH keys, credential and token files. */
+const SECRET_NAME =
+  /^(\.env(\..*)?|.*\.(pem|key|p12|pfx|keystore|jks|kdbx)|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|\.netrc|\.npmrc|\.pypirc|.*(credential|secret|token|password).*)$/i;
+
+export function mayHoldSecret(name: string): boolean {
+  return SECRET_NAME.test(name);
 }
 
 /** "finished": not resolved or archived, but its last run completed and nothing is pending. */
@@ -422,8 +432,16 @@ export function decideFinishedWorktree(
         (state(git) === "closed" && git.unpushedCommits === 0),
     );
     const merged = gits.some(({ git }) => state(git) === "merged");
-    // A closed pull request can be reopened by the person still in the chat.
-    if (finished && everyDone && (merged || headsClosed || quietLongEnough)) {
+    // A closed pull request can be reopened by the person still in the chat:
+    // a member done only because its pull request closed waits, whatever
+    // another member's merge says.
+    const closedOnly = gits.some(
+      ({ git }) =>
+        git.headInDefault !== true &&
+        !(state(git) === "merged" && integrated(git)) &&
+        state(git) === "closed",
+    );
+    if (finished && everyDone && (!closedOnly || headsClosed || quietLongEnough)) {
       applied = {
         reason: merged ? "merged" : "closed",
         detail: merged

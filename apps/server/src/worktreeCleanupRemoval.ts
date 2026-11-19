@@ -53,8 +53,6 @@ export function makeRemoval(deps: {
   readonly path: Path.Path;
   readonly baseDir: string;
   readonly platform: NodeJS.Platform;
-  /** The app's worktree folders that exist right now, as real paths. */
-  readonly managedRoots: () => ReadonlyArray<string>;
   readonly inside: (root: string, target: string) => boolean;
   readonly realOrNull: (value: string) => Effect.Effect<string | null>;
   readonly memberStaysInside: (folder: string, memberPath: string) => Effect.Effect<boolean>;
@@ -170,32 +168,18 @@ export function makeRemoval(deps: {
       for (const folder of folders.toReversed()) await NodeFSP.rmdir(folder);
     }).pipe(Effect.ignore);
 
-  /** `path` through its nearest folder that exists, so a removed folder still resolves. */
-  const throughExisting = async (target: string) => {
-    let existing = path.resolve(target);
-    const rest: Array<string> = [];
-    for (;;) {
-      try {
-        return path.join(await NodeFSP.realpath(existing), ...rest.toReversed());
-      } catch {
-        const parent = path.dirname(existing);
-        if (parent === existing) return null;
-        rest.push(path.basename(existing));
-        existing = parent;
-      }
-    }
-  };
-
   /**
-   * `git worktree prune` in a repository whose worktree just went, so no stale
-   * registration blocks a later worktree at the same path. A prune drops every
+   * `git worktree prune` in a repository whose worktrees this removal took,
+   * for a registration a removal left behind. A prune drops every
    * registration whose folder is missing, one on a drive that is not mounted
-   * included: it runs only when each worktree Git calls prunable lay under one
-   * of the app's worktree folders that exists now, and it leaves registrations
-   * younger than an hour to whatever is creating them.
+   * included, so it runs only when every worktree Git calls prunable is one
+   * this removal took, and it leaves registrations younger than an hour
+   * alone. Anything else prunable keeps every registration. A plain
+   * `git worktree remove` already unregisters what it removes, so this is
+   * usually nothing to do.
    */
   const pruneRegistrations = Effect.fn("WorktreeCleanupSweep.prune")(
-    function* (repository: string) {
+    function* (repository: string, removed: ReadonlyArray<string>) {
       const listed = yield* git.execute({
         operation: "WorktreeCleanupSweep.pruneList",
         cwd: repository,
@@ -207,18 +191,12 @@ export function makeRemoval(deps: {
       if (listed.exitCode !== 0 || listed.stdoutTruncated) return;
       const prunable = prunableWorktrees(listed.stdout);
       if (prunable.length === 0) return;
-      const roots = deps.managedRoots();
-      const outside = yield* Effect.tryPromise(async () => {
-        for (const worktree of prunable) {
-          const resolved = await throughExisting(worktree);
-          if (resolved === null || !roots.some((root) => inside(root, resolved))) return worktree;
-        }
-        return null;
-      });
-      if (outside !== null) {
+      const ours = new Set(removed.map((worktree) => path.resolve(worktree)));
+      const other = prunable.find((worktree) => !ours.has(path.resolve(worktree)));
+      if (other !== undefined) {
         yield* Effect.logInfo(
-          "storage cleanup skipped git worktree prune: a missing worktree is outside the app's folders",
-          { repository, worktree: outside },
+          "storage cleanup skipped git worktree prune: another missing worktree is registered",
+          { repository, worktree: other },
         );
         return;
       }
@@ -242,7 +220,12 @@ export function makeRemoval(deps: {
    * ignored files without asking, and earlier members can take minutes.
    */
   const memberUnchanged = Effect.fn("WorktreeCleanupSweep.memberUnchanged")(
-    function* (assessment: Assessment, state: MemberState) {
+    function* (
+      assessment: Assessment,
+      state: MemberState,
+      /** Walk untracked and ignored folders for a repository; slow, so only once. */
+      walkNested: boolean,
+    ) {
       if (
         state.member.relativePath !== "" &&
         !(yield* memberStaysInside(assessment.group.folder, state.path))
@@ -277,6 +260,7 @@ export function makeRemoval(deps: {
         assessment.members.length > 1 || state.member.repository !== "",
       );
       if (again.fingerprint !== state.fingerprint) return false;
+      if (!walkNested) return true;
       yield* readNested(again);
       return again.git?.nestedRepository === false;
       // Anything unreadable counts as changed.
@@ -297,13 +281,18 @@ export function makeRemoval(deps: {
     const depth = (state: MemberState) =>
       state.member.relativePath === "" ? 0 : state.member.relativePath.split(path.sep).length;
     let gone = 0;
+    const removedPaths: Array<{ readonly repository: string; readonly path: string }> = [];
     for (const state of assessment.members.toSorted((left, right) => depth(right) - depth(left))) {
       // Removing a member can take minutes: a chat may have been reopened meanwhile.
       // Use, then the member itself, then use again: the member walk takes time too.
+      // Last, its files once more without the slow walk, so the reading Git
+      // removal rests on is as late as it can be. No lock keeps a process
+      // outside the folder from writing into it in the moment that remains.
       if (
         !(yield* stillFree) ||
-        !(yield* memberUnchanged(assessment, state)) ||
-        !(yield* stillFree)
+        !(yield* memberUnchanged(assessment, state, true)) ||
+        !(yield* stillFree) ||
+        !(yield* memberUnchanged(assessment, state, false))
       )
         return { stopped: "changed" as const, member: "", gone, failure: null };
       // Files Git leaves behind were checked by nobody: they stay, and so does the rest.
@@ -345,9 +334,13 @@ export function makeRemoval(deps: {
         return { stopped: "refused" as const, member: failure.member, gone, failure };
       }
       gone += 1;
+      removedPaths.push({ repository: state.repository, path: state.path });
     }
     for (const repository of new Set(assessment.members.map((state) => state.repository))) {
-      yield* pruneRegistrations(repository);
+      yield* pruneRegistrations(
+        repository,
+        removedPaths.filter((entry) => entry.repository === repository).map((entry) => entry.path),
+      );
       yield* gitManager.invalidateStatus(repository);
     }
     const folder = assessment.group.folder;

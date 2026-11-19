@@ -64,6 +64,9 @@ const facts = (overrides: Partial<ChecksCopyFacts> = {}): ChecksCopyFacts => ({
   path: "/home/verify/widgets",
   lastUsedMs: 0,
   clean: true,
+  hiddenChanges: false,
+  otherIgnored: "",
+  tipsElsewhere: true,
   localCommits: 0,
   stash: false,
   processInside: false,
@@ -108,6 +111,12 @@ describe("decideChecksCopy", () => {
     ["an unreadable tree", { clean: null }, now, /could not be read/],
     ["commits made in it", { localCommits: 2 }, now, /2 commits were made in it/],
     ["an unreadable reflog", { localCommits: null }, now, /could not be read/],
+    ["hidden changes", { hiddenChanges: true }, now, /Git status hides/],
+    ["unreadable hidden changes", { hiddenChanges: null }, now, /could not be read/],
+    ["an ignored file that may hold data", { otherIgnored: ".env" }, now, /such as \.env/],
+    ["unreadable ignored files", { otherIgnored: null }, now, /could not be read/],
+    ["commits its source lacks", { tipsElsewhere: false }, now, /copied from does not have/],
+    ["unreadable sources", { tipsElsewhere: null }, now, /could not be read/],
     ["a stash", { stash: true }, now, /stash/],
     ["an unreadable stash", { stash: null }, now, /could not be read/],
     ["a process inside", { processInside: true }, now, /process works in it/],
@@ -210,6 +219,48 @@ describe("retireChecksCopy", () => {
     const result = retireChecksCopy(copy, options());
     assert.isFalse(result.removed);
     assert.match(result.reason, /uncommitted or untracked/);
+  });
+
+  it("keeps a copy with an ignored file outside installs and build output, or a clone in build output", () => {
+    const copy = makeCopy(NodePath.join(home, "verify"));
+    NodeFS.writeFileSync(NodePath.join(copy, ".gitignore"), "dist/\n.env\n");
+    git(copy, "add", ".gitignore");
+    git(copy, "commit", "--quiet", "-m", "ignore");
+    git(copy, "push", "--quiet", "origin", "HEAD");
+    NodeFS.mkdirSync(NodePath.join(copy, "dist"));
+    NodeFS.writeFileSync(NodePath.join(copy, "dist", "app.js"), "x\n");
+    assert.strictEqual(readChecksCopyFacts(copy, options()).otherIgnored, "");
+    NodeFS.mkdirSync(NodePath.join(copy, "dist", "vendor", ".git"), { recursive: true });
+    assert.strictEqual(readChecksCopyFacts(copy, options()).otherIgnored, "dist/");
+    NodeFS.rmSync(NodePath.join(copy, "dist", "vendor"), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(copy, ".env"), "TOKEN=x\n");
+    const result = retireChecksCopy(copy, options());
+    assert.isFalse(result.removed);
+    assert.match(result.reason, /such as \.env/);
+    assert.isTrue(NodeFS.existsSync(NodePath.join(copy, ".env")));
+  });
+
+  it("keeps a copy with an assume-unchanged edit", () => {
+    const copy = makeCopy(NodePath.join(home, "verify"));
+    git(copy, "update-index", "--assume-unchanged", "a.txt");
+    NodeFS.writeFileSync(NodePath.join(copy, "a.txt"), "hidden edit\n");
+    const result = retireChecksCopy(copy, options());
+    assert.isFalse(result.removed);
+    assert.match(result.reason, /Git status hides/);
+  });
+
+  it("keeps a copy whose checked-out commit its source no longer has", () => {
+    const copy = makeCopy(NodePath.join(home, "verify"));
+    NodeFS.writeFileSync(NodePath.join(copy, "c.txt"), "c\n");
+    git(copy, "add", "-A");
+    git(copy, "commit", "--quiet", "-m", "only here");
+    // The commit's reflog entry is gone, as after expiry: only the source check remains.
+    git(copy, "reflog", "expire", "--expire=now", "--all");
+    const facts = readChecksCopyFacts(copy, options());
+    assert.strictEqual(facts.localCommits, 0);
+    assert.isFalse(facts.tipsElsewhere);
+    assert.isFalse(retireChecksCopy(copy, options()).removed);
+    assert.isTrue(NodeFS.existsSync(copy));
   });
 
   it("keeps a copy a process works in, and every copy when processes are unknown", () => {

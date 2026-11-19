@@ -588,6 +588,8 @@ describe("a chat that finished though nobody resolved it", () => {
         NOW,
       );
     expect(set({ headInDefault: true, pullRequest: none })).toMatchObject({ action: "remove" });
+    // A member done only because its pull request closed waits six quiet hours.
+    expect(set({ pullRequest: closed })).toMatchObject({ action: "keep" });
     expect(set({ pullRequest: { state: "open", contentIntegrated: false } })).toMatchObject({
       action: "keep",
     });
@@ -605,7 +607,17 @@ describe("ignored files copied to evidence", () => {
     expect(isEvidenceFile(relative)).toBe(true);
   });
 
-  it.each([".env", "notes.md", "reports", "src/reports.ts", "apps/.specweave/state.json"])(
+  it.each([
+    ".env",
+    "notes.md",
+    "reports",
+    "src/reports.ts",
+    "apps/.specweave/state.json",
+    "reports/.env",
+    "reports/.env.local",
+    ".specweave/state/github-token.json",
+    "reports/deploy.pem",
+  ])(
     "does not copy %s",
     (relative) => {
       expect(isEvidenceFile(relative)).toBe(false);
