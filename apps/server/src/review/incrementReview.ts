@@ -95,9 +95,18 @@ interface ReviewFile {
   readonly size: number;
 }
 
-async function listReviewFiles(incrementPath: string): Promise<ReviewFile[]> {
+/**
+ * The review files of one increment folder, newest first. With `noLinks`
+ * (another copy's folder, read alongside the shown one) a linked `reports`
+ * folder or file is skipped, so that copy cannot lead out of its folder.
+ */
+async function listReviewFiles(incrementPath: string, noLinks = false): Promise<ReviewFile[]> {
   const reports = NodePath.join(incrementPath, "reports");
+  const linked = async (path: string) =>
+    noLinks && (await NodeFSP.lstat(path).catch(() => null))?.isSymbolicLink() === true;
+  if (await linked(reports)) return [];
   const list = async (dir: string, pattern: RegExp, numbered: boolean) => {
+    if (await linked(dir)) return [];
     const names = await NodeFSP.readdir(dir).catch(() => [] as string[]);
     const files = await Promise.all(
       names
@@ -105,7 +114,7 @@ async function listReviewFiles(incrementPath: string): Promise<ReviewFile[]> {
         .slice(0, MAX_REPORTS)
         .map(async (name) => {
           const path = NodePath.join(dir, name);
-          const stat = await NodeFSP.stat(path).catch(() => null);
+          const stat = await (noLinks ? NodeFSP.lstat(path) : NodeFSP.stat(path)).catch(() => null);
           return stat?.isFile() ? { path, numbered, mtimeMs: stat.mtimeMs, size: stat.size } : null;
         }),
     );
@@ -193,12 +202,23 @@ async function readReviewRecords(
       Number(b.numbered) - Number(a.numbered) ||
       b.path.localeCompare(a.path, undefined, { numeric: true }),
   );
-  // The same record kept in two copies of the increment counts once.
+  // The same record kept in two copies of the increment counts once: same
+  // file name and every field the policy reads. Names are unique within one
+  // folder, so records of one copy are never merged.
   const seen = new Set<string>();
   return records.filter((record) => {
-    const key = [record.model, record.family, record.head, record.verdict, record.at].join(
-      "\u0000",
-    );
+    const key = [
+      NodePath.basename(record.path),
+      record.numbered,
+      record.model,
+      record.family,
+      record.depth,
+      record.author,
+      record.repo,
+      record.head,
+      record.verdict,
+      record.at,
+    ].join("\u0000");
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -210,7 +230,10 @@ async function listReviewFilesOf(
   incrementPath: string,
   alsoFrom: ReadonlyArray<string>,
 ): Promise<ReviewFile[]> {
-  const lists = await Promise.all([incrementPath, ...alsoFrom].map(listReviewFiles));
+  const lists = await Promise.all([
+    listReviewFiles(incrementPath),
+    ...alsoFrom.map((path) => listReviewFiles(path, true)),
+  ]);
   return lists
     .flat()
     .sort((a, b) => b.mtimeMs - a.mtimeMs || Number(b.numbered) - Number(a.numbered));

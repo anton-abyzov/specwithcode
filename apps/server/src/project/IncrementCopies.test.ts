@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { rankCopies, type BoardGitRun, type CopyRank } from "./IncrementCopies.ts";
+import { copyBatches, rankCopies, type BoardGitRun, type CopyRank } from "./IncrementCopies.ts";
 import {
   commitAll,
   doneLedger,
@@ -94,6 +94,19 @@ describe("rankCopies", () => {
       ),
     ).toBeLessThan(0);
     expect(rankCopies(rank({}), rank({}))).toBe(0);
+  });
+});
+
+describe("copyBatches", () => {
+  it("keeps each Git batch under the bound, counts a shared blob once, never splits a copy", () => {
+    const blob = (oid: string, size: number) => ({ oid, size });
+    expect(
+      copyBatches(
+        [[blob("a", 400)], [blob("a", 400), blob("b", 300)], [blob("c", 500)], [blob("d", 2_000)]],
+        1_000,
+      ),
+    ).toEqual([[0, 1], [2], [3]]);
+    expect(copyBatches([], 1_000)).toEqual([]);
   });
 });
 
@@ -450,6 +463,119 @@ describe("the newest copy of an increment", () => {
     git(root, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/renamed");
     expect(await cardOf(root, id, cacheDir)).toMatchObject({
       source: { kind: "remote", name: "origin/main" },
+    });
+  });
+
+  it("counts the same review record kept in two copies once, and keeps records of different repositories", async () => {
+    const id = "0001-two-repos";
+    const fields = (repo: string) =>
+      `model=gpt-6.1-sol family=openai author=claude repo=${repo} at=2026-11-13T10:00:00Z`;
+    const { root, cacheDir } = await behindProject(
+      async (at) => {
+        await writeIncrement(at, id, {
+          tasks: 1,
+          ledger: doneLedger(1),
+          metadata: { status: "active" },
+        });
+        await record(folderOf(at, id), "review-api-1.md", fields("repositories/acme/api"), "ship");
+        await record(folderOf(at, id), "review-app-1.md", fields("repositories/acme/app"), "ship");
+      },
+      async (at) => {
+        await writeIncrement(at, id, { metadata: { status: "planned" } });
+        // The same record, saved in the project folder too.
+        await record(folderOf(at, id), "review-api-1.md", fields("repositories/acme/api"), "ship");
+      },
+    );
+    const card = await cardOf(root, id, cacheDir);
+    expect(card?.source).toMatchObject({ kind: "remote" });
+    expect(card?.reviews).toHaveLength(2);
+  });
+
+  it("never reads the project folder's reviews through a link out of its folder", async () => {
+    const id = "0001-linked-reviews";
+    const outside = await cache();
+    const { root, cacheDir } = await behindProject(
+      async (at) => {
+        await writeIncrement(at, id, {
+          tasks: 1,
+          ledger: doneLedger(1),
+          metadata: { status: "active" },
+        });
+        await record(
+          folderOf(at, id),
+          "review-gpt-6.1-sol-1.md",
+          "model=gpt-6.1-sol family=openai author=claude at=2026-11-13T10:00:00Z",
+          "fix first",
+        );
+      },
+      async (at) => {
+        await writeIncrement(at, id, { metadata: { status: "planned" } });
+        await record(
+          outside,
+          "review-gpt-6.1-sol-2.md",
+          "model=gpt-6.1-sol family=openai author=claude at=2026-11-13T12:00:00Z",
+          "ship",
+        );
+        await NodeFSP.mkdir(NodePath.join(folderOf(at, id), "reports"), { recursive: true });
+        await NodeFSP.symlink(
+          NodePath.join(outside, "reports", "reviews"),
+          NodePath.join(folderOf(at, id), "reports", "reviews"),
+        );
+      },
+    );
+    const card = await cardOf(root, id, cacheDir);
+    expect(card?.reviews?.map((review) => review.verdict)).toEqual(["fix first"]);
+    const view = await readProjectBoardIncrement(root, { incrementId: id, now: NOW, cacheDir });
+    expect(view).toMatchObject({ review: { latest: { verdict: "fix first" } } });
+  });
+
+  it("answers the board when the cache folder cannot be made", async () => {
+    const { root } = await behindProject(
+      async (at) => {
+        await writeIncrement(at, "0002-remote", {
+          tasks: 1,
+          ledger: [],
+          metadata: { title: "Remote" },
+        });
+      },
+      async (at) => {
+        await writeIncrement(at, "0001-local", { tasks: 1, ledger: [] });
+      },
+    );
+    const blocked = NodePath.join(await cache(), "not-a-folder");
+    await NodeFSP.writeFile(blocked, "");
+    const board = await readProjectBoard(root, { now: NOW, cacheDir: blocked });
+    expect(board.cards.map((card) => card.incrementId).toSorted()).toEqual([
+      "0001-local",
+      "0002-remote",
+    ]);
+    expect(board.cards.find((card) => card.incrementId === "0002-remote")).toMatchObject({
+      title: "Remote",
+      specPath: null,
+      source: { kind: "remote" },
+    });
+  });
+
+  it("gives two views opened at once the same readable remote copy", async () => {
+    const id = "0001-opened-twice";
+    const { root, cacheDir } = await behindProject(async (at) => {
+      await writeIncrement(at, id, { tasks: 2, ledger: doneLedger(1) });
+    });
+    const open = () => readProjectBoardIncrement(root, { incrementId: id, now: NOW, cacheDir });
+    const views = await Promise.all([open(), open(), open()]);
+    for (const view of views) expect(view).toMatchObject({ readable: true, doneTasks: 1 });
+  });
+
+  it("reads a default branch whose name the old pattern refused", async () => {
+    const id = "0001-on-release";
+    const { root, cacheDir } = await behindProject(async (at) => {
+      await writeIncrement(at, id, { tasks: 1, ledger: [] });
+    });
+    const merged = git(root, "rev-parse", "refs/remotes/origin/main");
+    git(root, "update-ref", "-d", "refs/remotes/origin/main");
+    setRemote(root, merged, "release+next");
+    expect(await cardOf(root, id, cacheDir)).toMatchObject({
+      source: { kind: "remote", name: "origin/release+next" },
     });
   });
 

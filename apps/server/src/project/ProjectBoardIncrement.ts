@@ -301,6 +301,7 @@ export async function readProjectBoardIncrement(
       ? []
       : await listEntries(NodePath.join(own, "reports", "reviews"), ownReal);
   const projectReviews = listedReviews === "outside" ? [] : listedReviews;
+  const projectContained = listed !== "outside" && listedReviews !== "outside";
   const signature = `${signed.signature}|${listingStamp(projectReports)}|${listingStamp(projectReviews)}`;
   const cached = cache.get(key);
   if (cached !== undefined && cached.signature === signature && input.now <= cached.expiresAt) {
@@ -316,8 +317,11 @@ export async function readProjectBoardIncrement(
       incrementId: input.incrementId,
       threadId: "",
       now: input.now,
-      // The project folder's review records count with the copy's own.
-      ...(root === copies.root || own === null ? {} : { reviewAlsoFrom: [own] }),
+      // The project folder's review records count with the copy's own,
+      // unless its reports lead out of its folder.
+      ...(root === copies.root || own === null || !projectContained
+        ? {}
+        : { reviewAlsoFrom: [own] }),
     }),
     readBounded(root, NodePath.join(folder, "spec.md"), SPEC_BYTES),
     readBounded(root, NodePath.join(folder, "metadata.json"), SMALL_BYTES),

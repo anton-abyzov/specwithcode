@@ -50,7 +50,10 @@ const CACHE_ENTRIES = 20_000;
 const READ_BATCH = 64;
 const INCREMENT_FOLDER = /^\d{4,}[A-Z]?-[a-z0-9]+(?:-[a-z0-9]+)*$/i;
 const COMMIT = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/u;
-const REF_NAME = /^refs\/[A-Za-z0-9._/-]+$/u;
+/** A ref name Git accepts (`git check-ref-format`), within what this reader opens. */
+const REF_NAME =
+  // oxlint-disable-next-line no-control-regex -- control characters are what it refuses
+  /^refs\/(?!.*(?:\.\.|@\{|\/\.|\.lock(?:\/|$)|\/\/))[^\x00-\x20\x7f~^:?*[\\]+(?<![./])$/u;
 const CONFIG_PATH = ".specweave/config.json";
 const REMOTE_PREFIX = "refs/remotes/";
 /** One Git read; a slower one answers nothing and the folders are shown alone. */
@@ -70,6 +73,8 @@ const COPY_TOUCH_MS = 60_000;
 const STATE_FILES = ["metadata.json", "spec.md", "tasks.md", "ledger.jsonl"];
 /** Above this a state file is not copied and the copy is not shown from its files. */
 const STATE_FILE_BYTES = 8 * 1_048_576;
+/** Blob bytes asked of one `git cat-file --batch`, under its 64 MiB output bound. */
+const COPY_BATCH_BYTES = 56 * 1_048_576;
 const COMPLETE_MARK = ".complete";
 
 /**
@@ -274,12 +279,48 @@ async function refCommit(common: string, ref: string): Promise<string | null> {
   return packedRef(common, ref);
 }
 
+/** Git's own answer for origin/HEAD, when the files could not give one; by common directory. */
+const resolvedDefaults = new Map<
+  string,
+  { readonly at: number; readonly value: { readonly ref: string; readonly commit: string } | null }
+>();
+
+/**
+ * Asks Git for origin/HEAD (read-only, nothing fetched): for ref storage
+ * the file reader does not know, such as reftable.
+ */
+async function resolvedDefault(
+  git: BoardGitRun,
+  top: string,
+  common: string,
+): Promise<{ readonly ref: string; readonly commit: string } | null> {
+  // Remembered for REMOTE_RETRY_MS either way: a fetch shows within that time.
+  const held = resolvedDefaults.get(common);
+  if (held !== undefined && Date.now() - held.at < REMOTE_RETRY_MS) return held.value;
+  const head = "refs/remotes/origin/HEAD";
+  const [name, commit] = await Promise.all([
+    git(top, ["rev-parse", "--verify", "--quiet", "--symbolic-full-name", head]),
+    git(top, ["rev-parse", "--verify", "--quiet", `${head}^{commit}`]),
+  ]);
+  const ref = name.ok ? name.stdout.toString("utf8").trim() : "";
+  const sha = commit.ok ? commit.stdout.toString("utf8").trim() : "";
+  const value =
+    ref.startsWith(REMOTE_PREFIX) && REF_NAME.test(ref) && COMMIT.test(sha)
+      ? { ref: ref.slice(REMOTE_PREFIX.length), commit: sha }
+      : null;
+  remember(resolvedDefaults, common, { at: Date.now(), value }, 64);
+  return value;
+}
+
 /** The remote's default branch as last fetched: its short name and commit. */
 async function remoteDefault(
+  git: BoardGitRun,
+  top: string,
   common: string,
 ): Promise<{ readonly ref: string; readonly commit: string } | null> {
   const head = (await readText(NodePath.join(common, "refs", "remotes", "origin", "HEAD")))?.trim();
-  const named = /^ref:\s*(refs\/remotes\/origin\/[A-Za-z0-9._/-]+)$/u.exec(head ?? "")?.[1];
+  const target = /^ref:\s*(refs\/remotes\/origin\/\S+)$/u.exec(head ?? "")?.[1];
+  const named = target !== undefined && REF_NAME.test(target) ? target : undefined;
   // A stale origin/HEAD (a renamed default branch) falls back to main, then master.
   const candidates = [
     ...new Set([
@@ -292,7 +333,11 @@ async function remoteDefault(
     const commit = await refCommit(common, ref);
     if (commit !== null) return { ref: ref.slice(REMOTE_PREFIX.length), commit };
   }
-  return null;
+  // Only when origin/HEAD exists in some form the files did not answer for.
+  const known =
+    head !== undefined ||
+    (await NodeFSP.stat(NodePath.join(common, "reftable")).catch(() => null)) !== null;
+  return known ? resolvedDefault(git, top, common) : null;
 }
 
 /** The commit checked out in the checkout whose top is `top`. */
@@ -465,7 +510,7 @@ async function remoteBranch(
   top: string,
   common: string,
 ): Promise<RemoteBranch | null> {
-  const named = await remoteDefault(common);
+  const named = await remoteDefault(git, top, common);
   if (named === null) return null;
   const held = remotes.get(common);
   if (held?.commit === named.commit) {
@@ -503,6 +548,10 @@ async function behindCount(
 const writing = new Map<string, Promise<string | null>>();
 /** When each cache folder was last pruned, and at which remote commit. */
 const pruned = new Map<string, { readonly commit: string; readonly at: number }>();
+/** When this process last served each cached copy, by its root. */
+const served = new Map<string, number>();
+/** Copies Git could not give, by root: not asked for again for REMOTE_RETRY_MS. */
+const unwritable = new Map<string, number>();
 let temporary = 0;
 
 const repositoryKey = (common: string) =>
@@ -510,9 +559,12 @@ const repositoryKey = (common: string) =>
 
 /**
  * Removes cached copies the branch no longer holds once nothing has served
- * them for COPY_KEPT_MS (a served copy's folder time is renewed), so a view
- * that is still open keeps its files. Runs when the commit changes, and again
- * after COPY_KEPT_MS for copies that were too young the first time.
+ * them for COPY_KEPT_MS, so a view that is still open keeps its files. Use is
+ * read from this process's own record, checked right before the removal, and
+ * from the folder time a served copy renews (for another process). Runs on
+ * any read with a remote branch, at most once per commit and COPY_KEPT_MS.
+ * A copy removed under a reader that still holds the older branch is written
+ * again on its next read.
  */
 async function pruneCopies(branch: RemoteBranch, folder: string): Promise<void> {
   const now = Date.now();
@@ -525,7 +577,10 @@ async function pruneCopies(branch: RemoteBranch, folder: string): Promise<void> 
     if (keep.has(name)) continue;
     const path = NodePath.join(folder, name);
     const stat = await NodeFSP.stat(path).catch(() => null);
-    if (stat === null || now - stat.mtimeMs < COPY_KEPT_MS) continue;
+    if (stat === null || Date.now() - stat.mtimeMs < COPY_KEPT_MS) continue;
+    // No await between this check and the removal starting.
+    if (Date.now() - (served.get(path) ?? 0) < COPY_KEPT_MS || writing.has(path)) continue;
+    served.delete(path);
     await NodeFSP.rm(path, { recursive: true, force: true }).catch(() => undefined);
   }
 }
@@ -536,6 +591,7 @@ interface CopyPlan {
   readonly entries: ReadonlyArray<{
     readonly target: ReadonlyArray<string>;
     readonly oid: string;
+    readonly size: number;
     readonly state: boolean;
   }>;
 }
@@ -557,7 +613,7 @@ function planCopy(
     const file = increment.files.get(path);
     if (file === undefined) continue;
     if (!(file.size <= STATE_FILE_BYTES)) return null;
-    entries.push({ target: target(path), oid: file.oid, state: true });
+    entries.push({ target: target(path), oid: file.oid, size: file.size, state: true });
   }
   let total = 0;
   for (const path of [...increment.files.keys()]
@@ -567,10 +623,15 @@ function planCopy(
     if (entries.length >= COPY_FILES) break;
     if (!(file.size <= COPY_FILE_BYTES) || total + file.size > COPY_TOTAL_BYTES) continue;
     total += file.size;
-    entries.push({ target: target(path), oid: file.oid, state: false });
+    entries.push({ target: target(path), oid: file.oid, size: file.size, state: false });
   }
   if (branch.config !== null && branch.config.size <= SMALL_BYTES) {
-    entries.push({ target: CONFIG_PATH.split("/"), oid: branch.config.oid, state: false });
+    entries.push({
+      target: CONFIG_PATH.split("/"),
+      oid: branch.config.oid,
+      size: branch.config.size,
+      state: false,
+    });
   }
   return { id, root, entries };
 }
@@ -621,6 +682,7 @@ async function cachedRoot(
   const root = NodePath.join(folder, increment.key);
   const done = await NodeFSP.stat(NodePath.join(root, COMPLETE_MARK)).catch(() => null);
   if (done !== null) {
+    remember(served, root, Date.now(), 4_096);
     // Served now: renew the folder's time so a prune keeps it while in use.
     const stat = await NodeFSP.stat(root).catch(() => null);
     if (stat !== null && Date.now() - stat.mtimeMs > COPY_TOUCH_MS) {
@@ -632,46 +694,98 @@ async function cachedRoot(
 }
 
 /**
- * Writes the remote branch's copies of these increments to the cache, all
- * with one `git cat-file --batch`. Increments already written cost a stat.
+ * Groups copies (by index) so that the blobs one batch asks Git for, with
+ * room for each header line, stay under `limit`. A blob two copies share is
+ * counted once per batch. A copy is never split.
+ */
+export function copyBatches(
+  copies: ReadonlyArray<ReadonlyArray<{ readonly oid: string; readonly size: number }>>,
+  limit: number,
+): number[][] {
+  const cost = (entries: ReadonlyArray<{ readonly size: number }>) =>
+    entries.reduce((sum, entry) => sum + entry.size + 128, 0);
+  const batches: number[][] = [];
+  let batch: number[] = [];
+  let bytes = 0;
+  const seen = new Set<string>();
+  copies.forEach((entries, index) => {
+    let size = cost(entries.filter((entry) => !seen.has(entry.oid)));
+    if (batch.length > 0 && bytes + size > limit) {
+      batches.push(batch);
+      batch = [];
+      bytes = 0;
+      seen.clear();
+      size = cost(entries);
+    }
+    for (const entry of entries) seen.add(entry.oid);
+    batch.push(index);
+    bytes += size;
+  });
+  if (batch.length > 0) batches.push(batch);
+  return batches;
+}
+
+/**
+ * Writes the remote branch's copies of these increments to the cache, with
+ * one `git cat-file --batch` per COPY_BATCH_BYTES of blobs (one for a usual
+ * board). Increments already written cost a stat; a copy Git could not give
+ * is not asked for again for REMOTE_RETRY_MS. Never rejects: a copy that
+ * cannot be written is shown from its status alone.
  */
 export async function prepareRemoteCopies(
   copies: BoardCopies,
   ids: ReadonlyArray<string>,
 ): Promise<void> {
   const branch = copies.remote;
-  if (branch === null || copies.cacheDir === null || ids.length === 0) return;
+  if (branch === null || copies.cacheDir === null) return;
+  const folder = NodePath.join(copies.cacheDir, repositoryKey(branch.common));
+  void pruneCopies(branch, folder).catch(() => undefined);
   const plans: CopyPlan[] = [];
   const settles: Array<(root: string | null) => void> = [];
-  let folder: string | null = null;
-  for (const id of ids) {
-    const cached = await cachedRoot(copies, id);
-    if (cached === null || cached.done || writing.has(cached.root)) continue;
-    folder = cached.folder;
-    const plan = planCopy(branch, id, branch.increments.get(id)!, cached.root);
-    if (plan === null) continue;
-    let settle!: (root: string | null) => void;
-    const promise = new Promise<string | null>((resolve) => (settle = resolve));
-    writing.set(cached.root, promise);
-    plans.push(plan);
-    settles.push(settle);
-  }
-  if (plans.length === 0 || folder === null) return;
   try {
+    for (const id of ids) {
+      const cached = await cachedRoot(copies, id);
+      if (cached === null || cached.done || writing.has(cached.root)) continue;
+      if (Date.now() - (unwritable.get(cached.root) ?? -REMOTE_RETRY_MS) < REMOTE_RETRY_MS)
+        continue;
+      const plan = planCopy(branch, id, branch.increments.get(id)!, cached.root);
+      if (plan === null) {
+        remember(unwritable, cached.root, Date.now(), 4_096);
+        continue;
+      }
+      let settle!: (root: string | null) => void;
+      const promise = new Promise<string | null>((resolve) => (settle = resolve));
+      writing.set(cached.root, promise);
+      plans.push(plan);
+      settles.push(settle);
+    }
+    if (plans.length === 0) return;
     await NodeFSP.mkdir(folder, { recursive: true, mode: 0o700 });
-    void pruneCopies(branch, folder);
-    const oids = [...new Set(plans.flatMap((plan) => plan.entries.map((entry) => entry.oid)))];
-    const read = await readBlobs(copies.git, branch.top, oids);
-    const blobs = new Map<string, Buffer>();
-    oids.forEach((oid, index) => {
-      const blob = read?.[index];
-      if (blob !== null && blob !== undefined) blobs.set(oid, blob);
-    });
-    await Promise.all(
-      plans.map(async (plan, index) =>
-        settles[index]!(await writePlanned(plan, blobs, branch.commit).catch(() => null)),
-      ),
+    const batches = copyBatches(
+      plans.map((plan) => plan.entries),
+      COPY_BATCH_BYTES,
     );
+    for (const members of batches) {
+      const oids = [
+        ...new Set(members.flatMap((index) => plans[index]!.entries.map((entry) => entry.oid))),
+      ];
+      const read = await readBlobs(copies.git, branch.top, oids);
+      const blobs = new Map<string, Buffer>();
+      oids.forEach((oid, index) => {
+        const blob = read?.[index];
+        if (blob !== null && blob !== undefined) blobs.set(oid, blob);
+      });
+      await Promise.all(
+        members.map(async (index) => {
+          const plan = plans[index]!;
+          const root = await writePlanned(plan, blobs, branch.commit).catch(() => null);
+          if (root === null) remember(unwritable, plan.root, Date.now(), 4_096);
+          settles[index]!(root);
+        }),
+      );
+    }
+  } catch {
+    // The cache folder could not be made: these copies show their status alone.
   } finally {
     for (const [index, plan] of plans.entries()) {
       settles[index]!(null);
@@ -692,6 +806,9 @@ async function remoteCopyRoot(copies: BoardCopies, id: string): Promise<string |
   const running = writing.get(cached.root);
   if (running !== undefined) return running;
   await prepareRemoteCopies(copies, [id]);
+  // Another reader may have started this copy while this one looked.
+  const joined = writing.get(cached.root);
+  if (joined !== undefined) return joined;
   const done = await NodeFSP.stat(NodePath.join(cached.root, COMPLETE_MARK)).catch(() => null);
   return done === null ? null : cached.root;
 }
@@ -916,7 +1033,8 @@ export async function chooseCopy(
   if (droppedEarly !== undefined) return droppedEarly;
   // Settled between the project folder and the remote branch, with no
   // worktree asked, when the newer of the two is closed and a closed copy
-  // with a spec is at hand.
+  // with a spec is at hand. A drop or reopen made only in a worktree of an
+  // increment closed here shows once it reaches either (D-02).
   if (settled.length > 0) {
     const ordered = settled.toSorted(
       (left, right) =>
