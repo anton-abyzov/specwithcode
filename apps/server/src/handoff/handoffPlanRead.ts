@@ -171,6 +171,51 @@ export function folderWorkFact(
   };
 }
 
+/** How cautious a line is: one that adds nothing or cannot say beats one with room. */
+const CAUTION: Record<HandoffPlanUsage["kind"], number> = {
+  "different-account": 0,
+  "usage-unknown": 1,
+  "same-account": 2,
+};
+
+/**
+ * One line per provider from what the machine answered (AC-22). A check that
+ * was refused the project's grant says nothing, whatever an older machine sent
+ * beside it. Readings for one provider merge to the most cautious: automatic
+ * only when every one is, and the least room any of them left.
+ */
+export function planUsage(checks: Iterable<HandoffTargetCheck>): Array<HandoffPlanUsage> {
+  const usage = new Map<string, HandoffPlanUsage>();
+  for (const check of checks) {
+    if (check.kind !== "checked" || check.evidence === null) continue;
+    if (check.failures.some((failure) => failure.check === "grant")) continue;
+    const evidence = check.evidence;
+    const line: HandoffPlanUsage = {
+      providerName: evidence.providerName,
+      kind: evidence.kind,
+      percentLeft: evidence.kind === "different-account" ? evidence.percentLeft : null,
+      automatic: evidence.automatic,
+    };
+    const seen = usage.get(line.providerName);
+    if (seen === undefined) {
+      usage.set(line.providerName, line);
+      continue;
+    }
+    const kind = CAUTION[line.kind] > CAUTION[seen.kind] ? line.kind : seen.kind;
+    const left =
+      seen.percentLeft === null || line.percentLeft === null
+        ? (seen.percentLeft ?? line.percentLeft)
+        : Math.min(seen.percentLeft, line.percentLeft);
+    usage.set(line.providerName, {
+      providerName: line.providerName,
+      kind,
+      percentLeft: kind === "different-account" ? left : null,
+      automatic: seen.automatic && line.automatic,
+    });
+  }
+  return [...usage.values()].slice(0, 16);
+}
+
 interface Candidate {
   readonly shell: OrchestrationV2ThreadShell;
   readonly project: Project | null;
@@ -423,25 +468,14 @@ export const makeHandoffPlanRead =
         })
         .slice(0, HANDOFF_PLAN_MAX_ITEMS);
 
-      const usage: Array<HandoffPlanUsage> = [];
-      for (const check of checks.values()) {
-        const evidence = check.kind === "checked" ? check.evidence : null;
-        if (evidence === null) continue;
-        if (usage.some((entry) => entry.providerName === evidence.providerName)) continue;
-        usage.push({
-          providerName: evidence.providerName,
-          kind: evidence.kind,
-          percentLeft: evidence.kind === "different-account" ? evidence.percentLeft : null,
-          automatic: evidence.automatic,
-        });
-      }
+      const usage = planUsage(checks.values());
 
       return {
         destinationEnvironmentId: destination,
         destinationLabel: label.slice(0, 120),
         sourceLabel: deps.selfLabel.slice(0, 120),
         unreachable,
-        usage: usage.slice(0, 16),
+        usage,
         items,
       };
     });

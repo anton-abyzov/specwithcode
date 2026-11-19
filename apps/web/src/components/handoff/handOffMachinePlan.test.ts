@@ -158,6 +158,19 @@ describe("the destination the dialog picks for the person (AC-22)", () => {
     );
     expect(pickDestination(machines, null, automaticDestinations(plans))).toBe(RACK);
   });
+
+  it("leaves a machine unpicked when its merged line for a provider is not automatic", () => {
+    const plans = new Map([
+      [
+        RACK,
+        usageOf([
+          { providerName: "Claude", kind: "same-account", percentLeft: null, automatic: false },
+        ]),
+      ],
+    ]);
+    expect(automaticDestinations(plans).size).toBe(0);
+    expect(pickDestination(machines.slice(2), null, automaticDestinations(plans))).toBeNull();
+  });
 });
 
 describe("what a hand off may send (AC-17)", () => {

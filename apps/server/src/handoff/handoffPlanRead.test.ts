@@ -26,6 +26,7 @@ import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcTest from "effect/rpc/RpcTest";
 
 import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
+import { planUsage } from "./handoffPlanRead.ts";
 import { makeRig, type Rig, type RigMachine } from "./handoffTransfer.test.fixture.ts";
 
 const temporary: Array<string> = [];
@@ -293,4 +294,44 @@ describe("the plan's window call (AC-33)", () => {
       expect(handled).toEqual([]);
     }).pipe(Effect.scoped),
   );
+});
+
+describe("the usage lines from what the machine answered (AC-22)", () => {
+  const evidence = (patch: object) => ({
+    modelSelection: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
+    providerName: "Claude",
+    kind: "different-account" as const,
+    line: "Different Claude account · 60% left",
+    percentLeft: 60,
+    automatic: true,
+    accountFingerprint: null,
+    usedPercent: 40,
+    resetsAt: null,
+    observedAt: null,
+    ...patch,
+  });
+  const checked = (failures: ReadonlyArray<object>, patch: object = {}) =>
+    ({ kind: "checked", failures, evidence: evidence(patch) }) as never;
+
+  it("shows nothing a machine sent beside a grant refusal", () => {
+    expect(planUsage([checked([{ check: "grant", message: "B: no work grant for App" }])])).toEqual(
+      [],
+    );
+  });
+
+  it("lets no reading hide a worse one for the same provider", () => {
+    expect(
+      planUsage([
+        checked([]),
+        checked([], {
+          kind: "same-account",
+          line: "Same Claude account as A: adds no usage",
+          percentLeft: null,
+          automatic: false,
+        }),
+      ]),
+    ).toEqual([
+      { providerName: "Claude", kind: "same-account", percentLeft: null, automatic: false },
+    ]);
+  });
 });
