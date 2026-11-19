@@ -113,7 +113,10 @@ export function AccessRowList({ children }: { readonly children: ReactNode }) {
   );
 }
 
-/** A row's own action: an outline button, never filled, so Continue stays the only filled one. */
+/**
+ * A row's own action: an outline button, never filled, so Continue stays the only filled
+ * button in the footer and among the rows' actions (the Mac checklist keeps its own, D-14).
+ */
 export function AccessRowAction({
   children,
   onClick,

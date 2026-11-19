@@ -5075,6 +5075,8 @@ export const ko: PhraseCatalog = {
   "Follow project (off)": "프로젝트 설정 따름 (끔)",
   "Lets this thread ask a stronger model to check its work.":
     "이 스레드가 더 강한 모델에게 작업 검토를 요청할 수 있게 합니다.",
+  "Has a model from another family review this thread's work when its feature is finished.":
+    "이 스레드의 기능이 완성되면 다른 계열의 모델이 작업을 검토하게 합니다.",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "채팅이 해결되었거나 보관되었고 이 일수 동안 비활성인 워크트리를 삭제합니다. 브랜치와 채팅 기록은 유지됩니다.",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
@@ -5699,6 +5701,7 @@ export const ko: PhraseCatalog = {
   "Anyone with this code can pair a browser with this computer.":
     "이 코드가 있으면 누구나 브라우저를 이 컴퓨터와 페어링할 수 있습니다.",
   "Chrome profile": "Chrome 프로필",
+  "Pick a profile above first.": "먼저 위에서 프로필을 선택하세요.",
   "Opens the store page in {profile}.": "{profile}에서 스토어 페이지를 엽니다.",
   "Opens the store page in Chrome.": "Chrome에서 스토어 페이지를 엽니다.",
   "Paste it in the extension's page, or click its icon in Chrome's toolbar and paste it there.":
@@ -5759,14 +5762,92 @@ export const ko: PhraseCatalog = {
   "Sign in again to reach your machines through SpecWithCode Connect.":
     "SpecWithCode Connect를 통해 머신에 접근하려면 다시 로그인하세요.",
   "Sign in again": "다시 로그인",
-  "first": "먼저",
-  "None of the ready agents runs a model on this list.": "준비된 에이전트 중 이 목록의 모델을 쓰는 에이전트가 없습니다.",
+  first: "먼저",
+  "None of the ready agents runs a model on this list.":
+    "준비된 에이전트 중 이 목록의 모델을 쓰는 에이전트가 없습니다.",
   "No reviewer yet.": "아직 리뷰어가 없습니다.",
-  "A review needs a model from a second family, such as {first} or {second}.": "리뷰에는 {first} 또는 {second} 같은 다른 계열의 모델이 필요합니다.",
+  "A review needs a model from a second family, such as {first} or {second}.":
+    "리뷰에는 {first} 또는 {second} 같은 다른 계열의 모델이 필요합니다.",
   "Add one": "추가하기",
   "+{n} more": "+{n}개 더",
   "Ready once an agent is signed in.": "에이전트가 로그인하면 준비됩니다.",
+  // 1398: the first feature guide and its offer.
+  "Your first feature": "첫 기능",
+  "Turn SpecWeave on": "SpecWeave 켜기",
+  "Ask for it whole": "한 번에 요청하기",
+  "Read the review": "리뷰 읽기",
+  "This project has no plans or board yet. Turn SpecWeave on.":
+    "이 프로젝트에는 아직 계획과 보드가 없습니다. SpecWeave를 켜세요.",
+  "Show me": "위치 보기",
+  "Ask for the whole feature in one request. Your agents plan it, build it, review it and close it.":
+    "기능 전체를 요청 한 번으로 맡기세요. 에이전트가 계획하고, 만들고, 리뷰하고, 마무리합니다.",
+  "Ask for the whole feature in one request. Your agents plan it, build it and close it.":
+    "기능 전체를 요청 한 번으로 맡기세요. 에이전트가 계획하고, 만들고, 마무리합니다.",
+  "Write it for me": "대신 써 주기",
+  "Open the thread": "스레드 열기",
+  Planning: "계획 중",
+  "Working: {done} of {total} tasks": "작업 중: 작업 {total}개 중 {done}개",
+  "In review": "리뷰 중",
+  "Fixing what the review found": "리뷰에서 찾은 문제 수정 중",
+  "When the card is in Done, open it and read what the review found.":
+    "카드가 완료로 옮겨지면 열어서 리뷰 내용을 읽으세요.",
+  "Open the review": "리뷰 열기",
+  Ship: "출시 가능",
+  "Fix first": "먼저 수정",
+  "No verdict": "판정 없음",
+  "A reviewer": "리뷰어",
+  "Reviewed by {model}, the same family that built it.":
+    "{model}이(가) 리뷰했습니다. 만든 쪽과 같은 계열입니다.",
+  "No review ran. A review needs a model from a second family, such as {codex} or {muse}.":
+    "리뷰가 실행되지 않았습니다. 리뷰에는 {codex}나 {muse}처럼 다른 계열의 모델이 필요합니다.",
+  "No review is recorded for this feature.": "이 기능에 기록된 리뷰가 없습니다.",
+  "Skip this step": "이 단계 건너뛰기",
+  "Leave the guide": "가이드 닫기",
+  "Waiting on this step. The Board tab says what went wrong.":
+    "이 단계에서 멈췄습니다. 보드 탭에서 원인을 확인하세요.",
+  "Waiting on this step. The coordinator's last message says why.":
+    "이 단계에서 멈췄습니다. 코디네이터의 마지막 메시지에 이유가 있습니다.",
+  "That is the loop: plan, board, work, review, done.":
+    "이것이 전체 흐름입니다: 계획, 보드, 작업, 리뷰, 완료.",
+  "Review finished features in all projects on this Mac":
+    "이 Mac의 모든 프로젝트에서 완성된 기능 리뷰하기",
+  "Each review uses the reviewer's plan.": "리뷰마다 리뷰어의 요금제를 사용합니다.",
+  "On for all projects on this Mac. Each review uses the reviewer's plan.":
+    "이 Mac의 모든 프로젝트에서 켜졌습니다. 리뷰마다 리뷰어의 요금제를 사용합니다.",
+  "Remove the sample project": "샘플 프로젝트 제거",
+  "Remove {name} from SpecWithCode? Its folder and files stay on disk.":
+    "SpecWithCode에서 {name}을(를) 제거할까요? 폴더와 파일은 디스크에 남습니다.",
+  "Build a first feature": "첫 기능 만들기",
+  "Your agents plan and build one small feature and another model reviews it, on your own plans.":
+    "에이전트가 작은 기능 하나를 계획하고 만들면, 다른 모델이 리뷰합니다. 내 요금제로 실행됩니다.",
+  "Try a first feature": "첫 기능 시작하기",
+  "Sign in an agent first": "먼저 에이전트에 로그인하세요",
+  "Continue your first feature": "첫 기능 계속하기",
+  "Your sample project is where you left it.": "샘플 프로젝트가 멈춘 곳 그대로 있습니다.",
+  "Open it": "열기",
+  "Dismiss Build a first feature": "첫 기능 만들기 닫기",
+  "First feature guide": "첫 기능 가이드",
+  "Automatic review is still on for the sample": "샘플의 자동 리뷰가 아직 켜져 있습니다",
+  done: "완료",
+  skipped: "건너뜀",
+  Reviews: "리뷰",
+  "Removed {name}": "{name} 제거됨",
+  "Its folder and files stay on disk.": "폴더와 파일은 디스크에 남아 있습니다.",
+  "The guide could not be updated. Try again.":
+    "가이드를 업데이트하지 못했습니다. 다시 시도하세요.",
+  "The setting was not saved. Try again.": "설정이 저장되지 않았습니다. 다시 시도하세요.",
+  "The sample project was not removed. Try again.":
+    "샘플 프로젝트가 제거되지 않았습니다. 다시 시도하세요.",
+  "Could not make the sample project": "샘플 프로젝트를 만들지 못했습니다",
+  "The sample project has no first commit": "샘플 프로젝트에 첫 커밋이 없습니다",
+  "The sample project is ready": "샘플 프로젝트가 준비되었습니다",
+  "It appears in the sidebar once this window catches up.":
+    "이 창이 갱신되면 사이드바에 나타납니다.",
+  "This connection cannot change the settings of this Mac.":
+    "이 연결로는 이 Mac의 설정을 바꿀 수 없습니다.",
   "How much longer work takes with {setting}": "'{setting}' 사용 시 작업이 얼마나 더 걸리는지",
-  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.": "작업 완료까지 시간이 훨씬 오래 걸릴 수 있습니다. 측정 결과 리뷰한 작업은 리뷰 전 같은 작업보다 중앙값 2.6배의 시간이 걸렸습니다(실행의 절반은 1.6~3.6배). 리뷰 라운드와 그 수정에 시간이 들기 때문입니다.",
-  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.": "작업 시간이 늘어날 수 있습니다. 상담 한 번에 약 2분이 걸립니다. 측정 결과 상담한 스레드는 약 1.1배의 시간이 걸렸고, 10개 중 1개는 1.4배 이상 걸렸습니다.",
+  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.":
+    "작업 완료까지 시간이 훨씬 오래 걸릴 수 있습니다. 측정 결과 리뷰한 작업은 리뷰 전 같은 작업보다 중앙값 2.6배의 시간이 걸렸습니다(실행의 절반은 1.6~3.6배). 리뷰 라운드와 그 수정에 시간이 들기 때문입니다.",
+  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.":
+    "작업 시간이 늘어날 수 있습니다. 상담 한 번에 약 2분이 걸립니다. 측정 결과 상담한 스레드는 약 1.1배의 시간이 걸렸고, 10개 중 1개는 1.4배 이상 걸렸습니다.",
 };

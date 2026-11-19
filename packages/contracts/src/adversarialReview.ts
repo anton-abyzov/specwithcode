@@ -79,6 +79,13 @@ export const AdversarialReviewSettingsPatch = Schema.Struct({
 });
 export type AdversarialReviewSettingsPatch = typeof AdversarialReviewSettingsPatch.Type;
 
+/**
+ * A thread's own review choice, set the way the advisor's is. Absent or null
+ * follows the project (which follows the machine).
+ */
+export const ThreadReviewMode = Schema.Literals(["on", "off"]);
+export type ThreadReviewMode = typeof ThreadReviewMode.Type;
+
 export const DEFAULT_ADVERSARIAL_REVIEW_SETTINGS: AdversarialReviewSettings = {
   autoOnFeatureComplete: false,
   reviewers: [],

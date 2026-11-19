@@ -1935,6 +1935,7 @@ export function threadShellFromProjection(
     ...(projection.thread.advisorMode == null
       ? {}
       : { advisorMode: projection.thread.advisorMode }),
+    ...(projection.thread.reviewMode == null ? {} : { reviewMode: projection.thread.reviewMode }),
     ...(projection.thread.purpose === undefined ? {} : { purpose: projection.thread.purpose }),
     pinOrderKey: projection.thread.pinOrderKey ?? null,
     lastVisitedAt: projection.thread.lastVisitedAt,
@@ -2303,6 +2304,7 @@ function shellFromState(input: {
     ...(input.state.thread.advisorMode == null
       ? {}
       : { advisorMode: input.state.thread.advisorMode }),
+    ...(input.state.thread.reviewMode == null ? {} : { reviewMode: input.state.thread.reviewMode }),
     ...(input.state.thread.purpose === undefined ? {} : { purpose: input.state.thread.purpose }),
     pinOrderKey: input.state.thread.pinOrderKey ?? null,
     lastVisitedAt: input.state.thread.lastVisitedAt,

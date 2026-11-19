@@ -83,6 +83,9 @@ const profile = (id: string, label: string) => ({
   lease: null,
 });
 
+type TextNode = string | { readonly children: readonly TextNode[] };
+const textOf = (node: TextNode): string =>
+  typeof node === "string" ? node : node.children.map(textOf).join("");
 let renderer: ReactTestRenderer;
 let setOpen: (open: boolean) => void = () => {};
 const onOpenChange = vi.fn();
@@ -212,6 +215,19 @@ describe("ChromeAccessRowView", () => {
     expect(bodyHidden()).toBe(true);
     await act(() => button("Set up").props.onClick());
     expect(onOpenChange).toHaveBeenCalledWith(true);
+  });
+
+  it.each([
+    ["not-set-up", input(), "Not set up"],
+    ["waiting", input({ codeHandedOut: true }), "Waiting for Chrome…"],
+  ] as const)("closed and %s, it says so in words beside Set up", async (expected, given, word) => {
+    await view(given);
+    expect(kind()).toBe(expected);
+    const chip = renderer.root.find(
+      (node) => typeof node.type === "string" && node.props["data-slot"] === "access-row-chip",
+    );
+    expect(textOf(chip)).toContain(word);
+    expect(button("Set up")).toBeDefined();
   });
 
   it("open, the steps show with why the extension is safer", async () => {
@@ -433,6 +449,20 @@ describe("ChromeAccessRow", () => {
     expect(text()).toContain("It opens in the Chrome profile you used last.");
   });
 
+  it("while Chrome's profiles are still being read, Add to Chrome waits with no store link", async () => {
+    vi.stubGlobal("window", { desktopBridge: { getClientPlatform: () => "win32" } });
+    state.profiles.mockReturnValue(new Promise(() => undefined));
+    await render();
+    await act(() => button("Set up").props.onClick());
+    expect(state.profiles).toHaveBeenCalledTimes(1);
+    const waiting = renderer.root.find(
+      (node) => node.props["data-chrome-add-waits-for-pick"] === "" && !node.props.render,
+    );
+    expect(waiting.props.disabled).toBe(true);
+    expect(renderer.root.findAll((node) => node.type === "a" && node.props.href)).toEqual([]);
+    expect(text()).not.toContain("It opens in the Chrome profile you used last.");
+  });
+
   it("elsewhere, reads Chrome's profiles once Set up is pressed and opens the store in the one picked", async () => {
     vi.stubGlobal("window", { desktopBridge: { getClientPlatform: () => "win32" } });
     state.profiles.mockResolvedValue([
@@ -443,6 +473,17 @@ describe("ChromeAccessRow", () => {
     expect(state.profiles).not.toHaveBeenCalled();
     await act(() => button("Set up").props.onClick());
     expect(state.profiles).toHaveBeenCalledTimes(1);
+    // None starts picked, and Add to Chrome waits for a pick, with no store link to fall back on.
+    const radios = renderer.root.findAll(
+      (node) => node.type === "button" && node.props.role === "radio",
+    );
+    expect(radios.map((radio) => radio.props["aria-checked"])).toEqual([false, false]);
+    const waiting = renderer.root.find(
+      (node) => node.props["data-chrome-add-waits-for-pick"] === "" && !node.props.render,
+    );
+    expect(waiting.props.disabled).toBe(true);
+    expect(text()).toContain("Pick a profile above first.");
+    expect(renderer.root.findAll((node) => node.type === "a" && node.props.href)).toEqual([]);
     await act(() =>
       renderer.root
         .find((node) => node.props["data-chrome-profile"] === "Profile 1" && node.type === "button")

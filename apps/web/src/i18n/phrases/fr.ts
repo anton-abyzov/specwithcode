@@ -4464,7 +4464,8 @@ export const fr: PhraseCatalog = {
   "Setup can be closed once the import finishes.":
     "La configuration pourra être fermée une fois l'importation terminée.",
   "Add a folder on this machine": "Ajouter un dossier de cette machine",
-  "Start with SpecWeave, for plans and a board": "Commencer avec SpecWeave, pour des plans et un tableau",
+  "Start with SpecWeave, for plans and a board":
+    "Commencer avec SpecWeave, pour des plans et un tableau",
   "Type a path, browse or drop a folder": "Saisissez un chemin, parcourez ou déposez un dossier",
   "Starting from nothing?": "Vous partez de zéro ?",
   "New empty project or clone a repository": "Nouveau projet vide ou cloner un dépôt",
@@ -5180,6 +5181,8 @@ export const fr: PhraseCatalog = {
   "Follow project (off)": "Comme le projet (désactivé)",
   "Lets this thread ask a stronger model to check its work.":
     "Permet à ce fil de demander à un modèle plus puissant de vérifier son travail.",
+  "Has a model from another family review this thread's work when its feature is finished.":
+    "Fait relire le travail de ce fil par un modèle d'une autre famille une fois sa fonctionnalité terminée.",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "Supprimer les worktrees dont les discussions sont résolues ou archivées et inactives depuis ce nombre de jours. Les branches et l’historique des discussions sont conservés.",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
@@ -5816,6 +5819,7 @@ export const fr: PhraseCatalog = {
   "Anyone with this code can pair a browser with this computer.":
     "Toute personne ayant ce code peut associer un navigateur à cet ordinateur.",
   "Chrome profile": "Profil Chrome",
+  "Pick a profile above first.": "Choisissez d'abord un profil ci-dessus.",
   "Opens the store page in {profile}.": "Ouvre la page du store dans {profile}.",
   "Opens the store page in Chrome.": "Ouvre la page du store dans Chrome.",
   "Paste it in the extension's page, or click its icon in Chrome's toolbar and paste it there.":
@@ -5876,14 +5880,94 @@ export const fr: PhraseCatalog = {
   "Sign in again to reach your machines through SpecWithCode Connect.":
     "Reconnectez-vous pour accéder à vos machines via SpecWithCode Connect.",
   "Sign in again": "Se reconnecter",
-  "first": "en premier",
-  "None of the ready agents runs a model on this list.": "Aucun des agents prêts n’utilise un modèle de cette liste.",
+  first: "en premier",
+  "None of the ready agents runs a model on this list.":
+    "Aucun des agents prêts n’utilise un modèle de cette liste.",
   "No reviewer yet.": "Pas encore de relecteur.",
-  "A review needs a model from a second family, such as {first} or {second}.": "Une relecture demande un modèle d’une autre famille, comme {first} ou {second}.",
+  "A review needs a model from a second family, such as {first} or {second}.":
+    "Une relecture demande un modèle d’une autre famille, comme {first} ou {second}.",
   "Add one": "En ajouter un",
   "+{n} more": "+{n} de plus",
   "Ready once an agent is signed in.": "Prêt dès qu’un agent est connecté.",
+  // 1398: the first feature guide and its offer.
+  "Your first feature": "Votre première fonctionnalité",
+  "Turn SpecWeave on": "Activer SpecWeave",
+  "Ask for it whole": "La demander en entier",
+  "Read the review": "Lire la revue",
+  "This project has no plans or board yet. Turn SpecWeave on.":
+    "Ce projet n’a encore ni plans ni tableau. Activez SpecWeave.",
+  "Show me": "Me montrer",
+  "Ask for the whole feature in one request. Your agents plan it, build it, review it and close it.":
+    "Demandez toute la fonctionnalité en une seule requête. Vos agents la planifient, la construisent, la relisent et la clôturent.",
+  "Ask for the whole feature in one request. Your agents plan it, build it and close it.":
+    "Demandez toute la fonctionnalité en une seule requête. Vos agents la planifient, la construisent et la clôturent.",
+  "Write it for me": "L’écrire pour moi",
+  "Open the thread": "Ouvrir le fil",
+  Planning: "Planification",
+  "Working: {done} of {total} tasks": "En cours : {done} tâches sur {total}",
+  "In review": "En revue",
+  "Fixing what the review found": "Correction de ce que la revue a trouvé",
+  "When the card is in Done, open it and read what the review found.":
+    "Quand la carte est dans Terminé, ouvrez-la et lisez ce que la revue a trouvé.",
+  "Open the review": "Ouvrir la revue",
+  Ship: "Prête à livrer",
+  "Fix first": "À corriger d’abord",
+  "No verdict": "Sans verdict",
+  "A reviewer": "Un relecteur",
+  "Reviewed by {model}, the same family that built it.":
+    "Relue par {model}, de la même famille que celle qui l’a construite.",
+  "No review ran. A review needs a model from a second family, such as {codex} or {muse}.":
+    "Aucune revue n’a eu lieu. Une revue demande un modèle d’une deuxième famille, comme {codex} ou {muse}.",
+  "No review is recorded for this feature.":
+    "Aucune revue n’est enregistrée pour cette fonctionnalité.",
+  "Skip this step": "Passer cette étape",
+  "Leave the guide": "Quitter le guide",
+  "Waiting on this step. The Board tab says what went wrong.":
+    "Cette étape attend. L’onglet Tableau dit ce qui n’a pas marché.",
+  "Waiting on this step. The coordinator's last message says why.":
+    "Cette étape attend. Le dernier message du coordinateur dit pourquoi.",
+  "That is the loop: plan, board, work, review, done.":
+    "Voilà la boucle : plan, tableau, travail, revue, terminé.",
+  "Review finished features in all projects on this Mac":
+    "Relire les fonctionnalités terminées dans tous les projets de ce Mac",
+  "Each review uses the reviewer's plan.": "Chaque revue utilise l’abonnement du relecteur.",
+  "On for all projects on this Mac. Each review uses the reviewer's plan.":
+    "Activé pour tous les projets de ce Mac. Chaque revue utilise l’abonnement du relecteur.",
+  "Remove the sample project": "Retirer le projet d’exemple",
+  "Remove {name} from SpecWithCode? Its folder and files stay on disk.":
+    "Retirer {name} de SpecWithCode ? Son dossier et ses fichiers restent sur le disque.",
+  "Build a first feature": "Créez une première fonctionnalité",
+  "Your agents plan and build one small feature and another model reviews it, on your own plans.":
+    "Vos agents planifient et construisent une petite fonctionnalité, et un autre modèle la relit, avec vos propres abonnements.",
+  "Try a first feature": "Essayer une première fonctionnalité",
+  "Sign in an agent first": "Connectez d’abord un agent",
+  "Continue your first feature": "Reprenez votre première fonctionnalité",
+  "Your sample project is where you left it.":
+    "Votre projet d’exemple est là où vous l’avez laissé.",
+  "Open it": "L’ouvrir",
+  "Dismiss Build a first feature": "Masquer Créez une première fonctionnalité",
+  "First feature guide": "Guide de la première fonctionnalité",
+  "Automatic review is still on for the sample":
+    "La revue automatique reste activée pour l’exemple",
+  done: "terminé",
+  skipped: "passé",
+  Reviews: "Revues",
+  "Removed {name}": "{name} retiré",
+  "Its folder and files stay on disk.": "Son dossier et ses fichiers restent sur le disque.",
+  "The guide could not be updated. Try again.": "Le guide n’a pas pu être mis à jour. Réessayez.",
+  "The setting was not saved. Try again.": "Le réglage n’a pas été enregistré. Réessayez.",
+  "The sample project was not removed. Try again.":
+    "Le projet d’exemple n’a pas été retiré. Réessayez.",
+  "Could not make the sample project": "Impossible de créer le projet d’exemple",
+  "The sample project has no first commit": "Le projet d’exemple n’a pas de premier commit",
+  "The sample project is ready": "Le projet d’exemple est prêt",
+  "It appears in the sidebar once this window catches up.":
+    "Il apparaîtra dans la barre latérale quand cette fenêtre sera à jour.",
+  "This connection cannot change the settings of this Mac.":
+    "Cette connexion ne peut pas modifier les réglages de ce Mac.",
   "How much longer work takes with {setting}": "Combien de temps en plus avec « {setting} »",
-  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.": "Peut rendre le travail beaucoup plus long à terminer : dans les mesures, le travail relu a pris en médiane 2,6 fois le temps du même travail avant la relecture (la moitié des exécutions entre 1,6 et 3,6 fois), car chaque tour de relecture et ses corrections prennent du temps.",
-  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.": "Peut rendre le travail plus long : chaque consultation ajoute environ 2 minutes. Dans les mesures, les fils qui ont consulté ont pris environ 1,1 fois le temps habituel, et 1 sur 10 a pris 1,4 fois ou plus.",
+  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.":
+    "Peut rendre le travail beaucoup plus long à terminer : dans les mesures, le travail relu a pris en médiane 2,6 fois le temps du même travail avant la relecture (la moitié des exécutions entre 1,6 et 3,6 fois), car chaque tour de relecture et ses corrections prennent du temps.",
+  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.":
+    "Peut rendre le travail plus long : chaque consultation ajoute environ 2 minutes. Dans les mesures, les fils qui ont consulté ont pris environ 1,1 fois le temps habituel, et 1 sur 10 a pris 1,4 fois ou plus.",
 };

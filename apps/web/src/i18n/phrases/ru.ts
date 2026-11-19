@@ -5133,6 +5133,8 @@ export const ru: PhraseCatalog = {
   "Follow project (off)": "Как в проекте (выкл.)",
   "Lets this thread ask a stronger model to check its work.":
     "Позволяет этому треду просить более сильную модель проверить работу.",
+  "Has a model from another family review this thread's work when its feature is finished.":
+    "Когда функция в этом треде готова, работу треда проверяет модель другого семейства.",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "Удалять worktree, чаты которых решены или в архиве и неактивны столько дней. Ветки и история чатов сохраняются.",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
@@ -5762,6 +5764,7 @@ export const ru: PhraseCatalog = {
   "Anyone with this code can pair a browser with this computer.":
     "Любой, у кого есть этот код, может связать браузер с этим компьютером.",
   "Chrome profile": "Профиль Chrome",
+  "Pick a profile above first.": "Сначала выберите профиль выше.",
   "Opens the store page in {profile}.": "Открывает страницу магазина в профиле {profile}.",
   "Opens the store page in Chrome.": "Открывает страницу магазина в Chrome.",
   "Paste it in the extension's page, or click its icon in Chrome's toolbar and paste it there.":
@@ -5821,14 +5824,93 @@ export const ru: PhraseCatalog = {
   "Sign in again to reach your machines through SpecWithCode Connect.":
     "Войдите снова, чтобы открывать свои машины через SpecWithCode Connect.",
   "Sign in again": "Войти снова",
-  "first": "первая",
-  "None of the ready agents runs a model on this list.": "Ни один из готовых агентов не использует модель из этого списка.",
+  first: "первая",
+  "None of the ready agents runs a model on this list.":
+    "Ни один из готовых агентов не использует модель из этого списка.",
   "No reviewer yet.": "Проверяющего пока нет.",
-  "A review needs a model from a second family, such as {first} or {second}.": "Для проверки нужна модель другого семейства, например {first} или {second}.",
+  "A review needs a model from a second family, such as {first} or {second}.":
+    "Для проверки нужна модель другого семейства, например {first} или {second}.",
   "Add one": "Добавить",
   "+{n} more": "ещё {n}",
   "Ready once an agent is signed in.": "Будет готово, когда агент войдёт в систему.",
-  "How much longer work takes with {setting}": "Насколько дольше идёт работа с настройкой «{setting}»",
-  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.": "Работа может занять намного больше времени: в замерах проверенная работа шла по медиане в 2,6 раза дольше, чем та же работа до проверки (у половины запусков в 1,6–3,6 раза), потому что каждый раунд проверки и его исправления добавляют время.",
-  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.": "Работа может занять больше времени: каждая консультация добавляет около 2 минут. В замерах треды с консультациями шли примерно в 1,1 раза дольше, а каждый десятый — в 1,4 раза дольше или больше.",
+  // 1398: the first feature guide and its offer.
+  "Your first feature": "Ваша первая функция",
+  "Turn SpecWeave on": "Включить SpecWeave",
+  "Ask for it whole": "Попросить всё сразу",
+  "Read the review": "Прочитать ревью",
+  "This project has no plans or board yet. Turn SpecWeave on.":
+    "В этом проекте пока нет планов и доски. Включите SpecWeave.",
+  "Show me": "Показать",
+  "Ask for the whole feature in one request. Your agents plan it, build it, review it and close it.":
+    "Попросите всю функцию одним запросом. Ваши агенты спланируют её, сделают, проверят и закроют.",
+  "Ask for the whole feature in one request. Your agents plan it, build it and close it.":
+    "Попросите всю функцию одним запросом. Ваши агенты спланируют её, сделают и закроют.",
+  "Write it for me": "Написать за меня",
+  "Open the thread": "Открыть тред",
+  Planning: "Планирование",
+  "Working: {done} of {total} tasks": "В работе: {done} из {total} задач",
+  "In review": "На ревью",
+  "Fixing what the review found": "Исправляет найденное на ревью",
+  "When the card is in Done, open it and read what the review found.":
+    "Когда карточка окажется в «Готово», откройте её и прочитайте, что нашло ревью.",
+  "Open the review": "Открыть ревью",
+  Ship: "Можно выпускать",
+  "Fix first": "Сначала исправить",
+  "No verdict": "Без вердикта",
+  "A reviewer": "Ревьюер",
+  "Reviewed by {model}, the same family that built it.":
+    "Проверено моделью {model} из того же семейства, что и сделала работу.",
+  "No review ran. A review needs a model from a second family, such as {codex} or {muse}.":
+    "Ревью не запускалось. Для ревью нужна модель из второго семейства, например {codex} или {muse}.",
+  "No review is recorded for this feature.": "Для этой функции не записано ни одного ревью.",
+  "Skip this step": "Пропустить шаг",
+  "Leave the guide": "Выйти из руководства",
+  "Waiting on this step. The Board tab says what went wrong.":
+    "Этот шаг ждёт. На вкладке «Доска» написано, что пошло не так.",
+  "Waiting on this step. The coordinator's last message says why.":
+    "Этот шаг ждёт. Причина в последнем сообщении координатора.",
+  "That is the loop: plan, board, work, review, done.":
+    "Вот и весь цикл: план, доска, работа, ревью, готово.",
+  "Review finished features in all projects on this Mac":
+    "Проверять готовые функции во всех проектах на этом Mac",
+  "Each review uses the reviewer's plan.": "Каждое ревью расходует тариф ревьюера.",
+  "On for all projects on this Mac. Each review uses the reviewer's plan.":
+    "Включено для всех проектов на этом Mac. Каждое ревью расходует тариф ревьюера.",
+  "Remove the sample project": "Удалить учебный проект",
+  "Remove {name} from SpecWithCode? Its folder and files stay on disk.":
+    "Удалить {name} из SpecWithCode? Папка и файлы останутся на диске.",
+  "Build a first feature": "Сделайте первую функцию",
+  "Your agents plan and build one small feature and another model reviews it, on your own plans.":
+    "Ваши агенты спланируют и сделают одну небольшую функцию, а другая модель её проверит, на ваших собственных тарифах.",
+  "Try a first feature": "Попробовать",
+  "Sign in an agent first": "Сначала подключите агента",
+  "Continue your first feature": "Продолжите первую функцию",
+  "Your sample project is where you left it.": "Учебный проект ждёт там, где вы остановились.",
+  "Open it": "Открыть",
+  "Dismiss Build a first feature": "Скрыть «Сделайте первую функцию»",
+  "First feature guide": "Руководство по первой функции",
+  "Automatic review is still on for the sample":
+    "Автоматическое ревью в учебном проекте всё ещё включено",
+  done: "готово",
+  skipped: "пропущено",
+  Reviews: "Ревью",
+  "Removed {name}": "{name} удалён",
+  "Its folder and files stay on disk.": "Папка и файлы остались на диске.",
+  "The guide could not be updated. Try again.":
+    "Не удалось обновить руководство. Попробуйте ещё раз.",
+  "The setting was not saved. Try again.": "Настройка не сохранилась. Попробуйте ещё раз.",
+  "The sample project was not removed. Try again.": "Учебный проект не удалён. Попробуйте ещё раз.",
+  "Could not make the sample project": "Не удалось создать учебный проект",
+  "The sample project has no first commit": "В учебном проекте нет первого коммита",
+  "The sample project is ready": "Учебный проект готов",
+  "It appears in the sidebar once this window catches up.":
+    "Он появится на боковой панели, когда окно обновится.",
+  "This connection cannot change the settings of this Mac.":
+    "Это подключение не может менять настройки этого Mac.",
+  "How much longer work takes with {setting}":
+    "Насколько дольше идёт работа с настройкой «{setting}»",
+  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.":
+    "Работа может занять намного больше времени: в замерах проверенная работа шла по медиане в 2,6 раза дольше, чем та же работа до проверки (у половины запусков в 1,6–3,6 раза), потому что каждый раунд проверки и его исправления добавляют время.",
+  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.":
+    "Работа может занять больше времени: каждая консультация добавляет около 2 минут. В замерах треды с консультациями шли примерно в 1,1 раза дольше, а каждый десятый — в 1,4 раза дольше или больше.",
 };

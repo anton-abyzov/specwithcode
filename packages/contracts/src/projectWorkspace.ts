@@ -393,6 +393,54 @@ export const sameFirstFeatureGuide = (
   left: FirstFeatureGuide | undefined,
   right: FirstFeatureGuide | undefined,
 ) => left?.started === right?.started && left?.ended === right?.ended;
+/** The fields the first feature rules read; a removed project carries `deletedAt`. */
+interface FirstFeatureCandidate {
+  readonly workspaceSettings?:
+    | {
+        readonly sample?: string | undefined;
+        readonly firstFeatureGuide?: FirstFeatureGuide | undefined;
+      }
+    | null
+    | undefined;
+  readonly deletedAt?: string | null | undefined;
+}
+
+/** Whether the project was made as the first feature sample. Renaming it changes nothing. */
+export const isFirstFeatureSample = (project: FirstFeatureCandidate): boolean =>
+  project.workspaceSettings?.sample === FIRST_FEATURE_SAMPLE;
+
+/**
+ * "The sample" on a machine (1398 AC-12): a live project made as the sample
+ * whose guide has not ended, the most recently started first. Undefined when
+ * there is none, so a new one may be made. The server and the window share it.
+ */
+export function activeFirstFeatureSample<P extends FirstFeatureCandidate>(
+  projects: ReadonlyArray<P>,
+): P | undefined {
+  return projects
+    .filter(
+      (project) =>
+        (project.deletedAt ?? null) === null &&
+        isFirstFeatureSample(project) &&
+        firstFeatureGuideEnd(project.workspaceSettings?.firstFeatureGuide) === undefined,
+    )
+    .toSorted((left, right) =>
+      (right.workspaceSettings?.firstFeatureGuide?.started ?? "").localeCompare(
+        left.workspaceSettings?.firstFeatureGuide?.started ?? "",
+      ),
+    )[0];
+}
+
+/**
+ * Whether any of these projects, removed ones included, is a sample whose
+ * guide ended `finished` (1398 AC-21): the offer is then gone for good.
+ */
+export const firstFeatureGuideFinishedIn = (projects: ReadonlyArray<FirstFeatureCandidate>) =>
+  projects.some(
+    (project) =>
+      isFirstFeatureSample(project) &&
+      firstFeatureGuideEnd(project.workspaceSettings?.firstFeatureGuide) === "finished",
+  );
 export const ProjectFirstFeatureGuideInput = Schema.Struct({
   projectId: ProjectId,
   mark: ProjectFirstFeatureGuideMark,

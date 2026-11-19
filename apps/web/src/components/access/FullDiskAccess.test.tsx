@@ -4,11 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import type { PrivacyAccess } from "@specweave-studio/contracts";
 
-import {
-  FirstRunFullDiskAccess,
-  FullDiskAccessRow,
-  settingsRequestFor,
-} from "./FullDiskAccess";
+import { FirstRunFullDiskAccess, FullDiskAccessRow, settingsRequestFor } from "./FullDiskAccess";
 
 const state = vi.hoisted(() => ({
   access: null as unknown,
@@ -84,12 +80,20 @@ it("asks System Settings to offer the agents' executable, or the app itself", ()
   });
   expect(
     settingsRequestFor(
-      access({ agentHost: { kind: "app", path: "/Applications/SpecWithCode.app", name: "SpecWithCode" } }),
+      access({
+        agentHost: { kind: "app", path: "/Applications/SpecWithCode.app", name: "SpecWithCode" },
+      }),
     ),
   ).toBe("full-disk-access");
   expect(
     settingsRequestFor(
-      access({ agentHost: { kind: "app", path: "/System/Applications/Utilities/Terminal.app", name: "Terminal" } }),
+      access({
+        agentHost: {
+          kind: "app",
+          path: "/System/Applications/Utilities/Terminal.app",
+          name: "Terminal",
+        },
+      }),
     ),
   ).toEqual({
     pane: "full-disk-access",
@@ -135,7 +139,11 @@ it("says running threads need a restart when only new runs have it", async () =>
 
 it("names the app macOS asks about when another app started the service", async () => {
   state.access = access({
-    agentHost: { kind: "app", path: "/System/Applications/Utilities/Terminal.app", name: "Terminal" },
+    agentHost: {
+      kind: "app",
+      path: "/System/Applications/Utilities/Terminal.app",
+      name: "Terminal",
+    },
   });
   await render(<FullDiskAccessRow environmentId={"env-local" as never} environmentLabel="M5" />);
   expect(container.textContent).toContain("Full Disk Access, turn on Terminal.");
@@ -159,6 +167,28 @@ it("first run mentions it closed and optional, on this Mac only", async () => {
   state.primary = null;
   await render(<FirstRunFullDiskAccess />);
   expect(container.querySelector('[data-slot="first-run-fda"]')).toBeNull();
+});
+
+it("first run's item follows a list that keeps one row open", async () => {
+  state.access = access({});
+  const onOpenChange = vi.fn();
+  await render(<FirstRunFullDiskAccess open={false} onOpenChange={onOpenChange} />);
+  const details = () => container.querySelector<HTMLDetailsElement>('[data-slot="first-run-fda"]')!;
+  expect(details().open).toBe(false);
+  // The person opens it: the list hears it.
+  await act(async () => {
+    details().open = true;
+    details().dispatchEvent(new Event("toggle"));
+  });
+  expect(onOpenChange).toHaveBeenLastCalledWith(true);
+  await render(<FirstRunFullDiskAccess open onOpenChange={onOpenChange} />);
+  expect(details().open).toBe(true);
+  // Another row opens: the list closes this one, and that close is not reported back.
+  onOpenChange.mockClear();
+  await render(<FirstRunFullDiskAccess open={false} onOpenChange={onOpenChange} />);
+  await act(async () => details().dispatchEvent(new Event("toggle")));
+  expect(details().open).toBe(false);
+  expect(onOpenChange).not.toHaveBeenCalled();
 });
 
 it("first run says nothing in the Windows or Linux desktop app", async () => {

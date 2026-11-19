@@ -43,6 +43,7 @@ import {
   type ReorderPinnedThreadInput,
   type ReorderActiveThreadInput,
   type SetThreadAdvisorModeInput,
+  type SetThreadReviewModeInput,
   type SetThreadAutoSettleInput,
   type SettleThreadInput,
   type SnoozeThreadInput,
@@ -83,6 +84,7 @@ import {
   reorderPinnedThread,
   reorderActiveThread,
   setThreadAdvisorMode,
+  setThreadReviewMode,
   setThreadAutoSettle,
   settleThread,
   snoozeThread,
@@ -129,6 +131,7 @@ export type {
   ReorderPinnedThreadInput,
   ReorderActiveThreadInput,
   SetThreadAdvisorModeInput,
+  SetThreadReviewModeInput,
   SetThreadAutoSettleInput,
   SettleThreadInput,
   SnoozeThreadInput,
@@ -232,6 +235,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     setAdvisorMode: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:set-advisor-mode",
       execute: (input: SetThreadAdvisorModeInput) => setThreadAdvisorMode(input),
+      scheduler,
+      concurrency,
+    }),
+    setReviewMode: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:set-review-mode",
+      execute: (input: SetThreadReviewModeInput) => setThreadReviewMode(input),
       scheduler,
       concurrency,
     }),
@@ -496,6 +505,10 @@ export function createThreadEnvironmentAtoms<R, E>(
     setAdvisorMode: optimistic.wrap(commands.setAdvisorMode, (thread, input) => ({
       ...thread,
       advisorMode: input.advisorMode,
+    })),
+    setReviewMode: optimistic.wrap(commands.setReviewMode, (thread, input) => ({
+      ...thread,
+      reviewMode: input.reviewMode,
     })),
     pin: optimistic.wrap(commands.pin, (thread, input, now) => ({
       ...thread,

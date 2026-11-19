@@ -5169,6 +5169,8 @@ export const de: PhraseCatalog = {
   "Follow project (off)": "Wie im Projekt (aus)",
   "Lets this thread ask a stronger model to check its work.":
     "Erlaubt diesem Thread, ein stärkeres Modell um eine Prüfung seiner Arbeit zu bitten.",
+  "Has a model from another family review this thread's work when its feature is finished.":
+    "Lässt ein Modell einer anderen Familie die Arbeit dieses Threads prüfen, sobald sein Feature fertig ist.",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "Worktrees entfernen, deren Chats erledigt oder archiviert und so viele Tage inaktiv sind. Branches und Chatverlauf bleiben erhalten.",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
@@ -5808,6 +5810,7 @@ export const de: PhraseCatalog = {
   "Anyone with this code can pair a browser with this computer.":
     "Jeder mit diesem Code kann einen Browser mit diesem Computer koppeln.",
   "Chrome profile": "Chrome-Profil",
+  "Pick a profile above first.": "Wähle zuerst oben ein Profil.",
   "Opens the store page in {profile}.": "Öffnet die Store-Seite in {profile}.",
   "Opens the store page in Chrome.": "Öffnet die Store-Seite in Chrome.",
   "Paste it in the extension's page, or click its icon in Chrome's toolbar and paste it there.":
@@ -5868,14 +5871,94 @@ export const de: PhraseCatalog = {
   "Sign in again to reach your machines through SpecWithCode Connect.":
     "Melde dich erneut an, um deine Rechner über SpecWithCode Connect zu erreichen.",
   "Sign in again": "Erneut anmelden",
-  "first": "zuerst",
-  "None of the ready agents runs a model on this list.": "Keiner der bereiten Agenten nutzt ein Modell auf dieser Liste.",
+  first: "zuerst",
+  "None of the ready agents runs a model on this list.":
+    "Keiner der bereiten Agenten nutzt ein Modell auf dieser Liste.",
   "No reviewer yet.": "Noch kein Prüfer.",
-  "A review needs a model from a second family, such as {first} or {second}.": "Eine Prüfung braucht ein Modell aus einer zweiten Familie, etwa {first} oder {second}.",
+  "A review needs a model from a second family, such as {first} or {second}.":
+    "Eine Prüfung braucht ein Modell aus einer zweiten Familie, etwa {first} oder {second}.",
   "Add one": "Eines hinzufügen",
   "+{n} more": "+{n} weitere",
   "Ready once an agent is signed in.": "Bereit, sobald ein Agent angemeldet ist.",
+  // 1398: the first feature guide and its offer.
+  "Your first feature": "Deine erste Funktion",
+  "Turn SpecWeave on": "SpecWeave einschalten",
+  "Ask for it whole": "Alles auf einmal anfragen",
+  "Read the review": "Review lesen",
+  "This project has no plans or board yet. Turn SpecWeave on.":
+    "Dieses Projekt hat noch keine Pläne und kein Board. Schalte SpecWeave ein.",
+  "Show me": "Zeig es mir",
+  "Ask for the whole feature in one request. Your agents plan it, build it, review it and close it.":
+    "Frag die ganze Funktion in einer Anfrage an. Deine Agenten planen sie, bauen sie, prüfen sie und schließen sie ab.",
+  "Ask for the whole feature in one request. Your agents plan it, build it and close it.":
+    "Frag die ganze Funktion in einer Anfrage an. Deine Agenten planen sie, bauen sie und schließen sie ab.",
+  "Write it for me": "Für mich schreiben",
+  "Open the thread": "Thread öffnen",
+  Planning: "Planung",
+  "Working: {done} of {total} tasks": "In Arbeit: {done} von {total} Aufgaben",
+  "In review": "Im Review",
+  "Fixing what the review found": "Behebt, was das Review gefunden hat",
+  "When the card is in Done, open it and read what the review found.":
+    "Sobald die Karte in Erledigt ist, öffne sie und lies, was das Review gefunden hat.",
+  "Open the review": "Review öffnen",
+  Ship: "Freigegeben",
+  "Fix first": "Erst beheben",
+  "No verdict": "Kein Urteil",
+  "A reviewer": "Ein Reviewer",
+  "Reviewed by {model}, the same family that built it.":
+    "Geprüft von {model}, aus derselben Familie, die sie gebaut hat.",
+  "No review ran. A review needs a model from a second family, such as {codex} or {muse}.":
+    "Es lief kein Review. Ein Review braucht ein Modell aus einer zweiten Familie, etwa {codex} oder {muse}.",
+  "No review is recorded for this feature.": "Für diese Funktion ist kein Review erfasst.",
+  "Skip this step": "Schritt überspringen",
+  "Leave the guide": "Anleitung verlassen",
+  "Waiting on this step. The Board tab says what went wrong.":
+    "Dieser Schritt wartet. Der Tab Board sagt, was schiefging.",
+  "Waiting on this step. The coordinator's last message says why.":
+    "Dieser Schritt wartet. Die letzte Nachricht des Koordinators sagt, warum.",
+  "That is the loop: plan, board, work, review, done.":
+    "Das ist der Ablauf: Plan, Board, Arbeit, Review, erledigt.",
+  "Review finished features in all projects on this Mac":
+    "Fertige Funktionen in allen Projekten auf diesem Mac prüfen",
+  "Each review uses the reviewer's plan.": "Jedes Review nutzt das Abo des Reviewers.",
+  "On for all projects on this Mac. Each review uses the reviewer's plan.":
+    "Für alle Projekte auf diesem Mac eingeschaltet. Jedes Review nutzt das Abo des Reviewers.",
+  "Remove the sample project": "Beispielprojekt entfernen",
+  "Remove {name} from SpecWithCode? Its folder and files stay on disk.":
+    "{name} aus SpecWithCode entfernen? Ordner und Dateien bleiben auf der Festplatte.",
+  "Build a first feature": "Bau eine erste Funktion",
+  "Your agents plan and build one small feature and another model reviews it, on your own plans.":
+    "Deine Agenten planen und bauen eine kleine Funktion, und ein anderes Modell prüft sie, mit deinen eigenen Abos.",
+  "Try a first feature": "Erste Funktion ausprobieren",
+  "Sign in an agent first": "Melde zuerst einen Agenten an",
+  "Continue your first feature": "Mach mit deiner ersten Funktion weiter",
+  "Your sample project is where you left it.": "Dein Beispielprojekt ist da, wo du aufgehört hast.",
+  "Open it": "Öffnen",
+  "Dismiss Build a first feature": "Bau eine erste Funktion ausblenden",
+  "First feature guide": "Anleitung zur ersten Funktion",
+  "Automatic review is still on for the sample":
+    "Automatisches Review ist im Beispiel noch eingeschaltet",
+  done: "erledigt",
+  skipped: "übersprungen",
+  Reviews: "Reviews",
+  "Removed {name}": "{name} entfernt",
+  "Its folder and files stay on disk.": "Ordner und Dateien bleiben auf der Festplatte.",
+  "The guide could not be updated. Try again.":
+    "Die Anleitung konnte nicht aktualisiert werden. Versuch es noch einmal.",
+  "The setting was not saved. Try again.":
+    "Die Einstellung wurde nicht gespeichert. Versuch es noch einmal.",
+  "The sample project was not removed. Try again.":
+    "Das Beispielprojekt wurde nicht entfernt. Versuch es noch einmal.",
+  "Could not make the sample project": "Das Beispielprojekt konnte nicht angelegt werden",
+  "The sample project has no first commit": "Das Beispielprojekt hat keinen ersten Commit",
+  "The sample project is ready": "Das Beispielprojekt ist bereit",
+  "It appears in the sidebar once this window catches up.":
+    "Es erscheint in der Seitenleiste, sobald dieses Fenster aktuell ist.",
+  "This connection cannot change the settings of this Mac.":
+    "Diese Verbindung kann die Einstellungen dieses Mac nicht ändern.",
   "How much longer work takes with {setting}": "Wie viel länger die Arbeit mit „{setting}“ dauert",
-  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.": "Kann die Arbeit deutlich verlängern: In Messungen dauerte geprüfte Arbeit im Median 2,6-mal so lange wie dieselbe Arbeit vor dem Review (die Hälfte der Läufe 1,6- bis 3,6-mal), weil jede Review-Runde und ihre Korrekturen Zeit kosten.",
-  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.": "Kann die Arbeit verlängern: Jede Konsultation kostet etwa 2 Minuten. In Messungen dauerten Threads mit Konsultationen etwa 1,1-mal so lange, jeder zehnte 1,4-mal so lange oder länger.",
+  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.":
+    "Kann die Arbeit deutlich verlängern: In Messungen dauerte geprüfte Arbeit im Median 2,6-mal so lange wie dieselbe Arbeit vor dem Review (die Hälfte der Läufe 1,6- bis 3,6-mal), weil jede Review-Runde und ihre Korrekturen Zeit kosten.",
+  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.":
+    "Kann die Arbeit verlängern: Jede Konsultation kostet etwa 2 Minuten. In Messungen dauerten Threads mit Konsultationen etwa 1,1-mal so lange, jeder zehnte 1,4-mal so lange oder länger.",
 };

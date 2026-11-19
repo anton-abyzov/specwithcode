@@ -62,6 +62,9 @@ const view = async (
   });
   return { onOpenChange, onRetry };
 };
+type TextNode = string | { readonly children: readonly TextNode[] };
+const textOf = (node: TextNode): string =>
+  typeof node === "string" ? node : node.children.map(textOf).join("");
 const text = () => JSON.stringify(renderer.toJSON());
 const buttons = () =>
   renderer.root.findAll((node) => typeof node.type !== "string" && node.props.onClick);
@@ -85,6 +88,18 @@ describe("MacAppsRowView", () => {
     expect(bodyHidden()).toBe(true);
     await act(() => button("Allow").props.onClick());
     expect(onOpenChange).toHaveBeenCalledWith(true);
+  });
+
+  it("not allowed says so in words beside Allow, and only then", async () => {
+    const chips = () =>
+      renderer.root.findAll(
+        (node) => typeof node.type === "string" && node.props["data-slot"] === "access-row-chip",
+      );
+    await view(off);
+    expect(chips().map((chip) => textOf(chip))).toEqual([expect.stringContaining("Not allowed")]);
+    await act(() => renderer.unmount());
+    await view(off, { requested: true });
+    expect(chips()).toHaveLength(0);
   });
 
   it("open, it draws the existing checklist", async () => {
