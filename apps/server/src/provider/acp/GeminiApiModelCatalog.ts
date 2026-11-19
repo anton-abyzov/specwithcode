@@ -1,4 +1,6 @@
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 /**
@@ -39,9 +41,11 @@ export function geminiApiKeyForInstance(
   settings: { readonly agentId: string; readonly authMethodId?: string | undefined },
   environment: NodeJS.ProcessEnv,
 ): string | undefined {
+  // Only an explicit API-key sign-in proves which account turns run on: with
+  // none set, Gemini CLI uses its own saved choice (a Google sign-in or
+  // Vertex AI) even when GEMINI_API_KEY is in the environment.
   if (settings.agentId !== GEMINI_AGENT_ID) return undefined;
-  const method = settings.authMethodId?.trim() || undefined;
-  if (method !== undefined && method !== API_KEY_AUTH_METHOD) return undefined;
+  if (settings.authMethodId?.trim() !== API_KEY_AUTH_METHOD) return undefined;
   const key = environment.GEMINI_API_KEY?.trim();
   return key ? key : undefined;
 }
@@ -127,3 +131,37 @@ export const fetchGeminiApiModels = (input: {
     );
     return parseGeminiApiModels(body);
   }).pipe(Effect.orElseSucceed((): ReadonlyArray<GeminiApiListedModel> => []));
+
+/** The last good list and when to read it again. */
+export interface GeminiApiModelCache {
+  readonly models: ReadonlyArray<GeminiApiListedModel>;
+  readonly expiresAt: number;
+}
+
+export const EMPTY_GEMINI_API_MODEL_CACHE: GeminiApiModelCache = { models: [], expiresAt: 0 };
+/** A good list is read again after the agent probe's own window. */
+export const GEMINI_API_MODELS_TTL_MS = 15 * 60 * 1_000;
+/** A failed or empty read waits this long, so a refused key is not re-read on every refresh. */
+export const GEMINI_API_MODELS_RETRY_MS = 5 * 60 * 1_000;
+
+/**
+ * Returns the cached list, reading it again once it expires. A failed read
+ * keeps the last good list and still moves the next try out.
+ */
+export const refreshGeminiApiModelCache = <R>(
+  cache: Ref.Ref<GeminiApiModelCache>,
+  read: Effect.Effect<ReadonlyArray<GeminiApiListedModel>, never, R>,
+): Effect.Effect<ReadonlyArray<GeminiApiListedModel>, never, R> =>
+  Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    const current = yield* Ref.get(cache);
+    if (current.expiresAt > now) return current.models;
+    const fetched = yield* read;
+    const failed = fetched.length === 0;
+    const models = failed ? current.models : fetched;
+    yield* Ref.set(cache, {
+      models,
+      expiresAt: now + (failed ? GEMINI_API_MODELS_RETRY_MS : GEMINI_API_MODELS_TTL_MS),
+    });
+    return models;
+  });

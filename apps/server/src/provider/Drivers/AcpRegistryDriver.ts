@@ -88,9 +88,12 @@ import * as AcpRegistryRuntimeCoordinator from "../acp/AcpRegistryRuntimeCoordin
 import * as AcpRegistryAuth from "../acp/AcpRegistryAuth.ts";
 import * as AcpRegistryAuthenticationState from "../acp/AcpRegistryAuthenticationState.ts";
 import {
+  EMPTY_GEMINI_API_MODEL_CACHE,
   fetchGeminiApiModels,
   geminiApiKeyForInstance,
+  refreshGeminiApiModelCache,
   type GeminiApiListedModel,
+  type GeminiApiModelCache,
 } from "../acp/GeminiApiModelCatalog.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
@@ -883,10 +886,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       // Gemini CLI on a Gemini API key: the key's own model list, read at most
       // once per probe window, adds models the CLI release does not list yet.
       const geminiApiKey = geminiApiKeyForInstance(effectiveConfig, processEnvironment);
-      const providerListedModels = yield* Ref.make<{
-        readonly models: ReadonlyArray<GeminiApiListedModel>;
-        readonly expiresAt: number;
-      }>({ models: [], expiresAt: 0 });
+      const providerListedModels = yield* Ref.make<GeminiApiModelCache>(
+        EMPTY_GEMINI_API_MODEL_CACHE,
+      );
       const readProviderListedModels = Ref.get(providerListedModels).pipe(
         Effect.map((current) => current.models),
       );
@@ -1002,22 +1004,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       const refreshProviderListedModels =
         geminiApiKey === undefined
           ? Effect.succeed<ReadonlyArray<GeminiApiListedModel>>([])
-          : Effect.gen(function* () {
-              const now = yield* Clock.currentTimeMillis;
-              const current = yield* Ref.get(providerListedModels);
-              if (current.expiresAt > now) return current.models;
-              const fetched = yield* fetchGeminiApiModels({
+          : refreshGeminiApiModelCache(
+              providerListedModels,
+              fetchGeminiApiModels({
                 apiKey: geminiApiKey,
                 baseUrl: processEnvironment.GOOGLE_GEMINI_BASE_URL,
-              }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
-              // A failed read keeps the last good list and tries again next refresh.
-              if (fetched.length === 0) return current.models;
-              yield* Ref.set(providerListedModels, {
-                models: fetched,
-                expiresAt: now + PROBE_SUCCESS_TTL_MS,
-              });
-              return fetched;
-            });
+              }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient)),
+            );
       const enrichProvider = refreshProviderListedModels.pipe(
         Effect.flatMap((listed) =>
           checkAcpRegistryProviderStatus(

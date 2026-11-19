@@ -1,8 +1,14 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import {
+  EMPTY_GEMINI_API_MODEL_CACHE,
+  GEMINI_API_MODELS_RETRY_MS,
+  GEMINI_API_MODELS_TTL_MS,
+  refreshGeminiApiModelCache,
   fetchGeminiApiModels,
   geminiApiKeyForInstance,
   parseGeminiApiModels,
@@ -76,7 +82,8 @@ describe("geminiApiKeyForInstance", () => {
     expect(
       geminiApiKeyForInstance({ agentId: "gemini", authMethodId: "gemini-api-key" }, env),
     ).toBe("key-1");
-    expect(geminiApiKeyForInstance({ agentId: "gemini" }, env)).toBe("key-1");
+    // No sign-in method chosen: the CLI may use a saved Google or Vertex AI sign-in.
+    expect(geminiApiKeyForInstance({ agentId: "gemini" }, env)).toBeUndefined();
     expect(
       geminiApiKeyForInstance({ agentId: "gemini", authMethodId: "vertex-ai" }, env),
     ).toBeUndefined();
@@ -84,7 +91,9 @@ describe("geminiApiKeyForInstance", () => {
       geminiApiKeyForInstance({ agentId: "gemini", authMethodId: "oauth-personal" }, env),
     ).toBeUndefined();
     expect(geminiApiKeyForInstance({ agentId: "github-copilot-cli" }, env)).toBeUndefined();
-    expect(geminiApiKeyForInstance({ agentId: "gemini" }, {})).toBeUndefined();
+    expect(
+      geminiApiKeyForInstance({ agentId: "gemini", authMethodId: "gemini-api-key" }, {}),
+    ).toBeUndefined();
   });
 });
 
@@ -115,6 +124,37 @@ describe("fetchGeminiApiModels", () => {
         Effect.provideService(HttpClient.HttpClient, client),
       );
       expect(models).toEqual([]);
+    }),
+  );
+});
+
+describe("refreshGeminiApiModelCache", () => {
+  const neon = { id: "gemini-4-neon", name: "Gemini 4 Neon" };
+  it.effect("reads once per window, and a failed read keeps the list and backs off", () =>
+    Effect.gen(function* () {
+      const cache = yield* Ref.make(EMPTY_GEMINI_API_MODEL_CACHE);
+      let reads = 0;
+      let answer: ReadonlyArray<typeof neon> = [neon];
+      const read = Effect.sync(() => {
+        reads += 1;
+        return answer;
+      });
+      expect(yield* refreshGeminiApiModelCache(cache, read)).toEqual([neon]);
+      expect(yield* refreshGeminiApiModelCache(cache, read)).toEqual([neon]);
+      expect(reads).toBe(1);
+
+      // The window ends and the key is refused: the last good list stays.
+      answer = [];
+      yield* TestClock.adjust(GEMINI_API_MODELS_TTL_MS);
+      expect(yield* refreshGeminiApiModelCache(cache, read)).toEqual([neon]);
+      expect(reads).toBe(2);
+      // Refreshes right after a failure do not read again.
+      yield* TestClock.adjust(GEMINI_API_MODELS_RETRY_MS - 1);
+      expect(yield* refreshGeminiApiModelCache(cache, read)).toEqual([neon]);
+      expect(reads).toBe(2);
+      yield* TestClock.adjust(1);
+      yield* refreshGeminiApiModelCache(cache, read);
+      expect(reads).toBe(3);
     }),
   );
 });
