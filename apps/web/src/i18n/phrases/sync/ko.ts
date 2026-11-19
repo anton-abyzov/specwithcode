@@ -13,7 +13,6 @@ export const syncKo: PhraseCatalog = {
     "개인 프로젝트는 컴퓨터 간에 동기화되지 않습니다.",
   'The project folder on {machine} is not a Git repository. Use "Compare all files…".':
     "{machine}의 프로젝트 폴더는 Git 저장소가 아닙니다. '모든 파일 비교…'를 사용하세요.",
-  "{machine} could not do it: {reason}.": "{machine}에서 실행하지 못했습니다: {reason}.",
   "{machine} did not answer. Check the connection, then check again.":
     "{machine}이(가) 응답하지 않았습니다. 연결을 확인한 뒤 다시 확인하세요.",
   "1 uncommitted file": "커밋하지 않은 파일 1개",
@@ -84,8 +83,6 @@ export const syncKo: PhraseCatalog = {
     "이름으로 보아 비밀 파일입니다. {source}에 남습니다: 동기화는 비밀을 보내지 않습니다.",
   "Looks like a {kind}": "{kind}처럼 보입니다",
   "Looks like a secret": "비밀로 보입니다",
-  "Not done: the machine gave no answer for this repository":
-    "완료되지 않음: 컴퓨터가 이 저장소에 대해 응답하지 않았습니다",
   "Includes 1 commit not pushed on {branch}": "{branch}의 푸시하지 않은 커밋 1개 포함",
   "Includes {n} commits not pushed on {branch}": "{branch}의 푸시하지 않은 커밋 {n}개 포함",
   "1 file left out": "제외된 파일 1개",
@@ -126,8 +123,6 @@ export const syncKo: PhraseCatalog = {
   "{n} more files are left out and not listed.": "제외되어 목록에 없는 파일이 {n}개 더 있습니다.",
   "Checked by file name, and untracked files by their first 64 KB. Look through the list before you send.":
     "파일 이름으로 확인하고, 추적하지 않는 파일은 처음 64 KB로 확인합니다. 보내기 전에 목록을 살펴보세요.",
-  "Send anyway counts once the uncommitted files of that repository are ticked.":
-    "그래도 보내기는 해당 저장소의 커밋하지 않은 파일을 체크해야 적용됩니다.",
   "Extras from {machine}": "{machine}의 추가 항목",
   "The extras from {machine} were not sent.": "{machine}의 추가 항목을 보내지 않았습니다.",
   "Uncommitted files in {repository}": "{repository}의 커밋하지 않은 파일",
@@ -140,10 +135,8 @@ export const syncKo: PhraseCatalog = {
     "Git이 먼저입니다. 각 컴퓨터가 원격에서 fetch한 뒤 fast-forward로만 앞으로 이동합니다. 아무것도 덮어쓰지 않고 푸시하지도 않습니다. 코디네이터는 그대로 있습니다.",
   "Sync {machine} with": "{machine}과(와) 동기화할 컴퓨터",
   "Fetching on {source} and {machine}…": "{source}와(과) {machine}에서 fetch하는 중…",
-  "Nothing was changed on either machine.": "어느 컴퓨터에서도 변경된 것이 없습니다.",
   "Syncing {source} and {machine}…": "{source}와(과) {machine} 동기화 중…",
   "Sending the ticked extras…": "체크한 추가 항목을 보내는 중…",
-  "{machine} did not run its part.": "{machine}이(가) 맡은 작업을 실행하지 않았습니다.",
   "Only the top repository of {machine} is listed: its folder is past the scan limits, so the repositories inside it are skipped.":
     "{machine}의 최상위 저장소만 표시됩니다: 폴더가 검사 한도를 넘어 그 안의 저장소는 건너뜁니다.",
   "Nothing to move forward or clone. Tick an extra to send it.":
@@ -186,8 +179,6 @@ export const syncKo: PhraseCatalog = {
   "Sync again before handing off the coordinator.": "코디네이터를 넘기기 전에 다시 동기화하세요.",
   "Sync again brings over what changed; it compares first and moves only changed files. Continue on {target} anyway moves the coordinator with these differences. Undo puts {target}'s folder back.":
     "'다시 동기화'는 바뀐 내용을 가져옵니다. 먼저 비교하고 바뀐 파일만 옮깁니다. '그래도 {target}에서 계속'은 이 차이를 둔 채 코디네이터를 옮깁니다. '실행 취소'는 {target}의 폴더를 원래대로 되돌립니다.",
-  "Sync again brings {source}'s version over. Move without them keeps {source}'s changes there and the copy on {target} as it is. Keep the coordinator on {source} to go on working there; the copy on {target} stays.":
-    "'다시 동기화'는 {source}의 버전을 가져옵니다. '제외하고 이동'은 {source}의 변경 사항을 그곳에 두고 {target}의 사본을 그대로 둡니다. 그곳에서 계속 작업하려면 코디네이터를 {source}에 두세요. {target}의 사본은 남습니다.",
   "This copy was not captured, so you can't move without them. Sync again brings them over. Or keep the coordinator on {source}; the copy on {target} stays.":
     "이 사본은 캡처되지 않아 제외하고 이동할 수 없습니다. '다시 동기화'로 가져올 수 있습니다. 또는 코디네이터를 {source}에 두세요. {target}의 사본은 남습니다.",
   "Add this project to another machine": "이 프로젝트를 다른 컴퓨터에 추가",
@@ -217,4 +208,56 @@ export const syncKo: PhraseCatalog = {
     "{there}에는 이미 {folder}에 이 프로젝트가 있습니다. 동기화하면 최신 상태가 됩니다.",
   "{there} has this project in {n} folders. Pick one.":
     "{there}의 폴더 {n}개에 이 프로젝트가 있습니다. 하나를 선택하세요.",
+  "Sync finished for {project}: {source} and {machine}":
+    "{project} 동기화 종료: {source}와(과) {machine}",
+  "Sync ended, and not everything was moved or sent. Each repository says why.":
+    "동기화가 끝났지만 이동하거나 보내지 못한 항목이 있습니다. 이유는 각 저장소에 표시됩니다.",
+  'No answer came for this repository, and it may have moved. "Check again" shows where it stands':
+    "이 저장소에 대한 응답이 오지 않았으며 이동되었을 수 있습니다. '다시 확인'으로 현재 상태를 볼 수 있습니다",
+  "{machine} answered in a way this version does not read. Update SpecWithCode on this machine, then check again.":
+    "{machine}이(가) 이 버전에서 읽을 수 없는 형식으로 응답했습니다. 이 컴퓨터의 SpecWithCode를 업데이트한 뒤 다시 확인하세요.",
+  "Nothing was moved or sent.": "이동하거나 보낸 것이 없습니다.",
+  "The rest of the extras from {machine} were not sent.":
+    "{machine}의 나머지 추가 항목은 보내지 않았습니다.",
+  "Sent to {target}: {reason}.": "{target}(으)로 보냄: {reason}.",
+  "Sent to {target}.": "{target}(으)로 보냈습니다.",
+  "Tick the uncommitted files of {repository} first.":
+    "먼저 {repository}의 커밋하지 않은 파일을 체크하세요.",
+  "Send anyway only applies once that repository's uncommitted files are ticked.":
+    "그래도 보내기는 해당 저장소의 커밋하지 않은 파일을 체크한 경우에만 적용됩니다.",
+  "{machine}: Needs update · {version}": "{machine}: 업데이트 필요 · {version}",
+  "{machine}: Needs update": "{machine}: 업데이트 필요",
+  "{machine} could not sync: {reason}.": "{machine}에서 동기화하지 못했습니다: {reason}.",
+  "{machine} did not finish its part of the sync.":
+    "{machine}이(가) 동기화에서 맡은 작업을 끝내지 못했습니다.",
+  Repositories: "저장소",
+  "Sync again brings {source}'s version over. Moving without these paths keeps {source}'s changes there and leaves the copy on {target} as it is. Keep the coordinator on {source} to go on working there; the copy on {target} stays.":
+    "'다시 동기화'는 {source}의 버전을 가져옵니다. 이 경로들을 제외하고 이동하면 {source}의 변경 사항은 그곳에 남고 {target}의 사본은 그대로 유지됩니다. 그곳에서 계속 작업하려면 코디네이터를 {source}에 두세요. {target}의 사본은 남습니다.",
+  "Keep the coordinator on {source}": "코디네이터를 {source}에 유지",
+  "Move without this path": "이 경로를 제외하고 이동",
+  "Move without these {n} paths": "이 경로 {n}개를 제외하고 이동",
+  "The files are on {target}, but {problem}.": "파일은 {target}에 있지만 {problem}.",
+  "The coordinator stays on {source}. The copied files stay on {target}.":
+    "코디네이터는 {source}에 남습니다. 복사한 파일은 {target}에 남습니다.",
+  "The coordinator stays here until you choose below.":
+    "아래에서 선택할 때까지 코디네이터는 여기에 남습니다.",
+  "Files are copied. Hand off the coordinator once work here is idle.":
+    "파일을 복사했습니다. 이곳의 작업이 한가해지면 코디네이터를 넘기세요.",
+  "Linking {target}…": "{target} 연결 중…",
+  "Linked: {source} can start work on {target}.":
+    "연결됨: {source}에서 {target}의 작업을 시작할 수 있습니다.",
+  "Linked: {source} can start work on {target}, in {folder}.":
+    "연결됨: {source}에서 {target}의 {folder}에 있는 작업을 시작할 수 있습니다.",
+  "Not linked yet. {reason}": "아직 연결되지 않았습니다. {reason}",
+  "No uncommitted changes on {source}.": "{source}에 커밋하지 않은 변경 사항이 없습니다.",
+  "Repositories new there download from GitHub or their Git host; one with unpushed commits or stashes is copied whole. Uncommitted and ignored files, and secrets unless you leave them out, come from this machine.":
+    "그곳에 없는 저장소는 GitHub 또는 Git 호스트에서 다운로드합니다. 푸시하지 않은 커밋이나 스태시가 있는 저장소는 통째로 복사합니다. 커밋하지 않은 파일과 무시된 파일, 그리고 제외하지 않는 한 비밀도 이 컴퓨터에서 가져옵니다.",
+  "Also brings unpushed commits, local branches and stashes. Slower for large repositories.":
+    "푸시하지 않은 커밋, 로컬 브랜치, 스태시도 가져옵니다. 큰 저장소에서는 더 느립니다.",
+  "Continues in a folder already saved there, which updates from origin. Always moves the coordinator there.":
+    "그곳에 이미 저장된 폴더에서 계속하며, 폴더는 origin에서 업데이트됩니다. 코디네이터는 항상 그곳으로 이동합니다.",
+  "Compare again before previewing this changed source.":
+    "변경된 이 원본을 미리 보기 전에 다시 비교하세요.",
+  "The source changed. Compare again before copying.":
+    "원본이 변경되었습니다. 복사하기 전에 다시 비교하세요.",
 };

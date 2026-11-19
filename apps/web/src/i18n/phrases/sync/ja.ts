@@ -13,7 +13,6 @@ export const syncJa: PhraseCatalog = {
     "個人プロジェクトはマシン間で同期されません。",
   'The project folder on {machine} is not a Git repository. Use "Compare all files…".':
     "{machine} のプロジェクトフォルダは Git リポジトリではありません。「すべてのファイルを比較…」を使ってください。",
-  "{machine} could not do it: {reason}.": "{machine} で実行できませんでした: {reason}。",
   "{machine} did not answer. Check the connection, then check again.":
     "{machine} から応答がありません。接続を確認してから、もう一度確認してください。",
   "1 uncommitted file": "未コミットのファイル 1 件",
@@ -86,8 +85,6 @@ export const syncJa: PhraseCatalog = {
     "名前からシークレットと判断しました。{source} に残ります: 同期はシークレットを送りません。",
   "Looks like a {kind}": "{kind} のようです",
   "Looks like a secret": "シークレットのようです",
-  "Not done: the machine gave no answer for this repository":
-    "未完了: このリポジトリについてマシンから応答がありませんでした",
   "Includes 1 commit not pushed on {branch}": "{branch} の未プッシュのコミット 1 件を含みます",
   "Includes {n} commits not pushed on {branch}": "{branch} の未プッシュのコミット {n} 件を含みます",
   "1 file left out": "除外したファイル 1 件",
@@ -131,8 +128,6 @@ export const syncJa: PhraseCatalog = {
     "ほかに {n} 件のファイルを除外しており、一覧にはありません。",
   "Checked by file name, and untracked files by their first 64 KB. Look through the list before you send.":
     "ファイル名で確認し、未追跡のファイルは先頭 64 KB も確認しています。送る前に一覧を確認してください。",
-  "Send anyway counts once the uncommitted files of that repository are ticked.":
-    "「それでも送る」は、そのリポジトリの未コミットのファイルにチェックを入れると有効になります。",
   "Extras from {machine}": "{machine} からの追加分",
   "The extras from {machine} were not sent.": "{machine} からの追加分は送られませんでした。",
   "Uncommitted files in {repository}": "{repository} の未コミットのファイル",
@@ -145,16 +140,14 @@ export const syncJa: PhraseCatalog = {
     "まず Git。各マシンがリモートから fetch して、早送り (fast-forward) のみで進めます。何も上書きせず、何もプッシュしません。コーディネーターはそのままです。",
   "Sync {machine} with": "{machine} の同期先",
   "Fetching on {source} and {machine}…": "{source} と {machine} で fetch 中…",
-  "Nothing was changed on either machine.": "どちらのマシンでも何も変更していません。",
   "Syncing {source} and {machine}…": "{source} と {machine} を同期中…",
   "Sending the ticked extras…": "チェックした追加分を送信中…",
-  "{machine} did not run its part.": "{machine} は自分の担当分を実行しませんでした。",
   "Only the top repository of {machine} is listed: its folder is past the scan limits, so the repositories inside it are skipped.":
     "{machine} の最上位のリポジトリだけを表示しています: フォルダがスキャンの上限を超えているため、中のリポジトリは省略しました。",
   "Nothing to move forward or clone. Tick an extra to send it.":
     "進めるものもクローンするものもありません。送るには追加分にチェックを入れてください。",
   "Files outside Git on either side? Compare all files… is the slow, complete way.":
-    "どちらかに Git の外のファイルがありますか?「すべてのファイルを比較…」は時間はかかりますが完全な方法です。",
+    "どちらかに Git の外のファイルがありますか？「すべてのファイルを比較…」は時間はかかりますが完全な方法です。",
   "Syncing…": "同期中…",
   Sync: "同期",
   "Same as {shown}": "{shown} と同じ",
@@ -194,8 +187,6 @@ export const syncJa: PhraseCatalog = {
     "コーディネーターを引き継ぐ前に、もう一度同期してください。",
   "Sync again brings over what changed; it compares first and moves only changed files. Continue on {target} anyway moves the coordinator with these differences. Undo puts {target}'s folder back.":
     "「もう一度同期」は変更分を持ってきます。先に比較し、変更されたファイルだけを移動します。「それでも {target} で続行」は、これらの差分があるままコーディネーターを移動します。「元に戻す」は {target} のフォルダを元に戻します。",
-  "Sync again brings {source}'s version over. Move without them keeps {source}'s changes there and the copy on {target} as it is. Keep the coordinator on {source} to go on working there; the copy on {target} stays.":
-    "「もう一度同期」は {source} の版を持ってきます。「それらなしで移動」は {source} の変更をそこに残し、{target} のコピーはそのままにします。そこで作業を続けるには「コーディネーターを {source} に残す」を選びます。{target} のコピーは残ります。",
   "This copy was not captured, so you can't move without them. Sync again brings them over. Or keep the coordinator on {source}; the copy on {target} stays.":
     "このコピーは記録されていないため、それらなしでは移動できません。「もう一度同期」で持ってこられます。または、コーディネーターを {source} に残してください。{target} のコピーは残ります。",
   "Add this project to another machine": "このプロジェクトを別のマシンに追加",
@@ -225,4 +216,56 @@ export const syncJa: PhraseCatalog = {
     "{there} にはすでにこのプロジェクトがあります ({folder})。同期で最新にします。",
   "{there} has this project in {n} folders. Pick one.":
     "{there} にはこのプロジェクトが {n} 個のフォルダにあります。1 つ選んでください。",
+  "Sync finished for {project}: {source} and {machine}":
+    "{project} の同期が終わりました: {source} と {machine}",
+  "Sync ended, and not everything was moved or sent. Each repository says why.":
+    "同期は終わりましたが、移動または送信されなかったものがあります。理由は各リポジトリに表示されます。",
+  'No answer came for this repository, and it may have moved. "Check again" shows where it stands':
+    "このリポジトリについて応答がなく、移動された可能性があります。「もう一度確認」で現在の状態がわかります",
+  "{machine} answered in a way this version does not read. Update SpecWithCode on this machine, then check again.":
+    "{machine} の応答は、このバージョンでは読み取れない形式でした。このマシンの SpecWithCode を更新してから、もう一度確認してください。",
+  "Nothing was moved or sent.": "何も移動も送信もしていません。",
+  "The rest of the extras from {machine} were not sent.":
+    "{machine} の残りの追加分は送信されませんでした。",
+  "Sent to {target}: {reason}.": "{target} に送信しました: {reason}。",
+  "Sent to {target}.": "{target} に送信しました。",
+  "Tick the uncommitted files of {repository} first.":
+    "先に {repository} の未コミットのファイルにチェックを入れてください。",
+  "Send anyway only applies once that repository's uncommitted files are ticked.":
+    "「それでも送る」は、そのリポジトリの未コミットのファイルにチェックを入れたときだけ適用されます。",
+  "{machine}: Needs update · {version}": "{machine}: 要更新 · {version}",
+  "{machine}: Needs update": "{machine}: 要更新",
+  "{machine} could not sync: {reason}.": "{machine} で同期できませんでした: {reason}。",
+  "{machine} did not finish its part of the sync.":
+    "{machine} は同期の担当分を完了しませんでした。",
+  Repositories: "リポジトリ",
+  "Sync again brings {source}'s version over. Moving without these paths keeps {source}'s changes there and leaves the copy on {target} as it is. Keep the coordinator on {source} to go on working there; the copy on {target} stays.":
+    "「もう一度同期」は {source} の版を持ってきます。これらのパスなしで移動すると、{source} の変更はそこに残り、{target} のコピーはそのままになります。そこで作業を続けるにはコーディネーターを {source} に残します。{target} のコピーは残ります。",
+  "Keep the coordinator on {source}": "コーディネーターを {source} に残す",
+  "Move without this path": "このパスなしで移動",
+  "Move without these {n} paths": "これら {n} 個のパスなしで移動",
+  "The files are on {target}, but {problem}.": "ファイルは {target} にありますが、{problem}。",
+  "The coordinator stays on {source}. The copied files stay on {target}.":
+    "コーディネーターは {source} に残ります。コピーしたファイルは {target} に残ります。",
+  "The coordinator stays here until you choose below.":
+    "下で選ぶまで、コーディネーターはここに残ります。",
+  "Files are copied. Hand off the coordinator once work here is idle.":
+    "ファイルをコピーしました。ここの作業が落ち着いたらコーディネーターを引き継いでください。",
+  "Linking {target}…": "{target} をリンク中…",
+  "Linked: {source} can start work on {target}.":
+    "リンクしました: {source} から {target} で作業を開始できます。",
+  "Linked: {source} can start work on {target}, in {folder}.":
+    "リンクしました: {source} から {target} の {folder} で作業を開始できます。",
+  "Not linked yet. {reason}": "まだリンクされていません。{reason}",
+  "No uncommitted changes on {source}.": "{source} に未コミットの変更はありません。",
+  "Repositories new there download from GitHub or their Git host; one with unpushed commits or stashes is copied whole. Uncommitted and ignored files, and secrets unless you leave them out, come from this machine.":
+    "向こうにないリポジトリは GitHub または Git ホストからダウンロードします。未プッシュのコミットやスタッシュがあるものは丸ごとコピーします。未コミットのファイルと無視されたファイル、除外しないかぎりシークレットも、このマシンから送ります。",
+  "Also brings unpushed commits, local branches and stashes. Slower for large repositories.":
+    "未プッシュのコミット、ローカルブランチ、スタッシュも持っていきます。大きなリポジトリでは遅くなります。",
+  "Continues in a folder already saved there, which updates from origin. Always moves the coordinator there.":
+    "向こうに保存済みのフォルダで続行し、origin から更新します。コーディネーターは必ずそこへ移ります。",
+  "Compare again before previewing this changed source.":
+    "変更されたこのソースをプレビューする前に、もう一度比較してください。",
+  "The source changed. Compare again before copying.":
+    "ソースが変更されました。コピーする前にもう一度比較してください。",
 };

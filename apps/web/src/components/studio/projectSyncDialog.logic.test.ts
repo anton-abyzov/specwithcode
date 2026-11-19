@@ -24,6 +24,7 @@ import { zh } from "../../i18n/phrases/zh";
 import {
   arrivalPrefix,
   extraItems,
+  extrasRemain,
   extraResultLine,
   isUnknownSyncCall,
   KNOWN_REFUSAL_DETAILS,
@@ -36,6 +37,7 @@ import {
   syncLeftovers,
   syncPlan,
   syncResultRows,
+  syncResultTitle,
   syncRunInput,
 } from "./projectSyncDialog.logic";
 
@@ -285,7 +287,7 @@ describe("syncPlan", () => {
     expect(site.b).toMatchObject({ done: true });
     const status = rows.find((row) => row.path === "apps/status")!;
     expect(readStepLine(status.b.line)).toBe(
-      "Not done: the machine gave no answer for this repository",
+      'No answer came for this repository, and it may have moved. "Check again" shows where it stands',
     );
     // Level with its upstream and with uncommitted files: the facts stay beside it.
     expect(readStepLine(rows[0]!.b.line)).toBe("Up to date · 2 uncommitted files");
@@ -330,12 +332,14 @@ describe("syncPlan", () => {
     });
   });
 
-  it("reads a branch found gone, and an origin that could not be asked, from the run's answer", () => {
-    const behind = syncPlan(
+  const behind = () =>
+    syncPlan(
       { a: fetched(facts(".", { behind: 2 })), b: fetched(facts(".")) },
       { project: "Atlas", a: "m4", b: "m5" },
     );
-    expect(behind.rows[0]!.a.step.action).toBe("fast-forward");
+
+  it("reads a branch found gone, and an origin that could not be asked, from the run's answer", () => {
+    expect(behind().rows[0]!.a.step.action).toBe("fast-forward");
     const answer = (reason: ProjectSyncReason, detail: string) => ({
       a: {
         results: [
@@ -345,7 +349,7 @@ describe("syncPlan", () => {
       b: null,
     });
     const gone = syncResultRows(
-      behind,
+      behind(),
       answer("no-upstream", "The branch origin/main is no longer on origin."),
     )[0]!.a;
     expect(readStepLine(gone.line)).toBe(
@@ -354,7 +358,7 @@ describe("syncPlan", () => {
     expect(gone.line.detail).toBeNull();
     expect(gone.done).toBe(false);
     const unasked = syncResultRows(
-      behind,
+      behind(),
       answer("refused", "origin could not be asked whether the branch is still there."),
     )[0]!.a;
     expect(unasked.line.sentence).toEqual({
@@ -362,12 +366,51 @@ describe("syncPlan", () => {
     });
     expect(unasked.line.tone).toBe("failed");
     // A sentence this version does not know keeps the machine's words.
-    const unknown = syncResultRows(behind, answer("no-upstream", "The branch moved to a tag."))[0]!
-      .a;
+    const unknown = syncResultRows(
+      behind(),
+      answer("no-upstream", "The branch moved to a tag."),
+    )[0]!.a;
     expect(unknown.line.detail).toBe("The branch moved to a tag.");
     expect(
-      readStepLine(syncResultRows(behind, answer("refused", "Something new."))[0]!.a.line),
-    ).toBe("Sync did not change it: Something new · Changed since the plan");
+      readStepLine(syncResultRows(behind(), answer("refused", "Something new."))[0]!.a.line),
+    ).toBe("Sync did not change it: Something new");
+  });
+
+  it("keeps what a machine says beside a step it did, and titles the result by what is left", () => {
+    const done = syncResultRows(behind(), {
+      a: {
+        results: [
+          {
+            ...step("behind", {
+              path: ".",
+              behind: 2,
+              detail: "Moved main from 1a2b3c4 to 5d6e7f8.",
+            }),
+            moved: 2,
+            downgraded: false,
+          },
+        ],
+      },
+      b: { results: [] },
+    });
+    expect(done[0]!.a.line.detail).toBe("Moved main from 1a2b3c4 to 5d6e7f8.");
+    const title = (rows: typeof done, extra: Partial<Parameters<typeof syncResultTitle>[0]> = {}) =>
+      syncResultTitle({ rows, scanLimited: false, failed: false, workRemains: false, ...extra });
+    expect(title(done)).toBe("in-sync");
+    expect(title(done, { scanLimited: true })).toBe("finished");
+    expect(title(done, { workRemains: true })).toBe("finished");
+    expect(title(done, { failed: true })).toBe("open");
+    // A repository no machine answered for is not in sync, and neither is one with files left.
+    expect(title(syncResultRows(behind(), { a: { results: [] }, b: { results: [] } }))).toBe(
+      "open",
+    );
+    const dirty = syncPlan(
+      { a: fetched(facts(".", { uncommitted: 2 })), b: fetched(facts(".")) },
+      { project: "Atlas", a: "m4", b: "m5" },
+    );
+    expect(title(syncResultRows(dirty, { a: { results: [] }, b: { results: [] } }))).toBe(
+      "finished",
+    );
   });
 
   it("keeps an answer for a folder outside the plan, such as a stopped clone's leftover", () => {
@@ -483,6 +526,13 @@ describe("extras", () => {
   it("sends nothing unless its line is ticked", () => {
     const every = new Set(extras.leftOut.map((file) => file.id));
     expect(extraItems(inventory, extras, new Set(), every)).toEqual([]);
+    // Work is left on the machine unless every line was ticked and all of it was sent.
+    const all = new Set(extras.lines.filter((line) => line.tickable).map((line) => line.id));
+    expect(extrasRemain(extras, all, true)).toBe(true);
+    const sendable = { ...extras, lines: extras.lines.filter((line) => line.tickable) };
+    expect(extrasRemain(sendable, all, true)).toBe(false);
+    expect(extrasRemain(sendable, all, false)).toBe(true);
+    expect(extrasRemain(sendable, new Set(), true)).toBe(true);
     // Stashes and unlisted branches cannot travel, ticked or not.
     expect(extraItems(inventory, extras, new Set(["stashes:.", "not-listed:."]), every)).toEqual(
       [],
@@ -513,7 +563,7 @@ describe("extras", () => {
   it("spells the branch prefix only for a machine name Git keeps as it is", () => {
     expect(arrivalPrefix("m4")).toBe("swc/from-m4/");
     expect(arrivalPrefix("linux-mini.local")).toBe("swc/from-linux-mini.local/");
-    expect(arrivalPrefix("Anna's MacBook Air")).toBe("swc/from-…/");
+    expect(arrivalPrefix("Build Mac 2")).toBe("swc/from-…/");
     expect(arrivalPrefix("m4.lock")).toBe("swc/from-…/");
   });
 });
@@ -587,6 +637,24 @@ describe("extraResultLine", () => {
     expect(extraResultLine(sent({ status: "stays", stays: "failed", bytes: 0 }), names).size).toBe(
       null,
     );
+    // A reason this version does not know is shown as the machine sent it, and files left out
+    // are named for an extra that stays too.
+    expect(stays("held-by-policy" as never)).toBe("Stays on M4: held-by-policy.");
+    expect(
+      read({
+        status: "stays",
+        arrivedAs: null,
+        landed: null,
+        stays: "failed",
+        leftOutNotListed: 3,
+      }),
+    ).toBe("Stays on M4: it could not be sent. | 3 files left out");
+  });
+
+  it("never names a branch or a size it was not given", () => {
+    expect(extraResultLine(sent({ bytes: 0 }), names).size).toBeNull();
+    expect(read({ arrivedAs: null, landed: null })).toBe("Sent to M5.");
+    expect(read({ arrivedAs: null, landed: "merged" as never })).toBe("Sent to M5: merged.");
   });
 });
 
@@ -629,7 +697,14 @@ describe("syncFailure", () => {
         code: "failed",
         reason: "Could not read this machine's projects.",
       }),
-    ).toEqual(["failed", "M5 could not do it: Could not read this machine's projects."]);
+    ).toEqual(["failed", "M5 could not sync: Could not read this machine's projects."]);
+    // An answer outside what this version reads fails as a whole: say so, not the parse error.
+    expect(
+      read({ _tag: "SchemaError", message: 'Expected "behind", got "held-by-policy"' }),
+    ).toEqual([
+      "unreadable",
+      "M5 answered in a way this version does not read. Update SpecWithCode on this machine, then check again.",
+    ]);
     expect(read(undefined)).toEqual([
       "failed",
       "M5 did not answer. Check the connection, then check again.",

@@ -13,7 +13,6 @@ export const syncPt: PhraseCatalog = {
     "Um projeto pessoal não é sincronizado entre máquinas.",
   'The project folder on {machine} is not a Git repository. Use "Compare all files…".':
     "A pasta do projeto em {machine} não é um repositório Git. Use “Comparar todos os arquivos…”.",
-  "{machine} could not do it: {reason}.": "{machine} não conseguiu fazer isso: {reason}.",
   "{machine} did not answer. Check the connection, then check again.":
     "{machine} não respondeu. Verifique a conexão e depois verifique de novo.",
   "1 uncommitted file": "1 arquivo não commitado",
@@ -49,10 +48,10 @@ export const syncPt: PhraseCatalog = {
   "Sync did not change it: {reason}": "A sincronização não o alterou: {reason}",
   "Sync did not change it": "A sincronização não o alterou",
   "Follows {name}, which is not a branch of origin. Not moved":
-    "Segue {name}, que não é um branch de origin. Não avançou",
+    "Segue {name}, que não é uma branch de origin. Não avançou",
   "{upstream} is no longer on origin. Not moved": "{upstream} não está mais em origin. Não avançou",
   "Sync did not change it: origin could not be asked whether the branch is still there":
-    "A sincronização não o alterou: não foi possível perguntar a origin se o branch ainda existe",
+    "A sincronização não o alterou: não foi possível perguntar a origin se a branch ainda existe",
   "A clone that was stopped left {path} behind, and it could not be removed":
     "Um clone interrompido deixou {path}, e não foi possível removê-lo",
   "{path}: {reason}": "{path}: {reason}",
@@ -83,8 +82,6 @@ export const syncPt: PhraseCatalog = {
     "Um segredo, pelo nome. Ele fica em {source}: a sincronização não envia segredos.",
   "Looks like a {kind}": "Parece {kind}",
   "Looks like a secret": "Parece um segredo",
-  "Not done: the machine gave no answer for this repository":
-    "Não feito: a máquina não respondeu sobre este repositório",
   "Includes 1 commit not pushed on {branch}": "Inclui 1 commit sem push em {branch}",
   "Includes {n} commits not pushed on {branch}": "Inclui {n} commits sem push em {branch}",
   "1 file left out": "1 arquivo deixado de fora",
@@ -127,8 +124,6 @@ export const syncPt: PhraseCatalog = {
     "Mais {n} arquivos foram deixados de fora e não aparecem na lista.",
   "Checked by file name, and untracked files by their first 64 KB. Look through the list before you send.":
     "Verificado pelo nome do arquivo e, nos arquivos não rastreados, pelos primeiros 64 KB. Confira a lista antes de enviar.",
-  "Send anyway counts once the uncommitted files of that repository are ticked.":
-    "Enviar mesmo assim só vale quando os arquivos não commitados desse repositório estão marcados.",
   "Extras from {machine}": "Extras de {machine}",
   "The extras from {machine} were not sent.": "Os extras de {machine} não foram enviados.",
   "Uncommitted files in {repository}": "Arquivos não commitados em {repository}",
@@ -141,10 +136,8 @@ export const syncPt: PhraseCatalog = {
     "Git primeiro. Cada máquina faz fetch do remoto e avança, só com fast-forward. Nada é sobrescrito e nada é enviado. O coordenador fica onde está.",
   "Sync {machine} with": "Sincronizar {machine} com",
   "Fetching on {source} and {machine}…": "Fazendo fetch em {source} e {machine}…",
-  "Nothing was changed on either machine.": "Nada foi alterado em nenhuma das máquinas.",
   "Syncing {source} and {machine}…": "Sincronizando {source} e {machine}…",
   "Sending the ticked extras…": "Enviando os extras marcados…",
-  "{machine} did not run its part.": "{machine} não executou a parte dela.",
   "Only the top repository of {machine} is listed: its folder is past the scan limits, so the repositories inside it are skipped.":
     "Só o repositório principal de {machine} aparece: a pasta dele passa dos limites de varredura, então os repositórios dentro dela são ignorados.",
   "Nothing to move forward or clone. Tick an extra to send it.":
@@ -177,7 +170,7 @@ export const syncPt: PhraseCatalog = {
   "Download from GitHub (recommended)": "Baixar do GitHub (recomendado)",
   "Folder on {machine}": "Pasta em {machine}",
   "Push it first, or choose Copy the whole folder under Details. The move goes ahead either way.":
-    "Faça push primeiro, ou escolha “Copiar a pasta inteira” em “Detalhes”. A mudança acontece de qualquer forma.",
+    "Faça push primeiro, ou escolha “Copiar a pasta inteira” em “Detalhes”. A movimentação continua de qualquer forma.",
   "Push these commits and continue the coordinator on {target}.":
     "Fazer push destes commits e continuar o coordenador em {target}.",
   "Push these commits to their remotes and continue the coordinator on {target}.":
@@ -190,8 +183,6 @@ export const syncPt: PhraseCatalog = {
     "Sincronize de novo antes de passar o coordenador.",
   "Sync again brings over what changed; it compares first and moves only changed files. Continue on {target} anyway moves the coordinator with these differences. Undo puts {target}'s folder back.":
     "“Sincronizar de novo” traz o que mudou; compara primeiro e move só os arquivos alterados. “Continuar em {target} mesmo assim” move o coordenador com essas diferenças. “Desfazer” restaura a pasta de {target}.",
-  "Sync again brings {source}'s version over. Move without them keeps {source}'s changes there and the copy on {target} as it is. Keep the coordinator on {source} to go on working there; the copy on {target} stays.":
-    "“Sincronizar de novo” traz a versão de {source}. “Mover sem eles” mantém as alterações de {source} lá e a cópia em {target} como está. Mantenha o coordenador em {source} para continuar trabalhando lá; a cópia em {target} fica.",
   "This copy was not captured, so you can't move without them. Sync again brings them over. Or keep the coordinator on {source}; the copy on {target} stays.":
     "Esta cópia não foi capturada, então você não pode mover sem eles. “Sincronizar de novo” os traz. Ou mantenha o coordenador em {source}; a cópia em {target} fica.",
   "Add this project to another machine": "Adicionar este projeto a outra máquina",
@@ -220,4 +211,56 @@ export const syncPt: PhraseCatalog = {
     "{there} já tem este projeto, em {folder}. A sincronização o atualiza.",
   "{there} has this project in {n} folders. Pick one.":
     "{there} tem este projeto em {n} pastas. Escolha uma.",
+  "Sync finished for {project}: {source} and {machine}":
+    "Sincronização de {project} concluída: {source} e {machine}",
+  "Sync ended, and not everything was moved or sent. Each repository says why.":
+    "A sincronização terminou, e nem tudo foi avançado ou enviado. Cada repositório diz o motivo.",
+  'No answer came for this repository, and it may have moved. "Check again" shows where it stands':
+    "Não chegou resposta sobre este repositório, e ele pode ter avançado. “Verificar de novo” mostra como ele está",
+  "{machine} answered in a way this version does not read. Update SpecWithCode on this machine, then check again.":
+    "{machine} respondeu de um jeito que esta versão não sabe ler. Atualize o SpecWithCode nesta máquina e verifique de novo.",
+  "Nothing was moved or sent.": "Nada foi avançado nem enviado.",
+  "The rest of the extras from {machine} were not sent.":
+    "O restante dos extras de {machine} não foi enviado.",
+  "Sent to {target}: {reason}.": "Enviado para {target}: {reason}.",
+  "Sent to {target}.": "Enviado para {target}.",
+  "Tick the uncommitted files of {repository} first.":
+    "Marque primeiro os arquivos não commitados de {repository}.",
+  "Send anyway only applies once that repository's uncommitted files are ticked.":
+    "Enviar mesmo assim só se aplica quando os arquivos não commitados desse repositório estão marcados.",
+  "{machine}: Needs update · {version}": "{machine}: Precisa atualizar · {version}",
+  "{machine}: Needs update": "{machine}: Precisa atualizar",
+  "{machine} could not sync: {reason}.": "{machine} não conseguiu sincronizar: {reason}.",
+  "{machine} did not finish its part of the sync.":
+    "{machine} não terminou a parte dela na sincronização.",
+  Repositories: "Repositórios",
+  "Sync again brings {source}'s version over. Moving without these paths keeps {source}'s changes there and leaves the copy on {target} as it is. Keep the coordinator on {source} to go on working there; the copy on {target} stays.":
+    "“Sincronizar de novo” traz a versão de {source}. Mover sem esses caminhos mantém as alterações de {source} lá e deixa a cópia em {target} como está. Mantenha o coordenador em {source} para continuar trabalhando lá; a cópia em {target} fica.",
+  "Keep the coordinator on {source}": "Manter o coordenador em {source}",
+  "Move without this path": "Mover sem este caminho",
+  "Move without these {n} paths": "Mover sem estes {n} caminhos",
+  "The files are on {target}, but {problem}.": "Os arquivos estão em {target}, mas {problem}.",
+  "The coordinator stays on {source}. The copied files stay on {target}.":
+    "O coordenador fica em {source}. Os arquivos copiados ficam em {target}.",
+  "The coordinator stays here until you choose below.":
+    "O coordenador fica aqui até você escolher abaixo.",
+  "Files are copied. Hand off the coordinator once work here is idle.":
+    "Os arquivos foram copiados. Passe o coordenador quando o trabalho aqui estiver parado.",
+  "Linking {target}…": "Vinculando {target}…",
+  "Linked: {source} can start work on {target}.":
+    "Vinculado: {source} pode iniciar trabalho em {target}.",
+  "Linked: {source} can start work on {target}, in {folder}.":
+    "Vinculado: {source} pode iniciar trabalho em {target}, em {folder}.",
+  "Not linked yet. {reason}": "Ainda não vinculado. {reason}",
+  "No uncommitted changes on {source}.": "Nenhuma alteração não commitada em {source}.",
+  "Repositories new there download from GitHub or their Git host; one with unpushed commits or stashes is copied whole. Uncommitted and ignored files, and secrets unless you leave them out, come from this machine.":
+    "Os repositórios novos lá são baixados do GitHub ou do host Git deles; um com commits não enviados ou stashes é copiado inteiro. Os arquivos não commitados e ignorados, e os segredos a menos que você os deixe de fora, vêm desta máquina.",
+  "Also brings unpushed commits, local branches and stashes. Slower for large repositories.":
+    "Também leva commits não enviados, branches locais e stashes. Mais lento em repositórios grandes.",
+  "Continues in a folder already saved there, which updates from origin. Always moves the coordinator there.":
+    "Continua em uma pasta já salva lá, que se atualiza a partir de origin. Sempre move o coordenador para lá.",
+  "Compare again before previewing this changed source.":
+    "Compare de novo antes de pré-visualizar esta origem alterada.",
+  "The source changed. Compare again before copying.":
+    "A origem mudou. Compare de novo antes de copiar.",
 };

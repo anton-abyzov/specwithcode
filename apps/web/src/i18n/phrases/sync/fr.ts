@@ -13,7 +13,6 @@ export const syncFr: PhraseCatalog = {
     "Un projet personnel n’est pas synchronisé entre les machines.",
   'The project folder on {machine} is not a Git repository. Use "Compare all files…".':
     "Le dossier du projet sur {machine} n’est pas un dépôt Git. Utilisez « Comparer tous les fichiers… ».",
-  "{machine} could not do it: {reason}.": "{machine} n’a pas pu le faire : {reason}.",
   "{machine} did not answer. Check the connection, then check again.":
     "{machine} n’a pas répondu. Vérifiez la connexion, puis vérifiez à nouveau.",
   "1 uncommitted file": "1 fichier non commité",
@@ -83,8 +82,6 @@ export const syncFr: PhraseCatalog = {
     "Un secret d’après son nom. Il reste sur {source} : la synchronisation n’envoie pas les secrets.",
   "Looks like a {kind}": "Ressemble à {kind}",
   "Looks like a secret": "Ressemble à un secret",
-  "Not done: the machine gave no answer for this repository":
-    "Non fait : la machine n’a pas répondu pour ce dépôt",
   "Includes 1 commit not pushed on {branch}": "Inclut 1 commit non poussé sur {branch}",
   "Includes {n} commits not pushed on {branch}": "Inclut {n} commits non poussés sur {branch}",
   "1 file left out": "1 fichier laissé de côté",
@@ -127,8 +124,6 @@ export const syncFr: PhraseCatalog = {
     "{n} autres fichiers sont laissés de côté et non listés.",
   "Checked by file name, and untracked files by their first 64 KB. Look through the list before you send.":
     "Vérifié d’après le nom de fichier, et pour les fichiers non suivis d’après leurs premiers 64 KB. Parcourez la liste avant d’envoyer.",
-  "Send anyway counts once the uncommitted files of that repository are ticked.":
-    "Envoyer quand même ne compte qu’une fois les fichiers non commités de ce dépôt cochés.",
   "Extras from {machine}": "Extras de {machine}",
   "The extras from {machine} were not sent.": "Les extras de {machine} n’ont pas été envoyés.",
   "Uncommitted files in {repository}": "Fichiers non commités dans {repository}",
@@ -141,10 +136,8 @@ export const syncFr: PhraseCatalog = {
     "D’abord Git. Chaque machine fait un fetch depuis le dépôt distant et avance, en fast-forward uniquement. Rien n’est écrasé et rien n’est poussé. Le coordinateur reste où il est.",
   "Sync {machine} with": "Synchroniser {machine} avec",
   "Fetching on {source} and {machine}…": "Fetch sur {source} et {machine}…",
-  "Nothing was changed on either machine.": "Rien n’a été modifié sur aucune des deux machines.",
   "Syncing {source} and {machine}…": "Synchronisation de {source} et {machine}…",
   "Sending the ticked extras…": "Envoi des extras cochés…",
-  "{machine} did not run its part.": "{machine} n’a pas exécuté sa part.",
   "Only the top repository of {machine} is listed: its folder is past the scan limits, so the repositories inside it are skipped.":
     "Seul le dépôt de premier niveau de {machine} est listé : son dossier dépasse les limites d’analyse, donc les dépôts qu’il contient sont ignorés.",
   "Nothing to move forward or clone. Tick an extra to send it.":
@@ -154,9 +147,9 @@ export const syncFr: PhraseCatalog = {
   "Syncing…": "Synchronisation…",
   Sync: "Synchroniser",
   "Same as {shown}": "Identique à {shown}",
-  "Same as {shown} · as of {time}": "Identique à {shown} · au {time}",
+  "Same as {shown} · as of {time}": "Identique à {shown} · à {time}",
   "{k} of {n} repositories differ": "{k} dépôts sur {n} diffèrent",
-  "{k} of {n} repositories differ · as of {time}": "{k} dépôts sur {n} diffèrent · au {time}",
+  "{k} of {n} repositories differ · as of {time}": "{k} dépôts sur {n} diffèrent · à {time}",
   "Not checked yet": "Pas encore vérifié",
   "Sync…": "Synchroniser…",
   "1 uncommitted file stays on {source}: Git carries commits only. Commit them, or choose Copy the whole folder under Details.":
@@ -189,8 +182,6 @@ export const syncFr: PhraseCatalog = {
     "Synchronisez à nouveau avant de transmettre le coordinateur.",
   "Sync again brings over what changed; it compares first and moves only changed files. Continue on {target} anyway moves the coordinator with these differences. Undo puts {target}'s folder back.":
     "« Synchroniser à nouveau » apporte ce qui a changé : il compare d’abord et ne déplace que les fichiers modifiés. « Continuer quand même sur {target} » déplace le coordinateur avec ces différences. « Annuler » remet en place le dossier de {target}.",
-  "Sync again brings {source}'s version over. Move without them keeps {source}'s changes there and the copy on {target} as it is. Keep the coordinator on {source} to go on working there; the copy on {target} stays.":
-    "« Synchroniser à nouveau » apporte la version de {source}. « Déplacer sans eux » laisse les modifications de {source} sur place et la copie sur {target} telle quelle. Gardez le coordinateur sur {source} pour continuer à y travailler ; la copie sur {target} reste.",
   "This copy was not captured, so you can't move without them. Sync again brings them over. Or keep the coordinator on {source}; the copy on {target} stays.":
     "Cette copie n’a pas été capturée, vous ne pouvez donc pas déplacer sans eux. « Synchroniser à nouveau » les apporte. Ou gardez le coordinateur sur {source} ; la copie sur {target} reste.",
   "Add this project to another machine": "Ajouter ce projet à une autre machine",
@@ -220,4 +211,56 @@ export const syncFr: PhraseCatalog = {
     "{there} a déjà ce projet, dans {folder}. La synchronisation le met à jour.",
   "{there} has this project in {n} folders. Pick one.":
     "{there} a ce projet dans {n} dossiers. Choisissez-en un.",
+  "Sync finished for {project}: {source} and {machine}":
+    "Synchronisation de {project} terminée : {source} et {machine}",
+  "Sync ended, and not everything was moved or sent. Each repository says why.":
+    "La synchronisation est terminée, mais tout n’a pas été avancé ou envoyé. Chaque dépôt indique pourquoi.",
+  'No answer came for this repository, and it may have moved. "Check again" shows where it stands':
+    "Aucune réponse n’est arrivée pour ce dépôt, et il a peut-être avancé. « Vérifier à nouveau » montre où il en est",
+  "{machine} answered in a way this version does not read. Update SpecWithCode on this machine, then check again.":
+    "{machine} a répondu d’une manière que cette version ne sait pas lire. Mettez à jour SpecWithCode sur cette machine, puis vérifiez à nouveau.",
+  "Nothing was moved or sent.": "Rien n’a été avancé ni envoyé.",
+  "The rest of the extras from {machine} were not sent.":
+    "Le reste des extras de {machine} n’a pas été envoyé.",
+  "Sent to {target}: {reason}.": "Envoyé à {target} : {reason}.",
+  "Sent to {target}.": "Envoyé à {target}.",
+  "Tick the uncommitted files of {repository} first.":
+    "Cochez d’abord les fichiers non commités de {repository}.",
+  "Send anyway only applies once that repository's uncommitted files are ticked.":
+    "Envoyer quand même ne s’applique qu’une fois les fichiers non commités de ce dépôt cochés.",
+  "{machine}: Needs update · {version}": "{machine} : Mise à jour requise · {version}",
+  "{machine}: Needs update": "{machine} : Mise à jour requise",
+  "{machine} could not sync: {reason}.": "{machine} n’a pas pu synchroniser : {reason}.",
+  "{machine} did not finish its part of the sync.":
+    "{machine} n’a pas terminé sa part de la synchronisation.",
+  Repositories: "Dépôts",
+  "Sync again brings {source}'s version over. Moving without these paths keeps {source}'s changes there and leaves the copy on {target} as it is. Keep the coordinator on {source} to go on working there; the copy on {target} stays.":
+    "« Synchroniser à nouveau » apporte la version de {source}. Déplacer sans ces chemins laisse les modifications de {source} sur place et la copie sur {target} telle quelle. Gardez le coordinateur sur {source} pour continuer à y travailler ; la copie sur {target} reste.",
+  "Keep the coordinator on {source}": "Garder le coordinateur sur {source}",
+  "Move without this path": "Déplacer sans ce chemin",
+  "Move without these {n} paths": "Déplacer sans ces {n} chemins",
+  "The files are on {target}, but {problem}.": "Les fichiers sont sur {target}, mais {problem}.",
+  "The coordinator stays on {source}. The copied files stay on {target}.":
+    "Le coordinateur reste sur {source}. Les fichiers copiés restent sur {target}.",
+  "The coordinator stays here until you choose below.":
+    "Le coordinateur reste ici jusqu’à ce que vous choisissiez ci-dessous.",
+  "Files are copied. Hand off the coordinator once work here is idle.":
+    "Les fichiers sont copiés. Passez le coordinateur une fois le travail terminé ici.",
+  "Linking {target}…": "Liaison de {target}…",
+  "Linked: {source} can start work on {target}.":
+    "Lié : {source} peut lancer du travail sur {target}.",
+  "Linked: {source} can start work on {target}, in {folder}.":
+    "Lié : {source} peut lancer du travail sur {target}, dans {folder}.",
+  "Not linked yet. {reason}": "Pas encore lié. {reason}",
+  "No uncommitted changes on {source}.": "Aucune modification non commitée sur {source}.",
+  "Repositories new there download from GitHub or their Git host; one with unpushed commits or stashes is copied whole. Uncommitted and ignored files, and secrets unless you leave them out, come from this machine.":
+    "Les dépôts nouveaux là-bas sont téléchargés depuis GitHub ou leur hébergeur Git ; un dépôt avec des commits non poussés ou des stashes est copié en entier. Les fichiers non commités et ignorés, ainsi que les secrets sauf si vous les écartez, viennent de cette machine.",
+  "Also brings unpushed commits, local branches and stashes. Slower for large repositories.":
+    "Apporte aussi les commits non poussés, les branches locales et les stashes. Plus lent pour les gros dépôts.",
+  "Continues in a folder already saved there, which updates from origin. Always moves the coordinator there.":
+    "Continue dans un dossier déjà enregistré là-bas, qui se met à jour depuis origin. Déplace toujours le coordinateur là-bas.",
+  "Compare again before previewing this changed source.":
+    "Comparez à nouveau avant de prévisualiser cette source modifiée.",
+  "The source changed. Compare again before copying.":
+    "La source a changé. Comparez à nouveau avant de copier.",
 };
