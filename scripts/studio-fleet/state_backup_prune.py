@@ -28,8 +28,8 @@ import tempfile
 import time
 
 from installation_descriptor import installation_lock
-from release_retention import (FAILURE_COPY_READ_KEY, STATE_BACKUP_NAME, failed_install, held_state_backups,
-                               prune_state_backups)
+from release_retention import (FAILURE_COPY_READ_KEY, STATE_BACKUP_NAME, _receipt_stamp, failed_install,
+                               held_state_backups, prune_state_backups)
 import studio_paths
 
 LOCK_BUSY = 'Another installation operation is in progress for this home'
@@ -208,19 +208,35 @@ def mark_read(home, receipt, now=None):
     """Stamps FAILURE_COPY_READ_KEY in a failed install's receipt, under the installation lock, so its
     state copy is no longer kept for a person. Returns the stamp (an earlier one stays). Only a receipt
     in an identity's own receipts folder that names a copy: a refusal record without one (1414's
-    refusal_proof reads exactly five keys) is never touched."""
+    refusal_proof reads exactly five keys) is never touched.
+
+    Every older failed receipt of that identity is stamped too. Receipt pruning may later remove the
+    read one, and an older failure must not then become the newest unread one and hold its copy again."""
     receipt = pathlib.Path(receipt)
     assert not receipt.is_symlink() and receipt.is_file(), 'Receipt not found: ' + str(receipt)
     folder = receipt.resolve().parent
     roots = [root.resolve() for root in (studio_paths.branded_root(home), studio_paths.legacy_root(home)) if root.exists()]
     assert folder.name == 'receipts' and folder.parent.name == 'updates' and folder.parent.parent.parent in roots, \
         'Not an update receipt of this home'
+    stamp = now or datetime.datetime.now(datetime.timezone.utc).isoformat()
     with installation_lock(home):
         value = json.loads(receipt.read_text())
         assert failed_install(value), 'Not a failed install that names a state copy'
         if FAILURE_COPY_READ_KEY not in value:
-            value[FAILURE_COPY_READ_KEY] = now or datetime.datetime.now(datetime.timezone.utc).isoformat()
+            value[FAILURE_COPY_READ_KEY] = stamp
             _write_receipt(receipt, value)
+        own_stamp = _receipt_stamp(receipt)
+        for older in sorted(receipt.parent.glob('update-*.json')):
+            older_stamp = _receipt_stamp(older)
+            if older == receipt or older.is_symlink() or own_stamp is None or older_stamp is None or older_stamp > own_stamp:
+                continue
+            try:
+                earlier = json.loads(older.read_text())
+            except (OSError, ValueError):
+                continue
+            if failed_install(earlier) and FAILURE_COPY_READ_KEY not in earlier:
+                earlier[FAILURE_COPY_READ_KEY] = stamp
+                _write_receipt(older, earlier)
         return value[FAILURE_COPY_READ_KEY]
 
 

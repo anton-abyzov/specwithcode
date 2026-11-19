@@ -130,6 +130,38 @@ class UnreadFailureCopy(unittest.TestCase):
         self.assertEqual(sorted(state_backup_prune.after_install('m4', self.home, later)),
                          sorted([older_copy.name, failed_copy.name]))
 
+    def test_pruning_the_read_receipt_does_not_bring_back_an_older_failure(self):
+        """Review round 1: A failed and held its copy, B failed later, rolled back and was read; receipt
+        pruning then removed B's finished receipt. A must not become the newest unread failure."""
+        older_copy = self.copy('20261101T000000Z')
+        older = self.receipt('1.0.300-20261101T000000Z', m4_failure(older_copy / 'statev2.sqlite'))
+        failed_copy, failed, later_copy, later = self.m4_history()
+        value = dict(json.loads(failed.read_text()), rollback='restored-old-release', pointers='previous-release')
+        value.pop('rollbackError')
+        failed.write_text(json.dumps(value))
+        state_backup_prune.mark_read(self.home, failed)
+        self.assertIn(READ, json.loads(older.read_text()))
+        for index in range(11):
+            self.receipt('1.0.%d-20261119T0500%02dZ' % (375 + index, index), {
+                'identity': 'm4', 'phase': 'preflight', 'result': 'update-failed', 'pointers': 'unchanged',
+                'error': 'AssertionError: Guarded prestate changed: rows'})
+        for path in self.receipts.iterdir():
+            os.utime(path, (time.time() - 2 * DAY,) * 2)
+        removed = release_retention.prune_update_receipts(self.own, keep=[later])
+        self.assertIn(failed.name, removed['receipts'])
+        self.assertTrue(older.is_file())
+        self.assertIsNone(release_retention.unread_failure_receipt(
+            [(path, json.loads(path.read_text())) for path in self.receipts.glob('update-*.json')]))
+        self.assertIn(older_copy.name, state_backup_prune.after_install('m4', self.home, later))
+        self.assertFalse(older_copy.exists())
+
+    def test_marking_an_older_receipt_leaves_newer_ones_unread(self):
+        older_copy = self.copy('20261101T000000Z')
+        older = self.receipt('1.0.300-20261101T000000Z', m4_failure(older_copy / 'statev2.sqlite'))
+        _, failed, _, _ = self.m4_history()
+        state_backup_prune.mark_read(self.home, older)
+        self.assertNotIn(READ, json.loads(failed.read_text()))
+
     def test_a_clean_rollback_counts_as_a_failure(self):
         copy = self.copy('20261118T190338Z')
         value = dict(m4_failure(copy / 'statev2.sqlite'), rollback='restored-old-release', pointers='previous-release')
