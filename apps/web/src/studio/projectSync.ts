@@ -75,10 +75,15 @@ export type SyncOutcome<A> =
 export interface ProjectSyncApi {
   status(machine: SyncMachine): Promise<SyncOutcome<ProjectSyncStatusResult>>;
   fetch(machine: SyncMachine): Promise<SyncOutcome<ProjectSyncFetchResult>>;
-  inventory(machine: SyncMachine): Promise<SyncOutcome<ProjectSyncInventoryResult>>;
+  /** `fetchId` names this machine's fetch: what is "only here" is judged as of it. */
+  inventory(
+    machine: SyncMachine,
+    fetchId?: string,
+  ): Promise<SyncOutcome<ProjectSyncInventoryResult>>;
+  /** Always with the fetch id of this machine's own fetch: a run goes by nothing else. */
   run(
     machine: SyncMachine,
-    input: Omit<ProjectSyncRunInput, "projectId">,
+    input: Omit<ProjectSyncRunInput, "projectId" | "fetchId"> & { readonly fetchId: string },
   ): Promise<SyncOutcome<ProjectSyncRunResult>>;
   /** Asks `source` to send its ticked extras to `target`. */
   sendExtras(
@@ -111,7 +116,11 @@ const on = (machine: SyncMachine) => ({
 export const projectSyncApi: ProjectSyncApi = {
   status: (machine) => call(projectSync.status, on(machine)),
   fetch: (machine) => call(projectSync.fetch, on(machine)),
-  inventory: (machine) => call(projectSync.inventory, on(machine)),
+  inventory: (machine, fetchId) =>
+    call(projectSync.inventory, {
+      environmentId: machine.environmentId,
+      input: { projectId: machine.projectId, ...(fetchId ? { fetchId } : {}) },
+    }),
   run: (machine, input) =>
     call(projectSync.run, {
       environmentId: machine.environmentId,

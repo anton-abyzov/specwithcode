@@ -271,4 +271,13 @@ export const syncZh: PhraseCatalog = {
     "复制尚未完成。请完成或取消它，然后再添加另一台机器。",
   "Open the unfinished copy": "打开未完成的复制",
   "Finish handoff": "完成交接",
+  "Needs update: fetched only, not moved forward": "需要更新：仅已获取，未前移",
+  "Needs update: not cloned": "需要更新：未克隆",
+  "Could not be read. Not moved": "无法读取。未移动",
+  "May have moved forward: the result could not be read. Check it before working in it":
+    "可能已前移：无法读取结果。在其中工作前请先检查",
+  "{repository} could not be read: what is only on {machine} is not known":
+    "无法读取 {repository}：不知道哪些内容只在 {machine} 上",
+  "Which branches of {repository} are only on {machine} could not be read":
+    "无法读取 {repository} 的哪些分支只在 {machine} 上",
 };

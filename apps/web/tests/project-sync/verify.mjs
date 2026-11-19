@@ -147,7 +147,7 @@ const UPSTREAM_RESULT = {
   "apps/worker":
     "Sync did not change it: origin could not be asked whether the branch is still there",
   // Its state could not be read at the run: never "0 uncommitted files".
-  "tools/cli": "Not moved",
+  "tools/cli": "Not moved: its state could not be read",
 };
 const PLAN = {
   // Level with its upstream, with uncommitted files and a thread at work: never bare.
@@ -248,7 +248,7 @@ try {
       assert.equal(calls.filter((call) => call.startsWith("run:")).length, 2);
       assert.ok(
         calls.includes(
-          'run:laptopE:{"fastForward":[{"path":"apps/web","otherBranch":"main"}],"clone":[]}',
+          'run:laptopE:{"fetchId":"fetch-laptopE","fastForward":[{"path":"apps/web","otherBranch":"main"}],"clone":[]}',
         ),
         calls.join("\n"),
       );
@@ -337,7 +337,9 @@ try {
       // Only rackF had something to do.
       assert.deepEqual(
         (await events(page)).filter((call) => call.startsWith("run:")),
-        ['run:rackF:{"fastForward":[{"path":"apps/web","otherBranch":"main"}],"clone":[]}'],
+        [
+          'run:rackF:{"fetchId":"fetch-rackF","fastForward":[{"path":"apps/web","otherBranch":"main"}],"clone":[]}',
+        ],
       );
       taken = await shot(page, `result-in-sync-${tag}`);
       results.push({ theme, width, case: "result, in sync", ...taken });
@@ -511,10 +513,8 @@ try {
           sentence,
           `${repo} on laptopE, result`,
         );
-      assert.equal(
-        await cell(page, "tools/cli", "a").locator("[data-sync-detail]").textContent(),
-        "Its state could not be read, so it was not moved.",
-      );
+      // The server's sentence says what the row says: shown once, in the window's language.
+      assert.equal(await cell(page, "tools/cli", "a").locator("[data-sync-detail]").count(), 0);
       assert.deepEqual(await texts(page, "[data-sync-leftover]"), [
         "laptopE: A clone that was stopped left .apps-site.clone-7f3a behind, and it could not be removed",
       ]);
@@ -607,6 +607,52 @@ try {
       );
       taken = await shot(page, `result-not-proven-${tag}`);
       results.push({ theme, width, case: "result, not proven in sync", ...taken });
+      await page.close();
+
+      // 12a. A machine without the guarded move fetches only and says it needs an update.
+      page = await at("case=dialog&state=older");
+      await waitStage(page, "plan");
+      assert.equal(
+        (await said(page, "apps/web", "a")).sentence,
+        "Needs update: fetched only, not moved forward",
+      );
+      taken = await shot(page, `plan-needs-update-${tag}`);
+      results.push({ theme, width, case: "plan, a machine without the guarded move", ...taken });
+      await page.locator("[data-sync-run]").click();
+      await waitStage(page, "result");
+      assert.deepEqual(
+        (await events(page)).filter((item) => item.startsWith("run:")),
+        [
+          'run:rackF:{"fetchId":"fetch-rackF","fastForward":[{"path":".","otherBranch":"main"}],"clone":[]}',
+        ],
+      );
+      await page.close();
+
+      // 12a'. Folders and states that could not be read, and a move that could not be confirmed.
+      page = await at("case=dialog&state=unread");
+      await waitStage(page, "plan");
+      assert.equal((await said(page, ".", "a")).sentence, "Could not be read. Not moved");
+      assert.equal(
+        (await said(page, "apps/web", "a")).sentence,
+        "Not moved: its state could not be read",
+      );
+      assert.equal(
+        await page
+          .locator('[data-sync-extras="a"] [data-sync-extra="only-here-unknown"]')
+          .textContent(),
+        "Which branches of apps/web are only on laptopE could not be read",
+      );
+      taken = await shot(page, `plan-unread-${tag}`);
+      results.push({ theme, width, case: "plan, what could not be read", ...taken });
+      await page.locator("[data-sync-run]").click();
+      await waitStage(page, "result");
+      assert.equal(
+        (await said(page, ".", "b")).sentence,
+        "May have moved forward: the result could not be read. Check it before working in it",
+      );
+      assert.equal(await page.locator("h2").textContent(), "Sync Atlas: laptopE and rackF");
+      taken = await shot(page, `result-unverified-${tag}`);
+      results.push({ theme, width, case: "result, a move that could not be confirmed", ...taken });
       await page.close();
 
       // 12b. A machine in the middle of work: 179 uncommitted files and 11 branches only there.

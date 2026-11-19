@@ -295,4 +295,14 @@ export const syncKo: PhraseCatalog = {
     "복사가 끝나지 않았습니다. 끝내거나 취소한 다음 다른 기기를 추가하세요.",
   "Open the unfinished copy": "끝나지 않은 복사 열기",
   "Finish handoff": "인계 완료",
+  "Needs update: fetched only, not moved forward":
+    "업데이트 필요: 가져오기만 했고 앞으로 이동하지 않았습니다",
+  "Needs update: not cloned": "업데이트 필요: 복제하지 않았습니다",
+  "Could not be read. Not moved": "읽을 수 없습니다. 이동하지 않았습니다",
+  "May have moved forward: the result could not be read. Check it before working in it":
+    "앞으로 이동했을 수 있습니다: 결과를 읽을 수 없었습니다. 작업하기 전에 확인하세요",
+  "{repository} could not be read: what is only on {machine} is not known":
+    "{repository}을(를) 읽을 수 없습니다: {machine}에만 있는 것은 알 수 없습니다",
+  "Which branches of {repository} are only on {machine} could not be read":
+    "{repository}의 어떤 브랜치가 {machine}에만 있는지 읽을 수 없습니다",
 };

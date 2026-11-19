@@ -304,4 +304,13 @@ export const syncJa: PhraseCatalog = {
     "コピーが完了していません。完了するかキャンセルしてから、別のマシンを追加してください。",
   "Open the unfinished copy": "未完了のコピーを開く",
   "Finish handoff": "引き継ぎを完了",
+  "Needs update: fetched only, not moved forward": "更新が必要: フェッチのみ、前進していません",
+  "Needs update: not cloned": "更新が必要: クローンしていません",
+  "Could not be read. Not moved": "読み取れませんでした。移動していません",
+  "May have moved forward: the result could not be read. Check it before working in it":
+    "前進した可能性があります: 結果を読み取れませんでした。作業する前に確認してください",
+  "{repository} could not be read: what is only on {machine} is not known":
+    "{repository} を読み取れませんでした: {machine} にだけあるものは不明です",
+  "Which branches of {repository} are only on {machine} could not be read":
+    "{repository} のどのブランチが {machine} にだけあるか読み取れませんでした",
 };

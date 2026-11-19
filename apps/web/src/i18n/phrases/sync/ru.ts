@@ -296,4 +296,14 @@ export const syncRu: PhraseCatalog = {
     "Копирование не завершено. Завершите или отмените его, затем добавьте другую машину.",
   "Open the unfinished copy": "Открыть незавершённое копирование",
   "Finish handoff": "Завершить передачу",
+  "Needs update: fetched only, not moved forward":
+    "Нужно обновление: только получено, не сдвинуто вперёд",
+  "Needs update: not cloned": "Нужно обновление: не клонировано",
+  "Could not be read. Not moved": "Не удалось прочитать. Не сдвинуто",
+  "May have moved forward: the result could not be read. Check it before working in it":
+    "Возможно, сдвинуто вперёд: результат не удалось прочитать. Проверьте, прежде чем работать в нём",
+  "{repository} could not be read: what is only on {machine} is not known":
+    "Не удалось прочитать {repository}: что есть только на {machine}, неизвестно",
+  "Which branches of {repository} are only on {machine} could not be read":
+    "Не удалось прочитать, какие ветки {repository} есть только на {machine}",
 };

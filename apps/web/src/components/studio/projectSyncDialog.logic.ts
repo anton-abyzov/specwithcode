@@ -13,6 +13,8 @@ import {
   PROJECT_SYNC_RPC_METHODS,
   planProjectSync,
   PROJECT_SYNC_MAX_LISTED,
+  PROJECT_SYNC_STATE_UNREAD_DETAIL,
+  PROJECT_SYNC_UNVERIFIED_DETAIL,
   projectSyncUpstreamGoneDetail,
   type ProjectSyncExtraItem,
   type ProjectSyncExtraResult,
@@ -187,7 +189,7 @@ export interface StepLine {
 /** What a machine said of a checkout's upstream; an older machine sends only `upstream`. */
 export type UpstreamFacts = Pick<
   ProjectSyncRepositoryFacts,
-  "upstream" | "otherUpstream" | "upstreamGone"
+  "upstream" | "otherUpstream" | "upstreamGone" | "unreadDetail"
 >;
 
 /**
@@ -215,12 +217,19 @@ const uncommittedFact = (n: number) => count(n, "1 uncommitted file", "{n} uncom
 export function stepLine(
   step: ProjectSyncStep,
   phase: "plan" | "result",
-  ran: { readonly moved: number; readonly downgraded: boolean } | null = null,
+  ran: {
+    readonly moved: number;
+    readonly downgraded: boolean;
+    readonly movedUnverified?: boolean | undefined;
+  } | null = null,
   upstream: UpstreamFacts | null = null,
 ): StepLine {
   const facts: SyncText[] = [];
+  // Git was asked to move it and the outcome could not be read: never "moved", never "not moved".
+  const unverified = phase === "result" && ran?.movedUnverified === true;
   // A refusal says its own reason: Git refusing a merge or a clone is no change of the plan.
-  if (ran?.downgraded && step.reason !== "refused") facts.push({ text: "Changed since the plan" });
+  if (ran?.downgraded && step.reason !== "refused" && !unverified)
+    facts.push({ text: "Changed since the plan" });
   if (step.uncommitted > 0 && step.reason !== "uncommitted")
     facts.push(uncommittedFact(step.uncommitted));
   if (step.inUseBy !== null && step.reason !== "in-use")
@@ -243,6 +252,14 @@ export function stepLine(
     };
   };
   const remote = step.remote ?? "";
+  if (unverified)
+    return line(
+      "failed",
+      {
+        text: "May have moved forward: the result could not be read. Check it before working in it",
+      },
+      step.detail === PROJECT_SYNC_UNVERIFIED_DETAIL ? null : step.detail,
+    );
   switch (step.reason) {
     case "behind": {
       // A result names what moved; a plan names what the fetch found.
@@ -278,6 +295,11 @@ export function stepLine(
       return line("held", { text, values: step.ahead === 1 ? { b: values.b } : values });
     }
     case "uncommitted":
+      // Nothing of the checkout is known: it is held, and the machine's own sentence says why.
+      if (step.detail === PROJECT_SYNC_STATE_UNREAD_DETAIL)
+        return line("held", { text: "Not moved: its state could not be read" }, null);
+      if (upstream?.unreadDetail != null)
+        return line("held", { text: "Could not be read. Not moved" });
       // No count: the machine could not read the checkout's state, and says so itself.
       if (step.uncommitted <= 0)
         return line(
@@ -421,6 +443,12 @@ export interface SyncPlan {
   readonly scanLimited: readonly SyncSide[];
   /** Whether any repository would be moved forward or cloned. */
   readonly moves: boolean;
+  /**
+   * The fetch each machine's run goes by, from that machine's own fetch answer. Null where
+   * the machine sent none or does not move by the guarded fast-forward: it is never asked to
+   * move anything, and its rows say it needs an update.
+   */
+  readonly fetchIds: Readonly<Record<SyncSide, string | null>>;
 }
 
 export const repositoryName = (path: string, project: string) => (path === "." ? project : path);
@@ -435,10 +463,28 @@ export function syncPlan(
   fetched: Readonly<Record<SyncSide, ProjectSyncFetchResult>>,
   names: SyncNames,
 ): SyncPlan {
-  const steps = {
+  const fetchIds = {
+    a: guardedFetchId(fetched.a),
+    b: guardedFetchId(fetched.b),
+  };
+  // Without its own fetch to go by, a machine fetches only: nothing there is moved or cloned.
+  const fetchOnly = (side: SyncSide, list: readonly ProjectSyncStep[]) =>
+    fetchIds[side] !== null
+      ? list
+      : list.map((step) =>
+          step.action === "fast-forward" || step.action === "clone"
+            ? { ...step, action: "fetch" as const }
+            : step,
+        );
+  const planned = {
     a: planProjectSync(fetched.a.repositories, fetched.b.repositories),
     b: planProjectSync(fetched.b.repositories, fetched.a.repositories),
   };
+  const needsUpdate = {
+    a: new Set(fetchIds.a === null ? planned.a.filter(moving).map((step) => step.path) : []),
+    b: new Set(fetchIds.b === null ? planned.b.filter(moving).map((step) => step.path) : []),
+  };
+  const steps = { a: fetchOnly("a", planned.a), b: fetchOnly("b", planned.b) };
   const held = {
     a: new Set(fetched.a.repositories.map((item) => item.path)),
     b: new Set(fetched.b.repositories.map((item) => item.path)),
@@ -456,7 +502,19 @@ export function syncPlan(
       branch: step.branch,
       step,
       upstream,
-      line: stepLine(step, "plan", null, upstream),
+      line: needsUpdate[side].has(path)
+        ? {
+            tone: "held",
+            sentence: {
+              text:
+                planned[side].find((item) => item.path === path)?.action === "clone"
+                  ? "Needs update: not cloned"
+                  : "Needs update: fetched only, not moved forward",
+            },
+            facts: [],
+            detail: null,
+          }
+        : stepLine(step, "plan", null, upstream),
     };
   };
   const rows: SyncRow[] = [];
@@ -469,11 +527,16 @@ export function syncPlan(
     rows,
     steps,
     scanLimited: (["a", "b"] as const).filter((side) => fetched[side].scanLimited),
-    moves: [...steps.a, ...steps.b].some(
-      (step) => step.action === "fast-forward" || step.action === "clone",
-    ),
+    moves: [...steps.a, ...steps.b].some(moving),
+    fetchIds,
   };
 }
+
+const moving = (step: ProjectSyncStep) => step.action === "fast-forward" || step.action === "clone";
+
+/** The fetch id a run may go by: only from a machine that moves by the guarded fast-forward. */
+const guardedFetchId = (answer: ProjectSyncFetchResult): string | null =>
+  answer.guardedFastForward === true && answer.fetchId ? answer.fetchId : null;
 
 /**
  * What the result's title may claim. "in-sync": every repository ended as a synced one and
@@ -533,7 +596,9 @@ export function statusesProveInSync(
       mine.head !== null &&
       mine.head === other.head &&
       mine.clean &&
-      other.clean
+      other.clean &&
+      mine.unread !== true &&
+      other.unread !== true
     );
   });
 }
@@ -589,9 +654,13 @@ export function syncLeftovers(
 export function syncRunInput(
   projectId: ProjectSyncRunInput["projectId"],
   steps: readonly ProjectSyncStep[],
-): ProjectSyncRunInput {
+  /** The machine's own fetch. Without one there is no run: a run never goes by none. */
+  fetchId: string | null,
+): (ProjectSyncRunInput & { readonly fetchId: string }) | null {
+  if (fetchId === null) return null;
   return {
     projectId,
+    fetchId,
     fastForward: steps
       .filter((step) => step.action === "fast-forward")
       .map((step) => ({ path: step.path, otherBranch: step.otherBranch })),
@@ -601,14 +670,27 @@ export function syncRunInput(
   };
 }
 
-export const runHasWork = (input: ProjectSyncRunInput) =>
-  input.fastForward.length > 0 || input.clone.length > 0;
+export const runHasWork = (
+  input: ProjectSyncRunInput | null,
+): input is ProjectSyncRunInput & {
+  readonly fetchId: string;
+} =>
+  input !== null &&
+  input.fetchId !== undefined &&
+  (input.fastForward.length > 0 || input.clone.length > 0);
 
 // ---------------------------------------------------------------------------
 // Extras: work Git does not carry, listed per machine, each line unticked
 // ---------------------------------------------------------------------------
 
-export type ExtraLineKind = "not-pushed" | "only-here" | "uncommitted" | "stashes" | "not-listed";
+export type ExtraLineKind =
+  | "not-pushed"
+  | "only-here"
+  | "uncommitted"
+  | "stashes"
+  | "not-listed"
+  | "unread"
+  | "only-here-unknown";
 
 export interface ExtraLine {
   /** Stable within one machine's list: the tick is kept by it. */
@@ -622,6 +704,8 @@ export interface ExtraLine {
   readonly branches: readonly string[];
   /** False for a line that cannot travel: stashes, and branches past the list's end. */
   readonly tickable: boolean;
+  /** What the machine said, shown as sent: why a list could not be read. */
+  readonly detail?: string | null;
 }
 
 export interface LeftOutLine {
@@ -657,6 +741,38 @@ const repositoryExtras = (
   const prefix = ARRIVAL_FAMILY;
   const base = { path: item.path, repository, branches: [] as readonly string[] };
   const lines: ExtraLine[] = [];
+  // Nothing of this repository's extras is known: its counts are placeholders, never shown.
+  if (item.unreadDetail != null)
+    return {
+      lines: [
+        {
+          ...base,
+          id: `unread:${item.path}`,
+          kind: "unread",
+          label: {
+            text: "{repository} could not be read: what is only on {machine} is not known",
+            values: { repository, machine: names.source },
+          },
+          helper: null,
+          detail: item.unreadDetail,
+          tickable: false,
+        },
+      ],
+      leftOut: [],
+    };
+  // Which branches origin has could not be judged: none is called "only here".
+  if (item.onlyHereUnknown === true)
+    lines.push({
+      ...base,
+      id: `only-here-unknown:${item.path}`,
+      kind: "only-here-unknown",
+      label: {
+        text: "Which branches of {repository} are only on {machine} could not be read",
+        values: { repository, machine: names.source },
+      },
+      helper: null,
+      tickable: false,
+    });
   for (const branch of item.notPushed)
     lines.push({
       ...base,
@@ -874,7 +990,11 @@ export function syncResultRows(
       const line = stepLine(
         answer,
         "result",
-        { moved: answer.moved, downgraded: answer.downgraded },
+        {
+          moved: answer.moved,
+          downgraded: answer.downgraded,
+          movedUnverified: answer.movedUnverified,
+        },
         // The branch can go from origin after the fetch: the answer says so, the facts name it.
         planned.upstream,
       );

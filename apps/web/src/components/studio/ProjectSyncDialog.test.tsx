@@ -1,4 +1,9 @@
 // @vitest-environment jsdom
+import {
+  PROJECT_SYNC_PATH_UNREAD_DETAIL,
+  PROJECT_SYNC_STATE_UNREAD_DETAIL,
+  PROJECT_SYNC_UNVERIFIED_DETAIL,
+} from "@specweave-studio/contracts";
 import type {
   ProjectSyncFetchResult,
   ProjectSyncInventoryResult,
@@ -63,7 +68,15 @@ const facts = (
   fetchError: null,
   ...extra,
 });
+/** A fetch answer from a machine that moves only by the guarded fast-forward. */
 const fetched = (...repositories: ProjectSyncRepositoryFacts[]): ProjectSyncFetchResult => ({
+  repositories,
+  fetchId: "fetch-1",
+  guardedFastForward: true,
+  scanLimited: false,
+});
+/** The same answer from a machine on an older version: no fetch id, no guarded move. */
+const older = (...repositories: ProjectSyncRepositoryFacts[]): ProjectSyncFetchResult => ({
   repositories,
   scanLimited: false,
 });
@@ -119,6 +132,8 @@ function scripted(input: {
   fetch: Record<string, ProjectSyncFetchResult | { cause: unknown }>;
   inventory?: Record<string, ProjectSyncInventoryResult>;
   status?: Record<string, ProjectSyncStatusResult | { cause: unknown }>;
+  /** What a machine's run answers, instead of moving each asked checkout 99 commits. */
+  run?: Record<string, ProjectSyncStepResult[]>;
 }) {
   const calls: string[] = [];
   const api: ProjectSyncApi = {
@@ -154,6 +169,8 @@ function scripted(input: {
     }),
     run: vi.fn<ProjectSyncApi["run"]>(async (on, plan) => {
       calls.push(`run ${on.label} ${JSON.stringify(plan)}`);
+      const said = input.run?.[on.label];
+      if (said) return { ok: true as const, value: { repositories: said } };
       return {
         ok: true as const,
         value: {
@@ -306,7 +323,7 @@ it("fetches on both machines, shows what Sync does per repository, then runs it"
   expect(stage()).toBe("result");
   // Only the machine with something to move is asked, and only for that.
   expect(calls.slice(4)).toEqual([
-    'run Laptop E {"fastForward":[{"path":"apps/site","otherBranch":"main"}],"clone":[]}',
+    'run Laptop E {"fetchId":"fetch-1","fastForward":[{"path":"apps/site","otherBranch":"main"}],"clone":[]}',
   ]);
   expect(cell("apps/site", "a")).toBe("Laptop EmainMoved forward 99 commits");
   expect(cell(".", "b")).toBe("Rack FmainUp to date2 uncommitted filesIn use by Docs lint");
@@ -892,4 +909,144 @@ it("says why a machine could not take part, changes nothing, and offers the slow
   await click("[data-sync-compare]");
   expect(onCompare).toHaveBeenCalledWith(RACK_F);
   expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+// The fetch a run goes by: each machine's own fetch id, and the guarded move only where the
+// machine's fetch says it has it.
+
+it("sends each machine's run and inventory with that machine's own fetch id", async () => {
+  const { api, calls } = scripted({
+    fetch: {
+      "Laptop E": { ...fetched(facts("."), facts("apps/site", { behind: 2 })), fetchId: "fetch-e" },
+      "Rack F": { ...fetched(facts(".", { behind: 3 }), facts("apps/site")), fetchId: "fetch-f" },
+    },
+  });
+  await render(api);
+  expect(vi.mocked(api.inventory).mock.calls.map(([on, id]) => [on.label, id])).toEqual([
+    ["Laptop E", "fetch-e"],
+    ["Rack F", "fetch-f"],
+  ]);
+  await click("[data-sync-run]");
+  expect(calls.filter((item) => item.startsWith("run "))).toEqual([
+    'run Laptop E {"fetchId":"fetch-e","fastForward":[{"path":"apps/site","otherBranch":"main"}],"clone":[]}',
+    'run Rack F {"fetchId":"fetch-f","fastForward":[{"path":".","otherBranch":"main"}],"clone":[]}',
+  ]);
+});
+
+it("only fetches on a machine without the guarded move, and says it needs an update", async () => {
+  const { api, calls } = scripted({
+    fetch: {
+      "Laptop E": older(facts("."), facts("apps/site", { behind: 2 })),
+      "Rack F": fetched(facts(".", { behind: 3 }), facts("apps/site")),
+    },
+  });
+  await render(api);
+  expect(cell("apps/site", "a")).toBe("Laptop EmainNeeds update: fetched only, not moved forward");
+  await click("[data-sync-run]");
+  // Laptop E is never asked to move anything; Rack F moves by its own fetch.
+  expect(calls.filter((item) => item.startsWith("run "))).toEqual([
+    'run Rack F {"fetchId":"fetch-1","fastForward":[{"path":".","otherBranch":"main"}],"clone":[]}',
+  ]);
+  expect(cell("apps/site", "a")).toBe("Laptop EmainNeeds update: fetched only, not moved forward");
+  expect(document.querySelector("h2")?.textContent).toBe("Sync Atlas: Laptop E and Rack F");
+});
+
+it("never builds a run without a fetch id, even from a machine that offers the guarded move", async () => {
+  const { api, calls } = scripted({
+    fetch: {
+      "Laptop E": { ...fetched(facts(".", { behind: 2 })), fetchId: undefined },
+      "Rack F": fetched(facts(".")),
+    },
+  });
+  await render(api);
+  expect(cell(".", "a")).toBe("Laptop EmainNeeds update: fetched only, not moved forward");
+  expect(calls.some((item) => item.startsWith("run "))).toBe(false);
+});
+
+it("says a move whose outcome could not be read may have happened, never done", async () => {
+  const { api } = scripted({
+    fetch: { "Laptop E": fetched(facts(".", { behind: 4 })), "Rack F": fetched(facts(".")) },
+    run: {
+      "Laptop E": [
+        step(".", {
+          moved: 0,
+          movedUnverified: true,
+          downgraded: true,
+          detail: PROJECT_SYNC_UNVERIFIED_DETAIL,
+        }),
+      ],
+    },
+  });
+  await render(api);
+  await click("[data-sync-run]");
+  expect(cell(".", "a")).toBe(
+    "Laptop EmainMay have moved forward: the result could not be read. Check it before working in it",
+  );
+  expect(document.querySelector("h2")?.textContent).toBe("Sync Atlas: Laptop E and Rack F");
+});
+
+it("says a checkout that could not be read is not moved, with what the machine said", async () => {
+  const { api } = scripted({
+    fetch: {
+      "Laptop E": fetched(
+        facts(".", { behind: 2, unreadDetail: PROJECT_SYNC_PATH_UNREAD_DETAIL }),
+        facts("apps/site", { behind: 1, stateUnread: true }),
+      ),
+      "Rack F": fetched(facts("."), facts("apps/site")),
+    },
+  });
+  await render(api);
+  expect(cell(".", "a")).toBe(
+    `Laptop EmainCould not be read. Not moved${PROJECT_SYNC_PATH_UNREAD_DETAIL}`,
+  );
+  // The machine's sentence says the same as the row: it is not shown twice.
+  expect(cell("apps/site", "a")).toBe("Laptop EmainNot moved: its state could not be read");
+  expect(cell("apps/site", "a")).not.toContain(PROJECT_SYNC_STATE_UNREAD_DETAIL);
+});
+
+it("lists extras that could not be read, or branches it could not judge, and never says in sync", async () => {
+  const unread: ProjectSyncInventoryResult = {
+    scanLimited: false,
+    repositories: [
+      {
+        ...WORK.repositories[0]!,
+        notPushed: [],
+        changedFiles: 0,
+        untrackedFiles: 0,
+        stashes: 0,
+        leftOut: [],
+        unreadDetail: "What this repository has that Git does not carry could not be read.",
+      },
+      {
+        ...WORK.repositories[0]!,
+        path: "apps/site",
+        notPushed: [],
+        changedFiles: 0,
+        untrackedFiles: 0,
+        stashes: 0,
+        leftOut: [],
+        onlyHereUnknown: true,
+      },
+    ],
+  };
+  const { api } = scripted({
+    fetch: {
+      "Laptop E": fetched(facts("."), facts("apps/site")),
+      "Rack F": fetched(facts("."), facts("apps/site")),
+    },
+    inventory: { "Laptop E": unread },
+  });
+  await render(api);
+  const text = (kind: string) =>
+    document.querySelector(`[data-sync-extras="a"] [data-sync-extra="${kind}"]`)?.textContent;
+  expect(text("unread")).toBe(
+    "Atlas could not be read: what is only on Laptop E is not knownWhat this repository has that Git does not carry could not be read.",
+  );
+  expect(text("only-here-unknown")).toBe(
+    "Which branches of apps/site are only on Laptop E could not be read",
+  );
+  // Neither line has a box: nothing unread is sent.
+  expect(document.querySelectorAll('[data-sync-extras="a"] [data-slot="checkbox"]').length).toBe(0);
+  await click("[data-sync-run]");
+  expect(document.querySelector("h2")?.textContent).not.toContain("in sync");
 });

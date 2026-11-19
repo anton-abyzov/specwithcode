@@ -305,4 +305,13 @@ export const syncDe: PhraseCatalog = {
     "Eine Kopie ist nicht abgeschlossen. Schließe sie ab oder brich sie ab und füge dann einen weiteren Rechner hinzu.",
   "Open the unfinished copy": "Die unfertige Kopie öffnen",
   "Finish handoff": "Übergabe abschließen",
+  "Needs update: fetched only, not moved forward": "Update nötig: nur abgerufen, nicht vorgerückt",
+  "Needs update: not cloned": "Update nötig: nicht geklont",
+  "Could not be read. Not moved": "Konnte nicht gelesen werden. Nicht verschoben",
+  "May have moved forward: the result could not be read. Check it before working in it":
+    "Vielleicht vorgerückt: Das Ergebnis konnte nicht gelesen werden. Prüfe es, bevor du darin arbeitest",
+  "{repository} could not be read: what is only on {machine} is not known":
+    "{repository} konnte nicht gelesen werden: Was nur auf {machine} liegt, ist unbekannt",
+  "Which branches of {repository} are only on {machine} could not be read":
+    "Welche Branches von {repository} nur auf {machine} liegen, konnte nicht gelesen werden",
 };

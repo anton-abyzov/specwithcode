@@ -391,6 +391,11 @@ function Extras({
                           <Words text={line.helper} />
                         </span>
                       ) : null}
+                      {line.detail ? (
+                        <span className="text-muted-foreground text-xs wrap-anywhere">
+                          {line.detail}
+                        </span>
+                      ) : null}
                     </span>
                   </Row>
                 </li>
@@ -658,7 +663,7 @@ export function ProjectSyncDialog({
           if (id !== run.current || !alive.current)
             return { failure: stopped(gate.current ?? { text: "Not sent." }) };
           // After the fetch, so "not pushed" is judged against what the remote has now.
-          const inventory = await api.inventory(machine);
+          const inventory = await api.inventory(machine, fetched.value.fetchId);
           return { fetched: fetched.value, inventory, machine };
         }),
       );
@@ -748,13 +753,18 @@ export function ProjectSyncDialog({
     const ran = await Promise.all(
       SIDES.map(async (side) => {
         const machine = machineOf(side, other);
-        const input = syncRunInput(machine.projectId, checked.plan.steps[side]);
+        const input = syncRunInput(
+          machine.projectId,
+          checked.plan.steps[side],
+          checked.plan.fetchIds[side],
+        );
         if (!runHasWork(input)) return { results: null, failure: null };
         // Asked again right before the call: the pair may no longer be allowed.
         const why = halt();
         if (why === "gone") return { results: null, failure: null, sent: false };
         if (why) return { results: null, failure: stopped(why), sent: false };
         const result = await api.run(machine, {
+          fetchId: input.fetchId,
           fastForward: input.fastForward,
           clone: input.clone,
         });

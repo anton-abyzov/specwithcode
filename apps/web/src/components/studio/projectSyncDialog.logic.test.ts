@@ -104,8 +104,11 @@ const facts = (
   ...extra,
 });
 
+/** A fetch answer from a machine that moves only by the guarded fast-forward. */
 const fetched = (...repositories: ProjectSyncRepositoryFacts[]): ProjectSyncFetchResult => ({
   repositories,
+  fetchId: "fetch-1",
+  guardedFastForward: true,
   scanLimited: false,
 });
 
@@ -262,8 +265,9 @@ describe("what a machine sends beside a step", () => {
       }),
       "plan",
     );
-    expect(readSyncText(unread.sentence)).toBe("Not moved");
-    expect(unread.detail).toBe("Its state could not be read, so it was not moved.");
+    // The server's sentence says what the row says: the row's own words, in every language.
+    expect(readSyncText(unread.sentence)).toBe("Not moved: its state could not be read");
+    expect(unread.detail).toBeNull();
     expect(unread.tone).toBe("held");
     expect(unread.facts).toEqual([]);
     const bare = stepLine(step("uncommitted", { action: "fetch", uncommitted: 0 }), "result");
@@ -315,20 +319,25 @@ describe("syncPlan", () => {
   });
 
   it("asks each machine only for its fast-forwards and clones", () => {
-    const a = syncRunInput("p" as never, plan.steps.a);
-    const b = syncRunInput("p" as never, plan.steps.b);
+    const a = syncRunInput("p" as never, plan.steps.a, "fetch-a");
+    const b = syncRunInput("p" as never, plan.steps.b, "fetch-b");
     expect(a).toEqual({
       projectId: "p",
+      fetchId: "fetch-a",
       fastForward: [{ path: "apps/site", otherBranch: "main" }],
       clone: [],
     });
     expect(b).toEqual({
       projectId: "p",
+      fetchId: "fetch-b",
       fastForward: [],
       clone: [{ path: "apps/status", remote: "git@example.com:acme/apps/status.git" }],
     });
     expect(runHasWork(a)).toBe(true);
-    expect(runHasWork(syncRunInput("p" as never, []))).toBe(false);
+    expect(runHasWork(syncRunInput("p" as never, [], "fetch-a"))).toBe(false);
+    // A machine with no fetch of its own to go by is never asked to run.
+    expect(syncRunInput("p" as never, plan.steps.a, null)).toBeNull();
+    expect(runHasWork(null)).toBe(false);
   });
 
   it("names a machine whose folder could not be scanned in full, and moves nothing when level", () => {
@@ -913,6 +922,12 @@ describe("what the result may claim", () => {
     );
     // No answer after the run is no proof.
     expect(proves(null, status(at("main")))).toBe(false);
+  });
+
+  it("is never proven by a checkout a machine could not read, whatever else it says", () => {
+    const unread = { ...at("main"), unread: true };
+    expect(proves(status(unread), status(at("main")))).toBe(false);
+    expect(proves(status(at("main")), status(unread))).toBe(false);
   });
 
   it("never says in sync without that proof, or beside something a machine said", () => {

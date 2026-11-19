@@ -300,4 +300,14 @@ export const syncEs: PhraseCatalog = {
     "Hay una copia sin terminar. Termínala o cancélala y luego añade otro equipo.",
   "Open the unfinished copy": "Abrir la copia sin terminar",
   "Finish handoff": "Terminar el traspaso",
+  "Needs update: fetched only, not moved forward":
+    "Necesita actualización: solo se hizo fetch, no avanzó",
+  "Needs update: not cloned": "Necesita actualización: no se clonó",
+  "Could not be read. Not moved": "No se pudo leer. No se movió",
+  "May have moved forward: the result could not be read. Check it before working in it":
+    "Puede que haya avanzado: no se pudo leer el resultado. Revísalo antes de trabajar en él",
+  "{repository} could not be read: what is only on {machine} is not known":
+    "No se pudo leer {repository}: no se sabe qué hay solo en {machine}",
+  "Which branches of {repository} are only on {machine} could not be read":
+    "No se pudo leer qué ramas de {repository} están solo en {machine}",
 };

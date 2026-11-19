@@ -299,4 +299,14 @@ export const syncFr: PhraseCatalog = {
     "Une copie n'est pas terminée. Terminez-la ou annulez-la, puis ajoutez une autre machine.",
   "Open the unfinished copy": "Ouvrir la copie inachevée",
   "Finish handoff": "Terminer le transfert",
+  "Needs update: fetched only, not moved forward":
+    "Mise à jour nécessaire : récupéré seulement, pas avancé",
+  "Needs update: not cloned": "Mise à jour nécessaire : pas cloné",
+  "Could not be read. Not moved": "Illisible. Pas déplacé",
+  "May have moved forward: the result could not be read. Check it before working in it":
+    "A peut-être avancé : le résultat n'a pas pu être lu. Vérifiez-le avant d'y travailler",
+  "{repository} could not be read: what is only on {machine} is not known":
+    "{repository} n'a pas pu être lu : ce qui est seulement sur {machine} est inconnu",
+  "Which branches of {repository} are only on {machine} could not be read":
+    "Impossible de lire quelles branches de {repository} sont seulement sur {machine}",
 };

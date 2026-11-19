@@ -40,7 +40,12 @@ import type {
   ProjectSyncRepositoryFacts,
   ProjectSyncStepResult,
 } from "@specweave-studio/contracts";
-import { projectSyncUpstreamGoneDetail } from "@specweave-studio/contracts";
+import {
+  PROJECT_SYNC_EXTRAS_UNREAD_DETAIL,
+  PROJECT_SYNC_PATH_UNREAD_DETAIL,
+  PROJECT_SYNC_UNVERIFIED_DETAIL,
+  projectSyncUpstreamGoneDetail,
+} from "@specweave-studio/contracts";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import {
   OrchestratorSwitcher,
@@ -220,6 +225,52 @@ const FETCHED: Record<string, Record<string, ProjectSyncFetchResult>> = {
     laptopE: LEVEL,
     rackF: { scanLimited: true, repositories: [facts(".", { behind: 2 })] },
   },
+  // laptopE runs a version without the guarded move: it fetches only and needs an update.
+  older: {
+    laptopE: { scanLimited: false, repositories: [facts("."), facts("apps/web", { behind: 3 })] },
+    rackF: { scanLimited: false, repositories: [facts(".", { behind: 2 }), facts("apps/web")] },
+  },
+  // laptopE could not read a folder, or a checkout's state; rackF's move cannot be confirmed.
+  unread: {
+    laptopE: {
+      scanLimited: false,
+      repositories: [
+        facts(".", { unreadDetail: PROJECT_SYNC_PATH_UNREAD_DETAIL }),
+        facts("apps/web", { behind: 2, stateUnread: true }),
+      ],
+    },
+    rackF: { scanLimited: false, repositories: [facts(".", { behind: 2 }), facts("apps/web")] },
+  },
+};
+/** laptopE's extras in "unread": one list could not be read, one cannot say what is only here. */
+const UNREAD_EXTRAS: ProjectSyncInventoryResult = {
+  scanLimited: false,
+  repositories: [
+    {
+      path: ".",
+      notPushed: [],
+      onlyHere: [],
+      branchesNotListed: 0,
+      changedFiles: 0,
+      untrackedFiles: 0,
+      stashes: 0,
+      leftOut: [],
+      leftOutNotListed: 0,
+      unreadDetail: PROJECT_SYNC_EXTRAS_UNREAD_DETAIL,
+    },
+    {
+      path: "apps/web",
+      notPushed: [],
+      onlyHere: [],
+      branchesNotListed: 0,
+      changedFiles: 0,
+      untrackedFiles: 0,
+      stashes: 0,
+      leftOut: [],
+      leftOutNotListed: 0,
+      onlyHereUnknown: true,
+    },
+  ],
 };
 
 // ---------------------------------------------------------------------------
@@ -379,13 +430,20 @@ const api: ProjectSyncApi = {
     if (state === "checking") return never();
     if (on.label === "rackF" && state in CAUSES) return { ok: false, cause: CAUSES[state] };
     const from = FETCHED[state] ?? FETCHED.plan!;
-    return answer(from[on.label]!);
+    // Each machine names its own fetch, and moves only by the guarded fast-forward.
+    if (state === "older" && on.label === "laptopE") return answer(from[on.label]!);
+    return answer({
+      ...from[on.label]!,
+      fetchId: `fetch-${on.label}`,
+      guardedFastForward: true,
+    });
   },
   inventory: async (on) => {
     record(`inventory:${on.label}`);
     if (state === "inventory-failed" && on.label === "rackF")
       return { ok: false, cause: CAUSES.offline };
     if (state === "long") return answer(on.label === "laptopE" ? LONG_ON_LAPTOP_E : EMPTY);
+    if (state === "unread") return answer(on.label === "laptopE" ? UNREAD_EXTRAS : EMPTY);
     if (FETCHED[state] && state !== "plan") return answer(EMPTY);
     return answer(on.label === "laptopE" ? ONLY_ON_LAPTOP_E : ONLY_ON_RACK_F);
   },
@@ -394,6 +452,17 @@ const api: ProjectSyncApi = {
     if (hold === "run") return never();
     if (state === "run-refused" && on.label === "laptopE")
       return { ok: false, cause: CAUSES.offline };
+    // Git was asked to move it, and what happened could not be read back.
+    if (state === "unread")
+      return answer({
+        repositories: plan.fastForward.map((item) =>
+          stepResult(item.path, {
+            movedUnverified: true,
+            downgraded: true,
+            detail: PROJECT_SYNC_UNVERIFIED_DETAIL,
+          }),
+        ),
+      });
     // The branch went from origin after the fetch, origin could not be asked, and a clone
     // that was stopped left a folder Sync could not remove.
     if (state === "upstream")
