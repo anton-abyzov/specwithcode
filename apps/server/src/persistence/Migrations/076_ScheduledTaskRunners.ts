@@ -31,7 +31,8 @@ export default Effect.gen(function* () {
       operation_json TEXT,
       updated_at TEXT NOT NULL,
       asked_json TEXT NOT NULL DEFAULT '[]',
-      copy_enabled INTEGER
+      copy_enabled INTEGER,
+      installed_revision INTEGER
     )
   `;
   yield* sql`

@@ -92,6 +92,12 @@ export const RoutineRunnerRequest = Schema.Union([
     routineId: ScheduledTaskId,
     /** The runner revision the change was made against; any other is refused. Omitted, it is not checked. */
     expectedRevision: Schema.optional(NonNegativeInt),
+    /**
+     * The caller's copy does not hold a definition it took from this runner, so
+     * its change was made against one nobody checked: not made, and answered
+     * with what this machine holds, as a change against an older revision is.
+     */
+    behind: Schema.optional(Schema.Boolean),
     edit: RoutineRunnerEdit,
   }),
   /** Step 1 of a runner move: saved here, off, under the move's operation id. */

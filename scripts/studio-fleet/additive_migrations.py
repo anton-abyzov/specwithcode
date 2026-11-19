@@ -133,7 +133,7 @@ DECLARED = {
          "CREATE TABLE scheduled_task_runners ( task_id TEXT PRIMARY KEY, state TEXT NOT NULL, "
          "runner_environment_id TEXT NOT NULL, runner_label TEXT, revision INTEGER NOT NULL DEFAULT 0, "
          "acked_json TEXT NOT NULL DEFAULT '[]', operation_id TEXT, operation_json TEXT, "
-         "updated_at TEXT NOT NULL, asked_json TEXT NOT NULL DEFAULT '[]', copy_enabled INTEGER )"),
+         "updated_at TEXT NOT NULL, asked_json TEXT NOT NULL DEFAULT '[]', copy_enabled INTEGER, installed_revision INTEGER )"),
         ('index', 'sqlite_autoindex_scheduled_task_runners_1', 'scheduled_task_runners', None),
         ('table', 'scheduled_task_revisions', 'scheduled_task_revisions',
          "CREATE TABLE scheduled_task_revisions ( task_id TEXT PRIMARY KEY, "

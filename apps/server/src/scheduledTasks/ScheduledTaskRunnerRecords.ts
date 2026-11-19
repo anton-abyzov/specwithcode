@@ -72,6 +72,12 @@ export interface RoutineRunnerRecord {
    * what a person sees, and what the row returns to.
    */
   readonly copyEnabled?: boolean | null | undefined;
+  /**
+   * `disarmed`: the runner's revision whose definition this copy's row holds,
+   * or null when the row was not written from its runner. `revision` alone only
+   * says what the runner counted, not that this copy took that definition.
+   */
+  readonly installedRevision?: number | null | undefined;
 }
 
 /** A resting copy whose routine was deleted at its runner and whose own row is still to go. */
@@ -102,6 +108,7 @@ interface RecordRow {
   readonly operation_json: string | null;
   readonly asked_json: string;
   readonly copy_enabled: number | null;
+  readonly installed_revision: number | null;
 }
 
 const STATES: ReadonlySet<string> = new Set([
@@ -138,6 +145,8 @@ const recordOf = (row: RecordRow): RoutineRunnerRecord | null => {
     operation: parseJson(row.operation_json),
     asked: strings(asked),
     copyEnabled: row.copy_enabled === null ? null : row.copy_enabled !== 0,
+    installedRevision:
+      row.installed_revision === null ? null : Math.max(0, Math.trunc(row.installed_revision)),
   };
 };
 
@@ -176,11 +185,12 @@ export const makeRunnerRecords = (sql: SqlClient.SqlClient) => {
       yield* sql`
         INSERT INTO scheduled_task_runners (
           task_id, state, runner_environment_id, runner_label, revision,
-          acked_json, operation_id, operation_json, updated_at, asked_json, copy_enabled
+          acked_json, operation_id, operation_json, updated_at, asked_json, copy_enabled,
+          installed_revision
         ) VALUES (
           ${record.taskId}, ${record.state}, ${record.runnerEnvironmentId}, ${record.runnerLabel},
           ${record.revision}, ${acked}, ${record.operationId}, ${operation}, ${now},
-          ${asked}, ${copyEnabled}
+          ${asked}, ${copyEnabled}, ${record.installedRevision ?? null}
         )
         ON CONFLICT (task_id) DO UPDATE SET
           state = excluded.state,
@@ -192,7 +202,8 @@ export const makeRunnerRecords = (sql: SqlClient.SqlClient) => {
           operation_json = excluded.operation_json,
           updated_at = excluded.updated_at,
           asked_json = excluded.asked_json,
-          copy_enabled = excluded.copy_enabled
+          copy_enabled = excluded.copy_enabled,
+          installed_revision = excluded.installed_revision
       `;
     });
   const remove = (taskId: string) =>
@@ -231,13 +242,31 @@ export const makeRunnerRecords = (sql: SqlClient.SqlClient) => {
     sql`UPDATE scheduled_tasks SET last_run_error = ${note} WHERE task_id = ${taskId}`.pipe(
       Effect.asVoid,
     );
+  /**
+   * Turns the row on or off and nothing else: the slot it is due at and its
+   * one-time generation stay. A copy that rests, or follows the coordinator
+   * again, was not armed anew by a person.
+   */
+  const setRowEnabled = (taskId: string, enabled: boolean) =>
+    sql`UPDATE scheduled_tasks SET enabled = ${enabled ? 1 : 0} WHERE task_id = ${taskId}`.pipe(
+      Effect.asVoid,
+    );
+  /** The slot the row is due at, and nothing else. */
+  const setSlot = (taskId: string, nextRunAt: string | null) =>
+    sql`UPDATE scheduled_tasks SET next_run_at = ${nextRunAt} WHERE task_id = ${taskId}`.pipe(
+      Effect.asVoid,
+    );
   const dropRevision = (taskId: string) =>
     sql`DELETE FROM scheduled_task_revisions WHERE task_id = ${taskId}`.pipe(Effect.asVoid);
   return {
     /** How many changes this machine made to the routine; 0 before the first. */
     revision,
     revisions: revisions.pipe(quiet("read routine revisions", new Map<string, number>())),
+    /** Fails when the counts cannot be read: for a read that must not guess. */
+    revisionsStrict: revisions,
     setRevision,
+    setRowEnabled,
+    setSlot,
     bumpRevision,
     dropRevision,
     setNote,

@@ -71,7 +71,7 @@ import {
   type RoutineRunnerRequest,
   type RoutineRunnerResponse,
 } from "./ScheduledTaskRunnerWire.ts";
-import { taskError } from "./ScheduledTaskStorage.ts";
+import { nextRunAt, taskError } from "./ScheduledTaskStorage.ts";
 
 import { makeRunnerReceive } from "./ScheduledTaskRunnerReceive.ts";
 import {
@@ -168,6 +168,10 @@ export class RoutineRunnerPace extends Context.Reference<{ readonly everyMs: num
 ) {}
 
 const decodeUpsert = Schema.decodeUnknownOption(ScheduledTaskUpsertInput);
+const localNow = DateTime.withCurrentZoneLocal(DateTime.nowInCurrentZone);
+/** When a routine on this schedule is next due, as a save that turns it on makes it. */
+const freshSlot = (schedule: ScheduledTask["schedule"], now: DateTime.DateTime) =>
+  nextRunAt({ enabled: true, schedule }, now);
 
 export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
   Effect.gen(function* () {
@@ -235,6 +239,24 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
         const record = yield* records.read(task.id);
         return record?.state === "settled" && (yield* covered(record, task.projectId));
       });
+
+    /**
+     * The project's routines this machine runs whatever the coordinator binding
+     * says. Every other machine rests its copy of these, so what this machine
+     * sends them as a coordinator (a replica, a handover) carries them off: one
+     * put back on the release before would otherwise turn its copy on again and
+     * fire it beside this machine.
+     */
+    const runsAsRunner = (projectId: ProjectId): Effect.Effect<ReadonlySet<string>> =>
+      Effect.gen(function* () {
+        const others = yield* othersOf(projectId);
+        if (others === null || others.length === 0) return new Set<string>();
+        const ids = new Set<string>();
+        for (const record of (yield* records.all).values())
+          if (record.state === "settled" && others.every((member) => record.acked.includes(member)))
+            ids.add(record.taskId);
+        return ids;
+      }).pipe(Effect.orElseSucceed(() => new Set<string>()));
 
     // --- the gate ----------------------------------------------------------------------
 
@@ -432,13 +454,31 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
       member: string,
       projectId: string,
       list: ReadonlyArray<ScheduledTask>,
-      counts: ReadonlyMap<string, number>,
       kind: { readonly refresh?: true; readonly incumbent?: boolean },
     ) =>
       Effect.gen(function* () {
         const acked: Array<string> = [];
         const refused: Array<string> = [];
-        for (const batch of batches(list)) {
+        /** The revision each routine went with. */
+        const sent = new Map<string, number>();
+        for (const planned of batches(list)) {
+          // Each definition and its revision are read in one transaction, just
+          // before they go: a change saved between two reads would pair the old
+          // definition with the new count, and a copy would take that for current.
+          const read = yield* records
+            .atomically(
+              Effect.gen(function* () {
+                const ids = new Set<string>(planned.map((task) => task.id));
+                const tasks = (yield* deps.listTasks).filter((task) => ids.has(task.id));
+                return { tasks, counts: yield* records.revisionsStrict };
+              }),
+            )
+            .pipe(Effect.result);
+          // Unreadable now: nothing is sent, and the next look asks again.
+          if (read._tag === "Failure") continue;
+          const { counts } = read.success;
+          const batch = read.success.tasks.filter(isRunnerRoutine);
+          if (batch.length === 0) continue;
           const answered = yield* peers
             .post(member, {
               op: "runner-disarm",
@@ -453,11 +493,13 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
               ...kind,
             })
             .pipe(Effect.result);
-          if (answered._tag === "Failure") return { acked, refused, failure: answered.failure };
+          if (answered._tag === "Failure")
+            return { acked, refused, sent, failure: answered.failure };
+          for (const task of batch) sent.set(task.id, counts.get(task.id) ?? 0);
           acked.push(...(answered.success.acked ?? []));
           refused.push(...(answered.success.refused ?? []));
         }
-        return { acked, refused, failure: null };
+        return { acked, refused, sent, failure: null };
       });
 
     /**
@@ -485,27 +527,42 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
         const id = input.id;
         const record = id === undefined ? null : yield* records.read(id);
         if (id === undefined || record?.state !== "disarmed") return yield* save(input);
+        // What its runner said it is counts over the replica: a runner every machine
+        // rests for sends its routine off (`runsAsRunner`), whatever it is there.
+        const enabled = record.copyEnabled ?? input.enabled;
         return yield* atomic(
           Effect.gen(function* () {
-            const saved = yield* save({ ...input, enabled: false });
+            // Saved as it is at its runner, so it holds the slot it would be due
+            // at; then off, with that slot kept for the day it follows again.
+            const saved = yield* save({ ...input, enabled });
+            if (enabled) yield* records.setRowEnabled(id, false);
             yield* records.setNote(id, runsElsewhereNote(record.runnerLabel));
-            yield* records.write({ ...record, copyEnabled: input.enabled });
+            // A replica's definition is not one this copy took from its runner.
+            yield* records.write({ ...record, copyEnabled: enabled, installedRevision: null });
             return saved;
           }),
         );
       });
 
     /**
-     * A resting copy follows the coordinator again: its row as it was before it
-     * was turned off to rest, the note gone, and no record, in one write.
+     * A resting copy follows the coordinator again: its row on as it was before
+     * it was turned off to rest, due at the slot it holds, the note gone, and no
+     * record, in one write.
      */
     const followAgain = (id: ScheduledTaskId, record: RoutineRunnerRecord) =>
       records.atomically(
         Effect.gen(function* () {
           const held = yield* deps.findTask(id);
           if (held !== null && record.copyEnabled != null) {
-            if (held.enabled !== record.copyEnabled)
-              yield* deps.setEnabled({ id, enabled: record.copyEnabled });
+            // Nobody armed it anew: the slot it is due at and its one-time
+            // generation stay as its runner, or a handover, left them.
+            if (held.enabled !== record.copyEnabled) {
+              yield* records.setRowEnabled(id, record.copyEnabled);
+              // A row that never held a slot gets one; a one-time routine without
+              // one already ran, and stays so.
+              if (record.copyEnabled && held.nextRunAt === null && held.schedule.type !== "once")
+                yield* records.setSlot(id, freshSlot(held.schedule, yield* localNow));
+            }
             yield* records.setNote(id, null);
           }
           yield* records.remove(id);
@@ -599,15 +656,19 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
           }
           if (peers !== null && stale.size > 0) {
             const reached = new Map<string, number>();
+            // The oldest revision any machine was sent: what all of them hold at least.
+            const went = new Map<string, number>();
             for (const [member, list] of stale) {
-              const told = yield* askToRest(peers, member, projectId, list, counts, {
-                refresh: true,
-              });
-              for (const id of told.acked) reached.set(id, (reached.get(id) ?? 0) + 1);
+              const told = yield* askToRest(peers, member, projectId, list, { refresh: true });
+              for (const id of told.acked) {
+                reached.set(id, (reached.get(id) ?? 0) + 1);
+                const revision = told.sent.get(id) ?? 0;
+                went.set(id, Math.min(went.get(id) ?? revision, revision));
+              }
             }
             for (const task of new Set([...stale.values()].flat()))
               if (reached.get(task.id) === others.length)
-                pushed.set(task.id, counts.get(task.id) ?? 0);
+                pushed.set(task.id, went.get(task.id) ?? 0);
           }
           if (need.size === 0 || peers === null) continue;
           if (
@@ -647,9 +708,7 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
             // Not remembered, not asked: a machine that rests for a claim this one
             // forgot would never be told to follow the coordinator again.
             if (!(yield* markAsked(list, self, member))) continue;
-            const answered = yield* askToRest(peers, member, projectId, list, counts, {
-              incumbent,
-            });
+            const answered = yield* askToRest(peers, member, projectId, list, { incumbent });
             for (const id of answered.acked) note(ackedNow, id, member);
             // A machine that said no wrote nothing: it is neither waited on nor told to rearm.
             const no =
@@ -790,8 +849,17 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
     ) =>
       records.atomically(
         Effect.gen(function* () {
+          let installed = record.installedRevision ?? null;
           if (existing !== null) {
+            // Off first, by itself: the row keeps its slot and its one-time generation.
+            if (existing.enabled) yield* records.setRowEnabled(existing.id, false);
             if (copy !== null) {
+              const before = yield* records.read(existing.id);
+              // Whether it was on before this: at its runner, for a copy that rested already.
+              const was =
+                before?.state === "disarmed" && before.copyEnabled != null
+                  ? before.copyEnabled
+                  : existing.enabled;
               const input = decodeUpsert({
                 id: existing.id,
                 title: copy.title,
@@ -815,12 +883,19 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
                 return yield* taskError("That routine does not match this version.", {
                   taskId: existing.id,
                 });
-              yield* deps.upsert(input.value);
-            } else if (existing.enabled)
-              yield* deps.setEnabled({ id: existing.id, enabled: false });
+              // Saved off, so an unchanged schedule keeps the slot the row holds.
+              const saved = (yield* deps.upsert(input.value)).task;
+              // Off at its runner: due at nothing. Turned on there, or on another
+              // schedule: due as a save of it would make it.
+              if (!copy.enabled) {
+                if (saved.nextRunAt !== null) yield* records.setSlot(existing.id, null);
+              } else if (!was || saved.nextRunAt === null)
+                yield* records.setSlot(existing.id, freshSlot(saved.schedule, yield* localNow));
+              installed = record.revision;
+            }
             yield* records.setNote(existing.id, runsElsewhereNote(record.runnerLabel));
           }
-          yield* records.write(record);
+          yield* records.write({ ...record, installedRevision: installed });
         }),
       );
 
@@ -874,11 +949,18 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
             runsElsewhereRefusal(record.runnerLabel, "this machine cannot reach it yet"),
             { taskId: existing.id },
           );
+        // The change was made on what this copy shows: its runner's definition at
+        // the revision it was installed at. One made against another is stale here
+        // already; one made on a row its runner never sent is for the runner to
+        // answer with what it holds, so a matching count alone proves nothing.
+        const installed = record.installedRevision ?? null;
+        if (expectedRevision !== undefined && installed !== null && expectedRevision !== installed)
+          return yield* taskError(STALE_ROUTINE_EDIT_REFUSAL, { taskId: existing.id });
         const answered = yield* peers
           .post(record.runnerEnvironmentId, {
             op: "runner-edit",
             routineId: existing.id,
-            ...(expectedRevision === undefined ? {} : { expectedRevision }),
+            ...(installed === null ? { behind: true } : { expectedRevision: installed }),
             edit,
           })
           .pipe(Effect.result);
@@ -1178,8 +1260,11 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
             })
             .map((task) => {
               const record = all.get(task.id);
+              // A copy shows the revision of the definition it holds, when it took one.
               const revision =
-                record?.state === "disarmed" ? record.revision : (counts.get(task.id) ?? 0);
+                record?.state === "disarmed"
+                  ? (record.installedRevision ?? record.revision)
+                  : (counts.get(task.id) ?? 0);
               if (record === undefined || record.state === "settling") return { ...task, revision };
               return {
                 ...task,
@@ -1217,6 +1302,7 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
       ownsRun,
       heldFromReplica,
       saveReplica,
+      runsAsRunner,
       guardUpsert,
       guardSetEnabled,
       guardDelete,

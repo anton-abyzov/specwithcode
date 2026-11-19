@@ -170,7 +170,12 @@ export const makeRunnerReceive = (parts: RunnerReceiveParts) => {
       const winsTie = self !== null && self < caller.sourceEnvironmentId;
       const theirs = request.incumbent === true ? 2 : 1;
       for (const [index, id] of request.routineIds.entries()) {
-        const held = yield* deps.findTask(id).pipe(Effect.orElseSucceed(() => null));
+        // A row that cannot be read is not a row that is not there: it may be on,
+        // and a record alone is no fence a release before this one reads. Neither
+        // confirmed nor said no to, so the caller keeps asking and never settles on it.
+        const found = yield* deps.findTask(id).pipe(Effect.result);
+        if (found._tag === "Failure") continue;
+        const held = found.success;
         if (held !== null && held.projectId !== project.projectId) {
           refused.push(id);
           continue;
@@ -214,7 +219,9 @@ export const makeRunnerReceive = (parts: RunnerReceiveParts) => {
         }
         // The definition comes with its revision. Without it the copy keeps the
         // revision it holds: it never shows one whose definition it did not take.
-        const sent = held === null ? null : (request.routines?.[index] ?? null);
+        const carried = request.routines?.[index] ?? null;
+        const named = carried !== null && carried.id === id ? carried : null;
+        const sent = held === null ? null : named;
         // Only a routine the caller's own work may change takes its definition from
         // the caller, as a change it sends is checked. Any other only rests.
         const mayDefine =
@@ -265,12 +272,21 @@ export const makeRunnerReceive = (parts: RunnerReceiveParts) => {
           asked: [],
           // What the row said before it was turned off here, for the day it follows
           // the coordinator again; with a definition, what its runner holds.
+          // Its runner's word counts even where this copy does not take the
+          // definition, or has no row yet for it.
           copyEnabled:
-            copy !== null
-              ? copy.enabled
+            named !== null
+              ? named.enabled
               : record?.state === "disarmed"
                 ? (record.copyEnabled ?? null)
                 : (held?.enabled ?? null),
+          // The definition this row holds is still the one the same runner sent,
+          // unless one comes with this request (`restCopy`).
+          installedRevision:
+            record?.state === "disarmed" &&
+            record.runnerEnvironmentId === caller.sourceEnvironmentId
+              ? (record.installedRevision ?? null)
+              : null,
         }).pipe(Effect.result);
         if (rested._tag === "Failure") {
           refused.push(id);
@@ -376,7 +392,10 @@ export const makeRunnerReceive = (parts: RunnerReceiveParts) => {
       const failed = (error: ScheduledTaskError) =>
         refuseTransfer(409, `Not changed: ${error.message}`);
       const current = yield* revisionOf(task.id, record).pipe(Effect.mapError(failed));
-      if (request.expectedRevision !== undefined && request.expectedRevision !== current)
+      if (
+        request.behind === true ||
+        (request.expectedRevision !== undefined && request.expectedRevision !== current)
+      )
         // Not made: the caller gets what this machine holds, to show and to change again.
         return {
           ...base,

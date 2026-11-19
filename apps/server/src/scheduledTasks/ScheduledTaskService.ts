@@ -1957,6 +1957,7 @@ export const layer = Layer.effect(
       // A routine this machine runs, moves or rests for its runner is never rewritten by a replica.
       heldByRunner: (id) =>
         runnerRef.current === null ? Effect.succeed(false) : runnerRef.current.heldFromReplica(id),
+      runsAsRunner: (id) => runnerRef.current?.runsAsRunner(id) ?? Effect.succeed(new Set()),
     }).pipe(Effect.provideService(SqlClient.SqlClient, sql));
 
     const webhooks = yield* makeWebhookTrigger({

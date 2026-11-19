@@ -328,6 +328,8 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
               asked: [],
               // Its row is off for the move; this is what it follows the coordinator with again.
               copyEnabled: operation.wasEnabled ?? true,
+              // The move sent this row's definition, and nothing changes one that moves.
+              installedRevision: revision,
             })
             .pipe(Effect.ignore);
           return {

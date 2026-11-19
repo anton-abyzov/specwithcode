@@ -164,6 +164,13 @@ export interface RoutineCopiesDeps {
    * or removes such a routine: its runner's row is the one that counts.
    */
   readonly heldByRunner?: (id: ScheduledTaskId) => Effect.Effect<boolean>;
+  /**
+   * The project's routines this machine runs whatever the coordinator binding
+   * says, every other machine resting its copy (ScheduledTaskRunner). They are
+   * sent off: a machine put back on a release before runners saves what it is
+   * sent, and would fire a copy sent on beside this machine.
+   */
+  readonly runsAsRunner?: (projectId: ProjectId) => Effect.Effect<ReadonlySet<string>>;
 }
 
 const decodeUpsert = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);
@@ -218,18 +225,29 @@ export const makeRoutineCopies = (deps: RoutineCopiesDeps) =>
     // Read on every lease, so kept until a routine changes.
     const cached = new Map<
       string,
-      { readonly generation: number; readonly snapshot: RoutineCopiesSnapshot | null }
+      {
+        readonly generation: number;
+        readonly rests: string;
+        readonly snapshot: RoutineCopiesSnapshot | null;
+      }
     >();
     const snapshot: RoutineCopies["Service"]["snapshot"] = ({ projectId, logicalProjectId }) =>
       Effect.gen(function* () {
         const generation = yield* deps.generation;
         const key = `${projectId}\u0000${logicalProjectId}`;
         const held = cached.get(key);
-        if (held !== undefined && held.generation === generation) return held.snapshot;
+        // Read every time: a machine joining or leaving changes it, and no routine does.
+        const resting =
+          deps.runsAsRunner === undefined ? new Set<string>() : yield* deps.runsAsRunner(projectId);
+        const rests = [...resting].toSorted().join("\u0000");
+        if (held !== undefined && held.generation === generation && held.rests === rests)
+          return held.snapshot;
         const routines = routineCopiesOf(
           yield* deps.listTasks,
           projectId,
           yield* grantsOf(projectId),
+        ).map((copy) =>
+          resting.has(copy.id) && copy.enabled ? { ...copy, enabled: false } : copy,
         );
         const json = encodeRoutinesJson(routines);
         let result: RoutineCopiesSnapshot | null = null;
@@ -246,7 +264,7 @@ export const makeRoutineCopies = (deps: RoutineCopiesDeps) =>
           );
           result = { routines, digest: coordinatorRoutinesDigest(routines) };
         }
-        cached.set(key, { generation, snapshot: result });
+        cached.set(key, { generation, rests, snapshot: result });
         return result;
       });
 
