@@ -1374,14 +1374,14 @@ export class DestinationCopies {
     if (!served.sealed && listedSealed)
       throw new CopyError(
         "refused",
-        `${record.sourceMachine} listed its secret files as sealed and sent one that is not, so it was not written. The other files are in place. Copy again to send the secret files.`,
+        `${record.sourceMachine} listed its secret files as sealed and sent one that is not, so it was not written. The other files are in place. Sync again to send the secret files.`,
       );
     if (!served.sealed) return served.bytes;
     const opened = await openSealedSecret(this.directory(record.operationId), served.bytes);
     if (opened === null)
       throw new CopyError(
         "refused",
-        `${record.sourceMachine} sent a secret file sealed to a key this machine does not hold, so it was not written. The other files are in place. Copy again to send the secret files.`,
+        `${record.sourceMachine} sent a secret file sealed to a key this machine does not hold, so it was not written. The other files are in place. Sync again to send the secret files.`,
       );
     return opened;
   }
@@ -1522,7 +1522,7 @@ function checksFailedMessage(
         )}${restored.length > 5 ? ", …" : ""}); the source has newer work there that would not travel`,
     );
   return restored.length > 0
-    ? `The files are in place, but ${parts.join(" and ")}, so the coordinator stayed on the source. Copy again to bring that work, or Move anyway to move without it.`
+    ? `The files are in place, but ${parts.join(" and ")}, so the coordinator stayed on the source. Sync again to bring that work, or Move anyway to move without it.`
     : `The files are in place, but ${parts.join(" and ")}, so the coordinator stayed on the source. Undo the copy, or retry to move it anyway.`;
 }
 

@@ -914,7 +914,7 @@ export class SourceTransfers {
           throw new SourceTransferError(
             409,
             "snapshot_unavailable",
-            "The captured copy files are missing or changed. Measure and compare again.",
+            "The captured copy files are missing or changed. Compare again.",
           );
         }
       });
@@ -1038,7 +1038,7 @@ export class SourceTransfers {
         throw new SourceTransferError(
           409,
           "secret_reapproval_required",
-          "This saved comparison includes a newly protected secret-like file. Measure and compare again, then approve secrets separately.",
+          "This saved comparison includes a newly protected secret-like file. Compare again, then approve secrets separately.",
         );
   }
 

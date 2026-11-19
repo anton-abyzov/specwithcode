@@ -1,19 +1,20 @@
-# Copy a project to another machine
+# Add or sync a project on another machine
 
-**Copy to another machine** is the one action for bringing a project to another of
-your machines. It copies the project folder as it is on disk, with uncommitted edits,
-stashes, branches that were never pushed, new files, ignored project data such as
-reports, and secret files such as `.env`. Nothing has to be pushed to a Git remote
-first. One question decides the rest: where the project's coordinator runs.
+The machine menu has two actions for a project's files. **Add to another machine…**
+brings a project to a machine that does not have it yet. **Sync…** brings a project
+that is already on two machines up to date through Git.
 
-| Where should the coordinator run?    | What happens                                                                                                     |
-| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| **Keep on &lt;source&gt;** (default) | The copy is linked to the same project and runs workers. The coordinator stays where it is.                      |
-| **Move to &lt;destination&gt;**      | After the copy, the coordinator's conversation and threads continue on the destination; the source runs workers. |
+This guide covers the folder copy both can lead to: **Copy the whole folder from
+&lt;source&gt;** in Add, and **Compare all files…** in Sync. It copies the project
+folder as it is on disk, with uncommitted edits, stashes, branches that were never
+pushed, new files, ignored project data such as reports, and secret files such as
+`.env`. Nothing has to be pushed to a Git remote first.
 
-That is the only difference: the files copied are the same either way. Both copies
-share the project's goal, instructions and memory, and threads from both machines
-show in the sidebar.
+A copy never moves the coordinator. It stays on the machine that has it, and both
+machines share the project's goal, instructions and memory; threads from both show
+in the sidebar. To run the coordinator on the other machine afterwards, choose
+**Continue the coordinator on &lt;machine&gt;** on the done screen or
+**Continue the coordinator here** in that machine's menu.
 
 Git keeps the copies current afterwards. When a thread starts, or a coordinator
 moves to a machine, SpecWithCode fetches every repository of the project. It leaves
@@ -27,7 +28,7 @@ Both machines must be in your private fleet. If they are not yet, follow
 ## Copy a project
 
 1. Open the project on the machine that has it now (the **source**).
-2. Open the machine menu in the message box and choose **Copy to another
+2. Open the machine menu in the message box and choose **Add to another
    machine…**, then pick the other machine (the **destination**).
    The list holds the machines this app is connected to. A machine on your
    SpecWithCode Connect account joins it on its own once it allows this one
@@ -44,30 +45,30 @@ Both machines must be in your private fleet. If they are not yet, follow
    (`.env`, keys), included unless you untick the line; the project's goal,
    instructions and memory. Sign-ins to Claude, Codex and GitHub and running
    processes stay on the source.
-5. Answer **Where should the coordinator run?** (see the table above).
-6. Choose **Copy to &lt;destination&gt;** (or **Copy and move to
-   &lt;destination&gt;**). The review lists anything that would change there and
-   each secret file before anything is written.
+5. Choose **Copy to &lt;destination&gt;**. The review lists anything that would
+   change there and each secret file before anything is written.
 
 **Details** holds the paths (source folder, checkout, branch, destination folder
 and worktree storage) and the rare choices:
 
-| How files travel                      | What happens                                                                                             |
-| ------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| **Copy everything** (default)         | The destination pulls the folder from the source, with uncommitted, ignored and secret files.            |
-| **Clone clean repositories from Git** | Like a copy, but clean repositories are cloned from their remotes instead of being copied byte for byte. |
-| **Git only, no file copy**            | Continues in a folder already saved there, which updates from origin. It always moves the coordinator.   |
+| How files travel                              | What happens                                                                                                                                                                                                     |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Download from GitHub (recommended)**        | Repositories new there download from GitHub or their Git host; one with unpushed commits or stashes is copied whole. Uncommitted and ignored files, and secrets unless you leave them out, come from the source. |
+| **Copy the whole folder from &lt;source&gt;** | Also brings unpushed commits, local branches and stashes. Slower for large repositories. In Sync this choice is **Compare all files…**.                                                                          |
 
-With **Git only**, uncommitted files, unpushed commits and secrets stay on the
-source; What comes along says how many, with **Commit for me**. When this
-repository belongs to a configured SpecWeave umbrella, Details also offers the
-containing workspace as the copy root.
+**Continue the coordinator here**, in the machine menu, copies no files: the
+coordinator continues in a folder already saved there, which updates from origin.
+Uncommitted files, unpushed commits and secrets stay on the source; What comes
+along says how many, with **Commit for me**. When this repository belongs to a
+configured SpecWeave umbrella, Details also offers the containing workspace as the
+copy root.
 
-For a machine that already has a linked copy, the machine menu also offers
-**Make &lt;machine&gt; main**, and that copy's own message box offers it too,
-next to **Write to &lt;main&gt;'s coordinator**. While the current main is
+For a machine that already has the project, a finished copy offers
+**Continue the coordinator on &lt;machine&gt;**, and that machine's own message
+box offers **Continue the coordinator here**, next to **Write to
+&lt;machine&gt;'s coordinator**. While the machine with the coordinator is
 connected it copies nothing and moves only the coordinator and its
-conversation, through Git, after you confirm. If the current main has been
+conversation, through Git, after you confirm. If that machine has been
 unreachable for 10 minutes or more, the copy takes over instead: it starts from
 the shared goal, memory and plan, and the earlier conversation stays on the old
 machine as history. In between, the item is off and says when it unlocks. A
@@ -101,9 +102,9 @@ when the destination already has files. This is a per-file capture, not an atomi
 snapshot of every file at one instant. If a file keeps changing while it is being
 captured, the comparison fails without changing the source or destination.
 
-**Measure again** checks the live source. Its current sizes and worktree notices
-do not change the captured comparison or add newer files to it. Choose **Measure
-and compare again** to capture newer work. The machine, folder and file types stay
+**Check for changes** checks the live source. Its current sizes and worktree notices
+do not change the captured comparison or add newer files to it. Choose **Compare
+again** to capture newer work. The machine, folder and file types stay
 selected; review the new comparison and choose what to keep again. Earlier
 conflict choices and secret approvals are not reused against different files.
 Destination edits after review still stop Apply until you review them again.
@@ -111,8 +112,8 @@ Destination edits after review still stop Apply until you review them again.
 Older saved jobs, and moves from volumes the source cannot capture (network,
 unknown or coarse-timestamp, or crossing a filesystem boundary), retain strict
 live freshness checks. If those files changed, or
-captured files are missing or damaged, the copy stops and offers **Measure and
-compare again**. Reopening the dialog keeps that recovery step rather than
+captured files are missing or damaged, the copy stops and offers **Compare
+again**. Reopening the dialog keeps that recovery step rather than
 retrying a refused copy. Updating the source enables new captured copies; older
 destination servers can consume them through the same validated transfer
 protocol. Both apps should be updated to show the capture wording.
@@ -130,7 +131,7 @@ filesystems instead of promising a stable capture. A folder mounted from another
 filesystem must be copied separately. These checks do not create a globally atomic
 filesystem snapshot.
 
-If **Measure again** has not replied after two minutes, the dialog unlocks and keeps
+If **Check for changes** has not replied after two minutes, the dialog unlocks and keeps
 your saved copy and choices. A timeout never marks the scan current or approves a
 copy. After a refresh, worktree notices describe the new scan rather than combining
 it with the saved list. Counts include worktrees whose names were shortened from
@@ -153,14 +154,14 @@ copied, and repositories whose commit, branches, stashes, staged changes, tags a
 other refs, or Git settings and hooks moved. A file and a repository at the same
 path are listed apart. You then choose one of three things:
 
-- **Copy again**: a fresh copy brings the changes over. It compares first and
+- **Sync again**: a fresh copy brings the changes over. It compares first and
   copies only what changed.
 - **Move without these N paths**: the coordinator moves now. Changed and new
   paths keep their newer version only on the source. A removed path is gone from
   the source but still in the copy on the destination; delete it there if the
   coordinator should not see it. If another path changes before the move, the
   dialog shows a new list and asks again. Closing and reopening the dialog keeps
-  your choice; **Copy again** clears it. If the source is busy when you choose
+  your choice; **Sync again** clears it. If the source is busy when you choose
   it, the list and the three choices stay for the next try.
 - **Keep the coordinator on &lt;source&gt;**: the move ends and the coordinator
   stays where it is. The copied files stay on the destination.
@@ -175,7 +176,7 @@ Moving without the listed paths needs a captured copy. On network, unknown or
 coarse-timestamp volumes the source cannot capture, and when the source has too
 little temporary space to capture, the move falls back to the older live checks.
 Older saved jobs work the same way, and any file the source could not read or
-copy refuses them. The dialog still lists the changes, but only **Copy again**
+copy refuses them. The dialog still lists the changes, but only **Sync again**
 and **Keep the coordinator on &lt;source&gt;** are offered.
 
 The comparison skips reading a file whose size, inode and change time match the
@@ -400,6 +401,6 @@ first.
 
 ### Refresh a saved copy scan
 
-Closing and reopening the dialog resumes its saved copy, including its selections and conflict choices. The scan time is shown above the counts; older scans without a timestamp say that their age is unknown. **Refresh scan** checks the current source without cancelling or applying the job. Missing worktree registrations are labelled separately and are not counted as current folders. Refresh never prunes Git registrations or deletes folders.
+Closing and reopening the dialog resumes its saved copy, including its selections and conflict choices. The scan time is shown above the counts; older scans without a timestamp say that their age is unknown. **Check for changes** checks the current source without cancelling or applying the job. Missing worktree registrations are labelled separately and are not counted as current folders. Refresh never prunes Git registrations or deletes folders.
 
-If the source changed, choose **Measure and compare again** to explicitly replace the old comparison. The machine, folder and file classes stay selected; review conflicts again and confirm any secret files separately. Copy approval validates the current source inventory and destination comparison before transferring. A changed or unverifiable old scan is refused.
+If the source changed, choose **Compare again** to explicitly replace the old comparison. The machine, folder and file classes stay selected; review conflicts again and confirm any secret files separately. Copy approval validates the current source inventory and destination comparison before transferring. A changed or unverifiable old scan is refused.
