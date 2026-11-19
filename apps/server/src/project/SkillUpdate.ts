@@ -449,6 +449,8 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
         timeout: VERSION_TIMEOUT,
         env,
       });
+      if (version.timedOut)
+        return failed("vskill version check did not finish in time. Try again.");
       if (version.exitCode !== 0 || !isVersionAtLeast(version.stdout, PRIVATE_SOURCE_MIN_VSKILL))
         return failed(
           input.visibility === "public"

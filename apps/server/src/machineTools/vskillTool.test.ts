@@ -287,7 +287,10 @@ fs.writeFileSync(path.join(bin,win?'vskill.cmd':'vskill'),win?${JSON.stringify('
         operation: "install",
         install: { repo: "owner/repo", skill: "sample" },
       });
-      expect(failed.outcomes?.[0].outcome).toBe("failed");
+      expect(failed.outcomes?.[0]).toMatchObject({
+        outcome: "failed",
+        message: "vskill version check did not finish in time. Try again.",
+      });
       expect(Date.now() - started).toBeLessThan(5000);
       yield* Effect.promise(async () => {
         const pid = Number(await fs.readFile(path.join(fx.home, "cli.pid"), "utf8"));
