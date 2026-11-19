@@ -87,15 +87,7 @@ import {
 import { refComponent } from "./checkpointGit.ts";
 import { HandoffMode } from "./HandoffMode.ts";
 import * as HandoffTransferStore from "./HandoffTransferStore.ts";
-import {
-  checkArrivedSet,
-  isLandedSet,
-  makeSetOffers,
-  materializeSet,
-  setOwnerTag,
-  missingSetSecrets,
-  startedSetFolder,
-} from "./HandoffSetMoves.ts";
+import { makeSetReceiver } from "./HandoffSetReceiver.ts";
 import {
   acceptedMessage,
   claimRefusal,
@@ -156,8 +148,6 @@ import type {
 import {
   capabilityFailure,
   HANDOFF_APP_VERSION,
-  HANDOFF_CAPABILITIES,
-  hasWorktreeSets,
   HANDOFF_PROTOCOL_VERSION,
   versionFailure,
 } from "./handoffWire.ts";
@@ -367,26 +357,7 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const grants = yield* WorkGrants.WorkGrants;
-  const setOffers = makeSetOffers(undefined, {
-    // A test's stand-in for the config may name no state folder.
-    directory:
-      typeof config.stateDir === "string"
-        ? NodePath.join(config.stateDir, "handoff-sets")
-        : undefined,
-    stored: (landing) =>
-      Effect.runPromise(
-        handoff.document.pipe(
-          Effect.map((held) =>
-            isLandedSet(
-              (held.incomingDetails ?? {})[
-                incomingKey(landing.sourceEnvironmentId, landing.sourceThreadId)
-              ]?.set,
-              landing,
-            ),
-          ),
-        ),
-      ),
-  });
+  const sets = makeSetReceiver(config, handoff.document, (cause) => fromBundleError(label, cause));
   const locks = yield* KeyedLock.make<string>();
   const transfers = yield* HandoffTransferStore.fromContext;
   // Read where the server provides it; without it a thread's existence is unknown.
@@ -477,52 +448,12 @@ export const make = Effect.gen(function* () {
       return { known } satisfies NegotiateResponse;
     });
 
-  /**
-   * A frame of a worktree set: taken only under an offer this machine agreed
-   * to. A member's frame waits outside its repository; with the thread's own
-   * frame every member's ref is written, and taken back if the thread is refused.
-   */
-  const replicateSet = (caller: ReceiverCaller, sent: ReplicateMeta, bundle: Uint8Array | null) =>
+  const replicate = (caller: ReceiverCaller, sent: ReplicateMeta, bundle: Uint8Array | null) =>
     Effect.gen(function* () {
       yield* sameSource(caller, sent.sourceEnvironmentId);
       const project = yield* requireProject(caller, sent.sourceProjectId);
-      const whole = yield* Effect.tryPromise({
-        try: () =>
-          setOffers.take({
-            sourceEnvironmentId: sent.sourceEnvironmentId,
-            sourceThreadId: sent.sourceThreadId,
-            self: caller.grant === null,
-            projectRoot: project.workspaceRoot,
-            targetRef: incomingRef(sent.sourceEnvironmentId, sent.sourceThreadId),
-            commit: sent.checkpoint.commit,
-            part: sent.setPart,
-            set: sent.set,
-            bundle,
-          }),
-        catch: (cause) => fromBundleError(label, cause),
-      });
-      if (whole === null) return { sequence: sent.checkpoint.sequence };
-      const meta = { ...sent, repositoryPath: whole.set.members[0]!.repositoryPath };
-      // Stored: the refs are the thread's. Refused or cut short: they are taken back.
-      return yield* replicateOne(caller, meta, null, true).pipe(
-        Effect.onExit((exit) => Effect.promise(Exit.isSuccess(exit) ? whole.done : whole.undo)),
-      );
-    });
-
-  const replicate = (caller: ReceiverCaller, meta: ReplicateMeta, bundle: Uint8Array | null) =>
-    meta.setPart === undefined && meta.set === undefined
-      ? replicateOne(caller, meta, bundle, false)
-      : replicateSet(caller, meta, bundle);
-
-  const replicateOne = (
-    caller: ReceiverCaller,
-    meta: ReplicateMeta,
-    bundle: Uint8Array | null,
-    landed: boolean,
-  ): Effect.Effect<ReplicateResponse, HandoffRefusal> =>
-    Effect.gen(function* () {
-      yield* sameSource(caller, meta.sourceEnvironmentId);
-      const project = yield* requireProject(caller, meta.sourceProjectId);
+      const { meta, landed } = yield* sets.take(caller, project, sent, bundle);
+      if (meta === null) return { sequence: sent.checkpoint.sequence };
       const root = yield* repositoryRoot(project, meta.repositoryPath);
       const targetRef = incomingRef(meta.sourceEnvironmentId, meta.sourceThreadId);
       const commit = meta.checkpoint.commit;
@@ -546,20 +477,6 @@ export const make = Effect.gen(function* () {
         },
         catch: (cause) => fromBundleError(label, cause),
       });
-      // The thread's copy is its own frame alone, and only with every member here.
-      if (meta.set !== undefined) {
-        const set = meta.set;
-        yield* Effect.tryPromise({
-          try: () =>
-            checkArrivedSet({
-              projectRoot: project.workspaceRoot,
-              set,
-              repositoryPath: meta.repositoryPath,
-              commit,
-            }),
-          catch: (cause) => fromBundleError(label, cause),
-        });
-      }
       const now = yield* nowIso;
       const verdict = yield* updateDocument((current) => {
         const result = upsertIncoming(current, {
@@ -573,7 +490,7 @@ export const make = Effect.gen(function* () {
       if (verdict.kind === "refused") return yield* refuse(409, verdict.code, verdict.message);
       const stored = findIncoming(verdict.document, meta.sourceEnvironmentId, meta.sourceThreadId);
       return { sequence: stored?.checkpoint.sequence ?? meta.checkpoint.sequence };
-    });
+    }).pipe(Effect.scoped);
 
   const providerFor = (modelSelection: ModelSelection) =>
     providers.getProviders.pipe(
@@ -641,13 +558,7 @@ export const make = Effect.gen(function* () {
             Effect.orElseSucceed(() => required),
           );
         }
-        const set = detail.set;
-        if (set !== undefined) {
-          missing = [
-            ...missing,
-            ...(yield* Effect.promise(() => missingSetSecrets(project.workspaceRoot, set))),
-          ];
-        }
+        missing = [...missing, ...(yield* sets.missingSecrets(project.workspaceRoot, detail.set))];
       }
       const provider = modelSelection === null ? null : yield* providerFor(modelSelection);
       const holder = replica?.lease;
@@ -705,16 +616,7 @@ export const make = Effect.gen(function* () {
               peerLabel: "The source machine",
               capabilities: request.capabilities,
             }));
-      // A set is agreed to only with a source that passes every check a move
-      // needs and can send one. Any other source reads an answer without the
-      // capability, and its frames are refused.
-      const offered = request.setOffer;
-      const agreed = unfit === null && hasWorktreeSets(request.capabilities);
-      if (offered !== undefined && agreed) {
-        yield* Effect.promise(() =>
-          setOffers.open(request.sourceEnvironmentId, offered.sourceThreadId, offered.id),
-        );
-      }
+      const capabilities = yield* sets.offer(request, unfit === null);
       const version =
         unfit === null
           ? null
@@ -733,10 +635,7 @@ export const make = Effect.gen(function* () {
         machineLabel: label,
         protocolVersion: HANDOFF_PROTOCOL_VERSION,
         appVersion: HANDOFF_APP_VERSION,
-        capabilities:
-          offered === undefined || agreed
-            ? HANDOFF_CAPABILITIES
-            : HANDOFF_CAPABILITIES.filter((each) => !hasWorktreeSets([each])),
+        capabilities,
         results,
       } satisfies PeerPreflightResponse;
     });
@@ -1062,12 +961,9 @@ export const make = Effect.gen(function* () {
       const name = `${refComponent(project.title).slice(0, 32)}-handoff-${refComponent(
         request.sourceThreadId,
       ).slice(-16)}-e${request.epoch}`;
-      const setOwner = `${request.sourceEnvironmentId}/${request.sourceThreadId}/${request.epoch}`;
-      // Two sources can make the same name; a set's folder also says whose it is.
-      const setName = `${name}-${setOwnerTag(setOwner)}`;
       const placed = resolveHandoffPlacement({
         repository: root,
-        name: detail.set === undefined ? name : setName,
+        name: sets.folderName(name, request, detail.set),
         defaultDirectory: config.worktreesDir,
         settings: resolveProjectSettings(settings, project.id).settings,
       }).pipe(
@@ -1088,10 +984,8 @@ export const make = Effect.gen(function* () {
       const nested = detail.repositoryPath
         .split("/")
         .some((segment) => segment.length > 0 && segment !== "." && segment !== "..");
-      const set = detail.set;
-      // A worktree set is never put in the project folder: it gets a thread folder of its own.
       const inPlace =
-        set !== undefined || usesWorktrees || retriedInWorktree
+        detail.set !== undefined || usesWorktrees || retriedInWorktree
           ? null
           : nested
             ? ({ applied: false, reason: "nested" } as const)
@@ -1104,34 +998,7 @@ export const make = Effect.gen(function* () {
                   }),
                 catch: (cause) => fromBundleError(label, cause),
               });
-      const setWorkspace =
-        set === undefined
-          ? null
-          : yield* Effect.tryPromise({
-              try: () =>
-                startedSetFolder({ projectRoot: project.workspaceRoot, set, name: setName }),
-              catch: (cause) => fromBundleError(label, cause),
-            }).pipe(
-              Effect.flatMap((started) =>
-                started === null
-                  ? Effect.map(placement, (place) => place.worktreePath)
-                  : Effect.succeed(started),
-              ),
-              Effect.flatMap((folder) =>
-                Effect.tryPromise({
-                  try: () =>
-                    materializeSet({
-                      projectRoot: project.workspaceRoot,
-                      folder,
-                      owner: setOwner,
-                      set,
-                      sourceLabel: replica.sourceLabel,
-                      sourceThreadId: request.sourceThreadId,
-                    }),
-                  catch: (cause) => fromBundleError(label, cause),
-                }),
-              ),
-            );
+      const setWorkspace = yield* sets.folder(project, name, request, detail, placement, replica);
       const workspace =
         setWorkspace !== null || inPlace?.applied === true
           ? setWorkspace
