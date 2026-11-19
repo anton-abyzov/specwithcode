@@ -1282,6 +1282,78 @@ describe("OwnedProcessTree.end after a lost parent", () => {
     expect((await tree.end()).unknown).toBe(true);
   });
 
+  it("keeps doubt on a Windows worker whose launcher's pid is reused after a missing start", async () => {
+    const f = fake("win32");
+    const server = windowsRow(100, 1, 1000);
+    const cli = windowsRow(200, 100, 2000);
+    const tool = windowsRow(201, 200, 3000);
+    const launcher = { ...windowsRow(202, 201, 4000), started: "" };
+    const replacement = windowsRow(202, 100, 6000);
+    const worker = windowsRow(203, 202, 5000);
+    f.setTable([server, cli, tool]);
+    expect(await f.tree.remember(15000, true)).toBe(true);
+    expect(await f.tree.remember(15000, true)).toBe(true);
+    f.exitRootAt(3500);
+    const ends = [];
+    for (const rows of [[launcher], [replacement, worker], [worker], [worker]]) {
+      f.setTable([server, ...rows]);
+      ends.push(await f.tree.end(400));
+    }
+    expect(ends.map((end) => end.unknown)).toEqual([true, true, true, true]);
+    expect(f.kills).toEqual([]);
+  });
+
+  it.each(["darwin", "linux"] as const)(
+    "never signals another job's group that leads with the reaped CLI's pid (%s)",
+    async (platform) => {
+      const exitedAt = Date.UTC(2026, 10, 19, 12);
+      // The new job's leader started a minute after the CLI exited.
+      const leader = { ...processRow(rootPid), started: new Date(exitedAt + 60_000).toString() };
+      let live = true;
+      const signals: Array<[number, NodeJS.Signals | 0]> = [];
+      let clock = 0;
+      const host: TreeHost = {
+        platform,
+        selfPid: 100,
+        now: () => clock,
+        sleep: async (ms) => {
+          clock += ms;
+        },
+        readProcessList: async () => (live ? [leader] : []),
+        signal: (pid, action) => {
+          signals.push([pid, action]);
+          if (!live) throw Object.assign(new Error("no such group"), { code: "ESRCH" });
+          if (action === "SIGTERM") live = false;
+        },
+        killVerified: async () => {
+          throw new Error("no Windows kill on POSIX");
+        },
+      };
+      const tree = new OwnedProcessTree(
+        { pid: rootPid, spawnedAt: 0, alive: () => false, exitedAtEpochMs: () => exitedAt },
+        host,
+      );
+      expect(await tree.end()).toEqual({ found: 0, survivors: 0, unknown: false });
+      expect(signals).toEqual([]);
+      expect(live).toBe(true);
+    },
+  );
+
+  it("still signals the CLI's group when a reading from before its exit lists it", async () => {
+    const f = fake("darwin");
+    const exitedAt = Date.UTC(2026, 10, 19, 12);
+    // `ps` caught the CLI in the second it exited; Node has reaped it since.
+    const cli = { ...processRow(rootPid), started: new Date(exitedAt).toString() };
+    const tool = processRow(201, rootPid);
+    f.setTable([cli, tool]);
+    f.exitRootAt(exitedAt + 900);
+    f.onSignal((pid, action) => {
+      if (pid === -rootPid && action === "SIGTERM") f.setTable([]);
+    });
+    expect(await f.tree.end()).toEqual({ found: 2, survivors: 0, unknown: false });
+    expect(f.signals).toEqual([`SIGTERM -${rootPid}`]);
+  });
+
   it("keeps a POSIX Stop unconfirmed on retry after its first reading failed", async () => {
     const f = fake("darwin");
     const member = processRow(201);

@@ -236,11 +236,13 @@ export function unidentifiedChildren(
   for (const [pid, started] of doubtful) {
     const row = byPid.get(pid);
     // A start missing from either reading cannot tell the process from a newer one: it
-    // stays in doubt, keeping whichever start is known.
+    // stays in doubt. A doubt held without a start keeps none: a start read later may be
+    // a newer process's on the same pid, and bounding the children by it would drop older
+    // ones the doubtful process started.
     const same =
       row !== undefined && (row.started === started || row.started === "" || started === "");
-    if (same && !parents.has(pid)) doubt.set(pid, started === "" ? row.started : started);
-    queue.push({ pid, start: startOf(started === "" && same ? row.started : started) });
+    if (same && !parents.has(pid)) doubt.set(pid, started);
+    queue.push({ pid, start: startOf(started) });
   }
   const walked = new Set<string>();
   while (queue.length > 0) {
@@ -510,6 +512,22 @@ export class OwnedProcessTree {
     if (members !== undefined && this.root.alive()) {
       const cli = members.find((entry) => entry.pid === this.root.pid);
       if (cli !== undefined) this.rootStarted = cli.started;
+    }
+    // The CLI's pid runs as a process started after the CLI exited (or other than the CLI
+    // read while it ran): a pid is not handed out while a group with that id exists, so
+    // the CLI's group had emptied and the id is another job's now.
+    const exitedAt = this.root.exitedAtEpochMs?.() ?? null;
+    const reused = table?.some(
+      (entry) =>
+        entry.pid === this.root.pid &&
+        !this.root.alive() &&
+        ((this.rootStarted !== null && entry.started !== this.rootStarted) ||
+          // `ps` gives whole seconds: only a later second proves a start after the exit.
+          (exitedAt !== null && Date.parse(entry.started) > exitedAt)),
+    );
+    if (groupUsable && reused === true) {
+      this.groupRetired = true;
+      groupUsable = false;
     }
     if (groupUsable && this.endedOnce && !this.root.alive()) {
       if (members === undefined) {
