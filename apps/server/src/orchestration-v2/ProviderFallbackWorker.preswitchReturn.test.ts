@@ -593,19 +593,21 @@ describe("the way back from a repeated usage pre-switch", () => {
         Effect.gen(function* () {
           yield* sweep();
           expect(ids(state)).toEqual([]);
-          // They pick Claude again; at 92% the pre-switch moves the thread back to Codex.
+          // They pick Claude again; at 92% the sweep's pre-switch (1089) moves
+          // the thread back to Codex, once.
           state.selection = { instanceId: claudeId, model: opus };
           state.claude = { usedPercent: 92, resetsAt: resetAt };
           yield* next();
           yield* sweep();
-          preswitchOnto(state, preswitchId);
+          expect(ids(state)).toEqual([preswitchId]);
+          expect(state.selection).toEqual({ instanceId: codexId, model: "gpt-6" });
           yield* next();
           yield* sweep();
-          expect(ids(state)).toEqual([]);
+          expect(ids(state)).toEqual([preswitchId]);
           state.claude = { usedPercent: 30, resetsAt: resetAt };
           yield* next();
           yield* sweep();
-          expect(ids(state)).toEqual([returnId]);
+          expect(ids(state)).toEqual([preswitchId, returnId]);
         }),
       );
     }),

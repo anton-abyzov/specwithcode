@@ -111,6 +111,9 @@ interface Thread {
   runs: ReadonlyArray<ReturnType<typeof run>>;
   /** A person's Stop on the latest run. */
   stopped: boolean;
+  /** A subagent the provider spawned, which takes no messages. */
+  providerSubagent?: boolean;
+  lastError?: string;
 }
 
 interface World {
@@ -164,7 +167,8 @@ function shellOf(thread: Thread) {
     modelSelection: thread.selection,
     status: thread.status,
     lastErrorClass: thread.lastErrorClass,
-    lastError: thread.lastErrorClass === null ? null : "You've hit your usage limit.",
+    lastError:
+      thread.lastError ?? (thread.lastErrorClass === null ? null : "You've hit your usage limit."),
     usageLimitResetAt: thread.lastErrorClass === null ? null : resetAt,
     latestRunId: thread.latestRunId === null ? null : RunId.make(thread.latestRunId),
     latestRunStartedAt: latest?.startedAt ?? null,
@@ -172,6 +176,16 @@ function shellOf(thread: Thread) {
     activeRunId: thread.activeRunId === null ? null : RunId.make(thread.activeRunId),
     pendingRuntimeRequest: null,
     settledOverride: thread.settledOverride,
+    ...(thread.providerSubagent === true
+      ? {
+          creationSource: "provider",
+          lineage: {
+            parentThreadId: ThreadId.make("coordinator"),
+            relationshipToParent: "subagent",
+            rootThreadId: ThreadId.make("coordinator"),
+          },
+        }
+      : {}),
     archivedAt: null,
     deletedAt: null,
     modelIdentity: threadModelIdentity({
@@ -413,6 +427,22 @@ describe("what the idle move leaves alone (1089)", () => {
   );
   it.effect("with no threshold", () =>
     nothing(world({ settings: { ...settings, providerLimitSwitchAtPercent: null } })),
+  );
+  it.effect("a thread whose turn failed for another reason", () =>
+    nothing(
+      world({
+        threads: [
+          idleThread({
+            status: "failed",
+            lastError: "Provider error",
+            runs: [run("r1", "t1", onClaude, "failed")],
+          }),
+        ],
+      }),
+    ),
+  );
+  it.effect("a subagent the provider spawned", () =>
+    nothing(world({ threads: [idleThread({ providerSubagent: true })] })),
   );
   it.effect("a model a person picked since the latest run", () =>
     nothing(

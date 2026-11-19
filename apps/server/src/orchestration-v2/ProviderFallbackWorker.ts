@@ -667,7 +667,8 @@ export function providerLimitStep(
  * "Switch before the limit" for a thread that did not stop (1089): under
  * `switch`, an idle thread whose provider reached the threshold moves to the
  * fallback before its next turn, once per usage window (the `limit-preswitch:`
- * id names the window). A person's pick wins: a selection that differs from
+ * id names the window). Only after a turn that completed: a failed one is
+ * the retry's or the recovery's to answer. A person's pick wins: a selection that differs from
  * the latest run's is theirs, unless an earlier pre-switch set it. Without
  * the latest run to compare, nothing moves early.
  */
@@ -685,7 +686,7 @@ function idlePreswitchCommand(
     > | null;
   },
 ): Extract<OrchestrationV2ServerCommand, { type: "thread.model-selection.set" }> | null {
-  if (rule.providerLimitAction !== "switch") return null;
+  if (rule.providerLimitAction !== "switch" || thread.status !== "completed") return null;
   const run = options.latestRun;
   if (run == null || run.id !== thread.latestRunId) return null;
   if (pickedSinceStop(thread, run) && thread.modelIdentity?.preswitched !== true) return null;
@@ -1723,11 +1724,18 @@ export const makeSweep = Effect.gen(function* () {
     for (const runId of idleRuns.keys()) if (!latestRunIds.has(runId)) idleRuns.delete(runId);
     // Read only for a thread the idle move could act on: free, not stopped,
     // under `switch`, and on a provider at the threshold.
-    const latestRunForPreswitch = (thread: FallbackThread, rule: ProviderFallbackRule) =>
+    const latestRunForPreswitch = (
+      thread: FallbackThread & Partial<Pick<OrchestrationV2ThreadShell, "lineage" | "creationSource">>,
+      rule: ProviderFallbackRule,
+    ) =>
       Effect.gen(function* () {
         if (
           rule.providerLimitAction !== "switch" ||
+          thread.status !== "completed" ||
           thread.latestRunId === null ||
+          // A subagent the provider spawned takes no messages, so it has no next turn to move.
+          (thread.lineage?.relationshipToParent === "subagent" &&
+            thread.creationSource === "provider") ||
           thread.settledOverride === "settled" ||
           stoppedOnLimit(thread) ||
           !threadIsFree(thread) ||
