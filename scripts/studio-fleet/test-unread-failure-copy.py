@@ -210,6 +210,32 @@ class UnreadFailureCopy(unittest.TestCase):
         self.assertNotIn(failed_copy.name, state_backup_prune.after_install('m4', self.home, later))
         self.assertTrue(failed_copy.is_dir())
 
+    def test_a_non_object_receipt_is_not_aged_out(self):
+        """Review round 4: valid JSON that is not an object is as unclassifiable as unreadable JSON."""
+        for content in ('[]', 'null', 'true', '"unavailable"', '42'):
+            with self.subTest(content=content):
+                self.tearDown_home()
+                failed_copy, failed, later_copy, later = self.m4_history()
+                self.age_past_the_receipt_window(later)
+                failed.write_text(content)
+                for path in self.receipts.iterdir():
+                    os.utime(path, (time.time() - 10 * DAY,) * 2)
+                removed = release_retention.prune_update_receipts(self.own, keep=[later])
+                self.assertNotIn(failed.name, removed['receipts'])
+                self.assertIsNone(state_backup_prune.after_install('m4', self.home, later) or None)
+                self.assertTrue(failed.is_file() and failed_copy.is_dir())
+
+    def tearDown_home(self):
+        """A fresh receipts folder and backups root for the next subtest."""
+        import shutil
+        for folder in (self.receipts, self.root):
+            if folder.exists():
+                shutil.rmtree(folder)
+        self.receipts.mkdir(parents=True)
+        watermark = self.own / 'updates' / release_retention.FAILURE_READ_FILE
+        if watermark.exists():
+            watermark.unlink()
+
     def test_an_unreadable_watermark_is_never_lowered(self):
         """Review round 3, finding 2: marking an older failure read while the watermark is unreadable."""
         older_copy = self.copy('20261101T000000Z')

@@ -456,8 +456,13 @@ def _unread_failure_names(receipts, own):
             if path.is_symlink() or not path.is_file() or path.stat().st_size > RECEIPT_READ_LIMIT:
                 unclassified.add(path.name)
                 continue
-            parsed.append((path, json.loads(path.read_text())))
+            value = json.loads(path.read_text())
         except (OSError, ValueError):
+            unclassified.add(path.name)
+            continue
+        if isinstance(value, dict):  # As state_backup_references: anything else is unclassified.
+            parsed.append((path, value))
+        else:
             unclassified.add(path.name)
     unread = unread_failure_receipt(parsed, failure_read_through(own))
     if unread is None or not os.path.lexists(dict(parsed)[unread]['stateBackup']):
