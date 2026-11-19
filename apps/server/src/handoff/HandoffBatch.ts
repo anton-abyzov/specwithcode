@@ -806,11 +806,31 @@ export function makeHandoffBatch(deps: HandoffBatchDeps) {
       const reason = options.reason ?? "machine-handoff";
       const label = (yield* deps.peerLabel(destination)).slice(0, 120);
       const startedAt = yield* deps.nowIso;
+      // The name is claimed in one write: of two requests that ask for it at
+      // once, one holds it and the other gets a name of its own.
       const asked = options.named;
-      const batchId =
-        asked !== undefined && (yield* store.read).batches[asked] === undefined
-          ? asked
-          : NodeCrypto.randomUUID();
+      const batchId = yield* store.update((document) => {
+        const id =
+          asked !== undefined && document.batches[asked] === undefined
+            ? asked
+            : NodeCrypto.randomUUID();
+        return [
+          id,
+          {
+            ...document,
+            batches: {
+              ...document.batches,
+              [id]: {
+                batchId: id,
+                targetEnvironmentId: destination,
+                trigger,
+                operationIds: [],
+                createdAt: startedAt,
+              },
+            },
+          },
+        ] as const;
+      });
 
       // The destination must name the batch's capability before anything is held for it.
       const named = yield* deps.capabilities(destination).pipe(Effect.result);

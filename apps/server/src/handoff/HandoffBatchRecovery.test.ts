@@ -23,6 +23,7 @@ import * as Fiber from "effect/Fiber";
 
 import { unscopedGrant } from "../fleet/workGrantPolicy.ts";
 import { applyFolderWork, coordinatorStays } from "./HandoffBatch.ts";
+import { AUTOMATIC_DISPOSITION_CHANGED } from "./HandoffTransferRunner.ts";
 import { HANDOFF_PLAN_CAPABILITY } from "./handoffPlan.ts";
 import { makeRig, type Rig, type RigMachine } from "./handoffTransfer.test.fixture.ts";
 import type { TakeoverRequest } from "./handoffWire.ts";
@@ -56,6 +57,7 @@ const statusOf = (root: string) =>
     .toSorted();
 
 const t1 = ThreadId.make("thread:one");
+const t2 = ThreadId.make("thread:two");
 const AUTOMATIC = { kind: "automatic", key: "limit-handoff:thread:one:run-1" } as const;
 const BATCH_ID = "0a1b2c3d-1111-4222-8333-444455557777";
 const BRANCH = "swc/from-a/uncommitted-20261119-140000-abc123";
@@ -330,9 +332,7 @@ describe("folder work stays inside the granted project (AC-20)", () => {
       } as never;
       yield* rig.restart(b);
 
-      const answered = yield* b
-        .folderWork(caller(a), request(a, "vendor/lib"))
-        .pipe(Effect.result);
+      const answered = yield* b.folderWork(caller(a), request(a, "vendor/lib")).pipe(Effect.result);
       expect(statusOf(nested)).toEqual([]);
       expect(answered._tag).toBe("Failure");
 
@@ -405,7 +405,11 @@ describe("a batch on file always ends (AC-23, AC-43)", () => {
       a.transfers.failWrite = (next) => {
         for (const batch of Object.values(next.batches)) {
           for (const entry of batch.rows ?? []) {
-            if (entry.kind === "thread" && entry.state === "pending" && entry.operationId === null) {
+            if (
+              entry.kind === "thread" &&
+              entry.state === "pending" &&
+              entry.operationId === null
+            ) {
               unlinked += 1;
             }
           }
@@ -852,45 +856,49 @@ describe("folder work after a restart is the work that was first sent (AC-20, EC
     }),
   );
 
-  it.effect("with its receipt on file: nothing is read or sent again, and the row says where it is", () =>
-    Effect.gen(function* () {
-      const rig = yield* makeRig(temporary);
-      const [a, b] = two(rig);
-      const calls = { inventory: 0, sent: [] as Array<unknown> };
-      source(a, calls);
-      stored(a, b, {
-        items: [FEATURE],
-        receipt: [{ ...FEATURE, arrivedAs: "swc/from-a/feature", note: null }],
-      });
-      yield* rig.restart(a);
+  it.effect(
+    "with its receipt on file: nothing is read or sent again, and the row says where it is",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* makeRig(temporary);
+        const [a, b] = two(rig);
+        const calls = { inventory: 0, sent: [] as Array<unknown> };
+        source(a, calls);
+        stored(a, b, {
+          items: [FEATURE],
+          receipt: [{ ...FEATURE, arrivedAs: "swc/from-a/feature", note: null }],
+        });
+        yield* rig.restart(a);
 
-      yield* a.moves.tick;
+        yield* a.moves.tick;
 
-      expect(calls).toEqual({ inventory: 0, sent: [] });
-      expect(folderRow(a)?.state).toBe("ready");
-      expect(folderRow(a)?.detail).toContain("On B as branch swc/from-a/feature.");
-      expect(folderRow(a)?.detail).not.toContain("later");
-    }),
+        expect(calls).toEqual({ inventory: 0, sent: [] });
+        expect(folderRow(a)?.state).toBe("ready");
+        expect(folderRow(a)?.detail).toContain("On B as branch swc/from-a/feature.");
+        expect(folderRow(a)?.detail).not.toContain("later");
+      }),
   );
 
-  it.effect("stopped while it was sending: nothing is sent again, and the row does not say nothing moved", () =>
-    Effect.gen(function* () {
-      const rig = yield* makeRig(temporary);
-      const [a, b] = two(rig);
-      const calls = { inventory: 0, sent: [] as Array<unknown> };
-      source(a, calls);
-      stored(a, b, { items: [FEATURE], receipt: null });
-      yield* rig.restart(a);
+  it.effect(
+    "stopped while it was sending: nothing is sent again, and the row does not say nothing moved",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* makeRig(temporary);
+        const [a, b] = two(rig);
+        const calls = { inventory: 0, sent: [] as Array<unknown> };
+        source(a, calls);
+        stored(a, b, { items: [FEATURE], receipt: null });
+        yield* rig.restart(a);
 
-      yield* a.moves.tick;
+        yield* a.moves.tick;
 
-      expect(calls).toEqual({ inventory: 0, sent: [] });
-      expect(folderRow(a)?.state).toBe("failed");
-      expect(folderRow(a)?.detail).toContain("stopped while it was sending");
-      expect(folderRow(a)?.detail).toContain("branch feature");
-      const [read] = yield* a.moves.readBatches({ batchId: BATCH_ID });
-      expect(read?.finishedAt).not.toBeNull();
-    }),
+        expect(calls).toEqual({ inventory: 0, sent: [] });
+        expect(folderRow(a)?.state).toBe("failed");
+        expect(folderRow(a)?.detail).toContain("stopped while it was sending");
+        expect(folderRow(a)?.detail).toContain("branch feature");
+        const [read] = yield* a.moves.readBatches({ batchId: BATCH_ID });
+        expect(read?.finishedAt).not.toBeNull();
+      }),
   );
 });
 
@@ -946,23 +954,25 @@ describe("an automatic start is admitted by the server, not by the window (AC-41
     }),
   );
 
-  it.effect("with no rule to read, nothing moves automatically, and a person's batch still does", () =>
-    Effect.gen(function* () {
-      const rig = yield* makeRig(temporary);
-      const [a, b] = two(rig);
-      rig.addThread(a, t1);
-      a.runEnding = "usage-limit";
-      a.admission = null;
-      yield* rig.restart(a);
+  it.effect(
+    "with no rule to read, nothing moves automatically, and a person's batch still does",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* makeRig(temporary);
+        const [a, b] = two(rig);
+        rig.addThread(a, t1);
+        a.runEnding = "usage-limit";
+        a.admission = null;
+        yield* rig.restart(a);
 
-      const run = yield* a.moves.handOffBatch(automatic(b));
+        const run = yield* a.moves.handOffBatch(automatic(b));
 
-      expect(rowOf(run, t1)?.state).toBe("stayed");
-      expect(takeovers(rig)).toHaveLength(0);
+        expect(rowOf(run, t1)?.state).toBe("stayed");
+        expect(takeovers(rig)).toHaveLength(0);
 
-      const asked = yield* a.moves.handOffBatch(ready(b));
-      expect(rowOf(asked, t1)?.state).toBe("ready");
-    }),
+        const asked = yield* a.moves.handOffBatch(ready(b));
+        expect(rowOf(asked, t1)?.state).toBe("ready");
+      }),
   );
 });
 
@@ -1012,6 +1022,81 @@ describe("asking again for a thread that already moved", () => {
       expect(b.launches).toHaveLength(1);
       const [read] = yield* a.moves.readBatches({ batchId: again.batchId });
       expect(rowOf(read, t1)?.continuedThreadId).toBe(continued);
+    }),
+  );
+});
+
+describe("after the rebase onto the track start and the window's batch id", () => {
+  it.effect(
+    "an automatic start decided for a resume does not move a thread whose run has ended",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* makeRig(temporary);
+        const [a, b] = two(rig);
+        rig.addThread(a, t1);
+        // Decided while the run could be continued; it has since completed.
+        a.runEnding = "completed";
+
+        const run = yield* a.moves.handOffBatch({
+          destinationEnvironmentId: b.environmentId,
+          start: "automatic",
+          trigger: { ...AUTOMATIC, disposition: "resume" },
+          threads: [{ threadId: t1, disposition: "resume" }],
+        });
+
+        expect(rowOf(run, t1)?.state).toBe("stayed");
+        expect(rowOf(run, t1)?.detail).toBe(AUTOMATIC_DISPOSITION_CHANGED);
+        expect(takeovers(rig)).toHaveLength(0);
+        expect(b.launches).toHaveLength(0);
+        expect(leaseOf(a, t1)).toMatchObject({ state: "active", epoch: 1 });
+      }),
+  );
+
+  it.effect("two requests that name the same batch at once each keep their own", () =>
+    Effect.gen(function* () {
+      const rig = yield* makeRig(temporary);
+      const [a, b] = two(rig);
+      rig.addThread(a, t1);
+      rig.addThread(a, t2);
+      const named = "0a1b2c3d-1111-4222-8333-44445555aaaa";
+      // The first request waits after it picked its batch's name.
+      const gate = yield* Deferred.make<void>();
+      const reached = yield* Deferred.make<void>();
+      a.projectLookupGate = signal(reached).pipe(Effect.andThen(Deferred.await(gate)));
+      const first = yield* a.moves
+        .handOffMachine({
+          destinationEnvironmentId: b.environmentId,
+          reason: "manual",
+          threadIds: [t1],
+          batchId: named,
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(reached);
+
+      yield* a.moves.handOffMachine({
+        destinationEnvironmentId: b.environmentId,
+        reason: "manual",
+        threadIds: [t2],
+        batchId: named,
+      });
+      const secondBatch = a.transfers.document.batches[named];
+      yield* Deferred.succeed(gate, undefined);
+      yield* Fiber.join(first);
+
+      const records = Object.values(a.transfers.document.transfers);
+      const of = (id: ThreadId) => records.find((record) => record.lineage.sourceThreadId === id);
+      expect(of(t1)?.batchId).not.toBeNull();
+      expect(of(t1)?.batchId).not.toBe(of(t2)?.batchId);
+      // The first request claimed the name; the second got its own and left it alone.
+      expect(secondBatch?.operationIds).toEqual([]);
+      expect(of(t2)?.batchId).not.toBe(named);
+      const holder = a.transfers.document.batches[named];
+      expect(holder?.operationIds.length).toBe(1);
+      expect(holder?.rows?.map((row) => row.id)).toEqual([t1]);
+      const owner = records.find((record) => record.operationId === holder?.operationIds[0]);
+      expect(owner?.batchId).toBe(named);
+      expect(holder?.rows?.[0]?.id).toBe(owner?.lineage.sourceThreadId);
+      expect(b.launches).toHaveLength(2);
     }),
   );
 });

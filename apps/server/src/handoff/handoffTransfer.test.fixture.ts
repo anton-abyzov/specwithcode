@@ -182,6 +182,8 @@ export interface RigMachine {
   projectRoot: string | null;
   /** How many of the next project lookups fail, as an unreadable store does. */
   projectLookupFails: number;
+  /** The next project lookup waits on this first; it is used once. */
+  projectLookupGate: Effect.Effect<void> | null;
   /** This machine's own folder work, read at the next start; null: it cannot read any. */
   folderSource: HandoffFolderWork["Service"] | null;
   /** The usage-limit rule's answer for an automatic start, read at the next start; null: no rule is readable. */
@@ -240,10 +242,7 @@ export const makeRig = (
     readonly name: string;
     readonly previous?: boolean;
     readonly capabilities?: ReadonlyArray<string>;
-  }> = [
-    { name: "a" },
-    { name: "b" },
-  ],
+  }> = [{ name: "a" }, { name: "b" }],
 ): Effect.Effect<Rig> =>
   Effect.gen(function* () {
     const base = NodeFS.realpathSync(
@@ -289,6 +288,7 @@ export const makeRig = (
         capabilities: entry.capabilities ?? null,
         projectRoot: null,
         projectLookupFails: 0,
+        projectLookupGate: null,
         folderSource: null,
         admission: { automatic: () => Effect.succeed(null) },
         moves: undefined as never,
@@ -409,6 +409,15 @@ export const makeRig = (
         Layer.succeed(ProjectService.ProjectService, {
           getById: (id: ProjectId) =>
             Effect.suspend(() => {
+              const gate = target.projectLookupGate;
+              if (gate !== null) {
+                target.projectLookupGate = null;
+                return gate.pipe(
+                  Effect.as(
+                    id === target.projectId ? Option.some(projectOf(target)) : Option.none(),
+                  ),
+                );
+              }
               if (target.projectLookupFails > 0) {
                 target.projectLookupFails -= 1;
                 return Effect.fail(new Error("The projects could not be read.") as never);

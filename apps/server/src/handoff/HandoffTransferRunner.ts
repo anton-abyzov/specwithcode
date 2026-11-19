@@ -850,12 +850,13 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         return yield* error;
       }
 
-      const disposition =
-        start.disposition ??
-        (enveloped ? planned?.disposition : undefined) ??
-        (first.shell.activeRunId !== null || shouldResume(first.checkpoint.runEnding)
+      // What the thread is now; the plan's or the batch's ask is only what is sent.
+      const derived =
+        first.shell.activeRunId !== null || shouldResume(first.checkpoint.runEnding)
           ? "resume"
-          : "ready");
+          : "ready";
+      const disposition =
+        start.disposition ?? (enveloped ? planned?.disposition : undefined) ?? derived;
       // An automatic move is for the run, the disposition and the preference it was
       // admitted with. Read here, after the checkpoint and before the hold, so a turn
       // that started since, or Off chosen since, is never stopped for it.
@@ -863,7 +864,7 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         trigger,
         mode: (yield* recordOf(threadId))?.mode,
         runId: first.shell.activeRunId ?? first.shell.latestRunId,
-        disposition,
+        disposition: derived,
       });
       if (stale !== null) {
         const error = failed("invalid", stale);
@@ -964,7 +965,10 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         trigger,
         mode: undefined,
         runId: heldShell.activeRunId ?? heldShell.latestRunId,
-        disposition: heldShell.activeRunId !== null ? "resume" : disposition,
+        disposition:
+          heldShell.activeRunId !== null || shouldResume(first.checkpoint.runEnding)
+            ? "resume"
+            : "ready",
       });
       if (changed !== null) {
         yield* staysHeld(null, changed);
