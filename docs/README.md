@@ -33,7 +33,7 @@
 - [Remote access](./user/remote-access.md)
 - [Outside agents (MCP)](./user/outside-agents.md)
 - [Add a machine](./user/add-a-machine.md)
-- [Move a project to another machine](./user/moving-a-project.md)
+- [Add or sync a project on another machine](./user/moving-a-project.md)
 - [Move work between machines](./user/portable-handoffs.md)
 - [Mobile notifications](./user/mobile-notifications.md)
 - [Linux worker on your own VPS](./user/linux-worker.md)

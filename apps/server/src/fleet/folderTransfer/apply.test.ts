@@ -469,7 +469,7 @@ describe("Apply while the source keeps committing", () => {
       },
     ]);
     expect(result.warnings).toEqual([
-      "2 files changed on the source after copying started; the copy has them as they were when it started. Copy again to bring the newer versions. (churn.txt, gone.txt)",
+      "2 files changed on the source after copying started; the copy has them as they were when it started. Sync again to bring the newer versions. (churn.txt, gone.txt)",
     ]);
     expect(result.restored).toEqual(["churn.txt", "gone.txt"]);
 

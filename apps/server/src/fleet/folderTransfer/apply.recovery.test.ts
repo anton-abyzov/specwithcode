@@ -563,7 +563,7 @@ describe("restoring files that changed on the source after the Git snapshot", ()
       expect(withoutGit(target)).toEqual(expected);
       expect(result.restored).toEqual(["ln"]);
       expect(result.warnings).toEqual([
-        "1 file changed on the source after copying started; the copy has them as they were when it started. Copy again to bring the newer versions. (ln)",
+        "1 file changed on the source after copying started; the copy has them as they were when it started. Sync again to bring the newer versions. (ln)",
       ]);
       expect(result.checks).toEqual([{ repo: ".", ok: true, problems: [] }]);
       expect(indexHash()).toBe(index);
