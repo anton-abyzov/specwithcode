@@ -161,6 +161,8 @@ const SCENES = [
   { name: "window", width: 1440, height: 760 },
   { name: "window", width: 1100, height: 720 },
   { name: "window", width: 860, height: 720 },
+  // Wide enough that the thread's box is past its 720 px container breakpoint.
+  { name: "thread", width: 1100, height: 620 },
   { name: "thread", width: 600, height: 520 },
   { name: "thread", width: 390, height: 520 },
   { name: "coordinator", width: 600, height: 520 },
@@ -184,7 +186,16 @@ try {
         await page.locator('[data-project-pane]').first().waitFor();
         // A typed message turns Send on, so it shows the color it sends with.
         const prompt = page.locator('[data-project-pane="threads"] [contenteditable="true"]');
-        if (await prompt.count()) {
+        // A phone-width box keeps its editor folded until it is tapped.
+        const folded = page.locator(
+          '[data-project-pane="threads"] [data-chat-composer-transition-prompt]',
+        );
+        if ((await folded.count()) > 0 && (await folded.first().isVisible())) {
+          await folded.first().click();
+          await page.waitForTimeout(300);
+        }
+        const typed = (await prompt.count()) > 0 && (await prompt.first().isVisible());
+        if (typed) {
           await prompt.first().click();
           await page.keyboard.type("Run the tests");
         }
@@ -192,8 +203,8 @@ try {
         const facts = await page.evaluate(measure);
         const tag = `${label}-${scene.name}-${scene.width}-${theme}${banner ? "-banner" : ""}`;
         await page.screenshot({ path: path.join(output, `${tag}.png`) });
-        results.push({ tag, ...facts });
-        if (!before) check(tag, facts, scene);
+        results.push({ tag, typed, ...facts });
+        if (!before) check(tag, facts, scene, typed);
         await page.close();
       }
     }
@@ -206,7 +217,7 @@ try {
 }
 console.log(`composer-foot ${label}: ${results.length} scenarios, screenshots in ${output}`);
 
-function check(tag, facts, scene) {
+function check(tag, facts, scene, typed) {
   const { thread, coordinator } = facts;
   if (thread) {
     // AC-02: "Runs on <machine>" reads in full at every width.
@@ -220,8 +231,10 @@ function check(tag, facts, scene) {
     assert.equal(thread.sendText, "", `${tag}: Send holds the text ${thread.sendText}`);
     assert.equal(thread.sendLabel, "Send to this thread on linux-mini", `${tag}: Send label`);
     assert.equal(thread.sendColor, "blue", `${tag}: Send color`);
-    assert.ok(thread.sendEnabled, `${tag}: Send is off with a message typed`);
-    assert.equal(thread.sendSize[0], thread.sendSize[1], `${tag}: Send is ${thread.sendSize} px`);
+    if (typed) {
+      assert.ok(thread.sendEnabled, `${tag}: Send is off with a message typed`);
+      assert.equal(thread.sendSize[0], thread.sendSize[1], `${tag}: Send is ${thread.sendSize} px`);
+    }
     // AC-03: the model's name reads in full, right beside the machine.
     assert.equal(thread.model, "Opus 5.5", `${tag}: model shows ${thread.model}`);
     assert.equal(thread.modelCut, false, `${tag}: the model name is cut`);
