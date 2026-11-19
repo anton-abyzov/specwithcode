@@ -580,8 +580,6 @@ export async function runCheck(deps, options = {}) {
     await call("computer_key", { keys: "backspace", repeat: CLEAR_PRESSES });
     await deps.sleep(300);
   };
-  const fieldLine = (reading, base) =>
-    reading.lines.find((line) => typedTail(line.text, base, true) !== undefined);
   for (const sample of TYPE_SAMPLES) {
     try {
       await freshSearch();
