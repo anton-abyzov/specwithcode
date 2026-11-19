@@ -27,6 +27,7 @@ import {
   HandoffTransferBatch,
   HandoffTransferRecord,
   HandoffTransferTrigger,
+  HandoffTransferOperationId,
 } from "./handoffTransfer.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import type {
@@ -486,7 +487,11 @@ export const HandoffThreadInput = Schema.Struct({ threadId: ThreadId });
  * sent under it, and leaves every other thread and the machine's pause alone.
  * Without one it resumes this machine after a wake: every unsent hold.
  */
-export const HandoffResumeFencedInput = Schema.Struct({ threadId: Schema.optional(ThreadId) });
+export const HandoffResumeFencedInput = Schema.Struct({
+  threadId: Schema.optional(ThreadId),
+  /** The record the press was made on: any other open move of the thread is left alone. */
+  operationId: Schema.optional(HandoffTransferOperationId),
+});
 export type HandoffResumeFencedInput = typeof HandoffResumeFencedInput.Type;
 
 export const HandOffInput = Schema.Struct({
@@ -521,6 +526,11 @@ export const HandOffMachineInput = Schema.Struct({
   reason: HandOffMachineReason,
   /** The threads to move; omitted moves every running handoff-mode thread. */
   threadIds: Schema.optional(Schema.Array(ThreadId).check(Schema.isMaxLength(100))),
+  /**
+   * The name the asking window gives this request's batch, so it can find its
+   * own records among every window's. A machine that keeps no records ignores it.
+   */
+  batchId: Schema.optional(HandoffTransferOperationId),
 });
 export type HandOffMachineInput = typeof HandOffMachineInput.Type;
 

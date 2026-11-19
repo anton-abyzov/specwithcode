@@ -127,6 +127,7 @@ export interface HandoffMovesPort {
   /** "Resume here" for one thread: releases its hold only when nothing was sent under it. */
   readonly resumeThread: (
     threadId: ThreadId,
+    operationId?: string,
   ) => Effect.Effect<HandoffModeSnapshot, HandoffModeError>;
   /** This machine's transfer records as the source, for the progress view. */
   readonly transfers: Effect.Effect<HandoffTransferView, HandoffModeError>;
@@ -190,6 +191,7 @@ export class HandoffMode extends Context.Service<
     readonly resumeFenced: Effect.Effect<HandoffModeSnapshot, HandoffModeError>;
     readonly resumeThread: (
       threadId: ThreadId,
+      operationId?: string,
     ) => Effect.Effect<HandoffModeSnapshot, HandoffModeError>;
     readonly preflight: (
       input: HandoffPreflightInput,
@@ -900,7 +902,8 @@ export const make = Effect.gen(function* () {
         : viaMoves((port) => port.handOffMachine(input)),
     continueHere: (input, options) => viaMoves((port) => port.continueHere(input, options)),
     resumeFenced: viaMoves((port) => port.resumeFenced),
-    resumeThread: (threadId) => viaMoves((port) => port.resumeThread(threadId)),
+    resumeThread: (threadId, operationId) =>
+      viaMoves((port) => port.resumeThread(threadId, operationId)),
     preflight: (input) => viaMoves((port) => port.preflight(input)),
     fence,
     guardSideEffect: guard,
@@ -927,7 +930,9 @@ export const layerRpcHandlers = WsHandoffModeRpcGroup.middleware(RpcInstrumentat
       [WS_METHODS.handoffModeHandOffMachine]: handoff.handOffMachine,
       [WS_METHODS.handoffModeContinueHere]: (input) => handoff.continueHere(input),
       [WS_METHODS.handoffModeResumeFenced]: (input) =>
-        input.threadId === undefined ? handoff.resumeFenced : handoff.resumeThread(input.threadId),
+        input.threadId === undefined
+          ? handoff.resumeFenced
+          : handoff.resumeThread(input.threadId, input.operationId),
       [WS_METHODS.handoffModePreflight]: handoff.preflight,
     };
   }),

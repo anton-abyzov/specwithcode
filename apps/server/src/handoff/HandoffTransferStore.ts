@@ -451,6 +451,14 @@ export function sourceTransferView(
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     .slice(0, HANDOFF_TRANSFER_VIEW_FINISHED_MAX);
   const kept = new Set(finished.map((record) => record.operationId));
+  // A batch is shown whole or not at all: one record of it brings the others.
+  const open = new Set(
+    own.filter((record) => !isHandoffTransferFinished(record.state)).map((r) => r.operationId),
+  );
+  for (const batch of Object.values(document.batches)) {
+    if (!batch.operationIds.some((id) => kept.has(id) || open.has(id))) continue;
+    for (const id of batch.operationIds) kept.add(id);
+  }
   // The order they were written in, which is a batch's own order for records of one instant.
   const transfers = own
     .filter((record) => !isHandoffTransferFinished(record.state) || kept.has(record.operationId))

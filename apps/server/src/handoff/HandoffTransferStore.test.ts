@@ -237,12 +237,15 @@ describe("a source's record of a move", () => {
       },
     };
     const view = sourceTransferView(document, a);
-    expect(view.transfers).toHaveLength(HANDOFF_TRANSFER_VIEW_FINISHED_MAX + 1);
+    // The open one, the newest finished ones, and `done-1`, which its batch brings along.
+    expect(view.transfers).toHaveLength(HANDOFF_TRANSFER_VIEW_FINISHED_MAX + 2);
     const shown = view.transfers.map((item) => item.operationId);
     expect(shown).toContain("op-1");
     expect(shown).not.toContain("theirs");
     // The oldest finished ones are left out, and so is a batch with no record left to show.
     expect(shown).not.toContain("done-0");
+    expect(shown).not.toContain("done-2");
+    expect(shown).toContain("done-1");
     expect(shown).toContain(`done-${HANDOFF_TRANSFER_VIEW_FINISHED_MAX + 4}`);
     expect(view.batches.map((item) => item.batchId)).toEqual(["new-batch"]);
     expect(sourceTransferView(EMPTY_HANDOFF_TRANSFER_DOCUMENT, a)).toEqual({
