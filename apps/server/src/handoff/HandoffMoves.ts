@@ -770,7 +770,7 @@ export const make = Effect.gen(function* () {
       }
 
       // 3. The destination takes over at the next epoch.
-      const here = { told: current?.launcher, self, selfLabel, targets: yield* peers.targets };
+      const here = { told: current?.launcher, self, selfLabel, peers };
       const moving = { shell: first.shell, destination, epoch };
       const waits = yield* HandoffFollow.named(follow, moving, here).pipe(
         Effect.mapError(() => failed("failed", HandoffFollow.FOLLOW_NOT_RECORDED)),

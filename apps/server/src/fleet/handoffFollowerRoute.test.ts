@@ -286,8 +286,8 @@ describe("the run that is a handed-off thread's result", () => {
         // Read more than once: the success that came before the stop is never the result.
         yield* settled(
           world,
-          Effect.sync(() => target.asked(THREAD, "studio_thread_read")),
-          (reads) => reads >= 3,
+          Effect.sync(() => target.asked(THREAD)),
+          (asked) => asked >= 4,
         );
         expect(kept).toEqual([]);
         expect(yield* rows).toMatchObject([{ state: "following", deliveredRunIds: [] }]);

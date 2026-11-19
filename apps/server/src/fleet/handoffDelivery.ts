@@ -143,21 +143,37 @@ const notStarted = (run: ListedRun) =>
   run.status === "queued" || (run.unlisted !== true && run.startedAt === null);
 
 /**
- * The run that takes the place of one that was only stopped: the next run to
- * start. Told from start times the other machine listed, or because only one
- * run has started; never from where a run sits in a page.
+ * The run that takes the place of `stopped`, a run that was only stopped: the
+ * first run to start after it stopped. A run that started before the stop is
+ * never it, however it ended: a message moved ahead of the owed run is not the
+ * handoff's. Told from times the other machine listed, never from where a run
+ * sits in a page; "unsure" when a time it needs is not known.
  */
-const successor = (runs: ReadonlyArray<ListedRun>): ListedRun | "unsure" | undefined => {
-  const started = runs.filter((run) => !endedWithoutResult(run.status) && !notStarted(run));
-  if (started.length <= 1) return started[0];
-  if (started.some((run) => run.unlisted === true || run.startedAt === null)) return "unsure";
-  return started.toSorted((left, right) =>
-    left.startedAt === right.startedAt
-      ? left.ordinal - right.ordinal
-      : (left.startedAt ?? "") < (right.startedAt ?? "")
-        ? -1
-        : 1,
-  )[0];
+const successor = (
+  runs: ReadonlyArray<ListedRun>,
+  stopped: ListedRun,
+): ListedRun | "unsure" | undefined => {
+  const started = runs.filter(
+    (run) => run !== stopped && !endedWithoutResult(run.status) && !notStarted(run),
+  );
+  if (started.length === 0) return undefined;
+  // Runs of one thread do not overlap, so a stop without a time is bounded by its start.
+  const from = stopped.completedAt ?? (stopped.unlisted === true ? null : stopped.startedAt);
+  if (from === null || started.some((run) => run.unlisted === true || run.startedAt === null))
+    return "unsure";
+  return started
+    .filter((run) =>
+      stopped.completedAt === null
+        ? (run.startedAt ?? "") > from
+        : (run.startedAt ?? "") >= from,
+    )
+    .toSorted((left, right) =>
+      left.startedAt === right.startedAt
+        ? left.ordinal - right.ordinal
+        : (left.startedAt ?? "") < (right.startedAt ?? "")
+          ? -1
+          : 1,
+    )[0];
 };
 
 /**
@@ -173,7 +189,7 @@ export function nextHandoffStep(
   const startedBy = (run: ListedRun) => messages.find((message) => message.runId === run.runId);
   let owed = runs.find((run) => run.runId === from);
   if (owed !== undefined && endedWithoutResult(owed.status)) {
-    const next = successor(runs);
+    const next = successor(runs, owed);
     if (next === "unsure") return { kind: "unsure" };
     owed = next;
   }
