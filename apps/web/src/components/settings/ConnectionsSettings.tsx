@@ -233,6 +233,11 @@ import {
   type ServerUpdateTarget,
 } from "../ServerUpdateAction";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
+import {
+  anotherRouteTitle,
+  connectBackupRouteDescription,
+  ROUTES_LEAVE_AGENTS_ALONE,
+} from "../cloud/routeAddedToasts";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
 import {
   resolveShortcutCommand,
@@ -2489,9 +2494,11 @@ export function ConnectionsSettings({
       setAddBackendDialogOpen(false);
       toastManager.add({
         type: "success",
-        title: routeTarget ? "Route added" : "Machine connected",
+        title: routeTarget
+          ? anotherRouteTitle(machineNickname(routeTarget.environmentId, routeTarget.label))
+          : "Machine connected",
         description: routeTarget
-          ? `${machineNickname(routeTarget.environmentId, routeTarget.label)} can now be reached over SSH ${target.alias}.`
+          ? `This app can also open ${machineNickname(routeTarget.environmentId, routeTarget.label)} over SSH (${target.alias}). ${ROUTES_LEAVE_AGENTS_ALONE}`
           : `${target.alias} is ready over an SSH-managed tunnel.`,
       });
       setIsAddingSavedBackend(false);
@@ -2570,8 +2577,8 @@ export function ConnectionsSettings({
       routeTarget
         ? {
             type: "success",
-            title: "Route added",
-            description: `${machineNickname(routeTarget.environmentId, routeTarget.label)} now has another way to connect.`,
+            title: anotherRouteTitle(machineNickname(routeTarget.environmentId, routeTarget.label)),
+            description: `This app can also open ${machineNickname(routeTarget.environmentId, routeTarget.label)} at the address you added. ${ROUTES_LEAVE_AGENTS_ALONE}`,
           }
         : {
             type: "success",
@@ -2908,8 +2915,10 @@ export function ConnectionsSettings({
     setAddBackendDialogOpen(false);
     toastManager.add({
       type: "success",
-      title: "Route added",
-      description: `${machineNickname(routeTarget.environmentId, routeTarget.label)} falls back to SpecWithCode Connect when its other routes are unreachable.`,
+      title: "SpecWithCode Connect added as a backup",
+      description: connectBackupRouteDescription(
+        machineNickname(routeTarget.environmentId, routeTarget.label),
+      ),
     });
   };
   const renderRemoteModeBody = () => (

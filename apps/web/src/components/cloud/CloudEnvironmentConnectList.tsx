@@ -39,6 +39,7 @@ import { Skeleton } from "../ui/skeleton";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { presentSavedCloudEnvironmentConnection } from "./cloudEnvironmentConnectionPresentation";
+import { connectBackupRouteDescription } from "./routeAddedToasts";
 
 const EMPTY_DISCOVERY_REFRESH_INTERVAL_MS = 5_000;
 
@@ -170,10 +171,10 @@ export function CloudEnvironmentConnectRows({
       toastManager.add({
         type: "success",
         title: savedWithoutRelay.has(environment.environmentId)
-          ? "SpecWithCode Connect route added"
+          ? "SpecWithCode Connect added as a backup"
           : "Machine added",
         description: savedWithoutRelay.has(environment.environmentId)
-          ? `${environment.label} falls back to SpecWithCode Connect when its other routes are unreachable.`
+          ? connectBackupRouteDescription(environment.label)
           : `Connecting to ${environment.label} through SpecWithCode Connect.`,
       });
       return true;

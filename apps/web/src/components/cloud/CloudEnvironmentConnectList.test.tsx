@@ -73,6 +73,7 @@ vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 vi.mock("../devices/ownDeviceId", () => ({ useOwnDeviceShortId: () => "R2DK" }));
 
 import { inlineCodeShown } from "../devices/inlineApprovalCode";
+import { toastManager } from "../ui/toast";
 import {
   CloudEnvironmentConnectRows,
   type SavedCloudEnvironmentConnection,
@@ -444,6 +445,32 @@ describe("cloud onboarding discovery", () => {
     await mount(false);
     await advance(30_000);
     expect(discovery.listEnvironments).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("adding Connect to a machine saved another way", () => {
+  it("says Connect is a backup way in that leaves agents alone", async () => {
+    discovery.listEnvironments.mockResolvedValue(linkedMachines);
+    vi.mocked(toastManager.add).mockClear();
+    await mount(true, [
+      {
+        environmentId: newMachineId,
+        connection: { phase: "connected", error: null, traceId: null },
+        relayManaged: false,
+      },
+    ]);
+    const addRoute = renderer!.root
+      .findAllByType("button")
+      .find((button) => button.children.includes("Add route"));
+    await act(async () => {
+      await addRoute!.props.onClick();
+    });
+    expect(toastManager.add).toHaveBeenCalledWith({
+      type: "success",
+      title: "SpecWithCode Connect added as a backup",
+      description:
+        "When this app can't reach Work laptop the usual way, it opens it through SpecWithCode Connect. It doesn't change what agents can do.",
+    });
   });
 });
 
