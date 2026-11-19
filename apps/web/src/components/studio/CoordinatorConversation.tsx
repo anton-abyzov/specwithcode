@@ -8,6 +8,7 @@ import { ArtifactCards } from "../chat/ThreadArtifacts";
 import { useMachineNickname, useMachineNicknames } from "../../studio/machineNickname";
 import { coordinatorExecutionLabel } from "../../studio/machineLabels";
 import { ConversationMachineContext, senderWithMachine } from "../../studio/conversationMachine";
+import { relaySender, sameRelaySenders } from "../../studio/relaySenders";
 import { useTx } from "../../i18n";
 import { limitContinuationNote } from "../../studio/runIdentity";
 import { modelLabel } from "../../studio/shellModel";
@@ -307,6 +308,11 @@ export function CoordinatorConversation({
   // Links resolve by IDs and titles only, so a status change or a resend keeps
   // this list, and with it every message's text and Markdown.
   const linkWorkers = useStructuralValue(workers, sameLinkThreads);
+  // Relay senders, local and remote, as they live and run now (1427).
+  const senders = useStructuralValue(
+    useMemo(() => [...workers, ...remoteWorkerThreads], [workers, remoteWorkerThreads]),
+    sameRelaySenders,
+  );
   const workersById = useMemo(
     () => new Map(workers.map((worker) => [worker.id as string, worker])),
     [workers],
@@ -523,13 +529,13 @@ export function CoordinatorConversation({
           ),
           // " · M5" after a sender on another machine than the coordinator's (1427).
           senderTitle: senderWithMachine(
-            linkWorkers.find((t) => t.id === row.message.senderThreadId),
+            relaySender(row.message.senderThreadId, senders, []),
             project.environmentId,
           ),
           // The question this message answered: a card answer folds into it.
           decision: answeredQuestions.get(row.message.id) ?? null,
         })),
-    [prepared, view, hidden, newThreads, messagesById, linkWorkers, answeredQuestions, project],
+    [prepared, view, hidden, newThreads, messagesById, senders, answeredQuestions, project],
   );
   const [openChecked, setOpenChecked] = useState<ReadonlySet<string>>(() => new Set());
   const toggleChecked = useCallback((leaderId: string, open: boolean) => {
