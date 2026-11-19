@@ -398,13 +398,20 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
         );
       });
 
+    /** As sent: a prompt outside ASCII takes more bytes than it has characters. */
+    const copyBytes = (task: ScheduledTask) =>
+      Buffer.byteLength(stringifyJson(routineCopyOf(task)), "utf8");
+    /** What the routine adds to a request: one too large to send goes as its id alone. */
+    const sentBytes = (task: ScheduledTask) => {
+      const bytes = copyBytes(task);
+      return bytes > PUSH_BYTES ? 0 : bytes;
+    };
     /** Requests no larger than the routines route reads, each with its routines' definitions. */
     const batches = (list: ReadonlyArray<ScheduledTask>) => {
       const out: Array<Array<ScheduledTask>> = [];
       let size = 0;
       for (const task of list) {
-        // As sent: a prompt outside ASCII takes more bytes than it has characters.
-        const bytes = Buffer.byteLength(stringifyJson(routineCopyOf(task)), "utf8");
+        const bytes = sentBytes(task);
         if (out.length === 0 || size + bytes > PUSH_BYTES || out.at(-1)!.length >= PUSH_ROUTINES) {
           out.push([]);
           size = 0;
@@ -438,7 +445,11 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
               sourceProjectId: projectId,
               routineIds: batch.map((task) => task.id),
               revisions: batch.map((task) => counts.get(task.id) ?? 0),
-              routines: batch.map((task) => routineCopyOf(task)),
+              // One too large for a request goes without its definition: its copy
+              // rests all the same, and keeps the revision it holds.
+              routines: batch.map((task) =>
+                copyBytes(task) > PUSH_BYTES ? null : routineCopyOf(task),
+              ),
               ...kind,
             })
             .pipe(Effect.result);
@@ -484,6 +495,23 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
         );
       });
 
+    /**
+     * A resting copy follows the coordinator again: its row as it was before it
+     * was turned off to rest, the note gone, and no record, in one write.
+     */
+    const followAgain = (id: ScheduledTaskId, record: RoutineRunnerRecord) =>
+      records.atomically(
+        Effect.gen(function* () {
+          const held = yield* deps.findTask(id);
+          if (held !== null && record.copyEnabled != null) {
+            if (held.enabled !== record.copyEnabled)
+              yield* deps.setEnabled({ id, enabled: record.copyEnabled });
+            yield* records.setNote(id, null);
+          }
+          yield* records.remove(id);
+        }),
+      );
+
     /** A copy whose routine was deleted at its runner: its row, its record and its count, or none. */
     const removeCopy = (id: ScheduledTaskId) =>
       records.atomically(
@@ -517,12 +545,35 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
           byProject.set(task.projectId, [...(byProject.get(task.projectId) ?? []), task]);
         for (const [projectId, owned] of byProject) {
           const others = yield* othersOf(projectId as ProjectId);
+          if (others === null) continue;
+          const left = new Set<string>();
+          for (const task of owned) {
+            const record = all.get(task.id) ?? null;
+            // Its runner left the project: nobody is left to say it may run again,
+            // so this copy follows the coordinator, as it did before it rested.
+            if (
+              record?.state === "disarmed" &&
+              !isPendingCopyDelete(record) &&
+              !others.includes(record.runnerEnvironmentId)
+            ) {
+              yield* writing(
+                Effect.gen(function* () {
+                  const now = yield* records.read(task.id);
+                  if (now?.state === "disarmed" && !others.includes(now.runnerEnvironmentId))
+                    yield* followAgain(task.id, now);
+                }),
+              ).pipe(Effect.ignore);
+              left.add(task.id);
+            }
+          }
           // A project no other machine shares has nothing to settle: it runs as it did.
-          if (others === null || others.length === 0) continue;
+          if (others.length === 0) continue;
           const need = new Map<string, Array<ScheduledTask>>();
           /** Routines this machine runs whose resting copies have not heard their latest revision. */
           const stale = new Map<string, Array<ScheduledTask>>();
           for (const task of owned) {
+            // Freed just now: it is claimed, if this machine runs it, on the next look.
+            if (left.has(task.id)) continue;
             const record = all.get(task.id) ?? null;
             if (record !== null && !runsHere(record)) continue;
             // Only the machine that runs it today claims it, or goes on claiming it.
@@ -1158,6 +1209,7 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
       tellDeleted,
       restCopy,
       removeCopy,
+      followAgain,
     });
 
     return {

@@ -314,8 +314,7 @@ export function routineItem(
     return {
       ...base,
       action: "stay",
-      reason:
-        "Stays on this machine, also when its thread moves. Move the routine itself to run it elsewhere.",
+      reason: "Stays on this machine, also when its thread moves.",
     };
   }
   if (project === undefined || project.targetProjectId === null) {

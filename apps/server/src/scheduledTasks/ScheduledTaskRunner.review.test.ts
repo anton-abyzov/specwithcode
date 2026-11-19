@@ -134,6 +134,57 @@ it.effect("a copy that arrives after its machine agreed to rest is saved resting
   }),
 );
 
+it.effect(
+  "two coordinators that both hold it off and claim at once never rest for each other",
+  () =>
+    Effect.gen(function* () {
+      yield* start;
+      const { machines, network } = yield* fleet(["alpha", "beta"]);
+      const [alpha, beta] = machines as [Machine, Machine];
+      beta.state.role = BESIDE;
+      beta.state.beside = true;
+      yield* alpha.seed();
+      yield* beta.seed();
+      yield* alpha.service.setEnabled({ id: ROUTINE, enabled: false });
+      yield* beta.service.setEnabled({ id: ROUTINE, enabled: false });
+      // Beta's claim leaves while alpha's is on its way.
+      let crossed = false;
+      network.before = (from, _to, op) =>
+        from === "alpha" && op === "runner-disarm" && !crossed
+          ? Effect.suspend(() => ((crossed = true), settle(beta)))
+          : Effect.void;
+      yield* settle(alpha);
+      assert.isTrue(crossed);
+      assert.equal((yield* beta.record)?.state, "disarmed");
+      assert.equal((yield* alpha.record)?.state, "settled");
+      // A person can still turn it on, on either machine.
+      yield* beta.service.setEnabled({ id: ROUTINE, enabled: true });
+      assert.isTrue((yield* listed(alpha)).enabled);
+    }),
+);
+
+it.effect("a copy whose runner left the project follows the coordinator again", () =>
+  Effect.gen(function* () {
+    yield* start;
+    const { machines } = yield* fleet(["alpha", "beta"]);
+    const [alpha, beta] = machines as [Machine, Machine];
+    yield* alpha.seed();
+    yield* beta.seed();
+    yield* settle(alpha);
+    assert.equal((yield* beta.record)?.state, "disarmed");
+    assert.notOk((yield* beta.row)?.enabled);
+    // Alpha is unlinked: nobody is left to tell beta's copy it may run.
+    beta.state.unlinked.add(alpha.environmentId);
+    beta.state.role = COORDINATES;
+    yield* settle(beta);
+    assert.isNull(yield* beta.record);
+    assert.deepInclude(yield* beta.row, { enabled: 1, last_run_error: null });
+    yield* beta.makeDue(DUE);
+    yield* beta.due;
+    assert.equal(beta.fires(), 1);
+  }),
+);
+
 // --- T21-03 --------------------------------------------------------------------------------
 
 it.effect("T21-03: the release before never fires a copy that confirmed it rests", () =>
@@ -328,6 +379,8 @@ it.effect("T21-09: a release whose answer was lost is answered again with its ru
     assert.deepInclude(yield* bringBack(alpha, beta), { kind: "returned" });
     // What the routine did on the other machine came back with it.
     assert.deepInclude(yield* alpha.row, { enabled: 1, run_count: 7, next_run_at: LATER });
+    // And this machine is its runner again, as before it moved.
+    assert.equal((yield* alpha.record)?.state, "settled");
     assert.isUndefined(yield* beta.row);
     yield* alpha.makeDue(DUE);
     yield* everyoneLooks;

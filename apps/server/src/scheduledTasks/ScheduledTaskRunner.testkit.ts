@@ -82,6 +82,8 @@ export interface Machine {
     beside: boolean;
     /** The move's reads of this machine's routines fail, as a database that cannot be read. */
     listFails: boolean;
+    /** Machines this one's project is no longer linked with. */
+    unlinked: Set<string>;
   };
   readonly sql: SqlClient.SqlClient;
   readonly service: Service.ScheduledTaskService["Service"];
@@ -125,6 +127,8 @@ export interface Network {
   readonly offline: Set<string>;
   /** The request arrives and is acted on; its answer is lost. Called once per request. */
   dropAnswer: (from: string, to: string, op: string) => boolean;
+  /** Runs as a request leaves, before the other machine sees it. */
+  before?: ((from: string, to: string, op: string) => Effect.Effect<void>) | undefined;
   /** Runs once the other machine acted on a request, before its answer is back. */
   during?: ((from: string, to: string, op: string) => Effect.Effect<void>) | undefined;
   /** Every request sent, as `from>to:op`. */
@@ -172,6 +176,7 @@ export const fleet = (
           const from = nameOf(self);
           const to = nameOf(target);
           network.log.push(`${from}>${to}:${wire.op ?? "?"}`);
+          if (network.before !== undefined) yield* network.before(from, to, wire.op ?? "?");
           const route = routes.get(target);
           if (route === undefined || network.offline.has(from) || network.offline.has(to))
             return yield* new AwayPeerError({
@@ -211,6 +216,7 @@ export const fleet = (
           movedThreads: new Map(),
           beside: false,
           listFails: false,
+          unlinked: new Set(),
         };
         // The binding this copy's project row carries, as the release before wrote it.
         const binding = () =>
@@ -233,7 +239,7 @@ export const fleet = (
               id: "logical-a",
               title: "Synthetic shared project",
               coordinatorId: "coordinator",
-              members,
+              members: members.filter((member) => !state.unlinked.has(member.environmentId)),
             },
           },
         });

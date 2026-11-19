@@ -83,16 +83,32 @@ export interface RunnerReceiveParts {
     copy: CoordinatorRoutineCopy | null,
     record: RoutineRunnerRecord,
   ) => Effect.Effect<void, ScheduledTaskError | SqlError>;
+  /** A resting copy follows the coordinator again, its row as it was before it rested. */
+  readonly followAgain: (
+    id: ScheduledTaskId,
+    record: RoutineRunnerRecord,
+  ) => Effect.Effect<void, ScheduledTaskError | SqlError>;
   /** A copy's row, record and count, or none of them. */
   readonly removeCopy: (id: ScheduledTaskId) => Effect.Effect<void, ScheduledTaskError | SqlError>;
 }
 
 export const makeRunnerReceive = (parts: RunnerReceiveParts) => {
-  const { deps, records, lock, peersRef, revisionOf, bump, tellDeleted, restCopy, removeCopy } =
-    parts;
+  const {
+    deps,
+    records,
+    lock,
+    peersRef,
+    revisionOf,
+    bump,
+    tellDeleted,
+    restCopy,
+    removeCopy,
+    followAgain,
+  } = parts;
   // --- another machine asks --------------------------------------------------------------
 
   const base = { capabilities: [ROUTINE_RUNNER_CAPABILITY] } as const;
+  const unreadableGrant = () => refuseTransfer(409, "That routine's grant could not be read.");
 
   /** This machine's linked copy of the caller's project, within the caller's grant. */
   const linkedProject = (caller: ReceiverCaller, sourceProjectId: string) =>
@@ -165,9 +181,10 @@ export const makeRunnerReceive = (parts: RunnerReceiveParts) => {
           continue;
         }
         const record = yield* records.read(id);
+        // Whether its row is on does not count: two machines that both hold it off
+        // and both claim it must not each rest for the other.
         const runsItToday =
           held !== null &&
-          held.enabled &&
           isRunnerRoutine(held) &&
           coordinates &&
           (yield* deps.legacyHold(held)) === null;
@@ -198,8 +215,24 @@ export const makeRunnerReceive = (parts: RunnerReceiveParts) => {
         // The definition comes with its revision. Without it the copy keeps the
         // revision it holds: it never shows one whose definition it did not take.
         const sent = held === null ? null : (request.routines?.[index] ?? null);
+        // Only a routine the caller's own work may change takes its definition from
+        // the caller, as a change it sends is checked. Any other only rests.
+        const mayDefine =
+          held !== null &&
+          grant !== null &&
+          othersRoutineRefusal(
+            {
+              coordinatorLabel: "that machine",
+              grant: {
+                coordinatorEnvironmentId: grant.coordinatorEnvironmentId,
+                ...(grant.kind === undefined ? {} : { kind: grant.kind }),
+              },
+            },
+            held,
+            yield* deps.readGrant(held.id).pipe(Effect.mapError(() => unreadableGrant())),
+          ) === null;
         const copy =
-          sent === null || held === null || sent.id !== id
+          sent === null || held === null || sent.id !== id || !mayDefine
             ? null
             : {
                 ...sent,
@@ -221,7 +254,14 @@ export const makeRunnerReceive = (parts: RunnerReceiveParts) => {
               : record.revision,
           acked: [],
           operationId: null,
-          operation: record !== null && isPendingCopyDelete(record) ? PENDING_COPY_DELETE : null,
+          // What this record remembers for the same runner stays: a delete still
+          // owed, or what this machine was before the routine moved there.
+          operation:
+            record !== null && isPendingCopyDelete(record)
+              ? PENDING_COPY_DELETE
+              : record?.runnerEnvironmentId === caller.sourceEnvironmentId
+                ? record.operation
+                : null,
           asked: [],
           // What the row said before it was turned off here, for the day it follows
           // the coordinator again; with a definition, what its runner holds.
@@ -264,24 +304,11 @@ export const makeRunnerReceive = (parts: RunnerReceiveParts) => {
             }
             continue;
           }
-          // The row was turned off to rest; it follows the coordinator again as it was.
-          yield* records
-            .atomically(
-              Effect.gen(function* () {
-                const held = yield* deps.findTask(id);
-                if (held !== null && record.copyEnabled != null) {
-                  if (held.enabled !== record.copyEnabled)
-                    yield* deps.setEnabled({ id, enabled: record.copyEnabled });
-                  yield* records.setNote(id, null);
-                }
-                yield* records.remove(id);
-              }),
-            )
-            .pipe(
-              Effect.mapError(() =>
-                refuseTransfer(409, "That routine could not follow the coordinator again here."),
-              ),
-            );
+          yield* followAgain(id, record).pipe(
+            Effect.mapError(() =>
+              refuseTransfer(409, "That routine could not follow the coordinator again here."),
+            ),
+          );
         }
       }
       yield* deps.notifyChanged;

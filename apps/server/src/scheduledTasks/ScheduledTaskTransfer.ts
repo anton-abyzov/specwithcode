@@ -323,7 +323,8 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
               revision,
               acked: [],
               operationId: record.operationId,
-              operation: null,
+              // Kept for Bring back: what this machine was to the routine before it moved.
+              operation: { ...operation, runState: null },
               asked: [],
               // Its row is off for the move; this is what it follows the coordinator with again.
               copyEnabled: operation.wasEnabled ?? true,
