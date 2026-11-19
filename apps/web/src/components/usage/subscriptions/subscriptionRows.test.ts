@@ -7,7 +7,12 @@ import {
 import type { LimitAccount } from "@specweave-studio/shared/usageLimits";
 import { describe, expect, it } from "vite-plus/test";
 
-import { nextRenewalOn, subscriptionRows } from "./subscriptionRows";
+import {
+  nextRenewalOn,
+  subscriptionRows,
+  subscriptionsSummary,
+  subscriptionsSummaryText,
+} from "./subscriptionRows";
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
