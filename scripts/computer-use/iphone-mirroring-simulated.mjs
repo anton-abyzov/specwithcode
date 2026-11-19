@@ -20,6 +20,7 @@ import { MIRRORING_APP, PATH_REFUSAL } from "./iphone-mirroring-check.mjs";
  * number of each tab tap after the setup tap; "stays" leaves the page and shows
  * the expanded pill's tab names, "switches" shows them once, then the page.
  * callPx: how far each computer_scroll call moves the list, whatever its notches.
+ * overlays: other apps' windows over the Mirroring window, as deps.window reports them.
  */
 export function simulatedPhone({
   missClick,
@@ -38,6 +39,7 @@ export function simulatedPhone({
   cursorBends = [],
   notchPx = 20,
   callPx,
+  overlays = [],
   timerNoise = false,
   pillExpands,
   // Called with the number of each input call: "refuse" puts SpecWithCode in
@@ -272,7 +274,7 @@ export function simulatedPhone({
     state,
     deps: {
       call,
-      window: async () => ({ window, onMainDisplay: true }),
+      window: async () => ({ window, onMainDisplay: true, overlays }),
       ocr: async () => ocr(),
       // The icon column, found in the picture only while Clock shows icon tabs.
       icons: async () => ({

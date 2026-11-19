@@ -23,7 +23,8 @@
 //                    "Clicks landed: all 20, but another check failed"
 //   Result: INVALID  with no click total: the run proves nothing and is
 //                    repeated. Setup did not finish (access, window,
-//                    connection), the installed app has no iPhone Mirroring
+//                    connection, another app's window over the Mirroring
+//                    window), the installed app has no iPhone Mirroring
 //                    path, another app kept the front (a step another app
 //                    interrupts is paused and repeated, 3 times at most), or
 //                    a failed run started at a 1-minute load above 48.
@@ -159,7 +160,9 @@ import {
 /**
  * Runs every step through `deps` and returns the report lines and totals.
  * deps.call(tool, args) -> { data, image } and throws on a tool error;
- * deps.window(size) -> { window, onMainDisplay } | undefined, in screenshot pixels;
+ * deps.window(size) -> { window, onMainDisplay, overlays } | undefined, in screenshot
+ *   pixels; overlays: [{ app, name, layer, x, y, width, height }] in display points,
+ *   other apps' windows in front of the Mirroring window that overlap it;
  * deps.ocr(image, region) -> [{ text, x, y, width, height }] in screenshot pixels;
  * deps.loadavg() -> the 1-minute load average;
  * deps.desktopApps() -> [{ version, path }] of the running SpecWithCode desktop apps;
@@ -328,7 +331,13 @@ export async function runCheck(deps, options = {}) {
     const found = size === undefined ? undefined : await deps.window(size);
     if (found === undefined) return { window: undefined, lines: [], shot };
     const text = await deps.ocr(shot.image, found.window);
-    return { window: found.window, onMainDisplay: found.onMainDisplay, lines: text, shot };
+    return {
+      window: found.window,
+      onMainDisplay: found.onMainDisplay,
+      overlays: found.overlays ?? [],
+      lines: text,
+      shot,
+    };
   };
   const summary = (seen) =>
     seen.lines
@@ -435,6 +444,19 @@ export async function runCheck(deps, options = {}) {
   setup(
     `window at (${seen.window.x}, ${seen.window.y}) ${seen.window.width}x${seen.window.height}; ${front()}`,
   );
+  // Another app's window in front of the Mirroring window takes the clicks and
+  // scrolls inside its frame, even where it draws nothing (Wispr Flow's
+  // "Status", November 18, 2026): the run would judge that app, not the product.
+  if (seen.overlays.length > 0) {
+    const named = seen.overlays.map(
+      (window) =>
+        `${window.app}${window.name === "" ? "" : ` "${window.name}"`} (layer ${window.layer}, ${window.width}x${window.height} at ${window.x}, ${window.y})`,
+    );
+    return invalid(
+      `another app's window lies over the ${MIRRORING_APP} window: ${named.join("; ")}. Quit that app or move ${MIRRORING_APP} clear of it`,
+    );
+  }
+  setup(`no other app's window over the ${MIRRORING_APP} window`);
   const blocked = seen.lines.find(
     (line) =>
       NOT_CONNECTED.some((phrase) => normalize(line.text).includes(phrase)) ||

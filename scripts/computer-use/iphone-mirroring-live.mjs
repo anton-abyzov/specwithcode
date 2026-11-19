@@ -101,16 +101,45 @@ function run(argv) {
   var pids = {};
   for (var a = 0; a < apps.count; a++) pids[String(apps.objectAtIndex(a).processIdentifier)] = true;
   var list = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(1 | 16, 0))) || [];
+  var screens = [];
+  for (var s = 0; s < $.NSScreen.screens.count; s++) {
+    var size = $.NSScreen.screens.objectAtIndex(s).frame.size;
+    screens.push({ width: Number(size.width), height: Number(size.height) });
+  }
   var found = null;
+  var before = [];
   for (var i = 0; i < list.length && found === null; i++) {
     var w = list[i];
     var b = w.kCGWindowBounds || {};
     if (pids[String(w.kCGWindowOwnerPID)] === true && Number(w.kCGWindowLayer) === 0 && Number(b.Width) > 100) {
       found = { x: Number(b.X), y: Number(b.Y), width: Number(b.Width), height: Number(b.Height) };
+    } else {
+      before.push(w);
     }
   }
+  // Windows in front of the Mirroring window that overlap it and would take a
+  // click there, skipped as the app's own click target does: Window Server
+  // windows other than the menu bar, and the see-through Dock window that
+  // spans a whole display.
+  var overlays = [];
+  for (var j = 0; found !== null && j < before.length; j++) {
+    var o = before[j];
+    var ob = o.kCGWindowBounds || {};
+    var owner = String(o.kCGWindowOwnerName || "");
+    var layer = Number(o.kCGWindowLayer);
+    if (!(Number(o.kCGWindowAlpha) > 0) || pids[String(o.kCGWindowOwnerPID)] === true) continue;
+    if (owner === "Window Server" && layer !== 24 && layer !== 25) continue;
+    var wide = false;
+    for (var k = 0; k < screens.length; k++) {
+      if (Number(ob.Width) === screens[k].width && Number(ob.Height) === screens[k].height) wide = true;
+    }
+    if (owner === "Dock" && layer !== 0 && wide) continue;
+    var x = Number(ob.X), y = Number(ob.Y), width = Number(ob.Width), height = Number(ob.Height);
+    if (x >= found.x + found.width || x + width <= found.x || y >= found.y + found.height || y + height <= found.y) continue;
+    overlays.push({ app: owner, name: String(o.kCGWindowName || ""), layer: layer, x: x, y: y, width: width, height: height });
+  }
   var main = $.NSScreen.screens.objectAtIndex(0).frame.size;
-  return JSON.stringify({ window: found, main: { width: Number(main.width), height: Number(main.height) } });
+  return JSON.stringify({ window: found, overlays: overlays, main: { width: Number(main.width), height: Number(main.height) } });
 }`;
 
 const OCR_SCRIPT = `
@@ -198,7 +227,8 @@ export async function liveDeps({ client, scratch, saveScreenshots, outDir }) {
       const answer = JSON.parse(
         run("/usr/bin/osascript", ["-l", "JavaScript", "-e", WINDOW_SCRIPT, MIRRORING_BUNDLE_ID]),
       );
-      return windowInScreenshot(answer.window, answer.main, size);
+      const found = windowInScreenshot(answer.window, answer.main, size);
+      return found === undefined ? undefined : { ...found, overlays: answer.overlays ?? [] };
     },
     ocr: async (image, region) => {
       const source = Buffer.from(image, "base64");
