@@ -1739,12 +1739,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   // Threads whose queue start an update hold skipped. Nothing else starts them
   // again (no terminal event follows), so one waiter retries them once the hold
   // is released or expires. The failed run that asked for the start is kept so
-  // a queue behind a provider failure is still held then, and so is a
-  // person's Resume, so the run they released still starts.
-  const heldQueueThreadIds = new Map<
-    ThreadId,
-    { readonly failedRunId?: RunId; readonly personResumed?: boolean }
-  >();
+  // a queue behind a provider failure is still held then.
+  const heldQueueThreadIds = new Map<ThreadId, RunId | undefined>();
+  // A person's Resume after a failed-run streak lets one queued run past the
+  // breaker. It is bound to the run that is next when the queue is first
+  // checked after it ("next" until then), so a retry that checks later still
+  // honours it and no other run ever passes on it.
+  const breakerConsent = new Map<ThreadId, RunId | "next">();
   let heldQueueWaiter = false;
   const startQueuesAfterHold: Effect.Effect<void> = Effect.gen(function* () {
     yield* updateHold.awaitReleased;
@@ -1753,9 +1754,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     heldQueueWaiter = false;
     yield* Effect.forEach(
       heldQueues,
-      ([threadId, options]) =>
+      ([threadId, failedRunId]) =>
         threadDispatch
-          .withLock(threadId, startNextQueuedRun(threadId, options))
+          .withLock(
+            threadId,
+            startNextQueuedRun(threadId, failedRunId === undefined ? undefined : { failedRunId }),
+          )
           .pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("Failed to start a queued V2 run after the update hold ended", {
@@ -1773,7 +1777,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const resumeQueueRetries = new Map<ThreadId, number>();
   const startQueueAfterResume = (
     threadId: ThreadId,
-    options: Parameters<typeof startNextQueuedRun>[1],
+    failedRunId: RunId | undefined,
   ): Effect.Effect<void> =>
     Effect.gen(function* () {
       const tries = resumeQueueRetries.get(threadId);
@@ -1789,8 +1793,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         Effect.sleep(Duration.millis(RESUME_QUEUE_RETRY_MS)).pipe(
           Effect.andThen(Effect.sync(() => resumeQueueRetries.set(threadId, attempt))),
           Effect.andThen(
-            // A person's Resume keeps its consent across the wait.
-            threadDispatch.withLock(threadId, startNextQueuedRun(threadId, options)),
+            threadDispatch.withLock(
+              threadId,
+              startNextQueuedRun(threadId, failedRunId === undefined ? undefined : { failedRunId }),
+            ),
           ),
           Effect.andThen(
             Effect.sync(() => {
@@ -1893,26 +1899,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       } as const;
     });
 
-  const startNextQueuedRun = (
-    threadId: ThreadId,
-    options?: {
-      readonly failedRunId?: RunId;
-      /** A person's Resume: the next run starts once even after a failed-run streak. */
-      readonly personResumed?: boolean;
-    },
-  ) =>
+  const startNextQueuedRun = (threadId: ThreadId, options?: { readonly failedRunId?: RunId }) =>
     Effect.gen(function* () {
       // An update hold keeps the queue where it is; the drain cancels it. A
       // queue left after the hold ends starts then.
       if (yield* updateHold.isHeld) {
-        const earlier = heldQueueThreadIds.get(threadId);
-        const failedRunId = options?.failedRunId ?? earlier?.failedRunId;
-        heldQueueThreadIds.set(threadId, {
-          ...(failedRunId === undefined ? {} : { failedRunId }),
-          ...(options?.personResumed === true || earlier?.personResumed === true
-            ? { personResumed: true }
-            : {}),
-        });
+        heldQueueThreadIds.set(threadId, options?.failedRunId ?? heldQueueThreadIds.get(threadId));
         if (!heldQueueWaiter) {
           heldQueueWaiter = true;
           yield* Effect.forkDetach(startQueuesAfterHold);
@@ -1928,7 +1920,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (coordinatorRefusal !== null) {
         // A resume hold ends by itself within seconds, with no queue transition to start it.
         if (coordinatorRefusal === CoordinatorWakeGate.COORDINATOR_RESUME_REFUSAL)
-          yield* startQueueAfterResume(threadId, options);
+          yield* startQueueAfterResume(threadId, options?.failedRunId);
         return;
       }
       const projection = yield* readCommandProjection(threadId);
@@ -2022,9 +2014,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // A routine fire or provider retry queued before the streak began would
       // start as the thread's next failure; it waits for a person like a
       // dispatched one is refused (RunFailureBreaker). A person's Resume
-      // starts this one run; an automatic release of the hold does not count.
+      // starts the one run it is bound to; an automatic release does not count.
+      if (breakerConsent.get(threadId) === "next") breakerConsent.set(threadId, nextRun.id);
       const breakerHolds =
-        options?.personResumed !== true &&
+        breakerConsent.get(threadId) !== nextRun.id &&
         failedRunBreakerRefusal(
           isBreakerGuardedQueuedMessage(
             nextRun.userMessageId,
@@ -13439,12 +13432,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
+      if (command.type === "queue.resume") breakerConsent.set(command.threadId, "next");
       if (command.type === "queue.resume" || command.type === "queued-message.steer-settle") {
-        yield* mapDispatchError(command)(
-          startNextQueuedRun(command.threadId, {
-            personResumed: command.type === "queue.resume",
-          }),
-        );
+        yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
       }
       return {
         sequence: receipt.resultSequence,
@@ -13611,10 +13601,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         detail: committed.receipt.error ?? "Previously rejected.",
       });
     }
+    if (command.type === "queue.resume") breakerConsent.set(command.threadId, "next");
     if (command.type === "queue.resume" || command.type === "queued-message.steer-settle") {
-      yield* mapDispatchError(command)(
-        startNextQueuedRun(command.threadId, { personResumed: command.type === "queue.resume" }),
-      );
+      yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
     }
     if (command.type === "notification.delivery.accept") {
       yield* mapDispatchError(command)(offerDelegatedCompletionDeliveries(command.threadId));
