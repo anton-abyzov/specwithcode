@@ -24,6 +24,7 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { type FakeToolHandler, fakeStudioMcp } from "./fakeStudioMcp.testkit.ts";
+import type { FleetTarget } from "../studioFleet.ts";
 import { fakeMachine, ORIGIN, target } from "./fleetMachine.testkit.ts";
 import * as FleetTargets from "./FleetTargets.ts";
 import * as FleetWorkerGrants from "./FleetWorkerGrants.ts";
@@ -94,17 +95,82 @@ export const capabilities = {
   features: {},
 };
 
+/** Lets a test wait for something that was written or asked, without a timer. */
+export interface Signal {
+  readonly fire: () => void;
+  /** Settles at the next `fire`. Take it before reading the state it guards. */
+  readonly next: () => Promise<void>;
+}
+
+export const makeSignal = (): Signal => {
+  let wake = () => {};
+  let pending = new Promise<void>((resolve) => {
+    wake = resolve;
+  });
+  return {
+    fire: () => {
+      const settle = wake;
+      pending = new Promise<void>((resolve) => {
+        wake = resolve;
+      });
+      settle();
+    },
+    next: () => pending,
+  };
+};
+
+/** A message a thread here keeps. The orchestrator takes a command id once per thread. */
+export interface KeptMessage {
+  readonly threadId: string;
+  readonly commandId: string;
+  readonly text: string;
+}
+
+/**
+ * Machines named by what they do in a test, so it does not lean on the shared
+ * world's names: this server, the machine work goes to, and any further ones.
+ */
+export interface Roles {
+  readonly self: string;
+  readonly target: FleetTarget;
+  readonly more?: ReadonlyArray<{
+    readonly target: FleetTarget;
+    readonly tools: Record<string, FakeToolHandler>;
+  }>;
+}
+
+export const machine = (role: string): FleetTarget => ({
+  ...target,
+  id: role,
+  label: `${role[0]?.toUpperCase() ?? ""}${role.slice(1)}`,
+  environmentId: EnvironmentId.make(`env-${role}`),
+  url: `https://${role}.example.ts.net`,
+});
+
+/** This server as "source" and the machine its work goes to as "target". */
+export const ROLES: Roles = { self: "env-source", target: machine("target") };
+
 export interface World {
   readonly tools: Record<string, FakeToolHandler>;
   readonly local: { current: Project };
   readonly caller: { archived: boolean; deleted?: boolean; settled?: boolean };
+  /** Every send to a thread here, repeats included. */
   readonly wakes: Array<{
     readonly commandId: string;
     readonly text: string;
     readonly mode: string;
+    readonly threadId: string;
   }>;
   /** What people see for each wake: its author and notification summary. */
   readonly notices: Array<{ readonly createdBy: string; readonly summary: string | undefined }>;
+  /** What the threads here keep of those sends: one message per command id and thread. */
+  readonly kept: Array<KeptMessage>;
+  /** Fires when a row is written, a message is sent here, or another machine is asked. */
+  readonly changed: Signal;
+  /** Row writes fail, as on a disk that cannot be written. */
+  storeFails: boolean;
+  /** Calls to other machines and row writes this server has under way. */
+  inFlight: number;
 }
 
 export const launchAnswer = {
@@ -123,8 +189,18 @@ export const setup = (
     readonly extraTargets?: ReadonlyArray<typeof target>;
     /** What this machine lets other machines do here ("Who can run work here"). */
     readonly workGrants?: Partial<WorkGrants.WorkGrantsShape>;
+    /** Machines named by role instead of the shared names. */
+    readonly roles?: Roles;
+    /** A folder that outlives this layer: a second setup over it is the server restarted. */
+    readonly baseDir?: string;
+    /** The messages the threads here already keep, as their database does across a restart. */
+    readonly kept?: Array<KeptMessage>;
+    /** One signal for several setups in a test. */
+    readonly changed?: Signal;
   } = {},
 ) => {
+  const self = fleet.roles?.self ?? "env-m4";
+  const first = fleet.roles?.target ?? target;
   const tokens = ["approval-required", "auto-accept-edits", "auto", "full-access"].flatMap(
     (access) => [1, 2, 3, 4].map((n) => `mcp-token-${access}-${n}`),
   );
@@ -142,26 +218,63 @@ export const setup = (
     caller: { archived: false },
     wakes: [],
     notices: [],
+    kept: fleet.kept ?? [],
+    changed: fleet.changed ?? makeSignal(),
+    storeFails: false,
+    inFlight: 0,
   };
-  const auth = fakeMachine();
-  const remote = fakeStudioMcp({
-    origin: ORIGIN,
-    environmentId: "env-m1",
-    tokens,
-    tools: new Proxy({} as Record<string, FakeToolHandler>, {
-      get: (_target, name: string) => world.tools[name],
-      ownKeys: () => Object.keys(world.tools),
+  /** A machine's tools as they are when called; every call is something a test may wait for. */
+  const live = (tools: () => Record<string, FakeToolHandler>) =>
+    new Proxy({} as Record<string, FakeToolHandler>, {
+      get: (_target, name: string) => {
+        const handler = tools()[name];
+        return handler === undefined
+          ? undefined
+          : async (args: Record<string, unknown>) => {
+              try {
+                return await handler(args);
+              } finally {
+                world.changed.fire();
+              }
+            };
+      },
+      ownKeys: () => Object.keys(tools()),
       getOwnPropertyDescriptor: (_target, name: string) =>
-        name in world.tools
-          ? { enumerable: true, configurable: true, value: world.tools[name] }
+        name in tools()
+          ? { enumerable: true, configurable: true, value: tools()[name] }
           : undefined,
-    }),
+    });
+  const origin = fleet.roles === undefined ? ORIGIN : first.url;
+  const auth = fakeMachine(
+    fleet.roles === undefined ? {} : { environmentId: first.environmentId, origins: [origin] },
+  );
+  const remote = fakeStudioMcp({
+    origin,
+    environmentId: first.environmentId,
+    tokens,
+    tools: live(() => world.tools),
   });
+  const others = (fleet.roles?.more ?? []).map((other) => ({
+    origin: other.target.url,
+    auth: fakeMachine({ environmentId: other.target.environmentId, origins: [other.target.url] }),
+    remote: fakeStudioMcp({
+      origin: other.target.url,
+      environmentId: other.target.environmentId,
+      tokens,
+      tools: live(() => other.tools),
+    }),
+  }));
   const fetcher = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
-    return url.pathname === "/mcp" || url.pathname === "/.well-known/studio/environment"
-      ? remote.fetcher(input, init)
-      : auth.fetcher(input, init);
+    const asked = others.find((other) => other.origin === url.origin) ?? { auth, remote };
+    world.inFlight += 1;
+    try {
+      return await (url.pathname === "/mcp" || url.pathname === "/.well-known/studio/environment"
+        ? asked.remote.fetcher(input, init)
+        : asked.auth.fetcher(input, init));
+    } finally {
+      world.inFlight -= 1;
+    }
   }) as typeof fetch;
 
   const shell = (id: string) => ({
@@ -176,11 +289,29 @@ export const setup = (
     getThreadShell: (id) => Effect.sync(() => shell(id) as never),
     sendToThread: (input) =>
       Effect.sync(() => {
-        world.wakes.push({ commandId: input.commandId, text: input.text, mode: input.mode });
+        world.wakes.push({
+          commandId: input.commandId,
+          text: input.text,
+          mode: input.mode,
+          threadId: input.threadId,
+        });
         world.notices.push({
           createdBy: input.createdBy,
           summary: input.notification?.summary,
         });
+        // As the orchestrator does: a command id it already took adds no message.
+        if (
+          !world.kept.some(
+            (message) =>
+              message.threadId === input.threadId && message.commandId === input.commandId,
+          )
+        )
+          world.kept.push({
+            threadId: input.threadId,
+            commandId: input.commandId,
+            text: input.text,
+          });
+        world.changed.fire();
         return {} as never;
       }),
   });
@@ -194,10 +325,10 @@ export const setup = (
     getProviders: Effect.succeed([{ instanceId: "codex-local", driver: "codex" }] as never),
   });
   const environment = Layer.mock(ServerEnvironment.ServerEnvironment)({
-    getEnvironmentId: Effect.succeed(EnvironmentId.make("env-m4")),
+    getEnvironmentId: Effect.succeed(EnvironmentId.make(self)),
     getDescriptor: Effect.succeed({
-      environmentId: EnvironmentId.make("env-m4"),
-      label: "M4",
+      environmentId: EnvironmentId.make(self),
+      label: fleet.roles === undefined ? "M4" : "Source",
     } as never),
   });
   const timings = Layer.succeed(RemoteWorkerFollower.RemoteWorkerFollowerTimings, {
@@ -215,15 +346,48 @@ export const setup = (
     recheckUnconfirmedMs: 60_000,
     ...timingOverrides,
   });
+  /** The real file store; a test can wait for its writes and make them fail. */
+  const store = Layer.effect(
+    RemoteWorkerStore.RemoteWorkerStore,
+    Effect.map(RemoteWorkerStore.RemoteWorkerStore, (real) =>
+      RemoteWorkerStore.RemoteWorkerStore.of({
+        list: real.list,
+        prune: real.prune,
+        modify: (id, change) =>
+          world.storeFails
+            ? Effect.fail(
+                new RemoteWorkerStore.RemoteWorkerStoreError({
+                  operation: "write",
+                  cause: "The test's disk cannot be written.",
+                }),
+              )
+            : Effect.suspend(() => {
+                world.inFlight += 1;
+                return real.modify(id, change);
+              }).pipe(
+                Effect.ensuring(
+                  Effect.sync(() => {
+                    world.inFlight -= 1;
+                    world.changed.fire();
+                  }),
+                ),
+              ),
+      }),
+    ),
+  ).pipe(Layer.provide(RemoteWorkerStore.layer));
   const layer = Layer.mergeAll(RemoteWorkers.layer, RemoteWorkerFollower.layerResume).pipe(
     Layer.provideMerge(RemoteWorkerFollower.layer),
     Layer.provideMerge(RemoteStudioMcpClient.layer),
-    Layer.provideMerge(Layer.merge(FleetWorkerGrants.layer, RemoteWorkerStore.layer)),
+    Layer.provideMerge(Layer.merge(FleetWorkerGrants.layer, store)),
     Layer.provideMerge(
       Layer.succeed(FleetTargets.FleetTargets, {
         load: Effect.succeed({
           version: 1 as const,
-          machines: [target, ...(fleet.extraTargets ?? [])],
+          machines: [
+            first,
+            ...(fleet.roles?.more ?? []).map((other) => other.target),
+            ...(fleet.extraTargets ?? []),
+          ],
         }),
         fetch: fetcher,
       }),
@@ -236,7 +400,12 @@ export const setup = (
       }),
     ),
     Layer.provideMerge(ServerSecretStore.layer),
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "studio-remote-workers-" })),
+    Layer.provideMerge(
+      ServerConfig.layerTest(
+        process.cwd(),
+        fleet.baseDir ?? { prefix: "studio-remote-workers-" },
+      ),
+    ),
     Layer.provideMerge(NodeServices.layer),
   );
   return { world, remote, auth, layer };
@@ -277,10 +446,42 @@ export const eventually = <A, E, R>(check: Effect.Effect<A, E, R>, until: (value
     return yield* Effect.die(new Error("condition not reached"));
   });
 
-export const allow = (access: "auto" | "full-access" = "auto") =>
+export const allow = (access: "auto" | "full-access" = "auto", machineId = "m1") =>
   FleetWorkerGrants.FleetWorkerGrants.pipe(
-    Effect.flatMap((grants) => grants.allow({ machineId: "m1", access })),
+    Effect.flatMap((grants) => grants.allow({ machineId, access })),
   );
+
+/**
+ * Waits until this server has nothing under way: no call to another machine
+ * and no row write, across many turns of the event loop. For the one thing a
+ * state cannot show, that nothing more happens after a restart.
+ */
+export const quiet = (world: Pick<World, "inFlight">) =>
+  Effect.promise(async () => {
+    for (let calm = 0; calm < 50; ) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      calm = world.inFlight === 0 ? calm + 1 : 0;
+    }
+  });
+
+/**
+ * Waits until `check` shows what `until` asks for, looking again only when a
+ * row was written, a message was sent here or another machine was asked.
+ * No timer: a state that never comes ends with the test's own timeout.
+ */
+export const settled = <A, E, R>(
+  world: Pick<World, "changed">,
+  check: Effect.Effect<A, E, R>,
+  until: (value: A) => boolean,
+) =>
+  Effect.gen(function* () {
+    while (true) {
+      const next = world.changed.next();
+      const value = yield* check;
+      if (until(value)) return value;
+      yield* Effect.promise(() => next);
+    }
+  });
 
 /** Allows workers again with the clock past the one-mint-a-minute limit. */
 export const allowLater = Effect.gen(function* () {
