@@ -37,6 +37,11 @@ export interface AccessRowsInput<Id extends string = string> {
   readonly machines: readonly AccessRowsMachine<Id>[];
   /** The window is the desktop app (`window.desktopBridge` exists). */
   readonly desktopApp: boolean;
+  /**
+   * How many iPhone examples were proven end to end (`IPHONE_PROVEN_EXAMPLES`).
+   * The iPhone row stays hidden at 0 (1395 D-02); missing counts as 0.
+   */
+  readonly provenIphoneExamples?: number;
 }
 
 export interface AccessRowPlan<Id extends string = string> {
@@ -61,7 +66,8 @@ export function accessRows<Id extends string>(
   const mac = own.platform === "darwin";
   if (mac && own.computerUseLocal === true) {
     rows.push({ id: "mac-apps", machineIds: here });
-    if (own.iphoneMirroring === "present") rows.push({ id: "iphone", machineIds: here });
+    if (own.iphoneMirroring === "present" && (input.provenIphoneExamples ?? 0) > 0)
+      rows.push({ id: "iphone", machineIds: here });
   }
   if (mac && own.fullDiskAccessLocal === true) {
     rows.push({ id: "full-disk-access", machineIds: here });

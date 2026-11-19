@@ -21,6 +21,9 @@ vi.mock("./MacAppsRow", () => ({
     </li>
   ),
 }));
+vi.mock("./IPhoneRow", () => ({
+  IPhoneRow: () => <li data-access-row="iphone" />,
+}));
 vi.mock("./ChromeAccessRow", () => ({
   ChromeAccessRow: () => <li data-access-row="browser" />,
 }));

@@ -1,11 +1,13 @@
 import type { PhraseCatalog } from "../phrases";
 import { syncPt } from "./sync/pt";
 import { handoffPt } from "./handoff/pt";
+import { iphonePt } from "./iphone/pt";
 
 /** Brazilian Portuguese Settings titles and labels, "você", as in the message catalog. */
 export const pt: PhraseCatalog = {
   ...syncPt,
   ...handoffPt,
+  ...iphonePt,
   About: "Sobre",
   "Accent color": "Cor de destaque",
   Account: "Conta",

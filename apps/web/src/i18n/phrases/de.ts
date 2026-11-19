@@ -1,11 +1,13 @@
 import type { PhraseCatalog } from "../phrases";
 import { syncDe } from "./sync/de";
 import { handoffDe } from "./handoff/de";
+import { iphoneDe } from "./iphone/de";
 
 /** German Settings titles and labels, informal "du", as in the message catalog. */
 export const de: PhraseCatalog = {
   ...syncDe,
   ...handoffDe,
+  ...iphoneDe,
   About: "Über",
   "Accent color": "Akzentfarbe",
   Account: "Konto",

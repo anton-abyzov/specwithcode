@@ -1,11 +1,13 @@
 import type { PhraseCatalog } from "../phrases";
 import { syncEs } from "./sync/es";
 import { handoffEs } from "./handoff/es";
+import { iphoneEs } from "./iphone/es";
 
 /** Spanish Settings titles and labels. "hilo" for thread, as in the message catalog. */
 export const es: PhraseCatalog = {
   ...syncEs,
   ...handoffEs,
+  ...iphoneEs,
   About: "Acerca de",
   "Accent color": "Color de acento",
   Account: "Cuenta",

@@ -13,6 +13,9 @@ export const RELAUNCH_FOR_COMPUTER_USE_CHANNEL = "desktop:relaunch-for-computer-
 export const SAVE_FIRST_RUN_RESUME_CHANNEL = "desktop:save-first-run-resume";
 export const TAKE_FIRST_RUN_RESUME_CHANNEL = "desktop:take-first-run-resume";
 export const RESET_COMPUTER_USE_PERMISSION_CHANNEL = "desktop:reset-computer-use-permission";
+export const GET_IPHONE_MIRRORING_CHANNEL = "desktop:get-iphone-mirroring";
+// Opens iPhone Mirroring and nothing else: the call takes no argument.
+export const OPEN_IPHONE_MIRRORING_CHANNEL = "desktop:open-iphone-mirroring";
 export const VOICE_GET_STATUS_CHANNEL = "desktop:voice-get-status";
 export const VOICE_REQUEST_ACCESS_CHANNEL = "desktop:voice-request-access";
 export const VOICE_SET_CALL_ACTIVE_CHANNEL = "desktop:voice-set-call-active";
