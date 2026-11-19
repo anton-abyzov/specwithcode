@@ -928,6 +928,39 @@ describe("handoff between two machines", () => {
     }),
   );
 
+  it.effect("drops an unanswered takeover that sleep started instead of sending it again", () =>
+    Effect.gen(function* () {
+      const { source, destination, moves, network, destinationRoot } = yield* scenario();
+      NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
+      network.dropTakeoverRequest = true;
+      yield* handOff(moves).pipe(Effect.flip);
+      // As an earlier release saved it: the lid closed and the takeover got no answer.
+      const saved = source.document.threads[threadId]!;
+      source.document = {
+        ...source.document,
+        threads: {
+          ...source.document.threads,
+          [threadId]: {
+            ...saved,
+            pendingTakeover: {
+              ...saved.pendingTakeover!,
+              request: { ...saved.pendingTakeover!.request, reason: "sleep" },
+            },
+          },
+        },
+      };
+      // The destination answers heartbeats again without having continued the thread.
+      network.dropTakeoverRequest = false;
+      yield* moves.tick;
+      yield* moves.tick;
+      expect(destination.launches).toEqual([]);
+      const record = source.document.threads[threadId];
+      expect(record?.lease?.state).toBe("active");
+      expect(record?.pendingTakeover).toBeNull();
+      expect(record?.continuedOn).toBeNull();
+    }),
+  );
+
   it.effect("resumes an interrupted turn here when the final checkpoint cannot be sent", () =>
     Effect.gen(function* () {
       const { source, destination, moves, fixture, network, destinationRoot } = yield* scenario();
