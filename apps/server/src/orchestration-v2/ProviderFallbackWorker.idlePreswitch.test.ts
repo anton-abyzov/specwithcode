@@ -434,7 +434,7 @@ describe("the idle move before the limit, from the sweep (1089)", () => {
         considered: [],
         settings: {
           ...settings,
-          providerLimitMachineTargets: [{ environmentId: "other" }] as never,
+          providerLimitMachineTargets: [{ environmentId: "other", modelSelection: onCodex }] as never,
           providerLimitTargetOrder: "other-machine-first",
         },
       });
@@ -519,10 +519,13 @@ describe("the idle move before the limit, from the sweep (1089)", () => {
           yield* nextSweep();
           yield* sweep();
           expect(thread.selection).toEqual(onClaude);
+          // Read home under the threshold: the window is over and its hold ends.
+          yield* nextSweep();
+          yield* sweep();
           // Claude passes the threshold in its next window: the move comes again.
-          yield* TestClock.setTime(Date.parse(resetAt) + 60_000);
           state.claudeUsed = 92;
           state.claudeResetAt = nextReset;
+          yield* nextSweep();
           yield* sweep();
           yield* sweep();
         }),
