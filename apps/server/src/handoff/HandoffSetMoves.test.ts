@@ -391,6 +391,61 @@ describe("a thread in a worktree set", () => {
     }),
   );
 
+  it.effect("opens no offer for a source that cannot send a set, and tells it so", () =>
+    Effect.gen(function* () {
+      const rig = yield* makeRig(temporary);
+      const [a, b] = rig.machines as [RigMachine, RigMachine];
+      withSet(rig, t1);
+      rig.addThread(a, t2);
+      yield* a.moves.preflight({ destinationEnvironmentId: b.environmentId, threadIds: [t2] });
+      const plain = replicated(rig, b)[0]!;
+      const there = NodePath.join(b.root, LIB);
+      const commit = git(there, "rev-parse", "HEAD");
+      const sources = [
+        // One repository per thread, though it names an offer.
+        {
+          id: "offer-v2",
+          protocolVersion: HANDOFF_PROTOCOL_VERSION,
+          capabilities: [HANDOFF_V2_CAPABILITY],
+        },
+        // An older protocol, whatever it says it can do.
+        {
+          id: "offer-old",
+          protocolVersion: HANDOFF_PROTOCOL_VERSION - 1,
+          capabilities: HANDOFF_CAPABILITIES,
+        },
+      ];
+      for (const source of sources) {
+        const answer = yield* b.receiver.preflight(caller(a), {
+          sourceEnvironmentId: a.environmentId,
+          protocolVersion: source.protocolVersion,
+          appVersion: "1.0.999",
+          capabilities: source.capabilities,
+          setOffer: { id: source.id, sourceThreadId: t1 },
+          threads: [],
+        } as PeerPreflightRequest);
+        // Naming the capability is agreeing to the set; this answer does not.
+        expect(answer.capabilities).not.toContain(SET_CAPABILITY);
+        const frame = {
+          ...plain,
+          sourceThreadId: t1,
+          setPart: { offer: source.id, repositoryPath: LIB, commit },
+        } as ReplicateMeta;
+        const refusal = yield* b.receiver.replicate(caller(a), frame, null).pipe(Effect.flip);
+        expect(refusal.message).toContain("did not agree");
+        const whole = {
+          ...plain,
+          sourceThreadId: t1,
+          set: { offer: source.id, members: [] },
+        } as ReplicateMeta;
+        const second = yield* b.receiver.replicate(caller(a), whole, null).pipe(Effect.flip);
+        expect(second.message).toContain("did not agree");
+      }
+      expect(appRefs(there)).toBe("");
+      expect(findIncoming(b.document, a.environmentId, t1)).toBeUndefined();
+    }),
+  );
+
   it.effect("sends frames a one-repository receiver cannot place, whatever it answered", () =>
     Effect.gen(function* () {
       const rig = yield* makeRig(temporary);
@@ -743,8 +798,11 @@ describe("the members of a set, each measured on its own", () => {
   const prepare = async (
     at: ReturnType<typeof project>,
     limits = SET_LIMITS,
+    /** `since`: what happens to the folder after its checkpoint. `verdict: false`: an older checkpoint. */
+    how: { readonly since?: () => void; readonly verdict?: boolean } = {},
   ): Promise<ReadonlyArray<PreparedMember>> => {
     const own = await writeCheckpoint({ cwd: at.folder, threadId: "thread-1" });
+    how.since?.();
     return checkpointSetMembers({
       projectRoot: at.root,
       members: at.members,
@@ -755,6 +813,7 @@ describe("the members of a set, each measured on its own", () => {
         branch: own.branch,
         ref: own.ref,
         skipped: [...own.skipped],
+        ...(how.verdict === false ? {} : { overLimit: own.overLimit }),
         requiredSecretPaths: [...own.requiredSecretPaths],
         sourceRoot: { workspaceRoot: own.root } as never,
       },
@@ -808,9 +867,9 @@ describe("the members of a set, each measured on its own", () => {
     expect(await bundleSetMember(members[1]!, [members[1]!.commit], limits)).toBeNull();
   });
 
-  it("stops at an oversized file in the first member that the capped list never showed", async () => {
+  /** 200 nested repositories sort ahead of the file and fill the list a checkpoint keeps. */
+  const crowded = () => {
     const at = project();
-    // 200 nested repositories sort ahead of the file and fill the list a checkpoint keeps.
     const nested = NodePath.join(at.folder, "a000");
     NodeFS.mkdirSync(nested);
     git(nested, "init", "-q", "-b", "main");
@@ -823,6 +882,11 @@ describe("the members of a set, each measured on its own", () => {
       });
     }
     write(at.folder, "zz-video.bin", ELEVEN_MB);
+    return at;
+  };
+
+  it("stops at an oversized file in the first member that the capped list never showed", async () => {
+    const at = crowded();
     const own = await writeCheckpoint({ cwd: at.folder, threadId: "thread-1" });
     // What the thread's stored checkpoint holds: the first 200 skips, none of them the file.
     expect(own.skipped).toHaveLength(200);
@@ -830,6 +894,25 @@ describe("the members of a set, each measured on its own", () => {
 
     await expect(prepare(at)).rejects.toThrow(
       /^The project folder's own repository: zz-video\.bin is 11 MB/,
+    );
+  });
+
+  it("judges the checkpoint it sends, not the folder as it is a moment later", async () => {
+    const at = crowded();
+    // The checkpoint left the 11 MB file out. An editor then replaces it with a small one.
+    const since = () => write(at.folder, "zz-video.bin", "small now\n");
+
+    await expect(prepare(at, SET_LIMITS, { since })).rejects.toThrow(
+      /^The project folder's own repository: zz-video\.bin is 11 MB/,
+    );
+  });
+
+  it("stays when an older checkpoint cannot say whether it left a file out", async () => {
+    const at = crowded();
+    const since = () => write(at.folder, "zz-video.bin", "small now\n");
+
+    await expect(prepare(at, SET_LIMITS, { since, verdict: false })).rejects.toThrow(
+      /does not say whether a file was over the limit/,
     );
   });
 
@@ -991,6 +1074,34 @@ describe("the members of a set, each measured on its own", () => {
       expect(read(folder, "app.ts")).toBe("export const one = 2;\n");
     });
 
+    it("keeps a cut attempt whose member holds a staged edit, though its files match", async () => {
+      const { folder, build } = await arrived();
+      await build();
+      NodeFS.rmSync(worktreeSetManifestPath(folder, NodePath));
+      const lib = NodePath.join(folder, LIB);
+      // Staged, then the file put back as the checkpoint has it: only the index holds the edit.
+      write(lib, "draft.ts", "export const staged = true;\n");
+      git(lib, "add", "draft.ts");
+      write(lib, "draft.ts", "export {};\n");
+
+      await expect(build()).rejects.toThrow(/^packages\/lib: /);
+
+      expect(git(lib, "show", ":draft.ts")).toBe("export const staged = true;");
+    });
+
+    it("keeps a cut attempt whose member holds a file Git ignores", async () => {
+      const { there, folder, build } = await arrived();
+      await build();
+      NodeFS.rmSync(worktreeSetManifestPath(folder, NodePath));
+      const lib = NodePath.join(folder, LIB);
+      NodeFS.appendFileSync(NodePath.join(there, LIB, ".git", "info", "exclude"), "*.local\n");
+      write(lib, "notes.local", "kept by hand\n");
+
+      await expect(build()).rejects.toThrow(/^packages\/lib: /);
+
+      expect(read(lib, "notes.local")).toBe("kept by hand\n");
+    });
+
     const TARGET = "refs/specwithcode/incoming/source-1/thread-1";
     const landed = (root: string) => git(root, "for-each-ref", "--format=%(refname)", TARGET);
     const frame = (there: string, set: ReplicateSet) => ({
@@ -1042,6 +1153,41 @@ describe("the members of a set, each measured on its own", () => {
       await whole!.undo();
       expect(landed(there)).toBe("");
       expect(landed(NodePath.join(there, LIB))).toBe("");
+    });
+
+    /** A receiver that stops after its first ref is written, and the one started after it. */
+    const stoppedMidway = async (stored: boolean) => {
+      const { at, there, set } = await arrived();
+      const directory = NodePath.join(at.base, "state");
+      const lib = set.members[1]!;
+      let reached = () => {};
+      const stopped = new Promise<void>((resolve) => (reached = resolve));
+      const first = makeSetOffers(undefined, {
+        directory,
+        // The process dies here: nothing after this line runs, not even a rollback.
+        afterRef: () => (reached(), new Promise<void>(() => {})),
+      });
+      await first.open("source-1", "thread-1", "offer-1");
+      const part = { offer: "offer-1", repositoryPath: LIB, commit: lib.commit };
+      await first.take({ ...frame(there, set), part });
+      const cut = first.take({ ...frame(there, set), set });
+      await Promise.race([stopped, cut]);
+      const restarted = makeSetOffers(undefined, { directory, stored: () => stored });
+      await restarted.open("source-1", "thread-2", "offer-2");
+      return { there };
+    };
+
+    it("after a restart, takes back the ref a stopped receiver had already written", async () => {
+      const { there } = await stoppedMidway(false);
+
+      expect(landed(there)).toBe("");
+      expect(landed(NodePath.join(there, LIB))).toBe("");
+    });
+
+    it("after a restart, keeps the refs of a thread whose record was stored", async () => {
+      const { there } = await stoppedMidway(true);
+
+      expect(landed(there)).toBe(TARGET);
     });
 
     it("keeps no copy of the thread while one member's work is missing", async () => {
