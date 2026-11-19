@@ -315,9 +315,19 @@ try {
         /Served by (\S+) in claude process (\d+)/g,
       ),
     ].map((match) => ({ email: match[1], pid: Number(match[2]) }));
+  let asked = 0;
   /** Sends a message and reads which account and process served it. */
   const ask = async (text) => {
-    const before = (await servedLines()).length;
+    // A reopened conversation loads its history first: count only once all earlier replies show.
+    const before = asked;
+    await page.waitForFunction(
+      (count) =>
+        (document.body.innerText.match(/Served by \S+ in claude process \d+/g)?.length ?? 0) >=
+        count,
+      before,
+      { timeout: 60_000 },
+    );
+    asked += 1;
     await send(text);
     await page.waitForFunction(
       (count) =>
@@ -401,6 +411,13 @@ try {
     (c) => c.apiKeyBilling || /Console/i.test(`${c.label} ${c.usageMessage}`),
   );
   step("Console profile sign-in, no click", consoleRead);
+  // The next turn must bill the Console profile, not keep the subscription's process.
+  await openProject();
+  const turn3 = await ask("Which account serves this turn now?");
+  step("turn 3 after the Console sign-in", turn3);
+  if (turn3.email !== "api@console.example.invalid")
+    receipt.failures.push(`turn 3 after the Console sign-in served by ${turn3.email}`);
+  await shot("3-console-composer-turn.png");
   await surfaces("3-console");
   consoleSignOut();
   const backRead = await waitFor(
@@ -408,6 +425,12 @@ try {
     (c) => !c.apiKeyBilling && c.email === PERSONAL.emailAddress && !/Console/i.test(`${c.label}`),
   );
   step("Console profile sign-out, no click", backRead);
+  await openProject();
+  const turn4 = await ask("And after the Console sign-out?");
+  step("turn 4 after the Console sign-out", turn4);
+  if (turn4.email !== PERSONAL.emailAddress)
+    receipt.failures.push(`turn 4 after the Console sign-out served by ${turn4.email}`);
+  await shot("4-personal-again-composer-turn.png");
   await surfaces("4-personal-again");
 } catch (error) {
   receipt.failures.push(String(error?.stack ?? error).slice(0, 2000));

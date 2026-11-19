@@ -4,11 +4,15 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
+import type { ServerProvider } from "@specweave-studio/contracts";
+
 import {
   claudeSubscriptionKey,
+  claudeSubscriptionReadOf,
   identitiesDiffer,
   makeSubscriptionMemory,
   nextIdentity,
+  subscriptionChangedSince,
   subscriptionKeyOf,
 } from "./subscriptionIdentity.ts";
 
@@ -62,6 +66,54 @@ describe("subscription identity", () => {
     assert.deepStrictEqual(nextIdentity({ key: "k1", email: "e" }, { email: "f" }), {
       email: "f",
     });
+  });
+});
+
+describe("claudeSubscriptionReadOf", () => {
+  const subscriptionKey = `claude:sha256:${"a".repeat(64)}`;
+  const snapshot = (auth: object, usageLimits?: object) =>
+    ({ auth, ...(usageLimits ? { usageLimits } : {}) }) as unknown as ServerProvider;
+  const personal = snapshot(
+    { status: "authenticated", type: "pro", email: "me@x.dev" },
+    { checkedAt: "2026-11-19T10:00:00.000Z", windows: [], subscriptionKey },
+  );
+  // The Console read keeps the subscription's windows (and key) as history.
+  const consoleRead = (email: string) =>
+    snapshot(
+      {
+        status: "authenticated",
+        type: "apiKey",
+        apiKeyBilling: true,
+        email,
+        label: "Claude Console (API Usage Billing)",
+      },
+      { checkedAt: "2026-11-19T10:05:00.000Z", windows: [], subscriptionKey },
+    );
+
+  it("tells a Console sign-in from the subscription it outranks, both ways", () => {
+    const opened = claudeSubscriptionReadOf(personal);
+    const console = claudeSubscriptionReadOf(consoleRead("api@x.dev"));
+    assert.strictEqual(opened.key, subscriptionKey);
+    assert.match(console.key ?? "", /^claude-api:sha256:[a-f0-9]{64}$/);
+    assert.notInclude(console.key ?? "", "x.dev");
+    assert.isTrue(subscriptionChangedSince(opened, 0, console));
+    assert.isTrue(subscriptionChangedSince(console, 0, opened));
+  });
+
+  it("tells two Console accounts apart and keeps one the same", () => {
+    const one = claudeSubscriptionReadOf(consoleRead("api@x.dev"));
+    assert.isFalse(
+      subscriptionChangedSince(one, 0, claudeSubscriptionReadOf(consoleRead("API@x.dev"))),
+    );
+    assert.isTrue(
+      subscriptionChangedSince(one, 0, claudeSubscriptionReadOf(consoleRead("other@x.dev"))),
+    );
+  });
+
+  it("names nothing for a read that is not signed in, so no process is replaced", () => {
+    const failed = claudeSubscriptionReadOf(snapshot({ status: "unknown" }));
+    assert.isUndefined(failed.key);
+    assert.isFalse(subscriptionChangedSince(claudeSubscriptionReadOf(personal), 0, failed));
   });
 });
 

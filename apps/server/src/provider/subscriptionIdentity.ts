@@ -52,12 +52,24 @@ export interface SubscriptionRead {
   readonly changedAt?: string | undefined;
 }
 
-/** The subscription a snapshot's usage read names, for `subscriptionChangedSince`. */
-export function subscriptionReadOf(snapshot: ServerProvider): SubscriptionRead {
-  return {
-    key: subscriptionKeyOf(snapshot.usageLimits),
-    changedAt: snapshot.usageLimits?.accountChangedAt,
-  };
+/**
+ * The Claude sign-in a snapshot names, for replacing a `claude` process that
+ * still holds another one. A sign-in billed to API credits (a Console profile,
+ * an API key) is keyed by its account, since it has no subscription key and
+ * its usage read keeps the last subscription's windows as history. A read that
+ * failed or is not signed in names nothing, which never replaces a process.
+ */
+export function claudeSubscriptionReadOf(snapshot: ServerProvider): SubscriptionRead {
+  const changedAt = snapshot.usageLimits?.accountChangedAt;
+  if (snapshot.auth.status !== "authenticated") return { changedAt };
+  if (snapshot.auth.apiKeyBilling === true || snapshot.auth.type === "apiKey") {
+    const account = JSON.stringify([
+      snapshot.auth.email?.trim().toLowerCase() ?? null,
+      snapshot.auth.label ?? null,
+    ]);
+    return { key: `claude-api:sha256:${sha256(account)}`, changedAt };
+  }
+  return { key: subscriptionKeyOf(snapshot.usageLimits), changedAt };
 }
 
 /**

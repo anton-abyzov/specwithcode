@@ -56,7 +56,7 @@ import {
 } from "../ClaudeProvider.ts";
 import { makeClaudeCliAuth } from "../ClaudeCliLogin.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
-import { makeSubscriptionMemory, subscriptionReadOf } from "../subscriptionIdentity.ts";
+import { claudeSubscriptionReadOf, makeSubscriptionMemory } from "../subscriptionIdentity.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import { resolveClaudeModelCatalog, scopeClaudeModelCatalog } from "../ClaudeModelCatalog.ts";
 import { createClaudeNativeCatalog } from "../ClaudeNativeModels.ts";
@@ -214,7 +214,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
           scopedLimitNames,
           onUsageLimits: (update) => snapshot.applyUsageLimits(update),
           subscription: Effect.suspend(() => snapshot.getSnapshot).pipe(
-            Effect.map(subscriptionReadOf),
+            Effect.map(claudeSubscriptionReadOf),
           ),
           modelCatalog: () => scopeClaudeModelCatalog(catalogState.current(), config.customModels),
         },
