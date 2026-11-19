@@ -7,6 +7,7 @@
 import { assert, it } from "@effect/vitest";
 import type { ScheduledTask } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
@@ -315,18 +316,22 @@ it.effect("a list never shows one definition's fields with another's hash", () =
       taskInput({ id: ROUTINE, projectId: alpha.projectId, prompt: NEW_PROMPT }),
     );
     // The runner's new definition reaches beta after beta's list read its rows
-    // and before it reads what each row is to its runner. It runs on its own,
-    // as another request does.
-    const refresh: { fiber: Fiber.Fiber<unknown, unknown> | null } = { fiber: null };
+    // and before it reads what each row is to its runner. It is another
+    // request: started here, outside the list's read, and held until then.
+    const gate = yield* Deferred.make<void>();
+    const refresh = yield* Effect.forkDetach(
+      Deferred.await(gate).pipe(Effect.andThen(settle(alpha))),
+    );
+    let reached = false;
     beta.state.beforeRecordsRead = Effect.gen(function* () {
-      const fiber = yield* Effect.forkDetach(settle(alpha));
-      refresh.fiber = fiber;
-      for (let turn = 0; turn < 2_000 && fiber.pollUnsafe() === undefined; turn++)
+      reached = true;
+      yield* Deferred.succeed(gate, undefined);
+      for (let turn = 0; turn < 2_000 && refresh.pollUnsafe() === undefined; turn++)
         yield* Effect.yieldNow;
     });
     const form = yield* listed(beta);
-    assert.isNotNull(refresh.fiber);
-    yield* Fiber.await(refresh.fiber!);
+    assert.isTrue(reached);
+    yield* Fiber.await(refresh);
     const after = yield* listed(beta);
     assert.equal(after.prompt, NEW_PROMPT);
     // Old fields with the old hash, or new with new: never one of each.

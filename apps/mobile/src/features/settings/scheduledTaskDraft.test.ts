@@ -481,7 +481,7 @@ describe("the routines screen", () => {
     expect(screen).toContain("remove({ environmentId, input: routineDeleteInput(task) })");
     expect(screen).toContain("...routineSeen(draft.task),");
     // No other place in the screen writes one of these inputs by hand.
-    expect(screen).not.toMatch(/input: \{ id: task\.id/);
+    expect(screen).not.toMatch(/(setEnabled|remove)\(\{[^)]*input: \{/);
     expect(screen.match(/setEnabled\(\{/g)).toHaveLength(1);
     expect(screen.match(/remove\(\{/g)).toHaveLength(1);
     expect(screen.match(/await upsert\(/g)).toHaveLength(1);
