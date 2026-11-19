@@ -49,7 +49,7 @@ import {
 
 const temporary: Array<string> = [];
 afterEach(() => {
-  for (const path of temporary.splice(0)) NodeFS.rmSync(path, { recursive: true, force: true });
+  for (const path of temporary.splice(0)) NodeFS.rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 const t1 = ThreadId.make("thread:one");
