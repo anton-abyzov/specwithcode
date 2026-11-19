@@ -152,16 +152,22 @@ describe("a handed-off worker's result", () => {
         expect(s.documents.source.threads[worker]?.lease?.state).toBe("active");
         expect(yield* rows).toMatchObject([{ state: "disposed", deliveredRunIds: [] }]);
         expect(s.kept).toEqual([]);
-        // The same thread is handed off again at the same epoch, and this time it is taken.
+        // The same thread is handed off again, and this time it is taken. The refused
+        // epoch is used up, so the move that goes through has a follow of its own.
         s.network.refuseTakeover = false;
         const moved = yield* handOff;
         const { run } = s.lastRun();
-        yield* settled(life.world, rows, (current) => current[0]?.followedRunId === run.id);
+        yield* settled(life.world, rows, (current) =>
+          current.some((row) => row.followedRunId === run.id),
+        );
         expect(s.kept).toEqual([]);
         yield* s.finish();
-        const current = yield* settled(life.world, rows, (all) => all[0]?.state === "idle");
-        expect(current).toHaveLength(1);
-        expect(current[0]?.remoteThreadId).toBe(moved.threadId);
+        const current = yield* settled(life.world, rows, (all) =>
+          all.some((row) => row.state === "idle"),
+        );
+        const live = current.filter((row) => row.state !== "disposed");
+        expect(live).toHaveLength(1);
+        expect(live[0]?.remoteThreadId).toBe(moved.threadId);
         expect(s.kept).toHaveLength(1);
       }).pipe(Effect.provide(life.layer));
     },
