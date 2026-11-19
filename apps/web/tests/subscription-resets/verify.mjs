@@ -210,6 +210,8 @@ try {
   await check("Copilot shows its amounts, its monthly note and the day set under its subscription", async () => {
     const copilot = page.locator('[data-subscription-row="copilot"]');
     const text = await copilot.innerText();
+    assert.match(text, /Premium requests/);
+    assert.doesNotMatch(text, /0-hour/);
     assert.match(text, /41% left \(885 of 1,500 premium requests\)/);
     assert.match(text, /Monthly allowance\. Resets on the first of the month at 00:00 UTC/);
     assert.match(text, /Renews Nov 28 \(set by you\)/);
