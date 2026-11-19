@@ -24,9 +24,9 @@
 //   Result: INVALID  with no click total: the run proves nothing and is
 //                    repeated. Setup did not finish (access, window,
 //                    connection), the installed app has no iPhone Mirroring
-//                    path, another app kept taking the front (a click on
-//                    another window does), or a failed run started at a
-//                    1-minute load above 48.
+//                    path, another app kept the front (a step another app
+//                    interrupts is paused and repeated, 3 times at most), or
+//                    a failed run started at a 1-minute load above 48.
 //
 // Before a live run: the phone is near the Mac, locked, with its language set
 // to English; iPhone Mirroring shows the phone (connected) on the main
@@ -48,10 +48,10 @@ export const MIRRORING_BUNDLE_ID = "com.apple.ScreenContinuity";
 /**
  * One sample per line: lowercase, capitals, digits, shifted symbols, a doubled
  * letter. Text recognition cannot tell c, o, s, v, w, x and z from their
- * capitals, reads q as "ą", and confuses "!" with "l" and "¡" with "i", so the
- * letter samples avoid those and the symbols are "@" and "#".
+ * capitals, reads q as "ą" and z as "2", and confuses "!" with "l" and "¡" with
+ * "i", so the samples avoid those (and s/5, o/0) and the symbols are "@" and "#".
  */
-export const TYPE_SAMPLES = ["hbdt", "QHBR", "4207", "x@y#z", "hbbd"];
+export const TYPE_SAMPLES = ["hbdt", "QHBR", "4207", "x@y#h", "hbbd"];
 /** The key repeat check types REPEAT_BASE + REPEAT_TAIL and deletes from the tail. */
 export const REPEAT_BASE = "QHBR";
 export const REPEAT_TAIL = "4207";
@@ -66,6 +66,8 @@ export const DEFAULTS = {
   listApp: "Settings",
   settleMs: 900,
   openMs: 2_200,
+  // How long a paused step waits for iPhone Mirroring to be back in front.
+  pauseMs: 60_000,
   // Spotlight shows its suggestions, and an inline one after the text, about a second after a key.
   suggestMs: 2_500,
   minScrollPx: 20,
@@ -88,8 +90,10 @@ const INPUT_TOOLS = new Set([
   "computer_scroll",
   "computer_type",
 ]);
-/** How often the check brings iPhone Mirroring forward, or retries, before the run is INVALID. */
+/** How often a step is paused by another app in front and repeated before the run is INVALID. */
 export const FRONT_TRIES = 3;
+/** Another app in front: the step is paused, then repeated from its start. */
+class FrontChanged extends Error {}
 /** Refusals that sent nothing because another app was in front: safe to try again. */
 const SENT_NOTHING = [
   "cannot click or type in SpecWithCode itself",
@@ -149,11 +153,13 @@ const sameChar = (typed, read) =>
   (read !== undefined &&
     SAME_SHAPE.has(typed.toLowerCase()) &&
     typed.toLowerCase() === read.toLowerCase());
-// What may follow the typed text in the field: nothing, the cursor, or
-// Spotlight's inline suggestion as the run's pictures show it
-// ("zQ4207- Ask Siri", "ZQZXV - Ask Siri"). Anything else may be typed text.
+// What may follow the typed text in the field: nothing, the cursor, or one of
+// Spotlight's inline suggestions the runs have shown ("zQ4207- Ask Siri",
+// "hbdt - HDToday", "4207 - Open"). Anything else may be typed text, so a new
+// suggestion reads UNSURE until it is added here.
 const NOTHING_AFTER = /^\|?$/;
-const KNOWN_SUGGESTION = /^\|? ?-\s+Ask Siri$/;
+export const SUGGESTIONS = ["Ask Siri", "HDToday", "Open"];
+const KNOWN_SUGGESTION = new RegExp(`^\\|? ?-\\s+(?:${SUGGESTIONS.join("|")})$`);
 
 /**
  * A field reading against typed text: undefined when it does not start with
@@ -404,10 +410,14 @@ export async function runCheck(deps, options = {}) {
   const [tabA, tabB] = config.tabs;
   const lines = [];
   const checks = [];
-  const log = (line) => {
+  // While a step runs, its lines wait here: a repeated step's results are
+  // written as not counted, so the log never scores an attempt twice.
+  let pending;
+  const emit = (line) => {
     lines.push(line);
     deps.onLine?.(line);
   };
+  const log = (line) => (pending === undefined ? emit(line) : pending.push(line));
   const check = (name, ok, detail) => {
     // With another app taking the front, a failed step says nothing about the product.
     if (!ok && frontLost !== undefined) return unsure(name, detail) ?? false;
@@ -423,62 +433,120 @@ export async function runCheck(deps, options = {}) {
   const note = (detail) => log(`NOTE ${detail}`);
 
   let lastFrontmost;
-  // Set when another app kept taking the front: the run then proves nothing.
+  // Set when another app kept the front: the run then proves nothing.
   let frontLost;
+  // From setup on, every input and reading needs iPhone Mirroring in front.
+  let guarding = false;
   const stamp = () => new Date().toISOString().slice(11, 23);
   const frontmost = async () => (deps.frontmost === undefined ? undefined : deps.frontmost());
-  // Before each input call the check brings iPhone Mirroring forward when
-  // another app is there (a click on another window takes the front). The
-  // product still decides where input goes; this only keeps Mirroring in front.
-  const bringForward = async (tool) => {
-    // Once another app was seen in front, only a read showing iPhone Mirroring
-    // ends the loss; anything else, a failed read or open included, is that loss.
-    let other;
+  const lose = (reason) => {
+    frontLost ??= `${reason}; keep the Mac's trackpad and keyboard untouched while the check runs`;
+    return new Error(frontLost);
+  };
+  // Another app in front pauses the step: it is repeated from its start once
+  // iPhone Mirroring is back, so a step is never judged across a front change.
+  const frontChange = (reason) => new FrontChanged(reason);
+  /** Waits for iPhone Mirroring to be in front on two readings in a row, opening it as needed. */
+  const waitForMirroring = async (name) => {
+    let waited = 0;
+    let steady = 0;
+    let other = "another app";
     try {
-      for (let attempt = 1; ; attempt++) {
+      while (steady < 2) {
         const app = await frontmost();
-        if (app === MIRRORING_APP || (app === undefined && other === undefined)) return;
-        if (app === undefined) throw new Error(`the app in front could not be read`);
-        other = app;
-        if (attempt > FRONT_TRIES) break;
-        note(
-          `${stamp()} ${app} was in front before ${tool}; bringing ${MIRRORING_APP} forward (${attempt} of ${FRONT_TRIES})`,
-        );
-        await deps.call("computer_open", { application: MIRRORING_APP });
+        if (app === MIRRORING_APP || app === undefined) steady++;
+        else {
+          steady = 0;
+          other = app;
+          if (waited > config.pauseMs) {
+            throw lose(`${other} kept the front for ${config.pauseMs / 1000} s during ${name}`);
+          }
+          await deps.call("computer_open", { application: MIRRORING_APP });
+        }
         await deps.sleep(config.settleMs);
+        waited += config.settleMs;
       }
     } catch (error) {
-      if (other === undefined) throw error;
-      throw lose(
-        `${other} was in front before ${tool} and bringing ${MIRRORING_APP} forward failed (${error.message})`,
-      );
+      if (frontLost !== undefined) throw error;
+      throw lose(`bringing ${MIRRORING_APP} back during ${name} failed (${error.message})`);
     }
-    throw lose(`${other} took the front back ${FRONT_TRIES} times before ${tool}`);
   };
-  const lose = (reason) => {
-    frontLost ??= `${reason}; keep hands off the Mac while the check runs`;
-    return new Error(frontLost);
+  /** Runs one step; a front change pauses it and runs it again from the start. */
+  const step = async (name, run) => {
+    for (let attempt = 1; ; attempt++) {
+      const mark = checks.length;
+      const outer = pending;
+      pending = [];
+      const flush = (void_) => {
+        const held = pending;
+        pending = outer;
+        for (const line of held) {
+          log(
+            void_ && /^(PASS|FAIL|UNSURE) /.test(line)
+              ? `NOTE not counted, the step was repeated: ${line}`
+              : line,
+          );
+        }
+      };
+      try {
+        // A repeat starts from what the phone shows now, never from before the change.
+        if (attempt > 1) {
+          try {
+            seen = await look();
+          } catch (error) {
+            if (error instanceof FrontChanged) throw error;
+            // Without a reading after the change the step cannot be repeated: that is the loss.
+            throw lose(
+              `the first reading after ${MIRRORING_APP} came back during ${name} failed (${error.message})`,
+            );
+          }
+        }
+        const value = await run();
+        flush(false);
+        return value;
+      } catch (error) {
+        const repeat = error instanceof FrontChanged && frontLost === undefined;
+        flush(repeat);
+        if (!repeat) throw error;
+        checks.length = mark;
+        if (attempt >= FRONT_TRIES) {
+          throw lose(`${error.message}, ${FRONT_TRIES} times in a row during ${name}`);
+        }
+        note(
+          `${stamp()} paused ${name}: ${error.message}; repeating it once ${MIRRORING_APP} is back`,
+        );
+        await waitForMirroring(name);
+      }
+    }
   };
   const call = async (tool, args) => {
     let result;
     if (!INPUT_TOOLS.has(tool)) result = await deps.call(tool, args);
     else {
       if (frontLost !== undefined) throw new Error(frontLost);
-      for (let attempt = 1; result === undefined; attempt++) {
-        await bringForward(tool);
+      if (guarding) {
+        let app;
         try {
-          result = await deps.call(tool, args);
+          app = await frontmost();
         } catch (error) {
-          const message = String(error?.message);
-          // Part of it may be on the phone: never send it again.
-          if (message.includes(LEFT_FRONT))
-            throw lose(`${MIRRORING_APP} left the front during ${tool}`);
-          if (!SENT_NOTHING.some((phrase) => message.includes(phrase))) throw error;
-          if (attempt >= FRONT_TRIES) {
-            throw lose(`${tool} was refused ${FRONT_TRIES} times with another app in front`);
-          }
-          note(`${stamp()} ${tool} was refused with nothing sent (${message}); trying again`);
+          throw frontChange(`the app in front could not be read before ${tool} (${error.message})`);
         }
+        if (app !== undefined && app !== MIRRORING_APP) {
+          throw frontChange(`${app} was in front before ${tool}`);
+        }
+      }
+      try {
+        result = await deps.call(tool, args);
+      } catch (error) {
+        const message = String(error?.message);
+        if (message.includes(LEFT_FRONT))
+          throw frontChange(`${MIRRORING_APP} left the front during ${tool}`);
+        if (SENT_NOTHING.some((phrase) => message.includes(phrase))) {
+          throw frontChange(
+            `${tool} was refused with another app in front, nothing sent (${message})`,
+          );
+        }
+        throw error;
       }
     }
     if (typeof result?.data?.frontmostApplication === "string") {
@@ -491,6 +559,10 @@ export async function runCheck(deps, options = {}) {
   /** A screenshot through the product, the Mirroring window in it, and the text inside that window. */
   const look = async () => {
     const shot = await call("computer_screenshot", {});
+    const shown = shot.data?.frontmostApplication;
+    if (guarding && typeof shown === "string" && shown !== MIRRORING_APP) {
+      throw frontChange(`${shown} was in front in the screenshot`);
+    }
     const size = shot.data?.display;
     const found = size === undefined ? undefined : await deps.window(size);
     if (found === undefined) return { window: undefined, lines: [], shot };
@@ -616,31 +688,40 @@ export async function runCheck(deps, options = {}) {
   setup(`connected: ${summary(seen)}`);
 
   // 2. The installed app has the iPhone Mirroring path -------------------------------
+  guarding = true;
+  let probe;
   try {
-    await call("computer_key", { keys: "cmd+1" });
-    await deps.sleep(config.settleMs);
-    await call("computer_key", { keys: "cmd+3" });
-    await deps.sleep(config.settleMs);
+    probe = await step("the path probe", async () => {
+      await call("computer_key", { keys: "cmd+1" });
+      await deps.sleep(config.settleMs);
+      await call("computer_key", { keys: "cmd+3" });
+      await deps.sleep(config.settleMs);
+      try {
+        await call("computer_type", { text: PATH_PROBE });
+      } catch (error) {
+        if (error instanceof FrontChanged) throw error;
+        return { refused: String(error?.message).includes(PATH_REFUSAL), reason: error.message };
+      }
+      // An app without the path pasted the probe: at most a stray key in the search field.
+      await call("computer_key", { keys: "backspace", repeat: 2 }).catch(() => undefined);
+      return { took: true };
+    });
   } catch (error) {
     return invalid(`opening the phone's Spotlight failed: ${error.message}`);
   }
-  try {
-    await call("computer_type", { text: PATH_PROBE });
-    // An app without the path pasted the probe: at most a stray key in the search field.
-    await call("computer_key", { keys: "backspace", repeat: 2 }).catch(() => undefined);
+  if (probe.took) {
     return invalid(
       `the installed desktop app has no iPhone Mirroring path: computer_type took "${PATH_PROBE}" instead of refusing it. It went to the phone's Spotlight search field, where a stray key is harmless, and was cleared with backspace`,
     );
-  } catch (error) {
-    if (!String(error?.message).includes(PATH_REFUSAL)) {
-      return invalid(`the iPhone Mirroring path probe failed for another reason: ${error.message}`);
-    }
-    check(
-      "mirroring path",
-      true,
-      `computer_type refused "${PATH_PROBE}" before pressing any key, as only the iPhone Mirroring path does; nothing reached the phone`,
-    );
   }
+  if (!probe.refused) {
+    return invalid(`the iPhone Mirroring path probe failed for another reason: ${probe.reason}`);
+  }
+  check(
+    "mirroring path",
+    true,
+    `computer_type refused "${PATH_PROBE}" before pressing any key, as only the iPhone Mirroring path does; nothing reached the phone`,
+  );
 
   // 3. Typing into Spotlight on the phone -----------------------------------------
   // Each step starts from a fresh, emptied search field, so what one step left
@@ -655,29 +736,31 @@ export async function runCheck(deps, options = {}) {
   };
   for (const sample of TYPE_SAMPLES) {
     try {
-      await freshSearch();
-      await call("computer_type", { text: sample });
-      await deps.sleep(config.settleMs);
-      seen = await look();
-      const fields = seen.lines
-        .map((line) => ({ line, field: readField(line.text, sample) }))
-        .filter((entry) => entry.field !== undefined && entry.field.count === 0);
-      const found = fields.some((entry) => entry.field.after !== "other");
-      const unclear = fields.find((entry) => entry.field.after === "other");
-      if (!found && unclear !== undefined) {
-        unsure(
-          `type "${sample}"`,
-          `the field reads ${JSON.stringify(unclear.line.text)}: the text then more that is neither the cursor nor a known suggestion, so it cannot be told whether more was typed; ${front()}`,
-        );
-      } else {
-        check(
-          `type "${sample}"`,
-          found,
-          found
-            ? `shown on the phone; ${front()}`
-            : `not shown as typed; read ${describeLines(seen.lines.slice(0, 12))}; ${front()}`,
-        );
-      }
+      await step(`type "${sample}"`, async () => {
+        await freshSearch();
+        await call("computer_type", { text: sample });
+        await deps.sleep(config.settleMs);
+        seen = await look();
+        const fields = seen.lines
+          .map((line) => ({ line, field: readField(line.text, sample) }))
+          .filter((entry) => entry.field !== undefined && entry.field.count === 0);
+        const found = fields.some((entry) => entry.field.after !== "other");
+        const unclear = fields.find((entry) => entry.field.after === "other");
+        if (!found && unclear !== undefined) {
+          unsure(
+            `type "${sample}"`,
+            `the field reads ${JSON.stringify(unclear.line.text)}: the text then more that is neither the cursor nor a known suggestion, so it cannot be told whether more was typed; ${front()}`,
+          );
+        } else {
+          check(
+            `type "${sample}"`,
+            found,
+            found
+              ? `shown on the phone; ${front()}`
+              : `not shown as typed; read ${describeLines(seen.lines.slice(0, 12))}; ${front()}`,
+          );
+        }
+      });
     } catch (error) {
       check(`type "${sample}"`, false, `failed: ${error.message}`);
     }
@@ -690,83 +773,85 @@ export async function runCheck(deps, options = {}) {
   // nothing passes only if the suggestion is seen gone after it, and a repeat
   // that removed one fewer than asked while a suggestion showed is UNSURE.
   try {
-    await freshSearch();
-    await call("computer_type", { text: REPEAT_BASE + REPEAT_TAIL });
-    const reads = [];
-    const read = async (waitMs = config.suggestMs) => {
-      await deps.sleep(waitMs);
-      seen = await look();
-      const line = seen.lines.find((entry) => readField(entry.text, REPEAT_BASE, true));
-      reads.push(line?.text);
-      const field = line === undefined ? undefined : readField(line.text, REPEAT_BASE, true);
-      return field === undefined
-        ? undefined
-        : {
-            tail: field.count,
-            suggestion: field.after === "suggestion",
-            other: field.after === "other",
-          };
-    };
-    const typed = await read();
-    await call("computer_key", { keys: "backspace" });
-    // Read soon, before Spotlight could search again.
-    const afterOne = await read(config.settleMs);
-    // No input since: what shows now is what the repeat meets.
-    const before = await read();
-    await call("computer_key", { keys: "backspace", repeat: REPEAT_PRESSES });
-    const afterRepeat = await read(config.settleMs);
-    const shown = reads.map((text) => (text === undefined ? "nothing" : JSON.stringify(text)));
-    const yes = (flag) => (flag ? "yes" : "no");
-    const usable = (entry) => entry !== undefined && !entry.other;
-    // Each call is judged on its own before and after readings, so doubt about
-    // one never hides a failure the other shows.
-    // The single press: arrived when it removed one character; lost when it
-    // removed none with no suggestion showing, or more than one; otherwise not
-    // judged, since a suggestion may have taken it without removing text.
-    let single = "not judged";
-    if (usable(typed) && usable(afterOne)) {
-      const removed = typed.tail - afterOne.tail;
-      if (removed === 1) single = "arrived";
-      else if (removed > 1 || removed < 0 || !typed.suggestion) single = "lost";
-    }
-    // The repeat: arrived when it removed REPEAT_PRESSES characters; lost when it
-    // removed fewer than the digits it could reach (one fewer with a suggestion),
-    // or more than it pressed; otherwise unsure.
-    let repeat;
-    if (afterRepeat === undefined || before === undefined) repeat = "unreadable";
-    else if (!usable(before) || !usable(afterRepeat)) repeat = "unsure";
-    else {
-      const removed = before.tail - afterRepeat.tail;
-      const least = Math.min(REPEAT_PRESSES, before.tail) - (before.suggestion ? 1 : 0);
-      if (removed < least || removed > REPEAT_PRESSES) repeat = "lost";
-      else if (removed === REPEAT_PRESSES) repeat = "arrived";
-      else repeat = "unsure";
-    }
-    const mistyped = usable(typed) && typed.tail !== REPEAT_TAIL.length;
-    const count = (from, to) =>
-      usable(from) && usable(to) ? `${from.tail - to.tail}` : "uncounted";
-    const detail = `field read ${shown.join(" -> ")}; one backspace removed ${count(typed, afterOne)} (suggestion before ${yes(typed?.suggestion)}, after ${yes(afterOne?.suggestion)}): ${single}; backspace repeat ${REPEAT_PRESSES} removed ${count(before, afterRepeat)} (suggestion before ${yes(before?.suggestion)}): ${repeat}`;
-    const changedAlone =
-      usable(afterOne) && usable(before) && before.tail !== afterOne.tail
-        ? "; the field also changed with no key pressed"
-        : "";
-    if (mistyped || single === "lost" || repeat === "lost" || repeat === "unreadable") {
-      const why = mistyped
-        ? `"${REPEAT_BASE}${REPEAT_TAIL}" was not typed as sent`
-        : "a press did not arrive or the field was gone";
-      check("key repeat", false, `${detail}${changedAlone}; ${why}`);
-    } else if (repeat === "arrived" && changedAlone === "") {
-      check(
-        "key repeat",
-        true,
-        `${detail}; every press of the repeat arrived${single === "arrived" ? ", and the single press too" : ` (the single press is not judged: ${usable(typed) && usable(afterOne) ? "a suggestion showed and no text was removed" : "its readings could not be counted"})`}`,
-      );
-    } else {
-      unsure(
-        "key repeat",
-        `${detail}${changedAlone}; ${repeat === "unsure" ? "the repeat's readings cannot show whether every press arrived" : "the field changed on its own between the two calls"}`,
-      );
-    }
+    await step("key repeat", async () => {
+      await freshSearch();
+      await call("computer_type", { text: REPEAT_BASE + REPEAT_TAIL });
+      const reads = [];
+      const read = async (waitMs = config.suggestMs) => {
+        await deps.sleep(waitMs);
+        seen = await look();
+        const line = seen.lines.find((entry) => readField(entry.text, REPEAT_BASE, true));
+        reads.push(line?.text);
+        const field = line === undefined ? undefined : readField(line.text, REPEAT_BASE, true);
+        return field === undefined
+          ? undefined
+          : {
+              tail: field.count,
+              suggestion: field.after === "suggestion",
+              other: field.after === "other",
+            };
+      };
+      const typed = await read();
+      await call("computer_key", { keys: "backspace" });
+      // Read soon, before Spotlight could search again.
+      const afterOne = await read(config.settleMs);
+      // No input since: what shows now is what the repeat meets.
+      const before = await read();
+      await call("computer_key", { keys: "backspace", repeat: REPEAT_PRESSES });
+      const afterRepeat = await read(config.settleMs);
+      const shown = reads.map((text) => (text === undefined ? "nothing" : JSON.stringify(text)));
+      const yes = (flag) => (flag ? "yes" : "no");
+      const usable = (entry) => entry !== undefined && !entry.other;
+      // Each call is judged on its own before and after readings, so doubt about
+      // one never hides a failure the other shows.
+      // The single press: arrived when it removed one character; lost when it
+      // removed none with no suggestion showing, or more than one; otherwise not
+      // judged, since a suggestion may have taken it without removing text.
+      let single = "not judged";
+      if (usable(typed) && usable(afterOne)) {
+        const removed = typed.tail - afterOne.tail;
+        if (removed === 1) single = "arrived";
+        else if (removed > 1 || removed < 0 || !typed.suggestion) single = "lost";
+      }
+      // The repeat: arrived when it removed REPEAT_PRESSES characters; lost when it
+      // removed fewer than the digits it could reach (one fewer with a suggestion),
+      // or more than it pressed; otherwise unsure.
+      let repeat;
+      if (afterRepeat === undefined || before === undefined) repeat = "unreadable";
+      else if (!usable(before) || !usable(afterRepeat)) repeat = "unsure";
+      else {
+        const removed = before.tail - afterRepeat.tail;
+        const least = Math.min(REPEAT_PRESSES, before.tail) - (before.suggestion ? 1 : 0);
+        if (removed < least || removed > REPEAT_PRESSES) repeat = "lost";
+        else if (removed === REPEAT_PRESSES) repeat = "arrived";
+        else repeat = "unsure";
+      }
+      const mistyped = usable(typed) && typed.tail !== REPEAT_TAIL.length;
+      const count = (from, to) =>
+        usable(from) && usable(to) ? `${from.tail - to.tail}` : "uncounted";
+      const detail = `field read ${shown.join(" -> ")}; one backspace removed ${count(typed, afterOne)} (suggestion before ${yes(typed?.suggestion)}, after ${yes(afterOne?.suggestion)}): ${single}; backspace repeat ${REPEAT_PRESSES} removed ${count(before, afterRepeat)} (suggestion before ${yes(before?.suggestion)}): ${repeat}`;
+      const changedAlone =
+        usable(afterOne) && usable(before) && before.tail !== afterOne.tail
+          ? "; the field also changed with no key pressed"
+          : "";
+      if (mistyped || single === "lost" || repeat === "lost" || repeat === "unreadable") {
+        const why = mistyped
+          ? `"${REPEAT_BASE}${REPEAT_TAIL}" was not typed as sent`
+          : "a press did not arrive or the field was gone";
+        check("key repeat", false, `${detail}${changedAlone}; ${why}`);
+      } else if (repeat === "arrived" && changedAlone === "") {
+        check(
+          "key repeat",
+          true,
+          `${detail}; every press of the repeat arrived${single === "arrived" ? ", and the single press too" : ` (the single press is not judged: ${usable(typed) && usable(afterOne) ? "a suggestion showed and no text was removed" : "its readings could not be counted"})`}`,
+        );
+      } else {
+        unsure(
+          "key repeat",
+          `${detail}${changedAlone}; ${repeat === "unsure" ? "the repeat's readings cannot show whether every press arrived" : "the field changed on its own between the two calls"}`,
+        );
+      }
+    });
   } catch (error) {
     check("key repeat", false, `failed: ${error.message}`);
   }
@@ -780,18 +865,20 @@ export async function runCheck(deps, options = {}) {
     await deps.sleep(config.openMs);
     return look();
   };
+  const barLabels = options.tabs === undefined ? config.barLabels : config.tabs;
+  let located;
   try {
-    seen = await openApp(config.clockApp);
+    located = await step(`opening ${config.clockApp}`, async () => {
+      seen = await openApp(config.clockApp);
+      const found = locateTabs(seen.lines, [tabA, tabB], barLabels);
+      if (found !== undefined && !found.ambiguous) return found;
+      // One more reading: a label text recognition missed once usually shows the next time.
+      await deps.sleep(config.settleMs);
+      seen = await look();
+      return locateTabs(seen.lines, [tabA, tabB], barLabels);
+    });
   } catch (error) {
     return stop("tabs", `opening ${config.clockApp} failed: ${error.message}`);
-  }
-  const barLabels = options.tabs === undefined ? config.barLabels : config.tabs;
-  let located = locateTabs(seen.lines, [tabA, tabB], barLabels);
-  if (located === undefined || located.ambiguous) {
-    // One more reading: a label text recognition missed once usually shows the next time.
-    await deps.sleep(config.settleMs);
-    seen = await look();
-    located = locateTabs(seen.lines, [tabA, tabB], barLabels);
   }
   if (located?.ambiguous) {
     unsure(
@@ -848,7 +935,7 @@ export async function runCheck(deps, options = {}) {
   // Not counted: makes the first tab current, so every counted tap changes the page.
   let warm;
   try {
-    warm = await tap(tabA);
+    warm = await step(`the setup tap on "${tabA}"`, () => tap(tabA));
   } catch (error) {
     return stop("tabs", `the setup tap on "${tabA}" failed: ${error.message}`);
   }
@@ -868,30 +955,32 @@ export async function runCheck(deps, options = {}) {
     const other = target === tabA ? tabB : tabA;
     const name = `click ${index}/${CLICK_TARGET}`;
     try {
-      // After a miss the target's page may already show; an uncounted tap on the other tab resets it.
-      if (anchorOf(target, signature(seen)) !== undefined) {
-        const reset = await tap(other);
-        note(`reset tap on "${other}" before ${name} at (${reset.point.x}, ${reset.point.y})`);
-      }
-      const result = await tap(target);
-      const page = signature(seen);
-      const where = `"${target}" at (${result.point.x}, ${result.point.y}); ${result.before ?? "unknown"} -> ${lastFrontmost ?? "unknown"}`;
-      // Landed: the page changed, shows the target tab's own words, and not the other tab's.
-      const changed = jaccard(page, result.pageBefore) < 0.5;
-      const anchor = anchorOf(target, page);
-      const foreign = anchorOf(other, page);
-      const same = refs[target] === undefined ? undefined : jaccard(page, refs[target]);
-      const ok =
-        changed &&
-        anchor !== undefined &&
-        foreign === undefined &&
-        (same === undefined || same >= 0.6);
-      if (ok && refs[target] === undefined) refs[target] = page;
-      check(
-        name,
-        ok,
-        `${where}; ${changed ? "page changed" : "page did not change"}, ${anchor === undefined ? "no" : `"${anchor}"`} ${target} word${foreign === undefined ? "" : `, but shows "${foreign}" from ${other}`}, ${same === undefined ? "first view of this page" : `matched ${same.toFixed(2)}`}`,
-      );
+      await step(name, async () => {
+        // After a miss the target's page may already show; an uncounted tap on the other tab resets it.
+        if (anchorOf(target, signature(seen)) !== undefined) {
+          const reset = await tap(other);
+          note(`reset tap on "${other}" before ${name} at (${reset.point.x}, ${reset.point.y})`);
+        }
+        const result = await tap(target);
+        const page = signature(seen);
+        const where = `"${target}" at (${result.point.x}, ${result.point.y}); ${result.before ?? "unknown"} -> ${lastFrontmost ?? "unknown"}`;
+        // Landed: the page changed, shows the target tab's own words, and not the other tab's.
+        const changed = jaccard(page, result.pageBefore) < 0.5;
+        const anchor = anchorOf(target, page);
+        const foreign = anchorOf(other, page);
+        const same = refs[target] === undefined ? undefined : jaccard(page, refs[target]);
+        const ok =
+          changed &&
+          anchor !== undefined &&
+          foreign === undefined &&
+          (same === undefined || same >= 0.6);
+        if (ok && refs[target] === undefined) refs[target] = page;
+        check(
+          name,
+          ok,
+          `${where}; ${changed ? "page changed" : "page did not change"}, ${anchor === undefined ? "no" : `"${anchor}"`} ${target} word${foreign === undefined ? "" : `, but shows "${foreign}" from ${other}`}, ${same === undefined ? "first view of this page" : `matched ${same.toFixed(2)}`}`,
+        );
+      });
     } catch (error) {
       check(name, false, `failed: ${error.message}`);
     }
@@ -899,56 +988,59 @@ export async function runCheck(deps, options = {}) {
 
   // 5. Scrolling the Settings list --------------------------------------------------
   try {
-    seen = await openApp(config.listApp);
-    const start = seen.lines;
-    const point = {
-      x: Math.round(seen.window.x + seen.window.width / 2),
-      y: Math.round(seen.window.y + seen.window.height * 0.6),
-    };
-    await call("computer_scroll", { ...point, direction: "down", amount: 5 });
-    await deps.sleep(config.settleMs);
-    seen = await look();
-    const down = scrolled(start, seen.lines, seen.window, "down", config.minScrollPx);
-    const middle = seen.lines;
-    check(
-      "scroll down",
-      down.ok,
-      `${down.replaced ? "page replaced" : `shared text moved ${down.median}px (${down.common} lines)`}; ${front()}`,
-    );
-    if (!down.ok) {
-      // Not counted: tells the next fix whether a swipe moves the list where the wheel did not.
-      await call("computer_drag", {
-        fromX: point.x,
-        fromY: Math.round(seen.window.y + seen.window.height * 0.7),
-        toX: point.x,
-        toY: Math.round(seen.window.y + seen.window.height * 0.35),
-      });
+    await step("scroll", async () => {
+      seen = await openApp(config.listApp);
+      const start = seen.lines;
+      const point = {
+        x: Math.round(seen.window.x + seen.window.width / 2),
+        y: Math.round(seen.window.y + seen.window.height * 0.6),
+      };
+      await call("computer_scroll", { ...point, direction: "down", amount: 5 });
       await deps.sleep(config.settleMs);
-      const probe = await look();
-      const moved = scrolled(middle, probe.lines, probe.window, "down", config.minScrollPx);
-      note(
-        `probe, not counted: computer_drag ${moved.ok ? "moved" : "did not move"} the list (${moved.median}px, ${moved.common} lines)`,
+      seen = await look();
+      const down = scrolled(start, seen.lines, seen.window, "down", config.minScrollPx);
+      const middle = seen.lines;
+      check(
+        "scroll down",
+        down.ok,
+        `${down.replaced ? "page replaced" : `shared text moved ${down.median}px (${down.common} lines)`}; ${front()}`,
       );
-      seen = probe;
-    }
-    const before = seen.lines;
-    await call("computer_scroll", { ...point, direction: "up", amount: 5 });
-    await deps.sleep(config.settleMs);
-    seen = await look();
-    const up = scrolled(before, seen.lines, seen.window, "up", config.minScrollPx);
-    const back =
-      jaccard(pageSignature(seen.lines, seen.window), pageSignature(start, seen.window)) >= 0.7 &&
-      jaccard(pageSignature(before, seen.window), pageSignature(start, seen.window)) < 0.7;
-    check(
-      "scroll up",
-      up.ok || back,
-      `${up.replaced ? "page replaced" : `shared text moved ${up.median}px (${up.common} lines)`}${back ? "; back at the top" : ""}; ${front()}`,
-    );
+      if (!down.ok) {
+        // Not counted: tells the next fix whether a swipe moves the list where the wheel did not.
+        await call("computer_drag", {
+          fromX: point.x,
+          fromY: Math.round(seen.window.y + seen.window.height * 0.7),
+          toX: point.x,
+          toY: Math.round(seen.window.y + seen.window.height * 0.35),
+        });
+        await deps.sleep(config.settleMs);
+        const probe = await look();
+        const moved = scrolled(middle, probe.lines, probe.window, "down", config.minScrollPx);
+        note(
+          `probe, not counted: computer_drag ${moved.ok ? "moved" : "did not move"} the list (${moved.median}px, ${moved.common} lines)`,
+        );
+        seen = probe;
+      }
+      const before = seen.lines;
+      await call("computer_scroll", { ...point, direction: "up", amount: 5 });
+      await deps.sleep(config.settleMs);
+      seen = await look();
+      const up = scrolled(before, seen.lines, seen.window, "up", config.minScrollPx);
+      const back =
+        jaccard(pageSignature(seen.lines, seen.window), pageSignature(start, seen.window)) >= 0.7 &&
+        jaccard(pageSignature(before, seen.window), pageSignature(start, seen.window)) < 0.7;
+      check(
+        "scroll up",
+        up.ok || back,
+        `${up.replaced ? "page replaced" : `shared text moved ${up.median}px (${up.common} lines)`}${back ? "; back at the top" : ""}; ${front()}`,
+      );
+    });
   } catch (error) {
     check("scroll", false, `failed: ${error.message}`);
   }
 
-  await call("computer_key", { keys: "cmd+1" }).catch(() => undefined);
+  // Back to the home screen; another app taking the front here still voids the run.
+  await step("the home key", () => call("computer_key", { keys: "cmd+1" })).catch(() => undefined);
   return finish();
 }
 

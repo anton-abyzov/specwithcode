@@ -179,7 +179,7 @@ describe("dry run", () => {
         firstRead = false;
         return read.map((entry) => ({
           ...entry,
-          text: entry.text.replace("- Ask Siri", "- New Suggestion"),
+          text: entry.text.replace("- Ask Siri", "- new suggestion"),
         }));
       },
       call: async (tool, args) => {
@@ -303,7 +303,7 @@ describe("dry run", () => {
   });
 
   it("calls a typed sample unsure, never passed, when unknown text follows it", async () => {
-    for (const shown of ["hbdt- Incorrect", "hbdt "]) {
+    for (const shown of ["hbdt- incorrect", "hbdt "]) {
       const phone = simulatedPhone();
       const deps = {
         ...phone.deps,
@@ -515,7 +515,7 @@ describe("dry run", () => {
     expect(result.lines.at(-1)).toMatch(/^Result: PASS/);
   });
 
-  it("reopens iPhone Mirroring once when the gate says the app in front changed", async () => {
+  it("repeats a step when the gate says the app in front changed", async () => {
     const phone = simulatedPhone();
     const call = phone.deps.call;
     let refused = false;
@@ -530,42 +530,52 @@ describe("dry run", () => {
     expect(result.pass).toBe(true);
     expect(
       result.lines.some((entry) =>
-        /^NOTE \S+ computer_type was refused with nothing sent/.test(entry),
+        /^NOTE \S+ paused the path probe: computer_type was refused/.test(entry),
       ),
     ).toBe(true);
   });
 
-  it("brings iPhone Mirroring back when a click puts SpecWithCode in front", async () => {
-    // SpecWithCode takes the front just before the first two keys, as a click on its window does.
-    const phone = simulatedPhone({ stealFront: (n) => (n <= 2 ? "refuse" : undefined) });
+  it("pauses and repeats a step when a click puts SpecWithCode in front", async () => {
+    const phone = simulatedPhone({
+      stealFront: (n) => (n === 1 || n === 9 ? "refuse" : undefined),
+    });
     const result = await runCheck(phone.deps);
     expect(result.lines.at(-1)).toMatch(/^Result: PASS/);
-    expect(
-      result.lines.filter((entry) =>
-        /^NOTE \S+ SpecWithCode was in front before computer_key; bringing iPhone Mirroring forward/.test(
-          entry,
-        ),
-      ),
-    ).toHaveLength(2);
+    expect(result.lines.filter((entry) => / paused /.test(entry))).toHaveLength(2);
   });
 
-  it("ends INVALID, never FAIL, when SpecWithCode keeps taking the front", async () => {
-    const phone = simulatedPhone({ stealFront: (n) => (n >= 8 ? "refuse" : undefined) });
-    const result = await runCheck(phone.deps);
-    expect(result.invalid).toBe(true);
-    expect(result.lines.at(-1)).toMatch(
-      /^Result: INVALID \(another app took the front: computer_\w+ was refused 3 times with another app in front; keep hands off the Mac/,
-    );
-    expect(result.lines.some((entry) => entry.startsWith("FAIL "))).toBe(false);
-    expect(result.lines.some((entry) => entry.startsWith("Clicks landed"))).toBe(false);
-  });
-
-  it("ends INVALID when iPhone Mirroring leaves the front during the setup tap", async () => {
+  it("repeats a typing step when another app covers the screenshot", async () => {
     const phone = simulatedPhone();
     const call = phone.deps.call;
-    let clicks = 0;
+    let typed = false;
+    let covered = 0;
     phone.deps.call = async (tool, args) => {
-      if (tool === "computer_click" && ++clicks === 1) {
+      if (tool === "computer_type") typed = args.text === "hbbd";
+      if (tool === "computer_screenshot" && typed && covered === 0) {
+        covered++;
+        phone.state.front = "Google Chrome";
+      }
+      return call(tool, args);
+    };
+    const result = await runCheck(phone.deps);
+    expect(covered).toBe(1);
+    expect(
+      result.lines.some((entry) =>
+        /^NOTE \S+ paused type "hbbd": Google Chrome was in front in the screenshot/.test(entry),
+      ),
+    ).toBe(true);
+    expect(
+      result.lines.find((entry) => entry.includes('type "hbbd"') && !entry.startsWith("NOTE")),
+    ).toMatch(/^PASS/);
+    expect(result.lines.at(-1)).toMatch(/^Result: PASS/);
+  });
+
+  it("repeats the key repeat measurement after iPhone Mirroring left the front partway", async () => {
+    const phone = simulatedPhone();
+    const call = phone.deps.call;
+    let repeats = 0;
+    phone.deps.call = async (tool, args) => {
+      if (tool === "computer_key" && args.repeat === 3 && ++repeats === 1) {
         await call(tool, args);
         phone.state.front = "SpecWithCode";
         throw new Error("iPhone Mirroring stopped being the app in front partway through.");
@@ -573,90 +583,165 @@ describe("dry run", () => {
       return call(tool, args);
     };
     const result = await runCheck(phone.deps);
-    expect(clicks).toBe(1);
-    expect(result.invalid).toBe(true);
-    expect(result.lines.at(-1)).toMatch(
-      /^Result: INVALID \(another app took the front: iPhone Mirroring left the front during computer_click/,
-    );
+    expect(repeats).toBe(2);
+    expect(result.lines.find((entry) => entry.startsWith("PASS key repeat"))).toBeDefined();
+    expect(result.lines.at(-1)).toMatch(/^Result: PASS/);
   });
 
-  it("ends INVALID when bringing iPhone Mirroring forward fails after a click took the front", async () => {
+  it("ends INVALID, never FAIL, when another app takes the front at every try", async () => {
+    const phone = simulatedPhone({ stealFront: (n) => (n >= 8 ? "refuse" : undefined) });
+    const result = await runCheck(phone.deps);
+    expect(result.invalid).toBe(true);
+    expect(result.lines.at(-1)).toMatch(
+      /^Result: INVALID \(another app took the front: .* 3 times in a row during type "\S+"; keep the Mac's trackpad and keyboard untouched/,
+    );
+    expect(result.lines.some((entry) => entry.startsWith("FAIL "))).toBe(false);
+    expect(result.lines.some((entry) => entry.startsWith("Clicks landed"))).toBe(false);
+  });
+
+  it("ends INVALID when another app keeps the front through the pause", async () => {
     const phone = simulatedPhone();
     const call = phone.deps.call;
     let probed = false;
-    let taken = false;
-    phone.deps.frontmost = async () => {
-      if (probed && !taken) {
-        taken = true;
-        phone.state.front = "SpecWithCode";
-      }
-      return phone.state.front;
-    };
     phone.deps.call = async (tool, args) => {
       if (tool === "computer_type" && args.text === "é") probed = true;
-      if (tool === "computer_open" && taken) throw new Error("the call timed out");
       return call(tool, args);
     };
+    phone.deps.frontmost = async () => (probed ? "Google Chrome" : phone.state.front);
     const result = await runCheck(phone.deps);
     expect(result.invalid).toBe(true);
-    expect(result.lines.some((entry) => entry.startsWith("FAIL "))).toBe(false);
     expect(result.lines.at(-1)).toMatch(
-      /another app took the front: SpecWithCode was in front before computer_key and bringing iPhone Mirroring forward failed \(the call timed out\)/,
+      /another app took the front: Google Chrome kept the front for 60 s during type "hbdt"/,
     );
+    expect(result.lines.some((entry) => entry.startsWith("FAIL "))).toBe(false);
   });
 
-  it("ends INVALID when the app in front cannot be read after bringing Mirroring forward", async () => {
-    // SpecWithCode stays in front through every recovery, then the last read fails,
-    // on the final home key after every check has passed.
+  it("never counts a repeated click on the page the interrupted tap already opened", async () => {
+    // Click 1 lands on Stopwatch, Chrome covers its screenshot, and the repeated
+    // tap on Stopwatch is lost: the click must not pass on the first tap's page.
+    for (const how of ["screenshot", "partway"]) {
+      const phone = simulatedPhone();
+      const call = phone.deps.call;
+      let clicks = 0;
+      let covered = false;
+      let dropped = false;
+      phone.deps.call = async (tool, args) => {
+        if (tool === "computer_click") clicks++;
+        if (tool === "computer_click" && covered && !dropped && args.x === 880) {
+          dropped = true;
+          return call("computer_screenshot", {});
+        }
+        if (tool === "computer_click" && clicks === 2 && how === "partway") {
+          await call(tool, args);
+          covered = true;
+          phone.state.front = "Google Chrome";
+          throw new Error("iPhone Mirroring stopped being the app in front partway through.");
+        }
+        if (tool === "computer_screenshot" && clicks === 2 && !covered) {
+          covered = true;
+          phone.state.front = "Google Chrome";
+        }
+        return call(tool, args);
+      };
+      const result = await runCheck(phone.deps);
+      expect(dropped).toBe(true);
+      expect(result.lines.find((entry) => entry.startsWith("FAIL click 1/20"))).toBeDefined();
+      expect(result.lines.some((entry) => entry.startsWith("PASS click 1/20"))).toBe(false);
+    }
+  });
+
+  it("ends INVALID when another app keeps the front at the last home key", async () => {
     const phone = simulatedPhone();
-    const call = phone.deps.call;
     let passed = 0;
-    let reads = 0;
-    const stealing = () => passed >= 30;
     phone.deps.onLine = (line) => {
       if (line.startsWith("PASS ")) passed++;
     };
-    phone.deps.call = async (tool, args) => {
-      if (tool === "computer_open" && stealing()) return { data: {} };
-      return call(tool, args);
-    };
     const read = phone.deps.frontmost;
-    phone.deps.frontmost = async () => {
-      if (!stealing()) return read();
-      if (++reads > 3) throw new Error("osascript timed out");
-      return "SpecWithCode";
-    };
+    phone.deps.frontmost = async () => (passed >= 30 ? "Google Chrome" : read());
     const result = await runCheck(phone.deps);
     expect(passed).toBe(30);
     expect(result.invalid).toBe(true);
     expect(result.lines.some((entry) => entry.startsWith("Clicks landed"))).toBe(false);
     expect(result.lines.at(-1)).toMatch(
-      /another app took the front: SpecWithCode was in front before computer_\w+ and bringing iPhone Mirroring forward failed \(osascript timed out\)/,
+      /Google Chrome kept the front for 60 s during the home key/,
     );
   });
 
-  it("never sends a key again after iPhone Mirroring left the front partway", async () => {
+  it("ends INVALID when the first reading after Mirroring came back fails", async () => {
+    // Chrome takes the front before a counted click, or before the last home key;
+    // Mirroring comes back, then the screenshot that starts the repeat fails.
+    for (const where of ["click", "home key"]) {
+      const phone = simulatedPhone();
+      const call = phone.deps.call;
+      let passed = 0;
+      let clicks = 0;
+      let stolen = false;
+      let failNext = false;
+      phone.deps.onLine = (line) => {
+        if (line.startsWith("PASS ")) passed++;
+      };
+      phone.deps.call = async (tool, args) => {
+        if (tool === "computer_click") clicks++;
+        if (tool === "computer_open" && stolen) failNext = true;
+        if (tool === "computer_screenshot" && failNext) {
+          failNext = false;
+          throw new Error("the screenshot failed");
+        }
+        return call(tool, args);
+      };
+      const read = phone.deps.frontmost;
+      phone.deps.frontmost = async () => {
+        const due = where === "click" ? clicks === 3 : passed >= 30;
+        if (due && !stolen) {
+          stolen = true;
+          phone.state.front = "Google Chrome";
+        }
+        return read();
+      };
+      const result = await runCheck(phone.deps);
+      expect(stolen).toBe(true);
+      expect(result.invalid).toBe(true);
+      expect(result.lines.some((entry) => entry.startsWith("FAIL "))).toBe(false);
+      expect(result.lines.some((entry) => entry.startsWith("Clicks landed"))).toBe(false);
+      expect(result.lines.at(-1)).toMatch(
+        /another app took the front: the first reading after iPhone Mirroring came back during .* failed \(the screenshot failed\)/,
+      );
+    }
+  });
+
+  it("writes a repeated step's earlier results as not counted", async () => {
+    // Scroll down is scored, then Chrome takes the front before scrolling up.
     const phone = simulatedPhone();
     const call = phone.deps.call;
-    let repeats = 0;
+    let scrolls = 0;
     phone.deps.call = async (tool, args) => {
-      if (tool === "computer_key" && args.repeat === 3) {
-        repeats++;
-        await call(tool, args);
-        phone.state.front = "SpecWithCode";
-        throw new Error("iPhone Mirroring stopped being the app in front partway through.");
-      }
+      if (tool === "computer_scroll" && ++scrolls === 2) phone.state.front = "Google Chrome";
       return call(tool, args);
     };
     const result = await runCheck(phone.deps);
-    expect(repeats).toBe(1);
+    expect(result.lines.filter((entry) => entry.startsWith("PASS scroll down"))).toHaveLength(1);
+    expect(
+      result.lines.some((entry) =>
+        entry.startsWith("NOTE not counted, the step was repeated: PASS scroll down"),
+      ),
+    ).toBe(true);
+    expect(result.lines.at(-1)).toMatch(/^Result: PASS \(30\/30 checks\)/);
+  });
+
+  it("ends INVALID when bringing iPhone Mirroring back fails", async () => {
+    const phone = simulatedPhone({ stealFront: (n) => (n === 8 ? "refuse" : undefined) });
+    const call = phone.deps.call;
+    let opens = 0;
+    phone.deps.call = async (tool, args) => {
+      if (tool === "computer_open" && ++opens > 1) throw new Error("the call timed out");
+      return call(tool, args);
+    };
+    const result = await runCheck(phone.deps);
     expect(result.invalid).toBe(true);
-    expect(result.lines.find((entry) => entry.includes("key repeat"))).toMatch(
-      /^UNSURE key repeat/,
-    );
     expect(result.lines.at(-1)).toMatch(
-      /another app took the front: iPhone Mirroring left the front during computer_key/,
+      /another app took the front: bringing iPhone Mirroring back during type "\S+" failed \(the call timed out\)/,
     );
+    expect(result.lines.some((entry) => entry.startsWith("FAIL "))).toBe(false);
   });
 
   it("writes dry-run.log and never check.log", async () => {
@@ -842,7 +927,12 @@ describe("judging the screen", () => {
     // Spaces typed around the text, or a suffix that is not a known suggestion, never pass.
     expect(startsWithTyped("hbdt ", "hbdt")).toBe(false);
     expect(startsWithTyped(" hbdt", "hbdt")).toBe(false);
+    expect(startsWithTyped("hbdt- incorrect", "hbdt")).toBe(false);
     expect(startsWithTyped("hbdt- Incorrect", "hbdt")).toBe(false);
+    // The other suggestions Spotlight showed in live runs.
+    expect(startsWithTyped("hbdt - HDToday", "hbdt")).toBe(true);
+    expect(startsWithTyped("4207 - Open", "4207")).toBe(true);
+    expect(startsWithTyped("hbdt - Search Web", "hbdt")).toBe(false);
     expect(startsWithTyped("hbdt - A", "hbdt")).toBe(false);
   });
 
@@ -851,6 +941,9 @@ describe("judging the screen", () => {
       const letters = sample.includes("@") ? "" : sample.replace(/[^A-Za-z]/g, "");
       expect(letters).not.toMatch(/[cosvwxzqCOSVWXZ]/);
       expect(sample).not.toMatch(/[!il1|]/);
+      // Letters and digits text recognition swaps (z/2, s/5, o/0) never share a sample.
+      expect(sample).not.toMatch(/[zZsSoO]/);
+      if (/[A-Za-z]/.test(sample)) expect(sample).not.toMatch(/[250]/);
     }
     expect(TYPE_SAMPLES.some((sample) => /(.)\1/.test(sample))).toBe(true);
   });
