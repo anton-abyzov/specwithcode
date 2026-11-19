@@ -435,12 +435,15 @@ export const makeFolderWorkSender =
     readonly operationId: string;
     /** What this operation's row already keeps: a server that stopped carries on from it. */
     readonly journal?: HandoffFolderWorkJournal | undefined;
-    /** Writes the journal to the row; false when it could not be written. */
-    readonly record?: (journal: HandoffFolderWorkJournal) => Effect.Effect<boolean>;
+    /**
+     * Writes the journal to the row; false when it could not be written. Every
+     * caller in the server passes it: without it nothing says what was sent.
+     */
+    readonly record: (journal: HandoffFolderWorkJournal) => Effect.Effect<boolean>;
   }): Effect.Effect<FolderWorkOutcome> =>
     Effect.gen(function* () {
       const label = input.destinationLabel;
-      const record = input.record ?? (() => Effect.succeed(true));
+      const record = input.record;
       const where = (path: string) => (path === "" || path === "." ? "" : `${path}: `);
       const named = (item: HandoffFolderWorkItem) =>
         `${where(item.path)}${item.kind === "branch" ? `branch ${item.branch}` : "uncommitted files"}`;

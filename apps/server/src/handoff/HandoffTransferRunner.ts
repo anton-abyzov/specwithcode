@@ -613,37 +613,16 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
           true,
         )).receipt;
       }
-      if (record.targetEnvironmentId === null || record.sequence === null) {
-        return yield* settleLegacy(record, shell);
-      }
-      const destination = record.targetEnvironmentId;
-      // A takeover goes only to a machine that keeps transfer records, the repeat
-      // as much as the first send: one that does not would start the thread
-      // without anything on file to answer for it. No answer leaves the hold as it is.
-      const keeps = yield* deps.keepsRecords(destination).pipe(Effect.result);
-      if (keeps._tag === "Failure") {
-        yield* patch(record.operationId, ["sent", "unknown", "accepted"], {
-          state: "unknown",
-          detail: keeps.failure.message.slice(0, 1000),
-        }).pipe(Effect.ignore);
-        return null;
-      }
-      if (!keeps.success) {
-        // It may confirm a continuation it has; it is never asked to make one.
-        const asked = yield* patch(record.operationId, ["sent", "unknown", "accepted"], {
-          state: "unknown",
-          sequence: null,
-          candidates: [{ environmentId: destination, verdict: "unasked", fencedAt: null }],
-        });
-        return asked === null ? null : yield* settleLegacy(asked, shell);
-      }
-      if (record.context !== undefined) {
+      if (record.context !== undefined && record.targetEnvironmentId !== null) {
+        const destination = record.targetEnvironmentId;
         // Sent with a batch's disposition and revision. A machine that stopped
         // naming the capability drops both, and it finishes a launch that was
         // cut from the checkpoint alone, on a takeover and on a status question
         // alike: either could run a thread meant to arrive idle. So nothing is
-        // sent and nothing is asked. The thread stays held here until that
-        // machine names the capability again; then the same operation is repeated.
+        // sent and nothing is asked, by any way a record without a batch is
+        // settled: this comes before those, and the record keeps its revision.
+        // The thread stays held here until that machine names the capability
+        // again; then the same operation is repeated.
         const takes = yield* deps.takesBatches(destination).pipe(Effect.result);
         if (takes._tag === "Failure") {
           yield* patch(record.operationId, ["sent", "unknown", "accepted"], {
@@ -663,6 +642,32 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
             .pipe(Effect.ignore);
           return null;
         }
+      }
+      if (record.targetEnvironmentId === null || record.sequence === null) {
+        return yield* settleLegacy(record, shell);
+      }
+      const destination = record.targetEnvironmentId;
+      // A takeover goes only to a machine that keeps transfer records, the repeat
+      // as much as the first send: one that does not would start the thread
+      // without anything on file to answer for it. No answer leaves the hold as it is.
+      const keeps = yield* deps.keepsRecords(destination).pipe(Effect.result);
+      if (keeps._tag === "Failure") {
+        yield* patch(record.operationId, ["sent", "unknown", "accepted"], {
+          state: "unknown",
+          detail: keeps.failure.message.slice(0, 1000),
+        }).pipe(Effect.ignore);
+        return null;
+      }
+      // A batch's record is never settled the legacy way, whatever that machine names.
+      if (!keeps.success && record.context !== undefined) return null;
+      if (!keeps.success) {
+        // It may confirm a continuation it has; it is never asked to make one.
+        const asked = yield* patch(record.operationId, ["sent", "unknown", "accepted"], {
+          state: "unknown",
+          sequence: null,
+          candidates: [{ environmentId: destination, verdict: "unasked", fencedAt: null }],
+        });
+        return asked === null ? null : yield* settleLegacy(asked, shell);
       }
       // Before it is sent again, the continuation it will make is followed again; if
       // that cannot be written, nothing is sent and the hold waits for the next try.

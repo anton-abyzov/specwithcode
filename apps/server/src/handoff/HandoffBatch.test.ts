@@ -872,6 +872,7 @@ describe("project folder work (AC-20)", () => {
     destination: EnvironmentId.make("env-b"),
     destinationLabel: "B",
     operationId: "0a1b2c3d-1111-4222-8333-444455557777",
+    record: () => Effect.succeed(true),
   } as never;
 
   it.effect(
