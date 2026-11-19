@@ -391,7 +391,7 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
               { id: ThreadId.make("coordinator"), runId: RunId.make("run-1") },
               // The worker's check showed run-2; run-3 started since.
               { id: ThreadId.make("worker"), runId: RunId.make("run-2") },
-              { id: ThreadId.make("queued"), runId: null },
+              { id: ThreadId.make("queued"), runId: null, latestExecutedRunId: null },
               { id: ThreadId.make("idle"), runId: null },
             ],
           }),
@@ -527,6 +527,28 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
             expectedLatestRunId: "run-4",
           }),
         ]);
+      }),
+    ),
+  );
+
+  it.effect("sends no unbound Stop when the check could not read the thread's runs", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent } = yield* makeScenario;
+        scenario.threads.push(shell("queued", { title: "Queued", status: "queued" }));
+        // The check's reading failed, so it offered no binding; the fresh one here works.
+        scenario.runs.set("queued", [{ id: RunId.make("run-9"), status: "completed" }]);
+        const result = yield* withFolders(scenario, (folders) =>
+          folders.stop({
+            commandId,
+            projectId,
+            workspaceRoot: parent,
+            threads: [{ id: ThreadId.make("queued"), runId: null }],
+          }),
+        );
+        expect(result.stopped).toEqual([]);
+        expect(result.failed.map((entry) => entry.id)).toEqual([ThreadId.make("queued")]);
+        expect(scenario.dispatched).toEqual([]);
       }),
     ),
   );

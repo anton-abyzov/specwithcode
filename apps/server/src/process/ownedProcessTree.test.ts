@@ -338,6 +338,53 @@ describe("OwnedProcessTree.end", () => {
     expect(calls).toEqual([]);
   });
 
+  it("follows a group member that leaves the group when it gets SIGTERM", async () => {
+    let table: ProcessEntry[] = [posix(200, 100, 200, "claude"), posix(202, 200, 200, "tool")];
+    let groupAlive = true;
+    const calls: string[] = [];
+    let clock = 0;
+    const host: TreeHost = {
+      platform: "linux",
+      selfPid: 100,
+      readProcessList: async () => table,
+      signal: (pid, signal) => {
+        if (signal === 0) {
+          if (pid === -200 && groupAlive) return;
+          throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+        }
+        calls.push(`${signal} ${pid}`);
+        // The CLI ends; its tool calls setsid() and keeps running as itself.
+        if (pid === -200 && signal === "SIGTERM") {
+          groupAlive = false;
+          table = [{ ...posix(202, 1, 202, "tool"), started: "t202" }];
+        }
+        if (pid === 202 && signal === "SIGKILL") table = [];
+      },
+      killVerified: async () => {},
+      sleep: async (ms) => {
+        clock += ms;
+      },
+      now: () => clock,
+    };
+    const tree = new OwnedProcessTree(root(200, false), host);
+    expect(await tree.end(2_000)).toEqual({ found: 2, survivors: 0, unknown: false });
+    expect(calls).toEqual(["SIGTERM -200", "SIGKILL 202"]);
+  });
+
+  it("stays unconfirmed when a Windows child of the tree is listed without its start", async () => {
+    const t = (n: number) => 1_000_000n + BigInt(n) * 10n;
+    const cli = win(200, 100, t(10), "claude.exe");
+    const blank = { ...win(201, 200, 0n, "tool"), started: "" };
+    let running = true;
+    const fake = fakeHost("win32", [[cli, blank], [win(201, 200, t(11), "tool")]]);
+    const tree = new OwnedProcessTree({ pid: 200, spawnedAt: 0, alive: () => running }, fake.host);
+    // The reading before the close cannot place the tool, so it does not count.
+    expect(await tree.remember(1_000, true)).toBe(false);
+    running = false;
+    // Its row reads well now, but its parent is gone: the end is not confirmed.
+    expect((await tree.end()).unknown).toBe(true);
+  });
+
   it("holds back a later try on the CLI's group when the table cannot be read", async () => {
     const stuck = [posix(202, 1, 200, "stuck tool")];
     const { host, calls } = fakeHost("linux", [stuck, stuck, null]);

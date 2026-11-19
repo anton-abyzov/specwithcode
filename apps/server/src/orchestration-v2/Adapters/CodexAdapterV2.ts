@@ -1,4 +1,5 @@
 import * as Cause from "effect/Cause";
+import { holdFailedStopTeardown } from "../../process/stopTeardowns.ts";
 import {
   codexToolInventory,
   unknownToolInventory,
@@ -7257,7 +7258,12 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                         }).pipe(
                           Effect.as({ success: true as const }),
                           Effect.catch((error) =>
-                            Effect.succeed({ success: false as const, error }),
+                            Effect.succeed({
+                              success: false as const,
+                              error,
+                              nativeThreadId,
+                              processId,
+                            }),
                           ),
                         ),
                     );
@@ -7293,8 +7299,26 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 yield* finalizeRemainingInterruptLineage;
 
                 const terminationResults = yield* terminateTrackedTerminals(interruptTargets);
-                const failedTermination = terminationResults.find((result) => !result.success);
-                if (failedTermination !== undefined && !failedTermination.success) {
+                const failedTerminations = terminationResults.flatMap((result) =>
+                  result.success ? [] : [result],
+                );
+                const failedTermination = failedTerminations[0];
+                if (failedTermination !== undefined) {
+                  // A terminal Codex could not end may still run in the old folder: the
+                  // folder change stays blocked until a retry confirms each one ended.
+                  const appThreadId = requestedInput.providerThread.appThreadId;
+                  if (appThreadId !== null) {
+                    for (const { nativeThreadId, processId } of failedTerminations) {
+                      holdFailedStopTeardown(appThreadId, () =>
+                        Effect.runPromise(
+                          terminateBackgroundTerminal(nativeThreadId, processId).pipe(
+                            Effect.as(true),
+                            Effect.orElseSucceed(() => false),
+                          ),
+                        ),
+                      );
+                    }
+                  }
                   return yield* Effect.fail(failedTermination.error);
                 }
                 // Stop the retained items without rewriting the completed root turn.

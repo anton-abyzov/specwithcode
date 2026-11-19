@@ -168,6 +168,20 @@ export function windowsTree(
 }
 
 /**
+ * Children of the tree's processes that the reading lists without a usable creation time:
+ * they cannot be attributed (or killed by identity) from this reading.
+ */
+export function unidentifiedChildren(
+  table: ReadonlyArray<ProcessEntry>,
+  tree: ReadonlyArray<Known>,
+): number[] {
+  const parents = new Set(tree.map((known) => known.entry.pid));
+  return table
+    .filter((entry) => parents.has(entry.ppid) && !/^\d+$/u.test(entry.started))
+    .map((entry) => entry.pid);
+}
+
+/**
  * The snapshot's processes that still run as the same process: same pid and start time.
  * The command line is not compared: a process that execs another program is still it.
  */
@@ -268,6 +282,11 @@ export class OwnedProcessTree {
   private endedOnce = false;
   /** A reading meant to catch what the CLI started failed, so an empty tree proves nothing. */
   private unconfirmed = false;
+  /**
+   * Windows children of the tree seen without a creation time. Each stays a doubt until a
+   * reading attributes it or no longer lists its pid (it exited).
+   */
+  private readonly unidentified = new Set<number>();
   private ending: Promise<TreeEndResult> | null = null;
   readonly root: OwnedRoot;
   private readonly host: TreeHost;
@@ -288,13 +307,27 @@ export class OwnedProcessTree {
     const known =
       table === undefined ? [] : windowsTree(table, this.root, this.host.selfPid, this.remembered);
     for (const entry of known) this.remembered.set(entry.entry.pid, entry);
-    const ok = table !== undefined && this.root.alive() && this.listsLiveRoot(table);
+    if (table !== undefined) this.noteUnidentified(table, known);
+    const ok =
+      table !== undefined &&
+      this.root.alive() &&
+      this.listsLiveRoot(table) &&
+      this.unidentified.size === 0;
     // Before a close, only a reading that lists the running CLI itself covers what it
     // started; a cached identity from an earlier reading does not.
     // The last such reading decides: one that succeeds right before the close covers
     // everything then running.
     if (required) this.unconfirmed = !ok;
     return ok;
+  }
+
+  private noteUnidentified(table: ReadonlyArray<ProcessEntry>, tree: ReadonlyArray<Known>) {
+    const listed = new Set(table.map((entry) => entry.pid));
+    const attributed = new Set(tree.map((known) => known.entry.pid));
+    for (const pid of this.unidentified) {
+      if (!listed.has(pid) || attributed.has(pid)) this.unidentified.delete(pid);
+    }
+    for (const pid of unidentifiedChildren(table, tree)) this.unidentified.add(pid);
   }
 
   /** Whether `table` lists the CLI as the process it was when first read. */
@@ -448,13 +481,38 @@ export class OwnedProcessTree {
         }
       }
     };
+    // The group's members this end saw: one that leaves the group (setsid on SIGTERM)
+    // empties it without ending, so an empty group is checked against them by identity.
+    const seenMembers = groupUsable ? (members ?? []) : [];
     const settled = async (until: number) => {
       while (host.now() < until) {
         if (!groupAlive()) {
-          if (escapees.length === 0) return true;
+          if (escapees.length === 0 && seenMembers.length === 0) return true;
           const now = await this.read(Math.min(until, deadline));
-          if (now !== undefined) escapees = stillRunning(escapees, now);
-          if (escapees.length === 0) return true;
+          if (now === undefined) {
+            // Nothing tells whether a member left the group instead of ending.
+            if (seenMembers.length > 0) unknown = true;
+            if (escapees.length === 0) return true;
+          } else {
+            const pgids = new Map(now.map((entry) => [entry.pid, entry.pgid]));
+            const leavers = stillRunning(seenMembers, now).filter(
+              (entry) => entry.pid !== host.selfPid && pgids.get(entry.pid) !== this.root.pid,
+            );
+            const below = posixEscapees(
+              now,
+              this.root,
+              host.selfPid,
+              false,
+              leavers.map((entry) => entry.pid),
+            );
+            const byPid = new Map(stillRunning(escapees, now).map((entry) => [entry.pid, entry]));
+            for (const entry of [...leavers, ...below]) {
+              byPid.set(entry.pid, entry);
+              this.escapees.set(entry.pid, entry);
+            }
+            escapees = [...byPid.values()];
+            if (escapees.length === 0) return true;
+          }
         }
         await host.sleep(Math.max(0, Math.min(200, until - host.now())));
       }
@@ -485,9 +543,12 @@ export class OwnedProcessTree {
       if (table === undefined) return { found: Math.max(found, 0), survivors: 0, unknown: true };
       left = windowsTree(table, this.root, host.selfPid, this.remembered);
       for (const known of left) this.remembered.set(known.entry.pid, known);
+      this.noteUnidentified(table, left);
       if (found === -1) found = left.length;
-      // A live CLI missing from the table is a reading that cannot be trusted.
-      const partial = this.root.alive() && !this.listsLiveRoot(table);
+      // A live CLI missing from the table, or a child of the tree listed without its
+      // creation time, is a reading that cannot confirm the end.
+      const partial =
+        (this.root.alive() && !this.listsLiveRoot(table)) || this.unidentified.size > 0;
       if (left.length === 0)
         return { found, survivors: 0, unknown: !rootKnown() || this.unconfirmed || partial };
       const budget = this.budget(killBy);
@@ -502,12 +563,16 @@ export class OwnedProcessTree {
     const table = await this.read(verifyBy);
     if (table === undefined) return { found: Math.max(found, 0), survivors: 0, unknown: true };
     left = windowsTree(table, this.root, host.selfPid, this.remembered);
+    this.noteUnidentified(table, left);
     return {
       found: Math.max(found, 0),
       survivors: left.length,
       unknown:
         left.length === 0 &&
-        (!rootKnown() || this.unconfirmed || (this.root.alive() && !this.listsLiveRoot(table))),
+        (!rootKnown() ||
+          this.unconfirmed ||
+          this.unidentified.size > 0 ||
+          (this.root.alive() && !this.listsLiveRoot(table))),
     };
   }
 }

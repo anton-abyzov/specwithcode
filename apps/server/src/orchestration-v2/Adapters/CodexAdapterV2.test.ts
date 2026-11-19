@@ -1,4 +1,5 @@
 import { sha256 } from "../../nodeCrypto.ts";
+import { stopTeardownPending } from "../../process/stopTeardowns.ts";
 import { ADVISOR_GUIDANCE } from "@specweave-studio/shared/advisor";
 import { seedReplayProject } from "../../project/ProjectContextTestkit.ts";
 import * as NodeOS from "node:os";
@@ -5168,6 +5169,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               .pipe(Effect.exit);
             assert.equal(failed._tag, "Failure");
             assert.isTrue(yield* harness.hasPendingBackgroundWork);
+            // The terminal may still run in the old folder: a folder change waits for it.
+            const appThreadId = harness.providerThread.appThreadId;
+            assert.isNotNull(appThreadId);
+            assert.isTrue(stopTeardownPending(appThreadId!));
           }
           yield* harness.runtime.interruptTurn({
             providerThread: harness.providerThread,

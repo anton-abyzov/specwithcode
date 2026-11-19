@@ -953,13 +953,11 @@ export const make = Effect.gen(function* () {
       const shell = shells.get(thread.id);
       const working =
         runId !== null || (shell !== undefined && threadWorkBlocksFolderChange(shell));
-      const binding =
-        saw.latestExecutedRunId !== undefined
-          ? saw.latestExecutedRunId
-          : thread.latestExecutedRunId;
+      // Bound to what the person's check showed. A check that could not read the thread's
+      // runs gave nothing to bind to; a newer reading here could name work they never saw.
+      const binding = saw.latestExecutedRunId;
       let stopFailed = false;
       if (working && runId === null && binding === undefined) {
-        // Its runs could not be read, so nothing binds the Stop to the work that was seen.
         stopFailed = true;
       } else if (working) {
         // One command id per thread and run, so a replay of this request is answered from
