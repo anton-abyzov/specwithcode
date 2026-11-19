@@ -282,7 +282,10 @@ interface LiveSessionEntry {
   /**
    * Threads whose detach left this exclusive session without attachments.
    * Their requests still wait on this session's callbacks, so whichever
-   * release ends the session settles them too.
+   * release ends the session settles them too. Never cleared, not even when
+   * the thread attaches again (an attach can still roll back): a release only
+   * settles requests on this session from before it ended, and none of those
+   * can be answered once it has.
    */
   readonly detachedThreadIds?: ReadonlySet<ThreadId>;
   readonly loadedProviderThreadKeyByThread: ReadonlyMap<ThreadId, string>;
@@ -1491,13 +1494,6 @@ export const layerWithOptions = (
             updated.set(sessionKey(input.providerSessionId), {
               ...entry,
               attachedThreadIds: new Set([...entry.attachedThreadIds, input.threadId]),
-              ...(entry.detachedThreadIds?.has(input.threadId) === true
-                ? {
-                    detachedThreadIds: new Set(
-                      [...entry.detachedThreadIds].filter((id) => id !== input.threadId),
-                    ),
-                  }
-                : {}),
             });
             return [entry.runtime, updated] as const;
           }),
