@@ -143,7 +143,9 @@ export interface TransferRunnerDeps {
    */
   readonly keepsRecords: (destination: EnvironmentId) => Effect.Effect<boolean, HandoffModeError>;
   /** Whether that machine names the batch capability now: it reads a disposition and a revision. */
-  readonly takesBatches: (destination: EnvironmentId) => Effect.Effect<boolean, HandoffModeError>;
+  readonly takesBatches: (
+    destination: EnvironmentId,
+  ) => Effect.Effect<{ readonly takes: boolean; readonly label: string }, HandoffModeError>;
   /** Keeps a worker's launcher waiting for it once it runs on another machine. */
   readonly follow: HandoffFollow.HandoffFollowShape;
   /** Follows the continuation a takeover will make, and says who the takeover names as waiting. */
@@ -590,55 +592,6 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       return null;
     });
 
-  /**
-   * Asks the destination what became of a sent record, and sends nothing. Its
-   * "accepted" fences the thread here with its receipt. Its "not accepted" is
-   * written there before it is said, so a takeover that arrives later is
-   * refused, and only then is the thread given back. No answer keeps the hold.
-   */
-  const confirm = (
-    record: HandoffTransferRecord,
-    destination: EnvironmentId,
-    shell: OrchestrationV2ThreadShell,
-  ): Effect.Effect<TakeoverResponse | null, HandoffModeError> =>
-    Effect.gen(function* () {
-      const threadId = record.lineage.sourceThreadId;
-      const epoch = record.lineage.epoch;
-      const status = yield* deps
-        .transferStatus(destination, {
-          sourceEnvironmentId: self,
-          sourceThreadId: threadId,
-          epoch,
-          operationId: record.operationId,
-        })
-        .pipe(Effect.result);
-      if (status._tag === "Failure") {
-        yield* patch(record.operationId, ["sent", "unknown", "accepted"], {
-          state: "unknown",
-          detail: status.failure.message.slice(0, 1000),
-        }).pipe(Effect.ignore);
-        return null;
-      }
-      const receipt = status.success.status === "accepted" ? status.success.receipt : null;
-      if (receipt !== null) {
-        yield* finish(record.operationId, receipt.resumed ? "resumed" : "ready", null, receipt);
-        yield* deps.fenceSource(shell, destination, receipt, epoch, record.reason as TakeoverReason);
-        return receipt;
-      }
-      if (status.success.status === "accepted") return null;
-      const detail = batchNeedsUpdate(status.success.machineLabel);
-      if (!(yield* finish(record.operationId, "failed", detail))) {
-        // Still open on file: the thread stays held and is asked about again.
-        yield* deps
-          .updateRecord(threadId, (current) => ({ ...current, lastError: NOT_RECORDED }))
-          .pipe(Effect.ignore);
-        return null;
-      }
-      yield* releaseRefused(threadId, epoch, detail);
-      yield* deps.follow.retire({ threadId, epoch });
-      return null;
-    });
-
   /** Carries on with an open record: the same operation, the same destination. */
   const settle = (
     record: HandoffTransferRecord,
@@ -686,8 +639,11 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       }
       if (record.context !== undefined) {
         // Sent with a batch's disposition and revision. A machine that stopped
-        // naming the capability would drop both and could run a thread meant to
-        // arrive idle, so it is asked what it has and is never sent this again.
+        // naming the capability drops both, and it finishes a launch that was
+        // cut from the checkpoint alone, on a takeover and on a status question
+        // alike: either could run a thread meant to arrive idle. So nothing is
+        // sent and nothing is asked. The thread stays held here until that
+        // machine names the capability again; then the same operation is repeated.
         const takes = yield* deps.takesBatches(destination).pipe(Effect.result);
         if (takes._tag === "Failure") {
           yield* patch(record.operationId, ["sent", "unknown", "accepted"], {
@@ -696,7 +652,17 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
           }).pipe(Effect.ignore);
           return null;
         }
-        if (!takes.success) return yield* confirm(record, destination, shell);
+        if (!takes.success.takes) {
+          const waits = `${batchNeedsUpdate(takes.success.label)} This thread stays paused here until then.`;
+          yield* patch(record.operationId, ["sent", "unknown", "accepted"], {
+            state: "unknown",
+            detail: waits.slice(0, 1000),
+          }).pipe(Effect.ignore);
+          yield* deps
+            .updateRecord(threadId, (current) => ({ ...current, lastError: waits }))
+            .pipe(Effect.ignore);
+          return null;
+        }
       }
       // Before it is sent again, the continuation it will make is followed again; if
       // that cannot be written, nothing is sent and the hold waits for the next try.

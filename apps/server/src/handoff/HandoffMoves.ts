@@ -655,9 +655,12 @@ export const make = Effect.gen(function* () {
           ),
     takesBatches: (destination) =>
       destination === self
-        ? Effect.succeed(true)
+        ? Effect.succeed({ takes: true, label: selfLabel })
         : namedBy(destination).pipe(
-            Effect.map((response) => hasHandoffBatch(response.capabilities)),
+            Effect.map((response) => ({
+              takes: hasHandoffBatch(response.capabilities),
+              label: response.machineLabel,
+            })),
           ),
     follow,
     launcherOf: (moving, told) =>

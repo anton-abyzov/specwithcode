@@ -721,7 +721,7 @@ describe("folder work after a restart is the work that was first sent (AC-20, EC
           finishedAt: null,
         },
       },
-    } as HandoffTransferDocument;
+    } as unknown as HandoffTransferDocument;
   };
   const folderRow = (a: RigMachine) =>
     a.transfers.document.batches[BATCH_ID]?.rows?.find((row) => row.kind === "folder-work") as

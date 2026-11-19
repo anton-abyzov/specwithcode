@@ -889,7 +889,7 @@ export const make = Effect.gen(function* () {
       }
       // An accepted takeover is finished as it was first asked: a repeat that
       // lost the batch's fields never turns "Ready" into a resumed run.
-      const batch = recorded === undefined ? request.batch : recorded.batch;
+      const batch = recorded?.batch ?? request.batch;
       const verdict = takeoverVerdict(yield* document, request, label);
       if (verdict.kind === "repeat") return verdict.response;
       if (verdict.kind === "refuse") {

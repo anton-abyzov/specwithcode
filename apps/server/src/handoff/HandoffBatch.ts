@@ -34,6 +34,8 @@ import {
   type HandoffBatchStoredRow,
   type HandoffCheckpoint,
   type HandoffContextRevision,
+  type HandoffFolderWorkItem,
+  type HandoffFolderWorkJournal,
   type HandOffInput,
   type HandoffMachineRun,
   type HandoffMachineThreadResult,
@@ -431,45 +433,98 @@ export const makeFolderWorkSender =
     readonly destination: EnvironmentId;
     readonly destinationLabel: string;
     readonly operationId: string;
+    /** What this operation's row already keeps: a server that stopped carries on from it. */
+    readonly journal?: HandoffFolderWorkJournal | undefined;
+    /** Writes the journal to the row; false when it could not be written. */
+    readonly record?: (journal: HandoffFolderWorkJournal) => Effect.Effect<boolean>;
   }): Effect.Effect<FolderWorkOutcome> =>
     Effect.gen(function* () {
       const label = input.destinationLabel;
-      const inventory = yield* deps.inventory({ projectId: input.projectId });
-      const items: Array<ProjectSyncExtraItem> = [];
-      for (const repository of inventory.repositories) {
-        for (const branch of repository.onlyHere) {
-          items.push({ kind: "branch", path: repository.path, branch: branch.branch });
-        }
-        if (repository.changedFiles + repository.untrackedFiles > 0) {
-          items.push({ kind: "uncommitted", path: repository.path, sendAnyway: [] });
-        }
-      }
-      if (items.length === 0) {
+      const record = input.record ?? (() => Effect.succeed(true));
+      const where = (path: string) => (path === "" || path === "." ? "" : `${path}: `);
+      const named = (item: HandoffFolderWorkItem) =>
+        `${where(item.path)}${item.kind === "branch" ? `branch ${item.branch}` : "uncommitted files"}`;
+      let items = input.journal?.items;
+      let receipt = input.journal?.receipt ?? null;
+      if (items !== undefined && receipt === null) {
+        // The send began and its answer never reached the row. The folder may
+        // hold later work by now, so nothing is read or sent again for this batch.
         return {
-          state: "stayed",
-          detail: `No project folder work on ${deps.selfLabel}.`,
+          state: "failed",
+          detail:
+            `The server stopped while it was sending this to ${label}: ${items.map(named).join(", ")}. Nothing was sent again. What had arrived is on ${label} as a branch, and every file is still on ${deps.selfLabel}. Hand off again to send the folder as it is now.`.slice(
+              0,
+              1000,
+            ),
         } satisfies FolderWorkOutcome;
       }
-      const sent = yield* deps.sendExtras({
-        projectId: input.projectId,
-        targetEnvironmentId: input.destination,
-        operationId: input.operationId,
-        items,
-      });
+      if (items === undefined) {
+        const inventory = yield* deps.inventory({ projectId: input.projectId });
+        const found: Array<HandoffFolderWorkItem> = [];
+        for (const repository of inventory.repositories) {
+          for (const branch of repository.onlyHere) {
+            found.push({ kind: "branch", path: repository.path, branch: branch.branch });
+          }
+          if (repository.changedFiles + repository.untrackedFiles > 0) {
+            found.push({ kind: "uncommitted", path: repository.path, branch: null });
+          }
+        }
+        if (found.length === 0) {
+          return {
+            state: "stayed",
+            detail: `No project folder work on ${deps.selfLabel}.`,
+          } satisfies FolderWorkOutcome;
+        }
+        // On file before anything leaves: a restart sends these or nothing.
+        if (!(yield* record({ items: found, receipt: null }))) {
+          return {
+            state: "failed",
+            detail: "Project folder work was not sent: the batch's record could not be written.",
+          } satisfies FolderWorkOutcome;
+        }
+        items = found;
+      }
+      if (receipt === null) {
+        const sent = yield* deps.sendExtras({
+          projectId: input.projectId,
+          targetEnvironmentId: input.destination,
+          operationId: input.operationId,
+          items: items.map(
+            (item): ProjectSyncExtraItem =>
+              item.kind === "branch"
+                ? { kind: "branch", path: item.path, branch: item.branch ?? "" }
+                : { kind: "uncommitted", path: item.path, sendAnyway: [] },
+          ),
+        });
+        receipt = sent.items.map((item) => {
+          const arrived = item.status === "sent" && item.arrivedAs !== null;
+          return {
+            kind: item.kind,
+            path: item.path,
+            branch: item.branch,
+            arrivedAs: arrived ? item.arrivedAs : null,
+            note: arrived
+              ? null
+              : (item.detail === null
+                  ? item.stays === null
+                    ? ""
+                    : ` (${item.stays})`
+                  : `: ${item.detail}`
+                ).slice(0, 600),
+          };
+        });
+        // Where each piece is on the destination, by name: a restart reads this and sends nothing.
+        yield* record({ items, receipt });
+      }
       const lines: Array<string> = [];
       let arrived = 0;
-      for (const item of sent.items) {
-        const where = item.path === "" || item.path === "." ? "" : `${item.path}: `;
-        if (item.status !== "sent" || item.arrivedAs === null) {
-          lines.push(
-            `${where}${item.kind === "branch" ? `branch ${item.branch}` : "uncommitted files"} stayed on ${deps.selfLabel}${
-              item.detail === null ? (item.stays === null ? "" : ` (${item.stays})`) : `: ${item.detail}`
-            }.`,
-          );
+      for (const item of receipt) {
+        if (item.arrivedAs === null) {
+          lines.push(`${named(item)} stayed on ${deps.selfLabel}${item.note ?? ""}.`);
           continue;
         }
         arrived += 1;
-        const asBranch = `${where}On ${label} as branch ${item.arrivedAs}.`;
+        const asBranch = `${where(item.path)}On ${label} as branch ${item.arrivedAs}.`;
         if (item.kind === "branch") {
           lines.push(`${asBranch} ${BRANCH_NEXT_STEP}`);
           continue;
@@ -485,7 +540,7 @@ export const makeFolderWorkSender =
           })
           .pipe(Effect.result);
         if (applied._tag === "Success" && applied.success.applied) {
-          lines.push(`${where}The uncommitted files are in ${label}'s working folder.`);
+          lines.push(`${where(item.path)}The uncommitted files are in ${label}'s working folder.`);
         } else {
           const why =
             applied._tag === "Success"
@@ -647,7 +702,7 @@ export function batchRunOf(
   batch: HandoffTransferBatch,
 ): HandoffBatchRun {
   const label = batch.targetLabel ?? String(batch.targetEnvironmentId);
-  const rows = (batch.rows ?? []).map((row): HandoffBatchRow => {
+  const rows = (batch.rows ?? []).map(({ folderWork: _journal, ...row }): HandoffBatchRow => {
     const record = row.operationId === null ? undefined : document.transfers[row.operationId];
     if (record === undefined) {
       return { ...row, context: null, continuedThreadId: row.continuedThreadId ?? null };
@@ -710,6 +765,18 @@ export function makeHandoffBatch(deps: HandoffBatchDeps) {
         row.kind === kind && row.id === id ? { ...row, ...patch } : row,
       ),
     })).pipe(Effect.ignore);
+
+  /** Keeps a folder row's journal; false when it could not be written. */
+  const journalOf = (batchId: string, projectId: string) => (folderWork: HandoffFolderWorkJournal) =>
+    updateBatch(batchId, (batch) => ({
+      ...batch,
+      rows: (batch.rows ?? []).map((row) =>
+        row.kind === "folder-work" && row.id === projectId ? { ...row, folderWork } : row,
+      ),
+    })).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
 
   const execute = (input: HandoffBatchInput, options: BatchOptions = {}) =>
     Effect.gen(function* () {
@@ -838,6 +905,7 @@ export function makeHandoffBatch(deps: HandoffBatchDeps) {
           destination,
           destinationLabel: label,
           operationId: batchId,
+          record: journalOf(batchId, row.id),
         });
         yield* patchRow(batchId, "folder-work", row.id, {
           state: outcome.state,
@@ -985,9 +1053,12 @@ export function makeHandoffBatch(deps: HandoffBatchDeps) {
   /**
    * Ends what a stopped server left open. A thread row with no record never
    * held its thread, so it reads Stayed (or is linked to the record its move
-   * wrote). Folder work that never reported is sent again under the batch's own
-   * operation id: the destination answers a repeat with what it did the first
-   * time. Rows with a record are ended by the transfer runner.
+   * wrote). Folder work carries on from its row's journal under the batch's
+   * own operation id: what arrived is put in place again by name, what was
+   * never begun is sent, and a send that was cut is never repeated. The
+   * destination is asked for the batch capability first, as a new batch asks,
+   * and while it does not answer the row waits. Rows with a record are ended by
+   * the transfer runner.
    */
   const reconcile = Effect.gen(function* () {
     const document = yield* store.read;
@@ -1000,6 +1071,17 @@ export function makeHandoffBatch(deps: HandoffBatchDeps) {
       const batchId = batch.batchId;
       running.add(batchId);
       yield* Effect.gen(function* () {
+        const label = batch.targetLabel ?? String(batch.targetEnvironmentId);
+        const folders = open.some((row) => row.kind === "folder-work");
+        const named = folders
+          ? yield* deps.capabilities(batch.targetEnvironmentId).pipe(Effect.result)
+          : null;
+        // No answer: nothing is sent on a guess, and the row is looked at again next time.
+        const waits = named?._tag === "Failure";
+        const unfit =
+          named?._tag === "Success"
+            ? batchCapabilityFailure({ peerLabel: label, capabilities: named.success })
+            : null;
         for (const row of open) {
           if (row.kind === "thread") {
             const record = Object.values(document.transfers).find(
@@ -1015,20 +1097,28 @@ export function makeHandoffBatch(deps: HandoffBatchDeps) {
             );
             continue;
           }
+          if (waits) continue;
+          // A machine from before batches is sent no extras. Where a send had
+          // already begun, the journal alone says what became of it.
           const outcome: FolderWorkOutcome =
             deps.folderWork === null
               ? { state: "stayed", detail: FOLDER_WORK_UNAVAILABLE }
-              : yield* deps.folderWork({
-                  projectId: row.id as ProjectId,
-                  destination: batch.targetEnvironmentId,
-                  destinationLabel: batch.targetLabel ?? String(batch.targetEnvironmentId),
-                  operationId: batchId,
-                });
+              : unfit !== null && row.folderWork === undefined
+                ? { state: "stayed", detail: unfit.message.slice(0, 1000) }
+                : yield* deps.folderWork({
+                    projectId: row.id as ProjectId,
+                    destination: batch.targetEnvironmentId,
+                    destinationLabel: label,
+                    operationId: batchId,
+                    journal: row.folderWork,
+                    record: journalOf(batchId, row.id),
+                  });
           yield* patchRow(batchId, "folder-work", row.id, {
             state: outcome.state,
             detail: outcome.detail,
           });
         }
+        if (waits) return;
         const finishedAt = yield* deps.nowIso;
         yield* updateBatch(batchId, (current) => ({
           ...current,

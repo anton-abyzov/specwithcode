@@ -205,6 +205,35 @@ export type HandoffTransferRecord = typeof HandoffTransferRecord.Type;
 export const HandoffBatchStart = Schema.Literals(["manual", "automatic"]);
 export type HandoffBatchStart = typeof HandoffBatchStart.Type;
 
+/** One piece of a project's folder work: a branch only the source has, or a repository's uncommitted files. */
+export const HandoffFolderWorkItem = Schema.Struct({
+  kind: Schema.Literals(["branch", "uncommitted"]),
+  path: text(4096),
+  branch: Schema.NullOr(text(512)),
+});
+export type HandoffFolderWorkItem = typeof HandoffFolderWorkItem.Type;
+
+/**
+ * What a batch's folder work is and what became of it, kept on its row. The
+ * items are written before anything is sent and the receipt once the send
+ * answered, so a server that stopped in between never reads the folder again
+ * to decide what to send: later edits are not part of this batch.
+ */
+export const HandoffFolderWorkJournal = Schema.Struct({
+  items: Schema.Array(HandoffFolderWorkItem),
+  /** Null until the send answered. Each item: the branch it arrived as, or why it stayed. */
+  receipt: Schema.NullOr(
+    Schema.Array(
+      Schema.Struct({
+        ...HandoffFolderWorkItem.fields,
+        arrivedAs: Schema.NullOr(text(512)),
+        note: Schema.NullOr(text(600)),
+      }),
+    ),
+  ),
+});
+export type HandoffFolderWorkJournal = typeof HandoffFolderWorkJournal.Type;
+
 /**
  * One row of a batch as the source keeps it. A thread row with an operation
  * reads its state from that thread's transfer record; a thread that never got
@@ -225,6 +254,8 @@ export const HandoffBatchStoredRow = Schema.Struct({
    * thread had moved there before this batch asked.
    */
   continuedThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  /** Folder work only: what was to be sent and what arrived. */
+  folderWork: Schema.optional(HandoffFolderWorkJournal),
 });
 export type HandoffBatchStoredRow = typeof HandoffBatchStoredRow.Type;
 
