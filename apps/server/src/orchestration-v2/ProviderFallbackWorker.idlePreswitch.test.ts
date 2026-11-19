@@ -568,8 +568,10 @@ describe("the idle move before the limit, from the sweep (1089)", () => {
 
   it.effect("moves again in a later window after a turn on the fallback and the way back", () =>
     Effect.gen(function* () {
-      const state = world();
+      // A window that resets in 90 seconds, so the test can pass its reset.
+      const soon = new Date(at + 90_000).toISOString();
       const nextReset = "2026-11-19T20:00:00.000Z";
+      const state = world({ claudeResetAt: soon });
       yield* sweeps(state, (sweep) =>
         Effect.gen(function* () {
           yield* sweep();
@@ -581,22 +583,40 @@ describe("the idle move before the limit, from the sweep (1089)", () => {
           yield* nextSweep();
           yield* sweep();
           expect(thread.selection).toEqual(onClaude);
-          // Read home under the threshold: the window is over and its hold ends.
-          yield* nextSweep();
-          yield* sweep();
-          // Claude passes the threshold in its next window: the move comes again.
+          // The window resets; Claude passes the threshold in its next one.
+          yield* TestClock.adjust(90_000);
           state.claudeUsed = 92;
           state.claudeResetAt = nextReset;
-          yield* nextSweep();
-          yield* sweep();
           yield* sweep();
         }),
       );
       expect(ids(state)).toEqual([
-        preswitchId,
-        returnId,
+        `limit-preswitch:t1:${claudeId}:${soon}`,
+        `limit-preswitch-return:t1:${claudeId}:${soon}`,
         `limit-preswitch:t1:${claudeId}:${nextReset}`,
       ]);
+    }),
+  );
+
+  it.effect("keeps a timed hold when a reading falls under the threshold early", () =>
+    Effect.gen(function* () {
+      const state = world();
+      yield* sweeps(state, (sweep) =>
+        Effect.gen(function* () {
+          yield* sweep();
+          state.threads[0]!.selection = onClaude;
+          state.threads[0]!.preswitch = null;
+          // A reading under the threshold before the reset ends no timed hold.
+          state.claudeUsed = 40;
+          yield* nextSweep();
+          yield* sweep();
+          state.claudeUsed = 92;
+          state.claudeResetAt = "2026-11-19T20:00:00.000Z";
+          yield* nextSweep();
+          yield* sweep();
+        }),
+      );
+      expect(ids(state)).toEqual([preswitchId]);
     }),
   );
 

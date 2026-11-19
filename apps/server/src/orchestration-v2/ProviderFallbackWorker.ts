@@ -1907,17 +1907,25 @@ export const makeSweep = Effect.gen(function* () {
         const used = origin === undefined ? null : providerUsedPercent(origin, now, model);
         if (used === null || used >= threshold) continue;
         const prefix = preswitchIdPrefix(thread.id, instanceId);
-        const ended = [...(yield* Ref.get(sent))].filter((id) => id.startsWith(prefix));
+        const sentNow = [...(yield* Ref.get(sent))].filter((id) => id.startsWith(prefix));
+        // A move whose id names a reset holds until that reset, whatever the
+        // reading; the reading ends only a window with no reset time.
+        const timed = (id: string) => {
+          const resetMs = Date.parse(preswitchWindowResetAt(id) ?? "");
+          return Number.isFinite(resetMs) && resetMs > now;
+        };
+        const ended = sentNow.filter((id) => !timed(id));
         yield* Ref.update(sent, (current) => {
           const without = new Set(current);
           for (const id of ended) without.delete(id);
           return without;
         });
-        yield* Ref.update(idleOrigins, (current) => {
-          const without = new Map(current);
-          without.delete(key);
-          return without;
-        });
+        if (ended.length === sentNow.length)
+          yield* Ref.update(idleOrigins, (current) => {
+            const without = new Map(current);
+            without.delete(key);
+            return without;
+          });
         // A window with no reset time ended: the next one needs its own id.
         if (ended.some((id) => preswitchWindowResetAt(id) === null))
           yield* Ref.update(openWindows, (current) =>
