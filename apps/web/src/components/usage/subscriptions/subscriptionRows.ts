@@ -174,6 +174,14 @@ function atLimitOf(limits: LimitAccount["limits"], windows: readonly Subscriptio
   );
 }
 
+/** How long one period lasts, for reading the pace; null when the provider does not say. */
+function durationOf(window: LimitAccount["limits"]["windows"][number]): number | null {
+  if (window.windowDurationMins !== undefined && window.windowDurationMins > 0) {
+    return window.windowDurationMins * 60_000;
+  }
+  return window.kind === "weekly" ? 7 * DAY_MS : window.kind === "monthly" ? 30 * DAY_MS : null;
+}
+
 function windowsOf(account: LimitAccount, now: number): SubscriptionWindow[] {
   const expiring = expiringQuota({ usageLimits: account.limits } as ServerProvider, "", now);
   return account.limits.windows
@@ -193,14 +201,7 @@ function windowsOf(account: LimitAccount, now: number): SubscriptionWindow[] {
       accountWide: windowModelScope(window) === null && !isCursorOverall(account, window.id),
       spent: window.usedPercent >= 100,
       amounts: windowAmounts(window),
-      durationMs:
-        window.windowDurationMins !== undefined && window.windowDurationMins > 0
-          ? window.windowDurationMins * 60_000
-          : window.kind === "weekly"
-            ? 7 * DAY_MS
-            : window.kind === "monthly"
-              ? 30 * DAY_MS
-              : null,
+      durationMs: durationOf(window),
     }))
     .toSorted((left, right) => lengthOf(left) - lengthOf(right));
 }
@@ -236,11 +237,17 @@ function noteProvider(account: LimitAccount): SubscriptionNoteProvider | null {
     : null;
 }
 
-function noteOf(account: LimitAccount, windows: readonly SubscriptionWindow[], reportedRenewal: boolean) {
+/**
+ * The note looks at every account window the reading holds, live or not: a
+ * session whose reset just passed was still reported, so its absence is not.
+ */
+function noteOf(account: LimitAccount, reportedRenewal: boolean) {
   const rule = subscriptionWindowNote({
     provider: noteProvider(account),
     plans: [account.limits.planLabel, account.plan],
-    windows: windows.filter((window) => window.accountWide),
+    windows: account.limits.windows
+      .filter((window) => windowModelScope(window) === null && !isCursorOverall(account, window.id))
+      .map((window) => ({ kind: window.kind, durationMs: durationOf(window) })),
     hasReportedRenewal: reportedRenewal,
   });
   return rule === null
@@ -325,7 +332,7 @@ export function subscriptionRows(
           : null,
       lastLoss: lastLossOf(account, accountKey, periods),
       atLimit: atLimitOf(account.limits, windows),
-      note: noteOf(account, windows, reported !== null && reported > now),
+      note: noteOf(account, reported !== null && reported > now),
     };
   });
   const soonest = (row: SubscriptionRow) =>
@@ -403,8 +410,9 @@ export function subscriptionsSummary(
     limited.length > 0
       ? min(
           limited.map((row) => {
-            const spent = soonest(row.windows.filter((window) => window.spent));
-            return spent ?? soonest(row.windows);
+            // A spent window frees the row; with one whose reset is unknown, no other reset does.
+            const spent = row.windows.filter((window) => window.accountWide && window.spent);
+            return spent.length > 0 ? soonest(spent) : soonest(row.windows);
           }),
         )
       : min(rows.map((row) => soonest(row.windows)));

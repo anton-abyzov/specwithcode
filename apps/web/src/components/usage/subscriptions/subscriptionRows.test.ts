@@ -341,6 +341,15 @@ describe("subscriptionsSummary", () => {
     expect(subscriptionsSummary(list, 0, now)).toMatchObject({ atLimit: 2, nextResetAt: now + DAY });
   });
 
+  it("names no reset for a row whose spent window has no reset time, not a shorter window's", () => {
+    const { resetsAt: _unknown, ...spentWeekly } = weekly(100, DAY);
+    const list = rows([
+      account("w", codex, "w@x.dev", "m4", { windows: [spentWeekly, session(20, HOUR)] }),
+    ]);
+    expect(list[0]?.atLimit).toBe(true);
+    expect(subscriptionsSummary(list, 0, now).nextResetAt).toBeNull();
+  });
+
   it("ignores scoped windows and Cursor's Overall, and leaves the reset out when none is known", () => {
     const list = rows([
       account("g", claude, "g@x.dev", "m4", {
@@ -391,6 +400,15 @@ describe("window notes", () => {
       ]),
     ).toBe("No 5-hour window reported for this plan.");
     expect(noteOf([account("q", claude, "q@x.dev", "m4", { windows: [weekly(10, DAY)] })])).toBeNull();
+  });
+
+  it("does not say a Codex Pro plan lacks a 5-hour window when its session just reset", () => {
+    const passed = { ...weekly(30, -HOUR), id: "primary", kind: "session" as const, label: "5-hour", windowDurationMins: 300 };
+    expect(
+      noteOf([
+        account("p", codex, "p@x.dev", "m4", { windows: [weekly(10, DAY), passed] }, { plan: "ChatGPT Pro 20x Subscription" }),
+      ]),
+    ).toBeNull();
   });
 
   it("never lets a model-scoped window or Cursor's Overall earn a note", () => {

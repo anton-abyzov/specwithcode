@@ -101,6 +101,17 @@ describe("SubscriptionRow renewal", () => {
     expect(html).toContain("Usage resets monthly with your billing cycle.");
   });
 
+  it("still shows a reported date on a row with nothing to key a day by, without an editor", () => {
+    const html = renderAccount({
+      driver: ProviderDriverKind.make("opencode"),
+      email: undefined,
+      limits: { checkedAt: iso(now), windows, renewsAt: iso(new Date(2026, 11, 2, 12).getTime()) },
+    });
+    expect(html).toContain("Renews Dec 2 (reported by OpenCode)");
+    expect(html).not.toContain("Set day");
+    expect(html).not.toContain("No renewal day");
+  });
+
   it("says a reading with nothing to key a day by cannot hold one", () => {
     const html = renderAccount({
       driver: ProviderDriverKind.make("acpRegistry"),

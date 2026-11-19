@@ -79,7 +79,14 @@ function RenewalDay({
   const [value, setValue] = useState("");
   const renewalKey = row.renewalKey;
   if (renewalKey === null) {
-    return <span>No renewal day: this account reports nothing to save it under.</span>;
+    // A reported date still shows; only saving a day needs a key.
+    return row.renewal?.source === "provider" ? (
+      <span data-renewal="provider">
+        Renews {formatDay(row.renewal.at)} (reported by {row.renewal.vendor ?? "the provider"})
+      </span>
+    ) : (
+      <span>No renewal day: this account reports nothing to save it under.</span>
+    );
   }
   if (editing) {
     const day = Number(value);
