@@ -279,7 +279,9 @@ describe("compaction keeps what a source still asks about", () => {
       const other = EnvironmentId.make("machine-c");
       const receipt = acting({
         state: "done",
-        results: [{ projectId: ProjectId.make("project-a"), outcome: "handed-over", epoch: 2 }],
+        results: [
+          { projectId: ProjectId.make("project-a"), outcome: "handed-over", detail: "", epoch: 2 },
+        ],
       });
       const others = Array.from({ length: 50 }, (_, index) =>
         acting({
