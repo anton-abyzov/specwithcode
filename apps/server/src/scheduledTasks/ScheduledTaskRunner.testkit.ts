@@ -544,3 +544,15 @@ export const fleet = (
       fires: () => machines.reduce((sum, entry) => sum + entry.fires(), 0),
     };
   });
+
+/**
+ * What a row on `machine` sends with a toggle or a delete: the definition its
+ * list shows for the routine, where it shows one (a copy another machine runs).
+ */
+export const shownOn = (machine: Machine) =>
+  machine.service.list().pipe(
+    Effect.map((list) => {
+      const hash = list.tasks.find((task) => task.id === ROUTINE)?.definitionHash;
+      return hash === undefined ? {} : { expectedDefinition: hash };
+    }),
+  );
