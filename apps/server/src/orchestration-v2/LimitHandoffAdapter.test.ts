@@ -124,7 +124,7 @@ describe("LimitHandoffAdapter", () => {
     }),
   );
 
-  it.effect("a move that succeeds is moved, asked once with only 0967's input", () =>
+  it.effect("a move that succeeds is moved, asked once with 0967's input and its trigger", () =>
     Effect.gen(function* () {
       const { port, calls } = harness({
         answer: () =>
@@ -148,6 +148,8 @@ describe("LimitHandoffAdapter", () => {
           threadId,
           destinationEnvironmentId: minis,
           modelSelection: request.modelSelection,
+          // What an automatic move back is weighed against on the other machine.
+          trigger: { kind: "automatic", key: request.idempotencyKey },
         },
       ]);
     }),
