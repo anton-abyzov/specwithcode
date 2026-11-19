@@ -33,19 +33,6 @@ import {
 const evidenceStamp = (now: number) =>
   DateTime.formatIso(DateTime.makeUnsafe(now)).slice(0, 19).replace(/[-:]/g, "").replace("T", "-");
 
-/** Paths of the worktrees `git worktree list --porcelain -z` marks prunable. */
-export function prunableWorktrees(porcelain: string): ReadonlyArray<string> {
-  const paths: Array<string> = [];
-  // Records end with an empty field; each field is `name value` or a bare name.
-  for (const record of porcelain.split("\0\0")) {
-    const fields = record.split("\0").filter((field) => field !== "");
-    const worktree = fields.find((field) => field.startsWith("worktree "));
-    if (worktree !== undefined && fields.some((field) => /^prunable( |$)/.test(field)))
-      paths.push(worktree.slice("worktree ".length));
-  }
-  return paths;
-}
-
 export function makeRemoval(deps: {
   readonly git: GitVcsDriver.GitVcsDriver["Service"];
   readonly gitManager: GitManager.GitManager["Service"];
@@ -169,52 +156,6 @@ export function makeRemoval(deps: {
     }).pipe(Effect.ignore);
 
   /**
-   * `git worktree prune` in a repository whose worktrees this removal took,
-   * for a registration a removal left behind. A prune drops every
-   * registration whose folder is missing, one on a drive that is not mounted
-   * included, so it runs only when every worktree Git calls prunable is one
-   * this removal took, and it leaves registrations younger than an hour
-   * alone. Anything else prunable keeps every registration. A plain
-   * `git worktree remove` already unregisters what it removes, so this is
-   * usually nothing to do.
-   */
-  const pruneRegistrations = Effect.fn("WorktreeCleanupSweep.prune")(
-    function* (repository: string, removed: ReadonlyArray<string>) {
-      const listed = yield* git.execute({
-        operation: "WorktreeCleanupSweep.pruneList",
-        cwd: repository,
-        args: ["worktree", "list", "--porcelain", "-z"],
-        maxOutputBytes: 4 * 1024 * 1024,
-        allowNonZeroExit: true,
-        timeoutMs: 15_000,
-      });
-      if (listed.exitCode !== 0 || listed.stdoutTruncated) return;
-      const prunable = prunableWorktrees(listed.stdout);
-      if (prunable.length === 0) return;
-      const ours = new Set(removed.map((worktree) => path.resolve(worktree)));
-      const other = prunable.find((worktree) => !ours.has(path.resolve(worktree)));
-      if (other !== undefined) {
-        yield* Effect.logInfo(
-          "storage cleanup skipped git worktree prune: another missing worktree is registered",
-          { repository, worktree: other },
-        );
-        return;
-      }
-      yield* git.execute({
-        operation: "WorktreeCleanupSweep.prune",
-        cwd: repository,
-        args: ["worktree", "prune", "--expire", "1.hour.ago"],
-        maxOutputBytes: 4096,
-        allowNonZeroExit: true,
-        timeoutMs: 30_000,
-      });
-    },
-    Effect.catchCause((cause) =>
-      Effect.logWarning("storage cleanup could not prune worktree registrations", { cause }),
-    ),
-  );
-
-  /**
    * One member read again right before it goes: false when anything in it or
    * about it differs from the assessment the removal rests on. Git deletes
    * ignored files without asking, and earlier members can take minutes.
@@ -270,8 +211,8 @@ export function makeRemoval(deps: {
 
   /**
    * Removes the members deepest first without force, stopping at the first
-   * that changed or that Git could not remove, then prunes stale registrations
-   * and removes the folders left empty. Branches and the manifest stay.
+   * that changed or that Git could not remove, then removes the folders left
+   * empty. Branches and the manifest stay.
    */
   const removeMembers = Effect.fn("WorktreeCleanupSweep.removeMembers")(function* (
     assessment: Assessment,
@@ -281,7 +222,6 @@ export function makeRemoval(deps: {
     const depth = (state: MemberState) =>
       state.member.relativePath === "" ? 0 : state.member.relativePath.split(path.sep).length;
     let gone = 0;
-    const removedPaths: Array<{ readonly repository: string; readonly path: string }> = [];
     for (const state of assessment.members.toSorted((left, right) => depth(right) - depth(left))) {
       // Removing a member can take minutes: a chat may have been reopened meanwhile.
       // Use, then the member itself, then use again: the member walk takes time too.
@@ -334,15 +274,12 @@ export function makeRemoval(deps: {
         return { stopped: "refused" as const, member: failure.member, gone, failure };
       }
       gone += 1;
-      removedPaths.push({ repository: state.repository, path: state.path });
     }
-    for (const repository of new Set(assessment.members.map((state) => state.repository))) {
-      yield* pruneRegistrations(
-        repository,
-        removedPaths.filter((entry) => entry.repository === repository).map((entry) => entry.path),
-      );
+    // No `git worktree prune`: it drops every registration whose folder is
+    // missing, a worktree on a drive that is not attached included, and a
+    // plain `git worktree remove` already unregisters what it removes.
+    for (const repository of new Set(assessment.members.map((state) => state.repository)))
       yield* gitManager.invalidateStatus(repository);
-    }
     const folder = assessment.group.folder;
     for (const state of assessment.members) {
       let parent = path.dirname(state.path);

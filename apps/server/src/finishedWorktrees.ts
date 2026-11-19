@@ -92,9 +92,9 @@ export function isEvidenceFile(relative: string): boolean {
   );
 }
 
-/** Names credentials and keys go by: `.env*`, `*.pem`, `*.key`, SSH keys, credential and token files. */
+/** Names credentials and keys go by: `.env*` (`.envrc` too), `*.pem`, `*.key`, SSH keys, credential and token files. */
 const SECRET_NAME =
-  /^(\.env(\..*)?|.*\.(pem|key|p12|pfx|keystore|jks|kdbx)|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|\.netrc|\.npmrc|\.pypirc|.*(credential|secret|token|password).*)$/i;
+  /^(\.env.*|.*\.(pem|key|p12|pfx|keystore|jks|kdbx)|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|\.netrc|\.npmrc|\.pypirc|.*(credential|secret|token|password).*)$/i;
 
 export function mayHoldSecret(name: string): boolean {
   return SECRET_NAME.test(name);
@@ -441,7 +441,9 @@ export function decideFinishedWorktree(
         !(state(git) === "merged" && integrated(git)) &&
         state(git) === "closed",
     );
-    if (finished && everyDone && (!closedOnly || headsClosed || quietLongEnough)) {
+    // Only a merge goes at once: a closed pull request waits, even when its
+    // commits are already on the default branch.
+    if (finished && everyDone && ((merged && !closedOnly) || headsClosed || quietLongEnough)) {
       applied = {
         reason: merged ? "merged" : "closed",
         detail: merged

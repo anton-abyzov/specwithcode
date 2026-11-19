@@ -588,6 +588,17 @@ describe("a chat that finished though nobody resolved it", () => {
         NOW,
       );
     expect(set({ headInDefault: true, pullRequest: none })).toMatchObject({ action: "remove" });
+    // A closed pull request whose commits are on the default branch waits too.
+    expect(
+      decideFinishedWorktree(
+        folder({
+          chats: finishedChat(60_000, true),
+          members: [member({ headInDefault: true, pullRequest: closed })],
+        }),
+        rules(),
+        NOW,
+      ),
+    ).toMatchObject({ action: "keep" });
     // A member done only because its pull request closed waits six quiet hours.
     expect(set({ pullRequest: closed })).toMatchObject({ action: "keep" });
     expect(set({ pullRequest: { state: "open", contentIntegrated: false } })).toMatchObject({
@@ -617,6 +628,7 @@ describe("ignored files copied to evidence", () => {
     "reports/.env.local",
     ".specweave/state/github-token.json",
     "reports/deploy.pem",
+    "reports/.envrc",
   ])(
     "does not copy %s",
     (relative) => {

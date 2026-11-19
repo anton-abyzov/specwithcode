@@ -218,14 +218,6 @@ export function makeMemberFacts(deps: {
     );
     // status.showUntrackedFiles=no hides new files from the status check.
     const untracked = yield* listOthers(state, ["--exclude-standard"], 64 * 1024);
-    const ignored = yield* listOthers(state, ["--ignored", "--exclude-standard"], 1024 * 1024);
-    const classified =
-      ignored === null
-        ? null
-        : yield* Effect.tryPromise(() => classifyIgnored(state.path, ignored.entries)).pipe(
-            Effect.orElseSucceed(() => null),
-          );
-    state.media = classified?.media ?? [];
     const hidden = yield* hiddenTrackedChangeReason(git, state.path).pipe(
       Effect.map((reason) => reason !== null),
       Effect.orElseSucceed(() => null),
@@ -244,6 +236,27 @@ export function makeMemberFacts(deps: {
               Effect.map((result) => result.exitCode === 0),
               Effect.orElseSucceed(() => null),
             );
+    // History before ignored files: the ignored listing is the last reading
+    // the removal rests on, as close to Git's removal as it can be.
+    const stash = yield* stashOnBranch(state.path, branch);
+    const reflogOnly = yield* reflogOnlyCommits(git, state.path).pipe(
+      Effect.orElseSucceed(() => null),
+    );
+    const unpushed = yield* commitCount(state.path, "WorktreeCleanupSweep.unpushed", [
+      "rev-list",
+      "--count",
+      "HEAD",
+      "--not",
+      "--remotes",
+    ]);
+    const ignored = yield* listOthers(state, ["--ignored", "--exclude-standard"], 1024 * 1024);
+    const classified =
+      ignored === null
+        ? null
+        : yield* Effect.tryPromise(() => classifyIgnored(state.path, ignored.entries)).pipe(
+            Effect.orElseSucceed(() => null),
+          );
+    state.media = classified?.media ?? [];
     const facts: FinishedMemberGit = {
       branch,
       changes: statusRead === null ? null : statusRead.hasWorkingTreeChanges,
@@ -262,17 +275,9 @@ export function makeMemberFacts(deps: {
               bytes: classified.media.reduce((total, file) => total + file.bytes, 0),
             },
       hiddenTrackedChanges: hidden,
-      stash: yield* stashOnBranch(state.path, branch),
-      reflogOnlyCommits: yield* reflogOnlyCommits(git, state.path).pipe(
-        Effect.orElseSucceed(() => null),
-      ),
-      unpushedCommits: yield* commitCount(state.path, "WorktreeCleanupSweep.unpushed", [
-        "rev-list",
-        "--count",
-        "HEAD",
-        "--not",
-        "--remotes",
-      ]),
+      stash,
+      reflogOnlyCommits: reflogOnly,
+      unpushedCommits: unpushed,
       restorable,
       nestedRepository: undefined,
       headInDefault: undefined,

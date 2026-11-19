@@ -101,8 +101,6 @@ import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
 import { hiddenTrackedChangeReason, nestedRepositoryReason } from "./worktreeHiddenWork.ts";
 import { anyWorktreePolicy, makeWorktreeCleanupSweep } from "./worktreeCleanupSweep.ts";
-import { listChecksCopies, machineGatePaths, retireChecksCopy } from "./checksCopyRetention.ts";
-import { releaseHeavyCheckLock, tryAcquireHeavyCheckLock } from "./cli/heavyCheckLock.ts";
 import { removableLogFile } from "./storageLogRetention.ts";
 import {
   LowDiskBackoff,
@@ -930,59 +928,6 @@ export const make = Effect.gen(function* () {
       Effect.map(({ removed }) => removed),
     );
 
-  /**
-   * Retires checks copies nobody used for a week (checksCopyRetention.ts),
-   * only while this sweep holds the heavy-check gate: `checks copy` and
-   * `checks run` work in a copy under that gate, so none starts while a copy
-   * is read and removed. A held or queued gate skips the pass until the next
-   * hour. Each copy is read again right before it goes; an unreadable process
-   * list keeps it.
-   */
-  const retireChecksCopies = Effect.fn("StorageCleanup.retireChecksCopies")(function* (
-    now: number,
-  ) {
-    const copies = listChecksCopies(config.baseDir);
-    if (copies.length === 0) return;
-    const gate = machineGatePaths();
-    const held = yield* Effect.acquireRelease(
-      Effect.sync(() => {
-        try {
-          return tryAcquireHeavyCheckLock({
-            paths: gate,
-            label: "storage cleanup: retire unused checks copies",
-            command: ["storage-cleanup", "retire-checks-copies"],
-            cwd: config.baseDir,
-          });
-        } catch {
-          return null;
-        }
-      }),
-      (record) =>
-        record === null ? Effect.void : Effect.sync(() => releaseHeavyCheckLock(gate, record.id)),
-    );
-    if (held === null) {
-      yield* Effect.logDebug("storage cleanup left checks copies for later: the gate is busy");
-      return;
-    }
-    for (const copy of copies) {
-      const processCwds = yield* listProcessCwds(platform);
-      const result = yield* Effect.sync(() =>
-        retireChecksCopy(copy, { home: config.baseDir, processCwds, nowMs: now, gatePaths: gate }),
-      );
-      if (result.removed)
-        yield* Effect.logInfo("storage cleanup retired an unused checks copy", {
-          path: copy,
-          bytes: result.bytes ?? null,
-          reason: result.reason,
-        });
-      else
-        yield* Effect.logDebug("storage cleanup kept checks copy", {
-          path: copy,
-          reason: result.reason,
-        });
-    }
-  }, Effect.scoped);
-
   const scope = new SweepScope();
   const lowDiskBackoff = new LowDiskBackoff();
   /** Set by `start`: sweeps before it are left to the first scheduled one. */
@@ -1059,10 +1004,6 @@ export const make = Effect.gen(function* () {
     yield* cleanFiles(config.logsDir, settings.logsAfterDays, now, true).pipe(
       Effect.catch((error) => Effect.logWarning("rotated log cleanup failed", { error })),
     );
-    if (otherInstance === null)
-      yield* retireChecksCopies(now).pipe(
-        Effect.catchCause((cause) => Effect.logWarning("checks copy cleanup failed", { cause })),
-      );
     // Last: it measures what the cleanups above left.
     yield* homeUsage
       .run(serverSettings, now)
