@@ -90,4 +90,27 @@ describe("icon tabs and scrolling", () => {
     );
     expect(result.lines).toContainEqual(expect.stringMatching(/^PASS scroll up/));
   });
+
+  it("calls a run invalid when another app's window lies over the Mirroring window", async () => {
+    const wispr = {
+      app: "Wispr Flow",
+      name: "Status",
+      layer: 1000,
+      x: 500,
+      y: 180,
+      width: 512,
+      height: 614,
+    };
+    const phone = simulatedPhone({ overlays: [wispr] });
+    const result = await runCheck(phone.deps);
+    expect(result.lines.at(-1)).toMatch(
+      /^Result: INVALID \(another app's window lies over the iPhone Mirroring window: Wispr Flow "Status" \(layer 1000, 512x614 at 500, 180\)\. Quit that app/,
+    );
+    // Nothing reached the phone: no tap, key, typing or scroll.
+    expect(
+      phone.state.calls.filter((tool) => /computer_(click|key|type|scroll|drag)/.test(tool)),
+    ).toEqual([]);
+    const clear = await runCheck(simulatedPhone().deps);
+    expect(clear.lines).toContain("SETUP no other app's window over the iPhone Mirroring window");
+  });
 });

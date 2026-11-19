@@ -93,25 +93,121 @@ export const run = (file, args, input, timeout = 20_000) =>
 const OCR_FIRST_TIMEOUT_MS = 180_000;
 const OCR_TIMEOUT_MS = 60_000;
 
+// The Mirroring window, the windows listed in front of it (front to back) and
+// the displays' frames and visible frames, all in the global display points a
+// click is posted at, as the app's own click target reads them.
 const WINDOW_SCRIPT = `
 ObjC.import("CoreGraphics");
 ObjC.import("AppKit");
+function area(rect, primaryHeight) {
+  return {
+    x: Number(rect.origin.x),
+    y: primaryHeight - Number(rect.origin.y) - Number(rect.size.height),
+    width: Number(rect.size.width),
+    height: Number(rect.size.height)
+  };
+}
 function run(argv) {
   var apps = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(argv[0]);
   var pids = {};
   for (var a = 0; a < apps.count; a++) pids[String(apps.objectAtIndex(a).processIdentifier)] = true;
   var list = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(1 | 16, 0))) || [];
+  var all = $.NSScreen.screens;
+  var primaryHeight = Number(all.objectAtIndex(0).frame.size.height);
+  var screens = [];
+  for (var s = 0; s < all.count; s++) {
+    var screen = all.objectAtIndex(s);
+    screens.push({ frame: area(screen.frame, primaryHeight), visible: area(screen.visibleFrame, primaryHeight) });
+  }
   var found = null;
+  var before = [];
   for (var i = 0; i < list.length && found === null; i++) {
     var w = list[i];
     var b = w.kCGWindowBounds || {};
-    if (pids[String(w.kCGWindowOwnerPID)] === true && Number(w.kCGWindowLayer) === 0 && Number(b.Width) > 100) {
+    var ours = pids[String(w.kCGWindowOwnerPID)] === true;
+    if (ours && Number(w.kCGWindowLayer) === 0 && Number(b.Width) > 100) {
       found = { x: Number(b.X), y: Number(b.Y), width: Number(b.Width), height: Number(b.Height) };
+    } else if (!ours) {
+      before.push({
+        app: String(w.kCGWindowOwnerName || ""),
+        name: String(w.kCGWindowName || ""),
+        layer: Number(w.kCGWindowLayer),
+        alpha: w.kCGWindowAlpha === undefined ? 1 : Number(w.kCGWindowAlpha),
+        x: Number(b.X), y: Number(b.Y), width: Number(b.Width), height: Number(b.Height)
+      });
     }
   }
-  var main = $.NSScreen.screens.objectAtIndex(0).frame.size;
-  return JSON.stringify({ window: found, main: { width: Number(main.width), height: Number(main.height) } });
+  var main = all.objectAtIndex(0).frame.size;
+  return JSON.stringify({ window: found, before: before, screens: screens, main: { width: Number(main.width), height: Number(main.height) } });
 }`;
+
+const MENU_BAR_LAYERS = new Set([24, 25]);
+
+const overlap = (a, b) => {
+  const x = Math.max(a.x, b.x);
+  const y = Math.max(a.y, b.y);
+  const width = Math.min(a.x + a.width, b.x + b.width) - x;
+  const height = Math.min(a.y + a.height, b.y + b.height) - y;
+  return width > 0 && height > 0 ? { x, y, width, height } : undefined;
+};
+
+const sameArea = (a, b) =>
+  a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+
+/**
+ * Where the Dock's display-wide window takes clicks: inside its display but
+ * outside the visible frame, below the visible frame's top (above it is the
+ * menu bar's strip). The bottom, left and right strips, some of them empty.
+ */
+function dockStrips({ frame, visible }) {
+  const right = frame.x + frame.width;
+  const bottom = frame.y + frame.height;
+  const below = visible.y + visible.height;
+  return [
+    { x: frame.x, y: below, width: frame.width, height: bottom - below },
+    { x: frame.x, y: visible.y, width: visible.x - frame.x, height: bottom - visible.y },
+    {
+      x: visible.x + visible.width,
+      y: visible.y,
+      width: right - visible.x - visible.width,
+      height: bottom - visible.y,
+    },
+  ].filter((strip) => strip.width > 0 && strip.height > 0);
+}
+
+/**
+ * The windows in front of the Mirroring window that would take a click on it,
+ * passed over as the desktop's click target (computerUseSteps.ts windowAtPoint)
+ * passes them: see-through windows, Window Server windows other than the menu
+ * bar, and the Dock's display-wide window where it is see-through. A Dock
+ * strip over the Mirroring window is reported as the part of the strip it
+ * covers. All in global display points; before is front to back.
+ */
+export function overlaysOver(mirroring, before, screens = []) {
+  if (mirroring === null || mirroring === undefined) return [];
+  const overlays = [];
+  for (const window of before) {
+    if (!(window.alpha > 0)) continue;
+    if (window.app === "Window Server" && !MENU_BAR_LAYERS.has(window.layer)) continue;
+    const covered = overlap(window, mirroring);
+    if (covered === undefined) continue;
+    const display =
+      window.app === "Dock" && window.layer !== 0
+        ? screens.find((screen) => sameArea(screen.frame, window))
+        : undefined;
+    const { app, name, layer } = window;
+    if (display === undefined) {
+      const { x, y, width, height } = window;
+      overlays.push({ app, name, layer, x, y, width, height });
+      continue;
+    }
+    const strip = dockStrips(display)
+      .map((part) => overlap(part, mirroring))
+      .find((part) => part !== undefined);
+    if (strip !== undefined) overlays.push({ app, name, layer, ...strip });
+  }
+  return overlays;
+}
 
 const OCR_SCRIPT = `
 ObjC.import("Foundation");
@@ -198,7 +294,9 @@ export async function liveDeps({ client, scratch, saveScreenshots, outDir }) {
       const answer = JSON.parse(
         run("/usr/bin/osascript", ["-l", "JavaScript", "-e", WINDOW_SCRIPT, MIRRORING_BUNDLE_ID]),
       );
-      return windowInScreenshot(answer.window, answer.main, size);
+      const found = windowInScreenshot(answer.window, answer.main, size);
+      if (found === undefined) return undefined;
+      return { ...found, overlays: overlaysOver(answer.window, answer.before, answer.screens) };
     },
     ocr: async (image, region) => {
       const source = Buffer.from(image, "base64");
