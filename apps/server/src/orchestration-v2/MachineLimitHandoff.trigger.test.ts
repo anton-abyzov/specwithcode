@@ -100,23 +100,23 @@ describe("limitHandoffTrigger for a thread on a track (1390 AC-37)", () => {
       ...patch,
     });
 
-  for (const order of ["other-machine-first", "same-machine-first"] as const) {
-    it(`asks no machine while the track has room here, under ${order}`, () => {
-      // A second local source, or a later local model, still has room.
-      const here = { ...out, outHere: false };
-      expect(withTrack(here, { localStep: "switch" }, order)).toBeNull();
-      // Even with no local step found this sweep, the track itself is not out.
-      expect(withTrack(here, { localStep: null }, order)).toBeNull();
-    });
+  const orders = ["other-machine-first", "same-machine-first"] as const;
 
-    it(`asks a machine once the track is out here, under ${order}`, () => {
-      const trigger = withTrack(out, { localStep: null }, order);
-      expect(trigger).toMatchObject({ key: "limit-handoff:t1:r2", reason: "usage-limit" });
-      expect(trigger?.track).toEqual(out);
-      // A local step off the track does not hold it back: the track comes before the order.
-      expect(withTrack(out, { localStep: "switch" }, order)?.track).toEqual(out);
-    });
-  }
+  it.each(orders)("asks no machine while the track has room here, under %s", (order) => {
+    // A second local source, or a later local model, still has room.
+    const here = { ...out, outHere: false };
+    expect(withTrack(here, { localStep: "switch" }, order)).toBeNull();
+    // Even with no local step found this sweep, the track itself is not out.
+    expect(withTrack(here, { localStep: null }, order)).toBeNull();
+  });
+
+  it.each(orders)("asks a machine once the track is out here, under %s", (order) => {
+    const trigger = withTrack(out, { localStep: null }, order);
+    expect(trigger).toMatchObject({ key: "limit-handoff:t1:r2", reason: "usage-limit" });
+    expect(trigger?.track).toEqual(out);
+    // A local step off the track does not hold it back: the track comes before the order.
+    expect(withTrack(out, { localStep: "switch" }, order)?.track).toEqual(out);
+  });
 
   it("still lets a banked reset, credits or API credits go first", () => {
     for (const localStep of ["redeem-reset", "spend-credits", "api-credits", "resume-api"])

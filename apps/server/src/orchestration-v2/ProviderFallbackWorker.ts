@@ -57,6 +57,7 @@ import { projectCompatibleProviders } from "../project/ProjectProviderCompatibil
 import * as Projects from "../project/ProjectService.ts";
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import { SIMULATED_USAGE_LIMIT_MESSAGE, simulatedUsageLimitInstances } from "./ProviderFailure.ts";
+import { limitHandoffTrackState } from "./limitHandoffTrack.ts";
 import { limitHandoffTrigger, MachineLimitHandoff } from "./MachineLimitHandoff.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -2072,6 +2073,14 @@ export const makeSweep = Effect.gen(function* () {
             (stoppedOnLimit(current) || !windowHeld(current, at)),
           localStep,
           windowKey: usageWindowKey(provider, at, model),
+          // A thread on a track asks a machine only once that track is out here (1390).
+          track: limitHandoffTrackState({
+            thread: current,
+            rule,
+            providers: own,
+            nowMs: at,
+            limited: options.limited,
+          }),
         });
       };
       const trigger = triggerFor(thread, providersFor(thread), resolved, step?.type ?? null, now);

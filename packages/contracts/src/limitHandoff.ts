@@ -106,9 +106,7 @@ export const LimitHandoffTrackDecision = Schema.Struct({
   /** Every machine that could take the track answered, and none has room. */
   everyMachineOut: Schema.Boolean,
   /** The earliest known reset of the track on any machine; null is "Reset unknown". */
-  earliestReset: Schema.NullOr(
-    Schema.Struct({ machineLabel: Schema.String, at: IsoDateTime }),
-  ),
+  earliestReset: Schema.NullOr(Schema.Struct({ machineLabel: Schema.String, at: IsoDateTime })),
   /** When the machines are asked again; nothing is asked before it. */
   recheckAt: Schema.NullOr(IsoDateTime),
   machines: Schema.Array(LimitHandoffTrackMachine),

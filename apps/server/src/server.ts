@@ -723,6 +723,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   MachineLimitHandoff.layerFleet.pipe(
     Layer.provide(RemoteWorkers.layerFleetWorkers),
     Layer.provide(LimitHandoffAdapter.layer),
+    // The adapter asks a machine what it would run a track's thread on.
+    Layer.provide(HandoffPeers.layer),
   ),
   MachineLimitHandoff.layerRpcHandlers,
   // Interrupts the work of a machine revoked here once its grace has passed.

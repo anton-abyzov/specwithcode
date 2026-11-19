@@ -11,6 +11,8 @@
  */
 import {
   type LimitHandoffCandidateReason,
+  type LimitHandoffTrackDecision,
+  MODEL_TRACK_LABELS,
   type ModelSelection,
   type OrchestratorMcpMachine,
   PROVIDER_DISPLAY_NAMES,
@@ -324,5 +326,35 @@ export function judgeAccountEvidence(input: {
     automatic: room,
     byHand: true,
     reason: room ? "eligible" : "at_threshold",
+  };
+}
+
+/**
+ * Shown under the order in Settings: a thread on a track ignores the order
+ * until its track is out on this machine (1390).
+ */
+export const TRACK_BEFORE_ORDER_LINE =
+  "Threads on a track try every model of their track on this machine first, whatever this order says. They hand off only when that track is out here.";
+
+/**
+ * What a thread shows while no machine has its track: "Daily track is out on
+ * every machine", then "Next reset: Minis at 14:02" or "Reset unknown". Null
+ * unless every machine that could take the track answered with no room.
+ */
+export function describeTrackWait(
+  decision: Pick<
+    LimitHandoffTrackDecision,
+    "track" | "target" | "everyMachineOut" | "earliestReset"
+  >,
+  formatTime: (at: string) => string,
+): { readonly title: string; readonly detail: string } | null {
+  if (!decision.everyMachineOut || decision.target !== null) return null;
+  const reset = decision.earliestReset;
+  return {
+    title: `${MODEL_TRACK_LABELS[decision.track]} track is out on every machine`,
+    detail:
+      reset === null
+        ? "Reset unknown"
+        : `Next reset: ${reset.machineLabel} at ${formatTime(reset.at)}`,
   };
 }

@@ -17,6 +17,7 @@ import * as Effect from "effect/Effect";
 import { accountInGrant } from "../fleet/workGrantPolicy.ts";
 import type * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import type * as ServerSettings from "../serverSettings.ts";
+import { trackStartCapabilityFailure } from "../orchestration-v2/limitHandoffTrack.ts";
 import { providerUsageSummary } from "../usage/providerUsageSummary.ts";
 import {
   confirmTarget,
@@ -129,7 +130,13 @@ export const makePeerCheck =
           selfLabel: label,
         }) ??
         capabilityFailure(source) ??
-        planCapabilityFailure(source);
+        planCapabilityFailure(source) ??
+        // A track start is this build's own wire feature: a source from before it gets no answer for one.
+        trackStartCapabilityFailure({
+          ...source,
+          start: request.start,
+          tracked: request.threads.some((thread) => thread.track !== null),
+        });
       if (unfit !== null) {
         return answer(
           request.threads.map((thread) => ({

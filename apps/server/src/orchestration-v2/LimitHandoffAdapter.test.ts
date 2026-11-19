@@ -435,7 +435,7 @@ describe("the automatic track start through the adapter (1390 T-13)", () => {
         usageWindowKey: "2026-10-20T18:00:00.000Z",
       });
       // The line on the source thread says why it left (AC-28).
-      expect(notes[0]?.note).toBe("Daily track out of tokens on M4 · continued on Minis with Opus");
+      expect(notes[0]?.note).toBe("Daily track out of tokens on M4 · continued on Minis with opus");
     }),
   );
 
@@ -451,7 +451,11 @@ describe("the automatic track start through the adapter (1390 T-13)", () => {
           environmentId === minis
             ? Effect.sync(() => {
                 asked.push(sent);
-                return { machineLabel: "Minis", capabilities: [...HANDOFF_CAPABILITIES], results: [] };
+                return {
+                  machineLabel: "Minis",
+                  capabilities: [...HANDOFF_CAPABILITIES],
+                  results: [],
+                };
               })
             : Effect.fail(
                 new HandoffPeerError({
