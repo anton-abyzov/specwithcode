@@ -24,8 +24,10 @@ describe("BringBackButton", () => {
       renderer = create(<BringBackButton offer={offer} />);
     });
     act(() => renderer.root.findByType("button").props.onClick());
+    // A required destination: the dialog never offers or falls back to another machine.
     expect(handOff).toHaveBeenCalledWith(offer.threadRef, {
       destinationEnvironmentId: "env-m4",
+      pinDestination: true,
     });
     act(() => renderer.unmount());
   });

@@ -9,7 +9,8 @@ import type {
 } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { bringBackOffer } from "./bringBack.logic";
+import type { HandoffDestination } from "./HandoffResults";
+import { bringBackOffer, bringBackWaitReason, pinnedDestination } from "./bringBack.logic";
 
 const m4 = "env-m4" as EnvironmentId;
 const m5 = "env-m5" as EnvironmentId;
@@ -95,14 +96,14 @@ describe("on the continued thread", () => {
       continuation: null,
       machineName: name,
     });
-    expect(asking?.refused).toBe("Answer its question or approval first.");
+    expect(asking?.refused).toBe("Answer its question, approval or sign-in first.");
     const approving = bringBackOffer({
       thread: { ...continued, hasPendingApprovals: true, hasPendingUserInput: false },
       connected: [m4, m5],
       continuation: null,
       machineName: name,
     });
-    expect(approving?.refused).toBe("Answer its question or approval first.");
+    expect(approving?.refused).toBe("Answer its question, approval or sign-in first.");
   });
 
   it("offers nothing once the thread moved again, or without a known origin", () => {
@@ -191,7 +192,7 @@ describe("on the read-only copy left on the source", () => {
         continuation: { ...idle, hasPendingApprovals: true },
         machineName: name,
       })?.refused,
-    ).toBe("Answer its question or approval first.");
+    ).toBe("Answer its question, approval or sign-in first.");
   });
 
   it("offers nothing for a project move", () => {
@@ -208,5 +209,95 @@ describe("on the read-only copy left on the source", () => {
         machineName: name,
       }),
     ).toBeNull();
+  });
+});
+
+describe("a pending sign-in", () => {
+  it("refuses on the continuation and on the source's copy", () => {
+    expect(
+      bringBackOffer({
+        thread: {
+          ...continued,
+          hasPendingApprovals: false,
+          hasPendingUserInput: false,
+          hasPendingSignIn: true,
+        },
+        connected: [m4, m5],
+        continuation: null,
+        machineName: name,
+      })?.refused,
+    ).toBe("Answer its question, approval or sign-in first.");
+    expect(
+      bringBackOffer({
+        thread: { ...original, hasPendingApprovals: false, hasPendingUserInput: false },
+        connected: [m4, m5],
+        continuation: { ...idle, hasPendingSignIn: true },
+        machineName: name,
+      })?.refused,
+    ).toBe("Answer its question, approval or sign-in first.");
+  });
+});
+
+describe("bringBackWaitReason", () => {
+  const shell = (kind: string | null) =>
+    ({
+      hasPendingApprovals: kind === "command",
+      hasPendingUserInput: kind === "user_input",
+      source: {
+        pendingRuntimeRequest:
+          kind === null ? null : { id: "r1", kind, createdAt: "2026-11-19T14:02:00.000Z" },
+      },
+    }) as never;
+
+  it("reads the live thread: a question, approval or sign-in waits", () => {
+    for (const kind of ["user_input", "command", "auth_refresh"])
+      expect(bringBackWaitReason(shell(kind))).toBe(
+        "Answer its question, approval or sign-in first.",
+      );
+  });
+
+  it("lets an idle thread go, and refuses a thread it can't read", () => {
+    expect(bringBackWaitReason(shell(null))).toBeNull();
+    expect(bringBackWaitReason(null)).toBe("The thread can't be read here, so it stays.");
+  });
+});
+
+describe("pinnedDestination", () => {
+  const a = { environmentId: m4, label: "M4", state: "reachable" } as const;
+  const c = {
+    environmentId: "env-m3" as EnvironmentId,
+    label: "M3",
+    state: "reachable",
+  } as const satisfies HandoffDestination;
+
+  it("offers only the source machine", () => {
+    expect(pinnedDestination([c, a], m4, name)).toEqual({
+      destinations: [a],
+      destination: m4,
+      refused: null,
+    });
+  });
+
+  it("never falls back to another machine when the source can't take work", () => {
+    const offline = pinnedDestination([c, { ...a, state: "offline", reason: "Offline" }], m4, name);
+    expect(offline.destination).toBeNull();
+    expect(offline.destinations.map((item) => item.environmentId)).toEqual([m4]);
+    expect(offline.refused).toBe("M4 can't take the thread back now: offline.");
+    const update = pinnedDestination(
+      [c, { ...a, state: "offline", reason: "Needs update" }],
+      m4,
+      name,
+    );
+    expect(update.destination).toBeNull();
+    expect(update.refused).toBe("M4 can't take the thread back now: needs update.");
+  });
+
+  it("refuses when the source is not among the machines at all", () => {
+    const missing = pinnedDestination([c], m4, name);
+    expect(missing.destination).toBeNull();
+    expect(missing.destinations).toEqual([
+      { environmentId: m4, label: "M4", state: "offline", reason: "Not connected" },
+    ]);
+    expect(missing.refused).toBe("M4 can't take the thread back now: not connected.");
   });
 });
