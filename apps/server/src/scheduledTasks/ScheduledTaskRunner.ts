@@ -79,6 +79,7 @@ import {
   deleteUnreachedRefusal,
   isOlderRelease,
   isPendingCopyDelete,
+  keepsOwnState,
   PENDING_COPY_DELETE,
   UNCONFIRMED_RUNNER_WAIT,
   isRunnerRoutine,
@@ -359,7 +360,10 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
             }),
           { discard: true },
         ),
-      ).pipe(Effect.ignore);
+      ).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
 
     /**
      * Tells the machines that rest their copies, and the ones that may, to
@@ -399,7 +403,8 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
       const out: Array<Array<ScheduledTask>> = [];
       let size = 0;
       for (const task of list) {
-        const bytes = stringifyJson(routineCopyOf(task)).length;
+        // As sent: a prompt outside ASCII takes more bytes than it has characters.
+        const bytes = Buffer.byteLength(stringifyJson(routineCopyOf(task)), "utf8");
         if (out.length === 0 || size + bytes > PUSH_BYTES || out.at(-1)!.length >= PUSH_ROUTINES) {
           out.push([]);
           size = 0;
@@ -442,6 +447,41 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
           refused.push(...(answered.success.refused ?? []));
         }
         return { acked, refused, failure: null };
+      });
+
+    /**
+     * Whether a coordinator's replica leaves this routine alone: this machine
+     * runs or moves it, or its copy rests and takes its definition from its
+     * runner. A resting record with no row yet lets the replica bring the row.
+     */
+    const heldFromReplica = (id: ScheduledTaskId): Effect.Effect<boolean> =>
+      Effect.gen(function* () {
+        const record = yield* records.read(id);
+        if (record?.state !== "disarmed") return keepsOwnState(record);
+        return (yield* deps.findTask(id)) !== null;
+      }).pipe(Effect.orElseSucceed(() => true));
+
+    /**
+     * A replica's save of a routine. One that rests here for a runner is saved
+     * as a resting copy is kept: its row off, what the replica said it was in
+     * the record, and the note a person reads, in one write.
+     */
+    const saveReplica = <A>(
+      input: ScheduledTaskUpsertInput,
+      save: (input: ScheduledTaskUpsertInput) => Effect.Effect<A, ScheduledTaskError>,
+    ): Effect.Effect<A, ScheduledTaskError> =>
+      Effect.gen(function* () {
+        const id = input.id;
+        const record = id === undefined ? null : yield* records.read(id);
+        if (id === undefined || record?.state !== "disarmed") return yield* save(input);
+        return yield* atomic(
+          Effect.gen(function* () {
+            const saved = yield* save({ ...input, enabled: false });
+            yield* records.setNote(id, runsElsewhereNote(record.runnerLabel));
+            yield* records.write({ ...record, copyEnabled: input.enabled });
+            return saved;
+          }),
+        );
       });
 
     /** A copy whose routine was deleted at its runner: its row, its record and its count, or none. */
@@ -553,7 +593,9 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
           const note = (into: Map<string, Array<string>>, id: string, member: string) =>
             into.set(id, [...(into.get(id) ?? []), member]);
           for (const [member, list] of need) {
-            yield* markAsked(list, self, member);
+            // Not remembered, not asked: a machine that rests for a claim this one
+            // forgot would never be told to follow the coordinator again.
+            if (!(yield* markAsked(list, self, member))) continue;
             const answered = yield* askToRest(peers, member, projectId, list, counts, {
               incumbent,
             });
@@ -1121,6 +1163,8 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
     return {
       hold,
       ownsRun,
+      heldFromReplica,
+      saveReplica,
       guardUpsert,
       guardSetEnabled,
       guardDelete,

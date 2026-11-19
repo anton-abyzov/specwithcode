@@ -286,11 +286,13 @@ export const makeTransferIn = (deps: TransferInDeps) => {
               // The record stays, resting for the caller, so a copy that arrives later
               // cannot fire here as well.
               const record = yield* strict(deps.records.read(request.routineId));
-              const revision = record === null ? 0 : yield* deps.revisionOf(request.routineId);
+              // A routine that release moved here has no record, and gets none: its
+              // next move from that release must find it as this one left it.
+              if (record === null)
+                return { routineId: request.routineId, enabled: false, runState };
+              const revision = yield* deps.revisionOf(request.routineId);
               yield* strict(
                 deps.records.write({
-                  taskId: request.routineId,
-                  operationId: null,
                   ...record,
                   state: "disarmed",
                   runnerEnvironmentId: caller.sourceEnvironmentId,
@@ -302,12 +304,7 @@ export const makeTransferIn = (deps: TransferInDeps) => {
                   copyEnabled: null,
                 }),
               );
-              return {
-                routineId: request.routineId,
-                enabled: false,
-                runState,
-                ...(record === null ? {} : { revision }),
-              };
+              return { routineId: request.routineId, enabled: false, runState, revision };
             }),
           );
         }

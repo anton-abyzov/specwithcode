@@ -64,12 +64,7 @@ import * as WorkGrants from "../fleet/WorkGrants.ts";
 import { makeRoutineCopies, RoutineCopies } from "./ScheduledTaskCopies.ts";
 import { makeRunSkips } from "./ScheduledTaskSkips.ts";
 import { makeRoutineCoordinatorGate } from "./ScheduledTaskCoordinatorGate.ts";
-import {
-  keepsOwnState,
-  makeRoutineRunner,
-  type RoutineRunner,
-  RoutineRunnerPace,
-} from "./ScheduledTaskRunner.ts";
+import { makeRoutineRunner, type RoutineRunner, RoutineRunnerPace } from "./ScheduledTaskRunner.ts";
 import { makeRunnerLegacyOwner, makeRunnerRoleActive } from "./ScheduledTaskRunnerRole.ts";
 import { HandoffTurnGate } from "../handoff/HandoffTurnGate.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -1203,7 +1198,7 @@ export const layer = Layer.effect(
         const sendTo = (threadId: ThreadId, text: string) =>
           admission.withLock(
             active.projectId,
-            assertTaskAdmission({ ...active, threadId }).pipe(
+            assertTaskAdmission({ ...active, threadId }, { byRunner }).pipe(
               withAideSetting,
               Effect.provideService(ProjectStore.ProjectStoreV2, projects),
               Effect.provideService(SqlClient.SqlClient, sql),
@@ -1953,15 +1948,15 @@ export const layer = Layer.effect(
         Effect.mapError((cause) => taskError("Could not list schedule tasks.", { cause })),
       ),
       findTask,
-      upsert,
+      // A copy that rests for a runner is saved resting (see the runner's `saveReplica`).
+      upsert: (input, options) =>
+        runnerRef.current === null
+          ? upsert(input, options)
+          : runnerRef.current.saveReplica(input, (resting) => upsert(resting, options)),
       remove: (id) => deleteTask({ id }),
       // A routine this machine runs, moves or rests for its runner is never rewritten by a replica.
       heldByRunner: (id) =>
-        runnerRef.current === null
-          ? Effect.succeed(false)
-          : runnerRef.current.records
-              .read(id)
-              .pipe(Effect.map((record) => keepsOwnState(record) || record?.state === "disarmed")),
+        runnerRef.current === null ? Effect.succeed(false) : runnerRef.current.heldFromReplica(id),
     }).pipe(Effect.provideService(SqlClient.SqlClient, sql));
 
     const webhooks = yield* makeWebhookTrigger({

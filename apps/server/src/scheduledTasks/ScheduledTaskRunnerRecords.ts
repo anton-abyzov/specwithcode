@@ -86,7 +86,7 @@ export const isPendingCopyDelete = (record: Pick<RoutineRunnerRecord, "state" | 
 export const runsHere = (record: Pick<RoutineRunnerRecord, "state"> | null | undefined) =>
   record != null && (record.state === "settled" || record.state === "settling");
 
-/** Whether the record keeps a replica or a handover from rewriting the routine here. */
+/** Whether the record makes this machine the one that runs or moves the routine. */
 export const keepsOwnState = (record: Pick<RoutineRunnerRecord, "state"> | null) =>
   record !== null &&
   (record.state === "settled" || record.state === "staged" || record.state === "moving");

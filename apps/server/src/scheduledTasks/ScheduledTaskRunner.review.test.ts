@@ -102,6 +102,35 @@ it.effect("T21-02: a settled runner fires after its project's coordinator was tr
     assert.equal(beta.fires(), 0);
     assert.equal(fires(), 1);
     assert.isNull((yield* alpha.row)?.last_run_error ?? null);
+    // Its next run posts into the thread the first one started: admitted the same way.
+    yield* alpha.makeDue(DUE);
+    yield* beta.makeDue(DUE);
+    yield* everyoneLooks;
+    assert.equal(alpha.fires(), 2);
+    assert.equal(fires(), 2);
+    assert.isNull((yield* alpha.row)?.last_run_error ?? null);
+  }),
+);
+
+it.effect("a copy that arrives after its machine agreed to rest is saved resting", () =>
+  Effect.gen(function* () {
+    yield* start;
+    const { machines } = yield* fleet(["alpha", "beta"]);
+    const [alpha, beta] = machines as [Machine, Machine];
+    const task = yield* alpha.seed();
+    yield* settle(alpha);
+    assert.equal((yield* beta.record)?.state, "disarmed");
+    assert.isUndefined(yield* beta.row);
+    // The coordinator's replica brings the row: off for the release before, on in the list.
+    const copies = yield* beta.service.routineCopies!();
+    yield* copies.replace({
+      projectId: beta.projectId,
+      logicalProjectId: "logical-a",
+      routines: [routineCopyOf({ ...task, ownThread: true })!],
+    });
+    assert.notOk((yield* beta.row)?.enabled);
+    assert.isTrue((yield* listed(beta)).enabled);
+    assert.equal((yield* beta.record)?.copyEnabled, true);
   }),
 );
 
@@ -514,6 +543,10 @@ it.effect("T21-13: the release before's sender moves a routine here and takes it
     assert.deepEqual(seen, ["stage:on", "enable:off", "release:off"]);
     assert.isUndefined(yield* beta.row);
     assert.deepInclude(yield* alpha.row, { enabled: 1, run_count: 1 });
+    // Nothing is left here that would refuse that release's next move of it.
+    assert.isNull(yield* beta.record);
+    assert.deepInclude(yield* sender.moveOut(input379(task, beta)), { kind: "moved" });
+    assert.deepInclude(yield* beta.row, { enabled: 1 });
   }),
 );
 
