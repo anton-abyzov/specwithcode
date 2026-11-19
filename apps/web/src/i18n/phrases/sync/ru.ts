@@ -61,8 +61,6 @@ export const syncRu: PhraseCatalog = {
   "Not moved": "Не продвинуто",
   "1 commit on {branch} that was never pushed": "1 коммит в {branch}, который не был отправлен",
   "{n} commits on {branch} that were never pushed": "Неотправленных коммитов в {branch}: {n}",
-  "Sent straight to {target} over the link between the machines, as branch {name}. Nothing goes to GitHub.":
-    "Отправляется напрямую на {target} по связи между машинами, как ветка {name}. В GitHub ничего не уходит.",
   "1 branch that exists only on {machine}": "1 ветка, которая есть только на {machine}",
   "{n} branches that exist only on {machine}": "Веток, которые есть только на {machine}: {n}",
   "Sent straight to {target} over the link between the machines, as branches under {name}. Nothing goes to GitHub.":
@@ -86,8 +84,6 @@ export const syncRu: PhraseCatalog = {
   "1 file left out": "1 файл пропущен",
   "{n} files left out": "Пропущено файлов: {n}",
   "{target} already has it as branch {name}.": "На {target} это уже есть как ветка {name}.",
-  "{branch} is checked out on {target}, so this arrived beside it as {name}. To use it there, check it out or merge it.":
-    "На {target} извлечена ветка {branch}, поэтому это пришло рядом как {name}. Чтобы использовать там, переключитесь на неё или слейте её.",
   "{target} has other work under that name, so this arrived beside it as {name}. To use it there, check it out or merge it.":
     "На {target} под этим именем другая работа, поэтому это пришло рядом как {name}. Чтобы использовать там, переключитесь на неё или слейте её.",
   "On {target} as branch {name}. To use it there, check it out or merge it.":
@@ -261,4 +257,39 @@ export const syncRu: PhraseCatalog = {
   "The source changed. Compare again before copying.":
     "Источник изменился. Сравните снова перед копированием.",
   "Not moved: its state could not be read": "Не продвинуто: не удалось прочитать состояние",
+  "Sent straight to {target} over the link between the machines, as a branch under {name}. Nothing goes to GitHub.":
+    "Отправляется напрямую на {target} по связи между машинами, как ветка под {name}. В GitHub ничего не уходит.",
+  "The branch it would arrive as is checked out on {target}, so this arrived beside it as {name}. To use it there, check it out or merge it.":
+    "Ветка, под именем которой это пришло бы, извлечена на {target}, поэтому это пришло рядом как {name}. Чтобы использовать там, переключитесь на неё или слейте её.",
+  "No answer came back. It may have arrived on {target}: check {target} before sending again.":
+    "Ответ не пришёл. Возможно, это дошло до {target}: проверьте на {target}, прежде чем отправлять снова.",
+  "Not sent.": "Не отправлено.",
+  "{machine} sent extras and no answer came back. They may have arrived: check {target} before sending again.":
+    "{machine} отправила дополнения, но ответ не пришёл. Возможно, они дошли: проверьте на {target}, прежде чем отправлять снова.",
+  "Sync ended, and not every answer came back. Each line says what to check.":
+    "Синхронизация завершена, но пришли не все ответы. В каждой строке указано, что проверить.",
+  "A move to another machine is not finished. Finish or cancel it, then add a machine.":
+    "Перенос на другую машину не завершён. Завершите или отмените его, затем добавьте машину.",
+  "The copy on {machine} is already shared with other machines. Unlink it there first.":
+    "Копия на {machine} уже используется совместно с другими машинами. Сначала отвяжите её там.",
+  "The copy on {machine} does not hold its coordinator, so it cannot be the one that stays.":
+    "У копии на {machine} нет своего координатора, поэтому остаться может не она.",
+  "A coordinator handoff is in progress on {machine}. Finish or retry it first.":
+    "На {machine} идёт передача координатора. Сначала завершите или повторите её.",
+  "The project on {machine} is paused. Resume it first.":
+    "Проект на {machine} приостановлен. Сначала возобновите его.",
+  "The project on {machine} is archived. Restore it first.":
+    "Проект на {machine} в архиве. Сначала восстановите его.",
+  "Only code projects can be linked across machines.":
+    "Связывать между машинами можно только проекты с кодом.",
+  "The coordinator on {machine} is working. Let it finish or stop it, then link.":
+    "Координатор на {machine} работает. Дождитесь окончания или остановите его, затем связывайте.",
+  "Project notes differ on {machine}.": "Заметки проекта на {machine} отличаются.",
+  "The copy's repository does not match the source.":
+    "Репозиторий копии не совпадает с источником.",
+  "some files changed on {source} while copying":
+    "некоторые файлы изменились на {source} во время копирования",
+  "the check of Root failed": "проверка корневого репозитория не прошла",
+  "the check of {repository} failed": "проверка {repository} не прошла",
+  "the checks of {n} repositories failed": "проверки {n} репозиториев не прошли",
 };

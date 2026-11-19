@@ -29,6 +29,13 @@ Both machines must be in your private fleet. If they are not yet, follow
 
 **Sync…** in the machine menu opens a dialog for the machine shown and one other
 machine that has the project. With several, you pick the other machine first.
+Sync runs between the linked machines of one project. A machine that added the
+same repository as a project of its own is listed as **Separate project** and
+cannot be picked until you link it.
+
+Sync needs this window to be allowed to change both machines. If that stops
+being true while the plan is on screen, for example the other machine goes
+offline, the plan is dropped, nothing is moved, and the dialog says why.
 
 Sync is Git first. Each machine fetches from its own remote and moves its checked
 out branch forward where that is a plain fast-forward. Nothing is fetched from the
@@ -45,8 +52,12 @@ each machine. Nothing changes until you choose **Sync**. A cell says one of:
 
 After the run each cell says what happened. A repository that could not be moved
 says why, and the others continue. If no answer came for a repository, the row
-says so and that it may have moved; **Check again** shows where it stands. The
-title says the project is in sync only when nothing is left on either machine.
+says so and that it may have moved; **Check again** shows where it stands.
+
+After the run both machines are asked where they stand. The title says the
+project is in sync only when every repository is on the same branch at the same
+commit on both, with nothing uncommitted and nothing left to send. Otherwise it
+says that Sync finished, and the rows say what is left.
 
 Below the repositories, **Only on &lt;machine&gt;** lists what Git does not carry:
 commits that were never pushed, branches that exist only there, and uncommitted
@@ -54,6 +65,11 @@ files. Each line is unticked. A ticked line is sent straight to the other machin
 over the link between the two, never to GitHub, and arrives there as a branch
 named `swc/from-<machine>/…`, not as files in its folder. To use it there, check
 that branch out or merge it. Stashes stay where they are.
+
+Afterwards each ticked line says what became of it: the branch it arrived as,
+why it stayed, or that it was not sent. If a line was sent and no answer came
+back, it says so: it may have arrived, so look on the other machine before you
+send it again.
 
 Uncommitted files are checked before they are sent, by file name and, for
 untracked files, by their first 64 KB. A file that looks like a secret is left

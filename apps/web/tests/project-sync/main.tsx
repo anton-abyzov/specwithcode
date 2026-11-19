@@ -13,6 +13,8 @@
                 inventory-failed  m5 could not list its extras
                 run-refused     Git refuses one step on m5 and m5's run fails on another
                 extras-failed   m4 could not send its extras
+                extras-unknown  m4 sent its extras and no answer came back
+                diverged        every step done, and m5 ended on another branch
                 long            the November 18 state of a busy machine: 179 uncommitted
                                 files and 11 branches that exist only on m4
                 offline | read-only | needs-update | not-found | not-git | failed | unreadable
@@ -23,7 +25,7 @@
               `&window=read-only` is a window that can only read: the real menu hook, fed
               each machine's status, shows the facts and greys "Sync…"
    `?theme=dark`, `?lang=` the interface language. */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   createMemoryHistory,
@@ -165,6 +167,11 @@ const LEVEL: ProjectSyncFetchResult = {
 const FETCHED: Record<string, Record<string, ProjectSyncFetchResult>> = {
   plan: { m4: side(1), m5: side(2) },
   small: {
+    m4: LEVEL,
+    m5: { scanLimited: false, repositories: [facts("."), facts("apps/web", { behind: 12 })] },
+  },
+  // As "small"; afterwards m5 says it is on another branch.
+  diverged: {
     m4: LEVEL,
     m5: { scanLimited: false, repositories: [facts("."), facts("apps/web", { behind: 12 })] },
   },
@@ -353,7 +360,20 @@ const BEHIND: Record<string, number> = {
 };
 
 const api: ProjectSyncApi = {
-  status: async () => ({ ok: false, cause: CAUSES.failed }),
+  // What each machine says after the run. Only this can prove the two are in sync.
+  status: async (on) => {
+    const from = (FETCHED[state] ?? FETCHED.plan!)[on.label]!;
+    return answer({
+      scanLimited: from.scanLimited,
+      repositories: from.repositories.map((item) => ({
+        path: item.path,
+        // "diverged": the run ended and m5 is on another branch at another commit.
+        branch: state === "diverged" && on.label === "m5" ? "release" : item.branch,
+        head: state === "diverged" && on.label === "m5" ? "d".repeat(40) : item.head,
+        clean: item.uncommitted === 0,
+      })),
+    });
+  },
   fetch: async (on) => {
     record(`fetch:${on.label}`);
     if (state === "checking") return never();
@@ -445,7 +465,9 @@ const api: ProjectSyncApi = {
   },
   sendExtras: async (source, target, sent) => {
     record(`extras:${source.label}>${target.label}:${JSON.stringify(sent.items)}`);
-    if (state === "extras-failed") return { ok: false, cause: CAUSES.offline };
+    if (state === "extras-failed") return { ok: false, cause: CAUSES["not-found"] };
+    // The call left the machine and its answer could not be read.
+    if (state === "extras-unknown") return { ok: false, cause: CAUSES.unreadable };
     const prefix = `swc/from-${source.label}`;
     return answer({
       items: sent.items.map((item): ProjectSyncExtraResult => {
@@ -500,52 +522,51 @@ const api: ProjectSyncApi = {
 // ---------------------------------------------------------------------------
 
 const open = (on: SyncMachine): SyncTarget => ({ machine: on, blocked: null });
+/** A machine that cannot sync: the menu's sentence, and the same reason without its subject. */
+const greyed = (name: string, why: Omit<Parameters<typeof syncBlockedOn>[0], "machine">) => ({
+  machine: machine(name),
+  blocked: syncBlockedOn({ machine: name, ...why }),
+  note: syncBlockedOn({ machine: name, ...why }, false),
+});
 const TARGETS: SyncTarget[] =
   state === "picker"
     ? [
         open(M5),
-        {
-          machine: machine("linux-mini"),
-          blocked: syncBlockedOn({
-            machine: "linux-mini",
-            reach: "offline",
-            read: undefined,
-            version: null,
-            access: "granted",
-          }),
-        },
-        {
-          machine: machine("m1"),
-          blocked: syncBlockedOn({
-            machine: "m1",
-            reach: "open",
-            read: { kind: "needs-update", at: NOW },
-            version: "1.4.2",
-            access: "granted",
-          }),
-        },
-        {
-          machine: machine("m3"),
-          blocked: syncBlockedOn({
-            machine: "m3",
-            reach: "open",
-            read: undefined,
-            version: null,
-            access: "denied",
-          }),
-        },
+        greyed("linux-mini", {
+          reach: "offline",
+          read: undefined,
+          version: null,
+          access: "granted",
+        }),
+        greyed("m1", {
+          reach: "open",
+          read: { kind: "needs-update", at: NOW },
+          version: "1.4.2",
+          access: "granted",
+        }),
+        greyed("m3", { reach: "open", read: undefined, version: null, access: "denied" }),
+        // The same repository as a project of its own: listed, never a Sync target.
+        { machine: machine("m2"), blocked: { text: "Separate project" } },
       ]
     : [open(M5)];
 
 function DialogPage() {
   const [shown, setShown] = useState(true);
+  // The verifier takes the window's grant on m5 away while the plan is on screen.
+  const [lost, setLost] = useState(false);
+  useEffect(() => {
+    (window as { loseGrant?: () => void }).loseGrant = () => setLost(true);
+  }, []);
+  const targets = lost
+    ? [greyed("m5", { reach: "open", read: undefined, version: null, access: "denied" })]
+    : TARGETS;
   return (
     <div className="fixture-page" data-dialog-page={shown ? "open" : "closed"}>
       {shown ? (
         <ProjectSyncDialog
           projectTitle={PROJECT}
           shown={M4}
-          targets={TARGETS}
+          targets={targets}
           onClose={() => {
             record("closed");
             setShown(false);

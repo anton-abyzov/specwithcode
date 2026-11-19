@@ -364,15 +364,17 @@ try {
       assert.deepEqual(await events(page), []);
       assert.deepEqual(await texts(page, "[data-sync-target]"), [
         "m5",
-        "linux-minilinux-mini offline",
-        "m1m1: Needs update · 1.4.2",
+        // The row names the machine: the reason is said without it.
+        "linux-miniOffline",
+        "m1Needs update · 1.4.2",
         "m3This window can only read m3",
+        "m2Separate project",
       ]);
       assert.deepEqual(
         await page
           .locator("[data-sync-target]")
           .evaluateAll((items) => items.map((item) => item.disabled)),
-        [false, true, true, true],
+        [false, true, true, true, true],
       );
       taken = await shot(page, `picker-${tag}`);
       results.push({ theme, width, case: "picker", ...taken });
@@ -525,9 +527,73 @@ try {
       await waitStage(page, "result");
       const notSent = page.locator('[data-sync-extra-results="a"]');
       assert.ok((await notSent.textContent()).includes("The extras from m4 were not sent."));
+      assert.deepEqual(
+        await notSent
+          .locator("[data-sync-extra-result]")
+          .evaluateAll((items) => items.map((item) => item.dataset.syncExtraResult)),
+        ["not-sent"],
+      );
       await notSent.scrollIntoViewIfNeeded();
       taken = await shot(page, `result-extras-not-sent-${tag}`);
       results.push({ theme, width, case: "result, extras not sent", ...taken });
+      await page.close();
+
+      // 12a. The extras were sent and the answer could not be read: neither sent nor failed.
+      page = await at("case=dialog&state=extras-unknown");
+      await waitStage(page, "plan");
+      await tick(page, "a", "not-pushed");
+      await page.locator("[data-sync-run]").click();
+      await waitStage(page, "result");
+      const unknown = page.locator('[data-sync-extra-results="a"]');
+      assert.equal(
+        await unknown.locator("[data-sync-extras-outcome]").textContent(),
+        "m4 sent extras and no answer came back. They may have arrived: check m5 before sending again.",
+      );
+      assert.ok(!(await unknown.textContent()).includes("were not sent"));
+      assert.deepEqual(
+        await unknown
+          .locator("[data-sync-extra-result]")
+          .evaluateAll((items) => items.map((item) => item.dataset.syncExtraResult)),
+        ["unknown"],
+      );
+      assert.ok(
+        (await unknown.locator('[data-sync-extra-result="unknown"]').textContent()).includes(
+          "No answer came back. It may have arrived on m5: check m5 before sending again.",
+        ),
+      );
+      assert.equal(
+        await page.locator("[data-sync-live]").textContent(),
+        "Sync ended, and not every answer came back. Each line says what to check.",
+      );
+      await unknown.scrollIntoViewIfNeeded();
+      taken = await shot(page, `result-extras-unknown-${tag}`);
+      results.push({ theme, width, case: "result, extras with no answer", ...taken });
+      await page.close();
+
+      // 12c. The window loses its grant on m5 while the plan is on screen: the plan goes.
+      page = await at("case=dialog&state=small");
+      await waitStage(page, "plan");
+      assert.equal(await page.locator("[data-sync-run]").isDisabled(), false);
+      await page.evaluate(() => window.loseGrant());
+      await waitStage(page, "failed");
+      assert.equal(
+        await page.locator('[data-sync-failure="blocked"]').textContent(),
+        "This window can only read m5",
+      );
+      assert.equal(await page.locator("[data-sync-run]").count(), 0);
+      assert.ok(!(await events(page)).some((event) => event.startsWith("run:")));
+      taken = await shot(page, `plan-grant-lost-${tag}`);
+      results.push({ theme, width, case: "plan, grant lost", ...taken });
+      await page.close();
+
+      // 12d. Every step is done and m5 ended on another branch: finished, never "in sync".
+      page = await at("case=dialog&state=diverged");
+      await waitStage(page, "plan");
+      await page.locator("[data-sync-run]").click();
+      await waitStage(page, "result");
+      assert.equal(await page.locator("h2").textContent(), "Sync finished for Atlas: m4 and m5");
+      taken = await shot(page, `result-not-proven-${tag}`);
+      results.push({ theme, width, case: "result, not proven in sync", ...taken });
       await page.close();
 
       // 12b. A machine in the middle of work: 179 uncommitted files and 11 branches only there.

@@ -63,8 +63,6 @@ export const syncDe: PhraseCatalog = {
   "1 commit on {branch} that was never pushed": "1 Commit auf {branch}, der nie gepusht wurde",
   "{n} commits on {branch} that were never pushed":
     "{n} Commits auf {branch}, die nie gepusht wurden",
-  "Sent straight to {target} over the link between the machines, as branch {name}. Nothing goes to GitHub.":
-    "Geht über die Verbindung zwischen den Rechnern direkt an {target}, als Branch {name}. Nichts geht an GitHub.",
   "1 branch that exists only on {machine}": "1 Branch, den es nur auf {machine} gibt",
   "{n} branches that exist only on {machine}": "{n} Branches, die es nur auf {machine} gibt",
   "Sent straight to {target} over the link between the machines, as branches under {name}. Nothing goes to GitHub.":
@@ -90,8 +88,6 @@ export const syncDe: PhraseCatalog = {
   "1 file left out": "1 Datei ausgelassen",
   "{n} files left out": "{n} Dateien ausgelassen",
   "{target} already has it as branch {name}.": "{target} hat es bereits als Branch {name}.",
-  "{branch} is checked out on {target}, so this arrived beside it as {name}. To use it there, check it out or merge it.":
-    "{branch} ist auf {target} ausgecheckt, daher ist es daneben als {name} angekommen. Um es dort zu nutzen, checke es aus oder merge es.",
   "{target} has other work under that name, so this arrived beside it as {name}. To use it there, check it out or merge it.":
     "{target} hat unter diesem Namen andere Arbeit, daher ist es daneben als {name} angekommen. Um es dort zu nutzen, checke es aus oder merge es.",
   "On {target} as branch {name}. To use it there, check it out or merge it.":
@@ -270,4 +266,39 @@ export const syncDe: PhraseCatalog = {
     "Die Quelle hat sich geändert. Vergleiche erneut, bevor du kopierst.",
   "Not moved: its state could not be read":
     "Nicht vorgerückt: Der Zustand konnte nicht gelesen werden",
+  "Sent straight to {target} over the link between the machines, as a branch under {name}. Nothing goes to GitHub.":
+    "Geht über die Verbindung zwischen den Rechnern direkt an {target}, als Branch unter {name}. Nichts geht an GitHub.",
+  "The branch it would arrive as is checked out on {target}, so this arrived beside it as {name}. To use it there, check it out or merge it.":
+    "Der Branch, als der es ankommen würde, ist auf {target} ausgecheckt, daher ist es daneben als {name} angekommen. Um es dort zu nutzen, checke es aus oder merge es.",
+  "No answer came back. It may have arrived on {target}: check {target} before sending again.":
+    "Es kam keine Antwort zurück. Es ist vielleicht auf {target} angekommen: Sieh auf {target} nach, bevor du es erneut sendest.",
+  "Not sent.": "Nicht gesendet.",
+  "{machine} sent extras and no answer came back. They may have arrived: check {target} before sending again.":
+    "{machine} hat Extras gesendet, und es kam keine Antwort zurück. Sie sind vielleicht angekommen: Sieh auf {target} nach, bevor du sie erneut sendest.",
+  "Sync ended, and not every answer came back. Each line says what to check.":
+    "Die Synchronisierung ist beendet, aber nicht jede Antwort kam zurück. Bei jeder Zeile steht, was zu prüfen ist.",
+  "A move to another machine is not finished. Finish or cancel it, then add a machine.":
+    "Ein Umzug auf einen anderen Rechner ist nicht abgeschlossen. Schließe ihn ab oder brich ihn ab und füge dann einen Rechner hinzu.",
+  "The copy on {machine} is already shared with other machines. Unlink it there first.":
+    "Die Kopie auf {machine} wird bereits mit anderen Rechnern geteilt. Hebe die Verknüpfung zuerst dort auf.",
+  "The copy on {machine} does not hold its coordinator, so it cannot be the one that stays.":
+    "Die Kopie auf {machine} hat ihren Koordinator nicht und kann deshalb nicht die sein, die bleibt.",
+  "A coordinator handoff is in progress on {machine}. Finish or retry it first.":
+    "Auf {machine} läuft eine Übergabe des Koordinators. Schließe sie zuerst ab oder wiederhole sie.",
+  "The project on {machine} is paused. Resume it first.":
+    "Das Projekt auf {machine} ist pausiert. Setze es zuerst fort.",
+  "The project on {machine} is archived. Restore it first.":
+    "Das Projekt auf {machine} ist archiviert. Stelle es zuerst wieder her.",
+  "Only code projects can be linked across machines.":
+    "Nur Code-Projekte lassen sich über Rechner hinweg verknüpfen.",
+  "The coordinator on {machine} is working. Let it finish or stop it, then link.":
+    "Der Koordinator auf {machine} arbeitet gerade. Lass ihn fertig werden oder halte ihn an und verknüpfe dann.",
+  "Project notes differ on {machine}.": "Die Projektnotizen auf {machine} weichen ab.",
+  "The copy's repository does not match the source.":
+    "Das Repository der Kopie passt nicht zur Quelle.",
+  "some files changed on {source} while copying":
+    "einige Dateien haben sich auf {source} während des Kopierens geändert",
+  "the check of Root failed": "die Prüfung des Haupt-Repositorys ist fehlgeschlagen",
+  "the check of {repository} failed": "die Prüfung von {repository} ist fehlgeschlagen",
+  "the checks of {n} repositories failed": "die Prüfungen von {n} Repositorys sind fehlgeschlagen",
 };
