@@ -445,6 +445,31 @@ describe("backfillLedger", () => {
     ]);
   });
 
+  it("adds nothing for a reset the history saw with a differently rounded time", () => {
+    const state = emptyLedger();
+    const live = (checkedAt: number, used: number, resetsAt: number) =>
+      advanceLedger(state, {
+        accountKey: "claude:max@example.com",
+        driver: claude,
+        checkedAt,
+        windows: [{ ...weekly(used, resetsAt), id: "seven_day" }],
+        resetCredits: null,
+      });
+    live(reset1 - 10 * MINUTE, 90, reset1);
+    live(reset1 + MINUTE, 90, reset1);
+    live(reset1 + 6 * MINUTE, 1, reset2);
+    expect(state.periods.map((period) => period.endedAt)).toEqual([reset1 + MINUTE]);
+    const past = history(
+      series("seven_day", "weekly", [
+        [reset1 - 10 * MINUTE, 90, reset1 + 3 * MINUTE],
+        [reset1 + 2 * MINUTE, 90, reset1 + 3 * MINUTE],
+        [reset1 + 6 * MINUTE, 1, reset2],
+      ]),
+    );
+    expect(backfillLedger(state, past)).toBe(0);
+    expect(state.periods).toHaveLength(1);
+  });
+
   it("leaves a cursor undated when a whole window went unread since the history's last reset", () => {
     const state = emptyLedger();
     advanceLedger(state, {
