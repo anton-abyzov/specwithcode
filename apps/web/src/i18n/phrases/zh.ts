@@ -5688,4 +5688,8 @@ export const zh: PhraseCatalog = {
     "审查留在此处：{machine} 上没有允许的审查模型",
   "Review stays here: update SpecWithCode on {machine}":
     "审查留在此处：请更新 {machine} 上的 SpecWithCode",
+  "Close. The code stays in Settings > Machines.": "关闭。代码仍在 设置 > 机器 中。",
+  "Waiting for {machine}": "正在等待 {machine}",
+  "Waiting for machines to allow this device": "正在等待机器允许此设备",
+  "Waiting to join": "等待加入",
 };

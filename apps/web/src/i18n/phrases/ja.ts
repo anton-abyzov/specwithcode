@@ -5945,4 +5945,8 @@ export const ja: PhraseCatalog = {
     "レビューはここに残ります: {machine} に許可されたレビュアーがありません",
   "Review stays here: update SpecWithCode on {machine}":
     "レビューはここに残ります: {machine} の SpecWithCode を更新してください",
+  "Close. The code stays in Settings > Machines.": "閉じる。コードは 設定 > マシン に残ります。",
+  "Waiting for {machine}": "{machine} を待っています",
+  "Waiting for machines to allow this device": "マシンがこのデバイスを許可するのを待っています",
+  "Waiting to join": "参加を待っています",
 };
