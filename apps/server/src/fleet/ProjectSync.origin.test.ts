@@ -464,7 +464,7 @@ describe("project sync: how long it may wait on origin (P2-36)", () => {
     git(f.a, "commit", "-q", "--amend", "-m", "rewritten");
     git(f.a, "push", "-q", "--force", "origin", "main");
     // Every answer takes just under the limit of one ask.
-    let clock = Date.now();
+    let clock = 1_000_000;
     vi.spyOn(Date, "now").mockImplementation(() => clock);
     let asks = 0;
     const slow: SyncGit = async (cwd, args, options) => {

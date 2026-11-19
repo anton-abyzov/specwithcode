@@ -160,6 +160,7 @@ export async function noteOrigin(
   if (records === undefined) return;
   const at = await identityOf(git, cwd);
   if (at === null) return dropOrigin(records, cwd);
+  // @effect-diagnostics-next-line globalDate:off - a plain async helper; when origin listed is wall-clock time.
   records.set(at.checkout, { ...at, url, heads, atMs: Date.now() });
 }
 
