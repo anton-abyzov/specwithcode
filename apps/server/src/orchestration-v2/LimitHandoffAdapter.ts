@@ -37,6 +37,7 @@ import {
   HANDOFF_PROTOCOL_VERSION,
 } from "../handoff/handoffWire.ts";
 import type { HandoffDocument } from "../handoff/handoffState.ts";
+import { AUTOMATIC_OFF } from "../handoff/HandoffTransferRunner.ts";
 import { turnRefusal } from "../handoff/HandoffTurnGate.ts";
 import {
   type LimitHandoffOutcome,
@@ -178,14 +179,16 @@ export function makeLimitHandoffPort(deps: LimitHandoffAdapterDeps): LimitHandof
       Effect.orElseSucceed(() => doubt("The handoff state could not be read.")),
     );
   const check = deps.check;
+  const optedOut = (threadId: ThreadId) =>
+    deps.document.pipe(
+      Effect.map((document) => document.threads[threadId]?.mode === "off"),
+      Effect.orElseSucceed(() => true),
+    );
   return {
     available: true,
     // Only the thread's own Off opts out; the project default and On both let it start.
-    optedOut: (threadId) =>
-      deps.document.pipe(
-        Effect.map((document) => document.threads[threadId]?.mode === "off"),
-        Effect.orElseSucceed(() => false),
-      ),
+    // A preference that cannot be read starts nothing.
+    optedOut,
     ...(check === undefined
       ? {}
       : ({
@@ -211,6 +214,15 @@ export function makeLimitHandoffPort(deps: LimitHandoffAdapterDeps): LimitHandof
       Effect.gen(function* () {
         const before = yield* held(request.threadId);
         if (before !== null) return before;
+        // Off is read again here, at the send: it may have been chosen while a machine
+        // answered. The runner refuses it once more before the hold.
+        if (yield* optedOut(request.threadId))
+          return {
+            type: "refused",
+            code: "automatic_off",
+            message: AUTOMATIC_OFF,
+            retryable: true,
+          } satisfies LimitHandoffOutcome;
         const answer = yield* deps
           .handOff({
             threadId: request.threadId,
@@ -226,6 +238,10 @@ export function makeLimitHandoffPort(deps: LimitHandoffAdapterDeps): LimitHandof
               ...(request.usageWindowKey === undefined
                 ? {}
                 : { usageWindowKey: request.usageWindowKey.slice(0, 120) }),
+              // The run and the disposition the move was admitted for; the runner
+              // refuses it before the hold when the thread is no longer there.
+              ...(request.runId === undefined ? {} : { runId: request.runId.slice(0, 256) }),
+              disposition: request.resume ? "resume" : "ready",
             },
           })
           .pipe(Effect.result);

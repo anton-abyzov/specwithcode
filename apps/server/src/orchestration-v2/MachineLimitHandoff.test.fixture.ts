@@ -247,7 +247,7 @@ export interface World {
   optedOut: boolean;
   /** The second thread, as the projection reads it now. */
   second: Record<string, unknown> | null;
-  readonly update: (patch: Partial<ServerSettings>) => Effect.Effect<void>;
+  update: (patch: Partial<ServerSettings>) => Effect.Effect<void>;
 }
 
 export type TrackAnswer =

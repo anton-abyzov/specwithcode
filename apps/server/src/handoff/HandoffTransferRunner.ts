@@ -193,6 +193,32 @@ export interface TransferStart {
 
 const MANUAL: HandoffTransferTrigger = { kind: "manual" };
 
+export const AUTOMATIC_OFF = "Hand off automatically is off for this thread.";
+export const AUTOMATIC_RUN_CHANGED = "A new turn started here since this hand off was decided.";
+export const AUTOMATIC_DISPOSITION_CHANGED = "This thread changed since this hand off was decided.";
+
+/**
+ * Why an automatic move no longer holds for the thread as it is now, or null.
+ * A move someone asked for is never refused here: Off, a run and a disposition
+ * bind only a start nobody watched.
+ */
+export function automaticStartRefusal(input: {
+  readonly trigger: HandoffTransferTrigger;
+  /** The thread's own "Hand off automatically". */
+  readonly mode: string | undefined;
+  /** The run the thread is on now: the one running, else the latest. */
+  readonly runId: string | null | undefined;
+  readonly disposition: "resume" | "ready";
+}): string | null {
+  const { trigger } = input;
+  if (trigger.kind !== "automatic") return null;
+  if (input.mode === "off") return AUTOMATIC_OFF;
+  if (trigger.runId !== undefined && trigger.runId !== input.runId) return AUTOMATIC_RUN_CHANGED;
+  if (trigger.disposition !== undefined && trigger.disposition !== input.disposition)
+    return AUTOMATIC_DISPOSITION_CHANGED;
+  return null;
+}
+
 export function makeTransferRunner(deps: TransferRunnerDeps) {
   const { self, selfLabel, store } = deps;
   /** Threads whose move runs in this process now; a tick leaves them alone. */
@@ -757,6 +783,25 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         return yield* error;
       }
 
+      const disposition =
+        first.shell.activeRunId !== null || shouldResume(first.checkpoint.runEnding)
+          ? "resume"
+          : "ready";
+      // An automatic move is for the run, the disposition and the preference it was
+      // admitted with. Read here, after the checkpoint and before the hold, so a turn
+      // that started since, or Off chosen since, is never stopped for it.
+      const stale = automaticStartRefusal({
+        trigger,
+        mode: (yield* recordOf(threadId))?.mode,
+        runId: first.shell.activeRunId ?? first.shell.latestRunId,
+        disposition,
+      });
+      if (stale !== null) {
+        const error = failed("invalid", stale);
+        yield* stays(error);
+        return yield* error;
+      }
+
       // 2. The record, before the hold: operation, destination, checkpoint, disposition.
       const now = yield* deps.nowIso;
       const operationId = planned?.operationId ?? NodeCrypto.randomUUID();
@@ -771,10 +816,7 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         projectId: first.shell.projectId,
         targetEnvironmentId: destination,
         sequence: first.checkpoint.sequence,
-        disposition:
-          first.shell.activeRunId !== null || shouldResume(first.checkpoint.runEnding)
-            ? "resume"
-            : "ready",
+        disposition,
         state: planned?.state === "held" ? "held" : "pending",
         legacy: false,
         candidates: [],

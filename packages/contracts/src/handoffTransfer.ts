@@ -86,6 +86,12 @@ export const HandoffTransferTrigger = Schema.Struct({
   reason: Schema.optional(text(120)),
   /** When the usage window that set off an automatic move resets, or absent when unknown. */
   usageWindowKey: Schema.optional(text(120)),
+  /**
+   * The run an automatic move was admitted for, and how it was to arrive.
+   * The source refuses the move before the hold when either no longer holds.
+   */
+  runId: Schema.optional(text(256)),
+  disposition: Schema.optional(HandoffTransferDisposition),
 });
 export type HandoffTransferTrigger = typeof HandoffTransferTrigger.Type;
 
