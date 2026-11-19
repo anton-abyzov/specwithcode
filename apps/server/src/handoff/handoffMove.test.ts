@@ -812,8 +812,10 @@ describe("handoff between two machines", () => {
         Effect.provide(destinationServices),
       );
       yield* TestClock.setTime(renewedAt + HANDOFF_LEASE_STALE_MS + 1_000);
-      const refused = yield* continueAlone(minisMoves, { sourceEnvironmentId: m4, sourceThreadId: threadId })
-        .pipe(Effect.flip);
+      const refused = yield* continueAlone(minisMoves, {
+        sourceEnvironmentId: m4,
+        sourceThreadId: threadId,
+      }).pipe(Effect.flip);
       expect(refused.code).toBe("invalid");
       expect(refused.message).toContain("Update M4 first.");
       expect(destination.launches).toHaveLength(0);
@@ -1031,8 +1033,10 @@ describe("handoff between two machines", () => {
           Effect.provide(destinationServices),
         );
         yield* TestClock.setTime(renewedAt + 30_000);
-        const early = yield* continueAlone(minisMoves, { sourceEnvironmentId: m4, sourceThreadId: threadId })
-          .pipe(Effect.flip);
+        const early = yield* continueAlone(minisMoves, {
+          sourceEnvironmentId: m4,
+          sourceThreadId: threadId,
+        }).pipe(Effect.flip);
         expect(early.code).toBe("busy");
         expect(destination.launches).toHaveLength(0);
 
@@ -1131,8 +1135,11 @@ describe("handoff between two machines", () => {
     ({ connect, source, refusal }) =>
       Effect.gen(function* () {
         const { minisMoves, destination } = yield* staleReplicaOnMinis(source, { connect });
-        const refused = yield* continueAlone(minisMoves, { sourceEnvironmentId: m4, sourceThreadId: threadId }, { byAgent: true })
-          .pipe(Effect.flip);
+        const refused = yield* continueAlone(
+          minisMoves,
+          { sourceEnvironmentId: m4, sourceThreadId: threadId },
+          { byAgent: true },
+        ).pipe(Effect.flip);
         expect(refused.code).toBe("busy");
         expect(refused.message).toContain(refusal);
         expect(refused.message).toContain("ask the user");
@@ -1145,7 +1152,8 @@ describe("handoff between two machines", () => {
       const { minisMoves, destination } = yield* staleReplicaOnMinis("silent", {
         connect: "online",
       });
-      yield* continueAlone(minisMoves, 
+      yield* continueAlone(
+        minisMoves,
         { sourceEnvironmentId: m4, sourceThreadId: threadId },
         { byAgent: true },
       );
@@ -1198,11 +1206,13 @@ describe("handoff between two machines", () => {
           },
         },
       };
-      const attempt = continueAlone(minisMoves, { sourceEnvironmentId: m4, sourceThreadId: threadId })
-        .pipe(
-          Effect.flip,
-          Effect.map((error) => error.message),
-        );
+      const attempt = continueAlone(minisMoves, {
+        sourceEnvironmentId: m4,
+        sourceThreadId: threadId,
+      }).pipe(
+        Effect.flip,
+        Effect.map((error) => error.message),
+      );
       const tick = Effect.gen(function* () {
         const fiber = yield* minisMoves.heartbeat.pipe(Effect.forkChild);
         yield* Effect.yieldNow;

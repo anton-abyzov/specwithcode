@@ -48,7 +48,8 @@ import {
 
 const temporary: Array<string> = [];
 afterEach(() => {
-  for (const path of temporary.splice(0)) NodeFS.rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  for (const path of temporary.splice(0))
+    NodeFS.rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 const t1 = ThreadId.make("thread:one");
@@ -79,9 +80,7 @@ describe(`this build with a machine on ${PREVIOUS_RELEASE}`, () => {
       operationId: "0a1b2c3d-1111-4222-8333-444455556666",
       trigger: { kind: "automatic", key: "limit-handoff:thread:one:run-1" },
     });
-    const read = Schema.decodeUnknownOption(PreviousTakeoverRequest)(
-      overTheWire(takeover),
-    );
+    const read = Schema.decodeUnknownOption(PreviousTakeoverRequest)(overTheWire(takeover));
     expect(Option.isSome(read)).toBe(true);
     expect(Option.getOrThrow(read)).not.toHaveProperty("operationId");
     const preflight = Schema.encodeSync(PeerPreflightRequest)({
@@ -93,9 +92,7 @@ describe(`this build with a machine on ${PREVIOUS_RELEASE}`, () => {
     });
     expect(
       Option.isSome(
-        Schema.decodeUnknownOption(PreviousPeerPreflightRequest)(
-          overTheWire(preflight),
-        ),
+        Schema.decodeUnknownOption(PreviousPeerPreflightRequest)(overTheWire(preflight)),
       ),
     ).toBe(true);
   });
@@ -287,29 +284,31 @@ describe(`this build with a machine on ${PREVIOUS_RELEASE}`, () => {
       }),
     );
 
-    it.effect("stays held when that machine launched the thread and could not write that it did", () =>
-      Effect.gen(function* () {
-        const rig = yield* makeRig(temporary, withPrevious);
-        const [a, , old] = rig.machines as [RigMachine, RigMachine, RigMachine];
-        rig.addThread(a, t1);
-        yield* holdWithRequest(a, old);
-        // The release launches the continuation, then writes that it continued. That
-        // last write failed: the thread runs there, and every heartbeat says "not continued".
-        old.launches.push({ threadId: continuationThreadId(a.environmentId, t1, 2) } as never);
+    it.effect(
+      "stays held when that machine launched the thread and could not write that it did",
+      () =>
+        Effect.gen(function* () {
+          const rig = yield* makeRig(temporary, withPrevious);
+          const [a, , old] = rig.machines as [RigMachine, RigMachine, RigMachine];
+          rig.addThread(a, t1);
+          yield* holdWithRequest(a, old);
+          // The release launches the continuation, then writes that it continued. That
+          // last write failed: the thread runs there, and every heartbeat says "not continued".
+          old.launches.push({ threadId: continuationThreadId(a.environmentId, t1, 2) } as never);
 
-        yield* a.moves.tick;
-        yield* a.moves.tick;
-        yield* TestClock.adjust("201 seconds");
-        yield* a.moves.tick;
-        yield* rig.restart(a);
-        yield* a.moves.tick;
+          yield* a.moves.tick;
+          yield* a.moves.tick;
+          yield* TestClock.adjust("201 seconds");
+          yield* a.moves.tick;
+          yield* rig.restart(a);
+          yield* a.moves.tick;
 
-        expect(rig.callsOf("heartbeat", old).length).toBeGreaterThan(1);
-        expect(leaseOf(a)).toMatchObject({ state: "handing-off", epoch: 1 });
-        expect(transferOf(a)?.state).toBe("unknown");
-        expect(turnRefusal(a.document, t1, a.environmentId)).not.toBeNull();
-        expect(old.launches).toHaveLength(1);
-      }),
+          expect(rig.callsOf("heartbeat", old).length).toBeGreaterThan(1);
+          expect(leaseOf(a)).toMatchObject({ state: "handing-off", epoch: 1 });
+          expect(transferOf(a)?.state).toBe("unknown");
+          expect(turnRefusal(a.document, t1, a.environmentId)).not.toBeNull();
+          expect(old.launches).toHaveLength(1);
+        }),
     );
   });
 
@@ -414,7 +413,12 @@ describe(`this build with a machine on ${PREVIOUS_RELEASE}`, () => {
           resumed: true,
           notice: null,
         };
-        b.document = previousMarkContinued(b.document, request, response, "2026-11-19T14:00:00.000Z");
+        b.document = previousMarkContinued(
+          b.document,
+          request,
+          response,
+          "2026-11-19T14:00:00.000Z",
+        );
 
         const repeat = yield* b.receiver.takeover(caller(a), request);
 

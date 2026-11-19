@@ -368,7 +368,9 @@ export const make = Effect.gen(function* () {
   const updateTransfers = <A>(
     change: Parameters<typeof transfers.update<A>>[0],
   ): Effect.Effect<A, HandoffRefusal> =>
-    transfers.update(change).pipe(Effect.mapError((error) => refuse(500, "failed", at(error.message))));
+    transfers
+      .update(change)
+      .pipe(Effect.mapError((error) => refuse(500, "failed", at(error.message))));
 
   /** The local project for the source project: the same one on this machine, else an explicit link. */
   const localProject = (sourceEnvironmentId: string, sourceProjectId: ProjectId) =>
@@ -1187,10 +1189,11 @@ export const make = Effect.gen(function* () {
           ? new HandoffRefusal({
               status: 503,
               code: "failed",
-              message: `${error.message} ${label} had accepted this handoff, so it may run the thread; ask again.`.slice(
-                0,
-                1000,
-              ),
+              message:
+                `${error.message} ${label} had accepted this handoff, so it may run the thread; ask again.`.slice(
+                  0,
+                  1000,
+                ),
               uncertain: true,
             })
           : error,
@@ -1344,7 +1347,11 @@ export const make = Effect.gen(function* () {
               ...(settled.operationId === null ? {} : { operationId: settled.operationId }),
               ...(settled.trigger === null ? {} : { trigger: settled.trigger }),
             });
-        return { machineLabel: label, status: "accepted", receipt } satisfies TransferStatusResponse;
+        return {
+          machineLabel: label,
+          status: "accepted",
+          receipt,
+        } satisfies TransferStatusResponse;
       }
       // The copy's lease moves up to the refused epoch, so a takeover from a
       // source that sends no operation id is refused as stale too.

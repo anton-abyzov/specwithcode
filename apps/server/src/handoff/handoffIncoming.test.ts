@@ -1445,7 +1445,7 @@ describe("takeover and the project's Use worktrees switch", () => {
       launchState.fail = true;
       const refused = yield* takeOver(peer()).pipe(Effect.flip);
       // The launch may have created the thread: in doubt, never a "no" the source releases on.
-        expect(refused).toMatchObject({ status: 503, code: "failed", uncertain: true });
+      expect(refused).toMatchObject({ status: 503, code: "failed", uncertain: true });
       expect(git(root, "status", "--porcelain")).toBe("M app.ts");
       launchState.fail = false;
       const response = yield* takeOver(peer());

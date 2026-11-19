@@ -76,8 +76,7 @@ const TURN_DID_NOT_STOP = "Its turn did not stop in 45 seconds, so the thread st
 const UNSENT_TOO_OLD =
   "The handoff was cut before anything was sent, so the thread stays here. Hand it off again to move it.";
 const RESUMED_HERE = "Resumed here before anything was sent.";
-const NO_MACHINE_ACCEPTED =
-  "No machine accepted this handoff, so the thread runs here again.";
+const NO_MACHINE_ACCEPTED = "No machine accepted this handoff, so the thread runs here again.";
 const LEGACY_HOLD_WAITS =
   "This thread was being handed off when SpecWithCode was updated. It stays paused until every machine that holds a copy confirms it did not continue it.";
 const NOT_RECORDED =
@@ -212,9 +211,7 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       state,
       detail: detail === null ? null : detail.slice(0, 1000),
       ...(receipt === null ? {} : { receipt }),
-    }).pipe(
-      Effect.match({ onFailure: () => false, onSuccess: (written) => written !== null }),
-    );
+    }).pipe(Effect.match({ onFailure: () => false, onSuccess: (written) => written !== null }));
 
   /** Gives back a hold nothing was sent under: the epoch was never used. */
   const releaseUnsent = (threadId: ThreadId, lastError: string | null) =>
@@ -312,7 +309,11 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
         } else {
           open = true;
           const failure = status.failure;
-          if (record.legacy && failure._tag === "HandoffPeerError" && failure.needsUpdate === true) {
+          if (
+            record.legacy &&
+            failure._tag === "HandoffPeerError" &&
+            failure.needsUpdate === true
+          ) {
             // That machine keeps no records. From now on it is asked the way a
             // hold with nothing on file is: by a heartbeat at this epoch, twice.
             yield* patch(record.operationId, ["sent", "unknown", "accepted"], {
@@ -326,7 +327,13 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       }
       if (response !== null) {
         yield* finish(record.operationId, response.resumed ? "resumed" : "ready", null, response);
-        yield* deps.fenceSource(shell, destination, response, epoch, record.reason as TakeoverReason);
+        yield* deps.fenceSource(
+          shell,
+          destination,
+          response,
+          epoch,
+          record.reason as TakeoverReason,
+        );
         return response;
       }
       const refusal = error ?? failed("failed", "The destination did not accept the handoff.");
@@ -722,9 +729,7 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
           },
           pendingTakeover: null,
         }))
-        .pipe(
-          Effect.tapError((error) => finish(operationId, "stayed", error.message)),
-        );
+        .pipe(Effect.tapError((error) => finish(operationId, "stayed", error.message)));
       const epoch = (held?.lease?.epoch ?? 0) + 1;
       const holding = yield* patch(operationId, ["pending", "held"], {
         state: "held",
@@ -1050,7 +1055,10 @@ export function makeTransferRunner(deps: TransferRunnerDeps) {
       const record = yield* recordOf(request.threadId);
       const asks = caller.sourceEnvironmentId;
       if (record === undefined || !record.replicas.some((entry) => entry.environmentId === asks)) {
-        return yield* failed("not_found", `${selfLabel}: that machine holds no copy of this thread`);
+        return yield* failed(
+          "not_found",
+          `${selfLabel}: that machine holds no copy of this thread`,
+        );
       }
       const moved = yield* owned(
         request.threadId,

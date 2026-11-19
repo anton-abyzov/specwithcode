@@ -741,9 +741,13 @@ export const make = Effect.gen(function* () {
         const shell = yield* shellOf(threadId).pipe(Effect.option);
         const title = Option.isSome(shell) ? shell.value.title.slice(0, 500) : String(threadId);
         const queued = carriesQueue ? yield* queuedMessagesOf(threadId) : [];
-        const moved = yield* handOffAs({ threadId, destinationEnvironmentId: destination }, reason, {
-          operationId: planned.get(threadId),
-        }).pipe(Effect.result);
+        const moved = yield* handOffAs(
+          { threadId, destinationEnvironmentId: destination },
+          reason,
+          {
+            operationId: planned.get(threadId),
+          },
+        ).pipe(Effect.result);
         if (moved._tag === "Success") {
           const carried =
             queued.length === 0
