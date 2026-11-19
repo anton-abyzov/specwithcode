@@ -34,6 +34,7 @@ import {
   type RoutineRunnerRecords,
   runsHere,
 } from "./ScheduledTaskRunnerRecords.ts";
+import { definitionHashOf } from "./ScheduledTaskDefinitionHash.ts";
 import {
   refuseTransfer,
   ROUTINE_RUNNER_CAPABILITY,
@@ -392,8 +393,9 @@ export const makeRunnerReceive = (parts: RunnerReceiveParts) => {
       const failed = (error: ScheduledTaskError) =>
         refuseTransfer(409, `Not changed: ${error.message}`);
       const current = yield* revisionOf(task.id, record).pipe(Effect.mapError(failed));
+      // By content first: a count can match a definition the caller never held.
       if (
-        request.behind === true ||
+        request.seen !== definitionHashOf(routineCopyOf({ ...task, ownThread: true }) ?? task) ||
         (request.expectedRevision !== undefined && request.expectedRevision !== current)
       )
         // Not made: the caller gets what this machine holds, to show and to change again.

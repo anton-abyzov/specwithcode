@@ -274,6 +274,8 @@ export const makeRunnerRecords = (sql: SqlClient.SqlClient) => {
     read: (taskId: string) => read(taskId).pipe(quiet("read a routine's runner", null)),
     readStrict: read,
     all: all.pipe(quiet("read routine runners", new Map<string, RoutineRunnerRecord>())),
+    /** Fails when the records cannot be read: for a read where none is not a safe guess. */
+    allStrict: all,
     write,
     remove,
     receipt,

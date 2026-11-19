@@ -348,6 +348,12 @@ export type ScheduledTaskRunnerInfo = typeof ScheduledTaskRunnerInfo.Type;
  * same view never silently replaces the earlier. Omitted, the edit is not checked.
  */
 const ScheduledTaskExpectedRevision = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+/**
+ * A hash of a routine's definition as a list showed it. A change made on a
+ * machine that only keeps a copy names the one it was made on, and the
+ * routine's runner refuses the change unless it holds that definition now.
+ */
+const ScheduledTaskDefinitionHash = Schema.String.check(Schema.isMaxLength(128));
 
 export const ScheduledTask = Schema.Struct({
   id: ScheduledTaskId,
@@ -378,6 +384,8 @@ export const ScheduledTask = Schema.Struct({
   runner: Schema.optional(ScheduledTaskRunnerInfo),
   /** How many times the routine changed where it is changed; a save names the one it was made against. */
   revision: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  /** On a machine that only keeps a copy: the definition shown here, for a change to name. */
+  definitionHash: Schema.optional(ScheduledTaskDefinitionHash),
 });
 export type ScheduledTask = typeof ScheduledTask.Type;
 
@@ -463,6 +471,7 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   brief: Schema.optional(Schema.NullOr(ScheduledTaskBrief)),
   ownThread: Schema.optional(ScheduledTaskOwnThread),
   expectedRevision: Schema.optional(ScheduledTaskExpectedRevision),
+  expectedDefinition: Schema.optional(ScheduledTaskDefinitionHash),
 });
 export type ScheduledTaskUpsertInput = typeof ScheduledTaskUpsertInput.Type;
 
@@ -471,12 +480,14 @@ export const ScheduledTaskSetEnabledInput = Schema.Struct({
   id: ScheduledTaskId,
   enabled: Schema.Boolean,
   expectedRevision: Schema.optional(ScheduledTaskExpectedRevision),
+  expectedDefinition: Schema.optional(ScheduledTaskDefinitionHash),
 });
 export type ScheduledTaskSetEnabledInput = typeof ScheduledTaskSetEnabledInput.Type;
 
 export const ScheduledTaskDeleteInput = Schema.Struct({
   id: ScheduledTaskId,
   expectedRevision: Schema.optional(ScheduledTaskExpectedRevision),
+  expectedDefinition: Schema.optional(ScheduledTaskDefinitionHash),
 });
 export type ScheduledTaskDeleteInput = typeof ScheduledTaskDeleteInput.Type;
 

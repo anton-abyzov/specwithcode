@@ -74,8 +74,12 @@ const STATE_BADGE: Record<RoutineTone, "success" | "error" | "info" | "outline">
  * refuses one made against a copy that went stale. A machine that predates
  * revisions lists none, and none is sent.
  */
-export function shownRevision(task: Pick<ScheduledTask, "revision">) {
-  return task.revision === undefined ? {} : { expectedRevision: task.revision };
+export function shownRevision(task: Pick<ScheduledTask, "revision" | "definitionHash">) {
+  return {
+    ...(task.revision === undefined ? {} : { expectedRevision: task.revision }),
+    // On a machine that only keeps a copy: the definition the row showed.
+    ...(task.definitionHash === undefined ? {} : { expectedDefinition: task.definitionHash }),
+  };
 }
 
 /** Asks before a delete; deleting a routine cannot be undone. */

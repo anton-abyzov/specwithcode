@@ -93,11 +93,12 @@ export const RoutineRunnerRequest = Schema.Union([
     /** The runner revision the change was made against; any other is refused. Omitted, it is not checked. */
     expectedRevision: Schema.optional(NonNegativeInt),
     /**
-     * The caller's copy does not hold a definition it took from this runner, so
-     * its change was made against one nobody checked: not made, and answered
-     * with what this machine holds, as a change against an older revision is.
+     * The hash of the definition the change was made on (ScheduledTaskDefinitionHash).
+     * Unless it is the one this machine holds now, the change is not made and is
+     * answered with what this machine holds, whatever the revisions say. So is
+     * a change that names none.
      */
-    behind: Schema.optional(Schema.Boolean),
+    seen: Schema.optional(Schema.String.check(Schema.isMaxLength(128))),
     edit: RoutineRunnerEdit,
   }),
   /** Step 1 of a runner move: saved here, off, under the move's operation id. */

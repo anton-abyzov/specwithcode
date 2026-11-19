@@ -311,7 +311,7 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
   ): Effect.Effect<TransferOutcome> =>
     Effect.gen(function* () {
       const self = yield* deps.selfEnvironmentId;
-      const moved = (revision: number) =>
+      const moved = (revision: number, sentNow: boolean) =>
         Effect.gen(function* () {
           // Off here for good: this copy names its runner and never fires again.
           yield* deps.records
@@ -328,8 +328,11 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
               asked: [],
               // Its row is off for the move; this is what it follows the coordinator with again.
               copyEnabled: operation.wasEnabled ?? true,
-              // The move sent this row's definition, and nothing changes one that moves.
-              installedRevision: revision,
+              // The move sent this row's definition, and the enable just answered with
+              // its revision there. A move picked up again hears only where it stands:
+              // a revision that may be of a change made there since, and no definition.
+              // Then this row is not known to hold it, until its runner sends both.
+              installedRevision: sentNow ? revision : null,
             })
             .pipe(Effect.ignore);
           return {
@@ -338,7 +341,7 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
             detail: movedDetail(operation.targetLabel, operation.capped),
           } as const;
         });
-      if (already !== null) return yield* moved(already.revision);
+      if (already !== null) return yield* moved(already.revision, false);
       const revision = yield* deps.revisionOf(task.id);
       if (operation.runState === null || record.operationId === null)
         return failed(
@@ -354,7 +357,7 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
         acked: [...new Set([...record.acked, ...(self === null ? [] : [self])])],
       }).pipe(Effect.result);
       if (enabled._tag === "Success" && enabled.success.enabled === true)
-        return yield* moved(enabled.success.revision ?? revision + 1);
+        return yield* moved(enabled.success.revision ?? revision + 1, true);
       if (enabled._tag === "Failure" && !definiteNo(enabled.failure))
         return failed(
           `${operation.targetLabel} did not confirm it turned the routine on. It stays off here; try the move again, or Bring back turns it on here.`,

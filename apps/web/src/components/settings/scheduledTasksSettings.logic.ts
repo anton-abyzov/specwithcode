@@ -134,6 +134,12 @@ export interface DraftState {
   readonly editingId: string | null;
   /** The revision the routine had when the form opened; null from a server that sends none. */
   readonly baseRevision: number | null;
+  /**
+   * The hash of the definition the form opened on, when the list sent one (a
+   * machine that only keeps a copy does). Kept as it was then: a list that
+   * refreshes while the form is open never makes an older draft look current.
+   */
+  readonly baseDefinition: string | null;
   readonly title: string;
   readonly prompt: string;
   readonly enabled: boolean;
@@ -269,6 +275,22 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
   };
 }
 
+/**
+ * What a save of an open form names: the revision and the definition the form
+ * opened on. The routine's runner refuses the save when either moved on, so a
+ * draft opened on an older definition never replaces a newer one, even after
+ * the list behind the form refreshed.
+ */
+export function draftBase(
+  draft: Pick<DraftState, "editingId" | "baseRevision" | "baseDefinition">,
+): { readonly expectedRevision?: number; readonly expectedDefinition?: string } {
+  if (!draft.editingId) return {};
+  return {
+    ...(draft.baseRevision === null ? {} : { expectedRevision: draft.baseRevision }),
+    ...(draft.baseDefinition === null ? {} : { expectedDefinition: draft.baseDefinition }),
+  };
+}
+
 export function taskToDraft(task: ScheduledTask): DraftState {
   const schedule = task.schedule;
   const weekdays =
@@ -278,6 +300,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
   return {
     editingId: task.id,
     baseRevision: task.revision ?? task.runner?.revision ?? null,
+    baseDefinition: task.definitionHash ?? null,
     title: task.title,
     prompt: task.prompt,
     enabled: task.enabled,

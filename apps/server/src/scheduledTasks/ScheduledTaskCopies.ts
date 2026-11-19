@@ -42,6 +42,8 @@ export class RoutineCopies extends Context.Service<
     readonly snapshot: (input: {
       readonly projectId: ProjectId;
       readonly logicalProjectId: string;
+      /** The machine the routines go to: each is sent as that machine must keep it. */
+      readonly recipient: string;
     }) => Effect.Effect<RoutineCopiesSnapshot | null, ScheduledTaskError>;
     /**
      * Keeps `routines` as this copy's own: each saved under its id, and the
@@ -165,12 +167,13 @@ export interface RoutineCopiesDeps {
    */
   readonly heldByRunner?: (id: ScheduledTaskId) => Effect.Effect<boolean>;
   /**
-   * The project's routines this machine runs whatever the coordinator binding
-   * says, every other machine resting its copy (ScheduledTaskRunner). They are
-   * sent off: a machine put back on a release before runners saves what it is
-   * sent, and would fire a copy sent on beside this machine.
+   * The routines whose copy on `recipient` rests for this machine by an
+   * acknowledgement that still counts (ScheduledTaskRunner). They are sent to
+   * that machine off: one put back on a release before runners saves what it
+   * is sent, and would fire a copy sent on beside this machine. A failure
+   * fails the snapshot: unknown is never sent as on.
    */
-  readonly runsAsRunner?: (projectId: ProjectId) => Effect.Effect<ReadonlySet<string>>;
+  readonly restsAt?: (recipient: string) => Effect.Effect<ReadonlySet<string>, ScheduledTaskError>;
 }
 
 const decodeUpsert = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);
@@ -231,15 +234,26 @@ export const makeRoutineCopies = (deps: RoutineCopiesDeps) =>
         readonly snapshot: RoutineCopiesSnapshot | null;
       }
     >();
-    const snapshot: RoutineCopies["Service"]["snapshot"] = ({ projectId, logicalProjectId }) =>
+    const snapshot: RoutineCopies["Service"]["snapshot"] = ({
+      projectId,
+      logicalProjectId,
+      recipient,
+    }) =>
       Effect.gen(function* () {
+        // A caller that does not say who the routines are for gets none: which of
+        // them must go off depends on the machine they go to.
+        if (typeof recipient !== "string" || recipient === "")
+          return yield* taskError("Routines are sent to a named machine only.");
         const generation = yield* deps.generation;
-        const key = `${projectId}\u0000${logicalProjectId}`;
-        const held = cached.get(key);
-        // Read every time: a machine joining or leaving changes it, and no routine does.
+        // Read every time, and once more when it fails: a machine joining or
+        // leaving changes it, and no routine does. Still unreadable, nothing is sent.
         const resting =
-          deps.runsAsRunner === undefined ? new Set<string>() : yield* deps.runsAsRunner(projectId);
+          deps.restsAt === undefined
+            ? new Set<string>()
+            : yield* deps.restsAt(recipient).pipe(Effect.retry({ times: 1 }));
         const rests = [...resting].toSorted().join("\u0000");
+        const key = `${projectId}\u0000${logicalProjectId}\u0000${recipient}`;
+        const held = cached.get(key);
         if (held !== undefined && held.generation === generation && held.rests === rests)
           return held.snapshot;
         const routines = routineCopiesOf(
