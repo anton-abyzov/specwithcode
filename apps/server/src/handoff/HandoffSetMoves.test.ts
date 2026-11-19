@@ -45,9 +45,13 @@ import {
 } from "./handoffTransfer.test.fixture.ts";
 import {
   HANDOFF_CAPABILITIES,
+  decodeFrame,
+  encodeFrame,
   HANDOFF_PROTOCOL_VERSION,
+  HANDOFF_WORKTREE_SET_CAPABILITY,
   PeerPreflightRequest,
-  type ReplicateMeta,
+  PeerPreflightResponse,
+  ReplicateMeta,
   type ReplicateSet,
 } from "./handoffWire.ts";
 import {
@@ -77,6 +81,9 @@ const read = (root: string, path: string) => NodeFS.readFileSync(NodePath.join(r
 
 /** The capability a machine must name at both ends before a worktree set travels to it. */
 const SET_CAPABILITY = "handoff.worktree-set";
+/** A frame as it travels: encoded, framed with its bundle, and read back on the other side. */
+const overTheFrame = (meta: ReplicateMeta) =>
+  decodeMeta(decodeFrame(encodeFrame(encodeMeta(meta), new Uint8Array([1, 2, 3]))).meta);
 const t1 = ThreadId.make("thread:set");
 const t2 = ThreadId.make("thread:plain");
 const LIB = "packages/lib";
@@ -93,6 +100,9 @@ const caller = (machine: RigMachine) => ({
   grant: unscopedGrant(machine.environmentId),
 });
 const encodeProbe = Schema.encodeSync(PeerPreflightRequest);
+const encodeAnswer = Schema.encodeSync(PeerPreflightResponse);
+const encodeMeta = Schema.encodeSync(ReplicateMeta);
+const decodeMeta = Schema.decodeUnknownSync(ReplicateMeta);
 const readAsPreviousRequest = Schema.decodeUnknownOption(PreviousPeerPreflightRequest);
 const readAsPreviousResponse = Schema.decodeUnknownOption(PreviousPeerPreflightResponse);
 const replicated = (rig: Rig, to?: RigMachine) =>
@@ -208,6 +218,70 @@ describe("a thread in a worktree set", () => {
         readonly set?: { readonly members: ReadonlyArray<{ readonly repositoryPath: string }> };
       };
       expect(last.set?.members.map((member) => member.repositoryPath)).toEqual(["", LIB]);
+      const frames = replicated(rig, b);
+      const part = frames.find((frame) => frame.setPart !== undefined);
+      expect(part?.repositoryPath).toBe(LIB);
+      expect(part?.setPart?.commit).toBe(last.set?.members[1]?.commit);
+      expect(frames.indexOf(part!)).toBeLessThan(frames.lastIndexOf(last));
+      // Both kinds of frame survive the wire as they are.
+      expect(overTheFrame(part!)).toEqual(part);
+      expect(overTheFrame(last)).toEqual(last);
+    }),
+  );
+
+  it.effect("is not copied by the standby tick: only a hand off sends it, whole", () =>
+    Effect.gen(function* () {
+      const rig = yield* makeRig(temporary);
+      const [a, b] = rig.machines as [RigMachine, RigMachine];
+      withSet(rig, t1);
+      rig.addThread(a, t2);
+      // Both threads have a checkpoint (the check of a move wrote it) and no standby copy on record.
+      yield* a.moves.preflight({ destinationEnvironmentId: b.environmentId, threadIds: [t1, t2] });
+      a.document = {
+        ...a.document,
+        threads: Object.fromEntries(
+          Object.entries(a.document.threads).map(([id, record]) => [
+            id,
+            { ...record, replicas: [] },
+          ]),
+        ),
+      };
+      rig.network.calls.length = 0;
+
+      yield* a.moves.replicate;
+
+      // The thread in one repository was copied; of the set, not one repository.
+      const sent = replicated(rig, b);
+      expect(sent.map((frame) => frame.sourceThreadId)).toEqual([t2]);
+      expect(rig.network.calls.every((call) => call.path !== "preflight")).toBe(true);
+    }),
+  );
+
+  it.effect("leaves nothing behind when a member cannot be built at the takeover", () =>
+    Effect.gen(function* () {
+      const rig = yield* makeRig(temporary);
+      const [a, b] = rig.machines as [RigMachine, RigMachine];
+      withSet(rig, t1, { running: true });
+      // The member's repository goes away after every check passed, as the takeover leaves.
+      rig.network.rule = (call) => {
+        if (call.path === "takeover") {
+          NodeFS.rmSync(NodePath.join(b.root, LIB), { recursive: true, force: true });
+        }
+        return undefined;
+      };
+
+      const row = yield* batchOf(a, b, t1);
+
+      expect(row.outcome).toBe("stayed");
+      expect(row.detail).toContain(LIB);
+      // It was sent and definitely not accepted: the record says so, and the thread runs here.
+      expect(transfersOf(a, t1)[0]?.state).toBe("failed");
+      expect(leaseOf(a, t1)?.state).toBe("active");
+      expect(b.launches).toHaveLength(0);
+      expect(Object.values(b.transfers.document.acceptances)).toHaveLength(0);
+      // The project's own member is built first; it is not left there alone.
+      expect(git(b.root, "worktree", "list").split("\n")).toHaveLength(1);
+      expect(git(b.root, "branch", "--format=%(refname:short)")).toBe("main");
     }),
   );
 
@@ -320,6 +394,7 @@ describe("the worktree set capability with a machine that does not name it", () 
   it("is named beside the transfer record, never instead of it", () => {
     expect(HANDOFF_CAPABILITIES).toContain(HANDOFF_V2_CAPABILITY);
     expect(HANDOFF_CAPABILITIES).toContain(SET_CAPABILITY);
+    expect(HANDOFF_WORKTREE_SET_CAPABILITY).toBe(SET_CAPABILITY);
   });
 
   it.effect("as the destination: the set thread stays and no repository is sent", () =>
@@ -364,6 +439,28 @@ describe("the worktree set capability with a machine that does not name it", () 
       });
       expect(asked.results).toEqual([]);
       expect(asked.capabilities).toEqual(expect.arrayContaining([HANDOFF_V2_CAPABILITY]));
+      // Its thread, replicated, passes every check here though it names no set capability.
+      const checked = yield* a.moves.preflight({
+        destinationEnvironmentId: b.environmentId,
+        threadIds: [t2],
+      });
+      expect(checked[0]?.failures).toEqual([]);
+      const copy = findIncoming(b.document, a.environmentId, t2);
+      const own = yield* b.receiver.preflight(caller(a), {
+        sourceEnvironmentId: a.environmentId,
+        protocolVersion: HANDOFF_PROTOCOL_VERSION,
+        appVersion: "1.0.384",
+        capabilities: [HANDOFF_V2_CAPABILITY],
+        threads: [
+          {
+            sourceThreadId: t2,
+            sourceProjectId: a.projectId,
+            sequence: copy!.checkpoint.sequence,
+            modelSelection: null,
+          },
+        ],
+      });
+      expect(own.results).toEqual([{ sourceThreadId: t2, failures: [] }]);
 
       const result = yield* a.moves.handOff({
         threadId: t2,
@@ -385,7 +482,7 @@ describe("the worktree set capability with a machine that does not name it", () 
         { name: "b" },
         { name: "old", previous: true },
       ]);
-      const [a, , old] = rig.machines as [RigMachine, RigMachine, RigMachine];
+      const [a, b, old] = rig.machines as [RigMachine, RigMachine, RigMachine];
       withSet(rig, t1, { running: true });
 
       const row = yield* batchOf(a, old, t1);
@@ -403,17 +500,20 @@ describe("the worktree set capability with a machine that does not name it", () 
         capabilities: [...HANDOFF_CAPABILITIES],
         threads: [],
       });
+      expect(rig.callsOf("preflight", old).length).toBeGreaterThan(0);
       expect(Option.isSome(readAsPreviousRequest(overTheWire(probe)))).toBe(true);
-      // And its answer, which names no capability, reads here as a machine without sets.
-      const answer = rig.callsOf("preflight", old).length;
-      expect(answer).toBeGreaterThan(0);
-      expect(
-        Option.isSome(
-          readAsPreviousResponse(
-            overTheWire({ machineLabel: "OLD", protocolVersion: 2, results: [] }),
-          ),
-        ),
-      ).toBe(true);
+      // And that release reads this build's answer, dropping the list it does not know.
+      const answer = yield* b.receiver.preflight(caller(a), {
+        sourceEnvironmentId: a.environmentId,
+        protocolVersion: HANDOFF_PROTOCOL_VERSION,
+        appVersion: "1.0.384",
+        capabilities: [...HANDOFF_CAPABILITIES],
+        threads: [],
+      });
+      expect(answer.capabilities).toContain(SET_CAPABILITY);
+      const read = readAsPreviousResponse(overTheWire(encodeAnswer(answer)));
+      expect(Option.isSome(read)).toBe(true);
+      expect(Option.getOrThrow(read)).not.toHaveProperty("capabilities");
     }),
   );
 });

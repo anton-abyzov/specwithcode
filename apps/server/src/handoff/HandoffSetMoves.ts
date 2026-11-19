@@ -48,9 +48,12 @@ import {
   resolveRepositoryPath,
 } from "./bundleGit.ts";
 import { writeCheckpoint } from "./checkpointGit.ts";
-import { HandoffPeerError } from "./handoffPeers.ts";
-import type { HandoffRefusal } from "./HandoffReceiver.ts";
+import { HandoffPeerError, type HandoffPeers } from "./handoffPeers.ts";
+import type { HandoffReceiver, HandoffRefusal, ReceiverCaller } from "./HandoffReceiver.ts";
 import {
+  HANDOFF_APP_VERSION,
+  HANDOFF_CAPABILITIES,
+  HANDOFF_PROTOCOL_VERSION,
   HANDOFF_SET_MAX_MEMBERS,
   hasWorktreeSets,
   type ReplicateMeta,
@@ -60,7 +63,7 @@ import {
 } from "./handoffWire.ts";
 
 /** The limits of one member: each repository of a set is measured on its own. */
-export interface SetLimits {
+interface SetLimits {
   readonly maxFileBytes: number;
   readonly maxFiles: number;
   readonly maxBundleBytes: number;
@@ -71,11 +74,19 @@ export const SET_LIMITS: SetLimits = {
   maxBundleBytes: HANDOFF_MAX_BUNDLE_BYTES,
 };
 
+/**
+ * Why the lease tick keeps no standby copy of a set thread. A copy made there
+ * would hold one member as of its last checkpoint and the others as of now,
+ * outside any transfer record; the set is copied when it is handed off.
+ */
+export const SET_COPY_ON_HANDOFF =
+  "This thread works in a worktree set. Its repositories are copied to another machine together, when the thread is handed off.";
+
 /** How long a machine that named the capability is not asked again. */
 const CAPABILITY_FRESH_MS = 10 * 60_000;
 
 /** Why the set does not travel. The message starts with the member it is about. */
-export class SetMoveError extends Error {
+class SetMoveError extends Error {
   readonly code: "invalid" | "too_large" | "failed";
   constructor(code: SetMoveError["code"], message: string) {
     super(message);
@@ -84,7 +95,7 @@ export class SetMoveError extends Error {
 }
 
 /** How a member is named to the user: its place in the project folder. */
-export const memberName = (repositoryPath: string) =>
+const memberName = (repositoryPath: string) =>
   repositoryPath === "" ? "The project folder's own repository" : repositoryPath;
 
 const megabytes = (bytes: number) => `${Math.round(bytes / 1_048_576)} MB`;
@@ -310,7 +321,7 @@ const named =
  * Replicates a set thread's checkpoint: every member, or nothing. `self` is a
  * move on this machine (another model): no bundle travels and nothing is asked.
  */
-export const shipSet = (input: {
+const shipSet = (input: {
   readonly self: boolean;
   readonly destination: string;
   readonly destinationLabel: string;
@@ -419,6 +430,52 @@ export const shipSet = (input: {
       yield* bytesOf(0),
     );
   }).pipe(Effect.scoped);
+
+/** `shipSet` over this machine's peers, or its own receiver for a move that stays here. */
+export const shipSetTo = (
+  via: {
+    readonly peers: HandoffPeers["Service"];
+    readonly receiver: HandoffReceiver["Service"];
+    readonly selfCaller: ReceiverCaller;
+    readonly capable: Map<string, number>;
+  },
+  destination: ReplicateMeta["sourceEnvironmentId"],
+  input: Pick<
+    Parameters<typeof shipSet>[0],
+    "destinationLabel" | "projectRoot" | "members" | "meta"
+  >,
+) => {
+  const self = input.meta.sourceEnvironmentId;
+  return shipSet({
+    ...input,
+    self: destination === self,
+    destination,
+    capable: via.capable,
+    capabilities: via.peers
+      .preflight(destination, {
+        sourceEnvironmentId: self,
+        protocolVersion: HANDOFF_PROTOCOL_VERSION,
+        appVersion: HANDOFF_APP_VERSION,
+        capabilities: HANDOFF_CAPABILITIES,
+        threads: [],
+      })
+      .pipe(Effect.map((answer) => answer.capabilities)),
+    negotiate: (repositoryPath, candidates) =>
+      via.peers
+        .negotiate(destination, {
+          sourceEnvironmentId: self,
+          sourceProjectId: input.meta.sourceProjectId,
+          sourceThreadId: input.meta.sourceThreadId,
+          repositoryPath,
+          candidates,
+        })
+        .pipe(Effect.map((answer) => answer.known)),
+    replicate: (frame, bundle) =>
+      destination === self
+        ? via.receiver.replicate(via.selfCaller, frame, bundle)
+        : via.peers.replicate(destination, frame, bundle),
+  });
+};
 
 // The destination.
 

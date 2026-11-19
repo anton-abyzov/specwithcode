@@ -79,7 +79,7 @@ import { shouldResume } from "./handoffPreflight.ts";
 import { outgoingReviewLock } from "./handoffReviewLock.ts";
 import * as Resume from "./handoffResume.ts";
 import { HandoffReceiver, type HandoffRefusal, type ReceiverCaller } from "./HandoffReceiver.ts";
-import { readSourceSet, shipSet } from "./HandoffSetMoves.ts";
+import { readSourceSet, SET_COPY_ON_HANDOFF, shipSetTo } from "./HandoffSetMoves.ts";
 import { makeTransferRunner } from "./HandoffTransferRunner.ts";
 import * as HandoffTransferStore from "./HandoffTransferStore.ts";
 import {
@@ -299,6 +299,8 @@ export const make = Effect.gen(function* () {
     shell: OrchestrationV2ThreadShell,
     checkpoint: HandoffCheckpoint,
     destination: EnvironmentId,
+    /** A move or its check. The standby copies of the lease tick are not: they carry no set. */
+    moving = false,
   ) =>
     Effect.gen(function* () {
       const project = yield* projects.getById(shell.projectId).pipe(
@@ -321,6 +323,7 @@ export const make = Effect.gen(function* () {
               try: () => readSourceSet(shell.worktreePath!),
               catch: (cause) => failed("failed", cause instanceof Error ? cause.message : ""),
             });
+      if (set !== null && !moving) return yield* failed("invalid", SET_COPY_ON_HANDOFF);
       const cwd = set?.[0]?.path ?? shell.worktreePath ?? project.workspaceRoot;
       const repositoryPath = yield* Effect.tryPromise({
         try: () => repositoryPathFor(project.workspaceRoot, cwd),
@@ -403,37 +406,11 @@ export const make = Effect.gen(function* () {
       const whole =
         set === null
           ? shipped
-          : shipSet({
-              self: destination === self,
-              destination,
+          : shipSetTo({ peers, receiver, selfCaller, capable: setCapable }, destination, {
               destinationLabel: label,
               projectRoot: project.workspaceRoot,
               members: set,
               meta,
-              capable: setCapable,
-              capabilities: peers
-                .preflight(destination, {
-                  sourceEnvironmentId: self,
-                  protocolVersion: HANDOFF_PROTOCOL_VERSION,
-                  appVersion: HANDOFF_APP_VERSION,
-                  capabilities: HANDOFF_CAPABILITIES,
-                  threads: [],
-                })
-                .pipe(Effect.map((answer) => answer.capabilities)),
-              negotiate: (path, candidates) =>
-                peers
-                  .negotiate(destination, {
-                    sourceEnvironmentId: self,
-                    sourceProjectId: shell.projectId,
-                    sourceThreadId: shell.id,
-                    repositoryPath: path,
-                    candidates,
-                  })
-                  .pipe(Effect.map((answer) => answer.known)),
-              replicate: (frame, bundle) =>
-                destination === self
-                  ? receiver.replicate(selfCaller, frame, bundle)
-                  : peers.replicate(destination, frame, bundle),
             });
       const key = backoffKey(shell.id, destination);
       return yield* whole.pipe(
@@ -540,7 +517,7 @@ export const make = Effect.gen(function* () {
         return yield* failed("failed", "This thread has no checkpoint to hand off.");
       }
       const shell = yield* shellOf(threadId);
-      yield* replicateTo(shell, checkpoint, destination);
+      yield* replicateTo(shell, checkpoint, destination, true);
       return { shell, checkpoint } as const;
     });
 
