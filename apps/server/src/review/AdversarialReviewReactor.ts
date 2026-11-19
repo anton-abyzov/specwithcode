@@ -89,15 +89,15 @@ export function threadTakesAutoReview(
 
 /**
  * Whether this finished run may start a review before the project setting is
- * read. A thread's own "On" holds wherever the thread is not a review and is
- * still open, like the advisor's On on any thread: also a delegated thread and
- * a run a person did not type. "Off" never reviews. A thread that follows the
- * project keeps the person-only rules.
+ * read. A thread's own "On" holds wherever the thread is still open and is
+ * neither a review nor an advisor child, like the advisor's On on any thread:
+ * also a delegated thread and a run a person did not type. "Off" never
+ * reviews. A thread that follows the project keeps the person-only rules.
  */
 export function runMayTakeAutoReview(
   thread: Pick<
     OrchestrationV2AppThread,
-    "title" | "lineage" | "origin" | "archivedAt" | "deletedAt" | "reviewMode"
+    "title" | "lineage" | "origin" | "archivedAt" | "deletedAt" | "reviewMode" | "purpose"
   >,
   userMessage:
     | Pick<OrchestrationV2ConversationMessage, "scheduledTaskId" | "senderThreadId">
@@ -108,6 +108,7 @@ export function runMayTakeAutoReview(
     return (
       thread.archivedAt === null &&
       thread.deletedAt === null &&
+      thread.purpose !== "advisor" &&
       !AdversarialReviewService.isAdversarialReviewThread(thread)
     );
   return (
@@ -153,7 +154,12 @@ export const start = Effect.gen(function* () {
     }
   });
 
-  const review = Effect.fn("AdversarialReviewReactor.review")(function* (
+  /**
+   * The thread and its project when this run may start a review, from fresh
+   * reads of the thread, its project and the settings. The recheck asks again:
+   * the thread may have been set to Off or archived in the meantime.
+   */
+  const admit = Effect.fn("AdversarialReviewReactor.admit")(function* (
     threadId: ThreadId,
     userMessageId: OrchestrationV2Run["userMessageId"],
   ) {
@@ -162,15 +168,26 @@ export const start = Effect.gen(function* () {
     });
     const thread = records.thread;
     const userMessage = records.messages.find((message) => message.id === userMessageId);
-    if (!runMayTakeAutoReview(thread, userMessage)) return;
+    if (!runMayTakeAutoReview(thread, userMessage)) return undefined;
     const project = Option.getOrUndefined(yield* projects.getById(thread.projectId));
-    if (project === undefined) return;
+    if (project === undefined) return undefined;
     const settings = resolveProjectSettings(
       yield* serverSettings.getSettings,
       project.id,
       project,
     ).settings;
-    if (!threadReviewState(thread.reviewMode, settings.adversarialReview).enabled) return;
+    if (!threadReviewState(thread.reviewMode, settings.adversarialReview).enabled)
+      return undefined;
+    return { thread, project };
+  });
+
+  const review = Effect.fn("AdversarialReviewReactor.review")(function* (
+    threadId: ThreadId,
+    userMessageId: OrchestrationV2Run["userMessageId"],
+  ) {
+    const admitted = yield* admit(threadId, userMessageId);
+    if (admitted === undefined) return;
+    const { thread, project } = admitted;
     // Suspended, so the recheck below reads again instead of reusing the first answer.
     const progressOf = Effect.suspend(() =>
       increments.read({ projectId: project.id, threadIds: [thread.id] }),
@@ -189,7 +206,11 @@ export const start = Effect.gen(function* () {
         later !== undefined &&
         bindingTakesAutoReview(later.binding) &&
         featureCompleteForReview(later)
-          ? startReview(thread.id, project.id, later)
+          ? admit(threadId, userMessageId).pipe(
+              Effect.flatMap((still) =>
+                still === undefined ? Effect.void : startReview(thread.id, project.id, later),
+              ),
+            )
           : Effect.void,
       ),
       Effect.catchCause((cause) =>

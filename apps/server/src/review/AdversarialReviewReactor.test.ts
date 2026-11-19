@@ -102,6 +102,12 @@ describe("runMayTakeAutoReview", () => {
         undefined,
       ),
     ).toBe(false);
+    expect(
+      AdversarialReviewReactor.runMayTakeAutoReview(
+        { ...on, purpose: "advisor" } as never,
+        undefined,
+      ),
+    ).toBe(false);
   });
 
   it("never reviews a thread set to Off", () => {
@@ -161,6 +167,8 @@ const runReactor = (input: {
   readonly auto: boolean;
   /** The source thread's own review choice. */
   readonly reviewMode?: "on" | "off" | null;
+  /** The choice from the source thread's second read on, as if changed during the recheck wait. */
+  readonly laterReviewMode?: "on" | "off" | null;
   readonly tasks: ReadonlyArray<never>;
   /** Tasks from the second read on, as a cached first read would lag them. */
   readonly laterTasks?: ReadonlyArray<never>;
@@ -173,6 +181,7 @@ const runReactor = (input: {
     const done = yield* Deferred.make<void>();
     const starts: Array<AdversarialReviewService.AdversarialReviewStartInput> = [];
     let reads = 0;
+    let threadReads = 0;
     const settings: ServerSettingsValue = {
       ...DEFAULT_SERVER_SETTINGS,
       adversarialReview: {
@@ -190,13 +199,17 @@ const runReactor = (input: {
             Stream.concat(Stream.never),
           ),
         ),
-        getThreadRecords: (threadId: ThreadId) =>
-          Effect.succeed({
+        getThreadRecords: (threadId: ThreadId) => {
+          const reviewMode =
+            threadId === sourceId && threadReads++ > 0 && input.laterReviewMode !== undefined
+              ? input.laterReviewMode
+              : threadId === sourceId
+                ? input.reviewMode
+                : undefined;
+          return Effect.succeed({
             thread: {
               ...personThread,
-              ...(threadId === sourceId && input.reviewMode !== undefined
-                ? { reviewMode: input.reviewMode }
-                : {}),
+              ...(reviewMode === undefined ? {} : { reviewMode }),
               id: threadId,
               projectId,
               title:
@@ -205,7 +218,8 @@ const runReactor = (input: {
                   : personThread.title,
             },
             messages: [],
-          }),
+          });
+        },
       } as never),
       Layer.succeed(ProjectService.ProjectService, {
         getById: () =>
@@ -346,6 +360,21 @@ describe("AdversarialReviewReactor", () => {
       expect(later.map((start) => start.commandId)).toEqual([
         "adversarial-review:project-review:0042-passkeys",
       ]);
+    }),
+  );
+
+  it.effect("starts nothing on the recheck once the thread was set to Off", () =>
+    Effect.gen(function* () {
+      const starts = yield* runReactor({
+        auto: true,
+        reviewMode: null,
+        laterReviewMode: "off",
+        tasks: [task("done"), task("claimed")],
+        laterTasks: [task("done"), task("done")],
+        events: [completed(sourceId, "run-1")],
+        wait: "6 seconds",
+      });
+      expect(starts).toEqual([]);
     }),
   );
 });

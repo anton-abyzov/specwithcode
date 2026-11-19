@@ -4155,8 +4155,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ? thread
             : { ...thread, advisorMode: command.advisorMode, updatedAt: now };
         case "thread.review-mode.set":
-          // A review thread never starts a review of its own work.
-          return isAdversarialReviewThreadTitle(thread.title) ||
+          // A review thread never reviews its own work, and an advisor child is not
+          // the author of the work it advises on.
+          return thread.purpose === "advisor" ||
+            isAdversarialReviewThreadTitle(thread.title) ||
             (thread.reviewMode ?? null) === command.reviewMode
             ? thread
             : { ...thread, reviewMode: command.reviewMode, updatedAt: now };
