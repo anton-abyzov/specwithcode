@@ -1,26 +1,26 @@
-/* Synthetic data only: the project "Atlas" on fictional machines m4, m5, m1, m3 and linux-mini.
+/* Synthetic data only: the project "Atlas" on fictional machines laptopE, rackF, deskB, kioskD and box-a.
    Nothing here talks to a server or touches a folder: the dialog gets a scripted API that
    answers from the facts below, and every sentence comes from the real plan and wording code.
    `?case=`
-     dialog   the Sync dialog on m4's page, `&state=`
+     dialog   the Sync dialog on laptopE's page, `&state=`
                 plan            every repository row of the plan, extras on both machines
                 small           one repository to move forward, nothing else
                 idle            both machines level, nothing to do
                 picker          several machines: one open, one offline, one from before Sync,
                                 one this window can only read
                 checking        the fetch has not answered
-                scan-limited    m5's folder is past the scan limits
-                inventory-failed  m5 could not list its extras
-                run-refused     Git refuses one step on m5 and m5's run fails on another
-                extras-failed   m4 could not send its extras
-                extras-unknown  m4 sent its extras and no answer came back
-                diverged        every step done, and m5 ended on another branch
+                scan-limited    rackF's folder is past the scan limits
+                inventory-failed  rackF could not list its extras
+                run-refused     Git refuses one step on rackF and rackF's run fails on another
+                extras-failed   laptopE could not send its extras
+                extras-unknown  laptopE sent its extras and no answer came back
+                diverged        every step done, and rackF ended on another branch
                 long            the November 18 state of a busy machine: 179 uncommitted
-                                files and 11 branches that exist only on m4
+                                files and 11 branches that exist only on laptopE
                 offline | read-only | needs-update | not-found | not-git | failed | unreadable
-                                why m5 could not take part in the check
+                                why rackF could not take part in the check
               `&hold=run` keeps the run from answering, for the running screen
-     menu     the machine menu on m4's page with each sync fact, "Sync…" and
+     menu     the machine menu on laptopE's page with each sync fact, "Sync…" and
               "Add to another machine…"; `&blocked=1` greys "Sync…" with its reason;
               `&window=read-only` is a window that can only read: the real menu hook, fed
               each machine's status, shows the facts and greys "Sync…"
@@ -91,8 +91,8 @@ const machine = (id: string): SyncMachine => ({
   projectId: "p" as never,
   label: id,
 });
-const M4 = machine("m4");
-const M5 = machine("m5");
+const LAPTOP_E = machine("laptopE");
+const RACK_F = machine("rackF");
 
 // ---------------------------------------------------------------------------
 // What each machine's fetch answers
@@ -118,7 +118,7 @@ const facts = (
 });
 const NO_REMOTE = { upstream: null, remote: null, fetch: "no-remote" } as const;
 
-/** One repository per row of the plan table: [path, on m4, on m5]; null is "not there". */
+/** One repository per row of the plan table: [path, on laptopE, on rackF]; null is "not there". */
 const PLAN_ROWS: ReadonlyArray<
   readonly [
     string,
@@ -126,7 +126,7 @@ const PLAN_ROWS: ReadonlyArray<
     Partial<ProjectSyncRepositoryFacts> | null,
   ]
 > = [
-  // Level on both, with uncommitted files and a thread at work on m5: never a bare "Up to date".
+  // Level on both, with uncommitted files and a thread at work on rackF: never a bare "Up to date".
   [".", {}, { uncommitted: 2, inUseBy: "Docs lint" }],
   ["apps/web", { behind: 99 }, {}],
   ["packages/ui", { ahead: 3 }, { behind: 1 }],
@@ -165,21 +165,21 @@ const LEVEL: ProjectSyncFetchResult = {
   repositories: [facts("."), facts("apps/web")],
 };
 const FETCHED: Record<string, Record<string, ProjectSyncFetchResult>> = {
-  plan: { m4: side(1), m5: side(2) },
+  plan: { laptopE: side(1), rackF: side(2) },
   small: {
-    m4: LEVEL,
-    m5: { scanLimited: false, repositories: [facts("."), facts("apps/web", { behind: 12 })] },
+    laptopE: LEVEL,
+    rackF: { scanLimited: false, repositories: [facts("."), facts("apps/web", { behind: 12 })] },
   },
-  // As "small"; afterwards m5 says it is on another branch.
+  // As "small"; afterwards rackF says it is on another branch.
   diverged: {
-    m4: LEVEL,
-    m5: { scanLimited: false, repositories: [facts("."), facts("apps/web", { behind: 12 })] },
+    laptopE: LEVEL,
+    rackF: { scanLimited: false, repositories: [facts("."), facts("apps/web", { behind: 12 })] },
   },
-  idle: { m4: LEVEL, m5: LEVEL },
+  idle: { laptopE: LEVEL, rackF: LEVEL },
   // Upstreams Sync does not move to: one that is no branch of origin, one gone from origin,
   // and a machine on an older version that names neither.
   upstream: {
-    m4: {
+    laptopE: {
       scanLimited: false,
       repositories: [
         facts("."),
@@ -201,7 +201,7 @@ const FETCHED: Record<string, Record<string, ProjectSyncFetchResult>> = {
         facts("tools/cli", { behind: 1 }),
       ],
     },
-    m5: {
+    rackF: {
       scanLimited: false,
       repositories: [
         facts("."),
@@ -215,10 +215,10 @@ const FETCHED: Record<string, Record<string, ProjectSyncFetchResult>> = {
       ],
     },
   },
-  long: { m4: LEVEL, m5: LEVEL },
+  long: { laptopE: LEVEL, rackF: LEVEL },
   "scan-limited": {
-    m4: LEVEL,
-    m5: { scanLimited: true, repositories: [facts(".", { behind: 2 })] },
+    laptopE: LEVEL,
+    rackF: { scanLimited: true, repositories: [facts(".", { behind: 2 })] },
   },
 };
 
@@ -227,7 +227,7 @@ const FETCHED: Record<string, Record<string, ProjectSyncFetchResult>> = {
 // ---------------------------------------------------------------------------
 
 const EMPTY: ProjectSyncInventoryResult = { repositories: [], scanLimited: false };
-const ONLY_ON_M4: ProjectSyncInventoryResult = {
+const ONLY_ON_LAPTOP_E: ProjectSyncInventoryResult = {
   scanLimited: false,
   repositories: [
     {
@@ -260,7 +260,7 @@ const ONLY_ON_M4: ProjectSyncInventoryResult = {
   ],
 };
 /** A machine in the middle of work: 179 uncommitted files and 11 branches only there. */
-const LONG_ON_M4: ProjectSyncInventoryResult = {
+const LONG_ON_LAPTOP_E: ProjectSyncInventoryResult = {
   scanLimited: false,
   repositories: [
     {
@@ -292,7 +292,7 @@ const LONG_ON_M4: ProjectSyncInventoryResult = {
     },
   ],
 };
-const ONLY_ON_M5: ProjectSyncInventoryResult = {
+const ONLY_ON_RACK_F: ProjectSyncInventoryResult = {
   scanLimited: false,
   repositories: [
     {
@@ -353,10 +353,10 @@ const stepResult = (
 });
 /** How far each repository of the plan is behind, so a result says what moved. */
 const BEHIND: Record<string, number> = {
-  "m4:apps/web": 99,
-  "m5:packages/ui": 1,
-  "m5:apps/web": 12,
-  "m5:.": 2,
+  "laptopE:apps/web": 99,
+  "rackF:packages/ui": 1,
+  "rackF:apps/web": 12,
+  "rackF:.": 2,
 };
 
 const api: ProjectSyncApi = {
@@ -367,9 +367,9 @@ const api: ProjectSyncApi = {
       scanLimited: from.scanLimited,
       repositories: from.repositories.map((item) => ({
         path: item.path,
-        // "diverged": the run ended and m5 is on another branch at another commit.
-        branch: state === "diverged" && on.label === "m5" ? "release" : item.branch,
-        head: state === "diverged" && on.label === "m5" ? "d".repeat(40) : item.head,
+        // "diverged": the run ended and rackF is on another branch at another commit.
+        branch: state === "diverged" && on.label === "rackF" ? "release" : item.branch,
+        head: state === "diverged" && on.label === "rackF" ? "d".repeat(40) : item.head,
         clean: item.uncommitted === 0,
       })),
     });
@@ -377,22 +377,22 @@ const api: ProjectSyncApi = {
   fetch: async (on) => {
     record(`fetch:${on.label}`);
     if (state === "checking") return never();
-    if (on.label === "m5" && state in CAUSES) return { ok: false, cause: CAUSES[state] };
+    if (on.label === "rackF" && state in CAUSES) return { ok: false, cause: CAUSES[state] };
     const from = FETCHED[state] ?? FETCHED.plan!;
     return answer(from[on.label]!);
   },
   inventory: async (on) => {
     record(`inventory:${on.label}`);
-    if (state === "inventory-failed" && on.label === "m5")
+    if (state === "inventory-failed" && on.label === "rackF")
       return { ok: false, cause: CAUSES.offline };
-    if (state === "long") return answer(on.label === "m4" ? LONG_ON_M4 : EMPTY);
+    if (state === "long") return answer(on.label === "laptopE" ? LONG_ON_LAPTOP_E : EMPTY);
     if (FETCHED[state] && state !== "plan") return answer(EMPTY);
-    return answer(on.label === "m4" ? ONLY_ON_M4 : ONLY_ON_M5);
+    return answer(on.label === "laptopE" ? ONLY_ON_LAPTOP_E : ONLY_ON_RACK_F);
   },
   run: async (on, plan) => {
     record(`run:${on.label}:${JSON.stringify(plan)}`);
     if (hold === "run") return never();
-    if (state === "run-refused" && on.label === "m4") return { ok: false, cause: CAUSES.offline };
+    if (state === "run-refused" && on.label === "laptopE") return { ok: false, cause: CAUSES.offline };
     // The branch went from origin after the fetch, origin could not be asked, and a clone
     // that was stopped left a folder Sync could not remove.
     if (state === "upstream")
@@ -531,41 +531,41 @@ const greyed = (name: string, why: Omit<Parameters<typeof syncBlockedOn>[0], "ma
 const TARGETS: SyncTarget[] =
   state === "picker"
     ? [
-        open(M5),
-        greyed("linux-mini", {
+        open(RACK_F),
+        greyed("box-a", {
           reach: "offline",
           read: undefined,
           version: null,
           access: "granted",
         }),
-        greyed("m1", {
+        greyed("deskB", {
           reach: "open",
           read: { kind: "needs-update", at: NOW },
           version: "1.4.2",
           access: "granted",
         }),
-        greyed("m3", { reach: "open", read: undefined, version: null, access: "denied" }),
+        greyed("kioskD", { reach: "open", read: undefined, version: null, access: "denied" }),
         // The same repository as a project of its own: listed, never a Sync target.
-        { machine: machine("m2"), blocked: { text: "Separate project" } },
+        { machine: machine("hubC"), blocked: { text: "Separate project" } },
       ]
-    : [open(M5)];
+    : [open(RACK_F)];
 
 function DialogPage() {
   const [shown, setShown] = useState(true);
-  // The verifier takes the window's grant on m5 away while the plan is on screen.
+  // The verifier takes the window's grant on rackF away while the plan is on screen.
   const [lost, setLost] = useState(false);
   useEffect(() => {
     (window as { loseGrant?: () => void }).loseGrant = () => setLost(true);
   }, []);
   const targets = lost
-    ? [greyed("m5", { reach: "open", read: undefined, version: null, access: "denied" })]
+    ? [greyed("rackF", { reach: "open", read: undefined, version: null, access: "denied" })]
     : TARGETS;
   return (
     <div className="fixture-page" data-dialog-page={shown ? "open" : "closed"}>
       {shown ? (
         <ProjectSyncDialog
           projectTitle={PROJECT}
-          shown={M4}
+          shown={LAPTOP_E}
           targets={targets}
           onClose={() => {
             record("closed");
@@ -588,7 +588,7 @@ const memberRef = (id: string) => ({
   projectId: "p",
   coordinatorThreadId: "project-coordinator:p",
 });
-const ROSTER = ["m4", "m5", "m1", "linux-mini", "m3", "m2"];
+const ROSTER = ["laptopE", "rackF", "deskB", "box-a", "kioskD", "hubC"];
 const linked = (id: string, binding: object) =>
   ({
     environmentId: id,
@@ -607,9 +607,9 @@ const linked = (id: string, binding: object) =>
     },
   }) as unknown as EnvironmentProject;
 const records = ROSTER.map((id) =>
-  id === "m4"
+  id === "laptopE"
     ? linked(id, { epoch: 0, state: "active" })
-    : linked(id, { epoch: 0, state: "transferred", successor: memberRef("m4") }),
+    : linked(id, { epoch: 0, state: "transferred", successor: memberRef("laptopE") }),
 );
 const copies = orchestratorCopies(
   records,
@@ -631,22 +631,22 @@ const status = (heads: Record<string, string>, dirty: readonly string[] = []): S
   },
 });
 const HEADS = { ".": "a", "apps/web": "a", "apps/api": "a", "packages/ui": "a", docs: "a" };
-/** What the window last read of each machine; m2 never answered. */
+/** What the window last read of each machine; hubC never answered. */
 const READS: Record<string, SyncStatusRead | undefined> = {
-  m4: status(HEADS),
+  laptopE: status(HEADS),
   // Same commits, clean trees.
-  m5: status(HEADS),
+  rackF: status(HEADS),
   // One repository at another commit, one with uncommitted files.
-  m1: status({ ...HEADS, "apps/web": "b" }, ["docs"]),
+  deskB: status({ ...HEADS, "apps/web": "b" }, ["docs"]),
   // Offline: the last status read in this session, with its time.
-  "linux-mini": status({ ...HEADS, "apps/api": "c" }),
+  "box-a": status({ ...HEADS, "apps/api": "c" }),
   // Its app is from before Sync.
-  m3: { kind: "needs-update", at: NOW },
+  kioskD: { kind: "needs-update", at: NOW },
 };
-const offline = (key: string) => key === "linux-mini:p";
+const offline = (key: string) => key === "box-a:p";
 const reachOf = (key: string): MachineRowReach =>
   offline(key) ? { reach: "offline", lastSeen: "25m ago" } : { reach: "open" };
-const VERSIONS: Record<string, string> = { m3: "1.4.2" };
+const VERSIONS: Record<string, string> = { kioskD: "1.4.2" };
 
 function MenuPage() {
   const blocked = params.get("blocked") === "1";
@@ -654,11 +654,11 @@ function MenuPage() {
     <div className="fixture-page">
       <OrchestratorSwitcher
         identity={{ color: "teal" } as never}
-        label="m4"
+        label="laptopE"
         projectTitle={PROJECT}
         connected
         statusDetail=""
-        current="m4:p"
+        current="laptopE:p"
         copies={copies}
         unknown={[]}
         savedMachineMissing={false}
@@ -673,7 +673,7 @@ function MenuPage() {
         syncBlocked={
           blocked
             ? syncBlockedOn({
-                machine: "m4",
+                machine: "laptopE",
                 reach: "open",
                 read: undefined,
                 version: null,
@@ -685,9 +685,9 @@ function MenuPage() {
         syncOf={(key) => {
           const id = key.split(":")[0]!;
           return syncRowFact({
-            shown: READS.m4,
+            shown: READS.laptopE,
             other: READS[id],
-            shownName: "m4",
+            shownName: "laptopE",
             offline: offline(key),
             version: VERSIONS[id] ?? null,
             // Read a moment ago: only the offline machine's fact carries its time.
@@ -705,9 +705,9 @@ function MenuPage() {
 
 /**
  * A window that can only read: the real hook decides what the menu shows. Each machine's
- * status was read through the hook's own store a moment ago, linux-mini's 25 minutes ago.
+ * status was read through the hook's own store a moment ago, box-a's 25 minutes ago.
  */
-const SEEDS: Record<string, SyncStatusRead | undefined> = { ...READS, m2: status(HEADS) };
+const SEEDS: Record<string, SyncStatusRead | undefined> = { ...READS, hubC: status(HEADS) };
 const seedReads = () =>
   Promise.all(
     ROSTER.map((id) =>
@@ -721,7 +721,7 @@ const seedReads = () =>
               : { ok: false, cause: "Unknown request tag: projectSync.status" };
           },
         },
-        () => Date.now() - (id === "linux-mini" ? 25 * 60_000 : 0),
+        () => Date.now() - (id === "box-a" ? 25 * 60_000 : 0),
       ),
     ),
   );
@@ -729,8 +729,8 @@ const seedReads = () =>
 function ReadOnlyMenuPage() {
   const files = useProjectSyncMenu({
     project: records[0]!,
-    label: "m4",
-    current: "m4:p",
+    label: "laptopE",
+    current: "laptopE:p",
     copies,
     unknown: [],
     environments: ROSTER.map((id) => ({ environmentId: id as never })),
@@ -745,11 +745,11 @@ function ReadOnlyMenuPage() {
     <div className="fixture-page">
       <OrchestratorSwitcher
         identity={{ color: "teal" } as never}
-        label="m4"
+        label="laptopE"
         projectTitle={PROJECT}
         connected
         statusDetail=""
-        current="m4:p"
+        current="laptopE:p"
         copies={copies}
         unknown={[]}
         savedMachineMissing={false}

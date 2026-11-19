@@ -137,28 +137,28 @@ describe("one-click approval", () => {
   it("says which secret-like files stayed on the source", () => {
     expect(secretsLeft([{ path: ".env" }, { path: "key.pem" }], [{ path: ".env" }])).toBe(1);
     expect(secretsLeft(null, [])).toBe(0);
-    expect(secretsLeftText(2, "M4")).toBe(
-      "2 secret-like files (.env and similar) stayed on M4. To send them, copy again with Secrets ticked.",
+    expect(secretsLeftText(2, "Laptop E")).toBe(
+      "2 secret-like files (.env and similar) stayed on Laptop E. To send them, copy again with Secrets ticked.",
     );
-    expect(secretsLeftText(0, "M4")).toBeNull();
+    expect(secretsLeftText(0, "Laptop E")).toBeNull();
   });
 
   it("says where to start the copy when this window cannot send the secrets that stayed", () => {
-    expect(secretsLeftText(1, "M4", "source-only")).toBe(
-      "1 secret-like file (.env and similar) stayed on M4. This window can't send them: only SpecWithCode on M4 can. Start the copy again there with Secrets ticked.",
+    expect(secretsLeftText(1, "Laptop E", "source-only")).toBe(
+      "1 secret-like file (.env and similar) stayed on Laptop E. This window can't send them: only SpecWithCode on Laptop E can. Start the copy again there with Secrets ticked.",
     );
     // An unanswered session may turn out denied: the text names the window that always can.
-    expect(secretsLeftText(1, "M4", "unconfirmed")).toBe(
-      "1 secret-like file (.env and similar) stayed on M4. To send them, start the copy again in SpecWithCode on M4 with Secrets ticked.",
+    expect(secretsLeftText(1, "Laptop E", "unconfirmed")).toBe(
+      "1 secret-like file (.env and similar) stayed on Laptop E. To send them, start the copy again in SpecWithCode on Laptop E with Secrets ticked.",
     );
     // A fresh copy would carry none of them: no action is named.
-    expect(secretsLeftText(2, "M4", null)).toBe(
-      "2 secret-like files (.env and similar) stayed on M4.",
+    expect(secretsLeftText(2, "Laptop E", null)).toBe(
+      "2 secret-like files (.env and similar) stayed on Laptop E.",
     );
     // The option that stops after measuring never chose secrets: no text names it.
     for (const sender of ["here", "source-only", "unconfirmed", null] as const) {
-      expect(secretsLeftText(0, "M4", sender)).toBeNull();
-      expect(secretsLeftText(3, "M4", sender)).not.toContain("Let me choose file types first");
+      expect(secretsLeftText(0, "Laptop E", sender)).toBeNull();
+      expect(secretsLeftText(3, "Laptop E", sender)).not.toContain("Let me choose file types first");
     }
   });
 
@@ -334,15 +334,15 @@ describe("problems after a copy", () => {
   it("names files changed while copying first, then failed checks", () => {
     const failed = (repo: string) => ({ repo, ok: false, problems: [] });
     expect(
-      copyProblem({ unstable: [], checks: [{ repo: ".", ok: true, problems: [] }] }, "M4"),
+      copyProblem({ unstable: [], checks: [{ repo: ".", ok: true, problems: [] }] }, "Laptop E"),
     ).toBeNull();
-    expect(copyProblem({ unstable: ["a.ts"], checks: [failed("app")] }, "M4")).toBe(
-      "some files changed on M4 while copying",
+    expect(copyProblem({ unstable: ["a.ts"], checks: [failed("app")] }, "Laptop E")).toBe(
+      "some files changed on Laptop E while copying",
     );
-    expect(copyProblem({ unstable: [], checks: [failed(".")] }, "M4")).toBe(
+    expect(copyProblem({ unstable: [], checks: [failed(".")] }, "Laptop E")).toBe(
       "the check of Root failed",
     );
-    expect(copyProblem({ unstable: [], checks: [failed("a"), failed("b")] }, "M4")).toBe(
+    expect(copyProblem({ unstable: [], checks: [failed("a"), failed("b")] }, "Laptop E")).toBe(
       "the checks of 2 repositories failed",
     );
   });
@@ -408,10 +408,10 @@ describe("grouped notices", () => {
       dirtyCount: 5,
     });
     expect(hasNotCopied(notices)).toBe(true);
-    expect(skippedWorktreeParts(notices, "M4")).toEqual([
-      "5 worktrees with uncommitted changes stayed on M4",
-      "1 worktree could not be checked and may hold uncommitted changes on M4",
-      "1 worktree on M4 has commits on no branch that did not travel",
+    expect(skippedWorktreeParts(notices, "Laptop E")).toEqual([
+      "5 worktrees with uncommitted changes stayed on Laptop E",
+      "1 worktree could not be checked and may hold uncommitted changes on Laptop E",
+      "1 worktree on Laptop E has commits on no branch that did not travel",
     ]);
     // An older source: counts come from the lists.
     const older = groupCopyNotices({
@@ -462,8 +462,8 @@ describe("grouped notices", () => {
 describe("steps and what happens next", () => {
   const base = {
     auto: true,
-    targetLabel: "linux-mini",
-    approveLabel: "Copy to linux-mini",
+    targetLabel: "box-a",
+    approveLabel: "Copy to box-a",
     failedBeforeApply: false,
   };
   it("says what happens next only while choosing file types or after a copy stopped", () => {
@@ -479,20 +479,20 @@ describe("steps and what happens next", () => {
     ] as const)
       expect(nextStepText({ ...base, stage })).toBeNull();
     expect(nextStepText({ ...base, stage: "select", auto: false })).toBe(
-      "Preview compares with linux-mini's folder. Nothing is written until you approve.",
+      "Preview compares with box-a's folder. Nothing is written until you approve.",
     );
     expect(nextStepText({ ...base, stage: "failed", held: true })).toContain(
-      "Continue on linux-mini anyway moves the coordinator with these differences.",
+      "Continue on box-a anyway moves the coordinator with these differences.",
     );
   });
 
   it("says Retry before Apply starts the copy again from measuring", () => {
     const failed = { ...base, stage: "failed" as const, failedBeforeApply: true };
     expect(nextStepText(failed)).toBe(
-      "Retry starts the copy again: it measures and compares again, then copies unless it needs you. Nothing on linux-mini changed, so Stop copy leaves it as it was.",
+      "Retry starts the copy again: it measures and compares again, then copies unless it needs you. Nothing on box-a changed, so Stop copy leaves it as it was.",
     );
     expect(nextStepText({ ...failed, auto: false })).toBe(
-      "Retry starts the copy again: it measures again, then you choose what to copy and preview it. Nothing on linux-mini changed, so Stop copy leaves it as it was.",
+      "Retry starts the copy again: it measures again, then you choose what to copy and preview it. Nothing on box-a changed, so Stop copy leaves it as it was.",
     );
     // After Apply the destination resumes the same copy.
     expect(nextStepText({ ...failed, failedBeforeApply: false })).toBe(
@@ -501,7 +501,7 @@ describe("steps and what happens next", () => {
   });
 
   const working = {
-    targetLabel: "linux-mini",
+    targetLabel: "box-a",
     measured: null,
     copy: null,
     recompare: null,
@@ -511,7 +511,7 @@ describe("steps and what happens next", () => {
     expect(
       workingLine({ ...working, stage: "scanning", measured: { files: 1204, bytes: 3_000_000 } }),
     ).toBe("Measuring… 1,204 files, 3.0 MB");
-    expect(workingLine({ ...working, stage: "planning" })).toBe("Comparing with linux-mini…");
+    expect(workingLine({ ...working, stage: "planning" })).toBe("Comparing with box-a…");
     expect(
       workingLine({
         ...working,
@@ -530,7 +530,7 @@ describe("steps and what happens next", () => {
     ).toBe("Copying 1.2 GB…");
     expect(workingLine({ ...working, stage: "copying" })).toBe("Copying…");
     expect(workingLine({ ...working, stage: "moving" })).toBe(
-      "Starting the coordinator on linux-mini…",
+      "Starting the coordinator on box-a…",
     );
     for (const stage of ["setup", "select", "preview", "done", "failed", "undone"] as const)
       expect(workingLine({ ...working, stage })).toBeNull();
@@ -551,15 +551,15 @@ describe("steps and what happens next", () => {
 
   it("names what the source is doing while it builds the copy", () => {
     expect(
-      sourceProgressText({ files: 10, bytes: 1_200_000_000, step: "git-snapshot" }, "M4"),
-    ).toBe("Copying Git data on M4… 1.2 GB");
+      sourceProgressText({ files: 10, bytes: 1_200_000_000, step: "git-snapshot" }, "Laptop E"),
+    ).toBe("Copying Git data on Laptop E… 1.2 GB");
     expect(
       sourceProgressText(
         { files: 3, bytes: 3000, step: "hashing", totalFiles: 10, totalBytes: 10_000 },
-        "M4",
+        "Laptop E",
       ),
-    ).toBe("Reading the selected files on M4… 3 of 10 files, 3.0 KB of 10.0 KB");
-    expect(sourceProgressText({ files: 1, bytes: 5 }, "M4")).toBe("Measuring… 1 file, 5 B");
+    ).toBe("Reading the selected files on Laptop E… 3 of 10 files, 3.0 KB of 10.0 KB");
+    expect(sourceProgressText({ files: 1, bytes: 5 }, "Laptop E")).toBe("Measuring… 1 file, 5 B");
   });
 });
 

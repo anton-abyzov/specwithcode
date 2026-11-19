@@ -39,7 +39,7 @@ vi.mock("../../state/filesystem", () => ({
 }));
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: (input: { environmentId: string } | null) => ({
-    data: input ? { parentPath: "/home/anton", entries: [] } : null,
+    data: input ? { parentPath: "/home/sam", entries: [] } : null,
     isPending: false,
   }),
 }));
@@ -110,8 +110,8 @@ const click = async (label: string) => {
 const handOff = async () => {
   await act(async () => root.render(<CopyFixture {...MOVE} />));
   await settle();
-  await click("Copy and move to M3");
-  await click("Copy and move to M3");
+  await click("Copy and move to Kiosk D");
+  await click("Copy and move to Kiosk D");
 };
 const links = () =>
   [...container.querySelectorAll<HTMLAnchorElement>('[data-slot="handoff-busy-thread"] a')].map(
@@ -147,14 +147,14 @@ it("names the source threads that keep the coordinator there, each opening its t
   };
   await handOff();
   expect(container.textContent).toContain(
-    "12 threads are still working or waiting for you on M4, so the coordinator stayed there.",
+    "12 threads are still working or waiting for you on Laptop E, so the coordinator stayed there.",
   );
   expect(container.textContent).toContain(
     "Answer or close each question, or stop the work, then try again.",
   );
   expect(links()).toEqual([
-    ["1050 repair lanes C and D", "/m4/lanes"],
-    ["1048 fresh review r2", "/m4/review"],
+    ["1050 repair lanes C and D", "/laptopE/lanes"],
+    ["1048 fresh review r2", "/laptopE/review"],
   ]);
   const rows = [...container.querySelectorAll('[data-slot="handoff-busy-thread"]')];
   expect(rows.map((row) => row.getAttribute("data-reason"))).toEqual([
@@ -165,7 +165,7 @@ it("names the source threads that keep the coordinator there, each opening its t
   // Only a thread of another project on the same folder says its project.
   expect(rows[0]!.textContent).not.toContain("Project");
   expect(rows[1]!.textContent).toContain("Old registration");
-  expect(container.textContent).toContain("And 10 more threads on M4.");
+  expect(container.textContent).toContain("And 10 more threads on Laptop E.");
 });
 
 it("links a destination's busy threads on the destination", async () => {
@@ -175,9 +175,9 @@ it("links a destination's busy threads on the destination", async () => {
   };
   await handOff();
   expect(container.textContent).toContain(
-    "A thread is still working or waiting for you on M3, so the coordinator stayed on M4.",
+    "A thread is still working or waiting for you on Kiosk D, so the coordinator stayed on Laptop E.",
   );
-  expect(links()).toEqual([["1050 repair lanes C and D", "/m3/lanes"]]);
+  expect(links()).toEqual([["1050 repair lanes C and D", "/kioskD/lanes"]]);
 });
 
 it("keeps the plain notice from an older source that names no threads", async () => {
@@ -186,7 +186,7 @@ it("keeps the plain notice from an older source that names no threads", async ()
   };
   await handOff();
   expect(container.textContent).toContain(
-    "Work is still running on M4, so the coordinator stayed there.",
+    "Work is still running on Laptop E, so the coordinator stayed there.",
   );
   expect(container.querySelector('[data-slot="handoff-busy-threads"]')).toBeNull();
 });

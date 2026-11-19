@@ -76,17 +76,17 @@ function Probe(props: {
   reachOf?: (key: string) => "open" | "offline";
 }) {
   menu = useProjectSyncMenu({
-    project: project("m4", "p"),
-    label: "m4",
-    current: "m4:p",
-    copies: props.copies ?? [copy("m4:p", "m4"), copy("m5:p", "m5")],
+    project: project("laptopE", "p"),
+    label: "laptopE",
+    current: "laptopE:p",
+    copies: props.copies ?? [copy("laptopE:p", "laptopE"), copy("rackF:p", "rackF")],
     unknown: [],
     environments: [
-      { environmentId: "m4" as never },
-      { environmentId: "m5" as never },
-      ...(props.third ? [{ environmentId: "mini" as never }] : []),
+      { environmentId: "laptopE" as never },
+      { environmentId: "rackF" as never },
+      ...(props.third ? [{ environmentId: "shelfG" as never }] : []),
     ],
-    projects: [project("m4", "p"), project("m5", "p")],
+    projects: [project("laptopE", "p"), project("rackF", "p")],
     nameOf: (environmentId) => environmentId,
     reachOf: props.reachOf ?? (() => "open"),
     versionOf: () => null,
@@ -99,19 +99,19 @@ const render = (props: Parameters<typeof Probe>[0]) =>
   act(async () => root.render(<Probe {...props} />));
 
 it("shows a read-only window the sync fact and Sync greyed with why, and opens no dialog", async () => {
-  const answers = { m4: status("a".repeat(40)), m5: status("b".repeat(40)) };
-  await refreshSyncStatus([on("m4", "m4"), on("m5", "m5")], {
-    status: async (machine) => ({ ok: true, value: answers[machine.environmentId as "m4"] }),
+  const answers = { laptopE: status("a".repeat(40)), rackF: status("b".repeat(40)) };
+  await refreshSyncStatus([on("laptopE", "laptopE"), on("rackF", "rackF")], {
+    status: async (machine) => ({ ok: true, value: answers[machine.environmentId as "laptopE"] }),
   });
   await render({ ask: null, readOnly: true, third: true });
-  expect(menu.syncOf("m5:p").sync).toMatchObject({
+  expect(menu.syncOf("rackF:p").sync).toMatchObject({
     tone: "differs",
     text: "{k} of {n} repositories differ",
   });
   expect(menu.onSync).not.toBeNull();
   expect(menu.syncBlocked).toEqual({
     text: "This window can only read {machine}",
-    values: { machine: "m4" },
+    values: { machine: "laptopE" },
   });
   // Greyed: choosing it opens nothing, and a window that cannot operate adds no machine.
   await act(async () => menu.onSync?.());
@@ -122,17 +122,17 @@ it("shows a read-only window the sync fact and Sync greyed with why, and opens n
 it("reads each machine's status when a read-only window opens the menu", async () => {
   runAtomCommand.mockResolvedValue({ _tag: "Success", value: status("a".repeat(40)) });
   await render({ ask: null, readOnly: true });
-  expect(menu.syncOf("m5:p").sync).toEqual({ tone: "unknown", text: "Not checked yet" });
+  expect(menu.syncOf("rackF:p").sync).toEqual({ tone: "unknown", text: "Not checked yet" });
   await act(async () => menu.onMenuOpenChange(true));
   expect(runAtomCommand).toHaveBeenCalledTimes(2);
-  expect(menu.syncOf("m5:p").sync).toMatchObject({ tone: "same", text: "Same as {shown}" });
+  expect(menu.syncOf("rackF:p").sync).toMatchObject({ tone: "same", text: "Same as {shown}" });
 });
 
 it("shows nothing of Sync where the project is personal or cannot be read", async () => {
   await render({ ask: null, readOnly: false });
   expect(menu.onSync).toBeNull();
   expect(menu.syncBlocked).toBeNull();
-  expect(menu.syncOf("m5:p")).toEqual({ sync: null });
+  expect(menu.syncOf("rackF:p")).toEqual({ sync: null });
   await act(async () => menu.onMenuOpenChange(true));
   expect(runAtomCommand).not.toHaveBeenCalled();
 });
@@ -147,19 +147,19 @@ it("offers Add by the dialog's rule, and Sync with a dialog, to a window that ca
   await act(async () => menu.onAdd?.());
   expect(ask).toHaveBeenCalledWith("add");
   await act(async () => menu.onSync?.());
-  expect(menu.dialog?.targets.map((target) => target.machine.label)).toEqual(["m5"]);
+  expect(menu.dialog?.targets.map((target) => target.machine.label)).toEqual(["rackF"]);
 });
 
 it("offers Sync between linked machines only, and lists a separate project greyed", async () => {
   const ask = vi.fn<SyncAsk>();
-  const copies = [copy("m4:p", "m4"), copy("m5:p", "m5"), copy("m1:q", "m1", "independent")];
+  const copies = [copy("laptopE:p", "laptopE"), copy("rackF:p", "rackF"), copy("deskB:q", "deskB", "independent")];
   await render({ ask, readOnly: false, copies });
   await act(async () => menu.onSync?.());
   expect(
     menu.dialog?.targets.map((target) => [target.machine.label, target.blocked?.text ?? null]),
   ).toEqual([
-    ["m5", null],
-    ["m1", "Separate project"],
+    ["rackF", null],
+    ["deskB", "Separate project"],
   ]);
   // Opening the menu reads the separate project's status too, and asks nothing else of it.
   runAtomCommand.mockResolvedValue({ _tag: "Success", value: status("a".repeat(40)) });
@@ -174,7 +174,7 @@ it("has no Sync where the only other machine has the repository as a separate pr
   await render({
     ask,
     readOnly: false,
-    copies: [copy("m4:p", "m4"), copy("m1:q", "m1", "independent")],
+    copies: [copy("laptopE:p", "laptopE"), copy("deskB:q", "deskB", "independent")],
   });
   expect(menu.onSync).toBeNull();
   expect(menu.syncBlocked).toBeNull();
@@ -187,19 +187,19 @@ it("tells the open dialog when a grant changes on either machine", async () => {
   expect(menu.dialog?.shownBlocked).toBeNull();
   expect(menu.dialog?.targets[0]).toMatchObject({ blocked: null, note: null });
 
-  grants.current = new Map([["m5", "denied"]]);
+  grants.current = new Map([["rackF", "denied"]]);
   await render({ ask, readOnly: false });
   expect(menu.dialog?.shownBlocked).toBeNull();
   expect(menu.dialog?.targets[0]?.blocked).toEqual({
     text: "This window can only read {machine}",
-    values: { machine: "m5" },
+    values: { machine: "rackF" },
   });
 
-  grants.current = new Map([["m4", "denied"]]);
+  grants.current = new Map([["laptopE", "denied"]]);
   await render({ ask, readOnly: false });
   expect(menu.dialog?.shownBlocked).toEqual({
     text: "This window can only read {machine}",
-    values: { machine: "m4" },
+    values: { machine: "laptopE" },
   });
   expect(menu.dialog?.targets[0]?.blocked).toBeNull();
 });

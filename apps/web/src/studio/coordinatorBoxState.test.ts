@@ -17,35 +17,35 @@ const read = (text: Text | null) =>
     ? text.text.replace(/\{(\w+)\}/g, (_, slot: string) => text.values?.[slot] ?? `{${slot}}`)
     : null;
 
-const names = { machine: "M5", main: "M4", project: "Atlas" };
-const main = { environmentId: "m4" };
-/** "Continue here" for M5, the machine shown, by the same rule the page uses. */
+const names = { machine: "Rack F", main: "Laptop E", project: "Atlas" };
+const main = { environmentId: "laptopE" };
+/** "Continue here" for Rack F, the machine shown, by the same rule the page uses. */
 const offers = {
-  move: mainOffer("m5:p", { kind: "move", main }, names)!,
-  takeover: mainOffer("m5:p", { kind: "takeover", main, silentMs: 23 * 60_000 }, names)!,
-  takeoverUnmeasured: mainOffer("m5:p", { kind: "takeover", main }, names)!,
+  move: mainOffer("rackF:p", { kind: "move", main }, names)!,
+  takeover: mainOffer("rackF:p", { kind: "takeover", main, silentMs: 23 * 60_000 }, names)!,
+  takeoverUnmeasured: mainOffer("rackF:p", { kind: "takeover", main }, names)!,
   waiting: mainOffer(
-    "m5:p",
+    "rackF:p",
     { kind: "blocked", main, reason: "waiting", waitMs: 3.5 * 60_000 },
     names,
   )!,
-  unloaded: mainOffer("m5:p", { kind: "unloaded", mainEnvironmentId: "m4" as never }, names)!,
+  unloaded: mainOffer("rackF:p", { kind: "unloaded", mainEnvironmentId: "laptopE" as never }, names)!,
   notReady: mainOffer(
-    "m5:p",
+    "rackF:p",
     { kind: "blocked", main, reason: "copy-not-ready", waitMs: 0 },
     names,
   )!,
   readOnly: mainOffer(
-    "m5:p",
+    "rackF:p",
     { kind: "blocked", main, reason: "main-read-only", waitMs: 0 },
     names,
   )!,
 };
 
-/** The coordinator on M4 answers and this window may operate it: Send routes there. */
+/** The coordinator on Laptop E answers and this window may operate it: Send routes there. */
 const input = (over: Partial<Input> = {}): Input => ({
   project: "Atlas",
-  machine: "M4",
+  machine: "Laptop E",
   routes: true,
   machineConnected: true,
   mayOperate: true,
@@ -61,7 +61,7 @@ describe("coordinatorBoxState: which state applies (AC-08 order)", () => {
     offer: offers.takeover,
     mayOperate: false,
     hasFiles: true,
-    movedTo: "linux-mini",
+    movedTo: "box-a",
     refused: "The coordinator is paused",
   };
   it("first says that this window has not opened the project on the coordinator's machine", () => {
@@ -111,18 +111,18 @@ describe("coordinatorBoxState: which state applies (AC-08 order)", () => {
 describe("coordinatorBoxState: what each state says and offers", () => {
   it("routes: Send opens the coordinator there, with Continue here beside it (AC-07)", () => {
     const box = coordinatorBoxState(input());
-    expect(read(box.line)).toBe("The coordinator for Atlas is on M4. Send opens it there.");
+    expect(read(box.line)).toBe("The coordinator for Atlas is on Laptop E. Send opens it there.");
     expect(box.send).toEqual({ text: "Send", enabled: true, continues: false });
     expect(box.continueHere?.enabled).toBe(true);
     expect(read(box.continueHere?.note ?? null)).toBe(
-      "Continue here syncs M5, then moves the coordinator conversation here from M4.",
+      "Continue here syncs Rack F, then moves the coordinator conversation here from Laptop E.",
     );
   });
 
   it("silent: the box's own button continues here and sends, with no second button (AC-09)", () => {
     const box = coordinatorBoxState(input({ offer: offers.takeover, machineConnected: false }));
     expect(read(box.line)).toBe(
-      "M4 has been offline for 23 minutes. Continue here: the coordinator starts on M5 from the shared goal, memory and plan. Its conversation on M4 stays readable there, and M4 gives way when it is back.",
+      "Laptop E has been offline for 23 minutes. Continue here: the coordinator starts on Rack F from the shared goal, memory and plan. Its conversation on Laptop E stays readable there, and Laptop E gives way when it is back.",
     );
     expect(box.send).toEqual({ text: "Continue here and send", enabled: true, continues: true });
     expect(box.continueHere).toBeNull();
@@ -133,7 +133,7 @@ describe("coordinatorBoxState: what each state says and offers", () => {
           .line,
       ),
     ).toBe(
-      "M4 has been offline for 10 minutes or more. Continue here: the coordinator starts on M5 from the shared goal, memory and plan. Its conversation on M4 stays readable there, and M4 gives way when it is back.",
+      "Laptop E has been offline for 10 minutes or more. Continue here: the coordinator starts on Rack F from the shared goal, memory and plan. Its conversation on Laptop E stays readable there, and Laptop E gives way when it is back.",
     );
   });
 
@@ -148,7 +148,7 @@ describe("coordinatorBoxState: what each state says and offers", () => {
     const box = coordinatorBoxState(
       input({ offer: offers.waiting, machineConnected: false, routes: false }),
     );
-    expect(read(box.line)).toBe("M4 is not answering. Continue here unlocks in 4 min.");
+    expect(read(box.line)).toBe("Laptop E is not answering. Continue here unlocks in 4 min.");
     expect(box.send).toEqual({ text: "Send", enabled: false, continues: false });
     expect(box.continueHere?.enabled).toBe(false);
     expect(read(box.continueHere?.note ?? null)).toBe("in 4 min");
@@ -159,17 +159,17 @@ describe("coordinatorBoxState: what each state says and offers", () => {
       input({ offer: offers.readOnly, mayOperate: false, routes: false }),
     );
     expect(read(box.line)).toBe(
-      "This window can only read M4, so it cannot send there. Open SpecWithCode on M4, or connect to it with full access.",
+      "This window can only read Laptop E, so it cannot send there. Open SpecWithCode on Laptop E, or connect to it with full access.",
     );
     expect(box.send.enabled).toBe(false);
     expect(box.continueHere?.enabled).toBe(false);
-    expect(read(box.continueHere?.note ?? null)).toBe("read-only on M4");
+    expect(read(box.continueHere?.note ?? null)).toBe("read-only on Laptop E");
   });
 
   it("files: Send is greyed, Continue here is not", () => {
     const box = coordinatorBoxState(input({ hasFiles: true }));
     expect(read(box.line)).toBe(
-      "Files stay on this machine. Remove them to send the text, or open Atlas on M4 to attach them there.",
+      "Files stay on this machine. Remove them to send the text, or open Atlas on Laptop E to attach them there.",
     );
     expect(box.send).toEqual({ text: "Send", enabled: false, continues: false });
     expect(box.continueHere?.enabled).toBe(true);
@@ -178,22 +178,22 @@ describe("coordinatorBoxState: what each state says and offers", () => {
   it("unloaded: both greyed, the line says to connect the coordinator's machine", () => {
     const box = coordinatorBoxState(input({ offer: offers.unloaded, routes: false }));
     expect(read(box.line)).toBe(
-      "Connect M4 first. This window has not opened Atlas on M4, so it cannot hand the coordinator off yet.",
+      "Connect Laptop E first. This window has not opened Atlas on Laptop E, so it cannot hand the coordinator off yet.",
     );
     expect(box.send.enabled).toBe(false);
     expect(box.continueHere?.enabled).toBe(false);
-    expect(read(box.continueHere?.note ?? null)).toBe("connect M4 first");
+    expect(read(box.continueHere?.note ?? null)).toBe("connect Laptop E first");
   });
 
   it("the machine shown offline: both greyed, even when a send could route", () => {
     const offline = mainOffer(
-      "m5:p",
+      "rackF:p",
       { kind: "blocked", main, reason: "copy-offline", waitMs: 0 },
       names,
     )!;
     const box = coordinatorBoxState(input({ offer: offline, routes: true }));
     expect(box.kind).toBe("unloaded");
-    expect(read(box.line)).toBe("Connect M5 first to continue the coordinator there.");
+    expect(read(box.line)).toBe("Connect Rack F first to continue the coordinator there.");
     expect(box.send.enabled).toBe(false);
     expect(box.continueHere?.enabled).toBe(false);
   });
@@ -203,7 +203,7 @@ describe("coordinatorBoxState: what each state says and offers", () => {
       input({ offer: offers.notReady, machineConnected: false, routes: false }),
     );
     expect(read(box.line)).toBe(
-      "M5 cannot continue the coordinator yet. Update SpecWithCode there, or connect to it with permission to change settings and run work.",
+      "Rack F cannot continue the coordinator yet. Update SpecWithCode there, or connect to it with permission to change settings and run work.",
     );
     expect(box.send.enabled).toBe(false);
     expect(box.continueHere?.enabled).toBe(false);
@@ -213,15 +213,15 @@ describe("coordinatorBoxState: what each state says and offers", () => {
   it("refused: the line gives the machine's reason, Send and Continue here stay on", () => {
     const box = coordinatorBoxState(input({ refused: "The coordinator is paused." }));
     expect(read(box.line)).toBe(
-      "M4 did not take the message: The coordinator is paused. Nothing was sent.",
+      "Laptop E did not take the message: The coordinator is paused. Nothing was sent.",
     );
     expect(box.send).toEqual({ text: "Send", enabled: true, continues: false });
     expect(box.continueHere?.enabled).toBe(true);
   });
 
   it("moved: says nothing was sent, and Send goes to the new machine", () => {
-    const box = coordinatorBoxState(input({ machine: "linux-mini", movedTo: "linux-mini" }));
-    expect(read(box.line)).toBe("The coordinator moved to linux-mini. Nothing was sent.");
+    const box = coordinatorBoxState(input({ machine: "box-a", movedTo: "box-a" }));
+    expect(read(box.line)).toBe("The coordinator moved to box-a. Nothing was sent.");
     expect(box.send).toEqual({ text: "Send", enabled: true, continues: false });
     expect(box.continueHere?.enabled).toBe(true);
   });
@@ -236,7 +236,7 @@ describe("coordinatorBoxState: what each state says and offers", () => {
   });
 
   it("offers no Continue here where the machine shown has none", () => {
-    for (const over of [{}, { hasFiles: true }, { refused: "No" }, { movedTo: "M4" }])
+    for (const over of [{}, { hasFiles: true }, { refused: "No" }, { movedTo: "Laptop E" }])
       expect(coordinatorBoxState(input({ ...over, offer: null })).continueHere).toBeNull();
     expect(
       coordinatorBoxState(input({ offer: null, mayOperate: false, routes: false })).continueHere,
@@ -247,13 +247,13 @@ describe("coordinatorBoxState: what each state says and offers", () => {
 describe("coordinatorBoxState: placeholders", () => {
   it("asks the coordinator while its machine answers", () => {
     expect(read(coordinatorBoxState(input()).placeholder)).toBe(
-      "Ask the coordinator for Atlas (on M4).",
+      "Ask the coordinator for Atlas (on Laptop E).",
     );
   });
   it("says the machine is not answering while it is not connected", () => {
     expect(
       read(coordinatorBoxState(input({ machineConnected: false, routes: false })).placeholder),
-    ).toBe("The coordinator for Atlas is on M4, which is not answering.");
+    ).toBe("The coordinator for Atlas is on Laptop E, which is not answering.");
   });
   it("names no machine it does not know", () => {
     expect(read(coordinatorBoxState(input({ machine: null, routes: false })).placeholder)).toBe(
@@ -263,7 +263,7 @@ describe("coordinatorBoxState: placeholders", () => {
 });
 
 describe("coordinatorBoxState: Send never names a machine (AC-02)", () => {
-  const machines = ["M4", "M5", "m4", "m5", "linux-mini", "Mac", "Mini"];
+  const machines = ["Laptop E", "Rack F", "laptopE", "rackF", "box-a", "Mac", "Shelf G"];
   const cases: Partial<Input>[] = [
     {},
     { offer: offers.takeover, machineConnected: false },
@@ -275,7 +275,7 @@ describe("coordinatorBoxState: Send never names a machine (AC-02)", () => {
     { refused: "No" },
     { offer: offers.unloaded, routes: false },
     { offer: offers.notReady, machineConnected: false, routes: false },
-    { machine: "linux-mini", movedTo: "linux-mini" },
+    { machine: "box-a", movedTo: "box-a" },
     { machine: null, routes: false, offer: null },
     { machineConnected: false, routes: false, offer: null },
   ];

@@ -455,6 +455,13 @@ first.
   available._
 - **Cancel before Apply.** **Cancel copy** removes the partial copy and releases
   the source. Nothing in the destination folder changes.
+- **Add while another copy is unfinished.** A project keeps one copy in progress
+  at a time. **Add to another machine…** then says which copy is not finished
+  and offers **Open the unfinished copy**; the unfinished copy and its folder are
+  left as they are. Finish or cancel it, then add the other machine.
+- **Add while a coordinator move is unfinished.** Add is refused with **Finish
+  handoff**, which reopens the move. A move that already completed does not
+  hold Add back.
 - **An older SpecWithCode on the source.** The copy stops with _The source
   machine runs an older SpecWithCode without folder copy. Update it first._
   Update the source, or use **Use the folder as it is**.

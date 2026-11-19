@@ -29,30 +29,30 @@ const project = (
   }) as never;
 
 describe("addableMachineIds", () => {
-  const shown = project("m4", "p4", { logical: "L", members: ["m4", "m5", "m3"] });
+  const shown = project("laptopE", "p4", { logical: "L", members: ["laptopE", "rackF", "kioskD"] });
   const projects = [
     shown,
-    project("m5", "p5", { logical: "L" }),
+    project("rackF", "p5", { logical: "L" }),
     // The same repository, not linked: the machine has the project.
-    project("mini", "pm", { root: "/srv/atlas" }),
+    project("shelfG", "pm", { root: "/srv/atlas" }),
     // Another repository on a machine without the project.
-    project("m1", "other", { root: "/work/notes", repository: "example.com/acme/notes" }),
+    project("deskB", "other", { root: "/work/notes", repository: "example.com/acme/notes" }),
   ];
 
   it("offers only a machine with no folder of the project and no membership", () => {
     expect(
-      addableMachineIds({ project: shown, machineIds: ["m4", "m5", "mini", "m1", "m3"], projects }),
-    ).toEqual(["m1"]);
+      addableMachineIds({ project: shown, machineIds: ["laptopE", "rackF", "shelfG", "deskB", "kioskD"], projects }),
+    ).toEqual(["deskB"]);
   });
 
   it("never offers a member this window has not loaded", () => {
-    // m3 is a member the project names: it has the project though no folder is loaded here.
-    expect(addableMachineIds({ project: shown, machineIds: ["m3"], projects })).toEqual([]);
+    // kioskD is a member the project names: it has the project though no folder is loaded here.
+    expect(addableMachineIds({ project: shown, machineIds: ["kioskD"], projects })).toEqual([]);
   });
 
   it("counts a linked folder whose repository reads differently, and no handoff scratch folder", () => {
-    const linked = project("m5", "p5", { logical: "L", repository: "example.com/fork/atlas" });
-    const scratch = project("m1", "machine-handoff:x", { logical: "L" });
+    const linked = project("rackF", "p5", { logical: "L", repository: "example.com/fork/atlas" });
+    const scratch = project("deskB", "machine-handoff:x", { logical: "L" });
     expect(projectFoldersElsewhere(shown, [shown, linked, scratch])).toEqual([linked]);
   });
 });

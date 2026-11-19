@@ -24,15 +24,15 @@ export const summary = {
 };
 export const project = {
   id: "source",
-  environmentId: "m4",
+  environmentId: "laptopE",
   title: "Project",
   workspaceRoot: "/Users/me/Projects/project",
 };
 export const copyStatus = (state: string, overrides: Record<string, unknown> = {}) => ({
   operationId: "00000000-0000-4000-8000-000000000001",
-  sourceEnvironmentId: "m4",
+  sourceEnvironmentId: "laptopE",
   sourceProjectId: "source",
-  sourceMachine: "M4",
+  sourceMachine: "Laptop E",
   mode: "copy-only",
   targetFolder: "/Users/me/Projects/project",
   title: "Project",
@@ -122,10 +122,10 @@ export const copyHandlers = ({
   copyCapabilities: () => ({ scopeVersion: 1 }),
   copyOffer: ({ input }: any) => ({
     operationId: input.operationId,
-    sourceEnvironmentId: "m4",
+    sourceEnvironmentId: "laptopE",
     sourceProjectId: "source",
-    sourceUrl: "https://m4.example.ts.net",
-    sourceMachine: "M4",
+    sourceUrl: "https://laptopE.example.ts.net",
+    sourceMachine: "Laptop E",
     token: "grant",
     title: "Project",
     mode: input.mode,
@@ -160,7 +160,7 @@ export const copyHandlers = ({
       digest: "d".repeat(64),
       manifest: { operationId: input.operationId, repositories: [] },
       destination: input.destination,
-      sourceEnvironmentId: "m4",
+      sourceEnvironmentId: "laptopE",
       sourceProjectId: "source",
       sourceThreadId: "coordinator",
     },
@@ -180,9 +180,9 @@ export interface FixtureOptions {
   coordinatorId?: string | null;
   canMove?: boolean;
   savedFolder?: string;
-  m1Available?: boolean;
-  /** M3 still connecting or offline, as the dialog lists it. */
-  m3Unavailable?: string;
+  deskBAvailable?: boolean;
+  /** Kiosk D still connecting or offline, as the dialog lists it. */
+  kioskDUnavailable?: string;
   savedProject?: (environmentId: string, folder: string) => Record<string, unknown> | null;
   dialog?: boolean;
   workspaceRoot?: string;
@@ -211,14 +211,14 @@ export function CopyFixture(overrides: FixtureOptions) {
         { ...project, workspaceRoot: overrides.workspaceRoot ?? project.workspaceRoot } as never
       }
       coordinatorId={(overrides.coordinatorId ?? "coordinator") as never}
-      sourceLabel="M4"
+      sourceLabel="Laptop E"
       method={overrides.method ?? "copy"}
       machines={[
-        { id: "m3" as never, label: "M3", unavailable: overrides.m3Unavailable ?? null },
+        { id: "kioskD" as never, label: "Kiosk D", unavailable: overrides.kioskDUnavailable ?? null },
         {
-          id: "m1" as never,
-          label: "M1",
-          unavailable: overrides.m1Available ? null : "Connect first",
+          id: "deskB" as never,
+          label: "Desk B",
+          unavailable: overrides.deskBAvailable ? null : "Connect first",
         },
       ]}
       savedFolder={() => overrides.savedFolder ?? null}
@@ -237,7 +237,7 @@ export function CopyFixture(overrides: FixtureOptions) {
       onChoicesChange={(choices) => {
         onChoices(choices);
         if (overrides.dialog)
-          setDoneOn(choices.done ? (choices.machine === "m1" ? "M1" : "M3") : null);
+          setDoneOn(choices.done ? (choices.machine === "deskB" ? "Desk B" : "Kiosk D") : null);
       }}
     />
   );
@@ -245,7 +245,7 @@ export function CopyFixture(overrides: FixtureOptions) {
     <MachineHandoffDialog
       open
       onOpenChange={onDialogClose}
-      sourceLabel="M4"
+      sourceLabel="Laptop E"
       projectTitle="Project"
       destinations={[]}
       selected=""

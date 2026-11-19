@@ -287,7 +287,7 @@ describe("syncPlan", () => {
       ),
       b: fetched(facts(".", { uncommitted: 2 }), facts("apps/site")),
     },
-    { project: "Atlas", a: "M4", b: "M5" },
+    { project: "Atlas", a: "Laptop E", b: "Rack F" },
   );
 
   it("lists the project's own repository first, then each nested one, with a cell per machine", () => {
@@ -334,7 +334,7 @@ describe("syncPlan", () => {
   it("names a machine whose folder could not be scanned in full, and moves nothing when level", () => {
     const level = syncPlan(
       { a: { ...fetched(facts(".")), scanLimited: true }, b: fetched(facts(".")) },
-      { project: "Atlas", a: "M4", b: "M5" },
+      { project: "Atlas", a: "Laptop E", b: "Rack F" },
     );
     expect(level.scanLimited).toEqual(["a"]);
     expect(level.moves).toBe(false);
@@ -371,7 +371,7 @@ describe("syncPlan", () => {
     const row = (mine: Partial<ProjectSyncRepositoryFacts>) =>
       syncPlan(
         { a: fetched(facts(".", mine)), b: fetched(facts(".")) },
-        { project: "Atlas", a: "m4", b: "m5" },
+        { project: "Atlas", a: "laptopE", b: "rackF" },
       ).rows[0]!.a;
     const other = row({ upstream: null, otherUpstream: "second/main" });
     expect(other.step).toMatchObject({ action: "none", reason: "no-upstream" });
@@ -409,7 +409,7 @@ describe("syncPlan", () => {
   const behind = () =>
     syncPlan(
       { a: fetched(facts(".", { behind: 2 })), b: fetched(facts(".")) },
-      { project: "Atlas", a: "m4", b: "m5" },
+      { project: "Atlas", a: "laptopE", b: "rackF" },
     );
 
   it("reads a branch found gone, and an origin that could not be asked, from the run's answer", () => {
@@ -495,7 +495,7 @@ describe("syncPlan", () => {
     );
     const dirty = syncPlan(
       { a: fetched(facts(".", { uncommitted: 2 })), b: fetched(facts(".")) },
-      { project: "Atlas", a: "m4", b: "m5" },
+      { project: "Atlas", a: "laptopE", b: "rackF" },
     );
     expect(title(syncResultRows(dirty, { a: { results: [] }, b: { results: [] } }))).toBe(
       "finished",
@@ -575,7 +575,7 @@ const inventory: ProjectSyncInventoryResult = {
     },
   ],
 };
-const names = { project: "Atlas", source: "M4", target: "M5" };
+const names = { project: "Atlas", source: "Laptop E", target: "Rack F" };
 
 describe("extras", () => {
   const extras = syncExtras(inventory, names);
@@ -585,16 +585,16 @@ describe("extras", () => {
       extras.lines.map((line) => [line.kind, readSyncText(line.label), line.tickable]),
     ).toEqual([
       ["not-pushed", "10 commits on fix/menu that were never pushed", true],
-      ["only-here", "2 branches that exist only on M4", true],
+      ["only-here", "2 branches that exist only on Laptop E", true],
       ["uncommitted", "179 uncommitted files in Atlas", true],
       ["stashes", "2 stashes in Atlas", false],
       ["not-listed", "3 more branches in Atlas are not listed", false],
     ]);
     expect(readSyncText(extras.lines[0]!.helper!)).toBe(
-      "Sent straight to M5 over the link between the machines, as a branch under swc/from-…/. Nothing goes to GitHub.",
+      "Sent straight to Rack F over the link between the machines, as a branch under swc/from-…/. Nothing goes to GitHub.",
     );
     expect(readSyncText(extras.lines[2]!.helper!)).toBe(
-      "Arrives on M5 as a branch under swc/from-…/, not as files in its folder. Nothing is committed on M4.",
+      "Arrives on Rack F as a branch under swc/from-…/, not as files in its folder. Nothing is committed on Laptop E.",
     );
     expect(readSyncText(extras.lines[3]!.helper!)).toBe(
       "Stashes stay. Compare all files… can bring them",
@@ -606,7 +606,7 @@ describe("extras", () => {
     expect(
       extras.leftOut.map((file) => [file.file, readSyncText(file.label), file.sendAnyway]),
     ).toEqual([
-      [".env.local", "A secret by its name. It stays on M4: Sync does not send secrets.", false],
+      [".env.local", "A secret by its name. It stays on Laptop E: Sync does not send secrets.", false],
       ["notes/keys.txt", "Looks like a GitHub token", true],
       ["data/big.bin", "Not checked", true],
     ]);
@@ -651,9 +651,9 @@ describe("extras", () => {
 
   it("never builds a branch name from the name this window shows for a machine", () => {
     // The sender names itself and the receiver makes that name safe: only a receipt has the ref.
-    const named = syncExtras(inventory, { ...names, source: "m4" });
+    const named = syncExtras(inventory, { ...names, source: "laptopE" });
     for (const line of named.lines)
-      expect(readSyncText(line.helper ?? { text: "" })).not.toContain("swc/from-m4");
+      expect(readSyncText(line.helper ?? { text: "" })).not.toContain("swc/from-laptopE");
   });
 });
 
@@ -662,7 +662,7 @@ const sent = (extra: Partial<ProjectSyncExtraResult> = {}): ProjectSyncExtraResu
   path: ".",
   branch: "fix/menu",
   status: "sent",
-  arrivedAs: "swc/from-M4/fix/menu",
+  arrivedAs: "swc/from-laptop-e/fix/menu",
   landed: "created",
   stays: null,
   detail: null,
@@ -682,28 +682,28 @@ describe("extraResultLine", () => {
 
   it("names the branch an extra arrived as, and the next step", () => {
     expect(read({})).toBe(
-      "On M5 as branch swc/from-M4/fix/menu. To use it there, check it out or merge it.",
+      "On Rack F as branch swc/from-laptop-e/fix/menu. To use it there, check it out or merge it.",
     );
     expect(extraResultLine(sent(), names).size).toBe("4.1 MB");
-    expect(read({ landed: "unchanged" })).toBe("M5 already has it as branch swc/from-M4/fix/menu.");
+    expect(read({ landed: "unchanged" })).toBe("Rack F already has it as branch swc/from-laptop-e/fix/menu.");
     // The answer does not say which branch is checked out there: only the receipt's ref is named.
-    expect(read({ landed: "checked-out", arrivedAs: "swc/from-M4/fix/menu-a3f9c1" })).toBe(
-      "The branch it would arrive as is checked out on M5, so this arrived beside it as swc/from-M4/fix/menu-a3f9c1. To use it there, check it out or merge it.",
+    expect(read({ landed: "checked-out", arrivedAs: "swc/from-laptop-e/fix/menu-a3f9c1" })).toBe(
+      "The branch it would arrive as is checked out on Rack F, so this arrived beside it as swc/from-laptop-e/fix/menu-a3f9c1. To use it there, check it out or merge it.",
     );
-    expect(read({ landed: "beside", arrivedAs: "swc/from-M4/fix/menu-a3f9c1" })).toBe(
-      "M5 has other work under that name, so this arrived beside it as swc/from-M4/fix/menu-a3f9c1. To use it there, check it out or merge it.",
+    expect(read({ landed: "beside", arrivedAs: "swc/from-laptop-e/fix/menu-a3f9c1" })).toBe(
+      "Rack F has other work under that name, so this arrived beside it as swc/from-laptop-e/fix/menu-a3f9c1. To use it there, check it out or merge it.",
     );
     expect(
       read({
         kind: "uncommitted",
         branch: null,
-        arrivedAs: "swc/from-M4/uncommitted-20261118-141502-a3f9c1",
+        arrivedAs: "swc/from-laptop-e/uncommitted-20261118-141502-a3f9c1",
         includedCommits: 10,
         includedBranch: "fix/menu",
         leftOutNotListed: 2,
       }),
     ).toBe(
-      "On M5 as branch swc/from-M4/uncommitted-20261118-141502-a3f9c1. To use it there, check it out or merge it. | Includes 10 commits not pushed on fix/menu | 2 files left out",
+      "On Rack F as branch swc/from-laptop-e/uncommitted-20261118-141502-a3f9c1. To use it there, check it out or merge it. | Includes 10 commits not pushed on fix/menu | 2 files left out",
     );
   });
 
@@ -711,12 +711,12 @@ describe("extraResultLine", () => {
     const stays = (reason: ProjectSyncExtraResult["stays"], detail: string | null = null) =>
       read({ status: "stays", arrivedAs: null, landed: null, stays: reason, detail, bytes: 0 });
     expect(stays("file-too-large", "media/demo.mov is 48 MB, over 10 MB.")).toBe(
-      'Stays on M4: media/demo.mov is 48 MB, over 10 MB. "Compare all files…" can bring it.',
+      'Stays on Laptop E: media/demo.mov is 48 MB, over 10 MB. "Compare all files…" can bring it.',
     );
     expect(stays("bundle-too-large")).toBe(
-      'Stays on M4: it is over a size limit. "Compare all files…" can bring it.',
+      'Stays on Laptop E: it is over a size limit. "Compare all files…" can bring it.',
     );
-    expect(stays("needs-update")).toBe("Stays on M4: update SpecWithCode on M5 first.");
+    expect(stays("needs-update")).toBe("Stays on Laptop E: update SpecWithCode on Rack F first.");
     // The source could not reach the target, perhaps after the target wrote the branch.
     const lost = extraResultLine(
       sent({ status: "stays", arrivedAs: null, landed: null, stays: "unreachable", bytes: 0 }),
@@ -724,7 +724,7 @@ describe("extraResultLine", () => {
     );
     expect(lost.state).toBe("unknown");
     expect(readSyncText(lost.sentence)).toBe(
-      "No answer came back. It may have arrived on M5: check M5 before sending again.",
+      "No answer came back. It may have arrived on Rack F: check Rack F before sending again.",
     );
     expect(readSyncText(lost.sentence)).not.toContain("Stays");
     // What the other machine said goes under the summary once, as sent.
@@ -733,18 +733,18 @@ describe("extraResultLine", () => {
         sent({ status: "stays", arrivedAs: null, landed: null, stays: reason, detail, bytes: 0 }),
         names,
       ).detail;
-    expect(told("unreachable", "M5 closed the link: timed out after 30 s.")).toBe(
-      "M5 closed the link: timed out after 30 s.",
+    expect(told("unreachable", "Rack F closed the link: timed out after 30 s.")).toBe(
+      "Rack F closed the link: timed out after 30 s.",
     );
-    expect(told("needs-update", "M5 runs 1.4.2, which has no receiver for extras.")).toBe(
-      "M5 runs 1.4.2, which has no receiver for extras.",
+    expect(told("needs-update", "Rack F runs 1.4.2, which has no receiver for extras.")).toBe(
+      "Rack F runs 1.4.2, which has no receiver for extras.",
     );
     expect(told("unreachable", null)).toBeNull();
     expect(told("unreachable", "  ")).toBeNull();
     expect(
       told(
         "unreachable",
-        "No answer came back. It may have arrived on M5: check M5 before sending again.",
+        "No answer came back. It may have arrived on Rack F: check Rack F before sending again.",
       ),
     ).toBeNull();
     // A reason already inside the sentence is not repeated under it.
@@ -752,18 +752,18 @@ describe("extraResultLine", () => {
       extraResultLine(sent({ status: "stays", stays: "refused", detail: "No grant." }), names)
         .detail,
     ).toBeNull();
-    expect(stays("nothing-to-send")).toBe("Nothing to send: M5 would get no new work.");
-    expect(stays("missing-branch")).toBe("Stays on M4: the branch is no longer there.");
-    expect(stays("refused", "M5: no work grant for Atlas")).toBe(
-      "Stays on M4: M5: no work grant for Atlas.",
+    expect(stays("nothing-to-send")).toBe("Nothing to send: Rack F would get no new work.");
+    expect(stays("missing-branch")).toBe("Stays on Laptop E: the branch is no longer there.");
+    expect(stays("refused", "Rack F: no work grant for Atlas")).toBe(
+      "Stays on Laptop E: Rack F: no work grant for Atlas.",
     );
-    expect(stays("failed")).toBe("Stays on M4: it could not be sent.");
+    expect(stays("failed")).toBe("Stays on Laptop E: it could not be sent.");
     expect(extraResultLine(sent({ status: "stays", stays: "failed", bytes: 0 }), names).size).toBe(
       null,
     );
     // A reason this version does not know is shown as the machine sent it, and files left out
     // are named for an extra that stays too.
-    expect(stays("held-by-policy" as never)).toBe("Stays on M4: held-by-policy.");
+    expect(stays("held-by-policy" as never)).toBe("Stays on Laptop E: held-by-policy.");
     expect(
       read({
         status: "stays",
@@ -772,13 +772,13 @@ describe("extraResultLine", () => {
         stays: "failed",
         leftOutNotListed: 3,
       }),
-    ).toBe("Stays on M4: it could not be sent. | 3 files left out");
+    ).toBe("Stays on Laptop E: it could not be sent. | 3 files left out");
   });
 
   it("never names a branch or a size it was not given", () => {
     expect(extraResultLine(sent({ bytes: 0 }), names).size).toBeNull();
-    expect(read({ arrivedAs: null, landed: null })).toBe("Sent to M5.");
-    expect(read({ arrivedAs: null, landed: "merged" as never })).toBe("Sent to M5: merged.");
+    expect(read({ arrivedAs: null, landed: null })).toBe("Sent to Rack F.");
+    expect(read({ arrivedAs: null, landed: "merged" as never })).toBe("Sent to Rack F: merged.");
   });
 });
 
@@ -801,7 +801,7 @@ describe("extras that were asked for", () => {
     // The reply named two of three: the third has no receipt, which is not a refusal.
     expect(states(answered)).toEqual(["sent", "stays", "unknown"]);
     expect(readSyncText(answered[2]!.sentence)).toBe(
-      "No answer came back. It may have arrived on M5: check M5 before sending again.",
+      "No answer came back. It may have arrived on Rack F: check Rack F before sending again.",
     );
     expect(answered[2]!.branch).toBeNull();
     const lost = extraBatchLines([branch("fix/menu"), files], null, names, "unknown");
@@ -912,7 +912,7 @@ describe("what the result may claim", () => {
   it("never says in sync without that proof, or beside something a machine said", () => {
     const level = syncPlan(
       { a: fetched(facts(".")), b: fetched(facts(".")) },
-      { project: "Atlas", a: "m4", b: "m5" },
+      { project: "Atlas", a: "laptopE", b: "rackF" },
     );
     const rows = syncResultRows(level, { a: null, b: null });
     const title = (extra: Partial<Parameters<typeof syncResultTitle>[0]> = {}) =>
@@ -948,7 +948,7 @@ describe("what the result may claim", () => {
   it("takes the branch an answer returns as the truth, and leaves an unanswered one unknown", () => {
     const behindPlan = syncPlan(
       { a: fetched(facts(".", { behind: 2 })), b: fetched(facts("."), facts("apps/site")) },
-      { project: "Atlas", a: "m4", b: "m5" },
+      { project: "Atlas", a: "laptopE", b: "rackF" },
     );
     // Detached before the run: the answer has no branch, and the plan's "main" is not shown.
     const detached = syncResultRows(behindPlan, {
@@ -989,17 +989,17 @@ describe("an answer outside the contract", () => {
     const exit = Schema.decodeUnknownExit(ProjectSyncRunResult)(answer);
     expect(Exit.isFailure(exit)).toBe(true);
     const cause = Exit.isFailure(exit) ? Cause.squash(exit.cause) : null;
-    const failure = syncFailure(cause, "M5");
+    const failure = syncFailure(cause, "Rack F");
     expect(failure.kind).toBe("unreadable");
     expect(readSyncText(failure.line)).toBe(
-      "M5 answered in a way this version does not read. Update SpecWithCode on this machine, then check again.",
+      "Rack F answered in a way this version does not read. Update SpecWithCode on this machine, then check again.",
     );
   });
 });
 
 describe("syncFailure", () => {
   const read = (cause: unknown) => {
-    const failure = syncFailure(cause, "M5");
+    const failure = syncFailure(cause, "Rack F");
     return [failure.kind, readSyncText(failure.line)];
   };
 
@@ -1022,26 +1022,26 @@ describe("syncFailure", () => {
     ).toBe(false);
     expect(read("Unknown request tag: projectSync.fetch")).toEqual([
       "needs-update",
-      'Update SpecWithCode on M5 to sync with Git. "Compare all files…" works now.',
+      'Update SpecWithCode on Rack F to sync with Git. "Compare all files…" works now.',
     ]);
   });
 
   it("tells offline, read only, not there and Git's own reason apart", () => {
     expect(
-      read({ _tag: "EnvironmentRpcUnavailableError", message: "M5 is not connected." }),
-    ).toEqual(["offline", "M5 is offline. Sync needs both machines connected."]);
+      read({ _tag: "EnvironmentRpcUnavailableError", message: "Rack F is not connected." }),
+    ).toEqual(["offline", "Rack F is offline. Sync needs both machines connected."]);
     expect(read({ _tag: "EnvironmentAuthorizationError", message: "needs a scope" })).toEqual([
       "read-only",
-      "This window can only read M5, so it cannot sync it. Open SpecWithCode on M5, or connect to it with full access.",
+      "This window can only read Rack F, so it cannot sync it. Open SpecWithCode on Rack F, or connect to it with full access.",
     ]);
     expect(read({ _tag: "ProjectSyncError", code: "not_found", reason: "x" })).toEqual([
       "not-found",
-      "M5 does not have this project.",
+      "Rack F does not have this project.",
     ]);
     expect(read({ _tag: "ProjectSyncError", code: "personal", reason: "x" })[0]).toBe("personal");
     expect(read({ _tag: "ProjectSyncError", code: "invalid", reason: "x" })).toEqual([
       "not-git",
-      'The project folder on M5 is not a Git repository. Use "Compare all files…".',
+      'The project folder on Rack F is not a Git repository. Use "Compare all files…".',
     ]);
     expect(
       read({
@@ -1049,17 +1049,17 @@ describe("syncFailure", () => {
         code: "failed",
         reason: "Could not read this machine's projects.",
       }),
-    ).toEqual(["failed", "M5 could not sync: Could not read this machine's projects."]);
+    ).toEqual(["failed", "Rack F could not sync: Could not read this machine's projects."]);
     // An answer outside what this version reads fails as a whole: say so, not the parse error.
     expect(
       read({ _tag: "SchemaError", message: 'Expected "behind", got "held-by-policy"' }),
     ).toEqual([
       "unreadable",
-      "M5 answered in a way this version does not read. Update SpecWithCode on this machine, then check again.",
+      "Rack F answered in a way this version does not read. Update SpecWithCode on this machine, then check again.",
     ]);
     expect(read(undefined)).toEqual([
       "failed",
-      "M5 did not answer. Check the connection, then check again.",
+      "Rack F did not answer. Check the connection, then check again.",
     ]);
   });
 });

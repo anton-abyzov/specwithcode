@@ -65,12 +65,12 @@ try {
       await page.goto(`${base}?short=1&secrets=1&theme=${theme}`);
       await page.getByRole("button", { name: "Details" }).click();
       await page.getByRole("checkbox", { name: "Let me choose file types first" }).click();
-      await page.getByRole("button", { name: "Copy to m5", exact: true }).click();
-      await page.getByRole("button", { name: "Preview on m5", exact: true }).click();
+      await page.getByRole("button", { name: "Copy to rackF", exact: true }).click();
+      await page.getByRole("button", { name: "Preview on rackF", exact: true }).click();
       const section = page.locator('[data-slot="copy-credentials"]');
       await section.waitFor();
       await page
-        .locator('[data-slot="copy-credential-status"]', { hasText: "Not signed in on m5" })
+        .locator('[data-slot="copy-credential-status"]', { hasText: "Not signed in on rackF" })
         .first()
         .waitFor();
       // What the destination lacks is listed; what it has sits under a closed Ready group.
@@ -90,7 +90,7 @@ try {
         await section.locator('[data-slot="copy-credentials-ready"]').evaluate((node) => node.open),
         false,
       );
-      NodeAssert.match(await section.textContent(), /Ready on m5 \(1\)/);
+      NodeAssert.match(await section.textContent(), /Ready on rackF \(1\)/);
       NodeAssert.doesNotMatch(await section.textContent(), /Send file/);
       // Sign in there: the destination's command as its own text, with what stayed behind.
       const kube = section.locator('[data-credential="kubernetes"]');
@@ -99,11 +99,11 @@ try {
         await kube.locator('[data-slot="copy-credential-command"] code').first().textContent(),
         "az aks get-credentials --resource-group <group> --name <cluster>",
       );
-      NodeAssert.match(await kube.textContent(), /Stays on m4/);
+      NodeAssert.match(await kube.textContent(), /Stays on laptopE/);
       NodeAssert.match(await kube.textContent(), /~\/\.kube\/config/);
       // A missing tool: its install comes first, then the sign-in, then the check.
       const gcloud = section.locator('[data-credential="google-cloud"]');
-      NodeAssert.match(await gcloud.textContent(), /gcloud is not installed on m5/);
+      NodeAssert.match(await gcloud.textContent(), /gcloud is not installed on rackF/);
       await gcloud.locator('[data-slot="copy-credential-sign-in"]').click();
       NodeAssert.deepEqual(
         await gcloud.locator('[data-slot="copy-credential-command"] code').allTextContents(),
@@ -140,14 +140,14 @@ try {
       // A key file: set up a new one there, never sent.
       const ssh = section.locator('[data-credential="ssh"]');
       await ssh.locator('[data-slot="copy-credential-sign-in"]').click();
-      NodeAssert.match(await ssh.textContent(), /Private keys stay on m4 and are never copied/);
+      NodeAssert.match(await ssh.textContent(), /Private keys stay on laptopE and are never copied/);
       // The places the project connects to, each with a check that runs as written.
       NodeAssert.deepEqual(
         await ssh
           .locator('[data-slot="copy-ssh-target"] [data-slot="copy-credential-command"] code')
           .allTextContents(),
         [
-          'gh ssh-key add ~/.ssh/id_ed25519.pub --title "m5"',
+          'gh ssh-key add ~/.ssh/id_ed25519.pub --title "rackF"',
           "ssh -o BatchMode=yes -T -- git@github.com",
           "ssh -o BatchMode=yes -- root@203.0.113.10 true",
         ],
