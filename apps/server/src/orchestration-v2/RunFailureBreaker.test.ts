@@ -46,7 +46,8 @@ it("guards routine fires and provider-open retries, not limit recovery or people
     messageId,
     creationSource,
   });
-  assert.isTrue(isBreakerGuardedRun(command("scheduled-task-message:task:2026-11-19T06:00", "web")));
+  const scheduled = command("scheduled-task-message:task:2026-11-19T06:00", "web");
+  assert.isTrue(isBreakerGuardedRun(scheduled));
   assert.isTrue(isBreakerGuardedRun(command("provider-retry:run-1")));
   assert.isTrue(isBreakerGuardedRun(command("provider-fallback:run-1")));
   assert.isFalse(isBreakerGuardedRun(command("limit-fallback:run-1")));
@@ -55,18 +56,30 @@ it("guards routine fires and provider-open retries, not limit recovery or people
   assert.isFalse(isBreakerGuardedRun(command("message:web:abc", "web")));
 });
 
-it("lets a person's Run now of a routine through", () => {
-  const fire = (messageId: string) => ({ commandId: "scheduled-task:x", messageId, creationSource: "server" });
-  assert.isFalse(isBreakerGuardedRun(fire("scheduled-task-message:task-1:manual:command:abc")));
-  assert.isFalse(isBreakerGuardedRun(fire("scheduled-task-message:task-1:7f0c:manual")));
-  assert.isTrue(isBreakerGuardedRun(fire("scheduled-task-message:task-1:webhook:delivery-1")));
+it("lets a person's Run now of a routine through, judged after the task id", () => {
+  const fire = (messageId: string, scheduledTaskId: string | undefined = "task:manual") => ({
+    commandId: "scheduled-task:x",
+    messageId,
+    creationSource: "server",
+    scheduledTaskId,
+  });
+  const id = (key: string) => `scheduled-task-message:task:manual:${key}`;
+  assert.isFalse(isBreakerGuardedRun(fire(id("manual:command:abc"))));
+  assert.isFalse(isBreakerGuardedRun(fire(id("7f0c-11aa:manual"))));
+  // The task id holds ":manual:", yet these are scheduled and webhook fires.
+  assert.isTrue(isBreakerGuardedRun(fire(id("2026-11-19T06:00:00Z:scheduled"))));
+  assert.isTrue(isBreakerGuardedRun(fire(id("webhook:delivery-1"))));
+  // Without the task id nothing can be read as Run now.
+  assert.isTrue(isBreakerGuardedRun(fire(id("manual:command:abc"), undefined)));
 });
 
-it("judges a queued run by its message id", () => {
-  assert.isTrue(isBreakerGuardedQueuedMessage("scheduled-task-message:task-1:2026-11-19T06:00", "thread-1"));
-  assert.isFalse(isBreakerGuardedQueuedMessage("scheduled-task-message:task-1:manual:command:abc", "thread-1"));
-  assert.isTrue(isBreakerGuardedQueuedMessage("provider-retry:thread-1:run-3", "thread-1"));
-  assert.isTrue(isBreakerGuardedQueuedMessage("provider-fallback:thread-1:run-3", "thread-1"));
-  assert.isFalse(isBreakerGuardedQueuedMessage("provider-retry:thread-2:run-3", "thread-1"));
-  assert.isFalse(isBreakerGuardedQueuedMessage("message:web:abc", "thread-1"));
+it("judges a queued run by its message id and task", () => {
+  const guarded = (messageId: string, task?: string) =>
+    isBreakerGuardedQueuedMessage(messageId, "thread-1", task);
+  assert.isTrue(guarded("scheduled-task-message:task-1:2026-11-19T06:00", "task-1"));
+  assert.isFalse(guarded("scheduled-task-message:task-1:manual:command:abc", "task-1"));
+  assert.isTrue(guarded("provider-retry:thread-1:run-3"));
+  assert.isTrue(guarded("provider-fallback:thread-1:run-3"));
+  assert.isFalse(guarded("provider-retry:thread-2:run-3"));
+  assert.isFalse(guarded("message:web:abc"));
 });

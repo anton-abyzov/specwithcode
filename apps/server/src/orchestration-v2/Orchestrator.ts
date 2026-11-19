@@ -2008,10 +2008,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         failedRun.userMessageId.startsWith(`${CONTEXT_COMPACT_MESSAGE_PREFIX}${threadId}:`);
       // A routine fire or provider retry queued before the streak began would
       // start as the thread's next failure; it waits for a person like a
-      // dispatched one is refused (RunFailureBreaker).
+      // dispatched one is refused (RunFailureBreaker). A run whose hold was
+      // released (queueHeld false: the person's Resume) starts: they chose to.
       const breakerHolds =
+        nextRun.queueHeld !== false &&
         failedRunBreakerRefusal(
-          isBreakerGuardedQueuedMessage(nextRun.userMessageId, threadId),
+          isBreakerGuardedQueuedMessage(
+            nextRun.userMessageId,
+            threadId,
+            nextMessage?.scheduledTaskId,
+          ),
           projection.runs,
         ) !== null;
       if (

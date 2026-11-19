@@ -50,12 +50,18 @@ export function failedRunBreakerRefusal(
 const ROUTINE_MESSAGE_PREFIX = "scheduled-task-message:";
 
 /**
- * A person's Run now of a routine (fire keys `<task>:manual:<command>` and
- * `<task>:<uuid>:manual`, ScheduledTaskService). It is how someone retries a
- * routine after fixing it, so the breaker lets it through.
+ * A person's Run now of a routine. Its fire key is `<task>:manual:<command>`
+ * or `<task>:<uuid>:manual` (ScheduledTaskService), read after the task's own
+ * id so a task id that itself contains `:manual` never passes for one. It is
+ * how someone retries a routine after fixing it, so the breaker lets it
+ * through. Without the task id a fire counts as automatic.
  */
-function isManualRoutineFire(messageId: string): boolean {
-  return messageId.includes(":manual:") || messageId.endsWith(":manual");
+function isManualRoutineFire(messageId: string, scheduledTaskId: string | undefined): boolean {
+  if (scheduledTaskId === undefined) return false;
+  const prefix = `${ROUTINE_MESSAGE_PREFIX}${scheduledTaskId}:`;
+  if (!messageId.startsWith(prefix)) return false;
+  const rest = messageId.slice(prefix.length);
+  return rest.startsWith("manual:") || /^[^:]+:manual$/.test(rest);
 }
 
 /**
@@ -69,9 +75,10 @@ export function isBreakerGuardedRun(command: {
   readonly commandId: string;
   readonly messageId: string;
   readonly creationSource?: string | undefined;
+  readonly scheduledTaskId?: string | undefined;
 }): boolean {
   if (command.messageId.startsWith(ROUTINE_MESSAGE_PREFIX))
-    return !isManualRoutineFire(command.messageId);
+    return !isManualRoutineFire(command.messageId, command.scheduledTaskId);
   return (
     command.creationSource === "server" &&
     [PROVIDER_FALLBACK_MESSAGE_PREFIX, PROVIDER_RETRY_MESSAGE_PREFIX].some(
@@ -85,8 +92,13 @@ export function isBreakerGuardedRun(command: {
  * alone (a queued run keeps no command): a scheduled routine fire, or the
  * server's provider retry or fallback for this thread.
  */
-export function isBreakerGuardedQueuedMessage(messageId: string, threadId: string): boolean {
-  if (messageId.startsWith(ROUTINE_MESSAGE_PREFIX)) return !isManualRoutineFire(messageId);
+export function isBreakerGuardedQueuedMessage(
+  messageId: string,
+  threadId: string,
+  scheduledTaskId: string | undefined,
+): boolean {
+  if (messageId.startsWith(ROUTINE_MESSAGE_PREFIX))
+    return !isManualRoutineFire(messageId, scheduledTaskId);
   return [PROVIDER_FALLBACK_MESSAGE_PREFIX, PROVIDER_RETRY_MESSAGE_PREFIX].some((prefix) =>
     messageId.startsWith(`${prefix}${threadId}:`),
   );

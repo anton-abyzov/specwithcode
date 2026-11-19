@@ -6,6 +6,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ScheduledTaskId,
   ThreadId,
   type OrchestrationV2Run,
 } from "@specweave-studio/contracts";
@@ -42,6 +43,10 @@ const layerTest = Layer.mergeAll(
     { databaseLayer: layerDatabase, runEffectWorker: false },
   ),
 );
+
+// A task id that itself contains ":manual", so only the trigger after it counts.
+const ROUTINE = "scheduled-task:manual";
+const fireId = (key: string) => `scheduled-task-message:${ROUTINE}:${key}`;
 
 const createThread = (name: string) =>
   Effect.gen(function* () {
@@ -81,6 +86,9 @@ const send = (
       dispatchMode: { type: dispatchMode },
       createdBy: "system",
       creationSource: "server",
+      ...(messageId.startsWith("scheduled-task-message:")
+        ? { scheduledTaskId: ScheduledTaskId.make(ROUTINE) }
+        : {}),
     });
   });
 
@@ -114,7 +122,7 @@ const latestRun = (threadId: ThreadId) =>
 const failFires = (threadId: ThreadId, count: number) =>
   Effect.gen(function* () {
     for (let index = 0; index < count; index++) {
-      yield* send(threadId, `scheduled-task-message:disk:2026-11-19T0${index}:00:00Z:scheduled`);
+      yield* send(threadId, fireId(`2026-11-19T0${index}:00:00Z:scheduled`));
       yield* finish(threadId, yield* latestRun(threadId), "failed");
     }
   });
@@ -126,25 +134,34 @@ it.effect(
       const threadId = yield* createThread("breaker-dispatch");
       yield* failFires(threadId, 3);
       const refused = yield* Effect.exit(
-        send(threadId, "scheduled-task-message:disk:2026-11-19T04:00:00Z:scheduled"),
+        send(threadId, fireId("2026-11-19T04:00:00Z:scheduled")),
       );
       assert.isTrue(Exit.isFailure(refused));
       assert.include(String(Exit.isFailure(refused) ? refused.cause : ""), "last 3 runs failed");
-      assert.isTrue(Exit.isFailure(yield* Effect.exit(send(threadId, `provider-retry:${threadId}:run-3`))));
+      assert.isTrue(
+        Exit.isFailure(yield* Effect.exit(send(threadId, `provider-retry:${threadId}:run-3`))),
+      );
+      assert.isTrue(
+        Exit.isFailure(yield* Effect.exit(send(threadId, fireId("webhook:delivery-1")))),
+      );
       // A person's Run now is the way back after fixing the routine.
-      yield* send(threadId, "scheduled-task-message:disk:manual:command:run-now-1");
+      yield* send(threadId, fireId("manual:command:run-now-1"));
       const manual = yield* latestRun(threadId);
       assert.equal(manual.status, "starting");
       // It succeeds, so scheduled fires start again.
       yield* finish(threadId, manual, "completed");
-      yield* send(threadId, "scheduled-task-message:disk:2026-11-19T05:00:00Z:scheduled");
+      yield* send(threadId, fireId("2026-11-19T05:00:00Z:scheduled"));
       assert.equal((yield* latestRun(threadId)).status, "starting");
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   30_000,
 );
 
 // A routine fire queued behind the run that makes the third failure.
-const fireQueuedBehindThirdRun = (name: string, third: "failed" | "completed") =>
+const fireQueuedBehindThirdRun = (
+  name: string,
+  third: "failed" | "completed",
+  personBehind = false,
+) =>
   Effect.gen(function* () {
     const sink = yield* EventSink.EventSinkV2;
     const threadId = yield* createThread(name);
@@ -153,11 +170,12 @@ const fireQueuedBehindThirdRun = (name: string, third: "failed" | "completed") =
     const running = yield* latestRun(threadId);
     yield* send(
       threadId,
-      "scheduled-task-message:disk:2026-11-19T06:00:00Z:scheduled",
+      fireId("2026-11-19T06:00:00Z:scheduled"),
       "queue_after_active",
     );
     const queued = yield* latestRun(threadId);
     assert.equal(queued.status, "queued");
+    if (personBehind) yield* send(threadId, `message:${threadId}:person`, "queue_after_active");
     const settled = yield* sink
       .stream({ afterSequence: yield* sink.latestSequence(), eventType: "run.updated" })
       .pipe(
@@ -173,16 +191,17 @@ const fireQueuedBehindThirdRun = (name: string, third: "failed" | "completed") =
       );
     yield* finish(threadId, running, third);
     yield* Fiber.join(settled);
-    return yield* latestRun(threadId);
+    const runs = (yield* (yield* Orchestrator.OrchestratorV2).getThreadProjection(threadId)).runs;
+    return { threadId, fire: runs.find((run) => run.id === queued.id)! };
   });
 
 it.effect(
   "holds a queued routine fire for a person once the run ahead of it is the third failure",
   () =>
     Effect.gen(function* () {
-      const queued = yield* fireQueuedBehindThirdRun("breaker-queue-held", "failed");
-      assert.equal(queued.status, "queued");
-      assert.equal(queued.queueHeld, true);
+      const { fire } = yield* fireQueuedBehindThirdRun("breaker-queue-held", "failed");
+      assert.equal(fire.status, "queued");
+      assert.equal(fire.queueHeld, true);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   30_000,
 );
@@ -191,8 +210,30 @@ it.effect(
   "starts a queued routine fire when the run ahead of it succeeded",
   () =>
     Effect.gen(function* () {
-      const queued = yield* fireQueuedBehindThirdRun("breaker-queue-starts", "completed");
-      assert.equal(queued.status, "starting");
+      const { fire } = yield* fireQueuedBehindThirdRun("breaker-queue-starts", "completed");
+      assert.equal(fire.status, "starting");
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  30_000,
+);
+
+it.effect(
+  "starts the held fire when a person resumes the queue, with their message behind it",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const { threadId, fire } = yield* fireQueuedBehindThirdRun("breaker-resume", "failed", true);
+      assert.equal(fire.queueHeld, true);
+      yield* orchestrator.dispatch({
+        type: "queue.resume",
+        commandId: CommandId.make(`resume:${threadId}`),
+        threadId,
+      });
+      const runs = (yield* orchestrator.getThreadProjection(threadId)).runs;
+      const resumed = runs.find((run) => run.id === fire.id)!;
+      assert.equal(resumed.status, "starting");
+      const person = runs.find((run) => run.userMessageId === `message:${threadId}:person`)!;
+      assert.equal(person.status, "queued");
+      assert.notEqual(person.queueHeld, true);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   30_000,
 );
