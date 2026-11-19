@@ -32,7 +32,7 @@ const foreignSessionMessage = (threadId: string) =>
 const COORDINATOR_ID = /^project-coordinator:./;
 
 const coordinatorNotStartedMessage = (threadId: string) =>
-  `Thread ${threadId} was not found on this machine. If you copied it exactly from a project's record, the ID is fine: a coordinator thread is created on its first run, so no coordinator has run under this ID here. A linked copy usually leaves coordinating to another machine: read that machine's coordinator, or list this project's threads with studio_thread_list. If you typed it, ${COPY_EXACTLY}`;
+  `Thread ${threadId} was not found on this machine. If you copied it exactly from a project's record, the ID is fine: a coordinator thread is created on its first run, so no coordinator has run under this ID here. Each machine runs its own coordinator: read another machine's with studio_thread_read {machine}, or list this project's threads with studio_thread_list. If you typed it, ${COPY_EXACTLY}`;
 
 /**
  * A `thread_not_found` an agent can act on. When the ID it passed is a

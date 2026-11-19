@@ -1,11 +1,18 @@
 /**
- * The project coordinator's `clock` context section: this machine's local
- * date, time and timezone when the turn was sent. System prompts are fixed
+ * The project coordinator's `clock` context section: its machine's name and
+ * local date, time and timezone when the turn was sent. The name rides here,
+ * not in the system prompt, so it stays right after a thread moves machines. System prompts are fixed
  * when a session starts, so the clock travels with each coordinator message
  * and wake instead; without it a coordinator answered "what time is it?" by
  * starting a worker. Workers read the time themselves.
  */
 export const CURRENT_TIME_PREFIX = "Current local time on this machine:";
+
+/** The clock's opening words; `machine` is the label of the machine the agent runs on. */
+export const currentTimePrefix = (machine: string | undefined) =>
+  machine === undefined
+    ? CURRENT_TIME_PREFIX
+    : `Current local time on ${machine}, the machine this agent runs on:`;
 
 /** The machine's IANA zone, or UTC when the runtime cannot name one. */
 export function machineTimeZone(): string {
@@ -43,7 +50,11 @@ function localText(epochMs: number, timeZone: string): string {
  * For example "Current local time on this machine: Friday, November 13, 2026,
  * 12:41 PM EST (America/New_York, UTC-05:00)."
  */
-export function currentTimeLine(epochMs: number, timeZone: string = machineTimeZone()): string {
+export function currentTimeLine(
+  epochMs: number,
+  timeZone: string = machineTimeZone(),
+  machine?: string,
+): string {
   let zone = timeZone;
   let text: string;
   try {
@@ -53,5 +64,5 @@ export function currentTimeLine(epochMs: number, timeZone: string = machineTimeZ
     text = localText(epochMs, zone);
   }
   // "Friday, November 13, 2026 at 12:41 PM EST": keep one comma-separated line.
-  return `${CURRENT_TIME_PREFIX} ${text.replace(" at ", ", ")} (${zone}, UTC${utcOffset(epochMs, zone)}).`;
+  return `${currentTimePrefix(machine)} ${text.replace(" at ", ", ")} (${zone}, UTC${utcOffset(epochMs, zone)}).`;
 }

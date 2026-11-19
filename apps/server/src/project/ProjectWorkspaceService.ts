@@ -55,6 +55,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { ownMachineLabel } from "../fleet/machineNames.ts";
 import { readFleetConfig } from "../studioFleet.ts";
 import * as LinkedMemoryHistory from "./LinkedMemoryHistory.ts";
 import { recordMemoryDelete, recordMemoryWrite } from "./linkedMemoryMerge.ts";
@@ -165,13 +167,14 @@ export function validateProjectMemory(name: string, content = ""): boolean {
 export function workerMachineLines(
   settings: ProjectWorkspaceReadResult["settings"],
   fleet: ReadonlyArray<{ readonly id: string; readonly label: string }> | undefined,
+  here = "this machine",
 ): ReadonlyArray<string> {
   // Only machine ids are read here, so the local entry's environment id is never used.
   const order = projectWorkerMachineOrder(settings, EnvironmentId.make("local"));
   if (order.length === 1 && isLocalWorkerMachine(order[0]!)) return [];
   const label = (machineId: string) =>
     machineId === LOCAL_WORKER_MACHINE_ID
-      ? "this machine"
+      ? here
       : (fleet?.find((machine) => machine.id === machineId)?.label ?? "another machine");
   const names = order.map((entry) => label(entry.machineId));
   const lines = [
@@ -186,6 +189,22 @@ export function workerMachineLines(
   return lines;
 }
 
+/** The coordinator's own machine, and what it does about another machine's work. */
+function coordinatorMachineLines(machine: string, others: boolean): ReadonlyArray<string> {
+  return [
+    `You are the coordinator on ${machine}. Each of the owner's machines runs its own coordinator, and the user may read you from another machine's window. Start each step the user must take with the machine it is done on ("On ${machine}: ..."), and name the machine of a thread that runs elsewhere. A "this machine" in a tool result or error means the machine that wrote it: write its name instead.`,
+    ...(others
+      ? [
+          'Asked about a thread or failure on another machine, read it there with studio_thread_read {machine} and open your answer with that machine\'s name. Continue or retry it yourself with studio_thread_send {machine} where you may, and leave the user only the step no agent can take, as "On <machine>: ...".',
+        ]
+      : []),
+  ];
+}
+
+/** A worker's or chat's own machine: the user may read it from another machine's window. */
+export const workerMachineLine = (machine: string) =>
+  `You run on ${machine}, and the user may read you from another machine's window: start each step they must take with the machine it is done on ("On ${machine}: ...").`;
+
 export function projectContextText(input: {
   projectId: string;
   threadId: string;
@@ -196,9 +215,12 @@ export function projectContextText(input: {
   fleet?: ReadonlyArray<{ readonly id: string; readonly label: string }> | undefined;
   /** The project plans its work in SpecWeave (isSpecweaveProject). */
   specweave?: boolean | undefined;
+  /** The name of the machine this agent runs on; without it no machine lines are added. */
+  machine?: string | undefined;
 }): string {
-  const { settings } = input;
+  const { settings, machine } = input;
   const coordinator = settings.coordinatorThreadId === input.threadId;
+  const others = (input.fleet?.length ?? 0) > 0;
   const role = coordinator
     ? [
         "You coordinate this project's work and do none of it yourself: you start, brief and route work to worker threads and track it. Workers do everything else, including research, reading files, settings or logs, running commands, web lookups and Gmail, Calendar or Drive reads, however small. Answer from this chat, memory, the thread list, the clock section or settled general facts with no worker; this project's code and current facts (versions, prices) go to a worker.",
@@ -212,9 +234,10 @@ export function projectContextText(input: {
               'This project plans its work in SpecWeave: pass increment on every launch, an open NNNN that covers the work, "new" for a change that needs planning, or "none" for questions, reviews and small fixes; post the spec a launch returns as [NNNN](<specPath>).',
             ]
           : []),
-        ...workerMachineLines(settings, input.fleet),
+        ...workerMachineLines(settings, input.fleet, machine),
+        ...(machine === undefined ? [] : coordinatorMachineLines(machine, others)),
         // Single-machine installs keep the prompt they always had.
-        ...((input.fleet?.length ?? 0) > 0
+        ...(others
           ? [
               'When the user names a machine (for example "use my M1"), pass it as machine to studio_thread_launch; studio_machine_list shows which machines allow workers. Follow a remote worker by its threadLink. Name machines by their label, never by an id.',
               "Only the user allows workers on another machine, in Settings > Machines. When a machine is not ready, say so in one line and offer to run the work here.",
@@ -223,7 +246,7 @@ export function projectContextText(input: {
         "Acknowledge a delegated request in one line naming where it went, with each worker's threadLink from the tool result copied verbatim. Never show internal IDs such as taskId or run IDs.",
         "The user cannot start a thread in this project; when they ask for one, start it in that same turn with their title and words, and answer with its link.",
         "'User follow-up from selected worker <threadId>, message <messageId>' is the user's reply in that worker. Read it and forward with studio_thread_send {threadId, forwardMessageId}, without retyping. Keep it with that worker unless clearly misdirected; for a new worker, launch then forward. Same-worker forwarding gets no commentary or confirmation; otherwise give one line linking its destination.",
-        "The user reads a worker's result in its thread, so do not relay, summarize or repeat it here. Use it only to coordinate next work, memory or delivery. Have the existing independent verifier record the worker's current scope with studio_thread_record_delivery; for a worker asked only a question, record it yourself as no_code. Include this in verification the work already needs and keep parent obligations separate. If all tasks are done and the assignment includes closing the increment, delegate only its remaining close checks. Respect repository rules and existing evidence. A task limited to implementation, tests or a report does not authorize closure. If the user must act, link the worker and say what is needed in one line, quoting errors exactly, and otherwise end the turn without a reply.",
+        "The user reads a worker's result in its thread, so do not relay, summarize or repeat it here. Use it only to coordinate next work, memory or delivery. Have the existing independent verifier record the worker's current scope with studio_thread_record_delivery; for a worker asked only a question, record it yourself as no_code. Include this in verification the work already needs and keep parent obligations separate. If all tasks are done and the assignment includes closing the increment, delegate only its remaining close checks. Respect repository rules and existing evidence. A task limited to implementation, tests or a report does not authorize closure. If the user must act, link the worker and say in one line what is needed and on which machine, quoting errors exactly, and otherwise end the turn without a reply.",
         ...(settings.kind === "personal"
           ? [
               "You are the user's personal assistant. This conversation is separate from their project chats: nothing goes into a project's chat, and nothing from one is shown here, unless the user asks for it.",
@@ -252,6 +275,7 @@ export function projectContextText(input: {
       ].join("\n")
     : [
         "This is shared project context. Preserve active worker ownership.",
+        ...(machine === undefined ? [] : [workerMachineLine(machine)]),
         "Your final message is your report: the user reads it in this thread, and the coordinator only uses it to coordinate. Give each path in full, including its worktree or scratch folder.",
         "Save lasting decisions with studio_project_memory_write, one file per subject, updated in place; keep MEMORY.md a short index. Run status, receipts and evidence paths go in your report, not memory.",
         "Follow the current request, repository rules and the task's listed files. For a task-only, patch-only or read-only assignment, leave bookkeeping and closure to its owner unless authorized. For an authorized full increment, record tasks, verify and close per repository rules. Reuse applicable evidence. Start a separate review only when requested or required by an in-scope acceptance gate.",
@@ -307,6 +331,12 @@ const isProjectWorkspaceError = Schema.is(ProjectWorkspaceError);
 const make = Effect.gen(function* () {
   const admission = yield* ProjectAdmission.ProjectAdmission;
   const serverConfig = yield* Effect.serviceOption(ServerConfig.ServerConfig);
+  // Read on each turn, so a rename shows at once and a thread that moved machines is
+  // told the one it runs on now (the server there builds its context).
+  const ownLabel = ownMachineLabel(
+    yield* Effect.serviceOption(ServerEnvironment.ServerEnvironment),
+    yield* Effect.serviceOption(ServerSettings.ServerSettingsService),
+  );
   /** The owner's other machines; none when there is no readable studio-fleet.json. */
   const fleetMachines = Option.match(serverConfig, {
     onNone: () => Effect.succeed([]),
@@ -603,7 +633,15 @@ const make = Effect.gen(function* () {
       const project = yield* requireProject(projectId);
       // A chat gets no project's goal, instructions, memory or knowledge: they would be
       // shared with every other chat on this machine.
-      if (isChatProject(project)) return projectContextSnapshot([["role", CHAT_CONTEXT_ROLE]]);
+      if (isChatProject(project)) {
+        const here = yield* ownLabel;
+        return projectContextSnapshot([
+          [
+            "role",
+            here === undefined ? CHAT_CONTEXT_ROLE : `${CHAT_CONTEXT_ROLE}\n${workerMachineLine(here)}`,
+          ],
+        ]);
+      }
       const settings = project.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
       if (settings.archived && !restoring) return yield* fail(projectId, "archived");
       if (!restoring && settings.paused && settings.coordinatorThreadId === threadId)
@@ -640,9 +678,11 @@ const make = Effect.gen(function* () {
             ),
             Effect.orElseSucceed(() => null),
           );
+      const machine = yield* ownLabel;
       const role = projectContextText({
         projectId,
         threadId,
+        machine,
         settings: { ...settings, goal: "", instructions: "" },
         files: [],
         index: "",
@@ -680,7 +720,7 @@ const make = Effect.gen(function* () {
       ]);
       // The coordinator's clock: a fresh minute is a changed section, so it is
       // delivered with every message and wake; workers read the time themselves.
-      const clockLine = currentTimeLine(now);
+      const clockLine = currentTimeLine(now, undefined, machine);
       const clock: ProjectContextSnapshot =
         settings.coordinatorThreadId === threadId
           ? [{ name: "clock", value: clockLine, revision: contextDigest(clockLine) }]
