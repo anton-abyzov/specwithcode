@@ -1,18 +1,25 @@
 import { useTx } from "../../i18n";
-import type {
-  EnvironmentId,
-  LimitHandoffCandidate,
-  LimitHandoffCandidatesResult,
-  ThreadId,
+import {
+  MODEL_TRACK_LABELS,
+  type EnvironmentId,
+  type LimitHandoffCandidate,
+  type LimitHandoffCandidatesResult,
+  type ThreadId,
 } from "@specweave-studio/contracts";
+import { scopeProjectRef, scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import { describeTrackWait } from "@specweave-studio/shared/machineFallback";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
+import { useProject, useThreadShell } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useHandoffModeSnapshot } from "../../studio/handoffMode";
 import { limitHandoff } from "../../studio/limitHandoff";
-import { requestHandOffProgress } from "../handoff/HandOffProgress";
+import {
+  requestHandOffNoMove,
+  requestHandOffProgress,
+  type HandOffNoMove,
+} from "../handoff/HandOffProgress";
 import { threadTransfer } from "../handoff/handOffProgress.logic";
 import { requestHandOffThread } from "../handoff/HandOffThreadDialog";
 import { Button } from "../ui/button";
@@ -173,6 +180,52 @@ export function LimitHandoffProgressLink({ onOpen }: { onOpen: () => void }) {
   );
 }
 
+type TrackDecision = LimitHandoffCandidatesResult["track"];
+
+/**
+ * The progress view's no-move state for a decision where every machine is out
+ * of the thread's track (1390 AC-39), else null. Each out machine's reset is
+ * listed, and the decision's earliest reset is kept when none of them said it.
+ */
+export function trackNoMove(track: TrackDecision, projectName: string): HandOffNoMove | null {
+  if (!track || !track.everyMachineOut || track.target !== null) return null;
+  const resets = track.machines
+    .filter((machine) => machine.state === "out")
+    .map((machine) => ({ machineLabel: machine.machineLabel, resetsAt: machine.resetsAt }));
+  const earliest = track.earliestReset;
+  if (earliest && !resets.some((reset) => reset.resetsAt === earliest.at))
+    resets.push({ machineLabel: earliest.machineLabel, resetsAt: earliest.at });
+  return {
+    projectName,
+    trackOut: { track: MODEL_TRACK_LABELS[track.track], staying: 1, resets },
+  };
+}
+
+/**
+ * Opens the no-move view by itself when the track runs out on every machine:
+ * once per episode, so the banner's refresh never reopens a view that was closed.
+ */
+export function useTrackNoMove(
+  environmentId: EnvironmentId,
+  track: TrackDecision,
+  projectName: string,
+) {
+  const opened = useRef<string | null>(null);
+  // Read when an episode starts; later refreshes leave the opened view as it is.
+  const latest = useRef<HandOffNoMove | null>(null);
+  latest.current = trackNoMove(track, projectName);
+  const episode = latest.current && track ? `${track.threadId}:${track.track}` : null;
+  useEffect(() => {
+    if (episode === null) {
+      opened.current = null;
+      return;
+    }
+    if (opened.current === episode || latest.current === null) return;
+    opened.current = episode;
+    requestHandOffNoMove(environmentId, latest.current);
+  }, [environmentId, episode]);
+}
+
 /** Loads the verdicts for a thread and refreshes them while the banner shows. */
 export function LimitHandoffCandidates({
   environmentId,
@@ -204,6 +257,10 @@ export function LimitHandoffCandidates({
       window.clearInterval(timer);
     };
   }, [candidates, environmentId, threadId]);
+  const tx = useTx();
+  const shell = useThreadShell(scopeThreadRef(environmentId, threadId));
+  const project = useProject(shell ? scopeProjectRef(environmentId, shell.projectId) : null);
+  useTrackNoMove(environmentId, result?.track, project?.title || tx("This project"));
   // A hand off of this thread that this machine has a record of: its progress view is one press away.
   const { snapshot } = useHandoffModeSnapshot(environmentId);
   const progress = threadTransfer(snapshot?.transfers, threadId) ? (
