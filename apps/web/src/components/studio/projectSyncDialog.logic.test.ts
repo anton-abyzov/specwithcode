@@ -11,6 +11,8 @@ import type {
   ProjectSyncRepositoryFacts,
   ProjectSyncStep,
 } from "@specweave-studio/contracts";
+import { ProjectSyncRunResult } from "@specweave-studio/contracts";
+import { Cause, Effect, Exit, Schema } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 
 import { de } from "../../i18n/phrases/de";
@@ -655,6 +657,27 @@ describe("extraResultLine", () => {
     expect(extraResultLine(sent({ bytes: 0 }), names).size).toBeNull();
     expect(read({ arrivedAs: null, landed: null })).toBe("Sent to M5.");
     expect(read({ arrivedAs: null, landed: "merged" as never })).toBe("Sent to M5: merged.");
+  });
+});
+
+describe("an answer outside the contract", () => {
+  it("fails to decode as a whole, and reads as an answer this version cannot read", () => {
+    // What the RPC client does with an answer: decode it, and die on a value it does not list.
+    const answer = {
+      repositories: [
+        { ...step("behind", { path: "." }), reason: "held-by-policy", moved: 0, downgraded: false },
+      ],
+    };
+    const exit = Effect.runSyncExit(
+      Schema.decodeUnknownEffect(ProjectSyncRunResult)(answer).pipe(Effect.orDie),
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+    const cause = Exit.isFailure(exit) ? Cause.squash(exit.cause) : null;
+    const failure = syncFailure(cause, "M5");
+    expect(failure.kind).toBe("unreadable");
+    expect(readSyncText(failure.line)).toBe(
+      "M5 answered in a way this version does not read. Update SpecWithCode on this machine, then check again.",
+    );
   });
 });
 

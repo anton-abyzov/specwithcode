@@ -351,7 +351,7 @@ const choosing = async (page, w) => {
     leading: "Stop copy",
   });
   NodeAssert.match(await body(), /Measured (?!earlier)[^·]+?Check for changes/);
-  NodeAssert.match(await body(), /Your choices.*Copy to linux-mini: \/home\/anton/);
+  NodeAssert.match(await body(), /Your choices.*Copy to linux-mini: \/home\/sam/);
   const pendingBeforeRefresh = await page.evaluate(() =>
     localStorage.getItem("specwithcode:folder-copy:m4:source"),
   );
@@ -441,7 +441,7 @@ const choosing = async (page, w) => {
   });
   NodeAssert.match(
     await body(),
-    /Checking the copy to \/home\/anton\/Projects\/github\/specweave-umb on linux-mini…/,
+    /Checking the copy to \/home\/sam\/Projects\/github\/specweave-umb on linux-mini…/,
   );
   await release("copyStatus");
   await check("restored", {
@@ -587,7 +587,7 @@ const move = async (page, w) => {
   await projectOnly.click();
   NodeAssert.equal(
     await folderBox(page).inputValue(),
-    "/home/anton/Projects/github/specweave-umb/repositories/anton-abyzov/specweave",
+    "/home/sam/Projects/github/specweave-umb/repositories/anton-abyzov/specweave",
   );
   await check("child-scope", { primary: "Copy and move to linux-mini" });
   await projectOnly.click();
@@ -635,7 +635,7 @@ const move = async (page, w) => {
   NodeAssert.deepEqual(await fixture(() => window.__folderCopyFixture.copyRequests.at(-1)), {
     copyRoot: "/Users/you/Projects/github/specweave-umb",
     projectRelativePath: "repositories/anton-abyzov/specweave",
-    targetFolder: "/home/anton/Projects/github/specweave-umb",
+    targetFolder: "/home/sam/Projects/github/specweave-umb",
   });
   await fixture(() => {
     window.__folderCopyFixture.failCopy = true;
@@ -658,7 +658,7 @@ const move = async (page, w) => {
   );
   NodeAssert.match(
     await body(),
-    /Nothing in \/home\/anton\/Projects\/github\/specweave-umb changed/,
+    /Nothing in \/home\/sam\/Projects\/github\/specweave-umb changed/,
   );
   // Nothing changed before Apply, so Retry runs the same copy again from measuring.
   await fixture(() => {
@@ -865,7 +865,7 @@ try {
         await folderBox(page).waitFor();
         NodeAssert.equal(
           await folderBox(page).inputValue(),
-          "/home/anton/Projects/github/specweave-umb",
+          "/home/sam/Projects/github/specweave-umb",
         );
         const w = walker(page, label, flow, viewport);
         try {
