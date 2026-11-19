@@ -19,6 +19,7 @@ import {
 import {
   legacyPair,
   legacyTrio,
+  linkedAs,
   machine,
   operationId,
   removeCheckouts,
@@ -191,18 +192,20 @@ describe("unlinking one of three machines (AC-35)", () => {
     const m4: Copy = { machine: trio.m4, member: trio.kept };
     const m1: Copy = { machine: trio.m1, member: trio.third };
     const listed = (copy: Copy) => trio.membersOn(copy.machine, copy.member.projectId).map(keyOf);
-    const unlinkOnM4 = (id: string) =>
+    const relinkId = "33333333-3333-4333-8333-333333333333";
+    /** The M4 is asked to drop the M3's link, named as the M4 listed it. */
+    const unlinkOnM4 = (id: string, membership: LogicalProjectMember) =>
       trio.m4.run((service) =>
         service.unlink({
           side: "coordinator",
           operationId: id,
           projectId: trio.kept.projectId,
-          member: trio.joining,
+          member: membership,
         }),
       );
     await reads(m1, m4);
     // 1. The M4 unlinks the M3, and the M1 records that.
-    await unlinkOnM4(unlinkId);
+    await unlinkOnM4(unlinkId, linkedAs(trio.joining));
     await reads(m1, m4);
     expect(listed(m1)).not.toContain(keyOf(trio.joining));
     expect(bindingOn(trio.m1, trio.third.projectId)?.removedMembers?.map(keyOf)).toEqual([
@@ -211,9 +214,10 @@ describe("unlinking one of three machines (AC-35)", () => {
     // 2. The M3 is linked again on the M4 while the M1 is away.
     await trio.m4.run((service) =>
       service.commit({
-        operationId: "33333333-3333-4333-8333-333333333333",
+        operationId: relinkId,
         projectId: trio.kept.projectId,
-        joining: trio.joining,
+        // As the M3 accepted it: its second link.
+        joining: linkedAs(trio.joining, relinkId, 2),
         notes: [],
       }),
     );
@@ -227,7 +231,7 @@ describe("unlinking one of three machines (AC-35)", () => {
     await reads(m4, m1);
     expect(listed(m4)).toContain(keyOf(trio.joining));
     // An unlink after the re-link still removes it everywhere.
-    await unlinkOnM4("44444444-4444-4444-8444-444444444444");
+    await unlinkOnM4("44444444-4444-4444-8444-444444444444", linkedAs(trio.joining, relinkId, 2));
     await reads(m1, m4);
     expect(listed(m1)).not.toContain(keyOf(trio.joining));
     await reads(m4, m1);
@@ -255,7 +259,7 @@ describe("unlinking one of three machines (AC-35)", () => {
         side: "coordinator",
         operationId: unlinkId,
         projectId: trio.kept.projectId,
-        member: trio.joining,
+        member: linkedAs(trio.joining),
       }),
     );
     const kept = settingsOf(trio.m4, trio.kept.projectId)!;

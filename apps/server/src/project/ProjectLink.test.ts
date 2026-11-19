@@ -46,7 +46,7 @@ describe("ProjectLink", () => {
       routineOwner: false,
     });
     // Both ends name the membership by the link that made it.
-    const linkedAs = { ...pair.joining, linkId: operationId };
+    const linkedAs = { ...pair.joining, linkId: operationId, generation: 1 };
     expect(committed.logicalProject.members).toEqual([pair.kept, linkedAs]);
     expect(accepted.logicalProject.members).toEqual([pair.kept, linkedAs]);
     // The kept copy records which folder on which machine each member maps to.
@@ -438,7 +438,8 @@ describe("ProjectLink", () => {
       }),
     );
     expect(unlinked.logicalProject.id).not.toBe(prepared.logicalProject.id);
-    expect(unlinked.logicalProject.members).toEqual([pair.joining]);
+    // Its own project again; it keeps the count of its links for the next one.
+    expect(unlinked.logicalProject.members).toEqual([{ ...pair.joining, generation: 1 }]);
     expect(unlinked.coordinatorBinding).toEqual({
       epoch: 0,
       state: "active",
@@ -460,7 +461,7 @@ describe("ProjectLink", () => {
         side: "coordinator",
         operationId: unlinkId,
         projectId: pair.kept.projectId,
-        member: pair.joining,
+        member: { ...pair.joining, linkId: operationId, generation: 1 },
       }),
     );
     expect(removed.logicalProject.members).toEqual([pair.kept]);
@@ -473,6 +474,7 @@ describe("ProjectLink", () => {
           environmentId: pair.joining.environmentId,
           projectId: pair.joining.projectId,
           linkId: operationId,
+          generation: 1,
           removedAt: expect.any(String),
         },
       ],
@@ -484,7 +486,7 @@ describe("ProjectLink", () => {
             side: "coordinator",
             operationId: unlinkId,
             projectId: pair.kept.projectId,
-            member: pair.joining,
+            member: { ...pair.joining, linkId: operationId, generation: 1 },
           }),
         )
       ).replayed,
@@ -532,7 +534,7 @@ describe("ProjectLink", () => {
     // The kept server fills its own folder in; the joining server fills in its own.
     expect(prepared.kept).toEqual(pair.kept);
     expect(prepared.logicalProject.members).toEqual([pair.kept, m2]);
-    const joined = { ...pair.joining, linkId: operationId };
+    const joined = { ...pair.joining, linkId: operationId, generation: 1 };
     expect(accepted.member).toEqual(joined);
     expect(accepted.logicalProject.members).toEqual([pair.kept, m2, joined]);
     expect(committed.logicalProject.members).toEqual([pair.kept, m2, joined]);
@@ -567,7 +569,7 @@ describe("ProjectLink", () => {
         side: "coordinator",
         operationId: unlinkId,
         projectId: pair.kept.projectId,
-        member: withoutRoot(pair.joining),
+        member: { ...withoutRoot(pair.joining), linkId: operationId, generation: 1 },
       }),
     );
     expect(removed.logicalProject.members).toEqual([pair.kept, m2]);

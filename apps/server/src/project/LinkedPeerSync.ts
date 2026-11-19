@@ -79,7 +79,7 @@ import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { forkParked } from "../serverActivation.ts";
 import { LinkedMemorySync } from "./LinkedMemorySync.ts";
 import { describeCopy, selfMemberOf } from "./LinkedPeerRoute.ts";
-import { removalEnds } from "./linkMembership.ts";
+import { generationOf, removalEnds } from "./linkMembership.ts";
 import {
   type LinkedCoordinator,
   type LinkedPair,
@@ -250,7 +250,12 @@ const memberRefs = (members: ReadonlyArray<LogicalProjectMember>) =>
 
 /** Which link listed each copy: two lists of the same copies may hold different links of one. */
 const linkRefs = (members: ReadonlyArray<LogicalProjectMember>) =>
-  members.map((member) => `${logicalProjectMemberKey(member)} ${member.linkId ?? ""}`).toSorted();
+  members
+    .map(
+      (member) =>
+        `${logicalProjectMemberKey(member)} ${member.linkId ?? ""} ${member.generation ?? ""}`,
+    )
+    .toSorted();
 const sameLinks = (
   left: ReadonlyArray<LogicalProjectMember>,
   right: ReadonlyArray<LogicalProjectMember>,
@@ -618,7 +623,9 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
         const now = yield* Clock.currentTimeMillis;
         const hold = memberHolds.get(key);
         if (hold !== undefined && hold.lists === lists && hold.until > now) return;
-        const peerKeys = new Set(peer.members.map(logicalProjectMemberKey));
+        const peerLinks = new Map(
+          peer.members.map((member) => [logicalProjectMemberKey(member), member]),
+        );
         const sendOwn = peers
           .linkedMembers(input.member.environmentId, {
             ...input.ref,
@@ -650,7 +657,10 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
                   // The peer may be unable to call here, so what it lacks is sent: a member
                   // this copy holds, or the unlink of one the peer still lists.
                   Effect.tap(() =>
-                    held.every((member) => peerKeys.has(logicalProjectMemberKey(member))) &&
+                    held.every((member) => {
+                      const theirs = peerLinks.get(logicalProjectMemberKey(member));
+                      return theirs !== undefined && generationOf(theirs) >= generationOf(member);
+                    }) &&
                     !(own.binding?.removedMembers ?? []).some((removal) =>
                       peer.members!.some((member) =>
                         removalEnds(

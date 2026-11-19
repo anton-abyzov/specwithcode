@@ -469,6 +469,7 @@ describe(`equal coordinators: compatibility with ${PINNED_RELEASE} (EC2-09)`, ()
     );
     expect(committed.logicalProject.members).toEqual([
       pair.kept,
+      // The accept of that release counts no links: the entry is named and counts as the oldest.
       { ...pair.joining, linkId: operationId },
     ]);
     expect(typesToOwnCoordinator(pair.m4, pair.kept.projectId)).toBe(true);

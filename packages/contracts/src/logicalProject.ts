@@ -30,6 +30,13 @@ export const LogicalProjectMember = Schema.Struct({
    * one. Absent on members linked before this field.
    */
   linkId: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(128))),
+  /**
+   * Which link of this copy this is, counted by the copy itself each time it accepts one,
+   * so a later link always has the higher number. An unlink names the number it ended; a
+   * membership at or below a number this machine knows was unlinked stays out. Absent on
+   * members linked before this field, and on one an older machine relayed: both count as 0.
+   */
+  generation: Schema.optionalKey(NonNegativeInt),
 });
 export type LogicalProjectMember = typeof LogicalProjectMember.Type;
 
@@ -127,9 +134,11 @@ export const ProjectCoordinatorBinding = Schema.Struct({
       Schema.Struct({
         environmentId: EnvironmentId,
         projectId: ProjectId,
-        /** The membership the unlink ended (`LogicalProjectMember.linkId`), when it had one. */
+        /** The link the unlink ended (`LogicalProjectMember.linkId`), when it had a name. */
         linkId: Schema.optional(Schema.String.check(Schema.isMaxLength(128))),
-        /** When it was unlinked; decides only for a membership without a `linkId`. */
+        /** The generation the unlink ended: it and every earlier link of the copy stay out. */
+        generation: Schema.optional(NonNegativeInt),
+        /** When it was unlinked; decides only for an unlink without a `generation`. */
         removedAt: Schema.optional(IsoDateTime),
       }),
     ).check(Schema.isMaxLength(256)),

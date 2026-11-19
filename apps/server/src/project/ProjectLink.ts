@@ -79,7 +79,13 @@ import { CoordinatorRearmStore } from "./CoordinatorRearmStore.ts";
 import * as CoordinatorRole from "./CoordinatorRole.ts";
 import { CoordinatorStandbyStore } from "./CoordinatorStandbyStore.ts";
 import * as LinkedMemorySync from "./LinkedMemorySync.ts";
-import { rememberRelink, rememberRemoval } from "./linkMembership.ts";
+import {
+  commitStep,
+  nextGeneration,
+  rememberRelink,
+  rememberRemoval,
+  unlinkTarget,
+} from "./linkMembership.ts";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
 import {
   type AddPredecessorMembersInput,
@@ -666,7 +672,16 @@ const make = Effect.gen(function* () {
             return yield* fail("repository_mismatch", rootSummary(own, input.keptFingerprint));
         }
         // This link names the membership: an unlink of an earlier one never ends it.
-        const joinedAs: LogicalProjectMember = { ...self, linkId: input.operationId };
+        const joinedAs: LogicalProjectMember = {
+          ...self,
+          linkId: input.operationId,
+          generation: nextGeneration({
+            self,
+            keptMembers: input.logicalProject.members,
+            keptRemoved: input.coordinatorBinding.removedMembers ?? [],
+            ownRemoved: project.workspaceSettings?.coordinatorBinding?.removedMembers ?? [],
+          }),
+        };
         const logicalProject: LogicalProject = {
           ...input.logicalProject,
           members: mergeMembers(input.logicalProject.members, [joinedAs]),
@@ -717,26 +732,33 @@ const make = Effect.gen(function* () {
         if (!identity) return yield* fail("conflict", "Prepare the link on this copy first.");
         const refusal = linkRefusals(project, false).keep;
         if (refusal) return yield* fail(refusal);
-        // The membership is named by this link, on both machines and every one they tell.
-        const joining: LogicalProjectMember = { ...input.joining, linkId: input.operationId };
-        const earlier = identity.members.find((member) => sameMember(member, joining));
-        const listed = earlier !== undefined && earlier.linkId === joining.linkId;
+        if (
+          identity.members.some(
+            (member) =>
+              logicalProjectMemberKey(member) === logicalProjectMemberKey(input.joining) &&
+              !sameMember(member, input.joining),
+          )
+        )
+          return yield* fail("conflict", "That copy is listed with another coordinator thread.");
+        // Decided before anything is written: a late retry of a link that was unlinked or
+        // replaced since is refused, and never brings that link back (linkMembership).
+        const step = commitStep({
+          members: identity.members,
+          removed: project.workspaceSettings?.coordinatorBinding?.removedMembers ?? [],
+          joining: input.joining,
+          operationId: input.operationId,
+        });
+        if (step.kind === "refused") return yield* fail("conflict", step.detail);
         const notesWritten = yield* writeNotes(project.id, input.notes);
         yield* recordSuperseded(project.id, input.superseded ?? []);
-        if (listed)
+        if (step.kind === "replay")
           return {
             operationId: input.operationId,
             logicalProject: identity,
             notesWritten,
             replayed: true,
           };
-        if (
-          earlier === undefined &&
-          identity.members.some(
-            (member) => logicalProjectMemberKey(member) === logicalProjectMemberKey(joining),
-          )
-        )
-          return yield* fail("conflict", "That copy is listed with another coordinator thread.");
+        const { joining, earlier } = step;
         const now = DateTime.toEpochMillis(yield* DateTime.now);
         // Listed here by an earlier link, which that copy left: this copy ends that
         // membership first, so an unlink of it made elsewhere never ends the new one.
@@ -786,7 +808,7 @@ const make = Effect.gen(function* () {
    */
   const rememberRemoved = (
     binding: ProjectCoordinatorBinding,
-    member: Pick<LogicalProjectMember, "environmentId" | "projectId" | "linkId">,
+    member: Pick<LogicalProjectMember, "environmentId" | "projectId" | "linkId" | "generation">,
   ) =>
     DateTime.now.pipe(
       Effect.map((now) => rememberRemoval(binding, member, DateTime.toEpochMillis(now))),
@@ -805,11 +827,11 @@ const make = Effect.gen(function* () {
           if (binding?.state === "transferring") return yield* fail("handoff_in_progress");
           if (logicalProjectMemberKey(input.member) === logicalProjectMemberKey(self))
             return yield* fail("invalid");
-          const remaining = identity.members.filter(
-            (member) => logicalProjectMemberKey(member) !== logicalProjectMemberKey(input.member),
-          );
           const current = binding ?? { epoch: 0, state: "active" as const };
-          if (remaining.length === identity.members.length)
+          // Only the link the request names, or an older one: a call that arrives after
+          // the copy was linked again changes nothing (linkMembership).
+          const target = unlinkTarget(identity.members, input.member);
+          if (target === undefined)
             return {
               operationId: input.operationId,
               logicalProject: identity,
@@ -817,11 +839,11 @@ const make = Effect.gen(function* () {
               notesWritten: 0,
               replayed: true,
             };
-          const logicalProject = { ...identity, members: remaining };
-          const leaving = identity.members.find(
-            (member) => logicalProjectMemberKey(member) === logicalProjectMemberKey(input.member),
-          );
-          const coordinatorBinding = yield* rememberRemoved(current, leaving ?? input.member);
+          const logicalProject = {
+            ...identity,
+            members: identity.members.filter((member) => member !== target.listed),
+          };
+          const coordinatorBinding = yield* rememberRemoved(current, target.ended);
           yield* writeOwnership(project, "project-unlink-member", input.operationId, {
             mode: "remove-member",
             logicalProject,

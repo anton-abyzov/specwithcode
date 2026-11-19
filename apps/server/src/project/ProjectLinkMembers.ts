@@ -30,6 +30,7 @@ import { stringifyJson } from "../json.ts";
 import { sha256 } from "../nodeCrypto.ts";
 import type { ProjectOwnershipUpdate } from "../orchestration-v2/ProjectCommands.ts";
 import {
+  generationOf,
   mergeRelinked,
   mergeRemoved,
   removalEnds,
@@ -178,7 +179,7 @@ export const makeProjectLinkMembers = (deps: ProjectLinkMembersDeps) => {
       const unlinkedThere = (input.removed ?? []).filter(
         (removal) =>
           logicalProjectMemberKey(removal) !== fromKey &&
-          (removal.linkId !== undefined || !listedThere.has(logicalProjectMemberKey(removal))),
+          (removal.generation !== undefined || !listedThere.has(logicalProjectMemberKey(removal))),
       );
       const endedBy = (member: LogicalProjectMember) =>
         unlinkedThere.find((removal) => removalEnds(removal, member, ownRelinked, theirRelinked));
@@ -217,29 +218,53 @@ export const makeProjectLinkMembers = (deps: ProjectLinkMembersDeps) => {
       const relinked = mergeRelinked(ownRelinked, theirRelinked);
       const ownRemoved = current.removedMembers ?? [];
       const stillRemoved = ownRemoved.filter(
-        (removal) => removal.linkId !== undefined || removalStands(removal, relinked),
+        (removal) => removal.generation !== undefined || removalStands(removal, relinked),
       );
-      const held = new Set(identity.members.map(logicalProjectMemberKey));
-      const added = byKey(input.members)
-        .filter(
-          (member) =>
-            !held.has(logicalProjectMemberKey(member)) &&
-            // A membership this copy unlinked stays out; a later link of that copy comes in.
-            !stillRemoved.some((removal) => removalEnds(removal, member, relinked)) &&
-            member.environmentId !== self.environmentId,
-        )
+      const held = new Map(
+        identity.members.map((member) => [logicalProjectMemberKey(member), member]),
+      );
+      // A membership this copy knows was unlinked stays out, whoever lists it and however
+      // late: only a later link of that copy, which counts above the unlink, comes in.
+      const offered = byKey(input.members).filter(
+        (member) =>
+          member.environmentId !== self.environmentId &&
+          !stillRemoved.some((removal) => removalEnds(removal, member, relinked)),
+      );
+      const added = offered
+        .filter((member) => !held.has(logicalProjectMemberKey(member)))
         .slice(0, Math.max(0, MAX_MEMBERS - identity.members.length));
+      // The same copy listed there by a later link than here: this list takes that link, as
+      // one an older machine relayed without a generation takes the named one.
+      const later = new Map(
+        offered
+          .filter((member) => {
+            const mine = held.get(logicalProjectMemberKey(member));
+            return (
+              mine !== undefined &&
+              memberRef(mine) === memberRef(member) &&
+              generationOf(member) > generationOf(mine)
+            );
+          })
+          .map((member) => [logicalProjectMemberKey(member), member]),
+      );
       const learned =
+        later.size > 0 ||
         stillRemoved.length !== ownRemoved.length ||
         stringifyJson(relinked) !== stringifyJson(ownRelinked);
       if (added.length === 0 && !learned) return { replayed: true, changed: false };
-      const members = [...identity.members, ...added];
+      const members = [
+        ...identity.members.map((member) => later.get(logicalProjectMemberKey(member)) ?? member),
+        ...added,
+      ];
       const { removedMembers: _removed, relinkedMembers: _relinked, ...rest } = current;
       yield* deps.writeOwnership(
         project,
         "project-link-members",
         learned || members.some((member) => member.linkId !== undefined)
-          ? stateId(members, [members.map((member) => member.linkId ?? null), relinked])
+          ? stateId(members, [
+              members.map((member) => [member.linkId ?? null, generationOf(member)]),
+              relinked,
+            ])
           : listId(members),
         {
           mode: "sync-members",

@@ -455,6 +455,13 @@ export const link = async (pair: ReturnType<typeof legacyPair>) => {
   return { prepared, accepted, committed };
 };
 
+/** A member as both ends list it once linked: named by its link, counted by its own copy. */
+export const linkedAs = (
+  member: LogicalProjectMember,
+  linkId: string = operationId,
+  generation = 1,
+): LogicalProjectMember => ({ ...member, linkId, generation });
+
 export const thirdLinkId = "33333333-3333-4333-8333-333333333333";
 
 /**
