@@ -26,7 +26,60 @@ import { CHECKS_COPY_STALE_PACK_MS, removeStaleGitPacks } from "../staleGitPacks
 export const VERIFICATION_INSTALL_COMMAND_ENV = "STUDIO_CHECKS_INSTALL_COMMAND";
 
 /** Inside the copy's `.git`, so it is never part of the working tree. */
-const STATE_FILE = "specwithcode-verify.json";
+export const VERIFICATION_STATE_FILE = "specwithcode-verify.json";
+const STATE_FILE = VERIFICATION_STATE_FILE;
+/** Inside the copy's `.git`: its mtime is the copy's last use by `checks copy` or `checks run`. */
+export const CHECKS_COPY_LAST_USED_FILE = "specwithcode-last-used";
+
+/**
+ * Records that the checks copy at `copyPath` was used at `nowMs`: writes the
+ * ISO time into `.git/specwithcode-last-used` and sets its mtime, which is
+ * the reading. Only a copy with a real `.git` folder is touched. Never throws.
+ */
+export function touchChecksCopyUse(copyPath: string, nowMs: number = Date.now()): void {
+  try {
+    const gitDir = NodePath.join(copyPath, ".git");
+    if (!NodeFS.lstatSync(gitDir).isDirectory()) return;
+    const marker = NodePath.join(gitDir, CHECKS_COPY_LAST_USED_FILE);
+    NodeFS.writeFileSync(marker, `${new Date(nowMs).toISOString()}\n`);
+    NodeFS.utimesSync(marker, nowMs / 1000, nowMs / 1000);
+  } catch {
+    // Recording use is a courtesy; a copy without it only retires on its git times.
+  }
+}
+
+/** Parent folders looked at above a working folder before giving up. */
+const CHECKS_COPY_WALK_LIMIT = 64;
+
+/**
+ * The checks copy `cwd` is in or inside: the nearest folder at or above it
+ * whose parent is named `verify` and that has a real `.git` folder. Null when
+ * there is none or anything cannot be read. Never throws.
+ */
+export function checksCopyContaining(cwd: string): string | null {
+  try {
+    let current = NodePath.resolve(cwd);
+    for (let step = 0; step < CHECKS_COPY_WALK_LIMIT; step += 1) {
+      const parent = NodePath.dirname(current);
+      if (parent === current) return null;
+      if (NodePath.basename(parent) === "verify") {
+        try {
+          if (
+            NodeFS.lstatSync(current).isDirectory() &&
+            NodeFS.lstatSync(NodePath.join(current, ".git")).isDirectory()
+          )
+            return current;
+        } catch {
+          // Not a copy; keep walking up.
+        }
+      }
+      current = parent;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 export class VerificationCopyError extends Error {
   readonly kind: "dirty" | "busy" | "failed";
@@ -212,6 +265,8 @@ export function ensureVerificationCopy(options: VerificationCopyOptions): Verifi
   } else if (git(copy, ["remote", "get-url", remote], env) !== source) {
     git(copy, ["remote", "set-url", remote, source], env);
   }
+  // Recorded before the fetch and install too, so a long install never reads as an unused copy.
+  touchChecksCopyUse(copy, (options.now ?? Date.now)());
 
   // Resolved in the source for a local path, so any commit there can be asked for by hash.
   const want = local
@@ -296,5 +351,6 @@ export function ensureVerificationCopy(options: VerificationCopyOptions): Verifi
     });
     installed = true;
   }
+  touchChecksCopyUse(copy, (options.now ?? Date.now)());
   return { path: copy, commit, created, moved, installed };
 }

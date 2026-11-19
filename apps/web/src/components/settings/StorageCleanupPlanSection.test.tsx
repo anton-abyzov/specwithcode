@@ -76,6 +76,8 @@ vi.mock("../ui/button", () => ({
   ),
 }));
 
+import { SUPPORTED_LOCALES } from "../../i18n";
+import { translatePhrase } from "../../i18n/phrases";
 import { StorageCleanupPlanSection } from "./StorageCleanupPlanSection";
 
 const item = (overrides: Partial<StorageCleanupPlanItem>): StorageCleanupPlanItem => ({
@@ -164,6 +166,10 @@ const reasonOf = (path: string) =>
   renderer.root
     .find((node) => node.type === "li" && node.props["data-path"] === path)
     .find((node) => node.type === "p" && node.props["data-reason"] !== undefined).children;
+const sizeOf = (path: string) =>
+  renderer.root
+    .find((node) => node.type === "li" && node.props["data-path"] === path)
+    .find((node) => node.type === "span" && node.props["data-size"] !== undefined).children;
 
 describe("StorageCleanupPlanSection", () => {
   it("loads nothing until Check, then lists what would go and what stays with the reason", async () => {
@@ -178,7 +184,7 @@ describe("StorageCleanupPlanSection", () => {
     const shown = text();
     expect(shown).toContain("At least 1.3 GB would be freed.");
     expect(shown).toContain(
-      "Dependency folders are left out: their files are shared with the package store. Some folders could not be fully checked or measured.",
+      "Dependency folders are left out: their files are shared with the package store. Some folders could not be fully checked.",
     );
     expect(renderer.root.findByProps({ "aria-label": "Would be removed" })).toBeTruthy();
     expect(renderer.root.findByProps({ "aria-label": "Kept" })).toBeTruthy();
@@ -206,7 +212,7 @@ describe("StorageCleanupPlanSection", () => {
     expect(shown).toContain("Removed 2 folders, at least 1.3 GB.");
     expect(shown).toContain("Nothing to remove right now.");
     expect(shown).not.toContain("app/1370-cleanup");
-    expect(shown).not.toContain("Some folders could not be fully checked or measured.");
+    expect(shown).not.toContain("Some folders could not be fully checked.");
     expect(shown).toContain("app/1371-open");
     expect(button("data-storage-cleanup-run").props.disabled).toBe(true);
   });
@@ -233,7 +239,7 @@ describe("StorageCleanupPlanSection", () => {
     const alert = renderer.root.find((node) => node.type === "p" && node.props.role === "alert");
     expect(alert.children.join("")).toBe("The check could not finish.");
     expect(text()).not.toContain("Nothing to remove right now.");
-    expect(text()).not.toContain("Some folders could not be fully checked or measured.");
+    expect(text()).not.toContain("Some folders could not be fully checked.");
     expect(button("data-storage-cleanup-run").props.disabled).toBe(true);
   });
 
@@ -295,6 +301,57 @@ describe("StorageCleanupPlanSection", () => {
     await press(button("data-storage-cleanup-run"));
     expect(state.runCleanup).not.toHaveBeenCalled();
     expect(text()).toContain("This connection cannot change this machine's storage.");
+  });
+
+  it("says size unknown where a folder without a size would show it", async () => {
+    mount();
+    await press(button("data-storage-cleanup-check"));
+    expect(sizeOf(UNPUSHED.path)).toEqual(["size unknown"]);
+    expect(sizeOf(MERGED.path)).toEqual(["512 MB"]);
+    expect(sizeOf(DOWNLOADS.path)).toEqual(["800 MB"]);
+  });
+
+  it("keeps the total a lower bound when a removable folder has no size", async () => {
+    const UNMEASURED = item({ path: "/Users/me/.specwithcode/worktrees/app/1372-big" });
+    state.getPlan.mockResolvedValue({
+      _tag: "Success",
+      value: { ...PLAN, items: [MERGED, UNMEASURED], removableBytes: 512_000_000, complete: true },
+    });
+    mount();
+    await press(button("data-storage-cleanup-check"));
+    expect(text()).toContain("At least 512 MB would be freed.");
+    expect(sizeOf(UNMEASURED.path)).toEqual(["size unknown"]);
+    // A complete plan with a missing size says nothing about folders it could not check.
+    expect(text()).not.toContain("Some folders could not be fully checked.");
+  });
+
+  it("lists a folder Git could not remove under Kept with Git's message", async () => {
+    const detail =
+      "Git could not remove it: fatal: 'app/1373' contains modified or untracked files. Open files: node (4512).";
+    const STUCK = item({
+      path: "/Users/me/.specwithcode/worktrees/app/1373-stuck",
+      action: "keep",
+      reason: "unknown",
+      detail,
+    });
+    state.getPlan.mockResolvedValue({
+      _tag: "Success",
+      value: { ...PLAN, items: [STUCK], removableBytes: 0, complete: true },
+    });
+    mount();
+    await press(button("data-storage-cleanup-check"));
+    const kept = renderer.root.findByProps({ "aria-label": "Kept" });
+    expect(kept.findAll((node) => node.type === "li")).toHaveLength(1);
+    expect(reasonOf(STUCK.path)).toEqual([detail]);
+  });
+
+  it("has the new words in every language", () => {
+    for (const phrase of ["size unknown", "Some folders could not be fully checked."]) {
+      for (const locale of SUPPORTED_LOCALES) {
+        if (locale === "en") continue;
+        expect(translatePhrase(locale, phrase), `${locale}: ${phrase}`).not.toBe(phrase);
+      }
+    }
   });
 
   it("shows nothing for a machine whose server cannot answer the plan", () => {

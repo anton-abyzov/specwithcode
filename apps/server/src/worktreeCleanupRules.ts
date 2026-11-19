@@ -23,7 +23,7 @@ import { threadHasQueuedTurnStart } from "./orchestration-v2/ThreadSettlementSer
 
 /**
  * Finished and waiting for nothing: no run in progress, no background task,
- * no question or approval pending, no turn queued to start. A run that
+ * no question or approval pending, no turn queued to start or held. A run that
  * completed, was cancelled, interrupted or rolled back counts; `waiting` does
  * not, and neither does a runless native sub-chat still at work.
  */
@@ -40,7 +40,41 @@ export function storageCleanupThreadIdle(thread: OrchestrationV2ThreadShell, now
       thread.status === "rolled_back") &&
     (thread.pendingBackgroundTasks?.length ?? 0) === 0 &&
     thread.pendingRuntimeRequest === null &&
+    // A held queue is messages waiting to run.
+    (thread.heldQueuedCount ?? 0) === 0 &&
     !threadHasQueuedTurnStart(thread, now)
+  );
+}
+
+/**
+ * Its work is done though nobody resolved it: idle as above, and its last run
+ * completed. A run that failed, was cancelled, interrupted or rolled back is
+ * one a person may still retry, and a chat that never ran has not started.
+ */
+export function storageCleanupThreadFinished(
+  thread: OrchestrationV2ThreadShell,
+  now: number,
+): boolean {
+  return (
+    storageCleanupThreadIdle(thread, now) &&
+    thread.status === "completed" &&
+    thread.latestRunId !== null
+  );
+}
+
+/**
+ * A sub-chat with no run of its own (a provider's native helper) shows only
+ * what its parent's run did: its parent decides for it.
+ */
+export function storageCleanupFollowsParent(
+  thread: OrchestrationV2ThreadShell,
+  folderThreadIds: ReadonlySet<string>,
+): boolean {
+  return (
+    thread.lineage.relationshipToParent === "subagent" &&
+    thread.lineage.parentThreadId !== null &&
+    folderThreadIds.has(thread.lineage.parentThreadId) &&
+    thread.latestRunId === null
   );
 }
 

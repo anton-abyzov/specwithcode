@@ -344,6 +344,100 @@ describe("worktree sets", () => {
       }),
     );
 
+    it.effect("restores a listed repository whose folder is gone, from its branch or cut again", () =>
+      Effect.gen(function* () {
+        const { fs, path, run, base, project, web } = yield* fixture;
+        const folder = path.join(base, "worktrees", "project", "thread-back");
+        yield* createWorktreeSet({
+          folder,
+          members: [],
+          branch: "thread/back",
+          projectRoot: project,
+          baseRef: "HEAD",
+          startFromOrigin: false,
+          submodules: null,
+        });
+        const add = (
+          existing: ReadonlyArray<WorktreeSetMember>,
+          extra: { limit?: number; refuseNew?: string } = {},
+        ) =>
+          addThreadRepository({
+            folder,
+            existing,
+            plain: false,
+            entry: "web",
+            checkouts: [{ id: "web", path: web }],
+            projectRoot: project,
+            branch: "thread/back",
+            startFromOrigin: false,
+            submodules: null,
+            ...extra,
+          });
+        const first = yield* add([]);
+        expect(first).toMatchObject({ alreadyMember: false, baseRef: "main" });
+        const member = path.join(folder, "web");
+        yield* fs.writeFileString(path.join(member, "work.txt"), "work\n");
+        yield* run(member, ["add", "work.txt"]);
+        yield* run(member, ["commit", "-m", "work"]);
+        const listed = () => readWorktreeSet(folder).pipe(Effect.map((set) => set?.members ?? []));
+
+        // The folder is gone, the branch stays: it comes back on the branch, even at the cap or on a low disk.
+        yield* fs.remove(member, { recursive: true });
+        const fromBranch = yield* add(yield* listed(), {
+          limit: 1,
+          refuseNew: "Only 1.0 GB is free",
+        });
+        expect(fromBranch).toMatchObject({ alreadyMember: false, restored: true, baseRef: "main" });
+        expect(fromBranch.members).toHaveLength(1);
+        expect((yield* run(member, ["symbolic-ref", "--short", "HEAD"])).stdout.trim()).toBe(
+          "thread/back",
+        );
+        expect(yield* fs.readFileString(path.join(member, "work.txt"))).toBe("work\n");
+
+        // The branch is gone too: it is cut again from the checked-out branch, which the manifest records.
+        yield* fs.remove(member, { recursive: true });
+        yield* run(web, ["worktree", "prune"]);
+        yield* run(web, ["branch", "-D", "thread/back"]);
+        yield* run(web, ["checkout", "-b", "develop"]);
+        const cutAgain = yield* add(yield* listed(), { limit: 1 });
+        expect(cutAgain).toMatchObject({
+          alreadyMember: false,
+          restored: true,
+          baseRef: "develop",
+        });
+        expect((yield* run(member, ["symbolic-ref", "--short", "HEAD"])).stdout.trim()).toBe(
+          "thread/back",
+        );
+        expect(yield* fs.exists(path.join(member, "work.txt"))).toBe(false);
+        expect((yield* listed()).map((entry) => entry.baseRef)).toEqual(["develop"]);
+
+        // A leftover folder with files but no checkout is refused and left as it is.
+        yield* fs.remove(member, { recursive: true });
+        yield* run(web, ["worktree", "prune"]);
+        yield* fs.makeDirectory(member);
+        yield* fs.writeFileString(path.join(member, "keep.txt"), "keep\n");
+        const refused = yield* add(yield* listed()).pipe(Effect.flip);
+        expect(refused).toContain("holds files but no git checkout");
+        expect(yield* fs.readFileString(path.join(member, "keep.txt"))).toBe("keep\n");
+        expect(yield* fs.exists(path.join(member, ".git"))).toBe(false);
+        expect((yield* listed()).map((entry) => entry.baseRef)).toEqual(["develop"]);
+
+        // A folder holding only .DS_Store counts as empty.
+        yield* fs.remove(path.join(member, "keep.txt"));
+        yield* fs.writeFileString(path.join(member, ".DS_Store"), "");
+        const refilled = yield* add(yield* listed());
+        expect(refilled).toMatchObject({ alreadyMember: false, restored: true });
+        expect(yield* fs.exists(path.join(member, ".git"))).toBe(true);
+        expect(yield* fs.exists(path.join(member, ".DS_Store"))).toBe(false);
+
+        // A member that is there is returned as it is.
+        const present = yield* add(yield* listed());
+        expect(present.alreadyMember).toBe(true);
+        expect(present.restored).toBeUndefined();
+        expect(present.members).toHaveLength(1);
+      }),
+    );
+
     it.effect("leaves a plain worktree plain when the repository cannot be added", () =>
       Effect.gen(function* () {
         const { fs, path, run, base, project, web } = yield* fixture;

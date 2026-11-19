@@ -20,13 +20,20 @@
  * - unchanged: its chats are closed and no member has commits of its own.
  * - merged or closed: a member's pull request merged or closed, and every
  *   member is merged with its content on the default branch, closed with
- *   nothing unpushed, or has no commits of its own. An open chat must have
- *   been quiet for six hours; resolved and archived chats need no wait.
+ *   nothing unpushed, or has no commits of its own. Merged work goes as soon
+ *   as every head chat is finished; a closed pull request, and a chat that is
+ *   still open, wait until the folder has been quiet for six hours. Resolved
+ *   and archived chats need no wait.
+ * - on the default branch: every member has no commits of its own, every head
+ *   chat is finished, and the folder has been quiet for six hours (the merged
+ *   rule's switch; reported as "unchanged").
  * - resolved: every head chat is resolved or archived and every member is
  *   pushed or on the default branch ("Delete worktrees of resolved chats").
  *
  * A head chat is one whose parent does not use the same folder; sub-chats
- * never decide, but one that is not quiet keeps the folder.
+ * never decide, but one that is not quiet keeps the folder. A head chat is
+ * finished when it is resolved, archived, or its last run completed and it
+ * waits for nothing; one whose last run failed or was stopped stays open.
  *
  * @module finishedWorktrees
  */
@@ -41,7 +48,7 @@ import { ORPHAN_MERGED_IDLE_MS } from "./orphanWorktrees.ts";
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
 
-/** Ignored media is copied to evidence up to this much per folder; more keeps the folder. */
+/** Ignored evidence files are copied up to this much per folder; more keeps the folder. */
 export const MEDIA_LIMIT_BYTES = 1024 ** 3;
 export const MEDIA_LIMIT_FILES = 2_000;
 
@@ -69,7 +76,22 @@ export function isMediaFile(name: string): boolean {
   return dot > 0 && MEDIA_EXTENSIONS.has(name.slice(dot + 1).toLowerCase());
 }
 
-export type FinishedChatState = "open" | "resolved" | "archived";
+/**
+ * An ignored file that is copied to evidence before its folder goes, by its
+ * path in its member with forward slashes: media anywhere, anything in a
+ * `reports` folder (review reports, run output), and SpecWeave's own local
+ * state and logs under `.specweave/`. Nothing else: an ignored file elsewhere
+ * can be a credential, and it keeps the folder instead.
+ */
+export function isEvidenceFile(relative: string): boolean {
+  const name = relative.slice(relative.lastIndexOf("/") + 1);
+  return (
+    isMediaFile(name) || /(^|\/)reports\/[^/]/.test(relative) || relative.startsWith(".specweave/")
+  );
+}
+
+/** "finished": not resolved or archived, but its last run completed and nothing is pending. */
+export type FinishedChatState = "open" | "finished" | "resolved" | "archived";
 
 export interface FinishedFolderChats {
   /** Chats whose parent does not use this folder. */
@@ -96,7 +118,7 @@ export interface FinishedMemberGit {
   readonly untracked: ReadonlyArray<string> | null;
   /** Names of ignored files that are neither rebuildable nor media. */
   readonly ignoredOther: ReadonlyArray<string> | null;
-  /** Ignored media, copied to evidence before removal. */
+  /** Ignored media, reports and SpecWeave state, copied to evidence before removal. */
   readonly media: { readonly files: number; readonly bytes: number } | null;
   /** Edits Git status hides (assume-unchanged, skip-worktree). */
   readonly hiddenTrackedChanges: boolean | null;
@@ -266,8 +288,11 @@ export function decideFinishedWorktree(
   if (chatBranch === null) return keep("unknown", "Its chats record no branch, or different ones.");
 
   const heads = chats?.heads ?? [];
-  const openHead = heads.find((head) => head.state !== "resolved" && head.state !== "archived");
-  const headsClosed = heads.length > 0 && openHead === undefined;
+  const openHead = heads.find((head) => head.state === "open");
+  const unclosedHead = heads.find((head) => head.state !== "resolved" && head.state !== "archived");
+  const headsClosed = heads.length > 0 && unclosedHead === undefined;
+  /** Every head chat is finished, resolved or archived. */
+  const headsFinished = heads.length > 0 && openHead === undefined;
   const newestActivityAt = chats?.newestActivityAt ?? null;
   const quietLongEnough = olderThan(newestActivityAt, ORPHAN_MERGED_IDLE_MS, now);
   // Settled before any Git command: most folders belong to chats still at work.
@@ -285,6 +310,12 @@ export function decideFinishedWorktree(
     }
     return keep("open", `${openHead.title} is open.`);
   }
+  // A finished chat that is not resolved goes only under the merged rule.
+  if (unclosedHead !== undefined && !rules.worktreeOnMerge)
+    return keep(
+      "no-rule",
+      `${unclosedHead.title} is finished but not resolved, and deleting merged worktrees is off.`,
+    );
   if (
     facts.deleted === null &&
     rules.worktreeAfterDays === null &&
@@ -313,7 +344,7 @@ export function decideFinishedWorktree(
   if (media.files > MEDIA_LIMIT_FILES || media.bytes > MEDIA_LIMIT_BYTES)
     return keep(
       "media",
-      `${plural(media.files, "media file")}, ${(media.bytes / 1024 ** 3).toFixed(1)} GB: more than is copied to evidence automatically.`,
+      `${plural(media.files, "file")} to keep, ${(media.bytes / 1024 ** 3).toFixed(1)} GB: more than is copied to evidence automatically.`,
     );
 
   let applied: {
@@ -355,12 +386,32 @@ export function decideFinishedWorktree(
     facts.deleted === null &&
     rules.worktreeOnMerge &&
     gits.length > 0 &&
-    (headsClosed || quietLongEnough)
+    (headsFinished || quietLongEnough)
   ) {
     if (gits.some(({ git }) => git.headInDefault === undefined))
       return notChecked("default-branch");
-    if (gits.some(({ git }) => git.branch !== null && git.pullRequest === undefined))
+    // Nothing of its own and no pull request its chats know as finished: the
+    // host is not asked. It goes once it has been quiet, so a chat that only
+    // answered a question keeps its folder while the person may still reply.
+    const nothingOfItsOwn =
+      !headsClosed &&
+      gits.every(({ git }) => git.headInDefault === true) &&
+      chats?.pullRequestFinished !== true;
+    if (nothingOfItsOwn) {
+      if (quietLongEnough)
+        applied = { reason: "unchanged", detail: "Everything in it is on the default branch." };
+    } else if (gits.some(({ git }) => git.branch !== null && git.pullRequest === undefined))
       return notChecked("pull-request");
+  }
+  if (
+    applied === null &&
+    !resolvedAndPushed &&
+    facts.deleted === null &&
+    rules.worktreeOnMerge &&
+    gits.length > 0 &&
+    (headsFinished || quietLongEnough) &&
+    gits.every(({ git }) => git.branch === null || git.pullRequest !== undefined)
+  ) {
     const state = (git: FinishedMemberGit) => (git.branch === null ? null : git.pullRequest?.state);
     const finished = gits.some(({ git }) => state(git) === "merged" || state(git) === "closed");
     const everyDone = gits.every(
@@ -369,8 +420,9 @@ export function decideFinishedWorktree(
         (state(git) === "merged" && integrated(git)) ||
         (state(git) === "closed" && git.unpushedCommits === 0),
     );
-    if (finished && everyDone) {
-      const merged = gits.some(({ git }) => state(git) === "merged");
+    const merged = gits.some(({ git }) => state(git) === "merged");
+    // A closed pull request can be reopened by the person still in the chat.
+    if (finished && everyDone && (merged || headsClosed || quietLongEnough)) {
       applied = {
         reason: merged ? "merged" : "closed",
         detail: merged
@@ -459,5 +511,17 @@ export function decideFinishedWorktree(
   if (openHead !== undefined) return keep("open", `${openHead.title} is open.`);
   if (unpushedBlocker !== null) return keep("unpushed", unpushedBlocker);
   if (unknownHistory !== null) return keep("unknown", unknownHistory);
+  if (unclosedHead !== undefined && rules.worktreeOnMerge) {
+    if (gits.every(({ git }) => git.headInDefault === true)) {
+      const quiet = elapsedMs(newestActivityAt, now);
+      return quiet === null
+        ? keep("unknown", "When it was last used is unknown, so it is kept.")
+        : keep(
+            "recent",
+            `Quiet for ${plural(Math.floor(quiet / HOUR_MS), "hour")}; it goes after 6.`,
+          );
+    }
+    return keep("open", `${unclosedHead.title} is finished, but its work is not merged.`);
+  }
   return keep("no-rule", "No cleanup rule that is switched on covers it.");
 }

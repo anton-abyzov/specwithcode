@@ -5196,8 +5196,9 @@ export const de: PhraseCatalog = {
   "At least {size} would be freed.": "Mindestens {size} würden frei.",
   "Dependency folders are left out: their files are shared with the package store.":
     "Abhängigkeitsordner sind nicht mitgezählt: Ihre Dateien teilen sie mit dem Paketspeicher.",
-  "Some folders could not be fully checked or measured.":
-    "Einige Ordner konnten nicht vollständig geprüft oder gemessen werden.",
+  "Some folders could not be fully checked.":
+    "Einige Ordner konnten nicht vollständig geprüft werden.",
+  "size unknown": "Größe unbekannt",
   "Leftover files of stopped downloads": "Reste abgebrochener Downloads",
   "Nothing to remove right now.": "Gerade gibt es nichts zu entfernen.",
   "Nothing was removed.": "Nichts wurde entfernt.",

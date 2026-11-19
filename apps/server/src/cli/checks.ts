@@ -45,7 +45,12 @@ import {
   runUnderHeavyCheckGate,
   tryAcquireHeavyCheckLock,
 } from "./heavyCheckLock.ts";
-import { ensureVerificationCopy, VerificationCopyError } from "./verificationCopy.ts";
+import {
+  checksCopyContaining,
+  ensureVerificationCopy,
+  touchChecksCopyUse,
+  VerificationCopyError,
+} from "./verificationCopy.ts";
 
 /** A flag was wrong; nothing ran. */
 export const CHECKS_EXIT_USAGE = 2;
@@ -60,6 +65,16 @@ export function machineHeavyCheckPaths(env: NodeJS.ProcessEnv = process.env) {
       ? NodePath.resolve(override)
       : NodePath.join(studioDefaultHome(NodeOS.homedir()), "locks"),
   );
+}
+
+/** Marks the checks copy this command runs in as used, before and after the run. Never throws. */
+function recordChecksCopyUse(): void {
+  try {
+    const copy = checksCopyContaining(process.cwd());
+    if (copy !== null) touchChecksCopyUse(copy);
+  } catch {
+    // process.cwd() throws in a removed folder; there is no copy to mark then.
+  }
 }
 
 const fail = (code: number, message: string) =>
@@ -107,6 +122,7 @@ const runCommand = Command.make("run", {
           );
         waitTimeoutMs = parsed;
       }
+      yield* Effect.sync(recordChecksCopyUse);
       // Uninterruptible: on Ctrl-C the signal goes to the command, and the gate is released when it exits.
       const result = yield* Effect.uninterruptible(
         Effect.promise(() =>
@@ -119,6 +135,7 @@ const runCommand = Command.make("run", {
           }),
         ),
       );
+      yield* Effect.sync(recordChecksCopyUse);
       process.exitCode = result.exitCode;
     }),
   ),

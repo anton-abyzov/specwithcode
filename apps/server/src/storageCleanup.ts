@@ -12,7 +12,6 @@
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type {
-  OrchestrationV2DomainEvent,
   ProjectId,
   ServerSettings,
   ServerSettingsError,
@@ -102,6 +101,17 @@ import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
 import { hiddenTrackedChangeReason, nestedRepositoryReason } from "./worktreeHiddenWork.ts";
 import { anyWorktreePolicy, makeWorktreeCleanupSweep } from "./worktreeCleanupSweep.ts";
+import { listChecksCopies, retireChecksCopy } from "./checksCopyRetention.ts";
+import { removableLogFile } from "./storageLogRetention.ts";
+import {
+  LowDiskBackoff,
+  MERGED_PULL_REQUESTS_REMEMBERED,
+  MergedPullRequests,
+  SweepScope,
+  sweepThreadAfterEvent,
+} from "./storageCleanupTriggers.ts";
+
+export { MERGED_PULL_REQUESTS_REMEMBERED, MergedPullRequests };
 
 const DAY_MS = 86_400_000;
 
@@ -159,70 +169,6 @@ const worktreeCleanupEnabled = (rules: WorktreeCleanupRules) =>
 const worktreeRulesOn = (settings: ServerSettings) =>
   settings.storageCleanup.removeResolvedWorktrees ||
   anyWorktreePolicy(settings, worktreeCleanupEnabled);
-
-/**
- * How many merged pull requests are remembered so a later sync of the same one
- * does not ask for a sweep again. Past it the oldest are forgotten: forgetting
- * one costs at most one extra sweep.
- */
-export const MERGED_PULL_REQUESTS_REMEMBERED = 10_000;
-
-/**
- * Merged pull requests already seen, by chat and pull request. A sync rewrites
- * every link of the chat, so an old merged link would otherwise ask for a sweep
- * on each update of any other pull request the chat holds.
- */
-export class MergedPullRequests {
-  private readonly keys = new Set<string>();
-  private readonly limit: number;
-  constructor(limit = MERGED_PULL_REQUESTS_REMEMBERED) {
-    this.limit = limit;
-  }
-
-  /** Records the chat's merged links; true when one of them was not seen merged before. */
-  note(
-    threadId: string,
-    links: ReadonlyArray<{
-      readonly host: string;
-      readonly repository: string;
-      readonly number: number;
-      readonly snapshot: { readonly state: string } | null;
-    }>,
-  ): boolean {
-    let newlyMerged = false;
-    for (const link of links) {
-      if (link.snapshot?.state !== "merged") continue;
-      const key = `${threadId}\0${link.host}\0${link.repository}\0${link.number}`;
-      if (this.keys.has(key)) continue;
-      newlyMerged = true;
-      this.keys.add(key);
-      // A Set iterates in insertion order, so the first key is the oldest.
-      if (this.keys.size > this.limit) {
-        const oldest = this.keys.values().next();
-        if (oldest.done !== true) this.keys.delete(oldest.value);
-      }
-    }
-    return newlyMerged;
-  }
-}
-
-/** Events after which a finished chat's folder may go: resolved, archived, merged, deleted. */
-function sweepAfterEvent(
-  event: OrchestrationV2DomainEvent,
-  settings: ServerSettings,
-  merged: MergedPullRequests,
-): boolean {
-  if (event.type === "thread.deleted" || event.type === "provider-session.updated")
-    return anyWorktreePolicy(settings, (rules) => rules.worktreeOnDelete);
-  // Recorded whatever the rules say, so switching a rule on later does not
-  // turn every old merge into a new one.
-  const newlyMerged =
-    event.type === "thread.pull-request-synced" &&
-    merged.note(event.payload.id, event.payload.pullRequests ?? []);
-  if (!worktreeRulesOn(settings)) return false;
-  if (event.type === "thread.settled" || event.type === "thread.archived") return true;
-  return newlyMerged;
-}
 
 /** A folder or leftover file a sweep removed, with its size outside dependency installs. */
 interface RemovedItem {
@@ -814,7 +760,11 @@ export const make = Effect.gen(function* () {
         const stat = yield* fs.stat(target);
         if (stat.type === "Directory" && rotatedLogs) {
           yield* visit(target);
-        } else if (stat.type === "File" && (!rotatedLogs || /\.(?:log|ndjson)\.\d+$/.test(name))) {
+        } else if (
+          stat.type === "File" &&
+          (!rotatedLogs ||
+            removableLogFile(path.relative(realRoot, target).split(path.sep).join("/")))
+        ) {
           const modified = Option.getOrNull(stat.mtime);
           if (modified !== null && modified.getTime() < now - days * DAY_MS) {
             const current = (yield* settingsService.getSettings).storageCleanup;
@@ -979,6 +929,36 @@ export const make = Effect.gen(function* () {
       Effect.map(({ removed }) => removed),
     );
 
+  /**
+   * Retires checks copies nobody used for a week (checksCopyRetention.ts). Each
+   * is read again right before it goes; an unreadable process list keeps all.
+   */
+  const retireChecksCopies = Effect.fn("StorageCleanup.retireChecksCopies")(function* (
+    now: number,
+  ) {
+    const copies = listChecksCopies(config.baseDir);
+    if (copies.length === 0) return;
+    const processCwds = yield* listProcessCwds(platform);
+    for (const copy of copies) {
+      const result = yield* Effect.sync(() =>
+        retireChecksCopy(copy, { home: config.baseDir, processCwds, nowMs: now }),
+      );
+      if (result.removed)
+        yield* Effect.logInfo("storage cleanup retired an unused checks copy", {
+          path: copy,
+          bytes: result.bytes ?? null,
+          reason: result.reason,
+        });
+      else
+        yield* Effect.logDebug("storage cleanup kept checks copy", {
+          path: copy,
+          reason: result.reason,
+        });
+    }
+  });
+
+  const scope = new SweepScope();
+  const lowDiskBackoff = new LowDiskBackoff();
   /** Set by `start`: sweeps before it are left to the first scheduled one. */
   let sweepsNotBefore = Number.NEGATIVE_INFINITY;
   /** A scheduled sweep is queued and has not started; later requests join it. */
@@ -988,6 +968,8 @@ export const make = Effect.gen(function* () {
     removed: Array<RemovedItem>,
   ) {
     if (request.kind === "scheduled") sweepWaiting = false;
+    // What this sweep covers: every folder, or the folders of the chats events named.
+    const onlyThreads = request.kind === "scheduled" ? scope.take() : null;
     const now = yield* Clock.currentTimeMillis;
     if (request.kind !== "now" && now < sweepsNotBefore) {
       yield* Effect.logDebug("storage cleanup deferred until startup settles", {
@@ -1005,13 +987,20 @@ export const make = Effect.gen(function* () {
         database: otherInstance,
       });
     if (otherInstance === null && worktreeRulesOn(serverSettings)) {
-      const worktrees = yield* worktreeSweep("apply", serverSettings, now).pipe(
+      const worktrees = yield* worktreeSweep(
+        "apply",
+        serverSettings,
+        now,
+        onlyThreads === null ? {} : { onlyThreads },
+      ).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("worktree cleanup failed", { cause }).pipe(Effect.as(null)),
         ),
       );
       if (worktrees !== null) removed.push(...worktrees.removed);
     }
+    // A pass for some chats looks at their folders and nothing else.
+    if (onlyThreads !== null) return;
     if (request.kind !== "now" || otherInstance === null)
       removed.push(
         ...(yield* removeInterruptedDownloads(now).pipe(
@@ -1025,6 +1014,8 @@ export const make = Effect.gen(function* () {
     // "Clean up now" removes only what the plan lists, so its result names
     // everything it removed. The scheduled sweeps run the passes below.
     if (request.kind === "now") return;
+    // A pass over every folder that removed nothing: low disk gains nothing from another soon.
+    lowDiskBackoff.notePass(removed.length, yield* Clock.currentTimeMillis);
     yield* cleanOrphanWorktrees(serverSettings, now).pipe(
       Effect.catch((error) => Effect.logWarning("orphan worktree cleanup failed", { error })),
     );
@@ -1042,6 +1033,10 @@ export const make = Effect.gen(function* () {
     yield* cleanFiles(config.logsDir, settings.logsAfterDays, now, true).pipe(
       Effect.catch((error) => Effect.logWarning("rotated log cleanup failed", { error })),
     );
+    if (otherInstance === null)
+      yield* retireChecksCopies(now).pipe(
+        Effect.catchCause((cause) => Effect.logWarning("checks copy cleanup failed", { cause })),
+      );
     // Last: it measures what the cleanups above left.
     yield* homeUsage
       .run(serverSettings, now)
@@ -1154,16 +1149,28 @@ export const make = Effect.gen(function* () {
     );
   });
   /** Queues a sweep unless one is already waiting to start: requests collapse into it. */
-  const requestSweep = Effect.suspend(() => {
+  const enqueueSweep = Effect.suspend(() => {
     if (sweepWaiting) return Effect.void;
     sweepWaiting = true;
     return worker.enqueue({ kind: "scheduled" });
+  });
+  /** A sweep of every folder: the schedule, a settings change, low disk. */
+  const requestSweep = Effect.suspend(() => {
+    scope.addAll();
+    return enqueueSweep;
   });
 
   // Events ask through a one-slot queue: a burst while a sweep waits its turn
   // becomes one more sweep, at most every EVENT_SWEEP_INTERVAL_MS.
   const eventSignals = yield* Queue.sliding<true>(1);
-  const requestEventSweep = Queue.offer(eventSignals, true).pipe(Effect.asVoid);
+  /** What the events since the last event sweep asked for. */
+  const eventScope = new SweepScope();
+  const requestEventSweep = (threadId: string | null) =>
+    Effect.suspend(() => {
+      if (threadId === null) eventScope.addAll();
+      else eventScope.addThread(threadId);
+      return Queue.offer(eventSignals, true).pipe(Effect.asVoid);
+    });
   let lastEventSweepAt = Number.NEGATIVE_INFINITY;
   const eventSweeps = Queue.take(eventSignals).pipe(
     Effect.andThen(Clock.currentTimeMillis),
@@ -1174,7 +1181,10 @@ export const make = Effect.gen(function* () {
     Effect.andThen(Clock.currentTimeMillis),
     Effect.flatMap((now) => {
       lastEventSweepAt = now;
-      return requestSweep;
+      const asked = eventScope.take();
+      if (asked === null) scope.addAll();
+      else for (const threadId of asked) scope.addThread(threadId);
+      return scope.empty ? Effect.void : enqueueSweep;
     }),
     // The interval counts from the end of the sweep: a sweep longer than the
     // interval is not followed by the next one at once.
@@ -1238,9 +1248,15 @@ export const make = Effect.gen(function* () {
     );
     for (const thread of known) mergedPullRequests.note(thread.id, thread.pullRequests ?? []);
     yield* forkParked(
-      Stream.runForEach(events, (event) =>
-        sweepAfterEvent(event, lastSettings, mergedPullRequests) ? requestEventSweep : Effect.void,
-      ).pipe(
+      Stream.runForEach(events, (event) => {
+        const threadId = sweepThreadAfterEvent(
+          event,
+          lastSettings,
+          mergedPullRequests,
+          worktreeRulesOn(lastSettings),
+        );
+        return threadId === null ? Effect.void : requestEventSweep(threadId);
+      }).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("Storage cleanup event stream failed", { cause }),
         ),
@@ -1253,7 +1269,18 @@ export const make = Effect.gen(function* () {
         Stream.runForEach(diskSpace.value.changes, (status) => {
           const turnedLow = lastLevel === "ok" && status.level !== "ok";
           lastLevel = status.level;
-          return turnedLow ? requestEventSweep : Effect.void;
+          if (status.level === "ok") lowDiskBackoff.reset();
+          if (!turnedLow) return Effect.void;
+          // Unless the sweeps before it removed nothing (`LowDiskBackoff`).
+          return Clock.currentTimeMillis.pipe(
+            Effect.flatMap((now) =>
+              lowDiskBackoff.allows(now)
+                ? requestEventSweep(null)
+                : Effect.logDebug(
+                    "storage cleanup skipped a low-disk sweep: the last removed nothing",
+                  ),
+            ),
+          );
         }),
       );
     }
