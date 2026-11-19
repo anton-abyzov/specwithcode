@@ -17,6 +17,8 @@ export interface RecordedGit {
   readonly privateIndex: boolean;
   /** The Git folder the command was pinned to (`GIT_DIR`), null when it found its own. */
   readonly gitDir: string | null;
+  /** The environment the code under test gave the command, on top of this process's. */
+  readonly env: Readonly<Record<string, string | undefined>>;
 }
 const recorded: Array<RecordedGit> = [];
 export const recordedGit = (): ReadonlyArray<RecordedGit> => recorded;
@@ -43,6 +45,7 @@ export function recordingGit(actual: GitModule): GitModule {
       args: [...args],
       privateIndex: options?.env?.GIT_INDEX_FILE !== undefined,
       gitDir: options?.env?.GIT_DIR ?? null,
+      env: { ...options?.env },
     };
     recorded.push(command);
     await gitHooks.before?.(command);
@@ -108,8 +111,7 @@ export function gitCommandsNotAllowed(): Array<string> {
                   ? rest.join(" ") === "list --porcelain"
                   : verb === "init"
                     ? // Only the send's own private repository, made bare and without templates.
-                      rest.join(" ") === "--bare -q --template=" ||
-                      rest.join(" ").startsWith("--bare -q --template= --object-format=")
+                      /^--bare -q --template= --object-format=(sha1|sha256)$/.test(rest.join(" "))
                     : verb === "bundle"
                       ? ["create", "verify", "list-heads"].includes(rest[0] ?? "")
                       : verb === "update-ref"
