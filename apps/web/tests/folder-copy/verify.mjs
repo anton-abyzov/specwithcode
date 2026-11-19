@@ -280,7 +280,7 @@ const walker = (page, label, flow, viewport) => {
   };
 };
 
-const folderBox = (page) => page.getByRole("textbox", { name: "Folder on ministorm" });
+const folderBox = (page) => page.getByRole("textbox", { name: "Folder on linux-mini" });
 /** "Let me choose file types first", under Details. */
 const chooseFirst = async (page) => {
   const box = page.getByRole("checkbox", { name: "Let me choose file types first" });
@@ -293,14 +293,14 @@ const intent = async (page) =>
 /** A move asked for with "Continue the coordinator here": the fixture opens a fresh flow set to move. */
 const moveCoordinator = (page) =>
   page.evaluate(() => window.dispatchEvent(new Event("fixture-move")));
-const COPY_TITLE = "Add SpecWeave to ministorm";
-const MOVE_TITLE = "Continue the coordinator on ministorm";
+const COPY_TITLE = "Add SpecWeave to linux-mini";
+const MOVE_TITLE = "Continue the coordinator on linux-mini";
 /** The setup screen shows no step line. */
 const NO_STEPS = "none";
-const DONE_TITLE = "SpecWeave is on ministorm";
+const DONE_TITLE = "SpecWeave is on linux-mini";
 // A copy of files only leaves the project here: its Done says copied, not on.
-// A finished copy names when it was copied: "SpecWeave is on ministorm (added 2h ago)".
-const COPIED_TITLE = /^SpecWeave is on ministorm \(added [^)]+\)$/;
+// A finished copy names when it was copied: "SpecWeave is on linux-mini (added 2h ago)".
+const COPIED_TITLE = /^SpecWeave is on linux-mini \(added [^)]+\)$/;
 const COPY_ONLY = ["where", "what", "review", "copy", "done"];
 const ONE_CLICK = ["where", "copy", "done"];
 const MOVE = ["where", "what", "review", "copy", "transfer", "done"];
@@ -313,7 +313,7 @@ const bar = (states, ids = COPY_ONLY) => ids.map((id, index) => `${id}:${states[
 const choosing = async (page, w) => {
   const { action, pause, release, calls, body, check, close, reopen } = w;
   await check("where", {
-    primary: "Copy to ministorm",
+    primary: "Copy to linux-mini",
     steps: NO_STEPS,
     leading: null,
     title: COPY_TITLE,
@@ -326,12 +326,12 @@ const choosing = async (page, w) => {
   );
   await chooseFirst(page);
   await check("where-choose", {
-    primary: "Copy to ministorm",
+    primary: "Copy to linux-mini",
     steps: NO_STEPS,
     leading: null,
   });
   await pause("copyOffer");
-  await action("Copy to ministorm").click();
+  await action("Copy to linux-mini").click();
   await check("measuring", {
     primary: null,
     steps: bar(["done", "current", "next", "next", "next"]),
@@ -346,12 +346,12 @@ const choosing = async (page, w) => {
   NodeAssert.equal(await action("Stop copy").isEnabled(), true);
   await release("copyOffer");
   await check("what", {
-    primary: "Preview on ministorm",
+    primary: "Preview on linux-mini",
     steps: bar(["done", "current", "next", "next", "next"]),
     leading: "Stop copy",
   });
   NodeAssert.match(await body(), /Measured (?!earlier)[^·]+?Check for changes/);
-  NodeAssert.match(await body(), /Your choices.*Copy to ministorm: \/home\/anton/);
+  NodeAssert.match(await body(), /Your choices.*Copy to linux-mini: \/home\/anton/);
   const pendingBeforeRefresh = await page.evaluate(() =>
     localStorage.getItem("specwithcode:folder-copy:m4:source"),
   );
@@ -359,7 +359,7 @@ const choosing = async (page, w) => {
   await page
     .getByText("Nothing changed since then, so your choices stay.", { exact: false })
     .waitFor();
-  await check("what-refreshed", { primary: "Preview on ministorm", leading: "Stop copy" });
+  await check("what-refreshed", { primary: "Preview on linux-mini", leading: "Stop copy" });
   NodeAssert.equal(
     await page.evaluate(() => localStorage.getItem("specwithcode:folder-copy:m4:source")),
     pendingBeforeRefresh,
@@ -370,7 +370,7 @@ const choosing = async (page, w) => {
   });
   await page.getByRole("button", { name: "Check for changes", exact: true }).click();
   await page.getByRole("button", { name: "Compare again", exact: true }).waitFor();
-  NodeAssert.equal(await action("Preview on ministorm").isDisabled(), true);
+  NodeAssert.equal(await action("Preview on linux-mini").isDisabled(), true);
   await check("what-source-changed", { primary: null, leading: "Stop copy" });
   await page.evaluate(() => {
     window.__folderCopyFixture.scanCurrent = true;
@@ -378,7 +378,7 @@ const choosing = async (page, w) => {
   await page.getByRole("button", { name: "Compare again", exact: true }).click();
   // A new comparison measures again and lands back on What with a fresh scan.
   await page.getByRole("button", { name: "Check for changes", exact: true }).waitFor();
-  NodeAssert.equal(await action("Preview on ministorm").isEnabled(), true);
+  NodeAssert.equal(await action("Preview on linux-mini").isEnabled(), true);
   // The step bar only shows progress: nothing in it can be clicked.
   NodeAssert.equal(
     await page.locator('[data-slot="copy-steps"] button').count(),
@@ -388,7 +388,7 @@ const choosing = async (page, w) => {
 
   const offers = await calls("copyOffer");
   await pause("copyStart");
-  await action("Preview on ministorm").click();
+  await action("Preview on linux-mini").click();
   await check("comparing", {
     primary: null,
     steps: bar(["done", "done", "current", "next", "next"]),
@@ -396,39 +396,39 @@ const choosing = async (page, w) => {
   });
   NodeAssert.match(
     await page.locator('[data-slot="copy-working"]').textContent(),
-    /^Comparing with ministorm…/,
+    /^Comparing with linux-mini…/,
   );
   await release("copyStart");
   await check("review", {
-    primary: "Copy to ministorm",
+    primary: "Copy to linux-mini",
     steps: bar(["done", "done", "current", "next", "next"]),
     leading: "Change setup",
   });
-  NodeAssert.match(await body(), /Nothing on ministorm would be replaced\./);
+  NodeAssert.match(await body(), /Nothing on linux-mini would be replaced\./);
 
   // Change setup stops this copy and goes back to Where with the same choices.
   await action("Change setup").click();
   await check("changed-setup", {
-    primary: "Copy to ministorm",
+    primary: "Copy to linux-mini",
     steps: NO_STEPS,
     leading: null,
     title: COPY_TITLE,
   });
-  NodeAssert.match(await body(), /Copy cancelled\. Nothing on ministorm changed\./);
+  NodeAssert.match(await body(), /Copy cancelled\. Nothing on linux-mini changed\./);
   NodeAssert.equal(await calls("copyCancel"), 1, "Change setup cancels the compared copy");
   NodeAssert.equal(
     await page.getByRole("checkbox", { name: "Let me choose file types first" }).isChecked(),
     true,
     "the choices are kept",
   );
-  await action("Copy to ministorm").click();
+  await action("Copy to linux-mini").click();
   await check("rechosen", {
-    primary: "Preview on ministorm",
+    primary: "Preview on linux-mini",
     steps: bar(["done", "current", "next", "next", "next"]),
   });
   NodeAssert.equal(await calls("copyOffer"), offers + 1, "starting again measures again");
-  await action("Preview on ministorm").click();
-  await check("review-again", { primary: "Copy to ministorm", leading: "Change setup" });
+  await action("Preview on linux-mini").click();
+  await check("review-again", { primary: "Copy to linux-mini", leading: "Change setup" });
 
   // Mid-Review: the reopen checks the copy, then brings Review back.
   await close();
@@ -441,38 +441,38 @@ const choosing = async (page, w) => {
   });
   NodeAssert.match(
     await body(),
-    /Checking the copy to \/home\/anton\/Projects\/github\/specweave-umb on ministorm…/,
+    /Checking the copy to \/home\/anton\/Projects\/github\/specweave-umb on linux-mini…/,
   );
   await release("copyStatus");
   await check("restored", {
-    primary: "Copy to ministorm",
+    primary: "Copy to linux-mini",
     steps: bar(["done", "done", "current", "next", "next"]),
     leading: "Change setup",
   });
 
   await pause("copyApprove");
-  await action("Copy to ministorm").click();
+  await action("Copy to linux-mini").click();
   await check("copying", {
     primary: null,
     steps: bar(["done", "done", "done", "current", "next"]),
     leading: "Stop copy",
   });
-  NodeAssert.match(await body(), /Starting to send to ministorm…/);
+  NodeAssert.match(await body(), /Starting to send to linux-mini…/);
   await release("copyApprove");
   await check("done", {
-    primary: "Open on ministorm",
+    primary: "Open on linux-mini",
     steps: bar(["done", "done", "done", "done", "current"]),
     leading: "Undo…",
     title: COPIED_TITLE,
   });
-  NodeAssert.match(await body(), /SpecWeave is on ministorm\. The coordinator stays here\./);
+  NodeAssert.match(await body(), /SpecWeave is on linux-mini\. The coordinator stays here\./);
 
   // Done was seen: the reopen still shows the finished copy. Sync again… archives it
   // and starts at Where with a last-copy strip.
   await close();
   await reopen();
   await check("done-reopened", {
-    primary: "Open on ministorm",
+    primary: "Open on linux-mini",
     leading: "Undo…",
     title: COPIED_TITLE,
   });
@@ -489,7 +489,7 @@ const choosing = async (page, w) => {
     "the last-copy line is visible on reopen",
   );
   await check("last-copy", {
-    primary: "Copy to ministorm",
+    primary: "Copy to linux-mini",
     steps: NO_STEPS,
     leading: null,
     title: COPY_TITLE,
@@ -497,7 +497,7 @@ const choosing = async (page, w) => {
   NodeAssert.equal(await calls("copyStatus"), statuses, "an archived copy is not checked");
   await page.locator('[data-slot="copy-last"]').getByRole("button", { name: "View" }).click();
   await check("last-copy-view", {
-    primary: "Open on ministorm",
+    primary: "Open on linux-mini",
     steps: bar(["done", "done", "done", "done", "current"]),
     leading: "Undo…",
     title: COPIED_TITLE,
@@ -510,11 +510,11 @@ const choosing = async (page, w) => {
  */
 const oneClick = async (page, w) => {
   const { action, step, pause, release, body, startNew, check, close, reopen } = w;
-  await check("where", { primary: "Copy to ministorm", leading: null, title: COPY_TITLE });
-  await action("Copy to ministorm").click();
+  await check("where", { primary: "Copy to linux-mini", leading: null, title: COPY_TITLE });
+  await action("Copy to linux-mini").click();
   const finished = bar(["done", "done", "current"], ONE_CLICK);
   await check("done", {
-    primary: "Open on ministorm",
+    primary: "Open on linux-mini",
     steps: finished,
     leading: "Undo…",
     title: COPIED_TITLE,
@@ -523,9 +523,9 @@ const oneClick = async (page, w) => {
 
   // A second copy closed while copying: the reopen checks it, then says it finished.
   await startNew();
-  await check("where-new", { primary: "Copy to ministorm", leading: null, title: COPY_TITLE });
+  await check("where-new", { primary: "Copy to linux-mini", leading: null, title: COPY_TITLE });
   await pause("copyApprove");
-  await action("Copy to ministorm").click();
+  await action("Copy to linux-mini").click();
   await check("copying", {
     primary: null,
     steps: bar(["done", "current", "next"], ONE_CLICK),
@@ -542,7 +542,7 @@ const oneClick = async (page, w) => {
   });
   await release("copyStatus");
   await check("finished-while-closed", {
-    primary: "Open on ministorm",
+    primary: "Open on linux-mini",
     steps: finished,
     title: COPIED_TITLE,
   });
@@ -556,10 +556,10 @@ const oneClick = async (page, w) => {
 const move = async (page, w) => {
   const { footer, action, pause, release, calls, body, menu, startNew, check, fixture } = w;
   await moveCoordinator(page);
-  NodeAssert.match(await intent(page), /^Continue the coordinator on ministorm/);
+  NodeAssert.match(await intent(page), /^Continue the coordinator on linux-mini/);
   await chooseFirst(page);
   await check("where", {
-    primary: "Copy and move to ministorm",
+    primary: "Copy and move to linux-mini",
     steps: NO_STEPS,
     leading: null,
     title: MOVE_TITLE,
@@ -583,13 +583,13 @@ const move = async (page, w) => {
   const projectOnly = page.getByRole("checkbox", { name: "Copy only this project folder" });
   NodeAssert.equal(await projectOnly.isChecked(), false, "the whole umbrella goes by default");
   await projectOnly.scrollIntoViewIfNeeded();
-  await check("umbrella-scope", { primary: "Copy and move to ministorm" });
+  await check("umbrella-scope", { primary: "Copy and move to linux-mini" });
   await projectOnly.click();
   NodeAssert.equal(
     await folderBox(page).inputValue(),
     "/home/anton/Projects/github/specweave-umb/repositories/anton-abyzov/specweave",
   );
-  await check("child-scope", { primary: "Copy and move to ministorm" });
+  await check("child-scope", { primary: "Copy and move to linux-mini" });
   await projectOnly.click();
   await page.locator('[data-slot="copy-destination-project"]').scrollIntoViewIfNeeded();
   NodeAssert.match(
@@ -606,12 +606,12 @@ const move = async (page, w) => {
     };
   });
   NodeAssert.ok(scroll.maximum > 0 && scroll.scrollTop > 0, "the body really scrolls");
-  await check("scrolled", { primary: "Copy and move to ministorm" });
+  await check("scrolled", { primary: "Copy and move to linux-mini" });
   NodeAssert.equal((await footer.boundingBox()).y, beforeScroll.y, "the footer stays put");
 
   // Two clicks in one task start one measure.
   await pause("copyOffer");
-  await action("Copy and move to ministorm").evaluate((element) => {
+  await action("Copy and move to linux-mini").evaluate((element) => {
     element.click();
     element.click();
   });
@@ -620,14 +620,14 @@ const move = async (page, w) => {
   NodeAssert.match(await body(), /then reopen it to finish the handoff\./);
   NodeAssert.equal(await calls("copyOffer"), 1, "a double click offers once");
   await release("copyOffer");
-  await check("what", { primary: "Preview on ministorm", leading: "Stop handoff" });
+  await check("what", { primary: "Preview on linux-mini", leading: "Stop handoff" });
   NodeAssert.match(
     await body(),
     /Work is still running here\. Files that change during the copy won.t be included, and the project moves once that work stops\./,
   );
-  await action("Preview on ministorm").click();
+  await action("Preview on linux-mini").click();
   await check("review", {
-    primary: "Copy and move to ministorm",
+    primary: "Copy and move to linux-mini",
     steps: bar(["done", "done", "current", "next", "next", "next"], MOVE),
     leading: "Change setup",
     title: MOVE_TITLE,
@@ -640,7 +640,7 @@ const move = async (page, w) => {
   await fixture(() => {
     window.__folderCopyFixture.failCopy = true;
   });
-  await action("Copy and move to ministorm").click();
+  await action("Copy and move to linux-mini").click();
   await check("failed", { primary: "Retry", leading: "Stop handoff" });
   // The stopped step reads in the error colour, not in the plain current-step colour.
   NodeAssert.deepEqual(
@@ -672,11 +672,11 @@ const move = async (page, w) => {
     steps: bar(["done", "current", "next", "next", "next", "next"], MOVE),
   });
   await release("copyOffer");
-  await action("Preview on ministorm").click();
-  await check("review-retry", { primary: "Copy and move to ministorm", leading: "Change setup" });
-  await action("Copy and move to ministorm").click();
+  await action("Preview on linux-mini").click();
+  await check("review-retry", { primary: "Copy and move to linux-mini", leading: "Change setup" });
+  await action("Copy and move to linux-mini").click();
   await check("deferred", {
-    primary: "Continue the coordinator on ministorm",
+    primary: "Continue the coordinator on linux-mini",
     steps: bar(["done", "done", "done", "done", "current", "next"], MOVE),
     title: DONE_TITLE,
   });
@@ -688,7 +688,7 @@ const move = async (page, w) => {
     window.__folderCopyFixture.transferReady = true;
   });
   await pause("prepare");
-  await action("Continue the coordinator on ministorm").click();
+  await action("Continue the coordinator on linux-mini").click();
   await check("transferring", { primary: null });
   const closers = page.getByRole("dialog").getByRole("button", { name: /^(Close|Cancel)$/ });
   for (const closer of await closers.all())
@@ -697,13 +697,13 @@ const move = async (page, w) => {
   NodeAssert.equal(await page.getByRole("dialog").count(), 1, "Escape keeps a locked dialog");
   await release("prepare");
   await check("done", {
-    primary: "Open on ministorm",
+    primary: "Open on linux-mini",
     steps: bar(["done", "done", "done", "done", "done", "current"], MOVE),
     title: DONE_TITLE,
   });
   NodeAssert.match(
     await page.locator('[data-slot="copy-done"]').textContent(),
-    /The coordinator continues on ministorm\./,
+    /The coordinator continues on linux-mini\./,
   );
   // Running work matters before Apply only: Done never contradicts the finished move.
   NodeAssert.doesNotMatch(await body(), /Work is still running here/);
@@ -726,8 +726,8 @@ const staleRecovery = async (page, w) => {
     window.__folderCopyFixture.destinationHasFiles = true;
   });
   await chooseFirst(page);
-  await action("Copy to ministorm").click();
-  await action("Preview on ministorm").click();
+  await action("Copy to linux-mini").click();
+  await action("Preview on linux-mini").click();
   await fixture(() =>
     window.__folderCopyFixture.failNext(
       "copyApprove",
@@ -753,11 +753,11 @@ const staleRecovery = async (page, w) => {
     1,
   );
   await action("Compare again").click();
-  await action("Preview on ministorm").click();
+  await action("Preview on linux-mini").click();
   await check("fresh-comparison", { primary: "Copy with my choices", leading: "Change setup" });
   await action("Copy with my choices").click();
   await check("recovered-copy", {
-    primary: "Open on ministorm",
+    primary: "Open on linux-mini",
     leading: "Undo…",
     title: COPIED_TITLE,
   });
@@ -770,7 +770,7 @@ const capturedCopy = async (page, w) => {
     window.__folderCopyFixture.captured = true;
     window.__folderCopyFixture.destinationHasFiles = true;
   });
-  await action("Copy to ministorm").click();
+  await action("Copy to linux-mini").click();
   await check("captured-review", { primary: "Copy with my choices", leading: "Change setup" });
   NodeAssert.equal(await calls("copyApprove"), 0, "capture never approves itself");
   NodeAssert.match(await body(), /This copy uses files captured/);
@@ -794,7 +794,7 @@ const capturedCopy = async (page, w) => {
   NodeAssert.equal(await calls("copyApprove"), 0, "reopen keeps the review pending");
   await action("Copy with my choices").click();
   await check("captured-copy-done", {
-    primary: "Open on ministorm",
+    primary: "Open on linux-mini",
     leading: "Undo…",
     title: COPIED_TITLE,
   });
@@ -819,20 +819,20 @@ const moveWithout = async (page, w) => {
     };
   });
   await moveCoordinator(page);
-  await action("Copy and move to ministorm").click();
+  await action("Copy and move to linux-mini").click();
   await page.locator('[data-slot="source-changes"]').waitFor();
   await check("source-changes", { primary: "Sync again", title: DONE_TITLE });
   NodeAssert.match(
     await page.locator('[data-slot="source-changes"]').textContent(),
     /ledger\.jsonl/,
   );
-  NodeAssert.doesNotMatch(await body(), /The coordinator continues on ministorm/);
+  NodeAssert.doesNotMatch(await body(), /The coordinator continues on linux-mini/);
   await action("Move without this path").click();
   await page.locator('[data-slot="copy-left-on-source"]').waitFor();
-  await check("moved-without", { primary: "Open on ministorm", title: DONE_TITLE });
+  await check("moved-without", { primary: "Open on linux-mini", title: DONE_TITLE });
   NodeAssert.match(
     await page.locator('[data-slot="copy-done"]').textContent(),
-    /The coordinator continues on ministorm\./,
+    /The coordinator continues on linux-mini\./,
   );
   NodeAssert.ok(
     (await page.locator('[data-slot="copy-left-on-source"]').textContent()).includes(ledger),

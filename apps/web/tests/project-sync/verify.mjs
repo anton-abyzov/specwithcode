@@ -89,7 +89,8 @@ async function layoutProblems(page, scope) {
       "h2,h3,p,button,label,code,li,[data-sync-cell] span,[data-row-sync],[data-row-note],[role=menuitem],[role=menuitemradio] .truncate",
     )) {
       const box = el.getBoundingClientRect();
-      if (box.width === 0) continue;
+      // The line for screen readers is clipped to a pixel on purpose.
+      if (box.width === 0 || el.classList.contains("sr-only")) continue;
       const name = `${el.tagName.toLowerCase()} "${el.textContent.trim().slice(0, 50)}"`;
       if (el.scrollWidth > el.clientWidth + 1 && getComputedStyle(el).display !== "inline")
         problems.push(`clipped ${name}: ${el.scrollWidth}px of text in ${el.clientWidth}px`);
@@ -317,6 +318,16 @@ try {
       await page.locator("[data-sync-run]").click();
       await waitStage(page, "result");
       assert.equal(await page.locator("h2").textContent(), "Atlas is in sync on m4 and m5");
+      assert.equal(
+        await page.locator("[data-sync-live]").textContent(),
+        "Atlas is in sync on m4 and m5",
+      );
+      // The repositories are a table: each cell is heard under its machine's column.
+      assert.deepEqual(await texts(page, `${DIALOG} [role="columnheader"]`), [
+        "Repository",
+        "m4",
+        "m5",
+      ]);
       assert.equal((await said(page, "apps/web", "b")).sentence, "Moved forward 12 commits");
       // Only m5 had something to do.
       assert.deepEqual(
@@ -352,7 +363,7 @@ try {
       assert.deepEqual(await texts(page, "[data-sync-target]"), [
         "m5",
         "linux-minilinux-mini offline",
-        "m1Needs update · 1.4.2",
+        "m1m1: Needs update · 1.4.2",
         "m3This window can only read m3",
       ]);
       assert.deepEqual(
@@ -370,10 +381,9 @@ try {
       // 7. The fetch has not answered.
       page = await at("case=dialog&state=checking");
       await waitStage(page, "checking");
-      assert.equal(
-        await page.locator(`${DIALOG} p[role="status"]`).textContent(),
-        "Fetching on m4 and m5…",
-      );
+      assert.equal(await page.locator("[data-sync-live]").textContent(), "Fetching on m4 and m5…");
+      // One live region that stays: the visible line is not a second one.
+      assert.equal(await page.locator(`${DIALOG} p[role="status"]`).count(), 1);
       assert.equal(await page.locator("[data-sync-run]").isDisabled(), true);
       taken = await shot(page, `checking-${tag}`);
       results.push({ theme, width, case: "checking", ...taken });
@@ -388,7 +398,9 @@ try {
           'Update SpecWithCode on m5 to sync with Git. "Compare all files…" works now.',
         "not-found": "m5 does not have this project.",
         "not-git": 'The project folder on m5 is not a Git repository. Use "Compare all files…".',
-        failed: "m5 could not do it: The project folder is on a drive that is not connected.",
+        failed: "m5 could not sync: The project folder is on a drive that is not connected.",
+        unreadable:
+          "m5 answered in a way this version does not read. Update SpecWithCode on this machine, then check again.",
       };
       for (const [kind, line] of Object.entries(failures)) {
         page = await at(`case=dialog&state=${kind}`);
@@ -396,8 +408,15 @@ try {
         assert.equal(await page.locator(`[data-sync-failure="${kind}"]`).textContent(), line);
         assert.ok(
           (await page.locator("[data-sync-failures]").textContent()).includes(
-            "Nothing was changed on either machine.",
+            "Nothing was moved or sent.",
           ),
+        );
+        // A failure is an alert, and the title holds the focus.
+        assert.ok((await page.locator(`${DIALOG} [role="alert"]`).count()) > 0);
+        assert.equal(
+          await page.evaluate(() => document.activeElement?.parentElement?.tagName),
+          "H2",
+          `focus after ${kind}`,
         );
         assert.equal(await page.locator("[data-sync-run]").count(), 0);
         assert.equal(await page.locator("[data-sync-compare]").isDisabled(), false);
@@ -441,7 +460,20 @@ try {
       await waitStage(page, "plan");
       await page.locator("[data-sync-run]").click();
       await waitStage(page, "result");
-      assert.ok((await page.locator(DIALOG).textContent()).includes("m4 did not run its part."));
+      assert.ok(
+        (await page.locator(DIALOG).textContent()).includes(
+          "m4 did not finish its part of the sync.",
+        ),
+      );
+      // m4 gave no answer: its rows say so, and never "Not done".
+      assert.equal(
+        (await said(page, "apps/web", "a")).sentence,
+        'No answer came for this repository, and it may have moved. "Check again" shows where it stands',
+      );
+      assert.equal(
+        await page.locator("[data-sync-live]").textContent(),
+        "Sync ended, and not everything was moved or sent. Each repository says why.",
+      );
       assert.equal(await page.locator("h2").textContent(), "Sync Atlas: m4 and m5");
       const refused = await page.locator('[data-sync-cell][data-tone="failed"]').count();
       assert.ok(refused > 0, "no refused step is shown");
@@ -490,6 +522,57 @@ try {
       await notSent.scrollIntoViewIfNeeded();
       taken = await shot(page, `result-extras-not-sent-${tag}`);
       results.push({ theme, width, case: "result, extras not sent", ...taken });
+      await page.close();
+
+      // 12b. A machine in the middle of work: 179 uncommitted files and 11 branches only there.
+      page = await at("case=dialog&state=long");
+      await waitStage(page, "plan");
+      const long = await texts(page, '[data-sync-extras="a"] [data-sync-extra] label');
+      assert.ok(
+        long.some((line) => line.startsWith("11 branches that exist only on m4")),
+        long.join(" | "),
+      );
+      assert.ok(
+        long.some((line) => line.startsWith("179 uncommitted files in Atlas")),
+        long.join(" | "),
+      );
+      // The check note stands wherever uncommitted files can be ticked.
+      assert.ok(
+        (
+          await page.locator('[data-sync-extras="a"] [data-sync-check-note]').textContent()
+        ).includes("Checked by file name, and untracked files by their first 64 KB."),
+      );
+      // "Send anyway" is off until the files are ticked, says why, and reads "Will be sent"
+      // only while they are.
+      const longAnyway = page.locator('[data-sync-left-out="content"] [data-sync-send-anyway]');
+      assert.equal(await longAnyway.isDisabled(), true);
+      assert.equal(
+        await longAnyway.getAttribute("title"),
+        "Tick the uncommitted files of Atlas first.",
+      );
+      await tick(page, "a", "uncommitted");
+      await longAnyway.click();
+      assert.equal(await longAnyway.textContent(), "Will be sent");
+      await tick(page, "a", "uncommitted");
+      assert.equal(await longAnyway.textContent(), "Send anyway");
+      await page.locator('[data-sync-extras="a"]').scrollIntoViewIfNeeded();
+      taken = await shot(page, `plan-long-${tag}`);
+      const wholeLong = await longShot(page, `plan-long-whole-${tag}`);
+      // Nothing was moved, and work is still listed on m4: finished, never "in sync".
+      await tick(page, "a", "only-here");
+      await page.locator("[data-sync-run]").click();
+      await waitStage(page, "result");
+      assert.equal(await page.locator("h2").textContent(), "Sync finished for Atlas: m4 and m5");
+      const wholeLongResult = await longShot(page, `result-long-whole-${tag}`);
+      results.push({
+        theme,
+        width,
+        case: "plan and result, 179 files and 11 branches",
+        ...taken,
+        whole: wholeLong,
+        result: wholeLongResult,
+        long,
+      });
       await page.close();
 
       // 13. The machine menu on m4's page: one sync fact per row, "Sync…" and "Add…".
@@ -559,6 +642,45 @@ try {
       await sync.click({ force: true });
       assert.equal((await events(page)).includes("sync"), false);
       results.push({ theme, width, case: "menu, Sync greyed", ...taken });
+      await page.close();
+
+      // A window that can only read, through the real menu hook: each row keeps its sync
+      // fact, "Sync…" is greyed with why, nothing is added and no dialog opens.
+      page = await open(`theme=${theme}&case=menu&window=read-only`, width, 820);
+      await page.locator("[data-coordinator-machine]").click();
+      await page.locator('[role="menu"]').waitFor();
+      await page.waitForTimeout(250);
+      const seen = await page
+        .locator('[role="menuitemradio"]')
+        .evaluateAll((items) =>
+          Object.fromEntries(
+            items.map((item) => [
+              item.getAttribute("data-orchestrator-view")?.split(":")[0],
+              item.querySelector("[data-row-sync]")?.textContent ?? null,
+            ]),
+          ),
+        );
+      assert.equal(seen.m4, null);
+      assert.equal(seen.m5, "Same as m4");
+      assert.equal(seen.m1, "2 of 5 repositories differ");
+      assert.equal(seen.m2, "Same as m4");
+      assert.match(seen["linux-mini"], /^1 of 5 repositories differ · as of /);
+      assert.equal(seen.m3, "Not checked yet");
+      const readOnlySync = page.locator('[data-machine-action="sync"]');
+      assert.equal(await readOnlySync.getAttribute("aria-disabled"), "true");
+      assert.equal(
+        await page.locator("[data-sync-blocked]").textContent(),
+        "This window can only read m4",
+      );
+      assert.equal(await page.locator('[data-machine-action="add"]').count(), 0);
+      taken = await shot(page, `menu-read-only-window-${tag}`, '[role="menu"]');
+      await readOnlySync.click({ force: true });
+      assert.equal((await events(page)).includes("sync"), false);
+      assert.equal(
+        await page.locator("[data-sync-dialog-open]").getAttribute("data-sync-dialog-open"),
+        "no",
+      );
+      results.push({ theme, width, case: "menu, read-only window", ...taken, seen });
       await page.close();
     }
   assert.deepEqual(errors, []);

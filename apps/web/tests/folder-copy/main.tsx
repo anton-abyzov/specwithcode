@@ -19,7 +19,7 @@ const MACHINES = params.has("short")
   : [
       { id: "m1" as never, label: "Anton’s MacBook Pro M1Max (190)", unavailable: null },
       { id: "m3" as never, label: "Anton’s MacBook Pro", unavailable: null },
-      { id: "linux" as never, label: "ministorm", unavailable: null },
+      { id: "linux" as never, label: "linux-mini", unavailable: null },
     ];
 /** `?git=1`: the Git handoff screen, as "Continue the coordinator here" opens it. */
 function GitFixture() {
