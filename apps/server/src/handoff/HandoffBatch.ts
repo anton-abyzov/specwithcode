@@ -72,6 +72,7 @@ import { extrasProject } from "./ExtrasReceiver.ts";
 import { HandoffMode } from "./HandoffMode.ts";
 import type { HandoffPeerError } from "./handoffPeers.ts";
 import { type HandoffPlan, outcomeLine } from "./handoffPlan.ts";
+import { shouldResume } from "./handoffPreflight.ts";
 import { HandoffRefusal, type ReceiverCaller } from "./HandoffReceiver.ts";
 import type { HandoffTransferStoreShape } from "./HandoffTransferStore.ts";
 import {
@@ -162,6 +163,13 @@ export function batchArrival(input: {
   }
   return { kind: "take", resume: input.resumable && batch.disposition === "resume" };
 }
+
+/** `batchArrival` for a takeover as the receiver holds it: its checkpoint says whether a run can continue. */
+export const takeoverArrival = (
+  batch: TakeoverRequest["batch"],
+  sequence: number,
+  checkpoint: Pick<HandoffCheckpoint, "sequence" | "commit" | "runEnding">,
+) => batchArrival({ batch, sequence, checkpoint, resumable: shouldResume(checkpoint.runEnding) });
 
 export const REVISION_MISMATCH =
   "holds another revision of this thread than the one handed over, so it did not take it";

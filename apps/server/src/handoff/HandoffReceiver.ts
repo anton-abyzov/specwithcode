@@ -145,7 +145,7 @@ import type {
   TransferStatusRequest,
   TransferStatusResponse,
 } from "./handoffWire.ts";
-import { batchArrival, REVISION_MISMATCH } from "./HandoffBatch.ts";
+import { REVISION_MISMATCH, takeoverArrival } from "./HandoffBatch.ts";
 import {
   capabilityFailure,
   HANDOFF_APP_VERSION,
@@ -887,8 +887,7 @@ export const make = Effect.gen(function* () {
         // Accepted, and the launch was cut: nothing below may turn that into a "no".
         standing = true;
       }
-      // An accepted takeover is finished as it was first asked: a repeat that
-      // lost the batch's fields never turns "Ready" into a resumed run.
+      // As first asked: a repeat that lost the batch's fields never turns "Ready" into a run.
       const batch = recorded?.batch ?? request.batch;
       const verdict = takeoverVerdict(yield* document, request, label);
       if (verdict.kind === "repeat") return verdict.response;
@@ -951,14 +950,8 @@ export const make = Effect.gen(function* () {
       if (held !== checkpoint.commit) {
         return yield* refuse(409, "invalid", at("no checkpoint for this thread"), "checkpoint");
       }
-      // A batch names what happens on arrival and the revision it hands over.
-      // Compared here, before a file or a worktree is placed for it.
-      const arrival = batchArrival({
-        batch,
-        sequence: request.sequence,
-        checkpoint,
-        resumable: shouldResume(checkpoint.runEnding),
-      });
+      // The batch's revision is compared here, before a file or a worktree is placed for it.
+      const arrival = takeoverArrival(batch, request.sequence, checkpoint);
       if (arrival.kind === "refuse") {
         return yield* refuse(409, "invalid", at(REVISION_MISMATCH), "checkpoint");
       }
