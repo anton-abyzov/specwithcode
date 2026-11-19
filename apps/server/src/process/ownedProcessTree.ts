@@ -110,6 +110,8 @@ export interface OwnedRoot {
    * the spawn until its exit, and a process holding it before the spawn would have kept it.
    */
   readonly exitedAtEpochMs?: () => number | null;
+  /** When this server saw the CLI exit on the host's monotonic clock, or null while it runs. */
+  readonly exitedAt?: () => number | null;
 }
 
 /**
@@ -444,6 +446,12 @@ export class OwnedProcessTree {
       this.groupSeen.set(entry.pid, entry.started);
       if (entry.pid === this.root.pid) this.rootStarted = entry.started;
     }
+    // Tools that already left the group are the CLI's too: once the CLI closes they are
+    // reparented, and only this reading still ties them to it. An end signals each only
+    // while it still runs as the same process.
+    for (const entry of posixEscapees(table, this.root, this.host.selfPid)) {
+      if (entry.started.length > 0) this.escapees.set(entry.pid, entry);
+    }
     return true;
   }
 
@@ -562,8 +570,16 @@ export class OwnedProcessTree {
     // by an earlier end, does. So, right after the exit, does one that started before it:
     // the CLI held the id then, and the id cannot have emptied and gone round to another
     // job since. `ps` gives whole seconds, so a start in the exit's own second counts too.
-    const exitRecent =
-      exitedAt !== null && (this.host.epochNow ?? Date.now)() - exitedAt <= START_PROOF_WINDOW_MS;
+    // Measured on the monotonic clock where the root has it: a wall clock set back would
+    // stretch the window.
+    const exitedAtMonotonic = this.root.exitedAt?.() ?? null;
+    const sinceExit =
+      exitedAtMonotonic !== null
+        ? host.now() - exitedAtMonotonic
+        : exitedAt === null
+          ? null
+          : (host.epochNow ?? Date.now)() - exitedAt;
+    const exitRecent = sinceExit !== null && sinceExit >= 0 && sinceExit <= START_PROOF_WINDOW_MS;
     const startedBeforeExit = (entry: ProcessEntry) => {
       const started = Date.parse(entry.started);
       return exitedAt !== null && Number.isFinite(started) && started <= exitedAt;
@@ -985,9 +1001,11 @@ export function spawnOwnedProcess(
   });
   let exited = false;
   let exitedAtEpochMs: number | null = null;
+  let exitedAt: number | null = null;
   child.once("exit", () => {
     exited = true;
     exitedAtEpochMs = Date.now();
+    exitedAt = host.now();
   });
   const tree = new OwnedProcessTree(
     {
@@ -995,6 +1013,7 @@ export function spawnOwnedProcess(
       spawnedAt,
       alive: () => !exited && child.pid !== undefined && child.exitCode === null,
       exitedAtEpochMs: () => exitedAtEpochMs,
+      exitedAt: () => exitedAt,
     },
     host,
   );

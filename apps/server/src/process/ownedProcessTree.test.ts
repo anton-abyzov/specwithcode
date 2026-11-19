@@ -1442,7 +1442,7 @@ describe("OwnedProcessTree.end after a lost parent", () => {
 
   it("still signals the CLI's group when a reading from before its exit lists it", async () => {
     const f = fake("darwin");
-    const exitedAt = Date.now() - 100;
+    const exitedAt = Date.now() - 1_000;
     // `ps` caught the CLI in the second it exited; Node reaped it just now.
     const cli = { ...processRow(rootPid), started: new Date(exitedAt).toString() };
     const tool = processRow(201, rootPid);
@@ -1512,6 +1512,84 @@ describe("OwnedProcessTree.end after a lost parent", () => {
     });
     expect((await f.tree.end()).unknown).toBe(true);
     expect((await f.tree.end()).unknown).toBe(true);
+  });
+});
+
+describe("POSIX Stop after the pre-close reading", () => {
+  it.each(["darwin", "linux"] as const)(
+    "ends a tool that left the CLI's group, known only from the pre-close reading (%s)",
+    async (platform) => {
+      const cli = posix(200, 100, 200, "claude");
+      const tool = { ...posix(201, 200, 201, "tool"), started: "Thu Nov 19 18:20:02 2026" };
+      let alive = true;
+      let clock = 0;
+      const signals: string[] = [];
+      let table: ProcessEntry[] = [cli, tool];
+      const host: TreeHost = {
+        platform,
+        selfPid: 100,
+        now: () => clock,
+        sleep: async (ms) => {
+          clock += ms;
+        },
+        readProcessList: async () => table,
+        signal: (pid, action) => {
+          if (action === 0) throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+          signals.push(`${action} ${pid}`);
+          if (pid === tool.pid) table = [];
+        },
+        killVerified: async () => {},
+      };
+      const tree = new OwnedProcessTree(
+        { pid: 200, spawnedAt: 0, alive: () => alive, exitedAtEpochMs: () => (alive ? null : 0) },
+        host,
+      );
+      expect(await tree.remember(1_000, true)).toBe(true);
+      alive = false;
+      // Closing the CLI reparented the tool: only the pre-close reading ties it to the CLI.
+      table = [{ ...tool, ppid: 1 }];
+      expect(await tree.end()).toEqual({ found: 1, survivors: 0, unknown: false });
+      expect(signals).toEqual(["SIGTERM 201"]);
+    },
+  );
+
+  it("measures the start-time window on the monotonic clock, not the wall clock", async () => {
+    const exitedAt = Date.UTC(2026, 10, 19, 12);
+    const worker = {
+      ...posix(201, 1, 200, "worker"),
+      started: new Date(exitedAt - 5_000).toString(),
+    };
+    let clock = 0;
+    const signals: string[] = [];
+    const host: TreeHost = {
+      platform: "darwin",
+      selfPid: 100,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+      // The wall clock was set back a minute after the exit.
+      epochNow: () => exitedAt - 60_000,
+      readProcessList: async () => [worker],
+      signal: (pid, action) => {
+        signals.push(`${action} ${pid}`);
+      },
+      killVerified: async () => {},
+    };
+    const tree = new OwnedProcessTree(
+      {
+        pid: 200,
+        spawnedAt: 0,
+        alive: () => false,
+        exitedAtEpochMs: () => exitedAt,
+        exitedAt: () => 0,
+      },
+      host,
+    );
+    // A minute on the monotonic clock: a start time alone proves nothing now.
+    clock = 60_000;
+    expect(await tree.end(1_000)).toMatchObject({ unknown: true });
+    expect(signals).toEqual([]);
   });
 });
 
