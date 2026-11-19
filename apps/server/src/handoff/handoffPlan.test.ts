@@ -723,16 +723,35 @@ describe("each thread's disposition in an automatic batch (AC-41)", () => {
     ).toBeNull();
   });
 
-  it("never moves a thread whose track is not known", () => {
+  it("never moves a thread whose track is not known, by hand or automatically", () => {
+    const reason = "Its model is on more than one track, and nothing says which one it runs on.";
     expect(planThread(automatic(), { ...limitStop, trackAmbiguous: true })).toMatchObject({
       disposition: "stays",
       stay: "track",
       ticked: false,
-      reason: "Its model is on more than one track, and nothing says which one it runs on.",
+      canTick: false,
+      reason,
     });
-    // By hand the person chose the target; the row moves on the model it names.
-    expect(planThread(facts(), checked({ trackAmbiguous: true }))).toMatchObject({
+    // By hand too: a person may accept an account that adds nothing, never a track
+    // nobody can name. The target answered for the model alone, which proves no track.
+    for (const fact of [
+      checked({ trackAmbiguous: true }),
+      checked({ trackAmbiguous: true, activity: "waiting", runEnding: "completed" }),
+      checked({ trackAmbiguous: true, activity: "settled", runEnding: "completed", unsaved: true }),
+    ]) {
+      expect(planThread(facts(), fact)).toMatchObject({
+        group: "stays",
+        disposition: "stays",
+        stay: "track",
+        ticked: false,
+        canTick: false,
+        reason,
+      });
+    }
+    // A thread with no track at all still moves on the model it names.
+    expect(planThread(facts(), checked({ trackAmbiguous: false }))).toMatchObject({
       disposition: "resume",
+      ticked: true,
     });
   });
 
