@@ -5996,4 +5996,6 @@ export const fr: PhraseCatalog = {
     "Ses messages en file ne partent pas encore lors d’un transfert manuel.",
   "Up to {n} threads go in one hand off. Hand off the rest after.":
     "Jusqu’à {n} fils partent en un transfert. Transférez le reste ensuite.",
+  "{provider} sign-in expired on {machine}": "La connexion {provider} a expiré sur {machine}",
+  "{provider} sign-in expired": "La connexion {provider} a expiré",
 };

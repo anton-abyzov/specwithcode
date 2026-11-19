@@ -5943,4 +5943,6 @@ export const ru: PhraseCatalog = {
     "При ручной передаче сообщения из очереди пока не переносятся.",
   "Up to {n} threads go in one hand off. Hand off the rest after.":
     "За одну передачу уходит до {n} тредов. Остальные передайте потом.",
+  "{provider} sign-in expired on {machine}": "Вход в {provider} на {machine} истёк",
+  "{provider} sign-in expired": "Вход в {provider} истёк",
 };

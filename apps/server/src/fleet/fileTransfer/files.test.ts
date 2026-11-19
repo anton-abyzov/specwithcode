@@ -348,6 +348,25 @@ describe("offers", () => {
     await expect(readPinned(pin, 1)).rejects.toThrow("holds a credential");
   });
 
+  it("never moves a provider sign-in file, wherever it sits", async () => {
+    const home = NodeOS.homedir();
+    for (const path of [
+      NodePath.join(home, ".codex-work", "auth.json"),
+      NodePath.join(home, ".gemini", "oauth_creds.json"),
+      NodePath.join(home, ".local", "share", "opencode", "auth.json"),
+      NodePath.join(baseOf(), "worktrees", "x", ".codex", "auth.json"),
+      NodePath.join(home, ".local", "share", "specweave", "account-profiles", "a", "token"),
+    ])
+      expect(await isCredentialLocation(path, baseOf(), state), path).toBe(true);
+    expect(
+      await isCredentialLocation(
+        NodePath.join(baseOf(), "worktrees", "x", "auth.ts"),
+        baseOf(),
+        state,
+      ),
+    ).toBe(false);
+  });
+
   it("never serves a credential folder, even inside a granted project", async () => {
     const home = NodeOS.homedir();
     expect(

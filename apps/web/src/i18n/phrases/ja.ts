@@ -5951,4 +5951,6 @@ export const ja: PhraseCatalog = {
     "手動の引き継ぎでは、キューにあるメッセージはまだ移りません。",
   "Up to {n} threads go in one hand off. Hand off the rest after.":
     "1 回の引き継ぎで移せるのは {n} 件のスレッドまでです。残りはその後に引き継いでください。",
+  "{provider} sign-in expired on {machine}": "{machine} の {provider} のサインインが期限切れです",
+  "{provider} sign-in expired": "{provider} のサインインが期限切れです",
 };

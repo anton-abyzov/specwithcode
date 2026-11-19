@@ -8,6 +8,32 @@ import {
 } from "./BackgroundWorkBlockRecovery";
 import type { WorkspaceMissingRecoveryActions } from "./WorkspaceMissingRecovery";
 
+/**
+ * The provider refused its own sign-in on the thread's machine: another model
+ * on that sign-in fails the same way, so signing in again comes first.
+ */
+export interface SignInRecoveryActions {
+  /** The provider's name, such as Codex. */
+  readonly provider: string;
+  /** The machine whose sign-in expired, when it has a name. */
+  readonly machine: string | null;
+  /** Opens that provider's sign-in on that machine. */
+  readonly onSignIn: () => void;
+}
+
+/** "Codex sign-in expired on M5", for the banner title and the timeline row. */
+export function signInRecoveryTitle(
+  tx: ReturnType<typeof useTx>,
+  recovery: Pick<SignInRecoveryActions, "provider" | "machine">,
+): string {
+  return recovery.machine
+    ? tx("{provider} sign-in expired on {machine}", {
+        provider: recovery.provider,
+        machine: recovery.machine,
+      })
+    : tx("{provider} sign-in expired", { provider: recovery.provider });
+}
+
 export interface FailureRecoveryActions {
   /** The failed latest run's root failure; only its row offers recovery. */
   failureItemId?: string | null;
@@ -26,6 +52,8 @@ export interface FailureRecoveryActions {
    * still runs; it replaces these actions.
    */
   backgroundWorkBlock?: BackgroundWorkBlockRecoveryActions | undefined;
+  /** Set when that failure is an expired sign-in; Sign in again leads. */
+  signIn?: SignInRecoveryActions | undefined;
 }
 
 /**
@@ -62,9 +90,21 @@ export function FailureRecovery({
   // Another model would be refused the same way while the work runs.
   const showSwitch =
     recovery.onSwitchModel !== undefined && !isBackgroundWorkBlockFailureCode(recovery.failureCode);
-  if (!showContinue && !showSwitch) return null;
+  const signIn = recovery.signIn;
+  if (!showContinue && !showSwitch && !signIn) return null;
   return (
     <div className="flex flex-wrap gap-2" data-failure-recovery>
+      {signIn ? (
+        <Button
+          type="button"
+          size="xs"
+          variant="default"
+          title={signInRecoveryTitle(tx, signIn)}
+          onClick={signIn.onSignIn}
+        >
+          {tx("Sign in again")}
+        </Button>
+      ) : null}
       {showContinue ? (
         <Button
           type="button"

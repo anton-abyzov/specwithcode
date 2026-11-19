@@ -21,6 +21,7 @@ import {
   type BackgroundWorkBlockRecoveryActions,
 } from "./BackgroundWorkBlockRecovery";
 import { ContextLimitRecovery, type ContextLimitRecoveryActions } from "./ContextLimitRecovery";
+import { signInRecoveryTitle, type SignInRecoveryActions } from "./FailureRecovery";
 import {
   WorkspaceMissingRecovery,
   type WorkspaceMissingRecoveryActions,
@@ -67,6 +68,7 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   contextLimitRecovery,
   workspaceMissingRecovery,
   backgroundWorkBlockRecovery,
+  signInRecovery,
 }: {
   error: string | null;
   errorClass?: OrchestrationV2ProviderFailureClass | null;
@@ -93,6 +95,11 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
    * and continuing replaces Continue and Switch model.
    */
   backgroundWorkBlockRecovery?: BackgroundWorkBlockRecoveryActions | undefined;
+  /**
+   * Set when the provider refused its sign-in: Sign in again leads, since
+   * another model on the same sign-in fails the same way.
+   */
+  signInRecovery?: SignInRecoveryActions | undefined;
 }) {
   const tx = useTx();
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
@@ -132,7 +139,11 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
           <CircleAlertIcon />
         )}
         {!chatGptUsageLimit ? (
-          <AlertTitle>{providerFailureDisplayTitle(failure)}</AlertTitle>
+          <AlertTitle>
+            {signInRecovery
+              ? signInRecoveryTitle(tx, signInRecovery)
+              : providerFailureDisplayTitle(failure)}
+          </AlertTitle>
         ) : null}
         <AlertDescription>
           {chatGptUsageLimit ? (
@@ -171,9 +182,15 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
           backgroundWorkBlockRecovery ||
           showContinue ||
           showSwitchModel ||
+          signInRecovery ||
           onDismiss) && (
           <AlertAction>
             {chatGptUsageLimit ? <ChatGptUsageButton variant="default" size="sm" /> : null}
+            {signInRecovery ? (
+              <Button variant="default" size="xs" onClick={signInRecovery.onSignIn}>
+                {tx("Sign in again")}
+              </Button>
+            ) : null}
             {backgroundWorkBlockRecovery ? (
               <BackgroundWorkBlockRecovery recovery={backgroundWorkBlockRecovery} />
             ) : null}

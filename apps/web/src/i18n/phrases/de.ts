@@ -5990,4 +5990,6 @@ export const de: PhraseCatalog = {
     "Seine Nachrichten in der Warteschlange gehen bei einer Übergabe von Hand noch nicht mit.",
   "Up to {n} threads go in one hand off. Hand off the rest after.":
     "Bis zu {n} Threads gehen in einer Übergabe. Übergib den Rest danach.",
+  "{provider} sign-in expired on {machine}": "{provider}-Anmeldung auf {machine} abgelaufen",
+  "{provider} sign-in expired": "{provider}-Anmeldung abgelaufen",
 };
