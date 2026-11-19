@@ -260,6 +260,37 @@ describe("the follower of a handed-off thread", () => {
   );
 
   it.live(
+    "still reports an old failure when its continuation, found among many waiting messages, is stopped",
+    () => {
+      const { target, kept, boot } = stage({ fallbackGraceMs: 1 });
+      target.create(THREAD);
+      const job = target.start(THREAD);
+      target.set(THREAD, job.id, "failed");
+      // Sixty messages wait there, so the failed job is older than the target lists at once.
+      for (let index = 0; index < 60; index++)
+        target.start(THREAD, { status: "queued", creationSource: "web" });
+      // The target's own continuation of the job runs ahead of them.
+      const fallback = target.start(THREAD, {
+        status: "queued",
+        creationSource: "server",
+        messageId: `limit-fallback:${THREAD}:${job.id}`,
+      });
+      target.set(THREAD, fallback.id, "running");
+      const { world, layer } = boot();
+      return Effect.gen(function* () {
+        yield* follow(handedOff());
+        yield* settled(world, rows, (current) => current[0]?.followedRunId === fallback.id);
+        expect(kept).toEqual([]);
+        target.set(THREAD, fallback.id, "interrupted");
+        yield* settled(world, rows, (current) => current[0]?.state === "idle");
+        expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: wakeOf(job.id) }]);
+        expect(kept[0]?.text).toContain("finished: failed");
+      }).pipe(Effect.provide(layer));
+    },
+    LIVE,
+  );
+
+  it.live(
     "keeps following when the target no longer has the run it was waiting on",
     () => {
       const { target, kept, boot } = stage();
@@ -478,6 +509,34 @@ describe("the follower of a handed-off thread", () => {
       return Effect.gen(function* () {
         yield* allow("auto", "onward");
         yield* follow(handedOff());
+        yield* settled(world, keptCount(kept), (count) => count >= 1);
+        const [row] = yield* settled(world, rows, (current) => current[0]?.state === "idle");
+        expect(row).toMatchObject({ machineId: "onward", remoteThreadId: next });
+        expect(kept).toMatchObject([{ threadId: LAUNCHER, commandId: wakeOf(run.id) }]);
+      }).pipe(Effect.provide(layer));
+    },
+    LIVE,
+  );
+
+  it.live(
+    "leaves a queued run it was waiting on when that copy is handed on",
+    () => {
+      const { target, onward, kept, boot } = stage();
+      target.create(THREAD);
+      const waiting = target.start(THREAD, { status: "queued", creationSource: "web" });
+      const next = continuationThreadId(ROLES.target.environmentId, THREAD, 3);
+      const { world, layer } = boot();
+      return Effect.gen(function* () {
+        yield* allow("auto", "onward");
+        yield* follow(handedOff());
+        yield* settled(world, rows, (current) => current[0]?.followedRunId === waiting.id);
+        // The target hands the thread on; the message stays queued on its fenced copy.
+        const copy = target.threads.get(THREAD);
+        if (copy !== undefined)
+          copy.movedTo = { environmentId: onward.environmentId, label: "Onward", epoch: 3 };
+        onward.create(next);
+        const run = onward.start(next);
+        onward.set(next, run.id, "completed");
         yield* settled(world, keptCount(kept), (count) => count >= 1);
         const [row] = yield* settled(world, rows, (current) => current[0]?.state === "idle");
         expect(row).toMatchObject({ machineId: "onward", remoteThreadId: next });

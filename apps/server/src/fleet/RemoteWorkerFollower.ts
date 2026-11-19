@@ -649,12 +649,13 @@ const make = Effect.gen(function* () {
         const status = isRecord(waited.success) ? waited.success.status : undefined;
         if (typeof status !== "string") return undefined;
         statusOf.set(message.runId, status);
-        // Older than every listed run, in the order their messages were sent.
+        // Older than every listed run, in the order their messages were sent; one
+        // still queued has not run, and comes after every run that has.
         runs.push({
           runId: message.runId,
           ordinal: runs.length - messages.length,
           status,
-          startedAt: "",
+          startedAt: status === "queued" ? null : "",
           completedAt: null,
         });
       }
