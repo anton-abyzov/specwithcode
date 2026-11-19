@@ -285,8 +285,8 @@ export function TeamUsageSettings({
       ) : null}
 
       <div role="status" className="space-y-1 text-muted-foreground">
-        {error ? <p className="text-destructive">{tx(error)}</p> : null}
-        {status.lastError ? <p className="text-destructive">{status.lastError}</p> : null}
+        {error ? <p className="text-destructive-foreground">{tx(error)}</p> : null}
+        {status.lastError ? <p className="text-destructive-foreground">{status.lastError}</p> : null}
         {status.removalPending ? (
           <p>
             {tx('Removing "{label}" from the team. It retries until the team confirms.', {
