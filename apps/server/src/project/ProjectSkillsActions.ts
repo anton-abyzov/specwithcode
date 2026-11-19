@@ -201,9 +201,17 @@ export const makeProjectSkillsActions = Effect.fn("ProjectSkillsActions.make")(f
   const findVskill = (projectId: SkillsActionContext["projectId"]) =>
     findVskillBinary(vskillLocation).pipe(
       Effect.flatMap((found) =>
-        found === null
-          ? Effect.fail(actionError(projectId, "agent_unavailable", VSKILL_MISSING))
-          : Effect.succeed(found),
+        found !== null
+          ? Effect.succeed(found)
+          : deps.prepareVskill
+            ? deps.prepareVskill().pipe(
+                Effect.map(({ binary, nodeDir }) => {
+                  vskillEnv.PATH = [nodeDir, deps.environment.PATH ?? ""].join(deps.platform === "win32" ? ";" : ":");
+                  return binary;
+                }),
+                Effect.mapError((error) => actionError(projectId, "agent_unavailable", error.message)),
+              )
+            : Effect.fail(actionError(projectId, "agent_unavailable", VSKILL_MISSING)),
       ),
     );
 
