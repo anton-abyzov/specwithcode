@@ -283,8 +283,9 @@ export function judgeAccountEvidence(input: {
   });
   if (usage === undefined) return unknown("unknown_usage");
   if (!usage.signedIn) return { ...unknown("signed_out", false), line: `${name} not signed in` };
+  // A fingerprint is salted from the provider and the account, so an exact match
+  // is that pool whichever provider the thread stopped on.
   const shared =
-    input.sameDriver &&
     usage.accountFingerprint !== null &&
     input.sourceFingerprints.includes(usage.accountFingerprint);
   if (shared)
