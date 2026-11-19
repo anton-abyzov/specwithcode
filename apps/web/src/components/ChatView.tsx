@@ -108,6 +108,7 @@ import {
 } from "@specweave-studio/client-runtime/state/models";
 import { visibleThreadPullRequests } from "@specweave-studio/shared/threadPullRequests";
 import {
+  isProviderSignInExpiredFailureCode,
   latestRootProviderFailureItem,
   providerFailureDisplayMessage,
   resumableRunId as resumableRunIdOf,
@@ -10479,12 +10480,39 @@ export default function ChatView(props: ChatViewProps) {
     stopBackgroundWork: handleStopBackgroundWork,
     continueRun: continueRefusedRun,
   });
+  // An expired sign-in: another model on it fails the same way, so the way
+  // out is signing in again on the machine that runs the thread.
+  const signInExpiredInstanceId =
+    isProviderSignInExpiredFailureCode(latestFailureItem?.failure.code) && activeThread
+      ? activeThread.modelSelection.instanceId
+      : null;
+  const signInRecovery = useMemo(() => {
+    if (signInExpiredInstanceId === null) return undefined;
+    const entry = providerInstanceEntries.find(
+      (candidate) => candidate.instanceId === signInExpiredInstanceId,
+    );
+    const environment = environmentById.get(environmentId);
+    return {
+      provider: entry?.displayName ?? String(signInExpiredInstanceId),
+      machine: environment
+        ? machineNicknameNow(environment.environmentId, environment.label)
+        : null,
+      onSignIn: () => openProviderSetup(signInExpiredInstanceId),
+    };
+  }, [
+    signInExpiredInstanceId,
+    providerInstanceEntries,
+    environmentById,
+    environmentId,
+    openProviderSetup,
+  ]);
   const failureRecovery = useMemo(() => {
     if (!canOperateThread || !isServerThread || suspendChatInput || !composerMounted) {
       return undefined;
     }
     const failureItem = latestFailureItem;
     return {
+      signIn: signInRecovery,
       failureItemId: failureItem?.id ?? null,
       failureCode: failureItem?.failure.code ?? null,
       continueRunId: resumableRunId,
@@ -10494,6 +10522,7 @@ export default function ChatView(props: ChatViewProps) {
       backgroundWorkBlock: backgroundWorkBlockRecovery,
     };
   }, [
+    signInRecovery,
     canOperateThread,
     isServerThread,
     suspendChatInput,
@@ -15745,6 +15774,11 @@ export default function ChatView(props: ChatViewProps) {
                     : undefined
                 }
                 onSwitchModel={failureRecovery?.onSwitchModel}
+                signInRecovery={
+                  localServerError === null && visibleThreadError === serverRuntimeError
+                    ? failureRecovery?.signIn
+                    : undefined
+                }
                 onDismiss={() => {
                   setThreadError(activeThread.id, null);
                   dismissThreadErrorBannerForSession(threadErrorBannerKey);

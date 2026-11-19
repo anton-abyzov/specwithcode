@@ -6044,4 +6044,6 @@ export const pt: PhraseCatalog = {
     "As mensagens na fila ainda não vão junto numa passagem manual.",
   "Up to {n} threads go in one hand off. Hand off the rest after.":
     "Até {n} threads vão numa passagem. Passe o resto depois.",
+  "{provider} sign-in expired on {machine}": "O login do {provider} em {machine} expirou",
+  "{provider} sign-in expired": "O login do {provider} expirou",
 };

@@ -5978,4 +5978,6 @@ export const ko: PhraseCatalog = {
     "수동 인계에서는 대기 중인 메시지가 아직 함께 가지 않습니다.",
   "Up to {n} threads go in one hand off. Hand off the rest after.":
     "한 번의 인계로 최대 {n}개 스레드가 갑니다. 나머지는 그다음에 인계하세요.",
+  "{provider} sign-in expired on {machine}": "{machine}의 {provider} 로그인이 만료되었습니다",
+  "{provider} sign-in expired": "{provider} 로그인이 만료되었습니다",
 };

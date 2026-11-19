@@ -6075,4 +6075,6 @@ export const es: PhraseCatalog = {
     "Sus mensajes en cola aún no viajan en un traspaso manual.",
   "Up to {n} threads go in one hand off. Hand off the rest after.":
     "Hasta {n} hilos van en un traspaso. Traspasa el resto después.",
+  "{provider} sign-in expired on {machine}": "La sesión de {provider} en {machine} caducó",
+  "{provider} sign-in expired": "La sesión de {provider} caducó",
 };

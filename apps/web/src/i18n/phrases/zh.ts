@@ -5789,4 +5789,6 @@ export const zh: PhraseCatalog = {
     "手动交接时，排队中的消息暂时不会一起转移。",
   "Up to {n} threads go in one hand off. Hand off the rest after.":
     "一次交接最多 {n} 个线程。其余的之后再交接。",
+  "{provider} sign-in expired on {machine}": "{machine} 上的 {provider} 登录已过期",
+  "{provider} sign-in expired": "{provider} 登录已过期",
 };

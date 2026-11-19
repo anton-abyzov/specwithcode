@@ -795,6 +795,38 @@ it.effect("retains identity after declined sharing but never admits inference", 
     }),
   ),
 );
+it.effect("renews a token the API refused even when its expiry says it is still good", () =>
+  provision(
+    Effect.gen(function* () {
+      const h = yield* makeHarness;
+      yield* h.signIn;
+      yield* h.phase("succeeded");
+      yield* h.auth.access;
+      assert.strictEqual(h.refreshes(), 0);
+      yield* h.auth.requestRenewal;
+      const renewed = yield* h.auth.access;
+      assert.strictEqual(h.refreshes(), 1);
+      assert.strictEqual(renewed.refreshToken, "refresh-1");
+      // One renewal per refusal: the next access keeps the renewed token.
+      yield* h.auth.access;
+      assert.strictEqual(h.refreshes(), 1);
+    }),
+  ),
+);
+it.effect("says sign in again when a refused token cannot be renewed", () =>
+  provision(
+    Effect.gen(function* () {
+      const h = yield* makeHarness;
+      yield* h.signIn;
+      yield* h.phase("succeeded");
+      h.setRevoked();
+      yield* h.auth.requestRenewal;
+      const result = yield* h.auth.access.pipe(Effect.flip);
+      assert.include(result.detail, "Sign in again");
+      assert.isTrue(Option.isNone(yield* h.auth.read));
+    }),
+  ),
+);
 it.effect("clears revoked refresh credentials and does not replay them", () =>
   provision(
     Effect.gen(function* () {
