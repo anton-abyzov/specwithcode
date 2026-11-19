@@ -451,23 +451,18 @@ export async function readRepositoryFacts(
       behind = right!;
     }
   }
-  // The fetch never prunes, so a branch deleted on `origin` still reads as behind its
-  // last fetched commit: origin is asked whether the branch is there before anything
-  // is planned to move to it.
+  // The fetch never prunes, so a branch deleted on `origin` still reads as it last did,
+  // behind or level: origin is asked whether the branch is there, so nothing is planned
+  // to move to it and it is never called up to date.
   const asked =
-    options.fetch && fetch === "ok" && behind > 0 && upstream?.ref != null
+    options.fetch && fetch === "ok" && upstream?.ref != null
       ? await branchOnOrigin(context, cwd, upstream.ref)
       : null;
   const gone = asked === false;
   if (options.fetch) {
     // What this fetch brought, for a move that cannot ask origin once more: only a
     // branch origin has, at the commit its tracking ref is at now.
-    if (
-      fetch === "ok" &&
-      upstream?.ref != null &&
-      upstream.commit !== null &&
-      (behind === 0 || asked === true)
-    )
+    if (fetch === "ok" && upstream?.ref != null && upstream.commit !== null && asked === true)
       context.fetched?.set(cwd, { ref: upstream.ref, commit: upstream.commit });
     else context.fetched?.delete(cwd);
   }
@@ -481,8 +476,10 @@ export async function readRepositoryFacts(
     ...(gone ? { upstreamGone: true } : {}),
     ahead,
     behind,
-    // A status Git could not read is never treated as clean.
-    uncommitted: uncommitted ?? 1,
+    // A status Git could not read is never treated as clean, and never given a count
+    // of files nobody saw: the plan holds the checkout on `stateUnread`.
+    uncommitted: uncommitted ?? 0,
+    ...(uncommitted === null ? { stateUnread: true } : {}),
     // Read last, after the status read above.
     inUseBy: await context.inUse(cwd),
     remote: cloneAddress(address),
@@ -917,11 +914,47 @@ export async function runSync(
       });
       continue;
     }
-    out.push(await fastForwardRepository(context, repository, wanted.otherBranch));
+    // A failure on one repository is that repository's result: the others keep theirs.
+    out.push(
+      await fastForwardRepository(context, repository, wanted.otherBranch).catch((cause) =>
+        failedStep(cause, { path: wanted.path, otherBranch: wanted.otherBranch, remote: null }),
+      ),
+    );
   }
-  for (const wanted of input.clone) out.push(await cloneRepository(context, root, wanted));
+  for (const wanted of input.clone)
+    out.push(
+      await cloneRepository(context, root, wanted).catch((cause) =>
+        failedStep(cause, { path: wanted.path, otherBranch: null, remote: wanted.remote }),
+      ),
+    );
   return out;
 }
+
+/** The result of a repository whose step did not end: nothing is claimed about it but that. */
+const failedStep = (
+  cause: unknown,
+  at: {
+    readonly path: string;
+    readonly otherBranch: string | null;
+    readonly remote: string | null;
+  },
+): ProjectSyncStepResult => ({
+  path: at.path,
+  action: "none",
+  reason: "refused",
+  branch: null,
+  otherBranch: at.otherBranch,
+  ahead: 0,
+  behind: 0,
+  uncommitted: 0,
+  inUseBy: null,
+  remote: at.remote,
+  detail: `Git did not finish: ${
+    cause instanceof Error && cause.message.length > 0 ? cause.message : "no reason given"
+  }`.slice(0, 1900),
+  moved: 0,
+  downgraded: true,
+});
 
 const defaultGit: SyncGit = (cwd, args, options) => runGit(cwd, args, options);
 

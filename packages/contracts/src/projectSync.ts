@@ -115,12 +115,19 @@ export const ProjectSyncRepositoryFacts = Schema.Struct({
    */
   otherUpstream: Schema.optional(Schema.NullOr(bounded(512))),
   /**
-   * True when this machine's fetch found the upstream's branch gone from `origin`. The fetch
-   * never prunes, so `upstream` and `behind` still read as they last did; such a checkout is
-   * planned as having no upstream and is never moved. Absent when the branch is there, when
-   * nothing was behind, and from a machine on an older version.
+   * True when this machine's fetch found the upstream's branch gone from `origin`, behind or
+   * not. The fetch never prunes, so `upstream`, `ahead` and `behind` still read as they last
+   * did; such a checkout is planned as having no upstream and is never moved. Absent when the
+   * branch is there, and from a machine on an older version.
    */
   upstreamGone: Schema.optional(Schema.Boolean),
+  /**
+   * True when Git could not read the checkout's state (`git status` failed). `uncommitted`
+   * is then 0, not a count: nobody saw the files. Such a checkout is never moved; the plan
+   * holds it with reason `uncommitted` and says so in `detail`. Absent when the state was
+   * read, and from a machine on an older version (which sends `uncommitted: 1` instead).
+   */
+  stateUnread: Schema.optional(Schema.Boolean),
   ahead: NonNegativeInt,
   behind: NonNegativeInt,
   /** Changed and untracked files, as `git status` counts them. */
@@ -185,6 +192,12 @@ export const PROJECT_SYNC_MOVED_UNASKED_DETAIL =
 export const PROJECT_SYNC_REFUSED_UNASKED_DETAIL =
   "origin could not be reached, and this Sync has not fetched this commit of the branch. Sync again when origin can be reached.";
 
+/**
+ * The `detail` of a step held with reason `uncommitted` because the checkout's state could
+ * not be read. Its `uncommitted` is 0: there is no count to show.
+ */
+export const PROJECT_SYNC_STATE_UNREAD_DETAIL = "Its state could not be read, so it was not moved.";
+
 /** The `detail` of a step whose upstream branch is gone from `origin`. */
 export const projectSyncUpstreamGoneDetail = (upstream: string) =>
   `The branch ${upstream} is no longer on origin.`;
@@ -235,6 +248,8 @@ export function planProjectSyncRepository(
     return step("none", "no-upstream", projectSyncUpstreamGoneDetail(facts.upstream));
   if (facts.behind === 0) return step("none", facts.ahead > 0 ? "not-pushed" : "up-to-date");
   if (facts.ahead > 0) return step("fetch", "diverged");
+  if (facts.stateUnread === true)
+    return step("fetch", "uncommitted", PROJECT_SYNC_STATE_UNREAD_DETAIL);
   if (facts.uncommitted > 0) return step("fetch", "uncommitted");
   if (facts.inUseBy !== null) return step("fetch", "in-use");
   return step("fast-forward", "behind");
