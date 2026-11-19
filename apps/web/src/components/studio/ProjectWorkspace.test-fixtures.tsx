@@ -527,7 +527,13 @@ vi.mock("../../hooks/useThreadActionMenu", () => ({
 }));
 vi.mock("../../browser/useOpenLink", () => ({ useOpenLink: () => state.openLink }));
 vi.mock("../../env", () => ({ isElectron: false }));
-const serverConfigFixture = vi.hoisted(() => ({ atom: {}, configs: new Map() }));
+// A real atom: plain functions outside React (`machineNickname` in thread chips and relay
+// lines) read it through the app's registry, which needs an atom it can read (1427).
+const serverConfigFixture = await vi.hoisted(async () => {
+  const { Atom } = await import("effect/reactivity");
+  const configs = new Map();
+  return { atom: Atom.make(configs), configs };
+});
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: (atom: unknown) =>
     atom === serverConfigFixture.atom ? serverConfigFixture.configs : [],

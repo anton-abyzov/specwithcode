@@ -6,7 +6,7 @@
  *
  * @module machineLabels
  */
-import type { ThreadExecutionSummary } from "@specweave-studio/contracts";
+import type { EnvironmentId, ThreadExecutionSummary } from "@specweave-studio/contracts";
 
 import { modelLabel, type ProviderNameSource } from "./shellModel";
 import { threadLocation } from "./threadLocation";
@@ -98,7 +98,16 @@ export function threadMachineSuffix(
 ): string | null {
   if (!coordinatorEnvironmentId) return null;
   const location = threadLocation({
-    summary: thread as ThreadExecutionSummary,
+    // Plain ids from shells and sources; the summary's are branded.
+    summary: {
+      ...(thread.ownerMachineId ? { ownerMachineId: thread.ownerMachineId as EnvironmentId } : {}),
+      ...(thread.executionMachineId
+        ? { executionMachineId: thread.executionMachineId as EnvironmentId }
+        : {}),
+      ...(thread.executionMachineLabel
+        ? { executionMachineLabel: thread.executionMachineLabel }
+        : {}),
+    } satisfies ThreadExecutionSummary,
     servingEnvironmentId: thread.environmentId,
     name,
   });
