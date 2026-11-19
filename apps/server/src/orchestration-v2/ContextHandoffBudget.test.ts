@@ -26,7 +26,7 @@ import {
   historicalMessage,
 } from "./ContextHandoffBudget.ts";
 import { projectContextHandoffForWire } from "./WireProjection.ts";
-import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
+import { deliverContextHandoffs, mergePendingHistories } from "./ContextHandoffDelivery.ts";
 import { renderNativeSessionPointers } from "./NativeSessionPointers.ts";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -845,6 +845,7 @@ describe("handoff delivery", () => {
 describe("pending handoff chronology", () => {
   const deliveredOrder = (
     histories: ReadonlyArray<ReadonlyArray<OrchestrationV2HistoricalMessage>>,
+    alreadyDeliveredItemIds: ReadonlySet<string> = new Set(),
   ) =>
     Effect.gen(function* () {
       let order: ReadonlyArray<string> = [];
@@ -856,7 +857,7 @@ describe("pending handoff chronology", () => {
         })),
         providerThread,
         budget: 16_000,
-        alreadyDeliveredItemIds: new Set(),
+        alreadyDeliveredItemIds,
         inject: (history) =>
           Effect.sync(() => {
             order = history.messages.map((item) => String(item.itemId));
@@ -895,6 +896,35 @@ describe("pending handoff chronology", () => {
       );
     }),
   );
+
+  it.effect("keeps the order a delivered item carries between the others", () =>
+    Effect.gen(function* () {
+      // earlier -> bridge -> later, with bridge already delivered.
+      assert.deepEqual(
+        yield* deliveredOrder(
+          [
+            [at("item:bridge", undefined), at("item:later", undefined)],
+            [at("item:earlier", undefined), at("item:bridge", undefined)],
+          ],
+          new Set(["item:bridge"]),
+        ),
+        ["item:earlier", "item:later"],
+      );
+    }),
+  );
+
+  it("merges many unordered histories in first appearance order", () => {
+    const histories = Array.from({ length: 2_000 }, (_, index) => [
+      at(`item:many:${index}`, undefined),
+    ]);
+    const started = performance.now();
+    const merged = mergePendingHistories(histories, new Set());
+    assert.isBelow(performance.now() - started, 1_000);
+    assert.deepEqual(
+      merged.map((item) => String(item.itemId)),
+      histories.map(([item]) => String(item!.itemId)),
+    );
+  });
 
   it.effect("keeps already ordered and single histories as they are", () =>
     Effect.gen(function* () {

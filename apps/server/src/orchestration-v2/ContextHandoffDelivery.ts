@@ -25,68 +25,78 @@ export function isPromptlessContinuation(message: {
 }
 
 /**
- * Merges pending histories into one chronological list, skipping delivered
+ * Merges pending histories into one chronological list, leaving out delivered
  * items. Each history is in order, so its sequence is the base constraint and
  * an item shared by two histories keeps both orders: `[later]` and
- * `[earlier, later]` merge to `[earlier, later]`. Between items no history
- * orders, the turn-item ordinal decides when both come from the same thread,
- * otherwise first appearance does. Ordinals of different threads (a fork's
- * source) are never compared.
+ * `[earlier, later]` merge to `[earlier, later]`. Delivered items still carry
+ * order between the others. Between items no history orders, the turn-item
+ * ordinal decides when both come from the same thread, otherwise first
+ * appearance does. Ordinals of different threads (a fork's source) are never
+ * compared.
  */
 export function mergePendingHistories(
   histories: ReadonlyArray<ReadonlyArray<OrchestrationV2HistoricalMessage>>,
   skip: ReadonlySet<string>,
 ): ReadonlyArray<OrchestrationV2HistoricalMessage> {
-  const nodes = new Map<
-    string,
-    {
-      readonly message: OrchestrationV2HistoricalMessage;
-      readonly seen: number;
-      readonly next: Set<string>;
-      waiting: number;
-    }
-  >();
+  interface Node {
+    readonly message: OrchestrationV2HistoricalMessage;
+    readonly seen: number;
+    readonly next: Set<Node>;
+    waiting: number;
+    done: boolean;
+  }
+  const nodes = new Map<string, Node>();
   for (const history of histories) {
-    let previous: string | undefined;
+    let previous: Node | undefined;
     for (const message of history) {
-      const id = message.itemId;
-      if (skip.has(id)) continue;
-      if (!nodes.has(id)) nodes.set(id, { message, seen: nodes.size, next: new Set(), waiting: 0 });
-      if (previous !== undefined && previous !== id && !nodes.get(previous)!.next.has(id)) {
-        nodes.get(previous)!.next.add(id);
-        nodes.get(id)!.waiting += 1;
+      let node = nodes.get(message.itemId);
+      if (node === undefined) {
+        node = { message, seen: nodes.size, next: new Set(), waiting: 0, done: false };
+        nodes.set(message.itemId, node);
       }
-      previous = id;
+      if (previous !== undefined && previous !== node && !previous.next.has(node)) {
+        previous.next.add(node);
+        node.waiting += 1;
+      }
+      previous = node;
     }
   }
-  if (histories.length <= 1) return [...nodes.values()].map((node) => node.message);
-  type Node = typeof nodes extends Map<string, infer N> ? N : never;
-  const before = (a: Node, b: Node) =>
-    a.message.threadId === b.message.threadId &&
-    a.message.ordinal !== undefined &&
-    b.message.ordinal !== undefined &&
-    a.message.ordinal < b.message.ordinal;
   const order = [...nodes.values()];
-  const done = new Set<Node>();
+  const emit = (node: Node) => !skip.has(node.message.itemId);
+  if (histories.length <= 1) return order.filter(emit).map((node) => node.message);
   let ready = order.filter((node) => node.waiting === 0);
   let cursor = 0;
+  let placed = 0;
   const merged: Array<OrchestrationV2HistoricalMessage> = [];
-  while (merged.length < order.length) {
+  while (placed < order.length) {
     if (ready.length === 0) {
       // Histories that disagree form a cycle: the earliest seen item breaks it.
-      while (done.has(order[cursor]!)) cursor += 1;
+      while (order[cursor]!.done) cursor += 1;
       ready = [order[cursor]!];
     }
-    const pick = ready
-      .filter((node) => !ready.some((other) => other !== node && before(other, node)))
-      .reduce((first, node) => (node.seen < first.seen ? node : first));
-    ready = ready.filter((node) => node !== pick);
-    done.add(pick);
-    merged.push(pick.message);
-    for (const id of pick.next) {
-      const next = nodes.get(id)!;
+    // The lowest ordinal of each thread among ready items; a ready item with
+    // a higher one waits for it.
+    const lowest = new Map<string, number>();
+    for (const node of ready) {
+      const ordinal = node.message.ordinal;
+      if (ordinal === undefined) continue;
+      const current = lowest.get(node.message.threadId);
+      if (current === undefined || ordinal < current) lowest.set(node.message.threadId, ordinal);
+    }
+    let pick: Node | undefined;
+    for (const node of ready) {
+      const ordinal = node.message.ordinal;
+      if (ordinal !== undefined && ordinal > lowest.get(node.message.threadId)!) continue;
+      if (pick === undefined || node.seen < pick.seen) pick = node;
+    }
+    const chosen = pick!;
+    ready = ready.filter((node) => node !== chosen);
+    chosen.done = true;
+    placed += 1;
+    if (emit(chosen)) merged.push(chosen.message);
+    for (const next of chosen.next) {
       next.waiting -= 1;
-      if (next.waiting === 0 && !done.has(next)) ready.push(next);
+      if (next.waiting === 0 && !next.done) ready.push(next);
     }
   }
   return merged;
