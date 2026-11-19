@@ -146,6 +146,8 @@ const UPSTREAM_RESULT = {
   "apps/status": "origin/main is no longer on origin. Not moved",
   "apps/worker":
     "Sync did not change it: origin could not be asked whether the branch is still there",
+  // Its state could not be read at the run: never "0 uncommitted files".
+  "tools/cli": "Not moved",
 };
 const PLAN = {
   // Level with its upstream, with uncommitted files and a thread at work: never bare.
@@ -497,6 +499,10 @@ try {
       await waitStage(page, "result");
       for (const [repo, sentence] of Object.entries(UPSTREAM_RESULT))
         assert.equal((await said(page, repo, "a")).sentence, sentence, `${repo} on m4, result`);
+      assert.equal(
+        await cell(page, "tools/cli", "a").locator("[data-sync-detail]").textContent(),
+        "Its state could not be read, so it was not moved.",
+      );
       assert.deepEqual(await texts(page, "[data-sync-leftover]"), [
         "m4: A clone that was stopped left .apps-site.clone-7f3a behind, and it could not be removed",
       ]);

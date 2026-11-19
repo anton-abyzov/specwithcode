@@ -260,4 +260,5 @@ export const syncRu: PhraseCatalog = {
     "Сравните снова, прежде чем открывать предпросмотр этого изменившегося источника.",
   "The source changed. Compare again before copying.":
     "Источник изменился. Сравните снова перед копированием.",
+  "Not moved: its state could not be read": "Не продвинуто: не удалось прочитать состояние",
 };

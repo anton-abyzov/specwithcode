@@ -264,4 +264,5 @@ export const syncEs: PhraseCatalog = {
     "Vuelve a comparar antes de previsualizar este origen que cambió.",
   "The source changed. Compare again before copying.":
     "El origen cambió. Vuelve a comparar antes de copiar.",
+  "Not moved: its state could not be read": "No se movió: no se pudo leer su estado",
 };
