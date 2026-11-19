@@ -25,6 +25,7 @@ import {
 import {
   ScheduledTaskBrief,
   ScheduledTaskCheck,
+  ScheduledTaskDefinitionHash,
   ScheduledTaskRunStatus,
   ScheduledTaskSchedule,
   ScheduledTaskUpsertSchedule,
@@ -1308,6 +1309,10 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   ownThread: Schema.optional(Schema.Boolean),
   /** Present only when runs are pinned to one model instead of following the thread. */
   pinnedModel: Schema.optional(ModelSelection),
+  definitionHash: Schema.optional(ScheduledTaskDefinitionHash).annotate({
+    description:
+      "Present when another machine runs this routine. Pass it back to update_scheduled_task or delete_scheduled_task: a change made on a definition that has changed since is refused.",
+  }),
 });
 export type OrchestratorMcpScheduledTask = typeof OrchestratorMcpScheduledTask.Type;
 
@@ -1348,6 +1353,10 @@ export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
   modelSelection: Schema.optional(Schema.NullOr(ModelSelection)).annotate({
     description:
       "Pin runs to this model, or null to unpin so runs follow the thread's next-turn model.",
+  }),
+  definitionHash: Schema.optional(ScheduledTaskDefinitionHash).annotate({
+    description:
+      "The routine's definitionHash as you last read it. Required when the routine has one: another machine runs it and makes the change only on that definition.",
   }),
 });
 export type OrchestratorMcpUpdateScheduledTaskInput =
@@ -1505,6 +1514,10 @@ export type OrchestratorMcpAskUserResult = typeof OrchestratorMcpAskUserResult.T
 
 export const OrchestratorMcpDeleteScheduledTaskInput = Schema.Struct({
   scheduledTaskId: ScheduledTaskId,
+  definitionHash: Schema.optional(ScheduledTaskDefinitionHash).annotate({
+    description:
+      "The routine's definitionHash as you last read it. Required when the routine has one: another machine runs it and makes the change only on that definition.",
+  }),
 });
 export type OrchestratorMcpDeleteScheduledTaskInput =
   typeof OrchestratorMcpDeleteScheduledTaskInput.Type;

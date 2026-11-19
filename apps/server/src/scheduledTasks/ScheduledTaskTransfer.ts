@@ -333,6 +333,8 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
               // a revision that may be of a change made there since, and no definition.
               // Then this row is not known to hold it, until its runner sends both.
               installedRevision: sentNow ? revision : null,
+              // Its own row, never written from its new runner: hashed as it is.
+              definitionHash: null,
             })
             .pipe(Effect.ignore);
           return {
@@ -667,12 +669,27 @@ const writeStateRow = (projectId: string, id: string, state: TransferRunState) =
  * Local and fast: the lid-close path runs it inside the five-second window.
  */
 export const makePauseHere =
-  (scheduled: Pick<ScheduledTaskService["Service"], "setEnabled">, sql: SqlClient.SqlClient) =>
+  (
+    scheduled: Pick<ScheduledTaskService["Service"], "setEnabled"> &
+      Partial<Pick<ScheduledTaskService["Service"], "list">>,
+    sql: SqlClient.SqlClient,
+  ) =>
   (taskId: string, note: string | null): Effect.Effect<boolean> =>
     Effect.gen(function* () {
       const id = ScheduledTaskId.make(taskId);
       const enabled = note === null;
-      yield* scheduled.setEnabled({ id, enabled });
+      // A copy another machine runs is changed there, on the definition read here now.
+      const shown =
+        scheduled.list === undefined
+          ? undefined
+          : (yield* scheduled.list()).tasks.find((task) => task.id === id);
+      yield* scheduled.setEnabled({
+        id,
+        enabled,
+        ...(shown?.definitionHash === undefined
+          ? {}
+          : { expectedDefinition: shown.definitionHash }),
+      });
       yield* sql`UPDATE scheduled_tasks SET last_run_error = ${note} WHERE task_id = ${id}`;
       const rows = yield* sql<{ readonly enabled: number | boolean | null }>`
         SELECT enabled FROM scheduled_tasks WHERE task_id = ${id}

@@ -72,6 +72,7 @@ import { projectInGrant } from "../fleet/workGrantPolicy.ts";
 import type { ReceiverCaller } from "../handoff/HandoffReceiver.ts";
 import { HandoffPeers } from "../handoff/handoffPeers.ts";
 import { RoutineCopies } from "../scheduledTasks/ScheduledTaskCopies.ts";
+import { HANDOVER_RESTING_COPY_REFUSAL } from "../scheduledTasks/ScheduledTaskRunnerRecords.ts";
 import {
   CoordinatorStandbyShadowWorker,
   STANDBY_DELIVERED_RUN_IDS_MAX,
@@ -144,6 +145,11 @@ export interface HandoverGathered {
   readonly shadowWorkers: ReadonlyArray<CoordinatorStandbyShadowWorker>;
   readonly routines?: ReadonlyArray<CoordinatorRoutineCopy> | undefined;
   readonly runStates?: ReadonlyArray<RoutineRunState> | undefined;
+  /**
+   * Why what travels cannot be left with the target yet: this machine may be
+   * gone once the handover is taken, so nothing is sent and it coordinates on.
+   */
+  readonly notSafe?: string | undefined;
 }
 
 export interface PlannedHandoverDeps {
@@ -277,6 +283,24 @@ export const makePlannedHandover = (deps: PlannedHandoverDeps) => {
         return result("failed", `Not handed over: ${linkErrorText(gave.failure)}`);
       // Gathered once this copy rests and refuses changes, so no edit made meanwhile is left behind.
       const gathered = yield* deps.gather(project, identity.id, input.targetEnvironmentId);
+      if (gathered.notSafe !== undefined) {
+        // A call of an earlier try may have reached the target: never reverted here.
+        if (resuming) return result("in-doubt", inDoubtDetail(label));
+        const reverted = yield* deps
+          .revert({ projectId: project.id, operationId })
+          .pipe(Effect.result);
+        return reverted._tag === "Success"
+          ? result(
+              "failed",
+              `Not handed over: ${gathered.notSafe} This machine coordinates it again.`,
+              undefined,
+              true,
+            )
+          : result(
+              "failed",
+              `Not handed over: ${gathered.notSafe} This machine could not take it back: ${linkErrorText(reverted.failure)}`,
+            );
+      }
       const { coordinatorBinding, self, successor } = gave.success;
       const request: PlannedHandoverRequest = {
         protocolVersion: PLANNED_HANDOVER_PROTOCOL_VERSION,
@@ -647,9 +671,14 @@ export const make = Effect.gen(function* () {
             deliveredRunIds: row.deliveredRunIds.slice(-STANDBY_DELIVERED_RUN_IDS_MAX),
           }));
         if (routineCopies === undefined) return { shadowWorkers };
-        const snapshot = yield* routineCopies
-          .snapshot({ projectId: project.id, logicalProjectId, recipient })
-          .pipe(Effect.orElseSucceed(() => null));
+        const taken = yield* routineCopies
+          // The role goes with them: see `handover` on the snapshot.
+          .snapshot({ projectId: project.id, logicalProjectId, recipient, handover: true })
+          .pipe(Effect.result);
+        // A copy the target may still rest, that nobody else would run: not safe to leave.
+        if (taken._tag === "Failure" && taken.failure.message === HANDOVER_RESTING_COPY_REFUSAL)
+          return { shadowWorkers, notSafe: taken.failure.message };
+        const snapshot = taken._tag === "Failure" ? null : taken.success;
         if (snapshot === null) return { shadowWorkers };
         const runStates = yield* withSql(
           readRunStates(

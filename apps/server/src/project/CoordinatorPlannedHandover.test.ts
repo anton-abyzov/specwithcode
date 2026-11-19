@@ -204,6 +204,8 @@ const pair = Effect.gen(function* () {
       onceGeneration: 0,
     },
   ];
+  /** Set when what travels cannot be left behind safely (the routines' runner says so). */
+  const gathering = { notSafe: undefined as string | undefined };
   const handover = makePlannedHandover({
     loadProject: (projectId) => Effect.sync(() => m4.projects.get(projectId)),
     giveWay: (input) =>
@@ -232,6 +234,7 @@ const pair = Effect.gen(function* () {
           }),
         ],
         runStates: routineRuns,
+        ...(gathering.notSafe === undefined ? {} : { notSafe: gathering.notSafe }),
       }).pipe(Effect.tap(() => check("gather"))),
     send,
     releaseWorkers: (_project, reason) => Effect.sync(() => void released.push(reason)),
@@ -278,6 +281,7 @@ const pair = Effect.gen(function* () {
     released,
     handOver,
     statusAsks,
+    gathering,
   };
 });
 
@@ -340,6 +344,37 @@ describe("planned coordinator handover", () => {
       expect(isActive(fleet.source())).toBe(true);
       expect(isActive(fleet.target())).toBe(false);
       expect(fleet.released).toEqual([]);
+    }),
+  );
+
+  it.effect("sends nothing and takes the coordinator back when a routine cannot go safely", () =>
+    Effect.gen(function* () {
+      const fleet = yield* pair;
+      fleet.gathering.notSafe = "Ministorm still rests a routine this machine has not settled.";
+      const result = yield* fleet.handOver();
+      expect(result.outcome).toBe("failed");
+      expect(result.detail).toContain("Ministorm still rests a routine");
+      expect(fleet.network.sent).toBe(0);
+      expect(isActive(fleet.source())).toBe(true);
+      expect(isActive(fleet.target())).toBe(false);
+      expect(fleet.released).toEqual([]);
+    }),
+  );
+
+  it.effect("never takes the coordinator back for that once a call may have arrived", () =>
+    Effect.gen(function* () {
+      const fleet = yield* pair;
+      fleet.network.answers.push("lose", "lose");
+      expect((yield* fleet.handOver()).outcome).toBe("in-doubt");
+      fleet.gathering.notSafe = "Ministorm still rests a routine this machine has not settled.";
+      const again = yield* fleet.handOver();
+      expect(again.outcome).toBe("in-doubt");
+      expect(fleet.seen.some((state) => state.step === "revert")).toBe(false);
+      expect(isActive(fleet.source())).toBe(false);
+      // Safe again, the same handover finishes.
+      fleet.gathering.notSafe = undefined;
+      expect((yield* fleet.handOver()).outcome).toBe("handed-over");
+      expect(isActive(fleet.target())).toBe(true);
     }),
   );
 

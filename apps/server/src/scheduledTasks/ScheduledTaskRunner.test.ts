@@ -24,8 +24,9 @@ import {
   type Machine,
   ROUTINE,
   STANDBY,
+  shownOn,
 } from "./ScheduledTaskRunner.testkit.ts";
-import { ROUTINE_RUNNER_CAPABILITY } from "./ScheduledTaskRunnerWire.ts";
+import { RUNNER_CAPABILITIES } from "./ScheduledTaskRunnerWire.ts";
 import { RESTING_ROUTINE_NOTE } from "./ScheduledTaskCoordinatorGate.ts";
 import { routineCopyOf } from "./ScheduledTaskCopies.ts";
 import { taskInput } from "./ScheduledTaskService.coordinatorGate.testkit.ts";
@@ -404,7 +405,7 @@ it.effect("concurrent edits: one is saved, the stale one is refused and changes 
     assert.equal((yield* listed(alpha)).revision, 2);
     assert.equal((yield* listed(beta)).revision, 2);
     // A change with no revision named (an agent's) is made as it comes.
-    yield* beta.service.setEnabled({ id: ROUTINE, enabled: false });
+    yield* beta.service.setEnabled({ id: ROUTINE, enabled: false, ...(yield* shownOn(beta)) });
     assert.equal((yield* alpha.row)?.enabled, 0);
     assert.equal((yield* listed(beta)).revision, 3);
     // The copy stays a copy: it is not turned on to fire here.
@@ -455,7 +456,9 @@ it.effect("a change that cannot reach the runner is refused and nothing is writt
       )
       .pipe(Effect.flip);
     assert.include(refused.message, "This routine runs on alpha");
-    const off = yield* beta.service.setEnabled({ id: ROUTINE, enabled: false }).pipe(Effect.flip);
+    const off = yield* beta.service
+      .setEnabled({ id: ROUTINE, enabled: false, ...(yield* shownOn(beta)) })
+      .pipe(Effect.flip);
     assert.include(off.message, "Nothing was changed");
     assert.deepEqual(yield* beta.row, before);
   }),
@@ -568,7 +571,7 @@ it.effect("the release before cannot turn on or restage a routine that has a run
     assert.equal((yield* alpha.record)?.state, "settled");
     // And every answer of this release names the capability an older one lacks.
     const status = yield* alpha.transfer!.receive(callerFrom(beta), { op: "status" });
-    assert.deepInclude(status, { capabilities: [ROUTINE_RUNNER_CAPABILITY] });
+    assert.deepInclude(status, { capabilities: RUNNER_CAPABILITIES });
   }),
 );
 
@@ -692,7 +695,7 @@ it.effect("a delete sent from a copy removes every other copy as well", () =>
     const [alpha, beta, gamma] = machines as [Machine, Machine, Machine];
     for (const machine of machines) yield* machine.seed();
     yield* settle(alpha);
-    yield* beta.service.delete({ id: ROUTINE });
+    yield* beta.service.delete({ id: ROUTINE, ...(yield* shownOn(beta)) });
     for (const machine of [alpha, beta, gamma]) assert.isUndefined(yield* machine.row);
   }),
 );
@@ -773,11 +776,11 @@ it.effect("a delete whose answer was lost is finished by asking again", () =>
     yield* beta.seed();
     yield* settle(alpha);
     network.dropAnswer = (from, _to, op) => from === "beta" && op === "runner-edit";
-    yield* beta.service.delete({ id: ROUTINE }).pipe(Effect.flip);
+    yield* beta.service.delete({ id: ROUTINE, ...(yield* shownOn(beta)) }).pipe(Effect.flip);
     // Deleted on the runner, and the copy never heard.
     assert.isUndefined(yield* alpha.row);
     network.dropAnswer = () => false;
-    yield* beta.service.delete({ id: ROUTINE });
+    yield* beta.service.delete({ id: ROUTINE, ...(yield* shownOn(beta)) });
     assert.isUndefined(yield* beta.row);
     assert.isNull(yield* beta.record);
   }),

@@ -144,6 +144,13 @@ DECLARED = {
          "task_id TEXT NOT NULL, answer_json TEXT NOT NULL, created_at TEXT NOT NULL )"),
         ('index', 'sqlite_autoindex_scheduled_task_runner_receipts_1', 'scheduled_task_runner_receipts', None),
     )),
+    # 077_ScheduledTaskCopyDefinitions.ts
+    77: ('ScheduledTaskCopyDefinitions', (
+        ('table', 'scheduled_task_copy_definitions', 'scheduled_task_copy_definitions',
+         "CREATE TABLE scheduled_task_copy_definitions ( task_id TEXT PRIMARY KEY, "
+         "definition_hash TEXT NOT NULL )"),
+        ('index', 'sqlite_autoindex_scheduled_task_copy_definitions_1', 'scheduled_task_copy_definitions', None),
+    )),
 }
 
 # Server migrations the page proof refuses (a rebuild, alter, drop or rename): an update that runs
