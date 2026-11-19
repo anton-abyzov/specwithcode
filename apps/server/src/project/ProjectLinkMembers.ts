@@ -224,8 +224,12 @@ export const makeProjectLinkMembers = (deps: ProjectLinkMembersDeps) => {
         );
         return { replayed: false, changed: true };
       }
-      // The other copy's later links end the unlinks this copy remembers of the same copies.
-      const relinked = mergeRelinked(ownRelinked, theirRelinked);
+      // An unlink this copy remembers ends only by its own relink, or by one the unlinked
+      // copy sends about itself. A relink another machine relays about it changes nothing.
+      const relinked = mergeRelinked(
+        ownRelinked,
+        theirRelinked.filter((entry) => logicalProjectMemberKey(entry) === fromKey),
+      );
       const ownRemoved = current.removedMembers ?? [];
       const stillRemoved = ownRemoved.filter(
         (removal) =>

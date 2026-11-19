@@ -536,3 +536,46 @@ describe("when a machine cannot tell, it keeps what it has (round 5)", () => {
     }),
   );
 });
+
+describe("a later link only the copy itself vouches for (round 6)", () => {
+  it.effect("another machine's relayed relink never ends this machine's unlink", () =>
+    Effect.gen(function* () {
+      const run = fleet();
+      const { a, b, c } = run;
+      yield* Effect.promise(() => run.link(a, c));
+      const logicalProjectId = a.machine.projects.get(a.member.projectId)!.workspaceSettings!
+        .logicalProject!.id;
+      // B as a machine from before link ids lists it: no name, no count.
+      const legacyB: LogicalProjectMember = {
+        environmentId: b.member.environmentId,
+        projectId: b.member.projectId,
+        coordinatorThreadId: b.member.coordinatorThreadId,
+      };
+      const fromC = (relinked: ReadonlyArray<{ environmentId: string; projectId: string }>) =>
+        Effect.promise(() =>
+          run.on(a, (service) =>
+            service.adoptMembers({
+              projectId: a.member.projectId,
+              logicalProjectId,
+              from: run.entry(a, c)!,
+              fromEpoch: 0,
+              members: [a.member, run.entry(a, c)!, legacyB],
+              relinked: relinked.map((entry) => ({
+                environmentId: entry.environmentId as never,
+                projectId: entry.projectId as never,
+                linkedAt: "2099-01-01T00:00:00.000Z",
+              })),
+            }),
+          ),
+        );
+      yield* fromC([]);
+      assert.deepStrictEqual(run.lists(a), everyone);
+      // A unlinks that legacy B: a dated unlink.
+      yield* Effect.promise(() => run.drop(a, run.entry(a, b)!));
+      assert.deepStrictEqual(run.lists(a), ["m1", "m4"]);
+      // C relays a relink of B, dated after that unlink. B never said so itself.
+      yield* fromC([legacyB]);
+      assert.deepStrictEqual(run.lists(a), ["m1", "m4"]);
+    }),
+  );
+});
