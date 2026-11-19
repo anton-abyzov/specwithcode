@@ -3449,7 +3449,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       name: "in pass-through, where the app passed no advisor",
       policy: CLAUDE_TEST_RUNTIME_POLICY,
       answeredBy: "claude-fable-5-2",
-      title: "Asked the advisor (claude-fable-5-2)",
+      title: "Asked the advisor (claude-fable-5-2) from Claude's settings",
     },
     {
       name: "over the model the app passed",

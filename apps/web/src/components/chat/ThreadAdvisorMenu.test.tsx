@@ -173,7 +173,7 @@ const builtInConsult = {
   item: {
     type: "dynamic_tool",
     toolName: "advisor",
-    title: "Asked the advisor (claude-fable-5-2)",
+    title: "Asked the advisor (claude-fable-5-2) from Claude's settings",
     status: "completed",
     output: "Check the migration first.",
   },
@@ -223,6 +223,13 @@ describe("the Advisor row's note", () => {
       kind: "pass-through",
       text: ["Claude's own advisor setting answered here: Fable 5.2"],
     });
+  });
+
+  it("never credits Claude's settings with an answer the app passed the advisor for", () => {
+    state.items = [
+      { ...builtInConsult, item: { ...builtInConsult.item, title: "Asked the advisor (claude-fable-5-2)" } },
+    ];
+    expect(note(render())).toBeNull();
   });
 
   it("says nothing in pass-through before Claude's own advisor answered, or for Off", () => {

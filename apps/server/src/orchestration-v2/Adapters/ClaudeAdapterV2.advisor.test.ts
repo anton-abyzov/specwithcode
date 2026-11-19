@@ -45,4 +45,9 @@ it("finds nothing in usage without an advisor entry", () => {
 it("names the model in the consult title only when it is known", () => {
   assert.equal(claudeAdvisorItemTitle("claude-fable-5-2"), "Asked the advisor (claude-fable-5-2)");
   assert.equal(claudeAdvisorItemTitle(undefined), "Asked the advisor");
+  assert.equal(
+    claudeAdvisorItemTitle("claude-fable-5-2", true),
+    "Asked the advisor (claude-fable-5-2) from Claude's settings",
+  );
+  assert.equal(claudeAdvisorItemTitle(undefined, true), "Asked the advisor");
 });

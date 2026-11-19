@@ -282,7 +282,7 @@ const PASS_THROUGH_ITEMS = [
       threadId: "thread-atlas-1",
       type: "dynamic_tool",
       toolName: "advisor",
-      title: "Asked the advisor (claude-fable-5-2)",
+      title: "Asked the advisor (claude-fable-5-2) from Claude's settings",
       status: "completed",
       output: "Check the retry path before the parser.",
       input: {},

@@ -102,14 +102,18 @@ function selectionName(
   return provider?.models.find((model) => model.slug === selection.model)?.name ?? selection.model;
 }
 
-/** The model that last answered as Claude's own advisor on this thread, by its display name. */
+/**
+ * The model that last answered from Claude Code's own advisor setting on this
+ * thread, by its display name. A consult the app passed the advisor for does
+ * not count. Only the loaded history is read.
+ */
 export function latestBuiltInAdvisor(
   items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
   providers: ReadonlyArray<ServerProvider>,
 ): string | null {
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const view = advisorConsultView(items[index]!.item);
-    if (view === null || !view.builtIn || view.advisor === null) continue;
+    if (view === null || view.fromClaudeSettings !== true || view.advisor === null) continue;
     // Named by its slug, as the timeline's consult row looks it up.
     const slug = view.advisor;
     for (const provider of [

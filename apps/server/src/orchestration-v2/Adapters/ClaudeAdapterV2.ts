@@ -2620,9 +2620,18 @@ function summarizeClaudeToolRequest(toolName: string, input: ClaudeNativeToolInp
 /** The name Claude Code gives its own advisor tool (a server tool, not MCP). */
 export const CLAUDE_ADVISOR_TOOL_NAME = "advisor";
 
-/** The title of a consult of Claude's own advisor, naming its model when known. */
-export function claudeAdvisorItemTitle(model: string | undefined): string {
-  return model === undefined ? "Asked the advisor" : `Asked the advisor (${model})`;
+/**
+ * The title of a consult of Claude's own advisor, naming its model when known,
+ * and saying so when Claude Code's own settings chose it (the app passed none).
+ */
+export function claudeAdvisorItemTitle(
+  model: string | undefined,
+  fromClaudeSettings = false,
+): string {
+  if (model === undefined) return "Asked the advisor";
+  return fromClaudeSettings
+    ? `Asked the advisor (${model}) from Claude's settings`
+    : `Asked the advisor (${model})`;
 }
 
 /**
@@ -4758,7 +4767,10 @@ export function makeClaudeAdapterV2(
             status: input.status,
             title:
               input.toolName === CLAUDE_ADVISOR_TOOL_NAME
-                ? claudeAdvisorItemTitle(answeredAdvisorModel ?? liveAdvisorModel)
+                ? claudeAdvisorItemTitle(
+                    answeredAdvisorModel ?? liveAdvisorModel,
+                    liveAdvisorModel === undefined,
+                  )
                 : readPath !== undefined
                   ? formatReadToolLabel(readPath)
                   : (searchTitle ??

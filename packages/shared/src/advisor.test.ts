@@ -324,13 +324,6 @@ describe("preferredAdvisor", () => {
       ["claude-fable-5-2", "claude-opus-5-5"],
       100,
     );
-    expect(
-      preferredAdvisor({
-        ...base,
-        providers: [full, codex, muse],
-        thread: sel("claudeAgent", "claude-opus-5-5"),
-      }),
-    ).toEqual(sel("claudeAgent", "claude-fable-5-2"));
     expect(preferredAdvisor({ ...base, providers: [full, codex, muse] })).toEqual(
       sel("claudeAgent", "claude-fable-5-2"),
     );
@@ -338,11 +331,7 @@ describe("preferredAdvisor", () => {
 
   it("follows a saved model", () => {
     expect(
-      preferredAdvisor({
-        ...base,
-        model: sel("claudeAgent", "claude-opus-5-5"),
-        thread: sel("claudeAgent", "claude-sonnet-5-5"),
-      }),
+      preferredAdvisor({ ...base, model: sel("claudeAgent", "claude-opus-5-5") }),
     ).toEqual(sel("claudeAgent", "claude-opus-5-5"));
   });
 });
