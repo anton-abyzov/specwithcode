@@ -89,7 +89,10 @@ try {
     );
     await page.locator('[data-slot="send-summary"]').waitFor();
     const dialog = await page.locator('[data-slot="dialog-popup"]').textContent();
-    NodeAssert.match(dialog, name === "move" ? /Continue the coordinator on m5/ : /Add specweave to m5/);
+    NodeAssert.match(
+      dialog,
+      name === "move" ? /Continue the coordinator on m5/ : /Add specweave to m5/,
+    );
     // A folder copy asks nothing about the coordinator.
     NodeAssert.equal(await page.locator('[data-slot="handoff-coordinator"]').count(), 0);
     NodeAssert.doesNotMatch(dialog, /Copy or move/);
@@ -197,7 +200,9 @@ try {
     if (name === "done-make-main") {
       // The switch opens the move to that copy: its setup, not the finished copy again.
       await makeMain.click();
-      await page.getByRole("heading", { name: "Continue the coordinator on m5", exact: true }).waitFor();
+      await page
+        .getByRole("heading", { name: "Continue the coordinator on m5", exact: true })
+        .waitFor();
       NodeAssert.equal(await page.evaluate(() => document.body.dataset.madeMain), "m5:m5");
       await footer.getByRole("button", { name: "Copy and move to m5", exact: true }).waitFor();
       NodeAssert.equal(await page.locator('[data-slot="copy-make-main"]').count(), 0);

@@ -140,7 +140,9 @@ try {
     await page.goto(`${origin}/?theme=${theme}`, { waitUntil: "networkidle" });
     const dialog = page.getByRole("dialog");
     await dialog.waitFor();
-    NodeAssert.ok(await dialog.getByRole("heading", { name: /^Continue the coordinator on / }).isVisible());
+    NodeAssert.ok(
+      await dialog.getByRole("heading", { name: /^Continue the coordinator on / }).isVisible(),
+    );
     NodeAssert.ok(
       await dialog
         .getByText(

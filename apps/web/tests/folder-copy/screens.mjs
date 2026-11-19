@@ -89,7 +89,9 @@ try {
   // A move asked for with "Continue the coordinator here" opens the same flow, set to move.
   await page.goto(`${base}?short=1&secrets=1&uncommitted=18&theme=light&move=1`);
   await page.getByRole("button", { name: "Copy and move to m5", exact: true }).waitFor();
-  await page.getByRole("heading", { name: "Continue the coordinator on m5", exact: true }).waitFor();
+  await page
+    .getByRole("heading", { name: "Continue the coordinator on m5", exact: true })
+    .waitFor();
   await shot(page, "after-setup-move");
   await page.goto(`${base}?short=1&secrets=1&uncommitted=18&theme=light`);
   await page.getByRole("heading", { name: "Add specweave to m5", exact: true }).waitFor();
