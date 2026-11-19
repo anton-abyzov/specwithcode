@@ -121,6 +121,7 @@ export * from "./handoffTransfer.ts";
 export * from "./away.ts";
 export * from "./awayRpc.ts";
 export * from "./handoffBatchRpc.ts";
+export * from "./handoffPlanView.ts";
 export * from "./threadExecution.ts";
 export * from "./folderCopy.ts";
 export * from "./machineReadiness.ts";

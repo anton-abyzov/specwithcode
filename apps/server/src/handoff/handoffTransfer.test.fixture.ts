@@ -27,6 +27,7 @@ import {
   type ThreadId,
   threadTurnKey,
 } from "@specweave-studio/contracts";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -134,6 +135,10 @@ export interface RigThread {
   activeRunId: string | null;
   worktreePath: string | null;
   /** A question, approval or sign-in the thread waits on; absent means none. */
+  /** Messages held behind its turn; absent means none. */
+  heldQueuedCount?: number;
+  /** Set once the thread was settled; absent means it waits for the next message. */
+  settledAt?: string | null;
   pendingRuntimeRequest?: {
     readonly id: string;
     readonly kind: string;
@@ -192,6 +197,8 @@ export interface RigMachine {
   projectLookupGate: Effect.Effect<void> | null;
   /** This machine's own folder work, read at the next start; null: it cannot read any. */
   folderSource: HandoffFolderWork["Service"] | null;
+  /** The account its Claude sign-in is on, and that account's usage; null: neither is known. */
+  providerAccount: { readonly email: string; readonly usedPercent: number | null } | null;
   /** The usage-limit rule's answer for an automatic start, read at the next start; null: no rule is readable. */
   admission: HandoffBatchAdmission["Service"] | null;
   moves: Effect.Success<typeof HandoffMoves.make>;
@@ -296,6 +303,7 @@ export const makeRig = (
         projectLookupFails: 0,
         projectLookupGate: null,
         folderSource: null,
+        providerAccount: null,
         admission: { automatic: () => Effect.succeed(null) },
         moves: undefined as never,
       };
@@ -390,6 +398,14 @@ export const makeRig = (
             activeRunId: thread.activeRunId,
             latestRunId: null,
             pendingRuntimeRequest: thread.pendingRuntimeRequest ?? null,
+            status: thread.activeRunId === null ? "idle" : "running",
+            archivedAt: null,
+            lineage: { relationshipToParent: null },
+            heldQueuedCount: thread.heldQueuedCount ?? 0,
+            executionMachineId: null,
+            settledAt: thread.settledAt ?? null,
+            settledOverride: null,
+            updatedAt: "2026-11-19T12:00:00.000Z",
             modelSelection,
             runtimeMode: "full-access",
             interactionMode: "default",
@@ -436,17 +452,42 @@ export const makeRig = (
           snapshot: Effect.sync(() => ({ projects: target.linked() ? [projectOf(target)] : [] })),
         } as never),
         Layer.succeed(ProviderRegistry.ProviderRegistry, {
-          getProviders: Effect.succeed([
-            {
-              instanceId: "claudeAgent",
-              driver: "claudeAgent",
-              displayName: "Claude",
-              enabled: true,
-              installed: true,
-              auth: { status: "authenticated" },
-              models: [{ slug: "claude-opus-5-5" }],
-            },
-          ]),
+          getProviders: Clock.currentTimeMillis.pipe(
+            Effect.map((nowMs) => {
+              const account = target.providerAccount;
+              const at = (ms: number) => new Date(ms).toISOString();
+              return [
+                {
+                  instanceId: "claudeAgent",
+                  driver: "claudeAgent",
+                  displayName: "Claude",
+                  enabled: true,
+                  installed: true,
+                  auth: {
+                    status: "authenticated",
+                    ...(account === null ? {} : { email: account.email }),
+                  },
+                  models: [{ slug: "claude-opus-5-5" }],
+                  ...(account?.usedPercent == null
+                    ? {}
+                    : {
+                        usageLimits: {
+                          checkedAt: at(nowMs),
+                          windows: [
+                            {
+                              id: "session",
+                              kind: "session",
+                              label: "Session",
+                              usedPercent: account.usedPercent,
+                              resetsAt: at(nowMs + 3_600_000),
+                            },
+                          ],
+                        },
+                      }),
+                },
+              ];
+            }),
+          ),
         } as never),
         Layer.succeed(ThreadLaunchService.ThreadLaunchService, {
           launch: (input: ThreadLaunchService.ThreadLaunchInput) =>
@@ -494,6 +535,13 @@ export const makeRig = (
                 ? Effect.fail(silent(target.label))
                 : Effect.succeed(shellOf(target, id)),
             ),
+          getShellSnapshot: () =>
+            Effect.sync(() => ({
+              threads: [...target.threads.keys()].flatMap((id) => {
+                const shell = shellOf(target, id);
+                return shell === null ? [] : [shell];
+              }),
+            })),
           getThread: () => Effect.succeed({ execution: null }),
           getThreadRecords: () =>
             Effect.succeed({

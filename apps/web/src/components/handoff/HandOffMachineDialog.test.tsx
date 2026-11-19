@@ -369,3 +369,65 @@ it("says when more threads are ticked than one hand off takes", async () => {
   await act(async () => root.render(<HandOffMachineDialogView {...props()} />));
   expect(document.body.textContent).not.toContain("Up to 100 threads");
 });
+
+it("shows the plan's groups and each machine's usage line (AC-17, AC-22)", async () => {
+  const queued = "t-queued" as ThreadId;
+  const unsaved = "t-unsaved" as ThreadId;
+  const folder = "folder-work:project-atlas" as ThreadId;
+  const view = props({
+    destinations: [
+      { environmentId: MINIS, label: "Minis", state: "reachable" },
+      { environmentId: "env-desk" as EnvironmentId, label: "Desk", state: "reachable" },
+    ],
+    usage: new Map([
+      [MINIS, ["Same Claude account as M4: adds no usage"]],
+      ["env-desk" as EnvironmentId, ["Usage unknown"]],
+    ]),
+    threads: [
+      {
+        threadId: queued,
+        title: "Ship it",
+        group: "queued",
+        canTick: false,
+        reason: "Its queued messages do not travel in a hand off by hand yet.",
+      },
+      { threadId: unsaved, title: "Draft notes", group: "unsaved" },
+      {
+        threadId: folder,
+        title: "atlas",
+        group: "folder-work",
+        kind: "folder-work",
+        reason: "1 branch only on M4",
+      },
+      {
+        threadId: blocked,
+        title: "Fix the API",
+        group: "stays",
+        reason: "data/dump.bin is 12 MB, over the 10 MB limit for one file",
+      },
+    ],
+    selected: new Set([folder]),
+    preflight: new Map(),
+  });
+  await act(async () => root.render(<HandOffMachineDialogView {...view} />));
+  const text = document.body.textContent ?? "";
+  expect(text).toContain("Queued (1)");
+  expect(text).toContain("Not running with unsaved work (1)");
+  expect(text).toContain("Project folder work (1)");
+  expect(text).toContain("Stays (1)");
+  expect(text).toContain("Same Claude account as M4: adds no usage");
+  expect(text).toContain("Usage unknown");
+  // A queued row is listed with why it cannot be ticked yet.
+  const queue = document.querySelector('[aria-label="Queued"]');
+  expect(queue?.textContent).toContain("Its queued messages do not travel");
+  expect(queue?.querySelector('[role="checkbox"]')).toBeNull();
+  expect(document.querySelector('[aria-label="Project folder work"]')?.textContent).toContain(
+    "1 branch only on M4",
+  );
+  expect(document.querySelector('[aria-label="Stays here"]')?.textContent).toContain(
+    "over the 10 MB limit",
+  );
+  // Folder work needs no thread check: ticked, it can go.
+  await act(async () => button("Hand off to Minis")!.click());
+  expect(view.onSubmit).toHaveBeenCalledTimes(1);
+});
