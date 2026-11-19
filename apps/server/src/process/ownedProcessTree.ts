@@ -332,15 +332,7 @@ export interface TreeHost {
   readonly killVerified: (entries: ReadonlyArray<ProcessEntry>, timeoutMs: number) => Promise<void>;
   readonly sleep: (ms: number) => Promise<void>;
   readonly now: () => number;
-  /** Wall-clock time, to compare with the CLI's exit time. Defaults to `Date.now`. */
-  readonly epochNow?: () => number;
 }
-
-/**
- * How long after the CLI exited its group may still be signalled with no table to show
- * who is in it: a group id cannot empty and be handed to another job that fast.
- */
-const BLIND_GROUP_SIGNAL_MS = 10_000;
 
 export interface TreeEndResult {
   /** Processes of the tree that were still running when the end began. */
@@ -537,12 +529,21 @@ export class OwnedProcessTree {
       this.groupRetired = true;
       groupUsable = false;
     }
-    // No table and the CLI reaped: the group is signalled blind only right after the exit.
-    // Later its id may be another job's, and nothing here can tell.
-    if (groupUsable && table === undefined && !this.root.alive()) {
-      const epochNow = (this.host.epochNow ?? Date.now)();
-      if (exitedAt === null || epochNow - exitedAt > BLIND_GROUP_SIGNAL_MS) {
+    // With the CLI reaped, its group id may be another job's: the group is signalled only
+    // with a member that proves it the CLI's, one an earlier end saw or one that started
+    // before the CLI exited (while the CLI held the id, no other job could have it).
+    // `ps` gives whole seconds, so a start in the exit's second still counts.
+    const startedBeforeExit = (entry: ProcessEntry) => {
+      const started = Date.parse(entry.started);
+      return exitedAt !== null && Number.isFinite(started) && started <= exitedAt;
+    };
+    const provesGroup = (entry: ProcessEntry) =>
+      this.groupSeen.get(entry.pid) === entry.started || startedBeforeExit(entry);
+    if (groupUsable && !this.root.alive() && exitedAt !== null) {
+      if (members === undefined || (members.length > 0 && !members.some(provesGroup))) {
+        // Neither signalled nor taken as gone: whoever is in it may be the tree's.
         groupUsable = false;
+        unknown = true;
         this.coverageLost = true;
       }
     }
@@ -555,7 +556,7 @@ export class OwnedProcessTree {
       } else if (members.length === 0) {
         this.groupRetired = true;
         groupUsable = false;
-      } else if (!members.some((entry) => this.groupSeen.get(entry.pid) === entry.started)) {
+      } else if (!members.some(provesGroup)) {
         // Nobody seen before: either a new job leads the id now (a leader with the CLI's
         // pid but another start), or members this tree never read. Only the first is
         // certain; the second is neither signalled nor taken as gone.

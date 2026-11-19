@@ -928,6 +928,20 @@ export const make = Effect.gen(function* () {
     const shells = new Map(
       (yield* projectThreads(input.projectId)).map((shell) => [shell.id, shell] as const),
     );
+    // An earlier Stop of a thread left processes it could not confirm gone: each is tried
+    // again now, alongside the new Stops, so a retry slow to answer never delays them.
+    const teardownRetries = yield* Effect.sync(
+      () =>
+        new Map(
+          current.activeThreads
+            .filter((thread) => seen.has(thread.id) && stopTeardownFailed(thread.id))
+            .map((thread) => [thread.id, retryFailedStopTeardown(thread.id)] as const),
+        ),
+    );
+    const outcomes: Array<{
+      readonly thread: (typeof current.activeThreads)[number];
+      readonly stopFailed: boolean;
+    }> = [];
     for (const thread of current.activeThreads) {
       const saw = seen.get(thread.id);
       if (saw === undefined) continue;
@@ -945,11 +959,6 @@ export const make = Effect.gen(function* () {
         });
         continue;
       }
-      // An earlier Stop of this thread left processes it could not confirm gone: try that
-      // again, separately from stopping the work it runs now.
-      const teardownLeft =
-        stopTeardownFailed(thread.id) &&
-        !(yield* Effect.promise(() => retryFailedStopTeardown(thread.id)));
       const shell = shells.get(thread.id);
       const working =
         runId !== null || (shell !== undefined && threadWorkBlocksFolderChange(shell));
@@ -996,6 +1005,12 @@ export const make = Effect.gen(function* () {
           });
         }
       }
+      outcomes.push({ thread, stopFailed });
+    }
+    // Only once every Stop went out: a retry of one thread never holds up another's Stop.
+    for (const { thread, stopFailed } of outcomes) {
+      const retry = teardownRetries.get(thread.id);
+      const teardownLeft = retry !== undefined && !(yield* Effect.promise(() => retry));
       if (stopFailed) {
         failed.push({
           id: thread.id,

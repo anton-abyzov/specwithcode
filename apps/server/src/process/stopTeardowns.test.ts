@@ -33,4 +33,11 @@ describe("failed Stop teardowns", () => {
     expect(await retryFailedStopTeardown("thread-b")).toBe(false);
     expect(stopTeardownPending("thread-b")).toBe(true);
   });
+
+  it("gives up on a retry that never answers and keeps the thread blocked", async () => {
+    holdFailedStopTeardown("thread-c", () => new Promise<boolean>(() => {}));
+    holdFailedStopTeardown("thread-c", async () => true);
+    expect(await retryFailedStopTeardown("thread-c", 20)).toBe(false);
+    expect(stopTeardownPending("thread-c")).toBe(true);
+  });
 });

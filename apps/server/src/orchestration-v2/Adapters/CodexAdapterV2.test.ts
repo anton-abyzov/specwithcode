@@ -5601,6 +5601,119 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
+  it.effect("gives up on a Codex Stop retry that never answers and keeps the folder held", () =>
+    Effect.gen(function* () {
+      const transcript = makeCodexReplayTranscript({
+        scenario: "foreground-interrupt-rejected-then-ended",
+        entries: [
+          ...codexReplayPreamble({
+            nativeThreadId: BG_NATIVE_THREAD,
+            nativeTurnId: BG_NATIVE_TURN,
+            prompt: BG_PROMPT,
+          }),
+          {
+            type: "emit_inbound",
+            label: "foreground command starts without a terminal handle",
+            frame: {
+              method: "item/started",
+              params: {
+                item: {
+                  ...backgroundCommandItem("inProgress"),
+                  processId: null,
+                  source: "agent",
+                },
+                threadId: BG_NATIVE_THREAD,
+                turnId: BG_NATIVE_TURN,
+                startedAtMs: 1782622440500,
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            label: "turn/interrupt",
+            frame: {
+              id: 4,
+              method: "turn/interrupt",
+              params: {
+                threadId: BG_NATIVE_THREAD,
+                turnId: BG_NATIVE_TURN,
+              },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "turn/interrupt rejected",
+            frame: { id: 4, error: { code: -32603, message: "simulated interrupt failure" } },
+          },
+          {
+            type: "expect_outbound",
+            label: "turn/interrupt retried for the folder change",
+            frame: {
+              id: 5,
+              method: "turn/interrupt",
+              params: { threadId: BG_NATIVE_THREAD, turnId: BG_NATIVE_TURN },
+            },
+          },
+        ],
+      });
+      const requests: string[] = [];
+      const harness = yield* makeCodexReplayHarness(
+        transcript,
+        () => Effect.void,
+        (method) =>
+          Effect.sync(() => {
+            requests.push(method);
+          }),
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("foreground-stop"),
+          text: BG_PROMPT,
+        }),
+      );
+      yield* awaitUntil(
+        () =>
+          harness.events.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "command_execution" &&
+              event.turnItem.status === "running",
+          ),
+        "tracked live command",
+      );
+      const providerTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+        driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+        nativeTurnId: BG_NATIVE_TURN,
+      });
+      const failed = yield* harness.runtime
+        .interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId,
+          requestRuntimeRestart: true,
+        })
+        .pipe(Effect.exit);
+      assert.equal(failed._tag, "Failure");
+      assert.include(requests, "turn/interrupt");
+      // Codex never confirmed the turn ended, and a foreground command has no terminal
+      // to end: the folder change waits.
+      const appThreadId = harness.providerThread.appThreadId;
+      assert.isNotNull(appThreadId);
+      assert.isTrue(stopTeardownPending(appThreadId!));
+      // The retry's request is never answered: the retry gives up instead of waiting
+      // forever, so the folder flow's other Stops go out, and the folder stays held.
+      const retry = retryFailedStopTeardown(appThreadId!, 200);
+      yield* awaitUntil(
+        () => requests.filter((method) => method === "turn/interrupt").length === 2,
+        "second turn interrupt request",
+      );
+      assert.isFalse(yield* Effect.promise(() => retry));
+      assert.isTrue(stopTeardownPending(appThreadId!));
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
   it.effect.each(backgroundStopCases)(
     "stops a command after root completion when termination returns %s",
     (terminated) => {

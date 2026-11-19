@@ -7107,6 +7107,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                           turnId: nativeTurnId,
                         })
                         .pipe(
+                          // An app-server that never answers leaves the turn unconfirmed.
+                          Effect.timeout("10 seconds"),
                           Effect.as("accepted" as const),
                           Effect.catchTags({
                             CodexAppServerProcessExitedError: () =>

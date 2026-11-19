@@ -587,6 +587,49 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
     ),
   );
 
+  it.effect("stops every thread while an earlier Stop's retry has not answered", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent } = yield* makeScenario;
+        scenario.threads[0] = shell("coordinator", {
+          title: "Coordinator",
+          activeRunId: RunId.make("run-b"),
+          status: "running",
+        });
+        scenario.threads.push(
+          shell("worker", { title: "Worker", activeRunId: RunId.make("run-w"), status: "running" }),
+        );
+        // The earlier Stop's retry answers only once both new Stops went out: awaiting it
+        // before dispatching would never get there.
+        holdFailedStopTeardown("coordinator", () =>
+          Effect.runPromise(
+            Effect.sleep("5 millis").pipe(
+              Effect.repeat({ until: () => scenario.dispatched.length >= 2 }),
+              Effect.as(true),
+            ),
+          ),
+        );
+        const result = yield* withFolders(scenario, (folders) =>
+          folders.stop({
+            commandId,
+            projectId,
+            workspaceRoot: parent,
+            threads: [
+              { id: ThreadId.make("coordinator"), runId: RunId.make("run-b") },
+              { id: ThreadId.make("worker"), runId: RunId.make("run-w") },
+            ],
+          }),
+        );
+        expect(scenario.dispatched).toEqual([
+          expect.objectContaining({ type: "run.interrupt", runId: "run-b" }),
+          expect.objectContaining({ type: "run.interrupt", runId: "run-w" }),
+        ]);
+        expect(result.failed).toEqual([]);
+        expect(stopTeardownPending("coordinator")).toBe(false);
+      }),
+    ),
+  );
+
   it.effect("retries a Stop that left processes running instead of stopping anything", () =>
     Effect.scoped(
       Effect.gen(function* () {

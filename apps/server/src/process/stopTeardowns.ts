@@ -8,6 +8,7 @@
  * thread each hold it until they end.
  */
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 const pending = new Map<string, number>();
 /**
@@ -47,14 +48,30 @@ export function holdFailedStopTeardown(threadId: string, retry: () => Promise<bo
   failed.set(threadId, entries);
 }
 
-/** Tries every failed teardown of the thread again; true once nothing of any is left. */
-export async function retryFailedStopTeardown(threadId: string): Promise<boolean> {
+/** The longest one retry may take: one that never answers keeps its hold. */
+const RETRY_TIMEOUT_MS = 20_000;
+
+/**
+ * Tries every failed teardown of the thread again, at once and each within `timeoutMs`;
+ * true once nothing of any is left.
+ */
+export async function retryFailedStopTeardown(
+  threadId: string,
+  timeoutMs = RETRY_TIMEOUT_MS,
+): Promise<boolean> {
   const entries = failed.get(threadId);
   if (entries === undefined) return true;
-  for (const retry of [...entries]) {
-    const done = await retry().catch(() => false);
-    if (done) entries.delete(retry);
-  }
+  await Promise.all(
+    [...entries].map(async (retry) => {
+      const done = await Effect.runPromise(
+        Effect.promise(() => retry().catch(() => false)).pipe(
+          Effect.timeoutOption(timeoutMs),
+          Effect.map(Option.getOrElse(() => false)),
+        ),
+      );
+      if (done) entries.delete(retry);
+    }),
+  );
   if (entries.size > 0) return false;
   if (failed.get(threadId) === entries) failed.delete(threadId);
   return true;

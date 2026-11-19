@@ -329,11 +329,7 @@ describe("OwnedProcessTree.end", () => {
   it("neither signals nor gives up a later group it cannot tie to the CLI", async () => {
     // The first end could not read the table, so it never saw who was in the group.
     const { host, calls } = fakeHost("linux", [null]);
-    // The CLI exited just now: its group is still signalled blind.
-    const tree = new OwnedProcessTree(
-      { ...root(200, false), exitedAtEpochMs: () => Date.now() },
-      host,
-    );
+    const tree = new OwnedProcessTree(root(200, false), host);
     expect(await tree.end(1_000)).toMatchObject({ survivors: 1, unknown: true });
     calls.length = 0;
     // A later end sees the group occupied by someone it cannot place: it stays unconfirmed.
@@ -342,23 +338,68 @@ describe("OwnedProcessTree.end", () => {
     expect(calls).toEqual([]);
   });
 
-  it("never signals the group blind once the CLI exited a while ago", async () => {
+  it("never signals a reaped CLI's group without a table to tie it to the CLI", async () => {
     const { host, calls } = fakeHost("linux", [null]);
-    // The table cannot be read and the CLI was reaped a minute ago: by now its group id
-    // may lead another job.
+    // The table cannot be read and the CLI was reaped: its group id may lead another job.
     const exitedAt = Date.UTC(2026, 10, 19, 12);
-    const later = { ...host, epochNow: () => exitedAt + 60_000 };
     const tree = new OwnedProcessTree(
       { ...root(200, false), exitedAtEpochMs: () => exitedAt },
-      later,
+      host,
     );
     expect(await tree.end(1_000)).toMatchObject({ unknown: true });
     expect(calls).toEqual([]);
-    // A retry with a table still cannot tie the group to the CLI.
-    Object.assign(later, { readProcessList: async () => [posix(202, 1, 200, "member")] });
-    expect(await tree.end(1_000)).toMatchObject({ unknown: true });
-    expect(calls).toEqual([]);
+    // A retry that lists a member started before the exit ends the group: the CLI held
+    // the id then, so the member is the tree's.
+    const member = {
+      ...posix(202, 1, 200, "member"),
+      started: new Date(exitedAt - 5_000).toString(),
+    };
+    let live = [member];
+    Object.assign(host, {
+      readProcessList: async () => live,
+      signal: (pid: number, action: NodeJS.Signals | 0) => {
+        if (action !== 0) calls.push(`${action} ${pid}`);
+        if (live.length === 0) throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+        if (action === "SIGTERM") live = [];
+      },
+    });
+    expect(await tree.end(1_000)).toMatchObject({ found: 1, survivors: 0 });
+    expect(calls).toEqual(["SIGTERM -200"]);
   });
+
+  it.each(["darwin", "linux"] as const)(
+    "never signals another job's group seen only by a worker started after the exit (%s)",
+    async (platform) => {
+      const exitedAt = Date.UTC(2026, 10, 19, 12);
+      // The new job's leader exited; its worker, started a minute after the CLI exited,
+      // still holds the group.
+      const worker = {
+        ...posix(205, 1, 200, "other job"),
+        started: new Date(exitedAt + 60_000).toString(),
+      };
+      const signals: string[] = [];
+      let clock = 0;
+      const host: TreeHost = {
+        platform,
+        selfPid: 100,
+        now: () => clock,
+        sleep: async (ms) => {
+          clock += ms;
+        },
+        readProcessList: async () => [worker],
+        signal: (pid, action) => {
+          signals.push(`${action} ${pid}`);
+        },
+        killVerified: async () => {},
+      };
+      const tree = new OwnedProcessTree(
+        { ...root(200, false), exitedAtEpochMs: () => exitedAt },
+        host,
+      );
+      expect(await tree.end()).toMatchObject({ unknown: true });
+      expect(signals).toEqual([]);
+    },
+  );
 
   it("follows a group member that leaves the group when it gets SIGTERM", async () => {
     let table: ProcessEntry[] = [posix(200, 100, 200, "claude"), posix(202, 200, 200, "tool")];
