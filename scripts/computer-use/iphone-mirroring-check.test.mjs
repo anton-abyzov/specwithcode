@@ -667,6 +667,48 @@ describe("dry run", () => {
     );
   });
 
+  it("ends INVALID when the first reading after Mirroring came back fails", async () => {
+    // Chrome takes the front before a counted click, or before the last home key;
+    // Mirroring comes back, then the screenshot that starts the repeat fails.
+    for (const where of ["click", "home key"]) {
+      const phone = simulatedPhone();
+      const call = phone.deps.call;
+      let passed = 0;
+      let clicks = 0;
+      let stolen = false;
+      let failNext = false;
+      phone.deps.onLine = (line) => {
+        if (line.startsWith("PASS ")) passed++;
+      };
+      phone.deps.call = async (tool, args) => {
+        if (tool === "computer_click") clicks++;
+        if (tool === "computer_open" && stolen) failNext = true;
+        if (tool === "computer_screenshot" && failNext) {
+          failNext = false;
+          throw new Error("the screenshot failed");
+        }
+        return call(tool, args);
+      };
+      const read = phone.deps.frontmost;
+      phone.deps.frontmost = async () => {
+        const due = where === "click" ? clicks === 3 : passed >= 30;
+        if (due && !stolen) {
+          stolen = true;
+          phone.state.front = "Google Chrome";
+        }
+        return read();
+      };
+      const result = await runCheck(phone.deps);
+      expect(stolen).toBe(true);
+      expect(result.invalid).toBe(true);
+      expect(result.lines.some((entry) => entry.startsWith("FAIL "))).toBe(false);
+      expect(result.lines.some((entry) => entry.startsWith("Clicks landed"))).toBe(false);
+      expect(result.lines.at(-1)).toMatch(
+        /another app took the front: the first reading after iPhone Mirroring came back during .* failed \(the screenshot failed\)/,
+      );
+    }
+  });
+
   it("writes a repeated step's earlier results as not counted", async () => {
     // Scroll down is scored, then Chrome takes the front before scrolling up.
     const phone = simulatedPhone();

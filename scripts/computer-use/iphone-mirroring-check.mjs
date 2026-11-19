@@ -490,7 +490,17 @@ export async function runCheck(deps, options = {}) {
       };
       try {
         // A repeat starts from what the phone shows now, never from before the change.
-        if (attempt > 1) seen = await look();
+        if (attempt > 1) {
+          try {
+            seen = await look();
+          } catch (error) {
+            if (error instanceof FrontChanged) throw error;
+            // Without a reading after the change the step cannot be repeated: that is the loss.
+            throw lose(
+              `the first reading after ${MIRRORING_APP} came back during ${name} failed (${error.message})`,
+            );
+          }
+        }
         const value = await run();
         flush(false);
         return value;
