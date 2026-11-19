@@ -1744,8 +1744,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   // A person's Resume after a failed-run streak lets one queued run past the
   // breaker. It is bound to the run that is next when the queue is first
   // checked after it ("next" until then), so a retry that checks later still
-  // honours it and no other run ever passes on it.
-  const breakerConsent = new Map<ThreadId, RunId | "next">();
+  // honours it and no other run ever passes on it. A replay of the same
+  // Resume command keeps the binding it already made.
+  const breakerConsent = new Map<
+    ThreadId,
+    { readonly commandId: CommandId; readonly runId: RunId | "next" }
+  >();
+  const grantBreakerConsent = (threadId: ThreadId, commandId: CommandId) => {
+    if (breakerConsent.get(threadId)?.commandId !== commandId)
+      breakerConsent.set(threadId, { commandId, runId: "next" });
+  };
   let heldQueueWaiter = false;
   const startQueuesAfterHold: Effect.Effect<void> = Effect.gen(function* () {
     yield* updateHold.awaitReleased;
@@ -2015,9 +2023,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // start as the thread's next failure; it waits for a person like a
       // dispatched one is refused (RunFailureBreaker). A person's Resume
       // starts the one run it is bound to; an automatic release does not count.
-      if (breakerConsent.get(threadId) === "next") breakerConsent.set(threadId, nextRun.id);
+      const consent = breakerConsent.get(threadId);
+      if (consent?.runId === "next")
+        breakerConsent.set(threadId, { ...consent, runId: nextRun.id });
       const breakerHolds =
-        breakerConsent.get(threadId) !== nextRun.id &&
+        breakerConsent.get(threadId)?.runId !== nextRun.id &&
         failedRunBreakerRefusal(
           isBreakerGuardedQueuedMessage(
             nextRun.userMessageId,
@@ -13432,7 +13442,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
-      if (command.type === "queue.resume") breakerConsent.set(command.threadId, "next");
+      if (command.type === "queue.resume")
+        grantBreakerConsent(command.threadId, command.commandId);
       if (command.type === "queue.resume" || command.type === "queued-message.steer-settle") {
         yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
       }
@@ -13601,7 +13612,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         detail: committed.receipt.error ?? "Previously rejected.",
       });
     }
-    if (command.type === "queue.resume") breakerConsent.set(command.threadId, "next");
+    if (command.type === "queue.resume") grantBreakerConsent(command.threadId, command.commandId);
     if (command.type === "queue.resume" || command.type === "queued-message.steer-settle") {
       yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
     }
