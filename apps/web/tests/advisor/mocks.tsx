@@ -73,8 +73,7 @@ const THREADS = {
   passthrough: { label: "Claude Fable 5.2", instanceId: "claudeAgent", model: "claude-fable-5-2" },
 } as const;
 const threadCase = new URLSearchParams(window.location.search).get("thread");
-export const fixtureThread =
-  THREADS[(threadCase ?? "sol") as keyof typeof THREADS] ?? THREADS.sol;
+export const fixtureThread = THREADS[(threadCase ?? "sol") as keyof typeof THREADS] ?? THREADS.sol;
 const passThrough = threadCase === "passthrough";
 
 /** The machine's settings: the advisor on with its defaults; the project overrides two fields. */

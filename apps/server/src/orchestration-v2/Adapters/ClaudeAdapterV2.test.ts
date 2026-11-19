@@ -3463,40 +3463,42 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       answeredBy: undefined,
       title: "Asked the advisor",
     },
-  ])("names the model Claude reports for its advisor's answer $name", ({ policy, answeredBy, title }) =>
-    Effect.gen(function* () {
-      const harness = yield* makeWakeHarness;
-      yield* harness.runtime.startTurn(
-        makeClaudeTestTurnInput({
-          threadId: harness.threadId,
-          providerThread: harness.providerThread,
-          now: yield* DateTime.now,
-          attemptId: RunAttemptId.make("claude-advisor-usage"),
-          text: "Plan the change",
-          attachments: [],
-          runtimePolicy: policy,
-        }),
-      );
-      yield* harness.offerAndWait(
-        advisorFrame({
-          uuid: "advisor-usage",
-          content: { type: "advisor_result", text: "Fine.", stop_reason: "end_turn" },
-          ...(answeredBy === undefined ? {} : { answeredBy }),
-        }),
-      );
-      yield* Queue.offer(
-        harness.sdkMessages,
-        makeResultFrame({ uuid: "advisor-usage-terminal", result: "Planned" }),
-      );
-      yield* Queue.take(harness.terminalReceipts);
-      const items = harness.events.flatMap((event) =>
-        event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
-          ? [event.turnItem]
-          : [],
-      );
-      assert.isAbove(items.length, 0);
-      for (const item of items) assert.equal(item.title, title);
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  ])(
+    "names the model Claude reports for its advisor's answer $name",
+    ({ policy, answeredBy, title }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("claude-advisor-usage"),
+            text: "Plan the change",
+            attachments: [],
+            runtimePolicy: policy,
+          }),
+        );
+        yield* harness.offerAndWait(
+          advisorFrame({
+            uuid: "advisor-usage",
+            content: { type: "advisor_result", text: "Fine.", stop_reason: "end_turn" },
+            ...(answeredBy === undefined ? {} : { answeredBy }),
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "advisor-usage-terminal", result: "Planned" }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        const items = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+            ? [event.turnItem]
+            : [],
+        );
+        assert.isAbove(items.length, 0);
+        for (const item of items) assert.equal(item.title, title);
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
   it.effect.each([

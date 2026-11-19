@@ -389,7 +389,8 @@ for (const theme of ["light", "dark"]) {
         fail(where, `the note is ${await note.getAttribute("data-thread-advisor-note")}`);
       await expectText(page, where, lines);
       const noteText = await note.innerText();
-      for (const text of absent) if (noteText.includes(text)) fail(where, `the note says "${text}"`);
+      for (const text of absent)
+        if (noteText.includes(text)) fail(where, `the note says "${text}"`);
       for (const problem of [
         ...(await layout(page, '[data-slot="menu-popup"], [data-thread-advisor-note]')),
         ...(await clipped(page, "[data-thread-advisor-note]")),

@@ -5047,8 +5047,10 @@ export const ko: PhraseCatalog = {
   "Advisor: {model}": "Advisor: {model}",
   "Advisor: {model}, same model as this thread": "Advisor: {model}, 이 스레드와 같은 모델",
   "Past {limit} tokens: {model}": "{limit} 토큰 초과: {model}",
-  "No model can advise this thread right now.": "지금은 이 스레드에 조언할 수 있는 모델이 없습니다.",
-  "Claude's own advisor setting answered here: {model}": "여기서는 Claude 자체 advisor 설정이 답했습니다: {model}",
+  "No model can advise this thread right now.":
+    "지금은 이 스레드에 조언할 수 있는 모델이 없습니다.",
+  "Claude's own advisor setting answered here: {model}":
+    "여기서는 Claude 자체 advisor 설정이 답했습니다: {model}",
   "On Claude threads, Claude's built-in advisor reads the whole conversation on each consult. A Fable advisor is billed to Claude usage credits.":
     "Claude 스레드에서는 Claude 내장 어드바이저가 상담할 때마다 대화 전체를 다시 읽습니다. Fable 어드바이저는 Claude 사용 크레딧으로 청구됩니다.",
   "Claude's own advisor": "Claude 자체 어드바이저",

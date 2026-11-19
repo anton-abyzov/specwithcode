@@ -92,7 +92,11 @@ vi.mock("../../state/environments", () => ({
             { slug: "claude-opus-5-5", name: "Opus 5.5" },
           ],
         },
-        { instanceId: "codex", driver: "codex", models: [{ slug: "gpt-6-astra", name: "GPT-6 Astra" }] },
+        {
+          instanceId: "codex",
+          driver: "codex",
+          models: [{ slug: "gpt-6-astra", name: "GPT-6 Astra" }],
+        },
       ],
       environment: {
         capabilities: {
@@ -185,7 +189,10 @@ function note(renderer: ReturnType<typeof create>) {
   );
   return found.length === 0
     ? null
-    : { kind: found[0]!.props["data-thread-advisor-note"], text: found[0]!.children.map((line) => text(line as never)) };
+    : {
+        kind: found[0]!.props["data-thread-advisor-note"],
+        text: found[0]!.children.map((line) => text(line as never)),
+      };
 }
 
 describe("the Advisor row's note", () => {
@@ -227,7 +234,10 @@ describe("the Advisor row's note", () => {
 
   it("never credits Claude's settings with an answer the app passed the advisor for", () => {
     state.items = [
-      { ...builtInConsult, item: { ...builtInConsult.item, title: "Asked the advisor (claude-fable-5-2)" } },
+      {
+        ...builtInConsult,
+        item: { ...builtInConsult.item, title: "Asked the advisor (claude-fable-5-2)" },
+      },
     ];
     expect(note(render())).toBeNull();
   });

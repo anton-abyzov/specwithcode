@@ -5108,7 +5108,8 @@ export const ja: PhraseCatalog = {
   "Advisor: {model}, same model as this thread": "Advisor: {model}（このスレッドと同じモデル）",
   "Past {limit} tokens: {model}": "{limit} トークン超: {model}",
   "No model can advise this thread right now.": "今このスレッドに助言できるモデルはありません。",
-  "Claude's own advisor setting answered here: {model}": "ここでは Claude 自身の advisor 設定が回答しました: {model}",
+  "Claude's own advisor setting answered here: {model}":
+    "ここでは Claude 自身の advisor 設定が回答しました: {model}",
   "On Claude threads, Claude's built-in advisor reads the whole conversation on each consult. A Fable advisor is billed to Claude usage credits.":
     "Claude のスレッドでは、Claude に組み込まれたアドバイザーが相談のたびに会話全体を読み直します。Fable のアドバイザーは Claude の使用クレジットに請求されます。",
   "Claude's own advisor": "Claude 自身のアドバイザー",

@@ -113,10 +113,7 @@ describe("threadAdvisorState", () => {
 
 describe("advisorOrder", () => {
   it("is the built-in Complex track: Fable 5.2, then GPT-6 Astra", () => {
-    expect(keys(advisorOrder(base))).toEqual([
-      "claudeAgent:claude-fable-5-2",
-      "codex:gpt-6-astra",
-    ]);
+    expect(keys(advisorOrder(base))).toEqual(["claudeAgent:claude-fable-5-2", "codex:gpt-6-astra"]);
   });
 
   it("never takes the Review track", () => {
@@ -330,9 +327,9 @@ describe("preferredAdvisor", () => {
   });
 
   it("follows a saved model", () => {
-    expect(
-      preferredAdvisor({ ...base, model: sel("claudeAgent", "claude-opus-5-5") }),
-    ).toEqual(sel("claudeAgent", "claude-opus-5-5"));
+    expect(preferredAdvisor({ ...base, model: sel("claudeAgent", "claude-opus-5-5") })).toEqual(
+      sel("claudeAgent", "claude-opus-5-5"),
+    );
   });
 });
 
@@ -401,7 +398,9 @@ describe("threadAdvisorPreview", () => {
   const preview = { ...base, claudeBuiltIn: true };
 
   it("an Opus thread is advised by Fable, the same past the limit", () => {
-    expect(threadAdvisorPreview({ ...preview, thread: sel("claudeAgent", "claude-opus-5-5") })).toEqual({
+    expect(
+      threadAdvisorPreview({ ...preview, thread: sel("claudeAgent", "claude-opus-5-5") }),
+    ).toEqual({
       advisor: sel("claudeAgent", "claude-fable-5-2"),
       sameModel: false,
       pastLimit: null,
@@ -409,7 +408,9 @@ describe("threadAdvisorPreview", () => {
   });
 
   it("a Fable thread is advised by Fable, then by the next Complex entry past the limit", () => {
-    expect(threadAdvisorPreview({ ...preview, thread: sel("claudeAgent", "claude-fable-5-2") })).toEqual({
+    expect(
+      threadAdvisorPreview({ ...preview, thread: sel("claudeAgent", "claude-fable-5-2") }),
+    ).toEqual({
       advisor: sel("claudeAgent", "claude-fable-5-2"),
       sameModel: true,
       pastLimit: sel("codex", "gpt-6-astra"),

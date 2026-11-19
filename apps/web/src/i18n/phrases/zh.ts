@@ -4913,7 +4913,8 @@ export const zh: PhraseCatalog = {
   "Advisor: {model}, same model as this thread": "Advisor：{model}，与此线程同一模型",
   "Past {limit} tokens: {model}": "超过 {limit} 个 token：{model}",
   "No model can advise this thread right now.": "目前没有模型可以为此线程提供建议。",
-  "Claude's own advisor setting answered here: {model}": "这里由 Claude 自身的 advisor 设置回答：{model}",
+  "Claude's own advisor setting answered here: {model}":
+    "这里由 Claude 自身的 advisor 设置回答：{model}",
   "On Claude threads, Claude's built-in advisor reads the whole conversation on each consult. A Fable advisor is billed to Claude usage credits.":
     "在 Claude 会话中，Claude 自带的顾问每次咨询都会重新读取整个对话。Fable 顾问按 Claude 用量额度计费。",
   "Claude's own advisor": "Claude 自带的顾问",

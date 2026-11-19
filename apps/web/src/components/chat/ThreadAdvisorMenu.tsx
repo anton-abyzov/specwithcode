@@ -173,7 +173,10 @@ function ThreadAdvisorNoteLines(props: { readonly note: ThreadAdvisorNote }) {
               : [tx("Past {limit} tokens: {model}", { limit: note.limit, model: note.pastLimit })]),
           ];
   return (
-    <div className="px-2 pt-0.5 pb-1.5 text-muted-foreground text-xs" data-thread-advisor-note={note.kind}>
+    <div
+      className="px-2 pt-0.5 pb-1.5 text-muted-foreground text-xs"
+      data-thread-advisor-note={note.kind}
+    >
       {lines.map((line) => (
         <div key={line}>{line}</div>
       ))}
@@ -373,7 +376,9 @@ export function ThreadAdvisorMenu(props: {
             : { advisor: null, sameModel: false, pastLimit: null },
           providers,
           limit: projectSettings.advisor.builtInContextLimit,
-          passThroughModel: advisorState.enabled ? null : latestBuiltInAdvisor(turnItems, providers),
+          passThroughModel: advisorState.enabled
+            ? null
+            : latestBuiltInAdvisor(turnItems, providers),
         })
       : null;
   return (
