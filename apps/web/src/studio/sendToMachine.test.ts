@@ -186,19 +186,23 @@ describe("the dialog's words", () => {
   });
 
   it("says once what the machine already has", () => {
-    expect(existingCopyLine({ there: "m1", holding: copy })).toBe(
-      "m1 already has this project, at ~/specweave. Only what it is missing is copied.",
+    const line = (input: Parameters<typeof existingCopyLine>[0]) => {
+      const text = existingCopyLine(input);
+      return text === null ? null : say(text);
+    };
+    expect(line({ there: "m1", holding: copy })).toBe(
+      "m1 already has this project, at ~/specweave. Sync brings it up to date.",
     );
-    expect(existingCopyLine({ there: "m4", holding: main })).toBe(
+    expect(line({ there: "m4", holding: main })).toBe(
       "m4 already has the coordinator, at ~/specweave.",
     );
     expect(
-      existingCopyLine({
+      line({
         there: "m1",
         holding: { kind: "several", copies: [copy.copy, copy.copy], mainId: null },
       }),
     ).toBe("m1 has this project in 2 folders. Pick one.");
-    expect(existingCopyLine({ there: "m1", holding: { kind: "none" } })).toBeNull();
+    expect(line({ there: "m1", holding: { kind: "none" } })).toBeNull();
   });
 
   it("says exactly what each choice does before the click", () => {

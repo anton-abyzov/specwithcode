@@ -171,7 +171,7 @@ it("shows Your choices while choosing, with one Change link that stops the copy"
   ]);
   const choices = document.querySelector('[data-slot="copy-choices"]')!;
   expect(choices.textContent).toContain("Copy to M3: /home/anton/Projects/project");
-  expect(choices.textContent).toContain("Copy everything");
+  expect(choices.textContent).toContain("Copy the whole folder from M4");
   expect(choices.querySelectorAll("button")).toHaveLength(1);
   expect(changeLink()?.textContent).toBe("Change (stops this copy)");
   expect(changeLink()?.disabled).toBe(false);
@@ -349,11 +349,11 @@ it("offers no Change once the copy is done, and Copy changes again leads to the 
   expect(changeLink()).toBeNull();
   await openMore();
   // A finished copy offers the form as a visible second choice, never as the main button.
-  expect(moreItems()).toEqual(["Copy again"]);
+  expect(moreItems()).toEqual(["Sync again"]);
   expect(() => button("Copy to M3")).toThrow();
-  expect(button("Copy changes again").getAttribute("data-variant")).not.toBe("default");
+  expect(button("Sync again").getAttribute("data-variant")).not.toBe("default");
   const calls = state.calls.length;
-  await click("Copy changes again");
+  await click("Sync again");
   expect(stageNow()).toBe("setup");
   expect(pointerNow()).toBeNull();
   expect(folderInput().value).toBe("/Users/me/Projects/project");
@@ -421,11 +421,11 @@ it("locks starting a new copy while a coordinator transfer may need recovering",
   await mount();
   await settle();
   expect(stepState()).toContain("Transfer:current");
-  expect(button("Hand off coordinator now").disabled).toBe(false);
+  expect(button("Continue the coordinator on M3").disabled).toBe(false);
   await openMore();
-  expect(isDisabled(button("Start a new copy"))).toBe(true);
+  expect(isDisabled(button("Add to another machine"))).toBe(true);
   // Copy again releases the source too, so it is locked the same way.
-  expect(isDisabled(button("Copy again"))).toBe(true);
+  expect(isDisabled(button("Sync again"))).toBe(true);
 });
 
 // Reopening: the dialog checks the copy first, then brings back the step that was on screen.
@@ -511,7 +511,7 @@ it("says a copy finished while closed, then keeps it as the last copy with View 
   expect(button("Undo…")).toBeTruthy();
   expect(state.link).toHaveBeenCalledOnce();
   // The form is one click away, and keeps this copy as the last copy.
-  await click("Copy changes again");
+  await click("Sync again");
   expect(stageNow()).toBe("setup");
   expect(pointerNow()).toBeNull();
   expect(document.querySelector('[data-slot="copy-last"]')?.textContent).toBe(
@@ -667,7 +667,7 @@ it("keeps a finished copy as the last copy when a new one starts from Done", asy
   await mount();
   await click("Copy to M3");
   expect(stageNow()).toBe("done");
-  await click("Copy changes again");
+  await click("Sync again");
   expect(pointerNow()).toBeNull();
   expect(JSON.parse(localStorage.getItem(LAST_KEY)!)).toMatchObject({
     targetFolder: "/home/anton/Projects/project",
@@ -709,7 +709,7 @@ it("keeps the move and machine the dialog was opened with over the last copy-onl
   await mount();
   await settle();
   expect(stageNow()).toBe("done");
-  await click("Copy changes again");
+  await click("Sync again");
   expect(button("Copy to M3").disabled).toBe(false);
   expect(folderInput().value).toBe("/home/anton/last");
   await act(async () => root.unmount());
@@ -737,7 +737,7 @@ it("lets the last copy go back to being the last copy when its destination is of
   statuses = [copyStatus("previewed", { rows }), copyStatus("applied", { rows })];
   await mount();
   await click("Copy to M3");
-  await click("Copy changes again");
+  await click("Sync again");
   expect(localStorage.getItem(LAST_KEY)).not.toBeNull();
   state.handlers.copyStatus = () => {
     throw Object.assign(new Error("M3 is offline."), {
@@ -750,7 +750,7 @@ it("lets the last copy go back to being the last copy when its destination is of
     "The copy to /home/anton/Projects/project on M3 finished. M3 is not reachable now. Check again to view or undo it.",
   );
   expect(pointerNow()).toMatchObject({ reopened: true });
-  await click("Start a new copy");
+  await click("Add to another machine");
   expect(checkingText()).toBeNull();
   expect(stageNow()).toBe("setup");
   expect(pointerNow()).toBeNull();
@@ -779,7 +779,7 @@ it("shows a finished copy as finished on a plain reopen while its machine is off
   );
   expect(() => button("Copy to M3")).toThrow();
   // It never traps the person: a new copy is still one click away, and this one is kept.
-  await click("Start a new copy");
+  await click("Add to another machine");
   expect(stageNow()).toBe("setup");
   expect(pointerNow()).toBeNull();
   expect(localStorage.getItem(LAST_KEY)).not.toBeNull();
@@ -796,7 +796,7 @@ it("offers only Check again for an unfinished copy whose destination is offline"
   await reopen();
   await settle();
   expect(checkingText()).not.toBeNull();
-  expect(() => button("Start a new copy")).toThrow();
+  expect(() => button("Add to another machine")).toThrow();
 });
 
 it("says a copy cancelled elsewhere copied nothing", async () => {
@@ -809,7 +809,7 @@ it("says a copy cancelled elsewhere copied nothing", async () => {
   expect(document.querySelector('[data-slot="copy-undone"]')?.textContent).toContain(
     "The copy was cancelled.",
   );
-  expect(button("Start a new copy")).toBeTruthy();
+  expect(button("Add to another machine")).toBeTruthy();
 });
 
 it("refreshes a resumed saved scan without cancelling, reoffering or changing stored choices", async () => {
@@ -874,7 +874,7 @@ it("replaces saved worktree notices with current counts after refreshing", async
   expect(pointerNow()).toEqual(saved);
   // A found change leaves one way on: measure and compare again, not a second check.
   expect(pageText()).not.toContain("Check for changes");
-  expect(button("Measure and compare again")).not.toBeNull();
+  expect(button("Compare again")).not.toBeNull();
 });
 
 it("offers Measure and compare again on What once the source changed, with Preview off", async () => {
@@ -894,7 +894,7 @@ it("offers Measure and compare again on What once the source changed, with Previ
   expect(button("Preview on M3").disabled).toBe(true);
   expect(pageText()).not.toContain("Check for changes");
   const compare = document.querySelectorAll('[data-slot="copy-scan-freshness"] button');
-  expect([...compare].map((node) => node.textContent)).toEqual(["Measure and compare again"]);
+  expect([...compare].map((node) => node.textContent)).toEqual(["Compare again"]);
 });
 
 it("unlocks a stalled read-only refresh without changing choices or accepting a late reply", async () => {
@@ -956,7 +956,7 @@ it.each(["typed", "legacy"])(
     });
     expect(button("Copy to M3").disabled).toBe(true);
     const footer = document.querySelector('[data-slot="copy-actions"]');
-    expect(footer?.textContent).toContain("Measure and compare again");
+    expect(footer?.textContent).toContain("Compare again");
     expect(names().filter((name) => name === "copyApprove")).toHaveLength(1);
     expect(names()).not.toContain("copyCancel");
     await reopen();
@@ -965,7 +965,7 @@ it.each(["typed", "legacy"])(
     expect(button("Copy to M3").disabled).toBe(true);
     expect(names()).not.toContain("copyApprove");
     const before = state.calls.length;
-    await click("Measure and compare again");
+    await click("Compare again");
     expect(stageNow()).toBe("select");
     expect(pointerNow().operationId).not.toBe(old.operationId);
     expect(pointerNow()).not.toHaveProperty("needsComparison");

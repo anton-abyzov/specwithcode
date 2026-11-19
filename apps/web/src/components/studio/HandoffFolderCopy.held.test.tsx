@@ -157,7 +157,7 @@ const reopenMove = (overrides: Record<string, unknown> = {}) =>
   );
 /** A "Copy again" sentence is only ever shown with its button. */
 const expectCopyAgainMatchesButton = () => {
-  if (container.textContent?.includes("Copy again:")) expect(labels()).toContain("Copy again");
+  if (container.textContent?.includes("Sync again:")) expect(labels()).toContain("Sync again");
 };
 
 beforeEach(() => {
@@ -231,14 +231,14 @@ it("shows the server's held message verbatim beside the differences", async () =
 it("keeps the Hand off anyway wording after the transfer clears the pointer", async () => {
   reopenMove();
   await mount();
-  await click("Hand off anyway");
-  expect(container.textContent).toContain("The coordinator now runs on M3.");
+  await click("Continue on M3 anyway, on its older commits");
+  expect(container.textContent).toContain("The coordinator continues on M3.");
   expect(pointerNow()).toBeNull();
   expect(problemsText()).toContain(
-    "You chose Hand off anyway, so the coordinator moved with these differences.",
+    "You chose Continue on M3 anyway, so the coordinator moved with these differences.",
   );
-  expect(problemsText()).not.toContain("Copy again");
-  expect(labels()).not.toContain("Copy again");
+  expect(problemsText()).not.toContain("Sync again");
+  expect(labels()).not.toContain("Sync again");
   expectCopyAgainMatchesButton();
 });
 
@@ -248,22 +248,22 @@ it("drops Hand off anyway when the source changed, and a reopen still offers Cop
     throw Object.assign(new Error("changed"), { code: "source_changed" });
   };
   await mount();
-  await click("Hand off anyway");
+  await click("Continue on M3 anyway, on its older commits");
   expect(pointerNow()).toMatchObject({ operationId: OPERATION });
   expect(pointerNow()).not.toHaveProperty("moveAnyway");
-  expect(problemsText()).toContain("Copy again: it compares first");
-  expect(problemsText()).not.toContain("Hand off anyway");
-  expect(labels()).toContain("Copy again");
-  expect(labels()).not.toContain("Hand off coordinator now");
+  expect(problemsText()).toContain("Sync again: it compares first");
+  expect(problemsText()).not.toContain("Continue on M3 anyway, on its older commits");
+  expect(labels()).toContain("Sync again");
+  expect(labels()).not.toContain("Continue the coordinator on M3");
 
   statuses = [committedAnyway()];
   await remount();
-  expect(problemsText()).toContain("Copy again: it compares first");
-  expect(problemsText()).not.toContain("Hand off anyway");
-  expect(labels()).toContain("Copy again");
-  expect(labels()).not.toContain("Hand off coordinator now");
+  expect(problemsText()).toContain("Sync again: it compares first");
+  expect(problemsText()).not.toContain("Continue on M3 anyway, on its older commits");
+  expect(labels()).toContain("Sync again");
+  expect(labels()).not.toContain("Continue the coordinator on M3");
   await openMore();
-  expect(isDisabled(button("Start a new copy"))).toBe(false);
+  expect(isDisabled(button("Add to another machine"))).toBe(false);
   expectCopyAgainMatchesButton();
 });
 

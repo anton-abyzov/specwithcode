@@ -1,6 +1,7 @@
 import type { MachineHandoffSourceChanges } from "@specweave-studio/contracts";
 import { formatBytes } from "../../studio/folderCopy";
 import { Badge } from "../ui/badge";
+import { useTx } from "../../i18n";
 import { Button } from "../ui/button";
 import { checkLabel } from "./handoffCopyNotices";
 import { measuredAgo } from "./HandoffCopyScanFreshness";
@@ -172,6 +173,7 @@ export function HandoffSourceChanges({
   /** When the copied files were captured; older copies have no time. */
   readonly capturedAt?: number | undefined;
 }) {
+  const tx = useTx();
   return (
     <div
       className="space-y-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm"
@@ -190,8 +192,14 @@ export function HandoffSourceChanges({
       />
       <p className="text-xs text-muted-foreground">
         {changes.acceptable
-          ? `Copy again brings ${sourceLabel}'s version over. Move without them keeps ${sourceLabel}'s changes there and the copy on ${targetLabel} as it is. Keep the coordinator on ${sourceLabel} to go on working there; the copy on ${targetLabel} stays.`
-          : `This copy was not captured, so you can't move without them. Copy again brings them over. Or keep the coordinator on ${sourceLabel}; the copy on ${targetLabel} stays.`}
+          ? tx(
+              "Sync again brings {source}'s version over. Move without them keeps {source}'s changes there and the copy on {target} as it is. Keep the coordinator on {source} to go on working there; the copy on {target} stays.",
+              { source: sourceLabel, target: targetLabel },
+            )
+          : tx(
+              "This copy was not captured, so you can't move without them. Sync again brings them over. Or keep the coordinator on {source}; the copy on {target} stays.",
+              { source: sourceLabel, target: targetLabel },
+            )}
         {rowConsequences(changes.rows, sourceLabel, targetLabel) &&
           ` ${rowConsequences(changes.rows, sourceLabel, targetLabel)}`}
       </p>
@@ -215,10 +223,11 @@ export function HandoffSourceChangesActions({
   readonly onMoveWithout: () => void;
   readonly onKeepHere: () => void;
 }) {
+  const tx = useTx();
   return (
     <>
       <Button disabled={busy} onClick={onCopyAgain}>
-        Copy again
+        {tx("Sync again")}
       </Button>
       {changes.acceptable && (
         <Button variant="outline" disabled={busy} onClick={onMoveWithout}>

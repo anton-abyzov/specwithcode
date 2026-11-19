@@ -158,7 +158,7 @@ it("refuses before fencing when the destination cannot read a summarized handoff
   expect(container.textContent).toContain(
     "Update the other machine to move the coordinator of a project this large. Nothing moved; the coordinator stays here.",
   );
-  expect(container.textContent).not.toContain("The coordinator now runs on M3.");
+  expect(container.textContent).not.toContain("The coordinator continues on M3.");
 });
 
 it("moves a summarized coordinator to a destination that reads it and says what stayed", async () => {
@@ -167,7 +167,7 @@ it("moves a summarized coordinator to a destination that reads it and says what 
   expect(published()).toHaveLength(1);
   // The source fences a summarized bundle only on this confirmation.
   expect((published()[0]![1] as any).input.contextRetention).toBe(1);
-  expect(container.textContent).toContain("The coordinator now runs on M3.");
+  expect(container.textContent).toContain("The coordinator continues on M3.");
   expect(container.querySelector('[data-slot="copy-done-retention"]')?.textContent).toBe(
     "The coordinator moved with its latest 412 messages. 9,418 older messages and 1,628 worker chats stay on M4; M3 has a summary of the 200 most recent workers.",
   );

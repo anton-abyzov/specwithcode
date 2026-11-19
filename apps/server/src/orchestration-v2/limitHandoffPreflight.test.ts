@@ -378,7 +378,7 @@ describe("a limit handoff whose preflight fails", () => {
             type: "refused",
             code: "invalid",
             message:
-              "Minis: no .env.local. Send it with studio_file_transfer, or with Copy to another machine; Minis: Claude not signed in",
+              "Minis: no .env.local. Send it with studio_file_transfer, or tick it in Sync; Minis: Claude not signed in",
             retryable: false,
           });
           // No lease, epoch, fence or error change on the source.

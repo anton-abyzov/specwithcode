@@ -482,7 +482,7 @@ describe("steps and what happens next", () => {
       "Preview compares with ministorm's folder. Nothing is written until you approve.",
     );
     expect(nextStepText({ ...base, stage: "failed", held: true })).toContain(
-      "Move anyway moves the coordinator with these differences.",
+      "Continue on ministorm anyway moves the coordinator with these differences.",
     );
   });
 
