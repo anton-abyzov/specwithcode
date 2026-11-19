@@ -384,12 +384,15 @@ export class SourceTransfers {
         if (refused !== null) return refused.code === "team_rules" ? "refused" : "revoked";
         // The grant as it stands now, not as it was read before the decision: a token
         // minted again meanwhile, or a revocation, is never written over.
+        // The deadline too, on a fresh clock: the decision may have outlasted it.
         const current = loaded.record.grant;
-        if (current.revokedAt !== null) return "revoked";
+        const decided = this.now();
+        if (current.revokedAt !== null || decided >= transferGrantExpiresAt(current))
+          return "revoked";
         // A read on the local network is a use of the grant, as one over Connect is.
         // Only the idle time changes, on the grant read in this same step.
-        if (used && now - current.lastUsedAt > 60_000)
-          await this.save(loaded, { grant: { ...loaded.record.grant, lastUsedAt: now } });
+        if (used && decided - current.lastUsedAt > 60_000)
+          await this.save(loaded, { grant: { ...loaded.record.grant, lastUsedAt: decided } });
         return null;
       },
       lanManifest: async (operationId) => {

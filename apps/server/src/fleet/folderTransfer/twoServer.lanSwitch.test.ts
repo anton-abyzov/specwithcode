@@ -252,6 +252,35 @@ describe("the grant is never written back from an earlier read (S-12)", () => {
     );
   }, 30_000);
 
+  it("refuses a read whose decision started before the grant ran out and ended after", async () => {
+    const offer = await prepare();
+    const connector = (await copies.lan!.connector(id))!;
+    let entered!: () => void;
+    let release!: () => void;
+    const deciding = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    gate = {
+      entered,
+      open: new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    };
+    // A real read on the generation's TLS socket, held at its authority decision.
+    const reading = connector.manifest().then(
+      () => "served",
+      () => "refused",
+    );
+    await deciding;
+    // The grant's deadline passes while the decision is still open.
+    serviceClock.now = Date.now() + 8 * 24 * 60 * 60_000;
+    release();
+    expect(await reading).toBe("refused");
+    const record = await sourceRecord();
+    expect([record.state, record.grant.revokedReason]).toEqual(["cancelled", "revoked"]);
+    expect(await hello(offer.token)).toBe(401);
+  }, 30_000);
+
   it("ends a generation by the retire route without touching the grant", async () => {
     const offer = await prepare();
     const before = (await sourceRecord()).grant;
