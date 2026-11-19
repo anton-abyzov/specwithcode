@@ -14,16 +14,22 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import type * as Semaphore from "effect/Semaphore";
+import type { SqlError } from "effect/sql/SqlError";
 
 import { accountInGrant, projectInGrant } from "../fleet/workGrantPolicy.ts";
 import type { ReceiverCaller } from "../handoff/HandoffReceiver.ts";
 import { othersRoutineRefusal } from "../mcp/routineOwnership.ts";
 import type * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import type { CoordinatorRoutineCopy, ScheduledTask } from "@specweave-studio/contracts";
 import { routineCopyOf } from "./ScheduledTaskCopies.ts";
+import { taskError } from "./ScheduledTaskStorage.ts";
+import { cappedRuntimeMode } from "./ScheduledTaskTransferIn.ts";
 import type { RoutineRunnerDeps, RoutineRunnerPeers } from "./ScheduledTaskRunner.ts";
 import {
   deleteUnreachedRefusal,
+  isPendingCopyDelete,
   isRunnerRoutine,
+  PENDING_COPY_DELETE,
   type RoutineRunnerRecord,
   type RoutineRunnerRecords,
   runsHere,
@@ -71,10 +77,19 @@ export interface RunnerReceiveParts {
     id: ScheduledTaskId,
     except: string | null,
   ) => Effect.Effect<Array<string>>;
+  /** Rests a copy for its runner: definition, row off, note and record in one write. */
+  readonly restCopy: (
+    existing: ScheduledTask | null,
+    copy: CoordinatorRoutineCopy | null,
+    record: RoutineRunnerRecord,
+  ) => Effect.Effect<void, ScheduledTaskError | SqlError>;
+  /** A copy's row, record and count, or none of them. */
+  readonly removeCopy: (id: ScheduledTaskId) => Effect.Effect<void, ScheduledTaskError | SqlError>;
 }
 
 export const makeRunnerReceive = (parts: RunnerReceiveParts) => {
-  const { deps, records, lock, peersRef, revisionOf, bump, tellDeleted } = parts;
+  const { deps, records, lock, peersRef, revisionOf, bump, tellDeleted, restCopy, removeCopy } =
+    parts;
   // --- another machine asks --------------------------------------------------------------
 
   const base = { capabilities: [ROUTINE_RUNNER_CAPABILITY] } as const;
@@ -126,14 +141,18 @@ export const makeRunnerReceive = (parts: RunnerReceiveParts) => {
       const project = yield* linkedProject(caller, request.sourceProjectId);
       const self = yield* deps.selfEnvironmentId;
       const coordinates = yield* deps.roleActive(project.projectId);
+      const incumbent = yield* deps.legacyOwner(project.projectId);
+      const grant = caller.grant;
       const peers = yield* Ref.get(peersRef);
       const label =
         request.runnerLabel ??
         (peers === null ? null : yield* peers.label(caller.sourceEnvironmentId));
       const acked: Array<ScheduledTaskId> = [];
       const refused: Array<ScheduledTaskId> = [];
-      // Both machines may coordinate and both may claim: the lower id keeps a routine it runs.
+      // Both machines may coordinate and both may claim. The one the release before
+      // let fire alone keeps a routine it runs; between two alike, the lower id does.
       const winsTie = self !== null && self < caller.sourceEnvironmentId;
+      const theirs = request.incumbent === true ? 2 : 1;
       for (const [index, id] of request.routineIds.entries()) {
         const held = yield* deps.findTask(id).pipe(Effect.orElseSucceed(() => null));
         if (held !== null && held.projectId !== project.projectId) {
@@ -159,7 +178,8 @@ export const makeRunnerReceive = (parts: RunnerReceiveParts) => {
           refused.push(id);
           continue;
         }
-        if (runsItToday && winsTie) {
+        const mine = runsItToday ? (incumbent ? 2 : 1) : 0;
+        if (mine > theirs || (mine === theirs && winsTie)) {
           refused.push(id);
           continue;
         }
@@ -175,17 +195,47 @@ export const makeRunnerReceive = (parts: RunnerReceiveParts) => {
           refused.push(id);
           continue;
         }
-        yield* records.write({
+        // The definition comes with its revision. Without it the copy keeps the
+        // revision it holds: it never shows one whose definition it did not take.
+        const sent = held === null ? null : (request.routines?.[index] ?? null);
+        const copy =
+          sent === null || held === null || sent.id !== id
+            ? null
+            : {
+                ...sent,
+                runtimeMode: cappedRuntimeMode(sent.runtimeMode, caller.runtimeCeiling).mode,
+                modelSelection:
+                  grant !== null && accountInGrant(grant.accounts, sent.modelSelection.instanceId)
+                    ? sent.modelSelection
+                    : held.modelSelection,
+              };
+        const rested = yield* restCopy(held, copy, {
           taskId: id,
           state: "disarmed",
           runnerEnvironmentId: caller.sourceEnvironmentId,
           runnerLabel: label,
           // The runner's revision, so a change made on this copy is made against it.
-          revision: request.revisions?.[index] ?? record?.revision ?? 0,
+          revision:
+            copy !== null || held === null || record === null
+              ? (request.revisions?.[index] ?? record?.revision ?? 0)
+              : record.revision,
           acked: [],
           operationId: null,
-          operation: null,
-        });
+          operation: record !== null && isPendingCopyDelete(record) ? PENDING_COPY_DELETE : null,
+          asked: [],
+          // What the row said before it was turned off here, for the day it follows
+          // the coordinator again; with a definition, what its runner holds.
+          copyEnabled:
+            copy !== null
+              ? copy.enabled
+              : record?.state === "disarmed"
+                ? (record.copyEnabled ?? null)
+                : (held?.enabled ?? null),
+        }).pipe(Effect.result);
+        if (rested._tag === "Failure") {
+          refused.push(id);
+          continue;
+        }
         acked.push(id);
       }
       yield* deps.notifyChanged;
@@ -205,13 +255,33 @@ export const makeRunnerReceive = (parts: RunnerReceiveParts) => {
         ) {
           if (request.deleted === true) {
             // The record goes only with the row: a row left without it would follow
-            // the coordinator again, and the runner would take it for deleted.
-            const undeleted = () => refuseTransfer(409, "That routine could not be deleted here.");
-            const held = yield* deps.findTask(id).pipe(Effect.mapError(undeleted));
-            if (held !== null) yield* deps.remove({ id }).pipe(Effect.mapError(undeleted));
-            yield* records.dropRevision(id).pipe(Effect.ignore);
+            // the coordinator again. One that will not go stays resting, marked to
+            // be removed, and the runner is told it is not gone yet.
+            const removed = yield* removeCopy(id).pipe(Effect.result);
+            if (removed._tag === "Failure") {
+              yield* records.write({ ...record, operation: PENDING_COPY_DELETE });
+              return yield* refuseTransfer(409, "That routine could not be deleted here.");
+            }
+            continue;
           }
-          yield* records.remove(id);
+          // The row was turned off to rest; it follows the coordinator again as it was.
+          yield* records
+            .atomically(
+              Effect.gen(function* () {
+                const held = yield* deps.findTask(id);
+                if (held !== null && record.copyEnabled != null) {
+                  if (held.enabled !== record.copyEnabled)
+                    yield* deps.setEnabled({ id, enabled: record.copyEnabled });
+                  yield* records.setNote(id, null);
+                }
+                yield* records.remove(id);
+              }),
+            )
+            .pipe(
+              Effect.mapError(() =>
+                refuseTransfer(409, "That routine could not follow the coordinator again here."),
+              ),
+            );
         }
       }
       yield* deps.notifyChanged;
@@ -287,14 +357,17 @@ export const makeRunnerReceive = (parts: RunnerReceiveParts) => {
           revision: current,
           copy: routineCopyOf({ ...task, ownThread: true }),
         } satisfies RoutineRunnerResponse;
+      let change: Effect.Effect<unknown, ScheduledTaskError> = Effect.void;
       switch (request.edit.kind) {
         case "delete": {
           const unreached = yield* tellDeleted(record, task.id, caller.sourceEnvironmentId);
           if (unreached.length > 0)
             return yield* refuseTransfer(409, deleteUnreachedRefusal(unreached));
-          yield* deps.remove({ id: task.id }).pipe(Effect.mapError(failed));
-          yield* records.remove(task.id).pipe(Effect.ignore);
-          yield* records.dropRevision(task.id).pipe(Effect.ignore);
+          yield* removeCopy(task.id).pipe(
+            Effect.mapError(() =>
+              refuseTransfer(409, "Not changed: could not delete the routine."),
+            ),
+          );
           return {
             ...base,
             revision: current + 1,
@@ -302,9 +375,8 @@ export const makeRunnerReceive = (parts: RunnerReceiveParts) => {
           } satisfies RoutineRunnerResponse;
         }
         case "enabled": {
-          yield* deps
-            .setEnabled({ id: task.id, enabled: request.edit.enabled })
-            .pipe(Effect.mapError(failed));
+          const enabled = request.edit.enabled;
+          change = deps.setEnabled({ id: task.id, enabled });
           break;
         }
         case "save": {
@@ -337,11 +409,29 @@ export const makeRunnerReceive = (parts: RunnerReceiveParts) => {
           });
           if (Option.isNone(input))
             return yield* refuseTransfer(400, "That routine does not match this version.");
-          yield* deps.upsert(input.value).pipe(Effect.mapError(failed));
+          change = deps.upsert(input.value);
           break;
         }
       }
-      yield* bump(task.id).pipe(Effect.mapError(failed));
+      // The change and its new revision are one write: a change never stays at the old one.
+      const made = change;
+      yield* records
+        .atomically(
+          Effect.gen(function* () {
+            if ((yield* revisionOf(task.id, record)) !== current)
+              return yield* taskError("The routine changed meanwhile.");
+            yield* made;
+            yield* bump(task.id);
+          }),
+        )
+        .pipe(
+          Effect.mapError((error) =>
+            refuseTransfer(
+              409,
+              `Not changed: ${error._tag === "ScheduledTaskError" ? error.message : "could not save the change."}`,
+            ),
+          ),
+        );
       yield* deps.notifyChanged;
       const after = yield* deps.findTask(task.id).pipe(Effect.orElseSucceed(() => null));
       return {

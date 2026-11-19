@@ -65,6 +65,19 @@ export const RoutineRunnerRequest = Schema.Union([
      * it unless these are newer, so a push queued before a move changes nothing.
      */
     refresh: Schema.optional(Schema.Boolean),
+    /**
+     * The caller ran these routines under the release before's rule and still
+     * may; without it the caller only offers to. A machine that runs one itself
+     * keeps it from a caller that only offers.
+     */
+    incumbent: Schema.optional(Schema.Boolean),
+    /**
+     * Each routine as the caller holds it at that revision, in the order of
+     * `routineIds`. A copy takes a revision only together with its definition.
+     */
+    routines: Schema.optional(
+      Schema.Array(Schema.NullOr(CoordinatorRoutineCopy)).check(Schema.isMaxLength(400)),
+    ),
   }),
   /** The caller no longer claims these routines: this machine's copies follow the coordinator again. */
   Schema.Struct({

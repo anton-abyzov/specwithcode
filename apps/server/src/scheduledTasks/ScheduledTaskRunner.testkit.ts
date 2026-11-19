@@ -49,6 +49,7 @@ import {
 import * as Service from "./ScheduledTaskService.ts";
 import { routineProject } from "./ScheduledTaskService.test-fixtures.ts";
 import { receive377 } from "./ScheduledTaskTransfer.release377.testkit.ts";
+import { taskError } from "./ScheduledTaskStorage.ts";
 import { makeTransfer, type ScheduledTaskTransfer } from "./ScheduledTaskTransfer.ts";
 
 /** A body as the other machine reads it: JSON, so nothing JSON cannot carry arrives. */
@@ -77,6 +78,10 @@ export interface Machine {
     sends: number;
     /** Threads handed off from this machine, and where to. */
     movedThreads: Map<string, string>;
+    /** Its coordinator was started beside the project's own: active, and no predecessor. */
+    beside: boolean;
+    /** The move's reads of this machine's routines fail, as a database that cannot be read. */
+    listFails: boolean;
   };
   readonly sql: SqlClient.SqlClient;
   readonly service: Service.ScheduledTaskService["Service"];
@@ -85,6 +90,16 @@ export interface Machine {
   readonly transfer: ScheduledTaskTransfer["Service"] | null;
   /** One pass of this machine's scheduler over what is due. */
   readonly due: Effect.Effect<void>;
+  /**
+   * The server again over the same database: a new scheduler, runner and
+   * move, with nothing kept in memory. Not a process restart.
+   */
+  readonly reopen: Effect.Effect<void>;
+  /** Makes every `verb` on `table` fail in this machine's database until the returned effect runs. */
+  readonly breakTable: (
+    table: string,
+    verb: "INSERT" | "UPDATE" | "DELETE",
+  ) => Effect.Effect<Effect.Effect<void>>;
   /** How many times this machine started a routine's run. */
   readonly fires: () => number;
   readonly row: Effect.Effect<
@@ -129,7 +144,11 @@ const grantFor = (source: EnvironmentId): EffectiveWorkGrant => ({
  */
 export const fleet = (
   names: ReadonlyArray<string>,
-  options: { readonly release?: Record<string, "1.0.377"> } = {},
+  options: {
+    readonly release?: Record<string, "1.0.377">;
+    /** How often a due pass looks for routines to settle; absent, the test settles by hand. */
+    readonly pace?: number;
+  } = {},
 ) =>
   Effect.gen(function* () {
     const network: Network = { offline: new Set(), dropAnswer: () => false, log: [] };
@@ -185,12 +204,26 @@ export const fleet = (
           launches: 0,
           sends: 0,
           movedThreads: new Map(),
+          beside: false,
+          listFails: false,
         };
+        // The binding this copy's project row carries, as the release before wrote it.
+        const binding = () =>
+          state.role.state !== "active"
+            ? { epoch: state.role.epoch, state: state.role.state }
+            : state.role.epoch === 0
+              ? undefined
+              : {
+                  epoch: state.role.epoch,
+                  state: "active" as const,
+                  ...(state.beside ? {} : { predecessor: members[(index + 1) % members.length]! }),
+                };
         const work = { due: Effect.void as Effect.Effect<void> };
         const projectRow = (): ProjectStore.ProjectRow => ({
           ...routineProject(projectId),
           workspaceSettings: {
             ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+            ...(binding() === undefined ? {} : { coordinatorBinding: binding() }),
             logicalProject: {
               id: "logical-a",
               title: "Synthetic shared project",
@@ -247,7 +280,7 @@ export const fleet = (
             heldMsBetween: () => Effect.succeed(0),
           }),
           // The tests settle by hand, through `runner.reconcile`.
-          Layer.succeed(RoutineRunnerPace, { everyMs: null }),
+          Layer.succeed(RoutineRunnerPace, { everyMs: options.pace ?? null }),
           Layer.succeed(CoordinatorRole, CoordinatorRole.of(roleService(state, Stream.empty))),
           Layer.succeed(CoordinatorWakeGate, { check: () => Effect.sync(() => state.fence) }),
           Layer.mock(ServerEnvironment.ServerEnvironment)({
@@ -292,8 +325,6 @@ export const fleet = (
         );
         const sql = Context.get(context, SqlClient.SqlClient);
         sqlRef.current = sql;
-        const service = Context.get(context, Service.ScheduledTaskService);
-        const runner = yield* service.runner!();
         const old = options.release?.[name] === "1.0.377";
         const projects = Effect.sync(() => {
           const row = projectRow();
@@ -301,15 +332,46 @@ export const fleet = (
             { id: row.projectId, deletedAt: null, workspaceSettings: row.workspaceSettings },
           ] as unknown as ReadonlyArray<Project>;
         });
-        const transfer = old
-          ? null
-          : yield* makeTransfer({
-              sql,
-              scheduled: service,
-              post: postFrom(environmentId),
-              projects,
-              label: (id) => Effect.succeed(nameOf(id)),
-            });
+        /** The scheduler, its runner and its move over `service`, as a server start builds them. */
+        const serverOver = (service: Service.ScheduledTaskService["Service"]) =>
+          Effect.gen(function* () {
+            const runner = yield* service.runner!();
+            const transfer = old
+              ? null
+              : yield* makeTransfer({
+                  sql,
+                  scheduled: {
+                    ...service,
+                    list: () =>
+                      state.listFails
+                        ? Effect.fail(taskError("Could not list schedule tasks."))
+                        : service.list(),
+                  },
+                  post: postFrom(environmentId),
+                  projects,
+                  label: (id) => Effect.succeed(nameOf(id)),
+                });
+            return { service, runner, transfer };
+          });
+        const live = {
+          current: yield* serverOver(Context.get(context, Service.ScheduledTaskService)),
+        };
+        const service = new Proxy({} as Service.ScheduledTaskService["Service"], {
+          get: (_target, key) => live.current.service[key as keyof typeof live.current.service],
+        });
+        const scope = yield* Effect.scope;
+        const reopen = Effect.gen(function* () {
+          const again = yield* Layer.buildWithScope(
+            Layer.fresh(
+              Service.layer.pipe(
+                Layer.provide(dependencies),
+                Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
+              ),
+            ),
+            scope,
+          );
+          live.current = yield* serverOver(Context.get(again, Service.ScheduledTaskService));
+        }).pipe(Effect.orDie);
         const readState = (id: string) =>
           sql<{
             next_run_at: string | null;
@@ -376,7 +438,7 @@ export const fleet = (
                       status: 400,
                       message: "The request does not match this version.",
                     })
-                  : transfer!.receive(caller, request.value);
+                  : live.current.transfer!.receive(caller, request.value);
               },
         );
         const row = sql<{
@@ -396,14 +458,29 @@ export const fleet = (
           state,
           sql,
           service,
-          runner,
-          transfer,
+          get runner() {
+            return live.current.runner;
+          },
+          get transfer() {
+            return live.current.transfer;
+          },
           due: Effect.suspend(() => work.due),
+          reopen,
+          breakTable: (table, verb) =>
+            Effect.gen(function* () {
+              const trigger = `synthetic_failure_${table}_${verb.toLowerCase()}`;
+              yield* sql.unsafe(
+                `CREATE TRIGGER IF NOT EXISTS ${trigger} BEFORE ${verb} ON ${table} BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END`,
+              );
+              return sql
+                .unsafe(`DROP TRIGGER IF EXISTS ${trigger}`)
+                .pipe(Effect.asVoid, Effect.orDie);
+            }).pipe(Effect.orDie),
           fires: () => state.launches + state.sends,
           row,
-          record: runner.records.read(ROUTINE),
+          record: Effect.suspend(() => live.current.runner.records.read(ROUTINE)),
           seed: (overrides = {}) =>
-            runner.internal.upsert(taskInput({ projectId, ...overrides })).pipe(
+            live.current.runner.internal.upsert(taskInput({ projectId, ...overrides })).pipe(
               Effect.map((result) => result.task),
               Effect.orDie,
             ),

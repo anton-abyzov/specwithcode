@@ -33,6 +33,14 @@ export const deleteUnreachedRefusal = (labels: ReadonlyArray<string>) =>
     0,
     500,
   );
+/** Why a copy waits: no machine has yet shown that it is the one that runs the routine. */
+export const UNCONFIRMED_RUNNER_WAIT =
+  "Waiting: the machines that share this project have not confirmed which one runs this routine.";
+export const copyNotRemovedRefusal = (label: string | null) =>
+  `Deleted on ${named(label)}. This machine's copy could not be removed yet; it stays off and is removed on its own.`.slice(
+    0,
+    500,
+  );
 export const STALE_ROUTINE_EDIT_REFUSAL =
   "This routine changed since you opened it, so your change was not saved. Open it again and repeat the change.";
 
@@ -52,7 +60,27 @@ export interface RoutineRunnerRecord {
   readonly operationId: string | null;
   /** The move in flight, as ScheduledTaskTransfer wrote it. */
   readonly operation: unknown;
+  /**
+   * `settling`, `settled`: the machines asked to rest their copies whose answer
+   * is not known. One of them may rest already, so it is told to follow the
+   * coordinator again whenever the ones that answered are.
+   */
+  readonly asked?: ReadonlyArray<string> | undefined;
+  /**
+   * `disarmed`: whether the routine is on at its runner. The copy's own row is
+   * off while it rests, so a release before this one never fires it; this is
+   * what a person sees, and what the row returns to.
+   */
+  readonly copyEnabled?: boolean | null | undefined;
 }
+
+/** A resting copy whose routine was deleted at its runner and whose own row is still to go. */
+export const PENDING_COPY_DELETE = { pendingDelete: true } as const;
+export const isPendingCopyDelete = (record: Pick<RoutineRunnerRecord, "state" | "operation">) =>
+  record.state === "disarmed" &&
+  typeof record.operation === "object" &&
+  record.operation !== null &&
+  (record.operation as { readonly pendingDelete?: unknown }).pendingDelete === true;
 
 /** Whether the record makes this machine the one that runs the routine. */
 export const runsHere = (record: Pick<RoutineRunnerRecord, "state"> | null | undefined) =>
@@ -72,6 +100,8 @@ interface RecordRow {
   readonly acked_json: string;
   readonly operation_id: string | null;
   readonly operation_json: string | null;
+  readonly asked_json: string;
+  readonly copy_enabled: number | null;
 }
 
 const STATES: ReadonlySet<string> = new Set([
@@ -94,17 +124,20 @@ const parseJson = (json: string | null): unknown => {
 const recordOf = (row: RecordRow): RoutineRunnerRecord | null => {
   if (!STATES.has(row.state)) return null;
   const acked = parseJson(row.acked_json);
+  const asked = parseJson(row.asked_json);
+  const strings = (value: unknown) =>
+    Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
   return {
     taskId: row.task_id,
     state: row.state as RoutineRunnerState,
     runnerEnvironmentId: row.runner_environment_id,
     runnerLabel: row.runner_label,
     revision: Math.max(0, Math.trunc(row.revision)),
-    acked: Array.isArray(acked)
-      ? acked.filter((entry): entry is string => typeof entry === "string")
-      : [],
+    acked: strings(acked),
     operationId: row.operation_id,
     operation: parseJson(row.operation_json),
+    asked: strings(asked),
+    copyEnabled: row.copy_enabled === null ? null : row.copy_enabled !== 0,
   };
 };
 
@@ -138,13 +171,16 @@ export const makeRunnerRecords = (sql: SqlClient.SqlClient) => {
       const now = DateTime.formatIso(yield* DateTime.now);
       const acked = stringifyJson([...new Set(record.acked)].toSorted());
       const operation = record.operation == null ? null : stringifyJson(record.operation);
+      const asked = stringifyJson([...new Set(record.asked ?? [])].toSorted());
+      const copyEnabled = record.copyEnabled == null ? null : record.copyEnabled ? 1 : 0;
       yield* sql`
         INSERT INTO scheduled_task_runners (
           task_id, state, runner_environment_id, runner_label, revision,
-          acked_json, operation_id, operation_json, updated_at
+          acked_json, operation_id, operation_json, updated_at, asked_json, copy_enabled
         ) VALUES (
           ${record.taskId}, ${record.state}, ${record.runnerEnvironmentId}, ${record.runnerLabel},
-          ${record.revision}, ${acked}, ${record.operationId}, ${operation}, ${now}
+          ${record.revision}, ${acked}, ${record.operationId}, ${operation}, ${now},
+          ${asked}, ${copyEnabled}
         )
         ON CONFLICT (task_id) DO UPDATE SET
           state = excluded.state,
@@ -154,7 +190,9 @@ export const makeRunnerRecords = (sql: SqlClient.SqlClient) => {
           acked_json = excluded.acked_json,
           operation_id = excluded.operation_id,
           operation_json = excluded.operation_json,
-          updated_at = excluded.updated_at
+          updated_at = excluded.updated_at,
+          asked_json = excluded.asked_json,
+          copy_enabled = excluded.copy_enabled
       `;
     });
   const remove = (taskId: string) =>
@@ -188,6 +226,11 @@ export const makeRunnerRecords = (sql: SqlClient.SqlClient) => {
       INSERT INTO scheduled_task_revisions (task_id, revision) VALUES (${taskId}, 1)
       ON CONFLICT (task_id) DO UPDATE SET revision = revision + 1
     `.pipe(Effect.asVoid);
+  /** The line a person reads under the routine; null clears it. */
+  const setNote = (taskId: string, note: string | null) =>
+    sql`UPDATE scheduled_tasks SET last_run_error = ${note} WHERE task_id = ${taskId}`.pipe(
+      Effect.asVoid,
+    );
   const dropRevision = (taskId: string) =>
     sql`DELETE FROM scheduled_task_revisions WHERE task_id = ${taskId}`.pipe(Effect.asVoid);
   return {
@@ -197,6 +240,7 @@ export const makeRunnerRecords = (sql: SqlClient.SqlClient) => {
     setRevision,
     bumpRevision,
     dropRevision,
+    setNote,
     /** Unreadable counts as none; the callers that must not guess use `readStrict`. */
     read: (taskId: string) => read(taskId).pipe(quiet("read a routine's runner", null)),
     readStrict: read,

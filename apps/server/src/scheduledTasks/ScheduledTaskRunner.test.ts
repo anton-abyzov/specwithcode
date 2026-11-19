@@ -596,14 +596,16 @@ it.effect("a replica or a planned handover never rewrites the routine its runner
       routines: [],
     });
     assert.isDefined(yield* alpha.row);
-    // The copy that rests still follows its replica.
+    // The copy that rests takes its definition from its runner only: a replica
+    // may be older than what the runner sent, and would turn its row on again.
     const resting = yield* beta.service.routineCopies!();
     yield* resting.replace({
       projectId: beta.projectId,
       logicalProjectId: "logical-a",
       routines: [{ ...copyOf(task), title: "From a replica" }],
     });
-    assert.equal((yield* beta.row)?.title, "From a replica");
+    assert.equal((yield* beta.row)?.title, "Synthetic review");
+    assert.notOk((yield* beta.row)?.enabled);
     assert.equal((yield* beta.record)?.state, "disarmed");
   }),
 );

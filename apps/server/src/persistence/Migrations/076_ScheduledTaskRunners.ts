@@ -5,6 +5,9 @@ import * as SqlClient from "effect/sql/SqlClient";
  * The one machine that runs a routine (1390 AC-45), apart from the routine's
  * own row so a save, a replica or a run transition never rewrites it. No row
  * means no runner is recorded yet: the routine runs where it always did.
+ * `asked_json` names the machines asked to rest their copies whose answer is
+ * not known; `copy_enabled` keeps, for a copy that rests, whether the routine
+ * is on, since the copy's own row is turned off while it rests.
  *
  * `scheduled_task_revisions` counts the changes made to a routine on this
  * machine, runner record or not, so a change made against an older count is
@@ -26,7 +29,9 @@ export default Effect.gen(function* () {
       acked_json TEXT NOT NULL DEFAULT '[]',
       operation_id TEXT,
       operation_json TEXT,
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      asked_json TEXT NOT NULL DEFAULT '[]',
+      copy_enabled INTEGER
     )
   `;
   yield* sql`

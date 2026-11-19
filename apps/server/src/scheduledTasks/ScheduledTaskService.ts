@@ -70,7 +70,7 @@ import {
   type RoutineRunner,
   RoutineRunnerPace,
 } from "./ScheduledTaskRunner.ts";
-import { makeRunnerRoleActive } from "./ScheduledTaskRunnerRole.ts";
+import { makeRunnerLegacyOwner, makeRunnerRoleActive } from "./ScheduledTaskRunnerRole.ts";
 import { HandoffTurnGate } from "../handoff/HandoffTurnGate.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import {
@@ -861,7 +861,8 @@ export const layer = Layer.effect(
         }
         const runsUnder = grant?.kind === "run" ? grant : null;
 
-        const suspended = yield* assertTaskAdmission(active).pipe(
+        const byRunner = runnerRef.current !== null && (yield* runnerRef.current.ownsRun(active));
+        const suspended = yield* assertTaskAdmission(active, { byRunner }).pipe(
           withAideSetting,
           Effect.provideService(ProjectStore.ProjectStoreV2, projects),
           Effect.provideService(SqlClient.SqlClient, sql),
@@ -1286,7 +1287,7 @@ export const layer = Layer.effect(
         const launchOwnThread = (replacing: string | null) =>
           admission.withLock(
             active.projectId,
-            assertTaskAdmission(active).pipe(
+            assertTaskAdmission(active, { byRunner }).pipe(
               withAideSetting,
               Effect.provideService(ProjectStore.ProjectStoreV2, projects),
               Effect.provideService(SqlClient.SqlClient, sql),
@@ -1585,11 +1586,11 @@ export const layer = Layer.effect(
         Effect.forkScoped,
       );
 
-    // Set once the runner exists: a look for routines to settle, started after a due pass.
-    const afterDuePass: { look: Effect.Effect<void> } = { look: Effect.void };
+    // Set once the runner exists: a look for routines to settle, run before a due pass.
+    const beforeDuePass: { look: Effect.Effect<void> } = { look: Effect.void };
     yield* scheduler.register(
       "scheduled-tasks",
-      runDueTasks().pipe(Effect.andThen(Effect.suspend(() => afterDuePass.look))),
+      Effect.suspend(() => beforeDuePass.look).pipe(Effect.andThen(runDueTasks())),
     );
 
     const list: ScheduledTaskService["Service"]["list"] = () =>
@@ -1954,11 +1955,13 @@ export const layer = Layer.effect(
       findTask,
       upsert,
       remove: (id) => deleteTask({ id }),
-      // A routine this machine runs, or is moving, is never rewritten by a replica.
+      // A routine this machine runs, moves or rests for its runner is never rewritten by a replica.
       heldByRunner: (id) =>
         runnerRef.current === null
           ? Effect.succeed(false)
-          : runnerRef.current.records.read(id).pipe(Effect.map(keepsOwnState)),
+          : runnerRef.current.records
+              .read(id)
+              .pipe(Effect.map((record) => keepsOwnState(record) || record?.state === "disarmed")),
     }).pipe(Effect.provideService(SqlClient.SqlClient, sql));
 
     const webhooks = yield* makeWebhookTrigger({
@@ -1980,6 +1983,7 @@ export const layer = Layer.effect(
       legacyHold,
       projects,
       roleActive: makeRunnerRoleActive(role, projects),
+      legacyOwner: makeRunnerLegacyOwner(projects),
       selfEnvironmentId:
         environment === undefined ? Effect.succeed(null) : environment.getEnvironmentId,
       threadMovedTo: (threadId) =>
@@ -2005,7 +2009,7 @@ export const layer = Layer.effect(
     });
     runnerRef.current = runner;
     const pace = (yield* RoutineRunnerPace).everyMs;
-    if (pace !== null) afterDuePass.look = yield* runner.pacedLook(pace);
+    if (pace !== null) beforeDuePass.look = yield* runner.pacedLook(pace);
 
     return ScheduledTaskService.of({
       list: () => list().pipe(Effect.flatMap(runner.decorate)),

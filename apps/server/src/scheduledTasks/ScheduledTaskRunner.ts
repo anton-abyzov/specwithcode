@@ -48,6 +48,7 @@ import {
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -62,7 +63,8 @@ import {
   RESTING_ROUTINE_CHANGE_REFUSAL,
   type RoutineCoordinatorHold,
 } from "./ScheduledTaskCoordinatorGate.ts";
-import { isCoordinatorOwnedRoutine } from "./ScheduledTaskCopies.ts";
+import { stringifyJson } from "../json.ts";
+import { isCoordinatorOwnedRoutine, routineCopyOf } from "./ScheduledTaskCopies.ts";
 import {
   affirmsRunner,
   type RoutineRunnerEdit,
@@ -73,8 +75,12 @@ import { taskError } from "./ScheduledTaskStorage.ts";
 
 import { makeRunnerReceive } from "./ScheduledTaskRunnerReceive.ts";
 import {
+  copyNotRemovedRefusal,
   deleteUnreachedRefusal,
   isOlderRelease,
+  isPendingCopyDelete,
+  PENDING_COPY_DELETE,
+  UNCONFIRMED_RUNNER_WAIT,
   isRunnerRoutine,
   makeRunnerRecords,
   MOVING_ROUTINE_CHANGE_REFUSAL,
@@ -114,6 +120,8 @@ export interface RoutineRunnerDeps {
   readonly projects: ProjectStore.ProjectStoreV2["Service"];
   /** Whether this machine's copy of the project coordinates it now. */
   readonly roleActive: (projectId: ProjectId) => Effect.Effect<boolean>;
+  /** Whether that copy's binding is one the release before let fire alone (ScheduledTaskRunnerRole). */
+  readonly legacyOwner: (projectId: ProjectId) => Effect.Effect<boolean>;
   /** This machine, or null on a host with no identity (then nothing is settled with peers). */
   readonly selfEnvironmentId: Effect.Effect<string | null>;
   /** The machine a thread was handed off to, when this copy of it no longer runs. */
@@ -143,11 +151,15 @@ export interface RoutineRunnerDeps {
 
 /** How often this machine asks its peers again about routines not settled yet. */
 const SETTLE_RETRY_MS = 60_000;
+/** How long a due pass waits for the look before it; the look goes on without it. */
+const LOOK_WAIT_MS = 2_000;
+/** The most one request to rest copies carries: the routines route reads 256 KB. */
+const PUSH_BYTES = 150_000;
+const PUSH_ROUTINES = 100;
 /**
  * How often a server looks for routines to settle with the other machines,
- * at the earliest. The look starts after a pass over due routines, on a fiber
- * of its own: it waits on other machines, and the scheduler's sources take
- * turns on a fixed beat. Null (a test that settles by hand) never looks.
+ * at the earliest. The look runs before a pass over due routines. Null (a
+ * test that settles by hand) never looks.
  */
 export class RoutineRunnerPace extends Context.Reference<{ readonly everyMs: number | null }>(
   "specweave-studio/scheduledTasks/RoutineRunnerPace",
@@ -169,6 +181,8 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
     /** The revision each routine's resting copies last heard, since this server started. */
     const pushed = new Map<string, number>();
     const lastAsked = new Map<string, number>();
+    /** Projects with a machine of the release before, as the last look found them. */
+    const legacySets = new Set<string>();
 
     /** The project's other machines, or null when this machine cannot tell itself apart. */
     const othersOf = (projectId: ProjectId) =>
@@ -198,6 +212,29 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
         ),
       );
 
+    /**
+     * Whether this machine may fire a routine no runner is settled for, once
+     * the release before's gate lets it. Two machines may both coordinate, and
+     * that gate lets both through, so only the one whose binding the release
+     * before let fire alone goes on firing. Any other copy waits, unless a
+     * machine of that release shares the project: then its rule is the rule.
+     */
+    const mayFireUnsettled = (projectId: ProjectId) =>
+      Effect.gen(function* () {
+        const others = yield* othersOf(projectId);
+        if (others === null || others.length === 0) return true;
+        if (yield* deps.legacyOwner(projectId)) return true;
+        return legacySets.has(projectId);
+      });
+
+    /** Whether this machine runs the routine by its settled record, whatever the coordinator binding says. */
+    const ownsRun = (task: GateTask): Effect.Effect<boolean> =>
+      Effect.gen(function* () {
+        if (task.id === undefined || !isRunnerRoutine(task)) return false;
+        const record = yield* records.read(task.id);
+        return record?.state === "settled" && (yield* covered(record, task.projectId));
+      });
+
     // --- the gate ----------------------------------------------------------------------
 
     const hold = (task: GateTask): Effect.Effect<RoutineCoordinatorHold | null> =>
@@ -225,8 +262,11 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
           (yield* covered(record, task.projectId))
         )
           return null;
-        // Not every machine confirmed: exactly the rule of the release before.
-        return yield* deps.legacyHold(task);
+        // Not every machine confirmed: the rule of the release before, for the one
+        // machine it let fire alone. A copy that cannot show it is that one waits.
+        const legacy = yield* deps.legacyHold(task);
+        if (legacy !== null || (yield* mayFireUnsettled(task.projectId))) return legacy;
+        return { kind: "wait", reason: UNCONFIRMED_RUNNER_WAIT } as const;
       }).pipe(
         // Unknown never fires: a copy that cannot read its runner waits for the next poll.
         Effect.catchCause((cause) =>
@@ -244,6 +284,7 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
       previous: RoutineRunnerRecord | null,
       acked: ReadonlyArray<string>,
       state: "settling" | "settled",
+      asked: ReadonlyArray<string> = previous?.asked ?? [],
     ): RoutineRunnerRecord => ({
       taskId,
       state,
@@ -253,40 +294,77 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
       acked,
       operationId: null,
       operation: null,
+      asked,
+      copyEnabled: null,
     });
 
     /**
-     * Records what the other machines confirmed, and `settled` once all of them
-     * did. Read again under the lock, and only while this machine still runs the
-     * routine under the coordinator rule: one that stopped coordinating meanwhile
-     * never becomes the runner over the machine that fires it now.
+     * Records what the other machines answered: `added` confirmed, `cleared`
+     * said no and so wrote nothing. `settled` once all of them confirmed. Read
+     * again under the lock, and only while this machine still runs the routine
+     * under the coordinator rule: one that stopped coordinating meanwhile never
+     * becomes the runner over the machine that fires it now.
      */
     const settleIfStillClaimed = (
       task: ScheduledTask,
       self: string | null,
       others: ReadonlyArray<string>,
       added: ReadonlyArray<string>,
+      cleared: ReadonlyArray<string> = [],
     ) =>
       writing(
         Effect.gen(function* () {
           const record = yield* records.read(task.id);
           if (record !== null && !runsHere(record)) return;
           const acked = [...new Set([...(record?.acked ?? []), ...added])];
+          const asked = (record?.asked ?? []).filter(
+            (member) => !added.includes(member) && !cleared.includes(member),
+          );
           const complete = others.every((member) => acked.includes(member));
           if (record?.state !== "settled" && (yield* deps.legacyHold(task)) !== null) {
-            // Kept as confirmed so far; the next pass frees these machines again.
-            if (acked.length > 0)
-              yield* records.write(selfRecord(task.id, self, record, acked, "settling"));
+            // Kept as answered so far; the next pass frees these machines again.
+            if (acked.length > 0 || asked.length > 0 || record !== null)
+              yield* records.write(selfRecord(task.id, self, record, acked, "settling", asked));
             return;
           }
           yield* records.write(
-            selfRecord(task.id, self, record, acked, complete ? "settled" : "settling"),
+            selfRecord(task.id, self, record, acked, complete ? "settled" : "settling", asked),
           );
           yield* deps.notifyChanged;
         }),
       );
 
-    /** Tells the machines that already rest their copies to follow the coordinator again. */
+    /**
+     * Written before a machine is asked to rest its copies: it may do so and
+     * its answer be lost, and then only this record says it was ever asked.
+     */
+    const markAsked = (tasks: ReadonlyArray<ScheduledTask>, self: string | null, member: string) =>
+      writing(
+        Effect.forEach(
+          tasks,
+          (task) =>
+            Effect.gen(function* () {
+              const record = yield* records.read(task.id);
+              if (record !== null && !runsHere(record)) return;
+              yield* records.write(
+                selfRecord(
+                  task.id,
+                  self,
+                  record,
+                  record?.acked ?? [],
+                  record?.state === "settled" ? "settled" : "settling",
+                  [...new Set([...(record?.asked ?? []), member])],
+                ),
+              );
+            }),
+          { discard: true },
+        ),
+      ).pipe(Effect.ignore);
+
+    /**
+     * Tells the machines that rest their copies, and the ones that may, to
+     * follow the coordinator again.
+     */
     const rearm = (peers: RoutineRunnerPeers, task: ScheduledTask, record: RoutineRunnerRecord) =>
       Effect.gen(function* () {
         // First, this machine stops firing as the runner: back under the coordinator gate.
@@ -298,7 +376,7 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
             }),
           );
         const freed: Array<string> = [];
-        for (const member of record.acked) {
+        for (const member of new Set([...record.acked, ...(record.asked ?? [])])) {
           const told = yield* peers
             .post(member, { op: "runner-rearm", routineIds: [task.id] })
             .pipe(Effect.result);
@@ -309,11 +387,72 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
             const now = yield* records.read(task.id);
             if (now === null || !runsHere(now)) return;
             const acked = now.acked.filter((entry) => !freed.includes(entry));
-            if (acked.length === 0) yield* records.remove(task.id);
-            else yield* records.write({ ...now, state: "settling", acked });
+            const asked = (now.asked ?? []).filter((entry) => !freed.includes(entry));
+            if (acked.length === 0 && asked.length === 0) yield* records.remove(task.id);
+            else yield* records.write({ ...now, state: "settling", acked, asked });
           }),
         );
       });
+
+    /** Requests no larger than the routines route reads, each with its routines' definitions. */
+    const batches = (list: ReadonlyArray<ScheduledTask>) => {
+      const out: Array<Array<ScheduledTask>> = [];
+      let size = 0;
+      for (const task of list) {
+        const bytes = stringifyJson(routineCopyOf(task)).length;
+        if (out.length === 0 || size + bytes > PUSH_BYTES || out.at(-1)!.length >= PUSH_ROUTINES) {
+          out.push([]);
+          size = 0;
+        }
+        out.at(-1)!.push(task);
+        size += bytes;
+      }
+      return out;
+    };
+
+    /**
+     * Asks `member` to rest its copies of `list`, each sent as this machine
+     * holds it with its revision. What it confirmed, what it said no to, and
+     * the failure that ended the asking, if any.
+     */
+    const askToRest = (
+      peers: RoutineRunnerPeers,
+      member: string,
+      projectId: string,
+      list: ReadonlyArray<ScheduledTask>,
+      counts: ReadonlyMap<string, number>,
+      kind: { readonly refresh?: true; readonly incumbent?: boolean },
+    ) =>
+      Effect.gen(function* () {
+        const acked: Array<string> = [];
+        const refused: Array<string> = [];
+        for (const batch of batches(list)) {
+          const answered = yield* peers
+            .post(member, {
+              op: "runner-disarm",
+              sourceProjectId: projectId,
+              routineIds: batch.map((task) => task.id),
+              revisions: batch.map((task) => counts.get(task.id) ?? 0),
+              routines: batch.map((task) => routineCopyOf(task)),
+              ...kind,
+            })
+            .pipe(Effect.result);
+          if (answered._tag === "Failure") return { acked, refused, failure: answered.failure };
+          acked.push(...(answered.success.acked ?? []));
+          refused.push(...(answered.success.refused ?? []));
+        }
+        return { acked, refused, failure: null };
+      });
+
+    /** A copy whose routine was deleted at its runner: its row, its record and its count, or none. */
+    const removeCopy = (id: ScheduledTaskId) =>
+      records.atomically(
+        Effect.gen(function* () {
+          if ((yield* deps.findTask(id)) !== null) yield* deps.remove({ id });
+          yield* records.remove(id);
+          yield* records.dropRevision(id);
+        }),
+      );
 
     /**
      * Settling asks other machines, each for up to half a minute, so it never
@@ -323,9 +462,13 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
     const reconcileOnce = (force: boolean) =>
       Effect.gen(function* () {
         const self = yield* deps.selfEnvironmentId;
+        const all = yield* records.all;
+        // A copy deleted at its runner whose own row would not go: tried again.
+        for (const record of all.values())
+          if (isPendingCopyDelete(record))
+            yield* writing(removeCopy(ScheduledTaskId.make(record.taskId))).pipe(Effect.ignore);
         const tasks = (yield* deps.listTasks).filter(isRunnerRoutine);
         if (tasks.length === 0) return;
-        const all = yield* records.all;
         const counts = yield* records.revisions;
         const peers = yield* Ref.get(peersRef);
         const now = DateTime.toEpochMillis(yield* DateTime.now);
@@ -366,18 +509,10 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
           if (peers !== null && stale.size > 0) {
             const reached = new Map<string, number>();
             for (const [member, list] of stale) {
-              const told = yield* peers
-                .post(member, {
-                  op: "runner-disarm",
-                  sourceProjectId: projectId,
-                  routineIds: list.map((task) => task.id),
-                  revisions: list.map((task) => counts.get(task.id) ?? 0),
-                  refresh: true,
-                })
-                .pipe(Effect.result);
-              if (told._tag === "Success")
-                for (const id of told.success.acked ?? [])
-                  reached.set(id, (reached.get(id) ?? 0) + 1);
+              const told = yield* askToRest(peers, member, projectId, list, counts, {
+                refresh: true,
+              });
+              for (const id of told.acked) reached.set(id, (reached.get(id) ?? 0) + 1);
             }
             for (const task of new Set([...stale.values()].flat()))
               if (reached.get(task.id) === others.length)
@@ -401,6 +536,8 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
             } else if (isOlderRelease(asked.failure)) old = true;
             else silent = true;
           }
+          if (old) legacySets.add(projectId);
+          else if (!silent) legacySets.delete(projectId);
           if (old) {
             for (const task of new Set([...need.values()].flat())) {
               const record = all.get(task.id);
@@ -410,24 +547,33 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
             continue;
           }
           if (silent) continue;
+          const incumbent = yield* deps.legacyOwner(projectId as ProjectId);
           const ackedNow = new Map<string, Array<string>>();
+          const clearedNow = new Map<string, Array<string>>();
+          const note = (into: Map<string, Array<string>>, id: string, member: string) =>
+            into.set(id, [...(into.get(id) ?? []), member]);
           for (const [member, list] of need) {
-            const answered = yield* peers
-              .post(member, {
-                op: "runner-disarm",
-                sourceProjectId: projectId,
-                routineIds: list.map((task) => task.id),
-                revisions: list.map((task) => counts.get(task.id) ?? 0),
-              })
-              .pipe(Effect.result);
-            if (answered._tag === "Failure") continue;
-            for (const id of answered.success.acked ?? [])
-              ackedNow.set(id, [...(ackedNow.get(id) ?? []), member]);
+            yield* markAsked(list, self, member);
+            const answered = yield* askToRest(peers, member, projectId, list, counts, {
+              incumbent,
+            });
+            for (const id of answered.acked) note(ackedNow, id, member);
+            // A machine that said no wrote nothing: it is neither waited on nor told to rearm.
+            const no =
+              answered.failure !== null &&
+              answered.failure.refused &&
+              !answered.failure.uncertain &&
+              (answered.failure.status ?? 0) < 500;
+            for (const id of no
+              ? list.map((task) => task.id).filter((id) => !answered.acked.includes(id))
+              : answered.refused)
+              note(clearedNow, id, member);
           }
           for (const task of owned) {
-            const added = ackedNow.get(task.id);
-            if (added === undefined) continue;
-            yield* settleIfStillClaimed(task, self, others, added);
+            const added = ackedNow.get(task.id) ?? [];
+            const cleared = clearedNow.get(task.id) ?? [];
+            if (added.length === 0 && cleared.length === 0) continue;
+            yield* settleIfStillClaimed(task, self, others, added, cleared);
           }
           yield* deps.notifyChanged;
         }
@@ -448,8 +594,11 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
     });
 
     /**
-     * A look at most every `everyMs`, started by the caller after a due pass. On a
-     * fiber of its own: it waits on other machines, and a due pass never waits on it.
+     * A look at most every `everyMs`, run by the caller before a due pass, so a
+     * runner is settled before its routine is looked at wherever the other
+     * machines answer in time. It asks other machines, so it runs on a fiber
+     * of its own and the due pass waits for it only so long: a machine that
+     * does not answer never holds up what is due.
      */
     const pacedLook = (everyMs: number) =>
       Effect.gen(function* () {
@@ -460,10 +609,11 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
           if (looks.running || now - looks.last < everyMs) return;
           looks.last = now;
           looks.running = true;
-          yield* tick.pipe(
+          const look = yield* tick.pipe(
             Effect.ensuring(Effect.sync(() => void (looks.running = false))),
             Effect.forkIn(scope),
           );
+          yield* Fiber.join(look).pipe(Effect.timeoutOption(LOOK_WAIT_MS), Effect.ignore);
         });
       });
 
@@ -507,6 +657,19 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
             : null;
       });
 
+    const isTaskError = (error: unknown): error is ScheduledTaskError =>
+      typeof error === "object" &&
+      error !== null &&
+      (error as { readonly _tag?: unknown })._tag === "ScheduledTaskError";
+    /** Every write of `effect`, or none of them. */
+    const atomic = <A, E>(effect: Effect.Effect<A, E>) =>
+      records
+        .atomically(effect)
+        .pipe(
+          Effect.mapError((error) =>
+            isTaskError(error) ? error : taskError("Could not save the change.", { cause: error }),
+          ),
+        );
     const revisionFailed = (cause: unknown) =>
       taskError("Could not read or record the routine's revision.", { cause });
     const bump = (taskId: string) =>
@@ -521,37 +684,51 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
         ? Effect.succeed(record.revision)
         : records.revision(taskId).pipe(Effect.mapError(revisionFailed));
 
-    /** The copy as this machine keeps it after its runner changed it. */
-    const keepCopy = (existing: ScheduledTask, copy: CoordinatorRoutineCopy) =>
-      Effect.gen(function* () {
-        const input = decodeUpsert({
-          id: existing.id,
-          title: copy.title,
-          prompt: copy.prompt,
-          enabled: copy.enabled,
-          schedule: copy.schedule,
-          projectId: existing.projectId,
-          threadId: existing.threadId,
-          workspaceStrategy: copy.workspaceStrategy,
-          modelSelection: copy.modelSelection,
-          runtimeMode: copy.runtimeMode,
-          interactionMode: copy.interactionMode,
-          createdBy: copy.createdBy,
-          creationSource: "server",
-          modelPinned: copy.modelPinned ?? false,
-          check: copy.check ?? null,
-          brief: copy.brief ?? null,
-          ownThread: existing.ownThread === true,
-        });
-        if (Option.isNone(input)) return;
-        yield* deps.upsert(input.value);
-      }).pipe(
-        // The runner has the change; this copy catches up with its next replica.
-        Effect.catch((cause) =>
-          Effect.logWarning("Could not keep a routine's copy after its runner changed it", {
-            cause,
-          }),
-        ),
+    /**
+     * Rests this machine's copy for the runner `record` names: the definition
+     * the runner sent with its revision, the row off so a release before this
+     * one never fires it, the note a person reads, and the record. All of it
+     * or none: a copy never shows a revision whose definition it did not take.
+     */
+    const restCopy = (
+      existing: ScheduledTask | null,
+      copy: CoordinatorRoutineCopy | null,
+      record: RoutineRunnerRecord,
+    ) =>
+      records.atomically(
+        Effect.gen(function* () {
+          if (existing !== null) {
+            if (copy !== null) {
+              const input = decodeUpsert({
+                id: existing.id,
+                title: copy.title,
+                prompt: copy.prompt,
+                enabled: false,
+                schedule: copy.schedule,
+                projectId: existing.projectId,
+                threadId: existing.threadId,
+                workspaceStrategy: copy.workspaceStrategy,
+                modelSelection: copy.modelSelection,
+                runtimeMode: copy.runtimeMode,
+                interactionMode: copy.interactionMode,
+                createdBy: copy.createdBy,
+                creationSource: "server",
+                modelPinned: copy.modelPinned ?? false,
+                check: copy.check ?? null,
+                brief: copy.brief ?? null,
+                ownThread: existing.ownThread === true,
+              });
+              if (Option.isNone(input))
+                return yield* taskError("That routine does not match this version.", {
+                  taskId: existing.id,
+                });
+              yield* deps.upsert(input.value);
+            } else if (existing.enabled)
+              yield* deps.setEnabled({ id: existing.id, enabled: false });
+            yield* records.setNote(existing.id, runsElsewhereNote(record.runnerLabel));
+          }
+          yield* records.write(record);
+        }),
       );
 
     /**
@@ -614,7 +791,7 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
           .pipe(Effect.result);
         const restsFor = (now: RoutineRunnerRecord) =>
           now.state === "disarmed" && now.runnerEnvironmentId === record.runnerEnvironmentId;
-        /** What the runner holds, written only while this is still its resting copy. */
+        /** What the runner holds, taken only while this is still its resting copy. */
         const keep = (
           copy: CoordinatorRoutineCopy | null | undefined,
           revision: number | undefined,
@@ -624,19 +801,32 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
               const now = yield* records.read(existing.id);
               // Still this runner's resting copy, and not an answer older than one already kept.
               if (now === null || !restsFor(now)) return;
-              if (revision !== undefined && revision < now.revision) return;
-              if (copy != null) yield* keepCopy(existing, copy);
-              if (revision !== undefined)
-                yield* records.write({ ...now, revision }).pipe(Effect.ignore);
+              // A revision comes only with its definition.
+              if (copy == null || revision === undefined || revision < now.revision) return;
+              const held = yield* deps.findTask(existing.id);
+              yield* restCopy(held, copy, { ...now, revision, copyEnabled: copy.enabled });
             }),
+          ).pipe(
+            // The runner has the change; this copy still shows the revision it holds.
+            Effect.catch((cause) =>
+              Effect.logWarning("Could not keep a routine's copy after its runner changed it", {
+                cause,
+              }),
+            ),
           );
+        /** Deleted at its runner: this copy goes whole, or keeps resting until it can. */
         const gone = writing(
           Effect.gen(function* () {
             const now = yield* records.read(existing.id);
             if (now !== null && !restsFor(now)) return;
-            yield* deps.remove({ id: existing.id }).pipe(Effect.ignore);
-            yield* records.remove(existing.id).pipe(Effect.ignore);
-            yield* records.dropRevision(existing.id).pipe(Effect.ignore);
+            const removed = yield* removeCopy(existing.id).pipe(Effect.result);
+            if (removed._tag === "Success") return;
+            if (now !== null)
+              yield* records.write({ ...now, operation: PENDING_COPY_DELETE }).pipe(Effect.ignore);
+            return yield* taskError(copyNotRemovedRefusal(record.runnerLabel), {
+              taskId: existing.id,
+              cause: removed.failure,
+            });
           }),
         );
         if (answered._tag === "Failure")
@@ -673,6 +863,7 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
       readonly targets: ReadonlyArray<Target>;
       readonly change: Effect.Effect<A, ScheduledTaskError>;
       readonly ownRemovable?: boolean | undefined;
+      readonly removes?: boolean | undefined;
       readonly expectedRevision?: number | undefined;
       /** Runs once the change is allowed, before it is made; a failure calls it off. */
       readonly before?: Effect.Effect<void, ScheduledTaskError> | undefined;
@@ -708,6 +899,8 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
       readonly ownRemovable?: boolean | undefined;
       readonly expectedRevision?: number | undefined;
       readonly before?: Effect.Effect<void, ScheduledTaskError> | undefined;
+      /** The change deletes the routine: nothing is left to count. */
+      readonly removes?: boolean | undefined;
     }): Effect.Effect<A, ScheduledTaskError> =>
       lock.withPermits(1)(
         Effect.gen(function* () {
@@ -754,8 +947,23 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
               });
           }
           if (input.before !== undefined) yield* input.before;
-          const result = yield* input.change;
-          for (const id of bumped) yield* bump(id);
+          // The revision the change was made against, the change and the new
+          // revision are one write: a change never stays at its old revision.
+          const result = yield* atomic(
+            Effect.gen(function* () {
+              for (const id of bumped)
+                if (
+                  input.expectedRevision !== undefined &&
+                  input.expectedRevision !== (yield* revisionOf(id, null))
+                )
+                  return yield* taskError(STALE_ROUTINE_EDIT_REFUSAL, {
+                    taskId: ScheduledTaskId.make(id),
+                  });
+              const changed = yield* input.change;
+              if (input.removes !== true) for (const id of bumped) yield* bump(id);
+              return changed;
+            }),
+          );
           // The change told the screens before its count moved: told again, or a
           // list would show the old count and the next save would be refused as stale.
           if (bumped.length > 0) yield* deps.notifyChanged;
@@ -830,7 +1038,18 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
     ) =>
       guard({
         targets: [{ id: input.id }],
-        change,
+        // The row, its runner record and its count go together, or none does:
+        // a row left behind without its record would fire as nobody's routine.
+        change: change.pipe(
+          Effect.tap(() => records.remove(input.id)),
+          Effect.tap(() => records.dropRevision(input.id)),
+          Effect.mapError((error) =>
+            isTaskError(error)
+              ? error
+              : taskError("Could not delete the routine.", { taskId: input.id, cause: error }),
+          ),
+        ),
+        removes: true,
         ownRemovable: true,
         expectedRevision: input.expectedRevision,
         // The copies that rest for it go first: one left behind would come back with a replica.
@@ -850,10 +1069,7 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
             return yield* taskError(deleteUnreachedRefusal(unreached), { taskId: input.id });
         }),
         forwarded: () => ({ edit: { kind: "delete" }, done: () => ({ id: input.id }) }),
-      }).pipe(
-        Effect.tap(() => records.remove(input.id).pipe(Effect.ignore)),
-        Effect.tap(() => records.dropRevision(input.id).pipe(Effect.ignore)),
-      );
+      });
 
     /** The list with each routine's runner, for the machines that show it. */
     const decorate = (listed: ScheduledTaskListResult): Effect.Effect<ScheduledTaskListResult> =>
@@ -861,22 +1077,32 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
         const all = yield* records.all;
         const counts = yield* records.revisions;
         return {
-          tasks: listed.tasks.map((task) => {
-            const record = all.get(task.id);
-            const revision =
-              record?.state === "disarmed" ? record.revision : (counts.get(task.id) ?? 0);
-            if (record === undefined || record.state === "settling") return { ...task, revision };
-            return {
-              ...task,
-              revision,
-              runner: {
-                environmentId: record.runnerEnvironmentId,
-                label: record.runnerLabel,
+          // A copy deleted at its runner that would not go yet is not a routine any more.
+          tasks: listed.tasks
+            .filter((task) => {
+              const record = all.get(task.id);
+              return record === undefined || !isPendingCopyDelete(record);
+            })
+            .map((task) => {
+              const record = all.get(task.id);
+              const revision =
+                record?.state === "disarmed" ? record.revision : (counts.get(task.id) ?? 0);
+              if (record === undefined || record.state === "settling") return { ...task, revision };
+              return {
+                ...task,
+                // A resting copy's row is off for the release before; this is what its runner holds.
+                ...(record.state === "disarmed" && record.copyEnabled != null
+                  ? { enabled: record.copyEnabled }
+                  : {}),
                 revision,
-                here: record.state === "settled" || record.state === "moving",
-              },
-            };
-          }),
+                runner: {
+                  environmentId: record.runnerEnvironmentId,
+                  label: record.runnerLabel,
+                  revision,
+                  here: record.state === "settled" || record.state === "moving",
+                },
+              };
+            }),
         };
       });
 
@@ -888,10 +1114,13 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
       revisionOf,
       bump,
       tellDeleted,
+      restCopy,
+      removeCopy,
     });
 
     return {
       hold,
+      ownsRun,
       guardUpsert,
       guardSetEnabled,
       guardDelete,
