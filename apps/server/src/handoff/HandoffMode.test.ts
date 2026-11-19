@@ -198,6 +198,8 @@ describe("HandoffMode", () => {
               results: [],
             };
           }),
+        // The snapshot this test reads asks the moves for their transfer records.
+        transfers: Effect.succeed({ transfers: [], batches: [] }),
       } as unknown as HandoffMode.HandoffMovesPort);
       // A window still on an earlier build asks on 'suspend': nothing moves.
       const slept = yield* Effect.exit(
