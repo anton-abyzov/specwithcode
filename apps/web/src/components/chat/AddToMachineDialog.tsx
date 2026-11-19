@@ -263,6 +263,7 @@ function AddToMachineBody({
       destinationEnvironmentId: destination,
       operationId,
       signal: controller.signal,
+      wholeFolder: true,
     }).then(
       ({ offer, summary }) => {
         if (!controller.signal.aborted) setScan({ state: "ready", offer, summary });

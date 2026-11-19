@@ -434,7 +434,7 @@ describe("offers and generations (AC-15, AC-16, AC-19)", () => {
       { recipientCertificateSha256: "4".repeat(64) },
       { expiresAt: Date.now() + 3 * 60 * 60_000 },
       { expiresAt: Date.now() - 1 },
-      { addresses: [{ host: "8.8.8.8", port: 443 }] },
+      { addresses: [{ host: "203.0.113.9", port: 443 }] },
       {},
     ])
       expect([
