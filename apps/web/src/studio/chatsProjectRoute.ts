@@ -10,7 +10,9 @@ export function useChatsProjectRoute(projectKey: string): boolean {
   const configs = useServerConfigs();
   return isChatsProjectRoute({
     group: findProjectGroup(groups, projectKey),
-    scratchRootFor: (environmentId) =>
-      configs.get(environmentId as EnvironmentId)?.scratchWorkspaceRoot ?? null,
+    scratchRootFor: (environmentId) => {
+      const config = configs.get(environmentId as EnvironmentId);
+      return config === undefined ? undefined : (config.scratchWorkspaceRoot ?? null);
+    },
   });
 }

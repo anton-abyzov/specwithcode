@@ -21,6 +21,7 @@ const runtime = vi.hoisted(() => ({
   nicknames: new Map<string, string>(),
   colors: new Map<string, string>(),
   dialogs: {} as Record<string, any>,
+  noScratch: new Set<string>(),
 }));
 vi.mock("~/studio/machineNickname", () => ({
   useMachineNicknames: () => (id: string, label?: string | null) =>
@@ -87,6 +88,7 @@ vi.mock("~/hooks/useScratchProject", () => ({
   useScratchProject: () => ({
     openScratchProject: runtime.scratch,
     scratchWorkspaceRootFor: (id: string) =>
+      !runtime.noScratch.has(id) &&
       runtime.environments.find(
         (item) => item.environmentId === id && item.connection.phase === "connected",
       )
@@ -165,6 +167,7 @@ beforeEach(() => {
   runtime.nicknames = new Map();
   runtime.colors = new Map();
   runtime.dialogs = {};
+  runtime.noScratch = new Set();
   onPendingChange.mockClear();
   sendInFlightRef.current = false;
 });
@@ -213,6 +216,27 @@ it("keeps a chat a chat on another machine, without asking for a project", async
     envMode: "local",
     worktreePath: null,
   });
+  expect(runtime.coordinator).not.toHaveBeenCalled();
+});
+
+it("never offers projects to a chat when the other machine cannot hold chats", async () => {
+  const chatProject = ProjectId.make("scratch-m4");
+  useComposerDraftStore.setState(useComposerDraftStore.getInitialState(), true);
+  useComposerDraftStore
+    .getState()
+    .setLogicalProjectDraftThreadId("/scratch/m4", scopeProjectRef(m4, chatProject), draftId, {});
+  runtime.projects = [
+    { id: chatProject, environmentId: m4, title: "No project", workspaceRoot: "/scratch/m4" },
+    { id: projectId, environmentId: m1, title: "data", workspaceRoot: "/m1/data" },
+  ];
+  runtime.noScratch = new Set([m1]);
+  await render();
+  await open();
+  await click("M1Connected");
+  expect(runtime.scratch).not.toHaveBeenCalled();
+  expect(document.body.textContent).not.toContain("Project on");
+  expect(document.body.textContent).toContain("M1 cannot hold a chat without a project right now.");
+  expect(useComposerDraftStore.getState().getDraftSession(draftId)?.environmentId).toBe(m4);
   expect(runtime.coordinator).not.toHaveBeenCalled();
 });
 

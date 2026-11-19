@@ -340,12 +340,19 @@ export function DraftMachinePicker(props: Props) {
             deriveLogicalProjectKeyFromSettings(project, grouping) ===
               deriveLogicalProjectKeyFromSettings(activeProject, grouping),
         ));
-    if (
-      draftIsChat &&
-      environmentId !== draft?.environmentId &&
-      scratchWorkspaceRootFor(environmentId) !== null
-    ) {
-      void select({ environmentId, projectId: null });
+    if (draftIsChat && environmentId !== draft?.environmentId) {
+      // A chat stays a chat: it never becomes a project's thread by switching machines.
+      if (scratchWorkspaceRootFor(environmentId) !== null)
+        void select({ environmentId, projectId: null });
+      else
+        setError(
+          tx("{name} cannot hold a chat without a project right now. Choose another machine.", {
+            name: nameOf(
+              environmentId,
+              environments.find((item) => item.environmentId === environmentId)?.label,
+            ),
+          }),
+        );
     } else if (matching && environmentId !== draft?.environmentId) {
       void select({ environmentId, projectId: matching.id });
     } else {
