@@ -90,6 +90,8 @@ export const SET_COPY_ON_HANDOFF =
 /** How long a destination keeps an offered set's members before it drops them. */
 export const SET_OFFER_TTL_MS = 10 * 60_000;
 const SET_OFFERS_MAX = 64;
+/** How many left-out files a stored checkpoint lists (`HandoffCheckpoint.skipped`). */
+const SKIPPED_LISTED = 200;
 
 /** Why the set does not travel. The message starts with the member it is about. */
 class SetMoveError extends Error {
@@ -195,7 +197,14 @@ export async function checkpointSetMembers(input: {
   readonly threadId: string;
   readonly checkpoint: Pick<
     HandoffCheckpoint,
-    "commit" | "baseCommit" | "branch" | "ref" | "skipped" | "requiredSecretPaths" | "sourceRoot"
+    | "commit"
+    | "baseCommit"
+    | "branch"
+    | "ref"
+    | "skipped"
+    | "overLimit"
+    | "requiredSecretPaths"
+    | "sourceRoot"
   >;
   readonly limits?: SetLimits;
 }): Promise<ReadonlyArray<PreparedMember>> {
@@ -225,23 +234,20 @@ export async function checkpointSetMembers(input: {
       throw new SetMoveError("invalid", `${name}: the set holds this repository twice.`);
     }
     if (index === 0) {
-      // The stored checkpoint lists only the first of what it left out, so the
-      // writer is asked again and its own verdict is the one that counts.
-      const probe = `refs/specwithcode/handoff-limits/${NodeCrypto.randomUUID()}`;
-      const measured = await writeCheckpoint({
-        cwd: member.path,
-        threadId: input.threadId,
-        ref: probe,
-      })
-        .finally(() =>
-          runGit(member.path, ["update-ref", "-d", probe], { allowFailure: true }).catch(
-            () => undefined,
-          ),
-        )
-        .catch((cause) => {
-          throw new SetMoveError("failed", `${name}: ${describe(cause)}`);
-        });
-      if (measured.overLimit !== null) throw overLimit(name, measured.overLimit, limits);
+      // The verdict of the writer of the very checkpoint that is sent. The
+      // folder as it is now may differ; the list alone holds only the first 200.
+      const verdict = input.checkpoint.overLimit;
+      const left =
+        verdict === undefined
+          ? input.checkpoint.skipped.find((file) => file.reason !== "submodule")
+          : verdict;
+      if (left != null) throw overLimit(name, left, limits);
+      if (verdict === undefined && input.checkpoint.skipped.length >= SKIPPED_LISTED) {
+        throw new SetMoveError(
+          "invalid",
+          `${name}: this checkpoint lists the first ${SKIPPED_LISTED} files it left out and does not say whether a file was over the limit. Hand off again to take a new checkpoint.`,
+        );
+      }
       prepared.push({
         repositoryPath,
         commit: input.checkpoint.commit,
@@ -524,6 +530,20 @@ async function memberRoots<Member extends Pick<ReplicateSetMember, "repositoryPa
   return out;
 }
 
+/** The refs one set's last frame writes, kept on disk while they are written. */
+interface SetLanding {
+  readonly sourceEnvironmentId: string;
+  readonly sourceThreadId: string;
+  readonly commit: string;
+  readonly targetRef: string;
+  readonly refs: Array<{
+    readonly root: string;
+    /** What the ref was before, or null when there was none. */
+    readonly before: string | null;
+    readonly commit: string;
+  }>;
+}
+
 interface SetOffer {
   /** The source machine and thread the offer was opened for. */
   readonly key: string;
@@ -546,8 +566,68 @@ const notOffered = () =>
  * refused, replaced by a later one for the same thread, or older than
  * `SET_OFFER_TTL_MS` is dropped with its files.
  */
-export function makeSetOffers(ttlMs: number = SET_OFFER_TTL_MS) {
+export function makeSetOffers(
+  ttlMs: number = SET_OFFER_TTL_MS,
+  at: {
+    /** A folder that outlives the process. Without one, a private temporary folder. */
+    readonly directory?: string | undefined;
+    /** Whether this machine stored the thread's record for that checkpoint. */
+    readonly stored?: (
+      sourceEnvironmentId: string,
+      sourceThreadId: string,
+      commit: string,
+    ) => boolean | Promise<boolean>;
+    /** Runs after each ref is written. A test stops a receiver here. */
+    readonly afterRef?: () => Promise<void>;
+  } = {},
+) {
   const offers = new Map<string, SetOffer>();
+  let home: Promise<string> | null = null;
+  const directory = () =>
+    (home ??=
+      at.directory === undefined
+        ? NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "swc-handoff-set-"))
+        : NodeFSP.mkdir(at.directory, { recursive: true, mode: 0o700 }).then(() => at.directory!));
+  const takeBack = async (landing: SetLanding) => {
+    for (const { root, before, commit } of landing.refs.toReversed()) {
+      // Only where the ref still is what this landing wrote: a later one is not undone.
+      await runGit(
+        root,
+        before === null
+          ? ["update-ref", "-d", landing.targetRef, commit]
+          : ["update-ref", landing.targetRef, before, commit],
+        { allowFailure: true },
+      ).catch(() => undefined);
+    }
+  };
+  let recovered: Promise<void> | null = null;
+  /**
+   * What a receiver that stopped left behind, settled once before this one
+   * takes anything: bundles that waited are dropped, and a set whose refs were
+   * being written is taken back unless the thread's record was stored.
+   */
+  const recover = () =>
+    (recovered ??= (async () => {
+      const root = await directory();
+      await NodeFSP.rm(NodePath.join(root, "staged"), { recursive: true, force: true });
+      const landings = NodePath.join(root, "landings");
+      for (const name of await NodeFSP.readdir(landings).catch(() => [] as Array<string>)) {
+        const file = NodePath.join(landings, name);
+        const landing = await NodeFSP.readFile(file, "utf8").then(
+          (text) => JSON.parse(text) as SetLanding,
+          () => null,
+        );
+        if (landing !== null && Array.isArray(landing.refs)) {
+          const kept = await Promise.resolve(
+            at.stored?.(landing.sourceEnvironmentId, landing.sourceThreadId, landing.commit),
+          ).catch(() => null);
+          // Not known either way: left for the next start.
+          if (kept === null) continue;
+          if (kept !== true) await takeBack(landing);
+        }
+        await NodeFSP.rm(file, { force: true });
+      }
+    })().catch(() => undefined));
   const keyOf = (sourceEnvironmentId: string, sourceThreadId: string) =>
     `${sourceEnvironmentId}\0${sourceThreadId}`;
   const drop = async (id: string) => {
@@ -560,6 +640,7 @@ export function makeSetOffers(ttlMs: number = SET_OFFER_TTL_MS) {
     }
   };
   const open = async (sourceEnvironmentId: string, sourceThreadId: string, id: string) => {
+    await recover();
     const key = keyOf(sourceEnvironmentId, sourceThreadId);
     // A later offer for the thread replaces the earlier one: that send was given up.
     for (const [other, offer] of [...offers]) if (offer.key === key) await drop(other);
@@ -572,7 +653,11 @@ export function makeSetOffers(ttlMs: number = SET_OFFER_TTL_MS) {
   };
   const save = async (offer: SetOffer, bundle: Uint8Array | null) => {
     if (bundle === null || bundle.byteLength === 0) return null;
-    offer.directory ??= await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "swc-handoff-set-"));
+    if (offer.directory === null) {
+      const staged = NodePath.join(await directory(), "staged");
+      await NodeFSP.mkdir(staged, { recursive: true, mode: 0o700 });
+      offer.directory = await NodeFSP.mkdtemp(NodePath.join(staged, "offer-"));
+    }
     const file = NodePath.join(offer.directory, `${NodeCrypto.randomUUID()}.bundle`);
     await NodeFSP.writeFile(file, bundle, { mode: 0o600 });
     return file;
@@ -593,7 +678,14 @@ export function makeSetOffers(ttlMs: number = SET_OFFER_TTL_MS) {
     readonly part: ReplicateMeta["setPart"];
     readonly set: ReplicateSet | undefined;
     readonly bundle: Uint8Array | null;
-  }): Promise<{ readonly set: ReplicateSet; readonly undo: () => Promise<void> } | null> => {
+  }): Promise<{
+    readonly set: ReplicateSet;
+    /** Takes the refs back: the thread was refused after they were written. */
+    readonly undo: () => Promise<void>;
+    /** The thread's record is stored: the refs are its own from here on. */
+    readonly done: () => Promise<void>;
+  } | null> => {
+    await recover();
     const id = input.part?.offer ?? input.set?.offer;
     if (id === undefined) throw notOffered();
     const offer =
@@ -616,10 +708,19 @@ export function makeSetOffers(ttlMs: number = SET_OFFER_TTL_MS) {
       return null;
     }
     if (set === undefined) throw notOffered();
-    const written: Array<() => Promise<unknown>> = [];
+    const landing: SetLanding = {
+      sourceEnvironmentId: input.sourceEnvironmentId,
+      sourceThreadId: input.sourceThreadId,
+      commit: input.commit,
+      targetRef: input.targetRef,
+      refs: [],
+    };
+    const landings = NodePath.join(await directory(), "landings");
+    const file = NodePath.join(landings, `${NodeCrypto.randomUUID()}.json`);
+    const done = () => NodeFSP.rm(file, { force: true }).catch(() => undefined);
     const undo = async () => {
-      for (const back of written.toReversed()) await back().catch(() => undefined);
-      written.length = 0;
+      await takeBack(landing);
+      await done();
     };
     try {
       const first = set.members[0];
@@ -630,27 +731,35 @@ export function makeSetOffers(ttlMs: number = SET_OFFER_TTL_MS) {
         commit: input.commit,
         file: await save(offer, input.bundle),
       });
+      const steps: Array<{
+        readonly member: ReplicateSetMember;
+        readonly root: string;
+        readonly file: string | null;
+      }> = [];
       for (const { member, root } of await memberRoots(input.projectRoot, set)) {
         const held = offer.parts.get(member.repositoryPath);
         if (held === undefined || held.commit !== member.commit) {
           throw invalid(member, "its work did not arrive here, so nothing of the thread is kept.");
         }
-        const before = await refCommit(root, input.targetRef);
-        written.push(() =>
-          runGit(
-            root,
-            before === null
-              ? ["update-ref", "-d", input.targetRef]
-              : ["update-ref", input.targetRef, before],
-            { allowFailure: true },
-          ),
-        );
+        landing.refs.push({
+          root,
+          before: await refCommit(root, input.targetRef),
+          commit: member.commit,
+        });
+        steps.push({ member, root, file: held.file });
+      }
+      // On disk before the first ref is written, so a receiver that stops
+      // between two of them finds what to take back when it starts again.
+      await NodeFSP.mkdir(landings, { recursive: true, mode: 0o700 });
+      await NodeFSP.writeFile(`${file}.new`, JSON.stringify(landing), { mode: 0o600, flush: true });
+      await NodeFSP.rename(`${file}.new`, file);
+      for (const { member, root, file: bundlePath } of steps) {
         await (
-          held.file === null
+          bundlePath === null
             ? pinCommit({ root, commit: member.commit, targetRef: input.targetRef })
             : applyBundle({
                 root,
-                bundlePath: held.file,
+                bundlePath,
                 commit: member.commit,
                 targetRef: input.targetRef,
               })
@@ -662,6 +771,7 @@ export function makeSetOffers(ttlMs: number = SET_OFFER_TTL_MS) {
                 `${memberName(member.repositoryPath)}: ${describe(cause)}`,
               );
         });
+        await at.afterRef?.();
       }
     } catch (cause) {
       await undo();
@@ -669,7 +779,7 @@ export function makeSetOffers(ttlMs: number = SET_OFFER_TTL_MS) {
     } finally {
       await drop(id);
     }
-    return { set, undo };
+    return { set, undo, done };
   };
   return { open, take, drop, size: () => offers.size };
 }
@@ -857,6 +967,49 @@ async function checkoutTree(path: string, except: ReadonlyArray<string>): Promis
   }
 }
 
+/**
+ * True when the checkout holds nothing but what this build put there. Its
+ * index and its files must be one of the three states a build passes through:
+ * both at the base, both at the checkpoint, or the index at the base under the
+ * checkpoint's files. A staged edit, or a file Git ignores that the build did
+ * not copy, is someone's work: removing the checkout would lose it.
+ */
+async function asBuilt(
+  path: string,
+  expected: {
+    readonly base: string;
+    readonly checkpoint: string;
+    /** Other members checked out inside this one. */
+    readonly inside: ReadonlyArray<string>;
+    readonly secrets: ReadonlyArray<string>;
+  },
+): Promise<boolean> {
+  const staged = await runGit(path, ["write-tree"], { allowFailure: true });
+  if (staged.code !== 0) return false;
+  const index = staged.stdout.trim();
+  const files = await checkoutTree(path, [...expected.inside, ...expected.secrets]);
+  const known =
+    (index === expected.base && (files === expected.base || files === expected.checkpoint)) ||
+    (index === expected.checkpoint && files === expected.checkpoint);
+  if (!known) return false;
+  const ignored = await runGit(path, [
+    "ls-files",
+    "--others",
+    "--ignored",
+    "--exclude-standard",
+    "-z",
+  ]);
+  return ignored.stdout
+    .split("\0")
+    .map((each) => each.replace(/\/$/, ""))
+    .filter((each) => each.length > 0)
+    .every(
+      (each) =>
+        expected.secrets.includes(each) ||
+        expected.inside.some((member) => each === member || each.startsWith(`${member}/`)),
+    );
+}
+
 /** Removes `folder` and the folders in it when not one of them holds a file. */
 async function removeEmptyFolders(folder: string): Promise<void> {
   const entries = await NodeFSP.readdir(folder, { withFileTypes: true }).catch(() => null);
@@ -953,11 +1106,12 @@ export async function materializeSet(input: {
       const untouched =
         (await isCheckoutOn(path, member.branch)) &&
         (await refCommit(path, "HEAD")) === member.baseCommit &&
-        (await Promise.all([
-          checkoutTree(path, [...inside, ...secrets]),
-          gitTree(root, member.commit),
-          gitTree(root, member.baseCommit),
-        ]).then(([now, checkpoint, base]) => now === checkpoint || now === base));
+        (await asBuilt(path, {
+          base: await gitTree(root, member.baseCommit),
+          checkpoint: await gitTree(root, member.commit),
+          inside,
+          secrets,
+        }));
       if (!untouched) {
         throw new BundleError(
           "failed",

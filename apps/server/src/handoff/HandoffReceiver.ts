@@ -156,6 +156,7 @@ import {
   capabilityFailure,
   HANDOFF_APP_VERSION,
   HANDOFF_CAPABILITIES,
+  hasWorktreeSets,
   HANDOFF_PROTOCOL_VERSION,
   versionFailure,
 } from "./handoffWire.ts";
@@ -365,7 +366,19 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const grants = yield* WorkGrants.WorkGrants;
-  const setOffers = makeSetOffers();
+  const setOffers = makeSetOffers(undefined, {
+    // A test's stand-in for the config may name no state folder.
+    directory:
+      typeof config.stateDir === "string"
+        ? NodePath.join(config.stateDir, "handoff-sets")
+        : undefined,
+    stored: (from, thread, commit) =>
+      Effect.runPromise(
+        handoff.document.pipe(
+          Effect.map((held) => findIncoming(held, from, thread)?.checkpoint.commit === commit),
+        ),
+      ),
+  });
   const locks = yield* KeyedLock.make<string>();
   const transfers = yield* HandoffTransferStore.fromContext;
   // Read where the server provides it; without it a thread's existence is unknown.
@@ -482,8 +495,9 @@ export const make = Effect.gen(function* () {
       });
       if (whole === null) return { sequence: sent.checkpoint.sequence };
       const meta = { ...sent, repositoryPath: whole.set.members[0]!.repositoryPath };
+      // Stored: the refs are the thread's. Refused or cut short: they are taken back.
       return yield* replicateOne(caller, meta, null, true).pipe(
-        Effect.tapError(() => Effect.promise(whole.undo)),
+        Effect.onExit((exit) => Effect.promise(Exit.isSuccess(exit) ? whole.done : whole.undo)),
       );
     });
 
@@ -666,13 +680,6 @@ export const make = Effect.gen(function* () {
   const preflight = (caller: ReceiverCaller, request: PeerPreflightRequest) =>
     Effect.gen(function* () {
       yield* sameSource(caller, request.sourceEnvironmentId);
-      const offered = request.setOffer;
-      if (offered !== undefined) {
-        // Naming the capability below is this machine agreeing to take that set.
-        yield* Effect.promise(() =>
-          setOffers.open(request.sourceEnvironmentId, offered.sourceThreadId, offered.id),
-        );
-      }
       const mismatch = versionFailure({
         peerLabel: "The source machine",
         peerProtocolVersion: request.protocolVersion,
@@ -690,6 +697,15 @@ export const make = Effect.gen(function* () {
               peerLabel: "The source machine",
               capabilities: request.capabilities,
             }));
+      // A set is agreed to only with a source that can send one. Any other
+      // source reads an answer without the capability, and its frames are refused.
+      const offered = request.setOffer;
+      const agreed = mismatch === null && hasWorktreeSets(request.capabilities);
+      if (offered !== undefined && agreed) {
+        yield* Effect.promise(() =>
+          setOffers.open(request.sourceEnvironmentId, offered.sourceThreadId, offered.id),
+        );
+      }
       const version =
         unfit === null
           ? null
@@ -708,7 +724,10 @@ export const make = Effect.gen(function* () {
         machineLabel: label,
         protocolVersion: HANDOFF_PROTOCOL_VERSION,
         appVersion: HANDOFF_APP_VERSION,
-        capabilities: HANDOFF_CAPABILITIES,
+        capabilities:
+          offered === undefined || agreed
+            ? HANDOFF_CAPABILITIES
+            : HANDOFF_CAPABILITIES.filter((each) => !hasWorktreeSets([each])),
         results,
       } satisfies PeerPreflightResponse;
     });

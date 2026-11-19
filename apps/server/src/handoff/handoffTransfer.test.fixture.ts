@@ -292,6 +292,7 @@ export const makeRig = (
               createdAt: "2026-11-19T14:00:00.000Z",
               reason: "handoff",
               skipped: [...written.skipped],
+              overLimit: written.overLimit,
               excludedSecretCount: written.excludedSecretCount,
               requiredSecretPaths: [...written.requiredSecretPaths],
               transcriptMessageCount: 1,
@@ -361,7 +362,11 @@ export const makeRig = (
             },
           }),
         } as never),
-        Layer.succeed(ServerConfig.ServerConfig, { worktreesDir } as never),
+        Layer.succeed(ServerConfig.ServerConfig, {
+          worktreesDir,
+          // Each machine keeps its own state, as two installs do.
+          stateDir: NodeFS.mkdtempSync(NodePath.join(base, "state-")),
+        } as never),
         Layer.succeed(ProjectService.ProjectService, {
           getById: (id: ProjectId) =>
             Effect.succeed(

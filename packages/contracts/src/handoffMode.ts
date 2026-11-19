@@ -226,6 +226,13 @@ export const HandoffCheckpoint = Schema.Struct({
   createdAt: IsoDateTime,
   reason: HandoffCheckpointReason,
   skipped: Schema.Array(HandoffSkippedFile).check(Schema.isMaxLength(200)),
+  /**
+   * The first file this snapshot left out for its size or the file count, or
+   * null when it left none out for that. `skipped` holds only the first 200
+   * entries, so this is the writer's own verdict. Absent from a checkpoint
+   * written before it was kept.
+   */
+  overLimit: Schema.optional(Schema.NullOr(HandoffSkippedFile)),
   /** Untracked secret-like files (.env and friends) left out of the snapshot. */
   excludedSecretCount: NonNegativeInt,
   /**

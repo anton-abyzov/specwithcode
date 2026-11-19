@@ -616,6 +616,7 @@ export const make = Effect.gen(function* () {
         createdAt,
         reason,
         skipped: [...written.skipped],
+        overLimit: written.overLimit,
         excludedSecretCount: written.excludedSecretCount,
         requiredSecretPaths: [...written.requiredSecretPaths],
         transcriptMessageCount: messages.length,
