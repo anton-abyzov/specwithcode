@@ -13,6 +13,7 @@ import {
   connectDeviceTitle,
   laterKey,
   requestsToPrompt,
+  requestsToShow,
 } from "../../studio/connectDevices.logic";
 import { DeviceApprovalPrompt, DeviceWaitingList } from "./ConnectDeviceViews";
 
@@ -300,6 +301,16 @@ describe("Later (1406)", () => {
     // A device that was not listed brings the pop-up back, with every waiting device.
     const third = phone("request-c", "ABCD", first.askedAt);
     expect(requestsToPrompt([renewed, third], later)).toEqual([renewed, third]);
+  });
+
+  it("keeps an open pop-up open while a device it showed still waits", () => {
+    const later = new Set([first].map(laterKey));
+    // Closed: Later decides, as before.
+    expect(requestsToShow([first], later, false)).toEqual([]);
+    expect(requestsToShow([first, second], later, false)).toEqual([first, second]);
+    // Open, after the new device was allowed: the one put off stays listed.
+    expect(requestsToShow([first], later, true)).toEqual([first]);
+    expect(requestsToShow([], later, true)).toEqual([]);
   });
 
   it("never hides another device that carries the same short ID", () => {

@@ -108,6 +108,19 @@ export function requestsToPrompt(
   return pending.some((request) => !later.has(laterKey(request))) ? pending : [];
 }
 
+/**
+ * What the pop-up shows: Later decides whether it opens, and once open it keeps
+ * every waiting device until nothing waits or the owner presses Later or closes
+ * it. So allowing a new device does not close it over one put off earlier.
+ */
+export function requestsToShow(
+  pending: ReadonlyArray<ConnectDeviceRequest>,
+  later: ReadonlySet<string>,
+  open: boolean,
+): ReadonlyArray<ConnectDeviceRequest> {
+  return open ? pending : requestsToPrompt(pending, later);
+}
+
 /** "macOS · SpecWithCode 1.0.338 · First seen November 17, 2026": what tells devices apart. */
 export function connectDeviceDetails(
   device: Partial<Pick<ConnectDevice, "system" | "app" | "firstSeenAt">> & {
