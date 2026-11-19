@@ -29,7 +29,9 @@
  * this machine's standby. It never revokes a grant.
  *
  * Nothing here runs because a machine went to sleep (1390 AC-36): an Away
- * starts only when someone chooses Leave.
+ * starts only when someone chooses Leave, and a start with `trigger: "sleep"`
+ * is refused before anything is read or written. Sessions an earlier release
+ * saved with that trigger still load and come back.
  */
 import {
   AwayError,
@@ -280,6 +282,10 @@ export interface AwayRunnerDeps {
 
 const THREAD_BATCH = 100;
 const RETURN_BATCH = 5;
+
+/** What `away.start` answers a start that a lid close sent. */
+const SLEEP_LEAVE_REFUSAL =
+  "Not started: nothing moves when a machine goes to sleep. Choose Leave to move work.";
 
 export const makeAwayRunner = (deps: AwayRunnerDeps) => {
   let running = false;
@@ -572,7 +578,7 @@ export const makeAwayRunner = (deps: AwayRunnerDeps) => {
    * Starts leaving, or resumes the unfinished session for the same target.
    * Answers once the session is saved; the stages run after.
    */
-  const start = (input: AwayStartInput) =>
+  const leave = (input: AwayStartInput) =>
     claimed(
       Effect.gen(function* () {
         const latest = yield* deps.loadSession;
@@ -665,6 +671,16 @@ export const makeAwayRunner = (deps: AwayRunnerDeps) => {
         return { session, forked: true };
       }),
     );
+
+  /**
+   * `away.start`. A start that says a lid close sent it is refused first: it
+   * reads no session, plans, saves and runs nothing, even when another start
+   * runs (1390 AC-36).
+   */
+  const start = (input: AwayStartInput): Effect.Effect<AwaySession, AwayError> =>
+    input.trigger === "sleep"
+      ? Effect.fail(new AwayError({ code: "not_allowed", message: SLEEP_LEAVE_REFUSAL }))
+      : leave(input);
 
   // --- Bring back -------------------------------------------------------------------------
 

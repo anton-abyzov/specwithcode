@@ -411,8 +411,11 @@ export const HandoffModeSnapshot = Schema.Struct({
   pausedSince: Schema.NullOr(IsoDateTime),
   machineRun: Schema.NullOr(HandoffMachineRun),
   /**
-   * Machines an earlier release let continue this machine's threads on silence, which
-   * have not confirmed since that they no longer do. Absent from an older server.
+   * Every machine this one still keeps a protective hold for, from the sleep and
+   * silence starts of an earlier release: one it armed that has not confirmed it is
+   * disarmed, one a thread here is fenced for, and the destination of a takeover a
+   * sleep started that has no answer yet. Empty means confirmed: nothing from sleep or
+   * silence can still move a thread. Absent from an older server, which confirms nothing.
    */
   pendingDisarm: Schema.optional(
     Schema.Array(

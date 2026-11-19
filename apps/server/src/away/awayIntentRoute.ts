@@ -2,18 +2,26 @@
  * The routes a machine going to sleep used to reach its Away target on
  * (1267 AC-09; 1390 AC-36). Sleep starts nothing now:
  * `POST /api/away/v1/intent` refuses every new intent with a definite answer,
- * so a machine on an earlier release keeps its work and lets its hold go.
+ * so a machine on an earlier release keeps its work and lets its hold go. A
+ * request that may repeat the intent recorded here before the update gets
+ * that intent back instead, so its sender keeps its hold and asks on wake.
  * `POST /api/away/v1/intent/cancel` and `POST /api/away/v1/intent/status`
  * still answer for intents recorded before this machine updated: whether one
  * was cancelled, and per project whether this machine took it over, with the
  * threads it continued. Only a machine with a live work grant here gets in
  * (`awayPeerCaller`); the body must name that same machine.
+ *
+ * An answer that would let a source run its work again is given only from
+ * state read here. When a read fails, or a thread's launch here is in doubt,
+ * the answer is one a source on any release reads as "no answer yet": it
+ * keeps its hold and asks again.
  */
 import {
   AWAY_INTENT_CANCEL_PATH,
   AWAY_INTENT_PATH,
   AWAY_INTENT_STATUS_PATH,
   AwayIntentCancelRequest,
+  type AwayIntentRecord,
   AwayIntentRequest,
   AwayIntentStatusAnswer,
   AwayIntentStatusRequest,
@@ -30,8 +38,8 @@ import { HttpRouter, HttpServerRequest } from "effect/http";
 import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import { HandoffMode } from "../handoff/HandoffMode.ts";
-import type { ReceiverCaller } from "../handoff/HandoffReceiver.ts";
+import { HandoffReceiver, type ReceiverCaller } from "../handoff/HandoffReceiver.ts";
+import type { ContinuationEvidence } from "../handoff/handoffState.ts";
 import { parseJson } from "../json.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { AwayIntents, type AwayIntentsShape, projectStatus } from "./AwayIntents.ts";
@@ -70,20 +78,82 @@ export const SLEEP_START_REFUSAL =
   "Not accepted: nothing moves when a machine goes to sleep. Hand work off from the machine that runs it.";
 
 /**
- * Refuses a new intent from `caller`: 409 with a reason, which a sender on an
- * earlier release reads as a definite "no", never as silence. Nothing is recorded.
+ * The status of an answer given when this machine cannot tell yet. A source
+ * on any release reads it as no answer and keeps its hold. On the intent
+ * route the body carries no `error` text: an earlier release's sender reads
+ * a 5xx without it as "the request may have arrived", never as a refusal.
  */
-export const recordIntent = (caller: ReceiverCaller, raw: unknown): IntentAnswer => {
-  const body = decodeIntent(raw);
-  if (Option.isNone(body))
-    return { status: 400, body: { error: "The request does not match this version." } };
-  if (body.value.sourceEnvironmentId !== caller.sourceEnvironmentId)
-    return {
-      status: 403,
-      body: { error: "A machine may record an away intent only for itself." },
-    };
-  return { status: 409, body: { error: SLEEP_START_REFUSAL } };
+const NOT_NOW = 503;
+
+/**
+ * Whether `request` may repeat `recorded`, the source's latest intent here
+ * (cancel and status answer about that one). The wire carries no operation
+ * id, so this errs towards a repeat, however old the record is: the same
+ * grace, the same threads in any order, and every project recorded was asked for (an earlier release kept only the
+ * projects linked here), whatever the record's state. A false match costs
+ * the source a hold until its wake check, which answers from the record:
+ * against a cancelled one it runs its work again; against a done one it gives
+ * way to what is still taken over and offers to bring work back, even if
+ * nothing is away any more. Refusing a true repeat would cost more: its
+ * sender would run work that already continues here.
+ */
+const mayRepeat = (
+  recorded: AwayIntentRecord,
+  request: Pick<AwayIntentRequest, "graceMinutes" | "projectIds" | "threadIds">,
+): boolean => {
+  const threads = new Set(request.threadIds);
+  const recordedThreads = new Set(recorded.threadIds);
+  return (
+    recorded.graceMinutes === request.graceMinutes &&
+    threads.size === recordedThreads.size &&
+    [...recordedThreads].every((threadId) => threads.has(threadId)) &&
+    recorded.projectIds.every((projectId) => request.projectIds.includes(projectId))
+  );
 };
+
+/**
+ * An intent from `caller`. Nothing is recorded and nothing starts. One that
+ * may repeat the source's latest intent here (`mayRepeat`) gets it back as an earlier
+ * release answered its first delivery (200, the intent and the projects not
+ * kept), so its sender holds and settles on wake through cancel and status.
+ * Any other is refused with 409 and a reason, which a sender on an earlier
+ * release reads as a definite "no". When the intents do not read, 503.
+ */
+export const recordIntent = (
+  caller: ReceiverCaller,
+  raw: unknown,
+  intents: Pick<AwayIntentsShape, "list">,
+): Effect.Effect<IntentAnswer> =>
+  Effect.gen(function* () {
+    const body = decodeIntent(raw);
+    if (Option.isNone(body))
+      return { status: 400, body: { error: "The request does not match this version." } };
+    if (body.value.sourceEnvironmentId !== caller.sourceEnvironmentId)
+      return {
+        status: 403,
+        body: { error: "A machine may record an away intent only for itself." },
+      };
+    const held = yield* intents.list.pipe(Effect.result);
+    if (held._tag === "Failure")
+      return {
+        status: NOT_NOW,
+        body: { unavailable: "This machine could not read its away intents. Ask again." },
+      };
+    const latest = held.success.findLast(
+      (intent) => intent.sourceEnvironmentId === caller.sourceEnvironmentId,
+    );
+    if (latest !== undefined && mayRepeat(latest, body.value))
+      return {
+        status: 200,
+        body: {
+          intent: latest,
+          refusedProjectIds: body.value.projectIds.filter(
+            (projectId) => !latest.projectIds.includes(projectId),
+          ),
+        },
+      };
+    return { status: 409, body: { error: SLEEP_START_REFUSAL } };
+  });
 
 export const cancelIntent = (
   intents: Pick<AwayIntentsShape, "cancel">,
@@ -104,20 +174,34 @@ export const cancelIntent = (
       : { status: 200, body: cancelled.success };
   });
 
+/** What the status route reads: the intents, and what began here for each asked thread. */
+export interface IntentStatusSources extends Pick<AwayIntentsShape, "latestState"> {
+  /** Handoff mode's receiver for the caller's thread. Never launches. */
+  readonly continuation: (sourceThreadId: string) => Effect.Effect<ContinuationEvidence>;
+}
+
+const notNow = (error: string): IntentAnswer => ({ status: NOT_NOW, body: { error } });
+
 /**
  * Whether this machine took over each of the caller's projects. Answered from
  * the bindings here, not only from the intents: a planned handover in doubt
  * and an intent that acted both show as a copy that coordinates with the
  * caller's copy as its predecessor.
+ *
+ * Each asked thread is answered from handoff mode: continued names the
+ * thread here; provably not begun is null. A thread whose launch here is in
+ * doubt is left out of `threads`, which a source on any release keeps held
+ * while the intent is not cancelled or absent. With a cancelled or absent
+ * intent a source releases every thread it is not told was continued, so the
+ * whole answer is 503 then, as it is when the projects asked about do not read.
  */
-export const intentStatus = (
-  intents: Pick<AwayIntentsShape, "latestState">,
+export const intentStatus = <E>(
+  sources: IntentStatusSources,
   caller: ReceiverCaller,
   raw: unknown,
-  projects: ReadonlyArray<Project>,
+  /** This machine's projects; read only when the caller asks about projects. */
+  projects: Effect.Effect<ReadonlyArray<Project>, E>,
   selfEnvironmentId: string,
-  /** The thread here that continues the caller's thread, or null (handoff mode's incoming record). */
-  continuedOf: (sourceThreadId: string) => string | null = () => null,
 ): Effect.Effect<IntentAnswer> =>
   Effect.gen(function* () {
     const body = decodeStatus(raw);
@@ -125,21 +209,48 @@ export const intentStatus = (
       return { status: 400, body: { error: "The request does not match this version." } };
     if (body.value.sourceEnvironmentId !== caller.sourceEnvironmentId)
       return { status: 403, body: { error: "A machine may ask only about its own projects." } };
-    const state = yield* intents.latestState(caller.sourceEnvironmentId).pipe(Effect.result);
+    const state = yield* sources.latestState(caller.sourceEnvironmentId).pipe(Effect.result);
     if (state._tag === "Failure") return { status: 500, body: { error: state.failure.message } };
+    const projectIds = body.value.projectIds;
+    let projectsHere: ReadonlyArray<Project> = [];
+    if (projectIds.length > 0) {
+      const read = yield* projects.pipe(Effect.option);
+      // Unread, every project would answer "not taken over", and a source would run it again.
+      if (Option.isNone(read))
+        return notNow("This machine could not read its projects. Ask again.");
+      projectsHere = read.value;
+    }
     const asked = body.value.threadIds;
+    const evidence: ReadonlyArray<{
+      readonly threadId: string;
+      readonly found: ContinuationEvidence;
+    }> =
+      asked === undefined
+        ? []
+        : yield* Effect.forEach(asked, (threadId) =>
+            sources.continuation(threadId).pipe(Effect.map((found) => ({ threadId, found }))),
+          );
+    const inDoubt = evidence.some((entry) => entry.found.kind === "unresolved");
+    if (inDoubt && (state.success === "cancelled" || state.success === null))
+      return notNow("This machine cannot tell yet whether it continued a thread. Ask again.");
     const answer: AwayIntentStatusAnswer = {
       intentState: state.success,
-      projects: body.value.projectIds.map((projectId) =>
-        projectStatus(projects, selfEnvironmentId, caller.sourceEnvironmentId, projectId),
+      projects: projectIds.map((projectId) =>
+        projectStatus(projectsHere, selfEnvironmentId, caller.sourceEnvironmentId, projectId),
       ),
       ...(asked === undefined
         ? {}
         : {
-            threads: asked.map((threadId) => ({
-              threadId,
-              continuedThreadId: continuedOf(threadId),
-            })),
+            threads: evidence.flatMap(({ threadId, found }) =>
+              found.kind === "unresolved"
+                ? []
+                : [
+                    {
+                      threadId,
+                      continuedThreadId: found.kind === "continued" ? found.threadId : null,
+                    },
+                  ],
+            ),
             // Nothing here continues a thread for an intent any more.
             threadsSettled: state.success !== "waiting" && state.success !== "acting",
           }),
@@ -158,7 +269,7 @@ const intentRoute = HttpRouter.add(
     if ("refused" in who) return who.refused;
     const body = yield* readBody;
     if (body === undefined) return tooLarge;
-    const answer = recordIntent(who.caller, body.raw);
+    const answer = yield* recordIntent(who.caller, body.raw, yield* AwayIntents);
     return answerJson(answer.status, answer.body);
   }),
 );
@@ -184,30 +295,23 @@ const statusRoute = HttpRouter.add(
     if ("refused" in who) return who.refused;
     const body = yield* readBody;
     if (body === undefined) return tooLarge;
-    const projects = yield* (yield* ProjectService.ProjectService).snapshot.pipe(
+    const projects = (yield* ProjectService.ProjectService).snapshot.pipe(
       Effect.map((snapshot) => snapshot.projects),
-      Effect.orElseSucceed(() => []),
     );
     const selfEnvironmentId = yield* (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId;
-    const handoff = yield* Effect.serviceOption(HandoffMode);
-    const incoming = Option.isNone(handoff)
-      ? []
-      : yield* handoff.value.document.pipe(
-          Effect.map((document) => document.incoming),
-          Effect.orElseSucceed(() => []),
-        );
+    const intents = yield* AwayIntents;
+    // The receiver the handoff peer route uses, so its takeover lock orders these reads.
+    const receiver = yield* HandoffReceiver;
     const answer = yield* intentStatus(
-      yield* AwayIntents,
+      {
+        latestState: intents.latestState,
+        continuation: (sourceThreadId) =>
+          receiver.continuation(who.caller.sourceEnvironmentId, sourceThreadId),
+      },
       who.caller,
       body.raw,
       projects,
       selfEnvironmentId,
-      (sourceThreadId) =>
-        incoming.find(
-          (entry) =>
-            entry.sourceEnvironmentId === who.caller.sourceEnvironmentId &&
-            entry.sourceThreadId === sourceThreadId,
-        )?.continuedThreadId ?? null,
     );
     return answerJson(answer.status, answer.body);
   }),

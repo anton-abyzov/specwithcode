@@ -9,13 +9,17 @@
  * - done: the takeover it made stands. A cancel that comes after is refused
  *   with what was taken over, and the source gives way.
  * - acting: unknown, the process stopped mid-takeover. It is settled from what
- *   the project bindings show: done when a project was really taken over,
- *   cancelled when none was. Nothing new is started.
+ *   the project bindings and handoff mode show: done when a project was taken
+ *   over or one of its threads continued here, cancelled only when provably
+ *   nothing was. While any of that cannot be read, or a thread's launch is in
+ *   doubt, it stays acting and is checked again. Nothing new is started.
  *
  * `AWAY_INTENT_STATUS_PATH` answers, per project, whether this machine took it
  * over, so a source that never got the first answer still learns the outcome.
  *
  * Kept as a JSON file in the state directory, so an intent survives a restart.
+ * A file that is there but does not read as intents is an error, never "no
+ * intents": a source reads "no intent" as "nothing moved".
  */
 import {
   AwayError,
@@ -45,6 +49,8 @@ import * as Semaphore from "effect/Semaphore";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { RemoteWorkerAdoption } from "../fleet/RemoteWorkerAdoption.ts";
+import { HandoffReceiver } from "../handoff/HandoffReceiver.ts";
+import type { ContinuationEvidence } from "../handoff/handoffState.ts";
 import { parseJson, stringifyJson } from "../json.ts";
 import { claimTargets } from "../project/CoordinatorPlannedHandover.ts";
 import { CoordinatorStandbyStore } from "../project/CoordinatorStandbyStore.ts";
@@ -91,11 +97,19 @@ export interface AwayIntentsDeps {
   /**
    * What an intent left `acting` really took over, one result per project, from
    * the bindings here. It starts no takeover; it may finish adopting the workers
-   * of a project already taken over. Never fails.
+   * of a project already taken over. Fails when the bindings cannot be read.
    */
   readonly settleActed: (
     intent: AwayIntentRecord,
-  ) => Effect.Effect<ReadonlyArray<AwayHandoverResult>>;
+  ) => Effect.Effect<ReadonlyArray<AwayHandoverResult>, AwayError>;
+  /**
+   * Whether the source's thread was continued here (handoff mode's receiver).
+   * Never launches; `unresolved` when it cannot tell.
+   */
+  readonly continuation: (
+    sourceEnvironmentId: EnvironmentId,
+    sourceThreadId: string,
+  ) => Effect.Effect<ContinuationEvidence>;
 }
 
 export interface AwayIntentsShape {
@@ -115,8 +129,9 @@ export interface AwayIntentsShape {
   readonly list: Effect.Effect<ReadonlyArray<AwayIntentRecord>, AwayError>;
   /**
    * Drains what an earlier release left: cancels every waiting intent and
-   * settles every acting one. Returns the ones it settled. An unreadable store
-   * settles nothing.
+   * settles every acting one whose outcome reads. Returns the ones it settled.
+   * An unreadable store settles nothing; an acting intent whose bindings or
+   * threads do not read stays acting for the next tick.
    */
   readonly tick: Effect.Effect<ReadonlyArray<AwayIntentRecord>>;
 }
@@ -208,11 +223,31 @@ export const makeAwayIntents = (deps: AwayIntentsDeps) =>
           if (cancelled !== undefined) settled.push(cancelled);
           continue;
         }
-        // Left acting by a restart: it may have taken projects over. With one taken it
-        // ends as done, and the source gives way. With none it ends as cancelled:
-        // a source reads "done" as "work moved" and would bring back work that never left.
-        const results = yield* deps.settleActed(intent);
-        const took = results.some((result) => result.outcome === "handed-over");
+        // Left acting by a restart: it may have taken projects over or continued its
+        // threads. With either it ends as done, and the source gives way. With provably
+        // neither it ends as cancelled: a source reads "done" as "work moved" and would
+        // bring back work that never left. Anything unreadable or in doubt writes nothing.
+        const acted = yield* deps.settleActed(intent).pipe(Effect.result);
+        if (acted._tag === "Failure") {
+          yield* Effect.logWarning("Away: an acting intent stays acting; bindings did not read", {
+            intentId: intent.intentId,
+            cause: acted.failure.message,
+          });
+          continue;
+        }
+        const results = acted.success;
+        const threads = yield* Effect.forEach(intent.threadIds, (threadId) =>
+          deps.continuation(intent.sourceEnvironmentId, threadId),
+        );
+        if (threads.some((evidence) => evidence.kind === "unresolved")) {
+          yield* Effect.logInfo("Away: an acting intent stays acting; a launch is in doubt", {
+            intentId: intent.intentId,
+          });
+          continue;
+        }
+        const took =
+          results.some((result) => result.outcome === "handed-over") ||
+          threads.some((evidence) => evidence.kind === "continued");
         const ended = yield* settle(intent.intentId, "acting", (held) =>
           took
             ? {
@@ -383,7 +418,10 @@ export const make = Effect.gen(function* () {
       } catch {
         raw = null;
       }
-      return Option.getOrElse(decodeStore(raw), () => EMPTY);
+      const decoded = decodeStore(raw);
+      // Unreadable is not empty: "no intent" would tell a source that nothing moved.
+      if (Option.isNone(decoded)) return yield* failed("The away intents here do not read.");
+      return decoded.value;
     }).pipe(Effect.mapError(() => failed("Could not read the away intents on this machine."))),
     write: (next) =>
       Effect.gen(function* () {
@@ -394,13 +432,17 @@ export const make = Effect.gen(function* () {
       }).pipe(Effect.mapError(() => failed("Could not save the away intents on this machine."))),
   };
 
+  // The receiver that records incoming threads: the one handoff moves take over with,
+  // so a thread's outcome is read under its takeover's lock.
+  const receiver = yield* HandoffReceiver;
   const core = yield* makeAwayIntents({
     store,
+    continuation: receiver.continuation,
     settleActed: (intent) =>
       Effect.gen(function* () {
         const snapshot = yield* projects.snapshot.pipe(
           Effect.map((value) => value.projects),
-          Effect.orElseSucceed(() => []),
+          Effect.mapError(() => failed("Could not read the projects on this machine.")),
         );
         const results = actedResults(snapshot, selfEnvironmentId, intent);
         // The takeover and the adoption of the source's workers were two steps. For a
@@ -423,9 +465,10 @@ export const make = Effect.gen(function* () {
             predecessor === undefined
           )
             continue;
+          // Unread, the source's workers would be adopted as none: settled on a later tick.
           const record = yield* standby
             .get(logicalProject.id)
-            .pipe(Effect.orElseSucceed(() => undefined));
+            .pipe(Effect.mapError(() => failed("Could not read the standby records here.")));
           const shadowWorkers =
             record !== undefined && record.coordinator.environmentId === intent.sourceEnvironmentId
               ? record.shadowWorkers

@@ -4567,8 +4567,10 @@ export const ko: PhraseCatalog = {
     "각 턴이 끝나면 이 컴퓨터의 스레드를 기존 스레드까지 포함해 같은 프로젝트가 있는 다른 컴퓨터로 복사하므로 어느 컴퓨터에서든 이어서 할 수 있습니다. 토큰을 조금 더 사용합니다.",
   "After you left with Away. Ask shows one button to bring it back.":
     "자리 비움으로 떠난 후의 동작입니다. 묻기를 선택하면 작업을 다시 가져오는 버튼 하나가 표시됩니다.",
-  "Waiting for {machine} to confirm that silence no longer moves threads. Until it answers, a thread it could continue pauses here when it goes quiet.":
-    "응답이 없어도 더 이상 스레드가 옮겨지지 않는다는 것을 {machine}이(가) 확인하기를 기다리고 있습니다. 응답할 때까지, {machine}이(가) 이어받을 수 있는 스레드는 {machine}의 응답이 끊기면 여기서 일시 중지됩니다.",
+  "This machine has not confirmed yet that closing the lid moves nothing. Another machine may still continue a thread when this one goes quiet. This copy pauses when that can happen.":
+    "이 컴퓨터는 덮개를 닫아도 아무것도 옮겨지지 않는다는 것을 아직 확인하지 않았습니다. 이 컴퓨터의 응답이 끊기면 다른 컴퓨터가 스레드를 이어받을 수 있습니다. 그럴 수 있을 때 이 사본은 일시 중지됩니다.",
+  "{machine} may still run an older version that continues a thread when this machine goes quiet. Until it confirms, such a thread pauses here. Update {machine} to end this.":
+    "{machine}에서 이 컴퓨터의 응답이 끊기면 스레드를 이어받는 이전 버전이 아직 실행 중일 수 있습니다. {machine}이(가) 확인할 때까지 그런 스레드는 여기서 일시 중지됩니다. 이 상태를 끝내려면 {machine}을(를) 업데이트하세요.",
   "Agents on {hereLabel} can start work on {thereLabel}":
     "{hereLabel}의 에이전트가 {thereLabel}에서 작업을 시작할 수 있음",
   "All sign-ins": "모든 로그인",
@@ -4692,6 +4694,8 @@ export const ko: PhraseCatalog = {
     "여기나 {coordinatorLabel}에서 중지할 때까지입니다. 자동으로 갱신됩니다.",
   "Until you stop it, here or on that machine.": "여기나 해당 컴퓨터에서 중지할 때까지입니다.",
   "When this machine wakes": "이 컴퓨터가 깨어날 때",
+  "Where Away sends your threads, routines and coordinators when you leave this machine.":
+    "이 컴퓨터를 떠날 때 스레드, 루틴, 코디네이터를 보내는 곳입니다.",
   "Where Away sends your threads, routines and coordinators when you leave this machine. Closing the lid moves nothing.":
     "이 컴퓨터를 떠날 때 스레드, 루틴, 코디네이터를 보내는 곳입니다. 덮개를 닫아도 아무것도 옮겨지지 않습니다.",
   "Who is it for": "누구를 위한 것인가요",

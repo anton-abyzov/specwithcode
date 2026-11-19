@@ -240,6 +240,15 @@ export const TakeoverResponse = Schema.Struct({
 });
 export type TakeoverResponse = typeof TakeoverResponse.Type;
 
+/** The most leases, and operations to settle, one heartbeat carries. */
+export const HEARTBEAT_PAGE_MAX = 500;
+/** One takeover of a source thread, by the epoch it would continue at. */
+export const HeartbeatOperation = Schema.Struct({
+  sourceThreadId: ThreadId,
+  epoch: NonNegativeInt,
+});
+export type HeartbeatOperation = typeof HeartbeatOperation.Type;
+
 export const HeartbeatRequest = Schema.Struct({
   sourceEnvironmentId: EnvironmentId,
   sourceLabel: text(120),
@@ -254,7 +263,16 @@ export const HeartbeatRequest = Schema.Struct({
        */
       autoContinueMinutes: Schema.optional(NonNegativeInt),
     }),
-  ).check(Schema.isMaxLength(500)),
+  ).check(Schema.isMaxLength(HEARTBEAT_PAGE_MAX)),
+  /**
+   * Operations the source holds a thread for and wants settled: a takeover sleep
+   * started on an earlier release, or a thread an armed machine may have continued on
+   * silence. Each names a thread in `leases`. Older receivers ignore it and answer no
+   * `notStarted`, so their silence settles nothing.
+   */
+  settle: Schema.optional(
+    Schema.Array(HeartbeatOperation).check(Schema.isMaxLength(HEARTBEAT_PAGE_MAX)),
+  ),
 });
 export type HeartbeatRequest = typeof HeartbeatRequest.Type;
 /** Threads the destination continued at a newer epoch: the source must fence them. */
@@ -262,6 +280,15 @@ export const HeartbeatResponse = Schema.Struct({
   machineLabel: text(120),
   continued: Schema.Array(
     Schema.Struct({ sourceThreadId: ThreadId, epoch: NonNegativeInt, threadId: ThreadId }),
+  ),
+  /**
+   * Of the `settle` operations, those for which no continuation exists here, read
+   * under the takeover's own lock; none can start later, since sleep and silence start
+   * nothing here. An operation whose outcome could not be read is left out. Only a
+   * receiver that knows `settle` sends it.
+   */
+  notStarted: Schema.optional(
+    Schema.Array(HeartbeatOperation).check(Schema.isMaxLength(HEARTBEAT_PAGE_MAX)),
   ),
 });
 export type HeartbeatResponse = typeof HeartbeatResponse.Type;

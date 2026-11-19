@@ -4620,8 +4620,10 @@ export const ja: PhraseCatalog = {
     "各ターンのあと、このマシンのスレッドを既存のものも含めて、同じプロジェクトを持つほかのマシンにコピーし、どのマシンでも続きを引き継げるようにします。トークンを少し多く使います。",
   "After you left with Away. Ask shows one button to bring it back.":
     "不在モードで離れたあとの動作です。「確認」では、作業を戻すボタンを 1 つ表示します。",
-  "Waiting for {machine} to confirm that silence no longer moves threads. Until it answers, a thread it could continue pauses here when it goes quiet.":
-    "無応答ではスレッドが移動しなくなったことを、{machine} が確認するのを待っています。応答があるまで、{machine} が続行できるスレッドは、{machine} の応答が途絶えるとここで一時停止します。",
+  "This machine has not confirmed yet that closing the lid moves nothing. Another machine may still continue a thread when this one goes quiet. This copy pauses when that can happen.":
+    "ふたを閉じても何も移動しないことを、このマシンはまだ確認していません。このマシンの応答が途絶えると、別のマシンがスレッドを続行する可能性があります。その可能性があるとき、このコピーは一時停止します。",
+  "{machine} may still run an older version that continues a thread when this machine goes quiet. Until it confirms, such a thread pauses here. Update {machine} to end this.":
+    "{machine} では、このマシンの応答が途絶えるとスレッドを続行する古いバージョンがまだ動いている可能性があります。{machine} が確認するまで、そのようなスレッドはここで一時停止します。これを解消するには {machine} を更新してください。",
   "Agents on {hereLabel} can start work on {thereLabel}":
     "{hereLabel} のエージェントは {thereLabel} で作業を開始できます",
   "All sign-ins": "すべてのサインイン",
@@ -4747,6 +4749,8 @@ export const ja: PhraseCatalog = {
     "ここか {coordinatorLabel} で停止するまで。自動で更新されます。",
   "Until you stop it, here or on that machine.": "ここかそのマシンで停止するまで。",
   "When this machine wakes": "このマシンがスリープから復帰したとき",
+  "Where Away sends your threads, routines and coordinators when you leave this machine.":
+    "このマシンを離れるときに、スレッド、ルーティン、コーディネーターを送る先です。",
   "Where Away sends your threads, routines and coordinators when you leave this machine. Closing the lid moves nothing.":
     "このマシンを離れるときに、スレッド、ルーティン、コーディネーターを送る先です。ふたを閉じても何も移動しません。",
   "Who is it for": "対象者",

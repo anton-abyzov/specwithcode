@@ -46,9 +46,11 @@ import { projectUsesWorktrees } from "../mcp/toolkits/project/launchWorkspace.ts
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveHandoffPlacement } from "./handoffPlacement.ts";
@@ -93,18 +95,24 @@ import {
   shouldResume,
 } from "./handoffPreflight.ts";
 import {
+  CONTINUATION_ID_PREFIX,
+  type ContinuationEvidence,
   emptyThreadRecord,
   findIncoming,
   type HandoffIncomingDetail,
   heartbeatContinued,
   incomingKey,
   ambiguousLinkMessage,
+  isRetiredReason,
   linkedLocalProject,
   markContinued,
+  preparedContinuations,
+  RETIRED_START_REFUSAL,
   takeoverVerdict,
   upsertIncoming,
 } from "./handoffState.ts";
 import type {
+  HeartbeatOperation,
   HeartbeatRequest,
   HeartbeatResponse,
   NegotiateRequest,
@@ -191,6 +199,27 @@ const EXECUTION_REASON: Readonly<Record<TakeoverReason, ThreadExecutionReason>> 
   "auto-takeover": "auto-takeover",
 };
 
+/** How long a heartbeat waits on one takeover in progress before leaving it unanswered. */
+const HEARTBEAT_SETTLE_WAIT = Duration.seconds(4);
+
+/** ContinuationEvidence, with what answers a repeat and whether a lease was ever saved. */
+type Evidence =
+  | {
+      readonly kind: "continued";
+      readonly threadId: ThreadId;
+      readonly epoch: number;
+      readonly response: TakeoverResponse | null;
+    }
+  | { readonly kind: "none"; readonly prepared: boolean }
+  | { readonly kind: "unresolved" };
+
+const publicEvidence = (found: Evidence): ContinuationEvidence =>
+  found.kind === "continued"
+    ? { kind: "continued", threadId: found.threadId }
+    : found.kind === "none"
+      ? { kind: "none" }
+      : { kind: "unresolved" };
+
 /** The continuation's id: the same for every attempt at one takeover, so a retry never forks. */
 export function continuationThreadId(
   sourceEnvironmentId: string,
@@ -201,7 +230,7 @@ export function continuationThreadId(
     .update(`${sourceEnvironmentId}\u0000${sourceThreadId}\u0000${epoch}`)
     .digest("hex")
     .slice(0, 32);
-  return ThreadId.make(`handoff:${digest}`);
+  return ThreadId.make(`${CONTINUATION_ID_PREFIX}${digest}`);
 }
 
 function toPreflightProvider(provider: ServerProvider): PreflightProvider {
@@ -244,6 +273,16 @@ export class HandoffReceiver extends Context.Service<
       caller: ReceiverCaller,
       request: HeartbeatRequest,
     ) => Effect.Effect<HeartbeatResponse, HandoffRefusal>;
+    /**
+     * Whether a thread here continues the source's thread, read under the same lock
+     * as its takeover. A continuation that launched but was never recorded is
+     * recorded now, so later heartbeats fence the source. Never launches anything;
+     * anything it cannot read is unresolved.
+     */
+    readonly continuation: (
+      sourceEnvironmentId: EnvironmentId,
+      sourceThreadId: string,
+    ) => Effect.Effect<ContinuationEvidence>;
   }
 >()("specweave-studio/handoff/HandoffReceiver") {}
 
@@ -593,14 +632,124 @@ export const make = Effect.gen(function* () {
       catch: (cause) => fromBundleError(label, cause),
     });
 
+  /**
+   * What continues one source thread here. The caller holds its takeover lock, so no
+   * launch of it is in progress: a continuation id launches only inside a takeover
+   * under that lock, and its thread is created by one accepted command. A thread read
+   * sees archived threads and never a deleted one, which nothing restores. So a saved
+   * lease with no thread behind it never ran, and for a retired reason never will. One
+   * that launched but was never recorded is recorded now, from its thread.
+   */
+  const evidenceLocked = (
+    sourceEnvironmentId: EnvironmentId,
+    sourceThreadId: ThreadId,
+    /** Epochs the caller knows a takeover was asked at. */
+    epochs: ReadonlyArray<number> = [],
+  ): Effect.Effect<Evidence> =>
+    Effect.gen(function* () {
+      const current = yield* handoff.document;
+      const replica = findIncoming(current, sourceEnvironmentId, sourceThreadId);
+      const detail = (current.incomingDetails ?? {})[
+        incomingKey(sourceEnvironmentId, sourceThreadId)
+      ];
+      if (replica?.continuedThreadId != null) {
+        return {
+          kind: "continued",
+          threadId: replica.continuedThreadId,
+          epoch: detail?.takeoverEpoch ?? replica.lease.epoch,
+          response: detail?.takeover ?? null,
+        } satisfies Evidence;
+      }
+      const prepared = preparedContinuations(
+        current,
+        (epoch) => continuationThreadId(sourceEnvironmentId, sourceThreadId, epoch),
+        replica === undefined ? epochs : [...epochs, replica.lease.epoch + 1],
+      );
+      for (const { threadId, epoch } of prepared) {
+        const shell = yield* orchestrator.getThreadShell(ThreadId.make(threadId));
+        if (shell === null) continue;
+        const response: TakeoverResponse = {
+          threadId: shell.id,
+          projectId: shell.projectId,
+          machineLabel: label,
+          modelSelection: shell.modelSelection,
+          resumed: replica === undefined ? false : shouldResume(replica.checkpoint.runEnding),
+          notice: null,
+        };
+        const now = yield* nowIso;
+        const started: TakeoverRequest = {
+          sourceEnvironmentId,
+          sourceThreadId,
+          epoch,
+          sequence: replica?.checkpoint.sequence ?? 0,
+          reason: "handoff",
+          modelSelection: null,
+        };
+        yield* handoff.updateDocument(
+          (latest) => [undefined, markContinued(latest, started, response, now)] as const,
+        );
+        yield* Effect.logWarning("Handoff recorded a continuation that launched unrecorded", {
+          sourceThreadId,
+          threadId: shell.id,
+          epoch,
+        });
+        return { kind: "continued", threadId: shell.id, epoch, response } satisfies Evidence;
+      }
+      return { kind: "none", prepared: prepared.length > 0 } satisfies Evidence;
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Handoff could not read whether a thread continues here", {
+          sourceThreadId,
+          cause,
+        }).pipe(Effect.as({ kind: "unresolved" } satisfies Evidence)),
+      ),
+    );
+
+  const evidence = (
+    sourceEnvironmentId: EnvironmentId,
+    sourceThreadId: string,
+    epochs: ReadonlyArray<number> = [],
+  ) =>
+    locks.withLock(
+      incomingKey(sourceEnvironmentId, sourceThreadId),
+      evidenceLocked(sourceEnvironmentId, ThreadId.make(sourceThreadId), epochs),
+    );
+
+  /**
+   * A takeover sleep or silence started, from a machine on an earlier release: nothing
+   * launches for it. A start this machine made before it updated answers with its
+   * thread. One that saved a lease but has no thread behind it, or whose outcome
+   * cannot be read, is refused as fenced: an earlier release keeps its hold on that
+   * answer alone, and its next heartbeat after it updates settles it. With nothing
+   * begun here, a definite refusal.
+   */
+  const retiredTakeover = (caller: ReceiverCaller, request: TakeoverRequest) =>
+    Effect.gen(function* () {
+      const found = yield* evidenceLocked(caller.sourceEnvironmentId, request.sourceThreadId, [
+        request.epoch,
+      ]);
+      if (found.kind === "continued" && found.epoch === request.epoch && found.response !== null) {
+        return found.response;
+      }
+      if (found.kind === "none" && !found.prepared) {
+        return yield* refuse(409, "invalid", at(RETIRED_START_REFUSAL), "lease");
+      }
+      return yield* refuse(
+        409,
+        "fenced",
+        at(
+          found.kind === "continued"
+            ? `already continued this thread at epoch ${found.epoch}`
+            : "an earlier start of this thread here did not finish; nothing starts for it now, and the thread stays paused there until this machine settles it",
+        ),
+        "lease",
+      );
+    });
+
   const takeoverLocked = (caller: ReceiverCaller, request: TakeoverRequest) =>
     Effect.gen(function* () {
-      const verdict = takeoverVerdict(
-        yield* document,
-        request,
-        label,
-        continuationThreadId(caller.sourceEnvironmentId, request.sourceThreadId, request.epoch),
-      );
+      if (isRetiredReason(request.reason)) return yield* retiredTakeover(caller, request);
+      const verdict = takeoverVerdict(yield* document, request, label);
       if (verdict.kind === "repeat") return verdict.response;
       if (verdict.kind === "refuse") {
         return yield* refuse(409, verdict.code, verdict.message, verdict.check);
@@ -962,15 +1111,59 @@ export const make = Effect.gen(function* () {
   const heartbeat = (caller: ReceiverCaller, request: HeartbeatRequest) =>
     Effect.gen(function* () {
       yield* sameSource(caller, request.sourceEnvironmentId);
+      // Each operation the source asks about is read under its takeover's lock: one in
+      // progress has finished, or never began, before it is answered. A takeover that
+      // holds its lock longer than the wait leaves its operation unanswered, so the
+      // source keeps that hold and still hears about every other thread.
+      const settled = yield* Effect.forEach(
+        request.settle ?? [],
+        (operation) =>
+          evidence(request.sourceEnvironmentId, operation.sourceThreadId, [operation.epoch]).pipe(
+            Effect.timeoutOption(HEARTBEAT_SETTLE_WAIT),
+            Effect.map((found) => ({
+              operation,
+              found: Option.getOrElse(found, (): Evidence => ({ kind: "unresolved" })),
+            })),
+          ),
+        { concurrency: "unbounded" },
+      );
       const now = yield* nowIso;
-      const continued = yield* updateDocument((current) => {
+      const recorded = yield* updateDocument((current) => {
         const [fenced, next] = heartbeatContinued(current, request, now);
         return [fenced, next] as const;
       });
-      return { machineLabel: label, continued } satisfies HeartbeatResponse;
+      // A continuation its thread proves fences the source even where no replica records it.
+      const continued = [...recorded];
+      for (const { operation, found } of settled) {
+        if (found.kind !== "continued") continue;
+        if (continued.some((entry) => entry.sourceThreadId === operation.sourceThreadId)) continue;
+        continued.push({
+          sourceThreadId: operation.sourceThreadId,
+          epoch: found.epoch,
+          threadId: found.threadId,
+        });
+      }
+      const notStarted: Array<HeartbeatOperation> = settled
+        .filter(({ found }) => found.kind === "none")
+        .map(({ operation }) => operation);
+      return {
+        machineLabel: label,
+        continued,
+        ...(request.settle === undefined ? {} : { notStarted }),
+      } satisfies HeartbeatResponse;
     });
 
-  return HandoffReceiver.of({ negotiate, replicate, preflight, takeover, heartbeat });
+  const continuation = (sourceEnvironmentId: EnvironmentId, sourceThreadId: string) =>
+    evidence(sourceEnvironmentId, sourceThreadId).pipe(Effect.map(publicEvidence));
+
+  return HandoffReceiver.of({
+    negotiate,
+    replicate,
+    preflight,
+    takeover,
+    heartbeat,
+    continuation,
+  });
 });
 
 export const layer = Layer.effect(HandoffReceiver, make);

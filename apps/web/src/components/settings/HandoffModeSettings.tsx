@@ -29,13 +29,24 @@ const NOTE_LABELS: Record<HandoffConfig["noteModel"], string> = {
   cheap: "Smaller model",
   thread: "Thread's model",
 };
-const BRING_BACK_LABELS: Record<AwayBringBack, string> = {
+/**
+ * The choices a Leave honours. Only a lid-close session ever read "auto-on-power",
+ * and sleep starts none, so a saved "auto-on-power" shows the wake card like Ask.
+ */
+type OfferedBringBack = Exclude<AwayBringBack, "auto-on-power">;
+const BRING_BACK_LABELS: Record<OfferedBringBack, string> = {
   prompt: "Ask",
-  "auto-on-power": "Bring back automatically on power",
   manual: "Do nothing",
 };
-const isBringBack = (value: unknown): value is AwayBringBack =>
-  value === "prompt" || value === "auto-on-power" || value === "manual";
+const offeredBringBack = (saved: AwayBringBack): OfferedBringBack =>
+  saved === "manual" ? "manual" : "prompt";
+const isOfferedBringBack = (value: unknown): value is OfferedBringBack =>
+  value === "prompt" || value === "manual";
+
+const AWAY_TARGET_DESCRIPTION =
+  "Where Away sends your threads, routines and coordinators when you leave this machine.";
+const AWAY_TARGET_CONFIRMED_DESCRIPTION =
+  "Where Away sends your threads, routines and coordinators when you leave this machine. Closing the lid moves nothing.";
 
 /** A project on this machine whose own setting differs from the machine default. */
 export interface HandoffModeOverride {
@@ -71,6 +82,9 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
   const away = awayConfigOf(config);
   const awayOff = props.pending || config.sleepTarget === null;
   const overrides = props.overrides ?? [];
+  const bringBack = offeredBringBack(away.bringBack);
+  // Absent: an older server, or one that cannot tell yet. Empty: confirmed by every machine.
+  const pendingDisarm = props.snapshot.pendingDisarm;
   return (
     <SettingsSection
       {...searchableSetting("handoff-mode")}
@@ -121,7 +135,9 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
       <SettingsRow
         {...searchableSetting("handoff-sleep-target")}
         title="Away target"
-        description="Where Away sends your threads, routines and coordinators when you leave this machine. Closing the lid moves nothing."
+        description={
+          pendingDisarm?.length === 0 ? AWAY_TARGET_CONFIRMED_DESCRIPTION : AWAY_TARGET_DESCRIPTION
+        }
         control={
           <Select
             value={config.sleepTarget ?? "off"}
@@ -160,18 +176,17 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
         description="After you left with Away. Ask shows one button to bring it back."
         control={
           <Select
-            value={away.bringBack}
+            value={bringBack}
             disabled={awayOff}
             onValueChange={(value) => {
-              if (isBringBack(value)) props.onConfig({ bringBack: value });
+              if (isOfferedBringBack(value)) props.onConfig({ bringBack: value });
             }}
           >
             <SelectTrigger size="sm" aria-label={tx("When this machine wakes")}>
-              <SelectValue>{BRING_BACK_LABELS[away.bringBack]}</SelectValue>
+              <SelectValue>{BRING_BACK_LABELS[bringBack]}</SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
               <SelectItem value="prompt">{BRING_BACK_LABELS.prompt}</SelectItem>
-              <SelectItem value="auto-on-power">{BRING_BACK_LABELS["auto-on-power"]}</SelectItem>
               <SelectItem value="manual">{BRING_BACK_LABELS.manual}</SelectItem>
             </SelectPopup>
           </Select>
@@ -223,18 +238,26 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
           />
         </CollapsiblePanel>
       </Collapsible>
-      {(props.snapshot.pendingDisarm ?? []).map((machine) => (
-        <p
-          key={machine.environmentId}
-          role="status"
-          className="px-3 py-2 text-muted-foreground text-sm sm:px-4"
-        >
+      {pendingDisarm === undefined ? (
+        <p role="status" className="px-3 py-2 text-muted-foreground text-sm sm:px-4">
           {tx(
-            "Waiting for {machine} to confirm that silence no longer moves threads. Until it answers, a thread it could continue pauses here when it goes quiet.",
-            { machine: machine.machineLabel },
+            "This machine has not confirmed yet that closing the lid moves nothing. Another machine may still continue a thread when this one goes quiet. This copy pauses when that can happen.",
           )}
         </p>
-      ))}
+      ) : (
+        pendingDisarm.map((machine) => (
+          <p
+            key={machine.environmentId}
+            role="status"
+            className="px-3 py-2 text-muted-foreground text-sm sm:px-4"
+          >
+            {tx(
+              "{machine} may still run an older version that continues a thread when this machine goes quiet. Until it confirms, such a thread pauses here. Update {machine} to end this.",
+              { machine: machine.machineLabel },
+            )}
+          </p>
+        ))
+      )}
       {props.error ? (
         <p role="alert" className="px-3 py-2 text-sm text-destructive-foreground sm:px-4">
           {props.error}
