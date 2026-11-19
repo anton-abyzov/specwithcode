@@ -9,6 +9,7 @@ import {
   ThreadId,
 } from "@specweave-studio/contracts";
 import { it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { describe, expect } from "vite-plus/test";
@@ -300,7 +301,9 @@ describe("LimitHandoffAdapter", () => {
         {
           threadId,
           continuation: ThreadId.make("remote-t1"),
-          note: "Hit 95% of Claude on M4 · continued on Minis with Claude Opus 5.5",
+          note: expect.stringMatching(
+            /^Handed off to Minis at \d\d:\d\d: Hit 95% of Claude on M4 · with Claude Opus 5\.5$/,
+          ),
         },
       ]);
     }),
@@ -366,6 +369,11 @@ describe("heldOutcome", () => {
 });
 
 describe("limitHandoffNote", () => {
+  // The line both machines show (AC-28), at a known time and zone.
+  const at = {
+    atMs: Date.parse("2026-10-20T14:02:00.000Z"),
+    timeZone: DateTime.zoneMakeNamedUnsafe("UTC"),
+  };
   const result: HandOffResult = {
     environmentId: minis,
     machineLabel: "Minis",
@@ -380,8 +388,9 @@ describe("limitHandoffNote", () => {
       limitHandoffNote(
         { ...request, modelSelection: opus, modelLabel: "Claude Opus 5.5" },
         { ...result, modelSelection: opus },
+        at,
       ),
-    ).toBe("Claude limit reached on M4 · continued on Minis with Claude Opus 5.5");
+    ).toBe("Handed off to Minis at 14:02: Claude limit reached on M4 · with Claude Opus 5.5");
   });
 
   it("names the model the destination started when it differs, and its notice", () => {
@@ -393,18 +402,19 @@ describe("limitHandoffNote", () => {
           modelSelection: { instanceId: ProviderInstanceId.make("own"), model: "claude-sonnet-5" },
           notice: "Not carried over: big.bin",
         },
+        at,
       ),
     ).toBe(
-      "Claude limit reached on M4 · continued on Minis with Claude Sonnet 5 · Not carried over: big.bin",
+      "Handed off to Minis at 14:02: Claude limit reached on M4 · with Claude Sonnet 5 · Not carried over: big.bin",
     );
     // Without a saved label the slug is spelled out.
-    expect(limitHandoffNote({ ...request, modelSelection: opus }, result)).toBe(
-      "Claude limit reached on M4 · continued on Minis with Claude Opus 5.5",
+    expect(limitHandoffNote({ ...request, modelSelection: opus }, result, at)).toBe(
+      "Handed off to Minis at 14:02: Claude limit reached on M4 · with Claude Opus 5.5",
     );
   });
 
   it("stays within a move link's 300 characters", () => {
-    const note = limitHandoffNote(request, { ...result, notice: "x".repeat(500) });
+    const note = limitHandoffNote(request, { ...result, notice: "x".repeat(500) }, at);
     expect(note.length).toBe(300);
     expect(note.endsWith("…")).toBe(true);
   });
@@ -441,7 +451,9 @@ describe("the automatic track start through the adapter (1390 T-13)", () => {
         disposition: "resume",
       });
       // The line on the source thread says why it left (AC-28).
-      expect(notes[0]?.note).toBe("Daily track out of tokens on M4 · continued on Minis with opus");
+      expect(notes[0]?.note).toMatch(
+        /^Handed off to Minis at \d\d:\d\d: Daily track out of tokens on M4 · with opus$/,
+      );
     }),
   );
 
