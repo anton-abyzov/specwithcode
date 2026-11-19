@@ -31,14 +31,20 @@ import {
 import { runGit } from "./folderTransfer/git.ts";
 import { fetchAll, runSync, type SyncContext, type SyncGit } from "./ProjectSync.ts";
 import { inventoryRepository } from "./ProjectSyncExtras.ts";
-import type { OriginRecords } from "./projectSyncOrigin.ts";
+import { newFetchRecord } from "./projectSyncOrigin.ts";
 
 beforeAll(isolateGit);
 afterAll(restoreGit);
 afterEach(cleanUp);
 
 const real: SyncGit = (cwd, args, options) => runGit(cwd, args, options);
-const context = (run: SyncGit = real): SyncContext => ({ git: run, inUse: async () => null });
+/** One fetch for the whole file: every test works in folders of its own. */
+const fetched = newFetchRecord("project-test");
+const context = (run: SyncGit = real): SyncContext => ({
+  git: run,
+  inUse: async () => null,
+  fetched,
+});
 const say = (step: Pick<ProjectSyncStep, "action" | "reason">) => `${step.action}:${step.reason}`;
 
 /** Three checkouts of one remote as the repositories of a project, each one commit behind. */
@@ -224,16 +230,17 @@ describe("project sync: the work on a branch that just went from origin (P2-31)"
     git(f.a, "push", "-q", "-u", "origin", "feature");
     return { ...f, head };
   };
-  const fetched = async (cwd: string) => {
-    const origin: OriginRecords = new Map();
-    const here = await fetchAll({ ...context(), origin }, [{ path: ".", cwd }]);
-    return { origin, facts: here[0]! };
+  /** A fetch of its own, and what it brought for the checkout. */
+  const fetchedAt = async (cwd: string) => {
+    const record = newFetchRecord("project-test");
+    const here = await fetchAll({ ...context(), fetched: record }, [{ path: ".", cwd }]);
+    return { origin: record.repositories.get(cwd)?.heads, facts: here[0]! };
   };
 
   it("offers a branch that was level when it was deleted, with no further commit", async () => {
     const f = level();
     git(f.b, "push", "-q", "origin", "--delete", "feature");
-    const { origin, facts } = await fetched(f.a);
+    const { origin, facts } = await fetchedAt(f.a);
     expect(facts).toMatchObject({ ahead: 0, behind: 0, upstreamGone: true });
     // The tracking ref still says "level": counted against it, the commit is nobody's.
     expect(git(f.a, "rev-parse", "refs/remotes/origin/feature")).toBe(f.head);
@@ -242,24 +249,45 @@ describe("project sync: the work on a branch that just went from origin (P2-31)"
     expect(extras.notPushed).toEqual([]);
   });
 
-  it("offers nothing when the deleted branch's commits are on a branch origin still has", async () => {
+  it("still lists a deleted branch whose commits are all on a branch origin has, with none of its own", async () => {
     const f = level();
     // Merged on origin, then deleted there.
     git(f.b, "fetch", "-q", "origin");
     git(f.b, "merge", "-q", "--ff-only", "origin/feature");
     git(f.b, "push", "-q", "origin", "main");
     git(f.b, "push", "-q", "origin", "--delete", "feature");
-    const { origin, facts } = await fetched(f.a);
+    const { origin, facts } = await fetchedAt(f.a);
     expect(facts).toMatchObject({ upstreamGone: true });
+    // The branch exists only here now: named as that, like one that was never published.
     const extras = await inventoryRepository({ path: ".", cwd: f.a }, origin);
-    expect(extras.onlyHere).toEqual([]);
+    expect(extras.onlyHere).toEqual([{ branch: "feature", head: f.head, commits: 0 }]);
     expect(extras.notPushed).toEqual([]);
+    git(f.a, "branch", "-q", "never-published", "main");
+    const again = await inventoryRepository({ path: ".", cwd: f.a }, origin);
+    expect(again.onlyHere.map((extra) => `${extra.branch} ${extra.commits}`)).toEqual([
+      "feature 0",
+      "never-published 0",
+    ]);
+  });
+
+  it("keeps a deleted branch's own commits however many branches origin has (P2-45)", async () => {
+    const f = level();
+    git(f.b, "push", "-q", "origin", "--delete", "feature");
+    const { origin } = await fetchedAt(f.a);
+    // origin with 2,500 branches, as a fetch of it would have brought them.
+    const many = new Map(origin);
+    const main = origin!.get("refs/heads/main")!;
+    for (let index = 0; index < 2500; index += 1) many.set(`refs/heads/topic-${index}`, main);
+    // One of them at a commit this checkout does not have yet.
+    many.set("refs/heads/not-here-yet", "1".repeat(40));
+    const extras = await inventoryRepository({ path: ".", cwd: f.a }, many);
+    expect(extras.onlyHere).toEqual([{ branch: "feature", head: f.head, commits: 1 }]);
   });
 
   it("counts a branch origin still has as before", async () => {
     const f = level();
     const own = commit(f.a, "feature.ts", "export const feature = 'mine';\n");
-    const { origin } = await fetched(f.a);
+    const { origin } = await fetchedAt(f.a);
     const extras = await inventoryRepository({ path: ".", cwd: f.a }, origin);
     expect(extras.notPushed).toEqual([{ branch: "feature", head: own, commits: 1 }]);
     expect(extras.onlyHere).toEqual([]);

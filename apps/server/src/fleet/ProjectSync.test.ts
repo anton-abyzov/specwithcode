@@ -9,6 +9,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "@effect/vi
 import { planProjectSync, type ProjectSyncStep } from "@specweave-studio/contracts";
 
 import { runGit } from "./folderTransfer/git.ts";
+import { newFetchRecord } from "./projectSyncOrigin.ts";
 import {
   cloneRepository,
   fastForwardRepository,
@@ -73,18 +74,24 @@ const commit = (folder: string, name: string, text: string) => {
 
 /** Every Git command the module ran in this file, as its arguments. */
 const everyCommand: Array<ReadonlyArray<string>> = [];
+/** What it wrote to Git's standard input, with the command it went to. */
+const everyInput: Array<{ readonly args: ReadonlyArray<string>; readonly input: string }> = [];
 
 function recording() {
   const commands: Array<ReadonlyArray<string>> = [];
   const run: SyncGit = (cwd, args, options) => {
     commands.push(args);
     everyCommand.push(args);
+    if (options?.input !== undefined) everyInput.push({ args, input: options.input });
     return runGit(cwd, args, options);
   };
   return { run, commands };
 }
 
+/** One fetch for the whole file: every test works in folders of its own. */
+const fetched = newFetchRecord("project-test");
 const context = (run: SyncGit, inUse: SyncContext["inUse"] = async () => null): SyncContext => ({
+  fetched,
   git: run,
   inUse,
 });
@@ -1261,8 +1268,10 @@ describe("project sync: the Git commands it runs (1390 AC-11)", () => {
       "status",
       "ls-remote",
       "ls-files",
+      "for-each-ref",
     ]);
-    const WRITES = new Set(["fetch", "merge", "clone"]);
+    // `update-ref` only ever removes Sync's own refs again (checked below).
+    const WRITES = new Set(["fetch", "merge", "clone", "update-ref"]);
     const verbs = new Set(everyCommand.map((args) => args[0]!));
     expect([...verbs].filter((verb) => !READS.has(verb) && !WRITES.has(verb))).toEqual([]);
     for (const verb of WRITES) expect(verbs.has(verb), verb).toBe(true);
@@ -1278,7 +1287,6 @@ describe("project sync: the Git commands it runs (1390 AC-11)", () => {
       "pull",
       "clean",
       "restore",
-      "update-ref",
       "worktree",
       "cherry-pick",
       "revert",
@@ -1291,8 +1299,9 @@ describe("project sync: the Git commands it runs (1390 AC-11)", () => {
       expect(verbs.has(forbidden), forbidden).toBe(false);
     for (const args of everyCommand) {
       // The fetch names its own destinations: never the repository's configured ones.
-      if (args[0] === "fetch")
-        expect(args).toEqual([
+      // And into a folder of refs of Sync's own, made for this one fetch.
+      if (args[0] === "fetch") {
+        expect(args.slice(0, 8)).toEqual([
           "fetch",
           "--quiet",
           "--no-prune",
@@ -1302,18 +1311,41 @@ describe("project sync: the Git commands it runs (1390 AC-11)", () => {
           "origin",
           "+refs/heads/*:refs/remotes/origin/*",
         ]);
+        expect(args[8]).toMatch(/^\+refs\/heads\/\*:refs\/specwithcode\/sync\/[0-9a-f-]{36}\/\*$/);
+        expect(args).toHaveLength(9);
+      }
+      // The merge moves forward or does nothing: every option a setting could turn on is off.
       if (args[0] === "merge") {
-        expect(args.slice(0, 6)).toEqual([
+        expect(args.slice(0, 13)).toEqual([
           "merge",
           "--ff-only",
+          "--no-squash",
+          "--commit",
           "--no-edit",
           "--no-autostash",
+          "--no-verify",
+          "--no-verify-signatures",
+          "--no-signoff",
+          "--no-log",
+          "--no-stat",
+          "--no-progress",
           "--no-overwrite-ignore",
-          "--quiet",
         ]);
-        expect(args[6]).toMatch(/^[0-9a-f]{40}$/);
-        expect(args).toHaveLength(7);
+        expect(args[13]).toMatch(/^[0-9a-f]{40}$/);
+        expect(args).toHaveLength(14);
       }
+      // Refs are listed, never changed, by `for-each-ref`; `update-ref` takes its work on
+      // standard input only, and that is nothing but the removal of Sync's own refs.
+      if (args[0] === "update-ref") expect(args).toEqual(["update-ref", "--no-deref", "--stdin"]);
+      // origin is asked for its address as Git reads it, or for one branch.
+      if (args[0] === "ls-remote")
+        expect(
+          args.join(" ") === "ls-remote --get-url origin" ||
+            (args.length === 4 &&
+              args.slice(0, 3).join(" ") === "ls-remote --heads origin" &&
+              args[3]!.startsWith("refs/heads/")),
+          args.join(" "),
+        ).toBe(true);
       if (args[0] === "clone")
         expect(args.slice(0, 6)).toEqual([
           "clone",
@@ -1335,6 +1367,12 @@ describe("project sync: the Git commands it runs (1390 AC-11)", () => {
       expect(
         args.filter((arg) => /^(-d|-D|-f|--delete|--force|--hard|--prune)$/.test(arg)),
       ).toEqual([]);
+    }
+    expect(everyInput.length).toBeGreaterThan(10);
+    for (const { args, input } of everyInput) {
+      expect(args[0]).toBe("update-ref");
+      for (const line of input.split("\n").filter((entry) => entry.length > 0))
+        expect(line).toMatch(/^delete refs\/specwithcode\/sync\/[0-9a-f-]{36}\/\S.* [0-9a-f]{40}$/);
     }
   });
 });

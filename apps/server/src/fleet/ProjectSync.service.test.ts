@@ -209,7 +209,8 @@ describe("the project sync service (1390 AC-10, AC-11)", () => {
         workspaceRoot: f.nested,
         worktreePath: null,
       });
-      const facts = (yield* sync.fetch(input)).repositories;
+      const second = yield* sync.fetch(input);
+      const facts = second.repositories;
       expect(facts.map((entry) => `${entry.path} ${entry.inUseBy}`)).toEqual([
         ". null",
         "repositories/lib Fix the library",
@@ -222,6 +223,7 @@ describe("the project sync service (1390 AC-10, AC-11)", () => {
       const nestedBefore = snapshot(f.nested);
       const run = yield* sync.run({
         ...input,
+        fetchId: second.fetchId,
         fastForward: [
           { path: ".", otherBranch: "main" },
           { path: "repositories/lib", otherBranch: "main" },
@@ -272,6 +274,7 @@ describe("the project sync service (1390 AC-10, AC-11)", () => {
           expect(NodeFS.existsSync(NodePath.join(f.a, leftover))).toBe(true);
         const run = yield* sync.run({
           ...input,
+          fetchId: fetched.fetchId,
           fastForward: [{ path: ".", otherBranch: "main" }],
           clone: [],
         });
