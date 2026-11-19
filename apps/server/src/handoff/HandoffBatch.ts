@@ -400,7 +400,6 @@ export const makeFolderWorkReceiver = Effect.gen(function* () {
   });
 });
 
-
 // The source: folder work
 
 export interface FolderWorkOutcome {
@@ -500,11 +499,10 @@ export const makeFolderWorkSender =
           projectId: input.projectId,
           targetEnvironmentId: input.destination,
           operationId: input.operationId,
-          items: items.map(
-            (item): ProjectSyncExtraItem =>
-              item.kind === "branch"
-                ? { kind: "branch", path: item.path, branch: item.branch ?? "" }
-                : { kind: "uncommitted", path: item.path, sendAnyway: [] },
+          items: items.map((item): ProjectSyncExtraItem =>
+            item.kind === "branch"
+              ? { kind: "branch", path: item.path, branch: item.branch ?? "" }
+              : { kind: "uncommitted", path: item.path, sendAnyway: [] },
           ),
         });
         receipt = sent.items.map((item) => {
@@ -700,6 +698,8 @@ export interface BatchOptions {
    * Runs before a thread moves and returns what to do once it has: Away mode
    * reads the queued messages first and carries them after.
    */
+  /** The asking window's name for the batch, so it finds its own records; a name taken is not reused. */
+  readonly named?: string | undefined;
   readonly aroundMove?: (
     threadId: ThreadId,
   ) => Effect.Effect<(continued: ThreadId) => Effect.Effect<string | null>>;
@@ -754,7 +754,10 @@ export function makeHandoffBatch(deps: HandoffBatchDeps) {
   /** The batches this process runs now: the rest on file belong to a server that stopped. */
   const running = new Set<string>();
 
-  const updateBatch = (batchId: string, change: (batch: HandoffTransferBatch) => HandoffTransferBatch) =>
+  const updateBatch = (
+    batchId: string,
+    change: (batch: HandoffTransferBatch) => HandoffTransferBatch,
+  ) =>
     store.update((document) => {
       const batch = document.batches[batchId];
       if (batch === undefined) return [undefined, document] as const;
@@ -778,16 +781,17 @@ export function makeHandoffBatch(deps: HandoffBatchDeps) {
     })).pipe(Effect.ignore);
 
   /** Keeps a folder row's journal; false when it could not be written. */
-  const journalOf = (batchId: string, projectId: string) => (folderWork: HandoffFolderWorkJournal) =>
-    updateBatch(batchId, (batch) => ({
-      ...batch,
-      rows: (batch.rows ?? []).map((row) =>
-        row.kind === "folder-work" && row.id === projectId ? { ...row, folderWork } : row,
-      ),
-    })).pipe(
-      Effect.as(true),
-      Effect.orElseSucceed(() => false),
-    );
+  const journalOf =
+    (batchId: string, projectId: string) => (folderWork: HandoffFolderWorkJournal) =>
+      updateBatch(batchId, (batch) => ({
+        ...batch,
+        rows: (batch.rows ?? []).map((row) =>
+          row.kind === "folder-work" && row.id === projectId ? { ...row, folderWork } : row,
+        ),
+      })).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
 
   const execute = (input: HandoffBatchInput, options: BatchOptions = {}) =>
     Effect.gen(function* () {
@@ -802,7 +806,11 @@ export function makeHandoffBatch(deps: HandoffBatchDeps) {
       const reason = options.reason ?? "machine-handoff";
       const label = (yield* deps.peerLabel(destination)).slice(0, 120);
       const startedAt = yield* deps.nowIso;
-      const batchId = NodeCrypto.randomUUID();
+      const asked = options.named;
+      const batchId =
+        asked !== undefined && (yield* store.read).batches[asked] === undefined
+          ? asked
+          : NodeCrypto.randomUUID();
 
       // The destination must name the batch's capability before anything is held for it.
       const named = yield* deps.capabilities(destination).pipe(Effect.result);
@@ -818,7 +826,8 @@ export function makeHandoffBatch(deps: HandoffBatchDeps) {
             })();
 
       const wanted = new Map<ThreadId, HandoffBatchInput["threads"][number]>();
-      for (const thread of input.threads) if (!wanted.has(thread.threadId)) wanted.set(thread.threadId, thread);
+      for (const thread of input.threads)
+        if (!wanted.has(thread.threadId)) wanted.set(thread.threadId, thread);
 
       const rows: Array<HandoffBatchStoredRow> = [];
       const early = new Map<ThreadId, HandoffModeError>();
@@ -1019,7 +1028,11 @@ export function makeHandoffBatch(deps: HandoffBatchDeps) {
         start: "manual",
         threads: input.threadIds.map((threadId) => ({ threadId })),
       },
-      { ...options, reason: input.reason === "sleep" ? "sleep" : "machine-handoff" },
+      {
+        ...options,
+        named: input.batchId,
+        reason: input.reason === "sleep" ? "sleep" : "machine-handoff",
+      },
     ).pipe(
       Effect.map((done) => ({
         destinationEnvironmentId: input.destinationEnvironmentId,
@@ -1075,9 +1088,7 @@ export function makeHandoffBatch(deps: HandoffBatchDeps) {
     const document = yield* store.read;
     for (const batch of Object.values(document.batches)) {
       if (batch.rows === undefined || running.has(batch.batchId)) continue;
-      const open = batch.rows.filter(
-        (row) => row.operationId === null && !finishedRow(row.state),
-      );
+      const open = batch.rows.filter((row) => row.operationId === null && !finishedRow(row.state));
       if (open.length === 0) continue;
       const batchId = batch.batchId;
       running.add(batchId);

@@ -650,9 +650,7 @@ export const make = Effect.gen(function* () {
     keepsRecords: (destination) =>
       destination === self
         ? Effect.succeed(true)
-        : namedBy(destination).pipe(
-            Effect.map((response) => hasHandoffV2(response.capabilities)),
-          ),
+        : namedBy(destination).pipe(Effect.map((response) => hasHandoffV2(response.capabilities))),
     takesBatches: (destination) =>
       destination === self
         ? Effect.succeed({ takes: true, label: selfLabel })
@@ -759,17 +757,17 @@ export const make = Effect.gen(function* () {
     peerLabel,
     capabilities: (destination) =>
       namedBy(destination).pipe(
-          Effect.flatMap((response) => {
-            const mismatch = versionFailure({
-              peerLabel: response.machineLabel,
-              peerProtocolVersion: response.protocolVersion,
-              peerAppVersion: response.appVersion,
-              selfLabel,
-            });
-            return mismatch === null
-              ? Effect.succeed(response.capabilities)
-              : Effect.fail(failed("invalid", mismatch.message));
-          }),
+        Effect.flatMap((response) => {
+          const mismatch = versionFailure({
+            peerLabel: response.machineLabel,
+            peerProtocolVersion: response.protocolVersion,
+            peerAppVersion: response.appVersion,
+            selfLabel,
+          });
+          return mismatch === null
+            ? Effect.succeed(response.capabilities)
+            : Effect.fail(failed("invalid", mismatch.message));
+        }),
       ),
     thread: (threadId) =>
       Effect.gen(function* () {
@@ -811,8 +809,7 @@ export const make = Effect.gen(function* () {
   const handOffMachine = (input: HandOffMachineInput) =>
     Effect.gen(function* () {
       if (input.reason === "sleep") return yield* failed("invalid", Drain.SLEEP_MOVES_NOTHING);
-      const threadIds =
-        input.threadIds ?? (yield* runningHandoffThreads(yield* handoff.document));
+      const threadIds = input.threadIds ?? (yield* runningHandoffThreads(yield* handoff.document));
       // Away mode names its threads, whatever their handoff mode, and their queues go too.
       const carriesQueue = input.reason === "away" || input.reason === "back";
       const run = yield* batch.handOffMachine(

@@ -6,6 +6,7 @@
  */
 import {
   EnvironmentId,
+  HANDOFF_BATCH_CAPABILITY,
   HANDOFF_TRACK_START_CAPABILITY,
   HANDOFF_V2_CAPABILITY,
   type ModelSelection,
@@ -585,6 +586,7 @@ describe(`the automatic track start with a machine on ${PREVIOUS_RELEASE}, and w
       HANDOFF_PLAN_CAPABILITY,
       HANDOFF_TRACK_START_CAPABILITY,
       HANDOFF_WORKTREE_SET_CAPABILITY,
+      HANDOFF_BATCH_CAPABILITY,
     ]);
   });
 

@@ -37,7 +37,6 @@ import {
   type ProjectId,
   type RuntimeMode,
   ThreadId,
-  type ThreadExecutionReason,
   type ThreadExecutionRecord,
 } from "@specweave-studio/contracts";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
@@ -76,7 +75,6 @@ import {
   availableBranch,
   BundleError,
   copyRequiredFiles,
-  type InPlaceRefusal,
   incomingRef,
   knownCommits,
   missingFiles,
@@ -138,7 +136,6 @@ import type {
   PeerPreflightResponse,
   ReplicateMeta,
   ReplicateResponse,
-  TakeoverReason,
   TakeoverRequest,
   TakeoverResponse,
   TransferPullRequest,
@@ -146,6 +143,7 @@ import type {
   TransferStatusResponse,
 } from "./handoffWire.ts";
 import { REVISION_MISMATCH, takeoverArrival } from "./HandoffBatch.ts";
+import { EXECUTION_REASON, IN_PLACE_REFUSAL, noticeOf } from "./handoffReceiverText.ts";
 import {
   capabilityFailure,
   HANDOFF_APP_VERSION,
@@ -245,28 +243,6 @@ const fromBundleError = (label: string, cause: unknown) => {
     return refuse(cause.code === "failed" ? 500 : 409, code, `${label}: ${cause.message}`);
   }
   return refuse(500, "failed", `${label}: ${describe(cause)}`);
-};
-
-const noticeOf = (parts: ReadonlyArray<string | null>) => {
-  const notice = parts.filter((part): part is string => part !== null).join(" ");
-  return notice.length === 0 ? null : notice.slice(0, 500);
-};
-
-/** Why a project with Use worktrees off still got a worktree for arriving work. */
-const IN_PLACE_REFUSAL: Readonly<Record<InPlaceRefusal | "nested", string>> = {
-  dirty: "has uncommitted changes",
-  moved: "is at a different commit than the work started from",
-  blocked: "has files in the way",
-  midway: "is in the middle of a merge or rebase",
-  nested: "is not the repository this work belongs to",
-};
-
-const EXECUTION_REASON: Readonly<Record<TakeoverReason, ThreadExecutionReason>> = {
-  handoff: "handoff",
-  "machine-handoff": "machine-handoff",
-  sleep: "sleep",
-  "continue-here": "continue-here",
-  "auto-takeover": "auto-takeover",
 };
 
 /** How long a heartbeat waits on one takeover in progress before leaving it unanswered. */

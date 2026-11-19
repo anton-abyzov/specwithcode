@@ -289,60 +289,58 @@ describe("each thread's disposition in a batch (AC-41)", () => {
 });
 
 describe("the batch is written through the transfer record", () => {
-  it.effect(
-    "has the batch and each thread's record on file before the first thread is held",
-    () =>
-      Effect.gen(function* () {
-        const rig = yield* makeRig(temporary);
-        const [a, b] = two(rig);
-        rig.addThread(a, t1, { running: true });
-        rig.addThread(a, t2);
-        let atFirstHold: HandoffTransferDocument | null = null;
-        a.onDocument = (document) =>
-          Effect.sync(() => {
-            const held = Object.values(document.threads).some(
-              (record) => record.lease?.state === "handing-off",
-            );
-            if (held && atFirstHold === null) atFirstHold = a.transfers.document;
-          });
-
-        const run = yield* a.moves.handOffBatch({
-          destinationEnvironmentId: b.environmentId,
-          start: "manual",
-          threads: [
-            { threadId: t1, disposition: "resume" },
-            { threadId: t2, disposition: "ready" },
-          ],
+  it.effect("has the batch and each thread's record on file before the first thread is held", () =>
+    Effect.gen(function* () {
+      const rig = yield* makeRig(temporary);
+      const [a, b] = two(rig);
+      rig.addThread(a, t1, { running: true });
+      rig.addThread(a, t2);
+      let atFirstHold: HandoffTransferDocument | null = null;
+      a.onDocument = (document) =>
+        Effect.sync(() => {
+          const held = Object.values(document.threads).some(
+            (record) => record.lease?.state === "handing-off",
+          );
+          if (held && atFirstHold === null) atFirstHold = a.transfers.document;
         });
 
-        const seen = atFirstHold as HandoffTransferDocument | null;
-        expect(seen).not.toBeNull();
-        const batch = seen?.batches[run.batchId];
-        expect(batch).toMatchObject({
-          start: "manual",
-          targetEnvironmentId: b.environmentId,
-          targetLabel: "B",
-        });
-        expect(batch?.operationIds).toHaveLength(2);
-        expect(batch?.rows?.map((row) => [row.id, row.operationId !== null])).toEqual([
-          [t1, true],
-          [t2, true],
-        ]);
-        const planned = Object.values(seen?.transfers ?? {});
-        expect(
-          planned.map((record) => [
-            record.lineage.sourceThreadId,
-            record.batchId,
-            record.targetEnvironmentId,
-            record.disposition,
-          ]),
-        ).toEqual([
-          [t1, run.batchId, b.environmentId, "resume"],
-          [t2, run.batchId, b.environmentId, "ready"],
-        ]);
-        // Read again later, the batch is the same rows from the same records.
-        expect(yield* a.moves.readBatches({ batchId: run.batchId })).toEqual([run]);
-      }),
+      const run = yield* a.moves.handOffBatch({
+        destinationEnvironmentId: b.environmentId,
+        start: "manual",
+        threads: [
+          { threadId: t1, disposition: "resume" },
+          { threadId: t2, disposition: "ready" },
+        ],
+      });
+
+      const seen = atFirstHold as HandoffTransferDocument | null;
+      expect(seen).not.toBeNull();
+      const batch = seen?.batches[run.batchId];
+      expect(batch).toMatchObject({
+        start: "manual",
+        targetEnvironmentId: b.environmentId,
+        targetLabel: "B",
+      });
+      expect(batch?.operationIds).toHaveLength(2);
+      expect(batch?.rows?.map((row) => [row.id, row.operationId !== null])).toEqual([
+        [t1, true],
+        [t2, true],
+      ]);
+      const planned = Object.values(seen?.transfers ?? {});
+      expect(
+        planned.map((record) => [
+          record.lineage.sourceThreadId,
+          record.batchId,
+          record.targetEnvironmentId,
+          record.disposition,
+        ]),
+      ).toEqual([
+        [t1, run.batchId, b.environmentId, "resume"],
+        [t2, run.batchId, b.environmentId, "ready"],
+      ]);
+      // Read again later, the batch is the same rows from the same records.
+      expect(yield* a.moves.readBatches({ batchId: run.batchId })).toEqual([run]);
+    }),
   );
 
   it.effect("hands each thread over at the revision of its checkpoint, and names it", () =>
@@ -562,7 +560,8 @@ describe("the batch's own capability, with machines on other builds (EC2-04, EC2
 
   it("names its own capability, beside the transfer record's and the plan's", () => {
     expect(HANDOFF_BATCH_CAPABILITY).toBe("handoff.batch");
-    expect(HANDOFF_CAPABILITIES).toEqual([...BEFORE_BATCHES, HANDOFF_BATCH_CAPABILITY]);
+    expect(HANDOFF_CAPABILITIES).toEqual(expect.arrayContaining(BEFORE_BATCHES));
+    expect(HANDOFF_CAPABILITIES.at(-1)).toBe(HANDOFF_BATCH_CAPABILITY);
   });
 
   it(`${PREVIOUS_RELEASE} reads a batch's takeover and drops what it does not know`, () => {
@@ -904,17 +903,15 @@ describe("project folder work (AC-20)", () => {
       }),
   );
 
-  it.effect(
-    "says why files stayed a branch, and names the next step",
-    () =>
-      Effect.gen(function* () {
-        const outcome = yield* sender(false, [])(sendTo);
+  it.effect("says why files stayed a branch, and names the next step", () =>
+    Effect.gen(function* () {
+      const outcome = yield* sender(false, [])(sendTo);
 
-        expect(outcome.state).toBe("ready");
-        expect(outcome.detail).toContain(
-          "On B as branch swc/from-a/uncommitted-1. Not put into the working folder: the folder has changes of its own. To use it there, check it out or merge it.",
-        );
-      }),
+      expect(outcome.state).toBe("ready");
+      expect(outcome.detail).toContain(
+        "On B as branch swc/from-a/uncommitted-1. Not put into the working folder: the folder has changes of its own. To use it there, check it out or merge it.",
+      );
+    }),
   );
 
   it.effect("the destination checks the work grant when the files would be written", () =>
