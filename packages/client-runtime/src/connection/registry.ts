@@ -286,6 +286,10 @@ export const make = Effect.gen(function* () {
     ReadonlyMap<EnvironmentId, EnvironmentServiceScope>
   >(new Map());
   const platformEnvironmentIds = yield* Ref.make<ReadonlySet<EnvironmentId>>(new Set());
+  // Bumped by every removal of the Connect routes (a sign-out or an account
+  // switch). A Connect route save that started before the bump is undone when
+  // it finishes, so a late answer for the account that left is never kept.
+  const relayRouteEpoch = yield* Ref.make(0);
   const persistedEnvironmentIds = yield* Ref.make<ReadonlySet<EnvironmentId>>(
     new Set(persistedRoutesByEnvironment.keys()),
   );
@@ -594,10 +598,15 @@ export const make = Effect.gen(function* () {
     const registered = connectionRegistrationCatalogEntry(registration);
     const environmentId = registered.target.environmentId;
     const route: ConnectionRoute = { target: registered.target, profile: registered.profile };
+    const isRelay = registration.target._tag === "RelayConnectionTarget";
+    const startedInEpoch = yield* Ref.get(relayRouteEpoch);
     yield* withLeaseLock(
       environmentId,
       Effect.gen(function* () {
         if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
+          return;
+        }
+        if (isRelay && (yield* Ref.get(relayRouteEpoch)) !== startedInEpoch) {
           return;
         }
         if (options?.knownAddressOnly === true) {
@@ -629,6 +638,17 @@ export const make = Effect.gen(function* () {
         yield* installEntryLocked(entry);
       }),
     );
+    // The Connect routes were removed while this save was being written.
+    if (isRelay && (yield* Ref.get(relayRouteEpoch)) !== startedInEpoch) {
+      yield* removeRoute(environmentId, RELAY_ROUTE_ID).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Could not undo a Connect route saved after a sign-out.", {
+            environmentId,
+            error,
+          }),
+        ),
+      );
+    }
   });
 
   /** Writes a new route list for a user-saved environment and restarts its connection. */
@@ -1033,23 +1053,26 @@ export const make = Effect.gen(function* () {
 
   const removeRelayEnvironments = Effect.fn("EnvironmentRegistry.removeRelayEnvironments")(
     function* () {
+      yield* Ref.update(relayRouteEpoch, (epoch) => epoch + 1);
       const relayEnvironmentIds = [...(yield* SubscriptionRef.get(entries)).values()]
         .filter((entry) =>
           connectionRoutes(entry).some((route) => route.target._tag === "RelayConnectionTarget"),
         )
         .map((entry) => entry.target.environmentId);
 
-      yield* Effect.forEach(
+      // Each machine on its own: one that cannot be removed must not keep the
+      // others, and the first failure is still reported once all have run.
+      const exits = yield* Effect.forEach(
         relayEnvironmentIds,
         (environmentId) =>
           removeRoute(environmentId, RELAY_ROUTE_ID).pipe(
             Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }),
+            Effect.exit,
           ),
-        {
-          concurrency: "unbounded",
-          discard: true,
-        },
+        { concurrency: "unbounded" },
       );
+      const failure = exits.find(Exit.isFailure);
+      if (failure !== undefined) return yield* failure;
     },
   );
 

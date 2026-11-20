@@ -1,0 +1,67 @@
+import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Ref from "effect/Ref";
+
+import { RelayConnectionRegistration } from "./catalog.ts";
+import * as EnvironmentRegistry from "./registry.ts";
+import {
+  RELAY_TARGET,
+  SECOND_RELAY_TARGET,
+  hasRoutes,
+  makeHarness,
+} from "./registry.testHarness.ts";
+
+// Synthetic accounts only: nothing here reaches a real Connect account or machine.
+describe("EnvironmentRegistry account switch", () => {
+  it.effect("a Connect save started before the cleanup does not outlive it", () =>
+    Effect.gen(function* () {
+      const saveStarted = yield* Deferred.make<void>();
+      const releaseSave = yield* Deferred.make<void>();
+      const harness = yield* makeHarness([RELAY_TARGET], [], [], {
+        beforeRegistrationRegister: (registration) =>
+          registration.target.environmentId === SECOND_RELAY_TARGET.environmentId
+            ? Deferred.succeed(saveStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseSave)),
+              )
+            : Effect.void,
+      });
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        // Account A's late answer: a Connect route save that is still being written.
+        const lateSave = yield* registry
+          .register(new RelayConnectionRegistration({ target: SECOND_RELAY_TARGET }))
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(saveStarted);
+
+        // The switch to account B removes every Connect route.
+        yield* registry.removeRelayEnvironments();
+        yield* Deferred.succeed(releaseSave, undefined);
+        yield* Fiber.join(lateSave);
+
+        const targets = yield* Ref.get(harness.storedTargets);
+        expect(hasRoutes(targets, RELAY_TARGET.environmentId)).toBe(false);
+        expect(hasRoutes(targets, SECOND_RELAY_TARGET.environmentId)).toBe(false);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("one failed removal does not stop the others", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([RELAY_TARGET, SECOND_RELAY_TARGET], [], [], {
+        beforeRegistrationRemove: (environmentId) =>
+          environmentId === RELAY_TARGET.environmentId
+            ? Effect.die(new Error("Fixture storage failure"))
+            : Effect.void,
+      });
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.removeRelayEnvironments().pipe(Effect.exit);
+
+        const targets = yield* Ref.get(harness.storedTargets);
+        expect(hasRoutes(targets, SECOND_RELAY_TARGET.environmentId)).toBe(false);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+});
