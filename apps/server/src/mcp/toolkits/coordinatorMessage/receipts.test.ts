@@ -81,16 +81,16 @@ describe("coordinator message receipts", () => {
       [outgoing("message-report-owner", "finding")],
     ),
   );
-  it.effect("a reply leaves rows of another membership or still queued unanswered", () =>
+  it.effect("refuses a reply to a message sent under an earlier membership", () =>
     run(
       (receiver) =>
         Effect.gen(function* () {
-          const answer = yield* deliver(
+          const refusal = yield* refusedWith(
             receiver,
             callerFrom(LINUX),
             request({ kind: "reply", replyTo: "message-original" }),
           );
-          expect(answer.ok).toBe(true);
+          expect(refusal.status).toBe(409);
           const sent = (yield* records).filter((row) => row.direction === "outgoing");
           expect(Object.fromEntries(sent.map((row) => [row.externalId, row.state]))).toEqual({
             "message-original": "delivered",

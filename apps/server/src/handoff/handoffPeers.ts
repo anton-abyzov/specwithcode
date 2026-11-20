@@ -661,8 +661,14 @@ export const make = Effect.gen(function* () {
         return yield* new HandoffPeerError(unknownFolderWorkPath(target.label));
       }
       // A machine from before coordinator messages has no such path. It took nothing.
+      // The router answers a path it lacks with the bare error "not_found"; a current
+      // receiver's own 404 (an unknown message) says why in a sentence.
       if (
         answer.status === 404 &&
+        Option.match(decodeError(json), {
+          onNone: () => true,
+          onSome: (body) => body.error === "not_found",
+        }) &&
         (path === "coordinator-message" ||
           path === "coordinator-message-read" ||
           path === "coordinator-message-receipt")

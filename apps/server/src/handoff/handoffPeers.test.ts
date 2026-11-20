@@ -83,6 +83,14 @@ function worker(
     // This worker is from before Sync extras: it has no such path.
     if (url.pathname.includes("/extras-"))
       return Response.json({ error: "not_found", code: "not_found" }, { status: 404 });
+    // It is from before coordinator messages for reads; it keeps receipts but not this message.
+    if (url.pathname.endsWith("/coordinator-message-read"))
+      return Response.json(PREVIOUS_UNKNOWN_PATH.body, { status: PREVIOUS_UNKNOWN_PATH.status });
+    if (url.pathname.endsWith("/coordinator-message-receipt"))
+      return Response.json(
+        { error: "That coordinator message is not kept here.", code: "not_found" },
+        { status: 404 },
+      );
     // It is the latest release, from before transfer records: it answers those paths as that release does.
     if (url.pathname.includes("/transfer-"))
       return Response.json(PREVIOUS_UNKNOWN_PATH.body, { status: PREVIOUS_UNKNOWN_PATH.status });
@@ -241,6 +249,34 @@ describe("handoff peers over SpecWithCode Connect", () => {
             `${CONNECT_ORIGIN}${HANDOFF_PEER_PREFIX}/extras-negotiate`,
             `${CONNECT_ORIGIN}${HANDOFF_PEER_PREFIX}/extras-replicate`,
           ]);
+        }),
+    ),
+  );
+
+  it.effect("reads only a bare unknown path as needing an update, never a receiver's own 404", () =>
+    withPeers(
+      { grant: (jkt) => studioToken({ sid: "grant", jkt }), offline: new Set([ORIGIN]) },
+      (peers) =>
+        Effect.gen(function* () {
+          const request = {
+            capabilities: ["coordinator-message.v1"],
+            logicalProjectId: "logical",
+            projectId: ProjectId.make("project-m1"),
+            messageId: "cm-0123456789",
+          };
+          const read = yield* Effect.flip(
+            peers.coordinatorMessageRead(machine.environmentId, {
+              ...request,
+              path: ".specweave/increments/1427-test/reports/m5.md",
+              offset: 0,
+            }),
+          );
+          const receipt = yield* Effect.flip(
+            peers.coordinatorMessageReceipt(machine.environmentId, request),
+          );
+          expect(read).toMatchObject({ needsUpdate: true, uncertain: false });
+          expect(receipt.needsUpdate).not.toBe(true);
+          expect(receipt.message).toContain("not kept here");
         }),
     ),
   );

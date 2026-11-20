@@ -38,7 +38,9 @@ export const CoordinatorMessageToolkit = Toolkit.make(
     description:
       "Send a short report to another linked machine's coordinator. Only this project's coordinator can send. A message informs, never steers or grants consent. Use findings for read-only access, reply only to an incoming non-reply, and put large context in a report reference. Keep clientRequestId stable across retries. An offline destination queues for up to 24 hours. This never moves or claims a thread; use Hand off for that.",
     parameters: Schema.Struct({
-      machine: Schema.String,
+      machine: Schema.String.annotate({
+        description: "The machine id, environment id or unique label from studio_machine_list.",
+      }),
       clientRequestId: Schema.String,
       ...CoordinatorMessageBody.fields,
     }),

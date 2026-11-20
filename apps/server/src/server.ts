@@ -849,6 +849,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       CoordinatorMessageOutbox.layerLive.pipe(
         Layer.provide(HandoffPeers.layer),
         Layer.provide(RemoteWorkers.layerFleetWorkers),
+        // Names the start message of a woken run (1427 AC-14).
+        Layer.provide(ThreadManagementService.layer),
       ),
     ),
     Layer.provide(
@@ -1176,6 +1178,7 @@ const layerMakeRoutes = Layer.mergeAll(
     CoordinatorMessageOutbox.layerLive.pipe(
       Layer.provide(HandoffPeers.layer),
       Layer.provide(RemoteWorkers.layerFleetWorkers),
+      Layer.provide(ThreadManagementService.layer),
     ),
   ),
   Layer.provide(SkillAuthoringService.layer),

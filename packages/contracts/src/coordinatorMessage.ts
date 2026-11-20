@@ -22,7 +22,7 @@ export const COORDINATOR_MESSAGE_DEDUPE_KEY_MAX = 200;
 export const COORDINATOR_MESSAGE_PATH_MAX = 1024;
 /** The only files a report ref may name: a report in an increment's reports folder. */
 export const COORDINATOR_MESSAGE_REPORT_PATH =
-  /^\.specweave\/increments\/[^/]+\/reports\/.+\.(md|txt|html|json)$/i;
+  /^\.specweave\/increments\/(?!\.\.?\/)[^/\\]+\/reports\/(?:(?!\.\.?\/)[^/\\]+\/)*[^/\\]+\.(md|txt|html|json)$/i;
 /** A direction carries at most this many messages per project in an hour; more fold into a digest. */
 export const COORDINATOR_MESSAGE_HOURLY_CAP = 6;
 

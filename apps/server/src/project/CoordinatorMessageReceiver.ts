@@ -631,7 +631,9 @@ export const make = Effect.gen(function* () {
           `${receiver} could not keep ${sender}'s message; ${sender} may try again.`,
         );
       const existing = yield* store.all.pipe(Effect.mapError(keptFailure));
-      // A reply's target: a message this machine sent this peer in this project.
+      // A reply's target: a message this machine sent this peer in this project,
+      // under the link as it stands now, that reached the peer.
+      const currentMembership = membershipOf(admittedProject, peer, selfEnvironmentId);
       const target =
         message.replyTo === undefined
           ? undefined
@@ -640,7 +642,13 @@ export const make = Effect.gen(function* () {
                 record.direction === "outgoing" &&
                 record.peerEnvironmentId === peer &&
                 record.projectId === admittedProject.id &&
-                record.externalId === message.replyTo,
+                (record.externalId === message.replyTo ||
+                  record.receiverMessageId === message.replyTo) &&
+                record.outgoingMembership !== undefined &&
+                record.outgoingMembership === currentMembership &&
+                (record.state === "delivered" ||
+                  record.state === "read" ||
+                  record.state === "answered"),
             );
       if (message.kind === "reply") {
         if (target === undefined)
@@ -928,24 +936,24 @@ export const make = Effect.gen(function* () {
    * revision seen; `anyRevision` patches it whatever a merge did since, for
    * facts that stay true of the row (a turn it started, a turn it woke).
    */
-  const patchRows = (
+  const patchRowsStrict = (
     seen: ReadonlyMap<string, number>,
     now: number,
     patch: (record: CoordinatorMessageRecord) => CoordinatorMessageRecord,
     anyRevision = false,
   ) =>
-    store
-      .update(now, (records) => {
-        let changed = false;
-        const next = records.map((record) => {
-          if (record.direction !== "incoming" || !seen.has(record.id)) return record;
-          if (!anyRevision && (record.revision ?? 0) !== seen.get(record.id)) return record;
-          changed = true;
-          return { ...patch(record), updatedAt: now };
-        });
-        return { records: changed ? next : records, result: undefined };
-      })
-      .pipe(Effect.ignore);
+    store.update(now, (records) => {
+      let changed = false;
+      const next = records.map((record) => {
+        if (record.direction !== "incoming" || !seen.has(record.id)) return record;
+        if (!anyRevision && (record.revision ?? 0) !== seen.get(record.id)) return record;
+        changed = true;
+        return { ...patch(record), updatedAt: now };
+      });
+      return { records: changed ? next : records, result: undefined };
+    });
+  const patchRows = (...args: Parameters<typeof patchRowsStrict>) =>
+    patchRowsStrict(...args).pipe(Effect.ignore);
 
   const setState = (
     seen: ReadonlyMap<string, number>,
@@ -1172,6 +1180,15 @@ export const make = Effect.gen(function* () {
             "hex",
           ).slice(0, 24)}`
         : `coordinator-message:${sentRow(first.record)}`;
+      // Recorded before the turn can start, so the woken turn's first reply is
+      // already fenced if the run id below is never written (1427 AC-14).
+      const fenced = yield* patchRowsStrict(
+        seen,
+        now,
+        (record) => ({ ...record, wakePending: { threadId: target.shell.id, commandId: id } }),
+        true,
+      ).pipe(Effect.result);
+      if (fenced._tag === "Failure") continue;
       const sent = yield* threads
         .sendToThread({
           projectId: target.project.id,

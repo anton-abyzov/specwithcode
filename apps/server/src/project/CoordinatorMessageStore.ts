@@ -117,6 +117,17 @@ export const CoordinatorMessageRecord = Schema.Struct({
   ),
   /** Incoming: the turn this message woke, retained after delivery for reply-loop fencing. */
   wokenRunId: Schema.optional(Schema.String),
+  /**
+   * Incoming: written before the wake starts a turn, so the woken turn is
+   * fenced even when recording its run id afterwards fails.
+   */
+  wakePending: Schema.optional(
+    Schema.Struct({ threadId: Schema.String, commandId: Schema.String }),
+  ),
+  /** Outgoing: the coordinator turn that sent it, so a woken turn sends one reply. */
+  sourceRunId: Schema.optional(Schema.String),
+  /** Outgoing: the receiver gave a final answer or none it will ever give; stop asking. */
+  receiptStopped: Schema.optional(Schema.Boolean),
   /** Incoming: sends that ended before any provider took them; each retry gets new ids. */
   startAttempt: Schema.optional(NonNegativeInt),
   /** Incoming: thread refs left out because this machine could not place them in the project. */

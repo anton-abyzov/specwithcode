@@ -46,7 +46,7 @@ export interface CoordinatorMessageOutboxDeps {
   ) => Effect.Effect<CoordinatorMessageDeliverResponse, OutboxFailure>;
   readonly receipt?: (
     record: CoordinatorMessageRecord,
-  ) => Effect.Effect<"read" | "quiet" | "not_delivered" | undefined, OutboxFailure>;
+  ) => Effect.Effect<"read" | "final" | undefined, OutboxFailure>;
   /**
    * Resolve the receiver's project from the current link, never a cached
    * project id. `undefined` means it is no longer linked.
@@ -79,9 +79,8 @@ export const makeOutbox = (deps: CoordinatorMessageOutboxDeps) =>
         yield* deps.store.update(now, (rows) => ({
           records: rows.map((row) =>
             row.id === id &&
-            (row.state === "queued" ||
-              (row.state === "delivered" &&
-                (state === "read" || state === "quiet" || state === "not_delivered")))
+            // A delivered message never goes back: a receipt can only say it was read.
+            (row.state === "queued" || (row.state === "delivered" && state === "read"))
               ? {
                   ...row,
                   state,
@@ -93,9 +92,25 @@ export const makeOutbox = (deps: CoordinatorMessageOutboxDeps) =>
           result: undefined,
         }));
       });
+    const stopReceipts = (id: string) =>
+      Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis;
+        yield* deps.store.update(now, (rows) => ({
+          records: rows.map((row) =>
+            row.id === id && row.state === "delivered"
+              ? { ...row, receiptStopped: true, updatedAt: now }
+              : row,
+          ),
+          result: undefined,
+        }));
+      });
     return {
       /** Caller supplies stable ids once. Persist before any network operation. */
-      enqueue: (record: CoordinatorMessageRecord) =>
+      /**
+       * `onePerRun`: the sending turn was woken by a coordinator message, so it
+       * sends one message in all; checked in the same write that appends it.
+       */
+      enqueue: (record: CoordinatorMessageRecord, onePerRun = false) =>
         Effect.gen(function* () {
           const problem = coordinatorMessageProblem(record);
           if (problem !== null)
@@ -185,6 +200,23 @@ export const makeOutbox = (deps: CoordinatorMessageOutboxDeps) =>
                     message: "A request id cannot be reused for different content.",
                   }),
                 };
+              if (
+                prior === undefined &&
+                onePerRun &&
+                record.sourceRunId !== undefined &&
+                rows.some(
+                  (row) =>
+                    row.direction === "outgoing" &&
+                    row.projectId === record.projectId &&
+                    row.sourceRunId === record.sourceRunId,
+                )
+              )
+                return {
+                  records: rows,
+                  result: new CoordinatorMessageOutboxError({
+                    message: "A woken turn sends one reply.",
+                  }),
+                };
               return prior === undefined
                 ? {
                     records: [...rows, { ...record, receivedAt: now, updatedAt: now }],
@@ -202,15 +234,16 @@ export const makeOutbox = (deps: CoordinatorMessageOutboxDeps) =>
           const rows = yield* deps.store.all;
           for (const row of rows) {
             if (row.direction !== "outgoing") continue;
-            if (row.state === "delivered" && deps.receipt !== undefined) {
+            if (row.state === "delivered" && deps.receipt !== undefined && !row.receiptStopped) {
               const allowed = yield* deps.authorize(row).pipe(Effect.result);
               if (allowed._tag === "Failure" || !allowed.success) continue;
               const receipt = yield* deps.receipt(row).pipe(Effect.result);
               if (receipt._tag === "Success") {
-                if (receipt.success !== undefined) yield* setState(row.id, receipt.success);
+                if (receipt.success === "read") yield* setState(row.id, "read");
+                else if (receipt.success === "final") yield* stopReceipts(row.id);
               } else if (!transientFailure(receipt.failure)) {
-                // The receiver no longer keeps it or refuses to answer: stop asking.
-                yield* setState(row.id, "not_delivered");
+                // The receiver no longer keeps it or refuses to answer: stop asking, still delivered.
+                yield* stopReceipts(row.id);
               }
               continue;
             }
@@ -280,6 +313,7 @@ import {
   type EnvironmentId,
   type ThreadId,
   coordinatorMessageDedupeKey,
+  orchestrationV2RunStartMessageId,
 } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
 import { sha256 } from "../nodeCrypto.ts";
@@ -288,6 +322,8 @@ import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { HandoffPeers } from "../handoff/handoffPeers.ts";
+import { readReportPage } from "../mcp/toolkits/coordinatorMessage/reportRead.ts";
+import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { CoordinatorMessageStore, layer as storeLayer } from "./CoordinatorMessageStore.ts";
 import { membershipOf } from "./CoordinatorMessageFrame.ts";
 import { ProjectService } from "./ProjectService.ts";
@@ -325,6 +361,9 @@ export const layer = Layer.effect(
     const projects = yield* ProjectService;
     const peers = yield* HandoffPeers;
     const self = yield* (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId;
+    const threads = Option.getOrUndefined(
+      yield* Effect.serviceOption(ThreadManagementService.ThreadManagementService),
+    );
     const destination = (projectId: ProjectId, peer: EnvironmentId, logicalId: string) =>
       Effect.gen(function* () {
         const found = yield* projects.getById(projectId);
@@ -383,14 +422,14 @@ export const layer = Layer.effect(
             receipt.state === "answered"
           )
             return "read" as const;
+          // Final on the receiver without a read: the sender keeps "delivered" and stops asking.
           if (
             receipt.state === "revoked" ||
             receipt.state === "refused" ||
-            receipt.state === "not_delivered"
+            receipt.state === "not_delivered" ||
+            receipt.state === "quiet"
           )
-            return "not_delivered" as const;
-          // The receiver folded it away without waking anyone: final, stop asking.
-          if (receipt.state === "quiet") return "quiet" as const;
+            return "final" as const;
           return undefined;
         }),
     });
@@ -408,10 +447,17 @@ export const layer = Layer.effect(
               message: "clientRequestId must contain 1 to 128 characters.",
             }),
           );
-        // Labels are free text two machines may share; only stable ids pick a peer.
-        const target = (yield* peers.targets).filter(
+        // A stable id first; a label only when exactly one linked machine carries it.
+        const targets = yield* peers.targets;
+        const byId = targets.filter(
           (item) => item.machineId === input.machine || item.environmentId === input.machine,
         );
+        const target =
+          byId.length > 0
+            ? byId
+            : targets.filter(
+                (item) => item.label.trim().toLowerCase() === input.machine.trim().toLowerCase(),
+              );
         if (target.length !== 1)
           return yield* Effect.fail(
             new CoordinatorMessageOutboxError({
@@ -445,13 +491,49 @@ export const layer = Layer.effect(
             return yield* refuse(
               "A report reference names a report of this machine under .specweave/increments/<increment>/reports/.",
             );
+        const reportRoot = Option.isSome(project) ? project.value.workspaceRoot : undefined;
+        for (const ref of message.refs)
+          if (ref.kind === "report") {
+            const readable =
+              reportRoot === undefined
+                ? undefined
+                : yield* Effect.tryPromise(() => readReportPage(reportRoot, ref.path, 0)).pipe(
+                    Effect.orElseSucceed(() => undefined),
+                  );
+            if (readable === undefined)
+              return yield* refuse(
+                `The report ${ref.path} is not a readable report of up to 256 KB in this project.`,
+              );
+          }
+        const member = yield* destination(input.projectId, peer, logical.id);
+        if (member === undefined)
+          return yield* Effect.fail(
+            new CoordinatorMessageOutboxError({ message: "The destination is no longer linked." }),
+          );
         const rows = yield* store.all;
+        const runStart =
+          threads === undefined
+            ? undefined
+            : yield* threads.getThreadProjection(input.threadId).pipe(
+                Effect.map((projection) => {
+                  const run = projection.runs.find((each) => each.id === input.runId);
+                  return run === undefined ? undefined : orchestrationV2RunStartMessageId(run);
+                }),
+                Effect.orElseSucceed(() => undefined),
+              );
         // Every message that woke this run, from any machine: a woken turn only answers.
         const wakes = rows.filter(
           (row) =>
             row.direction === "incoming" &&
             row.projectId === input.projectId &&
-            (row.wokenRunId === input.runId || row.startedRun?.runId === input.runId),
+            (row.wokenRunId === input.runId ||
+              row.startedRun?.runId === input.runId ||
+              // The wake was recorded before its turn started but the run id was not:
+              // the run's start message names it; without that lookup, fail closed.
+              (row.wakePending !== undefined &&
+                row.wokenRunId === undefined &&
+                row.wakePending.threadId === input.threadId &&
+                (runStart === undefined || runStart === row.wakePending.commandId))),
         );
         const waking = wakes.filter((row) => row.kind !== "reply");
         if (wakes.length > 0) {
@@ -466,17 +548,6 @@ export const layer = Layer.effect(
             return yield* refuse(
               "A turn woken by a coordinator message may only reply to that message, on the machine that sent it.",
             );
-          if (
-            rows.some(
-              (row) =>
-                row.direction === "outgoing" &&
-                row.projectId === input.projectId &&
-                row.peerEnvironmentId === peer &&
-                row.replyTo === answered.externalId &&
-                !row.clientRequestIds.includes(input.clientRequestId),
-            )
-          )
-            return yield* refuse("A woken turn sends one reply.");
         }
         if (message.replyTo !== undefined) {
           const original = rows.find(
@@ -499,13 +570,16 @@ export const layer = Layer.effect(
             return yield* refuse(
               "That message never reached this coordinator, so it takes no reply.",
             );
+          // Only a message admitted under the link as it stands now takes a reply.
+          if (
+            original.admittedUnder?.membership !== member.membershipStamp ||
+            !["delivered", "read", "answered"].includes(original.state)
+          )
+            return yield* refuse(
+              "That message arrived under an earlier link, so it takes no reply.",
+            );
           message = { ...message, replyTo: original.externalId };
         }
-        const member = yield* destination(input.projectId, peer, logical.id);
-        if (member === undefined)
-          return yield* Effect.fail(
-            new CoordinatorMessageOutboxError({ message: "The destination is no longer linked." }),
-          );
         const externalId = `cm-${sha256([stringifyJson([input.projectId, peer, input.clientRequestId])]).toString("hex")}`;
         const row = {
           externalId,
@@ -515,6 +589,7 @@ export const layer = Layer.effect(
           logicalProjectId: logical.id,
           outgoingMembership: member.membershipStamp,
           clientRequestIds: [input.clientRequestId],
+          sourceRunId: input.runId,
           ...message,
           dedupeKey: coordinatorMessageDedupeKey(message, peer),
           count: 1,
@@ -522,7 +597,10 @@ export const layer = Layer.effect(
           receivedAt: 0,
           updatedAt: 0,
         };
-        const id = yield* box.enqueue({ ...row, id: coordinatorMessageRowId(row) });
+        const id = yield* box.enqueue(
+          { ...row, id: coordinatorMessageRowId(row) },
+          wakes.length > 0,
+        );
         // Persist first. A periodic pass retries a destination that is offline now.
         yield* box.flush;
         const result = (yield* store.all).find(

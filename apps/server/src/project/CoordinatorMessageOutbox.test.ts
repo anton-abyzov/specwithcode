@@ -245,12 +245,14 @@ describe("coordinator message outbox", () => {
         authorize: () => Effect.succeed(true),
         receiverProject: () => Effect.succeed(PROJECT),
         deliver: () => Effect.die("must not resend"),
-        receipt: () => Effect.sync(() => (asks++, "quiet" as const)),
+        receipt: () => Effect.sync(() => (asks++, "final" as const)),
       });
       yield* box.flush;
       yield* box.flush;
       expect(asks).toBe(1);
-      expect((yield* store.all)[0]!.state).toBe("quiet");
+      // A message that reached the peer stays delivered; only the asking stops.
+      expect((yield* store.all)[0]!.state).toBe("delivered");
+      expect((yield* store.all)[0]!.receiptStopped).toBe(true);
     }).pipe(Effect.provide(layerMemory([outgoing("message-quiet-receipt", "finding")]))),
   );
   it.effect("stops asking an older peer that has no receipt path", () =>
@@ -278,7 +280,66 @@ describe("coordinator message outbox", () => {
       yield* box.flush;
       yield* box.flush;
       expect(asks).toBe(1);
-      expect((yield* store.all)[0]!.state).toBe("not_delivered");
+      expect((yield* store.all)[0]!.state).toBe("delivered");
+      expect((yield* store.all)[0]!.receiptStopped).toBe(true);
     }).pipe(Effect.provide(layerMemory([outgoing("message-old-receipt", "finding")]))),
+  );
+  it.effect("keeps asking after a transient receipt failure", () =>
+    Effect.gen(function* () {
+      const store = yield* CoordinatorMessageStore;
+      let asks = 0;
+      const box = yield* makeOutbox({
+        store,
+        authorize: () => Effect.succeed(true),
+        receiverProject: () => Effect.succeed(PROJECT),
+        deliver: () => Effect.die("must not resend"),
+        receipt: () =>
+          Effect.suspend(() => {
+            asks++;
+            return Effect.fail(
+              new HandoffPeerError({ code: "unreachable", message: "offline", uncertain: false }),
+            );
+          }),
+      });
+      yield* box.flush;
+      yield* box.flush;
+      expect(asks).toBe(2);
+      expect((yield* store.all)[0]!.state).toBe("delivered");
+      expect((yield* store.all)[0]!.receiptStopped).toBeUndefined();
+    }).pipe(Effect.provide(layerMemory([outgoing("message-flaky-receipt", "finding")]))),
+  );
+  it.effect("lets a woken turn send one message, and a retry of it again", () =>
+    Effect.gen(function* () {
+      const store = yield* CoordinatorMessageStore;
+      const box = yield* makeOutbox({
+        store,
+        authorize: () => Effect.succeed(true),
+        receiverProject: () => Effect.succeed(PROJECT),
+        deliver: () => Effect.die("not flushed"),
+      });
+      const first = outgoing("message-woken-one", "finding", {
+        state: "queued",
+        sourceRunId: "run-woken",
+      });
+      const record = { ...first, id: coordinatorMessageRowId(first) };
+      yield* box.enqueue(record, true);
+      // The same request again replays; it is not a second message.
+      expect(yield* box.enqueue(record, true)).toBe(record.externalId);
+      const second = outgoing("message-woken-two", "finding", {
+        state: "queued",
+        sourceRunId: "run-woken",
+      });
+      const error = yield* box
+        .enqueue({ ...second, id: coordinatorMessageRowId(second) }, true)
+        .pipe(Effect.flip);
+      expect(error.message).toBe("A woken turn sends one reply.");
+      // A turn nobody woke is not limited.
+      const free = outgoing("message-free", "finding", {
+        state: "queued",
+        sourceRunId: "run-woken",
+      });
+      yield* box.enqueue({ ...free, id: coordinatorMessageRowId(free) });
+      expect(yield* store.all).toHaveLength(2);
+    }).pipe(Effect.provide(layerMemory())),
   );
 });

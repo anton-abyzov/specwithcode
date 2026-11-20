@@ -1,4 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -8,6 +11,7 @@ import { ProjectService } from "../../../project/ProjectService.ts";
 import { ServerEnvironment } from "../../../environment/ServerEnvironment.ts";
 import { HandoffPeers } from "../../../handoff/handoffPeers.ts";
 import type { CoordinatorMessageRecord } from "../../../project/CoordinatorMessageStore.ts";
+import { membershipOf } from "../../../project/CoordinatorMessageFrame.ts";
 import {
   body,
   COORDINATOR,
@@ -88,13 +92,18 @@ describe("live coordinator outbox wiring", () => {
     );
   });
 
-  const refusing = (rows: CoordinatorMessageRecord[]) => {
+  const refusing = (
+    rows: CoordinatorMessageRecord[],
+    targets = [
+      { machineId: "linux-mini", environmentId: LINUX, label: "build box" },
+      { machineId: "other-box", environmentId: "environment-other", label: "Build Box " },
+    ],
+    project = projectOf(PROJECT),
+  ) => {
     const sent: string[] = [];
     const services = Layer.mergeAll(
       Layer.succeed(HandoffPeers, {
-        targets: Effect.succeed([
-          { machineId: "linux-mini", environmentId: LINUX, label: "build box" },
-        ]),
+        targets: Effect.succeed(targets),
         coordinatorMessage: (_peer: unknown, request: { messageId: string }) =>
           Effect.sync(() => {
             sent.push(request.messageId);
@@ -107,7 +116,7 @@ describe("live coordinator outbox wiring", () => {
           }),
       } as unknown as HandoffPeers["Service"]),
       Layer.succeed(ProjectService, {
-        getById: () => Effect.succeed(Option.some(projectOf(PROJECT))),
+        getById: () => Effect.succeed(Option.some(project)),
       } as unknown as ProjectService["Service"]),
       Layer.succeed(ServerEnvironment, {
         getEnvironmentId: Effect.succeed(M5),
@@ -128,6 +137,13 @@ describe("live coordinator outbox wiring", () => {
     machine: "linux-mini",
     clientRequestId: "refused-request",
     message: body({ refs: [] }),
+  };
+  const admitted = {
+    grantStamp: "grant",
+    operate: false,
+    capabilities: ["coordinator-message.v1"],
+    sessionId: "session",
+    membership: membershipOf(projectOf(PROJECT), LINUX, M5)!,
   };
   const incoming = (
     externalId: string,
@@ -150,8 +166,13 @@ describe("live coordinator outbox wiring", () => {
       refusal: "running coordinator turn",
     },
     {
-      name: "a target named only by its label",
+      name: "a label two linked machines share",
       input: { machine: "build box" },
+      refusal: "Name one linked machine",
+    },
+    {
+      name: "a label no linked machine has",
+      input: { machine: "no such box" },
       refusal: "Name one linked machine",
     },
     {
@@ -173,6 +194,44 @@ describe("live coordinator outbox wiring", () => {
       rows: [incoming("refused-question", { state: "refused" })],
       input: { message: body({ kind: "reply", replyTo: "refused-question", refs: [] }) },
       refusal: "never reached this coordinator",
+    },
+    {
+      name: "a report missing from this project",
+      input: {
+        message: body({
+          refs: [
+            {
+              kind: "report",
+              environmentId: M5,
+              path: ".specweave/increments/1427-test/reports/missing.md",
+              bytes: 10,
+            },
+          ],
+        }),
+      },
+      refusal: "is not a readable report",
+    },
+    {
+      name: "a reply to a message admitted under an earlier link",
+      rows: [
+        incoming("old-link-question", {
+          state: "read",
+          admittedUnder: { ...admitted, membership: "before-rejoin" },
+        }),
+      ],
+      input: { message: body({ kind: "reply", replyTo: "old-link-question", refs: [] }) },
+      refusal: "arrived under an earlier link",
+    },
+    {
+      name: "a new message while a wake of this thread has no known run",
+      rows: [
+        incoming("pending-wake", {
+          state: "read",
+          wakePending: { threadId: COORDINATOR, commandId: "command-wake" },
+        }),
+      ],
+      input: {},
+      refusal: "may only reply to that message",
     },
     {
       name: "a new message from a turn a message woke",
@@ -201,5 +260,32 @@ describe("live coordinator outbox wiring", () => {
         ),
       ).toEqual([]);
     }).pipe(Effect.provide(harness.layer));
+  });
+  it.effect("sends to a unique label, with a real report, replying under the current link", () => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "coordinator-report-"));
+    const reportPath = ".specweave/increments/1427-test/reports/m5.md";
+    NodeFS.mkdirSync(NodePath.join(root, NodePath.dirname(reportPath)), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(root, reportPath), "# Findings\n");
+    const harness = refusing(
+      [incoming("current-question", { state: "read", admittedUnder: admitted })],
+      [{ machineId: "linux-mini", environmentId: LINUX, label: "Build Box" }],
+      { ...projectOf(PROJECT), workspaceRoot: root } as ReturnType<typeof projectOf>,
+    );
+    return Effect.gen(function* () {
+      const outbox = yield* Outbox.CoordinatorMessageOutbox;
+      const sent = yield* outbox.send({
+        ...base,
+        machine: " build box ",
+        message: body({
+          kind: "reply",
+          replyTo: "current-question",
+          refs: [{ kind: "report", environmentId: M5, path: reportPath, bytes: 11 }],
+        }),
+      });
+      expect(harness.sent).toEqual([sent.externalId]);
+    }).pipe(
+      Effect.provide(harness.layer),
+      Effect.ensuring(Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true }))),
+    );
   });
 });
