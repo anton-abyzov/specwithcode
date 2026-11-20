@@ -1002,6 +1002,7 @@ export async function runComputerUseAction(
                   y: point.y,
                   application: action.application,
                   ...(targetWindowId === undefined ? {} : { windowId: targetWindowId }),
+                  ...(hasWindowContext ? { bounds: activeCapture.bounds } : {}),
                 },
               }),
         });
@@ -1183,7 +1184,9 @@ export async function runComputerUseAction(
                     x: point.x,
                     y: point.y,
                     application: action.application,
-                    ...(hasWindowContext ? { windowId: activeCapture.windowId } : {}),
+                    ...(hasWindowContext
+                      ? { windowId: activeCapture.windowId, bounds: activeCapture.bounds }
+                      : {}),
                   },
                 }),
           });
@@ -1334,7 +1337,9 @@ export async function runComputerUseAction(
                   x: from.x,
                   y: from.y,
                   application: fromApplication,
-                  ...(hasWindowContext ? { windowId: activeCapture.windowId } : {}),
+                  ...(hasWindowContext
+                    ? { windowId: activeCapture.windowId, bounds: activeCapture.bounds }
+                    : {}),
                 },
               }),
           ...(toApplication === undefined
@@ -1344,7 +1349,9 @@ export async function runComputerUseAction(
                   x: to.x,
                   y: to.y,
                   application: toApplication,
-                  ...(hasWindowContext ? { windowId: activeCapture.windowId } : {}),
+                  ...(hasWindowContext
+                    ? { windowId: activeCapture.windowId, bounds: activeCapture.bounds }
+                    : {}),
                 },
               }),
         });

@@ -99,6 +99,15 @@ describe("actionSteps", () => {
     const presses = steps.filter((step) => step.type === "mouse" && step.event !== 5);
     expect(presses.map((step) => (step.type === "mouse" ? step.event : 0))).toEqual([3, 4]);
     expect(presses.every((step) => step.type === "mouse" && step.flags === 0x100000)).toBe(true);
+    expect(steps.some((step) => step.type === "key")).toBe(false);
+  });
+
+  it("clickStepsAtPoint carries modifiers via flags without posting global key events", () => {
+    const steps = clickStepsAtPoint({ x: 100, y: 200 }, { modifiers: ["cmd", "shift"] });
+    expect(steps.some((step) => step.type === "key")).toBe(false);
+    const mouseSteps = steps.filter((step) => step.type === "mouse");
+    expect(mouseSteps.length).toBeGreaterThanOrEqual(3);
+    expect(mouseSteps.every((step) => step.flags === (0x100000 | 0x20000))).toBe(true);
   });
 
   it("drags with the button held between the two points", () => {

@@ -283,6 +283,179 @@ describe("JXA_INPUT_SCRIPT safety invariants", () => {
     expect(pidPosted.every((e) => e.pid === 100)).toBe(true);
     expect(dragPosted.at(-1)).toEqual({ type: 2, x: 100, y: 100 });
   });
+
+  it("aborts window-relative HID input with window-moved when window bounds shift", () => {
+    const posted: Array<unknown> = [];
+    const ctx = NodeVM.createContext({
+      ObjC: {
+        import: () => undefined,
+        bindFunction: () => undefined,
+        deepUnwrap: (v: unknown) => v,
+        castRefToObject: (v: unknown) => v,
+        unwrap: (v: unknown) => v,
+      },
+      delay: () => undefined,
+      $: Object.assign((s: string) => s, {
+        NSWorkspace: {
+          sharedWorkspace: {
+            frontmostApplication: {
+              isNil: () => false,
+              bundleIdentifier: { isNil: () => false, js: "com.apple.Notes" },
+              localizedName: { isNil: () => false, js: "Notes" },
+              processIdentifier: 100,
+            },
+          },
+        },
+        NSScreen: { screens: { isNil: () => true } },
+        CGWindowListCopyWindowInfo: () => [
+          {
+            kCGWindowOwnerName: "Notes",
+            kCGWindowOwnerPID: 100,
+            kCGWindowNumber: 42,
+            kCGWindowLayer: 0,
+            kCGWindowAlpha: 1,
+            kCGWindowBounds: { X: 80, Y: 50, Width: 500, Height: 400 },
+          },
+        ],
+        CGEventCreate: () => ({}),
+        CGEventGetLocation: () => ({ x: 10, y: 10 }),
+        CGEventCreateMouseEvent: (_s: unknown, type: number, pt: { x: number; y: number }) => ({
+          type,
+          x: pt.x,
+          y: pt.y,
+        }),
+        CGEventSetIntegerValueField: () => undefined,
+        CGEventSetFlags: () => undefined,
+        CGEventPost: (_tap: number, ev: unknown) => {
+          posted.push(ev);
+        },
+        CGEventSourceSecondsSinceLastEventType: () => 10,
+      }),
+    });
+    NodeVM.runInContext(JXA_INPUT_SCRIPT, ctx);
+    expect(() =>
+      (ctx.run as (argv: Array<string>) => string)([
+        JSON.stringify([
+          { type: "mouse", event: 1, button: 0, x: 150, y: 150, clickState: 1, flags: 0 },
+          { type: "mouse", event: 2, button: 0, x: 150, y: 150, clickState: 1, flags: 0 },
+        ]),
+        JSON.stringify({
+          expectedPointOwner: {
+            x: 150,
+            y: 150,
+            application: "Notes",
+            windowId: 42,
+            bounds: { x: 0, y: 0, width: 500, height: 400 },
+          },
+        }),
+      ]),
+    ).toThrow(/point-owner-changed:\s*window-moved/);
+    expect(posted).toHaveLength(0);
+  });
+
+  it("tracks drag-back synthetic cursor so global mouse-up and cursor restoration succeed", () => {
+    const posted: Array<{ type: number; x?: number; y?: number }> = [];
+    const warped: Array<{ x: number; y: number }> = [];
+    let cursor = { x: 33, y: 44 };
+    let dropCovered = false;
+    const ctx = NodeVM.createContext({
+      ObjC: {
+        import: () => undefined,
+        bindFunction: () => undefined,
+        deepUnwrap: (v: unknown) => v,
+        castRefToObject: (v: unknown) => v,
+        unwrap: (v: unknown) => v,
+      },
+      delay: () => undefined,
+      $: Object.assign((s: string) => s, {
+        NSWorkspace: {
+          sharedWorkspace: {
+            frontmostApplication: {
+              isNil: () => false,
+              bundleIdentifier: { isNil: () => false, js: "com.apple.Notes" },
+              localizedName: { isNil: () => false, js: "Notes" },
+              processIdentifier: 100,
+            },
+          },
+        },
+        NSScreen: { screens: { isNil: () => true } },
+        CGWindowListCopyWindowInfo: () => [
+          ...(dropCovered
+            ? [
+                {
+                  kCGWindowOwnerName: "Terminal",
+                  kCGWindowOwnerPID: 200,
+                  kCGWindowNumber: 99,
+                  kCGWindowLayer: 0,
+                  kCGWindowAlpha: 1,
+                  kCGWindowBounds: { X: 250, Y: 250, Width: 200, Height: 200 },
+                },
+              ]
+            : []),
+          {
+            kCGWindowOwnerName: "Notes",
+            kCGWindowOwnerPID: 100,
+            kCGWindowNumber: 42,
+            kCGWindowLayer: 0,
+            kCGWindowAlpha: 1,
+            kCGWindowBounds: { X: 0, Y: 0, Width: 500, Height: 500 },
+          },
+        ],
+        CGEventCreate: () => ({}),
+        CGEventGetLocation: () => cursor,
+        CGEventCreateMouseEvent: (_s: unknown, type: number, pt: { x: number; y: number }) => ({
+          type,
+          x: pt.x,
+          y: pt.y,
+        }),
+        CGEventCreateKeyboardEvent: (_s: unknown, keyCode: number, down: boolean) => ({
+          type: 10,
+          keyCode,
+          down,
+        }),
+        CGEventSetIntegerValueField: () => undefined,
+        CGEventSetFlags: () => undefined,
+        CGEventPost: (_tap: number, ev: { type: number; x?: number; y?: number }) => {
+          posted.push(ev);
+          if (typeof ev.x === "number" && typeof ev.y === "number") {
+            cursor = { x: ev.x, y: ev.y };
+          }
+          if (ev.type === 6 && ev.x === 300) {
+            dropCovered = true;
+          }
+        },
+        CGEventPostToPid: () => undefined,
+        CGWarpMouseCursorPosition: (pt: { x: number; y: number }) => {
+          warped.push({ x: pt.x, y: pt.y });
+          cursor = { x: pt.x, y: pt.y };
+        },
+        CGEventSourceSecondsSinceLastEventType: () => 10,
+      }),
+    });
+    NodeVM.runInContext(JXA_INPUT_SCRIPT, ctx);
+    expect(() =>
+      (ctx.run as (argv: Array<string>) => string)([
+        JSON.stringify([
+          { type: "mouse", event: 5, button: 0, x: 100, y: 100, clickState: 0, flags: 0 },
+          { type: "mouse", event: 1, button: 0, x: 100, y: 100, clickState: 1, flags: 0 },
+          { type: "mouse", event: 6, button: 0, x: 300, y: 300, clickState: 0, flags: 0 },
+          { type: "mouse", event: 2, button: 0, x: 300, y: 300, clickState: 1, flags: 0 },
+        ]),
+        JSON.stringify({
+          restoreCursor: true,
+          expectedPointOwner: { x: 100, y: 100, application: "Notes", windowId: 42 },
+          expectedDropOwner: { x: 300, y: 300, application: "Notes", windowId: 42 },
+        }),
+      ]),
+    ).toThrow(/drop-owner-changed:Terminal/);
+    // Global dragBack (6) to origin, then global mouseUp (2) at origin, then cursor restored (5) to (33, 44).
+    expect(posted.slice(-3)).toEqual([
+      { type: 6, x: 100, y: 100 },
+      { type: 2, x: 100, y: 100 },
+      { type: 5, x: 33, y: 44 },
+    ]);
+    expect(warped).toHaveLength(0);
+  });
 });
 
 describe("JXA_AX_ACTION_SCRIPT and JXA_WINDOWS_SCRIPT window disambiguation", () => {

@@ -122,19 +122,31 @@ export interface ReplayOptions {
   readonly restoreCursor?: boolean;
   /** Abort before posting any HID event if this app is not frontmost (case-insensitive). */
   readonly expectedFrontmost?: string;
-  /** Abort before posting any HID event if the topmost window at `(x, y)` is not owned by `application` (and `windowId` when set). */
+  /** Abort before posting any HID event if the topmost window at `(x, y)` is not owned by `application` (and `windowId`/`bounds` when set). */
   readonly expectedPointOwner?: {
     readonly x: number;
     readonly y: number;
     readonly application: string;
     readonly windowId?: number;
+    readonly bounds?: {
+      readonly x: number;
+      readonly y: number;
+      readonly width: number;
+      readonly height: number;
+    };
   };
-  /** For drags: abort before starting or cancel before mouse-up if the drop point `(x, y)` is not owned by `application` (and `windowId` when set). */
+  /** For drags: abort before starting or cancel before mouse-up if the drop point `(x, y)` is not owned by `application` (and `windowId`/`bounds` when set). */
   readonly expectedDropOwner?: {
     readonly x: number;
     readonly y: number;
     readonly application: string;
     readonly windowId?: number;
+    readonly bounds?: {
+      readonly x: number;
+      readonly y: number;
+      readonly width: number;
+      readonly height: number;
+    };
   };
   /** Abort before posting any HID event if this PID (e.g. SpecWithCode) is frontmost or owns the target point. */
   readonly forbidPid?: number;
@@ -178,10 +190,7 @@ export function clickStepsAtPoint(
   const modifiers = options.modifiers ?? [];
   const events = BUTTON_EVENTS[button];
   const flags = modifiers.reduce((mask, modifier) => mask | MODIFIER_FLAGS[modifier], 0);
-  const steps: Array<InputStep> = [move(point.x, point.y), { type: "sleep", ms: 20 }];
-  for (const modifier of modifiers) {
-    steps.push({ type: "key", keyCode: MODIFIER_KEY_CODES[modifier], down: true, flags });
-  }
+  const steps: Array<InputStep> = [move(point.x, point.y, flags), { type: "sleep", ms: 20 }];
   for (let click = 1; click <= count; click++) {
     steps.push(
       {
@@ -204,9 +213,6 @@ export function clickStepsAtPoint(
       },
     );
     if (click < count) steps.push({ type: "sleep", ms: 40 });
-  }
-  for (const modifier of modifiers.toReversed()) {
-    steps.push({ type: "key", keyCode: MODIFIER_KEY_CODES[modifier], down: false, flags: 0 });
   }
   return steps;
 }

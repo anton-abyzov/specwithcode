@@ -134,7 +134,7 @@ function pointOwnerAt(px, py) {
       continue;
     }
     var windowId = item.kCGWindowNumber === undefined ? null : Number(item.kCGWindowNumber);
-    return { owner: owner, pid: pid, windowId: windowId };
+    return { owner: owner, pid: pid, windowId: windowId, bounds: { x: x, y: y, width: width, height: height } };
   }
   return null;
 }
@@ -151,6 +151,19 @@ function verifyExpectedOwner(expected, forbidPid) {
   if (typeof expected.windowId === "number" && expected.windowId > 0) {
     if (hit.windowId !== expected.windowId) {
       return { err: "window-changed:" + (hit.windowId === null ? "unknown" : hit.windowId), hit: null };
+    }
+  }
+  if (expected.bounds) {
+    var eb = expected.bounds;
+    var hb = hit.bounds;
+    if (
+      !hb ||
+      Math.abs(hb.x - Number(eb.x)) > 1 ||
+      Math.abs(hb.y - Number(eb.y)) > 1 ||
+      Math.abs(hb.width - Number(eb.width)) > 1 ||
+      Math.abs(hb.height - Number(eb.height)) > 1
+    ) {
+      return { err: "window-moved", hit: null };
     }
   }
   return { err: null, hit: hit };
@@ -302,13 +315,17 @@ function run(argv) {
           isOriginStillSafe()
         ) {
           var dragBack = $.CGEventCreateMouseEvent(null, 6, releasePoint, press.button);
-          if (dragBack !== null) $.CGEventPost(0, dragBack);
+          if (dragBack !== null) {
+            $.CGEventPost(0, dragBack);
+            lastSyntheticCursor = { x: releasePoint.x, y: releasePoint.y };
+          }
         }
         release = $.CGEventCreateMouseEvent(null, MOUSE_UPS[press.event], releasePoint, press.button);
         if (press.clickState > 0) $.CGEventSetIntegerValueField(release, 1, press.clickState);
         $.CGEventSetFlags(release, press.flags || 0);
         if (isOriginStillSafe() || (!cancelDrag && !opts.expectedPointOwner)) {
           $.CGEventPost(0, release);
+          lastSyntheticCursor = { x: releasePoint.x, y: releasePoint.y };
         } else if (
           validStartPid !== null &&
           typeof $.CGEventPostToPid === "function"
