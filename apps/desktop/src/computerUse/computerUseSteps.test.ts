@@ -918,12 +918,39 @@ describe("background computer use helpers", () => {
     });
     NodeVM.runInContext(JXA_INPUT_SCRIPT, context);
     const steps = clickStepsAtPoint({ x: 100, y: 200 });
-    (context.run as (argv: Array<string>) => string)([
-      JSON.stringify(steps),
-      JSON.stringify({ restoreCursor: true }),
-    ]);
-    // Last posted event is mouse up at (100, 200), NOT a warp back to (900, 600).
-    expect(posted.at(-1)).toEqual({ type: 2, x: 100, y: 200 });
+    // Human moved the pointer after the initial mouseMove: replay aborts with
+    // human-moved instead of posting mouseDown/mouseUp at the old point or
+    // warping the cursor back to (900, 600).
+    expect(() =>
+      (context.run as (argv: Array<string>) => string)([
+        JSON.stringify(steps),
+        JSON.stringify({ restoreCursor: true }),
+      ]),
+    ).toThrow(/human-moved/);
+    expect(posted).toEqual([{ type: 5, x: 100, y: 200 }]);
+
+    // If a button is already held down when the human moves, stop() releases
+    // the held button at the human's current cursor (450, 450), not (100, 200).
+    posted.length = 0;
+    cursorPos = { x: 900, y: 600 };
+    let postCount = 0;
+    bridge.CGEventPost = (_: number, event: { type: number; x?: number; y?: number }) => {
+      posted.push({ ...event });
+      postCount++;
+      if (postCount === 1) {
+        cursorPos = { x: 100, y: 200 };
+      } else if (postCount === 2) {
+        // Human grabs the mouse right after mouseDown.
+        cursorPos = { x: 450, y: 450 };
+      }
+    };
+    expect(() =>
+      (context.run as (argv: Array<string>) => string)([
+        JSON.stringify(steps),
+        JSON.stringify({ restoreCursor: true }),
+      ]),
+    ).toThrow(/human-moved/);
+    expect(posted.at(-1)).toEqual({ type: 2, x: 450, y: 450 });
 
     // Refuses to post when forbidPid matches frontmost app.
     const countBefore = posted.length;
@@ -1210,19 +1237,112 @@ describe("background computer use helpers", () => {
     expect(writeObjectsCount).toBe(1);
     expect(clipboardText).toBe("user-original");
 
-    // If user copied something during paste (changeCount bumped), do NOT overwrite user's clipboard.
+    // If user copied something during paste (changeCount bumped), abort before
+    // pasting and do NOT overwrite the user's clipboard.
     bumpChangeCountDuringPaste = true;
-    (context.run as (argv: Array<string>) => string)([
-      JSON.stringify(PASTE_STEPS),
-      JSON.stringify({ pasteText: "typed-text", expectedFrontmost: "Notes" }),
-    ]);
+    expect(() =>
+      (context.run as (argv: Array<string>) => string)([
+        JSON.stringify(PASTE_STEPS),
+        JSON.stringify({ pasteText: "typed-text", expectedFrontmost: "Notes" }),
+      ]),
+    ).toThrow(/clipboard-changed/);
     expect(writeObjectsCount).toBe(1);
     expect(clipboardText).toBe("user-copied-same-or-new");
   });
 
-  it("requires non-empty AXIdentifier scoped to AXWindow in JXA_AX_ACTION_SCRIPT", () => {
+  it("aborts paste before writing clipboard if focus or changeCount changes during snapshot", () => {
+    let frontAppName = "Notes";
+    let changeCount = 5;
+    let clearCount = 0;
+    let postedKeys = 0;
+    let flipFocusOnSnapshot = false;
+    let bumpChangeCountOnSnapshot = false;
+    const pbItem = {
+      types: { isNil: () => false, count: 1, objectAtIndex: () => "public.utf8-plain-text" },
+      dataForType: () => {
+        if (flipFocusOnSnapshot) frontAppName = "Terminal";
+        if (bumpChangeCountOnSnapshot) changeCount++;
+        return { isNil: () => false, bytes: "saved" };
+      },
+    };
+    const bridge = {
+      NSWorkspace: {
+        sharedWorkspace: {
+          get frontmostApplication() {
+            return {
+              isNil: () => false,
+              processIdentifier: 100,
+              localizedName: { js: frontAppName },
+              bundleIdentifier: { isNil: () => false, js: "com.apple.Notes" },
+            };
+          },
+        },
+      },
+      NSPasteboardTypeString: "public.utf8-plain-text",
+      NSData: { dataWithData: (d: unknown) => d },
+      NSPasteboardItem: { alloc: { init: () => ({ setDataForType: () => undefined }) } },
+      NSMutableArray: { array: () => ({ addObject: () => undefined }) },
+      NSPasteboard: {
+        generalPasteboard: {
+          get changeCount() {
+            return changeCount;
+          },
+          get pasteboardItems() {
+            return { isNil: () => false, count: 1, objectAtIndex: () => pbItem };
+          },
+          get clearContents() {
+            clearCount++;
+            changeCount++;
+            return 0;
+          },
+          setStringForType: () => undefined,
+          writeObjects: () => true,
+        },
+      },
+      CGEventCreateKeyboardEvent: () => ({ kind: "key" }),
+      CGEventSetFlags: () => undefined,
+      CGEventPost: () => {
+        postedKeys++;
+      },
+    };
+    const context = NodeVM.createContext({
+      ObjC: { import: () => undefined },
+      $: Object.assign((val: string) => ({ raw: val }), bridge),
+      delay: () => undefined,
+    });
+    NodeVM.runInContext(JXA_INPUT_SCRIPT, context);
+
+    flipFocusOnSnapshot = true;
+    expect(() =>
+      (context.run as (argv: Array<string>) => string)([
+        JSON.stringify(PASTE_STEPS),
+        JSON.stringify({ pasteText: "secret", expectedFrontmost: "Notes" }),
+      ]),
+    ).toThrow(/not-frontmost-app/);
+    expect(clearCount).toBe(0);
+    expect(postedKeys).toBe(0);
+
+    frontAppName = "Notes";
+    flipFocusOnSnapshot = false;
+    bumpChangeCountOnSnapshot = true;
+    expect(() =>
+      (context.run as (argv: Array<string>) => string)([
+        JSON.stringify(PASTE_STEPS),
+        JSON.stringify({ pasteText: "secret", expectedFrontmost: "Notes" }),
+      ]),
+    ).toThrow(/clipboard-changed/);
+    expect(clearCount).toBe(0);
+    expect(postedKeys).toBe(0);
+  });
+
+  it("verifies topmost windowId at point and reads stdin in JXA scripts", () => {
     expect(JXA_AX_ACTION_SCRIPT).toContain('var id = copyStringAttr(el, "AXIdentifier");');
     expect(JXA_AX_ACTION_SCRIPT).toContain('if (!id.ok || !id.value) return "";');
     expect(JXA_AX_ACTION_SCRIPT).toContain('$("AXWindow")');
+    expect(JXA_AX_ACTION_SCRIPT).toContain("function verifyWindowAtPoint(req)");
+    expect(JXA_AX_ACTION_SCRIPT).toContain('"ax-window-occluded"');
+    expect(JXA_AX_ACTION_SCRIPT).toContain('"ax-window-unverifiable"');
+    expect(JXA_AX_ACTION_SCRIPT).toContain("readStdin()");
+    expect(JXA_INPUT_SCRIPT).toContain("readStdin()");
   });
 });

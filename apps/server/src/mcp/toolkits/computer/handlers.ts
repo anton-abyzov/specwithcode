@@ -47,6 +47,18 @@ const nonEmpty = (name: string | undefined) =>
 export const UNKNOWN_TARGET_REFUSAL =
   "Could not tell which app is in front, so the action did not run. Take a screenshot and try again.";
 
+const CAPTURED_APPS_MAX_ENTRIES = 128;
+const capturedApplicationByThread = new Map<string, string>();
+
+const setCapturedApplication = (threadId: string, application: string) => {
+  capturedApplicationByThread.delete(threadId);
+  capturedApplicationByThread.set(threadId, application);
+  if (capturedApplicationByThread.size > CAPTURED_APPS_MAX_ENTRIES) {
+    const oldest = capturedApplicationByThread.keys().next().value;
+    if (oldest !== undefined) capturedApplicationByThread.delete(oldest);
+  }
+};
+
 /**
  * The apps an action reaches, read just before it runs: the app being
  * opened; for a click, drag or scroll, the app owning the topmost window
@@ -67,6 +79,12 @@ const targetApps = (action: ComputerUseAction, broker: Broker, threadId: string)
       action.application !== undefined
     ) {
       return [action.application];
+    }
+    if (action.kind === "click" || action.kind === "scroll") {
+      const capturedApp = capturedApplicationByThread.get(threadId);
+      if (capturedApp !== undefined) {
+        return [capturedApp];
+      }
     }
     let frontmost: string | undefined | null = null;
     const readFrontmost = Effect.gen(function* () {
@@ -213,9 +231,13 @@ const look = (action: ComputerUseAction) =>
   Effect.gen(function* () {
     const scope = yield* allowed;
     const broker = yield* ComputerUseBroker.ComputerUseBroker;
-    return yield* broker.invoke(withSessionKey(action, scope.thread.threadId), {
+    const result = yield* broker.invoke(withSessionKey(action, scope.thread.threadId), {
       threadId: scope.thread.threadId,
     });
+    if (action.kind === "screenshot") {
+      capturedApplicationByThread.delete(scope.thread.threadId);
+    }
+    return result;
   });
 
 const run = (action: ComputerUseAction) =>
@@ -230,9 +252,19 @@ const run = (action: ComputerUseAction) =>
       names[0] !== undefined
         ? { ...action, application: names[0] }
         : action;
-    return yield* broker.invoke(withSessionKey(withApp, scope.thread.threadId), {
+    const result = yield* broker.invoke(withSessionKey(withApp, scope.thread.threadId), {
       threadId: scope.thread.threadId,
     });
+    if (action.kind === "screenshot") {
+      if (action.application !== undefined) {
+        setCapturedApplication(scope.thread.threadId, action.application);
+      } else {
+        capturedApplicationByThread.delete(scope.thread.threadId);
+      }
+    } else if (action.kind === "open") {
+      capturedApplicationByThread.delete(scope.thread.threadId);
+    }
+    return result;
   });
 
 /** Everything but the image: action tools report where things stand afterwards. */

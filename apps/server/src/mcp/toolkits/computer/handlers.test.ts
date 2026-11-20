@@ -493,3 +493,61 @@ it.effect(
     }).pipe(Effect.scoped, Effect.provide(layer));
   },
 );
+
+it.effect(
+  "binds omitted application on click/scroll to the active window-local capture until reset",
+  () => {
+    const { layer, call, actions } = harness({
+      allowed: ["app:notes", "app:terminal"],
+      answer: "allowed",
+      frontmost: ["SpecWithCode"],
+      appAt: () => "Terminal",
+    });
+    return Effect.gen(function* () {
+      const shot = yield* call("computer_screenshot", { application: "Notes" });
+      expect(shot.isError).toBe(false);
+
+      // Omitting application after a window-local screenshot of Notes must bind
+      // to Notes, not primary-display appAt ("Terminal").
+      const scrolled = yield* call("computer_scroll", { x: 40, y: 50, direction: "down" });
+      expect(scrolled.isError).toBe(false);
+      expect(actions.at(-1)).toEqual({
+        kind: "scroll",
+        x: 40,
+        y: 50,
+        direction: "down",
+        application: "Notes",
+        sessionKey: "thread-computer-test",
+      });
+
+      const clicked = yield* call("computer_click", { x: 20, y: 30 });
+      expect(clicked.isError).toBe(false);
+      expect(actions.at(-1)).toEqual({
+        kind: "click",
+        x: 20,
+        y: 30,
+        application: "Notes",
+        sessionKey: "thread-computer-test",
+      });
+
+      // Full-display screenshot resets window-local capture binding so appAt ("Terminal") applies again.
+      const fullShot = yield* call("computer_screenshot", {});
+      expect(fullShot.isError).toBe(false);
+
+      const scrolledAfterFull = yield* call("computer_scroll", {
+        x: 40,
+        y: 50,
+        direction: "down",
+      });
+      expect(scrolledAfterFull.isError).toBe(false);
+      expect(actions.at(-1)).toEqual({
+        kind: "scroll",
+        x: 40,
+        y: 50,
+        direction: "down",
+        application: "Terminal",
+        sessionKey: "thread-computer-test",
+      });
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  },
+);

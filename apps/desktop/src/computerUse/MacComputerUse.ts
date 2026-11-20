@@ -52,9 +52,9 @@ import {
 } from "./computerUseSteps.ts";
 import { isResettableBundleId, TCC_SERVICE, waitForPermission } from "./permissionWait.ts";
 
-const execFile = (file: string, args: ReadonlyArray<string>, timeoutMs: number) =>
+const execFile = (file: string, args: ReadonlyArray<string>, timeoutMs: number, stdin?: string) =>
   new Promise<string>((resolve, reject) => {
-    NodeChildProcess.execFile(
+    const child = NodeChildProcess.execFile(
       file,
       [...args],
       { timeout: timeoutMs, maxBuffer: 1024 * 1024 },
@@ -70,6 +70,9 @@ const execFile = (file: string, args: ReadonlyArray<string>, timeoutMs: number) 
         else resolve(stdout);
       },
     );
+    if (stdin !== undefined) {
+      child.stdin?.end(stdin, "utf8");
+    }
   });
 
 // The main process reads Screen Recording once at launch (CGPreflightScreenCaptureAccess
@@ -251,16 +254,23 @@ interface WindowCaptureState {
   readonly bounds: ScreenArea;
 }
 
-interface BackgroundFieldState {
-  readonly application: string;
-  readonly pid: number;
-  readonly windowId: number;
-  readonly bounds: ScreenArea;
-  readonly x: number;
-  readonly y: number;
-  readonly role?: string | undefined;
-  readonly fieldKey?: string | undefined;
-}
+type BackgroundFieldState =
+  | {
+      readonly status: "active";
+      readonly application: string;
+      readonly pid: number;
+      readonly windowId: number;
+      readonly bounds: ScreenArea;
+      readonly x: number;
+      readonly y: number;
+      readonly role?: string | undefined;
+      readonly fieldKey?: string | undefined;
+    }
+  | {
+      readonly status: "invalidated";
+      readonly application: string;
+      readonly reason: string;
+    };
 
 const MAX_SESSION_STATE = 32;
 /** Per-session last window capture, for mapping window-relative coordinates without cross-thread leaks. */
@@ -352,6 +362,7 @@ interface AxActionResult {
 async function runAxAction(request: {
   readonly mode: "click" | "type";
   readonly pid: number;
+  readonly windowId?: number;
   readonly x: number;
   readonly y: number;
   readonly text?: string;
@@ -364,8 +375,9 @@ async function runAxAction(request: {
   try {
     const output = await execFile(
       "/usr/bin/osascript",
-      ["-l", "JavaScript", "-e", JXA_AX_ACTION_SCRIPT, JSON.stringify(request)],
+      ["-l", "JavaScript", "-e", JXA_AX_ACTION_SCRIPT],
       10_000,
+      JSON.stringify(request),
     );
     return JSON.parse(output.trim()) as AxActionResult;
   } catch {
@@ -377,9 +389,16 @@ async function replay(
   steps: ReadonlyArray<InputStep>,
   options?: ReplayOptions,
 ): Promise<string | undefined> {
-  const args = ["-l", "JavaScript", "-e", JXA_INPUT_SCRIPT, JSON.stringify(steps)];
-  if (options !== undefined) args.push(JSON.stringify(options));
-  const output = await execFile("/usr/bin/osascript", args, 30_000);
+  const payload = JSON.stringify({
+    steps,
+    ...(options === undefined ? {} : { options }),
+  });
+  const output = await execFile(
+    "/usr/bin/osascript",
+    ["-l", "JavaScript", "-e", JXA_INPUT_SCRIPT],
+    30_000,
+    payload,
+  );
   try {
     const parsed = JSON.parse(output.trim()) as { frontmostApplication?: string | null };
     return parsed.frontmostApplication ?? undefined;
@@ -524,16 +543,22 @@ async function typeText(
       ...(guard?.forbidPid === undefined ? {} : { forbidPid: guard.forbidPid }),
     });
   } catch (error) {
-    if (
-      error instanceof Error &&
-      (error.message.includes("not-frontmost-app") ||
-        error.message.includes("forbidden-frontmost-pid"))
-    ) {
-      throw new ComputerUseInputError(
-        guard?.expectedFrontmost !== undefined
-          ? `Cannot type into "${guard.expectedFrontmost}" in the background: frontmost app changed before input could be sent. Bring "${guard.expectedFrontmost}" to the front with computer_open and try again.`
-          : "Cannot type while SpecWithCode is in front. Bring the target app forward with computer_open and try again.",
-      );
+    if (error instanceof Error) {
+      if (
+        error.message.includes("not-frontmost-app") ||
+        error.message.includes("forbidden-frontmost-pid")
+      ) {
+        throw new ComputerUseInputError(
+          guard?.expectedFrontmost !== undefined
+            ? `Cannot type into "${guard.expectedFrontmost}" in the background: frontmost app changed before input could be sent. Bring "${guard.expectedFrontmost}" to the front with computer_open and try again.`
+            : "Cannot type while SpecWithCode is in front. Bring the target app forward with computer_open and try again.",
+        );
+      }
+      if (error.message.includes("clipboard-changed")) {
+        throw new ComputerUseInputError(
+          "Clipboard changed while preparing to type, so nothing was pasted. Try again when the user is not copying.",
+        );
+      }
     }
     throw error;
   }
@@ -781,17 +806,25 @@ export async function runComputerUseAction(
         canAttemptBackgroundAxClick(action) &&
         targetPid !== undefined &&
         targetPid > 0 &&
-        targetPid !== process.pid
+        targetPid !== process.pid &&
+        targetWindowId !== undefined &&
+        targetWindowId > 0
       ) {
-        const ax = await runAxAction({ mode: "click", pid: targetPid, x: point.x, y: point.y });
+        const ax = await runAxAction({
+          mode: "click",
+          pid: targetPid,
+          windowId: targetWindowId,
+          x: point.x,
+          y: point.y,
+        });
         if (ax.ok) {
           if (
             ax.kind === "editable" &&
             action.application !== undefined &&
-            targetWindowId !== undefined &&
             targetBounds !== undefined
           ) {
             setBounded(backgroundFields, sessionKey, {
+              status: "active",
               application: action.application,
               pid: targetPid,
               windowId: targetWindowId,
@@ -845,16 +878,22 @@ export async function runComputerUseAction(
               }),
         });
       } catch (error) {
-        if (
-          error instanceof Error &&
-          (error.message.includes("point-owner-changed") ||
-            error.message.includes("forbidden-frontmost-pid"))
-        ) {
-          throw new ComputerUseInputError(
-            action.application !== undefined
-              ? `Cannot click "${action.application}" in the background: the window at the target point changed before input could be sent. Bring "${action.application}" forward with computer_open and try again.`
-              : "Cannot click while SpecWithCode is in front. Bring the target app forward with computer_open and try again.",
-          );
+        if (error instanceof Error) {
+          if (error.message.includes("human-moved")) {
+            throw new ComputerUseInputError(
+              "Stopped clicking because the user moved the pointer during the action. Try again when the pointer is idle.",
+            );
+          }
+          if (
+            error.message.includes("point-owner-changed") ||
+            error.message.includes("forbidden-frontmost-pid")
+          ) {
+            throw new ComputerUseInputError(
+              action.application !== undefined
+                ? `Cannot click "${action.application}" in the background: the window at the target point changed before input could be sent. Bring "${action.application}" forward with computer_open and try again.`
+                : "Cannot click while SpecWithCode is in front. Bring the target app forward with computer_open and try again.",
+            );
+          }
         }
         throw error;
       }
@@ -887,33 +926,44 @@ export async function runComputerUseAction(
       if (
         field !== undefined &&
         action.application !== undefined &&
-        sameAppName(field.application, action.application) &&
-        field.pid !== process.pid
+        sameAppName(field.application, action.application)
       ) {
-        if (scene === undefined || !isWindowCaptureFresh(scene, field)) {
-          backgroundFields.delete(sessionKey);
-          throw new ComputerUseInputError(
-            `The previously selected field in "${action.application}" moved, resized, or closed since it was clicked. Take a fresh screenshot and click the field again before typing.`,
-          );
+        if (field.status === "invalidated") {
+          throw new ComputerUseInputError(field.reason);
         }
-        const ax = await runAxAction({
-          mode: "type",
-          pid: field.pid,
-          x: field.x,
-          y: field.y,
-          text: action.text,
-          expectedRole: field.role,
-          expectedFieldKey: field.fieldKey,
-        });
-        if (ax.ok) {
-          frontmost = ax.frontmostApplication ?? undefined;
-          delivery = "background_ax";
-          break;
+        if (field.pid !== process.pid) {
+          if (scene === undefined || !isWindowCaptureFresh(scene, field)) {
+            const reason = `The previously selected field in "${action.application}" moved, resized, or closed since it was clicked. Take a fresh screenshot and click the field again before typing.`;
+            setBounded(backgroundFields, sessionKey, {
+              status: "invalidated",
+              application: action.application,
+              reason,
+            });
+            throw new ComputerUseInputError(reason);
+          }
+          const ax = await runAxAction({
+            mode: "type",
+            pid: field.pid,
+            windowId: field.windowId,
+            x: field.x,
+            y: field.y,
+            text: action.text,
+            expectedRole: field.role,
+            expectedFieldKey: field.fieldKey,
+          });
+          if (ax.ok) {
+            frontmost = ax.frontmostApplication ?? undefined;
+            delivery = "background_ax";
+            break;
+          }
+          const reason = `The previously selected field in "${action.application}" could not be updated in the background (${ax.reason ?? "ax-failed"}). Take a fresh screenshot and click the field again before typing.`;
+          setBounded(backgroundFields, sessionKey, {
+            status: "invalidated",
+            application: action.application,
+            reason,
+          });
+          throw new ComputerUseInputError(reason);
         }
-        backgroundFields.delete(sessionKey);
-        throw new ComputerUseInputError(
-          `The previously selected field in "${action.application}" could not be updated in the background (${ax.reason ?? "ax-failed"}). Take a fresh screenshot and click the field again before typing.`,
-        );
       }
       if (action.application !== undefined) {
         const safety =
@@ -996,16 +1046,22 @@ export async function runComputerUseAction(
                 }),
           });
         } catch (error) {
-          if (
-            error instanceof Error &&
-            (error.message.includes("point-owner-changed") ||
-              error.message.includes("forbidden-frontmost-pid"))
-          ) {
-            throw new ComputerUseInputError(
-              action.application !== undefined
-                ? `Cannot scroll "${action.application}" in the background: the window at the target point changed before input could be sent. Bring "${action.application}" forward with computer_open and try again.`
-                : "Cannot scroll while SpecWithCode is in front. Bring the target app forward with computer_open and try again.",
-            );
+          if (error instanceof Error) {
+            if (error.message.includes("human-moved")) {
+              throw new ComputerUseInputError(
+                "Stopped scrolling because the user moved the pointer during the action. Try again when the pointer is idle.",
+              );
+            }
+            if (
+              error.message.includes("point-owner-changed") ||
+              error.message.includes("forbidden-frontmost-pid")
+            ) {
+              throw new ComputerUseInputError(
+                action.application !== undefined
+                  ? `Cannot scroll "${action.application}" in the background: the window at the target point changed before input could be sent. Bring "${action.application}" forward with computer_open and try again.`
+                  : "Cannot scroll while SpecWithCode is in front. Bring the target app forward with computer_open and try again.",
+              );
+            }
           }
           throw error;
         }
