@@ -1,3 +1,4 @@
+import { stopTeardownPending } from "../../process/stopTeardowns.ts";
 import { DesignScreenshotToolkit, DesignToolkit } from "../../mcp/toolkits/design/tools.ts";
 import { ProjectPlanToolkit } from "../../mcp/toolkits/projectPlan/tools.ts";
 import { ProjectMemoryToolkit } from "../../mcp/toolkits/projectMemory/tools.ts";
@@ -2986,7 +2987,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   const makeWakeHarnessWithOptions = (options?: {
     readonly settings?: ClaudeSettings;
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
-    readonly interrupt?: Effect.Effect<void>;
+    readonly interrupt?: Effect.Effect<void, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
+    readonly rememberProcessTree?: Effect.Effect<void>;
+    readonly endProcessTree?: Effect.Effect<void>;
     readonly environment?: NodeJS.ProcessEnv;
     readonly browserExtensionPairingFile?: string;
   }) =>
@@ -3077,6 +3080,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   }),
                 interrupt: options?.interrupt ?? Effect.void,
                 close: options?.close?.(sdkMessages) ?? Effect.void,
+                ...(options?.rememberProcessTree === undefined
+                  ? {}
+                  : { rememberProcessTree: options.rememberProcessTree }),
+                ...(options?.endProcessTree === undefined
+                  ? {}
+                  : { endProcessTree: options.endProcessTree }),
               };
             }),
           forkSession: () => Effect.die("unused forkSession"),
@@ -7994,6 +8003,92 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* Fiber.join(stopped);
         yield* awaitUntil(() => harness.terminalEvents().length === 1, "interrupted terminal");
         assert.equal(harness.terminalEvents()[0]?.status, "interrupted");
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("holds the folder change until Stop has closed the CLI and its tools", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const calls: string[] = [];
+        let threadId = "";
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: (sdkMessages) =>
+            Effect.sync(() => calls.push(`close held=${stopTeardownPending(threadId)}`)).pipe(
+              Effect.andThen(Queue.shutdown(sdkMessages)),
+            ),
+          rememberProcessTree: Effect.sync(() =>
+            calls.push(`remember held=${stopTeardownPending(threadId)}`),
+          ),
+          endProcessTree: Effect.sync(() => calls.push("end")),
+        });
+        threadId = harness.threadId;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const now = yield* DateTime.now;
+        const attemptId = RunAttemptId.make("attempt-claude-stop-ends-tools");
+        const providerTurnId = idAllocator.derive.providerTurn({
+          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+          nativeTurnId: `turn:${attemptId}`,
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId,
+            text: "Run the tests.",
+            attachments: [],
+          }),
+        );
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId,
+        });
+        // The CLI's output ended, so the runner ended its tree; no second end here.
+        assert.deepEqual(calls, ["remember held=true", "remember held=true", "close held=true"]);
+        assert.equal(stopTeardownPending(harness.threadId), false);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("still closes the CLI when it rejects the interrupt", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const closes: string[] = [];
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: (sdkMessages) =>
+            Effect.sync(() => closes.push("close")).pipe(
+              Effect.andThen(Queue.shutdown(sdkMessages)),
+            ),
+          interrupt: Effect.fail(
+            new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+              method: "interrupt",
+              cause: "interrupt rejected",
+            }),
+          ),
+        });
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const now = yield* DateTime.now;
+        const attemptId = RunAttemptId.make("attempt-claude-stop-rejected");
+        const providerTurnId = idAllocator.derive.providerTurn({
+          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+          nativeTurnId: `turn:${attemptId}`,
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId,
+            text: "Run the tests.",
+            attachments: [],
+          }),
+        );
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId,
+        });
+        assert.deepEqual(closes, ["close"]);
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );

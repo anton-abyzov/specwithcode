@@ -75,6 +75,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsEnvironmentImportPreview]: AuthOrchestrationReadScope,
   // The check walks the folder and reports its checkouts and planning roots.
   [WS_METHODS.projectsFolderCheck]: AuthFilesystemReadScope,
+  // Stops threads, like the Stop button.
+  [WS_METHODS.projectsFolderStop]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsWorktreesRead]: AuthFilesystemReadScope,
   // Lists the checkouts inside the project folder.
   [WS_METHODS.projectsRepositoriesRead]: AuthFilesystemReadScope,
@@ -423,8 +425,8 @@ const ownerOnlyRpcMessage = (method: string) =>
       : TEAM_USAGE_OWNER_RPC_METHODS.includes(method)
         ? "Only a person on this machine can change what it shares with a team."
         : PERSONAL_DATA_RPC_METHODS.includes(method)
-        ? "Only this machine's owner can see or change personal data access here."
-        : "Only this machine's owner can start, stop or change Away here.";
+          ? "Only this machine's owner can see or change personal data access here."
+          : "Only this machine's owner can start, stop or change Away here.";
 
 export const refusesOwnerOnlyRpc = (method: string, principal: AuthPrincipal | undefined) =>
   principal?.kind === "coordinator" && OWNER_ONLY_RPC_METHODS.has(method);

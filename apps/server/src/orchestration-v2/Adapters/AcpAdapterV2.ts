@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import { holdFailedStopTeardown, withStopTeardown } from "../../process/stopTeardowns.ts";
 import * as NodePath from "node:path";
 
 import {
@@ -164,7 +165,22 @@ export const ACP_PROTOCOL = "acp.ndjson-jsonrpc" as const;
  * the hydrated tool frame; two seconds split that tail into a second synthetic
  * wake. Longer floors (4–20s) only prolonged Working. No per-model carveouts.
  */
+
 const ACP_DEFERRED_FINALIZE_DEBOUNCE: Duration.Input = "3000 millis";
+
+/**
+ * A failed ACP process-group teardown: the agent's processes may still run, so the
+ * folder change stays blocked until the runtime's teardown recovers (a replacement
+ * closes the old scope, whose finalizer force-kills the group) or the server restarts.
+ * ACP exposes no liveness probe for the old group, so the teardown state is the evidence.
+ */
+function holdFolderUntilTeardownRecovers(
+  appThreadId: string | null,
+  readState: () => Promise<{ readonly _tag: string }>,
+): void {
+  if (appThreadId === null) return;
+  holdFailedStopTeardown(appThreadId, () => readState().then((state) => state._tag !== "Failed"));
+}
 
 export interface AcpAdapterV2RuntimeInput {
   readonly cwd: string;
@@ -2003,10 +2019,7 @@ export function makeAcpAdapterV2(
         // covers it and is stored as partial.
         const sessionUsageTotals = new WeakMap<
           object,
-          Map<
-            string,
-            { totals: AcpRawPromptUsage | undefined; open: boolean; unreported: boolean }
-          >
+          Map<string, { totals: AcpRawPromptUsage | undefined; open: boolean; unreported: boolean }>
         >();
         const runtimeRestartRequired = yield* Ref.make(false);
         // Native sessions whose restored history the model rejected (for
@@ -8139,6 +8152,10 @@ export function makeAcpAdapterV2(
                             });
                             yield* Ref.set(runtimeTeardownState, { _tag: "Failed", error });
                             yield* Deferred.fail(teardownBarrier, error).pipe(Effect.ignore);
+                            holdFolderUntilTeardownRecovers(
+                              turnInput.providerThread.appThreadId,
+                              () => Effect.runPromise(Ref.get(runtimeTeardownState)),
+                            );
                             return yield* error;
                           }
                           const teardownExit = yield* runtime.terminateProcessGroup.pipe(
@@ -8153,6 +8170,10 @@ export function makeAcpAdapterV2(
                             });
                             yield* Ref.set(runtimeTeardownState, { _tag: "Failed", error });
                             yield* Deferred.fail(teardownBarrier, error).pipe(Effect.ignore);
+                            holdFolderUntilTeardownRecovers(
+                              turnInput.providerThread.appThreadId,
+                              () => Effect.runPromise(Ref.get(runtimeTeardownState)),
+                            );
                             return yield* error;
                           }
                           yield* Ref.set(runtimeRestartRequired, true);
@@ -8210,6 +8231,9 @@ export function makeAcpAdapterV2(
                       });
                       yield* Ref.set(runtimeTeardownState, { _tag: "Failed", error });
                       yield* Deferred.fail(teardownBarrier!, error).pipe(Effect.ignore);
+                      holdFolderUntilTeardownRecovers(turnInput.providerThread.appThreadId, () =>
+                        Effect.runPromise(Ref.get(runtimeTeardownState)),
+                      );
                       return error;
                     });
                     const runTransition = Effect.gen(function* () {
@@ -8276,6 +8300,39 @@ export function makeAcpAdapterV2(
                         if (!context.finalized) {
                           yield* finalizeTurn(context, "interrupted");
                         }
+                        // An agent that ignored the cancel is still busy with the
+                        // stopped prompt. A user Stop replaces its runtime now, which
+                        // ends the agent's process; otherwise the next turn starts a
+                        // fresh runtime instead of queueing behind it.
+                        if (!hardRestart) {
+                          yield* Ref.set(runtimeRestartRequired, true);
+                          if (turnInput.requestRuntimeRestart === true) {
+                            const replaced = yield* restartRuntimeAfterTeardownIfRequired(
+                              turnInput.providerThread.appThreadId,
+                            ).pipe(
+                              Effect.catchCause((cause) =>
+                                Effect.gen(function* () {
+                                  yield* Effect.logWarning(
+                                    "ACP Stop could not replace a runtime that ignored the cancel",
+                                    { driver, providerTurnId: turnInput.providerTurnId, cause },
+                                  );
+                                  // The busy agent still runs: the folder change stays
+                                  // blocked until a later turn replaces the runtime.
+                                  const appThreadId = turnInput.providerThread.appThreadId;
+                                  if (appThreadId !== null) {
+                                    holdFailedStopTeardown(appThreadId, () =>
+                                      Effect.runPromise(Ref.get(runtimeRestartRequired)).then(
+                                        (required) => !required,
+                                      ),
+                                    );
+                                  }
+                                  return false;
+                                }),
+                              ),
+                            );
+                            if (replaced) return;
+                          }
+                        }
                         return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                           driver,
                           detail: `ACP provider turn ${turnInput.providerTurnId} did not acknowledge cancellation before the interrupt timeout`,
@@ -8304,7 +8361,12 @@ export function makeAcpAdapterV2(
               );
             },
             (effect, turnInput) =>
-              effect.pipe(
+              // The folder change waits while a user Stop ends (or replaces) the agent.
+              (turnInput.requestRuntimeRestart === true &&
+              turnInput.providerThread.appThreadId !== null
+                ? withStopTeardown(turnInput.providerThread.appThreadId, effect)
+                : effect
+              ).pipe(
                 Effect.mapError(
                   (cause) =>
                     new ProviderAdapter.ProviderAdapterInterruptError({

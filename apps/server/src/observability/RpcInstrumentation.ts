@@ -165,6 +165,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.projectsEnvironmentPrepare]: "projects",
   [WS_METHODS.projectsEnvironmentImportPreview]: "projects",
   [WS_METHODS.projectsFolderCheck]: "projects",
+  [WS_METHODS.projectsFolderStop]: "projects",
   [WS_METHODS.projectsRepositoriesRead]: "projects",
   [WS_METHODS.projectsRepositoriesCheck]: "projects",
   [WS_METHODS.projectsWorktreesRead]: "projects",
