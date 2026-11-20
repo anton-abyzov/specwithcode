@@ -254,11 +254,8 @@ export const layerFromProjectStore: Layer.Layer<
                     // that followed usage would restart the session on each change.
                     advisor: preferredAdvisor({
                       providers,
-                      thread: input.modelSelection,
                       model: advisorSettings.advisor.model,
-                      reviewers: advisorSettings.adversarialReview.reviewers,
-                      tier: advisorSettings.adversarialReview.tier,
-                      tiers: advisorSettings.modelTiers,
+                      lanes: advisorSettings.modelLanes,
                       sourceOrder: advisorSettings.defaultModelProviders,
                     }),
                   }),

@@ -7,10 +7,24 @@ import { FOLDER_COPY_ALL_CONFLICTS_PREFIX } from "@specweave-studio/contracts";
 import { applyPlan, ApplyRefusedError, bytesNeeded, type RepositoryCheck } from "./apply.ts";
 import { DEFAULT_SELECTION, FILE_CLASSES, type FileClass } from "./classify.ts";
 import * as Messages from "./copyMessages.ts";
-import { repositoryRelations, scanDestination } from "./destinationScan.ts";
+import { caseInsensitiveAt, repositoryRelations, scanDestination } from "./destinationScan.ts";
 import { reachableOrigin } from "./git.ts";
 import { deviceOf, exists, freeBytes, privateDirectory, readJson, writeJson } from "./durable.ts";
-import { readManifestFile, writeManifest, type Manifest } from "./manifest.ts";
+import {
+  type DestinationLanRecord,
+  type DestinationLanState,
+  type LanDestination,
+  type LanDestinationAccess,
+  lanPathFor,
+  NO_LAN_STATE,
+} from "./lanDestination.ts";
+import {
+  readManifestFile,
+  validateManifestEntries,
+  validateManifestRepositories,
+  writeManifest,
+  type Manifest,
+} from "./manifest.ts";
 import { batchChunksFor, finalPass, pullFiles, type PullProgress } from "./pullWorker.ts";
 import {
   machineSlug,
@@ -25,8 +39,10 @@ import { validProjectRelativePath } from "../folderCopyScope.ts";
 import { olderThan } from "../../failClosedAge.ts";
 import { isSafeRelativePath } from "./paths.ts";
 import {
+  LanFirstSourceClient,
   SourceClient,
   SourceClientError,
+  type SourceClientOptions,
   StaleScanError,
   UnavailableSnapshotError,
 } from "./sourceClient.ts";
@@ -108,6 +124,15 @@ export interface DestinationRecord {
   readonly sourceMachine: string;
   readonly mode: "copy-only" | "copy-and-move";
   readonly targetFolder: string;
+  /**
+   * Frozen at approval: whether the target was missing or empty, and which
+   * folder it was (device and file id, null when missing). Apply writes only
+   * into that folder.
+   */
+  readonly targetApproved?: {
+    readonly kind: "empty" | "reviewed";
+    readonly identity: string | null;
+  };
   readonly title: string;
   readonly selection: ReadonlyArray<FileClass>;
   readonly purpose?: "add-to-machine" | "review";
@@ -145,6 +170,11 @@ export interface DestinationRecord {
   readonly secretsExpected?: ReadonlyArray<string>;
   /** Chunks per batch the source offered in its hello; older sources and records omit it. */
   readonly sourceBatchChunks?: number;
+  /**
+   * The local-network path of this copy (1334 S-10): the highest generation seen, the
+   * latch to Connect and bytes per path. Never an address, a key, a hash or a token.
+   */
+  readonly lan?: DestinationLanState;
   /** When the person approved the copy; the copy's clock starts here. */
   readonly startedAt?: string;
   /** When Apply finished: the files are in place, checked or not. */
@@ -191,7 +221,12 @@ export interface DestinationHooks {
   readonly reachableOrigin?: (origin: string, signal: AbortSignal) => Promise<string | null>;
   /** Where `~/` secret files land; the user's home by default. */
   readonly home?: () => string;
+  /** The local-network path, built over this service's records; absent means Connect only. */
+  readonly lan?: (access: LanDestinationAccess) => LanDestination;
 }
+
+/** States after which a copy never gets a local-network generation again. */
+const LAN_TERMINAL: ReadonlySet<CopyState> = new Set(["applied", "undone", "failed", "cancelled"]);
 
 export const BACKUP_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
 /**
@@ -251,9 +286,38 @@ export class DestinationCopies {
   /** Origins checked from this machine: the address that answered, or null. */
   private readonly origins = new Map<string, Promise<string | null>>();
 
+  /** The local-network half, when this machine has one. */
+  readonly lan: LanDestination | null;
+
   constructor(stateRoot: string, hooks: DestinationHooks = {}) {
     this.root = NodePath.join(stateRoot, "folder-copies");
     this.hooks = hooks;
+    this.lan = hooks.lan?.(this.lanAccess()) ?? null;
+  }
+
+  /** The only parts of a copy's record the local-network path reads and writes. */
+  private lanAccess(): LanDestinationAccess {
+    return {
+      lanRecord: async (operationId): Promise<DestinationLanRecord | null> => {
+        const record = await this.read(operationId).catch(() => null);
+        return record ? { ...record, terminal: LAN_TERMINAL.has(record.state) } : null;
+      },
+      lanRetire: async (operationId, generation) => {
+        const record = await this.read(operationId).catch(() => null);
+        if (!record) return;
+        // Plain Connect, with the copy's own grant, tried once.
+        await this.client(record, undefined, { timeoutMs: 5_000 }, true).lanRetire(generation);
+      },
+      lanSave: (operationId, change) =>
+        this.locked(operationId, async () => {
+          const current = await this.read(operationId);
+          if (!current) throw new CopyError("refused", "Unknown copy.");
+          await writeJson(this.paths(operationId).record, {
+            ...current,
+            lan: change(current.lan ?? NO_LAN_STATE),
+          });
+        }),
+    };
   }
 
   private now() {
@@ -338,6 +402,10 @@ export class DestinationCopies {
       } as DestinationRecord;
       await writeJson(this.paths(operationId).record, next);
       return next;
+    }).then(async (next) => {
+      if (patch.state !== undefined && LAN_TERMINAL.has(patch.state))
+        await this.lan?.end(operationId, "terminal");
+      return next;
     });
   }
 
@@ -345,9 +413,10 @@ export class DestinationCopies {
     record: DestinationRecord,
     signal?: AbortSignal,
     once?: { readonly timeoutMs: number },
+    connectOnly = false,
   ) {
     // SpecWithCode Connect is the primary route; the tailnet is the fallback.
-    return new SourceClient({
+    const options: SourceClientOptions = {
       baseUrl: record.sourceConnectUrl ?? record.sourceUrl,
       ...(record.sourceConnectUrl !== undefined
         ? {
@@ -362,7 +431,19 @@ export class DestinationCopies {
       ...(this.hooks.sleep ? { sleep: this.hooks.sleep } : {}),
       ...(signal ? { signal } : {}),
       ...(once ? { retry: false, timeoutMs: once.timeoutMs } : {}),
-    });
+    };
+    // The local network carries only the manifest and the chunks, through its own connector.
+    return this.lan === null || connectOnly
+      ? new SourceClient(options)
+      : new LanFirstSourceClient(
+          options,
+          lanPathFor(
+            this.lan,
+            this.lanAccess(),
+            record.operationId,
+            this.paths(record.operationId),
+          ),
+        );
   }
 
   /** Records the copy and starts the preview: manifest from the source, then the plan. */
@@ -593,7 +674,8 @@ export class DestinationCopies {
     );
     const assertSamePreview = async () => {
       if (
-        JSON.stringify(await this.require(operationId)) !== JSON.stringify(record) ||
+        JSON.stringify(withoutLan(await this.require(operationId))) !==
+          JSON.stringify(withoutLan(record)) ||
         JSON.stringify(await this.readPlan(operationId)) !== JSON.stringify(plan)
       )
         throw new CopyError(
@@ -629,9 +711,13 @@ export class DestinationCopies {
     const next = await this.locked(operationId, async () => {
       await assertSamePreview();
       const { finishedAt: _finishedAt, ...unfinished } = record;
+      // The local-network state moves on its own while a preview is checked: keep what is saved.
+      const saved = (await this.require(operationId)).lan;
       const approved: DestinationRecord = {
         ...unfinished,
+        ...(saved ? { lan: saved } : {}),
         state: "approved",
+        targetApproved: await approvedTarget(record.targetFolder),
         disk: { needed, free },
         ...(sourceMoved ? { warnings: [...record.warnings, SOURCE_MOVED] } : {}),
         error: null,
@@ -986,6 +1072,7 @@ export class DestinationCopies {
   }
 
   async close(): Promise<void> {
+    await this.lan?.close();
     this.keepaliveAbort?.abort();
     this.keepaliveAbort = null;
     if (this.keepalive !== null) clearInterval(this.keepalive);
@@ -1062,17 +1149,34 @@ export class DestinationCopies {
     return manifest;
   }
 
+  /** A manifest of this copy's scope whose every path this machine can take, before any chunk is asked for. */
+  private async safeManifest(record: DestinationRecord, manifest: Manifest): Promise<Manifest> {
+    this.checkedManifest(record, manifest);
+    const refusal =
+      validateManifestRepositories(manifest.header.repositories ?? [], process.platform) ??
+      validateManifestEntries(manifest.entries, {
+        platform: process.platform,
+        caseInsensitive: await caseInsensitiveAt(record.targetFolder),
+      });
+    if (refusal)
+      throw new CopyError(
+        "refused",
+        `The source manifest has a path this machine cannot take safely (${refusal.reason}): ${refusal.path.slice(0, 200)}`,
+      );
+    return manifest;
+  }
+
   private async fetchManifest(record: DestinationRecord, signal: AbortSignal) {
     const client = this.client(record, signal);
     const paths = this.paths(record.operationId);
     if (await exists(paths.manifest))
-      return this.checkedManifest(record, await readManifestFile(paths.manifest));
+      return this.safeManifest(record, await readManifestFile(paths.manifest));
     await client.requestManifest(record.selection);
     for (;;) {
       signal.throwIfAborted();
       const result = await client.manifest();
       if ("entries" in result) {
-        this.checkedManifest(record, result);
+        await this.safeManifest(record, result);
         await writeManifest(paths.manifest, result);
         return result;
       }
@@ -1267,14 +1371,20 @@ export class DestinationCopies {
       sourceRepositories: manifest.header.repositories,
       leftBehind: leftBehind(manifest, unstable),
       unstable,
+      ...(record.targetApproved ? { approved: record.targetApproved } : {}),
     });
-    const warnings = [...record.warnings, ...result.warnings].slice(0, 200);
+    // Apply's lines first: they name any folder it refused, and the list is cut.
+    const warnings = [...result.warnings, ...record.warnings].slice(0, 200);
     const differing = result.checks.filter((check) => !check.ok);
     // Files Apply put back to the Git snapshot: the source has newer work there.
     const restored = result.restored ?? [];
     if (
       record.mode === "copy-and-move" &&
-      (differing.length > 0 || unstable.size > 0 || restored.length > 0)
+      // An entry refused for its folder did not arrive: the source keeps the work.
+      (differing.length > 0 ||
+        unstable.size > 0 ||
+        restored.length > 0 ||
+        result.refused.length > 0)
     ) {
       // The source keeps the coordinator until the person looks: no commit, no move.
       await this.update(op, {
@@ -1287,6 +1397,7 @@ export class DestinationCopies {
             differing,
             [...unstable].filter((path) => !restored.includes(path)).length,
             restored,
+            result.refused.length,
           ),
         },
         checks: result.checks,
@@ -1374,14 +1485,14 @@ export class DestinationCopies {
     if (!served.sealed && listedSealed)
       throw new CopyError(
         "refused",
-        `${record.sourceMachine} listed its secret files as sealed and sent one that is not, so it was not written. The other files are in place. Copy again to send the secret files.`,
+        `${record.sourceMachine} listed its secret files as sealed and sent one that is not, so it was not written. The other files are in place. Sync again to send the secret files.`,
       );
     if (!served.sealed) return served.bytes;
     const opened = await openSealedSecret(this.directory(record.operationId), served.bytes);
     if (opened === null)
       throw new CopyError(
         "refused",
-        `${record.sourceMachine} sent a secret file sealed to a key this machine does not hold, so it was not written. The other files are in place. Copy again to send the secret files.`,
+        `${record.sourceMachine} sent a secret file sealed to a key this machine does not hold, so it was not written. The other files are in place. Sync again to send the secret files.`,
       );
     return opened;
   }
@@ -1500,8 +1611,13 @@ function checksFailedMessage(
   differing: ReadonlyArray<RepositoryCheck>,
   unstable: number,
   restored: ReadonlyArray<string> = [],
+  refused = 0,
 ) {
   const parts: Array<string> = [];
+  if (refused > 0)
+    parts.push(
+      `${refused === 1 ? "1 entry was" : `${refused} entries were`} not copied because a folder on the way is not yours alone (see the warnings)`,
+    );
   if (differing.length > 0)
     parts.push(
       `${differing.length === 1 ? "1 repository differs" : `${differing.length} repositories differ`} from the source (${differing
@@ -1522,7 +1638,7 @@ function checksFailedMessage(
         )}${restored.length > 5 ? ", …" : ""}); the source has newer work there that would not travel`,
     );
   return restored.length > 0
-    ? `The files are in place, but ${parts.join(" and ")}, so the coordinator stayed on the source. Copy again to bring that work, or Move anyway to move without it.`
+    ? `The files are in place, but ${parts.join(" and ")}, so the coordinator stayed on the source. Sync again to bring that work, or Move anyway to move without it.`
     : `The files are in place, but ${parts.join(" and ")}, so the coordinator stayed on the source. Undo the copy, or retry to move it anyway.`;
 }
 
@@ -1566,6 +1682,16 @@ const SOURCE_MOVED =
   "The source changed after its scan. This copy carries the scanned files and history; files that change during the copy are read again.";
 
 /** Every row is left out or new with nothing here: no source change could overwrite work here. */
+/** The target as the person approved it: which folder stands there, and whether it holds anything. */
+async function approvedTarget(
+  folder: string,
+): Promise<NonNullable<DestinationRecord["targetApproved"]>> {
+  const stat = await NodeFSP.lstat(folder, { bigint: true }).catch(() => null);
+  if (!stat) return { kind: "empty", identity: null };
+  const empty = stat.isDirectory() && (await NodeFSP.readdir(folder)).length === 0;
+  return { kind: empty ? "empty" : "reviewed", identity: `${stat.dev}:${stat.ino}` };
+}
+
 function nothingHere(plan: Plan): boolean {
   return plan.rows.every(
     (row) =>
@@ -1617,3 +1743,9 @@ export function formatBytes(bytes: number): string {
 }
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** A record without its local-network state, which changes outside a person's review. */
+function withoutLan(record: DestinationRecord) {
+  const { lan: _lan, updatedAt: _updatedAt, ...rest } = record;
+  return rest;
+}

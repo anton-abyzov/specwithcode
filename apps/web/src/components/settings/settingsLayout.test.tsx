@@ -1,7 +1,12 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { scrollToSettingsTarget, SettingsRow, SettingsUnavailableGroup } from "./settingsLayout";
+import {
+  PolicyTooltip,
+  scrollToSettingsTarget,
+  SettingsRow,
+  SettingsUnavailableGroup,
+} from "./settingsLayout";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -18,6 +23,35 @@ describe("unavailable settings", () => {
     expect(markup).toContain("Only available in the desktop app.");
     expect(markup).toContain("border-border/60");
     expect(markup).toContain("[&amp;_h3]:opacity-(--disabled-opacity)");
+  });
+});
+
+describe("title info", () => {
+  it("draws the note's button beside the title, named for its setting", () => {
+    const markup = renderToStaticMarkup(
+      <SettingsRow
+        title="Review finished features automatically"
+        description="A model from a different family reviews the work."
+        titleInfo={
+          <PolicyTooltip label="How much longer work takes with Review finished features automatically">
+            Can make work take much longer to finish.
+          </PolicyTooltip>
+        }
+      />,
+    );
+    const title = markup.indexOf("Review finished features automatically</h3>");
+    const button = markup.indexOf(
+      'aria-label="How much longer work takes with Review finished features automatically"',
+    );
+    expect(title).toBeGreaterThan(-1);
+    expect(button).toBeGreaterThan(title);
+    expect(markup).not.toContain('aria-label="Background policy details"');
+  });
+
+  it("keeps the background policy name when no label is given", () => {
+    expect(renderToStaticMarkup(<PolicyTooltip>Shared policy.</PolicyTooltip>)).toContain(
+      'aria-label="Background policy details"',
+    );
   });
 });
 

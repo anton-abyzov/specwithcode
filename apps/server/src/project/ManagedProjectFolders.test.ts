@@ -1225,6 +1225,31 @@ it.effect("adds SpecWeave to an existing folder that has none when asked", () =>
   ),
 );
 
+it.effect("specweaveOnlyIfNew binds a folder with files as it is, with no Git or SpecWeave", () =>
+  withScratch(
+    ({ baseDir }) =>
+      Effect.gen(function* () {
+        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const repo = path.join(baseDir, "kept");
+        yield* fs.makeDirectory(repo, { recursive: true });
+        yield* fs.writeFileString(path.join(repo, "keep.txt"), "untouched");
+        const bound = yield* folders.createNamedProject({
+          name: "kept",
+          parentPath: repo,
+          specweave: true,
+          specweaveOnlyIfNew: true,
+        });
+        assert.isTrue(bound.existing);
+        assert.isUndefined(bound.specweaveAdded);
+        assert.isFalse(yield* fs.exists(path.join(repo, ".specweave")));
+        assert.isFalse(yield* fs.exists(path.join(repo, ".git")));
+      }),
+    { git: noGitDriver, specweave: fakeSpecweaveInit },
+  ),
+);
+
 it.effect("says why SpecWeave could not be added to an existing folder", () =>
   withScratch(
     ({ baseDir }) =>

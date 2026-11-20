@@ -43,6 +43,12 @@ export interface PairingConnectionInput {
    * environment, or nothing is saved.
    */
   readonly expectedEnvironmentId?: EnvironmentId;
+  /**
+   * The Connect account this pairing is for (null: signed out). Omitted, it is
+   * the account settled when the pairing starts. Nothing is saved once the
+   * account has changed (1434).
+   */
+  readonly forAccount?: string | null;
 }
 
 export interface SshConnectionInput {
@@ -162,13 +168,28 @@ export const preparePairingRegistration = Effect.fn(
   });
 });
 
+/**
+ * The account a save is for, read before any network work starts, so a save
+ * that answers after an account switch is refused under the lease (1434).
+ */
+const currentAccountOption = (registry: EnvironmentRegistry.EnvironmentRegistry["Service"]) =>
+  SubscriptionRef.get(registry.accountScope).pipe(
+    Effect.map((forAccount) => (forAccount === undefined ? {} : { forAccount })),
+  );
+
 const registerPairingConnection = Effect.fn(
   "clientRuntime.connection.onboarding.registerPairingConnection",
 )(function* (input: PairingConnectionInput) {
-  const registration = yield* preparePairingRegistration(input);
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+  // Captured before the pairing goes out, so a late answer is checked against it.
+  const forAccount =
+    input.forAccount !== undefined
+      ? input.forAccount
+      : yield* SubscriptionRef.get(registry.accountScope);
+  const registration = yield* preparePairingRegistration(input);
   yield* registry.register(registration, {
     knownAddressOnly: input.expectedEnvironmentId === undefined,
+    ...(forAccount !== undefined ? { forAccount } : {}),
   });
   return registration.target.environmentId;
 });
@@ -180,6 +201,7 @@ const updateBearerConnection = Effect.fn(
   "clientRuntime.connection.onboarding.updateBearerConnection",
 )(function* (input: BearerConnectionUpdateInput) {
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+  const account = yield* currentAccountOption(registry);
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
   const saved = (yield* SubscriptionRef.get(registry.entries)).get(input.environmentId);
   // Editing changes the environment's first direct route; others stay as saved.
@@ -199,7 +221,7 @@ const updateBearerConnection = Effect.fn(
     entry: Option.fromUndefinedOr(entry),
     credential,
   });
-  yield* registry.register(registration);
+  yield* registry.register(registration, account);
 });
 
 export const prepareBearerConnectionUpdate = Effect.fn(
@@ -292,6 +314,8 @@ export const prepareSshRegistration = Effect.fn(
 const registerSshConnection = Effect.fn(
   "clientRuntime.connection.onboarding.registerSshConnection",
 )(function* (input: SshConnectionInput) {
+  const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+  const account = yield* currentAccountOption(registry);
   const registration = yield* prepareSshRegistration(input);
   if (
     input.expectedEnvironmentId !== undefined &&
@@ -299,8 +323,7 @@ const registerSshConnection = Effect.fn(
   ) {
     return yield* differentMachineError(registration.target.label);
   }
-  const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-  yield* registry.register(registration);
+  yield* registry.register(registration, account);
   return registration.target.environmentId;
 });
 

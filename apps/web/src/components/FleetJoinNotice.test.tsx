@@ -55,6 +55,10 @@ it("says a machine joined, with nothing to press, and remembers it", async () =>
   expect(notice).toMatchObject({ type: "info", title: "MacBook Pro joined", timeout: 0 });
   // 1327: the join reaches this machine only after its app was approved here.
   expect(notice.description).toContain("Its app was approved here with a code");
+  // 1422 AC-02: one way, and the second code is announced on the machine that shows it.
+  expect(notice.description).toContain("Agents here can now run work on MacBook Pro");
+  expect(notice.description).toContain("its agents can't run work here unless you allow that");
+  expect(notice.description).toContain("type the code shown here into MacBook Pro once");
   expect(notice.description).not.toContain("Nothing to accept");
   expect(notice).not.toHaveProperty("actionProps");
   expect(state.save.mock.calls[0]?.slice(0, 2)).toEqual([

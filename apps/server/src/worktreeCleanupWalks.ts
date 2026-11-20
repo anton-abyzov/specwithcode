@@ -9,7 +9,7 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-import { isMediaFile } from "./finishedWorktrees.ts";
+import { isEvidenceFile } from "./finishedWorktrees.ts";
 import { onlyDependencyIgnores } from "./orphanWorktrees.ts";
 
 /** Ignored media to copy to evidence before its folder goes. */
@@ -21,9 +21,15 @@ export interface MediaFile {
   readonly modifiedMs: number;
 }
 
-/** The plan's size walk stops here and reports no size. */
-const SIZE_WALK_MAX_ENTRIES = 200_000;
-export const SIZE_WALK_TIMEOUT = "5 seconds";
+/**
+ * The plan's size walk of one folder stops at this many entries or after this
+ * long, and the walks of one plan stop after `SIZE_WALK_BUDGET_MS` together.
+ * A folder past any of them has no size ("size unknown"); the plan itself is
+ * still complete, since no decision depends on a size.
+ */
+const SIZE_WALK_MAX_ENTRIES = 1_000_000;
+export const SIZE_WALK_TIMEOUT_MS = 20_000;
+export const SIZE_WALK_BUDGET_MS = 180_000;
 /** Ignored folders are walked for media; one this large keeps the folder instead. */
 export const IGNORED_WALK_MAX_ENTRIES = 20_000;
 const NESTED_WALK_MAX_ENTRIES = 2_000_000;
@@ -59,10 +65,10 @@ export async function entriesOutsideMembers(
 }
 
 /**
- * Ignored entries that are neither rebuildable nor media, by name, and the
- * media to copy. An ignored folder is opened (without following links) so a
- * screenshot folder can go once its media is copied; a folder too large to
- * list counts as data.
+ * Ignored entries that are neither rebuildable nor evidence, by name, and the
+ * evidence files to copy (`isEvidenceFile`). An ignored folder is opened
+ * (without following links) so a screenshot or reports folder can go once its
+ * files are copied; a folder too large to list counts as data.
  */
 export async function classifyIgnored(
   root: string,
@@ -75,7 +81,7 @@ export async function classifyIgnored(
     if (onlyDependencyIgnores(relative)) return;
     const target = NodePath.join(root, relative);
     const stat = await NodeFSP.lstat(target);
-    if (stat.isFile() && isMediaFile(NodePath.basename(target)))
+    if (stat.isFile() && isEvidenceFile(relative.split(NodePath.sep).join("/")))
       media.push({
         relative: NodePath.normalize(relative),
         bytes: stat.size,

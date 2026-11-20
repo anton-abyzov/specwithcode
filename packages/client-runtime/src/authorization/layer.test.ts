@@ -1451,6 +1451,51 @@ describe("RemoteEnvironmentAuthorization", () => {
       }).pipe(Effect.provide(harness.layer));
     }),
   );
+
+  it.effect("says a sign-in fixes a refusal made while this device is signed out", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ responses: [] });
+      yield* Ref.set(harness.session, Option.none());
+      const failure = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        return yield* remote
+          .authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID })
+          .pipe(Effect.flip);
+      }).pipe(Effect.provide(harness.layer));
+      expect(failure).toMatchObject({
+        _tag: "ConnectionBlockedError",
+        reason: "authentication",
+        connectSignInRequired: true,
+      });
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
+    }),
+  );
+
+  it.effect("does not ask for a sign-in when the account changed under a renewal", () =>
+    Effect.gen(function* () {
+      const release = yield* Deferred.make<void, ManagedRelay.ManagedRelayClientError>();
+      const harness = yield* makeHarness({
+        responses: [],
+        beforeBootstrap: Deferred.await(release),
+      });
+      const failure = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const pending = yield* remote
+          .authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID })
+          .pipe(Effect.flip, Effect.forkChild);
+        yield* Queue.take(harness.tokenReads);
+        // The relay answers after this device switched to another account.
+        yield* Ref.set(harness.session, Option.some({ accountId: "account-2" }));
+        yield* Deferred.succeed(release, undefined);
+        return yield* Fiber.join(pending);
+      }).pipe(Effect.provide(harness.layer));
+      expect(failure).toMatchObject({
+        _tag: "ConnectionBlockedError",
+        reason: "authentication",
+      });
+      expect(failure).not.toHaveProperty("connectSignInRequired");
+    }),
+  );
 });
 
 describe("dpopRenewalBackoffMs", () => {

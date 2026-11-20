@@ -64,7 +64,7 @@ const FILE_WAIT_MS = 15_000;
 const stableDelay = (attempt: number) => Math.min(25 * 2 ** attempt, 2000);
 const sleep = (ms: number) => NodeTimersPromises.setTimeout(ms);
 const invalid = () =>
-  new Error("The captured copy files are missing or changed. Measure and compare again.");
+  new Error("The captured copy files are missing or changed. Compare again.");
 
 class SourceDirectoryChanged extends Error {}
 /** Too little room on the source to capture: a moving copy falls back to live checks. */

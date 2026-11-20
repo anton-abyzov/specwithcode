@@ -262,6 +262,167 @@ describe("skill file helpers", () => {
 });
 
 describe("buildProjectSkillRows", () => {
+  it("carries discovery and other copies for display without changing any status", () => {
+    const content = "---\nname: deploy\n---\nBody\n";
+    const projectPath = `${CWD}/.agents/skills/deploy/SKILL.md`;
+    const userPath = `${HOME}/.agents/skills/deploy/SKILL.md`;
+    const build = (extra: Partial<ServerProviderSkill>) =>
+      buildProjectSkillRows({
+        cwd: CWD,
+        providers: [
+          provider("copilot", "acpRegistry", "GitHub Copilot", [
+            skill("deploy", projectPath, extra),
+          ]),
+        ],
+        locks: [lock("project", { deploy: lockEntry({ sha: vskillContentSha(content) }) })],
+        files: new Map([[projectPath, fact(projectPath, content)]]),
+        doctor: [],
+      })[0]!;
+    const plain = build({});
+    const withCopies = build({
+      discovery: "folder-scan",
+      // A different file at another level: it must not make the row a duplicate or drift.
+      otherCopies: [{ path: userPath, scope: "user" }],
+    });
+    assert.strictEqual(plain.providers[0]?.discovery, undefined);
+    assert.strictEqual(plain.providers[0]?.otherCopies, undefined);
+    assert.strictEqual(withCopies.providers[0]?.discovery, "folder-scan");
+    assert.deepEqual(withCopies.providers[0]?.otherCopies, [{ path: userPath, scope: "user" }]);
+    // Everything a status is computed from is identical.
+    const { providers: _plainProviders, ...plainRest } = plain;
+    const { providers: _copyProviders, ...copyRest } = withCopies;
+    assert.deepEqual(copyRest, plainRest);
+    assert.strictEqual(withCopies.status, "ok");
+    assert.strictEqual(withCopies.attention, false);
+    assert.strictEqual(withCopies.drift, "match");
+    assert.strictEqual(withCopies.copies, 1);
+    assert.strictEqual(withCopies.divergent, false);
+    assert.deepEqual(withCopies.scopes, ["project"]);
+    assert.strictEqual(withCopies.lock?.lockScope, "project");
+  });
+
+  it("does not attach a lock that names another folder, and compares only that folder's copies", () => {
+    const content = "---\nname: notes\n---\nBody\n";
+    const at = (folder: string) => `${CWD}/${folder}/notes/SKILL.md`;
+    const build = (
+      copies: ReadonlyArray<readonly [folder: string, body: string, realPath?: string]>,
+      installedPath: string | null,
+      lockFolders?: ReadonlyMap<string, string>,
+    ) => {
+      const locks = [
+        lock("project", {
+          notes: lockEntry({ sha: vskillContentSha(content), version: "9.9.9", installedPath }),
+        }),
+      ];
+      return buildProjectSkillRows({
+        cwd: CWD,
+        providers: [
+          provider(
+            "copilot",
+            "acpRegistry",
+            "GitHub Copilot",
+            copies.map(([folder]) => skill("notes", at(folder))),
+          ),
+        ],
+        locks,
+        files: new Map(
+          copies.map(([folder, body, realPath]) => [
+            at(folder),
+            fact(realPath ?? at(folder), body),
+          ]),
+        ),
+        doctor: [],
+        ...(lockFolders ? { lockFolders } : {}),
+      })[0]!;
+    };
+    // Same name, same content, another folder: not this lock's copy.
+    const elsewhere = build([["drafts", content]], ".agents/skills/notes");
+    assert.strictEqual(elsewhere.lock, null);
+    assert.strictEqual(elsewhere.drift, "unlocked");
+    assert.match(
+      elsewhere.issues.join(" "),
+      /belongs to another folder \(\.agents\/skills\/notes\)/,
+    );
+    // The folder the lock names, and a lock that names none, attach as before.
+    assert.strictEqual(build([[".agents/skills", content]], ".agents/skills/notes").drift, "match");
+    assert.strictEqual(build([["drafts", content]], null).lock?.version, "9.9.9");
+    // An edited copy of the same name elsewhere is not drift of the locked copy.
+    const sibling = build(
+      [
+        [".agents/skills", content],
+        ["drafts", `${content}edited\n`],
+      ],
+      ".agents/skills/notes",
+    );
+    assert.strictEqual(sibling.drift, "match");
+    // The row says which of its copies the lock is about.
+    assert.deepEqual(sibling.lock?.lockedPaths, [at(".agents/skills")]);
+    assert.strictEqual(build([["drafts", content]], null).lock?.lockedPaths, undefined);
+    // The named folder reached through a link is still the named folder.
+    const linked = build(
+      [["store", content, "/real/store/notes/SKILL.md"]],
+      ".agents/skills/notes",
+      new Map([[lockEntryKey(`${CWD}/vskill.lock`, "notes"), "/real/store/notes"]]),
+    );
+    assert.strictEqual(linked.lock?.version, "9.9.9");
+    assert.strictEqual(linked.drift, "match");
+  });
+
+  it("a project lock covers the copies inside its project, not a same-name copy in a parent folder", () => {
+    const content = "---\nname: notes\n---\nBody\n";
+    const parent = "/work/.claude/skills/notes/SKILL.md";
+    const own = `${CWD}/.agents/skills/notes/SKILL.md`;
+    assert.ok(!parent.startsWith(`${CWD}/`));
+    const build = (paths: ReadonlyArray<string>) =>
+      buildProjectSkillRows({
+        cwd: CWD,
+        providers: [
+          provider(
+            "claude",
+            "claudeAgent",
+            "Claude",
+            paths.map((path) => skill("notes", path)),
+          ),
+        ],
+        locks: [lock("project", { notes: lockEntry({ version: "2.0.0" }) })],
+        files: new Map(paths.map((path) => [path, fact(path, content)])),
+        doctor: [],
+      })[0]!;
+    assert.deepEqual(build([parent, own]).lock?.lockedPaths, [own]);
+    // Every copy inside the project, or none of them: the lock is read as before.
+    assert.strictEqual(build([own]).lock?.lockedPaths, undefined);
+    assert.strictEqual(build([parent]).lock?.lockedPaths, undefined);
+  });
+
+  it("a project lock that names another folder does not hide the user lock of a user copy", () => {
+    const content = "---\nname: notes\n---\nBody\n";
+    const userPath = `${HOME}/.agents/skills/notes/SKILL.md`;
+    const projectPath = `${CWD}/drafts/notes/SKILL.md`;
+    const row = buildProjectSkillRows({
+      cwd: CWD,
+      providers: [
+        provider("copilot", "acpRegistry", "GitHub Copilot", [
+          skill("notes", projectPath),
+          skill("notes", userPath, { scope: "user" }),
+        ]),
+      ],
+      locks: [
+        lock("project", {
+          notes: lockEntry({ version: "9.9.9", installedPath: ".agents/skills/notes" }),
+        }),
+        lock("user", { notes: lockEntry({ version: "1.0.0", sha: vskillContentSha(content) }) }),
+      ],
+      files: new Map([
+        [projectPath, fact(projectPath, content)],
+        [userPath, fact(userPath, content)],
+      ]),
+      doctor: [],
+    })[0]!;
+    assert.strictEqual(row.lock?.lockScope, "user");
+    assert.strictEqual(row.lock?.version, "1.0.0");
+    assert.match(row.issues.join(" "), /belongs to another folder/);
+  });
+
   it("joins providers by name, with lock info and a matching digest", () => {
     const content = "---\nname: deploy\n---\nBody\n";
     const projectPath = `${CWD}/.claude/skills/deploy/SKILL.md`;
@@ -931,6 +1092,45 @@ it.layer(NodeServices.layer)("gatherProjectSkills versions and catalogs", (it) =
         ],
       );
       assert.strictEqual(snapshot.providers[0]?.skills, 1);
+    }),
+  );
+});
+
+it.layer(NodeServices.layer)("gatherProjectSkills counts for a scanned agent", (it) => {
+  it.effect("counts the files the folder scan found, not the agent's machine-wide list", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const temp = yield* fs.makeTempDirectoryScoped({ prefix: "studio-project-skills-c-" });
+      const project = path.join(temp, "project");
+      const file = path.join(project, ".agents", "skills", "notes", "SKILL.md");
+      yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+      yield* fs.writeFileString(file, "---\nname: notes\ndescription: Notes.\n---\nNotes.\n");
+      const state = (id: string, extra: Record<string, unknown>) => ({
+        instanceId: ProviderInstanceId.make(id),
+        driver: ProviderDriverKind.make("acpRegistry"),
+        label: id,
+        state: "unsupported" as const,
+        skills: 9,
+        ...extra,
+      });
+      const snapshot = yield* gatherProjectSkills({
+        cwd: project,
+        homeDir: path.join(temp, "home"),
+        doctor: false,
+        providers: [
+          provider("scanned", "acpRegistry", "scanned", [skill("notes", file)]),
+          provider("listed", "acpRegistry", "listed", [skill("notes", file)]),
+        ],
+        providerStates: [state("scanned", { discovery: "folder-scan" }), state("listed", {})],
+      });
+      assert.deepEqual(
+        snapshot.providers.map((entry) => [entry.instanceId, entry.skills]),
+        [
+          ["scanned", 1],
+          ["listed", 9],
+        ],
+      );
     }),
   );
 });

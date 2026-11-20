@@ -87,7 +87,7 @@ const MANUAL_STEPS: Partial<Record<AwayMissingGrantKind, string>> = {
   provider: "Sign in to a provider it needs",
   "secret-file": "Copy a file it needs into the project folder",
   "project-link": "Link a project with its copy",
-  standby: "Let this machine take over a coordinator",
+  standby: "Let this machine continue a coordinator",
 };
 
 /**

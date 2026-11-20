@@ -592,7 +592,7 @@ export async function addVisibleMachineToStudioFleet(
   machineEnvironmentId: EnvironmentId,
   label: string,
 ): Promise<StudioFleetAddResult> {
-  const manually = `On ${label}, choose Join a main machine under Settings > Machines.`;
+  const manually = `On ${label}, choose Join one of your machines under Settings > Machines.`;
   let linked: boolean;
   try {
     linked = (await readStudioFleetTailscale(machineEnvironmentId)).connect?.linked === true;
@@ -758,6 +758,13 @@ export async function changeMachineWorkGrant(
     before 1.0.58 lack only that; the rest of the list works with them. */
 export function useFleetRemoveSupported(environmentId: EnvironmentId): boolean {
   return useServerConfigs().get(environmentId)?.environment.capabilities.studioFleetRemove === true;
+}
+
+/** Whether this server sends a skill from a connected GitHub repo to other machines ("Also add on"). */
+export function useFleetSkillGithubSupported(environmentId: EnvironmentId): boolean {
+  return (
+    useServerConfigs().get(environmentId)?.environment.capabilities.fleetSkillGithubSource === true
+  );
 }
 
 /**

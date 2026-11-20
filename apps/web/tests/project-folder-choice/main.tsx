@@ -124,7 +124,12 @@ function Fixture() {
               },
             })
           : null,
-        specweave: { checked: specweave, toggle: () => setSpecweave((value) => !value) },
+        // `mode=states` is a machine whose server is too old to set SpecWeave up.
+        specweave: {
+          checked: specweave,
+          toggle: () => setSpecweave((value) => !value),
+          unavailable: STATES,
+        },
       });
   const machineChoice = (
     <ProjectMachineChoice
@@ -244,9 +249,11 @@ function Fixture() {
   );
 }
 // `mode=setup`: the folder choice on the Projects step of first-run setup,
-// `found=0` when setup found nothing to import.
+// `found=0` when setup found nothing to import, `old=1` for a server that
+// cannot set SpecWeave up.
 function SetupFolder() {
   const [folder, setFolder] = useState<string | null>(null);
+  const params = new URLSearchParams(location.search);
   const machine = MACHINES.m4;
   return (
     <div className="mx-auto mt-10 max-w-3xl rounded-2xl border bg-zinc-25/80 px-6 py-5 dark:bg-white/2">
@@ -256,10 +263,14 @@ function SetupFolder() {
         machineLabel={machine.label}
         projectsFolder={machine.projectsFolder}
         projects={machine.projects}
-        defaultOpen={new URLSearchParams(location.search).get("found") === "0"}
+        defaultOpen={params.get("found") === "0"}
         disabled={false}
         folder={folder}
         onFolderChange={setFolder}
+        specweaveSetUp={params.get("old") !== "1"}
+        onStartWithSpecweave={(startWith) => {
+          (window as any).startWithSpecweave = startWith;
+        }}
         onOtherWays={() => {
           (window as any).otherWaysClicked = true;
         }}

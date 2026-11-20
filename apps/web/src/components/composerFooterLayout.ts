@@ -297,3 +297,40 @@ export function resolveScrollToEndClearance(input: {
   }
   return Math.ceil(input.overlayHeight - (top - contentTop));
 }
+
+/**
+ * Publishes the thread panel's height as `--chat-panel-height` on the element
+ * that holds the timeline and the composer overlay, so cards attached above the
+ * composer can size themselves to a share of the panel instead of the window.
+ */
+export function publishChatPanelHeight(panel: HTMLElement | null | undefined): void {
+  if (!panel) return;
+  const height = `${Math.round(panel.getBoundingClientRect().height)}px`;
+  if (panel.style.getPropertyValue("--chat-panel-height") !== height) {
+    panel.style.setProperty("--chat-panel-height", height);
+  }
+}
+
+/**
+ * How far above the panel's bottom edge "Jump to latest" sits so it clears
+ * every card attached above the composer in its column. Falls back to the
+ * whole overlay's height while the button or the composer is not mounted.
+ */
+export function measureScrollToEndClearance(overlay: HTMLElement, overlayHeight: number): number {
+  const mainSurface = overlay.querySelector<HTMLElement>(
+    '[data-chat-composer-main-surface="true"]',
+  );
+  const button = overlay.parentElement?.querySelector<HTMLElement>("button[data-jump-to-latest]");
+  if (!mainSurface || !button) return overlayHeight;
+  // The pill's label changes with "New" and with the language; the data
+  // attribute does not, so the pill is always found and placed.
+  return resolveScrollToEndClearance({
+    overlayHeight,
+    mainSurfaceTop: mainSurface.getBoundingClientRect().top,
+    button: button.getBoundingClientRect(),
+    attachments: Array.from(
+      overlay.querySelectorAll<HTMLElement>('[data-composer-banner-surface="attached"]'),
+      (element) => element.getBoundingClientRect(),
+    ),
+  });
+}

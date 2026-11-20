@@ -14,14 +14,7 @@ import {
   type ProjectSkillsSnapshot,
 } from "@specweave-studio/contracts";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import {
-  BadgeCheckIcon,
-  ExternalLinkIcon,
-  PinIcon,
-  RefreshCwIcon,
-  SearchIcon,
-  XIcon,
-} from "lucide-react";
+import { RefreshCwIcon, SearchIcon, XIcon } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { SkillDetailPanel } from "../skills/SkillDetailPanel";
@@ -34,16 +27,23 @@ import { SkillAuthoringSheet } from "../skills/SkillAuthoringSheet";
 import { SkillMachineMatrix } from "../skills/SkillMachineMatrix";
 import { SkillsBuiltInBlock, SkillsEmptyAgents } from "../skills/SkillsBuiltIn";
 import { SkillsManagementSlot } from "../skills/SkillsManagementSlot";
+import { SkillsPager } from "../skills/SkillsPager";
+import { SkillsReadState } from "../skills/SkillsReadState";
+import {
+  SkillProviderMark,
+  SkillRow,
+  TierCell,
+  VersionCell,
+  type ProviderEntries,
+} from "../skills/SkillsTable";
 import { useSkillLatestVersions } from "../skills/SkillUpdateLatest";
 import { splitBuiltInSkillRows } from "../skills/skillsPage.logic";
-import { cn } from "~/lib/utils";
-import type { ProviderInstanceEntry } from "../../providerInstances";
+import { paginate } from "~/lib/pagination";
 import { useEnvironment, useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
 import { useMachineNickname } from "../../studio/machineNickname";
 import { projectWorkspace } from "../../studio/projectWorkspace";
-import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { useProviderEntries } from "../studio/shell/ModelBadge";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -53,15 +53,10 @@ import { Spinner } from "../ui/spinner";
 import { Switch } from "../ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ProjectSkillAgentToggle, ProjectSkillPluginToggle } from "./ProjectSkillAgentToggles";
 import { SkillControlsProvider, type SkillMemberProject } from "./ProjectSkillControls";
 import { ProjectSkillSheetFooter } from "./ProjectSkillFleetPush";
-import {
-  ProjectSkillLinkButtons,
-  ProjectSkillRowMenu,
-  type SkillSheetFocus,
-} from "./ProjectSkillRowMenu";
+import { ProjectSkillLinkButtons, type SkillSheetFocus } from "./ProjectSkillRowMenu";
 import { ProjectSkillVersionSection } from "./ProjectSkillVersionSection";
 import {
   filterProjectSkillRows,
@@ -70,11 +65,7 @@ import {
   projectSkillLevel,
   projectSkillLevelLabel,
   projectSkillLevels,
-  projectSkillProviderBadges,
-  projectSkillSourceLinks,
-  projectSkillStatusBadge,
   projectSkillTierLabel,
-  projectSkillVersions,
   pickSkillsMember,
   type ProjectSkillFacetOption,
   withSelectedFacetOptions,
@@ -186,282 +177,6 @@ export function ProjectSkillsSettings() {
   );
 }
 
-/** Text with a hover hint; the hint lists what does not fit in the cell. */
-function Hinted({
-  hint,
-  className,
-  children,
-}: {
-  hint: string;
-  className?: string;
-  children: ReactNode;
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger render={<span tabIndex={0} className={className} />}>
-        {children}
-      </TooltipTrigger>
-      <TooltipPopup side="top" className="max-w-96 whitespace-pre-line break-all">
-        {hint}
-      </TooltipPopup>
-    </Tooltip>
-  );
-}
-
-function ExternalLink({
-  href,
-  label,
-  className,
-  children,
-}: {
-  href: string;
-  label: string;
-  className?: string;
-  children: ReactNode;
-}) {
-  return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer noopener"
-      aria-label={label}
-      className={cn(
-        "inline-flex min-w-0 items-center gap-1 rounded-sm underline-offset-2 hover:text-foreground hover:underline focus-visible:text-foreground focus-visible:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        className,
-      )}
-      onClick={(event) => event.stopPropagation()}
-    >
-      {children}
-    </a>
-  );
-}
-
-function TierCell({ row }: { row: ProjectSkillRow }) {
-  const tier = row.lock?.tier;
-  if (!tier) return <span className="text-muted-foreground">—</span>;
-  const registryUrl = projectSkillSourceLinks(row)?.registryUrl ?? null;
-  const verified = tier.toUpperCase() === "VERIFIED";
-  const badge = (
-    <Badge size="sm" variant={verified ? "success" : "outline"}>
-      {verified ? <BadgeCheckIcon aria-hidden /> : null}
-      {tier}
-    </Badge>
-  );
-  return registryUrl ? (
-    <ExternalLink href={registryUrl} label={`Open ${row.name} on verified-skill.com`}>
-      {badge}
-    </ExternalLink>
-  ) : (
-    badge
-  );
-}
-
-function SourceCell({ row }: { row: ProjectSkillRow }) {
-  const source = row.lock?.source;
-  if (!source) return <span className="text-muted-foreground">—</span>;
-  const links = projectSkillSourceLinks(row);
-  if (!links?.repoUrl) {
-    return (
-      <Hinted hint={source} className="block truncate text-muted-foreground">
-        {source}
-      </Hinted>
-    );
-  }
-  return (
-    <div className="flex min-w-0 flex-col items-start gap-0.5">
-      <ExternalLink
-        href={links.repoUrl}
-        label={`Open the source of ${row.name}: ${links.repoUrl}`}
-        className="max-w-full text-muted-foreground"
-      >
-        <span className="truncate">{links.label}</span>
-        <ExternalLinkIcon aria-hidden className="size-3 shrink-0" />
-      </ExternalLink>
-      {links.registryUrl ? (
-        <ExternalLink
-          href={links.registryUrl}
-          label={`Open ${row.name} on verified-skill.com: ${links.registryUrl}`}
-          className="max-w-full text-2xs text-muted-foreground"
-        >
-          <BadgeCheckIcon aria-hidden className="size-3 shrink-0 text-success-foreground" />
-          <span className="truncate">verified-skill.com</span>
-        </ExternalLink>
-      ) : null}
-    </div>
-  );
-}
-
-type ProviderEntries = ReadonlyMap<string, ProviderInstanceEntry>;
-
-/** The provider's own mark, the same one the model picker and thread headers draw. */
-function SkillProviderMark({
-  presence,
-  entries,
-  dimmed = false,
-}: {
-  presence: Pick<ProjectSkillPresence, "instanceId" | "driver" | "label">;
-  entries: ProviderEntries;
-  dimmed?: boolean;
-}) {
-  const entry = entries.get(presence.instanceId) ?? null;
-  return (
-    <ProviderInstanceIcon
-      driverKind={entry?.driverKind ?? presence.driver}
-      displayName={presence.label}
-      acpRegistryAgentId={entry?.acpRegistryAgentId}
-      acpRegistryIconUrl={entry?.acpRegistryIconUrl}
-      className="z-auto"
-      iconClassName={cn("size-3.5", dimmed ? "opacity-50" : "opacity-100")}
-    />
-  );
-}
-
-function StatusBadge({ row }: { row: ProjectSkillRow }) {
-  const status = projectSkillStatusBadge(row);
-  const badge = (
-    <Badge size="sm" variant={status.variant}>
-      {status.label}
-    </Badge>
-  );
-  return row.issues.length > 0 ? <Hinted hint={row.issues.join("\n")}>{badge}</Hinted> : badge;
-}
-
-/**
- * The lock's version beside the versions the copies on disk report (the
- * plugin manifest for a plugin skill), with a hint when they disagree. Either
- * side can be stale: a registry version published without bumping the file's
- * `version:` leaves the lock ahead of the file.
- */
-function VersionCell({ row, update }: { row: ProjectSkillRow; update?: string | null }) {
-  const tx = useTx();
-  const versions = projectSkillVersions(row);
-  const pinned = row.lock?.pinnedVersion ?? null;
-  const files = versions.files.map((file) => file.version);
-  const lockOnly = versions.lock !== null && !versions.lockOutOfDate;
-  if (versions.lock === null && files.length === 0) {
-    return <span className="text-muted-foreground">—</span>;
-  }
-  const hint = [
-    versions.lock ? `Lock: ${versions.lock}` : "Not in a vskill lock",
-    ...versions.files.map((file) => `${file.labels.join(", ")}: ${file.version}`),
-    ...(versions.lockOutOfDate ? ["The lock and the files on disk name different versions."] : []),
-  ].join("\n");
-  return (
-    <Hinted hint={hint} className="block">
-      <span className="font-mono">
-        {lockOnly ? versions.lock : files.join(" / ") || versions.lock}
-      </span>
-      {versions.lockOutOfDate ? (
-        <div className="text-xs text-warning-foreground">
-          {renderRich(tx("lock says {lock}"), { lock: versions.lock })}
-        </div>
-      ) : null}
-      {pinned || update ? (
-        <span className="mt-0.5 flex flex-wrap gap-1">
-          {pinned ? (
-            <Badge size="sm" variant="outline" data-testid="version-pinned">
-              <PinIcon aria-hidden />
-              {tx("pinned")}
-            </Badge>
-          ) : null}
-          {update ? (
-            <Badge size="sm" variant="info" data-testid="version-update">
-              ↑{update}
-            </Badge>
-          ) : null}
-        </span>
-      ) : null}
-    </Hinted>
-  );
-}
-
-function SkillRow({
-  row,
-  entries,
-  update,
-  onOpen,
-}: {
-  row: ProjectSkillRow;
-  entries: ProviderEntries;
-  update: string | null;
-  onOpen: (name: string, focus?: SkillSheetFocus) => void;
-}) {
-  const tx = useTx();
-  const issue = row.issues[0];
-  return (
-    <TableRow
-      data-skill={row.name}
-      data-status={row.status}
-      className="cursor-pointer"
-      onClick={(event) => {
-        // React bubbles clicks out of portals: a row menu item would reopen the sheet unfocused.
-        if (!event.currentTarget.contains(event.target as Node)) return;
-        if ((event.target as HTMLElement).closest("a,button,[role=switch]")) return;
-        onOpen(row.name);
-      }}
-    >
-      <TableCell className="max-w-64 whitespace-normal">
-        <button
-          type="button"
-          className="block max-w-full truncate text-left font-medium text-foreground hover:underline focus-visible:underline focus-visible:outline-none"
-          aria-label={`Show details for ${row.name}`}
-          onClick={() => onOpen(row.name)}
-        >
-          {row.name}
-        </button>
-        {row.attention && issue ? (
-          <div className="line-clamp-2 text-muted-foreground">{issue}</div>
-        ) : row.description ? (
-          <div className="truncate text-muted-foreground">{row.description}</div>
-        ) : null}
-      </TableCell>
-      <TableCell>
-        {row.providers.length === 0 ? (
-          <span className="text-muted-foreground">{tx("None")}</span>
-        ) : (
-          <div className="flex flex-wrap gap-1">
-            {projectSkillProviderBadges(row).map((badge) => (
-              <Hinted key={badge.key} hint={badge.title}>
-                <Badge size="sm" variant={badge.enabled ? "outline" : "secondary"}>
-                  <SkillProviderMark
-                    presence={badge.presence}
-                    entries={entries}
-                    dimmed={!badge.enabled}
-                  />
-                  {badge.enabled ? badge.label : `${badge.label} (off)`}
-                  {badge.enabled && badge.agentOnly ? (
-                    <span className="text-muted-foreground">{tx("agent only")}</span>
-                  ) : null}
-                </Badge>
-              </Hinted>
-            ))}
-          </div>
-        )}
-      </TableCell>
-      <TableCell>
-        <span className="text-muted-foreground">
-          {projectSkillLevels(row).map(projectSkillLevelLabel).join(", ") || "—"}
-        </span>
-      </TableCell>
-      <TableCell>
-        <VersionCell row={row} update={update} />
-      </TableCell>
-      <TableCell>
-        <TierCell row={row} />
-      </TableCell>
-      <TableCell className="max-w-56">
-        <SourceCell row={row} />
-      </TableCell>
-      <TableCell>
-        <StatusBadge row={row} />
-      </TableCell>
-      <TableCell className="w-8 text-right">
-        <ProjectSkillRowMenu row={row} onOpen={onOpen} />
-      </TableCell>
-    </TableRow>
-  );
-}
-
 function DetailItem({ term, children }: { term: string; children: ReactNode }) {
   return (
     <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-2 py-1">
@@ -491,7 +206,7 @@ function SkillDetails({ row, entries }: { row: ProjectSkillRow; entries: Provide
               ? "Copies differ"
               : "Discovered"
             : row.status === "missing"
-              ? "Missing on disk"
+              ? "No copy found"
               : "Needs attention"}
         </Badge>
         {row.lock?.tier ? <TierCell row={row} /> : null}
@@ -561,6 +276,11 @@ function SkillDetails({ row, entries }: { row: ProjectSkillRow; entries: Provide
                           {renderRich(tx("as {name}"), { name: presence.name })}
                         </span>
                       ) : null}
+                      {presence.discovery === "folder-scan" ? (
+                        <Badge size="sm" variant="outline" data-testid="skill-detail-folder-scan">
+                          {tx("folder scan")}
+                        </Badge>
+                      ) : null}
                       {presence.enabled ? null : (
                         <Badge size="sm" variant="secondary">
                           {tx("off")}
@@ -574,6 +294,20 @@ function SkillDetails({ row, entries }: { row: ProjectSkillRow; entries: Provide
                       <ProjectSkillAgentToggle presence={presence} />
                     </div>
                     <ProjectSkillPluginToggle presence={presence} />
+                    {presence.otherCopies?.length ? (
+                      <ul
+                        className="text-xs text-muted-foreground"
+                        data-testid="skill-detail-other-copies"
+                      >
+                        {presence.otherCopies.map((copy) => (
+                          <li key={copy.path} className="break-all">
+                            {tx("Also found")},{" "}
+                            {projectSkillLevelLabel(projectSkillLevel(copy.scope, copy.path))}:{" "}
+                            <span className="font-mono">{copy.path}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
                   </div>
                 ))}
               </li>
@@ -668,7 +402,6 @@ function SkillsFootnotes({
   machine: string;
 }) {
   const tx = useTx();
-  const notes = snapshot.providers.filter((provider) => provider.state !== "ok");
   return (
     <div className="space-y-1 px-3 pb-3 text-xs text-muted-foreground sm:px-4">
       <p>
@@ -689,15 +422,14 @@ function SkillsFootnotes({
                 : "vskill doctor is not available here, so its findings are left out.",
         })}
       </p>
-      {notes.map((provider) => (
-        <p key={provider.instanceId}>
-          {provider.label}: {provider.message ?? provider.state}
-        </p>
-      ))}
       <SkillsEmptyAgents snapshot={snapshot} machine={machine} />
     </div>
   );
 }
+
+/** Rows per page of the table: the default, then the larger sizes offered. */
+export const SKILLS_TABLE_PAGE_SIZE = 25;
+export const SKILLS_TABLE_PAGE_SIZES: ReadonlyArray<number> = [SKILLS_TABLE_PAGE_SIZE, 50, 100];
 
 const NO_MEMBERS: ReadonlyArray<SkillMemberProject> = [];
 
@@ -867,6 +599,14 @@ function ScopedProjectSkillsView({
     () => splitBuiltInSkillRows(rows),
     [rows],
   );
+  // Filters run over the whole inventory above; the page is cut from what matched.
+  const filterKey = `${search}\u0000${problemsOnly}\u0000${providers.join(",")}\u0000${levels.join(",")}\u0000${tiers.join(",")}`;
+  const [paging, setPaging] = useState<{ key: string; page: number }>({ key: filterKey, page: 1 });
+  const [pageSize, setPageSize] = useState<number>(SKILLS_TABLE_PAGE_SIZE);
+  // A changed filter starts on its first page, and stays there when the filter is undone.
+  if (paging.key !== filterKey) setPaging({ key: filterKey, page: 1 });
+  // A rescan that shrinks the list clamps the page instead of showing an empty one.
+  const tablePage = paginate(installedRows, paging.key === filterKey ? paging.page : 1, pageSize);
   const anyInstalled = useMemo(
     () => splitBuiltInSkillRows(snapshot?.rows ?? []).installed.length > 0,
     [snapshot],
@@ -1059,7 +799,7 @@ function ScopedProjectSkillsView({
                 data-testid="skills-linked-missing"
               >
                 <span>
-                  {renderRich(tx("{span} is not loaded in this project."), {
+                  {renderRich(tx("{span} was not found in this project's skills."), {
                     span: <span className="font-medium text-foreground">{linkedName}</span>,
                   })}
                 </span>
@@ -1086,6 +826,9 @@ function ScopedProjectSkillsView({
                   </span>
                 ) : null}
               </p>
+            ) : null}
+            {snapshot && snapshot.rows.length > 0 ? (
+              <SkillsReadState snapshot={snapshot} machine={machineName} />
             ) : null}
             <div className="flex flex-wrap items-center gap-3">
               <div className="relative min-w-0 flex-1 basis-56">
@@ -1203,8 +946,11 @@ function ScopedProjectSkillsView({
       ) : snapshot.rows.length === 0 ? (
         <>
           <p className="px-3 py-4 text-sm text-muted-foreground sm:px-4">
-            {tx("No agent loads any skill in this folder, and no vskill lockfile lists one.")}
+            {tx("No skills or lock entries were found in this read.")}
           </p>
+          <div className="px-3 pb-2 sm:px-4">
+            <SkillsReadState snapshot={snapshot} machine={machineName} />
+          </div>
           <SkillsFootnotes snapshot={snapshot} machine={machineName} />
         </>
       ) : (
@@ -1249,7 +995,7 @@ function ScopedProjectSkillsView({
                       </TableCell>
                     </TableRow>
                   ) : (
-                    installedRows.map((row) => (
+                    tablePage.items.map((row) => (
                       <SkillRow
                         key={row.name}
                         row={row}
@@ -1261,10 +1007,22 @@ function ScopedProjectSkillsView({
                   )}
                 </TableBody>
               </Table>
+              <SkillsPager
+                page={tablePage}
+                onPage={(page) => setPaging({ key: filterKey, page })}
+                label={tx("skills")}
+                pageSizes={SKILLS_TABLE_PAGE_SIZES}
+                onPageSize={(size) => {
+                  setPageSize(size);
+                  setPaging({ key: filterKey, page: 1 });
+                }}
+                className="px-2 py-2"
+              />
             </div>
           )}
           <SkillsBuiltInBlock
             rows={builtInRows}
+            filterKey={filterKey}
             onOpen={openWith}
             renderAgent={(presence) => <SkillProviderMark presence={presence} entries={entries} />}
           />

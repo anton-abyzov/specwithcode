@@ -313,6 +313,7 @@ const fixture = Effect.gen(function* () {
   });
   const git = HandoffGit.HandoffGit.of({
     inspect: () => Effect.die("Destination receive must not inspect the source"),
+    discover: () => Effect.die("Destination receive must not scan for a sync"),
     publish: () => Effect.die("Destination receive must not publish the source"),
     verifyWorkerCheckpoints: () =>
       Effect.die("Destination receive must not inspect source workers"),

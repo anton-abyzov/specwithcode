@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
+import { readFileSync } from "node:fs";
+import * as routineDraft from "./scheduledTaskDraft";
 import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
@@ -419,5 +421,69 @@ describe("routine project defaults within retained Settings scope", () => {
         () => null,
       ),
     ).toBe(live);
+  });
+});
+
+describe("what a routine change says it was made on", () => {
+  // Looked up by name: a build without it sends nothing, and must fail here, not at import.
+  const seen = (task: ScheduledTask | null) =>
+    (
+      (routineDraft as Record<string, unknown>).routineSeen as
+        | ((task: ScheduledTask | null) => unknown)
+        | undefined
+    )?.(task);
+  const copy: ScheduledTask = { ...legacyTask, revision: 7, definitionHash: "shown-at-open" };
+
+  it("sends the revision and the definition the row showed", () => {
+    expect(seen(copy)).toEqual({ expectedRevision: 7, expectedDefinition: "shown-at-open" });
+  });
+
+  it("sends neither for a new routine or one that shows none", () => {
+    expect(seen(null)).toEqual({});
+    expect(seen(legacyTask)).toEqual({});
+  });
+
+  it("keeps what the form opened on, whatever the list shows later", () => {
+    const draft = editDraft(copy);
+    const later: ScheduledTask = { ...copy, revision: 8, definitionHash: "shown-later" };
+    expect(later.definitionHash).not.toBe(draft.task?.definitionHash);
+    expect(seen(draft.task)).toEqual({ expectedRevision: 7, expectedDefinition: "shown-at-open" });
+  });
+});
+
+describe("the routines screen", () => {
+  const screen = readFileSync(
+    new URL("./SettingsScheduledTasksRouteScreen.tsx", import.meta.url),
+    "utf8",
+  );
+  const helper = (name: string) =>
+    (routineDraft as Record<string, unknown>)[name] as
+      | ((...args: ReadonlyArray<unknown>) => unknown)
+      | undefined;
+  const copy: ScheduledTask = { ...legacyTask, revision: 7, definitionHash: "shown-at-open" };
+
+  it("builds a toggle and a delete from the row, with what the row showed", () => {
+    expect(helper("routineToggleInput")?.(copy)).toEqual({
+      id: copy.id,
+      enabled: !copy.enabled,
+      expectedRevision: 7,
+      expectedDefinition: "shown-at-open",
+    });
+    expect(helper("routineDeleteInput")?.(copy)).toEqual({
+      id: copy.id,
+      expectedRevision: 7,
+      expectedDefinition: "shown-at-open",
+    });
+  });
+
+  it("sends a toggle, a delete and a save only as those helpers build them", () => {
+    expect(screen).toContain("setEnabled({ environmentId, input: routineToggleInput(task) })");
+    expect(screen).toContain("remove({ environmentId, input: routineDeleteInput(task) })");
+    expect(screen).toContain("...routineSeen(draft.task),");
+    // No other place in the screen writes one of these inputs by hand.
+    expect(screen).not.toMatch(/(setEnabled|remove)\(\{[^)]*input: \{/);
+    expect(screen.match(/setEnabled\(\{/g)).toHaveLength(1);
+    expect(screen.match(/remove\(\{/g)).toHaveLength(1);
+    expect(screen.match(/await upsert\(/g)).toHaveLength(1);
   });
 });

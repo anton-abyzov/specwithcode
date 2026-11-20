@@ -143,6 +143,8 @@ export async function offerAndScan(
     readonly destinationEnvironmentId: EnvironmentId;
     readonly operationId: string;
     readonly signal?: AbortSignal;
+    /** Add's whole-folder copy: both machines may send it over the local network. Extras never. */
+    readonly wholeFolder?: boolean;
   },
 ): Promise<{ readonly offer: FolderCopyOffer; readonly summary: FolderCopySourceSummary }> {
   const offer = unwrap(
@@ -153,6 +155,7 @@ export async function offerAndScan(
         operationId: input.operationId,
         mode: "copy-only",
         destinationEnvironmentId: input.destinationEnvironmentId,
+        ...(input.wholeFolder ? { lanPurpose: "add-whole-folder" as const } : {}),
       },
     }),
   );

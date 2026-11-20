@@ -808,6 +808,45 @@ describe("BoardIncrementView", () => {
     });
   });
 
+  describe("a copy from outside the project folder", () => {
+    it("says where the shown copy comes from, and when its branch was fetched", async () => {
+      const card = makeCard({
+        source: { kind: "remote", name: "origin/main", fetchedAt: "2026-11-16T10:00:00.000Z" },
+      });
+      runtime.reply = detail(card);
+      await render({ card });
+      const line = container.querySelector<HTMLElement>(".sws-board-view-source");
+      expect(line?.textContent).toBe("From origin/main, fetched 2h ago");
+    });
+
+    it("names a worktree, and says nothing for the project folder's own copy", async () => {
+      const card = makeCard({ source: { kind: "worktree", name: "fix-lane" } });
+      runtime.reply = detail(card);
+      await render({ card });
+      expect(container.querySelector(".sws-board-view-source")?.textContent).toBe(
+        "From worktree fix-lane",
+      );
+    });
+
+    it("does not call an unread copy's spec missing, nor offer to plan it", async () => {
+      const card = makeCard({
+        specPath: null,
+        tasks: { total: 0, done: 0 },
+        source: { kind: "remote", name: "origin/main", fetchedAt: null },
+      });
+      runtime.reply = detail(card, { problem: null, readable: false });
+      await render({ card });
+      expect(container.querySelector(".sws-board-view-source")?.textContent).toBe(
+        "From origin/main",
+      );
+      expect(section("Tasks")!.textContent).toContain(
+        "This copy's files could not be read on this machine.",
+      );
+      expect(section("Tasks")!.textContent).not.toContain("No spec yet");
+      expect(primary()?.textContent ?? "").not.toMatch(/^Plan/u);
+    });
+  });
+
   describe("why it sits in its column", () => {
     it("explains a column the status file disagrees with", async () => {
       const card = makeCard({

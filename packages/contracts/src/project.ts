@@ -14,6 +14,7 @@ import {
   NonNegativeInt,
   PositiveInt,
   ProjectId,
+  RunId,
   ThreadId,
   TrimmedNonEmptyString,
   TrimmedString,
@@ -350,6 +351,39 @@ export const ProjectFolderCheckInput = Schema.Struct({
 });
 export type ProjectFolderCheckInput = typeof ProjectFolderCheckInput.Type;
 
+/**
+ * Stop for the threads a folder check listed as running, each with the run it saw. The
+ * server stops a thread that still blocks the change with that same run, the way its
+ * Stop button would (the run is interrupted with its delegated tasks and the queue held;
+ * a thread with only queued or background work gets `thread.stop`). A thread that
+ * started another run since, or no longer blocks, is left alone, so a late or replayed
+ * Stop never reaches newer work.
+ */
+export const ProjectFolderStopInput = Schema.Struct({
+  commandId: CommandId,
+  projectId: ProjectId,
+  workspaceRoot: TrimmedNonEmptyString,
+  threads: Schema.Array(
+    Schema.Struct({
+      id: ThreadId,
+      runId: Schema.NullOr(RunId),
+      /** The check's `latestExecutedRunId`; binds a Stop of queued or background work to it. */
+      latestExecutedRunId: Schema.optional(Schema.NullOr(RunId)),
+      /** The check's `teardownsThrough`: only those Stop teardowns are tried again. */
+      teardownsThrough: Schema.optional(Schema.Number),
+    }),
+  ),
+});
+export type ProjectFolderStopInput = typeof ProjectFolderStopInput.Type;
+
+export const ProjectFolderStopResult = Schema.Struct({
+  stopped: Schema.Array(ThreadId),
+  failed: Schema.Array(
+    Schema.Struct({ id: ThreadId, title: Schema.String, message: Schema.String }),
+  ),
+});
+export type ProjectFolderStopResult = typeof ProjectFolderStopResult.Type;
+
 /** What changing a project's main folder to `targetRoot` would do, checked without changing it. */
 export const ProjectFolderCheck = Schema.Struct({
   projectId: ProjectId,
@@ -371,8 +405,37 @@ export const ProjectFolderCheck = Schema.Struct({
       archived: Schema.Boolean,
     }),
   ),
-  /** Threads with a queued or running turn, or a pending request. They must stop first. */
-  activeThreads: Schema.Array(Schema.Struct({ id: ThreadId, title: Schema.String })),
+  /** Threads with a queued, running or waiting turn, or a pending request. They must stop first. */
+  activeThreads: Schema.Array(
+    Schema.Struct({
+      id: ThreadId,
+      title: Schema.String,
+      /** The run that keeps it busy, or null for queued or background work; absent from older servers. */
+      runId: Schema.optional(Schema.NullOr(RunId)),
+      /**
+       * For a thread with no active run: its latest executed run (queued runs excluded, as
+       * the orchestrator picks it for `thread.stop`), or null. Absent when it could not be
+       * read, or from older servers.
+       */
+      latestExecutedRunId: Schema.optional(Schema.NullOr(RunId)),
+      /**
+       * The newest unconfirmed Stop teardown that held the thread when it was checked. A
+       * folder Stop tries again only teardowns up to it, the ones the person saw, never
+       * one work started since left. Absent when none held it, or from older servers.
+       */
+      teardownsThrough: Schema.optional(Schema.Number),
+    }),
+  ),
+  /**
+   * Threads that move with the folder and hold queued messages after a Stop. They do not
+   * block the change; the messages run in the new folder when the thread resumes.
+   * Omitted by servers that predate it.
+   */
+  heldThreads: Schema.optional(
+    Schema.Array(
+      Schema.Struct({ id: ThreadId, title: Schema.String, messageCount: NonNegativeInt }),
+    ),
+  ),
   threadCount: NonNegativeInt,
   /** Threads bound to a checkout inside the current folder, rebound to the same place in the new one. */
   reboundWorktreeCount: NonNegativeInt,
@@ -910,6 +973,21 @@ export const ProjectCreateNewInput = Schema.Struct({
    * projects and for a folder that already was a project.
    */
   specweave: Schema.optional(Schema.Boolean),
+  /**
+   * With `specweave`: only in a folder the create makes or an empty one it
+   * takes, decided under the create's lock. A folder that turns out to hold
+   * files is used as it is, with no Git and no SpecWeave (1396 AC-22).
+   */
+  specweaveOnlyIfNew: Schema.optional(Schema.Boolean),
+  /**
+   * Make the first feature guide's sample project (1398 AC-01) instead: a new
+   * Git repository named "First feature" (numbered when taken) holding one
+   * page, a `node --test` test and a README, with SpecWeave off whatever
+   * `specweave` says, and its own automatic review off. While this machine
+   * has a sample whose guide has not ended, that one is returned with
+   * `existing: true`. Send only to servers with `firstFeatureSample`.
+   */
+  sample: Schema.optional(Schema.Literal("first-feature")),
 });
 export type ProjectCreateNewInput = typeof ProjectCreateNewInput.Type;
 
@@ -956,6 +1034,12 @@ export const ProjectCreateNewResult = Schema.Struct({
   specweaveNeedsNode: Schema.optionalKey(Schema.Boolean),
   /** SpecWeave was set up in an existing folder that had none. Absent from older servers. */
   specweaveAdded: Schema.optionalKey(Schema.Boolean),
+  /**
+   * With `sample`: why the sample's own automatic review could not be turned
+   * off, so a review may start by itself beside the one the guide asks for.
+   * The project exists either way.
+   */
+  sampleAutoReviewError: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ProjectCreateNewResult = typeof ProjectCreateNewResult.Type;
 

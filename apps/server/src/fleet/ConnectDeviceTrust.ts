@@ -442,6 +442,11 @@ export interface ConnectDeviceTrustShape {
   /** A key this machine removed, or denied less than a day ago. */
   readonly isTurnedAway: (key: string) => Effect.Effect<boolean>;
   /**
+   * Whether the device list could be read. False when it is missing after
+   * setup or cannot be decoded. `check` and `isTurnedAway` are unchanged.
+   */
+  readonly listReadable: Effect.Effect<boolean>;
+  /**
    * Called when Connect mints a pairing credential for a device key: answers
    * the refusal that stops the mint (denied key, too many waiting), else null
    * after recording the key as waiting when it is new.
@@ -478,6 +483,7 @@ const unwired: ConnectDeviceTrustShape = {
   trackCredential: () => Effect.void,
   boundIds: () => Effect.succeed([]),
   isTurnedAway: () => Effect.succeed(false),
+  listReadable: Effect.succeed(false),
   refuseAtMint: () => Effect.succeed(refusedUnwired.message),
   isApproved: () => Effect.succeed(false),
   snapshot: Effect.fail(new DeviceTrustError({ reason: "unwired" })),
@@ -878,6 +884,10 @@ export const makeWith = (options: MakeOptions = {}) =>
         );
       });
 
+    const listReadable: ConnectDeviceTrustShape["listReadable"] = withLock(load).pipe(
+      Effect.map((loaded) => loaded._tag === "ok"),
+    );
+
     const isTurnedAway: ConnectDeviceTrustShape["isTurnedAway"] = (key) =>
       Effect.gen(function* () {
         const loaded = yield* withLock(load);
@@ -1117,6 +1127,7 @@ export const makeWith = (options: MakeOptions = {}) =>
       trackCredential,
       boundIds,
       isTurnedAway,
+      listReadable,
       refuseAtMint,
       isApproved,
       snapshot,

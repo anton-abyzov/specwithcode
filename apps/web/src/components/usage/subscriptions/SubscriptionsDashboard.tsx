@@ -283,6 +283,7 @@ export function SubscriptionsDashboard(props: SubscriptionsDashboardProps) {
   const renewalOf = (accountKey: string): SubscriptionRenewal | null => {
     const row = rows.find((entry) => entry.accountKey === accountKey);
     if (row) return row.renewal;
+    // A keyed account's renewal key is its account key, so the saved day is under it.
     const day = props.renewalDays?.[accountKey];
     return day === undefined ? null : { at: nextRenewalOn(day, now), source: "set", day };
   };

@@ -2,7 +2,9 @@ import {
   createContext,
   useContext,
   useEffect,
+  useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent,
   type ReactNode,
   type Ref,
@@ -10,6 +12,7 @@ import {
 import { createPortal } from "react-dom";
 import { isElectron } from "../../env";
 import { useT } from "../../i18n";
+import { cn } from "../../lib/utils";
 import { currentPlatform, keyLabel } from "../../lib/platformConventions";
 import { StarOnGitHubLink } from "../github/StarOnGitHub";
 import { LanguageSelect } from "../settings/LanguageSelect";
@@ -17,7 +20,7 @@ import { StudioWordmark } from "../StudioWordmark";
 import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { DialogCloseButton } from "../ui/dialog-close-button";
-import { WizardFooter, WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../ui/wizard";
+import { WizardFooter, WizardHeader, WizardPanel, WizardPopup } from "../ui/wizard";
 import { FirstRunUpdateNotice } from "./FirstRunUpdateNotice";
 import { stepStartControl } from "./wizardFocus";
 
@@ -72,7 +75,10 @@ export function StepShell({
 }) {
   return (
     <>
-      <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
+      {/* Focus lands here while the step's neutral action is busy (see `useStepChangeFocus`). */}
+      <h1 tabIndex={-1} className="text-2xl font-semibold tracking-tight text-foreground">
+        {title}
+      </h1>
       {description ? (
         <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">{description}</p>
       ) : null}
@@ -93,6 +99,63 @@ export function useHeldFor(active: boolean, delayMs: number) {
     };
   }, [active, delayMs]);
   return active && elapsed;
+}
+
+const SETUP_DIALOG = '[data-slot="dialog-popup"][data-wizard-step]';
+
+/** Where a step starts after a step change: a field it needs, else its enabled neutral action. */
+function stepChangeTarget(popup: Element): HTMLElement | null {
+  return (
+    popup.querySelector<HTMLElement>(
+      '[data-slot="dialog-panel"] :is(input, textarea, select):required:not(:disabled)',
+    ) ?? popup.querySelector<HTMLElement>("[data-wizard-neutral]:not(:disabled)")
+  );
+}
+
+/**
+ * On every step change focus moves to the new step's neutral action, so Enter
+ * goes on without choosing anything. While that action is off because the step
+ * is busy, focus waits on the step's heading and moves to the action once it is
+ * enabled, unless the person has moved focus since. The first step keeps the
+ * dialog's own initial focus.
+ */
+export function useStepChangeFocus(stepId: string | undefined, footerReady: boolean) {
+  const shownStep = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!footerReady) return;
+    const previous = shownStep.current;
+    shownStep.current = stepId;
+    if (previous === undefined || previous === stepId) return;
+    const popup = document.querySelector(SETUP_DIALOG);
+    if (popup === null) return;
+    const target = stepChangeTarget(popup);
+    if (target !== null) {
+      target.focus();
+      return;
+    }
+    const heading = popup.querySelector<HTMLElement>('[data-slot="dialog-panel"] h1');
+    if (heading === null) return;
+    if (!heading.hasAttribute("tabindex")) heading.setAttribute("tabindex", "-1");
+    heading.focus();
+    const observer = new MutationObserver(() => {
+      if (document.activeElement !== heading) {
+        observer.disconnect();
+        return;
+      }
+      const ready = stepChangeTarget(popup);
+      if (ready !== null) {
+        observer.disconnect();
+        ready.focus();
+      }
+    });
+    observer.observe(popup, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["disabled", "data-wizard-neutral"],
+    });
+    return () => observer.disconnect();
+  }, [stepId, footerReady]);
 }
 
 /** Undefined outside the frame; null inside it until the slot is in the page. */
@@ -149,6 +212,7 @@ export function WizardStepFooter({
   primary,
   primaryRef,
   note,
+  noteTone = "muted",
   error,
 }: {
   /** Absent on the first step. */
@@ -160,10 +224,17 @@ export function WizardStepFooter({
   readonly primaryRef?: Ref<HTMLButtonElement> | undefined;
   /** Says why an action is off, such as an import still running. */
   readonly note?: string | null | undefined;
+  /** A note that is the step's own state line takes that state's colour. */
+  readonly noteTone?: "muted" | "warning" | "success" | undefined;
   readonly error?: string | null | undefined;
 }) {
   const t = useT();
   const slot = useContext(FooterSlotContext);
+  // A footer drawn anew inside a step (Projects once its scan ends) gets no step-change
+  // focus. When its primary chooses something and a neutral skip sits beside it, the
+  // skip takes focus, so Enter still goes on without choosing (AC-02).
+  const neutralSkipTakesFocus =
+    primary !== undefined && primary.neutral !== true && skip?.neutral === true && !skip.disabled;
   const footer = (
     <div data-slot="wizard-step-footer" className={slot ? "shrink-0" : "-mx-6 mt-4 -mb-5"}>
       {error ? (
@@ -172,7 +243,17 @@ export function WizardStepFooter({
         </p>
       ) : null}
       {note ? (
-        <p role="status" className="px-6 pt-3 text-xs leading-relaxed text-muted-foreground">
+        <p
+          role="status"
+          className={cn(
+            "px-6 pt-3 text-xs leading-relaxed",
+            noteTone === "warning"
+              ? "text-warning-foreground"
+              : noteTone === "success"
+                ? "text-success-foreground"
+                : "text-muted-foreground",
+          )}
+        >
           {note}
         </p>
       ) : null}
@@ -194,6 +275,7 @@ export function WizardStepFooter({
             disabled={skip.disabled}
             onClick={skip.onClick}
             {...(skip.neutral ? WIZARD_NEUTRAL : {})}
+            autoFocus={slot !== null && neutralSkipTakesFocus}
           >
             {skip.label}
           </Button>
@@ -203,21 +285,24 @@ export function WizardStepFooter({
             ref={primaryRef}
             data-wizard-primary=""
             {...(primary.neutral ? WIZARD_NEUTRAL : {})}
-            aria-keyshortcuts="Enter"
+            // A primary that is off (disabled or busy) does not take Enter, so it shows no Enter hint.
+            aria-keyshortcuts={primary.disabled || primary.busy ? undefined : "Enter"}
             // Not before the footer is in its slot: focus inside the panel would scroll the step.
-            autoFocus={slot !== null && (primary.autoFocus ?? true)}
+            autoFocus={slot !== null && !neutralSkipTakesFocus && (primary.autoFocus ?? true)}
             variant={primary.variant ?? "default"}
             disabled={primary.disabled || primary.busy}
             onClick={primary.onClick}
           >
             {primary.label}
             {/* A hint for the eye, drawn by CSS: the button's name and text stay its label. */}
-            <kbd
-              aria-hidden
-              data-slot="kbd"
-              data-key={keyLabel("enter", currentPlatform())}
-              className="pointer-events-none inline-flex h-5 min-w-5 items-center justify-center rounded bg-current/12 px-1 font-sans text-xs font-medium opacity-80 select-none before:content-[attr(data-key)]"
-            />
+            {primary.disabled || primary.busy ? null : (
+              <kbd
+                aria-hidden
+                data-slot="kbd"
+                data-key={keyLabel("enter", currentPlatform())}
+                className="pointer-events-none inline-flex h-5 min-w-5 items-center justify-center rounded bg-current/12 px-1 font-sans text-xs font-medium opacity-80 select-none before:content-[attr(data-key)]"
+              />
+            )}
           </Button>
         ) : null}
       </WizardFooter>
@@ -291,6 +376,7 @@ export function FirstRunFrame<Id extends string>({
   canClose,
   onLeave,
   holdHeight = false,
+  picture,
   children,
   after,
 }: {
@@ -306,12 +392,19 @@ export function FirstRunFrame<Id extends string>({
   readonly canClose: boolean;
   readonly onLeave: () => void;
   readonly holdHeight?: boolean;
+  /**
+   * The open step's picture (`StepPicture`): beside the step from 880 px of
+   * dialog width, above it up to 880 px, left out below 620 px.
+   */
+  readonly picture?: ReactNode | undefined;
   readonly children: ReactNode;
   /** Drawn beside the dialog, such as a dialog a step opens. */
   readonly after?: ReactNode;
 }) {
   const t = useT();
   const [footerSlot, setFooterSlot] = useState<HTMLElement | null>(null);
+  useStepChangeFocus(stepId, footerSlot !== null);
+  const entry = useStepEntry(stepId);
   return (
     <Dialog
       open
@@ -345,6 +438,8 @@ export function FirstRunFrame<Id extends string>({
         initialFocus={() => stepStartControl() ?? true}
         onKeyDown={handleWizardEnter}
         data-wizard-step={stepId}
+        data-setup-frame=""
+        data-setup-picture={picture ? "" : undefined}
       >
         <WizardHeader
           title={t("wizard.title")}
@@ -356,18 +451,19 @@ export function FirstRunFrame<Id extends string>({
                   SpecWithCode
                 </span>
               </div>
-              <div className="flex items-center gap-1">
+              {/* Wraps on a narrow window, so the language select is never cut off at the edge. */}
+              <div className="flex max-w-full min-w-0 flex-wrap items-center gap-1">
                 <StarOnGitHubLink />
                 <LanguageSelect showIcon className="w-auto sm:w-auto" />
               </div>
             </div>
           }
         >
-          <WizardSteps
-            steps={stages.map((stage) => stage.label)}
-            currentStep={currentStage}
-            isStepDisabled={(index) => stagesLocked || index >= currentStage}
-            onStepChange={(index) => {
+          <SetupStageBar
+            labels={stages.map((stage) => stage.label)}
+            current={currentStage}
+            isDisabled={(index) => stagesLocked || index >= currentStage}
+            onPick={(index) => {
               const stage = stages[index];
               if (stagesLocked || index >= currentStage || stage === undefined) return;
               onStageChange(stage);
@@ -375,9 +471,35 @@ export function FirstRunFrame<Id extends string>({
           />
           <FirstRunUpdateNotice />
         </WizardHeader>
-        <WizardFooterSlot slot={footerSlot}>
-          <WizardPanel holdHeight={holdHeight}>{children}</WizardPanel>
-        </WizardFooterSlot>
+        {/* The dialog's width decides where the picture goes (setupMotion.css container queries). */}
+        <div data-slot="setup-body">
+          <div data-slot="setup-layout">
+            {picture ? (
+              <div
+                key={stepId}
+                aria-hidden
+                data-slot="setup-picture"
+                data-motion="setup"
+                data-setup-entry={entry}
+              >
+                {picture}
+              </div>
+            ) : null}
+            <WizardFooterSlot slot={footerSlot}>
+              <WizardPanel holdHeight={holdHeight}>
+                {/* A new step mounts as the old one leaves: no gap between them. */}
+                <div
+                  key={stepId}
+                  data-slot="setup-step"
+                  data-motion="setup"
+                  data-setup-entry={entry}
+                >
+                  {children}
+                </div>
+              </WizardPanel>
+            </WizardFooterSlot>
+          </div>
+        </div>
         {/* The open step draws its footer here, below the scroll, so its actions stay in view. */}
         <div ref={setFooterSlot} data-slot="wizard-footer-slot" className="shrink-0 empty:hidden" />
         {/* Last, as in every dialog: setup opens focused on its content. */}
@@ -387,5 +509,70 @@ export function FirstRunFrame<Id extends string>({
       </WizardPopup>
       {after}
     </Dialog>
+  );
+}
+
+/**
+ * How the open step comes in: `first` the first time it is shown in this run
+ * (its parts fall into place), `again` on Back or any later visit (a quick
+ * fade). Decided once per step change, so a re-render never swaps it.
+ */
+function useStepEntry(stepId: string | undefined): "first" | "again" {
+  const seen = useRef(new Set<string>());
+  const visit = useRef<{ step: string | undefined; entry: "first" | "again" } | null>(null);
+  if (visit.current === null || visit.current.step !== stepId) {
+    const entry = stepId !== undefined && seen.current.has(stepId) ? "again" : "first";
+    if (stepId !== undefined) seen.current.add(stepId);
+    visit.current = { step: stepId, entry };
+  }
+  return visit.current.entry;
+}
+
+/**
+ * The first-run stage bar: one thread with a knot per stage. Earlier stages
+ * reopen when pressed; the current and later ones are off.
+ */
+function SetupStageBar({
+  labels,
+  current,
+  isDisabled,
+  onPick,
+}: {
+  readonly labels: readonly string[];
+  readonly current: number;
+  readonly isDisabled: (index: number) => boolean;
+  readonly onPick: (index: number) => void;
+}) {
+  const count = labels.length;
+  const progress = count > 1 ? Math.min(Math.max(current, 0), count - 1) / (count - 1) : 0;
+  return (
+    <div data-slot="setup-stage-bar" style={{ "--setup-stages": count } as CSSProperties}>
+      <span aria-hidden data-slot="setup-rail">
+        <i data-motion="setup" style={{ "--setup-progress": progress } as CSSProperties} />
+      </span>
+      <ol
+        role="list"
+        aria-label="Setup progress"
+        className="relative grid"
+        style={{ gridTemplateColumns: `repeat(${count}, minmax(0, 1fr))` }}
+      >
+        {labels.map((label, index) => (
+          <li key={label} className="min-w-0">
+            <button
+              type="button"
+              disabled={isDisabled(index)}
+              data-state={index < current ? "done" : index === current ? "now" : "later"}
+              aria-current={index === current ? "step" : undefined}
+              aria-label={`${label}, step ${index + 1} of ${count}`}
+              onClick={() => onPick(index)}
+              className="grid w-full min-w-0 justify-items-center gap-1.5 rounded-md pb-1 text-xs font-medium text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring enabled:cursor-pointer enabled:hover:text-foreground data-[state=now]:text-foreground"
+            >
+              <span aria-hidden data-slot="setup-knot" data-motion="setup" />
+              <span className="max-w-full truncate">{label}</span>
+            </button>
+          </li>
+        ))}
+      </ol>
+    </div>
   );
 }

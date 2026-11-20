@@ -196,6 +196,17 @@ describe("restart to update", () => {
     ).toBe("Update now");
   });
 
+  it("names the machine the update acts on (1427 AC-05)", () => {
+    const view = getRestartToUpdateView(appIdle, serviceWaiting, { machine: "M5" });
+    expect(view?.description).toContain(
+      "Stops running work on M5, closes terminals and restarts SpecWithCode there.",
+    );
+    expect(view?.description).not.toContain("this machine");
+    const appUpdated = { ...appIdle, currentVersion: "0.2.5" };
+    const behind = getRestartToUpdateView(appUpdated, serviceUpToDate, { machine: "M5" });
+    expect(behind?.description).toContain("The SpecWithCode service on M5 still runs");
+  });
+
   it("does both when the app and the service each have an update", () => {
     const view = getRestartToUpdateView(appDownloaded, {
       ...serviceWaiting,

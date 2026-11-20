@@ -18,6 +18,7 @@ import { normalizeMachineNickname } from "@specweave-studio/shared/machineNickna
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as RemoteWorkers from "../fleet/RemoteWorkers.ts";
 import * as WorkerEpochStore from "../fleet/WorkerEpochStore.ts";
 import * as WorkGrants from "../fleet/WorkGrants.ts";
@@ -48,6 +49,8 @@ export interface WorkGrantContext {
   readonly origin: WorkOrigin | undefined;
   /** The coordinator machine's name, for messages. */
   readonly coordinatorLabel: string;
+  /** This machine's name, for messages a coordinator elsewhere relays; else "this machine". */
+  readonly hereLabel?: string | undefined;
   /** The coordinator epochs the calling machine named, one per linked project it coordinates. */
   readonly coordinatorEpochs?: ReadonlyMap<string, number> | undefined;
 }
@@ -95,6 +98,23 @@ export const COORDINATOR_FALLBACK_LABEL = "the coordinating machine";
 const coordinatorLabelOf = (labels: ReadonlyMap<string, string>, environmentId: string) =>
   labels.get(environmentId) ?? COORDINATOR_FALLBACK_LABEL;
 
+/** This machine's name: the owner's name for it, else the name it joined with. */
+const hereLabelOf = (labels: ReadonlyMap<string, string>) =>
+  Effect.serviceOption(ServerEnvironment.ServerEnvironment).pipe(
+    Effect.flatMap(
+      Option.match({
+        onNone: () => Effect.succeed(undefined),
+        onSome: (environment) =>
+          Effect.map(
+            environment.getDescriptor,
+            (own) => labels.get(own.environmentId) ?? own.label,
+          ),
+      }),
+    ),
+  );
+
+const hereOf = (work: WorkGrantContext) => work.hereLabel ?? "this machine";
+
 /**
  * The grant the caller acts under here, if any: a worker-grant client's own,
  * or for a thread that another machine's work started (or its subagents and
@@ -113,6 +133,7 @@ export const workGrantOf = Effect.fn("mcp.workGrantOf")(function* (context: Gran
       grant,
       origin: undefined,
       coordinatorLabel: coordinatorLabelOf(labels, grant.coordinatorEnvironmentId),
+      hereLabel: yield* hereLabelOf(labels),
       coordinatorEpochs: context.scope.client?.coordinatorEpochs,
     } satisfies WorkGrantContext;
   }
@@ -125,6 +146,7 @@ export const workGrantOf = Effect.fn("mcp.workGrantOf")(function* (context: Gran
     grant,
     origin,
     coordinatorLabel: coordinatorLabelOf(labels, grant.coordinatorEnvironmentId),
+    hereLabel: yield* hereLabelOf(labels),
   } satisfies WorkGrantContext;
 });
 
@@ -307,8 +329,8 @@ export const assertThreadWritable = Effect.fn("mcp.assertThreadWritable")(functi
   return yield* new OrchestratorMcpFailure({
     code: "outside_grant_scope",
     message: linked
-      ? `This thread belongs to this machine's own coordinator for "${project.title}", so ${work.coordinatorLabel} may read it but not send to, interrupt or change it. Ask this machine's coordinator, or migrate the thread first.`
-      : `This thread is this machine's own work in "${project.title}", so ${work.coordinatorLabel} may read it but not send to, interrupt or change it. ${work.coordinatorLabel}'s work steers only the threads it started here.`,
+      ? `This thread belongs to ${hereOf(work)}'s own coordinator for "${project.title}", so ${work.coordinatorLabel} may read it but not send to, interrupt or change it. For a report to the other linked machine's coordinator, use studio_coordinator_message. It informs and never steers a turn.`
+      : `This thread is ${hereOf(work)}'s own work in "${project.title}", so ${work.coordinatorLabel} may read it but not send to, interrupt or change it. ${work.coordinatorLabel}'s work steers only the threads it started here.`,
   });
 });
 

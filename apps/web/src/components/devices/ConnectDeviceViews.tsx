@@ -2,7 +2,7 @@
  * What the owner and a waiting device see (1327). Views take plain props so the
  * hosts and the fixture under tests/device-approval render the same thing.
  */
-import { CircleCheckIcon, MonitorSmartphoneIcon, ShieldAlertIcon } from "lucide-react";
+import { CircleCheckIcon, MonitorSmartphoneIcon, ShieldAlertIcon, XIcon } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import {
@@ -92,7 +92,8 @@ function CodeForm({
           size={compact ? "sm" : "lg"}
           maxLength={9}
           onChange={(event) => {
-            setCode(event.target.value);
+            // In capitals, like the code on the device; the machine accepts any case (1416).
+            setCode(event.target.value.toUpperCase());
             setError(null);
           }}
           placeholder={tx("6 characters")}
@@ -323,7 +324,7 @@ export function DeviceApprovalPrompt({
           </ul>
           <p className="text-sm" data-device-approval-grants>
             {tx(
-              "Allow lets it use terminals, files, settings and sign-ins on {machine} and start work there, as this app can.",
+              "Allow lets that device's SpecWithCode app open {machine} and use its chats and the work they start, terminals, files, settings and sign-ins, and approve or remove other devices. Letting another machine's agents run work here is a separate choice.",
               { machine },
             )}
           </p>
@@ -362,18 +363,47 @@ export function DeviceApprovalPrompt({
 const WAITING_CARD_CLASS =
   "w-[min(30rem,calc(100vw-2rem))] rounded-2xl border border-border bg-popover p-4 text-popover-foreground shadow-lg";
 
+/**
+ * Closes the floating card. The join stays pending: the code is still in
+ * Settings > Machines and the sidebar's "Show code" opens the card again.
+ */
+function WaitingCardClose({ onClose }: { onClose: () => void }) {
+  const tx = useTx();
+  return (
+    <Button
+      aria-label={tx("Close")}
+      title={tx("Close. The code stays in Settings > Machines.")}
+      className="absolute top-2 right-2"
+      data-device-waiting-close
+      onClick={onClose}
+      size="icon-xs"
+      variant="ghost-muted"
+    >
+      <XIcon />
+    </Button>
+  );
+}
+
 /** On the waiting device: where to go and the code to type, large and copyable. */
 export function DeviceWaitingCard({
   machine,
   code,
   deviceId = null,
+  onClose,
 }: {
   machine: string;
   code: string;
   deviceId?: string | null;
+  /** Shows a close button; closing only hides the card. */
+  onClose?: () => void;
 }) {
   return (
-    <section aria-live="polite" data-device-waiting={machine} className={WAITING_CARD_CLASS}>
+    <section
+      aria-live="polite"
+      data-device-waiting={machine}
+      className={onClose ? `relative pr-10 ${WAITING_CARD_CLASS}` : WAITING_CARD_CLASS}
+    >
+      {onClose ? <WaitingCardClose onClose={onClose} /> : null}
       <DeviceApprovalCode machine={machine} code={code} deviceId={deviceId} />
     </section>
   );
@@ -394,21 +424,31 @@ export interface WaitingOnMachine {
 export function DeviceWaitingList({
   waiting,
   deviceId = null,
+  onClose,
 }: {
   waiting: ReadonlyArray<WaitingOnMachine>;
   deviceId?: string | null;
+  onClose?: () => void;
 }) {
   const tx = useTx();
   const first = waiting[0];
   if (first === undefined) return null;
   if (waiting.length === 1)
-    return <DeviceWaitingCard machine={first.machine} code={first.code} deviceId={deviceId} />;
+    return (
+      <DeviceWaitingCard
+        machine={first.machine}
+        code={first.code}
+        deviceId={deviceId}
+        {...(onClose ? { onClose } : {})}
+      />
+    );
   return (
     <section
       aria-live="polite"
       data-device-waiting-list={waiting.length}
-      className={WAITING_CARD_CLASS}
+      className={onClose ? `relative pr-10 ${WAITING_CARD_CLASS}` : WAITING_CARD_CLASS}
     >
+      {onClose ? <WaitingCardClose onClose={onClose} /> : null}
       <p className="text-sm font-medium" data-device-waiting-line>
         {tx("Open SpecWithCode on each machine below and type its code:")}
       </p>

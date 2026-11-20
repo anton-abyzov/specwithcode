@@ -1246,7 +1246,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "private-machines-invite",
-    title: "Join a main machine",
+    title: "Join one of your machines",
     to: "/settings/machines",
     searchTerms: [
       "fleet invite join main machine primary tailscale connect serve line swc-machine add this mac",
@@ -1283,15 +1283,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "handoff-sleep-target",
     title: "Away target",
     to: "/settings/machines",
-    searchTerms: [
-      "away sleep suspend lid close laptop move hand off running threads machine handoff",
-    ],
-  },
-  {
-    id: "away-sleep-trigger",
-    title: "Leave automatically when the lid closes",
-    to: "/settings/machines",
-    searchTerms: ["away lid close sleep battery grace leave automatically"],
+    searchTerms: ["away leave target move hand off running threads machine handoff"],
   },
   {
     id: "away-bring-back",

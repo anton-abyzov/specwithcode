@@ -7,14 +7,12 @@ import {
   compareFingerprints,
   coordinatorMayLeave,
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
-  noteNameCandidates,
   LOGICAL_PROJECT_MEMBER_ROOT_MAX_LENGTH,
   logicalProjectMemberKey,
   type LogicalProject,
   type LogicalProjectMember,
   type Project,
   type ProjectCoordinatorBinding,
-  type ProjectCoordinatorReplica,
   type ProjectDisconnectedTurn,
   type ProjectFingerprintInput,
   type ProjectFingerprintResult,
@@ -58,7 +56,6 @@ import {
   hasSavedProjectIcon,
   isPortableProjectFaviconPath,
 } from "@specweave-studio/shared/projectFavicon";
-import { equalEpochTakeoverWins } from "@specweave-studio/shared/linkedPairSync";
 import { teamRulesMachineLinkRefusal } from "@specweave-studio/shared/teamRules";
 import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import * as Context from "effect/Context";
@@ -74,8 +71,6 @@ import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import type { ProjectOwnershipUpdate } from "../orchestration-v2/ProjectCommands.ts";
 import { randomUuidV4 } from "../orchestration-v2/RandomUuid.ts";
-import * as FleetTargets from "../fleet/FleetTargets.ts";
-import * as RemoteStudioMcpClient from "../fleet/RemoteStudioMcpClient.ts";
 import * as WorkerEpochStore from "../fleet/WorkerEpochStore.ts";
 import * as CoordinatorReplicas from "./CoordinatorReplicas.ts";
 import * as LinkedMemoryHistory from "./LinkedMemoryHistory.ts";
@@ -84,6 +79,13 @@ import { CoordinatorRearmStore } from "./CoordinatorRearmStore.ts";
 import * as CoordinatorRole from "./CoordinatorRole.ts";
 import { CoordinatorStandbyStore } from "./CoordinatorStandbyStore.ts";
 import * as LinkedMemorySync from "./LinkedMemorySync.ts";
+import {
+  commitStep,
+  nextGeneration,
+  rememberRelink,
+  rememberRemoval,
+  unlinkTarget,
+} from "./linkMembership.ts";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
 import {
   type AddPredecessorMembersInput,
@@ -92,6 +94,13 @@ import {
   coordinatorClaimWindow,
   makeProjectLinkMembers,
 } from "./ProjectLinkMembers.ts";
+import {
+  joinedBinding,
+  joinedBy,
+  requireEqualPeer,
+  retiredRoleChange,
+  retiredStandbyMethods,
+} from "./EqualCoordinatorMigration.ts";
 import { fingerprintFolder } from "./projectFingerprint.ts";
 import { LinkedPeerSyncState } from "./LinkedPeerSyncState.ts";
 import { RoutineCopies } from "../scheduledTasks/ScheduledTaskCopies.ts";
@@ -105,17 +114,16 @@ import {
 } from "./ProjectLinkStandby.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as ProjectWorkspaceService from "./ProjectWorkspaceService.ts";
-import { makeTakeoverEpochClaims } from "./takeoverEpochClaims.ts";
 
 /**
- * Links a project with its copy on another machine, keeping one coordinator.
+ * Links a project with its copy on another machine. Each machine keeps its own coordinator.
  * Each machine runs its own half; the caller (the app, or server code such as a
  * folder copy that ends in "link") carries results between them:
  *
  * 1. `prepare` on the kept copy: it gets a shared identity if it has none.
  * 2. `preview` on both copies: notes, goal, instructions and fingerprints to compare.
- * 3. `accept` on the joining copy: it adopts the identity and relinquishes its
- *    coordinator; its ordinary workers keep running.
+ * 3. `accept` on the joining copy: it adopts the identity and keeps its own
+ *    coordinator, active beside the kept one; its workers keep running.
  * 4. `commit` on the kept copy: it lists the joined copy and writes chosen notes.
  *
  * Between 3 and 4 the kept copy still coordinates and sending works; retrying the
@@ -167,7 +175,7 @@ export class ProjectLink extends Context.Service<
     readonly startCoordinator: (
       input: ProjectStartCoordinatorInput,
     ) => Effect.Effect<ProjectStartCoordinatorResult, ProjectLinkError>;
-    /** A transferred copy adopts its coordinator's member list (`ProjectLinkMembers`). */
+    /** A copy takes the members another listed copy holds (`ProjectLinkMembers`). */
     readonly adoptMembers: (
       input: AdoptMembersInput,
     ) => Effect.Effect<AdoptMembersResult, ProjectLinkError>;
@@ -576,6 +584,7 @@ const make = Effect.gen(function* () {
         lastCoordinatorActivityAt: activity === null ? null : DateTime.formatIso(activity),
         keepRefusal: refusals.keep,
         joinRefusal: refusals.join,
+        equalCoordinators: true as const,
         replica: Option.getOrNull(replica),
         ranWhileDisconnected:
           binding?.state === "transferred" ? yield* turnsSince(member, binding.takenOverAt) : [],
@@ -589,6 +598,7 @@ const make = Effect.gen(function* () {
         const project = yield* load(input.projectId);
         const kept = yield* selfMember(project);
         if (input.joining.environmentId === kept.environmentId) return yield* fail("same_machine");
+        yield* requireEqualPeer(input);
         const refusal = linkRefusals(project, false).keep;
         if (refusal) return yield* fail(refusal);
         const binding: ProjectCoordinatorBinding = project.workspaceSettings
@@ -633,6 +643,7 @@ const make = Effect.gen(function* () {
         const project = yield* load(input.projectId);
         const self = yield* selfMember(project);
         if (input.kept.environmentId === self.environmentId) return yield* fail("same_machine");
+        yield* requireEqualPeer(input);
         if (
           input.coordinatorBinding.state !== "active" ||
           !input.logicalProject.members.some((member) => sameMember(member, input.kept))
@@ -642,11 +653,7 @@ const make = Effect.gen(function* () {
         const binding = project.workspaceSettings?.coordinatorBinding;
         if (current?.id === input.logicalProject.id) {
           // Already this identity's member: a retry, or the same link done before.
-          if (
-            binding?.state === "transferred" &&
-            binding.successor !== undefined &&
-            sameMember(binding.successor, input.kept)
-          )
+          if (binding != null && joinedBy(binding, input.operationId))
             return {
               operationId: input.operationId,
               member: self,
@@ -664,29 +671,28 @@ const make = Effect.gen(function* () {
           if (!compareFingerprints(own, input.keptFingerprint).rootMatches)
             return yield* fail("repository_mismatch", rootSummary(own, input.keptFingerprint));
         }
+        // This link names the membership: an unlink of an earlier one never ends it.
+        const joinedAs: LogicalProjectMember = {
+          ...self,
+          linkId: input.operationId,
+          generation: nextGeneration({
+            self,
+            keptMembers: input.logicalProject.members,
+            keptRemoved: input.coordinatorBinding.removedMembers ?? [],
+            ownRemoved: project.workspaceSettings?.coordinatorBinding?.removedMembers ?? [],
+          }),
+        };
         const logicalProject: LogicalProject = {
           ...input.logicalProject,
-          members: mergeMembers(input.logicalProject.members, [self]),
+          members: mergeMembers(input.logicalProject.members, [joinedAs]),
         };
-        const relinquished: ProjectCoordinatorBinding = {
-          // The kept epoch: one active owner at the highest epoch, this copy relinquished beside it.
-          epoch: input.coordinatorBinding.epoch,
-          state: "transferred",
-          operationId: input.operationId,
-          successor: input.kept,
-        };
+        // This copy keeps its own coordinator: every machine runs one (EqualCoordinatorMigration).
+        const joined = joinedBinding(input.operationId, input.coordinatorBinding.epoch);
         yield* writeOwnership(project, "project-link-join", input.operationId, {
           mode: "join-as-member",
           joinExpectedLogicalProjectId: current?.id ?? null,
           logicalProject,
-          coordinatorBinding: relinquished,
-        });
-        yield* publishRole({
-          kind: "gave-way",
-          projectId: project.id,
-          logicalProjectId: logicalProject.id,
-          epoch: relinquished.epoch,
-          successor: input.kept,
+          coordinatorBinding: joined,
         });
         // A project shares one icon. This never fails the link: the icon only decorates it.
         const sharedIcon = input.sharedIcon && sharedIconOf(input.sharedIcon);
@@ -701,9 +707,9 @@ const make = Effect.gen(function* () {
         }
         return {
           operationId: input.operationId,
-          member: self,
+          member: joinedAs,
           logicalProject,
-          coordinatorBinding: relinquished,
+          coordinatorBinding: joined,
           replayed: false,
         };
       }),
@@ -726,39 +732,65 @@ const make = Effect.gen(function* () {
         if (!identity) return yield* fail("conflict", "Prepare the link on this copy first.");
         const refusal = linkRefusals(project, false).keep;
         if (refusal) return yield* fail(refusal);
-        const listed = identity.members.some((member) => sameMember(member, input.joining));
+        if (
+          identity.members.some(
+            (member) =>
+              logicalProjectMemberKey(member) === logicalProjectMemberKey(input.joining) &&
+              !sameMember(member, input.joining),
+          )
+        )
+          return yield* fail("conflict", "That copy is listed with another coordinator thread.");
+        // Decided before anything is written: a late retry of a link that was unlinked or
+        // replaced since is refused, and never brings that link back (linkMembership).
+        const step = commitStep({
+          members: identity.members,
+          removed: project.workspaceSettings?.coordinatorBinding?.removedMembers ?? [],
+          joining: input.joining,
+          operationId: input.operationId,
+        });
+        if (step.kind === "refused") return yield* fail("conflict", step.detail);
         const notesWritten = yield* writeNotes(project.id, input.notes);
         yield* recordSuperseded(project.id, input.superseded ?? []);
-        if (listed)
+        if (step.kind === "replay")
           return {
             operationId: input.operationId,
             logicalProject: identity,
             notesWritten,
             replayed: true,
           };
-        if (
-          identity.members.some(
-            (member) => logicalProjectMemberKey(member) === logicalProjectMemberKey(input.joining),
-          )
-        )
-          return yield* fail("conflict", "That copy is listed with another coordinator thread.");
-        // The joining entry keeps the folder its own machine recorded when it accepted.
-        const own = withOwnRoot(identity, kept);
-        const logicalProject = { ...own, members: [...own.members, input.joining] };
-        // Reread: writing notes does not change settings, but stay exact about the revision.
-        yield* writeOwnership(
-          yield* load(input.projectId),
-          "project-link-member",
-          input.operationId,
-          {
-            mode: "link-member",
-            logicalProject,
-            coordinatorBinding: project.workspaceSettings?.coordinatorBinding ?? {
-              epoch: 0,
-              state: "active",
+        const { joining, earlier } = step;
+        const now = DateTime.toEpochMillis(yield* DateTime.now);
+        // Listed here by an earlier link, which that copy left: this copy ends that
+        // membership first, so an unlink of it made elsewhere never ends the new one.
+        let current = yield* load(input.projectId);
+        if (earlier !== undefined) {
+          const held = current.workspaceSettings!.logicalProject!;
+          current = yield* writeOwnership(current, "project-link-member-ended", input.operationId, {
+            mode: "remove-member",
+            logicalProject: {
+              ...held,
+              members: held.members.filter((member) => !sameMember(member, earlier)),
             },
-          },
-        );
+            coordinatorBinding: rememberRemoval(
+              current.workspaceSettings?.coordinatorBinding ?? { epoch: 0, state: "active" },
+              earlier,
+              now,
+            ),
+          });
+        }
+        // The joining entry keeps the folder its own machine recorded when it accepted.
+        const own = withOwnRoot(current.workspaceSettings?.logicalProject ?? identity, kept);
+        const logicalProject = { ...own, members: [...own.members, joining] };
+        yield* writeOwnership(current, "project-link-member", input.operationId, {
+          mode: "link-member",
+          logicalProject,
+          // An unlink of this copy from before link ids ends here; the others name theirs.
+          coordinatorBinding: rememberRelink(
+            current.workspaceSettings?.coordinatorBinding ?? { epoch: 0, state: "active" },
+            joining,
+            now + 1,
+          ),
+        });
         return { operationId: input.operationId, logicalProject, notesWritten, replayed: false };
       }),
     );
@@ -771,26 +803,16 @@ const make = Effect.gen(function* () {
     );
 
   /**
-   * A coordinator that replaced a predecessor remembers whom it unlinked, so
-   * the predecessor's older list (`addPredecessorMembers`) never brings them back.
+   * A copy remembers whom it unlinked, so another copy's older list
+   * (`adoptMembers`, `addPredecessorMembers`) never brings them back.
    */
   const rememberRemoved = (
     binding: ProjectCoordinatorBinding,
-    member: Pick<LogicalProjectMember, "environmentId" | "projectId">,
-  ): ProjectCoordinatorBinding => {
-    if (binding.predecessor === undefined) return binding;
-    const key = logicalProjectMemberKey(member);
-    const kept = (binding.removedMembers ?? []).filter(
-      (removed) => logicalProjectMemberKey(removed) !== key,
+    member: Pick<LogicalProjectMember, "environmentId" | "projectId" | "linkId" | "generation">,
+  ) =>
+    DateTime.now.pipe(
+      Effect.map((now) => rememberRemoval(binding, member, DateTime.toEpochMillis(now))),
     );
-    return {
-      ...binding,
-      removedMembers: [
-        ...kept,
-        { environmentId: member.environmentId, projectId: member.projectId },
-      ].slice(-256),
-    };
-  };
 
   const unlinkLocked = (input: ProjectUnlinkInput) =>
     admission.withLock(
@@ -805,11 +827,11 @@ const make = Effect.gen(function* () {
           if (binding?.state === "transferring") return yield* fail("handoff_in_progress");
           if (logicalProjectMemberKey(input.member) === logicalProjectMemberKey(self))
             return yield* fail("invalid");
-          const remaining = identity.members.filter(
-            (member) => logicalProjectMemberKey(member) !== logicalProjectMemberKey(input.member),
-          );
           const current = binding ?? { epoch: 0, state: "active" as const };
-          if (remaining.length === identity.members.length)
+          // Only the link the request names, or an older one: a call that arrives after
+          // the copy was linked again changes nothing (linkMembership).
+          const target = unlinkTarget(identity.members, input.member);
+          if (target === undefined)
             return {
               operationId: input.operationId,
               logicalProject: identity,
@@ -817,8 +839,11 @@ const make = Effect.gen(function* () {
               notesWritten: 0,
               replayed: true,
             };
-          const logicalProject = { ...identity, members: remaining };
-          const coordinatorBinding = rememberRemoved(current, input.member);
+          const logicalProject = {
+            ...identity,
+            members: identity.members.filter((member) => member !== target.listed),
+          };
+          const coordinatorBinding = yield* rememberRemoved(current, target.ended);
           yield* writeOwnership(project, "project-unlink-member", input.operationId, {
             mode: "remove-member",
             logicalProject,
@@ -846,9 +871,9 @@ const make = Effect.gen(function* () {
             replayed: true,
           };
         if (binding?.state === "transferring") return yield* fail("handoff_in_progress");
+        // Every member runs its own coordinator and may leave with it.
         const sideLeaves =
-          input.leaveCoordinator === true &&
-          coordinatorMayLeave(binding, identity?.members.length ?? 0);
+          identity !== undefined && coordinatorMayLeave(binding, identity.members.length);
         if (binding?.state !== "transferred" && !sideLeaves) return yield* fail("not_linked");
         // Refuse before leaving when a note would be overwritten; nothing changes then.
         for (const note of input.notes) {
@@ -866,7 +891,8 @@ const make = Effect.gen(function* () {
           id,
           title: identity?.title ?? project.title,
           coordinatorId: `coordinator:${id}`,
-          members: [self],
+          // Its own project again: the link that listed it in the other one is over.
+          members: [(({ linkId: _ended, ...own }) => own)(self)],
         };
         const active: ProjectCoordinatorBinding = {
           epoch: 0,
@@ -1023,240 +1049,19 @@ const make = Effect.gen(function* () {
     );
 
   /**
-   * Writes the replica's notes; a local note with other text is kept beside it under
-   * a new `-before-takeover` name. Earlier backups are never replaced, and replaying
-   * a takeover finds its own backup instead of making another.
+   * Retired with equal coordinators: no copy takes another's coordinator over,
+   * by a person, a standby or a planned handover.
    */
-  const applyReplicaNotes = (projectId: ProjectId, replica: ProjectCoordinatorReplica) =>
-    Effect.gen(function* () {
-      // The replica writes its own names; a backup never goes there.
-      const replicaNames = new Set(replica.notes.map((note) => note.name));
-      // Backup names chosen in this batch, with their text; others are read from disk.
-      const taken = new Map<string, string>();
-      const heldText = (name: string) =>
-        taken.has(name)
-          ? Effect.succeed(taken.get(name))
-          : workspace.readMemory({ projectId, name }).pipe(
-              Effect.option,
-              Effect.map((held) => (Option.isSome(held) ? held.value.content : undefined)),
-            );
-      const replicaWrites: ProjectLinkNoteWrite[] = [];
-      const replaced: Array<{ readonly name: string; readonly content: string }> = [];
-      for (const note of replica.notes) {
-        const current = yield* workspace
-          .readMemory({ projectId, name: note.name })
-          .pipe(Effect.option);
-        if (Option.isSome(current) && current.value.content === note.content) continue;
-        if (Option.isSome(current))
-          replaced.push({ name: note.name, content: current.value.content });
-        replicaWrites.push({
-          name: note.name,
-          content: note.content,
-          expectedRevision: Option.isSome(current) ? current.value.revision : null,
-        });
-      }
-      // Backups go first: a takeover stopped partway never loses a note it replaces.
-      const writes: ProjectLinkNoteWrite[] = [];
-      for (const note of replaced) {
-        let name: string | undefined;
-        for (const candidate of noteNameCandidates(note.name, "before takeover")) {
-          if (replicaNames.has(candidate)) continue;
-          const held = yield* heldText(candidate);
-          if (held === undefined || held === note.content) {
-            name = candidate;
-            break;
-          }
-        }
-        if (name === undefined)
-          return yield* fail("too_large", `Too many earlier copies of "${note.name}".`);
-        taken.set(name, note.content);
-        if (!writes.some((write) => write.name === name))
-          writes.push({ name, content: note.content, expectedRevision: null, createOnly: true });
-      }
-      writes.push(...replicaWrites);
-      return yield* writeNotes(projectId, writes);
-    });
+  const takeoverLocked = () => retiredRoleChange("invalid");
+
+  const takeover: ProjectLink["Service"]["takeover"] = () => retiredRoleChange("invalid");
 
   /**
-   * Makes this member the coordinator after `predecessor`, starting from the
-   * replica. The caller holds the project lock. `epoch` is given by an
-   * automatic takeover, which names its operation by it; a person's takeover
-   * goes one above every epoch known.
+   * Retired with equal coordinators: this copy gives way to nobody. A peer on
+   * an older version that reconnects holding a superseding binding is told
+   * so, and this copy's binding, coordinator and workers stay as they are.
    */
-  const takeoverLocked = (input: {
-    readonly projectId: ProjectId;
-    readonly operationId: string;
-    readonly knownEpoch?: number | undefined;
-    readonly predecessor?: LogicalProjectMember | undefined;
-    readonly epoch?: number | undefined;
-    readonly takenOverBy: "person" | "auto";
-  }) =>
-    Effect.gen(function* () {
-      const project = yield* load(input.projectId);
-      yield* refusePersonal(project);
-      const identity = project.workspaceSettings?.logicalProject;
-      const binding = project.workspaceSettings?.coordinatorBinding;
-      const replica = yield* readReplica(project);
-      const replicaFrom = Option.match(replica, {
-        onNone: () => null,
-        onSome: (value) => value.replicatedAt,
-      });
-      if (
-        identity &&
-        binding?.state === "active" &&
-        binding.operationId === input.operationId &&
-        binding.takenOverAt !== undefined
-      )
-        return {
-          operationId: input.operationId,
-          logicalProject: identity,
-          coordinatorBinding: binding,
-          notesWritten: 0,
-          replicaFrom,
-          replayed: true,
-        };
-      if (!identity || binding?.state !== "transferred" || binding.successor === undefined)
-        return yield* fail(
-          binding?.state === "transferring" ? "handoff_in_progress" : "not_member",
-        );
-      if (project.workspaceSettings?.archived) return yield* fail("archived");
-      const self = yield* selfMember(project);
-      const predecessor = input.predecessor ?? binding.successor;
-      if (
-        logicalProjectMemberKey(predecessor) === logicalProjectMemberKey(self) ||
-        !identity.members.some((member) => sameMember(member, predecessor))
-      )
-        return yield* fail(
-          "superseded_conflict",
-          "The coordinator being replaced is not listed with this copy.",
-        );
-      const epoch = input.epoch ?? Math.max(binding.epoch, input.knownEpoch ?? 0) + 1;
-      if (epoch <= binding.epoch) return yield* fail("invalid");
-      const notesWritten = Option.isSome(replica)
-        ? yield* applyReplicaNotes(project.id, replica.value)
-        : 0;
-      const active: ProjectCoordinatorBinding = {
-        epoch,
-        state: "active",
-        operationId: input.operationId,
-        predecessor,
-        takenOverAt: DateTime.formatIso(yield* DateTime.now),
-        takenOverBy: input.takenOverBy,
-      };
-      yield* writeOwnership(
-        // Reread: notes do not change settings, but stay exact about the revision.
-        yield* load(input.projectId),
-        "project-takeover",
-        input.operationId,
-        { mode: "takeover", logicalProject: identity, coordinatorBinding: active },
-        Option.isSome(replica)
-          ? { goal: replica.value.goal, instructions: replica.value.instructions }
-          : undefined,
-      );
-      yield* publishRole({
-        kind: "took-over",
-        projectId: project.id,
-        logicalProjectId: identity.id,
-        epoch,
-        predecessor,
-        takenOverBy: input.takenOverBy,
-      });
-      return {
-        operationId: input.operationId,
-        logicalProject: identity,
-        coordinatorBinding: active,
-        notesWritten,
-        replicaFrom,
-        replayed: false,
-      };
-    });
-
-  const takeover: ProjectLink["Service"]["takeover"] = (input) =>
-    admission.withLock(input.projectId, takeoverLocked({ ...input, takenOverBy: "person" }));
-
-  const supersede: ProjectLink["Service"]["supersede"] = (input) =>
-    admission.withLock(
-      input.projectId,
-      Effect.gen(function* () {
-        const project = yield* load(input.projectId);
-        yield* refusePersonal(project);
-        const self = yield* selfMember(project);
-        const identity = project.workspaceSettings?.logicalProject;
-        const binding: ProjectCoordinatorBinding = project.workspaceSettings
-          ?.coordinatorBinding ?? { epoch: 0, state: "active" };
-        const incoming = input.coordinatorBinding;
-        if (!identity || identity.id !== input.logicalProjectId) return yield* fail("not_linked");
-        // Two flips at the same epoch: the earlier takeover (then the smaller
-        // copy ref) wins, and the later one gives way to it here.
-        const tieWin =
-          incoming.epoch === binding.epoch &&
-          equalEpochTakeoverWins(
-            {
-              environmentId: input.successor.environmentId,
-              projectId: input.successor.projectId,
-              logicalProjectId: input.logicalProjectId,
-              binding: incoming,
-            },
-            {
-              environmentId: self.environmentId,
-              projectId: self.projectId,
-              logicalProjectId: identity.id,
-              binding,
-            },
-          );
-        if (
-          incoming.state !== "active" ||
-          incoming.predecessor === undefined ||
-          (!sameMember(incoming.predecessor, self) && !tieWin) ||
-          incoming.operationId === undefined ||
-          incoming.takenOverAt === undefined ||
-          logicalProjectMemberKey(input.successor) === logicalProjectMemberKey(self)
-        )
-          return yield* fail("invalid");
-        if (
-          binding.state === "transferred" &&
-          binding.operationId === incoming.operationId &&
-          binding.successor !== undefined &&
-          sameMember(binding.successor, input.successor)
-        )
-          return {
-            coordinatorBinding: binding,
-            ranWhileDisconnected: yield* turnsSince(self, binding.takenOverAt),
-            replayed: true,
-          };
-        if (
-          binding.state !== "active" ||
-          incoming.epoch < binding.epoch ||
-          (incoming.epoch === binding.epoch && !tieWin) ||
-          !identity.members.some((member) => sameMember(member, input.successor))
-        )
-          return yield* fail("superseded_conflict");
-        const relinquished: ProjectCoordinatorBinding = {
-          epoch: incoming.epoch,
-          state: "transferred",
-          operationId: incoming.operationId,
-          successor: input.successor,
-          takenOverAt: incoming.takenOverAt,
-        };
-        yield* writeOwnership(project, "project-superseded", incoming.operationId, {
-          mode: "superseded",
-          logicalProject: identity,
-          coordinatorBinding: relinquished,
-        });
-        yield* publishRole({
-          kind: "gave-way",
-          projectId: project.id,
-          logicalProjectId: identity.id,
-          epoch: incoming.epoch,
-          successor: input.successor,
-        });
-        return {
-          coordinatorBinding: relinquished,
-          ranWhileDisconnected: yield* turnsSince(self, incoming.takenOverAt),
-          replayed: false,
-        };
-      }),
-    );
+  const supersede: ProjectLink["Service"]["supersede"] = () => retiredRoleChange();
 
   /**
    * Runs this member's own coordinator next to the others. Nothing is replaced:
@@ -1395,6 +1200,7 @@ const make = Effect.gen(function* () {
 
   return ProjectLink.of({
     ...standby,
+    ...retiredStandbyMethods(standby),
     replicateFromMember,
     fingerprint,
     preview,
@@ -1438,13 +1244,6 @@ export const layerRpcHandlers = WsProjectLinkRpcGroup.middleware(RpcInstrumentat
     const memory = yield* LinkedMemorySync.LinkedMemorySync;
     const guard = yield* CoordinatorReleaseGuard;
     const syncState = yield* Effect.serviceOption(LinkedPeerSyncState);
-    // A person's takeover claims its epoch on the other members' machines, as an
-    // automatic one does, so the coordinator it replaced steers nothing there.
-    const epochClaims = makeTakeoverEpochClaims({
-      client: yield* RemoteStudioMcpClient.RemoteStudioMcpClient,
-      targets: yield* FleetTargets.FleetTargets,
-      selfEnvironmentId: (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId,
-    });
     // The standby this copy leases to is released, and answers, before the change is written.
     const released =
       <I, A>(
@@ -1498,8 +1297,7 @@ export const layerRpcHandlers = WsProjectLinkRpcGroup.middleware(RpcInstrumentat
       ),
       [WS_METHODS.projectLinkMemoryExport]: whereRulesAllow(memory.memoryExport),
       [WS_METHODS.projectLinkMemoryMerge]: whereRulesAllow(memory.memoryMerge),
-      [WS_METHODS.projectTakeover]: (input: ProjectTakeoverInput) =>
-        epochClaims.takeover(link.takeover(input)),
+      [WS_METHODS.projectTakeover]: link.takeover,
       [WS_METHODS.projectSupersede]: released(
         (input: ProjectSupersedeInput) => ({
           projectId: input.projectId,

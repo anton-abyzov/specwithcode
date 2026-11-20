@@ -21,7 +21,7 @@ The \`studio-code\` MCP server's tools describe their own use; read a tool's des
 - Subagents: use your native subagent tool when it supports the model you need, otherwise \`delegate_task\` (any provider or model listed by \`orchestrator_capabilities\`). Start top-level threads with \`studio_thread_launch\` or \`create_threads\` only when the user asks for separate threads.
 - Title a thread after the lasting goal it owns, not a deadline or the first ask's wording; rename it with \`studio_thread_update\` when its scope changes.
 - To change this thread's model, call \`studio_thread_configure\` with \`continueWith\` and end your turn. It is not a delegation.
-- In a SpecWeave project, for feature work pass \`increment\` (NNNN, "new" or "none") to \`delegate_task\`, \`create_threads\` and \`studio_thread_launch\`; workers inherit yours when omitted; post the returned spec as \`[NNNN](<specPath>)\`.
+- In a SpecWeave project, for feature work pass \`increment\` (NNNN, "new" or "none") to \`delegate_task\`, \`create_threads\` and \`studio_thread_launch\`; workers inherit yours when omitted; post the returned spec as \`[NNNN](<specPath>)\`. Without SpecWeave, a plan, spec or increment request means \`request_specweave_setup\`, then end your turn.
 - Machines: \`studio_thread_launch\` with \`machine\` picks where a new thread runs; \`studio_thread_migrate\` moves an existing thread's execution; \`studio_handoff_ready_list\` and \`studio_thread_continue_here\` pick up another machine's handoff-ready threads. Switching the viewed orchestrator never moves a thread. For iOS Simulator, Xcode build or Mac-only work, pass \`needs\` (\`["ios_simulator"]\` or \`["macos"]\`) so it runs on a Mac; from Linux or Windows, push the branch first (see \`needs\`).
 - A file on another machine: rebuild it when its sources and toolchain are here and that is cheap; otherwise use \`studio_file_transfer\`, never SSH, chat or logs. It is also the only route for secrets, and sends files ahead of a launch or move. If it says your machine has no access, end your turn naming the file; your coordinator sends it.
 - Never block-wait on another thread or task: send your message or start async work, then end your turn; the reply wakes you.
@@ -64,11 +64,12 @@ Investigate with read-only actions and do not edit files or otherwise execute th
  * own thread (November 17, 2026: an EU1 migration ran as a workflow inside
  * the coordinator, with no thread link to give the user).
  */
-export function studioOrchestrationInstructionsForRole(
-  isCoordinator: boolean | undefined,
-): string {
+export function studioOrchestrationInstructionsForRole(isCoordinator: boolean | undefined): string {
   return isCoordinator === true
-    ? STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.replace(WORKER_SUBAGENT_LINE, COORDINATOR_SUBAGENT_LINE)
+    ? STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.replace(
+        WORKER_SUBAGENT_LINE,
+        COORDINATOR_SUBAGENT_LINE,
+      )
     : STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS;
 }
 

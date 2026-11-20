@@ -1,3 +1,4 @@
+import { maskEmail } from "@specweave-studio/shared/maskEmail";
 import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
 import { useAtomValue } from "@effect/atom-react";
@@ -252,7 +253,7 @@ export function MachineReadinessChecklist({
         ) : (
           enabled.map((provider) => {
             const signedIn = provider.auth.status === "authenticated";
-            const account = provider.auth.email ?? provider.auth.label ?? null;
+            const account = maskEmail(provider.auth.email) ?? provider.auth.label ?? null;
             return (
               <Row
                 key={provider.instanceId}

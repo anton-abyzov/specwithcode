@@ -701,8 +701,11 @@ describe("failed runs", () => {
 describe("blocked threads", () => {
   const blocked = thread({ reportedBlocker: "Ship 1.0.20 today, or wait for the signer?" });
 
-  it("names a quiet thread whose report has a blocker Blocked, needing you", () => {
-    expect(threadStatusWord(blocked)).toBe("Blocked");
+  // November 18, 2026: "Blocked" read as broken work; the row says what to decide.
+  it("asks a quiet thread's report blocker as a reply, needing you", () => {
+    expect(threadStatusWord(blocked)).toBe(
+      "Reply needed · Ship 1.0.20 today, or wait for the signer?",
+    );
     expect(threadTone(blocked)).toBe("waiting");
   });
 
@@ -724,8 +727,29 @@ describe("blocked threads", () => {
         source: { creationSource: "mcp" },
       }) as unknown as EnvironmentThreadShell;
     expect(threadStatusWord(child("worker-1"))).toBeNull();
-    expect(threadStatusWord(child("project-coordinator:project-1"))).toBe("Blocked");
+    expect(threadStatusWord(child("project-coordinator:project-1"))).toBe(
+      "Reply needed · Ship 1.0.20 today, or wait for the signer?",
+    );
     expect(threadTone(child("project-coordinator:project-1"))).toBe("waiting");
+  });
+
+  it("names an open question card by its prompt, or alone from an older server", () => {
+    const asking = (prompt?: string) =>
+      thread({
+        hasPendingUserInput: true,
+        source: {
+          pendingRuntimeRequest: {
+            id: "ask-user:t:q1",
+            kind: "user_input",
+            createdAt: null,
+            ...(prompt === undefined ? {} : { prompt }),
+          },
+        },
+      } as unknown as Partial<EnvironmentThreadShell>);
+    expect(threadStatusWord(asking("Release: Ship now or Wait for review"))).toBe(
+      "Answer needed · Release: Ship now or Wait for review",
+    );
+    expect(threadStatusWord(asking())).toBe("Answer needed");
   });
 
   it("drops the blocker while the thread runs again or once it is resolved", () => {
@@ -760,7 +784,9 @@ describe("threads on this machine while its server catches up", () => {
     );
     expect([...unreachable]).toEqual(["m1"]);
     const hostOffline = unreachable.has(blocked.environmentId);
-    expect(threadStatusWord(blocked, hostOffline)).toBe("Blocked");
+    expect(threadStatusWord(blocked, hostOffline)).toBe(
+      "Reply needed · Commit these changes, or discard them?",
+    );
     expect(threadTone(blocked, hostOffline)).toBe("waiting");
     expect(waitingCount([blocked], unreachable)).toBe(1);
   });
@@ -830,7 +856,9 @@ describe("threads on an unreachable host", () => {
   it("keeps a resolved thread resolved and is unchanged once the host is back", () => {
     expect(threadTone({ ...blocked, settledOverride: "settled" }, true)).toBe("resolved");
     expect(threadStatusWord({ ...blocked, settledOverride: "settled" }, true)).toBeNull();
-    expect(threadStatusWord(blocked, false)).toBe("Blocked");
+    expect(threadStatusWord(blocked, false)).toBe(
+      "Reply needed · Commit these changes, or discard them?",
+    );
     expect(waitingCount([blocked], new Set())).toBe(1);
   });
 });

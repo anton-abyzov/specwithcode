@@ -111,6 +111,20 @@ export class ConnectionBlockedError extends Schema.TaggedError<ConnectionBlocked
     serverUpdateRequired: Schema.optionalKey(Schema.Boolean),
     /** The host no longer accepts this device's approval; pairing again restores the connection. */
     reapprovalRequired: Schema.optionalKey(Schema.Boolean),
+    /**
+     * This device has no SpecWithCode Connect sign-in, and the route needs one;
+     * signing in restores the connection. Never set for a machine's own
+     * credential refusal, which signing in does not fix.
+     */
+    connectSignInRequired: Schema.optionalKey(Schema.Boolean),
+    /**
+     * The relay refused this window's Connect sign-in itself: its session token
+     * was missing or no longer accepted, or this device was removed from the
+     * account. A new sign-in fixes it. Never set for a DPoP proof the relay
+     * rejected or one this device could not make, which a sign-in does not
+     * fix (1417, AC-13).
+     */
+    connectSessionRefused: Schema.optionalKey(Schema.Boolean),
   },
 ) {
   override get message(): string {

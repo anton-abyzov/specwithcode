@@ -330,7 +330,7 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
             data-plan-criteria-count
           >
             <span aria-hidden>
-              AC {acCount.verified}/{acCount.total}
+              AC {acCount.verified}/{acCount.total} {tx("verified")}
             </span>
             <span className="sr-only">
               {renderRich(tx("{verified} of {total} acceptance criteria verified"), {

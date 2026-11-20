@@ -28,6 +28,7 @@ import {
   invalidateAcpRegistryCaches,
   withCopilotUsage,
   readsCopilotUsage,
+  GEMINI_GOOGLE_SIGN_IN_MESSAGE,
 } from "./AcpRegistryDriver.ts";
 import { makeCachedCopilotUsageLimits } from "../copilotUsageLimits.ts";
 import * as ServerSettings from "../../serverSettings.ts";
@@ -339,7 +340,7 @@ describe("acpRegistrySnapshotReadiness", () => {
     });
   });
 
-  it("offers Gemini 4 Argon for Gemini CLI once its catalog is probed", () => {
+  it("offers published Gemini 4 Cloud models after a CLI catalog probe", () => {
     const geminiCatalog = {
       models: [
         { id: "auto", name: "Auto", description: null },
@@ -372,6 +373,9 @@ describe("acpRegistrySnapshotReadiness", () => {
       ["auto", false],
       ["gemini-3.8-flash", false],
       ["gemini-4-argon", false],
+      ["gemini-4-carbon", false],
+      ["gemini-4-neon", false],
+      ["gemini-4-hydrogen", false],
     ]);
     // A catalog that lists Argon, or a custom entry typed earlier, is not duplicated.
     expect(
@@ -382,7 +386,7 @@ describe("acpRegistrySnapshotReadiness", () => {
         },
         { customModels: [], agentId: "gemini" },
       ),
-    ).toEqual([["gemini-4-argon", false]]);
+    ).toEqual([["gemini-4-argon", false], ["gemini-4-carbon", false], ["gemini-4-neon", false], ["gemini-4-hydrogen", false]]);
     expect(
       slugs(geminiCatalog, {
         customModels: ["gemini-4-argon"],
@@ -397,6 +401,84 @@ describe("acpRegistrySnapshotReadiness", () => {
         { customModels: [], agentId: "gemini" },
       ),
     ).toEqual([["default", false]]);
+  });
+
+  it("says Gemini CLI's Google sign-in no longer takes a free personal account", () => {
+    const geminiSnapshot = (authMethodId: string | undefined) =>
+      buildCheckedAcpRegistrySnapshot({
+        ...identity,
+        settings: decodeSettings({ agentId: "gemini", ...(authMethodId ? { authMethodId } : {}) }),
+        checkedAt: "2026-11-19T06:00:00.000Z",
+        inspection: { status: "ready", agentId: "gemini", version: "0.65.0", distribution: "npx" },
+        probeError: new AcpRegistryOperationError({
+          reason: "authentication_failed",
+          message: "Authentication required.",
+          authMethods: [
+            { id: "oauth-personal", name: "Log in with Google", description: null, type: "agent" },
+            { id: "gemini-api-key", name: "Gemini API key", description: null, type: "agent" },
+            { id: "vertex-ai", name: "Vertex AI", description: null, type: "agent" },
+          ],
+        }),
+      });
+    expect(geminiSnapshot(undefined).message).toBe(GEMINI_GOOGLE_SIGN_IN_MESSAGE);
+    expect(geminiSnapshot("oauth-personal").message).toBe(GEMINI_GOOGLE_SIGN_IN_MESSAGE);
+    expect(geminiSnapshot("gemini-api-key").message).toBe(
+      'Sign in in provider settings using "Gemini API key".',
+    );
+  });
+
+  it("adds the models a Gemini API key lists, with their token limits", () => {
+    const geminiCatalog = {
+      models: [
+        { id: "auto", name: "Auto", description: null },
+        { id: "gemini-3.8-flash", name: "gemini-3.8-flash", description: null },
+      ],
+      currentModelId: "auto",
+      configOptions: [],
+    };
+    const providerListed = [
+      { id: "gemini-4-neon", name: "Gemini 4 Neon", contextWindow: 1_048_576, maxOutput: 65_536 },
+      { id: "gemini-4-argon", name: "Gemini 4 Argon", contextWindow: 1_048_576 },
+      { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash", contextWindow: 1_048_576 },
+    ];
+    const snapshot = buildCheckedAcpRegistrySnapshot({
+      ...identity,
+      settings: decodeSettings({ agentId: "gemini" }),
+      checkedAt: "2026-11-19T06:00:00.000Z",
+      inspection: { status: "ready", agentId: "gemini", version: "0.65.0", distribution: "npx" },
+    });
+    const live = applyAcpRegistryLiveConfiguration(
+      snapshot,
+      geminiCatalog,
+      { customModels: [], agentId: "gemini" },
+      providerListed,
+    );
+    // Each model once: the CLI's own entries first, then what only the key lists.
+    expect(live.models.map((model) => model.slug)).toEqual([
+      "auto",
+      "gemini-3.8-flash",
+      "gemini-4-neon",
+      "gemini-4-argon",
+      "gemini-4-carbon",
+      "gemini-4-hydrogen",
+    ]);
+    expect(live.models.find((model) => model.slug === "gemini-4-neon")).toMatchObject({
+      name: "Gemini 4 Neon",
+      isCustom: false,
+      contextWindow: 1_048_576,
+      maxOutput: 65_536,
+    });
+    expect(live.models.find((model) => model.slug === "gemini-3.8-flash")).toMatchObject({
+      contextWindow: 1_048_576,
+    });
+    // Vertex and Google sign-ins keep the published Cloud supplements, without claiming access.
+    expect(live.message).toContain("has not been verified by an inference request");
+    expect(
+      applyAcpRegistryLiveConfiguration(snapshot, geminiCatalog, {
+        customModels: [],
+        agentId: "gemini",
+      }).models.map((model) => model.slug),
+    ).toEqual(["auto", "gemini-3.8-flash", "gemini-4-argon", "gemini-4-carbon", "gemini-4-neon", "gemini-4-hydrogen"]);
   });
 
   it("maps registry inspection status to provider readiness", () => {

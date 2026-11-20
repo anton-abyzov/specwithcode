@@ -70,6 +70,29 @@ export const DeviceSummary = Schema.Struct({
 });
 export type DeviceSummary = typeof DeviceSummary.Type;
 
+/** Why a platform is not ready on the machine's own host; the step a person takes next. */
+export const DEVICE_PLATFORM_SETUP_CODES = [
+  "not_mac",
+  "xcode_missing",
+  "xcode_not_selected",
+  "xcode_setup_unfinished",
+  "ios_runtime_missing",
+  "ios_simulator_missing",
+  "android_studio_missing",
+  "android_sdk_missing",
+  "android_tools_missing",
+  "android_avd_missing",
+] as const;
+export type DevicePlatformSetupCode = (typeof DEVICE_PLATFORM_SETUP_CODES)[number];
+
+export const isDevicePlatformSetupCode = (value: unknown): value is DevicePlatformSetupCode =>
+  typeof value === "string" &&
+  (DEVICE_PLATFORM_SETUP_CODES as ReadonlyArray<string>).includes(value);
+
+/** Android SDK parts the device host needs, as listed in `missing`. */
+export const ANDROID_SDK_PARTS = ["platform_tools", "emulator", "cmdline_tools"] as const;
+export type AndroidSdkPart = (typeof ANDROID_SDK_PARTS)[number];
+
 /**
  * What the host can do right now. Platforms missing their toolchain are
  * reported rather than hidden so the picker and the agent can explain why a
@@ -79,6 +102,21 @@ export const DevicePlatformAvailability = Schema.Struct({
   platform: DevicePlatform,
   available: Schema.Boolean,
   reason: Schema.optional(Schema.String),
+  /**
+   * What is missing on the machine's own host, one of
+   * `DEVICE_PLATFORM_SETUP_CODES`. Open on the wire so a snapshot from a newer
+   * machine still decodes; older machines send `reason` only. The
+   * device-missing codes come with `available: true`, since the toolchain works.
+   */
+  code: Schema.optional(Schema.String),
+  /** With `android_tools_missing`: the SDK parts not found, from `ANDROID_SDK_PARTS`. */
+  missing: Schema.optional(Schema.Array(Schema.String)),
+  /** iOS on a Mac: an Xcode app bundle was found (selected or in Applications). */
+  xcodeAppFound: Schema.optional(Schema.Boolean),
+  /** iOS on a Mac: the selected Xcode's `simctl` answered. */
+  simctlAnswered: Schema.optional(Schema.Boolean),
+  /** Android without an SDK: Android Studio was found; absent when it cannot be told. */
+  androidStudioFound: Schema.optional(Schema.Boolean),
 });
 export type DevicePlatformAvailability = typeof DevicePlatformAvailability.Type;
 

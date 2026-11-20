@@ -5,6 +5,12 @@ import * as NodePath from "node:path";
 import {
   type EnvironmentId,
   type FolderCopyError,
+  FOLDER_COPY_LAN_CAPABILITY,
+  FolderCopyLanCheck,
+  FolderCopyLanCheckAnswer,
+  FolderCopyLanOffer,
+  FolderCopyLanProbe,
+  FolderCopyLanRetire,
   FolderCopyStartInput,
   FolderCopyState,
   type FolderCopyStatus,
@@ -55,7 +61,18 @@ const bounded = (max: number) => Schema.String.check(Schema.isMaxLength(max));
 
 /** Internal, between SpecWithCode machines: the destination half, one step per call. */
 export const AgentCopyReceiveInput = Schema.Struct({
-  action: Schema.Literals(["check", "start", "status", "link", "secretsCheck", "secretsKey"]),
+  action: Schema.Literals([
+    "check",
+    "start",
+    "status",
+    "link",
+    "secretsCheck",
+    "secretsKey",
+    "lanProbe",
+    "lanCheck",
+    "lanOffer",
+    "lanRetire",
+  ]),
   /** check: the folder the copy will land in, `~` meaning that machine's home. */
   targetFolder: Schema.optional(bounded(4096)),
   /** start: the source's offer, with the absolute folder check returned. */
@@ -64,6 +81,20 @@ export const AgentCopyReceiveInput = Schema.Struct({
   operationId: Schema.optional(MachineHandoffOperationId),
   /** link: the source's prepared link, accepted for the project the copy registered. */
   link: Schema.optional(ProjectLinkAcceptInput),
+  /**
+   * lanCheck: the source asks whether this copy may use the local network (1334 S-1).
+   * It carries no port, key or token. An older machine does not know the action and
+   * refuses it, and the copy runs on Connect.
+   */
+  lanCheck: Schema.optional(FolderCopyLanCheck),
+  /** lanProbe: asked first, before any address is named. Answered yes or no. */
+  lanProbe: Schema.optional(FolderCopyLanProbe),
+  /** lanRetire: the source ended a generation. It can only end one. */
+  lanRetire: Schema.optional(FolderCopyLanRetire),
+  /** lanOffer: the `lan` block for the generation this machine just answered for. */
+  lanOffer: Schema.optional(
+    Schema.Struct({ operationId: MachineHandoffOperationId, lan: FolderCopyLanOffer }),
+  ),
 });
 export type AgentCopyReceiveInput = typeof AgentCopyReceiveInput.Type;
 
@@ -79,6 +110,14 @@ export const AgentCopyReceiveResult = Schema.Struct({
   sealedSecrets: Schema.optional(Schema.Boolean),
   /** secretsKey: the copy's receiving key, base64 SPKI. Only the public half. */
   secretsKey: Schema.optional(bounded(512)),
+  /** lanCheck and lanOffer: this machine knows the local-network path. */
+  [FOLDER_COPY_LAN_CAPABILITY]: Schema.optional(Schema.Literal(1)),
+  /** lanCheck: this machine's answer, or null when it will not use the local network. */
+  lan: Schema.optional(FolderCopyLanCheckAnswer.fields.lan),
+  /** lanOffer: whether every bound field matched this machine's own record. */
+  lanAccepted: Schema.optional(Schema.Boolean),
+  /** lanProbe: whether this machine will use the local network for this copy. */
+  lanReady: Schema.optional(Schema.Boolean),
 });
 export type AgentCopyReceiveResult = typeof AgentCopyReceiveResult.Type;
 
@@ -209,6 +248,29 @@ export const receiveAgentCopy = Effect.fn("fleet.agentCopy.receive")(function* (
       .pipe(Effect.mapError(copyFailure));
     return { secretsKey } as AgentCopyReceiveResult;
   }
+  // The same grant `start` needs, checked by the caller. The copy's recorded source must be
+  // the calling machine; reaching a private address proves none of this.
+  if (input.action === "lanProbe") {
+    if (input.lanProbe === undefined) return yield* invalid("Pass lanProbe.");
+    const lanReady = yield* handoff.copyLanProbe(caller.environmentId, input.lanProbe);
+    return { [FOLDER_COPY_LAN_CAPABILITY]: 1, lanReady } as AgentCopyReceiveResult;
+  }
+  if (input.action === "lanRetire") {
+    if (input.lanRetire === undefined) return yield* invalid("Pass lanRetire.");
+    yield* handoff.copyLanRetire(caller.environmentId, input.lanRetire);
+    // The same answer for a live generation, an ended one and one never made.
+    return { [FOLDER_COPY_LAN_CAPABILITY]: 1 } as AgentCopyReceiveResult;
+  }
+  if (input.action === "lanCheck") {
+    if (input.lanCheck === undefined) return yield* invalid("Pass lanCheck.");
+    const answer = yield* handoff.copyLanCheck(caller.environmentId, input.lanCheck);
+    return { [FOLDER_COPY_LAN_CAPABILITY]: 1, lan: answer.lan } as AgentCopyReceiveResult;
+  }
+  if (input.action === "lanOffer") {
+    if (input.lanOffer === undefined) return yield* invalid("Pass lanOffer.");
+    const lanAccepted = yield* handoff.copyLanOffer(caller.environmentId, input.lanOffer);
+    return { [FOLDER_COPY_LAN_CAPABILITY]: 1, lanAccepted } as AgentCopyReceiveResult;
+  }
   if (input.action === "check") {
     if (input.targetFolder === undefined) return yield* invalid("Pass targetFolder.");
     return { targetFolder: yield* emptyTarget(input.targetFolder) } as AgentCopyReceiveResult;
@@ -221,7 +283,13 @@ export const receiveAgentCopy = Effect.fn("fleet.agentCopy.receive")(function* (
       return yield* invalid("Only the machine that offers a folder starts its copy here.");
     const targetFolder = yield* emptyTarget(start.targetFolder);
     const status = yield* handoff
-      .copyStart({ ...start, targetFolder, selection: [...AGENT_COPY_SELECTION] })
+      // An agent's copy is Add's whole-folder copy: the one purpose it can have here.
+      .copyStart({
+        ...start,
+        targetFolder,
+        selection: [...AGENT_COPY_SELECTION],
+        purpose: "add-to-machine",
+      })
       .pipe(Effect.mapError(copyFailure));
     return condensed(status);
   }
@@ -358,6 +426,11 @@ export const runAgentCopy = Effect.fn("fleet.agentCopy.run")(function* (input: {
     args: AgentCopyReceiveInput,
     timeoutMs?: number,
   ) => Effect.Effect<unknown, OrchestratorMcpFailure>;
+  /**
+   * Whether that machine keeps its coordinator when the copy joins this project. One
+   * that does not is never asked to link: its accept would give the coordinator up.
+   */
+  readonly equalPeer: Effect.Effect<boolean>;
   /** Between status reads; tests shorten it. */
   readonly pollMs?: number;
 }) {
@@ -393,6 +466,7 @@ export const runAgentCopy = Effect.fn("fleet.agentCopy.run")(function* (input: {
       operationId,
       mode: "copy-only",
       destinationEnvironmentId: machine.environmentId,
+      lanPurpose: "add-whole-folder",
     })
     .pipe(Effect.mapError(copyFailure));
   const withdraw = (reason: string) =>
@@ -461,6 +535,7 @@ export const runAgentCopy = Effect.fn("fleet.agentCopy.run")(function* (input: {
     copyId: result.copyId,
     operationId,
     ask,
+    equalPeer: input.equalPeer,
   });
   return {
     projectId: result.copyId,
@@ -480,11 +555,15 @@ const linkCopied = Effect.fn("fleet.agentCopy.link")(function* (input: {
     args: AgentCopyReceiveInput,
     timeoutMs?: number,
   ) => Effect.Effect<AgentCopyReceiveResult, OrchestratorMcpFailure>;
+  readonly equalPeer: Effect.Effect<boolean>;
 }) {
   const unlinked = (reason: string) => ({
     linked: false as const,
     linkProblem: `${reason} It is listed as a separate project until you link it: open its menu in the sidebar and choose Link….`,
   });
+  // Asked before either machine changes anything (EC2-04).
+  if (!(yield* input.equalPeer))
+    return unlinked(`Update SpecWithCode on ${input.machine.label} to link projects.`);
   const found = yield* Effect.serviceOption(ProjectLink.ProjectLink);
   if (found._tag === "None") return unlinked("This machine could not link the copy.");
   const link = found.value;
@@ -493,6 +572,7 @@ const linkCopied = Effect.fn("fleet.agentCopy.link")(function* (input: {
     const prepared = yield* link.prepare({
       operationId: linkOperationId,
       projectId: input.sourceId,
+      equalCoordinators: true,
       joining: {
         environmentId: input.machine.environmentId,
         projectId: input.copyId,
@@ -511,6 +591,7 @@ const linkCopied = Effect.fn("fleet.agentCopy.link")(function* (input: {
           coordinatorBinding: prepared.coordinatorBinding,
           keptFingerprint: prepared.fingerprint,
           ...(prepared.sharedIcon ? { sharedIcon: prepared.sharedIcon } : {}),
+          equalCoordinators: true,
         },
       },
       60_000,

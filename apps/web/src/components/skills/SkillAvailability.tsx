@@ -19,6 +19,17 @@ export interface SkillAvailabilityState {
   readonly row: ProjectSkillRow | null;
 }
 
+/**
+ * True when some agent there cannot say a skill is absent from this folder: it
+ * keeps one list for the whole machine, or the app scanned only its usual
+ * skill folders, which is not every place the agent reads.
+ */
+export function skillAbsenceUnproven(snapshot: Pick<ProjectSkillsSnapshot, "providers">): boolean {
+  return snapshot.providers.some(
+    (provider) => provider.state === "unsupported" || provider.discovery === "folder-scan",
+  );
+}
+
 export function skillAvailabilityState(input: {
   connected: boolean;
   error: string | null;
@@ -48,7 +59,12 @@ export function skillAvailabilityState(input: {
   if (!input.snapshot.providers.some((provider) => provider.state === "ok"))
     return { state: "unknown", text: "No supported agent scan", row };
   if (!row || row.providers.length === 0)
-    return { state: "missing", text: "Not found in this scope", row };
+    // An agent that could not open some of its skill folders cannot say the skill is absent.
+    return input.snapshot.providers.some((provider) => provider.incomplete === true)
+      ? { state: "unknown", text: "Scan incomplete · refresh", row }
+      : skillAbsenceUnproven(input.snapshot)
+        ? { state: "unknown", text: "Not checked per folder", row }
+        : { state: "missing", text: "Not found in this scope", row };
   if (input.skillId && row.lock?.skillId !== input.skillId)
     return {
       state: "unknown",

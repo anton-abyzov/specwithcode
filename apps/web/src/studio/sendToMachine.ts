@@ -1,5 +1,5 @@
 /**
- * Copy to another machine…: what each machine already holds of this project, where Main is,
+ * Sync and Add: what each machine already holds of this project, where Main is,
  * and the one sentence that says what the click will do, before it is clicked. A copy keeps
  * Main where it is; only Git only (no files copied) and "Make X main" move it. A machine with
  * a copy gets that copy filled in, not a second one.
@@ -132,15 +132,21 @@ export function pickedHolding<T extends { readonly id: string }>(
 export function existingCopyLine(input: {
   readonly there: string;
   readonly holding: MachineHolding<{ readonly workspaceRoot: string }>;
-}): string | null {
+}): SendText | null {
   const { there, holding } = input;
   if (holding.kind === "none") return null;
   if (holding.kind === "several")
-    return `${there} has ${holding.copies.length} copies of this project. Pick the one to send to.`;
+    return {
+      text: "{there} has this project in {n} folders. Pick one.",
+      values: { there, n: String(holding.copies.length) },
+    };
   const folder = displayFolder(holding.copy.workspaceRoot);
   if (holding.kind === "main")
-    return `${there} already has Main, at ${folder}, so there is nothing to move.`;
-  return `${there} already has a copy, at ${folder}. Only what it is missing is copied.`;
+    return { text: "{there} already has the coordinator, at {folder}.", values: { there, folder } };
+  return {
+    text: "{there} already has this project, at {folder}. Sync brings it up to date.",
+    values: { there, folder },
+  };
 }
 
 /**
@@ -163,20 +169,26 @@ export function sendHeader(input: {
   if (input.otherProject && there)
     return input.otherProject.main
       ? {
-          text: "From {source}. {source}'s copy is not linked to the project {machine} belongs to (Main: {main}).",
+          text: "From {source}. {machine} has this repository as a separate project (coordinator on {main}).",
           values: { source, machine: there, main: input.otherProject.main },
         }
       : {
-          text: "From {source}. {source}'s copy is not linked to the project {machine} belongs to.",
+          text: "From {source}. {machine} has this repository as a separate project.",
           values: { source, machine: there },
         };
   if (input.move)
     return there
-      ? { text: "From {source}. Main moves to {machine}.", values: { source, machine: there } }
-      : { text: "From {source}. Main moves to the machine you choose.", values: { source } };
+      ? {
+          text: "From {source}. The coordinator continues on {machine}.",
+          values: { source, machine: there },
+        }
+      : {
+          text: "From {source}. The coordinator continues on the machine you choose.",
+          values: { source },
+        };
   return main
-    ? { text: "From {source}. Main stays on {main}.", values: { source, main } }
-    : { text: "From {source}. Main stays where it is.", values: { source } };
+    ? { text: "From {source}. The coordinator stays on {main}.", values: { source, main } }
+    : { text: "From {source}.", values: { source } };
 }
 
 /**
@@ -191,11 +203,11 @@ export function otherProjectNote(input: {
   const { source, there, main } = input;
   return main
     ? {
-        text: "Only files are copied into {machine}'s copy. Main stays on {main}, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.",
+        text: "Only files go into {machine}'s folder. Its coordinator stays on {main}. To make them one project, link {source} to it from the machine menu.",
         values: { source, machine: there, main },
       }
     : {
-        text: "Only files are copied into {machine}'s copy. Its Main does not change, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.",
+        text: "Only files go into {machine}'s folder. Its coordinator does not change. To make them one project, link {source} to it from the machine menu.",
         values: { source, machine: there },
       };
 }
@@ -224,17 +236,15 @@ export function sendPlan(input: {
   if (holding.kind === "several") return null;
   const move = input.choice === "move" && holding.kind !== "main";
   const after = move
-    ? `Work continues on ${there}, and this copy stops starting work.`
+    ? `The coordinator continues on ${there}.`
     : holding.kind === "main" || input.main
-      ? `Main stays on ${holding.kind === "main" ? there : input.main}.`
-      : "Main stays where it is.";
+      ? `The coordinator stays on ${holding.kind === "main" ? there : input.main}.`
+      : "The coordinator stays where it is.";
   const into =
-    holding.kind === "none"
-      ? null
-      : `${there}'s copy at ${displayFolder(holding.copy.workspaceRoot)}`;
+    holding.kind === "none" ? null : `${displayFolder(holding.copy.workspaceRoot)} on ${there}`;
   if (input.way === "git") {
     const left = input.localFiles ? ` ${staying(input.localFiles)}` : "";
-    return `Push this machine's commits, then move Main to ${into ?? there}. ${after}${left}`;
+    return `Push this machine's commits, then continue the coordinator in ${into ?? there}. ${after}${left}`;
   }
   const what = input.localFiles ? files(input.localFiles) : null;
   const first =
@@ -243,5 +253,5 @@ export function sendPlan(input: {
       : what
         ? `Copy ${what} into ${into}`
         : `Compare with ${into} and copy what it is missing`;
-  return move ? `${first}, then move Main there. ${after}` : `${first}. ${after}`;
+  return move ? `${first}, then continue the coordinator there. ${after}` : `${first}. ${after}`;
 }

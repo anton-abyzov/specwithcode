@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // The dialog's first step: which rows are listed, what is folded away, what is selected
-// before the person picks, and what the subtitle says about Main.
+// before the person picks, and what the subtitle says about the coordinator.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
@@ -153,7 +153,7 @@ it("lists only copies of this project and folds every other project away", async
   expect(text()).toContain("Connect linux-mini first.");
   expect(radio("EasyChamp on linux-mini").hasAttribute("data-disabled")).toBe(true);
   expect(text()).not.toContain("sketchmate_project");
-  expect(text()).not.toContain("No copy of EasyChamp");
+  expect(text()).not.toContain("EasyChamp was not found");
   const fold = button("Other projects (2)");
   expect(fold.getAttribute("aria-expanded")).toBe("false");
   // Only likely copies on connected machines are read.
@@ -208,7 +208,7 @@ it("says no copy was found and opens Other projects", async () => {
   await render();
   await settle();
   expect(document.querySelector("[data-link-no-copy]")?.textContent).toBe(
-    "No copy of EasyChamp was found on another machine.",
+    "EasyChamp was not found on another machine.",
   );
   expect(button("Other projects (2)").getAttribute("aria-expanded")).toBe("true");
   expect(rows()).toEqual(["ol on m3", "sketchmate_project on m1"]);
@@ -231,7 +231,7 @@ it("waits for the folders before saying no copy was found or selecting one", asy
   await render();
   await settle();
   expect(text()).toContain("Reading folders…");
-  expect(text()).not.toContain("No copy of EasyChamp");
+  expect(text()).not.toContain("EasyChamp was not found");
   expect(text()).not.toContain("Other projects");
   expect(picked()).toBeNull();
   await act(async () => release());
@@ -252,16 +252,17 @@ it("falls back to the remotes when this folder cannot be read", async () => {
   expect(button("Other projects (2)").getAttribute("aria-expanded")).toBe("false");
 });
 
-it("names no Main for a project that is not linked yet", async () => {
+it("names no coordinator for a project that is not linked yet", async () => {
   await render();
   await settle();
   expect(document.querySelector('[data-slot="dialog-description"]')?.textContent).toBe(
-    "Pick the copy of EasyChamp on another machine. Each copy keeps its own coordinator, and you can switch Main any time.",
+    "Pick EasyChamp on another machine. Linking makes them one project; each machine keeps its own coordinator.",
   );
+  expect(text()).not.toContain("one coordinator");
   expect(text()).not.toContain("One coordinator stays");
 });
 
-it("names the real Main for a project already linked with another copy", async () => {
+it("names the real coordinator for a project already linked with another machine", async () => {
   const member = (environmentId: string, projectId: string) => ({
     environmentId,
     projectId,
@@ -294,8 +295,9 @@ it("names the real Main for a project already linked with another copy", async (
   await render({ project: linkedHere as never });
   await settle();
   expect(document.querySelector('[data-slot="dialog-description"]')?.textContent).toBe(
-    "Pick the copy of EasyChamp on another machine. Each copy keeps its own coordinator; Main stays on m5 and you can switch it any time.",
+    "Pick EasyChamp on another machine. It joins this project and keeps its own coordinator.",
   );
+  expect(text()).not.toMatch(/coordinator stays|continue it on another machine/);
   // A copy already in this project is not offered again.
   expect(rows()).toEqual(["EasyChamp on m1"]);
 });
@@ -306,7 +308,12 @@ it("translates the first step", async () => {
   await render();
   await settle();
   expect(text()).toContain("Связать с проектом на другой машине");
-  expect(text()).toContain("Копия EasyChamp на другой машине не найдена.");
+  // The chooser's own sentence is translated, and promises no single or movable coordinator.
+  const said = document.querySelector('[data-slot="dialog-description"]')?.textContent ?? "";
+  expect(said).not.toContain("Linking makes them one project");
+  expect(said).toContain("EasyChamp");
+  expect(said).toMatch(/свой координатор|своего координатора|собственн/);
+  expect(text()).toContain("EasyChamp на другой машине не найден.");
   expect(text()).toContain("sketchmate_project на m1");
   expect(button("Другие проекты (1)")).toBeTruthy();
   expect(button("Проверить связь").disabled).toBe(true);

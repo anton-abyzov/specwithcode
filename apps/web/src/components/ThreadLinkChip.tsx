@@ -9,12 +9,18 @@ import { Link } from "@tanstack/react-router";
 import { MessagesSquareIcon } from "lucide-react";
 import type { MouseEvent, ReactNode } from "react";
 
+import { useThreadChipMachine } from "../studio/conversationMachine";
 import { threadCardStatus } from "../studio/projectThreadCards";
-import { useHostIdentityMismatch, useHostOffline, useHostReach } from "../studio/unreachableHosts";
+import {
+  useHostDownNote,
+  useHostIdentityMismatch,
+  useHostOffline,
+  useHostReach,
+} from "../studio/unreachableHosts";
 import { Tip } from "./studio/shell/Tip";
 import { toastManager } from "./ui/toast";
 
-function ChipFace(props: { title: string; tone?: string }) {
+function ChipFace(props: { title: string; tone?: string; machine?: string | null }) {
   return (
     <>
       <MessagesSquareIcon className="sws-thread-link-icon" aria-hidden />
@@ -22,6 +28,9 @@ function ChipFace(props: { title: string; tone?: string }) {
         <span className="sws-dot" data-tone={props.tone} aria-hidden />
       )}
       <span className="sws-thread-link-title">{props.title}</span>
+      {props.machine ? (
+        <span className="sws-thread-link-machine shrink-0 whitespace-nowrap">· {props.machine}</span>
+      ) : null}
     </>
   );
 }
@@ -48,19 +57,21 @@ export function ThreadLinkChipButton(props: {
     useHostOffline(props.thread.environmentId),
     useHostReach(props.thread.environmentId),
     useHostIdentityMismatch(props.thread.environmentId),
+    useHostDownNote(props.thread.environmentId),
   );
   const title = liveTitle(props.thread, props.label);
+  const machine = useThreadChipMachine(props.thread);
   return (
     <Tip label={`${title} · ${status.label}`} side="top">
       <button
         type="button"
         className={chipClass(props.className)}
-        aria-label={`Open thread ${title}, ${status.label}`}
+        aria-label={`Open thread ${title}${machine ? ` on ${machine}` : ""}, ${status.label}`}
         data-thread-chip={props.thread.id}
         data-markdown-copy={props.copyMarkdown}
         onClick={props.onOpen}
       >
-        <ChipFace title={title} tone={status.tone} />
+        <ChipFace title={title} tone={status.tone} machine={machine} />
       </button>
     </Tip>
   );
@@ -83,8 +94,10 @@ export function ThreadLinkChipLink(props: {
     useHostOffline(props.thread.environmentId),
     useHostReach(props.thread.environmentId),
     useHostIdentityMismatch(props.thread.environmentId),
+    useHostDownNote(props.thread.environmentId),
   );
   const title = liveTitle(props.thread, props.label);
+  const machine = useThreadChipMachine(props.thread);
   const onClick = (event: MouseEvent<HTMLAnchorElement>) => {
     const modified =
       event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
@@ -96,12 +109,12 @@ export function ThreadLinkChipLink(props: {
         to="/$environmentId/$threadId"
         params={{ environmentId: props.thread.environmentId, threadId: props.thread.id }}
         className={chipClass(props.className)}
-        aria-label={`Open thread ${title}, ${status.label}`}
+        aria-label={`Open thread ${title}${machine ? ` on ${machine}` : ""}, ${status.label}`}
         data-thread-chip={props.thread.id}
         data-markdown-copy={props.copyMarkdown}
         onClick={onClick}
       >
-        <ChipFace title={title} tone={status.tone} />
+        <ChipFace title={title} tone={status.tone} machine={machine} />
       </Link>
     </Tip>
   );
@@ -113,6 +126,8 @@ export function DeadThreadLinkChip(props: {
   /** `waiting`: its machine has not answered yet; the chip opens the thread once it does. */
   reason: "deleted" | "missing" | "elsewhere" | "waiting";
   copyMarkdown?: string | undefined;
+  /** The machine that was searched, by name; "this machine" when not known (1427). */
+  machine?: string | null | undefined;
 }): ReactNode {
   const why =
     props.reason === "waiting"
@@ -121,7 +136,7 @@ export function DeadThreadLinkChip(props: {
         ? "Thread was deleted"
         : props.reason === "elsewhere"
           ? "Thread on another machine; connect it in Settings > Machines to open it"
-          : "Thread not found on this machine";
+          : `Thread not found on ${props.machine || "this machine"}`;
   const title = props.label.trim() || "Thread";
   // The tip only shows on hover: a click or Enter gets the same reason.
   const explain = () =>

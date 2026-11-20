@@ -27,7 +27,11 @@ import {
   type ThreadTone,
 } from "../../../studio/shellModel";
 import { threadLocation, type ThreadLocation } from "../../../studio/threadLocation";
-import { useUnreachableHosts } from "../../../studio/unreachableHosts";
+import {
+  useHostDownNotes,
+  useHostReachStates,
+  useUnreachableHosts,
+} from "../../../studio/unreachableHosts";
 import {
   useThreadIncrementState,
   type ThreadIncrementState,
@@ -246,6 +250,9 @@ export function useBoardThreads(input: {
     return result;
   }, [pages, states]);
   const unreachable = useUnreachableHosts();
+  // Each line says why its machine is out of reach, as the Threads pane does (1417).
+  const reachStates = useHostReachStates();
+  const notes = useHostDownNotes();
   const { environments } = useEnvironments();
   const nickname = useMachineNicknames();
   const identity = useMachineIdentities();
@@ -282,7 +289,13 @@ export function useBoardThreads(input: {
       held.push({
         thread,
         tone: threadTone(thread, offline),
-        status: threadStatusWord(thread, offline),
+        status: threadStatusWord(
+          thread,
+          offline,
+          reachStates.get(thread.environmentId),
+          false,
+          notes.get(thread.environmentId) ?? null,
+        ),
         updatedAt: thread.updatedAt,
         machine,
         color: identity(machine.executionMachineId).color,
@@ -297,7 +310,17 @@ export function useBoardThreads(input: {
       byIncrement: grouped,
       multiMachine: machines.size > 1 || (machineLabels?.size ?? 0) > 1,
     };
-  }, [environments, identity, links, machineLabels, nickname, threads, unreachable]);
+  }, [
+    environments,
+    identity,
+    links,
+    machineLabels,
+    nickname,
+    notes,
+    reachStates,
+    threads,
+    unreachable,
+  ]);
   return { ...joined, answered, cut, loaders };
 }
 

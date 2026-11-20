@@ -219,6 +219,13 @@ describe("the approval pop-up with several devices (1406)", () => {
     );
   });
 
+  it("says what Allow opens, apart from another machine's agents (1422)", async () => {
+    await open([first]);
+    expect(prompt()!.querySelector("[data-device-approval-grants]")!.textContent).toBe(
+      "Allow lets that device's SpecWithCode app open m4 and use its chats and the work they start, terminals, files, settings and sign-ins, and approve or remove other devices. Letting another machine's agents run work here is a separate choice.",
+    );
+  });
+
   it("renders a machine that sends no ID yet without one", async () => {
     await open([phone("request-old", undefined, first.askedAt)]);
     expect(rows()[0]!.text).not.toContain("ID");
@@ -297,9 +304,14 @@ describe("Later (1406)", () => {
     const renewed = { ...first, id: "request-a2" };
     expect(requestsToPrompt([renewed, second], later)).toEqual([]);
     expect(laterKey(renewed)).toBe(laterKey(first));
-    // A device that was not listed brings the pop-up back, with every waiting device.
+    // A device that was not listed brings the pop-up back for itself only.
     const third = phone("request-c", "ABCD", first.askedAt);
-    expect(requestsToPrompt([renewed, third], later)).toEqual([renewed, third]);
+    expect(requestsToPrompt([renewed, third], later)).toEqual([third]);
+  });
+
+  it("lists every waiting device while none was put off", () => {
+    expect(requestsToPrompt([first, second], new Set())).toEqual([first, second]);
+    expect(requestsToPrompt([], new Set([laterKey(first)]))).toEqual([]);
   });
 
   it("never hides another device that carries the same short ID", () => {
@@ -318,6 +330,16 @@ describe("Later (1406)", () => {
     expect(
       requestsToPrompt([{ ...old, id: "request-new" }], new Set(["request-old"])),
     ).toHaveLength(1);
+  });
+
+  it("treats Escape like Later, so closing the pop-up is remembered too (1416)", async () => {
+    await open([first, second]);
+    await act(async () => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+    expect(prompt()).toBeNull();
   });
 
   it("hides the pop-up in the real view until a new device asks", async () => {
@@ -387,5 +409,15 @@ describe("the waiting device with several machines (1406)", () => {
         <DeviceWaitingList waiting={[{ id: "env-1", machine: "m4", code: "K7QX2M" }]} />,
       ),
     ).not.toContain("ID is");
+  });
+});
+
+describe("a typed code reads in capitals (1416)", () => {
+  it("shows lowercase typing in capitals and still allows the device", async () => {
+    const log = await open([first, second]);
+    await type("p4r-t9w");
+    expect(codeBox().value).toBe("P4R-T9W");
+    await allow();
+    expect(log).toEqual(["approve request-b"]);
   });
 });

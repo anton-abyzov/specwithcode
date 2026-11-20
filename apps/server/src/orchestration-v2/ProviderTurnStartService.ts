@@ -90,6 +90,7 @@ import { makeSettleRunBeforeStart as makeSettleRunBeforeStartWith } from "./sett
 import { readSpecweaveCheckpointPreface } from "./SpecweaveCheckpoint.ts";
 import { withAskedQuestions } from "./questionAnswerText.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
+import { missedBeforeRun } from "./startOnlyDispatch.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as ThreadWorkspaceRestore from "./ThreadWorkspaceRestore.ts";
 import { withWorktreeFolderLease } from "../git/worktreeOwnership.ts";
@@ -1496,12 +1497,8 @@ export const layer: Layer.Layer<
         ...runningProviderThread,
         contextUsage: handoffUsage,
       };
-      const missedRuns = projection.runs.filter(
-        (source) =>
-          source.ordinal < run.ordinal &&
-          source.providerThreadId === providerThread.id &&
-          (source.status === "failed" || source.status === "interrupted") &&
-          !deliveredAttemptIds.has(source.activeAttemptId),
+      const missedRuns = projection.runs.filter((source) =>
+        missedBeforeRun(source, run, providerThread.id, deliveredAttemptIds),
       );
       const missedRunIds = new Set(missedRuns.map((source) => source.id));
       const missedItems =

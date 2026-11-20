@@ -56,6 +56,7 @@ const row = (
 ): SubscriptionRow => ({
   key: `${driver}-${leftPercent}`,
   accountKey: `${driver}:a@example.com`,
+  renewalKey: `${driver}:a@example.com`,
   driver,
   displayName: null,
   plan: null,
@@ -73,6 +74,10 @@ const row = (
       long: false,
       scoped: false,
       durationMs: 5 * HOUR,
+      kind: "session",
+      accountWide: true,
+      spent: false,
+      amounts: null,
     },
     {
       id: "weekly",
@@ -83,11 +88,17 @@ const row = (
       long: true,
       scoped: false,
       durationMs: 7 * DAY,
+      kind: "weekly",
+      accountWide: true,
+      spent: leftPercent === 0,
+      amounts: null,
     },
   ],
   renewal: null,
   credits: null,
   lastLoss: null,
+  atLimit: false,
+  note: null,
   ...extra,
 });
 

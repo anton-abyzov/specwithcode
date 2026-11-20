@@ -73,6 +73,17 @@ describe("selectSecretFiles", () => {
   });
 });
 
+describe("provider sign-ins never travel", () => {
+  it("refuses a ticked provider sign-in file even when the scan offered it", () => {
+    for (const path of [".codex/auth.json", "home/.claude/.credentials.json", "AUTH.JSON"]) {
+      expect(code(() => selectSecretFiles([{ path, size: 10 }], [path]))).toBe("not_offered");
+    }
+    expect(selectSecretFiles([{ path: ".env", size: 1 }], [".env"])).toEqual([
+      { path: ".env", size: 1 },
+    ]);
+  });
+});
+
 describe("SentSecretsLedger", () => {
   it("keeps one line per operation and path and filters by destination", async () => {
     const ledger = new SentSecretsLedger(base);
@@ -107,6 +118,11 @@ describe("writeSecretFile", () => {
     // Windows has no POSIX mode bits to check.
     if (process.platform !== "win32") expect(stat.mode & 0o777).toBe(0o600);
     expect(NodeFS.readdirSync(NodePath.join(base, "svc/config"))).toEqual([".env"]);
+  });
+
+  it("refuses to write a provider sign-in file, whatever an older source sends", async () => {
+    await expect(write(".codex/auth.json", "{}")).rejects.toThrow("provider sign-in");
+    expect(NodeFS.existsSync(NodePath.join(base, ".codex"))).toBe(false);
   });
 
   it("leaves identical files alone and puts different ones beside", async () => {

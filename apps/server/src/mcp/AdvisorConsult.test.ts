@@ -320,16 +320,17 @@ describe("advisorFromResolution", () => {
     },
   });
   const claude = provider("claudeAgent", "claudeAgent", ["claude-fable-5-2", "claude-opus-5-5"]);
-  const codex = provider("codex", "codex", ["gpt-6.1-sol"]);
+  // GPT-6 Astra is the built-in Complex track's second model, after Fable 5.2.
+  const codex = provider("codex", "codex", ["gpt-6.1-sol", "gpt-6-astra"]);
   const label = (selection: ModelSelection) => `${selection.model} on ${selection.instanceId}`;
   const resolve = (providers: ReadonlyArray<ServerProvider>, thread: ModelSelection) =>
-    resolveAdvisor({ providers, model: null, reviewers: [], tier: "regular", thread, nowMs: now });
+    resolveAdvisor({ providers, model: null, lanes: null, thread, nowMs: now });
 
   it("moves a thread already on the advisor's model to the next entry", () => {
     const picked = advisorFromResolution(resolve([claude, codex], fable), label);
     expect(picked.kind).toBe("ok");
     if (picked.kind !== "ok") return;
-    expect(picked.value.model).not.toBe(fable.model);
+    expect(picked.value.model).toBe("gpt-6-astra");
   });
 
   it("refuses with each skipped entry and its reason when nothing can advise", () => {

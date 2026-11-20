@@ -110,28 +110,30 @@ try {
       assert.match(headers[3], /^Mini\s+Offline, not read$/);
       const line = (name) => matrix.locator("tbody tr").filter({ hasText: name }).locator("td");
       assert.deepEqual(await line("imagegen").allInnerTexts(), [
-        "On this machine",
-        "Added",
+        "Installed\nSystem",
+        "Installed\nSystem",
         "Offline",
       ]);
-      // A claude.ai skill another account does not sync is not a gap on that machine.
+      // A built-in skill a machine does not report is not a gap on that machine.
       assert.deepEqual(await line("anthropic-skills:pdf").allInnerTexts(), [
-        "On this machine",
-        "—",
+        "Installed\nclaude.ai",
+        "Not reported here",
         "Offline",
       ]);
       assert.deepEqual(await line("release-notes").allInnerTexts(), [
-        "On this machine\nv1.4.0",
-        "v1.3.0",
+        "v1.4.0\nUser",
+        "v1.3.0\nUser",
         "Offline",
       ]);
-      assert.deepEqual((await line("meeting-notes").allInnerTexts()).slice(1), [
+      assert.deepEqual(await line("meeting-notes").allInnerTexts(), [
+        "Installed\nUser",
         "Not on Desktop",
         "Offline",
       ]);
       // The offline machine is never reported as missing a skill.
       assert.equal(await matrix.getByText("Not on Mini").count(), 0);
-      assert.equal(await matrix.locator('button, input, [role="switch"]').count(), 0);
+      // Read-only: the search box above it is the only control.
+      assert.equal(await matrix.locator('button, [role="switch"]').count(), 0);
       assert.equal(await fits(), true);
       await shot("across-machines-offline");
 

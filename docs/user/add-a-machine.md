@@ -41,14 +41,14 @@ be accepted on the other machine: it shows a notice that the machine joined,
 and you can change or remove it there in **Settings → Machines**. The join line
 steps below are for a machine on another account, or one that cannot reach
 SpecWithCode Connect. In **Settings → Machines** they sit under **Another
-account, or no Connect**: choose **Show** to open **Add a machine** and **Join
-a main machine**.
+account, or no Connect**: choose **Show** to open **Add a machine** and **Join one
+of your machines**.
 
 ## Why the steps ask for an environment ID
 
 The invitation line grants access, so it names the one machine allowed to use
 it. That is what the environment ID is for. When this app already knows your
-main machine, **Join a main machine** lists it by name instead.
+main machine, **Join one of your machines** lists it by name instead.
 
 ## Disconnecting
 
@@ -524,7 +524,7 @@ a machine continues there.
 
 If a machine's address does change (a new Tailscale name, a renamed machine, or
 moving off an older setup that reached it through another machine), make a new
-line on it (**Join a main machine**, or `fleet invite --coordinator '<main-machine-environment-id>'`) and add the new line on
+line on it (**Join one of your machines**, or `fleet invite --coordinator '<main-machine-environment-id>'`) and add the new line on
 the main machine. That updates the machine in place: it keeps its name, and
 workers you allowed there carry over the next time a coordinator uses them.
 Browsers add the new address on their own and keep the old one as a fallback.

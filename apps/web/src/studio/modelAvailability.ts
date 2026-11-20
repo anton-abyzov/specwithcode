@@ -13,6 +13,7 @@
  *
  * @module modelAvailability
  */
+import { maskEmail } from "@specweave-studio/shared/maskEmail";
 import type { ServerProvider, ServerProviderUsageWindow } from "@specweave-studio/contracts";
 import { MACHINE_USAGE_MAX_AGE_MS } from "@specweave-studio/shared/machineFallback";
 import { isPerTokenProvider, usageDeniesTurn } from "@specweave-studio/shared/providerFallback";
@@ -610,7 +611,9 @@ export function railLimitSentence(
 export function accountEmailLine(provider: string, snapshot: ServerProvider): string | null {
   if (snapshot.auth.status !== "authenticated" || isPerTokenProvider(snapshot)) return null;
   const email = snapshot.auth.email?.trim();
-  return email ? `Signed in as ${email}` : `${provider} does not report an account email`;
+  return email
+    ? `Signed in as ${maskEmail(email) ?? email}`
+    : `${provider} does not report an account email`;
 }
 
 /** Usage refusal text. Model pickers display it as an advisory warning. */

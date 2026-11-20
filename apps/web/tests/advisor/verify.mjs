@@ -1,5 +1,6 @@
 // Headless check of the advisor's surfaces: the Advisor section in Settings >
-// Models and in the project dialog, the composer's Advisor row and the timeline
+// Models and in the project dialog, the composer's Advisor row (with its note
+// for a Fable thread, an Opus thread and pass-through) and the timeline
 // consult rows, in light and dark at 1280 and 390 px. Always headless; serves
 // the fixture only and aborts every other request. Run after building:
 //   node node_modules/vite-plus/bin/vp build --config apps/web/tests/advisor/vite.config.ts
@@ -140,8 +141,8 @@ for (const theme of ["light", "dark"]) {
       if (message.location().url.endsWith("/.well-known/studio/environment")) return;
       fail(at, `console error: ${message.text()}`);
     });
-    const open = async (view) => {
-      await page.goto(`${origin}/?theme=${theme}&view=${view}`);
+    const open = async (view, extra = "") => {
+      await page.goto(`${origin}/?theme=${theme}&view=${view}${extra}`);
       await page.waitForLoadState("networkidle");
     };
 
@@ -150,7 +151,7 @@ for (const theme of ["light", "dark"]) {
     await page.getByText("Let threads ask a stronger model", { exact: true }).waitFor();
     await expectText(page, `app ${at}`, [
       ...SECTION_ROWS,
-      "Fable 5.2, then the Review track",
+      "The Complex track",
       "This machine: Build Mac",
     ]);
     for (const [label, value] of [
@@ -266,6 +267,70 @@ for (const theme of ["light", "dark"]) {
     ))
       fail(`composer ${at}`, problem);
     await shot(page, `composer-${theme}-${width}`);
+
+    // The Adversarial review row comes right after Advisor, the same way.
+    const reviewRow = page.locator("[data-thread-review-menu]");
+    await reviewRow.waitFor();
+    const rowOrder = await page.evaluate(() =>
+      [...document.querySelectorAll("[data-thread-advisor-menu], [data-thread-review-menu]")].map(
+        (row) => (row.hasAttribute("data-thread-review-menu") ? "review" : "advisor"),
+      ),
+    );
+    if (JSON.stringify(rowOrder) !== JSON.stringify(["advisor", "review"]))
+      fail(`composer ${at}`, `rows in the order ${rowOrder.join(", ")}`);
+    if (!(await reviewRow.innerText()).startsWith("Adversarial review"))
+      fail(`composer ${at}`, "the review row has no Adversarial review heading");
+    const reviewText = await reviewRow.innerText();
+    for (const expected of [
+      "Has a model from another family review this thread's work when its feature is finished.",
+      "Follow project (off)",
+    ])
+      if (!reviewText.includes(expected)) fail(`composer ${at}`, `review row lacks "${expected}"`);
+    if ((await reviewRow.getAttribute("data-thread-review-menu")) !== "off")
+      fail(`composer ${at}`, "the review row does not show review off");
+    if ((await reviewRow.locator("[data-thread-review-choice]").count()) !== 3)
+      fail(`composer ${at}`, "the review row lacks its three choices");
+
+    // Each row's info button shows its time note without closing the menu or choosing.
+    for (const [row, expected, name] of [
+      ["[data-thread-advisor-menu]", "about 1.1 times as long", "advisor"],
+      ["[data-thread-review-menu]", "a median 2.6 times as long", "review"],
+    ]) {
+      const before = (await calls(page)).length;
+      const info = page.locator(`${row} [data-thread-choice-time-note]`);
+      const label = await info.getAttribute("aria-label");
+      if (!label?.startsWith("How much longer work takes with "))
+        fail(`composer ${at}`, `${name} info button is named "${label}"`);
+      await info.hover();
+      const note = page.locator("[data-slot='tooltip-popup']").filter({ hasText: expected });
+      await note.waitFor({ state: "visible", timeout: 5_000 }).catch(() => {
+        fail(`composer ${at}`, `${name} time note did not open`);
+      });
+      await page.waitForTimeout(250);
+      const box = await note.boundingBox();
+      if (box && (box.x < 0 || box.x + box.width > width + 0.5))
+        fail(`composer ${at}`, `${name} time note off screen ${JSON.stringify(box)}`);
+      await shot(page, `composer-${name}-note-${theme}-${width}`);
+      await info.click();
+      await page.waitForTimeout(100);
+      if ((await page.locator("[data-thread-advisor-menu]").count()) !== 1)
+        fail(`composer ${at}`, `opening the ${name} note closed the menu`);
+      if ((await calls(page)).length !== before)
+        fail(`composer ${at}`, `opening the ${name} note picked a choice`);
+      await page.mouse.move(0, 0);
+    }
+    await page.locator('[data-thread-review-choice="on"]').click();
+    const review = (await calls(page)).find((call) => call[0] === "setReviewMode");
+    if (
+      review?.[1]?.input?.reviewMode !== "on" ||
+      review?.[1]?.input?.threadId !== "thread-atlas-1"
+    )
+      fail(`composer ${at}`, `review On wrote ${JSON.stringify(review)}`);
+    await page.locator("[data-thread-advisor-menu]").waitFor({ state: "detached" });
+    await page.getByRole("button", { name: "Thread options" }).click();
+    await page.locator("[data-thread-advisor-menu]").waitFor();
+    if ((await reviewRow.getAttribute("data-thread-review-menu")) !== "on")
+      fail(`composer ${at}`, "the review row does not show the thread's On");
     await page.locator('[data-thread-advisor-choice="off"]').click();
     const set = (await calls(page)).find((call) => call[0] === "setAdvisorMode");
     if (set?.[1]?.input?.advisorMode !== "off" || set?.[1]?.input?.threadId !== "thread-atlas-1")
@@ -294,6 +359,45 @@ for (const theme of ["light", "dark"]) {
       for (const problem of await layout(page, '[data-slot="menu-popup"]'))
         fail(`composer ${at}`, problem);
       await shot(page, `composer-plain-${theme}-${width}`);
+    }
+
+    // The Advisor row's note names who answers the thread's next consult.
+    for (const [thread, kind, lines, absent] of [
+      [
+        "fable",
+        "advisor",
+        [
+          "Advisor: Claude Fable 5.2, same model as this thread",
+          "Past 200,000 tokens: GPT-6 Astra",
+        ],
+        [],
+      ],
+      ["opus", "advisor", ["Advisor: Claude Fable 5.2"], ["Past 200,000 tokens"]],
+      [
+        "passthrough",
+        "pass-through",
+        ["Claude's own advisor setting answered here: Claude Fable 5.2", "Follow project (off)"],
+        ["Advisor: "],
+      ],
+    ]) {
+      const where = `composer ${thread} ${at}`;
+      await open("composer", `&thread=${thread}`);
+      await page.getByRole("button", { name: "Thread options" }).click();
+      const note = page.locator("[data-thread-advisor-menu] [data-thread-advisor-note]");
+      await note.waitFor();
+      if ((await note.getAttribute("data-thread-advisor-note")) !== kind)
+        fail(where, `the note is ${await note.getAttribute("data-thread-advisor-note")}`);
+      await expectText(page, where, lines);
+      const noteText = await note.innerText();
+      for (const text of absent)
+        if (noteText.includes(text)) fail(where, `the note says "${text}"`);
+      for (const problem of [
+        ...(await layout(page, '[data-slot="menu-popup"], [data-thread-advisor-note]')),
+        ...(await clipped(page, "[data-thread-advisor-note]")),
+      ])
+        fail(where, problem);
+      await shot(page, `composer-note-${thread}-${theme}-${width}`);
+      await page.keyboard.press("Escape");
     }
 
     // The timeline: advice opens as Markdown; the unavailable consult is marked failed.

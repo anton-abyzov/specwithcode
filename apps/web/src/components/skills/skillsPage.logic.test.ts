@@ -66,12 +66,15 @@ describe("emptySkillAgents", () => {
         snapshot([
           { instanceId: "claude", label: "Claude", state: "ok", skills: 0 },
           { instanceId: "codex", label: "Codex", state: "ok", skills: 6 },
+          // An older or partial read, or the app's own folder scan, did not report zero.
           { instanceId: "cached", label: "Cursor", state: "cached", skills: 0 },
+          { instanceId: "part", label: "OpenCode", state: "ok", skills: 0, incomplete: true },
+          { instanceId: "scan", label: "Gemini", state: "ok", skills: 0, discovery: "folder-scan" },
           // A scan that failed or timed out did not report zero.
           { instanceId: "slow", label: "Grok", state: "timeout", skills: 0 },
           { instanceId: "off", label: "Pi", state: "unsupported", skills: 0 },
         ]),
       ),
-    ).toEqual(["Claude", "Cursor"]);
+    ).toEqual(["Claude"]);
   });
 });

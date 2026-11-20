@@ -13,6 +13,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import update_agent
 import update_agent_recovery as recovery
+import update_request
 
 _spec = importlib.util.spec_from_file_location('agent_tests_for_recovery', str(HERE / 'test-update-agent.py'))
 fixture = importlib.util.module_from_spec(_spec)
@@ -277,7 +278,7 @@ class AutomaticRecovery(RecoveryCase):
         prestates = [call['argv'][call['argv'].index('--prestate') + 1] for call in self.apply_calls()]
         self.assertNotEqual(*prestates)
 
-    def test_budget_persists_across_instances_and_exhaustion_holds_a_new_target(self):
+    def test_budget_persists_across_instances_and_a_newer_release_gets_one_attempt(self):
         self.failed_once()
         with self.preflight():
             for attempt, advance in ((2, 11), (3, 21)):
@@ -294,9 +295,10 @@ class AutomaticRecovery(RecoveryCase):
         self.control(newVersion='0.3.0')
         self.run_agent()
         self.run_agent()
-        self.assertEqual(self.state()['availableVersion'], '0.3.0')
-        self.assertEqual(self.state()['status'], 'error')
-        self.assertEqual(len(self.apply_calls()), 3)
+        # 0.2.0 stays held, but 0.3.0 ships its own helpers: one automatic attempt (refused_unchanged).
+        self.assertEqual(len(self.apply_calls()), 4)
+        self.assertEqual(self.state()['status'], 'installed')
+        self.assertEqual(self.state()['lastInstall']['version'], '0.3.0')
 
     def kept_after_a_failed_check(self, **receipt):
         self.fake.add_release()
@@ -789,6 +791,99 @@ class NewerReleaseRecovery(RecoveryCase):
                 self.assertFalse(recovery.newer_release_after_rollback(agent, verified))
         agent.state['lastInstall'] = last
         self.assertTrue(recovery.newer_release_after_rollback(agent, verified))
+
+
+
+class HeldRefusalRecovery(RecoveryCase):
+    """M4, November 18, 2026: an automatic install of 1.0.344 was refused in preflight
+    (`Guarded prestate changed: rows`, every pointer unchanged), a cancel two minutes later voided
+    its bounded retry, and the agent held 1.0.345 to 1.0.356 for a day with "did not install
+    automatically; choose Install now to retry". Nothing in the app offered Install now."""
+
+    HELD = 'SpecWithCode 0.2.0 did not install automatically; choose Install now to retry.'
+
+    def held(self):
+        self.failed_once()
+        # The non-interactive cancel at 03:54:44Z on M4: the retry record is bound to it.
+        self.config(quietMinutes=0, installCancelledAt=update_agent.iso(update_agent.utcnow()))
+        self.offset += datetime.timedelta(minutes=11)
+        self.run_agent()
+        self.assertEqual((self.state()['status'], self.state()['message']), ('error', self.HELD))
+        self.assertIsNone(self.state()['automaticRetry'])
+        self.assertEqual(len(self.apply_calls()), 1)
+
+    def offer_newer(self, **control):
+        self.fake.add_release('0.3.0')
+        self.config(quietMinutes=0, installCancelledAt=json.loads((self.updates / 'config.json').read_text())[
+            'installCancelledAt'], checkRequestedAt=update_agent.iso(update_agent.utcnow()))
+        self.control(newVersion='0.3.0', **control)
+
+    def test_the_held_version_stays_held_on_automatic_passes(self):
+        self.held()
+        for _ in range(3):
+            self.offset += datetime.timedelta(minutes=30)
+            self.run_agent()
+        self.assertEqual((self.state()['status'], self.state()['message']), ('error', self.HELD))
+        self.assertEqual(len(self.apply_calls()), 1)
+
+    def test_a_version_bound_forced_request_is_served_from_the_held_state(self):
+        # What fleet_rollout writes after it holds the service; this path is the agent M4 runs today.
+        self.held()
+        self.control()
+        update_request.write_request(self.home, 'm4', '0.2.0', force=True, now=update_agent.utcnow())
+        self.run_agent()
+        self.run_agent()
+        self.assertEqual(len(self.apply_calls()), 2)
+        self.assertEqual(self.state()['installedVersion'], '0.2.0')
+        self.assertEqual(self.state()['lastInstall']['result'], 'updated')
+
+    def test_a_newer_release_gets_one_attempt_after_a_refusal_that_changed_nothing(self):
+        self.held()
+        self.offer_newer()
+        self.run_agent()
+        self.run_agent()
+        self.assertEqual(len(self.apply_calls()), 2)
+        self.assertEqual(self.state()['status'], 'installed')
+        self.assertEqual(self.state()['lastInstall']['version'], '0.3.0')
+
+    def test_a_newer_release_refused_too_moves_the_hold_to_it(self):
+        self.held()
+        self.offer_newer(applyRefusals=100)
+        with self.preflight():
+            self.run_agent()
+            self.run_agent()
+        self.assertEqual(len(self.apply_calls()), 2)
+        self.assertEqual(self.state()['lastInstall']['version'], '0.3.0')
+        agent = self.agent()
+        verified = {'version': '0.3.0', 'binding': {'installedSourceCommit': fixture.OLD_COMMIT}}
+        self.assertFalse(recovery.newer_release_after_rollback(agent, verified))  # Its own budget now.
+
+    def test_only_a_strict_unchanged_refusal_frees_a_newer_release(self):
+        self.held()
+        self.fake.add_release('0.3.0')
+        agent = self.agent()
+        verified = {'version': '0.3.0', 'binding': {'installedSourceCommit': fixture.OLD_COMMIT}}
+        self.assertTrue(recovery.newer_release_after_rollback(agent, verified))
+        receipt = pathlib.Path(agent.state['lastInstall']['receipt'])
+        clean = json.loads(receipt.read_text())
+        for change in ({'restartStartedAt': '2026-11-18T03:50:00Z'}, {'stateBackup': 'x'}, {'rollback': None},
+                       {'pointers': 'new-release'}, {'pointers': 'mixed-see-backup'}, {'phase': 'restart-requested'},
+                       {'result': 'updated'}, {'identity': 'm1'}, {'error': 'TimeoutError: Guarded prestate changed'},
+                       {'error': 'AssertionError: Migration failed'}, {'error': None}):
+            with self.subTest(change=change):
+                receipt.write_text(json.dumps(dict(clean, **change)))
+                self.assertFalse(recovery.newer_release_after_rollback(agent, verified))
+        receipt.write_text(json.dumps(clean))
+        self.assertTrue(recovery.newer_release_after_rollback(agent, verified))
+        self.assertFalse(recovery.newer_release_after_rollback(agent, dict(verified, version='0.2.0')))
+
+    def test_the_web_matchers_use_the_agent_wording(self):
+        # SidebarRestartToUpdate.logic.ts (isFailedInstallHeld) must keep matching these strings.
+        logic = (HERE.parents[1] / 'apps/web/src/components/sidebar/SidebarRestartToUpdate.logic.ts').read_text()
+        self.assertIn("did not install automatically; choose Install now to retry.'", (HERE / 'update_agent_recovery.py').read_text())
+        self.assertIn('did not install automatically; choose Install now to retry\\.$/', logic)
+        self.assertIn("did not install; SpecWithCode stayed on %s. See the update receipt.'", (HERE / 'update_agent.py').read_text())
+        self.assertIn('did not install; SpecWithCode stayed on \\S+\\. See the update receipt\\.$/', logic)
 
 
 if __name__ == '__main__':

@@ -22,19 +22,19 @@ import {
 } from "../../src/studio/folderCopyActivity";
 
 // `?motion=1`: two copies played on a clock, for a headless recording of the motion. The
-// specweave copy to m5 measures, sends, applies and finishes; the vskill copy to linux-box
+// specweave copy to rackF measures, sends, applies and finishes; the vskill copy to linux-box
 // stops partway through Send. The dialog panel, the project banner, the sidebar line and
 // the toasts are the real components; only the clock is faster than a real copy.
 const GB = 1_000_000_000;
 const TOTAL = 7.5 * GB;
 const FILES = 121_868;
-const A = copyActivityKey("m4", "specweave");
-const B = copyActivityKey("m4", "vskill");
+const A = copyActivityKey("laptopE", "specweave");
+const B = copyActivityKey("laptopE", "vskill");
 const STARTED = new Date(Date.now() - 64_000).toISOString();
 
 type Script = { measure: number; send: number; apply: number; failAt?: number };
 const SCRIPTS: Record<string, Script & { target: string }> = {
-  [A]: { measure: 2_400, send: 9_000, apply: 10_800, target: "m5" },
+  [A]: { measure: 2_400, send: 9_000, apply: 10_800, target: "rackF" },
   [B]: { measure: 2_000, send: 12_000, apply: 13_000, failAt: 6_600, target: "linux-box" },
 };
 
@@ -45,7 +45,7 @@ function viewAt(script: Script & { target: string }, t: number): CopyProgressVie
     const fraction = t / script.measure;
     return {
       phase: "measure",
-      step: "Reading the selected files on m4",
+      step: "Reading the selected files on laptopE",
       fraction,
       bytes: bytes(fraction),
       files: files(fraction),
@@ -100,17 +100,17 @@ const activityOf = (key: string, view: CopyProgressView): CopyActivity => ({
   label: view.phase === "measure" ? "Measuring the folder" : "Copying files",
   fraction: view.fraction,
   waiting: false,
-  source: "m4",
+  source: "laptopE",
   progress: view,
 });
 const watches = new Map<string, CopyWatch>(
   [A, B].map((key) => [
     key,
     {
-      environmentId: "m4" as never,
+      environmentId: "laptopE" as never,
       projectId: key.split(":")[1]!,
       machineLabel: () => SCRIPTS[key]!.target,
-      sourceLabel: "m4",
+      sourceLabel: "laptopE",
     },
   ]),
 );
@@ -187,12 +187,12 @@ function Scene() {
             : status("failed", {
                 error: {
                   code: "source_unreachable",
-                  message: "m4 stopped answering over Connect for 2 minutes",
+                  message: "laptopE stopped answering over Connect for 2 minutes",
                 },
               }),
           target,
           null,
-          "m4",
+          "laptopE",
           () => {},
         );
       }, 1_400);
@@ -204,7 +204,7 @@ function Scene() {
       <h2 className="mb-3 text-sm font-medium">{title}</h2>
       <CopyProgressPanel
         view={views.get(key)!}
-        sourceLabel="m4"
+        sourceLabel="laptopE"
         targetLabel={SCRIPTS[key]!.target}
         startedAt={STARTED}
       />
@@ -219,9 +219,9 @@ function Scene() {
         <div className="relative flex h-8 items-center px-3 text-sm">easychamp</div>
       </aside>
       <main className="flex min-w-0 flex-1 flex-col">
-        <FolderCopyBanner environmentId="m4" projectId="specweave" />
+        <FolderCopyBanner environmentId="laptopE" projectId="specweave" />
         <div className="grid flex-1 content-start gap-6 p-8 md:grid-cols-2">
-          {panel(A, "Copy specweave to m5")}
+          {panel(A, "Copy specweave to rackF")}
           {panel(B, "Copy vskill to linux-box")}
         </div>
       </main>

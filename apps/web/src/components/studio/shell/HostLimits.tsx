@@ -4,6 +4,7 @@
  * offline hosts show what they last reported and when. Opening it never asks
  * a provider for anything: it reads the snapshots each host already holds.
  */
+import { maskEmail } from "@specweave-studio/shared/maskEmail";
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import { formatDuration } from "@specweave-studio/shared/usageLimits";
@@ -34,6 +35,7 @@ import {
 import { blockedLabel, leftPercent, usageLeftLabel } from "../../../studio/usageIndicatorModel";
 import { loadSavedHostReadings, saveHostReadings } from "../../../studio/hostLimitsStorage";
 import { useMachineNicknames } from "../../../studio/machineNickname";
+import { useHostDownNotes } from "../../../studio/unreachableHosts";
 import { ProviderInstanceIcon } from "../../chat/ProviderInstanceIcon";
 import { AccountHeader, shortDuration } from "../../usage/AccountHeader";
 import { RunOutNotice } from "../../usage/RunOutNotice";
@@ -65,15 +67,16 @@ export function useHostLimitBlocks(
 ) {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const nickname = useMachineNicknames();
+  const notes = useHostDownNotes();
   // Read once: saving below must not feed back into the blocks it came from.
   const [saved] = useState(() => loadSavedHostReadings(Date.now()));
   const blocks = useMemo(
     () =>
       collectHostLimitBlocks(
         only === null ? presentations : new Map([...presentations].filter(([id]) => only.has(id))),
-        { projectEnvironmentId, saved, driverLabel, machineName: nickname, now },
+        { projectEnvironmentId, saved, driverLabel, machineName: nickname, now, notes },
       ),
-    [presentations, projectEnvironmentId, saved, now, only, nickname],
+    [presentations, projectEnvironmentId, saved, now, only, nickname, notes],
   );
   useEffect(() => {
     const at = Date.now();
@@ -115,7 +118,8 @@ function ProviderRow({ row, now, dim }: { row: HostProviderRow; now: number; dim
         <div>
           <strong>{row.label}</strong>
           <span className="sws-hl-identity">
-            {[row.identity, row.plan].filter(Boolean).join(" · ") || null}
+            {[maskEmail(row.identity) ?? row.identity, row.plan].filter(Boolean).join(" · ") ||
+              null}
           </span>
           {row.sharedWith.length > 0 ? (
             <span
