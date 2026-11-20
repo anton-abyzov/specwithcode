@@ -1,9 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - a real state folder per machine.
 /**
- * A routine bound to a worker that was handed off rests on the machine it left
- * (1390 AC-45), with the scheduler built over the handoff gate the server gives
- * it, not a test stub: the handoff file says the thread continued on another
- * machine, and nothing fires here.
+ * A routine bound to a worker that was handed off never runs on the machine it
+ * left (1390 AC-45), whatever starts it, with the scheduler built over the
+ * handoff gate the server gives it, not a test stub. A handoff file that does
+ * not read makes it wait, and it runs once the file reads again.
  */
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -19,7 +19,7 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
-import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import type * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import {
   EMPTY_HANDOFF_DOCUMENT,
   emptyThreadRecord,
@@ -28,92 +28,174 @@ import {
 import * as HandoffTurnGate from "../handoff/HandoffTurnGate.ts";
 import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import { fleet, type Machine } from "./ScheduledTaskRunner.testkit.ts";
+import { threadHandedOffNote } from "./ScheduledTaskRunnerRecords.ts";
 
 const NOON = "2026-11-03T12:00:00.000Z";
 const DUE = "2026-11-03T11:59:00.000Z";
 const WORKER = "worker-thread";
+const ALPHA = EnvironmentId.make("env-alpha");
 const encodeDocument = Schema.encodeSync(HandoffDocument);
+
+/** `alpha`'s worker continued on `beta`. */
+const MOVED = JSON.stringify(
+  encodeDocument({
+    ...EMPTY_HANDOFF_DOCUMENT,
+    threads: {
+      [WORKER]: {
+        ...emptyThreadRecord(ProjectId.make("project-alpha")),
+        continuedOn: {
+          environmentId: EnvironmentId.make("env-beta"),
+          machineLabel: "beta",
+          threadId: ThreadId.make("continued-thread"),
+          at: "2026-11-03T11:58:00.000Z",
+        },
+      },
+    },
+  }),
+);
+const NOT_MOVED = JSON.stringify(encodeDocument(EMPTY_HANDOFF_DOCUMENT));
 
 const temporary: Array<string> = [];
 afterEach(() => {
   for (const path of temporary.splice(0)) NodeFS.rmSync(path, { recursive: true, force: true });
 });
 
-/** A state folder whose handoff file says `alpha`'s worker continued on `beta`. */
-const stateFolder = (environmentId: EnvironmentId) => {
-  const stateDir = NodeFS.realpathSync(
-    NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "swc-routine-gate-")),
-  );
-  temporary.push(stateDir);
-  const document =
-    environmentId === EnvironmentId.make("env-alpha")
-      ? {
-          ...EMPTY_HANDOFF_DOCUMENT,
-          threads: {
-            [WORKER]: {
-              ...emptyThreadRecord(ProjectId.make("project-alpha")),
-              continuedOn: {
-                environmentId: EnvironmentId.make("env-beta"),
-                machineLabel: "beta",
-                threadId: ThreadId.make("continued-thread"),
-                at: "2026-11-03T11:58:00.000Z",
-              },
-            },
-          },
-        }
-      : EMPTY_HANDOFF_DOCUMENT;
-  NodeFS.writeFileSync(
-    NodePath.join(stateDir, "handoff-mode.json"),
-    JSON.stringify(encodeDocument(document)),
-  );
-  return Layer.mergeAll(
+/**
+ * Each machine's scheduler over the handoff gate exactly as the server
+ * composes it, on a state folder of its own; `alpha`'s handoff file holds
+ * `alphaFile`. `rewrite` changes that file, and `platform` builds alpha's gate
+ * by hand.
+ */
+const platformOf = (
+  stateDir: string,
+  environment: Layer.Layer<ServerEnvironment.ServerEnvironment>,
+) =>
+  Layer.mergeAll(
     Layer.succeed(ServerConfig.ServerConfig, { stateDir } as never),
     NodeServices.layer,
     NodeCrypto.layer,
+    environment,
   );
+
+const serverGates = (alphaFile: string) => {
+  const folders = new Map<
+    string,
+    { readonly file: string; readonly platform: ReturnType<typeof platformOf> }
+  >();
+  const gate = (
+    environment: Layer.Layer<ServerEnvironment.ServerEnvironment>,
+    environmentId: EnvironmentId,
+  ) => {
+    const stateDir = NodeFS.realpathSync(
+      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "swc-routine-gate-")),
+    );
+    temporary.push(stateDir);
+    const file = NodePath.join(stateDir, "handoff-mode.json");
+    NodeFS.writeFileSync(file, environmentId === ALPHA ? alphaFile : NOT_MOVED);
+    const platform = platformOf(stateDir, environment);
+    folders.set(environmentId, { file, platform });
+    return RuntimeLayer.layerScheduledTaskHandoffGate.pipe(Layer.provide(platform));
+  };
+  return {
+    gate,
+    rewrite: (text: string) => NodeFS.writeFileSync(folders.get(ALPHA)!.file, text),
+    platform: () => folders.get(ALPHA)!.platform,
+  };
 };
 
-const platforms = new Map<
-  string,
-  Layer.Layer<Layer.Success<ReturnType<typeof stateFolder>> | ServerEnvironment.ServerEnvironment>
->();
+const addWorker = (machine: Machine) =>
+  machine.sql`INSERT INTO orchestration_v2_projection_threads ${machine.sql.insert({ thread_id: WORKER, project_id: machine.projectId, title: "Synthetic", default_provider: "codex", runtime_mode: "full-access", interaction_mode: "default", created_at: "2026-10-09T00:00:00Z", updated_at: "2026-10-09T00:00:00Z", deleted_at: null, payload_json: "{}" })}`;
 
-/** The scheduler's handoff gate exactly as the server composes it. */
-const serverGate = (
-  environment: Layer.Layer<ServerEnvironment.ServerEnvironment>,
-  environmentId: EnvironmentId,
-) => {
-  const platform = stateFolder(environmentId);
-  const provided = Layer.merge(platform, environment);
-  platforms.set(environmentId, provided);
-  return RuntimeLayer.layerScheduledTaskHandoffGate.pipe(Layer.provide(provided));
-};
+const settle = (machine: Machine) => machine.runner.reconcile({ force: true });
 
 it.effect("a worker's routine rests after the worker is handed off, with the server's gate", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(Date.parse(NOON));
+    const gates = serverGates(MOVED);
     const { machines, everyoneLooks, fires, network } = yield* fleet(["alpha", "beta"], {
-      handoffGate: serverGate,
+      handoffGate: gates.gate,
     });
     const [alpha, beta] = machines as [Machine, Machine];
 
     // Control: the gate itself reads the handoff file and names the machine.
     const direct = yield* Layer.build(
-      Layer.fresh(HandoffTurnGate.layer.pipe(Layer.provide(platforms.get(alpha.environmentId)!))),
+      Layer.fresh(HandoffTurnGate.layer.pipe(Layer.provide(gates.platform()))),
     );
     const gate = Context.get(direct, HandoffTurnGate.HandoffTurnGate);
-    assert.equal(yield* gate.continuedOn!(ThreadId.make(WORKER)), "beta");
+    assert.include(JSON.stringify(yield* gate.continuedOn!(ThreadId.make(WORKER))), "beta");
 
-    yield* alpha.sql`INSERT INTO orchestration_v2_projection_threads ${alpha.sql.insert({ thread_id: WORKER, project_id: alpha.projectId, title: "Synthetic", default_provider: "codex", runtime_mode: "full-access", interaction_mode: "default", created_at: "2026-10-09T00:00:00Z", updated_at: "2026-10-09T00:00:00Z", deleted_at: null, payload_json: "{}" })}`;
-    yield* alpha.seed({ threadId: WORKER });
+    yield* addWorker(alpha);
+    yield* alpha.seed({ threadId: WORKER, check: { command: "true" } });
     yield* alpha.makeDue(DUE);
-    yield* alpha.runner.reconcile({ force: true });
-    yield* beta.runner.reconcile({ force: true });
+    yield* settle(alpha);
+    yield* settle(beta);
     yield* everyoneLooks;
     assert.equal(fires(), 0);
-    assert.equal(alpha.state.sends, 0);
+    assert.equal(alpha.state.checks, 0);
     assert.equal((yield* alpha.row)?.last_run_error, "Its thread was handed off to beta.");
     assert.isUndefined(yield* beta.row);
     assert.deepEqual(network.log, []);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a webhook delivery after the handoff runs nothing, not even its check", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse(NOON));
+    const gates = serverGates(MOVED);
+    const { machines } = yield* fleet(["alpha"], { handoffGate: gates.gate });
+    const [alpha] = machines as [Machine];
+    yield* addWorker(alpha);
+    const task = yield* alpha.seed({
+      threadId: WORKER,
+      schedule: { type: "webhook" },
+      check: { command: "true" },
+    });
+    assert.isDefined(task.webhook);
+    const body = new TextEncoder().encode("{}");
+    const answer = yield* alpha.service.triggerWebhook({
+      hookId: task.id,
+      token: task.webhook!.path.split("/").at(-1) ?? "",
+      method: "POST",
+      path: `/api/hooks/${task.id}`,
+      query: "",
+      headers: { "content-type": "application/json" },
+      body,
+      bodyText: "{}",
+    });
+    // The URL stays local and answers; the delivery is logged and then refused.
+    assert.equal(answer._tag, "accepted");
+    let delivery = (yield* alpha.service.listWebhookDeliveries({ id: task.id })).deliveries[0];
+    for (let turn = 0; turn < 1000 && delivery?.outcome === "accepted"; turn++) {
+      yield* Effect.yieldNow;
+      delivery = (yield* alpha.service.listWebhookDeliveries({ id: task.id })).deliveries[0];
+    }
+    assert.equal(alpha.state.checks, 0);
+    assert.equal(alpha.fires(), 0);
+    assert.equal(delivery?.error, threadHandedOffNote("beta"));
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a handoff file that does not read makes the routine wait, and it runs once it reads", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse(NOON));
+    const gates = serverGates("{ not json");
+    const { machines } = yield* fleet(["alpha"], { handoffGate: gates.gate });
+    const [alpha] = machines as [Machine];
+    yield* addWorker(alpha);
+    yield* alpha.seed({ threadId: WORKER, check: { command: "true" } });
+    yield* alpha.makeDue(DUE);
+    yield* settle(alpha);
+    yield* alpha.due;
+    assert.equal(alpha.fires(), 0);
+    assert.equal(alpha.state.checks, 0);
+    // Still due: the next pass looks again.
+    assert.equal((yield* alpha.row)?.next_run_at, DUE);
+    yield* alpha.due;
+    assert.equal(alpha.fires(), 0);
+
+    gates.rewrite(NOT_MOVED);
+    yield* alpha.due;
+    assert.equal(alpha.state.checks, 1);
+    assert.equal(alpha.fires(), 1);
   }).pipe(Effect.scoped),
 );

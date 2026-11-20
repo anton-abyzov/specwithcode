@@ -78,6 +78,8 @@ export interface Machine {
     fence: string | null;
     launches: number;
     sends: number;
+    /** How many times a routine's command check ran on this machine. */
+    checks: number;
     /** Threads handed off from this machine, and where to. */
     movedThreads: Map<string, string>;
     /** Its coordinator was started beside the project's own: active, and no predecessor. */
@@ -269,6 +271,7 @@ export const fleet = (
           fence: null,
           launches: 0,
           sends: 0,
+          checks: 0,
           movedThreads: new Map(),
           beside: false,
           listFails: false,
@@ -329,7 +332,13 @@ export const fleet = (
               }),
           }),
           Layer.mock(SecretRequests.SecretRequests)({}),
-          Layer.mock(ProcessRunner.ProcessRunner)({}),
+          Layer.mock(ProcessRunner.ProcessRunner)({
+            run: () =>
+              Effect.sync(() => {
+                state.checks++;
+                return { stdout: "", stderr: "", code: 0, timedOut: false } as never;
+              }),
+          }),
           Layer.mock(ProjectCoordinator.ProjectCoordinatorService)({
             start: (input) =>
               Effect.gen(function* () {
