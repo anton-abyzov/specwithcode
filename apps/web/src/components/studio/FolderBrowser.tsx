@@ -20,6 +20,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { cn } from "../../lib/utils";
 import { PathField } from "./PathField";
 import { cleanPastedPath, typedDirectory } from "./pathField.logic";
+import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   collapseCrumbs,
@@ -653,9 +654,9 @@ export function FolderBrowser({
                     setNewError(null);
                   }}
                 />
-                <button type="submit" className={cn(TOOL, "text-foreground")} disabled={creating}>
+                <Button type="submit" variant="outline" size="xs" disabled={creating}>
                   {creating ? "Creating…" : "Create"}
-                </button>
+                </Button>
               </div>
               {newError ? (
                 <p role="alert" className="pt-1 pl-6.5 text-xs text-destructive-foreground">

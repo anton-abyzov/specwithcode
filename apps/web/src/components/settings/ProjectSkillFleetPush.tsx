@@ -442,7 +442,7 @@ function StudioLinkButton() {
       >
         <Button
           size="xs"
-          variant="ghost"
+          variant="outline"
           type="button"
           disabled={busy || !controls.canOpenStudio}
           title={error ?? tx("Bump, publish and submit a new version in Skill Studio.")}

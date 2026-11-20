@@ -1,6 +1,6 @@
 {
   "name": "specweave-studio",
-  "version": "1.0.320",
+  "version": "1.0.405",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -34,7 +34,7 @@
     "@effect/platform-node": "catalog:",
     "@effect/platform-node-shared": "catalog:",
     "@ff-labs/fff-node": "0.9.4",
-    "@modelcontextprotocol/sdk": "1.29.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "@muse-code/sdk": "1.4.11",
     "@napi-rs/keyring": "^1.3.0",
     "@noble/hashes": "catalog:",
@@ -52,13 +52,13 @@
     "postcss-value-parser": "4.2.0",
     "pptxgenjs": "4.0.1",
     "proper-lockfile": "4.1.2",
-    "smol-toml": "1.8.0",
-    "stream-chain": "^4.2.5",
-    "stream-json": "3.6.0",
+    "smol-toml": "1.9.1",
+    "stream-chain": "^4.4.2",
+    "stream-json": "3.9.0",
     "typescript-legacy": "npm:typescript@6.0.3",
     "yaml": "catalog:",
     "yauzl": "^3.4.0",
-    "zod": "4.6.5"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

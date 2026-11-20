@@ -19,7 +19,14 @@ import { SubscriptionsDashboard } from "../../src/components/usage/subscriptions
 import { SubscriptionRow } from "../../src/components/usage/subscriptions/SubscriptionRow";
 import { subscriptionLabel } from "../../src/components/usage/subscriptions/SubscriptionsView";
 import { resetReport, tokensLostAtReset } from "../../src/components/usage/subscriptions/resetReportModel";
-import { subscriptionRows } from "../../src/components/usage/subscriptions/subscriptionRows";
+import { NoReadingRow } from "../../src/components/usage/subscriptions/NoReadingRow";
+import {
+  noReadingRows,
+  renewalKeyOf,
+  subscriptionRows,
+  subscriptionsSummary,
+  subscriptionsSummaryText,
+} from "../../src/components/usage/subscriptions/subscriptionRows";
 import "./fixture.css";
 
 const params = new URLSearchParams(location.search);
@@ -33,6 +40,8 @@ const now = Date.now();
 const iso = (at: number) => new Date(at).toISOString();
 const codex = ProviderDriverKind.make("codex");
 const claude = ProviderDriverKind.make("claudeAgent");
+const acp = ProviderDriverKind.make("acpRegistry");
+const copilotKey = `copilot:sha256:${"0".repeat(64)}`;
 
 const window = (
   id: string,
@@ -53,15 +62,16 @@ const window = (
 const account = (
   key: string,
   driver: LimitAccount["driver"],
-  email: string,
+  email: string | undefined,
   plan: string,
   machine: string,
   limits: Omit<LimitAccount["limits"], "checkedAt"> & { readonly checkedAt?: string },
   offline = false,
+  displayName: string | null = null,
 ): LimitAccount => ({
   key,
   driver,
-  displayName: null,
+  displayName,
   email,
   plan,
   accentColor: undefined,
@@ -97,6 +107,31 @@ const accounts: LimitAccount[] = empty
           windows: [window("secondary", "weekly", "Weekly", 10_080, 60, 4 * DAY)],
         },
         true,
+      ),
+      account(
+        "copilot",
+        acp,
+        undefined,
+        "Pro",
+        "mini",
+        {
+          subscriptionKey: copilotKey,
+          windows: [
+            {
+              // Copilot reports no window length, as its reader publishes it.
+              id: "premium_interactions",
+              kind: "monthly",
+              label: "Premium requests",
+              usedPercent: 59,
+              resetsAt: iso(now + 16 * DAY),
+              used: 885,
+              limit: 1500,
+              unit: "premium requests",
+            },
+          ],
+        },
+        false,
+        "Copilot",
       ),
     ];
 
@@ -146,7 +181,45 @@ const colorOf = (key: string) => {
   const entry = byKey.get(key);
   return entry ? barColor(entry.driver) : "var(--foreground)";
 };
-const rows = subscriptionRows(accounts, periods, { "codex:ada@example.com": 2 }, now);
+const rows = subscriptionRows(
+  accounts,
+  periods,
+  {
+    "codex:ada@example.com": 2,
+    [renewalKeyOf(acp, null, { subscriptionKey: copilotKey }) ?? ""]: 28,
+  },
+  now,
+);
+// Built by hand like the rows above; which instances get one is tested in usageLimits.unreported.test.ts.
+const unread = noReadingRows(
+  empty
+    ? []
+    : [
+        {
+          key: "env-mini:devin",
+          driver: acp,
+          environmentLabel: "mini",
+          offline: false,
+          email: undefined,
+          plan: undefined,
+          reason: "unread",
+          message: "Usage not reported by Devin",
+          displayName: "Devin",
+        },
+        {
+          key: "env-linux-box:codex",
+          driver: codex,
+          environmentLabel: "linux-box",
+          offline: true,
+          email: undefined,
+          plan: undefined,
+          reason: "signedOut",
+          message: "Signed out",
+        },
+      ],
+  (driver) => (driver === codex ? "Codex" : driver === claude ? "Claude" : "ACP agent"),
+);
+const summary = subscriptionsSummary(rows, unread.length, now);
 const report = resetReport(periods, now, {
   // 300M tokens behind Claude's used share; Codex has two accounts, so no estimate.
   tokensSpent: ({ driver }) => (driver === claude ? 300_000_000 : null),
@@ -230,6 +303,9 @@ createRoot(document.getElementById("root")!).render(
     <div className="w-64" data-fixture-banner="">
       <FixtureBanner />
     </div>
+    <p className="text-sm text-muted-foreground tabular-nums" data-subscriptions-summary="">
+      {subscriptionsSummaryText(summary, now)}
+    </p>
     <SubscriptionsDashboard
       ledger={periods}
       rows={rows}
@@ -261,6 +337,9 @@ createRoot(document.getElementById("root")!).render(
             now={now}
             onSetDay={() => undefined}
           />
+        ))}
+        {unread.map((row) => (
+          <NoReadingRow key={row.key} row={row} />
         ))}
       </div>
     )}

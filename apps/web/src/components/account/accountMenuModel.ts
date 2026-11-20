@@ -12,19 +12,33 @@ export type ConnectAccount =
   | { readonly status: "loading" }
   /** Clerk did not start, so this window cannot tell whether it is signed in. */
   | { readonly status: "notLoaded"; readonly linked: boolean }
-  | { readonly status: "signedOut"; readonly linked: boolean }
+  | {
+      readonly status: "signedOut";
+      readonly linked: boolean;
+      /** A saved machine can't be reached from this window until it signs in (1417). */
+      readonly cutsOff?: boolean;
+    }
   | {
       readonly status: "signedIn";
       readonly name: string | null;
       readonly email: string | null;
+      /**
+       * Time left before Clerk ends this sign-in ("1h 40m"), from 24 hours
+       * before and only when a saved machine depends on it (1417, AC-11).
+       */
+      readonly sessionEndsIn?: string;
     };
 
 export interface AccountMenuPresentation {
   /** Shown on the button and read out as "Account: ...". */
   readonly name: string;
   readonly header: string;
-  /** Null when this window cannot sign in, or already has. */
+  /** Null when this window cannot sign in, or already has and its sign-in is not ending. */
   readonly signIn: { readonly label: string; readonly hint: string } | null;
+  /** "warning" while being signed out cuts this window off from a machine. */
+  readonly tone?: "warning";
+  /** The name the avatar's initial comes from when the button shows a warning instead. */
+  readonly avatarName?: string;
 }
 
 export function accountMenuPresentation(
@@ -50,6 +64,16 @@ export function accountMenuPresentation(
         },
       };
     case "signedOut":
+      if (account.cutsOff === true)
+        return {
+          name: "Signed out",
+          header: `${machine} · Signed out of SpecWithCode Connect`,
+          tone: "warning",
+          signIn: {
+            label: "Sign in",
+            hint: "Some of your machines can't be reached from this window until you sign in. This machine is not affected.",
+          },
+        };
       return account.linked
         ? {
             name: "Not signed in",
@@ -69,11 +93,20 @@ export function accountMenuPresentation(
           };
     case "signedIn": {
       const label = account.email ?? account.name;
-      return {
-        name: account.name ?? account.email ?? "SpecWithCode account",
-        header: label ? `${label} · ${machine}` : machine,
-        signIn: null,
-      };
+      const header = label ? `${label} · ${machine}` : machine;
+      const name = account.name ?? account.email ?? "SpecWithCode account";
+      if (account.sessionEndsIn !== undefined)
+        return {
+          name: `Sign-in ends in ${account.sessionEndsIn}`,
+          avatarName: name,
+          header,
+          tone: "warning",
+          signIn: {
+            label: "Sign in again now",
+            hint: "SpecWithCode Connect ends every sign-in after 7 days. Signing in again now starts a new one, and this window keeps your machines.",
+          },
+        };
+      return { name, header, signIn: null };
     }
   }
 }

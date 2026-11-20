@@ -83,6 +83,8 @@ export interface SettingsSearchItem {
    */
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
+  /** Its section renders only when every selected machine offers the advisor. */
+  readonly requiresAdvisor?: boolean;
 }
 
 export interface SettingsSearchAvailability {
@@ -95,6 +97,8 @@ export interface SettingsSearchAvailability {
   readonly isWslSettingsRowVisible: boolean;
   readonly hasThreadAutoSettlement: boolean;
   readonly managedTunnelActive?: boolean;
+  /** Every selected, connected machine advertises the `advisor` capability. */
+  readonly hasAdvisor?: boolean;
 }
 
 /**
@@ -288,6 +292,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "project-defaults",
     searchTerms: [
       "disk storage delete deleted archived threads old inactive merged unchanged worktrees retention days project inherit off custom",
+    ],
+  },
+  {
+    id: "storage-cleanup-plan",
+    title: "What cleanup would remove",
+    to: "/settings/storage",
+    scope: "environment-defaults",
+    searchTerms: [
+      "disk storage free space dry run preview clean up now remove finished resolved merged closed chats worktrees kept reason leftover downloads",
     ],
   },
   {
@@ -654,6 +667,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "environment-defaults",
   },
   {
+    id: "terminal-commands",
+    title: "Use these commands in Terminal",
+    to: "/settings/general",
+    searchTerms: [
+      "terminal shell path command not found claude codex specweave node gh zprofile zshrc bashrc bash_profile startup file",
+    ],
+    scope: "environment-defaults",
+  },
+  {
     id: "continue-threads-after-server-update",
     title: "Continue threads after restarts",
     to: "/settings/general",
@@ -872,6 +894,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["cursor macOS keychain usage tokens cost limits permission"],
     providerSettingsOnly: true,
     macProviderSettingsOnly: true,
+  },
+  {
+    id: "advisor",
+    title: "Advisor",
+    to: "/settings/models",
+    searchTerms: [
+      "advisor second opinion stronger model consult review approach stuck before done fable claude built-in brief size consults per run context limit",
+    ],
+    providerSettingsOnly: true,
+    requiresAdvisor: true,
   },
   {
     id: "adversarial-review",
@@ -1217,7 +1249,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "private-machines-invite",
-    title: "Join a main machine",
+    title: "Join one of your machines",
     to: "/settings/machines",
     searchTerms: [
       "fleet invite join main machine primary tailscale connect serve line swc-machine add this mac",
@@ -1254,15 +1286,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "handoff-sleep-target",
     title: "Away target",
     to: "/settings/machines",
-    searchTerms: [
-      "away sleep suspend lid close laptop move hand off running threads machine handoff",
-    ],
-  },
-  {
-    id: "away-sleep-trigger",
-    title: "Leave automatically when the lid closes",
-    to: "/settings/machines",
-    searchTerms: ["away lid close sleep battery grace leave automatically"],
+    searchTerms: ["away leave target move hand off running threads machine handoff"],
   },
   {
     id: "away-bring-back",
@@ -1561,6 +1585,7 @@ export function filterAvailableSettingsSearchItems(
       (!item.localEnvironmentOnly || !availability.localEnvironmentDisabled) &&
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
+      (!item.requiresAdvisor || availability.hasAdvisor === true) &&
       (!item.managedTunnelOnly || availability.managedTunnelActive === true),
   );
 }

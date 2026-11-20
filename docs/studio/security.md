@@ -25,6 +25,14 @@ never goes over Connect. Add Tailscale when you want a direct private route; the
 Another private network (plain WireGuard, ZeroTier) can replace Tailscale for direct routes with the same rules: bind
 SpecWithCode to loopback, forward into it, pair each origin.
 
+The address one machine uses to reach another is never plain http, on a LAN or anywhere else. The fleet file, join
+codes and folder copies accept only `https://` to a private `*.ts.net` name or to a SpecWithCode Connect address
+(`apps/server/src/fleet/fleetOrigin.ts`); a raw LAN IP, a `.local` name or any `http://` address is refused before a
+request is made. The reason is the credential: over a Tailscale address the main machine sends a plain bearer token,
+which plain http would put on the network in clear text. A direct LAN route for folder copies, when it ships, uses TLS
+with a certificate pinned for that one copy, not http. The "Plain LAN address" row above is about a browser or phone
+you point at a machine yourself, not about machines reaching each other.
+
 ## What the CLIProxyAPI hub is for
 
 CLIProxyAPI is a separate open-source program that signs in to several Claude, Codex or Gemini

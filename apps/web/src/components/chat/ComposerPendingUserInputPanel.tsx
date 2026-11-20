@@ -15,10 +15,21 @@ import {
   derivePendingUserInputProgress,
   type PendingUserInputDraftAnswer,
 } from "../../pendingUserInput";
-import { ArrowRightIcon, CheckIcon, ChevronLeftIcon, CornerDownLeftIcon } from "lucide-react";
+import {
+  ArrowRightIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  ChevronLeftIcon,
+  CornerDownLeftIcon,
+} from "lucide-react";
+import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
+import { Tooltip, TooltipPopup } from "../ui/tooltip";
+import { useQuestionCardCollapsed } from "./questionCardCollapse";
+import { OnActionMachine, type ActionMachine } from "../../studio/actionMachine";
+import { useQuestionOptionsLayout } from "./questionOptionsLayout";
 import {
   deriveQuestionStep,
   presentQuestionOption,
@@ -53,7 +64,14 @@ interface PendingUserInputPanelProps {
   onReplyInChat?: (() => void) | undefined;
   /** Who asked: the coordinator, or the thread's title. Named on the card when given. */
   askedBy?: string | undefined;
+  /** The asking thread's machine when it is not the window's own (1427 AC-07). */
+  machine?: ActionMachine | null | undefined;
   renderText?: QuestionTextRenderer | undefined;
+  /**
+   * The thread (or coordinator) the card belongs to. When given, folding the
+   * card to its one-line summary is remembered for that thread.
+   */
+  collapseKey?: string | undefined;
 }
 
 export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserInputPanel({
@@ -68,7 +86,9 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
   onDismiss,
   onReplyInChat,
   askedBy,
+  machine,
   renderText = renderPlainQuestionText,
+  collapseKey,
 }: PendingUserInputPanelProps) {
   if (pendingUserInputs.length === 0) return null;
   const activePrompt = pendingUserInputs[0];
@@ -89,7 +109,9 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
       onDismiss={onDismiss}
       onReplyInChat={onReplyInChat}
       askedBy={askedBy}
+      machine={machine ?? null}
       renderText={renderText}
+      collapseKey={collapseKey}
     />
   );
 });
@@ -107,7 +129,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onDismiss,
   onReplyInChat,
   askedBy,
+  machine,
   renderText,
+  collapseKey,
 }: {
   prompt: PendingUserInput;
   /** Requests queued behind this one; each shows after this one is answered. */
@@ -122,7 +146,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onDismiss: (requestId: RuntimeRequestId) => void;
   onReplyInChat: (() => void) | undefined;
   askedBy: string | undefined;
+  machine: ActionMachine | null;
   renderText: QuestionTextRenderer;
+  collapseKey: string | undefined;
 }) {
   const tx = useTx();
   // Message-mode requests remain answerable after their provider turn ends.
@@ -142,8 +168,81 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   // collapsed question's id (rather than a bare flag) reopens the card when the
   // prompt advances to its next question, which can happen without a click —
   // sending from the composer advances the active question.
+  // With a collapse key the fold belongs to the thread instead: it outlasts
+  // this question, a reload and switching threads, so a small screen keeps the
+  // thread body in view until the person opens the card again.
   const [collapsedQuestionId, setCollapsedQuestionId] = useState<string | null>(null);
-  const isCollapsed = collapsedQuestionId !== null && collapsedQuestionId === activeQuestion?.id;
+  const [threadCollapsed, setThreadCollapsed] = useQuestionCardCollapsed(collapseKey);
+  const isCollapsed =
+    setThreadCollapsed !== null
+      ? threadCollapsed
+      : collapsedQuestionId !== null && collapsedQuestionId === activeQuestion?.id;
+  // With room for every description, each option shows its description in
+  // full, so the card never moves under the pointer. On a panel too short for
+  // that, options show one line each, and hover (after a short pause),
+  // keyboard focus or the details toggle opens one to its full description.
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const optionsLayout = useQuestionOptionsLayout(
+    cardRef,
+    isCollapsed,
+    [
+      prompt.requestId,
+      activeQuestion?.id ?? "",
+      activeQuestion?.question ?? "",
+      ...(activeQuestion?.options ?? []).map(
+        (option) => `${option.label}\u0001${option.description ?? ""}`,
+      ),
+    ].join("\u0000"),
+  );
+  const compactOptions = optionsLayout === "compact";
+  const [hoveredOptionKey, setHoveredOptionKey] = useState<string | null>(null);
+  // The clipped description under the pointer, which the tooltip points at.
+  const [hoveredDescription, setHoveredDescription] = useState<HTMLElement | null>(null);
+  const [focusedOptionKey, setFocusedOptionKey] = useState<string | null>(null);
+  const [pinnedOptionKeys, setPinnedOptionKeys] = useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  );
+  const hoverTimerRef = useRef<number | null>(null);
+  // A press elsewhere blurs a keyboard-opened row on pointer down. Folding it
+  // right then would shift what is under the pointer before the click lands,
+  // so the fold waits until the press is over.
+  const pointerPressedRef = useRef(false);
+  useEffect(() => {
+    const down = () => {
+      pointerPressedRef.current = true;
+    };
+    const up = () => {
+      pointerPressedRef.current = false;
+    };
+    document.addEventListener("pointerdown", down, true);
+    document.addEventListener("pointerup", up, true);
+    document.addEventListener("pointercancel", up, true);
+    return () => {
+      document.removeEventListener("pointerdown", down, true);
+      document.removeEventListener("pointerup", up, true);
+      document.removeEventListener("pointercancel", up, true);
+    };
+  }, []);
+  const foldAfterPress = (fold: () => void) => {
+    if (!pointerPressedRef.current) {
+      fold();
+      return;
+    }
+    const finish = () => {
+      document.removeEventListener("pointerup", finish);
+      document.removeEventListener("pointercancel", finish);
+      // After the click that follows this pointer up.
+      window.setTimeout(fold, 0);
+    };
+    document.addEventListener("pointerup", finish);
+    document.addEventListener("pointercancel", finish);
+  };
+  const clearHoverTimer = () => {
+    if (hoverTimerRef.current !== null) {
+      window.clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+  };
 
   useEffect(() => {
     onAdvanceRef.current = onAdvance;
@@ -177,11 +276,14 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     progress.selectedOptionValues,
   ]);
 
-  // Clear auto-advance timer on unmount
+  // Clear auto-advance and hover timers on unmount
   useEffect(() => {
     return () => {
       if (autoAdvanceTimerRef.current !== null) {
         window.clearTimeout(autoAdvanceTimerRef.current);
+      }
+      if (hoverTimerRef.current !== null) {
+        window.clearTimeout(hoverTimerRef.current);
       }
     };
   }, []);
@@ -321,12 +423,14 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
 
   const customAnswerActive = progress.customAnswer.trim().length > 0;
   const { headline, details } = splitQuestionText(activeQuestion.question);
+  const optionCount = activeQuestion.options.length;
 
   return (
     <Collapsible
       open={!isCollapsed}
       onOpenChange={(open) => {
-        setCollapsedQuestionId(open ? null : activeQuestion.id);
+        if (setThreadCollapsed !== null) setThreadCollapsed(!open);
+        else setCollapsedQuestionId(open ? null : activeQuestion.id);
       }}
     >
       <CollapsibleTrigger
@@ -340,32 +444,44 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       >
         <ComposerBanner.Icon />
         <ComposerBanner.Content>
-          {askedBy ? (
-            // The agent asked this, not the person: its name leads the card.
-            <>
-              <span
-                data-question-asker
-                className="min-w-0 max-w-[65%] shrink truncate text-muted-foreground"
-              >
-                {`${askedBy} asks`}
+          {isCollapsed ? (
+            // Folded: one line naming what waits, so the thread stays readable.
+            <span data-question-summary className="flex min-w-0 flex-1 items-baseline gap-1">
+              <span className="shrink-0 font-medium text-muted-foreground">{tx("Question:")}</span>{" "}
+              <span className="min-w-0 truncate text-foreground">{headline}</span>{" "}
+              <span className="shrink-0 whitespace-nowrap text-muted-foreground">
+                {`· ${optionCount} ${optionCount === 1 ? "option" : "options"}`}
               </span>
-              <span aria-hidden className="shrink-0 text-muted-foreground">
-                ·
+              <OnActionMachine machine={machine} />
+            </span>
+          ) : (
+            <>
+              {askedBy ? (
+                // The agent asked this, not the person: its name leads the card.
+                <>
+                  <span
+                    data-question-asker
+                    className="min-w-0 max-w-[65%] shrink truncate text-muted-foreground"
+                  >
+                    {`${askedBy} asks`}
+                  </span>
+                  <OnActionMachine machine={machine} />
+                  <span aria-hidden className="shrink-0 text-muted-foreground">
+                    ·
+                  </span>
+                </>
+              ) : null}
+              <span
+                className={cn(
+                  "font-medium text-muted-foreground",
+                  // Beside a long asker name, the header gives way too.
+                  askedBy ? "min-w-0 shrink truncate" : "shrink-0",
+                )}
+              >
+                {activeQuestion.header}
               </span>
             </>
-          ) : null}
-          <span
-            className={cn(
-              "font-medium text-muted-foreground",
-              // Beside a long asker name, the header gives way too.
-              askedBy ? "min-w-0 shrink truncate" : "shrink-0",
-            )}
-          >
-            {activeQuestion.header}
-          </span>
-          {isCollapsed ? (
-            <span className="min-w-0 flex-1 truncate text-secondary-label">{headline}</span>
-          ) : null}
+          )}
         </ComposerBanner.Content>
         <ComposerBanner.Actions>
           {waitingCount > 0 ? (
@@ -412,10 +528,14 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
         </ComposerBanner.Actions>
       </CollapsibleTrigger>
       <CollapsiblePanel>
-        <ComposerBanner.Scroll>
+        {/* About 40% of the thread panel for the whole stack: the queue line and
+            this card's header take the rest of that share. */}
+        <ComposerBanner.Scroll className="max-h-[clamp(6rem,calc(var(--chat-panel-height,100dvh)*0.4_-_4.5rem),22rem)]">
           <div
+            ref={cardRef}
             className="px-2 pt-1 pb-1.5 wrap-anywhere sm:px-3"
             data-question-card
+            data-question-options={optionsLayout}
             data-question-card-request={prompt.requestId}
           >
             <div className="text-sm leading-snug font-medium text-foreground">
@@ -437,7 +557,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             <div
               role={activeQuestion.multiSelect ? "group" : "radiogroup"}
               aria-label={headline}
-              className="mt-2 divide-y divide-border/60"
+              className="mt-1.5 divide-y divide-border/60"
               onKeyDown={moveOptionFocus}
             >
               {activeQuestion.options.map((option, index) => {
@@ -451,11 +571,23 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                   (!customAnswerActive && progress.selectedOptionValues.includes(optionValue));
                 const letter = questionOptionLetter(index);
                 const unavailable = disabled || isResponding;
+                const optionKey = `${activeQuestion.id}:${optionValue}`;
+                const hasDescription = Boolean(presented.description);
+                const pinned = pinnedOptionKeys.has(optionKey);
+                const expanded =
+                  hasDescription && (!compactOptions || pinned || focusedOptionKey === optionKey);
+                // Hover never resizes a row: a clipped description shows in a
+                // tooltip instead, so nothing under the pointer moves.
+                const showDescriptionTip =
+                  compactOptions &&
+                  !expanded &&
+                  hoveredOptionKey === optionKey &&
+                  hoveredDescription !== null;
                 return (
                   // A div, not a button: descriptions may hold links, which
                   // cannot nest inside a button and must not pick the option.
                   <div
-                    key={`${activeQuestion.id}:${optionValue}`}
+                    key={optionKey}
                     role={activeQuestion.multiSelect ? "checkbox" : "radio"}
                     tabIndex={unavailable ? -1 : 0}
                     aria-checked={isSelected}
@@ -463,6 +595,48 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                     aria-keyshortcuts={letter.length === 1 ? letter : undefined}
                     data-question-option={letter}
                     data-recommended={presented.recommended ? "true" : undefined}
+                    data-expanded={expanded ? "true" : "false"}
+                    onPointerEnter={(event) => {
+                      if (event.pointerType !== "mouse" || !hasDescription || !compactOptions) {
+                        return;
+                      }
+                      clearHoverTimer();
+                      const row = event.currentTarget;
+                      // A short pause, so sweeping the pointer across the list
+                      // does not open a tooltip for every row on the way.
+                      hoverTimerRef.current = window.setTimeout(() => {
+                        hoverTimerRef.current = null;
+                        const description = row.querySelector<HTMLElement>(
+                          "[data-question-option-description]",
+                        );
+                        // Only a clipped description needs its full text shown.
+                        if (description && description.scrollWidth > description.clientWidth + 1) {
+                          setHoveredDescription(description);
+                          setHoveredOptionKey(optionKey);
+                        }
+                      }, 350);
+                    }}
+                    onPointerLeave={() => {
+                      clearHoverTimer();
+                      setHoveredOptionKey((current) => (current === optionKey ? null : current));
+                    }}
+                    onFocus={(event) => {
+                      // Keyboard focus only: a click that focused the row would
+                      // fold the previously focused one and move this row
+                      // under the pointer before the click lands.
+                      if (
+                        event.target === event.currentTarget &&
+                        event.currentTarget.matches(":focus-visible")
+                      ) {
+                        if (compactOptions) setFocusedOptionKey(optionKey);
+                      }
+                    }}
+                    onBlur={(event) => {
+                      if (event.target !== event.currentTarget) return;
+                      foldAfterPress(() =>
+                        setFocusedOptionKey((current) => (current === optionKey ? null : current)),
+                      );
+                    }}
                     onClick={(event) => {
                       if ((event.target as HTMLElement).closest("a,button")) return;
                       handleOptionSelection(activeQuestion.id, optionValue);
@@ -482,7 +656,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                       handleOptionSelection(activeQuestion.id, optionValue);
                     }}
                     className={cn(
-                      "group/option flex w-full items-start gap-3 rounded-md px-1.5 py-2 text-left outline-none transition-colors duration-150",
+                      "group/option flex w-full gap-2 rounded-md px-1.5 py-1 text-left outline-none transition-colors duration-150",
+                      expanded ? "items-start" : "items-center",
                       "focus-visible:bg-muted/45 focus-visible:ring-1 focus-visible:ring-primary/30",
                       isSelected ? "bg-muted/55" : "hover:bg-muted/35",
                       unavailable ? "cursor-not-allowed opacity-50" : "cursor-pointer",
@@ -491,42 +666,113 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                     <span
                       aria-hidden
                       className={cn(
-                        "mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md border text-xs font-medium tabular-nums transition-colors",
+                        "flex size-5 shrink-0 items-center justify-center rounded-md border text-2xs font-medium tabular-nums transition-colors",
                         isSelected
                           ? "border-primary/40 bg-primary/12 text-primary"
                           : "border-border bg-background/60 text-muted-foreground group-hover/option:text-foreground group-focus-visible/option:text-foreground",
                       )}
                     >
-                      {isSelected ? <CheckIcon className="size-3.5" /> : letter}
+                      {isSelected ? <CheckIcon className="size-3" /> : letter}
                     </span>
-                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                      <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
-                        <span className="text-sm font-semibold text-foreground">
-                          {presented.label}
-                        </span>
-                        {presented.recommended ? (
-                          <span
-                            data-question-recommended
-                            className="rounded px-1.5 py-px text-3xs font-medium bg-info/12 text-info-foreground"
-                          >
-                            {tx("Recommended")}
-                          </span>
-                        ) : null}
+                    <div
+                      className={cn(
+                        "flex min-w-0 flex-1 gap-x-2",
+                        expanded ? "flex-wrap items-center gap-y-0.5" : "items-baseline",
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "text-sm font-semibold text-foreground",
+                          expanded ? "min-w-0" : "max-w-[70%] shrink-0 truncate",
+                        )}
+                      >
+                        {presented.label}
                       </span>
+                      {presented.recommended ? (
+                        <span
+                          data-question-recommended
+                          className="shrink-0 self-center rounded px-1.5 py-px text-3xs font-medium bg-info/12 text-info-foreground"
+                        >
+                          {tx("Recommended")}
+                        </span>
+                      ) : null}
                       {presented.description ? (
-                        <div className="text-xs leading-snug text-muted-foreground">
+                        <div
+                          data-question-option-description
+                          className={cn(
+                            "text-xs leading-snug text-muted-foreground",
+                            expanded
+                              ? "basis-full"
+                              : // One line: the markdown's blocks flow inline and clip.
+                                // A link's icon keeps its box, or it grows to the line's width.
+                                "min-w-0 flex-1 truncate [&_:not([data-link-favicon],[data-link-favicon]_*)]:inline",
+                          )}
+                        >
                           {renderText(presented.description, "description")}
                         </div>
                       ) : null}
                     </div>
-                    <CornerDownLeftIcon
-                      aria-hidden
-                      className={cn(
-                        "mt-1 size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity",
-                        !unavailable &&
-                          "group-hover/option:opacity-100 group-focus-visible/option:opacity-100",
-                      )}
-                    />
+                    {showDescriptionTip && presented.description ? (
+                      // Mounted only while shown, pointing at the clipped text.
+                      <Tooltip open>
+                        <TooltipPopup
+                          anchor={hoveredDescription}
+                          side="top"
+                          align="start"
+                          className="max-w-96"
+                          data-question-option-tip={letter}
+                        >
+                          {renderText(presented.description, "description")}
+                        </TooltipPopup>
+                      </Tooltip>
+                    ) : null}
+                    {hasDescription && !compactOptions ? null : hasDescription ? (
+                      // For touch, where there is no hover: shows or hides the
+                      // full description without picking the option.
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        data-question-option-details
+                        aria-expanded={expanded}
+                        aria-label={
+                          expanded
+                            ? tx("Hide the full description")
+                            : tx("Show the full description")
+                        }
+                        className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                        // Keeps focus where it is, so no other row folds mid-click.
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => {
+                          clearHoverTimer();
+                          setHoveredOptionKey(null);
+                          setPinnedOptionKeys((current) => {
+                            const next = new Set(current);
+                            if (expanded) next.delete(optionKey);
+                            else next.add(optionKey);
+                            return next;
+                          });
+                          if (expanded) {
+                            setFocusedOptionKey((current) =>
+                              current === optionKey ? null : current,
+                            );
+                          }
+                        }}
+                      >
+                        <ChevronDownIcon
+                          aria-hidden
+                          className={cn("size-3.5 transition-transform", expanded && "rotate-180")}
+                        />
+                      </button>
+                    ) : (
+                      <CornerDownLeftIcon
+                        aria-hidden
+                        className={cn(
+                          "size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity",
+                          !unavailable &&
+                            "group-hover/option:opacity-100 group-focus-visible/option:opacity-100",
+                        )}
+                      />
+                    )}
                   </div>
                 );
               })}
@@ -584,16 +830,16 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               ) : null}
             </p>
             {progress.questionIndex > 0 && onPrevious ? (
-              <button
-                type="button"
+              <Button
+                variant="outline"
+                size="xs"
                 data-question-step-back
                 disabled={responseDisabled}
                 onClick={onPrevious}
-                className="inline-flex h-7 shrink-0 cursor-pointer items-center gap-1 rounded-full px-2.5 text-xs font-medium text-muted-foreground outline-none transition-colors hover:bg-muted/55 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
               >
                 <ChevronLeftIcon aria-hidden className="size-3.5" />
                 {tx("Back")}
-              </button>
+              </Button>
             ) : null}
             <button
               type="button"

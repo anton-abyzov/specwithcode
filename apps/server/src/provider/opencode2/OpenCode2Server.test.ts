@@ -190,6 +190,18 @@ describe("OpenCode2Server passwords", () => {
     );
     assert.deepStrictEqual(environment, { PATH: "/bin", OPENCODE_PASSWORD: "studio-generated" });
   });
+
+  it("starts the server with the instance's PATH as it is at start, not when it was made", () => {
+    const instanceEnvironment: NodeJS.ProcessEnv = { PATH: "/bin" };
+    const environment = OpenCode2Server.serverEnvironment(
+      instanceEnvironment,
+      Redacted.make("studio-generated"),
+    );
+    // An installer added a folder after the instance was made.
+    instanceEnvironment.PATH = "/new/bin:/bin";
+    assert.strictEqual(environment.PATH, "/new/bin:/bin");
+    assert.strictEqual({ ...environment }.PATH, "/new/bin:/bin");
+  });
 });
 
 // Serves /api/info only with the password from OPENCODE_PASSWORD, like 2.x, and

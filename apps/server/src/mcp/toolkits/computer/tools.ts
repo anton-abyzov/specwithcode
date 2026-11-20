@@ -99,7 +99,7 @@ const ComputerDragTool = action(
 const ComputerScrollTool = action(
   "computer_scroll",
   "Scroll on computer",
-  `Computer use: scroll the view under a point. ${COORDINATES}`,
+  `Computer use: scroll the view under a point. ${COORDINATES} In iPhone Mirroring one notch moves the phone's list only about 2.5 points, so pass amount 20 to 40 to move it a useful distance; computer_drag does not scroll there.`,
   ComputerToolScrollInput,
   false,
 );
@@ -107,7 +107,7 @@ const ComputerScrollTool = action(
 const ComputerTypeTool = action(
   "computer_type",
   "Type on computer",
-  "Computer use: enter text into the focused field on the user's desktop. Click the field first. Any language and keyboard layout works.",
+  "Computer use: enter text into the focused field on the user's desktop. Click the field first. Any language and keyboard layout works, except in iPhone Mirroring, where only US keyboard characters can be typed, up to 1,000 per call.",
   ComputerToolTypeInput,
   true,
 );

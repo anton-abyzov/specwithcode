@@ -1,3 +1,5 @@
+// The foot's own rules load with the markup they style.
+import "./shell/composer-foot.css";
 import type {
   ChatAttachment,
   EnvironmentId,
@@ -10,7 +12,7 @@ import { useRef, useSyncExternalStore, type ReactNode } from "react";
 
 import { composerSendButtonLabel, composerSubmissionIntentForKey } from "../../composer-logic";
 import { parseAwayAppCommand, parseComposerAppCommand } from "../../studio/composerAppCommands";
-import { requestAway } from "../../studio/awayRequest";
+import { openComposerAppDialog } from "../../studio/useComposerAppCommands";
 import { resolveLeadingSkillCommand } from "../../providerSkillSearch";
 import { ViewerThreadComposerPortal } from "../../viewerOverlayStore";
 import type { ProjectCoordinatorComposer } from "../../studio/projectCoordinatorComposer";
@@ -64,11 +66,11 @@ export async function submitCoordinatorDraft(input: {
     void onAppCommand(appCommand);
     return;
   }
-  // `/away` and `/back` act on the machine, so they open the Away dialog from any composer.
+  // `/away` and `/back` act on the machine, so they open Hand off (or Bring back) from any composer.
   const awayCommand = images.length === 0 ? parseAwayAppCommand(text) : null;
   if (awayCommand !== null) {
     composer.setPrompt("");
-    requestAway(awayCommand);
+    openComposerAppDialog(awayCommand, null);
     return;
   }
   composer.setSubmitting(true);
@@ -157,8 +159,21 @@ function CoordinatorComposerForm(props: {
   readonly meta: ReactNode;
   readonly controls: ReactNode;
   readonly modelFallback: boolean;
-  /** False while the coordinator's machine is not connected: Send then names no machine. */
+  /** False while the coordinator's machine is not connected. */
   readonly hostReachable?: boolean;
+  /**
+   * The button's own words when it does more than send (none does today). Never a
+   * machine name: the line above the box says where a message goes. With `run`, pressing
+   * the button or the send key runs that instead of sending, and the draft stays.
+   */
+  readonly primary?: { readonly text: string; readonly run?: () => void } | null;
+  /**
+   * A send that goes to the coordinator on another machine than the one shown: that
+   * machine's name for screen readers, and what the button's tooltip says.
+   */
+  readonly sendTo?: { readonly machine: string; readonly tip: string } | null;
+  /** The coordinator is on another machine than the one shown, reachable or not. */
+  readonly coordinatorElsewhere?: boolean;
   /** Checked before a send; see `submitCoordinatorDraft`. */
   readonly draftSentElsewhere?: () => Promise<boolean>;
 }) {
@@ -199,13 +214,15 @@ function CoordinatorComposerForm(props: {
     cwd: props.cwd,
   });
   const filePicker = useRef<HTMLInputElement>(null);
-  // The coordinator's machine, by color, icon and name: the box wears it, and a send
-  // to a machine other than the one being looked at says where it goes.
+  // The coordinator's machine, by color and icon: the box wears it. Send carries its color
+  // when it goes to a machine other than this device's, and never its name.
   const hostEnvironment = useEnvironment(environmentId);
   const machine = useMachineIdentity(environmentId, hostEnvironment?.label);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  // An unreachable machine takes nothing, so Send never names it; the status line says why.
+  const primary = props.primary ?? null;
   const sendsElsewhere =
+    // The coordinator is on another machine and this send does not go there: no machine.
+    !(props.coordinatorElsewhere && !props.sendTo) &&
     props.hostReachable !== false &&
     machine !== null &&
     primaryEnvironmentId !== null &&
@@ -218,15 +235,18 @@ function CoordinatorComposerForm(props: {
     attached.preparing.length > 0 ||
     (!prompt.trim() && attached.attachments.length === 0);
   const submit = () =>
-    submitCoordinatorDraft({
-      composer,
-      attached,
-      onAppCommand,
-      onSend,
-      onError,
-      resolveText: (text) => resolveLeadingSkillCommand(text, props.provider?.snapshot, props.cwd),
-      ...(props.draftSentElsewhere ? { sentElsewhere: props.draftSentElsewhere } : {}),
-    });
+    primary?.run
+      ? Promise.resolve(primary.run())
+      : submitCoordinatorDraft({
+          composer,
+          attached,
+          onAppCommand,
+          onSend,
+          onError,
+          resolveText: (text) =>
+            resolveLeadingSkillCommand(text, props.provider?.snapshot, props.cwd),
+          ...(props.draftSentElsewhere ? { sentElsewhere: props.draftSentElsewhere } : {}),
+        });
   return (
     <form
       className="project-composer sws-composer"
@@ -312,23 +332,29 @@ function CoordinatorComposerForm(props: {
             void submit();
           }}
         />
-        <Tip
-          label={sendsElsewhere ? sendLabel.replace(/^Send/, `Send to ${machine.name}`) : sendLabel}
-        >
+        <Tip label={primary?.text ?? props.sendTo?.tip ?? sendLabel}>
           <button
-            className={sendsElsewhere ? "sws-send sws-send-target machine-send" : "sws-send"}
-            // The name is drawn from this attribute, so the button's text stays "Send".
-            {...(sendsElsewhere
-              ? {
-                  ...machineColorProps(machine),
-                  "data-send-label": `Send to ${machine.name}`,
-                  "data-send-short": machine.short,
-                }
+            className={[
+              "sws-send",
+              primary ? "sws-send-target" : "",
+              sendsElsewhere ? "machine-send" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+            // The words are drawn from this attribute. They never name a machine.
+            {...(primary
+              ? { "data-send-label": primary.text, "data-send-short": primary.text }
               : {})}
+            {...(sendsElsewhere ? machineColorProps(machine) : {})}
             aria-label={
-              sendsElsewhere ? `Send to the coordinator on ${machine.name}` : "Send to coordinator"
+              primary?.text ??
+              (props.sendTo
+                ? `Send to the coordinator on ${props.sendTo.machine}`
+                : sendsElsewhere
+                  ? `Send to the coordinator on ${machine.name}`
+                  : "Send to coordinator")
             }
-            disabled={sendDisabled}
+            disabled={sendDisabled && !primary?.run}
           >
             <ArrowUpIcon aria-hidden />
             <span className="sr-only">{sending || preparing ? "Sending…" : "Send"}</span>

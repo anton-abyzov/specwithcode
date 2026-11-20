@@ -18,7 +18,7 @@ import {
 import { modelSelectionEffortValue } from "@specweave-studio/shared/effortLevel";
 import { createModelSelection } from "@specweave-studio/shared/model";
 import { ChevronRightIcon, Code2Icon, ZapIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useRef } from "react";
 
 import { cn } from "~/lib/utils";
 import type { ProviderInstanceEntry } from "../../../providerInstances";
@@ -30,6 +30,8 @@ import { ProviderModelPicker } from "../../chat/ProviderModelPicker";
 import type { ModelEsque } from "../../chat/providerIconUtils";
 import { useTraitsEffortControl } from "../../chat/TraitsPicker";
 import { MachineChip } from "../../MachineChip";
+import { toastManager } from "../../ui/toast";
+import { carriedProjectModelSelection, type HeldProjectModelOptions } from "../projectModelCarry";
 
 /** The model new threads start on, as the project saves it. */
 export interface ProjectThreadModel {
@@ -137,6 +139,24 @@ export function ProjectModelsPopover(props: {
         }
       : null,
   );
+  // Options a model along the way could not run, kept so going back restores them.
+  const heldOptions = useRef<HeldProjectModelOptions | null>(null);
+  // Another model keeps the effort, Ultracode and context window it can run; the rest are named.
+  const pickThreadModel = (instanceId: ProviderInstanceId, model: string) => {
+    if (locked) return;
+    const carried = carriedProjectModelSelection({
+      previous: thread,
+      instanceId,
+      model,
+      entries: props.entries,
+      planModeEnabled: props.planModeEnabled,
+      held: heldOptions.current,
+    });
+    heldOptions.current = carried.held;
+    threads.onChange(carried.selection);
+    if (carried.note)
+      toastManager.add({ type: "info", title: "Model options", description: carried.note });
+  };
   const offersUltracode = hasBoolean(threadEntry, thread?.model, "ultracode");
   const ultracodeOn =
     thread?.options?.some((option) => option.id === "ultracode" && option.value === true) === true;
@@ -211,7 +231,7 @@ export function ProjectModelsPopover(props: {
             title="Model for new threads"
             triggerAriaLabel={`Model for new threads: ${modelLabel(threadEntry, thread.instanceId, thread.model).full}. Change model`}
             disabled={locked}
-            onInstanceModelChange={(id, model) => saveThread(createModelSelection(id, model))}
+            onInstanceModelChange={pickThreadModel}
           />
         ) : firstReady ? (
           <ProviderModelPicker
@@ -225,7 +245,7 @@ export function ProjectModelsPopover(props: {
             triggerLabel="Choose model"
             triggerAriaLabel="Model for new threads: choose model"
             disabled={locked}
-            onInstanceModelChange={(id, model) => saveThread(createModelSelection(id, model))}
+            onInstanceModelChange={pickThreadModel}
           />
         ) : (
           <span className="text-xs text-muted-foreground">No provider is ready here.</span>

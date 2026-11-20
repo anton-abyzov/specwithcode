@@ -6,6 +6,7 @@ import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button, InlineButton } from "../ui/button";
 import { formatProviderDriverKindLabel } from "../../providerModels";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { OnActionMachine, type ActionMachine } from "../../studio/actionMachine";
 
 /** Unsupported and broken versions fail mid-turn, so they warn even when ready. */
 function getIncompatibleVersion(status: ServerProvider) {
@@ -61,7 +62,11 @@ export function hasProviderSetup(status: ServerProvider): boolean {
 }
 
 /** Broken-version guidance takes precedence over startup failures it can cause. */
-export function getProviderStatusMessage(status: ServerProvider): string {
+export function getProviderStatusMessage(
+  status: ServerProvider,
+  /** The machine the provider is on, by its name; "this machine" when not known. */
+  machineName?: string | null,
+): string {
   if (
     status.auth.status !== "unauthenticated" &&
     status.compatibilityAdvisory?.status === "broken" &&
@@ -72,7 +77,7 @@ export function getProviderStatusMessage(status: ServerProvider): string {
   if (status.message) return status.message;
   const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
   if (!status.installed && hasProviderSetup(status)) {
-    return `Open provider setup to install ${formatProviderDriverKindLabel(status.driver)} on this environment.`;
+    return `Open provider setup to install ${formatProviderDriverKindLabel(status.driver)} on ${machineName?.trim() || "this machine"}.`;
   }
   if (status.auth.status === "unauthenticated") {
     if (hasProviderSetup(status)) {
@@ -93,7 +98,10 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   onDismiss,
   onOpenProviderSetup,
   status,
+  machine = null,
 }: {
+  /** The thread's machine when it is not the window's own (1427 AC-07). */
+  machine?: ActionMachine | null | undefined;
   onDismiss: () => void;
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   status: ServerProvider | null;
@@ -111,7 +119,7 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
     : incompatible
       ? `${providerName} ${status.version ?? ""} is ${incompatible.status === "broken" ? "known to be broken" : "unsupported"}`
       : `${providerName} provider status`;
-  const message = incompatible?.message ?? getProviderStatusMessage(status);
+  const message = incompatible?.message ?? getProviderStatusMessage(status, machine?.name);
   const isWarning =
     incompatible?.status !== "broken" && (status.status === "warning" || incompatible !== null);
 
@@ -124,7 +132,11 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
         controlAlignment="first-line"
       >
         <InfoIcon />
-        <AlertTitle>{title}</AlertTitle>
+        <AlertTitle>
+          {title}
+          {machine ? " " : null}
+          <OnActionMachine machine={machine} />
+        </AlertTitle>
         <AlertDescription>
           <Tooltip>
             <TooltipTrigger render={<div className="line-clamp-3" />}>{message}</TooltipTrigger>

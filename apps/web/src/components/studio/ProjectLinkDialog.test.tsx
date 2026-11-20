@@ -32,6 +32,9 @@ vi.mock("../../hooks/useScratchProject", () => ({
     scratchWorkspaceRootFor: (id: string) => (id === "m1" ? "/Users/b/.scratch" : null),
   }),
 }));
+vi.mock("../settings/useReplacedMachineRecords", () => ({
+  useRetiredMachineRecords: () => new Map<string, string>(),
+}));
 vi.mock("./useLinkMachines", () => ({
   useLinkMachines: () => ({
     label: (id: string) => ({ m4: "M4", m3: "M3", m1: "M1" })[id] ?? "Machine",
@@ -203,14 +206,17 @@ it("ranks copies by fingerprint, keeps the most recent coordinator and merges no
   const candidates = [...document.querySelectorAll('[data-slot="link-candidate"]')];
   expect(candidates[0]?.textContent).toContain("EasyChamp on M3");
   expect(candidates[0]?.textContent).toContain("Same root repository; 1 of 2 repositories match");
-  // A project that looks unrelated is not fingerprinted, but can still be chosen.
-  expect(candidates[1]?.textContent).toContain("Notes on M1");
+  // A project that looks unrelated is not fingerprinted and is folded under Other projects.
+  expect(candidates).toHaveLength(1);
+  expect(button("Other projects (1)").getAttribute("aria-expanded")).toBe("false");
+  expect(text()).not.toContain("Notes on M1");
   expect(
     state.calls.filter((call) => call.tag === "projects.fingerprint").map((call) => call.input),
   ).toEqual([{ projectId: "here" }, { projectId: "there" }]);
-  expect(button("Review link").disabled).toBe(true);
+  // The one copy that matches is selected already.
+  expect(radioIn(candidates[0]!, "EasyChamp on M3").getAttribute("aria-checked")).toBe("true");
+  expect(button("Review link").disabled).toBe(false);
 
-  await click(radioIn(candidates[0]!, "EasyChamp on M3"));
   await click(button("Review link"));
   // M3's coordinator was active more recently, so it stays by default.
   expect(button("Link, keep coordinator on M3")).toBeTruthy();
@@ -238,7 +244,10 @@ it("ranks copies by fingerprint, keeps the most recent coordinator and merges no
     operationId,
     projectId: "there",
     joining: member("m4", "here"),
+    // Both machines were held to the equal-coordinators capability before this call.
+    equalCoordinators: true,
   });
+  expect(state.calls.at(-2)?.input.equalCoordinators).toBe(true);
   expect(state.calls.at(-1)?.input.notes).toEqual([
     { name: "only-m4.md", content: "from M4", expectedRevision: null },
     { name: "plan-m4.md", content: "M4 plan", expectedRevision: null, createOnly: true },
@@ -251,7 +260,68 @@ it("ranks copies by fingerprint, keeps the most recent coordinator and merges no
     },
   ]);
   expect(text()).toContain("Projects linked");
+  // Each machine keeps its own coordinator: none stops or becomes history (1427 AC-08).
+  expect(text()).toContain("Each machine keeps its own coordinator");
+  expect(text()).not.toMatch(/read-only history|can start work on both|coordinator stops/);
   expect(localStorage.length).toBe(0);
+});
+
+it("links another machine's copy into this project without changing main", async () => {
+  const kept = { ...logicalProject, members: [member("m4", "here")] };
+  state.handlers["projectLink.prepare"] = ({ input }) => ({
+    operationId: input.operationId,
+    kept: member("m4", "here"),
+    logicalProject: kept,
+    coordinatorBinding: { epoch: 0, state: "active" },
+    fingerprint: umbrella,
+    adopted: true,
+  });
+  state.handlers["projectLink.accept"] = ({ input }) => ({
+    operationId: input.operationId,
+    member: member("m3", "there"),
+    logicalProject: { ...kept, members: [...kept.members, member("m3", "there")] },
+    coordinatorBinding: { epoch: 0, state: "transferred" },
+    replayed: false,
+  });
+  await render({
+    joining: true,
+    initialCandidate: { environmentId: "m3", projectId: "there" } as never,
+  });
+  await settle();
+  await settle();
+  // It opens on what M3 gives up, with no choice of side: M3's coordinator was the more
+  // recent one, and main still stays here.
+  expect(text()).toContain("Link M3 to this project");
+  expect(text()).toContain(
+    "M3 joins EasyChamp. Each machine keeps its own coordinator: linking moves nothing.",
+  );
+  expect(document.querySelector("[data-link-main-stays]")?.textContent).toBe(
+    "Each machine keeps its own coordinator. To continue M4's conversation on M3, use Continue here after linking.",
+  );
+  expect(document.querySelector<HTMLElement>("fieldset[hidden]")?.textContent).toContain(
+    "Coordinator stays on",
+  );
+  expect(document.querySelector("[data-link-consent]")?.textContent).toBe(
+    "Link M3 to this project. M3 gives up its own goal and instructions: it follows this project's from now on. Each machine keeps its own coordinator, and M3's workers keep running. Files are not copied.",
+  );
+  // Nothing links before the person agrees to that.
+  expect(button("Link M3").disabled).toBe(true);
+  expect(state.calls.some((call) => call.tag === "projectLink.prepare")).toBe(false);
+  const consent = [...document.querySelectorAll<HTMLElement>('[role="checkbox"]')].at(-1)!;
+  await click(consent);
+  const conflict = document.querySelector('[data-slot="note-conflict"]');
+  if (conflict) await click(radioIn(conflict, "Keep both"));
+  await click(button("Link M3"));
+  const steps = state.calls.filter((call) =>
+    /^projectLink\.(prepare|accept|commit)$/.test(call.tag),
+  );
+  expect(steps.map((call) => [call.tag, call.environmentId])).toEqual([
+    ["projectLink.prepare", "m4"],
+    ["projectLink.accept", "m3"],
+    ["projectLink.commit", "m4"],
+  ]);
+  expect(steps[0]?.input).toMatchObject({ projectId: "here", joining: member("m3", "there") });
+  expect(text()).toContain("Projects linked");
 });
 
 it("does not offer another machine's No project folder or an archived project", async () => {
@@ -261,6 +331,7 @@ it("does not offer another machine's No project folder or an archived project", 
   );
   await render();
   await settle();
+  await click(button("Other projects (1)"));
   const candidates = [...document.querySelectorAll('[data-slot="link-candidate"]')];
   expect(candidates.map((candidate) => candidate.textContent?.split(" on ")[0])).toEqual([
     "EasyChamp",
@@ -284,7 +355,8 @@ it("retries a link that stopped before its last step with the same operation", a
   await click(document.querySelector<HTMLElement>('[role="checkbox"]')!);
   await click(button("Link, keep coordinator on M3"));
   expect(text()).toContain("M3 is not connected.");
-  expect(text()).toContain("already defers to M3; retry to finish listing it there.");
+  expect(text()).toContain("has joined the project; retry to finish listing it on M3.");
+  expect(text()).not.toContain("defers");
   await click(button("Retry link"));
   const operations = state.calls
     .filter((call) => call.tag !== "projects.fingerprint" && call.tag !== "projectLink.preview")

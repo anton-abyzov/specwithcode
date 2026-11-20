@@ -14,7 +14,6 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 
 import {
-  findProjectNameOwner,
   planProjectCommand,
   encodeProjectCommandRejection,
   decodeProjectCommandRejection,
@@ -131,6 +130,40 @@ describe("planProjectCommand", () => {
       payloadOf(update({ defaultModelSelection: selection })).defaultModelSelection,
       selection,
     );
+  });
+
+  it("applies an approved model replacement only to the model it was read against", () => {
+    const codex = ProviderInstanceId.make("codex");
+    const saved: ModelSelection = {
+      instanceId: codex,
+      model: "gpt-5.6-sol",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    };
+    const next: ModelSelection = { instanceId: codex, model: "gpt-5.6-luna" };
+    const replace = (expected: ModelSelection | null, current: ModelSelection | null) =>
+      plan(
+        {
+          type: "project.meta.update",
+          commandId: CommandId.make("cmd-replace"),
+          projectId,
+          defaultModelSelection: next,
+          expectedDefaultModelSelection: expected,
+        },
+        { project: row({ defaultModelSelection: current }) },
+      );
+    assert.deepEqual(payloadOf(replace(saved, { ...saved })).defaultModelSelection, next);
+    assert.deepEqual(payloadOf(replace(null, null)).defaultModelSelection, next);
+    // A save that landed after the read wins: another effort, another model, or none.
+    for (const current of [
+      { ...saved, options: [{ id: "reasoningEffort", value: "medium" }] },
+      next,
+      null,
+    ])
+      assert.strictEqual(
+        failureOf(replace(saved, current))._tag,
+        "ProjectDefaultModelConflictError",
+      );
+    assert.strictEqual(failureOf(replace(null, saved))._tag, "ProjectDefaultModelConflictError");
   });
 
   it("carries an internal worker seed, including options, in the creation event", () => {
@@ -518,7 +551,7 @@ describe("durable logical coordinator ownership", () => {
       ),
     );
   });
-  it("requires exact standalone identity consent to join a target project", () => {
+  it("never gives an active coordinator up to join a target project, even with consent (AC-35)", () => {
     const target = { ...settings, coordinatorBinding: { epoch: 0, state: "active" as const } };
     const ownership = {
       mode: "handoff" as const,
@@ -527,7 +560,8 @@ describe("durable logical coordinator ownership", () => {
       coordinatorBinding: { epoch: 0, state: "transferred" as const, operationId: "transfer" },
     };
     failureOf(plan({ ...command, ownership }, { project: row({ workspaceSettings: target }) }));
-    payloadOf(
+    // Consent named the identity to leave; the coordinator here still stays active.
+    failureOf(
       plan(
         {
           ...command,
@@ -535,86 +569,6 @@ describe("durable logical coordinator ownership", () => {
         },
         { project: row({ workspaceSettings: target }) },
       ),
-    );
-  });
-});
-
-describe("unique project names", () => {
-  const other = row({ projectId: ProjectId.make("project-other"), title: "SpecWeave" });
-  const rename = (title: string, nameOwner: ProjectRow | null = other) =>
-    plan(
-      { type: "project.meta.update", commandId: CommandId.make("rename"), projectId, title },
-      { project: row(), nameOwner: nameOwner ?? undefined },
-    );
-
-  it("refuses a name another project has, whatever its case", () => {
-    const failure = failureOf(rename("specweave"));
-    assert.equal(failure._tag, "ProjectNameTakenError");
-    assert.include(failure.message, "already has this name");
-    const decoded = Option.getOrThrow(
-      decodeProjectCommandRejection(encodeProjectCommandRejection(failure)),
-    );
-    assert.equal(decoded._tag, "ProjectNameTakenError");
-  });
-
-  it("refuses a new name over 120 characters but keeps a long current one", () => {
-    const failure = failureOf(rename("x".repeat(121), null));
-    assert.equal(failure._tag, "ProjectCommandInvariantError");
-    assert.include(failure.message, "at most 120 characters");
-    assert.equal(payloadOf(rename("x".repeat(120), null)).title, "x".repeat(120));
-    const long = "y".repeat(130);
-    assert.equal(
-      payloadOf(
-        plan(
-          {
-            type: "project.meta.update",
-            commandId: CommandId.make("keep"),
-            projectId,
-            title: long,
-          },
-          { project: row({ title: long }) },
-        ),
-      ).title,
-      long,
-    );
-  });
-
-  it("keeps a free name, the current name and a case change of it", () => {
-    assert.equal(payloadOf(rename("Olysense", null)).title, "Olysense");
-    assert.equal(payloadOf(rename("Scripts")).title, "Scripts");
-    assert.equal(payloadOf(rename("SCRIPTS", null)).title, "SCRIPTS");
-  });
-
-  it("finds the owner of a name ignoring case and surrounding space", () => {
-    const rows = [
-      row(),
-      other,
-      row({
-        projectId: ProjectId.make("gone"),
-        title: "Gone",
-        deletedAt: "2026-01-02T00:00:00.000Z",
-      }),
-    ];
-    assert.equal(
-      findProjectNameOwner({ rows, projectId, title: "  specweave " })?.projectId,
-      other.projectId,
-    );
-    assert.isUndefined(findProjectNameOwner({ rows, projectId, title: "gone" }));
-    assert.isUndefined(findProjectNameOwner({ rows, projectId, title: "scripts" }));
-  });
-
-  it("lets checkouts of one project or one repository share its name", () => {
-    const identity = { id: "logical:a", title: "SpecWeave", coordinatorId: "c", members: [] };
-    const settings = { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, logicalProject: identity };
-    const rows = [row({ workspaceSettings: settings }), { ...other, workspaceSettings: settings }];
-    assert.isUndefined(findProjectNameOwner({ rows, projectId, title: "specweave" }));
-    assert.isUndefined(
-      findProjectNameOwner({
-        rows: [row(), other],
-        projectId,
-        title: "specweave",
-        sameRepository: () => true,
-      }),
     );
   });
 });
@@ -827,14 +781,9 @@ describe("explicit link ownership modes", () => {
     );
   });
 
-  it("joins a standalone copy as a member whose coordinator is relinquished", () => {
+  it("joins a standalone copy as a member that keeps its own active coordinator", () => {
     const joined = { ...shared, members: [other, self] };
-    const relinquished = {
-      epoch: 4,
-      state: "transferred" as const,
-      operationId: "link-op",
-      successor: other,
-    };
+    const relinquished = { epoch: 4, state: "active" as const, operationId: "link-op" };
     const ownership = {
       mode: "join-as-member",
       joinExpectedLogicalProjectId: standalone.id,
@@ -868,11 +817,12 @@ describe("explicit link ownership modes", () => {
       ),
       "coordinator handoff",
     );
+    // A joining copy never gives way: it follows, replaces and awaits nobody.
     for (const binding of [
-      { ...relinquished, state: "active" },
+      { ...relinquished, state: "transferred", successor: other },
+      { ...relinquished, state: "transferring" },
       { ...relinquished, operationId: undefined },
-      { ...relinquished, successor: self },
-      { ...relinquished, successor: { ...other, projectId: ProjectId.make("stranger") } },
+      { ...relinquished, successor: other },
       { ...relinquished, predecessor: other },
     ])
       failureOf(apply(current, { ...ownership, coordinatorBinding: binding }));
@@ -880,7 +830,7 @@ describe("explicit link ownership modes", () => {
     failureOf(apply(current, { ...ownership, logicalProject: { ...joined, members: [other] } }));
   });
 
-  it("unlinks only a relinquished member, to a fresh standalone active coordinator", () => {
+  it("unlinks a member, to a fresh standalone active coordinator", () => {
     const member = {
       logicalProject: { ...shared, members: [other, self] },
       coordinatorBinding: {
@@ -904,15 +854,26 @@ describe("explicit link ownership modes", () => {
       logicalProject: fresh,
       coordinatorBinding: active,
     });
-    assert.include(
-      failureText(
-        apply(
-          { ...member, coordinatorBinding: { epoch: 0, state: "active" } },
-          { mode: "unlink", logicalProject: fresh, coordinatorBinding: active },
-        ),
+    // An equal coordinator leaves the same way; one in a handoff, or alone, does not.
+    payloadOf(
+      apply(
+        { ...member, coordinatorBinding: { epoch: 0, state: "active" } },
+        { mode: "unlink", logicalProject: fresh, coordinatorBinding: active },
       ),
-      "Only a member whose coordinator was relinquished",
     );
+    for (const current of [
+      { ...member, coordinatorBinding: { epoch: 0, state: "transferring", operationId: "h" } },
+      {
+        logicalProject: { ...shared, members: [self] },
+        coordinatorBinding: { epoch: 0, state: "active" },
+      },
+    ])
+      assert.include(
+        failureText(
+          apply(current, { mode: "unlink", logicalProject: fresh, coordinatorBinding: active }),
+        ),
+        "Only a member of a shared project can unlink",
+      );
     for (const ownership of [
       { logicalProject: { ...fresh, id: shared.id } },
       { logicalProject: { ...fresh, members: [self, other] } },
@@ -926,6 +887,55 @@ describe("explicit link ownership modes", () => {
           coordinatorBinding: active,
           ...ownership,
         }),
+      );
+  });
+
+  it("makes a copy from before an equal coordinator, and ends its open role operation", () => {
+    const roster = { ...shared, members: [other, self] };
+    const equal = (binding: Record<string, unknown>, next: Record<string, unknown>) =>
+      apply(
+        { logicalProject: roster, coordinatorBinding: binding },
+        { mode: "equal-coordinators", logicalProject: roster, coordinatorBinding: next },
+      );
+    const gaveWay = { epoch: 4, state: "transferred", operationId: "link-op", successor: other };
+    payloadOf(equal(gaveWay, { epoch: 4, state: "active", operationId: "link-op" }));
+    const moving = { epoch: 4, state: "transferring", operationId: "move-op", successor: other };
+    const ended = { epoch: 4, state: "active", retiredOperationIds: ["move-op"] };
+    payloadOf(equal(moving, ended));
+    // The open operation must be retired, the epoch kept, and nobody followed or awaited.
+    for (const next of [
+      { epoch: 4, state: "active" },
+      { epoch: 5, state: "active", retiredOperationIds: ["move-op"] },
+      { ...ended, successor: other },
+      { ...ended, predecessor: other },
+      { ...ended, state: "transferred" },
+    ])
+      failureOf(equal(moving, next));
+    // Identity and members never change with it.
+    failureOf(
+      apply(
+        { logicalProject: roster, coordinatorBinding: gaveWay },
+        {
+          mode: "equal-coordinators",
+          logicalProject: { ...roster, members: [self] },
+          coordinatorBinding: { epoch: 4, state: "active" },
+        },
+      ),
+    );
+    // A late write under the retired operation never fences the copy again.
+    for (const state of ["transferring", "transferred"])
+      assert.include(
+        failureText(
+          apply(
+            { logicalProject: roster, coordinatorBinding: ended },
+            {
+              mode: "handoff",
+              logicalProject: roster,
+              coordinatorBinding: { epoch: 4, state, operationId: "move-op", successor: other },
+            },
+          ),
+        ),
+        "ended when every machine got its own coordinator",
       );
   });
 
@@ -1358,20 +1368,20 @@ describe("explicit link ownership modes", () => {
       payloadOf(sync([other, self]));
     });
 
-    it("rejects an active copy", () => {
+    it("lets an equal coordinator add members, never remove one", () => {
       const active = { epoch: 4, state: "active" as const };
-      assert.include(
-        failureText(
-          apply(
-            { logicalProject: memberSide, coordinatorBinding: active },
-            {
-              mode: "sync-members",
-              logicalProject: { ...memberSide, members: [other, self, later] },
-              coordinatorBinding: active,
-            },
-          ),
+      const three = { ...memberSide, members: [other, self, later] };
+      payloadOf(
+        apply(
+          { logicalProject: memberSide, coordinatorBinding: active },
+          { mode: "sync-members", logicalProject: three, coordinatorBinding: active },
         ),
-        "relinquished",
+      );
+      failureOf(
+        apply(
+          { logicalProject: three, coordinatorBinding: active },
+          { mode: "sync-members", logicalProject: memberSide, coordinatorBinding: active },
+        ),
       );
     });
 

@@ -49,6 +49,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as PhoneLinks from "./phoneLinks.ts";
 import * as FleetWorkerGrants from "./FleetWorkerGrants.ts";
 import * as RemoteStudioMcpClient from "./RemoteStudioMcpClient.ts";
+import { failure, grantFailure, noMachines, remoteFailure } from "./remoteFailure.ts";
 import * as RemoteWorkerAdoption from "./RemoteWorkerAdoption.ts";
 import * as RemoteWorkerFollower from "./RemoteWorkerFollower.ts";
 import {
@@ -62,9 +63,13 @@ import {
   type RemoteProjectMatch,
   translateModel,
 } from "./remoteWorkerMatching.ts";
+import { readProviders } from "./remoteWorkerProbe.ts";
+
+export { readProviderUsage } from "./remoteWorkerProbe.ts";
 import { remoteRepositoryBrief } from "./remoteRepositories.ts";
 import * as ProjectWorkspaceService from "../project/ProjectWorkspaceService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
+import { afterHandoffRunEnded, owesResult } from "./handoffDelivery.ts";
 import * as RemoteWorkerStore from "./RemoteWorkerStore.ts";
 import * as WorkerEpochStore from "./WorkerEpochStore.ts";
 import {
@@ -157,6 +162,12 @@ export interface RemoteLaunchInput extends LauncherKey {
   readonly explicitModelSelection: ModelSelection | undefined;
   /** What the thread would inherit here; the other machine's default replaces an unavailable one. */
   readonly inheritedModelSelection: ModelSelection | undefined;
+  /**
+   * The model this project's settings pick for an unnamed thread, tried before
+   * the inherited one. It never starts there on a sign-in that machine's grant
+   * excludes or holds back from automatic starts; the inherited model is next.
+   */
+  readonly pickedModelSelection?: ModelSelection | undefined;
   readonly runtimeMode: RuntimeMode;
   readonly requestedRuntimeMode: RuntimeMode | undefined;
   readonly interactionMode: ProviderInteractionMode;
@@ -306,15 +317,6 @@ export interface RemoteWorkersShape {
   readonly machineLabels: Effect.Effect<ReadonlyMap<string, string>>;
 }
 
-const failure = (code: OrchestratorMcpFailure["code"], message: string) =>
-  new OrchestratorMcpFailure({ code, message });
-
-const noMachines = (target: string) =>
-  failure(
-    "unknown_machine",
-    `No machine named "${target}". studio_machine_list shows the machines this one can use.`,
-  );
-
 /** A thread link's environment (for another machine's thread) and decoded thread id. */
 const parseStudioThreadRef = (value: string) => {
   const target = parseStudioThreadTarget(value);
@@ -359,74 +361,12 @@ const disabled: RemoteWorkersShape = {
   machineLabels: Effect.succeed(new Map()),
 };
 
+export { remoteFailure };
+
 export class RemoteWorkers extends Context.Reference<RemoteWorkersShape>(
   "studio/fleet/RemoteWorkers",
   { defaultValue: () => disabled },
 ) {}
-
-const KNOWN_FAILURE_CODES = new Set<string>(
-  OrchestratorMcpFailure.fields.code.literals as ReadonlyArray<string>,
-);
-
-/** A remote call's error in the words an agent can act on. */
-export function remoteFailure(
-  machine: Pick<OrchestratorMcpMachineRef, "id" | "label">,
-  error: RemoteStudioMcpClient.RemoteMcpError,
-): OrchestratorMcpFailure {
-  const { label } = machine;
-  switch (error.reason) {
-    case "unknown_machine":
-      return noMachines(machine.id);
-    case "not_authorized":
-      return failure(
-        "machine_not_authorized",
-        error.grant === "revoked"
-          ? `${label} revoked this machine's worker access. If it was revoked under "Who can run work here" there, allow this machine again on ${label} first. Then, on this machine, the user opens Settings > Machines and chooses Allow on ${label}'s card, on the line "Agents on … can start work on ${label}".`
-          : error.grant === "expired"
-            ? `Worker access on ${label} expired. On this machine, the user opens Settings > Machines and chooses Allow on ${label}'s card, on the line "Agents on … can start work on ${label}".`
-            : `Workers are not allowed on ${label} yet. On this machine (not on ${label}), the user opens Settings > Machines and chooses Allow on ${label}'s card, on the line "Agents on … can start work on ${label}".`,
-      );
-    case "unreachable":
-      return failure("machine_unreachable", `${label} is unavailable right now.`);
-    case "identity_mismatch":
-      return failure(
-        "machine_identity_mismatch",
-        `The address configured for ${label} now answers as a different machine; nothing was sent.`,
-      );
-    case "unsupported":
-      return failure(
-        "machine_unsupported",
-        `${label} needs a newer SpecWithCode for this. Update SpecWithCode on ${label} and try again.`,
-      );
-    case "refused":
-      return failure("capability_denied", "That tool is not available on other machines.");
-    case "invalid_response":
-      return failure("orchestration_error", `${label} sent an answer this machine could not read.`);
-    case "tool_failure": {
-      const code =
-        error.remoteCode && KNOWN_FAILURE_CODES.has(error.remoteCode)
-          ? (error.remoteCode as OrchestratorMcpFailure["code"])
-          : "orchestration_error";
-      return failure(code, `${label}: ${error.remoteMessage ?? "the request was refused."}`);
-    }
-  }
-}
-
-const grantFailure = (
-  machine: OrchestratorMcpMachineRef,
-  error: FleetWorkerGrants.FleetWorkerGrantError,
-) =>
-  error.reason === "unknown_machine"
-    ? noMachines(machine.id)
-    : error.reason === "not_allowed" || error.reason === "revoked" || error.reason === "expired"
-      ? remoteFailure(
-          machine,
-          new RemoteStudioMcpClient.RemoteMcpError({
-            reason: "not_authorized",
-            grant: error.reason,
-          }),
-        )
-      : failure("orchestration_error", error.message);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -463,72 +403,6 @@ interface Probe extends MachineProbeFacts {
   readonly projects: ReadonlyArray<Project>;
 }
 
-const ISO_TIME = /^\d{4}-\d{2}-\d{2}T[\d:.]+(?:Z|[+-]\d{2}:\d{2})$/;
-const isoOrNull = (value: unknown) =>
-  typeof value === "string" && ISO_TIME.test(value) && Number.isFinite(Date.parse(value))
-    ? value
-    : null;
-
-/**
- * The usage another machine shares for one provider, or undefined when it
- * shares none (an older version) or sends something malformed. Unknown
- * usage is never read as room.
- */
-export const readProviderUsage = (
-  value: unknown,
-): OrchestratorMcpMachineProvider["usage"] | undefined => {
-  if (!isRecord(value) || typeof value.signedIn !== "boolean") return undefined;
-  const fingerprint =
-    typeof value.accountFingerprint === "string" &&
-    /^sha256:[a-f0-9]{64}$/.test(value.accountFingerprint)
-      ? value.accountFingerprint
-      : null;
-  const used =
-    typeof value.usedPercent === "number" &&
-    Number.isFinite(value.usedPercent) &&
-    value.usedPercent >= 0 &&
-    value.usedPercent <= 100
-      ? value.usedPercent
-      : null;
-  return {
-    accountFingerprint: fingerprint,
-    usedPercent: used,
-    resetsAt: isoOrNull(value.resetsAt),
-    signedIn: value.signedIn,
-    observedAt: isoOrNull(value.observedAt),
-    ...(value.limited === true ? { limited: true } : {}),
-  } as OrchestratorMcpMachineProvider["usage"];
-};
-
-const readProviders = (capabilities: unknown): ReadonlyArray<OrchestratorMcpMachineProvider> =>
-  (isRecord(capabilities) && Array.isArray(capabilities.providers) ? capabilities.providers : [])
-    .filter(isRecord)
-    .flatMap((provider) => {
-      if (
-        typeof provider.providerInstanceId !== "string" ||
-        typeof provider.driverKind !== "string"
-      )
-        return [];
-      const usage = readProviderUsage(provider.usage);
-      const models = (Array.isArray(provider.models) ? provider.models : []).filter(isRecord);
-      const paidModels = models.flatMap((model) =>
-        typeof model.id === "string" && model.paid === true ? [model.id] : [],
-      );
-      return [
-        {
-          providerInstanceId: provider.providerInstanceId,
-          driverKind: provider.driverKind,
-          models: models.flatMap((model) => (typeof model.id === "string" ? [model.id] : [])),
-          available: Array.isArray(provider.constraints) && provider.constraints.length === 0,
-          ...(usage === undefined ? {} : { usage }),
-          ...(typeof provider.allowedByGrant === "boolean"
-            ? { allowedByGrant: provider.allowedByGrant }
-            : {}),
-          ...(paidModels.length === 0 ? {} : { paidModels }),
-        } as unknown as OrchestratorMcpMachineProvider,
-      ];
-    });
-
 const make = Effect.gen(function* () {
   const targets = yield* FleetTargets.FleetTargets;
   const grants = yield* FleetWorkerGrants.FleetWorkerGrants;
@@ -549,6 +423,15 @@ const make = Effect.gen(function* () {
   // A row naming this machine itself (a line added while the server was down, or a copied
   // file) is never a remote machine: it would list as needing a grant and resolve to itself.
   const nicknames = ownerMachineNames(settings);
+  // This machine's name, so a step relayed by another machine's coordinator says where.
+  const ownName = Effect.all([environment.getDescriptor, nicknames]).pipe(
+    Effect.map(([own, names]) => names.get(own.environmentId) ?? own.label),
+  );
+  const failWith = (make: (name: string) => OrchestratorMcpFailure) =>
+    Effect.flatMap(ownName, (name) => Effect.fail(make(name)));
+  const failedOn =
+    (machine: OrchestratorMcpMachineRef) => (error: RemoteStudioMcpClient.RemoteMcpError) =>
+      failWith((name) => remoteFailure(machine, error, name));
   // Rows carry the owner's name for a machine, so agents see and resolve the name the app
   // shows. The name saved when a machine joined is its host name, which can equal this one's.
   const everyRow = Effect.all([
@@ -688,7 +571,7 @@ const make = Effect.gen(function* () {
   ) =>
     client
       .call({ machineId: machine.id, tool, arguments: args, timeoutMs })
-      .pipe(Effect.mapError((error) => remoteFailure(machine, error)));
+      .pipe(Effect.catch(failedOn(machine)));
 
   /** The other machine's providers and projects, kept for a minute. */
   const probe = (machine: OrchestratorMcpMachineRef, fresh = false) =>
@@ -797,6 +680,10 @@ const make = Effect.gen(function* () {
             }
             row.reachable = true;
             row.providers = probed.success.providers;
+            // Whether it keeps a review thread's reviewer lock, as its descriptor said just now.
+            const said = yield* client.peerRules(machine.id).pipe(Effect.result);
+            if (said._tag === "Success" && said.success?.reviewLock === true)
+              row.handoffReviewLock = true;
             if (probed.success.platform !== undefined) row.platform = probed.success.platform;
             const scope = probed.success.projectScope;
             if (scope !== undefined) row.projectScope = scope;
@@ -817,7 +704,7 @@ const make = Effect.gen(function* () {
       return {
         local: yield* withThisMachinePlatform({
           id: "local" as const,
-          label: (yield* nicknames).get(descriptor.environmentId) ?? descriptor.label,
+          label: yield* ownName,
           environmentId: descriptor.environmentId,
         }),
         machines: rows,
@@ -879,15 +766,11 @@ const make = Effect.gen(function* () {
         const capabilities = yield* call(machine, "orchestrator_capabilities", {});
         return { projectId: member.projectId, providers: readProviders(capabilities) };
       }
-      const probed = yield* probe(machine).pipe(
-        Effect.mapError((error) => remoteFailure(machine, error)),
-      );
+      const probed = yield* probe(machine).pipe(Effect.catch(failedOn(machine)));
       let match = matchFor(machine, project, probed.projects, explicit);
       if (match.match === "none" && explicit !== undefined) {
         // The project may have been registered there in the last minute.
-        const fresh = yield* probe(machine, true).pipe(
-          Effect.mapError((error) => remoteFailure(machine, error)),
-        );
+        const fresh = yield* probe(machine, true).pipe(Effect.catch(failedOn(machine)));
         match = matchFor(machine, project, fresh.projects, explicit);
       }
       let listed = probed.projects;
@@ -899,9 +782,7 @@ const make = Effect.gen(function* () {
         attempt++
       ) {
         if (attempt > 0) yield* Effect.sleep(COLD_IDENTITY_DELAY);
-        const fresh = yield* probe(machine, true).pipe(
-          Effect.mapError((error) => remoteFailure(machine, error)),
-        );
+        const fresh = yield* probe(machine, true).pipe(Effect.catch(failedOn(machine)));
         listed = fresh.projects;
         match = matchFor(machine, project, listed, explicit);
       }
@@ -929,9 +810,10 @@ const make = Effect.gen(function* () {
     machine: OrchestratorMcpMachineRef,
     selection: ModelSelection,
     remote: ReadonlyArray<OrchestratorMcpMachineProvider>,
+    picked = false,
   ) =>
     Effect.map(driverKindOf(selection.instanceId), (driverKind) =>
-      translateModel({ selection, driverKind, remote }),
+      translateModel({ selection, driverKind, remote, picked }),
     ).pipe(Effect.map((translation) => ({ machine, translation })));
 
   const modelUnavailable = (machine: OrchestratorMcpMachineRef, selection: ModelSelection) =>
@@ -966,13 +848,11 @@ const make = Effect.gen(function* () {
       if (held !== null) return yield* failure("capability_denied", held.message);
       const credential = yield* grants
         .credential(machine.id)
-        .pipe(Effect.mapError((error) => grantFailure(machine, error)));
+        .pipe(Effect.catch((error) => failWith((name) => grantFailure(machine, error, name))));
       // A worker too old to hold a carried ceiling would drop it the moment it arrives.
       const carried = input.delegation.carried;
       if (carried !== undefined) {
-        const peer = yield* client
-          .peerRules(machine.id)
-          .pipe(Effect.mapError((error) => remoteFailure(machine, error)));
+        const peer = yield* client.peerRules(machine.id).pipe(Effect.catch(failedOn(machine)));
         if (peer?.carried !== true)
           return yield* failure(
             "machine_unsupported",
@@ -1010,9 +890,7 @@ const make = Effect.gen(function* () {
         input.localProject === undefined
           ? {
               projectId: input.machineProjectId,
-              providers: (yield* probe(machine).pipe(
-                Effect.mapError((error) => remoteFailure(machine, error)),
-              )).providers,
+              providers: (yield* probe(machine).pipe(Effect.catch(failedOn(machine)))).providers,
             }
           : yield* remoteProjectId(machine, input.localProject, input.machineProjectId);
 
@@ -1026,14 +904,16 @@ const make = Effect.gen(function* () {
         if (translation.type === "unavailable")
           return yield* modelUnavailable(machine, input.explicitModelSelection);
         modelSelection = translation.modelSelection;
-      } else if (input.inheritedModelSelection !== undefined) {
-        const { translation } = yield* translate(
-          machine,
-          input.inheritedModelSelection,
-          target.providers,
-        );
-        modelSelection =
-          translation.type === "unavailable" ? undefined : translation.modelSelection;
+      } else {
+        const unnamed = [
+          [input.pickedModelSelection, true],
+          [input.inheritedModelSelection, false],
+        ] as const;
+        for (const [selection, picked] of unnamed) {
+          if (selection === undefined || modelSelection !== undefined) continue;
+          const { translation } = yield* translate(machine, selection, target.providers, picked);
+          if (translation.type !== "unavailable") modelSelection = translation.modelSelection;
+        }
       }
 
       // The worker is told which repositories the project uses; it clones
@@ -1205,7 +1085,7 @@ const make = Effect.gen(function* () {
         // Only these leave it open whether the other machine started the thread.
         if (error.reason !== "unreachable" && error.reason !== "invalid_response") {
           yield* dispose(error.message);
-          return yield* remoteFailure(machine, error);
+          return yield* remoteFailure(machine, error, yield* ownName);
         }
         const row = yield* store.list.pipe(
           Effect.map((rows) => rows.find((candidate) => candidate.id === rowId)),
@@ -1402,19 +1282,22 @@ const make = Effect.gen(function* () {
       const key = input.runId ?? "no-run";
       const updatedAt = yield* isoNow;
       yield* store
-        .modify(row.id, (current) =>
-          current
-            ? {
-                ...current,
-                state: "idle",
-                lastStatus: input.status,
-                deliveredRunIds: current.deliveredRunIds.includes(key)
-                  ? current.deliveredRunIds
-                  : [...current.deliveredRunIds, key].slice(-50),
-                updatedAt,
-              }
-            : undefined,
-        )
+        .modify(row.id, (current) => {
+          if (!current) return undefined;
+          // A handed-off thread's result is still the follower's to tell: seeing a run
+          // end here, least of all one that was only stopped, does not deliver it.
+          const stillOwed = afterHandoffRunEnded(current, input.status);
+          if (stillOwed !== undefined) return { ...current, ...stillOwed, updatedAt };
+          return {
+            ...current,
+            state: "idle",
+            lastStatus: input.status,
+            deliveredRunIds: current.deliveredRunIds.includes(key)
+              ? current.deliveredRunIds
+              : [...current.deliveredRunIds, key].slice(-50),
+            updatedAt,
+          };
+        })
         .pipe(Effect.ignore);
     });
 
@@ -1440,6 +1323,8 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const rows = yield* store.list.pipe(Effect.orElseSucceed(() => []));
       const configured = yield* machines.pipe(Effect.orElseSucceed(() => []));
+      // A handed-off thread that came back runs on this machine.
+      const here = yield* environment.getDescriptor;
       const relevant = rows
         // A project's list names the thread that started each worker; a client's have none.
         .filter(
@@ -1455,7 +1340,8 @@ const make = Effect.gen(function* () {
           id: row.id,
           machineId: row.machineId,
           machineLabel:
-            configured.find((machine) => machine.id === row.machineId)?.label ?? row.machineId,
+            configured.find((machine) => machine.id === row.machineId)?.label ??
+            (row.machineId === here.environmentId ? here.label : row.machineId),
           environmentId: EnvironmentId.make(row.environmentId),
           callerThreadId: ThreadId.make(row.callerThreadId),
           remoteThreadId: row.remoteThreadId === null ? null : ThreadId.make(row.remoteThreadId),
@@ -1474,6 +1360,12 @@ const make = Effect.gen(function* () {
             : { launchedAt: row.launchStartedAt as StudioFleetRemoteWorker["updatedAt"] }),
           ...(row.runtimeMode === undefined ? {} : { runtimeMode: row.runtimeMode }),
           ...(row.loweredFrom === undefined ? {} : { loweredFrom: row.loweredFrom }),
+          ...(owesResult(row) && row.handoff.awaiting !== undefined
+            ? {
+                awaiting:
+                  row.handoff.awaiting === "continuation" ? ("handoff" as const) : ("run" as const),
+              }
+            : {}),
         })),
       );
     });

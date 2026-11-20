@@ -429,6 +429,8 @@ export function makePiAdapterV2(
         extensionPath,
         runtimeMode: input.runtimePolicy.runtimeMode,
         responseStyle: input.runtimePolicy.responseStyle,
+        advisorGuidance: input.runtimePolicy.advisorGuidance,
+        isCoordinator: input.runtimePolicy.isCoordinator,
       });
       const connection: PiRpcConnection = yield* makePiRpcConnection({
         command: options.settings.binaryPath || "pi",

@@ -13,6 +13,7 @@ import {
   type CopilotUserResponse,
   COPILOT_USAGE_CACHE_TTL_MS,
   COPILOT_USAGE_UNAVAILABLE_TTL_MS,
+  copilotGhSignInMessage,
   copilotUserResponseToLimits,
   makeCachedCopilotUsageLimits,
   parseCopilotLastLoggedInUser,
@@ -71,6 +72,9 @@ describe("copilotUserResponseToLimits", () => {
         label: "Premium requests",
         usedPercent: 25,
         resetsAt: "2026-12-01T00:00:00.000Z",
+        used: 75,
+        limit: 300,
+        unit: "premium requests",
       },
     ]);
     expect(limits.subscriptionKey).toMatch(/^copilot:sha256:[a-f0-9]{64}$/u);
@@ -119,8 +123,29 @@ describe("copilotUserResponseToLimits", () => {
         label: "Chat",
         usedPercent: 80,
         resetsAt: "2026-12-01T00:00:00.000Z",
+        used: 40,
+        limit: 50,
+        unit: "chat",
       },
     ]);
+  });
+
+  it("publishes no amounts without a finite remaining count, and never a negative used", () => {
+    const withPremium = (premium: Record<string, unknown>) =>
+      copilotUserResponseToLimits({
+        response: {
+          ...proResponse,
+          quota_snapshots: { ...proResponse.quota_snapshots, premium_interactions: quota(premium) },
+        },
+        checkedAt,
+      }).windows[0];
+    const percentOnly = withPremium({ entitlement: 300, remaining: null, percent_remaining: 40, has_quota: true });
+    expect(percentOnly?.usedPercent).toBe(60);
+    expect(percentOnly).not.toHaveProperty("used");
+    expect(percentOnly).not.toHaveProperty("limit");
+    expect(percentOnly).not.toHaveProperty("unit");
+    const over = withPremium({ entitlement: 300, remaining: 320, percent_remaining: 100, has_quota: true });
+    expect(over).toMatchObject({ used: 0, limit: 300, unit: "premium requests" });
   });
 
   it("publishes no spent window for an unlimited quota", () => {
@@ -230,14 +255,52 @@ describe("readCopilotUsageLimits", () => {
         `${home}/.copilot/config.json`,
         `{ "lastLoggedInUser": { "host": "https://github.com", "login": "octocat" } }`,
       );
+      const asked: Array<string | undefined> = [];
+      const limits = yield* readCopilotUsageLimits(
+        { instanceEnvironment: {}, processEnvironment: { HOME: home } },
+        (login) => {
+          asked.push(login);
+          return Effect.succeed<CopilotGhTokenResult>({ _tag: "notSignedIn" });
+        },
+        () => Effect.succeed(["anton-abyzov"]),
+      ).pipe(Effect.provideService(HttpClient.HttpClient, respond({}, 500)));
+      // gh is asked for the Copilot account by name, never its active one.
+      expect(asked).toEqual(["octocat"]);
+      expect(limits.unavailable).toEqual({
+        reason: "unsupported",
+        message:
+          "Add octocat to the GitHub CLI to read Copilot usage: run gh auth login --hostname github.com --web, approve as octocat in the browser, then gh auth switch --hostname github.com --user anton-abyzov to keep anton-abyzov active. Usage is read for octocat without switching.",
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it("words the gh sign-in hint by the accounts gh already holds", () => {
+    expect(copilotGhSignInMessage({ login: "abycrash", ghAccounts: [] })).toBe(
+      "Sign in to the GitHub CLI as abycrash to read Copilot usage: run gh auth login --hostname github.com --web and approve as abycrash in the browser.",
+    );
+    expect(
+      copilotGhSignInMessage({ login: "abycrash", ghAccounts: ["anton-abyzov", "someone"] }),
+    ).toContain("gh auth switch --hostname github.com --user anton-abyzov");
+    expect(copilotGhSignInMessage({ login: "AbyCrash", ghAccounts: ["abycrash"] })).toBe(
+      "The GitHub CLI holds AbyCrash but did not hand over its token for Copilot usage. Update gh to 2.40 or later, or run gh auth login --hostname github.com --web again and approve as AbyCrash.",
+    );
+    expect(copilotGhSignInMessage({ login: undefined, ghAccounts: ["anton-abyzov"] })).toBe(
+      "Sign in to the GitHub CLI to read Copilot usage (gh auth login --hostname github.com --web).",
+    );
+  });
+
+  it.effect("does not list gh accounts when the Copilot CLI has no stored sign-in", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "copilot-usage-" });
       const limits = yield* readCopilotUsageLimits(
         { instanceEnvironment: {}, processEnvironment: { HOME: home } },
         () => Effect.succeed<CopilotGhTokenResult>({ _tag: "notSignedIn" }),
+        () => Effect.die("gh auth status must not run without a Copilot login"),
       ).pipe(Effect.provideService(HttpClient.HttpClient, respond({}, 500)));
-      expect(limits.unavailable).toEqual({
-        reason: "unsupported",
-        message: "Sign in to the GitHub CLI as octocat to read Copilot usage (gh auth login).",
-      });
+      expect(limits.unavailable?.message).toBe(
+        "Sign in to the GitHub CLI to read Copilot usage (gh auth login --hostname github.com --web).",
+      );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

@@ -354,7 +354,7 @@ object ShellSummaries {
     /** Threads the user started: not a coordinator and not a subagent's child. */
     fun isTopLevel(thread: ThreadShell, coordinatorIds: Set<String>): Boolean {
         if (thread.isCoordinatorThread || thread.id in coordinatorIds) return false
-        if (thread.isSubagent) return false
+        if (thread.isSubagent || thread.isAdvisorThread) return false
         return !thread.isArchived && thread.deletedAt == null
     }
 

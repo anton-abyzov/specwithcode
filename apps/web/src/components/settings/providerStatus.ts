@@ -119,6 +119,12 @@ export interface ProviderStatusView {
   readonly account: ServerProviderAuth | null;
   readonly accountIsLastKnown: boolean;
   readonly action: ProviderStatusAction | null;
+  /**
+   * For an agent that is not installed, what the machine found of its command:
+   * "missing" (no file), "broken" (a file that does not start), or null from an
+   * older machine that does not say and does not look again by itself.
+   */
+  readonly cli: "missing" | "broken" | null;
 }
 
 /**
@@ -130,7 +136,13 @@ export function getProviderStatusView(
   enabled: boolean,
   tx: TranslatePhrase = englishPhrase,
 ): ProviderStatusView {
-  const none = { detail: null, account: null, accountIsLastKnown: false, action: null } as const;
+  const none = {
+    detail: null,
+    account: null,
+    accountIsLastKnown: false,
+    action: null,
+    cli: null,
+  } as const;
   if (!enabled) {
     return {
       ...none,
@@ -156,14 +168,17 @@ export function getProviderStatusView(
     return { ...none, state: "checking", tone: "checking", headline: tx("Checking…") };
   }
   if (state === "install") {
+    const cli = provider.cli?.state ?? null;
     return {
       ...none,
       state: "notInstalled",
       tone: "attention",
-      headline: tx("Not installed"),
-      // Where the app cannot install it, the machine's words are the only lead.
+      headline: cli === "broken" ? tx("Installed, but it does not start") : tx("Not installed"),
+      // The machine's own words. The status row leaves them out where its install
+      // step says the same for a command that is nowhere.
       detail: provider.message ?? null,
       action: "install",
+      cli,
     };
   }
   if (state === "signIn") {
@@ -203,6 +218,7 @@ export function getProviderStatusView(
     account: signedIn ? provider.auth : lastKnown?.status === "authenticated" ? lastKnown : null,
     accountIsLastKnown: !signedIn && lastKnown?.status === "authenticated",
     action: "checkAgain",
+    cli: null,
   };
 }
 

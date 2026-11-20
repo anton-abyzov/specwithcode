@@ -10,18 +10,11 @@ import {
   type EnvironmentId,
   type ProjectId,
   type ThreadId,
+  type ThreadIncrementProgress,
 } from "@specweave-studio/contracts";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import { LaptopIcon, WifiOffIcon } from "lucide-react";
-import {
-  memo,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useEnvironments } from "../../../state/environments";
 import { useMachineIdentities } from "../../../studio/machineIdentity";
@@ -34,7 +27,11 @@ import {
   type ThreadTone,
 } from "../../../studio/shellModel";
 import { threadLocation, type ThreadLocation } from "../../../studio/threadLocation";
-import { useUnreachableHosts } from "../../../studio/unreachableHosts";
+import {
+  useHostDownNotes,
+  useHostReachStates,
+  useUnreachableHosts,
+} from "../../../studio/unreachableHosts";
 import {
   useThreadIncrementState,
   type ThreadIncrementState,
@@ -50,6 +47,11 @@ export interface BoardThread {
   readonly machine: ThreadLocation;
   /** The machine it runs on now, as that machine's color id. */
   readonly color: string;
+  /** How it is bound to the increment; only a `claim` names the task it wrote to. */
+  readonly binding: string | null;
+  readonly boundTaskId: string | null;
+  /** When it last wrote to that task in the ledger. */
+  readonly boundAt: string | null;
 }
 
 /**
@@ -87,7 +89,7 @@ function pageCount(threads: number): number {
   return pages;
 }
 
-/** The pages to read, and whether some thread fits in none of them. */
+/** The pages to read, and whether some thread that is not resolved fits in none of them. */
 export function boardThreadPages(threads: ReadonlyArray<EnvironmentThreadShell>): {
   readonly pages: ReadonlyArray<BoardThreadPage>;
   readonly cut: boolean;
@@ -111,16 +113,20 @@ export function boardThreadPages(threads: ReadonlyArray<EnvironmentThreadShell>)
       let page = bucket;
       if (bucket.length > THREAD_INCREMENT_PROGRESS_MAX_THREADS) {
         // Too many for one read: the threads still at work stay, then the newest.
-        cut = true;
-        page = bucket
+        const ranked = bucket
           .map((thread) => ({ thread, resolved: threadTone(thread) === "resolved" }))
           .toSorted(
             (left, right) =>
               Number(left.resolved) - Number(right.resolved) ||
               right.thread.updatedAt.localeCompare(left.thread.updatedAt),
-          )
-          .slice(0, THREAD_INCREMENT_PROGRESS_MAX_THREADS)
-          .map((entry) => entry.thread);
+          );
+        // Leaving out resolved threads loses no decision: they hold no work,
+        // color no edge and never make a card busy. It does lose their lines on
+        // the cards and in the view's finished list. Only a thread that is not
+        // resolved and goes unread leaves the board not knowing.
+        if (ranked.slice(THREAD_INCREMENT_PROGRESS_MAX_THREADS).some((entry) => !entry.resolved))
+          cut = true;
+        page = ranked.slice(0, THREAD_INCREMENT_PROGRESS_MAX_THREADS).map((entry) => entry.thread);
       }
       const threadIds = page.map((thread) => thread.id).toSorted();
       pages.push({
@@ -138,6 +144,10 @@ export function boardThreadPages(threads: ReadonlyArray<EnvironmentThreadShell>)
   }
   return { pages, cut };
 }
+
+/** What a thread's progress read says about its increment; a fixture may know only the id. */
+type BoardThreadLink = Pick<ThreadIncrementProgress, "incrementId"> &
+  Partial<Pick<ThreadIncrementProgress, "binding" | "boundTaskId" | "boundAt">>;
 
 interface BoardPageState {
   /** The ids the state answers for; a page whose ids changed is not answered yet. */
@@ -166,10 +176,17 @@ export function useBoardThreads(input: {
 }): {
   readonly byIncrement: ReadonlyMap<string, ReadonlyArray<BoardThread>>;
   /**
-   * False until every thread has said which increment it works on: an empty
-   * card then means "not known yet", not "nobody is on it".
+   * False until every thread that is read has said which increment it works
+   * on: an empty card then means "not known yet", not "nobody is on it". In a
+   * project past the read limit, resolved threads may be left unread; their
+   * lines are then missing from the cards, which is not said anywhere.
    */
   readonly answered: boolean;
+  /**
+   * The project has more unresolved threads than are read, so `answered` never
+   * becomes true. Resolved threads left unread do not count: nothing is decided by them.
+   */
+  readonly cut: boolean;
   /** Threads run on more than one machine, so each line names its own. */
   readonly multiMachine: boolean;
   readonly loaders: ReactNode;
@@ -226,13 +243,16 @@ export function useBoardThreads(input: {
     });
   // A page being read again keeps its last answer for the threads it still holds.
   const links = useMemo(() => {
-    const result = new Map<string, string>();
+    const result = new Map<string, BoardThreadLink>();
     for (const page of pages)
       for (const [threadId, entry] of states.get(page.key)?.state.progress ?? [])
-        result.set(`${page.environmentId}\u0000${threadId}`, entry.incrementId);
+        result.set(`${page.environmentId}\u0000${threadId}`, entry);
     return result;
   }, [pages, states]);
   const unreachable = useUnreachableHosts();
+  // Each line says why its machine is out of reach, as the Threads pane does (1417).
+  const reachStates = useHostReachStates();
+  const notes = useHostDownNotes();
   const { environments } = useEnvironments();
   const nickname = useMachineNicknames();
   const identity = useMachineIdentities();
@@ -261,17 +281,27 @@ export function useBoardThreads(input: {
         unreachable,
       });
       machines.add(machine.executionMachineId);
-      const incrementId = links.get(`${thread.environmentId}\u0000${thread.id}`);
-      if (!incrementId) continue;
+      const link = links.get(`${thread.environmentId}\u0000${thread.id}`);
+      if (!link) continue;
+      const incrementId = link.incrementId;
       const offline = machine.state === "unknown";
       const held = grouped.get(incrementId) ?? [];
       held.push({
         thread,
         tone: threadTone(thread, offline),
-        status: threadStatusWord(thread, offline),
+        status: threadStatusWord(
+          thread,
+          offline,
+          reachStates.get(thread.environmentId),
+          false,
+          notes.get(thread.environmentId) ?? null,
+        ),
         updatedAt: thread.updatedAt,
         machine,
         color: identity(machine.executionMachineId).color,
+        binding: link.binding ?? null,
+        boundTaskId: link.boundTaskId ?? null,
+        boundAt: link.boundAt ?? null,
       });
       grouped.set(incrementId, held);
     }
@@ -286,10 +316,12 @@ export function useBoardThreads(input: {
     links,
     machineLabels,
     nickname,
+    notes,
+    reachStates,
     threads,
     unreachable,
   ]);
-  return { ...joined, answered, loaders };
+  return { ...joined, answered, cut, loaders };
 }
 
 /** Where a thread runs, in its machine's color; "→ name" once it moved there. */

@@ -744,13 +744,29 @@ describe("AssetAccess", () => {
       const separatorIndex = suffix.indexOf("/");
       const token = suffix.slice(0, separatorIndex);
 
+      const clipPath = path.join(root, "clip.mp4");
+      const audioPath = path.join(root, "note.mp3");
+      yield* fileSystem.writeFileString(clipPath, "video");
+      yield* fileSystem.writeFileString(audioPath, "audio");
+      const canonicalClipPath = yield* fileSystem.realPath(clipPath);
+      const canonicalAudioPath = yield* fileSystem.realPath(audioPath);
+
       expect(yield* resolveAsset(token, "report.html")).toEqual({
         kind: "file",
         path: canonicalHtmlPath,
+        htmlPreview: "file",
       });
       expect(yield* resolveAsset(token, "report.css")).toEqual({
         kind: "file",
         path: canonicalCssPath,
+      });
+      expect(yield* resolveAsset(token, "clip.mp4")).toEqual({
+        kind: "file",
+        path: canonicalClipPath,
+      });
+      expect(yield* resolveAsset(token, "note.mp3")).toEqual({
+        kind: "file",
+        path: canonicalAudioPath,
       });
       expect(yield* resolveAsset(token, "../secret.txt")).toBeNull();
       expect(yield* resolveAsset(token, ".env")).toBeNull();
@@ -892,6 +908,7 @@ describe("AssetAccess", () => {
       expect(yield* resolveAsset(token, "report.html")).toEqual({
         kind: "file",
         path: canonicalHtmlPath,
+        htmlPreview: "file",
       });
       expect(yield* resolveAsset(token, "report.css")).toEqual({
         kind: "file",
@@ -953,6 +970,7 @@ describe("AssetAccess", () => {
       expect(yield* resolveAsset(token, "report.html")).toEqual({
         kind: "file",
         path: canonicalHtmlPath,
+        htmlPreview: "file",
       });
     }).pipe(Effect.provide(layerTest)),
   );

@@ -1,5 +1,9 @@
 /**
- * Member lists of linked copies follow the coordinator. A copy that joined
+ * Member lists of linked copies. Every copy runs its own coordinator, so an
+ * equal (active) copy takes from any other listed copy only the members it
+ * does not list yet, never a removal, and never one it unlinked itself
+ * (`adoptEqualMembers`). The rest is what copies from before equal
+ * coordinators still do with each other. A copy that joined
  * learns machines linked after it from the copy it gave way to (additions and
  * removals), which relays its own coordinator's list when it gave way too; the
  * owner's app may also send a coordinator one takeover later (additions only).
@@ -22,8 +26,20 @@ import {
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 
+import { stringifyJson } from "../json.ts";
 import { sha256 } from "../nodeCrypto.ts";
 import type { ProjectOwnershipUpdate } from "../orchestration-v2/ProjectCommands.ts";
+import {
+  generationOf,
+  mergeRelinked,
+  mergeRemoved,
+  removalEnds,
+  removalStands,
+  returnsAsNewLink,
+  wasRemoved,
+  type RelinkedMember,
+  type RemovedMember,
+} from "./linkMembership.ts";
 import type * as ProjectAdmission from "./ProjectAdmission.ts";
 
 /** The most members a shared identity lists (`LogicalProject`). */
@@ -75,6 +91,13 @@ export interface AdoptMembersInput {
    * this one gave way to, since its epoch is its own word.
    */
   readonly viaApp?: boolean;
+  /**
+   * The members that copy unlinked on purpose (its `removedMembers`). An equal coordinator
+   * drops the ones it still lists; a member that copy merely does not list stays.
+   */
+  readonly removed?: ReadonlyArray<RemovedMember>;
+  /** The members that copy linked again after an unlink (its `relinkedMembers`), and when. */
+  readonly relinked?: ReadonlyArray<RelinkedMember>;
 }
 
 export interface AdoptMembersResult {
@@ -117,8 +140,171 @@ const listId = (members: ReadonlyArray<LogicalProjectMember>) =>
     .toString("hex")
     .slice(0, 16);
 
+/** Names one list with the unlinks or links written beside it, which a list alone repeats. */
+const stateId = (members: ReadonlyArray<LogicalProjectMember>, beside: ReadonlyArray<unknown>) =>
+  sha256([stringifyJson(members.map(memberRef).toSorted()), stringifyJson(beside)])
+    .toString("hex")
+    .slice(0, 16);
+
 export const makeProjectLinkMembers = (deps: ProjectLinkMembersDeps) => {
   const { admission, fail, load } = deps;
+
+  /**
+   * An equal coordinator adds the members another listed copy holds, and drops
+   * the ones that copy says it unlinked on purpose. The caller holds the project
+   * lock. A member the other copy only fails to list is never removed, no entry
+   * this copy holds is rewritten, and a member this copy unlinked stays unlinked.
+   */
+  const adoptEqualMembers = (
+    project: Project,
+    identity: LogicalProject,
+    self: LogicalProjectMember,
+    input: AdoptMembersInput,
+  ): Effect.Effect<AdoptMembersResult, ProjectLinkError> =>
+    Effect.gen(function* () {
+      const binding = project.workspaceSettings?.coordinatorBinding;
+      const fromKey = logicalProjectMemberKey(input.from);
+      const remembered = binding?.removedMembers ?? [];
+      // A copy this machine unlinked speaks for itself again only with a newer link of its own.
+      const ownWord = input.members.find((member) => logicalProjectMemberKey(member) === fromKey);
+      const returning =
+        wasRemoved(remembered, fromKey) &&
+        ownWord !== undefined &&
+        returnsAsNewLink(remembered, ownWord);
+      if (
+        !returning &&
+        !identity.members.some(
+          (member) =>
+            logicalProjectMemberKey(member) === fromKey &&
+            member.environmentId !== self.environmentId,
+        )
+      )
+        return yield* fail("not_member");
+      const current = binding ?? { epoch: 0, state: "active" as const };
+      const ownRelinked = current.relinkedMembers ?? [];
+      const theirRelinked = input.relinked ?? [];
+      // What the other copy unlinked on purpose, by the membership each unlink ended. One
+      // from before link ids also lapses when that copy lists the member again.
+      const listedThere = new Set(input.members.map(logicalProjectMemberKey));
+      const unlinkedThere = (input.removed ?? []).filter(
+        (removal) =>
+          logicalProjectMemberKey(removal) !== fromKey &&
+          (removal.linkId !== undefined || !listedThere.has(logicalProjectMemberKey(removal))),
+      );
+      const endedBy = (member: LogicalProjectMember) =>
+        unlinkedThere.find((removal) => removalEnds(removal, member, ownRelinked, theirRelinked));
+      const dropped = identity.members.filter(
+        (member) => member.environmentId !== self.environmentId && endedBy(member) !== undefined,
+      );
+      if (dropped.length > 0) {
+        const droppedKeys = new Set(dropped.map(logicalProjectMemberKey));
+        const remaining = identity.members.filter(
+          (member) => !droppedKeys.has(logicalProjectMemberKey(member)),
+        );
+        // Remembered here too, so an older list from a third copy never brings them back.
+        const removals = dropped.map((member) => endedBy(member)!);
+        const updated = yield* deps.writeOwnership(
+          project,
+          "project-link-members-removed",
+          stateId(remaining, removals),
+          {
+            mode: "remove-member",
+            logicalProject: { ...identity, members: remaining },
+            coordinatorBinding: {
+              ...current,
+              removedMembers: mergeRemoved(current.removedMembers ?? [], removals),
+            },
+          },
+        );
+        yield* adoptEqualMembers(
+          updated,
+          updated.workspaceSettings?.logicalProject ?? { ...identity, members: remaining },
+          self,
+          { ...input, removed: [] },
+        );
+        return { replayed: false, changed: true };
+      }
+      // An unlink this copy remembers ends only by its own relink, or by one the unlinked
+      // copy sends about itself. A relink another machine relays about it changes nothing.
+      const relinked = mergeRelinked(
+        ownRelinked,
+        theirRelinked.filter((entry) => logicalProjectMemberKey(entry) === fromKey),
+      );
+      const ownRemoved = current.removedMembers ?? [];
+      const stillRemoved = ownRemoved.filter(
+        (removal) =>
+          removal.linkId !== undefined ||
+          removal.generation !== undefined ||
+          removalStands(removal, relinked),
+      );
+      const held = new Map(
+        identity.members.map((member) => [logicalProjectMemberKey(member), member]),
+      );
+      // A membership this copy knows was unlinked stays out, whoever lists it and however
+      // late: only a later link of that copy, which counts above the unlink, comes in.
+      const offered = byKey(input.members).filter(
+        (member) =>
+          member.environmentId !== self.environmentId &&
+          !stillRemoved.some((removal) => removalEnds(removal, member, relinked)),
+      );
+      // An unlinked copy comes back only from its own word, as a newer link; another
+      // machine's list never brings it back, whatever link it names.
+      const mayList = (member: LogicalProjectMember) =>
+        !wasRemoved(stillRemoved, logicalProjectMemberKey(member)) ||
+        (logicalProjectMemberKey(member) === fromKey && returnsAsNewLink(stillRemoved, member));
+      const added = offered
+        .filter((member) => !held.has(logicalProjectMemberKey(member)) && mayList(member))
+        .slice(0, Math.max(0, MAX_MEMBERS - identity.members.length));
+      // The same copy listed there by a later link than here: this list takes that link, as
+      // one an older machine relayed without a generation takes the named one.
+      const later = new Map(
+        offered
+          .filter((member) => {
+            const mine = held.get(logicalProjectMemberKey(member));
+            return (
+              mine !== undefined &&
+              mayList(member) &&
+              // Only to a named link: an entry without a name is no evidence of one.
+              member.linkId !== undefined &&
+              memberRef(mine) === memberRef(member) &&
+              generationOf(member) > generationOf(mine)
+            );
+          })
+          .map((member) => [logicalProjectMemberKey(member), member]),
+      );
+      const learned =
+        later.size > 0 ||
+        stillRemoved.length !== ownRemoved.length ||
+        stringifyJson(relinked) !== stringifyJson(ownRelinked);
+      if (added.length === 0 && !learned) return { replayed: true, changed: false };
+      const members = [
+        ...identity.members.map((member) => later.get(logicalProjectMemberKey(member)) ?? member),
+        ...added,
+      ];
+      const { removedMembers: _removed, relinkedMembers: _relinked, ...rest } = current;
+      yield* deps.writeOwnership(
+        project,
+        "project-link-members",
+        learned || members.some((member) => member.linkId !== undefined)
+          ? stateId(members, [
+              members.map((member) => [member.linkId ?? null, generationOf(member)]),
+              relinked,
+            ])
+          : listId(members),
+        {
+          mode: "sync-members",
+          logicalProject: { ...identity, members },
+          coordinatorBinding: learned
+            ? {
+                ...rest,
+                ...(stillRemoved.length === 0 ? {} : { removedMembers: stillRemoved }),
+                ...(relinked.length === 0 ? {} : { relinkedMembers: relinked }),
+              }
+            : current,
+        },
+      );
+      return { replayed: false, changed: true };
+    });
 
   const adoptMembers = (input: AdoptMembersInput) =>
     admission.withLock(
@@ -131,8 +317,10 @@ export const makeProjectLinkMembers = (deps: ProjectLinkMembersDeps) => {
         const binding = project.workspaceSettings?.coordinatorBinding;
         if (identity?.id !== input.logicalProjectId) return yield* fail("not_linked");
         if (project.workspaceSettings?.archived) return yield* fail("archived");
-        // An active or moving copy never takes another copy's list.
-        if (binding?.state !== "transferred") return yield* fail("not_member");
+        // A moving copy never takes another copy's list; an equal one only adds from it.
+        if (binding === undefined || binding.state === "active")
+          return yield* adoptEqualMembers(project, identity, self, input);
+        if (binding.state !== "transferred") return yield* fail("not_member");
         const fromKey = logicalProjectMemberKey(input.from);
         const from = identity.members.find(
           (member) =>

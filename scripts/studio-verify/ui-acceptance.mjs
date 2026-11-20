@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
+import { walkFirstRun } from './first-run-walk.mjs';
 
 const capacityPath = '/api/studio/capacity';
 const protocol = { 'x-studio-orchestration-protocol': '2' };
@@ -17,15 +18,8 @@ async function dismissNotifications(page) {
 
 async function openOverview(page, origin) {
   await page.goto(origin + '/', { waitUntil: 'networkidle' });
-  for (let i = 0; i < 2; i++) {
-    const next = page.getByRole('button', { name: 'Continue', exact: true });
-    if (await next.count()) { await next.click(); await sleep(300); }
-  }
-  // The access step: keep what the machine has, so the checks after setup run as before.
-  const keepAccess = page.getByRole('button', { name: /^Keep (Supervised|current access)$/ });
-  if (await keepAccess.count()) { await keepAccess.click(); await sleep(300); }
-  const skip = page.getByRole('button', { name: 'Do not import projects', exact: true });
-  if (await skip.count()) { await skip.click(); await sleep(1000); }
+  // First-run setup on each step's neutral action, keeping the machine's access.
+  await walkFirstRun(page, { until: () => page.locator('.studio-desk').isVisible() });
   await page.locator('.studio-desk').waitFor();
   await dismissNotifications(page);
 }
@@ -111,14 +105,7 @@ export async function verifyNotifications({ browser, context, origin, reportDir,
     try {
       const page = await fresh.newPage();
       await page.goto(origin + '/', { waitUntil: 'networkidle' });
-      for (let i = 0; i < 2; i++) {
-        const next = page.getByRole('button', { name: 'Continue', exact: true });
-        if (await next.count()) { await next.click(); await sleep(300); }
-      }
-      const keepAccess = page.getByRole('button', { name: /^Keep (Supervised|current access)$/ });
-      if (await keepAccess.count()) { await keepAccess.click(); await sleep(300); }
-      const skip = page.getByRole('button', { name: 'Do not import projects', exact: true });
-      if (await skip.count()) { await skip.click(); await sleep(1000); }
+      await walkFirstRun(page, { until: () => page.locator('.studio-desk').isVisible() });
       await page.locator('.studio-desk').waitFor();
       const button = page.getByRole('button', { name: 'New session', exact: true }).first();
       const toastCount = await page.locator('[data-slot=toast-close]').count();

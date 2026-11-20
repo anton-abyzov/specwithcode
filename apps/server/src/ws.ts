@@ -119,6 +119,7 @@ import {
   WsRpcGroup,
   WsCoreRpcGroup,
   ModsError,
+  firstFeatureGuideFinishedIn,
 } from "@specweave-studio/contracts";
 import { resolveServerBackgroundActivitySettings } from "@specweave-studio/shared/backgroundActivitySettings";
 import {
@@ -286,6 +287,7 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import {
   failEnvironmentAuthInvalid,
+  failEnvironmentAuthRefused,
   failEnvironmentInternal,
   upgradeUntilSessionEnds,
 } from "./auth/http.ts";
@@ -1882,6 +1884,16 @@ const layerWsRpc = (
           const auth = yield* serverAuth.getDescriptor();
           const scratchWorkspaceRoot = yield* managedFolders.scratchRoot;
           const teamRules = yield* ServerSettings.currentTeamRulesSummary;
+          // Removed projects too: a finished sample a person removed still ends the offer (1398 AC-21).
+          const firstFeatureFinished = yield* projectStore.list({ includeDeleted: true }).pipe(
+            Effect.map(firstFeatureGuideFinishedIn),
+            // The config still loads; the offer may show again, so the reason is logged.
+            Effect.catch((cause) =>
+              Effect.logWarning("Failed to read projects for the first feature offer", {
+                detail: String(cause),
+              }).pipe(Effect.as(false)),
+            ),
+          );
           const editorConfig = yield* resolveEditorConfig(
             yield* resolveAvailableEditorsForConfig(externalLauncher.resolveAvailableEditors()),
             resolveFileManagerRevealKindForConfig(externalLauncher.resolveFileManagerRevealKind()),
@@ -1924,6 +1936,8 @@ const layerWsRpc = (
             threadResumeCompletionMarker: true,
             threadSnapshotPagination: true,
             specweaveSetUp: true,
+            firstFeatureSample: true,
+            ...(firstFeatureFinished ? { firstFeatureFinished: true } : {}),
             ...Option.match(scratchWorkspaceRoot, {
               onNone: () => ({}),
               onSome: (root) => ({ scratchWorkspaceRoot: root }),
@@ -2437,6 +2451,12 @@ const layerWsRpc = (
           ),
         [WS_METHODS.serverRefreshProviders]: (input) =>
           Effect.gen(function* () {
+            // An agent installed since the server started may sit in a folder
+            // the shell added to PATH since. A person's click asks the shell
+            // again; any other refresh does so only when a startup file changed.
+            yield* providerRegistry.rereadPath({
+              force: input.fresh === true || input.refreshModels === true,
+            });
             if (input.discover && providerRegistry.findAgents) {
               return yield* providerRegistry.findAgents({ fresh: input.fresh === true });
             }
@@ -2469,6 +2489,16 @@ const layerWsRpc = (
             if (input.instanceId === undefined) {
               yield* usageLimitSources.refresh;
             }
+            // A person pressed Refresh: every instance reads its account past
+            // its probe cache, as a targeted fresh refresh does for one.
+            if (input.fresh === true && input.instanceId === undefined && !input.refreshModels) {
+              const instances = yield* providerInstances.listInstances;
+              yield* Effect.forEach(
+                instances,
+                (instance) => instance.invalidateCaches ?? Effect.void,
+                { concurrency: "unbounded", discard: true },
+              );
+            }
             let providers = yield* input.cwd !== undefined && input.instanceId !== undefined
               ? providerRegistry.refreshWorkspaceSnapshot({
                   instanceId: input.instanceId,
@@ -2476,7 +2506,9 @@ const layerWsRpc = (
                   fresh: input.fresh === true,
                 })
               : input.instanceId !== undefined
-                ? providerRegistry.refreshInstance(input.instanceId)
+                ? providerRegistry.refreshInstance(input.instanceId, {
+                    fresh: input.fresh === true,
+                  })
                 : providerRegistry.refresh();
             if (input.refreshModels) {
               const instances = yield* providerInstances.listInstances;
@@ -3525,11 +3557,7 @@ export const serveRpcWebSocket = <E, R>(
     const analytics = yield* AnalyticsService.AnalyticsService;
     const session = yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
       Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
-        failEnvironmentAuthInvalid(
-          EnvironmentAuth.serverAuthCredentialReason(error),
-          EnvironmentAuth.serverAuthDpopFailureReason(error),
-          EnvironmentAuth.serverAuthTeamRulesMessage(error),
-        ),
+        failEnvironmentAuthRefused(error),
       ),
       Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
         failEnvironmentInternal("internal_error", error),
@@ -3568,7 +3596,7 @@ const inferredWebSocketLayer = Layer.unwrap(
             Effect.provideService(RpcServer.Protocol, withTerminalOutputWindow(protocol)),
             Effect.provide(
               Layer.mergeAll(
-                RpcAuthorization.layer(session.scopes, session.principal),
+                RpcAuthorization.layer(session.scopes, session.principal, session.deviceKey),
                 rpcDeadlineLayer,
                 rpcInstrumentationLayer,
               ),

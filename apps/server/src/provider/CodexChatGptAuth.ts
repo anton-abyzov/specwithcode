@@ -31,6 +31,8 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 const isSetupError = Schema.is(ProviderSetupError);
 const RESOURCE = "https://api.openai.com/v1";
 const REQUIRED_SCOPE = "chatgpt.tokens.use.direct";
+/** Renew a managed sign-in this long before it expires; matches the Codex adapter's window. */
+export const ACCESS_RENEW_BEFORE_MS = 10 * 60_000;
 const DISCOVERY = "https://auth.openai.com/.well-known/openid-configuration";
 const TokenResponse = Schema.Struct({
   access_token: Schema.NonEmptyString,
@@ -171,6 +173,20 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
   const resource = options.resource ?? RESOURCE;
   const failure = (operation: string, detail: string) =>
     new ProviderSetupError({ instanceId: options.instanceId, operation, detail });
+  // Set when the API refused the token a running Codex held: the next access
+  // renews it even if its expiry time says it is still good.
+  let renewRequested = false;
+  // The life of the last token this process saw issued. A short-lived token
+  // renews at half its life, not ten minutes early, so it is not renewed on
+  // every access.
+  let issuedLifetimeMs: number | null = null;
+  const renewLeadMs = () =>
+    issuedLifetimeMs === null
+      ? ACCESS_RENEW_BEFORE_MS
+      : Math.min(ACCESS_RENEW_BEFORE_MS, issuedLifetimeMs / 2);
+  const requestRenewal = Effect.sync(() => {
+    renewRequested = true;
+  });
   let metadata: typeof Discovery.Type | undefined;
   let jwks: ReturnType<typeof createRemoteJWKSet> | undefined;
   const discover = Effect.gen(function* () {
@@ -684,6 +700,7 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
             },
             scopes.includes(REQUIRED_SCOPE) || Option.isNone(yield* read),
           );
+          issuedLifetimeMs = tokens.expires_in * 1000;
         }),
       );
       if (!scopes.includes(REQUIRED_SCOPE))
@@ -732,7 +749,7 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
               "Token sharing is disabled. Sign in with ChatGPT and enable token sharing.",
             );
           const now = yield* Clock.currentTimeMillis;
-          if (record.expiresAt - now > 60_000) return record;
+          if (!renewRequested && record.expiresAt - now > renewLeadMs()) return record;
           if (record.earliestRefreshAt !== null && record.earliestRefreshAt > now) {
             if (record.expiresAt > now) return record;
             return yield* failure(
@@ -755,7 +772,9 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
             Effect.interruptible,
             Effect.timeout("20 seconds"),
             Effect.mapError((error) =>
-              error._tag === "ProviderSetupError" && error.operation === "client"
+              // A refused renewal already cleared the sign-in; keep its words.
+              error._tag === "ProviderSetupError" &&
+              (error.operation === "client" || error.operation === "refresh")
                 ? error
                 : failure(
                     "refresh",
@@ -775,6 +794,8 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
             scopes: tokens.scope.split(/\s+/).filter(Boolean),
           };
           yield* save(record);
+          renewRequested = false;
+          issuedLifetimeMs = tokens.expires_in * 1000;
           if (!record.scopes.includes(REQUIRED_SCOPE))
             return yield* failure(
               "sharing",
@@ -984,6 +1005,7 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
     controller: { ...controller, reconnectProfile, importProfile },
     read,
     access,
+    requestRenewal,
     exportProfile,
     revoke: lock.withPermit(withSessionLock(remove)),
   };

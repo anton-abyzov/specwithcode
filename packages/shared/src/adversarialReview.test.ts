@@ -10,8 +10,10 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   defaultReviewerChain,
   describeReviewerOrder,
+  isAdversarialReviewThreadTitle,
   resolveReviewer,
   reviewerChain,
+  threadReviewState,
 } from "./adversarialReview.ts";
 import { newestOfFamily, tierModelFor } from "./modelTiers.ts";
 
@@ -467,5 +469,38 @@ describe("reviewerOrderGroups", () => {
       ["copilot/gpt-6.1-sol", []],
       ["claudeAgent/claude-opus-5-5", ["copilot/claude-opus-5.5"]],
     ]);
+  });
+});
+
+describe("threadReviewState", () => {
+  it("follows the project setting until the thread chooses", () => {
+    for (const mode of [null, undefined]) {
+      expect(threadReviewState(mode, { autoOnFeatureComplete: false })).toEqual({
+        enabled: false,
+        source: "settings",
+      });
+      expect(threadReviewState(mode, { autoOnFeatureComplete: true })).toEqual({
+        enabled: true,
+        source: "settings",
+      });
+    }
+  });
+
+  it("lets the thread's own choice win either way", () => {
+    expect(threadReviewState("on", { autoOnFeatureComplete: false })).toEqual({
+      enabled: true,
+      source: "thread",
+    });
+    expect(threadReviewState("off", { autoOnFeatureComplete: true })).toEqual({
+      enabled: false,
+      source: "thread",
+    });
+  });
+});
+
+describe("isAdversarialReviewThreadTitle", () => {
+  it("tells a review thread by its title", () => {
+    expect(isAdversarialReviewThreadTitle("Adversarial review: Sign in")).toBe(true);
+    expect(isAdversarialReviewThreadTitle("Sign in with passkeys")).toBe(false);
   });
 });

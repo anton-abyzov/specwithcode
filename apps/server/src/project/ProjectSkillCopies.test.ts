@@ -131,6 +131,20 @@ describe("inventory-bound skill copies", () => {
       f.call({ ...f.input, operation: "preview", sourceId: f.a, targetIds: [f.b] }),
     ).rejects.toMatchObject({ reason: "scope_unsupported" });
   });
+  it("refuses a claude.ai-synced destination", async () => {
+    const f = await fixture();
+    Object.assign(f.providers[1]!, { scope: "claude.ai" });
+    const read = await f.call({ ...f.input, operation: "read" });
+    expect(read.copies[1]?.writable).toBe(false);
+    await expect(
+      f.call({
+        ...f.input,
+        operation: "preview",
+        sourceId: read.copies[0]!.id,
+        targetIds: [read.copies[1]!.id],
+      }),
+    ).rejects.toMatchObject({ reason: "scope_unsupported" });
+  });
   it("refuses plugin-managed destinations", async () => {
     const f = await fixture();
     Object.assign(f.providers[1]!, { pluginVersion: "1.0.0" });

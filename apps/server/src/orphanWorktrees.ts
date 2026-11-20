@@ -83,8 +83,9 @@ export function dependencyInstallPaths(stdout: string): ReadonlyArray<string> {
 /**
  * Ignored paths a fresh checkout rebuilds: dependency installs (a pnpm workspace
  * can link `node_modules` as a symlink, listed without a slash),
- * TypeScript build info, git hook shims and Finder's `.DS_Store`, which
- * something writes into every worktree within a minute of its creation.
+ * TypeScript build info, Python bytecode, SpecWeave's housekeeping marker, git
+ * hook shims and Finder's `.DS_Store`, which something writes into every
+ * worktree within a minute of its creation.
  * `.cache/`, `.env*` and anything else may hold secrets or local data and still
  * keep the folder.
  */
@@ -92,6 +93,11 @@ export function dependencyInstallPaths(stdout: string): ReadonlyArray<string> {
 // them. Only dependency installs retain the existing directory-level exemption.
 const REBUILDABLE_DIRECTORY = /(^|\/)node_modules\/$/;
 const REBUILDABLE_FILE = /(^|\/)(node_modules|\.DS_Store|[^/]+\.tsbuildinfo)$/;
+// Python's bytecode files, and the marker SpecWeave's state housekeeping
+// leaves in every checkout (`.specweave/state/.gc-last`, a time and nothing else).
+// Only the bytecode files themselves: a `__pycache__/` folder is opened and
+// its files judged one by one, since anything can be put in it.
+const REBUILDABLE_CACHE = /(^|\/)([^/]+\.pyc|\.specweave\/state\/\.gc-last)$/;
 // The hook installer's shims; hooks a person adds beside them stay.
 const HOOK_SHIMS = /^\.vite-hooks\/_\//;
 
@@ -100,6 +106,7 @@ function rebuildable(entry: string): boolean {
     entry === "" ||
     REBUILDABLE_DIRECTORY.test(entry) ||
     REBUILDABLE_FILE.test(entry) ||
+    REBUILDABLE_CACHE.test(entry) ||
     HOOK_SHIMS.test(entry)
   );
 }

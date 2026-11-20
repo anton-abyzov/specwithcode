@@ -103,6 +103,8 @@ data class ThreadShell(
     @Serializable(with = LenientInstant::class) val executionLastSeenAt: Instant? = null,
     /** Set on a copy that continued elsewhere (handoff) or moved to another project. */
     @Serializable(with = LenientThreadMoveLink::class) val movedTo: ThreadMoveLink? = null,
+    /** "advisor" on a child that exists only to advise its parent. Kept raw. */
+    @Serializable(with = LenientString::class) val purpose: String? = null,
 ) {
     val isPinned: Boolean get() = pinnedAt != null
     val isArchived: Boolean get() = archivedAt != null
@@ -128,6 +130,9 @@ data class ThreadShell(
 
     /** A spawned subagent's thread rather than one the user started. */
     val isSubagent: Boolean get() = lineage.relationshipToParent == LineageRelationship.Subagent
+
+    /** A child that only advises its parent; never listed as a thread. */
+    val isAdvisorThread: Boolean get() = purpose == "advisor"
 
     /** True for a coordinator thread with the default `project-coordinator:` id. */
     val isCoordinatorThread: Boolean get() = id.startsWith("project-coordinator:")

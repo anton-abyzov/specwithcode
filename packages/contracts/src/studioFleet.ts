@@ -361,6 +361,12 @@ export const StudioFleetRemoteWorker = Schema.Struct({
   runtimeMode: Schema.optionalKey(StudioFleetWorkerAccess),
   /** The coordinator's own mode when that machine's worker grant lowered it. */
   loweredFrom: Schema.optionalKey(StudioFleetWorkerAccess),
+  /**
+   * A thread handed off to that machine with no run seen there yet: the
+   * machine has still to take it ("handoff"), or it is there with no run
+   * going ("run"). Absent once a run is followed, and for every other worker.
+   */
+  awaiting: Schema.optionalKey(Schema.Literals(["handoff", "run"])),
 });
 export type StudioFleetRemoteWorker = typeof StudioFleetRemoteWorker.Type;
 
@@ -700,6 +706,49 @@ const StudioFleetUpdateHoldMinutes = Schema.Int.check(
 );
 
 /**
+ * A skill folder in a GitHub repo at one commit (increment 1399). The repo is
+ * the skill name's `owner/repo`; the folder is named after the skill. The
+ * destination installs `https://github.com/<repo>/tree/<commit>/<folder>`, so
+ * it gets exactly that commit, then records `branch` in its lock so later
+ * updates compare against the branch head. Each segment starts with a letter,
+ * digit or underscore, so none is `..` or reads as a flag.
+ */
+export const StudioFleetSkillSource = Schema.Struct({
+  kind: Schema.Literal("github"),
+  path: Schema.String.check(
+    Schema.isMaxLength(400),
+    Schema.isPattern(/^(?:[A-Za-z0-9_][A-Za-z0-9._-]{0,199}\/){1,8}SKILL\.md$/),
+  ),
+  branch: Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_][A-Za-z0-9._-]{0,199}$/)),
+  commit: Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/)),
+});
+export type StudioFleetSkillSource = typeof StudioFleetSkillSource.Type;
+
+/**
+ * The copy an Undo replaces: the one the rollout installed. The machine acts only
+ * while its lock still records this commit and SKILL.md hash, so a later update
+ * there is never rolled back by an old Undo.
+ */
+export const StudioFleetSkillReplaces = Schema.Struct({
+  commit: Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/)),
+  contentHash: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/)),
+});
+export type StudioFleetSkillReplaces = typeof StudioFleetSkillReplaces.Type;
+
+/**
+ * The copy a machine had before a GitHub-source install, from the same repo; Undo
+ * puts it back. `version` is null when that lock entry records none.
+ */
+export const StudioFleetSkillPrevious = Schema.Struct({
+  version: Schema.NullOr(Schema.String),
+  commit: Schema.NullOr(Schema.String),
+  contentHash: Schema.NullOr(Schema.String),
+  branch: Schema.NullOr(Schema.String),
+  path: Schema.NullOr(Schema.String),
+});
+export type StudioFleetSkillPrevious = typeof StudioFleetSkillPrevious.Type;
+
+/**
  * What a fleet primary may ask of this machine with its management token:
  * install a published release (`force` drains and holds the service as
  * Update now does), cancel the install request it wrote, or look for a
@@ -846,6 +895,12 @@ export const StudioFleetSkillInput = Schema.Union([
     preview: Schema.optionalKey(Schema.Boolean),
     expectedHash: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(128))),
     contentHash: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))),
+    /** A GitHub source instead of a registry version (needs `fleetSkillGithubSource`). */
+    source: Schema.optionalKey(StudioFleetSkillSource),
+    /** Remove the skill this source installed, matched by `contentHash` (Undo). */
+    action: Schema.optionalKey(Schema.Literal("remove")),
+    /** Undo only: the copy it replaces; refused once that machine holds another one. */
+    replaces: Schema.optionalKey(StudioFleetSkillReplaces),
   }),
   exactStruct({
     coordinatorEnvironmentId: EnvironmentId,
@@ -863,6 +918,12 @@ export const StudioFleetSkillInput = Schema.Union([
     preview: Schema.optionalKey(Schema.Boolean),
     expectedHash: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(128))),
     contentHash: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))),
+    /** A GitHub source instead of a registry version (needs `fleetSkillGithubSource`). */
+    source: Schema.optionalKey(StudioFleetSkillSource),
+    /** Remove the skill this source installed, matched by `contentHash` (Undo). */
+    action: Schema.optionalKey(Schema.Literal("remove")),
+    /** Undo only: the copy it replaces; refused once that machine holds another one. */
+    replaces: Schema.optionalKey(StudioFleetSkillReplaces),
   }),
 ]);
 export type StudioFleetSkillInput = typeof StudioFleetSkillInput.Type;
@@ -891,13 +952,27 @@ export const StudioFleetSkillRefusal = Schema.Literals([
   "stale",
   "install-failed",
   "busy",
+  /** The GitHub repo is not connected on that machine. */
+  "repo-not-connected",
+  /** That machine has no GitHub access to the private repo. */
+  "no-access",
+  /** Another source already installed a skill with this name there. */
+  "name-taken",
 ]);
 export type StudioFleetSkillRefusal = typeof StudioFleetSkillRefusal.Type;
+
+/** How vskill ran: the installed one, or `npx --yes vskill@latest` where none is installed. */
+export const StudioFleetSkillVia = Schema.Literals(["vskill", "npx"]);
+export type StudioFleetSkillVia = typeof StudioFleetSkillVia.Type;
 
 export const StudioFleetSkillResult = Schema.Struct({
   preview: Schema.optionalKey(Schema.Boolean),
   expectedHash: Schema.optionalKey(Schema.String),
   installedVersion: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  /** A GitHub-source preview: the files the install writes, the runner and the copy it replaces. */
+  files: Schema.optionalKey(Schema.Array(Schema.String)),
+  via: Schema.optionalKey(StudioFleetSkillVia),
+  previous: Schema.optionalKey(Schema.NullOr(StudioFleetSkillPrevious)),
   result: Schema.Literal("accepted"),
   /** Names this install in the status call, so the primary reads its own. */
   requestId: Schema.String,
@@ -924,5 +999,9 @@ export const StudioFleetSkillStatus = Schema.Struct({
   pinnedVersion: Schema.optionalKey(Schema.NullOr(Schema.String)),
   lastError: Schema.optionalKey(Schema.String),
   lastErrorReason: Schema.optionalKey(StudioFleetSkillRefusal),
+  /** GitHub-source runs: how vskill ran, the copy replaced, and whether this was a removal. */
+  via: Schema.optionalKey(StudioFleetSkillVia),
+  previous: Schema.optionalKey(Schema.NullOr(StudioFleetSkillPrevious)),
+  action: Schema.optionalKey(Schema.Literals(["install", "remove"])),
 });
 export type StudioFleetSkillStatus = typeof StudioFleetSkillStatus.Type;

@@ -155,6 +155,13 @@ describe("the header reply and view menu", () => {
     expect(client.persist).toHaveBeenLastCalledWith({ threadTimelineDetail: {} });
   });
 
+  it("keeps the reply style and view level in the wide chip", async () => {
+    state.responseStyle = "detailed";
+    await open({ appearance: "project", threadKey: "host:worker", project });
+    expect(trigger().textContent).toBe("Detailed · Folded steps");
+    expect(trigger().querySelector("svg")).not.toBeNull();
+  });
+
   it("says Mixed when the project's checkouts disagree", async () => {
     state.mixed = true;
     await open({ project });

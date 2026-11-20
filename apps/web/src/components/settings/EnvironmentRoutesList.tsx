@@ -154,7 +154,7 @@ export function EnvironmentRoutesList({
         </SortableContext>
       </DndContext>
       <div className="border-t border-border/70 px-1 py-1">
-        <Button size="xs" variant="ghost-muted" onClick={onAddRoute}>
+        <Button size="xs" variant="outline" onClick={onAddRoute}>
           <PlusIcon className="size-3" />
           {tx("Add connection path")}
         </Button>

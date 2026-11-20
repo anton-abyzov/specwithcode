@@ -229,10 +229,41 @@ export function replaceAllDecisions(
   return decisions;
 }
 
-/** "3 secret-like files (.env and similar) stayed on M4. …", or null when none stayed. */
-export function secretsLeftText(count: number, sourceLabel: string): string | null {
+/**
+ * Who can send the secrets a copy left behind: this window (its grant on the source holds
+ * access:write), only the source's own window, or not confirmed yet.
+ */
+export type SecretsSender = "here" | "source-only" | "unconfirmed";
+
+/**
+ * "3 secret-like files (.env and similar) stayed on M4. …" with the action that sends them:
+ * from this window only when it can, otherwise from SpecWithCode on the source, which
+ * always can. No action is named (a null sender) when a fresh copy would carry none of
+ * them. Null when none stayed.
+ */
+export function secretsLeftText(
+  count: number,
+  sourceLabel: string,
+  sender: SecretsSender | null = "here",
+): string | null {
   if (count <= 0) return null;
-  return `${count.toLocaleString()} secret-like ${count === 1 ? "file" : "files"} (.env and similar) stayed on ${sourceLabel}. Copy them yourself, or run the copy again with “Let me choose file types first” to send them.`;
+  const stayed = `${count.toLocaleString()} secret-like ${count === 1 ? "file" : "files"} (.env and similar) stayed on ${sourceLabel}.`;
+  if (sender === null) return stayed;
+  if (sender === "here") return `${stayed} To send them, copy again with Secrets ticked.`;
+  return sender === "source-only"
+    ? `${stayed} This window can't send them: only SpecWithCode on ${sourceLabel} can. Start the copy again there with Secrets ticked.`
+    : `${stayed} To send them, start the copy again in SpecWithCode on ${sourceLabel} with Secrets ticked.`;
+}
+
+/** The left-behind secret files a fresh copy could carry: those among the ones that can travel. */
+export function secretsLeftSendable(
+  secretFiles: ReadonlyArray<{ readonly path: string }> | null | undefined,
+  sent: ReadonlyArray<{ readonly path: string }> | null | undefined,
+  travel: ReadonlyArray<string>,
+): boolean {
+  if (!secretFiles) return false;
+  const arrived = new Set((sent ?? []).map((file) => file.path));
+  return secretFiles.some((file) => !arrived.has(file.path) && travel.includes(file.path));
 }
 
 /** Secret-like files measured on the source that were not sent with this copy. */

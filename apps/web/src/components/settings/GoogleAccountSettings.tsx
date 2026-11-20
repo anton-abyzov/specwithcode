@@ -21,7 +21,7 @@ import {
   type AtomCommandResult,
 } from "@specweave-studio/client-runtime/state/runtime";
 import { Link, useLocation } from "@tanstack/react-router";
-import { MailIcon } from "lucide-react";
+import { CalendarClockIcon, MailIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { useProjects, useServerConfigs } from "../../state/entities";
@@ -444,7 +444,7 @@ export function GoogleAccountSettingsPanel() {
               ) : (
                 <Button
                   size="xs"
-                  variant="ghost-muted"
+                  variant="outline"
                   disabled={!canWrite || busy}
                   aria-label={tx("Make {account} the default for {title}", {
                     account: selected === null ? tx("this account") : accountTitle(selected),
@@ -459,7 +459,7 @@ export function GoogleAccountSettingsPanel() {
             {briefing === "proactive" ? (
               <Button
                 size="xs"
-                variant="ghost-muted"
+                variant="outline"
                 render={
                   <Link
                     to="/settings/scheduled-tasks"
@@ -484,6 +484,7 @@ export function GoogleAccountSettingsPanel() {
                   />
                 }
               >
+                <CalendarClockIcon aria-hidden />
                 {tx("Morning briefing")}
               </Button>
             ) : null}
@@ -609,7 +610,7 @@ export function GoogleAccountSettingsPanel() {
                 <TeamRulesInert lock={teamRulesLock}>
                   <Button
                     size="xs"
-                    variant="ghost-muted"
+                    variant="outline"
                     disabled={!canWrite || busy}
                     onClick={() => setReplacingClient(true)}
                   >
@@ -643,7 +644,7 @@ export function GoogleAccountSettingsPanel() {
                           <TeamRulesInert lock={teamRulesLock}>
                             <Button
                               size="xs"
-                              variant="ghost-muted"
+                              variant="outline"
                               disabled={!canWrite || busy || wanted.size === 0}
                               aria-label={`${account.connected ? "Reconnect" : "Connect"} ${accountTitle(account)}`}
                               onClick={() => beginSignIn(account.id)}
@@ -654,7 +655,7 @@ export function GoogleAccountSettingsPanel() {
                           {account.connected ? (
                             <Button
                               size="xs"
-                              variant="ghost-muted"
+                              variant="destructive-outline"
                               disabled={!canWrite || busy || environmentId === null}
                               aria-label={`Disconnect ${accountTitle(account)}`}
                               onClick={() => {
@@ -669,7 +670,7 @@ export function GoogleAccountSettingsPanel() {
                           ) : null}
                           <Button
                             size="xs"
-                            variant="ghost-muted"
+                            variant="destructive-outline"
                             disabled={!canWrite || busy || environmentId === null}
                             aria-label={`Remove ${accountTitle(account)}`}
                             onClick={() => {
@@ -942,7 +943,7 @@ export function GoogleAccountSettingsPanel() {
                   >
                     {tx("Enable for all active projects")}
                   </Button>
-                  <Button size="xs" variant="ghost-muted" onClick={() => setOfferEnableAll(false)}>
+                  <Button size="xs" variant="outline" onClick={() => setOfferEnableAll(false)}>
                     {tx("Not now")}
                   </Button>
                 </div>
@@ -992,7 +993,7 @@ export function GoogleAccountSettingsPanel() {
                             <div className="flex gap-1">
                               <Button
                                 size="xs"
-                                variant="ghost-muted"
+                                variant="outline"
                                 disabled={!canWrite || busy || onCount === projects.length}
                                 aria-label={tx("Enable {service} for all active projects", {
                                   service: label,
@@ -1003,7 +1004,7 @@ export function GoogleAccountSettingsPanel() {
                               </Button>
                               <Button
                                 size="xs"
-                                variant="ghost-muted"
+                                variant="outline"
                                 disabled={!canWrite || busy || !anyOn}
                                 aria-label={tx("Disable {service} for all projects", {
                                   service: label,
@@ -1051,7 +1052,7 @@ export function GoogleAccountSettingsPanel() {
           <div className="border-t px-3 py-3 sm:px-4">
             <Button
               size="xs"
-              variant="ghost-muted"
+              variant="outline"
               disabled={!canWrite || busy}
               onClick={() => setReplacingClient(true)}
             >

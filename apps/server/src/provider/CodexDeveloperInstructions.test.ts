@@ -6,6 +6,7 @@ import {
   buildCodexAdditionalContext,
   buildCodexDeveloperInstructions,
 } from "./CodexDeveloperInstructions.ts";
+import { ADVISOR_GUIDANCE } from "@specweave-studio/shared/advisor";
 
 describe("buildCodexDeveloperInstructions", () => {
   it("appends runtime info after the mode instructions", () => {
@@ -107,6 +108,19 @@ describe("Studio browser developer instructions", () => {
     NodeAssert.doesNotMatch(
       runtimeInstructions({ ...runtime, responseStyle: "detailed" }),
       /<response_style mode="concise">/,
+    );
+  });
+
+  it("sends the advisor guidance as its own entry only while the advisor is on", () => {
+    const on = buildCodexAdditionalContext({ ...runtime, advisorGuidance: ADVISOR_GUIDANCE });
+    NodeAssert.equal(on.studio_code_advisor?.value, ADVISOR_GUIDANCE);
+    NodeAssert.equal(on.studio_code_advisor?.kind, "application");
+    // The runtime entry stays the same size so it keeps under Codex's per-entry cap.
+    NodeAssert.equal(on.studio_code_runtime!.value, runtimeInstructions(runtime));
+    NodeAssert.equal(buildCodexAdditionalContext(runtime).studio_code_advisor, undefined);
+    NodeAssert.equal(
+      buildCodexAdditionalContext({ ...runtime, advisorGuidance: " " }).studio_code_advisor,
+      undefined,
     );
   });
 

@@ -124,7 +124,7 @@ it("tags a project with no copy on this device with its machine, mutes it, and s
   expect(row()?.hasAttribute("data-elsewhere")).toBe(true);
   expect(container.querySelector("[data-project-elsewhere]")?.textContent).toBe("M5");
   expect(container.querySelector("[data-tip]")?.getAttribute("data-tip")).toContain(
-    "Runs on M5. No copy on this device.",
+    "On M5. Not on this device.",
   );
   // It still opens: the row stays a link to the project.
   expect(container.querySelector("a.sws-side-row")).not.toBeNull();

@@ -1,9 +1,14 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useCallback, useEffect } from "react";
 import { ProjectWorkspace } from "../components/studio/ProjectWorkspace";
-import { parseProjectWorkspaceSearch, projectWorkspaceSearch } from "../studio/projectPaneThreads";
+import {
+  parseProjectWorkspaceSearch,
+  projectKeyMoveSearch,
+  projectWorkspaceSearch,
+} from "../studio/projectPaneThreads";
 import type { SelectProjectThread } from "../studio/useProjectPaneSelection";
 import { useHiddenAideRoute } from "../studio/hiddenAideRoute";
+import { useChatsProjectRoute } from "../studio/chatsProjectRoute";
 export const Route = createFileRoute("/projects/$projectKey")({
   // `?thread=<id>` is the thread open in the right panel, so links, reload and
   // back/forward all land on it.
@@ -20,14 +25,18 @@ export const Route = createFileRoute("/projects/$projectKey")({
 function ProjectWorkspaceRoute() {
   const { projectKey } = Route.useParams();
   const search = Route.useSearch();
-  const { thread, checkout, threadEnvironment, restoreThread } = search;
+  const { thread, checkout, threadEnvironment, restoreThread, increment } = search;
   const navigate = Route.useNavigate();
   // A hidden personal assistant (Settings → General) has no page: links, history
   // and reloads that name it land on Overview instead. Nothing is deleted.
   const aideHidden = useHiddenAideRoute(projectKey);
+  // A machine's "No project" folder holds chats; it is not a project and has no page.
+  // Until its machine's config arrives, a folder shaped like one shows nothing.
+  const chatsRoute = useChatsProjectRoute(projectKey);
+  const leave = aideHidden || chatsRoute === "chats";
   useEffect(() => {
-    if (aideHidden) void navigate({ to: "/", replace: true });
-  }, [aideHidden, navigate]);
+    if (leave) void navigate({ to: "/", replace: true });
+  }, [leave, navigate]);
   const selectThread = useCallback<SelectProjectThread>(
     (next, options) => {
       if (
@@ -57,13 +66,16 @@ function ProjectWorkspaceRoute() {
       void navigate({
         to: "/projects/$projectKey",
         params: { projectKey: next },
-        search: {
-          ...projectWorkspaceSearch(thread ?? null, checkout, threadEnvironment),
-          ...(restoreThread ? { restoreThread: true } : {}),
-        },
+        search: projectKeyMoveSearch({
+          thread,
+          checkout,
+          threadEnvironment,
+          restoreThread,
+          increment,
+        }),
         replace: true,
       }),
-    [navigate, thread, checkout, threadEnvironment, restoreThread],
+    [navigate, thread, checkout, threadEnvironment, restoreThread, increment],
   );
   const selectCheckout = useCallback(
     (key: string) => {
@@ -75,7 +87,7 @@ function ProjectWorkspaceRoute() {
     },
     [navigate, projectKey],
   );
-  if (aideHidden) return null;
+  if (leave || chatsRoute === "pending") return null;
   return (
     <ProjectWorkspace
       projectKey={projectKey}

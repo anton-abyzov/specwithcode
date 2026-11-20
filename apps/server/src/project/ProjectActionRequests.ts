@@ -1,7 +1,8 @@
 /**
  * Project changes an agent may ask for but never make itself: archive,
- * restore, delete, move to another folder, or approve one more folder for the
- * project's agents. The agent's request shows an
+ * restore, delete, move to another folder, approve one more folder for the
+ * project's agents, or replace a model the person saved for the project. The
+ * agent's request shows an
  * approval card in its thread. Only the user's answer, which reaches the server
  * through the app's own connection, applies the change: the server applies it
  * and then tells the agent what happened. An agent cannot answer the card.
@@ -10,6 +11,7 @@
 import {
   CommandId,
   DEFAULT_PROJECT_ENVIRONMENT,
+  ModelSelection,
   NodeId,
   type OrchestrationV2Command,
   type OrchestrationV2UserInputQuestion,
@@ -18,6 +20,7 @@ import {
   ProjectFolderCheckError,
   type ProjectId,
   RuntimeRequestId,
+  type ServerProvider,
   type ThreadId,
   TurnItemId,
 } from "@specweave-studio/contracts";
@@ -47,6 +50,16 @@ import {
   resolveProjectEnvironment,
 } from "./ProjectEnvironmentPaths.ts";
 import * as ProjectService from "./ProjectService.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import {
+  describeModelSelection,
+  modelChangeCardText,
+  modelSelectionProblem,
+  ProjectModelRole,
+  projectThreadsUseTracks,
+  sameModelSelection,
+  savedProjectModel,
+} from "./projectModelChange.ts";
 import { PROJECT_ACTION_REQUEST_PREFIX } from "./projectActionRequestId.ts";
 
 export { isProjectActionRequestId } from "./projectActionRequestId.ts";
@@ -57,6 +70,7 @@ export const ProjectAction = Schema.Literals([
   "delete",
   "change_folder",
   "add_folder",
+  "change_model",
 ]);
 export type ProjectAction = typeof ProjectAction.Type;
 /** Asked for by studio_file_transfer, never through studio_project_request. */
@@ -97,6 +111,15 @@ export interface ProjectActionRequestInput {
   readonly workspaceRoot?: string;
   /** Required for add_folder: the folder the project's agents should also reach. */
   readonly folder?: string;
+  /** Required for change_model: which of the project's saved models to replace. */
+  readonly modelRole?: ProjectModelRole;
+  /** Required for change_model: the model and options to save, exactly as approved. */
+  readonly modelSelection?: ModelSelection;
+  /**
+   * change_model: this machine's providers, for the names on the card and to
+   * refuse a model it does not list. Empty or omitted names models by their ids.
+   */
+  readonly providers?: ReadonlyArray<ServerProvider>;
 }
 
 interface RequestRow {
@@ -127,6 +150,13 @@ const Params = Schema.fromJsonString(
         destinationPath: Schema.optional(Schema.String),
       }),
     ),
+    /** change_model: which saved model, and the exact selection the card named. */
+    modelRole: Schema.optional(ProjectModelRole),
+    modelSelection: Schema.optional(ModelSelection),
+    /** change_model: the model saved when the card was shown; approval needs it unchanged. */
+    previousModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+    /** change_model: the new choice as the card worded it, for the outcome. */
+    modelText: Schema.optional(Schema.String),
     title: Schema.String,
   }),
 );
@@ -244,6 +274,43 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  /**
+   * This machine's settings, read where the request runs: a Project settings
+   * override is part of what the person saved. Absent only in a test world.
+   */
+  const readSettings = Effect.gen(function* () {
+    const service = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+    if (Option.isNone(service)) return null;
+    // Unreadable settings could hide an override, so nothing is asked or saved on a guess.
+    return yield* service.value.getSettings.pipe(
+      Effect.mapError(() => failure("This machine's settings could not be read. Try again.")),
+    );
+  });
+
+  /**
+   * A Project settings override outranks the project's own thread model, and
+   * the project service removes one only when the field itself changes. An
+   * approved model must be the one threads start on, so what is left goes here.
+   */
+  const clearThreadModelOverride = (projectId: ProjectId, name: string) =>
+    Effect.gen(function* () {
+      const service = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+      if (Option.isNone(service)) return;
+      const stuck = failure(
+        `New threads in ${name} still start on its older Project settings override, which could not be removed. Remove it in Settings, scoped to the project.`,
+      );
+      const settings = yield* service.value.getSettings.pipe(Effect.mapError(() => stuck));
+      if (
+        !Object.hasOwn(settings.projectSettingsOverrides[projectId] ?? {}, "defaultModelSelection")
+      )
+        return;
+      yield* service.value
+        .updateSettings({
+          projectSettingsOverrideChanges: { [projectId]: { clear: ["defaultModelSelection"] } },
+        })
+        .pipe(Effect.mapError(() => stuck));
+    });
+
   const countThreads = (projectId: ProjectId) =>
     threads.getShellSnapshot().pipe(
       Effect.map(
@@ -332,7 +399,16 @@ export const make = Effect.gen(function* () {
     input: ProjectActionRequestInput,
     project: Project,
   ): Effect.fn.Return<
-    { readonly question: string; readonly canonicalFolder?: string },
+    {
+      readonly question: string;
+      readonly canonicalFolder?: string;
+      readonly model?: {
+        readonly role: ProjectModelRole;
+        readonly selection: ModelSelection;
+        readonly previous: ModelSelection | null;
+        readonly text: string;
+      };
+    },
     ProjectActionRequestError
   > {
     const name = `"${project.title}"`;
@@ -378,6 +454,44 @@ export const make = Effect.gen(function* () {
         return {
           question: `Let agents in the project ${name} read and write ${canonical}?\n\nThreads in the project can use it from their next turn; turns already running keep their current folders.${asked}${personal}${first} Remove it any time in project settings.\n\n${why}`,
           canonicalFolder: canonical,
+        };
+      }
+      case "change_model": {
+        const role = input.modelRole;
+        const selection = input.modelSelection;
+        if (role === undefined || selection === undefined)
+          return yield* failure(
+            'Pass role ("threads" for the model new threads start on, "coordinator" for the coordinator\'s own) and modelSelection: the provider, model and options to save.',
+          );
+        const providers = input.providers ?? [];
+        const problem = modelSelectionProblem(selection, providers);
+        if (problem !== null) return yield* failure(problem);
+        const settings = yield* readSettings;
+        // On Tracks the track for the task picks the model; saving one here would change nothing.
+        if (role === "threads" && projectThreadsUseTracks(project, settings))
+          return yield* failure(
+            `New threads in ${name} start from its model tracks, so no single saved model applies. The user edits the tracks in project settings.`,
+          );
+        const previous = savedProjectModel(project, role, settings).model;
+        if (sameModelSelection(previous, selection))
+          return yield* failure(
+            `The project ${name} already has that model saved with those options. Nothing to change.`,
+          );
+        return {
+          question: modelChangeCardText({
+            projectTitle: project.title,
+            role,
+            from: previous,
+            to: selection,
+            providers,
+            reason: input.reason,
+          }),
+          model: {
+            role,
+            selection,
+            previous,
+            text: describeModelSelection(selection, providers),
+          },
         };
       }
       case "archive":
@@ -434,7 +548,7 @@ export const make = Effect.gen(function* () {
     "ProjectActionRequests.request",
   )(function* (input) {
     const project = yield* readProject(input.projectId);
-    const { question, canonicalFolder } = yield* describe(input, project);
+    const { question, canonicalFolder, model } = yield* describe(input, project);
     const records = yield* threads
       .getThreadRecords(input.threadId, ["runs"])
       .pipe(Effect.mapError(() => failure("The asking thread could not be read.")));
@@ -454,6 +568,14 @@ export const make = Effect.gen(function* () {
           ...(input.folder === undefined ? {} : { folder: input.folder }),
           ...(canonicalFolder === undefined ? {} : { canonicalFolder }),
           ...(input.secretTransfer === undefined ? {} : { secretTransfer: input.secretTransfer }),
+          ...(model === undefined
+            ? {}
+            : {
+                modelRole: model.role,
+                modelSelection: model.selection,
+                previousModelSelection: model.previous,
+                modelText: model.text,
+              }),
         })},
         ${input.reason}, ${input.threadId}, 'pending', ${now}
       )`.pipe(Effect.mapError(() => failure("The request could not be recorded.")));
@@ -568,6 +690,49 @@ export const make = Effect.gen(function* () {
           },
         });
         return `Added ${canonical} to the approved folders of ${name}. Threads there can use it from their next turn.`;
+      }
+      case "change_model": {
+        const role = params.modelRole;
+        const selection = params.modelSelection;
+        if (role === undefined || selection === undefined)
+          return yield* failure("The request named no model.");
+        const project = yield* projects.getById(projectId);
+        if (Option.isNone(project)) return yield* failure(`The project ${name} no longer exists.`);
+        // The person approved replacing the model the card named, not whatever is saved now.
+        const settings = yield* readSettings;
+        if (role === "threads" && projectThreadsUseTracks(project.value, settings))
+          return yield* failure(
+            `New threads in ${name} now start from its model tracks, so no single saved model applies.`,
+          );
+        const current = savedProjectModel(project.value, role, settings).model;
+        if (!sameModelSelection(current, params.previousModelSelection ?? null))
+          return yield* failure(
+            `The saved model of ${name} changed after this card was shown (it is now ${describeModelSelection(current, [])}). Ask again if the change is still wanted.`,
+          );
+        yield* projects.update(
+          role === "coordinator"
+            ? {
+                commandId,
+                projectId,
+                approvalRequestId,
+                workspaceSettings: {
+                  expectedRevision: project.value.workspaceSettings?.revision ?? 0,
+                  coordinatorModelSelection: selection,
+                },
+              }
+            : {
+                commandId,
+                projectId,
+                approvalRequestId,
+                defaultModelSelection: selection,
+                // A save landing between the check above and this write wins.
+                expectedDefaultModelSelection: project.value.defaultModelSelection,
+              },
+        );
+        if (role === "threads") yield* clearThreadModelOverride(projectId, name);
+        const what =
+          role === "coordinator" ? "The coordinator model" : "The model new threads start on";
+        return `${what} of ${name} is now ${params.modelText ?? describeModelSelection(selection, [])}.`;
       }
       case "change_folder": {
         if (params.workspaceRoot === undefined)

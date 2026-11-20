@@ -1,31 +1,32 @@
 /**
- * Away intents (1267 AC-09, the target's half). Within the five seconds a
- * Mac gives before it sleeps, the source records here that it is going away:
- * which of its projects' coordinators this machine should take over, and
- * which of its threads were replicated here to continue. The intent waits out
- * its grace on this machine's clock. It is cancelled when the source asks
- * (`AWAY_INTENT_CANCEL_PATH`), when it is heard awake (a lease that is not
- * its going-to-sleep lease, after the intent), or when it answers at the
- * moment the grace runs out. Otherwise it turns `acting` under the lock, from
- * when no cancel can stop it, and this machine takes over each project like
- * an armed standby (`ProjectLink.awayTakeover`), claims the epoch and adopts
- * the source's workers, then hands the intent to whoever registered
- * `onIntentDue` (the Away runner continues the replicated threads). A cancel
- * that comes too late is refused with what was taken over, and the source
- * gives way; `AWAY_INTENT_STATUS_PATH` answers the same for each project.
+ * Away intents an earlier release recorded here (1267 AC-09; 1390 AC-36).
  *
- * Kept as a JSON file in the state directory, like the standby records, so
- * an intent survives a restart of this machine.
+ * A machine going to sleep starts nothing, so no intent is recorded any more:
+ * `AWAY_INTENT_PATH` answers a definite refusal. What is left is the drain of
+ * intents this machine recorded before it updated, by the state each is in:
+ *
+ * - waiting: cancelled. Its grace is not waited out, and nothing is taken over.
+ * - done: the takeover it made stands. A cancel that comes after is refused
+ *   with what was taken over, and the source gives way.
+ * - acting: unknown, the process stopped mid-takeover. It is settled from what
+ *   the project bindings and handoff mode show: done when a project was taken
+ *   over or one of its threads continued here, cancelled only when provably
+ *   nothing was. While any of that cannot be read, or a thread's launch is in
+ *   doubt, it stays acting and is checked again. Nothing new is started.
+ *
+ * `AWAY_INTENT_STATUS_PATH` answers, per project, whether this machine took it
+ * over, so a source that never got the first answer still learns the outcome.
+ *
+ * Kept as a JSON file in the state directory, so an intent survives a restart.
+ * A file that is there but does not read as intents is an error, never "no
+ * intents": a source reads "no intent" as "nothing moved".
  */
 import {
-  AWAY_INTENT_CANCEL_PATH,
-  AWAY_INTENT_PATH,
   AwayError,
   type AwayHandoverResult,
   type AwayIntentCancelAnswer,
   type AwayIntentProjectStatus,
   AwayIntentRecord,
-  type AwayIntentRequest,
   type AwayIntentState,
   type EnvironmentId,
   type Project,
@@ -41,29 +42,27 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as PubSub from "effect/PubSub";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { RemoteWorkerAdoption } from "../fleet/RemoteWorkerAdoption.ts";
-import { HandoffPeers } from "../handoff/handoffPeers.ts";
+import { HandoffReceiver } from "../handoff/HandoffReceiver.ts";
+import type { ContinuationEvidence } from "../handoff/handoffState.ts";
 import { parseJson, stringifyJson } from "../json.ts";
 import { claimTargets } from "../project/CoordinatorPlannedHandover.ts";
 import { CoordinatorStandbyStore } from "../project/CoordinatorStandbyStore.ts";
-import { heardAwakeSince, STANDBY_TICK_MS } from "../project/CoordinatorStandbyWatch.ts";
-import { ProjectLink } from "../project/ProjectLink.ts";
+import { STANDBY_TICK_MS } from "../project/CoordinatorStandbyWatch.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { forkParked } from "../serverActivation.ts";
-import { type AwayPeerPost, makeAwayPeerPost } from "./awayPeerCall.ts";
 
 const FILE_NAME = "away-intents.json";
-/** Settled intents kept for the summary; older ones are dropped. */
+/** Settled intents kept for the summary; older ones are dropped, except each source's receipts. */
 const KEEP_SETTLED = 50;
-const SEND_TIMEOUT_MS = 4_000;
+/** Why a waiting intent ends: sleep no longer starts a move (1390 AC-36). */
+export const SLEEP_START_RETIRED = "sleep-start-retired";
 
 const StoreFile = Schema.Struct({
   version: Schema.Literal(1),
@@ -95,19 +94,25 @@ export const memoryIntentStore = (
 
 export interface AwayIntentsDeps {
   readonly store: AwayIntentStore;
-  readonly newId: Effect.Effect<string>;
-  /** Whether the source was heard awake since the intent arrived, or answers now. */
-  readonly heardAwake: (intent: AwayIntentRecord) => Effect.Effect<boolean>;
-  /** Takes over each of the source's projects; one result per project, never fails. */
-  readonly act: (intent: AwayIntentRecord) => Effect.Effect<ReadonlyArray<AwayHandoverResult>>;
+  /**
+   * What an intent left `acting` really took over, one result per project, from
+   * the bindings here. It starts no takeover; it may finish adopting the workers
+   * of a project already taken over. Fails when the bindings cannot be read.
+   */
+  readonly settleActed: (
+    intent: AwayIntentRecord,
+  ) => Effect.Effect<ReadonlyArray<AwayHandoverResult>, AwayError>;
+  /**
+   * Whether the source's thread was continued here (handoff mode's receiver).
+   * Never launches; `unresolved` when it cannot tell.
+   */
+  readonly continuation: (
+    sourceEnvironmentId: EnvironmentId,
+    sourceThreadId: string,
+  ) => Effect.Effect<ContinuationEvidence>;
 }
 
 export interface AwayIntentsShape {
-  /** Records the source's intent; it replaces one still waiting from the same source. */
-  readonly record: (
-    sourceEnvironmentId: EnvironmentId,
-    request: Omit<AwayIntentRequest, "sourceEnvironmentId">,
-  ) => Effect.Effect<AwayIntentRecord, AwayError>;
   /**
    * The source is back: its waiting intents are cancelled. When its latest
    * intent is already acting or done nothing is cancelled, and the answer
@@ -122,22 +127,13 @@ export interface AwayIntentsShape {
     sourceEnvironmentId: EnvironmentId,
   ) => Effect.Effect<AwayIntentState | null, AwayError>;
   readonly list: Effect.Effect<ReadonlyArray<AwayIntentRecord>, AwayError>;
-  /** Acts on every intent whose grace ran out; returns the ones it settled. */
+  /**
+   * Drains what an earlier release left: cancels every waiting intent and
+   * settles every acting one whose outcome reads. Returns the ones it settled.
+   * An unreadable store settles nothing; an acting intent whose bindings or
+   * threads do not read stays acting for the next tick.
+   */
   readonly tick: Effect.Effect<ReadonlyArray<AwayIntentRecord>>;
-  /**
-   * Runs `handler` with each intent this machine acted on, after its
-   * takeovers. The Away runner continues the replicated threads here.
-   */
-  readonly onIntentDue: (
-    handler: (intent: AwayIntentRecord) => Effect.Effect<void>,
-  ) => Effect.Effect<void>;
-  /** Every intent this machine acted on, as it acts. */
-  readonly due: Stream.Stream<AwayIntentRecord>;
-  /**
-   * Whether the follow-up of the source's acted intent (continuing its
-   * threads) still runs here, so a thread not continued yet may still be.
-   */
-  readonly followUpRunning: (sourceEnvironmentId: EnvironmentId) => Effect.Effect<boolean>;
 }
 
 const isoAt = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
@@ -145,11 +141,6 @@ const isoAt = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
 export const makeAwayIntents = (deps: AwayIntentsDeps) =>
   Effect.gen(function* () {
     const lock = yield* Semaphore.make(1);
-    const published = yield* PubSub.unbounded<AwayIntentRecord>();
-    const handlers: Array<(intent: AwayIntentRecord) => Effect.Effect<void>> = [];
-    /** Sources whose acted intent's follow-up (the hooks) runs now. */
-    const following = new Map<string, number>();
-
     const modify = <A>(change: (current: StoreFile) => readonly [A, StoreFile | undefined]) =>
       lock.withPermit(
         Effect.gen(function* () {
@@ -158,41 +149,6 @@ export const makeAwayIntents = (deps: AwayIntentsDeps) =>
           return result;
         }),
       );
-
-    const record: AwayIntentsShape["record"] = (sourceEnvironmentId, request) =>
-      Effect.gen(function* () {
-        const nowMs = yield* Clock.currentTimeMillis;
-        const intentId = yield* deps.newId;
-        const intent: AwayIntentRecord = {
-          intentId,
-          sourceEnvironmentId,
-          graceMinutes: request.graceMinutes,
-          projectIds: [...request.projectIds],
-          threadIds: [...request.threadIds],
-          receivedAt: isoAt(nowMs),
-          dueAt: isoAt(nowMs + request.graceMinutes * 60_000),
-          state: "waiting",
-        };
-        return yield* modify((current) => [
-          intent,
-          {
-            ...current,
-            intents: [
-              ...current.intents.map((held) =>
-                held.state === "waiting" && held.sourceEnvironmentId === sourceEnvironmentId
-                  ? {
-                      ...held,
-                      state: "cancelled" as const,
-                      cancelledAt: intent.receivedAt,
-                      cancelReason: "replaced",
-                    }
-                  : held,
-              ),
-              intent,
-            ],
-          },
-        ]);
-      });
 
     const cancel: AwayIntentsShape["cancel"] = (sourceEnvironmentId, reason) =>
       Effect.gen(function* () {
@@ -210,6 +166,14 @@ export const makeAwayIntents = (deps: AwayIntentsDeps) =>
                 },
                 undefined,
               ];
+            // An earlier delivery from this source acted while a later one still waits. A
+            // source on an earlier release reads a count as "nothing moved" and runs its
+            // work again, so it hears what was taken and settles through status instead.
+            const acted = current.intents.findLast(
+              (held) =>
+                held.sourceEnvironmentId === sourceEnvironmentId &&
+                (held.state === "acting" || held.state === "done"),
+            );
             let cancelled = 0;
             const intents = current.intents.map((held) => {
               if (held.state !== "waiting" || held.sourceEnvironmentId !== sourceEnvironmentId)
@@ -223,11 +187,13 @@ export const makeAwayIntents = (deps: AwayIntentsDeps) =>
               };
             });
             return [
-              {
-                cancelled,
-                state: cancelled > 0 ? "cancelled" : (latest?.state ?? null),
-                takenOver: [],
-              },
+              acted === undefined
+                ? {
+                    cancelled,
+                    state: cancelled > 0 ? "cancelled" : (latest?.state ?? null),
+                    takenOver: [],
+                  }
+                : { cancelled: 0, state: acted.state, takenOver: takenOverBy(acted) },
               cancelled === 0 ? undefined : { ...current, intents },
             ];
           },
@@ -251,72 +217,64 @@ export const makeAwayIntents = (deps: AwayIntentsDeps) =>
 
     const tick: AwayIntentsShape["tick"] = Effect.gen(function* () {
       const nowMs = yield* Clock.currentTimeMillis;
-      // An intent left acting by a restart is finished first; it can no longer be cancelled.
-      const due = (yield* deps.store.read).intents.filter(
-        (intent) =>
-          intent.state === "acting" ||
-          (intent.state === "waiting" && Date.parse(intent.dueAt) <= nowMs),
+      const open = (yield* deps.store.read).intents.filter(
+        (intent) => intent.state === "acting" || intent.state === "waiting",
       );
       const settled: AwayIntentRecord[] = [];
-      for (const intent of due) {
-        let acting: AwayIntentRecord | undefined = intent.state === "acting" ? intent : undefined;
-        if (acting === undefined) {
-          if (yield* deps.heardAwake(intent)) {
-            const cancelled = yield* settle(intent.intentId, "waiting", (held) => ({
-              ...held,
-              state: "cancelled",
-              cancelledAt: isoAt(nowMs),
-              cancelReason: "heard-awake",
-            }));
-            if (cancelled !== undefined) settled.push(cancelled);
-            continue;
-          }
-          // Under the lock, so a cancel either came first (nothing happens) or is refused.
-          acting = yield* settle(intent.intentId, "waiting", (held) => ({
+      for (const intent of open) {
+        if (intent.state === "waiting") {
+          // Under the lock, so a cancel from the source either came first or finds it cancelled.
+          const cancelled = yield* settle(intent.intentId, "waiting", (held) => ({
             ...held,
-            state: "acting",
-            actedAt: isoAt(nowMs),
+            state: "cancelled",
+            cancelledAt: isoAt(nowMs),
+            cancelReason: SLEEP_START_RETIRED,
           }));
-          if (acting === undefined) continue;
+          if (cancelled !== undefined) settled.push(cancelled);
+          continue;
         }
-        // Takeovers replay by their operation ids, so a restart before the
-        // intent is marked done only repeats them.
-        const results = yield* deps.act(acting);
-        // Counted before the done write, so a status read in between never sees
-        // a done intent with no follow-up running and calls its threads settled.
-        following.set(
-          acting.sourceEnvironmentId,
-          (following.get(acting.sourceEnvironmentId) ?? 0) + 1,
+        // Left acting by a restart: it may have taken projects over or continued its
+        // threads. With either it ends as done, and the source gives way. With provably
+        // neither it ends as cancelled: a source reads "done" as "work moved" and would
+        // bring back work that never left. Anything unreadable or in doubt writes nothing.
+        const acted = yield* deps.settleActed(intent).pipe(Effect.result);
+        if (acted._tag === "Failure") {
+          yield* Effect.logWarning("Away: an acting intent stays acting; bindings did not read", {
+            intentId: intent.intentId,
+            cause: acted.failure.message,
+          });
+          continue;
+        }
+        const results = acted.success;
+        const threads = yield* Effect.forEach(intent.threadIds, (threadId) =>
+          deps.continuation(intent.sourceEnvironmentId, threadId),
         );
-        const done =
-          (yield* settle(intent.intentId, "acting", (held) => ({
-            ...held,
-            state: "done",
-            actedAt: held.actedAt ?? isoAt(nowMs),
-            results: [...results],
-          }))) ??
-          // Nothing else moves an acting intent; if the write was lost, the hooks still run.
-          ({ ...acting, state: "done", results: [...results] } satisfies AwayIntentRecord);
-        settled.push(done);
-        yield* PubSub.publish(published, done);
-        yield* Effect.forEach(
-          handlers,
-          (handler) =>
-            handler(done).pipe(
-              Effect.catchCause((cause) =>
-                Effect.logWarning("An away intent hook failed", { intentId: done.intentId, cause }),
-              ),
-            ),
-          { discard: true },
-        ).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              const left = (following.get(done.sourceEnvironmentId) ?? 1) - 1;
-              if (left <= 0) following.delete(done.sourceEnvironmentId);
-              else following.set(done.sourceEnvironmentId, left);
-            }),
-          ),
+        if (threads.some((evidence) => evidence.kind === "unresolved")) {
+          yield* Effect.logInfo("Away: an acting intent stays acting; a launch is in doubt", {
+            intentId: intent.intentId,
+          });
+          continue;
+        }
+        const took =
+          results.some((result) => result.outcome === "handed-over") ||
+          threads.some((evidence) => evidence.kind === "continued");
+        const ended = yield* settle(intent.intentId, "acting", (held) =>
+          took
+            ? {
+                ...held,
+                state: "done",
+                actedAt: held.actedAt ?? isoAt(nowMs),
+                results: [...results],
+              }
+            : {
+                ...held,
+                state: "cancelled",
+                cancelledAt: isoAt(nowMs),
+                cancelReason: SLEEP_START_RETIRED,
+                results: [...results],
+              },
         );
+        if (ended !== undefined) settled.push(ended);
       }
       return settled;
     }).pipe(
@@ -326,7 +284,6 @@ export const makeAwayIntents = (deps: AwayIntentsDeps) =>
     );
 
     return {
-      record,
       cancel,
       latestState: (sourceEnvironmentId) =>
         deps.store.read.pipe(
@@ -334,10 +291,6 @@ export const makeAwayIntents = (deps: AwayIntentsDeps) =>
         ),
       list: deps.store.read.pipe(Effect.map((file) => file.intents)),
       tick,
-      onIntentDue: (handler) => Effect.sync(() => void handlers.push(handler)),
-      due: Stream.fromPubSub(published),
-      followUpRunning: (sourceEnvironmentId) =>
-        Effect.sync(() => (following.get(sourceEnvironmentId) ?? 0) > 0),
     } satisfies AwayIntentsShape;
   });
 
@@ -388,13 +341,68 @@ export function projectStatus(
   };
 }
 
-/** Keeps every open intent and the newest settled ones. */
+/**
+ * What an intent really took over, read from this machine's project bindings:
+ * `handed-over` where its copy coordinates with the source's copy as its
+ * predecessor, `skipped` where it does not.
+ */
+export function actedResults(
+  projects: ReadonlyArray<Project>,
+  selfEnvironmentId: string,
+  intent: Pick<AwayIntentRecord, "sourceEnvironmentId" | "projectIds">,
+): Array<AwayHandoverResult> {
+  return intent.projectIds.map((projectId) => {
+    const status = projectStatus(
+      projects,
+      selfEnvironmentId,
+      intent.sourceEnvironmentId,
+      projectId,
+    );
+    return status.takenOver
+      ? {
+          projectId,
+          outcome: "handed-over" as const,
+          detail: "This machine coordinates the project now.",
+          ...(status.epoch === undefined ? {} : { epoch: status.epoch }),
+        }
+      : {
+          projectId,
+          outcome: "skipped" as const,
+          detail: "Not taken over: a machine going to sleep no longer hands work off.",
+        };
+  });
+}
+
+/**
+ * The intents no compaction drops: each source's latest, which cancel and
+ * status answer about, and its latest done one, the receipt that its work
+ * moved here. One is retired only once a later one of the same kind from the
+ * same source is recorded, which only an earlier release does, so other
+ * sources' intents never push them out.
+ */
+function receiptsOf(intents: ReadonlyArray<AwayIntentRecord>): ReadonlySet<string> {
+  const latest = new Map<string, string>();
+  const done = new Map<string, string>();
+  for (const intent of intents) {
+    latest.set(intent.sourceEnvironmentId, intent.intentId);
+    if (intent.state === "done") done.set(intent.sourceEnvironmentId, intent.intentId);
+  }
+  return new Set([...latest.values(), ...done.values()]);
+}
+
+/** Keeps every open intent, every source's receipts and the newest other settled ones. */
 function trim(file: StoreFile): StoreFile {
   const settled = file.intents.filter(
     (intent) => intent.state !== "waiting" && intent.state !== "acting",
   );
   if (settled.length <= KEEP_SETTLED) return file;
-  const drop = new Set(settled.slice(0, settled.length - KEEP_SETTLED).map((i) => i.intentId));
+  const kept = receiptsOf(file.intents);
+  const drop = new Set(
+    settled
+      .filter((intent) => !kept.has(intent.intentId))
+      .slice(0, settled.length - KEEP_SETTLED)
+      .map((intent) => intent.intentId),
+  );
   return { ...file, intents: file.intents.filter((intent) => !drop.has(intent.intentId)) };
 }
 
@@ -416,35 +424,20 @@ export function linkedCopyOf(
 
 // --- the service ---------------------------------------------------------------
 
-export class AwayIntents extends Context.Service<
-  AwayIntents,
-  AwayIntentsShape & {
-    /** On the source: records the intent on the target before this machine sleeps. */
-    readonly send: (
-      targetEnvironmentId: EnvironmentId,
-      request: AwayIntentRequest,
-    ) => Effect.Effect<void, AwayError>;
-    /** On the source, back: cancels the intent it left on the target. */
-    readonly sendCancel: (
-      targetEnvironmentId: EnvironmentId,
-      sourceEnvironmentId: EnvironmentId,
-    ) => Effect.Effect<void, AwayError>;
-  }
->()("specweave-studio/away/AwayIntents") {}
+export class AwayIntents extends Context.Service<AwayIntents, AwayIntentsShape>()(
+  "specweave-studio/away/AwayIntents",
+) {}
 
 export const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
   const config = yield* ServerConfig.ServerConfig;
-  const link = yield* ProjectLink;
   const projects = yield* ProjectService.ProjectService;
   const standby = yield* CoordinatorStandbyStore;
-  const peers = yield* HandoffPeers;
   const adoption = yield* RemoteWorkerAdoption;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const selfEnvironmentId = yield* environment.getEnvironmentId;
-  const post: AwayPeerPost = yield* makeAwayPeerPost;
   const file = path.join(config.stateDir, FILE_NAME);
   const failed = (message: string) => new AwayError({ code: "failed", message });
 
@@ -458,7 +451,10 @@ export const make = Effect.gen(function* () {
       } catch {
         raw = null;
       }
-      return Option.getOrElse(decodeStore(raw), () => EMPTY);
+      const decoded = decodeStore(raw);
+      // Unreadable is not empty: "no intent" would tell a source that nothing moved.
+      if (Option.isNone(decoded)) return yield* failed("The away intents here do not read.");
+      return decoded.value;
     }).pipe(Effect.mapError(() => failed("Could not read the away intents on this machine."))),
     write: (next) =>
       Effect.gen(function* () {
@@ -469,75 +465,51 @@ export const make = Effect.gen(function* () {
       }).pipe(Effect.mapError(() => failed("Could not save the away intents on this machine."))),
   };
 
+  // The receiver that records incoming threads: the one handoff moves take over with,
+  // so a thread's outcome is read under its takeover's lock.
+  const receiver = yield* HandoffReceiver;
   const core = yield* makeAwayIntents({
     store,
-    newId: crypto.randomUUIDv4.pipe(Effect.orDie),
-    heardAwake: (intent) =>
-      Effect.gen(function* () {
-        const receivedMs = Date.parse(intent.receivedAt);
-        const records = yield* standby.list.pipe(Effect.orElseSucceed(() => []));
-        if (
-          records.some(
-            (record) =>
-              record.coordinator.environmentId === intent.sourceEnvironmentId &&
-              heardAwakeSince(record, receivedMs),
-          )
-        )
-          return true;
-        // Answering now means it is awake and still coordinating: taking over would make two.
-        return yield* peers.reachable(intent.sourceEnvironmentId);
-      }),
-    act: (intent) =>
+    continuation: receiver.continuation,
+    settleActed: (intent) =>
       Effect.gen(function* () {
         const snapshot = yield* projects.snapshot.pipe(
           Effect.map((value) => value.projects),
-          Effect.orElseSucceed(() => []),
+          Effect.mapError(() => failed("Could not read the projects on this machine.")),
         );
-        const results: AwayHandoverResult[] = [];
-        for (const sourceProjectId of intent.projectIds) {
-          const result = (
-            outcome: AwayHandoverResult["outcome"],
-            detail: string,
-            epoch?: number,
-          ): AwayHandoverResult => ({
-            projectId: sourceProjectId,
-            outcome,
-            detail: detail.slice(0, 500),
-            ...(epoch === undefined ? {} : { epoch }),
-          });
-          const copy = linkedCopyOf(snapshot, intent.sourceEnvironmentId, sourceProjectId);
-          if (copy === undefined) {
-            results.push(result("failed", "This project has no linked copy on this machine."));
-            continue;
-          }
-          const taken = yield* link
-            .awayTakeover({ projectId: copy.id, sourceEnvironmentId: intent.sourceEnvironmentId })
-            .pipe(Effect.result);
-          if (taken._tag === "Failure") {
-            results.push(
-              result(
-                taken.failure.code === "superseded_conflict" ? "skipped" : "failed",
-                taken.failure.detail ?? `Not taken over (${taken.failure.code}).`,
-              ),
-            );
-            continue;
-          }
-          const { coordinatorBinding, logicalProject } = taken.success;
-          const self = logicalProject.members.find(
-            (member) => member.environmentId === selfEnvironmentId && member.projectId === copy.id,
+        const results = actedResults(snapshot, selfEnvironmentId, intent);
+        // The takeover and the adoption of the source's workers were two steps. For a
+        // project already taken over the adoption is repeated: it replays by its
+        // operation ids, so one that finished changes nothing.
+        for (const result of results) {
+          if (result.outcome !== "handed-over") continue;
+          const copy = linkedCopyOf(snapshot, intent.sourceEnvironmentId, result.projectId);
+          const binding = copy?.workspaceSettings?.coordinatorBinding;
+          const logicalProject = copy?.workspaceSettings?.logicalProject;
+          const self = logicalProject?.members.find(
+            (member) => member.environmentId === selfEnvironmentId && member.projectId === copy?.id,
           );
-          const predecessor = coordinatorBinding.predecessor;
+          const predecessor = binding?.predecessor;
+          if (
+            copy === undefined ||
+            binding === undefined ||
+            logicalProject === undefined ||
+            self === undefined ||
+            predecessor === undefined
+          )
+            continue;
+          // Unread, the source's workers would be adopted as none: settled on a later tick.
           const record = yield* standby
             .get(logicalProject.id)
-            .pipe(Effect.orElseSucceed(() => undefined));
+            .pipe(Effect.mapError(() => failed("Could not read the standby records here.")));
           const shadowWorkers =
             record !== undefined && record.coordinator.environmentId === intent.sourceEnvironmentId
               ? record.shadowWorkers
               : [];
-          if (self !== undefined && predecessor !== undefined)
-            yield* adoption.adopt({
+          yield* adoption
+            .adopt({
               logicalProjectId: logicalProject.id,
-              epoch: coordinatorBinding.epoch,
+              epoch: binding.epoch,
               projectId: copy.id,
               coordinatorThreadId: self.coordinatorThreadId,
               predecessor,
@@ -548,37 +520,21 @@ export const make = Effect.gen(function* () {
                 selfEnvironmentId,
                 intent.sourceEnvironmentId,
               ),
-            });
-          results.push(
-            result(
-              "handed-over",
-              "This machine coordinates the project now.",
-              coordinatorBinding.epoch,
-            ),
-          );
+            })
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Away: could not finish adopting a taken project's workers", {
+                  projectId: copy.id,
+                  cause,
+                }),
+              ),
+            );
         }
         return results;
       }),
   });
 
-  const send = (targetEnvironmentId: EnvironmentId, path: string, body: unknown) =>
-    post(targetEnvironmentId, path, body, SEND_TIMEOUT_MS).pipe(
-      Effect.asVoid,
-      Effect.mapError(
-        (error) =>
-          new AwayError({
-            code: error.uncertain ? "unreachable" : "failed",
-            message: error.message,
-          }),
-      ),
-    );
-
-  return AwayIntents.of({
-    ...core,
-    send: (targetEnvironmentId, request) => send(targetEnvironmentId, AWAY_INTENT_PATH, request),
-    sendCancel: (targetEnvironmentId, sourceEnvironmentId) =>
-      send(targetEnvironmentId, AWAY_INTENT_CANCEL_PATH, { sourceEnvironmentId }),
-  });
+  return AwayIntents.of(core);
 });
 
 export const layer = Layer.effect(AwayIntents, make);

@@ -246,13 +246,20 @@ function Children({ className, render, ...props }: useRender.ComponentProps<"div
   });
 }
 
-/** Bounded banner content uses the app's scroll area and fades only overflowing edges. */
+/**
+ * Bounded banner content uses the app's scroll area and fades only overflowing edges.
+ * Its height follows the thread panel (`--chat-panel-height`, set by the chat view),
+ * falling back to the window, so a short window or side panel keeps the thread visible.
+ */
 function Scroll({ className, children, ...props }: ComponentProps<typeof ScrollArea>) {
   return (
     <ScrollArea
       radius="none"
       scrollFade
-      className={cn("h-auto max-h-[min(24rem,40dvh)]", className)}
+      className={cn(
+        "h-auto max-h-[min(24rem,calc(var(--chat-panel-height,100dvh)*0.4))]",
+        className,
+      )}
       {...props}
     >
       {/* Clears the overlay scrollbar only once there is something to scroll. */}

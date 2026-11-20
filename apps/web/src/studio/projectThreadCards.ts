@@ -9,6 +9,7 @@ import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/st
 import { resolveThreadCurrentPullRequestLink } from "@specweave-studio/shared/threadPullRequests";
 import type { VcsStatusResult } from "@specweave-studio/contracts";
 
+import type { HostDownNote } from "../lib/machineStatus";
 import { THREAD_TONE_LABELS, threadStatusWord, threadTone, type ThreadTone } from "./shellModel";
 
 /** A thread's dot: the pane's tones, plus "done" for a thread whose last turn finished. */
@@ -26,9 +27,13 @@ export function threadCardStatus(
   thread: StatusShell,
   hostOffline = false,
   hostReach?: MachineReachState,
+  /** The fleet says the host's address now answers as a different SpecWithCode. */
+  hostIdentityMismatch = false,
+  /** Why the host is out of reach beyond its reach state ("Needs sign-in"). */
+  hostNote: HostDownNote | null = null,
 ): ThreadCardStatus {
   const tone = threadTone(thread, hostOffline);
-  const word = threadStatusWord(thread, hostOffline, hostReach);
+  const word = threadStatusWord(thread, hostOffline, hostReach, hostIdentityMismatch, hostNote);
   if (word !== null) return { tone, label: word };
   if (tone === "idle" && thread.latestRun?.status === "completed")
     return { tone: "done", label: "Done" };

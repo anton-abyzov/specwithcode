@@ -115,7 +115,8 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       };
       const authConfigIssue = antigravityAuthConfigIssue(auth);
       const processEnvironment = mergeProviderInstanceEnvironment(environment);
-      const userHome = resolveAntigravityUserHome(yield* HostProcessPlatform, processEnvironment);
+      const platform = yield* HostProcessPlatform;
+      const userHome = resolveAntigravityUserHome(platform, processEnvironment);
       const directories = yield* resolveAntigravityInstanceDirectories(
         serverConfig.stateDir,
         instanceId,
@@ -393,6 +394,14 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         stampIdentity: classifyModels,
         probe,
         auth: { type: auth.authMethod, label: antigravityAuthLabel(auth.authMethod) },
+        // A custom executable, or one a person put on PATH. An install made in
+        // the app is announced by the install itself.
+        installProbe: {
+          command:
+            settings.binaryPath.trim() ||
+            AntigravityInstallation.antigravityExecutableName(platform),
+          environment: processEnvironment,
+        },
         supportsTextGeneration: isAntigravityTextGenerationAvailable(profileDirectory).pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),

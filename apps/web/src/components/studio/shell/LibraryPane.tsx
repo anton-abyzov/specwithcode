@@ -80,6 +80,7 @@ import {
 import type { ProjectArtifacts } from "../../../studio/useProjectArtifacts";
 import { Tip } from "./Tip";
 import { designFile, useProjectDesignActions } from "./useProjectDesignActions";
+import { Button } from "../../ui/button";
 import { CharacterCount } from "../../ui/character-count";
 
 const VIEW_STORAGE_KEY = "studio:project-library-view:v1";
@@ -764,12 +765,12 @@ function AddArtifactForm(props: {
       </label>
       {error ? <p role="alert">{error}</p> : null}
       <div className="sws-library-form-actions">
-        <button type="button" className="project-control" onClick={props.onCancel}>
+        <Button variant="outline" size="sm" onClick={props.onCancel}>
           Cancel
-        </button>
-        <button type="submit" className="project-control project-primary" disabled={busy}>
+        </Button>
+        <Button type="submit" size="sm" disabled={busy}>
           {busy ? "Adding…" : "Add artifact"}
-        </button>
+        </Button>
       </div>
     </form>
   );

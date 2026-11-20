@@ -29,7 +29,7 @@ import * as Equal from "effect/Equal";
 import { cn } from "../../lib/utils";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import { ChatGptConnectionButton } from "./ChatGptConnectionButton";
 import { Dialog } from "../ui/dialog";
 import { Badge } from "../ui/badge";
@@ -552,7 +552,7 @@ export function AddProviderInstanceDialog({
                             setHasAttemptedSubmit(false);
                           }}
                           size="xs"
-                          variant="ghost"
+                          variant="outline"
                         >
                           {tx("Search registry")}
                         </Button>
@@ -617,26 +617,24 @@ export function AddProviderInstanceDialog({
                   </div>
                   <div className="flex shrink-0 gap-2 text-2xs">
                     {selectedAcp.website ? (
-                      <a
+                      <InlineButton
+                        tone="muted"
                         aria-label={`Open documentation for ${selectedAcp.name} (${selectedAcp.id})`}
-                        className="text-muted-foreground hover:text-foreground"
-                        href={selectedAcp.website}
-                        rel="noreferrer"
-                        target="_blank"
+                        render={<a href={selectedAcp.website} rel="noreferrer" target="_blank" />}
                       >
                         {tx("Docs")}
-                      </a>
+                      </InlineButton>
                     ) : null}
                     {selectedAcp.repository ? (
-                      <a
+                      <InlineButton
+                        tone="muted"
                         aria-label={`Open source for ${selectedAcp.name} (${selectedAcp.id})`}
-                        className="text-muted-foreground hover:text-foreground"
-                        href={selectedAcp.repository}
-                        rel="noreferrer"
-                        target="_blank"
+                        render={
+                          <a href={selectedAcp.repository} rel="noreferrer" target="_blank" />
+                        }
                       >
                         {tx("Source")}
-                      </a>
+                      </InlineButton>
                     ) : null}
                   </div>
                 </div>
@@ -737,7 +735,7 @@ export function AddProviderInstanceDialog({
 
             <WizardFooter buttonOrder="source">
               <Button
-                variant={wizardStep === 0 ? "ghost-muted" : "outline"}
+                variant="outline"
                 size="sm"
                 disabled={isSaving || isPreparingRegistryAgent}
                 onClick={() => {

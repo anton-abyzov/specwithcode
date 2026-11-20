@@ -26,7 +26,7 @@ export function feedbackBannerItem(
       submission.status === "sent" ? (
         <Button
           size="xs"
-          variant="ghost"
+          variant="outline"
           onClick={() => {
             void writeTextToClipboard(submission.feedbackId, "Codex feedback thread ID").catch(
               (error: unknown) => {

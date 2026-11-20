@@ -50,6 +50,7 @@ import {
   parseSpecweaveSpec,
   parseVerifyReport,
   type SpecweaveAcceptedSkip,
+  type SpecweaveTaskHolder,
 } from "../mods/SpecweaveProgress.ts";
 import { nodePath as NodePath } from "../nodePath.ts";
 import { specweaveStudioCheckpointPath } from "../orchestration-v2/SpecweaveCheckpoint.ts";
@@ -62,6 +63,12 @@ import { INCREMENTS_DIR, resolveReportIncrement } from "./ThreadReports.ts";
 import { readIncrementReview } from "../review/incrementReview.ts";
 
 const SPEC_BYTES = 262_144;
+/**
+ * Compares increment folder names by their numbers ("0010" after "0009").
+ * One collator for every sort: `localeCompare` with options builds a new one
+ * per comparison, which costs tens of milliseconds over a large board.
+ */
+export const compareNumbered = new Intl.Collator(undefined, { numeric: true }).compare;
 const INCREMENT_FOLDER = /^\d{4,}[A-Z]?-[a-z0-9]+(?:-[a-z0-9]+)*$/i;
 const LEDGER_BYTES = 1_048_576;
 const SMALL_BYTES = 524_288;
@@ -105,7 +112,11 @@ async function isDirectory(path: string): Promise<boolean> {
 }
 
 /** A file inside `root` after resolving links, no bigger than `maximum`; null otherwise. */
-export async function readBounded(root: string, file: string, maximum: number): Promise<string | null> {
+export async function readBounded(
+  root: string,
+  file: string,
+  maximum: number,
+): Promise<string | null> {
   try {
     const real = await NodeFSP.realpath(file);
     if (!inside(await NodeFSP.realpath(root), real)) return null;
@@ -224,9 +235,66 @@ export async function hasAnySpecweaveConfig(folder: string): Promise<boolean> {
  * the files decide, so turning SpecWeave on is running `specweave init`.
  */
 export async function isSpecweaveProject(workspaceRoot: string): Promise<boolean> {
-  return (
-    (await hasSpecweaveConfig(workspaceRoot)) || (await planningRootAbove(workspaceRoot)) !== null
+  return (await specweaveState(workspaceRoot)) === "on";
+}
+
+/**
+ * The one answer to "is SpecWeave on here" (1396):
+ * - `on`: set up with `specweave init`, or an umbrella above plans it;
+ * - `unfinished`: the folder holds increment folders but was never set up, as
+ *   an older `specweave create-increment` leaves a plain folder;
+ * - `off`: neither. A personal assistant is always `off`.
+ */
+export type SpecweaveState = "on" | "unfinished" | "off";
+
+export async function specweaveState(
+  workspaceRoot: string,
+  options: { readonly personal?: boolean } = {},
+): Promise<SpecweaveState> {
+  if (options.personal === true) return "off";
+  if (
+    (await hasSpecweaveConfig(workspaceRoot)) ||
+    (await planningRootAbove(workspaceRoot)) !== null
+  )
+    return "on";
+  return (await incrementIds(workspaceRoot)).length > 0 ? "unfinished" : "off";
+}
+
+/** How many increments an `unfinished` folder holds, and the first titles, newest first. */
+export async function unfinishedIncrements(
+  workspaceRoot: string,
+  listed = 3,
+): Promise<{ readonly count: number; readonly titles: ReadonlyArray<string> }> {
+  const ids = await incrementIds(workspaceRoot);
+  const titles = await Promise.all(
+    ids.slice(0, listed).map(async (id) => {
+      const meta = await incrementMeta(
+        workspaceRoot,
+        NodePath.join(workspaceRoot, INCREMENTS_DIR, id, "metadata.json"),
+      );
+      return meta.title ?? id;
+    }),
   );
+  return { count: ids.length, titles };
+}
+
+/**
+ * Whether a `.git` (a folder, or a worktree's file) sits in `folder` or any
+ * folder above it: files only, no Git process. An unreadable entry counts as
+ * one, so the app never offers to start a second repository inside a real one.
+ */
+export async function insideGitWorkTree(folder: string): Promise<boolean> {
+  let dir = await NodeFSP.realpath(folder).catch(() => NodePath.resolve(folder));
+  for (;;) {
+    const found = await NodeFSP.lstat(NodePath.join(dir, ".git")).then(
+      () => true,
+      (error: NodeJS.ErrnoException) => error.code !== "ENOENT" && error.code !== "ENOTDIR",
+    );
+    if (found) return true;
+    const parent = NodePath.dirname(dir);
+    if (parent === dir) return false;
+    dir = parent;
+  }
 }
 
 /**
@@ -505,7 +573,13 @@ export async function evidencedRoots(
 async function claimedBinding(
   thread: ThreadIncrementSource,
   allowedRoots: ReadonlyArray<string>,
-): Promise<{ root: string; incrementId: string; taskId: string | null } | null> {
+): Promise<{
+  root: string;
+  incrementId: string;
+  taskId: string | null;
+  /** The time of the ledger event that bound the thread. */
+  at: string | null;
+} | null> {
   const binding = await readJson(specweaveStudioThreadBindingPath(thread.threadId, thread.home));
   if (
     binding === null ||
@@ -534,6 +608,8 @@ async function claimedBinding(
     root,
     incrementId: binding.incrementId,
     taskId: typeof binding.taskId === "string" ? binding.taskId : null,
+    at:
+      typeof binding.at === "string" && Number.isFinite(Date.parse(binding.at)) ? binding.at : null,
   };
 }
 
@@ -574,7 +650,7 @@ export async function branchBoundIncrement(
   const folders = entries
     .filter((entry) => entry.isDirectory() && INCREMENT_FOLDER.test(entry.name))
     .map((entry) => entry.name)
-    .toSorted((left, right) => right.localeCompare(left, undefined, { numeric: true }));
+    .toSorted((left, right) => compareNumbered(right, left));
   const number = INCREMENT_BRANCH.exec(name)?.[1];
   if (number !== undefined) {
     const found = uniqueFolderForNumber(folders, number);
@@ -611,12 +687,21 @@ async function checkpointNames(thread: ThreadIncrementSource, incrementId: strin
   );
 }
 
+/** A held task's owner and lease, as `ThreadIncrementTask` carries them. */
+export function taskHolderFields(
+  holder: SpecweaveTaskHolder | undefined,
+): { owner: string; leased: boolean } | Record<string, never> {
+  return holder === undefined ? {} : { owner: holder.owner, leased: holder.leased };
+}
+
 /** Reads one increment folder the way the plan card shows it. */
 export async function readIncrementProgress(input: {
   readonly root: string;
   readonly incrementId: string;
   readonly threadId: string;
   readonly now: number;
+  /** Other copies of the increment whose review records count too. */
+  readonly reviewAlsoFrom?: ReadonlyArray<string>;
 }): Promise<Omit<ThreadIncrementProgress, "binding" | "boundTaskId"> | null> {
   const folder = NodePath.join(input.root, INCREMENTS_DIR, input.incrementId);
   if (!inside(input.root, folder) || !(await isDirectory(folder))) return null;
@@ -657,6 +742,8 @@ export async function readIncrementProgress(input: {
         criteria: [...task.criteria],
         note: task.note,
         ...(task.status === "done" && task.changedAt !== null ? { doneAt: task.changedAt } : {}),
+        ...(task.changedAt === null ? {} : { changedAt: task.changedAt }),
+        ...taskHolderFields(folded?.holders.get(task.id)),
         ...(card === undefined ? {} : { line: card.line }),
         ...(await sanitizeCardLink(card?.link ?? null, folder)),
       };
@@ -680,7 +767,13 @@ export async function readIncrementProgress(input: {
       acceptedSkips: ledgerFold?.acceptedSkips ?? [],
     }),
     verify,
-    review: await readIncrementReview({ incrementPath: folder, spec, ledger, tasks: tasksFile }),
+    review: await readIncrementReview({
+      incrementPath: folder,
+      spec,
+      ledger,
+      tasks: tasksFile,
+      ...(input.reviewAlsoFrom === undefined ? {} : { alsoFrom: input.reviewAlsoFrom }),
+    }),
   };
 }
 
@@ -706,6 +799,7 @@ export async function readThreadIncrementProgress(
       let incrementId: string;
       let binding: ThreadIncrementBinding;
       let boundTaskId = claimed?.taskId ?? null;
+      let boundAt = claimed?.at ?? null;
       if (thread.link !== undefined) {
         incrementId = thread.link.incrementId;
         binding = "manual";
@@ -718,6 +812,7 @@ export async function readThreadIncrementProgress(
               ...(await writtenSpecIncrements(workspaceRoot, thread)).map((spec) => spec.root),
             ])) ?? (await incrementRootFor(workspaceRoot, thread.worktreePath));
           boundTaskId = null;
+          boundAt = null;
         }
       } else if (claimed !== null) {
         ({ root, incrementId } = claimed);
@@ -764,6 +859,7 @@ export async function readThreadIncrementProgress(
             threadId: thread.threadId as ThreadIncrementProgress["threadId"],
             binding,
             boundTaskId,
+            boundAt: boundTaskId === null ? null : boundAt,
           };
     }),
   );
@@ -809,7 +905,7 @@ export async function incrementIds(root: string): Promise<string[]> {
   return names
     .filter((entry) => entry.isDirectory() && INCREMENT_FOLDER.test(entry.name))
     .map((entry) => entry.name)
-    .toSorted((left, right) => right.localeCompare(left, undefined, { numeric: true }));
+    .toSorted((left, right) => compareNumbered(right, left));
 }
 
 export interface IncrementQuery {
@@ -844,9 +940,7 @@ export async function queryProjectIncrements(
   for (const root of new Set([own, ...workedRoots])) {
     for (const id of await incrementIds(root)) if (!rootOf.has(id)) rootOf.set(id, root);
   }
-  const ids = [...rootOf.keys()].toSorted((left, right) =>
-    right.localeCompare(left, undefined, { numeric: true }),
-  );
+  const ids = [...rootOf.keys()].toSorted((left, right) => compareNumbered(right, left));
   const metas: IncrementMeta[] = [];
   for (let start = 0; start < ids.length; start += METADATA_READ_BATCH) {
     metas.push(
