@@ -629,7 +629,7 @@ describe("Update now around a held restart: guards", () => {
   it("says the hold ended when the request is found lapsed as it is asked again after its hold", async () => {
     const pressedAt = await pressUpdateNow();
     const holdUntil = pressedAt + 15 * 60_000;
-    await advance(holdUntil + 5_000 - Date.now());
+    vi.setSystemTime(holdUntil + 5_000);
     calls.length = 0;
     // The next look still finds the work held; the desktop lapses the request
     // right after, and the service lets its hold go.
