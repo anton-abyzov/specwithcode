@@ -76,7 +76,7 @@ export const makeOutbox = (deps: CoordinatorMessageOutboxDeps) =>
               new Error("This coordinator may no longer send this message."),
             );
           const now = yield* Clock.currentTimeMillis;
-          return yield* deps.store.update(now, (rows) => {
+          const result = yield* deps.store.update<string | Error>(now, (rows) => {
             const collision = rows.find((row) => row.id === record.id);
             if (
               collision !== undefined &&
@@ -98,7 +98,10 @@ export const makeOutbox = (deps: CoordinatorMessageOutboxDeps) =>
                     record.replyTo,
                   ]))
             )
-              throw new Error("A message id cannot be reused for different content.");
+              return {
+                records: rows,
+                result: new Error("A message id cannot be reused for different content."),
+              };
             const prior = rows.find(
               (row) =>
                 row.direction === "outgoing" &&
@@ -106,6 +109,31 @@ export const makeOutbox = (deps: CoordinatorMessageOutboxDeps) =>
                 row.peerEnvironmentId === record.peerEnvironmentId &&
                 row.clientRequestIds.includes(record.clientRequestIds[0]!),
             );
+            if (
+              prior !== undefined &&
+              JSON.stringify([
+                prior.kind,
+                prior.subject,
+                prior.text,
+                prior.refs,
+                prior.userStep,
+                prior.replyTo,
+                prior.logicalProjectId,
+              ]) !==
+                JSON.stringify([
+                  record.kind,
+                  record.subject,
+                  record.text,
+                  record.refs,
+                  record.userStep,
+                  record.replyTo,
+                  record.logicalProjectId,
+                ])
+            )
+              return {
+                records: rows,
+                result: new Error("A request id cannot be reused for different content."),
+              };
             return prior === undefined
               ? {
                   records: [...rows, { ...record, receivedAt: now, updatedAt: now }],
@@ -113,6 +141,8 @@ export const makeOutbox = (deps: CoordinatorMessageOutboxDeps) =>
                 }
               : { records: rows, result: prior.externalId };
           });
+          if (result instanceof Error) return yield* Effect.fail(result);
+          return result;
         }),
       /** Serialized passes prevent reconnect and regular sync from sending concurrently. */
       flush: lock.withPermit(
@@ -170,7 +200,7 @@ import {
   coordinatorMessageDedupeKey,
 } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import { sha256 } from "../nodeCrypto.ts";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
@@ -308,7 +338,7 @@ export const layer = Layer.effect(
             );
           message = { ...message, replyTo: original.externalId };
         }
-        const externalId = `cm-${yield* Crypto.randomUUIDv4}`;
+        const externalId = `cm-${sha256(JSON.stringify([input.projectId, peer, input.clientRequestId])).toString("hex")}`;
         const row = {
           externalId,
           direction: "outgoing" as const,

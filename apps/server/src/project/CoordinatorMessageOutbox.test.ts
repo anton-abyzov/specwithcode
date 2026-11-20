@@ -111,4 +111,23 @@ describe("coordinator message outbox", () => {
       expect((yield* store.all)[0]!.state).toBe("queued");
     }).pipe(Effect.provide(layerMemory())),
   );
+  it.effect("refuses changing content under a persisted retry key", () =>
+    Effect.gen(function* () {
+      const store = yield* CoordinatorMessageStore;
+      const box = yield* makeOutbox({
+        store,
+        authorize: () => Effect.succeed(true),
+        receiverProject: () => Effect.succeed(PROJECT),
+        deliver: () => Effect.die("must not send"),
+      });
+      const row = outgoing("message-collision", "finding", { state: "queued" });
+      const record = { ...row, id: coordinatorMessageRowId(row) };
+      yield* box.enqueue(record);
+      const error = yield* box
+        .enqueue({ ...record, text: "changed private content" })
+        .pipe(Effect.flip);
+      expect(error.message).toContain("cannot be reused");
+      expect((yield* store.all)[0]!.text).toBe(record.text);
+    }).pipe(Effect.provide(layerMemory())),
+  );
 });
