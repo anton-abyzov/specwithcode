@@ -317,9 +317,8 @@ export function trackEntryEffort(
   if (descriptor === undefined) return null;
   // A level saved under another harness's option id, or one this model lacks,
   // runs at the nearest level the model offers.
-  const saved =
-    selection.options?.find((option) => option.id === descriptor.id)?.value ??
-    modelSelectionEffortValue(selection);
+  const own = selection.options?.find((option) => option.id === descriptor.id)?.value;
+  const saved = typeof own === "string" ? own : modelSelectionEffortValue(selection);
   if (typeof saved === "string") {
     const kept = resolveEffort(saved, descriptors);
     if (kept.ok) return { optionId: kept.optionId, value: kept.value, saved: true };

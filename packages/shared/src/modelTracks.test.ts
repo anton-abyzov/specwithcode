@@ -632,6 +632,29 @@ describe("track effort", () => {
     ]);
   });
 
+  it("carries saved effort to a source whose effort id matches the original thinking toggle", () => {
+    const alternate = withLevels(
+      provider("pi", "pi", ["claude-opus-5-5"], 10),
+      "thinking",
+      ["low", "medium", "high"],
+    );
+    const selection = {
+      ...sel("pi", "claude-opus-5-5"),
+      options: [
+        { id: "thinking", value: false },
+        { id: "effort", value: "high" },
+      ],
+    };
+    expect(trackEntryEffort(selection, [alternate])).toEqual({
+      optionId: "thinking",
+      value: "high",
+      saved: true,
+    });
+    expect(withTrackEffort(selection, [alternate]).options).toEqual([
+      { id: "thinking", value: "high" },
+    ]);
+  });
+
   it("carries an entry's level to the same model on another harness", () => {
     const saved = {
       routine: [

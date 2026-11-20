@@ -301,9 +301,8 @@ export function routedSelection(
 
 /**
  * A new worker's model with an effort level: its own, else the track's start
- * level (Medium, or Extra High for Muse Wonder Full in Review), matched to the
- * nearest level the model offers. Without one the provider's own default ran,
- * which is Max on Muse. Only threads being created pass through here.
+ * level, matched to the nearest level the model offers. Only threads being
+ * created pass through here.
  */
 export function withStartEffort<T extends { readonly modelSelection: ModelSelection }>(
   target: T,

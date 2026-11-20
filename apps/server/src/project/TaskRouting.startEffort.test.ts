@@ -42,9 +42,24 @@ const muse: ServerProvider = {
   slashCommands: [],
   skills: [],
 };
-const worker = (model: string, options?: Array<{ id: string; value: string }>) => ({
+const copilot: ServerProvider = {
+  ...muse,
+  instanceId: ProviderInstanceId.make("acpRegistry_copilot"),
+  driver: ProviderDriverKind.make("acpRegistry"),
+  models: [{
+    slug: "gemini-4-neon",
+    name: "Gemini 4 Neon",
+    isCustom: false,
+    capabilities: levels(["low", "medium", "high"]),
+  }],
+};
+const worker = (
+  model: string,
+  options?: Array<{ id: string; value: string }>,
+  instanceId = muse.instanceId,
+) => ({
   modelSelection: {
-    instanceId: muse.instanceId,
+    instanceId,
     model,
     ...(options === undefined ? {} : { options }),
   },
@@ -57,10 +72,14 @@ describe("withStartEffort", () => {
     ).toEqual([{ id: "reasoningEffort", value: "medium" }]);
   });
 
-  it("starts a Wonder Full reviewer at Extra High", () => {
+  it("starts Neon reviewers at High and fallback reviewers at Medium", () => {
     expect(
       withStartEffort(worker("muse-wonder-full-1.0"), [muse], true).modelSelection.options,
-    ).toEqual([{ id: "reasoningEffort", value: "xhigh" }]);
+    ).toEqual([{ id: "reasoningEffort", value: "medium" }]);
+    const neon = worker("gemini-4-neon", undefined, copilot.instanceId);
+    expect(withStartEffort(neon, [copilot], true).modelSelection.options).toEqual([
+      { id: "reasoningEffort", value: "high" },
+    ]);
   });
 
   it("keeps the level the caller named", () => {
