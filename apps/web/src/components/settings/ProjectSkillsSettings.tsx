@@ -2,7 +2,10 @@ import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
 import { WorkflowCapabilities } from "./WorkflowCapabilities";
 import {
+  AuthFilesystemWriteScope,
   EnvironmentId,
+  isProviderDriverKind,
+  PROVIDER_DISPLAY_NAMES,
   ThreadId,
   summarizeProjectSkills,
   type ProjectId,
@@ -11,14 +14,7 @@ import {
   type ProjectSkillsSnapshot,
 } from "@specweave-studio/contracts";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import {
-  BadgeCheckIcon,
-  ExternalLinkIcon,
-  PinIcon,
-  RefreshCwIcon,
-  SearchIcon,
-  XIcon,
-} from "lucide-react";
+import { RefreshCwIcon, SearchIcon, XIcon } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { SkillDetailPanel } from "../skills/SkillDetailPanel";
@@ -28,13 +24,26 @@ import {
   type SkillAuthoringSeed,
 } from "../skills/skillAuthoringSeed";
 import { SkillAuthoringSheet } from "../skills/SkillAuthoringSheet";
-import { cn } from "~/lib/utils";
-import type { ProviderInstanceEntry } from "../../providerInstances";
+import { SkillMachineMatrix } from "../skills/SkillMachineMatrix";
+import { SkillsBuiltInBlock, SkillsEmptyAgents } from "../skills/SkillsBuiltIn";
+import { SkillsManagementSlot } from "../skills/SkillsManagementSlot";
+import { SkillsPager } from "../skills/SkillsPager";
+import { SkillsReadState } from "../skills/SkillsReadState";
+import {
+  SkillProviderMark,
+  SkillRow,
+  TierCell,
+  VersionCell,
+  type ProviderEntries,
+} from "../skills/SkillsTable";
+import { useSkillLatestVersions } from "../skills/SkillUpdateLatest";
+import { splitBuiltInSkillRows } from "../skills/skillsPage.logic";
+import { paginate } from "~/lib/pagination";
 import { useEnvironment, useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
+import { useEnvironmentScope } from "../../state/session";
 import { useMachineNickname } from "../../studio/machineNickname";
 import { projectWorkspace } from "../../studio/projectWorkspace";
-import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { useProviderEntries } from "../studio/shell/ModelBadge";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -44,15 +53,10 @@ import { Spinner } from "../ui/spinner";
 import { Switch } from "../ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ProjectSkillAgentToggle, ProjectSkillPluginToggle } from "./ProjectSkillAgentToggles";
 import { SkillControlsProvider, type SkillMemberProject } from "./ProjectSkillControls";
 import { ProjectSkillSheetFooter } from "./ProjectSkillFleetPush";
-import {
-  ProjectSkillLinkButtons,
-  ProjectSkillRowMenu,
-  type SkillSheetFocus,
-} from "./ProjectSkillRowMenu";
+import { ProjectSkillLinkButtons, type SkillSheetFocus } from "./ProjectSkillRowMenu";
 import { ProjectSkillVersionSection } from "./ProjectSkillVersionSection";
 import {
   filterProjectSkillRows,
@@ -61,12 +65,10 @@ import {
   projectSkillLevel,
   projectSkillLevelLabel,
   projectSkillLevels,
-  projectSkillProviderBadges,
-  projectSkillSourceLinks,
-  projectSkillStatusBadge,
-  projectSkillVersions,
+  projectSkillTierLabel,
   pickSkillsMember,
   type ProjectSkillFacetOption,
+  withSelectedFacetOptions,
 } from "./ProjectSkillsSettings.logic";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsScopeNotice } from "./SettingsScopeNotice";
@@ -98,6 +100,18 @@ export function ProjectSkillsSettings() {
       presentationById.get(EnvironmentId.make(environmentId))?.connection.phase === "connected",
   });
 
+  // Another machine's read rides on its copy of this project, or on any project there at user level.
+  const projectIdFor = useCallback(
+    (environmentId: EnvironmentId) =>
+      (projectScope
+        ? (group?.memberProjects ?? [])
+        : groups.flatMap((candidate) => candidate.memberProjects)
+      ).find((candidate) => candidate.environmentId === environmentId)?.id ?? null,
+    [group, groups, projectScope],
+  );
+  const pickedMachine = useEnvironment(machine);
+  const pickedMachineName = useMachineNickname(machine ?? "", pickedMachine?.label);
+
   if (!projectScope) {
     // The machine view rides on any project of that machine; it scans the home folder, not the project.
     const machineId = machine ?? primaryEnvironmentId;
@@ -117,6 +131,7 @@ export function ProjectSkillsSettings() {
               projectId={anchor.id}
               folder="~"
               userLevel
+              projectIdFor={projectIdFor}
             />
           </SettingsPageContainer>
         </div>
@@ -145,290 +160,20 @@ export function ProjectSkillsSettings() {
             projectId={member.id}
             folder={member.workspaceRoot}
             memberProjects={group?.memberProjects ?? []}
+            projectIdFor={projectIdFor}
           />
         ) : (
           <p className="text-sm text-muted-foreground">
-            {tx("This project is no longer available.")}
+            {/* One machine per page: never read another machine's copy in its place. */}
+            {group && machine
+              ? tx("This project has no folder on {machine}. Pick another machine above.", {
+                  machine: pickedMachineName,
+                })
+              : tx("This project is no longer available.")}
           </p>
         )}
       </SettingsPageContainer>
     </div>
-  );
-}
-
-/** Text with a hover hint; the hint lists what does not fit in the cell. */
-function Hinted({
-  hint,
-  className,
-  children,
-}: {
-  hint: string;
-  className?: string;
-  children: ReactNode;
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger render={<span tabIndex={0} className={className} />}>
-        {children}
-      </TooltipTrigger>
-      <TooltipPopup side="top" className="max-w-96 whitespace-pre-line break-all">
-        {hint}
-      </TooltipPopup>
-    </Tooltip>
-  );
-}
-
-function ExternalLink({
-  href,
-  label,
-  className,
-  children,
-}: {
-  href: string;
-  label: string;
-  className?: string;
-  children: ReactNode;
-}) {
-  return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer noopener"
-      aria-label={label}
-      className={cn(
-        "inline-flex min-w-0 items-center gap-1 rounded-sm underline-offset-2 hover:text-foreground hover:underline focus-visible:text-foreground focus-visible:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        className,
-      )}
-      onClick={(event) => event.stopPropagation()}
-    >
-      {children}
-    </a>
-  );
-}
-
-function TierCell({ row }: { row: ProjectSkillRow }) {
-  const tier = row.lock?.tier;
-  if (!tier) return <span className="text-muted-foreground">—</span>;
-  const registryUrl = projectSkillSourceLinks(row)?.registryUrl ?? null;
-  const verified = tier.toUpperCase() === "VERIFIED";
-  const badge = (
-    <Badge size="sm" variant={verified ? "success" : "outline"}>
-      {verified ? <BadgeCheckIcon aria-hidden /> : null}
-      {tier}
-    </Badge>
-  );
-  return registryUrl ? (
-    <ExternalLink href={registryUrl} label={`Open ${row.name} on verified-skill.com`}>
-      {badge}
-    </ExternalLink>
-  ) : (
-    badge
-  );
-}
-
-function SourceCell({ row }: { row: ProjectSkillRow }) {
-  const source = row.lock?.source;
-  if (!source) return <span className="text-muted-foreground">—</span>;
-  const links = projectSkillSourceLinks(row);
-  if (!links?.repoUrl) {
-    return (
-      <Hinted hint={source} className="block truncate text-muted-foreground">
-        {source}
-      </Hinted>
-    );
-  }
-  return (
-    <div className="flex min-w-0 flex-col items-start gap-0.5">
-      <ExternalLink
-        href={links.repoUrl}
-        label={`Open the source of ${row.name}: ${links.repoUrl}`}
-        className="max-w-full text-muted-foreground"
-      >
-        <span className="truncate">{links.label}</span>
-        <ExternalLinkIcon aria-hidden className="size-3 shrink-0" />
-      </ExternalLink>
-      {links.registryUrl ? (
-        <ExternalLink
-          href={links.registryUrl}
-          label={`Open ${row.name} on verified-skill.com: ${links.registryUrl}`}
-          className="max-w-full text-2xs text-muted-foreground"
-        >
-          <BadgeCheckIcon aria-hidden className="size-3 shrink-0 text-success-foreground" />
-          <span className="truncate">verified-skill.com</span>
-        </ExternalLink>
-      ) : null}
-    </div>
-  );
-}
-
-type ProviderEntries = ReadonlyMap<string, ProviderInstanceEntry>;
-
-/** The provider's own mark, the same one the model picker and thread headers draw. */
-function SkillProviderMark({
-  presence,
-  entries,
-  dimmed = false,
-}: {
-  presence: ProjectSkillPresence;
-  entries: ProviderEntries;
-  dimmed?: boolean;
-}) {
-  const entry = entries.get(presence.instanceId) ?? null;
-  return (
-    <ProviderInstanceIcon
-      driverKind={entry?.driverKind ?? presence.driver}
-      displayName={presence.label}
-      acpRegistryAgentId={entry?.acpRegistryAgentId}
-      acpRegistryIconUrl={entry?.acpRegistryIconUrl}
-      className="z-auto"
-      iconClassName={cn("size-3.5", dimmed ? "opacity-50" : "opacity-100")}
-    />
-  );
-}
-
-function StatusBadge({ row }: { row: ProjectSkillRow }) {
-  const status = projectSkillStatusBadge(row);
-  const badge = (
-    <Badge size="sm" variant={status.variant}>
-      {status.label}
-    </Badge>
-  );
-  return row.issues.length > 0 ? <Hinted hint={row.issues.join("\n")}>{badge}</Hinted> : badge;
-}
-
-/**
- * The lock's version beside the versions the copies on disk report (the
- * plugin manifest for a plugin skill), with a hint when they disagree. Either
- * side can be stale: a registry version published without bumping the file's
- * `version:` leaves the lock ahead of the file.
- */
-function VersionCell({ row, update }: { row: ProjectSkillRow; update?: string | null }) {
-  const tx = useTx();
-  const versions = projectSkillVersions(row);
-  const pinned = row.lock?.pinnedVersion ?? null;
-  const files = versions.files.map((file) => file.version);
-  const lockOnly = versions.lock !== null && !versions.lockOutOfDate;
-  if (versions.lock === null && files.length === 0) {
-    return <span className="text-muted-foreground">—</span>;
-  }
-  const hint = [
-    versions.lock ? `Lock: ${versions.lock}` : "Not in a vskill lock",
-    ...versions.files.map((file) => `${file.labels.join(", ")}: ${file.version}`),
-    ...(versions.lockOutOfDate ? ["The lock and the files on disk name different versions."] : []),
-  ].join("\n");
-  return (
-    <Hinted hint={hint} className="block">
-      <span className="font-mono">
-        {lockOnly ? versions.lock : files.join(" / ") || versions.lock}
-      </span>
-      {versions.lockOutOfDate ? (
-        <div className="text-xs text-warning-foreground">
-          {renderRich(tx("lock says {lock}"), { lock: versions.lock })}
-        </div>
-      ) : null}
-      {pinned || update ? (
-        <span className="mt-0.5 flex flex-wrap gap-1">
-          {pinned ? (
-            <Badge size="sm" variant="outline" data-testid="version-pinned">
-              <PinIcon aria-hidden />
-              {tx("pinned")}
-            </Badge>
-          ) : null}
-          {update ? (
-            <Badge size="sm" variant="info" data-testid="version-update">
-              ↑{update}
-            </Badge>
-          ) : null}
-        </span>
-      ) : null}
-    </Hinted>
-  );
-}
-
-function SkillRow({
-  row,
-  entries,
-  update,
-  onOpen,
-}: {
-  row: ProjectSkillRow;
-  entries: ProviderEntries;
-  update: string | null;
-  onOpen: (name: string, focus?: SkillSheetFocus) => void;
-}) {
-  const tx = useTx();
-  const issue = row.issues[0];
-  return (
-    <TableRow
-      data-skill={row.name}
-      data-status={row.status}
-      className="cursor-pointer"
-      onClick={(event) => {
-        // React bubbles clicks out of portals: a row menu item would reopen the sheet unfocused.
-        if (!event.currentTarget.contains(event.target as Node)) return;
-        if ((event.target as HTMLElement).closest("a,button,[role=switch]")) return;
-        onOpen(row.name);
-      }}
-    >
-      <TableCell className="max-w-64 whitespace-normal">
-        <button
-          type="button"
-          className="block max-w-full truncate text-left font-medium text-foreground hover:underline focus-visible:underline focus-visible:outline-none"
-          aria-label={`Show details for ${row.name}`}
-          onClick={() => onOpen(row.name)}
-        >
-          {row.name}
-        </button>
-        {row.attention && issue ? (
-          <div className="line-clamp-2 text-muted-foreground">{issue}</div>
-        ) : row.description ? (
-          <div className="truncate text-muted-foreground">{row.description}</div>
-        ) : null}
-      </TableCell>
-      <TableCell>
-        {row.providers.length === 0 ? (
-          <span className="text-muted-foreground">{tx("None")}</span>
-        ) : (
-          <div className="flex flex-wrap gap-1">
-            {projectSkillProviderBadges(row).map((badge) => (
-              <Hinted key={badge.key} hint={badge.title}>
-                <Badge size="sm" variant={badge.enabled ? "outline" : "secondary"}>
-                  <SkillProviderMark
-                    presence={badge.presence}
-                    entries={entries}
-                    dimmed={!badge.enabled}
-                  />
-                  {badge.enabled ? badge.label : `${badge.label} (off)`}
-                  {badge.enabled && badge.agentOnly ? (
-                    <span className="text-muted-foreground">{tx("agent only")}</span>
-                  ) : null}
-                </Badge>
-              </Hinted>
-            ))}
-          </div>
-        )}
-      </TableCell>
-      <TableCell>
-        <span className="text-muted-foreground">
-          {projectSkillLevels(row).map(projectSkillLevelLabel).join(", ") || "—"}
-        </span>
-      </TableCell>
-      <TableCell>
-        <VersionCell row={row} update={update} />
-      </TableCell>
-      <TableCell>
-        <TierCell row={row} />
-      </TableCell>
-      <TableCell className="max-w-56">
-        <SourceCell row={row} />
-      </TableCell>
-      <TableCell>
-        <StatusBadge row={row} />
-      </TableCell>
-      <TableCell className="w-8 text-right">
-        <ProjectSkillRowMenu row={row} onOpen={onOpen} />
-      </TableCell>
-    </TableRow>
   );
 }
 
@@ -461,7 +206,7 @@ function SkillDetails({ row, entries }: { row: ProjectSkillRow; entries: Provide
               ? "Copies differ"
               : "Discovered"
             : row.status === "missing"
-              ? "Missing on disk"
+              ? "No copy found"
               : "Needs attention"}
         </Badge>
         {row.lock?.tier ? <TierCell row={row} /> : null}
@@ -531,6 +276,11 @@ function SkillDetails({ row, entries }: { row: ProjectSkillRow; entries: Provide
                           {renderRich(tx("as {name}"), { name: presence.name })}
                         </span>
                       ) : null}
+                      {presence.discovery === "folder-scan" ? (
+                        <Badge size="sm" variant="outline" data-testid="skill-detail-folder-scan">
+                          {tx("folder scan")}
+                        </Badge>
+                      ) : null}
                       {presence.enabled ? null : (
                         <Badge size="sm" variant="secondary">
                           {tx("off")}
@@ -544,6 +294,20 @@ function SkillDetails({ row, entries }: { row: ProjectSkillRow; entries: Provide
                       <ProjectSkillAgentToggle presence={presence} />
                     </div>
                     <ProjectSkillPluginToggle presence={presence} />
+                    {presence.otherCopies?.length ? (
+                      <ul
+                        className="text-xs text-muted-foreground"
+                        data-testid="skill-detail-other-copies"
+                      >
+                        {presence.otherCopies.map((copy) => (
+                          <li key={copy.path} className="break-all">
+                            {tx("Also found")},{" "}
+                            {projectSkillLevelLabel(projectSkillLevel(copy.scope, copy.path))}:{" "}
+                            <span className="font-mono">{copy.path}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
                   </div>
                 ))}
               </li>
@@ -630,9 +394,14 @@ function FacetGroup({
   );
 }
 
-function SkillsFootnotes({ snapshot }: { snapshot: ProjectSkillsSnapshot }) {
+function SkillsFootnotes({
+  snapshot,
+  machine,
+}: {
+  snapshot: ProjectSkillsSnapshot;
+  machine: string;
+}) {
   const tx = useTx();
-  const notes = snapshot.providers.filter((provider) => provider.state !== "ok");
   return (
     <div className="space-y-1 px-3 pb-3 text-xs text-muted-foreground sm:px-4">
       <p>
@@ -653,14 +422,14 @@ function SkillsFootnotes({ snapshot }: { snapshot: ProjectSkillsSnapshot }) {
                 : "vskill doctor is not available here, so its findings are left out.",
         })}
       </p>
-      {notes.map((provider) => (
-        <p key={provider.instanceId}>
-          {provider.label}: {provider.message ?? provider.state}
-        </p>
-      ))}
+      <SkillsEmptyAgents snapshot={snapshot} machine={machine} />
     </div>
   );
 }
+
+/** Rows per page of the table: the default, then the larger sizes offered. */
+export const SKILLS_TABLE_PAGE_SIZE = 25;
+export const SKILLS_TABLE_PAGE_SIZES: ReadonlyArray<number> = [SKILLS_TABLE_PAGE_SIZE, 50, 100];
 
 const NO_MEMBERS: ReadonlyArray<SkillMemberProject> = [];
 
@@ -701,10 +470,13 @@ function ScopedProjectSkillsView({
   folder,
   memberProjects = NO_MEMBERS,
   userLevel = false,
+  projectIdFor,
 }: {
   environmentId: EnvironmentId;
   projectId: ProjectId;
   folder: string;
+  /** The project on another machine that carries its read in "Across machines". */
+  projectIdFor?: ((environmentId: EnvironmentId) => ProjectId | null) | undefined;
   /** This project on every machine, for installing it on the others. */
   memberProjects?: ReadonlyArray<SkillMemberProject>;
   /** The machine-wide view: user-level skills of every agent, read from the home folder. */
@@ -786,6 +558,13 @@ function ScopedProjectSkillsView({
     linked.skillView === "compare" ? "compare" : null,
   );
   const [updates, setUpdates] = useState<Readonly<Record<string, string | null>>>({});
+  // Newer versions in each skill's own source, for the "Update available" chips.
+  const latestVersions = useSkillLatestVersions({
+    environmentId,
+    projectId,
+    userLevel,
+    ...threadFolder,
+  });
   const openWith = useCallback((name: string, focus?: SkillSheetFocus) => {
     setEditError(null);
     setOpenSkill(name);
@@ -815,6 +594,42 @@ function ScopedProjectSkillsView({
         : [],
     [snapshot, search, problemsOnly, providers, levels, tiers],
   );
+  // Skills that ship with an agent sit in their own read-only block.
+  const { installed: installedRows, builtIn: builtInRows } = useMemo(
+    () => splitBuiltInSkillRows(rows),
+    [rows],
+  );
+  // Filters run over the whole inventory above; the page is cut from what matched.
+  const filterKey = `${search}\u0000${problemsOnly}\u0000${providers.join(",")}\u0000${levels.join(",")}\u0000${tiers.join(",")}`;
+  const [paging, setPaging] = useState<{ key: string; page: number }>({ key: filterKey, page: 1 });
+  const [pageSize, setPageSize] = useState<number>(SKILLS_TABLE_PAGE_SIZE);
+  // A changed filter starts on its first page, and stays there when the filter is undone.
+  if (paging.key !== filterKey) setPaging({ key: filterKey, page: 1 });
+  // A rescan that shrinks the list clamps the page instead of showing an empty one.
+  const tablePage = paginate(installedRows, paging.key === filterKey ? paging.page : 1, pageSize);
+  const anyInstalled = useMemo(
+    () => splitBuiltInSkillRows(snapshot?.rows ?? []).installed.length > 0,
+    [snapshot],
+  );
+  const [view, setView] = useState<"machine" | "across">("machine");
+  const canWrite = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
+  const currentRead = useMemo(
+    () => ({
+      snapshot: snapshot ?? null,
+      error: query.error,
+      pending: query.isPending,
+      connected: !machineOffline,
+      successful: query.isSuccess,
+    }),
+    [snapshot, query.error, query.isPending, query.isSuccess, machineOffline],
+  );
+  const remoteProjectId = useCallback(
+    (remote: EnvironmentId) =>
+      projectIdFor
+        ? projectIdFor(remote)
+        : (memberProjects.find((member) => member.environmentId === remote)?.id ?? null),
+    [memberProjects, projectIdFor],
+  );
   const facets = useMemo(() => projectSkillFacets(snapshot?.rows ?? []), [snapshot]);
   const chipsActive = providers.length + levels.length + tiers.length > 0;
   const filtered = chipsActive || problemsOnly || search.trim() !== "";
@@ -833,12 +648,41 @@ function ScopedProjectSkillsView({
   const attention = snapshot ? projectSkillAttentionCount(snapshot.rows) : 0;
   const entries = useProviderEntries(environmentId);
   const presenceByLabel = useMemo(() => {
-    const byLabel = new Map<string, ProjectSkillPresence>();
+    const byLabel = new Map<
+      string,
+      Pick<ProjectSkillPresence, "instanceId" | "driver" | "label">
+    >();
     for (const row of snapshot?.rows ?? [])
       for (const presence of row.providers)
         if (!byLabel.has(presence.instanceId)) byLabel.set(presence.instanceId, presence);
+    // An agent with no skill here still has a mark, so a chip for it reads like the others.
+    for (const provider of snapshot?.providers ?? [])
+      if (!byLabel.has(provider.instanceId)) byLabel.set(provider.instanceId, provider);
     return byLabel;
   }, [snapshot]);
+  // A selected value no row has stays a selected chip with count 0, so it never filters unseen.
+  const agentOptions = useMemo(
+    () =>
+      withSelectedFacetOptions(
+        facets.providers,
+        providers,
+        // A built-in agent this machine does not run still reads "Claude", never `claudeAgent`.
+        (value) =>
+          entries.get(value)?.displayName ??
+          presenceByLabel.get(value)?.label ??
+          (isProviderDriverKind(value) ? PROVIDER_DISPLAY_NAMES[value] : undefined) ??
+          value,
+      ),
+    [facets.providers, providers, entries, presenceByLabel],
+  );
+  const levelOptions = useMemo(
+    () => withSelectedFacetOptions(facets.levels, levels, projectSkillLevelLabel),
+    [facets.levels, levels],
+  );
+  const tierOptions = useMemo(
+    () => withSelectedFacetOptions(facets.tiers, tiers, projectSkillTierLabel),
+    [facets.tiers, tiers],
+  );
 
   return (
     <SettingsSection
@@ -908,120 +752,188 @@ function ScopedProjectSkillsView({
             )}
           </p>
         )}
-        {linkedMissing ? (
-          <p
-            className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
-            role="status"
-            data-testid="skills-linked-missing"
+        <div className="flex flex-wrap gap-1" role="group" aria-label={tx("Skills view")}>
+          <Button
+            type="button"
+            size="xs"
+            variant={view === "machine" ? "secondary" : "outline"}
+            aria-pressed={view === "machine"}
+            onClick={() => setView("machine")}
           >
-            <span>
-              {renderRich(tx("{span} is not loaded in this project."), {
-                span: <span className="font-medium text-foreground">{linkedName}</span>,
-              })}
-            </span>
-            <Button
-              size="micro"
-              variant="ghost-muted"
-              type="button"
-              onClick={() => {
-                setLinkedName(null);
-                setOpenSkill(null);
-              }}
-            >
-              {tx("Dismiss")}
-            </Button>
-          </p>
-        ) : null}
-        {snapshot ? (
-          <p className="text-sm text-foreground" role="status" data-testid="skills-summary">
-            {summarizeProjectSkills(snapshot.rows)}
-            {filtered ? (
-              <span className="text-muted-foreground">
-                {" "}
-                {renderRich(tx("· showing {length}"), { length: rows.length })}
-              </span>
-            ) : null}
-          </p>
-        ) : null}
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="relative min-w-0 flex-1 basis-56">
-            <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              size="sm"
-              type="search"
-              className="w-full"
-              aria-label={tx("Search skills")}
-              placeholder={tx("Search skills, agents, sources")}
-              value={search}
-              onChange={(event) => setSearch(event.currentTarget.value)}
-              style={{ paddingLeft: "1.75rem" }}
-            />
-          </div>
-          <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-foreground">
-            {renderRich(tx("{switch}Only problems{value}"), {
-              switch: (
-                <Switch
-                  size="sm"
-                  checked={problemsOnly}
-                  onCheckedChange={(checked) => setProblemsOnly(checked)}
-                  aria-label={tx("Only problems")}
-                />
-              ),
-              value: attention > 0 ? ` (${attention})` : "",
-            })}
-          </label>
+            {tx("On {machine}", { machine: machineName })}
+          </Button>
+          <Button
+            type="button"
+            size="xs"
+            variant={view === "across" ? "secondary" : "outline"}
+            aria-pressed={view === "across"}
+            onClick={() => setView("across")}
+          >
+            {tx("Across machines")}
+          </Button>
         </div>
-        {snapshot && snapshot.rows.length > 0 ? (
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2" data-testid="skills-filters">
-            <FacetGroup
-              label={tx("Agent")}
-              options={facets.providers}
-              value={providers}
-              onChange={setProviders}
-              renderIcon={(label) => {
-                const presence = presenceByLabel.get(label);
-                return presence ? (
-                  <SkillProviderMark presence={presence} entries={entries} />
-                ) : null;
-              }}
+        {!canWrite && !machineOffline ? (
+          <p className="text-xs text-foreground" role="status" data-testid="skills-view-only">
+            {tx("You can look at {machine}'s settings from this sign-in, but not change them.", {
+              machine: machineName,
+            })}
+          </p>
+        ) : null}
+        {view === "machine" && !machineOffline ? (
+          <>
+            {/* Search, "Connect a skill repo" and updates mount in this one slot. */}
+            <SkillsManagementSlot
+              environmentId={environmentId}
+              projectId={projectId}
+              userLevel={userLevel}
+              {...threadFolder}
+              machineName={machineName}
+              snapshot={snapshot ?? null}
+              onChanged={query.refresh}
+              onOpen={openWith}
             />
-            <FacetGroup
-              label={tx("Level")}
-              options={facets.levels}
-              value={levels}
-              onChange={setLevels}
-            />
-            <FacetGroup
-              label={tx("Tier")}
-              options={facets.tiers}
-              value={tiers}
-              onChange={setTiers}
-            />
-            {filtered ? (
-              <Button
-                size="xs"
-                variant="ghost-muted"
-                type="button"
-                onClick={() => {
-                  setSearch("");
-                  setProblemsOnly(false);
-                  setProviders([]);
-                  setLevels([]);
-                  setTiers([]);
-                }}
+            {linkedMissing ? (
+              <p
+                className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+                role="status"
+                data-testid="skills-linked-missing"
               >
-                <XIcon />
-                {tx("Clear filters")}
-              </Button>
+                <span>
+                  {renderRich(tx("{span} was not found in this project's skills."), {
+                    span: <span className="font-medium text-foreground">{linkedName}</span>,
+                  })}
+                </span>
+                <Button
+                  size="micro"
+                  variant="outline"
+                  type="button"
+                  onClick={() => {
+                    setLinkedName(null);
+                    setOpenSkill(null);
+                  }}
+                >
+                  {tx("Dismiss")}
+                </Button>
+              </p>
             ) : null}
-          </div>
+            {snapshot ? (
+              <p className="text-sm text-foreground" role="status" data-testid="skills-summary">
+                {summarizeProjectSkills(snapshot.rows)}
+                {filtered ? (
+                  <span className="text-muted-foreground">
+                    {" "}
+                    {renderRich(tx("· showing {length}"), { length: rows.length })}
+                  </span>
+                ) : null}
+              </p>
+            ) : null}
+            {snapshot && snapshot.rows.length > 0 ? (
+              <SkillsReadState snapshot={snapshot} machine={machineName} />
+            ) : null}
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="relative min-w-0 flex-1 basis-56">
+                <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  size="sm"
+                  type="search"
+                  className="w-full"
+                  aria-label={tx("Search skills")}
+                  placeholder={tx("Search skills, agents, sources")}
+                  value={search}
+                  onChange={(event) => setSearch(event.currentTarget.value)}
+                  style={{ paddingLeft: "1.75rem" }}
+                />
+              </div>
+              <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-foreground">
+                {renderRich(tx("{switch}Only problems{value}"), {
+                  switch: (
+                    <Switch
+                      size="sm"
+                      checked={problemsOnly}
+                      onCheckedChange={(checked) => setProblemsOnly(checked)}
+                      aria-label={tx("Only problems")}
+                    />
+                  ),
+                  value: attention > 0 ? ` (${attention})` : "",
+                })}
+              </label>
+            </div>
+            {snapshot && (snapshot.rows.length > 0 || chipsActive) ? (
+              <div
+                className="flex flex-wrap items-center gap-x-4 gap-y-2"
+                data-testid="skills-filters"
+              >
+                <FacetGroup
+                  label={tx("Agent")}
+                  options={agentOptions}
+                  value={providers}
+                  onChange={setProviders}
+                  renderIcon={(label) => {
+                    const presence = presenceByLabel.get(label);
+                    return presence ? (
+                      <SkillProviderMark presence={presence} entries={entries} />
+                    ) : null;
+                  }}
+                />
+                <FacetGroup
+                  label={tx("Level")}
+                  options={levelOptions}
+                  value={levels}
+                  onChange={setLevels}
+                />
+                <FacetGroup
+                  label={tx("Tier")}
+                  options={tierOptions}
+                  value={tiers}
+                  onChange={setTiers}
+                />
+                {filtered ? (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    type="button"
+                    onClick={() => {
+                      setSearch("");
+                      setProblemsOnly(false);
+                      setProviders([]);
+                      setLevels([]);
+                      setTiers([]);
+                    }}
+                  >
+                    <XIcon />
+                    {tx("Clear filters")}
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+          </>
         ) : null}
       </div>
-      {query.error && !snapshot ? (
+      {view === "across" ? (
+        <div className="px-3 py-3 sm:px-4">
+          <SkillMachineMatrix
+            environmentId={environmentId}
+            userLevel={userLevel}
+            current={currentRead}
+            projectIdFor={remoteProjectId}
+            latest={latestVersions}
+          />
+        </div>
+      ) : machineOffline ? (
+        <div className="px-3 py-3 sm:px-4">
+          <p
+            role="status"
+            data-testid="skills-machine-offline"
+            className="rounded-lg border bg-muted/40 px-4 py-6 text-center text-sm text-muted-foreground"
+          >
+            {tx("{machine} is offline. Its settings show when it reconnects.", {
+              machine: machineName,
+            })}
+          </p>
+        </div>
+      ) : query.error && !snapshot ? (
         <p role="alert" className="px-3 py-4 text-sm text-destructive-foreground sm:px-4">
-          {machineOffline
-            ? `${machineName} is not connected, so its skills cannot be read now. Pick another machine above, or open SpecWithCode on ${machineName}.`
-            : `Could not read this project's skills${environment ? ` on ${machineName}` : ""}: ${query.error}`}
+          {`Could not read this project's skills${environment ? ` on ${machineName}` : ""}: ${query.error}`}
         </p>
       ) : !snapshot ? (
         <p
@@ -1032,9 +944,15 @@ function ScopedProjectSkillsView({
           {tx("Scanning skill folders and lockfiles…")}
         </p>
       ) : snapshot.rows.length === 0 ? (
-        <p className="px-3 py-4 text-sm text-muted-foreground sm:px-4">
-          {tx("No agent loads any skill in this folder, and no vskill lockfile lists one.")}
-        </p>
+        <>
+          <p className="px-3 py-4 text-sm text-muted-foreground sm:px-4">
+            {tx("No skills or lock entries were found in this read.")}
+          </p>
+          <div className="px-3 pb-2 sm:px-4">
+            <SkillsReadState snapshot={snapshot} machine={machineName} />
+          </div>
+          <SkillsFootnotes snapshot={snapshot} machine={machineName} />
+        </>
       ) : (
         <>
           {query.error ? (
@@ -1044,48 +962,71 @@ function ScopedProjectSkillsView({
               })}
             </p>
           ) : null}
-          <div className="px-1 sm:px-2" data-testid="skills-table">
-            <Table className="min-w-[44rem]" aria-label={tx("Project skills")}>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{tx("Skill")}</TableHead>
-                  <TableHead>{tx("Providers")}</TableHead>
-                  <TableHead>{tx("Scope")}</TableHead>
-                  <TableHead>{tx("Version")}</TableHead>
-                  <TableHead>{tx("Tier")}</TableHead>
-                  <TableHead>{tx("Source")}</TableHead>
-                  <TableHead>{tx("Status")}</TableHead>
-                  <TableHead>
-                    <span className="sr-only">{tx("Actions")}</span>
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.length === 0 ? (
+          {!anyInstalled ? (
+            <p className="px-3 py-2 text-sm text-muted-foreground sm:px-4">
+              {tx("Nothing is installed on {machine} yet.", { machine: machineName })}
+            </p>
+          ) : (
+            <div className="px-1 sm:px-2" data-testid="skills-table">
+              <Table className="min-w-[44rem]" aria-label={tx("Project skills")}>
+                <TableHeader>
                   <TableRow>
-                    <TableCell colSpan={8}>
-                      <p className="py-2 text-center text-muted-foreground">
-                        {problemsOnly && !search.trim() && !chipsActive
-                          ? tx("Nothing needs attention.")
-                          : tx("No skills match these filters.")}
-                      </p>
-                    </TableCell>
+                    <TableHead>{tx("Skill")}</TableHead>
+                    <TableHead>{tx("Providers")}</TableHead>
+                    <TableHead>{tx("Scope")}</TableHead>
+                    <TableHead>{tx("Version")}</TableHead>
+                    <TableHead>{tx("Tier")}</TableHead>
+                    <TableHead>{tx("Source")}</TableHead>
+                    <TableHead>{tx("Status")}</TableHead>
+                    <TableHead>
+                      <span className="sr-only">{tx("Actions")}</span>
+                    </TableHead>
                   </TableRow>
-                ) : (
-                  rows.map((row) => (
-                    <SkillRow
-                      key={row.name}
-                      row={row}
-                      entries={entries}
-                      update={updates[row.name] ?? null}
-                      onOpen={openWith}
-                    />
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </div>
-          <SkillsFootnotes snapshot={snapshot} />
+                </TableHeader>
+                <TableBody>
+                  {installedRows.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={8}>
+                        <p className="py-2 text-center text-muted-foreground">
+                          {problemsOnly && !search.trim() && !chipsActive
+                            ? tx("Nothing needs attention.")
+                            : tx("No skills match these filters.")}
+                        </p>
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    tablePage.items.map((row) => (
+                      <SkillRow
+                        key={row.name}
+                        row={row}
+                        entries={entries}
+                        update={updates[row.name] ?? latestVersions.get(row.name) ?? null}
+                        onOpen={openWith}
+                      />
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+              <SkillsPager
+                page={tablePage}
+                onPage={(page) => setPaging({ key: filterKey, page })}
+                label={tx("skills")}
+                pageSizes={SKILLS_TABLE_PAGE_SIZES}
+                onPageSize={(size) => {
+                  setPageSize(size);
+                  setPaging({ key: filterKey, page: 1 });
+                }}
+                className="px-2 py-2"
+              />
+            </div>
+          )}
+          <SkillsBuiltInBlock
+            rows={builtInRows}
+            filterKey={filterKey}
+            onOpen={openWith}
+            renderAgent={(presence) => <SkillProviderMark presence={presence} entries={entries} />}
+          />
+          <SkillsFootnotes snapshot={snapshot} machine={machineName} />
           <Sheet
             open={detailRow !== null}
             onOpenChange={(open) => {

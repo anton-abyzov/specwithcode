@@ -9,6 +9,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   describeMachineWait,
   firstEligibleMachine,
+  judgeAccountEvidence,
   judgeMachineCandidate,
   type MachineView,
   orderFallbackCandidates,
@@ -239,5 +240,126 @@ describe("fallback order and wait text", () => {
       "No other machine has room: Minis: same Claude account as M4; M3: offline.",
     );
     expect(firstEligibleMachine([skipped, offline, judge(machine())])?.reason).toBe("eligible");
+  });
+});
+
+describe("judgeAccountEvidence: what a target's sign-in adds (1390, AC-22 and AC-38)", () => {
+  type Reading = NonNullable<Parameters<typeof judgeAccountEvidence>[0]["usage"]>;
+  const reading: Reading = {
+    accountFingerprint: poolB,
+    usedPercent: 40,
+    resetsAt: laterReset,
+    signedIn: true,
+    observedAt: fresh,
+  };
+  const evidence = (
+    usage: Partial<Reading> = {},
+    overrides: Partial<Parameters<typeof judgeAccountEvidence>[0]> = {},
+  ) =>
+    judgeAccountEvidence({
+      providerName: "Claude",
+      sourceLabel: "M4",
+      sameDriver: true,
+      sourceFingerprints: [poolA],
+      usage: { ...reading, ...usage },
+      thresholdPercent: 99,
+      nowMs: now,
+      ...overrides,
+    });
+
+  it("names another account with what is left of it", () => {
+    expect(evidence()).toMatchObject({
+      kind: "different-account",
+      line: "Different Claude account · 60% left",
+      percentLeft: 60,
+      automatic: true,
+      byHand: true,
+      reason: "eligible",
+    });
+  });
+
+  it("says a shared account adds no usage, and never picks it automatically", () => {
+    expect(evidence({ accountFingerprint: poolA })).toMatchObject({
+      kind: "same-account",
+      line: "Same Claude account as M4: adds no usage",
+      automatic: false,
+      byHand: true,
+      reason: "same_account",
+    });
+    // Any of the source's depleted pools counts.
+    expect(
+      evidence({ accountFingerprint: poolB }, { sourceFingerprints: [poolA, poolB] }).kind,
+    ).toBe("same-account");
+  });
+
+  it("reads unknown and stale usage as unknown: by hand only", () => {
+    for (const usage of [
+      { usedPercent: null },
+      { observedAt: null },
+      { observedAt: stale },
+      // Inside its window and below the threshold, an old reading proves no room.
+      { observedAt: stale, usedPercent: 10, resetsAt: laterReset },
+      { accountFingerprint: null },
+    ] satisfies ReadonlyArray<Partial<Reading>>) {
+      expect(evidence(usage)).toMatchObject({
+        kind: "usage-unknown",
+        line: "Usage unknown",
+        automatic: false,
+        byHand: true,
+      });
+    }
+    expect(evidence({}, { usage: undefined })).toMatchObject({
+      kind: "usage-unknown",
+      automatic: false,
+    });
+    expect(evidence({}, { sourceFingerprints: [] }).kind).toBe("usage-unknown");
+    expect(evidence({ observedAt: stale }).reason).toBe("stale_usage");
+  });
+
+  it("never picks an account at the threshold automatically", () => {
+    expect(evidence({ usedPercent: 99 })).toMatchObject({
+      kind: "different-account",
+      line: "Different Claude account · 1% left",
+      automatic: false,
+      byHand: true,
+      reason: "at_threshold",
+    });
+    // "Only at the limit" is a threshold of 100.
+    expect(evidence({ usedPercent: 99 }, { thresholdPercent: null }).automatic).toBe(true);
+  });
+
+  it("is no target at all when signed out or already limited", () => {
+    expect(evidence({ signedIn: false })).toMatchObject({ automatic: false, byHand: false });
+    expect(evidence({ limited: true })).toMatchObject({
+      automatic: false,
+      byHand: false,
+      reason: "limited",
+    });
+  });
+
+  it("counts a pool the source is out on as shared, whichever provider the thread stopped on", () => {
+    // The track ran out on two providers; the target offers the second one's account.
+    expect(
+      evidence(
+        { accountFingerprint: poolB, usedPercent: 10 },
+        { sameDriver: false, providerName: "Codex", sourceFingerprints: [poolA, poolB] },
+      ),
+    ).toMatchObject({
+      kind: "same-account",
+      line: "Same Codex account as M4: adds no usage",
+      automatic: false,
+      byHand: true,
+      reason: "same_account",
+    });
+  });
+
+  it("never treats another provider as the same pool or as unknown", () => {
+    expect(
+      evidence({ accountFingerprint: null }, { sameDriver: false, providerName: "Codex" }),
+    ).toMatchObject({
+      kind: "different-account",
+      line: "Different Codex account · 60% left",
+      automatic: true,
+    });
   });
 });

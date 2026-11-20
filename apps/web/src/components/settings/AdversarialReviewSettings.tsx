@@ -15,6 +15,7 @@ import { Switch } from "../ui/switch";
 import { ModelTracksSettings } from "./ModelTracksSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { PolicyTooltip, SettingResetButton, SettingsRow } from "./settingsLayout";
+import { ADVERSARIAL_REVIEW_TIME_NOTE, SLOWER_WORK_NOTE_LABEL } from "./slowerWorkNotes";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -108,6 +109,15 @@ export function AdversarialReviewSettings({ part }: { readonly part?: "depth" } 
             mixed={mixed}
             id="adversarial-review-auto"
             title={tx("Review finished features automatically")}
+            titleInfo={
+              <PolicyTooltip
+                label={tx(SLOWER_WORK_NOTE_LABEL, {
+                  setting: tx("Review finished features automatically"),
+                })}
+              >
+                {tx(ADVERSARIAL_REVIEW_TIME_NOTE)}
+              </PolicyTooltip>
+            }
             description={tx(
               isProjectScope
                 ? "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Turn it on for the projects where a second opinion is worth the usage."

@@ -102,7 +102,7 @@ export const de: Messages = {
   "wizard.import.selectNone": "Keine auswählen",
   "wizard.import.looking": "Suche nach Projekten…",
   "wizard.import.checkFailed": "Projekte konnten nicht geprüft werden. {error}",
-  "wizard.import.none": "Keine vorhandenen Claude-Code- oder Codex-Projekte gefunden.",
+  "wizard.import.none": "Keine vorhandenen Agentenprojekte gefunden.",
   "wizard.import.importing": "Importiere…",
   "wizard.import.importButton": {
     one: "{count} Projekt importieren",

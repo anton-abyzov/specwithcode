@@ -31,15 +31,17 @@ import {
 } from "../../lib/durableComposerDraftBindings";
 import { retryTransientSend } from "../../lib/transientSendRetry";
 import { ProjectCoordinatorDetails } from "./ProjectCoordinatorDetails";
-import { type MachineHandoffOpenRequest, ProjectMachineHandoff } from "./ProjectMachineHandoff";
+import { ProjectMachineHandoff } from "./ProjectMachineHandoff";
+import { useMachineHandoffRequest } from "./useMachineHandoffRequest";
 import { FolderCopyBanner } from "./FolderCopyBanner";
 import { OtherMachineAssistantNotice } from "./OtherMachineAssistantNotice";
 import { ProjectPlan } from "./ProjectPlan";
 import { TimelineDetailMenu } from "../chat/TimelineDetailMenu";
+import { CoordinatorSpecweaveCard } from "../chat/CoordinatorSpecweaveCard";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
-import { LaptopIcon, PanelRightIcon, SettingsIcon } from "lucide-react";
+import { PanelRightIcon, SettingsIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
 import {
   AuthOrchestrationOperateScope,
@@ -47,6 +49,7 @@ import {
   CommandId,
   logicalProjectTitle,
   type ChatAttachment,
+  type EnvironmentId,
   type ModelSelection,
   type ProjectStarterSuggestion,
   type ThreadId,
@@ -166,13 +169,14 @@ import { bulkThreadTargets } from "../../studio/bulkThreadControl";
 import { useBulkThreadControl } from "../../studio/useBulkThreadControl";
 import { useComposerAppCommands } from "../../studio/useComposerAppCommands";
 import { BoardPane } from "./shell/BoardPane";
-import { ProjectSpecweaveSetting } from "./ProjectSpecweaveSetting";
+import { BoardSpecweaveSetup } from "./ProjectSpecweaveSetting";
 import { LibraryPane } from "./shell/LibraryPane";
 import { LIBRARY_SECTIONS, type LibrarySection } from "../../studio/projectArtifacts";
 import { ProjectArtifactShelf } from "./shell/ProjectArtifactShelf";
 import { useProjectArtifacts } from "../../studio/useProjectArtifacts";
 import { ProjectDesignsButton, ProjectDesignsPane } from "./shell/ProjectDesignsPane";
 import { useProjectDesigns } from "../design/useProjectDesigns";
+import { useBoardIncrementRoute } from "../../studio/useBoardIncrementRoute";
 import { useProjectPaneDeepLink } from "../../studio/useProjectPaneDeepLink";
 import { PullRequestsPane } from "./shell/PullRequestsPane";
 import { ScheduledPane } from "./shell/ScheduledPane";
@@ -189,27 +193,33 @@ import { useOpenLink } from "../../browser/useOpenLink";
 import { ProjectWorkerPane } from "./ProjectWorkerPane";
 import { coordinatorProgress } from "../../studio/coordinatorProgress";
 import { Tip } from "./shell/Tip";
+import { CoordinatorMachineTag } from "./CoordinatorMachineTag";
 import { useCoordinatorVoiceAsk, useVoiceCall, VoiceCallBar } from "./VoiceCall";
 import { useDictationShortcut } from "./dictationShortcut";
 import { useVoiceDictation, VoiceDictationBar } from "./VoiceDictation";
 import { ProjectIconButton } from "./ProjectIconEditor";
 import { ProjectMoreMenu } from "./shell/ProjectMoreMenu";
+import { FirstFeatureGuide, useFirstFeatureReopen } from "./firstFeature/FirstFeatureGuide";
+import { specweaveStateOf } from "./specweaveSetup.logic";
 import { randomUUID } from "../../lib/utils";
 
 import { CoordinatorConversation } from "./CoordinatorConversation";
 import { ProjectOrchestratorSwitcher } from "./OrchestratorSwitcher";
-import { CoordinatorBlockedNotice } from "./CoordinatorBlockedNotice";
 import { ProjectComposerHostStatus } from "./ComposerHostStatus";
 import { useTx } from "../../i18n";
 import {
   keptCoordinatorCopies,
   type OrchestratorCopy,
-  workersOnlyProblem,
 } from "../../studio/projectCoordinatorMachine";
 import { useMachineNickname } from "../../studio/machineNickname";
 import { machineColorProps, useMachineIdentity } from "../../studio/machineIdentity";
-import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
-import { useHostReach, useUnreachableHosts } from "../../studio/unreachableHosts";
+import {
+  useHostIdentityMismatch,
+  useHostReach,
+  useHostReachStates,
+  useUnreachableHosts,
+} from "../../studio/unreachableHosts";
+import { archivedHistoryNotice } from "../../studio/archivedHistoryNotice";
 import { isThisMachineTarget } from "../../connection/desktopLocal";
 import {
   environmentWaitsForReconnectGrace,
@@ -281,7 +291,6 @@ export function ProjectWorkspaceSurface({
   selectedEnvironmentId = null,
   restoringThread = false,
   ownershipProblem = null,
-  coordinatorElsewhere = null,
   setSelected,
 }: {
   project: EnvironmentProject;
@@ -300,8 +309,6 @@ export function ProjectWorkspaceSurface({
   selectedEnvironmentId?: string | null;
   restoringThread?: boolean;
   ownershipProblem?: string | null;
-  /** A workers-only copy's coordinator on another machine, where its work is started. */
-  coordinatorElsewhere?: { readonly key: string; readonly machine: string | null } | null;
   setSelected: SelectProjectThread;
 }) {
   const projectTitle = logicalProjectTitle(project);
@@ -411,21 +418,16 @@ export function ProjectWorkspaceSurface({
   const [coordinatorDetailsOpen, setCoordinatorDetailsOpen] = useState(false);
   const [machineHandoffOpen, setMachineHandoffOpen] = useState(false);
   const [handoffTarget, setHandoffTarget] = useState<string | null>(null);
-  // The machine menu's "Copy to another machine…": the dialog opens on the copy.
-  const [handoffRequest, setHandoffRequest] = useState<MachineHandoffOpenRequest | null>(null);
-  const requestHandoff = useCallback(
-    (mode: MachineHandoffOpenRequest["mode"], target?: string) =>
-      setHandoffRequest((previous) => ({
-        mode,
-        seq: (previous?.seq ?? 0) + 1,
-        ...(target ? { target } : {}),
-      })),
+  // The machine menu's Sync and Add items: the folder dialog opens on the copy, once.
+  const handoff = useMachineHandoffRequest();
+  const requestHandoff = handoff.ask;
+  const handoffOpenChange = useCallback(
+    (open: boolean) => {
+      setMachineHandoffOpen(open);
+      if (!open) setHandoffTarget(null);
+    },
     [],
   );
-  const handoffOpenChange = useCallback((open: boolean) => {
-    setMachineHandoffOpen(open);
-    if (!open) setHandoffTarget(null);
-  }, []);
   const [retryingCoordinator, setRetryingCoordinator] = useState(false);
   const [coordinatorActivityRunId, setCoordinatorActivityRunId] = useState<string | null>(null);
   const [coordinatorReviewView, setCoordinatorReviewView] = useState<"requests" | "activity">(
@@ -607,6 +609,7 @@ export function ProjectWorkspaceSurface({
       ? project.environmentId
       : null;
   const hostReach = useHostReach(project.environmentId);
+  const hostIdentityMismatch = useHostIdentityMismatch(project.environmentId);
   const [graceElapsedEnvironmentId, setGraceElapsedEnvironmentId] = useState<string | null>(null);
   useEffect(() => {
     setGraceElapsedEnvironmentId(null);
@@ -623,6 +626,7 @@ export function ProjectWorkspaceSurface({
   const admissionContext = {
     ...hostAdmission,
     ...(hostReach === undefined ? {} : { reach: hostReach }),
+    ...(hostIdentityMismatch ? { identityMismatch: true } : {}),
     accessPending: operateAccess === "unknown",
     ...(environment?.label || machineName !== project.environmentId
       ? { machineLabel: machineName }
@@ -640,15 +644,9 @@ export function ProjectWorkspaceSurface({
   const hostStatus = connected
     ? null
     : composerHostStatus(environment?.connection, admissionContext);
-  // A workers-only copy names where its work starts; only one that ran a coordinator keeps history.
-  const workersOnly = coordinatorElsewhere
-    ? workersOnlyProblem(
-        coordinatorElsewhere.machine,
-        shells.some((t) => t.id === mainCoordinatorId && t.environmentId === project.environmentId),
-      )
-    : null;
-  // An unreachable machine refuses first: a typed message is never sent elsewhere.
-  const blocked = (connected ? null : admission) ?? workersOnly ?? ownershipProblem ?? admission;
+  // Every machine runs its own coordinator: what is typed here goes to this machine's.
+  // An unreachable machine refuses first.
+  const blocked = (connected ? null : admission) ?? ownershipProblem ?? admission;
   // Memoized, not just computed: these feed memoized callbacks below, and the
   // React Compiler keeps those only for values it knows are not changed later.
   const coordinator = useMemo(
@@ -1041,6 +1039,13 @@ export function ProjectWorkspaceSurface({
     [selectedThread, setOverviewOpen, setPaneTab, setSelected],
   );
   useProjectPaneDeepLink(showPaneTab);
+  const showBoardTab = useCallback(() => showPaneTab("board"), [showPaneTab]);
+  // A link naming an increment (`?increment=`) lands on the Board tab with its view open.
+  const boardIncrement = useBoardIncrementRoute({
+    available: hasBoard,
+    shown: overviewOpen && selectedThread === null && paneTab === "board",
+    show: showBoardTab,
+  });
   const toggleOverview = useCallback(() => {
     if (threadOpen || overviewOpen) hideOverview();
     else setOverviewOpen(true);
@@ -1641,6 +1646,16 @@ export function ProjectWorkspaceSurface({
     return ids;
   }, [paneScope]);
   const unreachableHosts = useUnreachableHosts();
+  const hostReachStates = useHostReachStates();
+  // A machine already shown as not connected says so itself; the rest are named.
+  const archivedNotice = archivedHistoryNotice({
+    failedEnvironmentIds: archived.failedEnvironmentIds,
+    reach: hostReachStates,
+    label: (environmentId) => {
+      const name = machineLabels.get(environmentId);
+      return name === undefined || name === environmentId ? null : name;
+    },
+  });
   const subagents = useThreadSubagents({
     thread: selectedThread,
     shells,
@@ -1706,6 +1721,21 @@ export function ProjectWorkspaceSurface({
       field.setSelectionRange(field.value.length, field.value.length);
     });
   };
+  const reopenFirstFeature = useFirstFeatureReopen(project);
+  // A request for the person to send, from the Board or the first feature guide.
+  const draftRequest =
+    canOperate && connected
+      ? (text: string) => {
+          // The composer sits behind an expanded panel, and on a phone
+          // behind the panel itself.
+          setPaneExpanded(false);
+          if (phone) {
+            setSelected(null);
+            setOverviewOpen(false);
+          }
+          draftForCoordinator(text);
+        }
+      : undefined;
   const quickStarts = (
     <CoordinatorQuickStarts
       // Hidden sends can't be appended to: a chip waits while a message is on its way.
@@ -1780,24 +1810,12 @@ export function ProjectWorkspaceSurface({
                 >
                   <h1>{projectTitle}</h1>
                 </Tip>
-                {primaryEnvironmentId !== null && project.environmentId !== primaryEnvironmentId ? (
-                  // Another machine runs this project: its coordinator, workers and sign-ins.
-                  <Tip label={`Runs on ${machineName}, not this computer`}>
-                    <span
-                      className="sws-tag sws-project-machine machine-chip"
-                      data-project-machine
-                      {...machineColorProps(machineIdentity)}
-                    >
-                      {machineIdentity ? (
-                        <EnvironmentMachineIcon kind={machineIdentity.icon} aria-hidden />
-                      ) : (
-                        <LaptopIcon aria-hidden />
-                      )}
-                      <span className="sr-only">Runs on </span>
-                      {machineName}
-                    </span>
-                  </Tip>
-                ) : null}
+                {/* Another machine's coordinator: its name and the window's, both visible. */}
+                <CoordinatorMachineTag
+                  shownEnvironmentId={project.environmentId}
+                  shownLabel={environment?.label}
+                  windowEnvironmentId={primaryEnvironmentId}
+                />
                 {snapshot?.settings.kind === "personal" ? (
                   <Tip label={PERSONAL_ASSISTANT_DESCRIPTION}>
                     <span className="sws-tag">
@@ -1863,6 +1881,7 @@ export function ProjectWorkspaceSurface({
                       : undefined
                   }
                   onOpenSettingsTab={setTab}
+                  onOpenFirstFeatureGuide={reopenFirstFeature}
                   designHere={project.environmentId === primaryEnvironmentId}
                 />
               </div>
@@ -1870,6 +1889,22 @@ export function ProjectWorkspaceSurface({
             {machinePrivate ? null : (
               <FolderCopyBanner environmentId={project.environmentId} projectId={project.id} />
             )}
+            {/* The sample project's first feature guide (1398); nothing for any other project. */}
+            <FirstFeatureGuide
+              project={project}
+              specweave={specweaveStateOf(snapshot)}
+              specweaveWaiting={snapshot?.specweaveSetupFailure !== undefined}
+              askWaiting={coordinatorFailure !== null || Boolean(coordinator?.limitRecovery)}
+              author={model ?? null}
+              canOperate={canOperate && connected}
+              onShowBoard={showBoardTab}
+              onOpenIncrement={(incrementId) => {
+                showBoardTab();
+                boardIncrement.open(incrementId);
+              }}
+              onAsk={draftRequest}
+              onOpenThread={showCoordinator}
+            />
             {machinePrivate &&
             primaryEnvironmentId !== null &&
             project.environmentId !== primaryEnvironmentId ? (
@@ -1967,11 +2002,19 @@ export function ProjectWorkspaceSurface({
                 // workspace read is pending, a coordinator with history may be behind it.
                 welcome
               ) : null}
+              {conversationCoordinatorId ? (
+                <CoordinatorSpecweaveCard
+                  environmentId={project.environmentId}
+                  projectId={project.id}
+                  threadId={conversationCoordinatorId}
+                />
+              ) : null}
               <QuestionLiveStatus announcement={questionAnnouncement} />
               <CoordinatorComposer
                 composer={composer}
                 // A viewer showing the coordinator borrows this composer.
                 threadRef={coordinatorRef}
+                // The box wears the machine the chip names: the one shown.
                 environmentId={project.environmentId}
                 cwd={project.workspaceRoot}
                 sendBlocked={
@@ -2023,6 +2066,7 @@ export function ProjectWorkspaceSurface({
                 keybindings={keybindings}
                 isPhoneKeyboard={isPhoneKeyboard}
                 sendShortcut={sendShortcut}
+                // A routed message goes to the coordinator as typed: commands and skills here act on this machine.
                 onAppCommand={appCommandsOffered ? runAppCommand : null}
                 provider={model ? (providerEntries.get(model.instanceId) ?? null) : null}
                 onSend={sendFromComposer}
@@ -2036,14 +2080,9 @@ export function ProjectWorkspaceSurface({
                       />
                     ) : null}
                     {blocked && !hostStatus && (
-                      <CoordinatorBlockedNotice
-                        text={blocked}
-                        coordinator={blocked === workersOnly ? coordinatorElsewhere : null}
-                        current={`${project.environmentId}:${project.id}`}
-                        members={iconCheckouts}
-                        copies={checkouts}
-                        onOpen={onCheckout}
-                      />
+                      <p className="project-muted" role="status">
+                        {blocked}
+                      </p>
                     )}
                     {/* A send refused for the host the line names would only repeat it. */}
                     {error && !(hostStatus && error === blocked) && (
@@ -2087,6 +2126,7 @@ export function ProjectWorkspaceSurface({
                         environment?.connection,
                         admissionContext,
                       )}
+                      projectTitle={projectTitle}
                       current={`${project.environmentId}:${project.id}`}
                       copies={checkouts}
                       unknown={unknownMachines}
@@ -2099,13 +2139,9 @@ export function ProjectWorkspaceSurface({
                             }
                           : null
                       }
-                      // Moving is its own confirmed dialog, and needs a coordinator to move.
-                      // A personal assistant is private to its machine: it never moves.
-                      onMove={
-                        mainCoordinatorId && canOperate && !machinePrivate ? setHandoffTarget : null
-                      }
-                      // One Copy to another machine: its dialog asks where the coordinator runs.
-                      onCopy={canOperate && !machinePrivate ? () => requestHandoff("copy") : null}
+                      // Continuing the coordinator here is its own confirmed action.
+                      onCopy={canOperate && !machinePrivate ? requestHandoff : null}
+                      syncReadOnly={!canOperate && !machinePrivate}
                     />
                     {/* After the model, at the row's end: voice and the run state are icons,
                         so the machine and the model keep the room. */}
@@ -2173,7 +2209,8 @@ export function ProjectWorkspaceSurface({
                         project={project}
                         coordinatorId={mainCoordinatorId}
                         requestedTarget={handoffTarget}
-                        openRequest={handoffRequest}
+                        openRequest={handoff.request}
+                        onRequestHandled={handoff.handled}
                         // The machine menu above opens it: one control for Add, Move and Leave.
                         showTrigger={false}
                         onOpenChange={handoffOpenChange}
@@ -2289,30 +2326,21 @@ export function ProjectWorkspaceSurface({
                   bar={paneBar}
                   specweave={snapshot?.specweave === true}
                   setup={
-                    <ProjectSpecweaveSetting
-                      project={project}
-                      specweave={snapshot?.specweave}
-                      disabled={!canOperate || !connected}
-                      onChanged={query.refresh}
-                    />
+                    snapshot ? (
+                      <BoardSpecweaveSetup
+                        project={project}
+                        snapshot={snapshot}
+                        disabled={!canOperate || !connected}
+                        onChanged={query.refresh}
+                      />
+                    ) : null
                   }
                   threads={workers}
                   machineLabels={machineLabels}
                   onOpenThread={(thread) => openThread(thread.id, thread.environmentId)}
-                  onAsk={
-                    canOperate && connected
-                      ? (text) => {
-                          // The composer sits behind an expanded panel, and on a phone
-                          // behind the panel itself.
-                          setPaneExpanded(false);
-                          if (phone) {
-                            setSelected(null);
-                            setOverviewOpen(false);
-                          }
-                          draftForCoordinator(text);
-                        }
-                      : undefined
-                  }
+                  openIncrement={boardIncrement.incrementId}
+                  onOpenIncrement={boardIncrement.open}
+                  onAsk={draftRequest}
                 />
               ) : paneTab === "designs" ? (
                 <ProjectDesignsPane
@@ -2438,16 +2466,12 @@ export function ProjectWorkspaceSurface({
                           machineFilter={machineFilter}
                         />
                       ) : null}
-                      {archived.error ? (
+                      {archivedNotice ? (
                         <p className="project-notice" role="alert">
-                          {say("Archived threads could not be loaded.")}{" "}
-                          <button
-                            type="button"
-                            className="project-control"
-                            onClick={archived.refresh}
-                          >
+                          {say(tx(archivedNotice.phrase, archivedNotice.params))}{" "}
+                          <Button variant="outline" size="xs" onClick={archived.refresh}>
                             Retry resolved history
-                          </button>
+                          </Button>
                         </p>
                       ) : null}
                     </>
@@ -2474,7 +2498,9 @@ export function ProjectWorkspaceSurface({
             canOperate={canOperate && connected}
             accessNotice={
               !connected
-                ? "This machine is not connected. Changes can be made once it reconnects."
+                ? tx("{machine} is not connected. Changes can be made once it reconnects.", {
+                    machine: machineName,
+                  })
                 : operateAccess === "unknown"
                   ? "Checking this connection's access…"
                   : undefined

@@ -3,9 +3,11 @@ import { describe, expect, it } from "@effect/vitest";
 import { ProviderInstanceId, type ModelSelection } from "@specweave-studio/contracts";
 
 import {
+  CLAUDE_DISABLE_ADVISOR_ENV,
   compileClaudeModelSelection,
   describeBackgroundWork,
   describeDeferredClaudeSelection,
+  resolveClaudeSessionAdvisor,
 } from "./claudeModelOptions.ts";
 
 const selection = (
@@ -64,6 +66,73 @@ describe("compileClaudeModelSelection", () => {
     expect(identity([...unset, { id: "ultracode", value: true }])).toBe(identity(unset));
     expect(identity([...unset, { id: "ultracode", value: false }])).toBe(identity(unset));
     expect(identity([{ id: "effort", value: "high" }])).not.toBe(identity(unset));
+  });
+
+  it("passes Claude's own advisor as a flag setting or switches it off with a variable", () => {
+    const plain = selection("claude-opus-5-5", [{ id: "effort", value: "high" }]);
+    const none = compileClaudeModelSelection(plain);
+    expect(none.settings).not.toHaveProperty("advisorModel");
+    expect(none.environment).toEqual({});
+    const model = compileClaudeModelSelection(plain, undefined, {
+      kind: "model",
+      model: "claude-fable-5-2",
+    });
+    expect(model.settings).toMatchObject({ advisorModel: "claude-fable-5-2" });
+    expect(model.environment).toEqual({});
+    const off = compileClaudeModelSelection(plain, undefined, { kind: "disable" });
+    expect(off.settings).not.toHaveProperty("advisorModel");
+    expect(off.environment).toEqual({ [CLAUDE_DISABLE_ADVISOR_ENV]: "1" });
+  });
+
+  it("keys the process on the advisor value, and only when one is passed", () => {
+    const plain = selection("claude-opus-5-5", [{ id: "effort", value: "high" }]);
+    const identity = (advisor?: Parameters<typeof compileClaudeModelSelection>[2]) =>
+      compileClaudeModelSelection(plain, undefined, advisor).queryIdentity;
+    // Unchanged when nothing is passed: a thread without the advisor keeps its process.
+    expect(Object.keys(JSON.parse(identity()))).toEqual(["apiModelId", "effort", "settings"]);
+    const fable = identity({ kind: "model", model: "claude-fable-5-2" });
+    expect(identity({ kind: "model", model: "claude-fable-5-2" })).toBe(fable);
+    expect(fable).not.toBe(identity());
+    expect(identity({ kind: "model", model: "claude-opus-5-5" })).not.toBe(fable);
+    expect(identity({ kind: "disable" })).not.toBe(fable);
+    expect(identity({ kind: "disable" })).not.toBe(identity());
+    expect(describeDeferredClaudeSelection(identity(), fable)).toBe(
+      "Claude's built-in advisor on claude-fable-5-2 applies when background work finishes.",
+    );
+    expect(describeDeferredClaudeSelection(fable, identity({ kind: "disable" }))).toBe(
+      "Claude's built-in advisor off applies when background work finishes.",
+    );
+  });
+
+  it("routes by context size: past the limit to the app's advisor, back under half", () => {
+    const route = (contextTokens: number | null, previousRoute: "built-in" | "studio" | null) =>
+      resolveClaudeSessionAdvisor({
+        claudeAdvisor: { kind: "model", model: "claude-fable-5-2", contextLimit: 1_000 },
+        contextTokens,
+        previousRoute,
+      });
+    expect(route(999, null)).toEqual({
+      outcome: { kind: "model", model: "claude-fable-5-2" },
+      route: "built-in",
+    });
+    expect(route(1_000, "built-in")).toEqual({ outcome: { kind: "disable" }, route: "studio" });
+    expect(route(600, "studio").route).toBe("studio");
+    expect(route(499, "studio").route).toBe("built-in");
+    expect(route(null, "studio").route).toBe("studio");
+    expect(
+      resolveClaudeSessionAdvisor({
+        claudeAdvisor: { kind: "disable" },
+        contextTokens: 10,
+        previousRoute: "built-in",
+      }),
+    ).toEqual({ outcome: { kind: "disable" }, route: null });
+    expect(
+      resolveClaudeSessionAdvisor({
+        claudeAdvisor: undefined,
+        contextTokens: 10,
+        previousRoute: null,
+      }),
+    ).toEqual({ outcome: undefined, route: null });
   });
 
   it("names what waits for background work", () => {

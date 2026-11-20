@@ -87,7 +87,7 @@ export const ko: Messages = {
   "wizard.import.selectNone": "선택 해제",
   "wizard.import.looking": "프로젝트를 찾는 중…",
   "wizard.import.checkFailed": "프로젝트를 확인하지 못했습니다. {error}",
-  "wizard.import.none": "기존 Claude Code 또는 Codex 프로젝트가 없습니다.",
+  "wizard.import.none": "기존 에이전트 프로젝트가 없습니다.",
   "wizard.import.importing": "가져오는 중…",
   "wizard.import.importButton": { other: "프로젝트 {count}개 가져오기" },
   "wizard.import.otherFolders": "기타 폴더",

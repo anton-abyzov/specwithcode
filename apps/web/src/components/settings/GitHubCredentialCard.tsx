@@ -287,7 +287,12 @@ export function GitHubCredentialCard({
             <Button size="xs" disabled={busy} onClick={() => void runCopy()}>
               {tx("Copy sign-in")}
             </Button>
-            <Button size="xs" variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={busy}
+              onClick={() => setConfirming(false)}
+            >
               {tx("Cancel")}
             </Button>
             {plan.replacesSaved ? null : (
@@ -329,7 +334,7 @@ export function GitHubCredentialCard({
           ) : null}
           {plan.copy === "secondary" ? (
             <div>
-              <Button size="xs" variant="ghost" disabled={busy} onClick={startCopy}>
+              <Button size="xs" variant="outline" disabled={busy} onClick={startCopy}>
                 {copyLabel}
               </Button>
             </div>
@@ -342,7 +347,7 @@ export function GitHubCredentialCard({
             {tx("Remove copied sign-in")}
           </Button>
           {plan.otherGhLogin ? (
-            <Button size="xs" variant="ghost" disabled={busy} onClick={() => void remove()}>
+            <Button size="xs" variant="outline" disabled={busy} onClick={() => void remove()}>
               {renderRich(tx("Use gh's {otherGhLogin} for SpecWithCode instead"), {
                 otherGhLogin: plan.otherGhLogin,
               })}

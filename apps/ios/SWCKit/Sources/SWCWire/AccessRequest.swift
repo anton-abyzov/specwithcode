@@ -7,7 +7,7 @@ import Foundation
 /// What an access request asks for.
 public struct AccessRequestSubjectKind: OpenStringEnum {
   public enum Known: String, Sendable, CaseIterable {
-    case app, device, machine, folder
+    case app, device, machine, folder, permission
   }
   public let rawValue: String
   public init(rawValue: String) { self.rawValue = rawValue }
@@ -16,6 +16,7 @@ public struct AccessRequestSubjectKind: OpenStringEnum {
   public static let device = Self(.device)
   public static let machine = Self(.machine)
   public static let folder = Self(.folder)
+  public static let permission = Self(.permission)
 }
 
 /// Where an access request card stands.

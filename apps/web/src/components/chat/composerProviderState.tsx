@@ -63,6 +63,8 @@ type TraitsRenderInput = {
   hidden?: boolean;
   triggerClassName?: string;
   isComposerOwned?: boolean;
+  /** The thread can show the Advisor row; see useThreadAdvisorRowAvailable. */
+  advisorRowAvailable?: boolean;
 };
 
 export function getComposerPromptInjectionState(prompt: string): ComposerPromptInjectionState {
@@ -186,8 +188,11 @@ function renderTraitsControl(
     hidden,
     triggerClassName,
     isComposerOwned,
+    advisorRowAvailable,
   } = input;
   const hasTarget = threadRef !== undefined || draftId !== undefined;
+  // A model with no options still opens the menu when the thread can consult.
+  const advisorOnly = advisorRowAvailable === true && threadRef !== undefined;
   const { selections: resolvedModelOptions } = resolveComposerOptionSelections(
     models,
     model,
@@ -197,14 +202,15 @@ function renderTraitsControl(
   );
   if (
     !hasTarget ||
-    !shouldRenderTraitsControls({
-      provider,
-      models,
-      model,
-      modelOptions: resolvedModelOptions,
-      prompt,
-      planModeEnabled,
-    })
+    (!advisorOnly &&
+      !shouldRenderTraitsControls({
+        provider,
+        models,
+        model,
+        modelOptions: resolvedModelOptions,
+        prompt,
+        planModeEnabled,
+      }))
   ) {
     return null;
   }
@@ -225,6 +231,7 @@ function renderTraitsControl(
       {...(hidden !== undefined ? { hidden } : {})}
       {...(triggerClassName !== undefined ? { triggerClassName } : {})}
       {...(isComposerOwned ? { isComposerOwned } : {})}
+      {...(Component === TraitsPicker && advisorOnly ? { advisorRowAvailable: true } : {})}
     />
   );
 }

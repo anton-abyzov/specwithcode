@@ -194,6 +194,8 @@ export function useComputerUsePermissions(enabled = true) {
     relaunch: bridge?.relaunchForComputerUse
       ? () => void bridge.relaunchForComputerUse?.()
       : undefined,
+    /** Checks again now, for a Retry after a failed check. */
+    retry: () => void refreshSharedStatus(),
   };
 }
 
@@ -205,10 +207,21 @@ export function useComputerUsePermissions(enabled = true) {
 export function ComputerUsePermissionChecklist({
   permissions = ALL_PERMISSIONS,
   state,
+  onBeforeRelaunch,
 }: {
   permissions?: readonly ComputerUsePermission[];
   state: ReturnType<typeof useComputerUsePermissions>;
+  /** Runs before Quit & Reopen, so first-run setup can note where to come back to. */
+  onBeforeRelaunch?: (() => Promise<unknown>) | undefined;
 }) {
+  const relaunch = state.relaunch;
+  const quitAndReopen =
+    relaunch && onBeforeRelaunch
+      ? () =>
+          void onBeforeRelaunch()
+            .catch(() => undefined)
+            .then(relaunch)
+      : relaunch;
   const pending = (permission: ComputerUsePermission) =>
     permissions.includes(permission) &&
     state.requested.has(permission) &&
@@ -263,13 +276,13 @@ export function ComputerUsePermissionChecklist({
           );
         })}
       </ul>
-      {screenRecordingPending && state.relaunch ? (
+      {screenRecordingPending && quitAndReopen ? (
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
           Already turned it on? macOS applies Screen Recording after the app reopens.
           <button
             type="button"
             className={cn(ACCESS_SECONDARY_BUTTON_CLASS, "h-7 px-3 text-xs font-medium")}
-            onClick={state.relaunch}
+            onClick={quitAndReopen}
           >
             Quit &amp; Reopen
           </button>

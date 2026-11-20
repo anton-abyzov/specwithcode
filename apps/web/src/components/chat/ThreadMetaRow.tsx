@@ -24,6 +24,7 @@ import { useNowMinute } from "~/hooks/useNowMinute";
 import { cn } from "~/lib/utils";
 import { environmentMachineIcon } from "../EnvironmentMachineIcon";
 import { PULL_REQUEST_STATE_PRESENTATION } from "../pullRequest/pullRequestIcons";
+import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { ThreadMachine } from "./threadMachine";
@@ -350,16 +351,16 @@ export const ThreadMetaRow = memo(function ThreadMetaRow({
         );
       })}
       {hidden > 0 || showAll ? (
-        <button
-          type="button"
-          className="h-6 rounded-md px-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+        <Button
+          variant="outline"
+          size="xs"
           aria-label={
             showAll ? tx("Show fewer pull requests") : `Show ${hidden} more pull requests`
           }
           onClick={() => setShowAll((all) => !all)}
         >
           {showAll ? tx("Fewer") : `+${hidden}`}
-        </button>
+        </Button>
       ) : null}
     </div>
   );

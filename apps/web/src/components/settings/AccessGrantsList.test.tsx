@@ -12,6 +12,7 @@ const atoms = vi.hoisted(() => ({
 }));
 const commands = vi.hoisted(() => ({ list: vi.fn(), revoke: vi.fn() }));
 const effects = vi.hoisted(() => ({ pending: [] as Array<() => unknown> }));
+const rows = vi.hoisted(() => ({ locked: false }));
 
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
@@ -29,6 +30,7 @@ vi.mock("react/compiler-runtime", async () => {
   const { reactHookHarness } = await import("../../test/reactHookHarness");
   return { c: reactHookHarness.useMemoCache };
 });
+vi.mock("./settingsRowsLocked", () => ({ useSettingsRowsLocked: () => rows.locked }));
 vi.mock("../../state/server", () => ({
   serverEnvironment: { listAccessGrants: atoms.list, revokeAccessGrant: atoms.revoke },
 }));
@@ -50,10 +52,10 @@ const iphone = {
   grantedAt: hourAgo,
 } as const;
 
-function render(kind: "app" | "device"): Tree {
+function render(kind: "app" | "device", machine = environmentId): Tree {
   hooks.beginRender();
   effects.pending = [];
-  return AccessGrantsList({ kind, environmentId }) as Tree;
+  return AccessGrantsList({ kind, environmentId: machine }) as Tree;
 }
 
 async function mount(kind: "app" | "device"): Promise<Tree> {
@@ -87,6 +89,7 @@ function button(tree: Tree, label: string): Tree {
 }
 
 beforeEach(() => {
+  rows.locked = false;
   hooks.reset();
   commands.list.mockReset().mockResolvedValue({
     _tag: "Success",
@@ -117,6 +120,79 @@ describe("AccessGrantsList", () => {
     tree = render("app");
     expect(text(tree)).not.toContain("Notes");
     expect(text(tree)).toContain("Finder");
+  });
+
+  it("shows four entries until asked for all of them", async () => {
+    const apps = ["Notes", "Finder", "Dock", "Music", "Maps", "Mail"].map((label) => ({
+      kind: "app" as const,
+      key: `app:${label.toLowerCase()}`,
+      label,
+      grantedAt: hourAgo,
+    }));
+    commands.list.mockResolvedValue({ _tag: "Success", value: { grants: apps } });
+    let tree = await mount("app");
+    expect(text(tree)).toContain("Music");
+    expect(text(tree)).not.toContain("Maps");
+    const toggle = () =>
+      visitElements(
+        tree,
+        (element) => element.props["data-testid"] === "access-grants-app-toggle",
+      )!;
+    expect(text(toggle())).toBe("Show all 6");
+    expect(toggle().props["aria-expanded"]).toBe(false);
+    // The button names the list it opens.
+    const list = visitElements(tree, (element) => element.type === "ul")!;
+    expect(toggle().props["aria-controls"]).toBe(list.props.id);
+    (toggle().props.onClick as () => void)();
+    tree = render("app");
+    expect(text(tree)).toContain("Mail");
+    expect(text(toggle())).toBe("Show fewer");
+    expect(toggle().props["aria-expanded"]).toBe(true);
+  });
+
+  it("starts on the short list again for another machine", async () => {
+    const apps = ["Notes", "Finder", "Dock", "Music", "Maps", "Mail"].map((label) => ({
+      kind: "app" as const,
+      key: `app:${label.toLowerCase()}`,
+      label,
+      grantedAt: hourAgo,
+    }));
+    commands.list.mockResolvedValue({ _tag: "Success", value: { grants: apps } });
+    let tree = await mount("app");
+    const toggle = () =>
+      visitElements(
+        tree,
+        (element) => element.props["data-testid"] === "access-grants-app-toggle",
+      )!;
+    (toggle().props.onClick as () => void)();
+    tree = render("app");
+    expect(text(tree)).toContain("Mail");
+    tree = render("app", EnvironmentId.make("env-other"));
+    expect(text(tree)).not.toContain("Mail");
+    expect(toggle().props["aria-expanded"]).toBe(false);
+  });
+
+  it("shows every entry, with no toggle, to a sign-in that may only look", async () => {
+    const apps = ["Notes", "Finder", "Dock", "Music", "Maps", "Mail"].map((label) => ({
+      kind: "app" as const,
+      key: `app:${label.toLowerCase()}`,
+      label,
+      grantedAt: hourAgo,
+    }));
+    commands.list.mockResolvedValue({ _tag: "Success", value: { grants: apps } });
+    rows.locked = true;
+    const tree = await mount("app");
+    expect(text(tree)).toContain("Mail");
+    expect(
+      visitElements(tree, (element) => element.props["data-testid"] === "access-grants-app-toggle"),
+    ).toBeNull();
+  });
+
+  it("offers no toggle for four entries or fewer", async () => {
+    const tree = await mount("app");
+    expect(
+      visitElements(tree, (element) => element.props["data-testid"] === "access-grants-app-toggle"),
+    ).toBeNull();
   });
 
   it("explains how to add one when nothing is allowed yet", async () => {

@@ -5,6 +5,7 @@ import type {
   MachineHandoffSourceChanges,
 } from "@specweave-studio/contracts";
 import { formatBytes } from "../../studio/folderCopy";
+import { txNow } from "../../i18n";
 import {
   comparingProgressView,
   movingProgressView,
@@ -65,7 +66,10 @@ export function nextStepText(input: {
         : `Preview compares with ${machine}'s folder. Nothing is written until you approve.`;
     case "failed":
       if (input.held)
-        return `Copy again brings over what changed; it compares first and moves only changed files. Move anyway moves the coordinator with these differences. Undo puts ${machine}'s folder back.`;
+        return txNow(
+          "Sync again brings over what changed; it compares first and moves only changed files. Continue on {target} anyway moves the coordinator with these differences. Undo puts {target}'s folder back.",
+          { target: machine },
+        );
       // Before Apply the destination cannot resume: Retry runs the same copy from measuring.
       if (input.failedBeforeApply)
         return `Retry starts the ${action} again: ${input.auto ? "it measures and compares again, then copies unless it needs you" : "it measures again, then you choose what to copy and preview it"}. Nothing on ${machine} changed, so Stop ${action} leaves it as it was.`;
@@ -138,13 +142,13 @@ export function workingView(input: {
       // The source reads the chosen files while the destination waits to compare them.
       if (measured?.step && measured.step !== "listing")
         return sourceProgressView(measured, sourceLabel);
-    {
-      const fromCopy = copy ? statusProgressView(copy, sourceLabel, targetLabel) : null;
-      // Comparing says why it compares again; later steps speak for themselves.
-      return fromCopy && fromCopy.phase !== "measure"
-        ? fromCopy
-        : comparingProgressView(targetLabel, recompareStep(input.recompare ?? null));
-    }
+      {
+        const fromCopy = copy ? statusProgressView(copy, sourceLabel, targetLabel) : null;
+        // Comparing says why it compares again; later steps speak for themselves.
+        return fromCopy && fromCopy.phase !== "measure"
+          ? fromCopy
+          : comparingProgressView(targetLabel, recompareStep(input.recompare ?? null));
+      }
     case "copying":
       // Approving: the destination still reads as previewed until it starts.
       return (
@@ -342,7 +346,7 @@ export function transferRefusal(
   }
   if (codeOf(cause) === "source_changed" && !published) {
     const changes = changesOf(cause);
-    // Older sources send no list: Copy again stays the only answer.
+    // Older sources send no list: Sync again stays the only answer.
     return changes && changes.total > 0
       ? {
           notice: `${paths(changes.total)} changed on ${sourceLabel} after copying.`,
@@ -351,7 +355,12 @@ export function transferRefusal(
           changes,
         }
       : {
-          notice: `${sourceLabel} changed after copying. Copy again before moving the coordinator.`,
+          notice: txNow(
+            "{source} changed after copying. Sync again before moving the coordinator.",
+            {
+              source: sourceLabel,
+            },
+          ),
           recovery: false,
           copyAgain: true,
         };

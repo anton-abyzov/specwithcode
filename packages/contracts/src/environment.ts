@@ -128,6 +128,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   storageCleanup: Schema.optionalKey(Schema.Boolean),
   /** Server answers `server.cleanOldAppVersions` and measures old app versions apart. */
   cleanOldAppVersions: Schema.optionalKey(Schema.Boolean),
+  /** Server answers `server.getStorageCleanupPlan` and `server.runStorageCleanup`. */
+  storageCleanupPlan: Schema.optionalKey(Schema.Boolean),
   projectWorktreeCleanup: Schema.optionalKey(Schema.Boolean),
   /** Purge of deleted threads and archived threads' event log (storageCleanup). */
   threadHistoryRetention: Schema.optionalKey(Schema.Boolean),
@@ -172,6 +174,14 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server understands thread.auto-settle.set (per-thread auto-settle off).
       Same version-skew contract as threadSettlement. */
   threadAutoSettleOptOut: Schema.optionalKey(Schema.Boolean),
+  /** Server reads the `advisor` setting, understands thread.advisor-mode.set and
+      serves the studio-code `advisor` tool. Absent on older servers, so clients
+      hide the Advisor controls there. */
+  advisor: Schema.optionalKey(Schema.Boolean),
+  /** Server understands thread.review-mode.set and reads a thread's own review
+      choice before the project's. Absent on older servers, so clients hide the
+      Adversarial review row there. */
+  threadReviewMode: Schema.optionalKey(Schema.Boolean),
   /** Server understands regenerateTitle on thread.meta.update. Absent on
       older servers, so clients hide the action instead of sending it. */
   threadTitleRegeneration: Schema.optionalKey(Schema.Boolean),
@@ -189,6 +199,16 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   designCommentReplies: Schema.optionalKey(Schema.Boolean),
   /** Enforces a ceiling carried with work from another machine; older servers omit it. */
   teamRulesCarried: Schema.optionalKey(Schema.Boolean),
+  /** Keeps a review thread's reviewer lock when one is handed to it (the
+      `reviewLock` of a handoff checkpoint). Older servers omit it and are
+      never sent a review thread. */
+  handoffReviewLock: Schema.optionalKey(Schema.Boolean),
+  /** Knows the local-network path of a folder copy (1390 T-17): the code, never the
+      setting. Older servers omit it and their copies run on SpecWithCode Connect. */
+  folderCopyLan: Schema.optionalKey(Schema.Boolean),
+  /** A new Connect device or linked phone needs one approval on this machine
+      (1327). Absent on older servers, which let any signed-in device in. */
+  deviceApproval: Schema.optionalKey(Schema.Boolean),
   /** Accepts format `svg` on `design.export`; older servers omit it. */
   designSvgExport: Schema.optionalKey(Schema.Boolean),
   /** Server removes a private machine from its list (`removeFleetMachine`).
@@ -206,6 +226,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server takes its fleet primary's skill installs at `/api/studio/fleet/skills`.
       Absent on older servers: the primary reports `unsupported` for them. */
   fleetSkillUpdate: Schema.optionalKey(Schema.Boolean),
+  /** Skill installs from a connected GitHub repo at one commit, with preview, Undo and the
+      npx fallback (increment 1399). Absent on older servers: the primary lists the machine
+      as needing an update and sends it nothing. */
+  fleetSkillGithubSource: Schema.optionalKey(Schema.Boolean),
   /** Server lets a coordinator's management token add and allow that coordinator at
       `/api/studio/fleet/workers/self-allow`. Absent on older servers: the
       coordinator asks the owner to add it there by hand. */
@@ -325,6 +349,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       (`projectLink.startCoordinator`). Absent on older servers, where a
       member can only take over the single coordinator. */
   coordinatorPerMachine: Schema.optionalKey(Schema.Boolean),
+  /** Every linked machine keeps its own active coordinator: `projectLink.accept` leaves the
+      joining copy's coordinator active instead of relinquishing it. Absent on older servers,
+      whose accept gives the coordinator up, so a link is refused before either end is asked. */
+  equalCoordinators: Schema.optionalKey(Schema.Boolean),
   /** Replicates a linked project's native plan so claims bind on every machine
       (`projectLink.planExport`, `projectLink.planMerge`). */
   linkedPlans: Schema.optionalKey(Schema.Boolean),

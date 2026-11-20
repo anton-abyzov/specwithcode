@@ -15,7 +15,13 @@ import * as DeviceService from "../../../device/DeviceService.ts";
 import type { McpInvocationScope } from "../../McpInvocationContext.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import type { AccessRequestCardInput } from "../../OrchestratorMcpService.ts";
-import { findDevice, requestAccess } from "./requestAccess.ts";
+import type { PrivacyAccess } from "@specweave-studio/contracts";
+import {
+  findDevice,
+  fullDiskAccessSubject,
+  requestAccess,
+  requestFullDiskAccess,
+} from "./requestAccess.ts";
 
 const device = (overrides: Partial<DeviceSummary>): DeviceSummary =>
   ({
@@ -182,4 +188,113 @@ describe("requestAccess", () => {
       assert.equal(asked.length, 0);
     }),
   );
+});
+
+describe("requestFullDiskAccess", () => {
+  const scope: McpInvocationScope = {
+    environmentId: EnvironmentId.make("environment-fda"),
+    capabilities: new Set(["orchestration"]),
+    issuedAt: 1,
+    requestNamespace: "thread:thread-fda",
+    thread: {
+      threadId: ThreadId.make("thread-fda"),
+      providerSessionId: "session",
+      providerInstanceId: ProviderInstanceId.make("claude"),
+    },
+    client: undefined,
+  };
+  const access = (fullDiskAccess: PrivacyAccess["fullDiskAccess"]): PrivacyAccess => ({
+    checkedAt: "2026-11-18T00:00:00.000Z",
+    fullDiskAccess,
+    agentHost:
+      fullDiskAccess === "not-applicable"
+        ? null
+        : { kind: "executable", path: "/opt/node/bin/node", name: "node" },
+    runningAgentsNeedRestart: false,
+  });
+  const service = (asked: Array<AccessRequestCardInput>, status: "allowed" | "denied") =>
+    Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({
+      requestAccess: (_scope, card) =>
+        Effect.sync(() => {
+          asked.push(card);
+          return status === "allowed"
+            ? { status: "allowed" as const, scope: "machine" as const }
+            : { status: "denied" as const };
+        }),
+    });
+  const input = { reason: "To list Chrome profiles.", permission: "full-disk-access" as const };
+
+  it.effect("returns not_applicable off macOS with no card", () =>
+    Effect.gen(function* () {
+      const asked: Array<AccessRequestCardInput> = [];
+      const result = yield* requestFullDiskAccess(scope, input, async () =>
+        access("not-applicable"),
+      ).pipe(Effect.provide(service(asked, "allowed")));
+      assert.equal(result.status, "not_applicable");
+      assert.equal(asked.length, 0);
+    }),
+  );
+
+  it.effect("answers allowed at once when it is already on", () =>
+    Effect.gen(function* () {
+      const asked: Array<AccessRequestCardInput> = [];
+      const result = yield* requestFullDiskAccess(scope, input, async () => access("allowed")).pipe(
+        Effect.provide(service(asked, "denied")),
+      );
+      assert.equal(result.status, "allowed");
+      assert.equal(asked.length, 0);
+    }),
+  );
+
+  it.effect("shows one permission card naming the item to add, resolved by the probe", () =>
+    Effect.gen(function* () {
+      const asked: Array<AccessRequestCardInput> = [];
+      const result = yield* requestFullDiskAccess(scope, input, async () =>
+        access("not-allowed"),
+      ).pipe(Effect.provide(service(asked, "denied")));
+      assert.equal(result.status, "denied");
+      assert.equal(asked.length, 1);
+      const card = asked[0]!;
+      assert.equal(card.subjects[0]!.kind, "permission");
+      assert.include(card.subjects[0]!.detail, "/opt/node/bin/node");
+      assert.isDefined(card.resolvedBySystem);
+      assert.isFalse(yield* card.resolvedBySystem!);
+    }),
+  );
+
+  it.effect("refuses a permission mixed with apps", () =>
+    Effect.gen(function* () {
+      const error = yield* requestAccess(scope, { ...input, apps: ["Notes"] }).pipe(
+        Effect.flip,
+        Effect.provide(
+          Layer.mergeAll(
+            service([], "allowed"),
+            Layer.mock(AccessRequests.AccessRequests)({}),
+            Layer.mock(ComputerUseBroker.ComputerUseBroker)({}),
+            Layer.mock(DeviceService.DeviceService)({}),
+          ),
+        ),
+      );
+      assert.equal(error.code, "invalid_request");
+    }),
+  );
+});
+
+describe("fullDiskAccessSubject", () => {
+  const access = (agentHost: PrivacyAccess["agentHost"]): PrivacyAccess => ({
+    checkedAt: "2026-11-18T12:00:00.000Z",
+    fullDiskAccess: "not-allowed",
+    agentHost,
+    runningAgentsNeedRestart: false,
+  });
+
+  it("names the app, the executable, or SpecWithCode when the host is unknown", () => {
+    const detail = (host: PrivacyAccess["agentHost"]) => fullDiskAccessSubject(access(host)).detail ?? "";
+    assert.include(
+      detail({ kind: "app", path: "/System/Applications/Utilities/Terminal.app", name: "Terminal" }),
+      "Turn on Terminal in System Settings.",
+    );
+    assert.include(detail({ kind: "executable", path: "/opt/node/bin/node", name: "node" }), "Add /opt/node/bin/node");
+    assert.include(detail(null), "Turn on SpecWithCode in System Settings.");
+  });
 });

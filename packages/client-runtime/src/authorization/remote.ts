@@ -29,7 +29,11 @@ const clientMetadataTokenExchangeFields = (
 ) => {
   const displayOs = clientMetadata?.os;
   return {
-    ...(clientMetadata?.label ? { client_label: clientMetadata.label } : {}),
+    // The device's own name when it has one, so a machine that asks for
+    // approval can tell this device from another (1327).
+    ...((clientMetadata?.deviceName ?? clientMetadata?.label)
+      ? { client_label: clientMetadata?.deviceName ?? clientMetadata?.label }
+      : {}),
     ...(clientMetadata?.deviceType ? { client_device_type: clientMetadata.deviceType } : {}),
     ...(displayOs && displayOs !== "unknown" && displayOs !== "other"
       ? { client_os: displayOs }

@@ -2,7 +2,9 @@ import type { EnvironmentId } from "@specweave-studio/contracts";
 import { AuthAccessWriteScope } from "@specweave-studio/contracts";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { environmentCatalog } from "../connection/catalog";
 import { connectPairing } from "../connection/onboarding";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useClientSettings } from "../hooks/useSettings";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useEnvironmentScope } from "../state/session";
@@ -83,6 +85,9 @@ function AutoConnectFleet({ environmentId }: { readonly environmentId: Environme
     });
     if (machines.length === 0) return;
     running.current = true;
+    // The machine list is this account's: a pairing that answers after a
+    // switch is not saved (1434).
+    const forAccount = appAtomRegistry.get(environmentCatalog.accountScopeValueAtom);
     void (async () => {
       let failed = false;
       try {
@@ -91,10 +96,17 @@ function AutoConnectFleet({ environmentId }: { readonly environmentId: Environme
           attempted.current.set(machine.environmentId, Date.now());
           try {
             const credential = await pairStudioFleet(environmentId, machine.id);
+            // Skipped while the pairing was out (removed by hand, or dropped on a
+            // Connect account switch): its answer is not saved.
+            if (readSkippedFleetEnvironments().has(machine.environmentId)) {
+              markFleetAutoConnectSettled(machine.environmentId);
+              continue;
+            }
             const result = await connect({
               host: credential.host,
               pairingCode: credential.pairingCode,
               expectedEnvironmentId: credential.environmentId,
+              ...(forAccount !== undefined ? { forAccount } : {}),
             });
             if (result._tag === "Failure") throw new Error("Pairing was not saved.");
           } catch {

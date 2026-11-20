@@ -301,6 +301,31 @@ var x = 1;
     assert.strictEqual(result.regionCount, 0);
     assert.deepStrictEqual(result.inlined, []);
   });
+
+  // Vite+ 1.6 / Rolldown 1.2 stopped emitting `//#region` and writes the
+  // module path as its own comment. The 1.0.329 sign stage failed closed on
+  // that, which is what regionCount === 0 is for.
+  const pathComment = (modulePath: string) => `// ${modulePath}\nexport const x = 1;\n`;
+
+  it("reads Rolldown 1.2 path comments", () => {
+    const source =
+      pathComment(
+        "../../node_modules/.pnpm/node-addon-api@7.1.1/node_modules/node-addon-api/index.js",
+      ) +
+      pathComment(
+        "../../node_modules/.pnpm/effect@4.0.1_patch_hash=abc/node_modules/effect/dist/BigInt.js",
+      ) +
+      pathComment("src/bin.ts") +
+      pathComment("package.json") +
+      pathComment("\\0rolldown/runtime.js") +
+      "// @__NO_SIDE_EFFECTS__\n" +
+      "// https://example.com/file.js\n";
+    const result = findInlinedExternalPackages(source);
+
+    assert.deepStrictEqual(result.inlined, ["node-addon-api"]);
+    assert.deepStrictEqual(result.inlinedPackages, ["effect", "node-addon-api"]);
+    assert.strictEqual(result.regionCount, 5);
+  });
 });
 
 // The single-executable build can only `import` built-ins. A file-backed

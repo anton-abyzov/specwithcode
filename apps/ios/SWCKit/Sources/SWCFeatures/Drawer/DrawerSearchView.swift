@@ -11,7 +11,7 @@ struct DrawerSearchView: View {
   @FocusState private var focused: Bool
 
   var body: some View {
-    let projects = ([model.aide].compactMap(\.self)) + model.projects
+    let projects = (model.aideSeats.isEmpty ? [model.aide].compactMap(\.self) : model.aideSeats) + model.projects
     let results = SearchResults(query: query, projects: projects, threads: model.allThreads)
     VStack(spacing: 0) {
       HStack(spacing: WeaveSpacing.s2) {

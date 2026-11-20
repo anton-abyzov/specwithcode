@@ -694,7 +694,7 @@ export function ConnectionMatrix({
       <div aria-live="polite" className="connection-details" data-testid="connection-details">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="font-medium">{title}</h3>
-          <Button variant="ghost" size="sm" onClick={closeDetails}>
+          <Button variant="outline" size="sm" onClick={closeDetails}>
             <XIcon aria-hidden />
             {tx("Close details")}
           </Button>

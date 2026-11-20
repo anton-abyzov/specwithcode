@@ -28,7 +28,9 @@ export type ConnectionLossCause =
   /** This device has no network. */
   | "no-network"
   /** The connection was refused and no longer retries. */
-  | "stopped";
+  | "stopped"
+  /** The machine answered: its owner has not approved this device yet (1327). */
+  | "awaiting-approval";
 
 export type MachineReachState =
   | "connected"
@@ -60,6 +62,7 @@ export function connectionLossCause(
   if (network === "offline") return "no-network";
   if (failure === null) return undefined;
   if (failure._tag === "ConnectionBlockedError") return "stopped";
+  if (failure.deviceApprovalCode !== undefined) return "awaiting-approval";
   if (failure.relayUnreachable === true) return "relay-unreachable";
   return failure.reason === "endpoint-unavailable" ? "no-service" : "not-answering";
 }
@@ -76,6 +79,9 @@ function stateAfterGrace(cause: ConnectionLossCause | undefined): MachineReachSt
     case "stopped":
     case undefined:
       return "not-answering";
+    // Never an outage: `machineReach` answers for it before any grace.
+    case "awaiting-approval":
+      return "connecting";
   }
 }
 
@@ -111,6 +117,14 @@ export function machineReach(
     case "connecting":
     case "reconnecting": {
       const cause = connection.phase === "offline" ? "no-network" : connection.cause;
+      // The machine answers every attempt and waits for its owner, however
+      // long that takes: the device keeps asking, so this is not an outage.
+      if (cause === "awaiting-approval") {
+        return {
+          state: connection.lastConnectedAt === undefined ? "connecting" : "reconnecting",
+          graceEndsAt: null,
+        };
+      }
       if (connection.lostAt === undefined) {
         return connection.phase === "connecting"
           ? { state: "connecting", graceEndsAt: null }

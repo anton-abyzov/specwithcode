@@ -294,7 +294,7 @@ function MainMachinePicker({
         ))}
         <Button
           size="xs"
-          variant={other ? "secondary" : "ghost-muted"}
+          variant={other ? "secondary" : "outline"}
           aria-pressed={other}
           disabled={disabled}
           onClick={() => {
@@ -405,11 +405,11 @@ export function FleetInvitePanel({
           <AlertDescription>
             {here === ""
               ? tx(
-                  "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.",
+                  "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join one of your machines there and paste its line here under Add a machine.",
                   { machines: managed },
                 )
               : tx(
-                  "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.",
+                  "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join one of your machines there and paste its line here under Add a machine.",
                   { here, machines: managed },
                 )}
           </AlertDescription>
@@ -792,7 +792,7 @@ export function TailscaleReadinessNotice({
             {readiness.loginUrl ? (
               <Button
                 size="xs"
-                variant="link"
+                variant="outline"
                 onClick={() => readiness.openUrl(readiness.loginUrl!)}
               >
                 {tx("Open the sign-in page again")}
@@ -861,7 +861,7 @@ export function ConnectReadinessNotice({
 }
 
 /**
- * Beside Join a main machine, once this machine's server reports its own
+ * Beside Join one of your machines, once this machine's server reports its own
  * SpecWithCode Connect link: the line can be made now, with no sign-in in
  * this window. The link is the server's, so a window that never signed in
  * (a paired browser) still sees it.
@@ -982,7 +982,7 @@ export function FleetInviteDialog({
     >
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>{tx("Join a main machine")}</DialogTitle>
+          <DialogTitle>{tx("Join one of your machines")}</DialogTitle>
           <DialogDescription>
             {tx(
               "Your main machine can then start work here. The line carries this machine’s SpecWithCode Connect address, so link Connect here first. After that, the main machine’s own keys reach this machine; no one needs to stay signed in.",
@@ -1014,7 +1014,7 @@ export function FleetInviteDialog({
 }
 
 /**
- * Beside Join a main machine: Tailscale's state here, with Install or Sign in
+ * Beside Join one of your machines: Tailscale's state here, with Install or Sign in
  * when it is not ready, and the dialog the button opens. One check serves
  * both; it looks again sooner while the dialog is open.
  */

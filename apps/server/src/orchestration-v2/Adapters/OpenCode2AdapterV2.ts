@@ -3297,8 +3297,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           model: turnInput.modelSelection.model,
           responseStyle: turnInput.runtimePolicy.responseStyle,
           agentInstructions: turnInput.runtimePolicy.agentInstructions,
+          // Only a session whose studio-code server was added can reach `advisor`.
+          advisorGuidance:
+            state.mcp !== undefined ? turnInput.runtimePolicy.advisorGuidance : undefined,
         }),
-        studioOrchestrationSystemPrompt(state.mcp !== undefined),
+        studioOrchestrationSystemPrompt(
+          state.mcp !== undefined,
+          turnInput.runtimePolicy.isCoordinator,
+        ),
       ]
         .filter((part) => part !== undefined && part.length > 0)
         .join("\n\n");

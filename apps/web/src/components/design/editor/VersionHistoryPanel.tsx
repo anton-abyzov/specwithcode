@@ -4,7 +4,7 @@
  * replaces what the canvas shows; the replaced content stays in the history.
  */
 import type { DesignHistoryEntry } from "@specweave-studio/contracts";
-import { BookmarkIcon, XIcon } from "lucide-react";
+import { BookmarkIcon, RotateCcwIcon, XIcon } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import {
@@ -185,7 +185,7 @@ export function VersionHistoryPanel({
                 <Button
                   type="button"
                   size="xs"
-                  variant="ghost"
+                  variant="outline"
                   disabled={busy}
                   onClick={() => setNaming(false)}
                 >
@@ -254,6 +254,7 @@ export function VersionHistoryPanel({
                     disabled={busy}
                     onClick={() => setRestoring(row)}
                   >
+                    <RotateCcwIcon aria-hidden />
                     Restore
                   </Button>
                 ) : null}

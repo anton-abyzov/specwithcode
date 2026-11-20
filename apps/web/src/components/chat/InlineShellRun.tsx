@@ -298,7 +298,7 @@ function InlineShellRunConfirm({ run }: { run: InlineShellRun }) {
       <Button type="button" size="micro" onClick={run.confirmRun} data-shell-run-confirm="">
         {tx("Run")}
       </Button>
-      <Button type="button" size="micro" variant="ghost-muted" onClick={run.cancelRun}>
+      <Button type="button" size="micro" variant="outline" onClick={run.cancelRun}>
         {tx("Cancel")}
       </Button>
     </div>
@@ -362,17 +362,17 @@ export function InlineShellRunPanel() {
         ) : null}
         <span className="ms-auto flex items-center gap-0.5">
           {run.running ? (
-            <Button type="button" size="micro" variant="ghost-muted" onClick={run.stop}>
+            <Button type="button" size="micro" variant="destructive-outline" onClick={run.stop}>
               <SquareIcon className="size-3" />
               {tx("Stop")}
             </Button>
           ) : (
             <>
-              <Button type="button" size="micro" variant="ghost-muted" onClick={run.requestRun}>
+              <Button type="button" size="micro" variant="outline" onClick={run.requestRun}>
                 <PlayIcon className="size-3" />
                 {tx("Run again")}
               </Button>
-              <Button type="button" size="micro" variant="ghost-muted" onClick={run.clear}>
+              <Button type="button" size="micro" variant="outline" onClick={run.clear}>
                 {tx("Clear")}
               </Button>
             </>

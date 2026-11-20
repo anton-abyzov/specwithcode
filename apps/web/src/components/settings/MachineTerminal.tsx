@@ -135,7 +135,7 @@ export function MachineTerminal({
               ? `Connecting to ${environmentLabel}…`
               : `Shell on ${environmentLabel}, in its home folder`}
         </span>
-        <Button size="xs" variant="ghost-muted" onClick={onClose}>
+        <Button size="xs" variant="outline" onClick={onClose}>
           {tx("Close")}
         </Button>
       </div>

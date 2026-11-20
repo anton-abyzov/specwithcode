@@ -335,12 +335,21 @@ export type AwayIntentThreadStatus = typeof AwayIntentThreadStatus.Type;
 export const AwayIntentStatusAnswer = Schema.Struct({
   /** The state of the source's latest intent here, or null without one. */
   intentState: Schema.NullOr(AwayIntentState),
+  /**
+   * The asked projects. An asked project left out is in doubt on the target
+   * (it may have taken it over and handed it on): the source keeps holding it.
+   */
   projects: Schema.Array(AwayIntentProjectStatus),
-  /** The asked threads; absent from targets that predate it. */
+  /**
+   * The asked threads; absent from targets that predate it. An asked thread
+   * left out is in doubt on the target (it may have launched there): the
+   * source keeps holding it and asks again.
+   */
   threads: Schema.optionalKey(Schema.Array(AwayIntentThreadStatus)),
   /**
    * Nothing more will continue: the latest intent is settled and its
-   * follow-up finished, so a thread not continued now never will be.
+   * follow-up finished, so a listed thread not continued now never will be.
+   * It says nothing about a thread left out of `threads`.
    */
   threadsSettled: Schema.optionalKey(Schema.Boolean),
   /** The target's own receive time. */
@@ -459,7 +468,11 @@ export const AWAY_RETURN_PATH = "/api/away/v1/return";
 /** The most items one session records. */
 export const AWAY_SESSION_MAX_ITEMS = 3 * AWAY_PLAN_MAX_ITEMS;
 
-/** What started the session: the Leave button or a lid close (AC-09). */
+/**
+ * What started the session: the Leave button, or a lid close on an earlier
+ * release (AC-09). `sleep` stays readable on saved sessions; no new one
+ * starts with it (1390 AC-36).
+ */
 export const AwayTrigger = Schema.Literals(["manual", "sleep"]);
 export type AwayTrigger = typeof AwayTrigger.Type;
 
@@ -558,6 +571,10 @@ export type AwaySession = typeof AwaySession.Type;
 export const AwayStartInput = Schema.Struct({
   targetEnvironmentId: EnvironmentId,
   coordinatorScope: Schema.optionalKey(AwayCoordinatorScope),
+  /**
+   * Still decodes `sleep` for callers on an earlier release; the server
+   * refuses such a start before it reads or writes anything (1390 AC-36).
+   */
   trigger: Schema.optionalKey(AwayTrigger),
 });
 export type AwayStartInput = typeof AwayStartInput.Type;

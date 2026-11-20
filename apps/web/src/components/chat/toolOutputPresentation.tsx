@@ -19,6 +19,7 @@ import {
 } from "../../lib/outputLanguage";
 import { cn } from "../../lib/utils";
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
+import { Button } from "../ui/button";
 import { HighlightedTokens } from "./HighlightedTokens";
 import { terminalOutputPlainText, withoutTerminalEscapes } from "./shellCodeBlocks";
 import { TerminalActionBar, TerminalLinkedText } from "./TerminalTextActions";
@@ -239,18 +240,16 @@ export function toolPresentationBlocks(
   return blocks;
 }
 
-/** A pager control: the same look as the panel's header controls. */
+/** A pager bar: its actions rest on a border so they don't read as the paging label. */
 function PagingBar({
   paging,
   onLoadEarlier,
   position,
-  controlClass,
 }: {
   readonly paging: ToolCodePaging;
   /** Wraps the paging's own handler so the panel can keep the reader's place. */
   readonly onLoadEarlier: () => void;
   readonly position: "top" | "bottom";
-  readonly controlClass: string;
 }) {
   const tx = useTx();
   const earlier = paging.offset > 0 && paging.onLoadEarlier ? onLoadEarlier : undefined;
@@ -266,24 +265,14 @@ function PagingBar({
     >
       <span>{toolCodePagingLabel(paging)}</span>
       {earlier ? (
-        <button
-          type="button"
-          className={controlClass}
-          disabled={paging.loading === true}
-          onClick={earlier}
-        >
+        <Button variant="outline" size="xs" disabled={paging.loading === true} onClick={earlier}>
           {tx("Load earlier")}
-        </button>
+        </Button>
       ) : null}
       {more ? (
-        <button
-          type="button"
-          className={controlClass}
-          disabled={paging.loading === true}
-          onClick={more}
-        >
+        <Button variant="outline" size="xs" disabled={paging.loading === true} onClick={more}>
           {tx("Load more")}
-        </button>
+        </Button>
       ) : null}
       {paging.loading ? <span role="status">{tx("Loading…")}</span> : null}
       {paging.error ? (
@@ -480,12 +469,7 @@ export function ToolCodePanel({
         <TerminalActionBar text={plain ?? content} />
       ) : null}
       {showsPaging && paging.anchor === "end" ? (
-        <PagingBar
-          paging={paging}
-          onLoadEarlier={loadEarlier}
-          position="top"
-          controlClass={controlClass}
-        />
+        <PagingBar paging={paging} onLoadEarlier={loadEarlier} position="top" />
       ) : null}
       <pre
         ref={preRef}
@@ -518,12 +502,7 @@ export function ToolCodePanel({
         </code>
       </pre>
       {showsPaging && paging.anchor === "start" ? (
-        <PagingBar
-          paging={paging}
-          onLoadEarlier={loadEarlier}
-          position="bottom"
-          controlClass={controlClass}
-        />
+        <PagingBar paging={paging} onLoadEarlier={loadEarlier} position="bottom" />
       ) : null}
       {copyState === "failed" ? (
         <p className="px-3 pb-2 font-sans text-xs text-destructive-foreground" role="status">

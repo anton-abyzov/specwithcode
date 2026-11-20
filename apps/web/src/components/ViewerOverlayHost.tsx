@@ -44,6 +44,7 @@ import { useLocation } from "@tanstack/react-router";
 import { useProjectFileQuery } from "./files/projectFilesQueryState";
 import { mayBeMissing } from "./chat/MissingFileNotice";
 import { ArtifactViewer, ThreadArtifactStrip, useThreadViewables } from "./chat/ThreadArtifacts";
+import { HtmlSourceModeProvider, HtmlSourceSwitch } from "./files/LinkedFileBody";
 import { ViewerLinkedPane, viewerLinkHeader } from "./chat/ViewerLinkedPane";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import { Button } from "./ui/button";
@@ -353,6 +354,7 @@ function FocusedFileActions(props: { readonly file: ViewerFileTarget }) {
     return null;
   return (
     <>
+      <HtmlSourceSwitch path={file.path} />
       {file.openInEditor ? (
         <Button type="button" size="xs" variant="ghost" onClick={file.openInEditor}>
           <SquarePenIcon aria-hidden />
@@ -409,12 +411,15 @@ export function FocusedFileViewer(): ReactNode {
   });
   if (slots === null || target === null) return null;
   return (
-    <>
+    <HtmlSourceModeProvider
+      path={target.file.path}
+      initialSource={target.file.line !== undefined}
+    >
       {createPortal(<ViewerLinkedPane target={target} actionsSlot={null} />, slots.content)}
       {slots.actions
         ? createPortal(<FocusedFileActions file={target.file} />, slots.actions)
         : null}
-    </>
+    </HtmlSourceModeProvider>
   );
 }
 

@@ -4,8 +4,8 @@ import { createPortal } from "react-dom";
 /**
  * The dialog owns placement; the copy flow keeps its current handlers and state.
  * The flow lists its primary action first, so the row is reversed to put it at
- * the end of the footer like every other dialog. A ghost action marked `data-leading`
- * (Stop copy, Change setup, Undo…) sits at the far left.
+ * the end of the footer like every other dialog. A bordered action marked `data-leading`
+ * (Stop copy, Change setup, Undo…) sits at the far left, on the content edge.
  */
 export const HandoffCopyActionsTarget = createContext<HTMLElement | null | undefined>(undefined);
 

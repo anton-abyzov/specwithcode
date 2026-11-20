@@ -80,9 +80,12 @@ export const layer = Layer.effectDiscard(
 
     const dispatchContinuation = Effect.fn("ProviderContinuationService.dispatchContinuation")(
       function* (request: ProviderContinuationRequests.ProviderContinuationRequest) {
+        // Subagents give the wake-up an advisor consult's advice.
         const projection = yield* threads.getThreadRecords(
           request.threadId,
-          ["messages", "runs", "providerTurns"],
+          request.delegatedCompletion === undefined
+            ? ["messages", "runs", "providerTurns"]
+            : ["messages", "runs", "providerTurns", "subagents"],
           {
             messageIds:
               request.delegatedCompletion === undefined
@@ -129,7 +132,7 @@ export const layer = Layer.effectDiscard(
             commandId,
             threadId: request.threadId,
             messageId: delivery.messageId,
-            text: delegatedCompletionWakeText(delivery.taskIds),
+            text: delegatedCompletionWakeText(delivery.taskIds, projection.subagents),
             attachments: [],
             dispatchMode: { type: "queue_after_active" },
             createdBy: "agent",

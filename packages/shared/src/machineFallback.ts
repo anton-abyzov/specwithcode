@@ -11,6 +11,8 @@
  */
 import {
   type LimitHandoffCandidateReason,
+  type LimitHandoffTrackDecision,
+  MODEL_TRACK_LABELS,
   type ModelSelection,
   type OrchestratorMcpMachine,
   PROVIDER_DISPLAY_NAMES,
@@ -230,4 +232,129 @@ export function sameMachineTarget(
     left.modelSelection.instanceId === right.modelSelection.instanceId &&
     left.modelSelection.model === right.modelSelection.model
   );
+}
+
+/**
+ * What a target's sign-in adds for a thread that leaves `source` (1390). It is
+ * the line the target picker shows and the rule both starts share: by hand a
+ * shared or unknown account is allowed with its line, automatically only a
+ * different account with a fresh reading below the threshold qualifies.
+ */
+export type AccountEvidenceKind = "different-account" | "same-account" | "usage-unknown";
+
+export interface AccountEvidence {
+  readonly kind: AccountEvidenceKind;
+  /** "Different Claude account · 60% left". */
+  readonly line: string;
+  readonly percentLeft: number | null;
+  /** An automatic move may pick this sign-in. */
+  readonly automatic: boolean;
+  /** A person may pick it, reading the line. False when no turn could run on it. */
+  readonly byHand: boolean;
+  readonly reason: MachineCandidateReason;
+}
+
+type UsageReading = NonNullable<NonNullable<MachineView["providers"]>[number]["usage"]>;
+
+/**
+ * Unlike `judgeMachineCandidate`, no policy turns an unknown reading into room,
+ * and a reading older than `MACHINE_USAGE_MAX_AGE_MS` is unknown however long
+ * its window still runs: usage only rises, so an old low reading proves nothing.
+ */
+export function judgeAccountEvidence(input: {
+  readonly providerName: string;
+  readonly sourceLabel: string;
+  /** The sign-in runs on the provider the thread ran out on. */
+  readonly sameDriver: boolean;
+  /** The account pools the thread's track is out on at the source. */
+  readonly sourceFingerprints: ReadonlyArray<string>;
+  readonly usage: UsageReading | undefined;
+  /** Null means "only at the limit" (100). */
+  readonly thresholdPercent: number | null;
+  readonly nowMs: number;
+}): AccountEvidence {
+  const { usage } = input;
+  const name = input.providerName;
+  const unknown = (reason: MachineCandidateReason, byHand = true): AccountEvidence => ({
+    kind: "usage-unknown",
+    line: "Usage unknown",
+    percentLeft: null,
+    automatic: false,
+    byHand,
+    reason,
+  });
+  if (usage === undefined) return unknown("unknown_usage");
+  if (!usage.signedIn) return { ...unknown("signed_out", false), line: `${name} not signed in` };
+  // A fingerprint is salted from the provider and the account, so an exact match
+  // is that pool whichever provider the thread stopped on.
+  const shared =
+    usage.accountFingerprint !== null &&
+    input.sourceFingerprints.includes(usage.accountFingerprint);
+  if (shared)
+    return {
+      kind: "same-account",
+      line: `Same ${name} account as ${input.sourceLabel}: adds no usage`,
+      percentLeft: null,
+      automatic: false,
+      byHand: true,
+      reason: "same_account",
+    };
+  const left = usage.usedPercent === null ? null : Math.max(0, Math.round(100 - usage.usedPercent));
+  if (usage.limited === true)
+    return {
+      kind: "different-account",
+      line: `${name} limit reached`,
+      percentLeft: left,
+      automatic: false,
+      byHand: false,
+      reason: "limited",
+    };
+  if (
+    input.sameDriver &&
+    (usage.accountFingerprint === null || input.sourceFingerprints.length === 0)
+  )
+    return unknown("unknown_account");
+  if (usage.usedPercent === null || left === null) return unknown("unknown_usage");
+  const observedMs = usage.observedAt === null ? Number.NaN : Date.parse(usage.observedAt);
+  if (!Number.isFinite(observedMs) || input.nowMs - observedMs > MACHINE_USAGE_MAX_AGE_MS)
+    return unknown("stale_usage");
+  const room = usage.usedPercent < (input.thresholdPercent ?? 100);
+  return {
+    kind: "different-account",
+    line: `Different ${name} account · ${left}% left`,
+    percentLeft: left,
+    automatic: room,
+    byHand: true,
+    reason: room ? "eligible" : "at_threshold",
+  };
+}
+
+/**
+ * Shown under the order in Settings: a thread on a track ignores the order
+ * until its track is out on this machine (1390).
+ */
+export const TRACK_BEFORE_ORDER_LINE =
+  "Threads on a track try every model of their track on this machine first, whatever this order says. They hand off only when that track is out here.";
+
+/**
+ * What a thread shows while no machine has its track: "Daily track is out on
+ * every machine", then "Next reset: Minis at 14:02" or "Reset unknown". Null
+ * unless every machine that could take the track answered with no room.
+ */
+export function describeTrackWait(
+  decision: Pick<
+    LimitHandoffTrackDecision,
+    "track" | "target" | "everyMachineOut" | "earliestReset"
+  >,
+  formatTime: (at: string) => string,
+): { readonly title: string; readonly detail: string } | null {
+  if (!decision.everyMachineOut || decision.target !== null) return null;
+  const reset = decision.earliestReset;
+  return {
+    title: `${MODEL_TRACK_LABELS[decision.track]} track is out on every machine`,
+    detail:
+      reset === null
+        ? "Reset unknown"
+        : `Next reset: ${reset.machineLabel} at ${formatTime(reset.at)}`,
+  };
 }

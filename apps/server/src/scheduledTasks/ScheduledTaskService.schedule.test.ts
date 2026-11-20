@@ -13,6 +13,7 @@ import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { RoutineRunnerPace } from "./ScheduledTaskRunner.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 
 const decodeUpsertInput = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);
@@ -76,6 +77,8 @@ it.effect("preserves a due run when a save only pads the scheduled hour", () =>
         getThreadShell: () => Effect.succeed(null),
       }),
       Layer.mock(SecretRequests.SecretRequests)({}),
+      // No look before the due pass: this test counts on the first pass running at once.
+      Layer.succeed(RoutineRunnerPace, { everyMs: null }),
     );
     yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;

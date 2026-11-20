@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import { DEFAULT_ADVERSARIAL_REVIEW_SETTINGS } from "./adversarialReview.ts";
+import { OrchestrationV2Command } from "./orchestrationV2.ts";
 import { ProjectSettingsOverrides, ServerSettings, ServerSettingsPatch } from "./settings.ts";
 
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
@@ -63,5 +64,30 @@ describe("adversarialReview setting", () => {
         modelTiers: { claudeAgent: { regular: "claude-opus-5-5" } },
       }).modelTiers,
     ).toEqual({ claudeAgent: { regular: "claude-opus-5-5" } });
+  });
+});
+
+describe("thread.review-mode.set", () => {
+  const decode = Schema.decodeUnknownSync(OrchestrationV2Command);
+  it.each(["on", "off", null])("accepts %s", (reviewMode) => {
+    expect(
+      decode({
+        type: "thread.review-mode.set",
+        commandId: "cmd-1",
+        threadId: "thread-1",
+        reviewMode,
+      }),
+    ).toMatchObject({ type: "thread.review-mode.set", reviewMode });
+  });
+
+  it("refuses an unknown mode", () => {
+    expect(() =>
+      decode({
+        type: "thread.review-mode.set",
+        commandId: "cmd-1",
+        threadId: "thread-1",
+        reviewMode: "auto",
+      }),
+    ).toThrow();
   });
 });

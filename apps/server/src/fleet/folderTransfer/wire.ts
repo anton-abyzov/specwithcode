@@ -7,6 +7,8 @@ import * as NodeZlib from "node:zlib";
  * server answers 404 and the newer side can say which machine needs an update.
  */
 export const FOLDER_TRANSFER_PREFIX = "/api/folder-transfer/v1";
+/** Sealed secret bodies are served with this type, so a reader never takes one for plain bytes. */
+export const SEALED_SECRET_CONTENT_TYPE = "application/x-swc-sealed-secret";
 export const FOLDER_TRANSFER_VERSION = 1;
 /** A chunk batch request names at most this many chunks... */
 export const MAX_BATCH_CHUNKS = 32;
@@ -19,6 +21,11 @@ export const MAX_BATCH_CHUNKS_LARGE = 1024;
 /** ...and the destination keeps each batch under this many bytes. */
 export const MAX_BATCH_BYTES = 64 * 1024 * 1024;
 export const MAX_REQUEST_BYTES = 4 * 1024 * 1024;
+/** A `lan-retire` body names one generation and nothing else. */
+export const LAN_RETIRE_BYTES = 1024;
+/** The most a request to this route may carry; enforced before its body is read. */
+export const requestBytesFor = (method: string, path: string): number =>
+  method === "POST" && path.endsWith("/lan-retire") ? LAN_RETIRE_BYTES : MAX_REQUEST_BYTES;
 
 export const CHUNK_OK = 0;
 /** The chunk is not in this operation's manifest. */

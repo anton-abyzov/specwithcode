@@ -8,8 +8,12 @@ import {
   STUDIO_MEDIA_INSTRUCTIONS,
 } from "../../provider/RuntimeInstructions.ts";
 import { STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/StudioOrchestrationInstructions.ts";
+import { ADVISOR_GUIDANCE } from "@specweave-studio/shared/advisor";
 import {
   PI_STUDIO_MCP_EXTENSION_SOURCE,
+  STUDIO_MCP_BEARER_ENV,
+  STUDIO_MCP_URL_ENV,
+  STUDIO_PI_ADVISOR_GUIDANCE_ENV,
   STUDIO_PI_RESPONSE_STYLE_ENV,
   STUDIO_PI_RUNTIME_MODE_ENV,
 } from "./piStudioMcpExtensionSource.ts";
@@ -61,6 +65,34 @@ describe("Pi response style", () => {
     const detailed = await systemPromptFor({ [STUDIO_PI_RESPONSE_STYLE_ENV]: "detailed" });
     assert.include(detailed, STUDIO_DETAILED_RESPONSE_STYLE_INSTRUCTIONS);
     assert.notInclude(detailed, STUDIO_CONCISE_RESPONSE_STYLE_INSTRUCTIONS);
+  });
+});
+
+describe("Pi advisor guidance", () => {
+  const studioMcp = {
+    [STUDIO_MCP_URL_ENV]: "http://127.0.0.1:43123/mcp",
+    [STUDIO_MCP_BEARER_ENV]: "test-token",
+  };
+
+  it("adds the guidance after the orchestration block when the studio-code endpoint is present", async () => {
+    const prompt = await systemPromptFor({
+      ...studioMcp,
+      [STUDIO_PI_ADVISOR_GUIDANCE_ENV]: ADVISOR_GUIDANCE,
+    });
+    assert.include(prompt, `<advisor>\n${ADVISOR_GUIDANCE}\n</advisor>`);
+    assert.isTrue(prompt.endsWith("</advisor>"));
+    assert.isAbove(
+      prompt.indexOf("<advisor>"),
+      prompt.indexOf(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.trim()),
+    );
+  });
+
+  it("leaves it out without the studio-code endpoint or with the advisor off", async () => {
+    const noTools = await systemPromptFor({ [STUDIO_PI_ADVISOR_GUIDANCE_ENV]: ADVISOR_GUIDANCE });
+    assert.notInclude(noTools, "<advisor>");
+    const off = await systemPromptFor(studioMcp);
+    assert.include(off, STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.trim());
+    assert.notInclude(off, "<advisor>");
   });
 });
 

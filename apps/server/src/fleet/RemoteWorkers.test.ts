@@ -501,6 +501,7 @@ describe("RemoteWorkers", () => {
                 { id: "default", label: "Pi default" },
                 { id: "openrouter/anthropic/claude-sonnet-5", label: "Sonnet", paid: true },
                 { id: "lmstudio/qwen3", label: "Qwen", paid: "yes" },
+                { id: "anthropic/claude", label: "Claude", held: true },
               ],
             },
           ],
@@ -526,6 +527,7 @@ describe("RemoteWorkers", () => {
       expect(grok).not.toHaveProperty("allowedByGrant");
       expect(codex).not.toHaveProperty("paidModels");
       expect(pi?.paidModels).toEqual(["openrouter/anthropic/claude-sonnet-5"]);
+      expect(pi?.heldModels).toEqual(["anthropic/claude"]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -695,6 +697,7 @@ describe("RemoteWorkers", () => {
         {
           commandId: "remote-worker-wake:rwt:command-1:b-run-1",
           mode: "queue",
+          threadId: "coordinator",
           text: 'Remote worker [Fix the flaky test](studio://thread/env-m1/b-thread-1) on M1 finished: completed. Read it with studio_thread_read {threadId:"studio://thread/env-m1/b-thread-1"}.',
         },
       ]);
@@ -795,15 +798,39 @@ describe("RemoteWorkers", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("names where the user allows workers, then the machine they will run on", () => {
+    // Distinct names for both ends, so a swap of the two shows up: the owner's name for
+    // this machine, and the target's name as the launch names it.
+    const { layer } = setup();
+    const named = Layer.mock(ServerSettings.ServerSettingsService)({
+      getSettings: Effect.succeed({
+        machineNicknames: {
+          "env-m4": { name: "Machine A", updatedAt: "2026-11-19T00:00:00.000Z" },
+        },
+      } as never),
+    });
+    return Effect.gen(function* () {
+      const workers = yield* RemoteWorkers.RemoteWorkers;
+      const missing = yield* workers
+        .launch(launchInput({ machine: { ...M1, label: "Machine B" } }))
+        .pipe(Effect.flip);
+      expect(missing.code).toBe("machine_not_authorized");
+      // A relayed error keeps the step on the machine it is done on: this one, not the target.
+      expect(missing.message).toContain(
+        'Workers are not allowed on Machine B yet. On Machine A (not on Machine B), the user opens Settings > Machines and chooses Allow on Machine B\'s card, on the line "Agents on … can start work on Machine B".',
+      );
+      expect(missing.message).not.toContain("this machine");
+    }).pipe(Effect.provide(layer.pipe(Layer.provide(named))));
+  });
+
   it.live("reports a missing grant and a project without a match there", () => {
     const { layer } = setup({
       studio_project_list: () => ({ result: { projects: [], nextCursor: null } }),
     });
     return Effect.gen(function* () {
       const workers = yield* RemoteWorkers.RemoteWorkers;
-      expect((yield* workers.launch(launchInput()).pipe(Effect.flip)).code).toBe(
-        "machine_not_authorized",
-      );
+      const missing = yield* workers.launch(launchInput()).pipe(Effect.flip);
+      expect(missing.code).toBe("machine_not_authorized");
       yield* allow();
       expect((yield* workers.launch(launchInput()).pipe(Effect.flip)).code).toBe(
         "project_unavailable_on_machine",
@@ -836,6 +863,55 @@ describe("RemoteWorkers", () => {
         1,
       );
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("tries the app's pick first, and never starts it on a model held back there", () => {
+    const codex = ProviderInstanceId.make("codex");
+    const held = { instanceId: codex, model: "gpt-5.5" } as ModelSelection;
+    const plan = { instanceId: codex, model: "gpt-5.5-mini" } as ModelSelection;
+    // That machine bills gpt-5.5 per use, or cannot say how; the mini runs on its plan.
+    const sent = (input: Parameters<typeof launchInput>[0]) => {
+      const { remote, layer } = setup({
+        orchestrator_capabilities: () => ({
+          result: {
+            ...capabilities,
+            providers: [
+              {
+                ...capabilities.providers[0],
+                models: [
+                  { id: held.model, label: null, held: true },
+                  { id: plan.model, label: null },
+                ],
+              },
+            ],
+          },
+        }),
+      });
+      return Effect.gen(function* () {
+        yield* allow();
+        yield* (yield* RemoteWorkers.RemoteWorkers).launch(launchInput(input));
+        return remote.toolCalls.find((call) => call.name === "studio_thread_launch")?.args
+          .modelSelection;
+      }).pipe(Effect.provide(layer));
+    };
+    return Effect.gen(function* () {
+      // The pick runs there on a plan: it wins over what the caller runs on.
+      expect(
+        yield* sent({ pickedModelSelection: plan, inheritedModelSelection: held }),
+      ).toMatchObject(plan);
+      // The pick is held back there: the caller's own model starts, as it did before.
+      expect(
+        yield* sent({ pickedModelSelection: held, inheritedModelSelection: plan }),
+      ).toMatchObject(plan);
+      // The caller's own model is inherited whatever it costs there, as before.
+      expect(
+        yield* sent({ pickedModelSelection: held, inheritedModelSelection: held }),
+      ).toMatchObject(held);
+      // A model the caller names is the caller's choice.
+      expect(
+        yield* sent({ explicitModelSelection: held, pickedModelSelection: undefined }),
+      ).toMatchObject(held);
+    });
   });
 
   it.live("falls back to this project's worker model when the remote project has none", () => {

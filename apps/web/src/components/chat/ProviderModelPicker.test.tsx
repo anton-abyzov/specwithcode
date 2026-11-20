@@ -17,11 +17,14 @@ import type { ModelEsque } from "./providerIconUtils";
 const contentState = vi.hoisted(() => ({
   render: false,
   props: null as ComponentProps<typeof ModelPickerContent> | null,
+  popups: [] as Array<Record<string, unknown>>,
 }));
 vi.mock("../ui/popover", async (original) => ({
   ...(await original<typeof import("../ui/popover")>()),
-  PopoverPopup: ({ children }: { children: ReactNode }) =>
-    contentState.render ? <div>{children}</div> : null,
+  PopoverPopup: ({ children, ...props }: { children: ReactNode } & Record<string, unknown>) => {
+    contentState.popups.push(props);
+    return contentState.render ? <div>{children}</div> : null;
+  },
 }));
 vi.mock("./ModelPickerContent", async (original) => ({
   ...(await original<typeof import("./ModelPickerContent")>()),
@@ -33,6 +36,7 @@ vi.mock("./ModelPickerContent", async (original) => ({
 afterEach(() => {
   contentState.render = false;
   contentState.props = null;
+  contentState.popups = [];
 });
 
 function providerEntry(instanceId: string, driver: string) {
@@ -526,4 +530,21 @@ describe("Weave picker button", () => {
     renderToStaticMarkup(picker({ effort, disabled: true }));
     expect(contentState.props?.effort).toBeUndefined();
   });
+});
+
+it("keeps the model picker popup inside the window: shifted along the chip, capped by the popover", () => {
+  renderPicker({
+    instanceId: "codex",
+    driver: "codex",
+    model: "gpt-6.1-sol",
+    options: [{ slug: "gpt-6.1-sol", name: "GPT-6.1-Sol" }],
+  });
+  const popup = contentState.popups.find((props) => "data-model-picker-popup" in props)!;
+  expect(popup).toBeDefined();
+  // Flips above or below the chip and shifts sideways to stay on screen.
+  expect(popup.collisionAvoidance).toMatchObject({ side: "flip", align: "shift" });
+  // No override of the popover's 8px edge margin or its width cap (32rem, the window less 2rem).
+  expect(popup.collisionPadding).toBeUndefined();
+  expect(popup.width).toBeUndefined();
+  expect(String(popup.className)).not.toMatch(/(^|\s)(min-|max-)?w-/);
 });

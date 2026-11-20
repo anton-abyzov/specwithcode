@@ -6,7 +6,7 @@ import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
 
 import { gateRequest, recordRequestFailure } from "../auth/CredentialFailureLimiter.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
-import { FOLDER_TRANSFER_PREFIX, MAX_REQUEST_BYTES } from "./folderTransfer/wire.ts";
+import { FOLDER_TRANSFER_PREFIX, requestBytesFor } from "./folderTransfer/wire.ts";
 import * as MachineHandoff from "./MachineHandoff.ts";
 
 const refusal = (status: number, error: string, headers?: Record<string, string>) =>
@@ -33,19 +33,17 @@ export const layer = HttpRouter.add(
     );
     if (blocked !== undefined)
       return refusal(429, "rate_limited", { "retry-after": String(blocked.retryAfterSeconds) });
+    // The route's own limit, checked on the declared length before a byte of body is read.
+    const limit = requestBytesFor(request.method, url.value.pathname);
     const contentLength = Number(request.headers["content-length"] ?? "0");
-    if (!Number.isFinite(contentLength) || contentLength > MAX_REQUEST_BYTES)
-      return refusal(413, "too_large");
+    if (!Number.isFinite(contentLength) || contentLength > limit) return refusal(413, "too_large");
     // Chunked requests carry no content-length, so the reader itself is capped.
     const body =
       request.method === "GET" || request.method === "HEAD"
         ? Option.some(new Uint8Array())
         : yield* request.arrayBuffer.pipe(
             Effect.map((buffer) => new Uint8Array(buffer)),
-            Effect.provideService(
-              HttpIncomingMessage.MaxBodySize,
-              ByteSize.bytes(MAX_REQUEST_BYTES),
-            ),
+            Effect.provideService(HttpIncomingMessage.MaxBodySize, ByteSize.bytes(limit)),
             Effect.option,
           );
     if (Option.isNone(body)) return refusal(413, "too_large");

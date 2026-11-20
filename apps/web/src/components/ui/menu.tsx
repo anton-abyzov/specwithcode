@@ -1,8 +1,9 @@
 "use client";
 
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
-import { CheckIcon, ChevronRightIcon } from "lucide-react";
+import { CheckIcon, ChevronRightIcon, InfoIcon } from "lucide-react";
 import type * as React from "react";
+import { useId, useLayoutEffect, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { usePagePopup } from "./pagePopups";
@@ -20,9 +21,61 @@ function MenuTrigger({ className, children, ...props }: MenuPrimitive.Trigger.Pr
   );
 }
 
+// One width scale for every menu (docs/studio/design-guidelines.md, Popups): a menu sizes to
+// its rows up to its cap and wraps longer text, so a long line never stretches it across the
+// window. md suits most menus; lg and xl are for pickers whose rows carry long names.
+const menuPopupWidthClassName = {
+  sm: "max-w-[min(16rem,calc(100vw-2rem))]",
+  md: "max-w-[min(20rem,calc(100vw-2rem))]",
+  lg: "max-w-[min(24rem,calc(100vw-2rem))]",
+  xl: "max-w-[min(32rem,calc(100vw-2rem))]",
+} as const;
+
+/** Every popup keeps this far from the window's edges, flipping or shifting to stay inside. */
+const POPUP_COLLISION_PADDING = 8;
+
+/**
+ * Escape returns focus to whatever opened the menu or submenu. Base UI 1.5 skips its own return
+ * when a row the pointer is resting on holds focus at close, leaving focus on the page body;
+ * this puts it back only in that case, and only when Escape was the last thing pressed, so a
+ * click elsewhere keeps its focus. It runs when the popup unmounts, so a `keepMounted` menu
+ * does not get it.
+ */
+function EscapeFocusReturn() {
+  const ref = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const active = document.activeElement;
+    const opener = active instanceof HTMLElement && active !== document.body ? active : null;
+    const popup = ref.current?.closest<HTMLElement>(
+      '[data-slot="menu-popup"], [data-slot="menu-sub-content"]',
+    );
+    let escaped = false;
+    const onKeyDown = (event: KeyboardEvent) => {
+      escaped = event.key === "Escape";
+    };
+    const onPointerDown = () => {
+      escaped = false;
+    };
+    popup?.addEventListener("keydown", onKeyDown, true);
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => {
+      popup?.removeEventListener("keydown", onKeyDown, true);
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      if (!escaped || !opener) return;
+      setTimeout(() => {
+        const now = document.activeElement;
+        if ((!now || now === document.body) && opener.isConnected)
+          opener.focus({ preventScroll: true });
+      }, 0);
+    };
+  }, []);
+  return <span hidden data-slot="menu-focus-return" ref={ref} />;
+}
+
 function MenuPopup({
   children,
   className,
+  width = "md",
   sideOffset = 4,
   align = "center",
   alignOffset,
@@ -37,6 +90,7 @@ function MenuPopup({
   side?: MenuPrimitive.Positioner.Props["side"];
   anchor?: MenuPrimitive.Positioner.Props["anchor"];
   keepMounted?: boolean;
+  width?: keyof typeof menuPopupWidthClassName;
 }) {
   return (
     <MenuPrimitive.Portal keepMounted={keepMounted}>
@@ -44,6 +98,7 @@ function MenuPopup({
         align={align}
         alignOffset={alignOffset}
         anchor={anchor}
+        collisionPadding={POPUP_COLLISION_PADDING}
         className="z-[130]"
         data-slot="menu-positioner"
         side={side}
@@ -58,14 +113,18 @@ function MenuPopup({
             // the Review panel header). Drag hit-testing ignores z-index, so
             // the topmost row would stay unhoverable without this opt-out.
             "[-webkit-app-region:no-drag]",
-            // Menus size to their content from one minimum, never past the viewport.
-            "min-w-[min(10rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)]",
+            // Menus size to their content from one minimum up to their width cap.
+            "min-w-[min(10rem,calc(100vw-2rem))]",
+            menuPopupWidthClassName[width],
             className,
           )}
           data-slot="menu-popup"
           {...props}
         >
-          <div className="max-h-(--available-height) w-full overflow-y-auto p-1">{children}</div>
+          <div className="max-h-(--available-height) w-full overflow-y-auto p-1">
+            {children}
+            <EscapeFocusReturn />
+          </div>
         </MenuPrimitive.Popup>
       </MenuPrimitive.Positioner>
     </MenuPrimitive.Portal>
@@ -233,7 +292,7 @@ function MenuGroupLabel({
   return (
     <MenuPrimitive.GroupLabel
       className={cn(
-        "px-2 py-1.5 font-medium text-muted-foreground text-xs data-inset:ps-9 sm:data-inset:ps-8",
+        "px-2 pt-1.5 pb-1 font-medium text-muted-foreground text-xs leading-4 data-inset:ps-9 sm:data-inset:ps-8",
         className,
       )}
       data-inset={inset}
@@ -243,10 +302,85 @@ function MenuGroupLabel({
   );
 }
 
+/**
+ * One short line under a group label saying what the group does. It wraps inside the menu's
+ * width and never sets it. Longer explanations belong in a row's tooltip or behind an info
+ * action, not here (docs/studio/design-guidelines.md, Popups).
+ */
+function MenuHint({ className, ...props }: React.ComponentProps<"p">) {
+  return (
+    <p
+      className={cn("px-2 pb-1.5 text-pretty text-muted-foreground text-xs leading-4", className)}
+      data-slot="menu-hint"
+      {...props}
+    />
+  );
+}
+
+/**
+ * A menu group whose label carries an info button. The button sits on the label row but comes
+ * after the group's rows in the DOM, so the menu still opens with focus on its first real row
+ * and arrow keys reach the button after the group's last row. It shows or hides `info` under
+ * the label without closing the menu. Use it for anything longer than one short line
+ * (docs/studio/design-guidelines.md, Popups). `infoLabel` names the button for assistive
+ * technology.
+ */
+function MenuInfoGroup({
+  label,
+  info,
+  infoLabel,
+  defaultOpen = false,
+  children,
+}: {
+  label: React.ReactNode;
+  info: React.ReactNode;
+  infoLabel: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const id = useId();
+  return (
+    <MenuPrimitive.Group
+      className="grid grid-cols-[minmax(0,1fr)_auto] items-start"
+      data-slot="menu-group"
+    >
+      <MenuGroupLabel className="col-start-1 row-start-1 min-w-0 self-center">
+        {label}
+      </MenuGroupLabel>
+      {open ? (
+        <div
+          className="col-span-2 row-start-2 flex flex-col gap-1 pb-0.5"
+          data-slot="menu-info"
+          id={id}
+        >
+          {info}
+        </div>
+      ) : null}
+      <div className="col-span-2 row-start-3 min-w-0">{children}</div>
+      <MenuPrimitive.Item
+        aria-controls={open ? id : undefined}
+        aria-expanded={open}
+        aria-label={infoLabel}
+        className={cn(
+          "col-start-2 row-start-1 me-1 inline-flex size-6 shrink-0 cursor-pointer items-center justify-center self-center rounded-sm text-muted-foreground outline-none data-highlighted:bg-accent data-highlighted:text-accent-foreground aria-expanded:text-foreground",
+          // A finger-sized target on phones and touch screens; the desktop look stays 24 px.
+          "max-sm:h-8 max-sm:w-10 pointer-coarse:h-8 pointer-coarse:w-10",
+        )}
+        closeOnClick={false}
+        data-slot="menu-info-button"
+        onClick={() => setOpen((value) => !value)}
+      >
+        <InfoIcon aria-hidden className="size-3.5" />
+      </MenuPrimitive.Item>
+    </MenuPrimitive.Group>
+  );
+}
+
 function MenuSeparator({ className, ...props }: MenuPrimitive.Separator.Props) {
   return (
     <MenuPrimitive.Separator
-      className={cn("mx-2 my-1 h-px bg-border", className)}
+      className={cn("mx-2 my-1.5 h-px bg-border", className)}
       data-slot="menu-separator"
       {...props}
     />
@@ -313,6 +447,7 @@ function MenuSubPopup({
   align?: MenuPrimitive.Positioner.Props["align"];
   sideOffset?: MenuPrimitive.Positioner.Props["sideOffset"];
   alignOffset?: MenuPrimitive.Positioner.Props["alignOffset"];
+  width?: keyof typeof menuPopupWidthClassName;
 }) {
   const defaultAlignOffset = align !== "center" ? -5 : undefined;
 
@@ -349,6 +484,8 @@ export {
   MenuRadioItem as DropdownMenuRadioItem,
   MenuRadioItemIndicator,
   MenuGroupLabel,
+  MenuHint,
+  MenuInfoGroup,
   MenuGroupLabel as DropdownMenuLabel,
   MenuSeparator,
   MenuSeparator as DropdownMenuSeparator,

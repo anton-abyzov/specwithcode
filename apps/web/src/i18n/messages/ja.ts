@@ -88,7 +88,7 @@ export const ja: Messages = {
   "wizard.import.selectNone": "選択を解除",
   "wizard.import.looking": "プロジェクトを探しています…",
   "wizard.import.checkFailed": "プロジェクトを確認できませんでした。{error}",
-  "wizard.import.none": "既存の Claude Code や Codex のプロジェクトは見つかりませんでした。",
+  "wizard.import.none": "既存のエージェントのプロジェクトは見つかりませんでした。",
   "wizard.import.importing": "インポート中…",
   "wizard.import.importButton": { other: "{count} 件のプロジェクトをインポート" },
   "wizard.import.otherFolders": "その他のフォルダー",

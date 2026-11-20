@@ -189,12 +189,12 @@ export function DraftMachinePicker(props: Props) {
   const activeProject = projects.find(
     (project) => project.environmentId === draft?.environmentId && project.id === draft.projectId,
   );
+  // A chat has no project: on another machine it is a chat there too, never a project pick.
+  const draftIsChat =
+    activeProject !== undefined &&
+    isScratchProject(activeProject, scratchWorkspaceRootFor(activeProject.environmentId));
   // A named project groups machines by whether they have it; Scratch has no copies to group.
-  const runOnProject =
-    activeProject &&
-    !isScratchProject(activeProject, scratchWorkspaceRootFor(activeProject.environmentId))
-      ? activeProject
-      : null;
+  const runOnProject = activeProject && !draftIsChat ? activeProject : null;
   const groups = runOnProject
     ? runOnMachineGroups({
         active: runOnProject,
@@ -340,7 +340,20 @@ export function DraftMachinePicker(props: Props) {
             deriveLogicalProjectKeyFromSettings(project, grouping) ===
               deriveLogicalProjectKeyFromSettings(activeProject, grouping),
         ));
-    if (matching && environmentId !== draft?.environmentId) {
+    if (draftIsChat && environmentId !== draft?.environmentId) {
+      // A chat stays a chat: it never becomes a project's thread by switching machines.
+      if (scratchWorkspaceRootFor(environmentId) !== null)
+        void select({ environmentId, projectId: null });
+      else
+        setError(
+          tx("{name} cannot hold a chat without a project right now. Choose another machine.", {
+            name: nameOf(
+              environmentId,
+              environments.find((item) => item.environmentId === environmentId)?.label,
+            ),
+          }),
+        );
+    } else if (matching && environmentId !== draft?.environmentId) {
       void select({ environmentId, projectId: matching.id });
     } else {
       setChoosingEnvironmentId(environmentId);
@@ -657,6 +670,21 @@ export function DraftMachinePicker(props: Props) {
     );
   }
 
+  // "No project": a chat on that machine. A chat's own choice, so it leads the list there.
+  function noProjectRow(environment: EnvironmentPresentation) {
+    if (scratchWorkspaceRootFor(environment.environmentId) === null) return null;
+    return (
+      <MenuItem
+        closeOnClick={false}
+        disabled={pending || locked || Boolean(destinationReason)}
+        onClick={() => void select({ environmentId: environment.environmentId, projectId: null })}
+      >
+        <span className="min-w-0 flex-1">{tx("No project")}</span>
+        {draftIsChat ? <CheckIcon aria-label={tx("Current")} className="size-3.5" /> : null}
+      </MenuItem>
+    );
+  }
+
   function projectsView(environment: EnvironmentPresentation) {
     const name = nameOf(environment.environmentId, environment.label);
     return (
@@ -692,6 +720,7 @@ export function DraftMachinePicker(props: Props) {
             {destinationReason}
           </p>
         )}
+        {draftIsChat ? noProjectRow(environment) : null}
         {destinationProjects.map((project) => (
           <MenuItem
             key={project.id}
@@ -709,17 +738,7 @@ export function DraftMachinePicker(props: Props) {
             </span>
           </MenuItem>
         ))}
-        {scratchWorkspaceRootFor(environment.environmentId) !== null && (
-          <MenuItem
-            closeOnClick={false}
-            disabled={pending || locked || Boolean(destinationReason)}
-            onClick={() =>
-              void select({ environmentId: environment.environmentId, projectId: null })
-            }
-          >
-            {tx("No project")}
-          </MenuItem>
-        )}
+        {draftIsChat ? null : noProjectRow(environment)}
         {!destinationProjects.length &&
           scratchWorkspaceRootFor(environment.environmentId) === null && (
             <p className="px-2 py-2 text-sm text-muted-foreground">
@@ -807,6 +826,7 @@ export function DraftMachinePicker(props: Props) {
         </MenuTrigger>
         <MenuPopup
           align="start"
+          width="lg"
           className="w-[min(22rem,calc(100vw-2rem))]"
           {...composerFloatingLayerProps}
         >

@@ -4,6 +4,7 @@ import { Tool } from "effect/ai";
 import {
   STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
   studioAcpPromptWithInstructions,
+  studioOrchestrationInstructionsForRole,
   studioOrchestrationPromptForFirstRun,
   studioOrchestrationSystemPrompt,
 } from "./StudioOrchestrationInstructions.ts";
@@ -64,7 +65,11 @@ describe("SpecWithCode orchestration provider instructions", () => {
     // The needs sentence (about 45 tokens) sends simulator and Xcode work to a Mac
     // and points Linux and Windows callers at the build steps in `needs`.
     // The title line (about 35 tokens) keeps a thread's name about what it owns.
-    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 3_050);
+    // The permission clause (about 15 tokens) turns a macOS "Operation not
+    // permitted" into the Full Disk Access card instead of a text blocker.
+    // The SpecWeave setup sentence (about 25 tokens) raises the setup card
+    // instead of planting an increment where SpecWeave is not set up (1396).
+    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 3_205);
   });
 
   it("asks for thread titles that name the lasting goal and follow a scope change", () => {
@@ -174,6 +179,38 @@ describe("SpecWithCode orchestration provider instructions", () => {
     );
   });
 
+  it("tells ACP agents a denied or blocked bridge call is never fixed by a restart", () => {
+    const injected = studioAcpPromptWithInstructions({
+      prompt: "Inspect the repository.",
+      state: { interactionMode: "default", hasStudioMcp: true },
+    });
+    const fallback = injected.slice(injected.indexOf("ACP fallback:"));
+    // The two denials an agent sees: the provider refusing the command, and its sandbox blocking it.
+    assert.include(fallback, "`approval prompts are disabled`");
+    assert.include(fallback, "`connect EPERM`");
+    assert.include(
+      fallback,
+      "restarting this session, the app or the machine does not fix it, so never ask for a restart",
+    );
+    assert.include(fallback, "quote the denial exactly");
+    assert.include(fallback, "the thread's access mode decides it");
+    // The same text is right on every release: it names no version and no update.
+    assert.notMatch(
+      fallback.slice(0, fallback.indexOf("</studio_code_instructions>")),
+      /\d+\.\d+\.\d+/,
+    );
+    assert.notMatch(fallback, /update SpecWithCode/i);
+    // Agents without the bridge are not told about it.
+    assert.notInclude(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "approval prompts are disabled");
+    assert.notInclude(
+      studioAcpPromptWithInstructions({
+        prompt: "Inspect the repository.",
+        state: { interactionMode: "default", hasStudioMcp: false },
+      }),
+      "approval prompts are disabled",
+    );
+  });
+
   it("injects prompt fallback only for an MCP-enabled first run", () => {
     const prompt = "Inspect the repository.";
     const injected = studioOrchestrationPromptForFirstRun({
@@ -192,6 +229,66 @@ describe("SpecWithCode orchestration provider instructions", () => {
       studioOrchestrationPromptForFirstRun({ prompt, runOrdinal: 1, hasStudioMcp: false }),
       prompt,
     );
+  });
+
+  it("routes a coordinator's real work to a worker thread, not native subagents", () => {
+    const coordinator = studioOrchestrationInstructionsForRole(true);
+    assert.include(coordinator, "you route work, you do not do it");
+    assert.include(coordinator, "`delegate_task` in mode async");
+    assert.include(coordinator, "Never use native subagents, native workflows");
+    assert.include(coordinator, "recording delivery for an answer-only task");
+    assert.include(coordinator, "forwarding a user's answer to its owning worker");
+    assert.notInclude(coordinator, "use your native subagent tool when it supports");
+    assert.notInclude(coordinator, "only when the user asks for separate threads");
+    // A non-trivial ask reaches the coordinator as this prompt: it must not
+    // carry an instruction to execute it in the coordinator thread.
+    const injected = studioOrchestrationPromptForFirstRun({
+      prompt: "Investigate why M5 cannot start work and fix it.",
+      runOrdinal: 1,
+      hasStudioMcp: true,
+      isCoordinator: true,
+    });
+    assert.include(injected, "you route work, you do not do it");
+    // A coordinator past its first run (made coordinator later, or switched
+    // provider) still gets the routing line; a worker past run 1 gets nothing.
+    assert.include(
+      studioOrchestrationPromptForFirstRun({
+        prompt: "Read the logs and fix it.",
+        runOrdinal: 7,
+        hasStudioMcp: true,
+        isCoordinator: true,
+      }),
+      "you route work, you do not do it",
+    );
+    assert.equal(
+      studioOrchestrationPromptForFirstRun({
+        prompt: "Read the logs and fix it.",
+        runOrdinal: 7,
+        hasStudioMcp: true,
+        isCoordinator: false,
+      }),
+      "Read the logs and fix it.",
+    );
+    assert.equal(studioOrchestrationSystemPrompt(true, true), coordinator);
+    assert.include(
+      studioAcpPromptWithInstructions({
+        prompt: "Fix it.",
+        state: { interactionMode: "default", hasStudioMcp: true, isCoordinator: true },
+      }),
+      "you route work, you do not do it",
+    );
+  });
+
+  it("keeps the worker subagent line for non-coordinator threads", () => {
+    assert.equal(
+      studioOrchestrationInstructionsForRole(false),
+      STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
+    );
+    assert.equal(
+      studioOrchestrationInstructionsForRole(undefined),
+      STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
+    );
+    assert.equal(studioOrchestrationSystemPrompt(true), STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS);
   });
 
   it("only exposes the system prompt when the SpecWithCode MCP server is attached", () => {

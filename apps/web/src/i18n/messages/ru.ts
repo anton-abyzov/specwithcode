@@ -103,7 +103,7 @@ export const ru: Messages = {
   "wizard.import.selectNone": "Снять выбор",
   "wizard.import.looking": "Ищем проекты…",
   "wizard.import.checkFailed": "Не удалось проверить проекты. {error}",
-  "wizard.import.none": "Существующие проекты Claude Code или Codex не найдены.",
+  "wizard.import.none": "Существующие проекты агентов не найдены.",
   "wizard.import.importing": "Импорт…",
   "wizard.import.importButton": {
     one: "Импортировать {count} проект",

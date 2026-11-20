@@ -412,7 +412,15 @@ export class GitVcsDriver extends Context.Service<
       input: GitSetBranchUpstreamInput,
     ) => Effect.Effect<void, GitCommandError>;
     readonly removeWorktree: (
-      input: VcsRemoveWorktreeInput,
+      input: VcsRemoveWorktreeInput & {
+        /**
+         * Git can drop a worktree's registration and still fail to delete its
+         * files. By default the folder is then deleted, since a person asked
+         * for the removal. Unattended cleanup sets this: files Git left are
+         * files nobody checked, so they stay and the call fails.
+         */
+        readonly keepLeftBehind?: boolean;
+      },
     ) => Effect.Effect<void, GitCommandError>;
     /** Drops worktree admin entries whose directory is already gone (`git worktree prune`). */
     readonly pruneWorktrees: (input: {

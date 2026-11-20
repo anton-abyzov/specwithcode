@@ -227,7 +227,7 @@ export function ProjectOverrides({
         className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-accent px-3 py-2 text-xs text-accent-foreground"
       >
         <span>{change.text}</span>
-        <Button size="xs" variant="ghost" onClick={change.undo}>
+        <Button size="xs" variant="outline" onClick={change.undo}>
           {tx("Undo")}
         </Button>
       </div>
@@ -255,7 +255,7 @@ export function ProjectOverrides({
               group.lines.length > 1 ? (
                 <Button
                   size="sm"
-                  variant="ghost"
+                  variant="outline"
                   disabled={allReason !== undefined}
                   title={allReason}
                   onClick={() =>

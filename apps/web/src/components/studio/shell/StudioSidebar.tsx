@@ -61,6 +61,7 @@ import { isCommandPaletteOpen, openCommandPalette } from "../../../commandPalett
 import { isElectron } from "../../../env";
 import { useComposerDraftStore } from "../../../composerDraftStore";
 import { useScratchProject } from "../../../hooks/useScratchProject";
+import { requestChatSettings } from "../../../studio/chatSettingsRequest";
 import { useLocalStorage } from "../../../hooks/useLocalStorage";
 import { useNowMinute } from "../../../hooks/useNowMinute";
 import { useOpenChat } from "../../../hooks/useOpenChat";
@@ -170,6 +171,7 @@ import { resolveThreadRouteTarget } from "../../../threadRoutes";
 import { stackedThreadToast, toastManager } from "../../ui/toast";
 import { useSettingsProjectGroups } from "../../settings/useSettingsProjectGroups";
 import { SidebarChromeFooter, SidebarChromeHeader } from "../../sidebar/SidebarChrome";
+import { InlineButton } from "../../ui/button";
 import { MenuItem, MenuSeparator } from "../../ui/menu";
 import { SidebarContent, useSidebar } from "../../ui/sidebar";
 import { Tip } from "./Tip";
@@ -1075,9 +1077,14 @@ export default function StudioSidebar() {
             {codeProjects.length === 0 && setAsideRows.length === 0 ? (
               <p className="sws-side-empty">
                 {automatedProjects.length + archivedProjects.length > 0 ? (
-                  <Link to="/settings/archived" onClick={closeMobile} data-set-aside-link="">
+                  <InlineButton
+                    tone="muted"
+                    className="[--inline-button-text-align:start] [--inline-button-white-space:normal]"
+                    data-set-aside-link=""
+                    render={<Link to="/settings/archived" onClick={closeMobile} />}
+                  >
                     {tx("Your projects are archived. Open them in Settings > Archive.")}
-                  </Link>
+                  </InlineButton>
                 ) : (
                   tx("No projects yet. Create one or open a folder.")
                 )}
@@ -1391,6 +1398,18 @@ export default function StudioSidebar() {
                                     {tx("Resolve")}
                                   </MenuItem>
                                 )}
+                                {isStandaloneChat(thread) ? (
+                                  <MenuItem
+                                    onClick={() =>
+                                      requestChatSettings({
+                                        environmentId: thread.environmentId,
+                                        threadRef: ref,
+                                      })
+                                    }
+                                  >
+                                    {tx("Chat settings")}
+                                  </MenuItem>
+                                ) : null}
                                 <MenuSeparator />
                                 <MenuItem
                                   disabled={!threadRuntimeCanArchive(thread.runtime)}

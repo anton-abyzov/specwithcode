@@ -1471,6 +1471,16 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverCleanOldAppVersions,
       concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
     }),
+    getStorageCleanupPlan: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:get-storage-cleanup-plan",
+      tag: WS_METHODS.serverGetStorageCleanupPlan,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
+    runStorageCleanup: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:run-storage-cleanup",
+      tag: WS_METHODS.serverRunStorageCleanup,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
     retryResourceTelemetry: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:retry-resource-telemetry",
       tag: WS_METHODS.serverRetryResourceTelemetry,

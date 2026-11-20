@@ -28,7 +28,7 @@ import {
   type EnvironmentConnectionPhase,
 } from "@specweave-studio/client-runtime/connection";
 import { isLoopbackHttpBaseUrl } from "@specweave-studio/client-runtime/connection";
-import { hostReachOr, machineReachWords } from "../lib/machineStatus";
+import { hostReachOr, machineReachWords, type HostDownNote } from "../lib/machineStatus";
 import { planLabel } from "./accountSwitches";
 import { usageToneOfUsed } from "./usageIndicatorModel";
 
@@ -141,6 +141,8 @@ export function hostReachStatus(
     : never,
   isThisMachine: boolean,
   now: number,
+  /** Why another machine is down beyond its reach state (1417). */
+  note: HostDownNote | null = null,
 ): { readonly status: HostStatus; readonly word: string } {
   const phase = connection.phase as EnvironmentConnectionPhase;
   if (isThisMachine || phase === "connected") {
@@ -153,7 +155,7 @@ export function hostReachStatus(
   const reach = hostReachOr(undefined, { ...connection, phase }, now);
   return {
     status: isMachineReachDown(reach) ? "offline" : "connecting",
-    word: machineReachWords(reach, phase).short.replace(/…$/, ""),
+    word: machineReachWords(reach, phase, false, note).short.replace(/…$/, ""),
   };
 }
 
@@ -324,6 +326,8 @@ export function collectHostLimitBlocks(
     /** The display name for a host: its nickname when the user set one. */
     readonly machineName?: (environmentId: EnvironmentId, hostLabel: string) => string;
     readonly now: number;
+    /** Each host's down note, from the gated presentations (1417). */
+    readonly notes?: ReadonlyMap<string, HostDownNote>;
   },
 ): readonly HostLimitBlock[] {
   const blocks: HostLimitBlock[] = [];
@@ -335,6 +339,7 @@ export function collectHostLimitBlocks(
       presentation.connection,
       isThisMachine && reachedOnLoopback(presentation.entry.target),
       options.now,
+      options.notes?.get(environmentId) ?? null,
     );
     const live = providerRows(
       presentation.serverConfig?.providers ?? [],

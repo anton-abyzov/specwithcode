@@ -13,7 +13,7 @@ const rows: FolderCopyRow[] = [
     kind: "repository",
     path: ".",
     status: "dirty",
-    detail: "Behind the source, with uncommitted changes here.",
+    detail: "Behind laptopE, with uncommitted changes here.",
     filesToMove: 16941,
     bytesToMove: 295000000,
     bytesPresent: 2200000000,
@@ -41,7 +41,7 @@ const rows: FolderCopyRow[] = [
   ].map((name): FolderCopyRow => ({
     id: `repo:${name}`,
     kind: "repository",
-    path: `repositories/anton-abyzov/${name}`,
+    path: `repositories/acme/${name}`,
     status: "conflict",
     detail:
       "Files already occupy this path; the destination scan did not identify a repository here.",
@@ -59,9 +59,9 @@ const rows: FolderCopyRow[] = [
 ];
 const status: FolderCopyStatus = {
   operationId: "fixture",
-  sourceEnvironmentId: "m4" as never,
+  sourceEnvironmentId: "laptopE" as never,
   sourceProjectId: "fixture" as never,
-  sourceMachine: "MacBook M4",
+  sourceMachine: "Laptop E",
   mode: "copy-only",
   targetFolder: "/projects/specweave",
   title: "SpecWeave",
@@ -110,14 +110,14 @@ export function PreviewClarity() {
       <section className="mx-auto max-w-3xl space-y-4 rounded-xl border bg-background p-4 sm:p-6">
         <h1 className="text-xl font-semibold">Hand off SpecWeave</h1>
         <p className="text-muted-foreground">
-          From MacBook M4 to another machine. Nothing there is replaced without asking.
+          From Laptop E to another machine. Nothing there is replaced without asking.
         </p>
         <CopyPlanPreview
           status={availabilityCase ? footerCopy : status}
           onDecide={setLastChoice}
           onClone={() => {}}
           disabled={false}
-          machines={{ here: "ministorm", source: "MacBook M4" }}
+          machines={{ here: "box-a", source: "Laptop E" }}
           rootLabel="Umbrella root"
         />
         {availabilityCase && (
@@ -130,13 +130,13 @@ export function PreviewClarity() {
             copy={footerCopy}
             machine={"linux" as never}
             mode="copy-only"
-            targetLabel="ministorm"
+            targetLabel="box-a"
             auto={false}
             chooseFirst={false}
             selection={[]}
             setupBlocked={false}
             replaced="Some files"
-            approveLabel="Copy to ministorm"
+            approveLabel="Copy to box-a"
             secretsUnconfirmed={availabilityCase === "secrets"}
             failedBeforeApply={false}
             undoPreview={null}

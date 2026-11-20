@@ -30,9 +30,12 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
 import { SettingsScopeSentence } from "./SettingsScopeSentence";
 import {
+  isProjectFieldSettingKey,
   isProjectScopedSettingKey,
   listProjectOverrides,
   type ProjectOverrideEntry,
+  scopedSettingFieldMixed,
+  scopedSettingFieldSource,
   scopedSettingsAreMixed,
   scopedSettingsSource,
 } from "./scopedSettings";
@@ -200,8 +203,17 @@ function DescriptionTooltip({ label, children }: { readonly label: string; child
   );
 }
 
-/** Info affordance explaining how a setting interacts with the shared background policy. */
-export function PolicyTooltip({ children }: { readonly children: string }) {
+/**
+ * Info affordance explaining how a setting interacts with the shared background
+ * policy. `label` names the button for another kind of note (already translated).
+ */
+export function PolicyTooltip({
+  children,
+  label,
+}: {
+  readonly children: string;
+  readonly label?: string;
+}) {
   const tx = useTx();
   return (
     <Tooltip>
@@ -211,7 +223,7 @@ export function PolicyTooltip({ children }: { readonly children: string }) {
           <Button
             size="icon-micro"
             variant="ghost-muted"
-            aria-label={tx("Background policy details")}
+            aria-label={label ?? tx("Background policy details")}
           >
             <InfoIcon className="size-3.5" />
           </Button>
@@ -418,7 +430,9 @@ export function SettingsRow({
   control,
   serverScoped = false,
   settingKeys = EMPTY_SETTING_KEYS,
+  settingField,
   mixed: mixedOverride,
+  titleInfo,
   children,
   className,
   literal = false,
@@ -436,7 +450,15 @@ export function SettingsRow({
   control?: ReactNode;
   serverScoped?: boolean;
   settingKeys?: readonly (keyof ServerSettings)[];
+  /**
+   * One field of a key a project overrides field by field (the advisor): the
+   * row reads "Overridden for this project" only when the project's override
+   * holds this field. Pass `onResetOverride` that removes just the field.
+   */
+  settingField?: string;
   mixed?: boolean;
+  /** An info button beside the title, such as a note on what turning it on costs. */
+  titleInfo?: ReactNode;
   children?: ReactNode;
 }) {
   const tx = useTx();
@@ -468,10 +490,24 @@ export function SettingsRow({
   // A project scope can only edit keys that support overrides; the rest stay
   // visible so the user sees the inherited value, but cannot change it here.
   const environmentWide = isProjectScope && serverScoped && scopedKeys.length === 0;
+  const fieldKey =
+    settingField !== undefined &&
+    scopedKeys.length === 1 &&
+    isProjectFieldSettingKey(scopedKeys[0]!)
+      ? scopedKeys[0]
+      : undefined;
   const mixed =
-    mixedOverride ?? (context !== null && scopedSettingsAreMixed(context.targets, settingKeys));
+    mixedOverride ??
+    (context !== null &&
+      (fieldKey !== undefined && settingField !== undefined
+        ? scopedSettingFieldMixed(context.targets, fieldKey, settingField)
+        : scopedSettingsAreMixed(context.targets, settingKeys)));
   const source =
-    context && isProjectScope ? scopedSettingsSource(context.targets, scopedKeys) : null;
+    context && isProjectScope
+      ? fieldKey !== undefined && settingField !== undefined
+        ? scopedSettingFieldSource(context.targets, fieldKey, settingField)
+        : scopedSettingsSource(context.targets, scopedKeys)
+      : null;
   const unavailable =
     serverScoped &&
     (!canWriteSettings ||
@@ -578,10 +614,16 @@ export function SettingsRow({
     settingKeys.some((key) =>
       context.targets.some((candidate) => {
         const environmentSettings = environmentSettingsById.get(candidate.environmentId);
-        return (
-          environmentSettings !== undefined &&
-          !Equal.equals(environmentSettings[key], DEFAULT_SERVER_SETTINGS[key])
-        );
+        if (environmentSettings === undefined) return false;
+        if (key === fieldKey && settingField !== undefined) {
+          const value: unknown = environmentSettings[key];
+          const builtIn: unknown = DEFAULT_SERVER_SETTINGS[key];
+          return !Equal.equals(
+            (value as Record<string, unknown> | null)?.[settingField],
+            (builtIn as Record<string, unknown> | null)?.[settingField],
+          );
+        }
+        return !Equal.equals(environmentSettings[key], DEFAULT_SERVER_SETTINGS[key]);
       }),
     );
   const inheritance: { state: SettingInheritanceState; summary: string } = mixed
@@ -641,6 +683,9 @@ export function SettingsRow({
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex min-h-5 min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
             <h3 className="min-w-0 text-sm font-medium text-foreground">{shownTitle}</h3>
+            {titleInfo ? (
+              <span className="inline-flex h-5 shrink-0 items-center">{titleInfo}</span>
+            ) : null}
             {descriptionBehindInfo ? (
               <DescriptionTooltip
                 label={
@@ -728,10 +773,13 @@ export function SettingsPageContainer({
   children,
   className,
   width = "readable",
+  header,
 }: {
   children: ReactNode;
   className?: string;
   width?: WorkspacePageWidth;
+  /** Shown above the scope line, such as a page's tabs. */
+  header?: ReactNode;
 }) {
   const navigate = useNavigate();
   const hash = useLocation({ select: (location) => location.hash });
@@ -760,7 +808,15 @@ export function SettingsPageContainer({
         data-settings-page-scroll
       >
         <WorkspacePageContainer width={width} className={cn("gap-8", className)}>
-          <SettingsScopeSentence />
+          {header ? (
+            // Tabs and the scope line read as one block above the rows.
+            <div className="flex min-w-0 flex-col gap-3">
+              {header}
+              <SettingsScopeSentence />
+            </div>
+          ) : (
+            <SettingsScopeSentence />
+          )}
           {children}
         </WorkspacePageContainer>
       </div>

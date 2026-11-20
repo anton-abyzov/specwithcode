@@ -134,7 +134,7 @@ export function WhatYouCanDoCard({
               <Button
                 className="shrink-0"
                 size="xs"
-                variant="ghost-muted"
+                variant="outline"
                 render={<Link to={item.action.to} />}
               >
                 {tx(item.action.label)}

@@ -46,6 +46,49 @@ export function subscriptionKeyOf(
     : undefined;
 }
 
+/** The subscription a provider process opened on, or reads now: its key and when it last changed. */
+export interface SubscriptionRead {
+  readonly key?: string | undefined;
+  readonly changedAt?: string | undefined;
+}
+
+/**
+ * The Claude sign-in a snapshot names, for replacing a `claude` process that
+ * still holds another one. A sign-in billed to API credits (a Console profile,
+ * an API key) is keyed by its account, since it has no subscription key and
+ * its usage read keeps the last subscription's windows as history. A read that
+ * failed or is not signed in names nothing, which never replaces a process.
+ */
+export function claudeSubscriptionReadOf(snapshot: ServerProvider): SubscriptionRead {
+  const changedAt = snapshot.usageLimits?.accountChangedAt;
+  if (snapshot.auth.status !== "authenticated") return { changedAt };
+  if (snapshot.auth.apiKeyBilling === true || snapshot.auth.type === "apiKey") {
+    const account = JSON.stringify([
+      snapshot.auth.email?.trim().toLowerCase() ?? null,
+      snapshot.auth.label ?? null,
+    ]);
+    return { key: `claude-api:sha256:${sha256(account)}`, changedAt };
+  }
+  return { key: subscriptionKeyOf(snapshot.usageLimits), changedAt };
+}
+
+/**
+ * Whether a process opened on `opened` (at `openedAtMs`) now serves another
+ * subscription than `current`. One opened on a known subscription has changed
+ * when another is read. One opened before any read named it has changed when
+ * a sign-in change is seen after it started, since nothing says which
+ * subscription it holds.
+ */
+export function subscriptionChangedSince(
+  opened: SubscriptionRead,
+  openedAtMs: number,
+  current: SubscriptionRead,
+): boolean {
+  if (opened.key !== undefined) return current.key !== undefined && current.key !== opened.key;
+  const changedMs = Date.parse(current.changedAt ?? "");
+  return Number.isFinite(changedMs) && changedMs > openedAtMs;
+}
+
 /** A signed-in identity: the subscription key and a hash of the email, either may be unknown. */
 export interface SubscriptionIdentity {
   readonly key?: string | undefined;

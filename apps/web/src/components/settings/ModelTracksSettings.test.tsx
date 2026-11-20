@@ -35,6 +35,7 @@ vi.mock("./useScopedSettings", () => ({
   useUpdateScopedSettings: () => state.update,
 }));
 vi.mock("./settingsLayout", () => ({
+  PolicyTooltip: () => null,
   SETTINGS_PICKER_TRIGGER_CLASSNAME: "",
   useRelativeTimeTick: () => Date.now(),
 }));

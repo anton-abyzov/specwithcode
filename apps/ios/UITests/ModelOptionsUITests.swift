@@ -6,7 +6,7 @@ import XCTest
 final class ModelOptionsUITests: SWCUITestCase {
   func testOptionsMenuTurnsOnUltracodeForTheNextMessage() throws {
     launch(route: "thread", appearance: "dark")
-    _ = hittableButton("Approve")  // the transcript has loaded
+    // The chip appears once the thread has loaded.
     let chip = app.buttons["chat.model-options"]
     waitForHittable(chip, "The composer should show the thread's model options")
     XCTAssertTrue(chip.label.contains("Opus 5.5"), "The chip should name the model: \(chip.label)")
@@ -32,11 +32,57 @@ final class ModelOptionsUITests: SWCUITestCase {
     attachScreenshot("Ultracode chosen")
   }
 
+  /// The same menu switches the thread's model; the next message runs on it.
+  func testOptionsMenuSwitchesTheModelForTheNextMessage() throws {
+    launch(route: "thread", appearance: "dark")
+    // The chip appears once the thread has loaded.
+    let chip = app.buttons["chat.model-options"]
+    waitForHittable(chip, "The composer should show the thread's model options")
+    XCTAssertTrue(chip.label.contains("Opus 5.5"), "The chip starts on the thread's model: \(chip.label)")
+
+    chip.tap()
+    settle()
+    tap(modelSubmenu)
+    settle()
+    attachScreenshot("Model list")
+    tap(button(startingWith: "Codex"))
+    settle()
+    tap(button(startingWith: "GPT-5.5"))
+    settle()
+    XCTAssertTrue(waitUntil { chip.label.contains("GPT-5.5") }, "The chip should name the picked model: \(chip.label)")
+    XCTAssertFalse(chip.label.contains("High"), "Opus's options do not carry over to Codex: \(chip.label)")
+    attachScreenshot("GPT-5.5 picked")
+
+    // Sending runs the message on the picked model; the chip keeps naming it.
+    tap(composer)
+    composer.typeText("Try this on Codex")
+    hittableButton("Send").tap()
+    settle()
+    XCTAssertTrue(waitUntil { chip.label.contains("GPT-5.5") }, "After sending the chip still names GPT-5.5: \(chip.label)")
+    attachScreenshot("Sent on GPT-5.5")
+
+    chip.tap()
+    settle()
+    tap(modelSubmenu)
+    settle()
+    tap(button(startingWith: "Claude Code"))
+    settle()
+    tap(button(startingWith: "Sonnet 5.5"))
+    settle()
+    XCTAssertTrue(waitUntil { chip.label.contains("Sonnet 5.5") }, "The chip should name Sonnet: \(chip.label)")
+    XCTAssertTrue(chip.label.contains("High"), "Sonnet starts from its own default options: \(chip.label)")
+  }
+
+  /// The menu's Model row, not the chip whose label also starts with "Model".
+  private var modelSubmenu: XCUIElement {
+    app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Model' AND NOT (label BEGINSWITH 'Model options')")).firstMatch
+  }
+
   /// On an unfolded Duo the thread's controls sit at the foot of the status
   /// rail, clear of the system's clock, Wi-Fi and indicators at its top.
   func testDuoRailSitsBelowTheSystemStatusIcons() throws {
     launch(route: "thread", appearance: "dark")
-    _ = hittableButton("Approve")
+    // The chip appears once the thread has loaded.
     let rail = app.descendants(matching: .any).matching(identifier: "chat.rail").firstMatch
     guard rail.waitForExistence(timeout: 3) else {
       throw XCTSkip("No status rail on this device: it shows only on an unfolded iPhone Duo")

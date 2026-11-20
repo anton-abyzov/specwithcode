@@ -5,6 +5,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {homedir} from 'node:os';
+import { walkFirstRun } from './first-run-walk.mjs';
 assert.equal(process.version,'v22.20.0');
 process.env.PWDEBUG='0';process.env.PLAYWRIGHT_HTML_OPEN='never';
 const arg=process.argv.indexOf('--report-dir');assert.ok(arg>=0);
@@ -38,19 +39,14 @@ try{
     failedAssets.add(meta.staticAssetPath);bodyReads.push((async()=>{try{const text=await r.text();receipt.events.push({type:'asset-proxy-body',staticAssetPath:meta.staticAssetPath,length:text.length,hash:hash(text),badGateway:/bad gateway/i.test(text),connectionRefused:/refused/i.test(text),reset:/reset/i.test(text),unexpectedEOF:/unexpected EOF/i.test(text),proxy:/proxy/i.test(text)});}catch{}})());}});
   page.on('websocket',ws=>{receipt.events.push({type:'browser-websocket',...urlMetadata(ws.url())});ws.on('socketerror',e=>receipt.events.push({type:'browser-websocket-error',...errorMetadata(e)}));});
   await page.goto(origin+'/',{waitUntil:'networkidle'});
-  for(let i=0;i<40;i++){
-    const next=page.getByRole('button',{name:'Continue',exact:true}),skip=page.getByRole('button',{name:'Do not import projects',exact:true});
-    // The access step: keep what the machine has, so the checks after setup run as before.
-    const keepAccess=page.getByRole('button',{name:/^Keep (Supervised|current access)$/});
-    if(await next.isVisible())await next.click();else if(await keepAccess.isVisible())await keepAccess.click();else if(await skip.isVisible())await skip.click();
-    if(await page.locator('.studio-desk').isVisible())break;
-    await page.waitForTimeout(500);
-  }
+  // First-run setup on each step's neutral action. A diagnosis records where setup stopped and goes on.
+  try{receipt.setupSteps=await walkFirstRun(page,{until:()=>page.locator('.studio-desk').isVisible(),appearTimeoutMs:20000,stepTimeoutMs:20000});}
+  catch(e){receipt.setupSteps=e.firstRunSteps??[];receipt.setupStoppedAt=e.firstRunStep??null;}
   const safeSnapshot=async()=>await page.evaluate(()=>{
     const text=document.body.innerText;
-    const known=['Still connecting','Could not read settings','Enter a pairing token','Connect to this environment','Invalid pairing token','Do not import projects','Continue','Control desk','Welcome'];
+    const known=['Still connecting','Could not read settings','Enter a pairing token','Connect to this environment','Invalid pairing token','Continue','Control desk','Welcome'];
     return {path:location.pathname,secureContext:isSecureContext,titleMatchesStudio:document.title.includes('SpecWeave'),bodyCharacters:text.length,
-      knownGateText:known.filter(s=>text.includes(s)),deskVisible:Boolean(document.querySelector('.studio-desk')),
+      knownGateText:known.filter(s=>text.includes(s)),setupStep:document.querySelector('[data-wizard-step]')?.getAttribute('data-wizard-step')??null,deskVisible:Boolean(document.querySelector('.studio-desk')),
       inputs:[...document.querySelectorAll('input')].map(e=>({type:e.type,filled:Boolean(e.value)})),scripts:document.scripts.length,
       readyState:document.readyState,settingsStored:localStorage.getItem('studio:client-settings:v1')!==null};
   });

@@ -13,15 +13,50 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { beforeEach, vi } from "vite-plus/test";
 
-const { createClerkBridgeMock, storageAdapter, storageMock } = vi.hoisted(() => ({
-  createClerkBridgeMock: vi.fn(),
-  storageAdapter: {
-    getItem: vi.fn(),
-    setItem: vi.fn(),
-    removeItem: vi.fn(),
-  },
-  storageMock: vi.fn(),
-}));
+const { createClerkBridgeMock, electronMock, storageAdapter, storageMock } = vi.hoisted(() => {
+  type Listener = (...args: any[]) => unknown;
+  const handlers = new Map<string, Listener>();
+  const listeners = new Map<string, Listener[]>();
+  // Electron's ipcMain and app, as far as the Clerk wiring touches them.
+  const electronMock = {
+    handlers,
+    listeners,
+    ipcMain: {
+      handle: (channel: string, listener: Listener) => {
+        if (handlers.has(channel)) {
+          throw new Error(`Attempted to register a second handler for '${channel}'`);
+        }
+        handlers.set(channel, listener);
+      },
+      removeHandler: (channel: string) => {
+        handlers.delete(channel);
+      },
+    },
+    app: {
+      on: (name: string, listener: Listener) => {
+        listeners.set(name, [...(listeners.get(name) ?? []), listener]);
+      },
+      removeListener: (name: string, listener: Listener) => {
+        listeners.set(
+          name,
+          (listeners.get(name) ?? []).filter((candidate) => candidate !== listener),
+        );
+      },
+    },
+  };
+  return {
+    electronMock,
+    createClerkBridgeMock: vi.fn(),
+    storageAdapter: {
+      getItem: vi.fn(),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+    },
+    storageMock: vi.fn(),
+  };
+});
+
+vi.mock("electron", () => ({ ipcMain: electronMock.ipcMain, app: electronMock.app }));
 
 vi.mock("@clerk/electron", () => ({
   createClerkBridge: createClerkBridgeMock,
@@ -40,6 +75,8 @@ import type * as Electron from "electron";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
+import { CLERK_OAUTH_TRANSPORT_OPEN_CHANNEL } from "./DesktopClerkOAuthTransport.ts";
+import { CONNECT_SIGN_IN_STATE_CHANNEL } from "../ipc/channels.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopPreReadyFileSystem from "./DesktopPreReadyFileSystem.ts";
 
@@ -87,6 +124,8 @@ describe("DesktopClerk", () => {
   beforeEach(() => {
     createClerkBridgeMock.mockReset();
     storageMock.mockReset();
+    electronMock.handlers.clear();
+    electronMock.listeners.clear();
   });
 
   it.effect("acquires and releases the SDK bridge with the layer", () => {
@@ -470,3 +509,213 @@ it.effect.each(["startup", "open-url"] as const)(
       );
     }).pipe(Effect.scoped),
 );
+
+describe("DesktopClerk Connect sign-in handler", () => {
+  beforeEach(() => {
+    createClerkBridgeMock.mockReset();
+    storageMock.mockReset();
+    electronMock.handlers.clear();
+    electronMock.listeners.clear();
+  });
+
+  const appListenerCounts = () => [
+    electronMock.listeners.get("open-url")?.length ?? 0,
+    electronMock.listeners.get("second-instance")?.length ?? 0,
+  ];
+  const makeWindowSender = () => {
+    const sender = {
+      id: 7,
+      getType: () => "window",
+      mainFrame: { frame: "main" },
+      isDestroyed: () => false,
+      send: vi.fn<(channel: string, state: string) => void>(),
+    };
+    return { sender, event: { sender, senderFrame: sender.mainFrame } };
+  };
+  const scopedAppListeners = {
+    on: () => Effect.void,
+  } as unknown as ElectronApp.ElectronApp["Service"];
+
+  it.effect(
+    "takes over the SDK's open channel in the primary instance and releases it before the bridge",
+    () => {
+      const order: string[] = [];
+      const sdkHandler = vi.fn();
+      storageMock.mockReturnValue(storageAdapter);
+      createClerkBridgeMock.mockImplementation(() => {
+        // The SDK registers its own handler when the bridge is created.
+        electronMock.ipcMain.handle(CLERK_OAUTH_TRANSPORT_OPEN_CHANNEL, sdkHandler);
+        return {
+          isPrimaryInstance: true,
+          cleanup: () => {
+            order.push(
+              `bridge cleanup, handler ${electronMock.handlers.has(CLERK_OAUTH_TRANSPORT_OPEN_CHANNEL) ? "present" : "gone"}, listeners ${appListenerCounts().join("/")}`,
+            );
+            electronMock.ipcMain.removeHandler(CLERK_OAUTH_TRANSPORT_OPEN_CHANNEL);
+          },
+        };
+      });
+
+      return Effect.gen(function* () {
+        yield* Effect.scoped(
+          Layer.build(layerDesktopClerk()).pipe(
+            Effect.flatMap((context) =>
+              Effect.gen(function* () {
+                const clerk = yield* DesktopClerk.DesktopClerk;
+                yield* clerk.configure;
+                const installed = electronMock.handlers.get(CLERK_OAUTH_TRANSPORT_OPEN_CHANNEL);
+                assert.isDefined(installed);
+                assert.notStrictEqual(installed, sdkHandler);
+                assert.deepEqual(appListenerCounts(), [1, 1]);
+                order.push("configured");
+              }).pipe(
+                Effect.provide(context),
+                Effect.provideService(ElectronApp.ElectronApp, scopedAppListeners),
+                Effect.provideService(
+                  ElectronWindow.ElectronWindow,
+                  {} as ElectronWindow.ElectronWindow["Service"],
+                ),
+                Effect.provideService(DesktopWindow.DesktopWindow, desktopWindow),
+              ),
+            ),
+          ),
+        );
+
+        assert.deepEqual(order, ["configured", "bridge cleanup, handler gone, listeners 0/0"]);
+        assert.equal(electronMock.handlers.size, 0);
+      });
+    },
+  );
+
+  it.effect("leaves the channel alone in a secondary instance", () => {
+    storageMock.mockReturnValue(storageAdapter);
+    createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: false });
+    const electronApp = {
+      quit: Effect.void,
+      on: () => Effect.void,
+    } as unknown as ElectronApp.ElectronApp["Service"];
+
+    return Effect.gen(function* () {
+      const clerk = yield* DesktopClerk.DesktopClerk;
+      yield* Effect.exit(Effect.scoped(clerk.configure));
+      assert.equal(electronMock.handlers.size, 0);
+      assert.deepEqual(appListenerCounts(), [0, 0]);
+    }).pipe(
+      Effect.provide(layerDesktopClerk()),
+      Effect.provideService(ElectronApp.ElectronApp, electronApp),
+      Effect.provideService(
+        ElectronWindow.ElectronWindow,
+        {} as ElectronWindow.ElectronWindow["Service"],
+      ),
+      Effect.provideService(DesktopWindow.DesktopWindow, desktopWindow),
+    );
+  });
+
+  it.effect(
+    "opens the browser through the shell, reports to the asking window and reveals it on the callback",
+    () => {
+      storageMock.mockReturnValue(storageAdapter);
+      createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
+      const opened: unknown[] = [];
+      const shell = ElectronShell.ElectronShell.of({
+        openExternal: (url) =>
+          Effect.sync(() => {
+            opened.push(url);
+            return true;
+          }),
+        openSystemSettings: () => Effect.succeed(false),
+        copyText: () => Effect.void,
+      });
+      const askingWindow = { id: 70 } as Electron.BrowserWindow;
+      const lookedUp: number[] = [];
+      const revealed = Promise.withResolvers<Electron.BrowserWindow>();
+      const electronWindow = {
+        appWindowForWebContents: (webContentsId: number) =>
+          Effect.sync(() => {
+            lookedUp.push(webContentsId);
+            return Option.some(askingWindow);
+          }),
+        reveal: (window: Electron.BrowserWindow) => Effect.sync(() => revealed.resolve(window)),
+      } as unknown as ElectronWindow.ElectronWindow["Service"];
+
+      return Effect.gen(function* () {
+        const clerk = yield* DesktopClerk.DesktopClerk;
+        yield* clerk.configure;
+        const { sender, event } = makeWindowSender();
+        const handler = electronMock.handlers.get(CLERK_OAUTH_TRANSPORT_OPEN_CHANNEL)!;
+
+        const signIn = handler(event, "https://accounts.example.com/authorize?state=s") as Promise<{
+          callbackUrl: string;
+        }>;
+        assert.deepEqual(sender.send.mock.calls, [[CONNECT_SIGN_IN_STATE_CHANNEL, "waiting"]]);
+
+        // Development builds use the studio-dev scheme; the production link is not theirs.
+        const openUrl = electronMock.listeners.get("open-url")![0]!;
+        openUrl({ preventDefault: vi.fn() }, "studio://app/?rotating_token_nonce=n");
+        const callback = { preventDefault: vi.fn() };
+        openUrl(callback, "studio-dev://app/?rotating_token_nonce=n");
+
+        assert.deepEqual(yield* Effect.promise(() => signIn), {
+          callbackUrl: "studio-dev://app/?rotating_token_nonce=n",
+        });
+        assert.equal(callback.preventDefault.mock.calls.length, 1);
+        assert.deepEqual(opened, ["https://accounts.example.com/authorize?state=s"]);
+        assert.deepEqual(sender.send.mock.calls, [
+          [CONNECT_SIGN_IN_STATE_CHANNEL, "waiting"],
+          [CONNECT_SIGN_IN_STATE_CHANNEL, "completed"],
+        ]);
+        assert.strictEqual(yield* Effect.promise(() => revealed.promise), askingWindow);
+        assert.deepEqual(lookedUp, [7]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, shell)),
+        Effect.provideService(ElectronApp.ElectronApp, scopedAppListeners),
+        Effect.provideService(ElectronWindow.ElectronWindow, electronWindow),
+        Effect.provideService(DesktopWindow.DesktopWindow, desktopWindow),
+      );
+    },
+  );
+
+  it.effect("reports open-failed when the shell cannot open the browser", () => {
+    storageMock.mockReturnValue(storageAdapter);
+    createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
+    const shell = ElectronShell.ElectronShell.of({
+      openExternal: () => Effect.succeed(false),
+      openSystemSettings: () => Effect.succeed(false),
+      copyText: () => Effect.void,
+    });
+
+    return Effect.gen(function* () {
+      const clerk = yield* DesktopClerk.DesktopClerk;
+      yield* clerk.configure;
+      const { sender, event } = makeWindowSender();
+      const handler = electronMock.handlers.get(CLERK_OAUTH_TRANSPORT_OPEN_CHANNEL)!;
+
+      const error = yield* Effect.promise(() =>
+        (handler(event, "https://accounts.example.com/authorize?state=s") as Promise<unknown>).then(
+          () => null,
+          (cause: unknown) => cause,
+        ),
+      );
+
+      assert.instanceOf(error, Error);
+      assert.equal(
+        (error as Error).message,
+        "Clerk: could not open the browser for the OAuth flow.",
+      );
+      assert.deepEqual(sender.send.mock.calls, [
+        [CONNECT_SIGN_IN_STATE_CHANNEL, "waiting"],
+        [CONNECT_SIGN_IN_STATE_CHANNEL, "open-failed"],
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, shell)),
+      Effect.provideService(ElectronApp.ElectronApp, scopedAppListeners),
+      Effect.provideService(
+        ElectronWindow.ElectronWindow,
+        {} as ElectronWindow.ElectronWindow["Service"],
+      ),
+      Effect.provideService(DesktopWindow.DesktopWindow, desktopWindow),
+    );
+  });
+});

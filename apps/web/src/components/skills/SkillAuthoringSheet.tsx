@@ -935,13 +935,13 @@ export function SkillAuthoringForm({
             >
               Save draft
             </Button>
-            <Button type="button" variant="ghost" onClick={() => void close()}>
+            <Button type="button" variant="outline" onClick={() => void close()}>
               Close
             </Button>
             {draft && !["queued", "reviewing"].includes(publication?.state ?? "") ? (
               <Button
                 type="button"
-                variant="ghost"
+                variant="destructive-outline"
                 disabled={inProgress || !canWrite}
                 onClick={() => {
                   if (

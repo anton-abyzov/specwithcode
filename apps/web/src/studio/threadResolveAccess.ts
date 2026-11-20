@@ -16,7 +16,12 @@ export interface ThreadResolveAccessInput {
   readonly access: "granted" | "denied" | "signed-out" | "unknown";
   /** The thread's own machine's connection, or null when this app does not know that machine. */
   readonly connection:
-    | { readonly phase: string; readonly blockedReason?: string | undefined }
+    | {
+        readonly phase: string;
+        readonly blockedReason?: string | undefined;
+        /** Refused because this window has no SpecWithCode Connect sign-in (1417). */
+        readonly connectSignInRequired?: boolean | undefined;
+      }
     | null
     | undefined;
   /** False while this app is still loading its list of machines: none is known yet. */
@@ -70,6 +75,8 @@ export function threadResolveBlockedReason(input: ThreadResolveAccessInput): str
     // Reconnecting never helps here: this app holds no connection to that machine at all.
     return `This device is not paired with ${label ?? "that machine"}, so this thread can't be ${done} from here.`;
   }
+  if (connection.connectSignInRequired === true)
+    return `This window is signed out of SpecWithCode Connect. Sign in to reach ${label ?? "that machine"} and ${action} this thread.`;
   if (connection.blockedReason === "authentication") return signedOut;
   if (connection.phase !== "connected") {
     if (input.reach === "reconnecting" || input.reach === "connecting")

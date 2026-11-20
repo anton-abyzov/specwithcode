@@ -13,6 +13,8 @@ import {
   resolveReviewer,
   reviewerChain,
   reviewerOrderGroups,
+  isAdversarialReviewThreadTitle,
+  threadReviewState,
 } from "./adversarialReview.ts";
 import { newestOfFamily, tierModelFor } from "./modelTiers.ts";
 
@@ -378,7 +380,7 @@ describe("reviewerOrderGroups", () => {
   });
 });
 
-describe("the family rule as Anton's order has it", () => {
+describe("the family rule with a saved reviewer order", () => {
   // Claude Opus 5.5 first, then Muse Wonder Full, GPT-6.1 Sol, Muse Wonder.
   const order = [
     sel("claudeAgent", "claude-opus-5-5"),
@@ -448,5 +450,38 @@ describe("the family rule as Anton's order has it", () => {
     });
     expect(line?.reviewer).toBe(null);
     expect(line?.skipped.every((skip) => skip.reason === "same-family")).toBe(true);
+  });
+});
+
+describe("threadReviewState", () => {
+  it("follows the project setting until the thread chooses", () => {
+    for (const mode of [null, undefined]) {
+      expect(threadReviewState(mode, { autoOnFeatureComplete: false })).toEqual({
+        enabled: false,
+        source: "settings",
+      });
+      expect(threadReviewState(mode, { autoOnFeatureComplete: true })).toEqual({
+        enabled: true,
+        source: "settings",
+      });
+    }
+  });
+
+  it("lets the thread's own choice win either way", () => {
+    expect(threadReviewState("on", { autoOnFeatureComplete: false })).toEqual({
+      enabled: true,
+      source: "thread",
+    });
+    expect(threadReviewState("off", { autoOnFeatureComplete: true })).toEqual({
+      enabled: false,
+      source: "thread",
+    });
+  });
+});
+
+describe("isAdversarialReviewThreadTitle", () => {
+  it("tells a review thread by its title", () => {
+    expect(isAdversarialReviewThreadTitle("Adversarial review: Sign in")).toBe(true);
+    expect(isAdversarialReviewThreadTitle("Sign in with passkeys")).toBe(false);
   });
 });
