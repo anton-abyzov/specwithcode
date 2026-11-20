@@ -316,6 +316,29 @@ describe("administrator code-block runs", () => {
     },
   );
 
+  it("stops lingering background children in the block process group when the block exits normally", async () => {
+    const runsDir = NodePath.join(root, "runs-bg-exit");
+    const readyFile = NodePath.join(state, "bg-exit-pid");
+    const wrapped = await prepare(
+      [
+        `/bin/sh -c 'echo $$ > "${readyFile}"; exec /bin/sleep 20' &`,
+        `while [ ! -s "${readyFile}" ]; do :; done`,
+        "exit 0",
+      ].join("\n"),
+      runsDir,
+    );
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 15_000,
+    });
+    expect(ran.status).toBe(0);
+    const backgroundPid = NodeFS.readFileSync(readyFile, "utf8").trim();
+    waitUntil('! kill -0 "$1" 2>/dev/null', backgroundPid);
+    expect(hasState("ticket")).toBe(false);
+    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+  });
+
   it.each(["SIGTERM", "SIGKILL"] as const)(
     "ends the block, drops the ticket and removes the folder on %s",
     async (signal) => {

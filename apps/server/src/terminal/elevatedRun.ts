@@ -249,12 +249,14 @@ mark() { printf '\\033]${TERMINAL_ELEVATION_OSC};elevation=%s;%s\\007' "$1" "$no
 collect_tree() {
   root="$1"
   own_pgid="\${2:-0}"
+  root_exited="\${3:-0}"
   [ -n "$root" ] || return 0
   if [ -x ${ps} ] && [ -x ${awk} ]; then
-    ${ps} -eo pid=,ppid=,pgid= 2>/dev/null | ${awk} -v root="$root" -v own_pgid="$own_pgid" -v wrap="$wrapper_pid" '
+    ${ps} -eo pid=,ppid=,pgid= 2>/dev/null | ${awk} -v root="$root" -v own_pgid="$own_pgid" -v root_exited="$root_exited" -v wrap="$wrapper_pid" '
       BEGIN {
         root = root + 0
         own_pgid = own_pgid + 0
+        root_exited = root_exited + 0
         wrap = wrap + 0
       }
       {
@@ -267,8 +269,8 @@ collect_tree() {
       }
       END {
         if (root <= 1) exit 0
-        seen[root] = 1
-        if (own_pgid == 1 || root_pgid == root) {
+        if (root_exited == 0 && (root in parent)) seen[root] = 1
+        if (own_pgid == 1 || (root_exited == 0 && root_pgid == root)) {
           for (i = 1; i <= n; i++) {
             p = all[i]
             if (group[p] == root) seen[p] = 1
@@ -290,12 +292,13 @@ collect_tree() {
         }
       }
     '
-  else
+  elif [ "$root_exited" = 0 ]; then
     printf '%s\\n' "$root"
   fi
 }
 stop_target() {
   pidfile="$1"
+  root_exited="\${2:-0}"
   [ -f "$pidfile" ] || return 0
   target_pid=
   own_pgid=0
@@ -305,12 +308,19 @@ stop_target() {
     ""|*[!0-9]*|0|1) return 0 ;;
   esac
   own_pgid="\${own_pgid:-0}"
+  if [ "$root_exited" = 1 ] && [ "$own_pgid" != 1 ]; then
+    return 0
+  fi
   # Freeze first so a shell cannot advance to the next command or fork while stopping.
   [ "$own_pgid" = 1 ] && kill -STOP -- -"$target_pid" 2>/dev/null
-  kill -STOP "$target_pid" 2>/dev/null
-  pids="$(collect_tree "$target_pid" "$own_pgid")"
-  [ -n "$pids" ] && kill -STOP $pids 2>/dev/null
-  pids="$(collect_tree "$target_pid" "$own_pgid")"
+  [ "$root_exited" = 0 ] && kill -STOP "$target_pid" 2>/dev/null
+  pids="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"
+  if [ -z "$pids" ]; then
+    [ "$own_pgid" = 1 ] && kill -CONT -- -"$target_pid" 2>/dev/null
+    return 0
+  fi
+  kill -STOP $pids 2>/dev/null
+  pids="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"
   [ "$own_pgid" = 1 ] && kill -TERM -- -"$target_pid" 2>/dev/null
   [ -n "$pids" ] && kill -TERM $pids 2>/dev/null
   [ "$own_pgid" = 1 ] && kill -CONT -- -"$target_pid" 2>/dev/null
@@ -326,7 +336,7 @@ stop_target() {
     i=$((i + 1))
   done
   [ "$own_pgid" = 1 ] && kill -KILL -- -"$target_pid" 2>/dev/null
-  more="$(collect_tree "$target_pid" "$own_pgid")"
+  more="$(collect_tree "$target_pid" "$own_pgid" "$root_exited")"
   for p in $more $pids; do
     kill -0 "$p" 2>/dev/null && kill -KILL "$p" 2>/dev/null
   done
@@ -429,7 +439,7 @@ mark started
 run_isolated "$dir/block.pid" 1 "\${SHELL:-/bin/sh}" -c "$block"
 code=$?
 reclaim_tty
-${rm} -f "$dir/block.pid"
+stop_target "$dir/block.pid" 1
 exit "$code"
 `;
 }

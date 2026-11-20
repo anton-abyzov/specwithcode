@@ -54,25 +54,212 @@ interface ScanResult {
   readonly closed: boolean;
 }
 
+interface PendingHeredoc {
+  readonly delimiter: string;
+  readonly stripTabs: boolean;
+  readonly quoted: boolean;
+}
+
+/**
+ * Parses a `<<` or `<<-` heredoc operator starting at `start` (where `code[start]` is `<`).
+ * Returns null if the delimiter is empty, unclosed, or contains dynamic expansion.
+ */
+function parseHeredocOperator(
+  code: string,
+  start: number,
+): { readonly heredoc: PendingHeredoc; readonly nextIndex: number } | null {
+  let index = start + 2;
+  let stripTabs = false;
+  if (code[index] === "-") {
+    stripTabs = true;
+    index += 1;
+  }
+  while (code[index] === " " || code[index] === "\t") index += 1;
+
+  let delimiter = "";
+  let quoted = false;
+  while (index < code.length) {
+    const char = code[index] ?? "";
+    if (WORD_BOUNDARY_CHARS.has(char)) break;
+    if (char === "'") {
+      quoted = true;
+      const close = code.indexOf("'", index + 1);
+      if (close === -1) return null;
+      delimiter += code.slice(index + 1, close);
+      index = close + 1;
+      continue;
+    }
+    if (char === '"') {
+      quoted = true;
+      index += 1;
+      let closed = false;
+      while (index < code.length) {
+        const inner = code[index] ?? "";
+        if (inner === "\\") {
+          const next = code[index + 1];
+          if (next === undefined) return null;
+          delimiter += next;
+          index += 2;
+          continue;
+        }
+        if (inner === "$" || inner === "`") return null;
+        if (inner === '"') {
+          closed = true;
+          index += 1;
+          break;
+        }
+        delimiter += inner;
+        index += 1;
+      }
+      if (!closed) return null;
+      continue;
+    }
+    if (char === "\\") {
+      quoted = true;
+      const next = code[index + 1];
+      if (next === undefined) return null;
+      delimiter += next;
+      index += 2;
+      continue;
+    }
+    if (char === "$") return null;
+    delimiter += char;
+    index += 1;
+  }
+
+  if (delimiter.length === 0) return null;
+  return {
+    heredoc: { delimiter, stripTabs, quoted },
+    nextIndex: index - 1,
+  };
+}
+
+/**
+ * Consumes queued heredoc bodies starting at `lineStart` (immediately after `\n`).
+ * Returns unquoted bodies whose embedded substitutions still run.
+ */
+function consumePendingHeredocs(
+  code: string,
+  lineStart: number,
+  pending: PendingHeredoc[],
+): {
+  readonly nextIndex: number;
+  readonly closed: boolean;
+  readonly unquotedBodies: string[];
+} {
+  const unquotedBodies: string[] = [];
+  let cursor = lineStart;
+  for (const heredoc of pending) {
+    const bodyStart = cursor;
+    let found = false;
+    while (cursor <= code.length) {
+      const nl = code.indexOf("\n", cursor);
+      const rawLine = nl === -1 ? code.slice(cursor) : code.slice(cursor, nl);
+      const candidate = heredoc.stripTabs ? rawLine.replace(/^\t+/, "") : rawLine;
+      if (candidate === heredoc.delimiter) {
+        if (!heredoc.quoted) unquotedBodies.push(code.slice(bodyStart, cursor));
+        cursor = nl === -1 ? code.length : nl + 1;
+        found = true;
+        break;
+      }
+      if (nl === -1) break;
+      cursor = nl + 1;
+    }
+    if (!found) {
+      pending.length = 0;
+      return { nextIndex: code.length, closed: false, unquotedBodies };
+    }
+  }
+  pending.length = 0;
+  return { nextIndex: cursor - 1, closed: true, unquotedBodies };
+}
+
+/**
+ * The index of the `}` that closes a `${` whose body starts at `start`.
+ * Honours quotes, escapes, backticks, nested `${...}`, and `$(...)`.
+ */
+function braceExpansionEnd(code: string, start: number): ScanResult {
+  for (let index = start; index < code.length; index += 1) {
+    const char = code[index] ?? "";
+    if (char === "\\") {
+      index += 1;
+      continue;
+    }
+    if (char === "'") {
+      const close = code.indexOf("'", index + 1);
+      if (close === -1) return { index: code.length, closed: false };
+      index = close;
+      continue;
+    }
+    if (char === '"') {
+      const dq = doubleQuoteEnd(code, index + 1);
+      if (!dq.closed) return { index: code.length, closed: false };
+      index = dq.index;
+      continue;
+    }
+    if (char === "`") {
+      let end = index + 1;
+      while (end < code.length) {
+        if (code[end] === "\\") {
+          end += 2;
+          continue;
+        }
+        if (code[end] === "`") break;
+        end += 1;
+      }
+      if (end >= code.length) return { index: code.length, closed: false };
+      index = end;
+      continue;
+    }
+    if (char === "$" && code[index + 1] === "(") {
+      const sub = substitutionEnd(code, index + 2);
+      if (!sub.closed) return { index: code.length, closed: false };
+      index = sub.index;
+      continue;
+    }
+    if (char === "$" && code[index + 1] === "{") {
+      const nested = braceExpansionEnd(code, index + 2);
+      if (!nested.closed) return { index: code.length, closed: false };
+      index = nested.index;
+      continue;
+    }
+    if (char === "}") return { index, closed: true };
+  }
+  return { index: code.length, closed: false };
+}
+
 /**
  * The index of the `)` that closes a `$(` whose body starts at `start`.
- * Honours quotes, escapes, comments, backticks and `case ... ) ... esac` patterns.
+ * Honours quotes, escapes, comments, backticks, heredocs, `${...}`, and `case ... ) ... esac`.
  */
 function substitutionEnd(code: string, start: number): ScanResult {
   let depth = 1;
   let caseDepth = 0;
   let inCasePattern = false;
+  let atCommandStart = true;
   let word = "";
   let wordClean = true;
+  const pendingHeredocs: PendingHeredoc[] = [];
 
   const flushWord = () => {
     if (wordClean && word.length > 0) {
-      if (word === "case") caseDepth += 1;
-      else if (word === "in" && caseDepth > 0) inCasePattern = true;
-      else if (word === "esac" && caseDepth > 0) {
+      if (atCommandStart && word === "case") {
+        caseDepth += 1;
+        atCommandStart = false;
+      } else if (word === "in" && caseDepth > 0) {
+        inCasePattern = true;
+        atCommandStart = false;
+      } else if (word === "esac" && caseDepth > 0) {
         caseDepth -= 1;
         inCasePattern = false;
+        atCommandStart = false;
+      } else if (atCommandStart && KEYWORDS.has(word)) {
+        atCommandStart = true;
+      } else {
+        atCommandStart = false;
       }
+    } else if (!wordClean || word.length > 0) {
+      atCommandStart = false;
     }
     word = "";
     wordClean = true;
@@ -114,6 +301,13 @@ function substitutionEnd(code: string, start: number): ScanResult {
       index = end;
       continue;
     }
+    if (char === "$" && code[index + 1] === "{") {
+      wordClean = false;
+      const brace = braceExpansionEnd(code, index + 2);
+      if (!brace.closed) return { index: code.length, closed: false };
+      index = brace.index;
+      continue;
+    }
     if (
       char === "#" &&
       word.length === 0 &&
@@ -122,29 +316,59 @@ function substitutionEnd(code: string, start: number): ScanResult {
     ) {
       const lineEnd = code.indexOf("\n", index);
       if (lineEnd === -1) return { index: code.length, closed: false };
-      index = lineEnd;
+      index = lineEnd - 1;
+      continue;
+    }
+    if (char === "<" && code[index + 1] === "<" && code[index + 2] !== "<") {
+      flushWord();
+      const parsed = parseHeredocOperator(code, index);
+      if (!parsed) return { index: code.length, closed: false };
+      pendingHeredocs.push(parsed.heredoc);
+      index = parsed.nextIndex;
+      continue;
+    }
+    if (char === "\n") {
+      flushWord();
+      atCommandStart = true;
+      if (pendingHeredocs.length > 0) {
+        const consumed = consumePendingHeredocs(code, index + 1, pendingHeredocs);
+        if (!consumed.closed) return { index: code.length, closed: false };
+        index = consumed.nextIndex;
+      }
       continue;
     }
     if (char === ";" && code[index + 1] === ";") {
       flushWord();
       if (caseDepth > 0) inCasePattern = true;
+      atCommandStart = true;
       index += 1;
       continue;
     }
     if (char === "(") {
       flushWord();
       depth += 1;
+      atCommandStart = true;
       continue;
     }
     if (char === ")") {
       flushWord();
       if (inCasePattern && depth === 1) {
         inCasePattern = false;
+        atCommandStart = true;
         continue;
       }
       depth -= 1;
       if (depth === 1 && inCasePattern) inCasePattern = false;
-      if (depth === 0) return { index, closed: true };
+      if (depth === 0) {
+        if (pendingHeredocs.length > 0) return { index: code.length, closed: false };
+        return { index, closed: true };
+      }
+      atCommandStart = false;
+      continue;
+    }
+    if (SEPARATORS.has(char)) {
+      flushWord();
+      atCommandStart = true;
       continue;
     }
     if (WORD_BOUNDARY_CHARS.has(char)) {
@@ -158,7 +382,7 @@ function substitutionEnd(code: string, start: number): ScanResult {
 
 /**
  * The end of a double-quoted string that starts after `start`. `\"` does not
- * end it, and neither does a quote inside `$( )`: "$(echo "a"; sudo id)".
+ * end it, and neither does a quote inside `$( )` or `${ }`: "$(echo "a"; sudo id)".
  */
 function doubleQuoteEnd(code: string, start: number): ScanResult {
   for (let index = start; index < code.length; index += 1) {
@@ -168,6 +392,10 @@ function doubleQuoteEnd(code: string, start: number): ScanResult {
       const sub = substitutionEnd(code, index + 2);
       if (!sub.closed) return { index: code.length, closed: false };
       index = sub.index;
+    } else if (char === "$" && code[index + 1] === "{") {
+      const brace = braceExpansionEnd(code, index + 2);
+      if (!brace.closed) return { index: code.length, closed: false };
+      index = brace.index;
     } else if (char === '"') return { index, closed: true };
   }
   return { index: code.length, closed: false };
@@ -227,6 +455,7 @@ function simpleCommands(code: string): {
   let started = false;
   let redirecting = false;
   let inBacktick = false;
+  const pendingHeredocs: PendingHeredoc[] = [];
 
   const endWord = () => {
     if (!started) return;
@@ -245,6 +474,15 @@ function simpleCommands(code: string): {
     words = [];
     writes = [];
     redirecting = false;
+  };
+  const collectEmbeddedSubstitutions = (source: string) => {
+    const subs = doubleQuoteSubstitutions(source);
+    if (subs.uncertain) uncertain = true;
+    for (const body of subs.bodies) {
+      const nested = simpleCommands(body);
+      if (nested.uncertain) uncertain = true;
+      commands.push(...nested.commands);
+    }
   };
 
   for (let index = 0; index < code.length; index += 1) {
@@ -279,13 +517,7 @@ function simpleCommands(code: string): {
       started = true;
       index = dq.index;
       // Commands still run inside double quotes: "$(sudo id)" and "`sudo id`".
-      const subs = doubleQuoteSubstitutions(inner);
-      if (subs.uncertain) uncertain = true;
-      for (const body of subs.bodies) {
-        const nested = simpleCommands(body);
-        if (nested.uncertain) uncertain = true;
-        commands.push(...nested.commands);
-      }
+      collectEmbeddedSubstitutions(inner);
       continue;
     }
     if (char === "#" && !started) {
@@ -297,6 +529,16 @@ function simpleCommands(code: string): {
       if (!substitutionEnd(code, index + 2).closed) uncertain = true;
       endCommand();
       index += 1;
+      continue;
+    }
+    if (char === "$" && code[index + 1] === "{") {
+      const brace = braceExpansionEnd(code, index + 2);
+      if (!brace.closed) uncertain = true;
+      const inner = code.slice(index + 2, brace.index);
+      text += code.slice(index, brace.closed ? brace.index + 1 : brace.index);
+      started = true;
+      index = brace.index;
+      collectEmbeddedSubstitutions(inner);
       continue;
     }
     if (char === "`") {
@@ -317,6 +559,26 @@ function simpleCommands(code: string): {
     }
     if (char === "<") {
       endWord();
+      if (code[index + 1] === "<" && code[index + 2] !== "<") {
+        const parsed = parseHeredocOperator(code, index);
+        if (!parsed) uncertain = true;
+        else {
+          pendingHeredocs.push(parsed.heredoc);
+          index = parsed.nextIndex;
+        }
+      }
+      continue;
+    }
+    if (char === "\n") {
+      endCommand();
+      if (pendingHeredocs.length > 0) {
+        const consumed = consumePendingHeredocs(code, index + 1, pendingHeredocs);
+        if (!consumed.closed) uncertain = true;
+        for (const body of consumed.unquotedBodies) {
+          collectEmbeddedSubstitutions(body);
+        }
+        index = consumed.nextIndex;
+      }
       continue;
     }
     if (SEPARATORS.has(char)) {
@@ -340,7 +602,7 @@ function simpleCommands(code: string): {
     started = true;
   }
   endCommand();
-  if (inBacktick) uncertain = true;
+  if (inBacktick || pendingHeredocs.length > 0) uncertain = true;
   return { commands, uncertain };
 }
 

@@ -79,7 +79,10 @@ describe("Open in Terminal", () => {
     expect(sh(command).status).toBe(0);
     const file = NodePath.join(dir, "run-3.command");
     expect(NodeFS.readFileSync(file, "utf8").startsWith("#!/bin/zsh -l\n")).toBe(true);
-    const ran = NodeChildProcess.spawnSync(file, [], { encoding: "utf8", cwd: root });
+    // Open in Terminal is macOS-only where /bin/zsh exists; Linux CI may lack zsh.
+    const ran = NodeFS.existsSync("/bin/zsh")
+      ? NodeChildProcess.spawnSync(file, [], { encoding: "utf8", cwd: root })
+      : NodeChildProcess.spawnSync("/bin/sh", [file], { encoding: "utf8", cwd: root });
     expect(ran.status).toBe(0);
     expect(NodeFS.readFileSync(NodePath.join(root, "ran-in"), "utf8")).toBe(
       `${NodeFS.realpathSync(cwd)}\n`,

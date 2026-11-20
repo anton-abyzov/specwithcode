@@ -265,6 +265,61 @@ describe("shellRunElevation", () => {
       sudo: true,
       systemChanges: [],
     });
+    expect(shellRunElevation('echo "$(printf case in)"')).toEqual({
+      administrator: false,
+      sudo: false,
+      systemChanges: [],
+    });
+  });
+
+  it("handles heredocs and parameter expansions inside double-quoted substitutions", () => {
+    expect(
+      shellRunElevation(
+        ["echo \"$(cat <<'EOF_HERE'", ")", "EOF_HERE", "sudo -n true", ')"'].join("\n"),
+      ),
+    ).toEqual({
+      administrator: true,
+      sudo: true,
+      systemChanges: [],
+    });
+    expect(
+      shellRunElevation(
+        ['echo "$(cat <<-EOF_HERE', "\t)", "\tEOF_HERE", "sudo rm -rf /etc/hosts", ')"'].join("\n"),
+      ),
+    ).toEqual({
+      administrator: true,
+      sudo: true,
+      systemChanges: ["/etc/hosts"],
+    });
+    expect(
+      shellRunElevation(["cat <<'EOF'", "'", "EOF", "sudo -n true", "echo 'x'"].join("\n")),
+    ).toEqual({
+      administrator: true,
+      sudo: true,
+      systemChanges: [],
+    });
+    expect(shellRunElevation(["cat <<EOF", "$(sudo rm -rf /etc/hosts)", "EOF"].join("\n"))).toEqual(
+      {
+        administrator: true,
+        sudo: true,
+        systemChanges: ["/etc/hosts"],
+      },
+    );
+    expect(shellRunElevation('echo "$(echo ${x:-)}; sudo -n true)"')).toEqual({
+      administrator: true,
+      sudo: true,
+      systemChanges: [],
+    });
+    expect(shellRunElevation('echo "${x:-"}"}; $(sudo -n true)"')).toEqual({
+      administrator: true,
+      sudo: true,
+      systemChanges: [],
+    });
+    const unclosedHeredoc = shellRunElevation(
+      ["echo \"$(cat <<'EOF_HERE'", ")", 'sudo -n true)"'].join("\n"),
+    );
+    expect(unclosedHeredoc.uncertain).toBe(true);
+    expect(shellRunNeedsElevationConfirm(unclosedHeredoc)).toBe(true);
   });
 
   it("requires confirmation when unclosed quotes or substitutions leave parsing uncertain", () => {
