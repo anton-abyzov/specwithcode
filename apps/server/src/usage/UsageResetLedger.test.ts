@@ -20,6 +20,7 @@ import * as ServerConfig from "../config.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as Ledger from "./UsageResetLedger.ts";
 import * as Sources from "./UsageLimitSources.ts";
+import { USAGE_LIMIT_HISTORY_FILE, encodeHistoryFile } from "./usageLimitHistoryStore.ts";
 
 const codex = ProviderDriverKind.make("codex");
 const HOUR = 60 * 60_000;
@@ -108,6 +109,7 @@ describe("UsageResetLedger", () => {
           windowDurationMins: 10_080,
           endedAt: iso(reset1),
           lastReadAt: iso(reset1 - HOUR),
+          announcedAt: iso(reset1),
           usedPercentAtReset: 59,
           lostPercent: 41,
           cause: "scheduled",
@@ -129,6 +131,42 @@ describe("UsageResetLedger", () => {
         lostPercent: 10,
       });
       yield* Scope.close(second.scope, Exit.void);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer))),
+  );
+
+  it.live("starts a new ledger with the resets the quota history already saw", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "usage-reset-backfill-" });
+      yield* fs.writeFileString(
+        path.join(stateDir, USAGE_LIMIT_HISTORY_FILE),
+        encodeHistoryFile(
+          new Map([
+            [
+              "codex:pro@example.com|weekly:secondary",
+              {
+                accountKey: "codex:pro@example.com",
+                driver: codex,
+                windowId: "secondary",
+                windowKind: "weekly" as const,
+                windowDurationMins: 10_080,
+                samples: [
+                  { at: reset1 - HOUR, usedPercent: 92, resetsAt: reset1 },
+                  { at: reset1 + HOUR, usedPercent: 3, resetsAt: reset2 },
+                ],
+              },
+            ],
+          ]),
+        ),
+      );
+      const life = yield* lifetime(stateDir);
+      const read = yield* life.service.read({});
+      expect(read.periods).toMatchObject([
+        { windowId: "secondary", endedAt: iso(reset1), usedPercentAtReset: 92, lostPercent: 8 },
+      ]);
+      yield* Scope.close(life.scope, Exit.void);
+      expect(yield* fs.exists(path.join(stateDir, Ledger.USAGE_RESET_LEDGER_FILE))).toBe(true);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer))),
   );
 });

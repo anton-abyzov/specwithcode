@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import type { AccountOwners } from "../connection/accountOwners.ts";
 import type { ConnectionRegistration } from "../connection/catalog.ts";
 import type { ConnectionTarget, PersistedConnectionTarget } from "../connection/model.ts";
 
@@ -36,6 +37,7 @@ export class ConnectionPersistenceError extends Schema.TaggedError<ConnectionPer
       "remove-vcs-refs",
       "clear-vcs-refs",
       "clear-environment",
+      "save-account-owners",
     ]),
     message: Schema.String,
   },
@@ -149,5 +151,23 @@ export class EnvironmentOwnedDataCleanup extends Context.Reference<{
 }>("@specweave-studio/client-runtime/platform/persistence/EnvironmentOwnedDataCleanup", {
   defaultValue: () => ({
     clear: () => Effect.void,
+  }),
+}) {}
+
+/**
+ * Which Connect account saved each machine on this client (1434). The default
+ * keeps nothing, so a client without one never forgets a machine on a switch.
+ */
+export class AccountOwnersStore extends Context.Reference<{
+  readonly read: Effect.Effect<AccountOwners | null>;
+  /** Fails when the record could not be stored, so a save is never left without its owner. */
+  readonly write: (owners: AccountOwners) => Effect.Effect<void, ConnectionPersistenceError>;
+  /** Runs before a machine is forgotten on a switch, so automatic pairing leaves it. */
+  readonly forgotten: (environmentId: EnvironmentId) => Effect.Effect<void>;
+}>("@specweave-studio/client-runtime/platform/persistence/AccountOwnersStore", {
+  defaultValue: () => ({
+    read: Effect.succeed(null),
+    write: () => Effect.void,
+    forgotten: () => Effect.void,
   }),
 }) {}

@@ -104,13 +104,21 @@ const task = (id: string) => ({
   ownThread: true,
 });
 
-const world = (grants: Record<string, ScheduledTaskGrantedBy | undefined>) => {
+const world = (
+  grants: Record<string, ScheduledTaskGrantedBy | undefined>,
+  /** Routines this machine only keeps a copy of, by the hash of what its list shows. */
+  shown: Record<string, string> = {},
+) => {
   const saved: Array<{
     readonly input: ScheduledTaskUpsertInput;
     readonly grantedBy: ScheduledTaskGrantedBy | null | undefined;
   }> = [];
   const deleted: Array<string> = [];
-  const tasks = ["owner-made", "m4-made", "m1-made"].map(task);
+  const deletes: Array<Record<string, unknown>> = [];
+  const tasks = ["owner-made", "m4-made", "m1-made"].map((id) => ({
+    ...task(id),
+    ...(shown[id] === undefined ? {} : { definitionHash: shown[id] }),
+  }));
   const layer = OrchestratorMcpService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -128,6 +136,7 @@ const world = (grants: Record<string, ScheduledTaskGrantedBy | undefined>) => {
           delete: (input) =>
             Effect.sync(() => {
               deleted.push(input.id);
+              deletes.push({ ...input });
               return undefined as never;
             }),
           upsert: (input, options) =>
@@ -164,7 +173,7 @@ const world = (grants: Record<string, ScheduledTaskGrantedBy | undefined>) => {
       }),
       Effect.runPromise,
     );
-  return { run, saved, deleted };
+  return { run, saved, deleted, deletes };
 };
 
 const m4Grant: ScheduledTaskGrantedBy = {
@@ -283,5 +292,51 @@ describe("delete_scheduled_task under a grant that allows routines", () => {
     expect(other.code).toBe("outside_grant_scope");
     expect(other.message).toContain("another machine's work");
     expect(deleted).toEqual([]);
+  });
+});
+
+describe("a routine this machine only keeps a copy of", () => {
+  const copy = { "m4-made": "shown-now" };
+  const id = ScheduledTaskId.make("m4-made");
+
+  it("is listed with the hash of the definition shown", async () => {
+    const { run } = world({ "m4-made": m4Grant }, copy);
+    const listed = await run((service) => service.listScheduledTasks(fromM4, {}));
+    expect(
+      listed.tasks.map((entry) => [
+        entry.scheduledTaskId,
+        (entry as { readonly definitionHash?: string }).definitionHash,
+      ]),
+    ).toContainEqual(["m4-made", "shown-now"]);
+  });
+
+  it("is deleted only with the hash the caller read, never one filled in for it", async () => {
+    const { run, deletes } = world({ "m4-made": m4Grant }, copy);
+    await run((service) => service.deleteScheduledTask(fromM4, { scheduledTaskId: id }));
+    await run((service) =>
+      service.deleteScheduledTask(fromM4, {
+        scheduledTaskId: id,
+        definitionHash: "read-earlier",
+      } as never),
+    );
+    expect(deletes).toEqual([{ id }, { id, expectedDefinition: "read-earlier" }]);
+  });
+
+  it("is changed only with the hash the caller read, never one read for it", async () => {
+    const { run, saved } = world({ "m4-made": m4Grant }, copy);
+    await run((service) =>
+      service.updateScheduledTask(fromM4, { scheduledTaskId: id, prompt: "Check again" }),
+    );
+    await run((service) =>
+      service.updateScheduledTask(fromM4, {
+        scheduledTaskId: id,
+        prompt: "Check again",
+        definitionHash: "read-earlier",
+      } as never),
+    );
+    expect(saved.map((entry) => entry.input.expectedDefinition)).toEqual([
+      undefined,
+      "read-earlier",
+    ]);
   });
 });

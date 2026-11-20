@@ -223,7 +223,7 @@ export function GitHubSignInPanel({
               <ExternalLinkIcon />
               {renderRich(tx("Open {value}"), { value: pageLabel(code.url) })}
             </Button>
-            <Button size="xs" variant="ghost" disabled={busy} onClick={() => void stop()}>
+            <Button size="xs" variant="outline" disabled={busy} onClick={() => void stop()}>
               {tx("Cancel")}
             </Button>
           </div>

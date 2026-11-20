@@ -133,6 +133,8 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
     networkStatus: yield* SubscriptionRef.make<NetworkStatus>("online"),
     start: Effect.void,
     register: () => Effect.die("Unexpected environment registration"),
+    accountScope: yield* SubscriptionRef.make<string | null | undefined>(undefined),
+    setAccount: () => Effect.void,
     assertKnownAddress: () => Effect.die("Unexpected address check"),
     registerPlatform: () => Effect.die("Unexpected environment registration"),
     reconcilePlatform: () => Effect.die("Unexpected environment reconciliation"),

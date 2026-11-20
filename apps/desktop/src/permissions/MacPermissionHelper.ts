@@ -9,7 +9,17 @@ import {
   type SettingsWindow,
 } from "./MacSettingsWindow.ts";
 
-import { MAC_PERMISSION_TITLES, type MacPermission } from "./MacPermission.ts";
+import {
+  MAC_PERMISSION_ACCEPTS_DRAG,
+  MAC_PERMISSION_TITLES,
+  type MacPermission,
+} from "./MacPermission.ts";
+
+/** What the helper offers to drag: the app itself, or the agents' launchd executable. */
+export interface MacPermissionDragItem {
+  readonly path: string;
+  readonly name: string;
+}
 
 const permissionGranted = (permission: MacPermission) => {
   if (permission === "screen-recording")
@@ -40,8 +50,14 @@ const escapeHtml = (value: string) =>
     }
   });
 
-function helperHtml(permission: MacPermission, icon: string) {
+export function helperHtml(permission: MacPermission, icon: string, itemName = "SpecWithCode") {
   const title = MAC_PERMISSION_TITLES[permission];
+  const name = escapeHtml(itemName);
+  const body = MAC_PERMISSION_ACCEPTS_DRAG[permission]
+    ? `<header>↑ Drag ${name} into the list above</header>
+<button id="app" draggable="true" aria-label="Drag ${name} to System Settings, or click to reveal in Finder"><img src="${escapeHtml(icon)}" alt="" draggable="false">${name}</button>`
+    : `<header>Turn on ${name} in the list above</header>
+<p id="hint">It appears there after macOS asks once. Turn its switch on, then come back.</p>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">
 <title>Set up ${title}</title><style>
@@ -59,10 +75,10 @@ button:focus-visible { outline: 2px solid #007aff; outline-offset: 3px; }
 #app { display: flex; align-items: center; gap: 12px; width: 100%; height: 52px; margin-top: 20px; padding: 8px 12px; border: 0; border-radius: 10px; background: var(--row); cursor: grab; text-align: left; font-size: 16px; font-weight: 600; }
 #app:active { cursor: grabbing; }
 img { width: 32px; height: 32px; pointer-events: none; }
+#hint { margin: 16px 0 0; font-size: 14px; opacity: .8; }
 </style></head><body><main id="panel">
 <button id="close" aria-label="Close permission helper">×</button>
-<header>↑ Drag SpecWithCode into the list above</header>
-<button id="app" draggable="true" aria-label="Drag SpecWithCode to System Settings, or click to reveal in Finder"><img src="${escapeHtml(icon)}" alt="" draggable="false">SpecWithCode</button>
+${body}
 </main></body></html>`;
 }
 
@@ -83,13 +99,15 @@ export class MacPermissionHelper {
     owner: Electron.BrowserWindow | null,
     iconPaths: readonly string[],
     isGranted: () => boolean | Promise<boolean> = () => permissionGranted(permission),
+    dragItem?: MacPermissionDragItem,
   ) {
     this.close();
     const generation = this.generation;
     if (await isGranted()) return;
     if (generation !== this.generation) return;
-    const bundle = macAppBundlePath(Electron.app.getPath("exe"));
-    if (!bundle) return;
+    const appBundle = macAppBundlePath(Electron.app.getPath("exe"));
+    if (!appBundle) return;
+    const bundle = dragItem?.path ?? appBundle;
     if (owner?.isDestroyed()) return;
     // Finder's bundle-icon lookup can return the generic app icon for mounted artifacts.
     // Use the same PNG that packaging uses to generate the app's macOS icon.
@@ -97,7 +115,16 @@ export class MacPermissionHelper {
       .map((iconPath) => Electron.nativeImage.createFromPath(iconPath))
       .find((image) => !image.isEmpty());
     if (!appIcon) throw new Error("The packaged SpecWithCode icon is missing.");
-    const icon = appIcon.resize({ width: 64, height: 64 });
+    // A bare executable shows Finder's own icon for it, so the row matches System Settings.
+    const itemIcon =
+      dragItem === undefined
+        ? undefined
+        : await Electron.app.getFileIcon(dragItem.path, { size: "large" }).catch(() => undefined);
+    const icon = (itemIcon && !itemIcon.isEmpty() ? itemIcon : appIcon).resize({
+      width: 64,
+      height: 64,
+    });
+    if (generation !== this.generation) return;
     const window = createDesktopBrowserWindow({
       width: 560,
       height: 140,
@@ -197,7 +224,7 @@ export class MacPermissionHelper {
     window.webContents.on("will-navigate", (event) => event.preventDefault());
     try {
       await window.loadURL(
-        `data:text/html;charset=utf-8,${encodeURIComponent(helperHtml(permission, icon.toDataURL()))}`,
+        `data:text/html;charset=utf-8,${encodeURIComponent(helperHtml(permission, icon.toDataURL(), dragItem?.name ?? "SpecWithCode"))}`,
       );
       if (!window.isDestroyed()) {
         stopTracking = watchMacSettingsWindow(

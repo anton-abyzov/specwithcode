@@ -5,6 +5,7 @@ import {
   MachineHandoffContext,
   MachineHandoffPrepareInput,
   MachineHandoffReceiveInput,
+  MachineHandoffReceiveResult,
   MachineHandoffError,
   type MachineHandoffBundle,
 } from "./machineHandoff.ts";
@@ -23,6 +24,10 @@ import {
 const isPrepareInput = Schema.is(MachineHandoffPrepareInput);
 const isReceiveInput = Schema.is(MachineHandoffReceiveInput);
 const decodeReceiveInput = Schema.decodeUnknownSync(MachineHandoffReceiveInput);
+const decodeResult = Schema.decodeUnknownSync(MachineHandoffReceiveResult);
+const isReceiveResult = Schema.is(MachineHandoffReceiveResult);
+const decodeHandoffError = Schema.decodeUnknownSync(MachineHandoffError);
+const isCopyCapabilities = Schema.is(FolderCopyCapabilities);
 const operationId = "11111111-1111-4111-8111-111111111111";
 const metadata = {
   manifest: {
@@ -252,5 +257,61 @@ describe("MachineHandoffContext retention", () => {
     expect(isCapabilities({ scopeVersion: 1 })).toBe(true);
     expect(isCapabilities({ scopeVersion: 1, contextRetention: 1 })).toBe(true);
     expect(isCapabilities({ scopeVersion: 1, contextRetention: 2 })).toBe(false);
+  });
+});
+
+describe("an existing copy's update between app versions (1326)", () => {
+  const start = { projectId: "destination", operationId, mode: "start", bundle };
+  const result = {
+    operationId,
+    phase: "started",
+    projectId: "destination",
+    coordinatorThreadId: null,
+    workspacePath: "/project",
+    contextPath: null,
+    replayed: false,
+  };
+
+  it("an older client's start carries no choice, and a newer one's choice is closed", () => {
+    expect(decodeReceiveInput(start)).not.toHaveProperty("staleCopy");
+    expect(decodeReceiveInput({ ...start, staleCopy: "refuse" })).toHaveProperty(
+      "staleCopy",
+      "refuse",
+    );
+    expect(isReceiveInput({ ...start, staleCopy: "accept" })).toBe(true);
+    expect(isReceiveInput({ ...start, staleCopy: "overwrite" })).toBe(false);
+    // A preview never carries it: nothing is updated there.
+    expect(decodeReceiveInput({ ...previewInput, staleCopy: "refuse" })).not.toHaveProperty(
+      "staleCopy",
+    );
+  });
+
+  it("an older destination's reply has no update report and no capability", () => {
+    expect(decodeResult(result)).not.toHaveProperty("updateSkipped");
+    expect(isCopyCapabilities({ scopeVersion: 1, contextRetention: 1 })).toBe(true);
+    expect(isCopyCapabilities({ scopeVersion: 1, existingCopyUpdate: 1 })).toBe(true);
+    expect(isCopyCapabilities({ scopeVersion: 1, existingCopyUpdate: 2 })).toBe(false);
+  });
+
+  it("reads a reason a newer destination sends by its words", () => {
+    const updateSkipped = {
+      reason: "a-reason-added-later",
+      message: "The copy there was not updated to this machine's commits: for a new reason.",
+      repository: "repositories/app",
+    };
+    expect(decodeResult({ ...result, updateSkipped }).updateSkipped).toEqual(updateSkipped);
+    const refused = decodeHandoffError({
+      _tag: "MachineHandoffError",
+      code: "git_refused",
+      updateSkipped,
+    });
+    expect(refused.message).toBe(updateSkipped.message);
+    // Bounded on the wire: the keys named, never more than the dialog can show.
+    expect(
+      isReceiveResult({
+        ...result,
+        updateSkipped: { ...updateSkipped, unsafeConfig: Array.from({ length: 33 }, () => "k") },
+      }),
+    ).toBe(false);
   });
 });

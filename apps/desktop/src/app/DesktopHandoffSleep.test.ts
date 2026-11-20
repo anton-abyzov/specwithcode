@@ -1,9 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
-import {
-  AWAY_SLEEP_PATH,
-  AWAY_WAKE_PATH,
-  COORDINATOR_SUSPEND_PATH,
-} from "@specweave-studio/contracts";
+import { AWAY_WAKE_PATH, COORDINATOR_SUSPEND_PATH } from "@specweave-studio/contracts";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -12,9 +8,6 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import {
   AWAY_WAKE_ACTION,
-  DesktopSuspendNoticeError,
-  HANDOFF_SLEEP_ACTION,
-  notifyServerOfAwaySleep,
   notifyServerOfAwayWake,
   notifyServerOfSuspend,
   registerAwayWakeNotice,
@@ -38,42 +31,13 @@ const fakePowerMonitor = () => {
   };
 };
 
-describe("registerHandoffSleepNotice", () => {
-  it.effect("asks the window to hand off on suspend, not on screen lock", () =>
-    Effect.gen(function* () {
-      const monitor = fakePowerMonitor();
-      const sent: string[] = [];
-      yield* registerHandoffSleepNotice(monitor, (action) =>
-        Effect.sync(() => {
-          sent.push(action);
-        }),
-      );
-      monitor.emit("lock-screen");
-      assert.deepEqual(sent, []);
-      monitor.emit("suspend");
-      yield* Effect.yieldNow;
-      assert.deepEqual(sent, [HANDOFF_SLEEP_ACTION]);
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("never throws when the window is gone", () =>
-    Effect.gen(function* () {
-      const monitor = fakePowerMonitor();
-      yield* registerHandoffSleepNotice(monitor, () => Effect.fail(new NoWindow()));
-      monitor.emit("suspend");
-      yield* Effect.yieldNow;
-    }).pipe(Effect.scoped),
-  );
-});
-
 describe("the suspend notice to the server", () => {
-  it.effect("tells the server on suspend as well as the window, never on screen lock", () =>
+  it.effect("on suspend tells the server and asks no window to move threads (1390 AC-36)", () =>
     Effect.gen(function* () {
       const monitor = fakePowerMonitor();
       const sent: string[] = [];
       yield* registerHandoffSleepNotice(
         monitor,
-        (action) => Effect.sync(() => void sent.push(action)),
         Effect.sync(() => void sent.push("server")),
       );
       monitor.emit("lock-screen");
@@ -81,29 +45,17 @@ describe("the suspend notice to the server", () => {
       assert.deepEqual(sent, []);
       monitor.emit("suspend");
       yield* Effect.yieldNow;
-      assert.sameMembers(sent, [HANDOFF_SLEEP_ACTION, "server"]);
+      // Only the notice: nothing here can ask a window, or Away, to start a move.
+      assert.deepEqual(sent, ["server"]);
     }).pipe(Effect.scoped),
   );
 
-  it.effect("still reaches the server when no window answers, and the other way round", () =>
+  it.effect("never throws when the server does not answer", () =>
     Effect.gen(function* () {
       const monitor = fakePowerMonitor();
-      const sent: string[] = [];
-      yield* registerHandoffSleepNotice(
-        monitor,
-        () => Effect.fail(new NoWindow()),
-        Effect.sync(() => void sent.push("server")),
-      );
-      const other = fakePowerMonitor();
-      yield* registerHandoffSleepNotice(
-        other,
-        (action) => Effect.sync(() => void sent.push(action)),
-        Effect.fail(new NoWindow()),
-      );
+      yield* registerHandoffSleepNotice(monitor, Effect.fail(new NoWindow()));
       monitor.emit("suspend");
-      other.emit("suspend");
       yield* Effect.yieldNow;
-      assert.sameMembers(sent, ["server", HANDOFF_SLEEP_ACTION]);
     }).pipe(Effect.scoped),
   );
 
@@ -161,60 +113,10 @@ describe("the suspend notice to the server", () => {
   );
 });
 
-describe("Away's lid-close trigger (AC-09)", () => {
+describe("the wake notice", () => {
   const settle = Effect.gen(function* () {
     for (let index = 0; index < 5; index++) yield* Effect.yieldNow;
   });
-
-  it.effect("when Away takes the sleep, the window is not asked to move threads", () =>
-    Effect.gen(function* () {
-      const monitor = fakePowerMonitor();
-      const sent: string[] = [];
-      yield* registerHandoffSleepNotice(
-        monitor,
-        (action) => Effect.sync(() => void sent.push(action)),
-        Effect.sync(() => void sent.push("server")),
-        Effect.sync(() => (sent.push("away"), true)),
-      );
-      monitor.emit("suspend");
-      yield* settle;
-      assert.sameMembers(sent, ["away", "server"]);
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("when Away skips or refuses, the old path runs; a timeout does not move twice", () =>
-    Effect.gen(function* () {
-      const run = (away: Effect.Effect<boolean, DesktopSuspendNoticeError>) =>
-        Effect.gen(function* () {
-          const monitor = fakePowerMonitor();
-          const sent: string[] = [];
-          yield* registerHandoffSleepNotice(
-            monitor,
-            (action) => Effect.sync(() => void sent.push(action)),
-            undefined,
-            away,
-          );
-          monitor.emit("suspend");
-          yield* settle;
-          return sent;
-        });
-      assert.deepEqual(yield* run(Effect.succeed(false)), [HANDOFF_SLEEP_ACTION]);
-      assert.deepEqual(
-        yield* run(
-          Effect.fail(new DesktopSuspendNoticeError({ reason: "the server answered 404" })),
-        ),
-        [HANDOFF_SLEEP_ACTION],
-      );
-      assert.deepEqual(
-        yield* run(
-          Effect.fail(
-            new DesktopSuspendNoticeError({ reason: "no answer in time", uncertain: true }),
-          ),
-        ),
-        [],
-      );
-    }).pipe(Effect.scoped),
-  );
 
   it.effect("wake and unlock ask the server; the card shows only when work moved", () =>
     Effect.gen(function* () {
@@ -257,23 +159,6 @@ describe("Away's lid-close trigger (AC-09)", () => {
     httpBaseUrl: new URL("http://127.0.0.1:3773/"),
     bearerToken: "desktop-service-bearer",
   });
-
-  it.effect("the sleep notice sends the battery state and reads the server's decision", () =>
-    Effect.gen(function* () {
-      const seen: Array<{ url: string; body: unknown }> = [];
-      const left = yield* notifyServerOfAwaySleep(local, true).pipe(
-        Effect.provideService(HttpClient.HttpClient, answering({ outcome: "left" }, seen)),
-      );
-      assert.isTrue(left);
-      assert.deepEqual(seen, [
-        { url: `http://127.0.0.1:3773${AWAY_SLEEP_PATH}`, body: { onBattery: true } },
-      ]);
-      const skipped = yield* notifyServerOfAwaySleep(local, false).pipe(
-        Effect.provideService(HttpClient.HttpClient, answering({ outcome: "skipped" }, [])),
-      );
-      assert.isFalse(skipped);
-    }),
-  );
 
   it.effect("the wake notice shows the card on prompt or auto, not on none", () =>
     Effect.gen(function* () {

@@ -64,6 +64,7 @@ const makeHarnessFor = Effect.fnUntraced(function* (
   let codeError: string | undefined;
   const revocations: URLSearchParams[] = [];
   let transient = false;
+  let refreshLifetimeSeconds = 3600;
   let invalidNonce = false;
   let identityFailure: "issuer" | "audience" | "signature" | undefined;
   let mismatchedState = false;
@@ -137,7 +138,7 @@ const makeHarnessFor = Effect.fnUntraced(function* (
                     access_token: `access-${refreshes}`,
                     refresh_token: `refresh-${refreshes}`,
                     token_type: "Bearer",
-                    expires_in: 3600,
+                    expires_in: refreshLifetimeSeconds,
                     scope: grantScope,
                   }),
                 );
@@ -360,6 +361,9 @@ const makeHarnessFor = Effect.fnUntraced(function* (
     refreshes: () => refreshes,
     setRevoked: () => {
       revoked = true;
+    },
+    setRefreshLifetime: (seconds: number) => {
+      refreshLifetimeSeconds = seconds;
     },
     setTransient: (value: boolean) => {
       transient = value;
@@ -792,6 +796,55 @@ it.effect("retains identity after declined sharing but never admits inference", 
       const result = yield* h.auth.access.pipe(Effect.result);
       assert.strictEqual(result._tag, "Failure");
       assert.strictEqual(h.refreshes(), 0);
+    }),
+  ),
+);
+it.effect("renews a token the API refused even when its expiry says it is still good", () =>
+  provision(
+    Effect.gen(function* () {
+      const h = yield* makeHarness;
+      yield* h.signIn;
+      yield* h.phase("succeeded");
+      yield* h.auth.access;
+      assert.strictEqual(h.refreshes(), 0);
+      yield* h.auth.requestRenewal;
+      const renewed = yield* h.auth.access;
+      assert.strictEqual(h.refreshes(), 1);
+      assert.strictEqual(renewed.refreshToken, "refresh-1");
+      // One renewal per refusal: the next access keeps the renewed token.
+      yield* h.auth.access;
+      assert.strictEqual(h.refreshes(), 1);
+    }),
+  ),
+);
+it.effect("renews a short-lived token at half its life, not on every access", () =>
+  provision(
+    Effect.gen(function* () {
+      const h = yield* makeHarness;
+      yield* h.signIn;
+      yield* h.phase("succeeded");
+      h.setRefreshLifetime(300);
+      yield* h.auth.requestRenewal;
+      yield* h.auth.access;
+      assert.strictEqual(h.refreshes(), 1);
+      // Five minutes left of a five-minute token: well before half its life.
+      yield* h.auth.access;
+      yield* h.auth.access;
+      assert.strictEqual(h.refreshes(), 1);
+    }),
+  ),
+);
+it.effect("says sign in again when a refused token cannot be renewed", () =>
+  provision(
+    Effect.gen(function* () {
+      const h = yield* makeHarness;
+      yield* h.signIn;
+      yield* h.phase("succeeded");
+      h.setRevoked();
+      yield* h.auth.requestRenewal;
+      const result = yield* h.auth.access.pipe(Effect.flip);
+      assert.include(result.detail, "Sign in again");
+      assert.isTrue(Option.isNone(yield* h.auth.read));
     }),
   ),
 );

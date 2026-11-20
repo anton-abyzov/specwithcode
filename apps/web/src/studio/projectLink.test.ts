@@ -64,7 +64,12 @@ const note = (name: string, content: string, revision = 1) => ({ name, content, 
 describe("machine readiness", () => {
   it("names the one fix for each machine that cannot link", () => {
     const state = (connected: boolean, supportsLink: boolean | undefined, canWrite: boolean) =>
-      linkMachineState({ connected, supportsLink, canWrite });
+      linkMachineState({
+        connected,
+        supportsLink,
+        supportsEqualCoordinators: supportsLink,
+        canWrite,
+      });
     expect(state(true, true, true)).toBe("ready");
     expect(linkMachineProblem(state(false, true, true), "M3")).toBe("Connect M3 first.");
     // A 1.0.55 server reports no capability at all.
@@ -72,6 +77,26 @@ describe("machine readiness", () => {
       "Update SpecWithCode on M3 to link projects.",
     );
     expect(linkMachineProblem(state(true, true, false), "M3")).toContain("needs permission");
+  });
+
+  it("holds a machine from before equal coordinators back before either end is asked (EC2-04)", () => {
+    // 1.0.386 links projects, and its accept would give its coordinator up to the kept copy.
+    const old = linkMachineState({
+      connected: true,
+      supportsLink: true,
+      supportsEqualCoordinators: undefined,
+      canWrite: true,
+    });
+    expect(old).toBe("update");
+    expect(linkMachineProblem(old, "M3")).toBe("Update SpecWithCode on M3 to link projects.");
+    expect(
+      linkMachineState({
+        connected: true,
+        supportsLink: true,
+        supportsEqualCoordinators: true,
+        canWrite: true,
+      }),
+    ).toBe("ready");
   });
 });
 
@@ -239,7 +264,10 @@ describe("copies of a shared project", () => {
       ["coordinator", false],
       ["workers", false],
     ]);
-    expect(copyRolesSummary([kept, joined])).toBe("M3: coordinator · M4: runs workers");
+    expect(copyRolesSummary([kept, joined])).toEqual({
+      text: "On {coordinator} (coordinator) and {last}",
+      values: { coordinator: "M3", last: "M4" },
+    });
     expect(copyRolesSummary([kept])).toBeNull();
   });
 
@@ -290,6 +318,7 @@ describe("linkCopyAsWorkers", () => {
     lastCoordinatorActivityAt: null,
     keepRefusal: null,
     joinRefusal: null,
+    equalCoordinators: true,
     ...overrides,
   });
   const ok = <A>(value: A) => Promise.resolve({ _tag: "Success" as const, value });

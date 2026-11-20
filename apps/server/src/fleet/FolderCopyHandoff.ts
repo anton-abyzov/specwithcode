@@ -20,6 +20,7 @@ import {
   type DestinationRecord,
   toCopyError,
 } from "./folderTransfer/destinationService.ts";
+import { lanPathOf } from "./folderTransfer/lanDestination.ts";
 import { SourceClientError } from "./folderTransfer/sourceClient.ts";
 import type { Plan } from "./folderTransfer/reconcile.ts";
 import {
@@ -227,6 +228,7 @@ export function sourceStatus(record: SourceOperationRecord): FolderCopySourceSta
                 })),
                 approvedAt: record.secrets.approvedAt,
                 destinationLabel: text(record.secrets.destinationLabel, 200),
+                ...(record.secrets.sealTo !== undefined ? { sealed: true } : {}),
               }
             : null,
         }
@@ -294,6 +296,7 @@ export function copyStatus(record: DestinationRecord, plan: Plan | null): Folder
           ? { code: record.error.code, message: text(record.error.message, 4000) }
           : null,
     progress: record.progress,
+    ...(lanPathOf(record.lan) ? { transport: lanPathOf(record.lan)! } : {}),
     disk: record.disk,
     rows: plan ? plan.rows.map(row) : [],
     totals: plan

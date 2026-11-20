@@ -228,7 +228,7 @@ export async function runFleetDiskRoom(
   if (token === undefined)
     throw new FleetUpdateFailure(
       "unauthorized",
-      `No management token is saved for ${target.label}. On that machine choose Join a main machine and add the line here.`,
+      `No management token is saved for ${target.label}. On that machine choose Join one of your machines and add the line here.`,
     );
   let descriptor;
   try {

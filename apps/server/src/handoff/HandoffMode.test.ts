@@ -179,6 +179,67 @@ describe("HandoffMode", () => {
     }).pipe(Effect.provide(layerFor(repository(), fixture)));
   });
 
+  it.effect("refuses a machine move that sleep started and lists machines still armed", () => {
+    const fixture: Fixture = { runStatus: "running", activeRunId: "run-1", latestRunId: "run-1" };
+    const other = EnvironmentId.make("env-m1");
+    return Effect.gen(function* () {
+      const handoff = yield* HandoffMode.HandoffMode;
+      const asked: Array<string> = [];
+      yield* handoff.attachMoves({
+        handOffMachine: (input: { readonly reason: string }) =>
+          Effect.sync(() => {
+            asked.push(input.reason);
+            return {
+              destinationEnvironmentId: other,
+              destinationLabel: "M1",
+              reason: "manual",
+              startedAt: "2026-11-19T10:00:00.000Z",
+              finishedAt: "2026-11-19T10:00:01.000Z",
+              results: [],
+            };
+          }),
+        // The snapshot this test reads asks the moves for their transfer records.
+        transfers: Effect.succeed({ transfers: [], batches: [] }),
+      } as unknown as HandoffMode.HandoffMovesPort);
+      // A window still on an earlier build asks on 'suspend': nothing moves.
+      const slept = yield* Effect.exit(
+        handoff.handOffMachine({ destinationEnvironmentId: other, reason: "sleep" }),
+      );
+      expect(asked).toEqual([]);
+      expect(slept._tag).toBe("Failure");
+      yield* handoff.handOffMachine({ destinationEnvironmentId: other, reason: "manual" });
+      expect(asked).toEqual(["manual"]);
+      // An earlier release let M1 continue this machine's threads on its own, and M1
+      // has not answered since: the snapshot says who is still to confirm.
+      expect((yield* handoff.snapshot).pendingDisarm ?? []).toEqual([]);
+      yield* handoff.updateDocument((document) => [
+        undefined,
+        {
+          ...document,
+          autoContinuePeers: { [other]: { minutes: 5, baselineAt: "2026-11-19T10:00:00.000Z" } },
+          threads: {
+            [threadId]: {
+              ...emptyThreadRecord(projectId),
+              replicas: [
+                {
+                  environmentId: other,
+                  machineLabel: "M1",
+                  state: "current",
+                  sequence: 1,
+                  detail: null,
+                  updatedAt: "2026-11-19T10:00:00.000Z",
+                },
+              ],
+            },
+          },
+        },
+      ]);
+      expect((yield* handoff.snapshot).pendingDisarm).toEqual([
+        { environmentId: other, machineLabel: "M1", since: "2026-11-19T10:00:00.000Z" },
+      ]);
+    }).pipe(Effect.provide(layerFor(repository(), fixture)));
+  });
+
   it.effect("sets a project override only for a project on this machine", () => {
     const fixture: Fixture = { runStatus: "running", activeRunId: "run-1", latestRunId: "run-1" };
     return Effect.gen(function* () {

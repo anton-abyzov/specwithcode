@@ -12,6 +12,7 @@ import {
   type QuestionTextRenderer,
 } from "../chat/ComposerPendingUserInputPanel";
 import { DecisionCard } from "../chat/DecisionCard";
+import { useActionMachineFor } from "../../studio/actionMachine";
 import { linkifyQuestionPaths } from "../chat/questionCard.logic";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
@@ -69,6 +70,7 @@ export function CoordinatorQuestionCard(props: {
 }) {
   const { question } = props;
   const renderText = useQuestionText(props.environmentId, props.cwd);
+  const machine = useActionMachineFor(props.environmentId);
   return (
     <ComposerBanner.Root
       placement="floating"
@@ -92,6 +94,7 @@ export function CoordinatorQuestionCard(props: {
           if (!question.composerCanAnswer || !focusCoordinatorPrompt()) props.onAnswerElsewhere();
         }}
         askedBy={question.askedBy}
+        machine={machine}
         renderText={renderText}
       />
     </ComposerBanner.Root>
@@ -125,6 +128,7 @@ export function CoordinatorQuestionRecovery(props: {
 }) {
   const { question } = props.recovery;
   const renderText = useQuestionText(props.recovery.environmentId, props.recovery.cwd);
+  const machine = useActionMachineFor(props.recovery.environmentId);
   const answerId = useId();
   return (
     <section
@@ -148,6 +152,7 @@ export function CoordinatorQuestionRecovery(props: {
               : () => document.getElementById(answerId)?.focus()
           }
           askedBy={question.askedBy}
+          machine={machine}
           renderText={renderText}
         />
       </div>

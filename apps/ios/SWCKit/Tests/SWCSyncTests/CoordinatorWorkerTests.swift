@@ -26,4 +26,11 @@ struct CoordinatorWorkerTests {
     #expect(!ShellSummaries.isCoordinatorWorker(nested, coordinatorIds: ["coord-1"]))
     #expect(ShellSummaries.isTopLevel(try TestData.thread(), coordinatorIds: []))
   }
+
+  @Test func aCoordinatorsAdvisorIsNot() throws {
+    var advisor = try child("advisor", parent: "project-coordinator:proj_1")
+    advisor.purpose = "advisor"
+    #expect(advisor.isAdvisorThread)
+    #expect(!ShellSummaries.isTopLevel(advisor, coordinatorIds: []))
+  }
 }

@@ -146,13 +146,42 @@ export const CLAUDE_PROVIDER_HOSTED_DOCUMENT_TOOLS = [
   "mcp__claude_ai_Claude_Docs__delete",
 ] as const;
 
+/**
+ * Native tools a project coordinator never gets: it routes work to worker
+ * threads with the Studio MCP tools, which stay available. Without this a
+ * coordinator ran a whole migration as a native workflow in its own thread
+ * and had no thread link to give the user (November 17, 2026).
+ */
+export const CLAUDE_COORDINATOR_DISALLOWED_TOOLS = [
+  "Agent",
+  "Task",
+  "Workflow",
+  "Bash",
+  "Read",
+  "Edit",
+  "Write",
+  "Glob",
+  "Grep",
+  "WebFetch",
+  "WebSearch",
+  "NotebookEdit",
+] as const;
+
 /** Native orchestration and reasoning effort are independent session choices. */
 export function compileClaudeWorkflowPolicy(input: {
   readonly mode?: ClaudeWorkflowMode | undefined;
+  /** The thread is its project's coordinator: workflows off, no hands-on native tools. */
+  readonly coordinator?: boolean | undefined;
   /** The thread's Ultracode toggle; unset follows the mode. */
   readonly ultracode?: boolean | undefined;
   readonly agentInstructions?: string | undefined;
   readonly responseStyle?: ResponseStyle | undefined;
+  /**
+   * When to consult the advisor, only for a session that has an advisor to
+   * call. The main session gets it; Agent workers do not, so consults stay
+   * the parent's choice.
+   */
+  readonly advisorGuidance?: string | undefined;
   readonly orchestrationInstructions?: string | undefined;
   readonly subagentPromptFileContents?: string | undefined;
   readonly extraArgs?: Readonly<Record<string, string | null>> | undefined;
@@ -160,7 +189,7 @@ export function compileClaudeWorkflowPolicy(input: {
   readonly disallowedTools?: ReadonlyArray<string> | undefined;
   readonly environment: NodeJS.ProcessEnv;
 }) {
-  const mode = input.mode ?? "on-request";
+  const mode = input.coordinator === true ? "disabled" : (input.mode ?? "on-request");
   if (
     input.extraArgs?.["append-subagent-system-prompt-file"] !== undefined &&
     input.subagentPromptFileContents === undefined
@@ -169,15 +198,23 @@ export function compileClaudeWorkflowPolicy(input: {
       "Claude worker instruction file must be resolved before compiling workflow policy.",
     );
   }
-  const instructions = [
-    input.agentInstructions?.trim(),
-    input.extraArgs?.["append-subagent-system-prompt"],
-    input.subagentPromptFileContents,
-    buildRuntimeInstructions({ harness: "Claude Code", responseStyle: input.responseStyle }),
-    input.orchestrationInstructions,
-  ]
-    .filter((part): part is string => typeof part === "string" && part.length > 0)
-    .join("\n\n");
+  const joinInstructions = (advisorGuidance: string | undefined) =>
+    [
+      input.agentInstructions?.trim(),
+      input.extraArgs?.["append-subagent-system-prompt"],
+      input.subagentPromptFileContents,
+      buildRuntimeInstructions({
+        harness: "Claude Code",
+        responseStyle: input.responseStyle,
+        advisorGuidance,
+      }),
+      input.orchestrationInstructions,
+    ]
+      .filter((part): part is string => typeof part === "string" && part.length > 0)
+      .join("\n\n");
+  const instructions = joinInstructions(input.advisorGuidance);
+  const subagentInstructions =
+    input.advisorGuidance === undefined ? instructions : joinInstructions(undefined);
   const extraArgs = { ...input.extraArgs };
   // The CLI rejects simultaneous inline/file additions. Preserve both contents
   // in one append rather than passing conflicting flags or discarding rules.
@@ -188,7 +225,7 @@ export function compileClaudeWorkflowPolicy(input: {
   if (launchUltracode) extraArgs.effort = "xhigh";
   // An initialize-only SDK append is not inherited by workflow workers.
   // The documented CLI flag is: verified against native worker journals.
-  extraArgs["append-subagent-system-prompt"] = instructions;
+  extraArgs["append-subagent-system-prompt"] = subagentInstructions;
   const settings = {
     enableWorkflows: mode !== "disabled",
     ultracode: resolveClaudeUltracode(mode, input.ultracode, launchUltracode),
@@ -196,12 +233,18 @@ export function compileClaudeWorkflowPolicy(input: {
   const environment = { ...input.environment };
   if (mode === "disabled") environment.CLAUDE_CODE_DISABLE_WORKFLOWS = "1";
   const allowedTools = input.allowedTools?.filter(
-    (tool) => mode !== "disabled" || !/^Workflow(?:\(|$)/.test(tool),
+    (tool) =>
+      (mode !== "disabled" || !/^Workflow(?:\(|$)/.test(tool)) &&
+      (input.coordinator !== true ||
+        !CLAUDE_COORDINATOR_DISALLOWED_TOOLS.some(
+          (blocked) => tool === blocked || tool.startsWith(`${blocked}(`),
+        )),
   );
   const disallowedTools = [
     ...new Set([
       ...(input.disallowedTools ?? []),
       ...(mode === "disabled" ? ["Workflow"] : []),
+      ...(input.coordinator === true ? CLAUDE_COORDINATOR_DISALLOWED_TOOLS : []),
       ...CLAUDE_PROVIDER_HOSTED_DOCUMENT_TOOLS,
     ]),
   ];

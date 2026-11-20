@@ -8,6 +8,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
@@ -17,7 +18,14 @@ import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import { refreshServerPath } from "../serverPath.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import {
+  commandMark,
+  commandWatchFolders,
+  watchCommandFolders,
+  type CommandProbe,
+} from "./commandWatch.ts";
 import { CLAUDE_STATUS_CHECK_FAILED } from "./providerSnapshot.ts";
 import { applyUsageLimitsUpdate, resolveUsageLimitsAfterProbe } from "./providerUsageLimits.ts";
 import type { ServerProviderShape } from "./ServerProvider.ts";
@@ -88,6 +96,33 @@ export function withLastKnownAuth(
   return lastKnownAuth ? { ...rest, lastKnownAuth } : rest;
 }
 
+/**
+ * Says why an agent that is on cannot run, from where its command was found:
+ * nowhere ("missing"), or somewhere it does not start from ("broken"). An
+ * agent that is off, or that runs, carries no such note.
+ */
+export function withCli(
+  probed: ServerProvider,
+  command: string,
+  foundAt: string | undefined,
+): ServerProvider {
+  const { cli: _reported, ...rest } = probed;
+  if (!probed.enabled || probed.installed) return rest;
+  return {
+    ...rest,
+    cli: {
+      state: foundAt === undefined ? "missing" : "broken",
+      command,
+      ...(foundAt === undefined ? {} : { path: foundAt }),
+    },
+  };
+}
+
+/** How often the command of an agent that cannot run is looked for again. */
+const INSTALL_PROBE_INTERVAL: Duration.Input = "3 seconds";
+/** How often the folders watched for that command are matched to the ones that exist. */
+const INSTALL_WATCH_REARM_INTERVAL: Duration.Input = "30 seconds";
+
 /** How often a row that is not signed in is asked about again while it is on screen. */
 const SIGN_IN_PROBE_INTERVAL: Duration.Input = "5 seconds";
 /** How long one such question may take before it counts as no answer. */
@@ -140,6 +175,15 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     readonly beforeCheck?: Effect.Effect<void>;
     readonly interval?: Duration.Input;
   };
+  /**
+   * The command this agent runs, for an agent that is a program on the
+   * machine. While the agent is on and cannot run, a mark of that command
+   * (stat only, see `commandWatch.ts`) is read every few seconds while a
+   * window is in front, and whenever its folder changes; a changed mark runs
+   * the full check. So an install, a repair or a removal shows without a
+   * click. It also puts `cli` on a snapshot that is not installed.
+   */
+  readonly installProbe?: CommandProbe & { readonly interval?: Duration.Input };
 }): Effect.fn.Return<
   ServerProviderShape,
   ServerSettingsError,
@@ -164,6 +208,24 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   const settingsRef = yield* Ref.make(initialSettings);
   const enrichmentFiberRef = yield* Ref.make<Fiber.Fiber<void, unknown> | null>(null);
   const scope = yield* Effect.scope;
+  // The probe needs the file system. A runtime without one (some tests) runs without the probe.
+  const probeFileSystem = input.installProbe
+    ? yield* Effect.serviceOption(FileSystem.FileSystem)
+    : Option.none<FileSystem.FileSystem>();
+  const installProbe =
+    input.installProbe && Option.isSome(probeFileSystem)
+      ? { probe: input.installProbe, fileSystem: probeFileSystem.value }
+      : undefined;
+  const readCommandMark = installProbe
+    ? commandMark(installProbe.probe).pipe(
+        Effect.provideService(FileSystem.FileSystem, installProbe.fileSystem),
+      )
+    : undefined;
+  // The mark the last full check ended with; null until one has run. It is
+  // read after the check, so files the agent's own launcher writes while it
+  // is being checked never count as a change.
+  let checkedCommandMark: string | null = null;
+  let afterCheck: Effect.Effect<void> = Effect.void;
 
   const publishEnrichedSnapshot = Effect.fn("publishEnrichedSnapshot")(function* (
     generation: number,
@@ -240,7 +302,13 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       return state.snapshot;
     }
 
-    const probedSnapshot = yield* input.checkProvider;
+    const checked = yield* input.checkProvider;
+    const command = readCommandMark ? yield* readCommandMark : undefined;
+    if (command) checkedCommandMark = command.mark;
+    const probedSnapshot =
+      command && installProbe
+        ? withCli(checked, installProbe.probe.command, command.path)
+        : checked;
     const {
       snapshot: nextSnapshot,
       generation: nextGeneration,
@@ -301,6 +369,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     yield* Ref.set(settingsRef, nextSettings);
     yield* PubSub.publish(changesPubSub, nextSnapshot);
     yield* restartSnapshotEnrichment(nextSettings, nextSnapshot, nextGeneration);
+    yield* afterCheck;
     return nextSnapshot;
   });
   const applySnapshot = (nextSettings: Settings, options?: { readonly forceRefresh?: boolean }) =>
@@ -439,6 +508,93 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         }),
       ),
       Effect.ignoreCause({ log: true }),
+      Effect.forever,
+      Effect.forkScoped,
+    );
+  }
+
+  if (installProbe && readCommandMark) {
+    const { probe, fileSystem } = installProbe;
+    const withFileSystem = Effect.provideService(FileSystem.FileSystem, fileSystem);
+    // On and not installed: missing, or a launcher whose program is not there.
+    // A row that is installed and failing for another reason (signed out, an
+    // unsupported version) is not watched: nothing landing in a folder ends it.
+    const waiting = Ref.get(snapshotStateRef).pipe(
+      Effect.map(({ snapshot }) => snapshot.enabled && !snapshot.installed),
+    );
+    let rechecking = false;
+    const recheckOnChange = Effect.suspend(() => {
+      if (rechecking) return Effect.void;
+      rechecking = true;
+      return Effect.gen(function* () {
+        // A folder added to the shell's startup files is on PATH before the command is looked for.
+        yield* refreshServerPath({ force: false }).pipe(withFileSystem);
+        // Compared while no check runs: what a check under way writes is that check's own baseline.
+        yield* refreshSemaphore.withPermits(1)(
+          Effect.gen(function* () {
+            const { mark } = yield* readCommandMark;
+            if (checkedCommandMark === null || mark === checkedCommandMark) return;
+            yield* applySnapshotBase(yield* input.getSettings, { forceRefresh: true });
+          }),
+        );
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            rechecking = false;
+          }),
+        ),
+      );
+    });
+
+    yield* Effect.sleep(probe.interval ?? INSTALL_PROBE_INTERVAL).pipe(
+      Effect.andThen(
+        Effect.gen(function* () {
+          if (!(yield* waiting) || !(yield* hasProviderStatusDemand)) return;
+          yield* recheckOnChange;
+        }),
+      ),
+      Effect.ignoreCause({ log: true }),
+      Effect.forever,
+      Effect.forkScoped,
+    );
+
+    // The folders are watched only while the agent cannot run, and matched
+    // again to the ones that exist: an installer may make the folder itself.
+    const watchRef = yield* Ref.make<{
+      readonly key: string;
+      readonly fiber: Fiber.Fiber<void, unknown>;
+    } | null>(null);
+    const armLock = yield* Semaphore.make(1);
+    const armWatchNow = Effect.gen(function* () {
+      const folders = (yield* waiting)
+        ? yield* commandWatchFolders(probe).pipe(withFileSystem)
+        : [];
+      const key = folders.join("\n");
+      const armed = yield* Ref.get(watchRef);
+      if ((armed?.key ?? "") === key) return;
+      if (armed) yield* Fiber.interrupt(armed.fiber).pipe(Effect.ignore);
+      if (folders.length === 0) {
+        yield* Ref.set(watchRef, null);
+        return;
+      }
+      const fiber = yield* watchCommandFolders({
+        folders,
+        // Run apart from the watch: the check it leads to may end this very watch.
+        onChange: waiting.pipe(
+          Effect.flatMap((still) => (still ? recheckOnChange : Effect.void)),
+          Effect.ignoreCause({ log: true }),
+          Effect.forkIn(scope),
+          Effect.asVoid,
+        ),
+      }).pipe(withFileSystem, Effect.forkIn(scope));
+      yield* Ref.set(watchRef, { key, fiber });
+    });
+    const armWatch = armLock
+      .withPermits(1)(armWatchNow)
+      .pipe(Effect.ignoreCause({ log: true }));
+    afterCheck = armWatch;
+    yield* Effect.sleep(INSTALL_WATCH_REARM_INTERVAL).pipe(
+      Effect.andThen(armWatch),
       Effect.forever,
       Effect.forkScoped,
     );

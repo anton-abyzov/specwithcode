@@ -30,7 +30,8 @@ export default defineConfig({
       name: "isolated-project-board",
       enforce: "pre",
       resolveId(source, importer) {
-        if (!importer || !/Board(Pane|Threads)\.tsx$/.test(importer)) return;
+        // Every board file that imports a stubbed module; the pure models import none.
+        if (!importer || !/Board(Pane|Threads|Card|IncrementView)\.tsx$/.test(importer)) return;
         const target = source.startsWith("~/")
           ? resolve(appSource, source.slice(2))
           : source.startsWith(".")

@@ -70,6 +70,7 @@ import { ModelTracksSettings } from "../settings/ModelTracksSettings";
 import { ProviderLimitSettings } from "../settings/ProviderLimitSettings";
 import { SettingsGroup } from "../settings/SettingsGroup";
 import { AdversarialReviewSettings } from "../settings/AdversarialReviewSettings";
+import { AdvisorSettings } from "../settings/AdvisorSettings";
 import { RecommendedModelProviders } from "../settings/RecommendedModelProviders";
 import { ThreadModelModeSetting } from "../settings/ThreadModelModeSetting";
 import { SettingsScopeProvider } from "../settings/SettingsScopeContext";
@@ -477,6 +478,7 @@ export function ProjectWorkspaceSettings({
             <nav aria-label="Project settings sections" onKeyDown={moveTabFocus}>
               <ProjectSettingsSearch
                 tabs={tabs}
+                hasAdvisor={hostConfig?.environment?.capabilities.advisor === true}
                 onPick={(result) => {
                   setTab(result.section);
                   if (result.kind === "row") jumpToRow(result.row.id);
@@ -686,6 +688,7 @@ export function ProjectWorkspaceSettings({
                         </SettingsSection>
                       </>
                     )}
+                    <AdvisorSettings id="project-advisor" className="pt-3" />
                   </SettingsScopeProvider>
                   <label className="project-checkbox">
                     <input
@@ -713,6 +716,7 @@ export function ProjectWorkspaceSettings({
                     <ProjectSpecweaveSetting
                       project={project}
                       specweave={snapshot.specweave}
+                      gitRepository={snapshot.gitRepository}
                       disabled={disabled || dirty}
                       onChanged={onSaved}
                     />

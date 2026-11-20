@@ -22,6 +22,7 @@ import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { cn } from "~/lib/utils";
 
+import { Button } from "../../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../../ui/input-group";
 import {
   Menu,
@@ -208,15 +209,15 @@ export function DesignGalleryView(props: DesignGalleryViewProps) {
             onSelect={changeScope}
           />
           {backToProject !== null ? (
-            <button
-              type="button"
+            <Button
+              variant="outline"
+              size="xs"
               data-testid="design-open-project"
-              className={LINK_BUTTON}
               onClick={backToProject}
             >
               Open project
               <ArrowUpRightIcon aria-hidden className="size-3.5" />
-            </button>
+            </Button>
           ) : null}
           <span className="flex-1" />
           <div className="flex min-w-0 flex-1 items-center justify-end gap-2 sm:flex-none">
@@ -335,12 +336,12 @@ export function DesignGalleryView(props: DesignGalleryViewProps) {
         >
           <span className="font-medium">{props.notice.title}</span>
           <span className="min-w-0 flex-1 text-muted-foreground">{props.notice.description}</span>
-          <button type="button" className={LINK_BUTTON} onClick={props.notice.onAction}>
+          <Button variant="outline" size="xs" onClick={props.notice.onAction}>
             {props.notice.actionLabel}
-          </button>
-          <button type="button" className={LINK_BUTTON} onClick={props.notice.onDismiss}>
+          </Button>
+          <Button variant="outline" size="xs" onClick={props.notice.onDismiss}>
             Dismiss
-          </button>
+          </Button>
         </div>
       ) : null}
       {problems.length > 0 ? (
@@ -413,8 +414,6 @@ export function DesignGalleryView(props: DesignGalleryViewProps) {
 }
 
 const GRID = "grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-x-5 gap-y-7";
-const LINK_BUTTON =
-  "inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground outline-none transition-colors duration-[120ms] ease-out-quint hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none";
 const INLINE_LINK =
   "rounded-sm font-medium text-foreground underline underline-offset-2 outline-none hover:text-foreground/80 focus-visible:ring-2 focus-visible:ring-ring";
 
@@ -512,14 +511,14 @@ function OwnerSection({
         <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{count}</span>
         <span className="flex-1" />
         {projectKey !== null && props.onOpenProject ? (
-          <button
-            type="button"
-            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground outline-none transition-colors duration-[120ms] ease-out-quint hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          <Button
+            variant="outline"
+            size="xs"
             onClick={() => props.onOpenProject?.(section.designs[0]!, projectKey)}
           >
             Open project
             <ArrowUpRightIcon aria-hidden className="size-3.5" />
-          </button>
+          </Button>
         ) : null}
       </header>
       <div ref={ref}>{body(first)}</div>
@@ -537,14 +536,15 @@ function OwnerSection({
               <div className="pt-7">{body(rest)}</div>
             </div>
           </div>
-          <button
-            type="button"
-            className="self-start rounded-md px-2 py-1 text-xs font-medium text-muted-foreground outline-none transition-colors duration-[120ms] hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          <Button
+            variant="outline"
+            size="xs"
+            className="self-start"
             aria-expanded={open}
             onClick={() => setOpen((value) => !value)}
           >
             {open ? "Show fewer" : `Show ${rest.length} more`}
-          </button>
+          </Button>
         </>
       ) : null}
     </section>

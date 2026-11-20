@@ -298,7 +298,7 @@ export function ThemeSearchSection({
                 key={suggestion}
                 disabled={installingId !== null}
                 size="xs"
-                variant="ghost"
+                variant="outline"
                 onClick={() => {
                   if (query.trim() === suggestion) {
                     void runSearch(suggestion);

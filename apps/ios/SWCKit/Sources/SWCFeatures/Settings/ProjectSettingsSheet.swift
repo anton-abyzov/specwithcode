@@ -58,7 +58,8 @@ struct ProjectSettingsSheet: View {
       .sheet(isPresented: $pickingIcon) {
         ProjectIconPicker(title: draft.title, current: shownIcon) { draft.icon = $0 }
           .presentationDetents([.medium, .large])
-          .presentationDragIndicator(.visible)
+          // Hidden, as on the settings sheet it opens from.
+          .presentationDragIndicator(.hidden)
       }
       .alert("Archive \(draft.title.isEmpty ? "this project" : draft.title)?", isPresented: $confirmArchive) {
         Button("Archive project", role: .destructive) { archive() }
@@ -89,7 +90,7 @@ struct ProjectSettingsSheet: View {
           .frame(maxWidth: .infinity)
           .padding(.top, WeaveSpacing.s8)
           // A linked copy whose machine is away still lists the other
-          // machines, so "Take over coordinator here" stays in reach.
+          // machines, so "Continue the coordinator here" stays in reach.
           LinkedProjectMachinesCard(project: project)
             .padding(.horizontal, WeaveSpacing.gutter)
         }

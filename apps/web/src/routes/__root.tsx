@@ -23,6 +23,7 @@ import { ConversationFindBar } from "../components/find/ConversationFindBar";
 import { ModsHost } from "../mods/ModsHost";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { ThreadMoveDialogHost } from "../components/ThreadMoveDialog";
+import { ChatSettingsDialogHost } from "../components/chat/ChatSettingsDialog";
 import { UsageSheetHost } from "../components/usage/UsageSheet";
 import { HandoffDesktopBridge } from "../components/handoff/HandoffDesktopBridge";
 import { HandOffMachineDialogHost } from "../components/handoff/HandOffMachineDialog";
@@ -30,6 +31,11 @@ import { HandOffThreadDialogHost } from "../components/handoff/HandOffThreadDial
 import { AwayDialogHost } from "../components/away/AwayDialog";
 import { MachineToolInstallDialogHost } from "../components/machineTools/MachineToolInstallDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
+import {
+  DeviceApprovalNoticesHost,
+  DeviceApprovalPromptHost,
+  DeviceWaitingForApprovalHost,
+} from "../components/devices/ConnectDeviceHosts";
 import { KeybindingsConfigWarning } from "../components/KeybindingsConfigWarning";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
 import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
@@ -206,11 +212,15 @@ function RootRouteView() {
           {isElectron && primaryEnvironmentAuthenticated ? <HandoffDesktopBridge /> : null}
           <CustomSnoozeDialogHost />
           <ThreadMoveDialogHost />
+          <ChatSettingsDialogHost />
           <HandOffThreadDialogHost />
           <HandOffMachineDialogHost />
           <AwayDialogHost />
           {/* Setup can start Restart to update, which asks before stopping running work. */}
           <ConfirmDialogHost />
+          {/* 1327: a device can ask this machine, or wait on another, during setup too. */}
+          {primaryEnvironmentAuthenticated ? <DeviceApprovalPromptHost /> : null}
+          <DeviceWaitingForApprovalHost />
           {/* A link started during setup may need the relay client. The sign-in step installs it
               in its own row; any other link here asks, and the question needs this to be seen. */}
           <RelayClientInstallDialog />
@@ -278,8 +288,12 @@ function RootRouteView() {
           <ThreadNotificationCoordinator />
           <ReopenClosedViewShortcut />
           <ConfirmDialogHost />
+          {primaryEnvironmentAuthenticated ? <DeviceApprovalPromptHost /> : null}
+          <DeviceWaitingForApprovalHost />
+          <DeviceApprovalNoticesHost />
           <CustomSnoozeDialogHost />
           <ThreadMoveDialogHost />
+          <ChatSettingsDialogHost />
           <HandOffThreadDialogHost />
           <HandOffMachineDialogHost />
           <AwayDialogHost />

@@ -406,7 +406,7 @@ export function SkillActionPreviewCard() {
       ) : null}
       {error ? <p className="text-destructive-foreground">{error}</p> : null}
       <div className="flex justify-end gap-1.5">
-        <Button size="xs" variant="ghost" type="button" onClick={controls.cancel}>
+        <Button size="xs" variant="outline" type="button" onClick={controls.cancel}>
           {proposal ? tx("Cancel") : tx("Dismiss")}
         </Button>
         {proposal ? (

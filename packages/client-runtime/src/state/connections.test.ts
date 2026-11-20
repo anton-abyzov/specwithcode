@@ -120,3 +120,55 @@ describe("environment catalog atoms", () => {
     ),
   );
 });
+
+describe("environment catalog register (1434)", () => {
+  it.effect(
+    "a save asked for before an account switch carries the account it was asked under",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const accountScope = yield* SubscriptionRef.make<string | null | undefined>(
+            "user_fixture_a",
+          );
+          const seen: Array<unknown> = [];
+          let releaseFirst: () => void = () => {};
+          const firstHeld = new Promise<void>((resolve) => (releaseFirst = resolve));
+          const registry = EnvironmentRegistry.EnvironmentRegistry.of({
+            accountScope,
+            register: (_target: unknown, options: unknown) =>
+              Effect.promise(async () => {
+                if (seen.length === 0) {
+                  seen.push(options);
+                  await firstHeld;
+                  return;
+                }
+                seen.push(options);
+              }),
+          } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+          const catalog = createEnvironmentCatalogAtoms(
+            Atom.runtime(Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, registry)),
+          );
+          const atoms = AtomRegistry.make();
+          yield* Effect.addFinalizer(() => Effect.sync(() => atoms.dispose()));
+          atoms.get(catalog.accountScopeValueAtom);
+          yield* Effect.yieldNow;
+
+          const target = {} as Parameters<typeof catalog.register.run>[1];
+          // One save occupies the catalog lane; a second is asked for under A and
+          // waits its turn while the account switches to B.
+          const first = catalog.register.run(atoms, target);
+          const second = catalog.register.run(atoms, target);
+          yield* SubscriptionRef.set(accountScope, "user_fixture_b");
+          yield* Effect.yieldNow;
+          expect(atoms.get(catalog.accountScopeValueAtom)).toBe("user_fixture_b");
+          releaseFirst();
+          yield* Effect.promise(() => Promise.all([first, second]));
+
+          expect(seen).toEqual([
+            { forAccount: "user_fixture_a" },
+            { forAccount: "user_fixture_a" },
+          ]);
+        }),
+      ),
+  );
+});

@@ -13,16 +13,22 @@ import {
  */
 export function ProjectSettingsSearch({
   tabs,
+  hasAdvisor,
   onPick,
   children,
 }: {
   tabs: readonly ProjectSettingsTab[];
+  /** Whether the project's machines offer the advisor; false hides its result. */
+  hasAdvisor?: boolean;
   onPick: (result: ProjectSettingsSearchResult) => void;
   children: ReactNode;
 }) {
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
-  const results = useMemo(() => searchProjectSettings(query, tabs), [query, tabs]);
+  const results = useMemo(
+    () => searchProjectSettings(query, tabs, hasAdvisor === undefined ? {} : { hasAdvisor }),
+    [hasAdvisor, query, tabs],
+  );
   const searching = query.trim().length > 0;
   useEffect(() => setActive(0), [query]);
 

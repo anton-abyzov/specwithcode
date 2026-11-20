@@ -44,8 +44,10 @@ const identityOf = (environmentId: string, label?: string | null) => {
 
 export const machineColorProps = (identity: { color: Color } | null | undefined) =>
   identity ? { "data-machine-color": identity.color } : {};
-export const useMachineIdentity = (environmentId: string | null | undefined, label?: string | null) =>
-  environmentId ? identityOf(environmentId, label) : null;
+export const useMachineIdentity = (
+  environmentId: string | null | undefined,
+  label?: string | null,
+) => (environmentId ? identityOf(environmentId, label) : null);
 export const useMachineIdentities = () => identityOf;
 export const useKnownMachineIdentities = () => Object.keys(MACHINES).map((id) => identityOf(id));
 export const useMachineColorWearers = () => {

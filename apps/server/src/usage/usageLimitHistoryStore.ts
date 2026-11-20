@@ -22,6 +22,9 @@ import * as DateTime from "effect/DateTime";
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 
+/** The quota history's file in the state directory. */
+export const USAGE_LIMIT_HISTORY_FILE = "usage-limit-history.json";
+
 export const HISTORY_RETENTION_MS = 14 * 24 * HOUR;
 export const MAX_SAMPLES_PER_SERIES = 3_000;
 const MAX_SERIES = 400;

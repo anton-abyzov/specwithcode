@@ -9,6 +9,7 @@ import {
   ThreadId,
   type SourceControlCloneProtocol,
 } from "@specweave-studio/contracts";
+import { defaultDestinationFolder } from "@specweave-studio/shared/existingCopy";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -54,21 +55,8 @@ const invalid = (message: string) =>
 export const cloneUrlOf = (identity: RepositoryIdentity): string =>
   identity.origin?.remoteUrl ?? identity.locator.remoteUrl;
 
-const HOME_PREFIX =
-  /^(?:\/Users\/[^/]+|\/home\/[^/]+|\/root|[A-Za-z]:[\\/]Users[\\/][^\\/]+)(?=$|[\\/])/u;
-
-/** The folder relative to home here, so it lands in the same place there; outside home, its name under home. */
-export function destinationFor(sourceRoot: string): string {
-  const trimmed = sourceRoot.replace(/[\\/]+$/u, "");
-  if (trimmed === "~" || trimmed.startsWith("~/")) return trimmed;
-  const home = HOME_PREFIX.exec(trimmed);
-  if (home) {
-    const rest = trimmed.slice(home[0].length).replaceAll("\\", "/").replace(/^\/+/u, "");
-    if (rest) return `~/${rest}`;
-  }
-  const name = trimmed.split(/[\\/]/u).findLast(Boolean);
-  return `~/${name ?? "project"}`;
-}
+/** The folder relative to home here, so it lands in the same place there; one rule with the app's. */
+export const destinationFor = (sourceRoot: string): string => defaultDestinationFolder(sourceRoot);
 
 /** `repo` from `git@host:owner/repo.git`, `https://host/owner/repo` or a path. */
 export function repositoryNameOf(cloneUrl: string): string {
@@ -118,11 +106,7 @@ const readCloneUrl = Effect.fn("mcp.addToMachine.readCloneUrl")(function* (proje
 });
 
 /** What the agent does about the secret files a folder copy left here. */
-const secretsNext = (
-  machineLabel: string,
-  workspaceRoot: string,
-  secrets: ReadonlyArray<string>,
-) =>
+const secretsNext = (machineLabel: string, workspaceRoot: string, secrets: ReadonlyArray<string>) =>
   secrets.length === 0
     ? ""
     : ` Secret files stayed here: ${secrets.join(", ")}. Send each one the work there needs with studio_file_transfer {machine:"${machineLabel}", direction:"send", path, destinationPath} (under ${workspaceRoot} for a file in the project); the owner approves each one.`;
@@ -167,7 +151,7 @@ export const addProjectToMachine = Effect.fn("mcp.addProjectToMachine")(function
       )?.projectId ?? RemoteWorkers.savedWorkerMachine(source.project, machine)?.projectId;
     if (listedThere != null)
       return yield* invalid(
-        `This project already has ${listedThere} as its copy on ${machine.label}. Launch there with machineProjectId:"${listedThere}"; if that copy is gone or was unlinked, ask the user to relink it (its sidebar menu > Link…) or remove it in Settings > Machines, or pass destinationPath to clone one more copy.`,
+        `This project is already on ${machine.label} as ${listedThere}. Launch there with machineProjectId:"${listedThere}"; if it is gone or was unlinked, ask the user to relink it (its sidebar menu > Link…) or remove it in Settings > Machines, or pass destinationPath to clone one more copy.`,
       );
     // A failed search is reported, not read as "no copy": cloning then would add the
     // very duplicate this check prevents.
@@ -342,6 +326,7 @@ const copyProjectFolder = Effect.fn("mcp.addToMachine.copyProjectFolder")(functi
     workspaceRoot: input.project.workspaceRoot,
     machine,
     targetFolder: input.destinationPath,
+    equalPeer: peerRunsEqualCoordinators(remote, machine),
     receive: (args, timeoutMs) =>
       remote.proxy({
         machine,
@@ -485,7 +470,7 @@ export const linkExistingCopy = Effect.fn("mcp.addToMachine.linkExistingCopy")(f
       kind: "unlinked",
       copy,
       linkTried: false,
-      problem: `It has threads of its own, so it was not linked automatically: linking makes this project's coordinator the one for both copies. Open its menu in the sidebar and choose Link… to compare both and choose what to keep.`,
+      problem: `It has threads of its own, so it was not linked automatically: linking makes this project's coordinator the one for both machines. Open its menu in the sidebar and choose Link… to compare both and choose what to keep.`,
     } as ExistingCopyOutcome;
   const outcome = yield* linkCopy({
     sourceId: input.project.id,
@@ -516,7 +501,7 @@ const unlinkedCopyFailure = (
 ) =>
   new OrchestratorMcpFailure({
     code: "project_unavailable_on_machine",
-    message: `${machine.label} has this project as ${copy.id} at ${copy.workspaceRoot}, but it is not linked to the project here, so work cannot start there yet. ${problem} Once the user has linked it, studio_machine_list shows it as this project's copy on ${machine.label}.`,
+    message: `${machine.label} has this repository as a separate project, ${copy.id} at ${copy.workspaceRoot}, but it is not linked to the project here, so work cannot start there yet. ${problem} Once the user has linked it, studio_machine_list shows this project on ${machine.label}.`,
   });
 
 /** Links the copy, trying once more after a first attempt that failed; fails when it still cannot. */
@@ -542,6 +527,24 @@ const linkedOrFail = Effect.fn("mcp.addToMachine.linkedOrFail")(function* (input
  * its own identity and every machine lists it as a second project. A copy that
  * cannot link stays registered; the answer says why and how to link it.
  */
+const SaysEqualCoordinators = Schema.Struct({
+  features: Schema.Struct({ equalCoordinators: Schema.Literal(true) }),
+});
+/**
+ * Whether `machine` keeps its coordinator when a copy there joins a project. One that
+ * does not answer, or does not say so, is treated as a release from before.
+ */
+const peerRunsEqualCoordinators = (
+  remote: RemoteWorkers.RemoteWorkersShape,
+  machine: OrchestratorMcpMachineRef,
+): Effect.Effect<boolean> =>
+  remote.proxy({ machine, tool: "orchestrator_capabilities", arguments: {} }).pipe(
+    Effect.map((answer) =>
+      Option.isSome(Schema.decodeUnknownOption(SaysEqualCoordinators)(answer)),
+    ),
+    Effect.orElseSucceed(() => false),
+  );
+
 const linkCopy = Effect.fn("mcp.addToMachine.linkCopy")(function* (input: {
   readonly sourceId: ProjectId;
   readonly machine: OrchestratorMcpMachineRef;
@@ -552,13 +555,17 @@ const linkCopy = Effect.fn("mcp.addToMachine.linkCopy")(function* (input: {
     problem: `${reason} It is listed as a separate project until you link it: open its menu in the sidebar and choose Link….`,
   });
   const link = Option.getOrUndefined(yield* Effect.serviceOption(ProjectLink.ProjectLink));
-  if (link === undefined) return unlinked("This machine could not link the copy.");
+  if (link === undefined) return unlinked("This machine could not link the project there.");
   const remote = yield* RemoteWorkers.RemoteWorkers;
   const operationId = yield* randomUuidV4;
+  // That machine's accept gives its coordinator up unless it says it keeps it (EC2-04).
+  if (!(yield* peerRunsEqualCoordinators(remote, input.machine)))
+    return unlinked(`Update SpecWithCode on ${input.machine.label} to link projects.`);
   const linked = Effect.gen(function* () {
     const prepared = yield* link.prepare({
       operationId,
       projectId: input.sourceId,
+      equalCoordinators: true,
       joining: {
         environmentId: input.machine.environmentId,
         projectId: input.copyId,
@@ -576,6 +583,7 @@ const linkCopy = Effect.fn("mcp.addToMachine.linkCopy")(function* (input: {
         coordinatorBinding: prepared.coordinatorBinding,
         keptFingerprint: prepared.fingerprint,
         ...(prepared.sharedIcon ? { sharedIcon: prepared.sharedIcon } : {}),
+        equalCoordinators: true,
       },
       timeoutMs: LINK_TIMEOUT_MS,
     });
@@ -591,7 +599,7 @@ const linkCopy = Effect.fn("mcp.addToMachine.linkCopy")(function* (input: {
   return yield* linked.pipe(
     Effect.catch((error) =>
       Effect.succeed(
-        unlinked(`The copy on ${input.machine.label} was not linked: ${error.message}`),
+        unlinked(`The project on ${input.machine.label} was not linked: ${error.message}`),
       ),
     ),
   );

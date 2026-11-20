@@ -52,6 +52,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import { fleetRequest, makeFleetLink } from "./fleet/fleetTransport.ts";
 import { join } from "./nodePath.ts";
+import * as ConnectDeviceTrust from "./fleet/ConnectDeviceTrust.ts";
 import { connectFleet, readFleetConfig } from "./studioFleet.ts";
 import { addFleetMachine } from "./studioFleetJoin.ts";
 import {
@@ -107,10 +108,19 @@ const serverEnvironment = Layer.mock(ServerEnvironment.ServerEnvironment)({
   getDescriptor: Effect.succeed({ environmentId: WORKER, label: "Worker" } as never),
 });
 
-const makeLayerRoutes = (capture: (auth: EnvironmentAuth.EnvironmentAuth["Service"]) => void) =>
+const makeLayerRoutes = (
+  capture: (
+    auth: EnvironmentAuth.EnvironmentAuth["Service"],
+    trust: ConnectDeviceTrust.ConnectDeviceTrustShape,
+  ) => void,
+) =>
   Layer.mergeAll(
     Layer.effectDiscard(
-      EnvironmentAuth.EnvironmentAuth.pipe(Effect.tap((auth) => Effect.sync(() => capture(auth)))),
+      Effect.gen(function* () {
+        const auth = yield* EnvironmentAuth.EnvironmentAuth;
+        const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
+        capture(auth, trust);
+      }),
     ),
     HttpApiBuilder.layer(TestApi).pipe(
       Layer.provide(AuthHttp.layer),
@@ -177,14 +187,20 @@ const publicUrl = (path: string, via: Via) =>
   `${via === "local" ? "http://localhost:8319" : via === "tailnet" ? TAILNET : CONNECT}${path}`;
 
 const withRoutes = <A, E>(
-  use: (handler: Handler, auth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E>,
+  use: (
+    handler: Handler,
+    auth: EnvironmentAuth.EnvironmentAuth["Service"],
+    trust: ConnectDeviceTrust.ConnectDeviceTrustShape,
+  ) => Effect.Effect<A, E>,
 ) =>
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
     const context = Context.make(Crypto.Crypto, crypto);
     let routerAuth: EnvironmentAuth.EnvironmentAuth["Service"] | undefined;
-    const layerRoutes = makeLayerRoutes((auth) => {
+    let routerTrust: ConnectDeviceTrust.ConnectDeviceTrustShape | undefined;
+    const layerRoutes = makeLayerRoutes((auth, trust) => {
       routerAuth = auth;
+      routerTrust = trust;
     });
     return yield* Effect.acquireUseRelease(
       Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true })),
@@ -193,7 +209,7 @@ const withRoutes = <A, E>(
           const handler: Handler = (request) => Effect.promise(() => web.handler(request, context));
           // The router builds its layer on first request.
           yield* handler(at("/api/auth/session", "local"));
-          return yield* use(handler, routerAuth!);
+          return yield* use(handler, routerAuth!, routerTrust!);
         }),
       (web) => Effect.promise(() => web.dispose()),
     );
@@ -467,7 +483,7 @@ it.live(
 );
 
 it.live("never lets a Studio Connect session or a management token change access", () =>
-  withRoutes((handler, auth) =>
+  withRoutes((handler, auth, trust) =>
     Effect.gen(function* () {
       const key = makeTestDpopKey();
       // A Studio Connect (Clerk) session: the mint binds it to the client's key.
@@ -494,6 +510,18 @@ it.live("never lets a Studio Connect session or a management token change access
       expect(exchanged.status).toBe(200);
       const cloud = yield* json<{ access_token: string; token_type: string }>(exchanged);
       expect(cloud.token_type).toBe("DPoP");
+      // A device that signs in after this machine started asks first (1327); the owner allows it.
+      const waiting = yield* trust.check({
+        subject: ConnectDeviceTrust.CONNECT_SUBJECT,
+        proofKeyThumbprint: key.thumbprint,
+      });
+      if (waiting._tag !== "refused" || waiting.approvalCode === undefined)
+        throw new Error("expected the new Connect device to wait for approval");
+      yield* trust.approve({
+        code: waiting.approvalCode,
+        approvedBy: "this machine",
+        approverKey: null,
+      });
       expect(
         (yield* ticket(
           handler,

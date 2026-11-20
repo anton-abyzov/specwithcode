@@ -62,6 +62,7 @@ import { useSettingsScope } from "./SettingsScopeContext";
 import {
   WEBHOOK_SIGNATURE_DEFAULTS,
   defaultOnceAt,
+  draftBase,
   matchesScheduledTaskScope,
   onceAtIso,
   MORNING_BRIEFING_TEMPLATE,
@@ -118,6 +119,8 @@ const WORKSPACE_MODE_LABELS: Record<WorkspaceMode, string> = {
 
 const EMPTY_DRAFT: DraftState = {
   editingId: null,
+  baseRevision: null,
+  baseDefinition: null,
   title: "",
   prompt: "",
   enabled: true,
@@ -235,7 +238,7 @@ export function ScheduledTasksSettings(target: {
         headerAction={
           <Button
             size="xs"
-            variant="ghost-muted"
+            variant="outline"
             disabled={!defaultEnvironment || !canCreate}
             onClick={() =>
               defaultEnvironment &&
@@ -610,6 +613,8 @@ function ScheduledTaskEditorDialog({
             };
     const input: ScheduledTaskUpsertInput = {
       ...(draft.editingId ? { id: draft.editingId as ScheduledTaskId, requireExisting: true } : {}),
+      // The runner refuses the save when the routine changed since the form opened.
+      ...draftBase(draft),
       title: draft.title.trim(),
       prompt: draft.prompt.trim(),
       enabled: draft.enabled,

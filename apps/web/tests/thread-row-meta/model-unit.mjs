@@ -167,7 +167,7 @@ const readUnits = (ids) =>
 
 // The pane pages its threads: open every page so the oldest fallback rows mount too.
 async function showAllThreads(page) {
-  const more = page.locator(".sws-show-more", { hasText: "Show more" });
+  const more = page.locator("[data-thread-group-pager]", { hasText: "Show more" });
   while ((await more.count()) > 0) {
     await more.first().click();
   }

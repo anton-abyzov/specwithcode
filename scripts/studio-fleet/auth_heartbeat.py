@@ -129,16 +129,35 @@ def read_auth_sessions(state, expected):
         db.close()
 
 
+def _count_change(name, before, after):
+    return '%s %s -> %s' % (name, before, after)
+
+
+def proof_difference(key, before, after):
+    """What differs under one protected proof key, for a refusal: the key, and for counts each table
+    with its before and after count, for an ID list its lengths. Never a row, an identifier or a hash
+    (a refusal lands in the receipt's pageFallback and error), so names and integers only."""
+    if isinstance(before, dict) and isinstance(after, dict) and all(
+            type(value) is int for value in [*before.values(), *after.values()]):
+        changed = [_count_change(table, before.get(table, 'none'), after.get(table, 'none'))
+                   for table in sorted(set(before) | set(after)) if before.get(table) != after.get(table)]
+        return key + ' ' + ', '.join(changed) if changed else key
+    if isinstance(before, list) and isinstance(after, list):
+        return _count_change(key, len(before), len(after)) if len(before) != len(after) else key + ' members'
+    return key
+
+
 def assert_only_auth_hash_changed(before, after):
     assert set(before) == set(after), 'Protected row proof shape changed'
-    for key in before:
-        if key != 'hashes':
-            assert before[key] == after[key], 'Protected rows or counts changed'
+    differing = [proof_difference(key, before[key], after[key])
+                 for key in sorted(before) if key != 'hashes' and before[key] != after[key]]
+    # The prefix stays as it was: the update agent and receipts match these messages by prefix.
+    assert not differing, 'Protected rows or counts changed: ' + '; '.join(differing)
     assert set(before['hashes']) == set(after['hashes']), 'Protected tables changed'
     assert 'auth_sessions' in before['hashes']
-    for table in before['hashes']:
+    for table in sorted(before['hashes']):
         if table != 'auth_sessions':
-            assert before['hashes'][table] == after['hashes'][table], 'Other protected table changed'
+            assert before['hashes'][table] == after['hashes'][table], 'Other protected table changed: ' + table
     assert before['nativeWorkIdle'] is True and after['nativeWorkIdle'] is True
 
 

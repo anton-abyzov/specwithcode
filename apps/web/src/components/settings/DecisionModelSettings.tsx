@@ -169,7 +169,7 @@ export function DecisionModelSettings(props: {
               {hasKey ? (
                 <Button
                   size="sm"
-                  variant="ghost"
+                  variant="destructive-outline"
                   disabled={props.readOnly}
                   onClick={() => apply({ removeKey: true })}
                 >

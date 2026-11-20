@@ -79,3 +79,81 @@ describe("limitHandoffTrigger with a pending request", () => {
     expect(limitHandoffTrigger(pending({ kind: "user_input" }))).toBeNull();
   });
 });
+
+describe("limitHandoffTrigger for a thread on a track (1390 AC-37)", () => {
+  const out = {
+    kind: "track" as const,
+    track: "daily" as const,
+    outHere: true,
+    fingerprints: [`sha256:${"a".repeat(64)}`],
+    earliestResetMs: null,
+  };
+  const withTrack = (
+    track: NonNullable<Parameters<typeof limitHandoffTrigger>[0]["track"]>,
+    patch: Partial<Parameters<typeof limitHandoffTrigger>[0]> = {},
+    order: "other-machine-first" | "same-machine-first" = "other-machine-first",
+  ) =>
+    limitHandoffTrigger({
+      ...base,
+      rule: { ...base.rule, providerLimitTargetOrder: order },
+      track,
+      ...patch,
+    });
+
+  const orders = ["other-machine-first", "same-machine-first"] as const;
+
+  it.each(orders)("asks no machine while the track has room here, under %s", (order) => {
+    // A second local source, or a later local model, still has room.
+    const here = { ...out, outHere: false };
+    expect(withTrack(here, { localStep: "switch" }, order)).toBeNull();
+    // Even with no local step found this sweep, the track itself is not out.
+    expect(withTrack(here, { localStep: null }, order)).toBeNull();
+  });
+
+  it.each(orders)("asks a machine once the track is out here, under %s", (order) => {
+    const trigger = withTrack(out, { localStep: null }, order);
+    expect(trigger).toMatchObject({ key: "limit-handoff:t1:r2", reason: "usage-limit" });
+    expect(trigger?.track).toEqual(out);
+    // A local step off the track does not hold it back: the track comes before the order.
+    expect(withTrack(out, { localStep: "switch" }, order)?.track).toEqual(out);
+  });
+
+  it("still lets a banked reset, credits or API credits go first", () => {
+    for (const localStep of ["redeem-reset", "spend-credits", "api-credits", "resume-api"])
+      expect(withTrack(out, { localStep })).toBeNull();
+  });
+
+  it("starts nothing for a thread whose track is not known, or a review thread", () => {
+    expect(withTrack({ kind: "held", reason: "Its track is not known." })).toBeNull();
+  });
+
+  it("leaves a project without tracks on its saved order", () => {
+    const none = { kind: "none" as const };
+    expect(withTrack(none, { localStep: "switch" }, "other-machine-first")?.key).toBe(
+      "limit-handoff:t1:r2",
+    );
+    expect(withTrack(none, { localStep: "switch" }, "other-machine-first")?.track).toBeUndefined();
+    expect(withTrack(none, { localStep: "switch" }, "same-machine-first")).toBeNull();
+    expect(withTrack(none, { localStep: null }, "same-machine-first")).not.toBeNull();
+  });
+
+  it("keeps ask, wait and no targets as they are", () => {
+    for (const providerLimitAction of ["ask", "wait"])
+      expect(
+        limitHandoffTrigger({
+          ...base,
+          rule: { ...base.rule, providerLimitAction } as never,
+          track: out,
+        }),
+      ).toBeNull();
+    expect(
+      limitHandoffTrigger({
+        ...base,
+        rule: { ...base.rule, providerLimitMachineTargets: [] },
+        track: out,
+      }),
+    ).toBeNull();
+    // A stop that resets within the project's wait is no trigger at all.
+    expect(withTrack(out, { stopped: false })).toBeNull();
+  });
+});

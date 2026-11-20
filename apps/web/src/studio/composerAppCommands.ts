@@ -1,7 +1,8 @@
 /**
  * Slash commands the app runs itself, without a model turn: stop or continue
  * this thread or every thread in the project, a one-line project status, and
- * Away mode (`/away` leaves this machine, `/back` brings its work back).
+ * Hand off (`/handoff` hands a project's work to another machine, `/away`
+ * hands off every project on this machine, `/back` brings its work back).
  * Anything else that starts with `/` still reaches the agent.
  */
 export type ComposerAppCommand =
@@ -10,8 +11,11 @@ export type ComposerAppCommand =
   | "stop-all"
   | "continue-all"
   | "status"
+  | "handoff"
   | "away"
   | "back";
+
+import { txNow, type TranslatePhrase } from "../i18n";
 
 export interface ComposerAppCommandEntry {
   readonly command: ComposerAppCommand;
@@ -37,15 +41,25 @@ export const COMPOSER_APP_COMMANDS: ReadonlyArray<ComposerAppCommandEntry> = [
     label: "/status",
     description: "Count running, interrupted and idle threads",
   },
+  { command: "handoff", label: "/handoff", description: "Hand off work to another machine" },
   {
     command: "away",
     label: "/away",
-    description: "Leave this machine: hand its threads, routines and coordinator on",
+    description: "Hand off every project on this machine",
   },
   { command: "back", label: "/back", description: "Bring work back to this machine" },
 ];
 
-const APP_COMMAND_PATTERN = /^\/(stop-all|continue-all|stop|continue|status|away|back)\s*$/i;
+/** A command's description in the interface language; one with no translation stays English. */
+export function composerAppCommandDescription(
+  entry: ComposerAppCommandEntry,
+  tx: TranslatePhrase = txNow,
+): string {
+  return tx(entry.description);
+}
+
+const APP_COMMAND_PATTERN =
+  /^\/(stop-all|continue-all|stop|continue|status|handoff|away|back)\s*$/i;
 /**
  * `$away` and `$back` typed as the whole message mean the same as the slash
  * form in every harness, so a skill of that name never gets the turn.

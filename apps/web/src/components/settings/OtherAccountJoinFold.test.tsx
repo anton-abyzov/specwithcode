@@ -20,7 +20,7 @@ async function mount(openFor = false) {
   let renderer: ReturnType<typeof create> | null = null;
   const element = (next: boolean) => (
     <OtherAccountJoinFold openFor={next} targetIds={ids}>
-      <p id="private-machines-invite">Join a main machine</p>
+      <p id="private-machines-invite">Join one of your machines</p>
     </OtherAccountJoinFold>
   );
   await act(async () => {

@@ -1,6 +1,8 @@
 import { useEffect } from "react";
+import { useAtomValue } from "@effect/atom-react";
 import { logicalProjectTitle, type EnvironmentId } from "@specweave-studio/contracts";
 import { useProjects } from "../../state/entities";
+import { environmentServerConfigsAtom } from "../../state/server";
 import { useNamedEnvironments } from "../settings/useNamedEnvironments";
 import {
   unwatchCopy,
@@ -53,6 +55,12 @@ export function FolderCopyWatchers() {
     );
     return found ? logicalProjectTitle(found) : undefined;
   };
+  const configs = useAtomValue(environmentServerConfigsAtom);
+  // Which machines take `~/` secret files, as the dialog knows it; null until that loads.
+  const homeSecrets = (environmentId: string) => {
+    const config = configs.get(environmentId as EnvironmentId);
+    return config ? config.environment.capabilities?.homeSecretFiles === true : null;
+  };
   const label = (environmentId: string) =>
     environments.find((item) => item.environmentId === environmentId)?.label ?? "the other machine";
 
@@ -85,6 +93,7 @@ export function FolderCopyWatchers() {
           }
           restored={watch.restored ?? false}
           reviewOnly={watch.reviewOnly ?? false}
+          homeSecrets={homeSecrets}
           onDone={() => unwatchCopy(key)}
         />
       ))}

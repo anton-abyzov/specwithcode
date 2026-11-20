@@ -18,6 +18,11 @@ export const RELAY_PROTOCOL_VERSION = 1;
 export const CLOSE_REJECTED = 4401;
 export const CLOSE_REPLACED = 4409;
 export const CLOSE_BAD_HELLO = 4400;
+/** This extension id may not connect (a hand-loaded copy while the developer switch is off). */
+export const CLOSE_NOT_ALLOWED = 4403;
+/** The name a profile gets when its extension sent none. "Chrome" was the old default. */
+export const UNNAMED_PROFILE = "Unnamed profile";
+
 /** The close reason the extension sends when the user clicks Unpair in its popup. */
 export const CLOSE_REASON_UNPAIRED = "unpaired";
 
@@ -124,6 +129,13 @@ interface Connection {
   profile: RelayProfile | null;
   helloTimer: ReturnType<typeof setTimeout> | null;
   closed: boolean;
+  /** The extension id from the socket's `Origin`, which Chrome sets; preferred over the hello's. */
+  readonly originExtensionId: string | null;
+}
+
+export interface RelayOpenOptions {
+  /** The extension id the route read from the request's `Origin`. */
+  readonly extensionId?: string;
 }
 
 export interface RelaySession {
@@ -136,6 +148,11 @@ export interface RelaySession {
 export interface BrowserRelayHubOptions {
   /** Constant-time check of the token a profile presents. */
   readonly verifyToken: (token: string) => boolean;
+  /**
+   * Whether this extension id may connect, asked at hello before the token,
+   * so a switch turned off while a socket was opening still applies.
+   */
+  readonly extensionAllowed?: (extensionId: string) => boolean;
   /** The name shown in the extension's popup. */
   readonly machineName: () => string;
   readonly now?: () => number;
@@ -171,7 +188,8 @@ export function parseHello(text: string): RelayHello | null {
   return {
     protocol: typeof p.protocol === "number" ? p.protocol : 0,
     token: typeof p.token === "string" ? p.token : "",
-    label: str(p.label, 60) || "Chrome",
+    // Extensions from 1.0.7 never pair without a name; this only covers a missing one.
+    label: str(p.label, 60) || UNNAMED_PROFILE,
     extensionVersion: str(p.extensionVersion, 20) || "unknown",
     extensionId: str(p.extensionId, 64),
     instanceId: str(p.instanceId, 64),
@@ -196,7 +214,7 @@ export class BrowserRelayHub {
   }
 
   /** A new socket from an extension. It must say hello with the right token first. */
-  open(socket: RelaySocket): RelaySession {
+  open(socket: RelaySocket, options: RelayOpenOptions = {}): RelaySession {
     const connection: Connection = {
       socket,
       pending: new Map(),
@@ -204,6 +222,7 @@ export class BrowserRelayHub {
       profile: null,
       helloTimer: null,
       closed: false,
+      originExtensionId: options.extensionId || null,
     };
     connection.helloTimer = setTimeout(
       () => this.reject(connection, CLOSE_BAD_HELLO, "no hello"),
@@ -235,6 +254,10 @@ export class BrowserRelayHub {
     if (connection.profile === null) {
       const hello = parseHello(text);
       if (hello === null) return this.reject(connection, CLOSE_BAD_HELLO, "expected hello");
+      // The id Chrome put in the Origin decides "from the Chrome Web Store", not the hello's claim.
+      const extensionId = connection.originExtensionId ?? hello.extensionId;
+      if (this.options.extensionAllowed && !this.options.extensionAllowed(extensionId))
+        return this.reject(connection, CLOSE_NOT_ALLOWED, "extension not allowed");
       if (!this.options.verifyToken(hello.token))
         return this.reject(connection, CLOSE_REJECTED, "pairing code rejected");
       if (connection.helloTimer) clearTimeout(connection.helloTimer);
@@ -246,15 +269,14 @@ export class BrowserRelayHub {
         const sameProfile =
           hello.instanceId && other.profile.instanceId
             ? other.profile.instanceId === hello.instanceId
-            : other.profile.extensionId === hello.extensionId &&
-              other.profile.label === hello.label;
+            : other.profile.extensionId === extensionId && other.profile.label === hello.label;
         if (sameProfile) this.reject(other, CLOSE_REPLACED, "replaced by a newer connection");
       }
       connection.profile = {
         id: `p${++this.profileSeq}`,
         label: this.uniqueLabel(hello.label),
         extensionVersion: hello.extensionVersion,
-        extensionId: hello.extensionId,
+        extensionId,
         instanceId: hello.instanceId,
         browser: browserFromUserAgent(hello.userAgent),
         connectedAt: this.now(),
@@ -637,6 +659,14 @@ export class BrowserRelayHub {
   /** The pairing code changed: drop every profile, which must pair again. */
   disconnectAll(reason: string) {
     for (const connection of [...this.connections]) this.reject(connection, CLOSE_REJECTED, reason);
+  }
+
+  /** Closes every socket whose extension id (from its Origin, else its hello) fails `keep`. */
+  disconnectExtensions(keep: (extensionId: string) => boolean, reason: string) {
+    for (const connection of [...this.connections]) {
+      const extensionId = connection.profile?.extensionId ?? connection.originExtensionId ?? "";
+      if (!keep(extensionId)) this.reject(connection, CLOSE_NOT_ALLOWED, reason);
+    }
   }
 
   /** Resolves once a profile is connected, or after `timeoutMs`. */

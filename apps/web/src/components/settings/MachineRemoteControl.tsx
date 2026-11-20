@@ -327,8 +327,7 @@ function MachineRemoteSheet({
                 {model.projects.length > RECENT_PROJECTS ? (
                   <Button
                     size="xs"
-                    variant="ghost"
-                    className="text-muted-foreground"
+                    variant="outline"
                     onClick={() => setShowAllProjects((value) => !value)}
                   >
                     {showAllProjects
@@ -339,8 +338,7 @@ function MachineRemoteSheet({
                 {model.temporary.length > 0 ? (
                   <Button
                     size="xs"
-                    variant="ghost"
-                    className="text-muted-foreground"
+                    variant="outline"
                     aria-expanded={showTemporary}
                     onClick={() => setShowTemporary((value) => !value)}
                   >
@@ -401,8 +399,8 @@ function MachineRemoteSheet({
             {!searching && model.threads.length > RECENT_THREADS ? (
               <Button
                 size="xs"
-                variant="ghost"
-                className="mt-1 text-muted-foreground"
+                variant="outline"
+                className="mt-1"
                 onClick={() => setShowAllThreads((value) => !value)}
               >
                 {showAllThreads ? tx("Show fewer") : `Show all ${model.threads.length}`}
@@ -412,14 +410,19 @@ function MachineRemoteSheet({
         ) : null}
       </DialogPanel>
       <DialogFooter className="sm:items-center sm:justify-between">
-        <Link
-          to="/settings/providers"
-          search={{ machine: environmentId }}
-          onClick={onNavigate}
-          className="text-center text-muted-foreground text-sm hover:text-foreground"
+        <Button
+          size="sm"
+          variant="outline"
+          render={
+            <Link
+              to="/settings/providers"
+              search={{ machine: environmentId }}
+              onClick={onNavigate}
+            />
+          }
         >
           {renderRich(tx("Agents on {name}"), { name: name })}
-        </Link>
+        </Button>
         <Button
           size="sm"
           variant="outline"

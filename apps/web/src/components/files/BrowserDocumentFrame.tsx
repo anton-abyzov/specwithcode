@@ -30,17 +30,36 @@ const PDF_VIEWER_FRAGMENT = "#toolbar=0&view=FitH";
 export const isPdfPreviewFile = (path: string): boolean =>
   /\.pdf$/i.test(path.split(/[?#]/, 1)[0] ?? "");
 
+/** The link script's id. A page's own message does not use it, and is ignored. */
+export function isStudioFileLinkId(id: string | number): boolean {
+  return typeof id === "string" && /^studio-file-link-[1-9]\d{0,5}$/.test(id);
+}
+
+/** Asks the server for the wrapper. Keeps a query and a hash the URL already has. */
+function fileFrameSrc(src: string): string {
+  const hashIndex = src.indexOf("#");
+  const hash = hashIndex >= 0 ? src.slice(hashIndex) : "";
+  const before = hashIndex >= 0 ? src.slice(0, hashIndex) : src;
+  const queryIndex = before.indexOf("?");
+  const path = queryIndex >= 0 ? before.slice(0, queryIndex) : before;
+  const params = new URLSearchParams(queryIndex >= 0 ? before.slice(queryIndex + 1) : "");
+  params.set("studio-frame", "1");
+  return `${path}?${params.toString()}${hash}`;
+}
+
 /**
- * Renders an HTML or PDF document from its URL. HTML runs in a sandboxed frame
- * with an opaque origin, so a page cannot reach the app's session or storage.
- * The built-in PDF viewer needs an unsandboxed frame; a PDF runs no scripts.
- * An agent's HTML render also wears the app theme.
+ * Renders an HTML or PDF document from its URL. A workspace file page runs in
+ * the locked frame. An attachment keeps today's sandboxed frame, raw URL and
+ * popups. The built-in PDF viewer needs an unsandboxed frame; a PDF runs no
+ * scripts. An agent's HTML render also wears the app theme.
  */
 export function BrowserDocumentFrame(props: {
   readonly src: string;
   readonly title: string;
   readonly pdf: boolean;
   readonly htmlRender?: boolean;
+  /** Workspace file page. The server wraps it. Attachments leave this off. */
+  readonly lockedFile?: boolean;
 }) {
   const className = "min-h-0 flex-1 border-0 bg-white";
   return props.pdf ? (
@@ -53,6 +72,8 @@ export function BrowserDocumentFrame(props: {
     />
   ) : props.htmlRender ? (
     <HtmlRenderPage key={props.src} src={props.src} title={props.title} />
+  ) : props.lockedFile ? (
+    <HtmlFileFrame src={props.src} title={props.title} className={className} />
   ) : (
     <iframe
       key={props.src}
@@ -60,6 +81,47 @@ export function BrowserDocumentFrame(props: {
       title={props.title}
       className={className}
       sandbox="allow-scripts allow-forms allow-popups"
+    />
+  );
+}
+
+/**
+ * A file's HTML page. No popups. The server wraps it. A link to another site
+ * opens through the app only while the reader is using this frame.
+ */
+function HtmlFileFrame(props: {
+  readonly src: string;
+  readonly title: string;
+  readonly className: string;
+}) {
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const src = fileFrameSrc(props.src);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const openLink = (event: MessageEvent) => {
+      const frame = frameRef.current;
+      const request = readHtmlRenderLinkRequest(event.data);
+      if (
+        request === undefined ||
+        !isStudioFileLinkId(request.id) ||
+        !trustedFrameMessage(event, frame) ||
+        !readerIsUsing(frame!)
+      ) {
+        return;
+      }
+      window.open(request.url, "_blank", "noopener,noreferrer");
+    };
+    window.addEventListener("message", openLink);
+    return () => window.removeEventListener("message", openLink);
+  }, []);
+  return (
+    <iframe
+      ref={frameRef}
+      key={src}
+      src={src}
+      title={props.title}
+      className={props.className}
+      sandbox="allow-scripts allow-forms"
     />
   );
 }

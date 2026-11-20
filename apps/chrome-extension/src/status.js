@@ -29,11 +29,13 @@ export function titleFor(view) {
   const next = view.nextRetryAt ? ` Next try at ${clock(view.nextRetryAt)}.` : "";
   switch (view.phase) {
     case "connected":
-      return `${name}: connected. Agents can use this profile (${view.label}).`;
+      return view.label
+        ? `${name}: connected. Agents can use this profile (${view.label}).`
+        : `${name}: connected. Agents can use this profile. Give it a name agents can tell apart.`;
     case "disconnected":
       return `${name}: NOT connected${since}. Agents cannot use this profile. Reconnecting on its own.`;
     case "rejected":
-      return `${name}: NOT connected${since}. SpecWithCode did not accept the pairing code.${next} If it keeps failing, paste the current code from Settings › Chrome.`;
+      return `${name}: NOT connected${since}. ${view.message || "SpecWithCode did not accept the pairing code."}${next}`;
     case "paused":
       return `${name}: paused. Agents cannot use this profile.`;
     case "connecting":

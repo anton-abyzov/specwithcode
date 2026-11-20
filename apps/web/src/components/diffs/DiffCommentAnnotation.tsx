@@ -114,7 +114,7 @@ export function DiffCommentAnnotation({
       />
       <div className="mt-1.5 flex items-center gap-1">
         <span className="mr-auto text-3xs text-muted-foreground">⌘/Ctrl Enter to send</span>
-        <Button variant="ghost-muted" size="xs" onClick={onCancel}>
+        <Button variant="outline" size="xs" onClick={onCancel}>
           Cancel
         </Button>
         {secondaryAction ? (

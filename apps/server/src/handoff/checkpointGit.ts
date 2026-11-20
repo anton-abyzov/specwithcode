@@ -11,11 +11,17 @@ import {
   type HandoffSkippedFile,
 } from "@specweave-studio/contracts";
 
+import { cloneStagingIn } from "../fleet/cloneStaging.ts";
 import { gitText, runGit } from "../fleet/folderTransfer/git.ts";
 import {
   isSecretLikeProjectPath,
   isUntrackedSecretConfigPath,
 } from "../workspace/WorkspaceSensitivePaths.ts";
+import {
+  checkSnapshotContent,
+  checkStagedContent,
+  type SnapshotContentFinding,
+} from "./snapshotSecrets.ts";
 
 const SKIPPED_LIST_MAX = 200;
 const REQUIRED_SECRET_PATHS_MAX = 200;
@@ -46,6 +52,14 @@ export interface CheckpointCommit {
   readonly requiredSecretPaths: ReadonlyArray<string>;
   /** False when the tree matched the previous checkpoint, which was kept. */
   readonly changed: boolean;
+  /** Changed and untracked files left out as secrets by their name. Never sent to another machine. */
+  readonly excludedSecretPaths: ReadonlyArray<string>;
+  /** Local only: the first file left out for its size or the file count, also past the capped list. */
+  readonly overLimit: HandoffSkippedFile | null;
+  /** Untracked files the content check left out; empty unless `contentCheck` was asked for. */
+  readonly leftOutByContent: ReadonlyArray<SnapshotContentFinding>;
+  /** Files in the snapshot, after everything left out. */
+  readonly includedFileCount: number;
 }
 
 const REF_COMPONENT = /^[A-Za-z0-9_-][A-Za-z0-9_.-]*$/;
@@ -99,9 +113,43 @@ export async function writeCheckpoint(input: {
   readonly message?: string;
   /** Another ref to write the snapshot to; defaults to the thread's hidden handoff ref. */
   readonly ref?: string;
+  /**
+   * Create `ref` only where no ref of that name exists (Git checks under its
+   * lock): a ref someone else holds is never reused or overwritten, and the
+   * call fails instead.
+   */
+  readonly exclusive?: boolean;
+  /**
+   * A private repository the snapshot goes into instead of the checkout's own:
+   * its new objects are written in `objectDirectory` (whose alternates name the
+   * checkout's object store), and `ref` is written, and an earlier one read, with
+   * `refEnv`. Nothing of the snapshot is then written in the checkout's repository.
+   */
+  readonly privateStore?: {
+    readonly objectDirectory: string;
+    readonly refEnv: Readonly<Record<string, string | undefined>>;
+  };
+  /**
+   * Also check untracked files by content (`snapshotSecrets.ts`) and leave out
+   * what it flags, except the files named in `sendAnyway`. Off unless asked
+   * for: a thread's checkpoint keeps today's name check alone until the thread
+   * can show which files were left out.
+   */
+  readonly contentCheck?: {
+    readonly pastLimit: "leave-out" | "name-only";
+    readonly sendAnyway?: ReadonlyArray<string>;
+    /** Runs between the check of the files and their staging. Tests rewrite a file here. */
+    readonly onChecked?: () => Promise<void>;
+  };
 }): Promise<CheckpointCommit> {
   const root = await repositoryRoot(input.cwd);
   const ref = input.ref ?? handoffRef(input.threadId);
+  const refEnv = input.privateStore === undefined ? {} : { env: input.privateStore.refEnv };
+  // Where the snapshot's objects are written, and read back from.
+  const objects =
+    input.privateStore === undefined
+      ? {}
+      : { GIT_OBJECT_DIRECTORY: input.privateStore.objectDirectory };
   const head = await runGit(root, ["rev-parse", "--verify", "-q", "HEAD^{commit}"], {
     allowFailure: true,
   });
@@ -119,7 +167,7 @@ export async function writeCheckpoint(input: {
 
   const scratch = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "swc-handoff-"));
   try {
-    const env = { GIT_INDEX_FILE: NodePath.join(scratch, "index") };
+    const env = { GIT_INDEX_FILE: NodePath.join(scratch, "index"), ...objects };
     await runGit(root, ["read-tree", baseCommit], { env });
     const [untracked, changed, ignored] = await Promise.all([
       runGit(root, ["ls-files", "-z", "--others", "--exclude-standard"], { env }),
@@ -130,26 +178,37 @@ export async function writeCheckpoint(input: {
         { env },
       ),
     ]);
+    // A folder a Sync clone is being made in (it carries the clone step's mark) is not
+    // this checkout's work: neither its mark nor the half-made clone is ever carried, and
+    // no ignored secret in it is asked for.
+    const staging = cloneStagingIn(root);
     const secretPaths = new Set<string>();
     for (const entry of ignored.stdout.split("\0")) {
       if (
         entry &&
         !entry.endsWith("/") &&
-        (isSecretLikeProjectPath(entry) || isUntrackedSecretConfigPath(entry))
+        (isSecretLikeProjectPath(entry) || isUntrackedSecretConfigPath(entry)) &&
+        !(await staging.has(entry))
       )
         secretPaths.add(entry);
     }
     const candidates = new Set<string>();
-    const untrackedPaths = new Set(untracked.stdout.split("\0").filter(Boolean));
+    const untrackedPaths = new Set<string>();
+    for (const entry of untracked.stdout.split("\0"))
+      if (entry && !(await staging.has(entry))) untrackedPaths.add(entry);
     for (const entry of changed.stdout.split("\0")) if (entry) candidates.add(entry);
-    for (const entry of untracked.stdout.split("\0")) if (entry) candidates.add(entry);
+    for (const entry of untrackedPaths) candidates.add(entry);
 
     const skipped: Array<HandoffSkippedFile> = [];
+    let overLimit: HandoffSkippedFile | null = null;
     const skip = (file: HandoffSkippedFile) => {
+      // The list is capped for display; the first file over a limit is kept apart from it.
+      if (file.reason !== "submodule" && overLimit === null) overLimit = file;
       if (skipped.length < SKIPPED_LIST_MAX) skipped.push(file);
     };
     let excludedSecretCount = 0;
-    const included: Array<string> = [];
+    const excludedSecretPaths: Array<string> = [];
+    let included: Array<string> = [];
     for (const path of [...candidates].toSorted()) {
       if (path.endsWith("/")) {
         skip({ path: path.slice(0, -1), bytes: 0, reason: "submodule" });
@@ -162,6 +221,7 @@ export async function writeCheckpoint(input: {
       ) {
         excludedSecretCount += 1;
         secretPaths.add(path);
+        excludedSecretPaths.push(path);
         continue;
       }
       const stat = await NodeFSP.lstat(NodePath.join(root, path)).catch(() => null);
@@ -181,6 +241,20 @@ export async function writeCheckpoint(input: {
       included.push(path);
     }
 
+    let leftOutByContent: ReadonlyArray<SnapshotContentFinding> = [];
+    if (input.contentCheck !== undefined) {
+      const checked = await checkSnapshotContent({
+        root,
+        untracked: included.filter((path) => untrackedPaths.has(path)),
+        allow: new Set(input.contentCheck.sendAnyway ?? []),
+        pastLimit: input.contentCheck.pastLimit,
+      });
+      leftOutByContent = checked.leftOut;
+      const out = new Set(leftOutByContent.map((file) => file.path));
+      included = included.filter((path) => !out.has(path));
+      await input.contentCheck.onChecked?.();
+    }
+
     if (included.length > 0) {
       const pathspec = NodePath.join(scratch, "pathspec");
       await NodeFSP.writeFile(pathspec, `${included.join("\0")}\0`, { mode: 0o600 });
@@ -188,16 +262,65 @@ export async function writeCheckpoint(input: {
         env,
       });
     }
-    const ownTree = (await runGit(root, ["write-tree"], { env })).stdout.trim();
+    let ownTree = (await runGit(root, ["write-tree"], { env })).stdout.trim();
+    if (input.contentCheck !== undefined) {
+      // What is checked is what travels: the staged blobs are judged, not the files
+      // read a moment earlier, which a running thread may have rewritten since.
+      const staged = await checkStagedContent({
+        root,
+        baseCommit,
+        tree: ownTree,
+        secretName: (path) => isSecretLikeProjectPath(path) || isUntrackedSecretConfigPath(path),
+        allow: new Set(input.contentCheck.sendAnyway ?? []),
+        maxFileBytes: HANDOFF_MAX_SNAPSHOT_FILE_BYTES,
+        maxChangedFiles: HANDOFF_MAX_SNAPSHOT_FILES,
+        env: objects,
+      });
+      if (staged.tooLarge !== null) skip({ ...staged.tooLarge, reason: "too-large" });
+      if (staged.tooMany !== null)
+        skip({ path: staged.tooMany.path, bytes: 0, reason: "too-many-files" });
+      for (const path of staged.secretNames) {
+        excludedSecretCount += 1;
+        secretPaths.add(path);
+        excludedSecretPaths.push(path);
+      }
+      if (staged.flagged.length > 0 || staged.secretNames.length > 0) {
+        const flagged = [...staged.flagged.map((file) => file.path), ...staged.secretNames];
+        for (let index = 0; index < flagged.length; index += 100) {
+          await runGit(
+            root,
+            ["update-index", "--force-remove", "--", ...flagged.slice(index, index + 100)],
+            { env },
+          );
+        }
+        const out = new Set(flagged);
+        leftOutByContent = [
+          ...leftOutByContent.filter((file) => !out.has(file.path)),
+          ...staged.flagged,
+        ];
+        included = included.filter((path) => !out.has(path));
+        ownTree = (await runGit(root, ["write-tree"], { env })).stdout.trim();
+      }
+    }
+    const local = {
+      excludedSecretPaths,
+      leftOutByContent,
+      includedFileCount: included.length,
+      overLimit: overLimit as HandoffSkippedFile | null,
+    };
     const requiredSecretPaths = [...secretPaths]
       .filter((path) => path.length <= 1024)
       .toSorted()
       .slice(0, REQUIRED_SECRET_PATHS_MAX);
 
-    const previous = await runGit(root, ["rev-parse", "--verify", "-q", `${ref}^{commit}`], {
-      allowFailure: true,
-    });
-    if (previous.code === 0) {
+    const previous =
+      input.exclusive === true
+        ? null
+        : await runGit(root, ["rev-parse", "--verify", "-q", `${ref}^{commit}`], {
+            allowFailure: true,
+            ...refEnv,
+          });
+    if (previous !== null && previous.code === 0) {
       const previousCommit = previous.stdout.trim();
       const [previousTree, previousParent] = await Promise.all([
         gitText(root, ["rev-parse", `${previousCommit}^{tree}`]),
@@ -216,6 +339,7 @@ export async function writeCheckpoint(input: {
           excludedSecretCount,
           requiredSecretPaths,
           changed: false,
+          ...local,
         };
       }
     }
@@ -231,10 +355,14 @@ export async function writeCheckpoint(input: {
           "-m",
           input.message ?? `SpecWithCode handoff checkpoint for ${input.threadId}`,
         ],
-        { env: CHECKPOINT_IDENTITY },
+        { env: { ...CHECKPOINT_IDENTITY, ...objects } },
       )
     ).stdout.trim();
-    await runGit(root, ["update-ref", ref, commit]);
+    await runGit(
+      root,
+      ["update-ref", ref, commit, ...(input.exclusive === true ? [""] : [])],
+      refEnv,
+    );
     return {
       root,
       commit,
@@ -245,6 +373,7 @@ export async function writeCheckpoint(input: {
       excludedSecretCount,
       requiredSecretPaths,
       changed: true,
+      ...local,
     };
   } finally {
     await NodeFSP.rm(scratch, { recursive: true, force: true });

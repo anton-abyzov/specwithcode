@@ -56,6 +56,7 @@ import {
   openExternal,
   openSystemSettings,
   checkSystemPermission,
+  closeSystemSettingsHelper,
   pasteAsText,
   probeRemoteEditors,
   pickFolder,
@@ -79,7 +80,11 @@ import {
   setSnapShotShortcutSuppressed,
 } from "./methods/snapShot.ts";
 import * as PreviewIpc from "./methods/preview.ts";
-import { listExternalBrowsers, openInExternalBrowser } from "./methods/externalBrowser.ts";
+import {
+  clearClipboardIfText,
+  listExternalBrowsers,
+  openInExternalBrowser,
+} from "./methods/externalBrowser.ts";
 import * as AppActivationIpc from "./methods/appActivation.ts";
 import {
   completeLegacyLocalStorage,
@@ -163,10 +168,12 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(openExternal);
   yield* ipc.handle(listExternalBrowsers);
   yield* ipc.handle(openInExternalBrowser);
+  yield* ipc.handle(clearClipboardIfText);
   yield* ipc.handle(receiveProviderAuthCallback);
   yield* ipc.handle(cancelProviderAuthCallback);
   yield* ipc.handle(openSystemSettings);
   yield* ipc.handle(checkSystemPermission);
+  yield* ipc.handle(closeSystemSettingsHelper);
   yield* ipc.handle(pasteAsText);
   yield* ipc.handle(openProjectWindow);
   yield* ipc.handle(startFileDrag);

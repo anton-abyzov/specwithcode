@@ -78,7 +78,7 @@ export function ApiCreditRecoveryAction({ targets, automatic, setup }: ApiCredit
           </Button>
         ))}
         {setup !== null ? (
-          <Button type="button" size="xs" variant="ghost" onClick={() => setAdding(true)}>
+          <Button type="button" size="xs" variant="outline" onClick={() => setAdding(true)}>
             {targets.length === 0 ? tx("Add an API key") : tx("Add another API key")}
           </Button>
         ) : null}

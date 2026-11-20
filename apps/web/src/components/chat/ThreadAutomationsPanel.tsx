@@ -99,7 +99,12 @@ export function ThreadAutomationsPanel(props: {
     // revert concurrent edits made to the task elsewhere.
     const result = await setTaskEnabled({
       environmentId: props.environmentId,
-      input: { id: task.id, enabled },
+      input: {
+        id: task.id,
+        enabled,
+        // On a machine that only keeps a copy: the definition the row showed.
+        ...(task.definitionHash === undefined ? {} : { expectedDefinition: task.definitionHash }),
+      },
     });
     setBusyTaskId(null);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {

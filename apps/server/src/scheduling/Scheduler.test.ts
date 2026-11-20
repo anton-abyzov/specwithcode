@@ -1,9 +1,11 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -182,4 +184,82 @@ it.effect("spreads the sources across each tick instead of starting them togethe
       }
     }).pipe(Effect.provide(Scheduler.layer));
   }),
+);
+
+it.effect("sits out an automatic install while the agent applies it, and counts it held", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scheduler-install-" });
+    const statePath = `${dir}/state.json`;
+    const writeState = (status: string, updatedAtMs: number) =>
+      fileSystem.writeFileString(
+        statePath,
+        JSON.stringify({
+          status,
+          message: status,
+          updatedAt: DateTime.formatIso(DateTime.makeUnsafe(updatedAtMs)),
+        }),
+      );
+    const startMs = Date.parse("2026-11-18T03:47:30.000Z");
+    yield* TestClock.setTime(startMs);
+    // An unheld service: the agent installs on its own, as with Install automatically on.
+    yield* writeState("installing", startMs);
+    const hold = yield* ServiceUpdateHold.makeWithOptions({ agentStatePath: statePath });
+    const ranAt = yield* Queue.unbounded<number>();
+    yield* Effect.gen(function* () {
+      const scheduler = yield* Scheduler.Scheduler;
+      yield* scheduler.register(
+        "due",
+        Effect.flatMap(Clock.currentTimeMillis, (now) => Queue.offer(ranAt, now)).pipe(
+          Effect.asVoid,
+        ),
+      );
+      yield* TestClock.adjust("15 minutes");
+      assert.isTrue(Option.isNone(yield* Queue.poll(ranAt)));
+      // The install ends: due work runs on the next tick, and the wait reads as held,
+      // so a fixed-time run due meanwhile fires late instead of being skipped as missed.
+      const installedMs = yield* Clock.currentTimeMillis;
+      yield* writeState("installed", installedMs);
+      yield* TestClock.adjust("5 seconds");
+      const resumedMs = yield* Queue.take(ranAt);
+      const heldMsBetween = scheduler.heldMsBetween!;
+      const slotMs = startMs + 10 * 60_000;
+      // A slot at 03:57:30 waited from then until the install ended, all of it held.
+      assert.isAtLeast(yield* heldMsBetween(slotMs, resumedMs), installedMs - slotMs);
+    }).pipe(
+      Effect.provide(Scheduler.layer),
+      Effect.provideService(ServiceUpdateHold.ServiceUpdateHold, hold),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("runs due work when an installing state is older than the apply timeout", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scheduler-install-" });
+    const statePath = `${dir}/state.json`;
+    const startMs = Date.parse("2026-11-18T03:47:30.000Z");
+    // The agent died while installing, long ago.
+    const staleMs =
+      startMs - ServiceUpdateHold.AGENT_APPLY_TIMEOUT_MS - ServiceUpdateHold.AGENT_RETRY_MS - 1;
+    yield* TestClock.setTime(startMs);
+    yield* fileSystem.writeFileString(
+      statePath,
+      JSON.stringify({
+        status: "installing",
+        updatedAt: DateTime.formatIso(DateTime.makeUnsafe(staleMs)),
+      }),
+    );
+    const hold = yield* ServiceUpdateHold.makeWithOptions({ agentStatePath: statePath });
+    const ran = yield* Queue.unbounded<number>();
+    yield* Effect.gen(function* () {
+      const scheduler = yield* Scheduler.Scheduler;
+      yield* scheduler.register("due", Queue.offer(ran, 1).pipe(Effect.asVoid));
+      yield* TestClock.adjust("5 seconds");
+      assert.equal(yield* Queue.take(ran), 1);
+    }).pipe(
+      Effect.provide(Scheduler.layer),
+      Effect.provideService(ServiceUpdateHold.ServiceUpdateHold, hold),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

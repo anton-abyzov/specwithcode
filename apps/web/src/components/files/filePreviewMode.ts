@@ -10,6 +10,23 @@ export function resolveFilePreviewPath(path: string | null, cwd: string): string
 
 export const isMarkdownPreviewFile = (path: string): boolean => /\.(?:md|mdx)$/i.test(path);
 
+/** The side panel opens markdown rendered until the person chooses source. */
+export const SIDE_PANEL_MARKDOWN_STARTS_RENDERED = true;
+
+/**
+ * HTML source in the side panel applies only while that file stays open.
+ * Opening a file, including one already viewed as source, starts rendered.
+ */
+export function htmlPanelSourcePath(
+  _current: string | null,
+  action:
+    | { readonly type: "open" }
+    | { readonly type: "preview" }
+    | { readonly type: "source"; readonly path: string },
+): string | null {
+  return action.type === "source" ? action.path : null;
+}
+
 export const PROTECTED_FILE_READ_MESSAGE =
   "This file is protected from viewing inside SpecWithCode. Use another editor to open it.";
 export const PROTECTED_FILE_SAVE_MESSAGE =

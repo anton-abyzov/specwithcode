@@ -46,7 +46,7 @@ function CheckOutput({ output, truncated }: { output: string; truncated: boolean
       {folded || truncated ? (
         <div className="mt-1 flex items-center gap-1 text-2xs text-muted-foreground">
           {folded ? (
-            <Button type="button" variant="ghost-muted" size="xs" onClick={() => setExpanded(true)}>
+            <Button type="button" variant="outline" size="xs" onClick={() => setExpanded(true)}>
               Show all {lines.length} lines
             </Button>
           ) : null}
