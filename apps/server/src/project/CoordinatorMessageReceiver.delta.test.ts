@@ -433,18 +433,27 @@ describe("CoordinatorMessageReceiver checks the admitting device again (round 4 
     ),
   );
 
-  it.effect("drops a message admitted without device facts", () =>
+  it.effect("refuses a message that arrives without device facts", () =>
     run((receiver, harness) =>
       Effect.gen(function* () {
         const caller = callerFrom(LINUX);
-        yield* receiver.deliver(caller, request(), {
-          operate: true,
-          sessionId: `session-${caller.sourceEnvironmentId}`,
-          credentialExpiresAt: 8.64e15,
-        } as Parameters<typeof receiver.deliver>[2]);
-        yield* settle;
+        const refusal = yield* receiver
+          .deliver(caller, request(), {
+            operate: true,
+            sessionId: `session-${caller.sourceEnvironmentId}`,
+            credentialExpiresAt: 8.64e15,
+          } as Parameters<typeof receiver.deliver>[2])
+          .pipe(
+            Effect.match({
+              onFailure: (error) => error,
+              onSuccess: () => undefined,
+            }),
+          );
+        if (refusal === undefined) return yield* Effect.die("The message was admitted.");
+        expect(refusal.message).toContain("no longer approved");
+        namesBoth(refusal, "linux-mini");
         expect(harness.sends).toHaveLength(0);
-        expect((yield* records)[0]!.state).toBe("refused");
+        expect(yield* records).toEqual([]);
       }),
     ),
   );
@@ -485,18 +494,27 @@ describe("CoordinatorMessageReceiver keeps the credential's signed expiry (round
     ),
   );
 
-  it.effect("drops a message admitted without its credential's expiry", () =>
+  it.effect("refuses a message that arrives without its credential's expiry", () =>
     run((receiver, harness) =>
       Effect.gen(function* () {
         const caller = callerFrom(LINUX);
-        yield* receiver.deliver(caller, request(), {
-          operate: true,
-          sessionId: `session-${caller.sourceEnvironmentId}`,
-          device: {},
-        });
-        yield* settle;
+        const refusal = yield* receiver
+          .deliver(caller, request(), {
+            operate: true,
+            sessionId: `session-${caller.sourceEnvironmentId}`,
+            device: {},
+          })
+          .pipe(
+            Effect.match({
+              onFailure: (error) => error,
+              onSuccess: () => undefined,
+            }),
+          );
+        if (refusal === undefined) return yield* Effect.die("The message was admitted.");
+        expect(refusal.message).toContain("sign-in that sent it has ended");
+        namesBoth(refusal, "linux-mini");
         expect(harness.sends).toHaveLength(0);
-        expect((yield* records)[0]!.state).toBe("refused");
+        expect(yield* records).toEqual([]);
       }),
     ),
   );
