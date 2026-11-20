@@ -63,7 +63,7 @@ describe("LimitHandoffCandidateList", () => {
     });
     const buttons = renderer.root.findAllByType("button" as never);
     expect(buttons).toHaveLength(1);
-    expect(buttons[0]!.findByType("span" as never).children).toEqual(["Move to M3"]);
+    expect(buttons[0]!.findByType("span" as never).children).toEqual(["Hand off to M3"]);
     // The order and every machine's verdict live in the Tooltip primitive (hover and
     // keyboard focus), not a native title and not a numbered list.
     expect(buttons[0]!.props.title).toBeUndefined();
@@ -103,6 +103,32 @@ describe("LimitHandoffCandidateList", () => {
     expect(html).toContain("<li>M3: offline</li>");
   });
 
+  it("shows a review that stays once per machine, in its own sentence", () => {
+    const stays = (label: string, review: "no_reviewer" | "update_needed", text: string) =>
+      ({ ...candidate(label, text, false), reason: "refused", review }) as ReturnType<
+        typeof candidate
+      >;
+    const html = renderToStaticMarkup(
+      <LimitHandoffCandidateList
+        result={result({
+          candidates: [
+            stays("Minis", "no_reviewer", "Review stays here: no permitted reviewer on Minis"),
+            stays("M3", "update_needed", "Review stays here: update SpecWithCode on M3"),
+          ],
+          waiting:
+            "Review stays here: no permitted reviewer on Minis. Review stays here: update SpecWithCode on M3.",
+        })}
+        onMove={noop}
+      />,
+    );
+    expect(html).not.toContain("<button");
+    expect(html).toContain("<li>Review stays here: no permitted reviewer on Minis</li>");
+    expect(html).toContain("<li>Review stays here: update SpecWithCode on M3</li>");
+    // Once: the wait text above the list would repeat it, and is left out.
+    expect(html.split("no permitted reviewer on Minis")).toHaveLength(2);
+    expect(html).not.toContain("No other machine");
+  });
+
   it("names the same-machine-first order in the tooltip", () => {
     expect(
       limitHandoffOrderTip(
@@ -116,7 +142,7 @@ describe("LimitHandoffCandidateList", () => {
     );
   });
 
-  it("says when this server can't move threads yet", () => {
+  it("says when this machine can't hand threads off yet", () => {
     const html = renderToStaticMarkup(
       <LimitHandoffCandidateList
         result={result({
@@ -126,8 +152,79 @@ describe("LimitHandoffCandidateList", () => {
         onMove={noop}
       />,
     );
-    expect(html).toContain("This server can&#x27;t move threads to another machine yet.");
+    expect(html).toContain("This machine can&#x27;t hand threads off yet.");
     expect(html).not.toContain("<button");
+  });
+
+  const trackWait = (earliestReset: { machineLabel: string; at: string } | null) =>
+    ({
+      threadId: "t1",
+      track: "daily",
+      machineLabel: "M4",
+      trackOut: true,
+      reason: "Daily track out of tokens on M4",
+      target: null,
+      everyMachineOut: true,
+      earliestReset,
+      recheckAt: earliestReset?.at ?? null,
+      machines: [
+        {
+          environmentId: "env-Minis",
+          machineLabel: "Minis",
+          state: "out",
+          line: "Minis: Same Claude account as M4: adds no usage",
+          resetsAt: null,
+        },
+      ],
+      decidedAt: "2026-10-20T20:00:00.000Z",
+    }) as unknown as NonNullable<LimitHandoffCandidatesResult["track"]>;
+
+  it("says the track is out on every machine and names the next reset (AC-39)", () => {
+    const html = renderToStaticMarkup(
+      <LimitHandoffCandidateList
+        result={result({
+          // A machine a person could still pick by hand does not hide the wait.
+          candidates: [candidate("Minis", "Minis: same Claude account as M4", false)],
+          waiting: "Daily track is out on every machine.",
+          track: trackWait({ machineLabel: "Minis", at: "2026-10-20T22:30:00.000Z" }),
+        })}
+        onMove={noop}
+        formatTime={(at) => `time(${at})`}
+      />,
+    );
+    expect(html).toContain('role="status"');
+    expect(html).toContain("Daily track is out on every machine");
+    expect(html).toContain("Next reset: Minis at time(2026-10-20T22:30:00.000Z)");
+    expect(html).toContain("<li>Minis: Same Claude account as M4: adds no usage</li>");
+    expect(html).not.toContain("<button");
+  });
+
+  it("says the reset is unknown when no machine names one, even with no saved candidates", () => {
+    const html = renderToStaticMarkup(
+      <LimitHandoffCandidateList
+        result={result({ track: trackWait(null) })}
+        onMove={noop}
+        formatTime={(at) => at}
+      />,
+    );
+    expect(html).toContain("Daily track is out on every machine");
+    expect(html).toContain("Reset unknown");
+    expect(html).not.toContain("Next reset");
+  });
+
+  it("keeps the usual verdicts while a machine could not be asked", () => {
+    const html = renderToStaticMarkup(
+      <LimitHandoffCandidateList
+        result={result({
+          candidates: [candidate("M3", "M3: offline", false)],
+          waiting: "No other machine has room: M3: offline.",
+          track: { ...trackWait(null), everyMachineOut: false },
+        })}
+        onMove={noop}
+      />,
+    );
+    expect(html).not.toContain("is out on every machine");
+    expect(html).toContain("No other machine has room");
   });
 
   it("renders nothing without machine targets", () => {

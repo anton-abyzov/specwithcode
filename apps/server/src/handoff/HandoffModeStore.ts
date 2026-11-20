@@ -20,10 +20,19 @@ const encodeDocument = Schema.encodeSync(HandoffDocument);
 
 const storageFailed = (message: string) => new HandoffModeError({ code: "failed", message });
 
+/** Every read and update fails with this while the file is there but cannot be read. */
+const unreadable = () =>
+  storageFailed(
+    "The handoff mode file is there but cannot be read, so this machine cannot tell which threads moved; it changes nothing until the file reads again.",
+  );
+
 /**
  * One JSON file in the state directory. Updates are serialized and written
- * atomically (temporary file, fsync, rename); a file that does not decode
- * reads as empty rather than blocking the server.
+ * atomically (temporary file, fsync, rename). No file reads as the empty
+ * document. A file that is there but does not parse or decode fails every read
+ * and update, and is never written over: it may hold the only record of a
+ * thread another machine continued. Nothing but a document read whole is kept,
+ * so once the file reads again, answers come from it.
  */
 export class HandoffModeStore extends Context.Service<
   HandoffModeStore,
@@ -48,10 +57,12 @@ const make = Effect.gen(function* () {
     const text = yield* fs.readFileString(target);
     const raw = yield* Effect.try({
       try: () => parseJson(text) as unknown,
-      catch: () => storageFailed("The handoff mode file is not valid JSON."),
-    }).pipe(Effect.orElseSucceed(() => null));
-    return Option.getOrElse(decodeDocument(raw), () => EMPTY_HANDOFF_DOCUMENT);
-  }).pipe(Effect.mapError(() => storageFailed("Could not read the handoff mode file.")));
+      catch: unreadable,
+    });
+    const decoded = decodeDocument(raw);
+    if (Option.isNone(decoded)) return yield* Effect.fail(unreadable());
+    return decoded.value;
+  }).pipe(Effect.mapError(unreadable));
 
   const writeFile = (document: HandoffDocument) =>
     Effect.gen(function* () {

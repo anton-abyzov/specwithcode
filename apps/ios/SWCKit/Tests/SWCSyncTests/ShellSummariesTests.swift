@@ -596,6 +596,25 @@ import SWCWire
     #expect(hidden.threadsByProject.values.joined().allSatisfy { $0.ref.threadId != "ask" })
   }
 
+  @Test func everyListedMachinesPercyIsASeat() throws {
+    // Anton, November 17, 2026: the phone showed only m1's Percy, with no way to open m4's.
+    var personal = try TestData.project(id: "aide", title: "Percy", root: "/aide")
+    personal.workspaceSettings?.kind = .personal
+    let m1 = machine("m1", threads: [try TestData.thread(id: "m1-ask", projectId: "aide")], projects: [personal])
+    let m4 = machine("m4", threads: [try TestData.thread(id: "m4-ask", projectId: "aide")], projects: [personal])
+    let stranger = machine("other", threads: [try TestData.thread(id: "their-ask", projectId: "aide")], projects: [personal])
+
+    let output = ShellSummaries.build([m4, m1, stranger], home: ["m1", "m4"])
+    let m1Ref = ProjectRef(environmentId: "m1", projectId: "aide")
+    let m4Ref = ProjectRef(environmentId: "m4", projectId: "aide")
+    #expect(output.aide?.ref == m1Ref)
+    #expect(output.aideSeats.map(\.ref) == [m1Ref, m4Ref])
+    #expect(output.threadsByProject[m4Ref]?.map(\.ref.threadId) == ["m4-ask"])
+    // A machine the phone does not list never offers its Percy.
+    #expect(!output.aideSeats.contains { $0.ref.environmentId == "other" })
+    #expect(!output.recentThreads.contains { $0.ref.threadId == "their-ask" })
+  }
+
   @Test func aideOnAMachineTheDesktopDoesNotListIsStillFound() throws {
     // The #1123 regression: the phone's home is the M4, and Percy lives on the
     // M1, which no listed project links to. M1's own projects stay out.

@@ -58,8 +58,6 @@ export function HandoffCopyStepPanels({
   onFolderChange,
   findingHome,
   mode,
-  onModeChange,
-  canMove,
   chooseFirst,
   onChooseFirstChange,
   selection,
@@ -124,8 +122,6 @@ export function HandoffCopyStepPanels({
   readonly onFolderChange: (value: string) => void;
   readonly findingHome: boolean;
   readonly mode: FolderCopyMode;
-  readonly onModeChange: (mode: FolderCopyMode) => void;
-  readonly canMove: boolean;
   readonly chooseFirst: boolean;
   readonly onChooseFirstChange: (chooseFirst: boolean) => void;
   readonly selection: ReadonlyArray<FolderCopyFileClass>;
@@ -237,8 +233,6 @@ export function HandoffCopyStepPanels({
             findingHome={findingHome}
             projectRelativePath={scope.selected.projectRelativePath}
             mode={mode}
-            onModeChange={onModeChange}
-            canMove={canMove}
             chooseFirst={
               pending && pending.cancelled !== true ? pending.auto !== true : chooseFirst
             }

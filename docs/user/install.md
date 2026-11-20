@@ -345,6 +345,13 @@ sign-in on another computer, or on your phone, does not carry over.
 
 Provider CLIs must be on the server's `PATH`. If SpecWithCode cannot find one, set its
 **Binary path** in provider settings, especially when using a version manager.
+
+A CLI you install after the app started is picked up by itself within a few seconds while
+the app window is in front, with no restart. For a provider that is not installed,
+**Settings → Providers** shows its install command with **Copy** and **Run in terminal**,
+which runs it on that provider's machine. **Check again** also reads your login shell's
+`PATH` again, for an installer that added a new folder to it.
+
 Cursor runs through its SDK as a local agent, so it needs no CLI. Install the
 [Cursor CLI](https://cursor.com/cli) and run `agent login` with the same account only if you
 want Cursor history and limits on **Usage**. Codex connected through ChatGPT and Antigravity can use their

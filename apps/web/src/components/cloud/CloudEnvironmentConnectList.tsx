@@ -24,11 +24,13 @@ import * as Option from "effect/Option";
 import { type ReactNode, useCallback, useEffect, useEffectEvent, useState } from "react";
 
 import { environmentCatalog } from "~/connection/catalog";
+import { useTx } from "~/i18n";
 import { cn } from "~/lib/utils";
 import { relayEnvironmentDiscovery } from "~/state/relay";
 import { useRelayEnvironmentDiscovery } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
+import { InlineDeviceApprovalCode } from "../devices/inlineApprovalCode";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "../settings/itemRows";
 import { Checkbox } from "../ui/checkbox";
@@ -37,6 +39,7 @@ import { Skeleton } from "../ui/skeleton";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { presentSavedCloudEnvironmentConnection } from "./cloudEnvironmentConnectionPresentation";
+import { anotherRouteTitle, connectRouteDescription } from "./routeAddedToasts";
 
 const EMPTY_DISCOVERY_REFRESH_INTERVAL_MS = 5_000;
 
@@ -98,6 +101,7 @@ export function CloudEnvironmentConnectRows({
     readonly onChange: (environmentId: EnvironmentId, selected: boolean) => void;
   };
 }) {
+  const tx = useTx();
   const policyLabel = useManagedTunnelPolicyLabel();
   const environmentsState = useRelayEnvironmentDiscovery();
   const registerEnvironment = useAtomCommand(environmentCatalog.register, {
@@ -130,7 +134,8 @@ export function CloudEnvironmentConnectRows({
       .filter((environment) => environment.relayManaged)
       .map((environment) => [environment.environmentId, environment]),
   );
-  // Saved over another route only: Studio Connect would be an added fallback.
+  // Saved over another route only: Connect would be one more route, ranked
+  // ahead of LAN, Tailscale and SSH (`insertRoute`).
   const savedWithoutRelay = new Set(
     savedEnvironments
       .filter((environment) => !environment.relayManaged)
@@ -167,10 +172,10 @@ export function CloudEnvironmentConnectRows({
       toastManager.add({
         type: "success",
         title: savedWithoutRelay.has(environment.environmentId)
-          ? "SpecWithCode Connect route added"
+          ? anotherRouteTitle(environment.label)
           : "Machine added",
         description: savedWithoutRelay.has(environment.environmentId)
-          ? `${environment.label} falls back to SpecWithCode Connect when its other routes are unreachable.`
+          ? connectRouteDescription(environment.label)
           : `Connecting to ${environment.label} through SpecWithCode Connect.`,
       });
       return true;
@@ -367,72 +372,89 @@ export function CloudEnvironmentConnectRows({
           : availability === "checking"
             ? "bg-warning"
             : "bg-muted-foreground/35";
+    // The machine answered with a code for this device to show (1327): the row
+    // says it waits for approval and shows the code, never "Reconnecting…" (1416).
+    const approvalCode = unsupported ? undefined : savedEnvironment?.connection.deviceApprovalCode;
+    const waitingLabel = approvalCode === undefined ? null : tx("Waiting for approval");
+    const approvalBlock =
+      approvalCode === undefined ? null : (
+        <div className="mt-3">
+          <InlineDeviceApprovalCode
+            environmentId={environment.environmentId}
+            machine={environment.label}
+            code={approvalCode}
+          />
+        </div>
+      );
     const notAdded = savedWithoutRelay.has(environment.environmentId)
       ? "Saved without SpecWithCode Connect"
       : "Not added";
     const statusText =
       unsupported && !savedEnvironment
         ? `SpecWithCode Connect · ${notAdded} · Client not supported`
-        : offlineReason !== null
-          ? offlineReason
-          : savedConnection
-            ? savedConnection.statusText
-            : availability === "online"
-              ? `SpecWithCode Connect · ${notAdded} · Online`
-              : availability === "offline"
-                ? `SpecWithCode Connect · ${notAdded} · Offline`
-                : availability === "checking"
-                  ? `SpecWithCode Connect · ${notAdded} · Checking…`
-                  : (Option.getOrNull(error)?.message ??
-                    `SpecWithCode Connect · ${notAdded} · Status unavailable`);
+        : waitingLabel !== null
+          ? waitingLabel
+          : offlineReason !== null
+            ? offlineReason
+            : savedConnection
+              ? savedConnection.statusText
+              : availability === "online"
+                ? `SpecWithCode Connect · ${notAdded} · Online`
+                : availability === "offline"
+                  ? `SpecWithCode Connect · ${notAdded} · Offline`
+                  : availability === "checking"
+                    ? `SpecWithCode Connect · ${notAdded} · Checking…`
+                    : (Option.getOrNull(error)?.message ??
+                      `SpecWithCode Connect · ${notAdded} · Status unavailable`);
     if (selection) {
       return (
-        <label
-          key={environment.environmentId}
-          className="flex cursor-pointer items-center gap-3 rounded-lg border border-border bg-background px-3 py-2.5 has-disabled:cursor-default"
-        >
-          <Checkbox
-            checked={!unsupported && selection.selectedIds.has(environment.environmentId)}
-            disabled={unsupported || connectingEnvironmentIds.has(environment.environmentId)}
-            onCheckedChange={async (checked) => {
-              if (unsupported) return;
-              selection.onChange(environment.environmentId, checked);
-              if (checked && !savedEnvironment) {
-                const connected = await connectEnvironment(environment);
-                if (!connected) selection.onChange(environment.environmentId, false);
-              }
-            }}
-          />
-          <EnvironmentMachineIcon
-            aria-hidden
-            kind={machineKind}
-            className="size-4 shrink-0 text-muted-foreground"
-          />
-          <span className="min-w-0 flex-1 truncate text-sm font-medium">{environment.label}</span>
-          <Tooltip>
-            <TooltipTrigger
-              render={<span tabIndex={0} />}
-              className={cn(
-                "max-w-[45%] shrink-0 truncate text-xs",
-                savedConnection?.tone === "error"
-                  ? "text-destructive-foreground"
-                  : "text-muted-foreground",
-              )}
-            >
-              {connectingEnvironmentIds.has(environment.environmentId)
-                ? "Connecting…"
-                : (savedConnection?.buttonLabel ??
-                  (availability === "online"
-                    ? "Available"
-                    : availability === "offline"
-                      ? "Offline"
-                      : availability === "error"
-                        ? "Unavailable"
-                        : "Checking…"))}
-            </TooltipTrigger>
-            <TooltipPopup>{unsupportedDetail ?? statusText}</TooltipPopup>
-          </Tooltip>
-        </label>
+        <div key={environment.environmentId}>
+          <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-border bg-background px-3 py-2.5 has-disabled:cursor-default">
+            <Checkbox
+              checked={!unsupported && selection.selectedIds.has(environment.environmentId)}
+              disabled={unsupported || connectingEnvironmentIds.has(environment.environmentId)}
+              onCheckedChange={async (checked) => {
+                if (unsupported) return;
+                selection.onChange(environment.environmentId, checked);
+                if (checked && !savedEnvironment) {
+                  const connected = await connectEnvironment(environment);
+                  if (!connected) selection.onChange(environment.environmentId, false);
+                }
+              }}
+            />
+            <EnvironmentMachineIcon
+              aria-hidden
+              kind={machineKind}
+              className="size-4 shrink-0 text-muted-foreground"
+            />
+            <span className="min-w-0 flex-1 truncate text-sm font-medium">{environment.label}</span>
+            <Tooltip>
+              <TooltipTrigger
+                render={<span tabIndex={0} />}
+                className={cn(
+                  "max-w-[45%] shrink-0 truncate text-xs",
+                  savedConnection?.tone === "error"
+                    ? "text-destructive-foreground"
+                    : "text-muted-foreground",
+                )}
+              >
+                {connectingEnvironmentIds.has(environment.environmentId)
+                  ? "Connecting…"
+                  : (waitingLabel ??
+                    savedConnection?.buttonLabel ??
+                    (availability === "online"
+                      ? "Available"
+                      : availability === "offline"
+                        ? "Offline"
+                        : availability === "error"
+                          ? "Unavailable"
+                          : "Checking…"))}
+              </TooltipTrigger>
+              <TooltipPopup>{unsupportedDetail ?? statusText}</TooltipPopup>
+            </Tooltip>
+          </label>
+          {approvalBlock}
+        </div>
       );
     }
     return (
@@ -475,7 +497,9 @@ export function CloudEnvironmentConnectRows({
               className={cn(
                 "mt-1 truncate text-xs",
                 savedConnection?.tone === "error" ||
-                  (savedConnection?.tone === "connecting" && savedEnvironment?.connection.error) ||
+                  (savedConnection?.tone === "connecting" &&
+                    approvalCode === undefined &&
+                    savedEnvironment?.connection.error) ||
                   (savedConnection === null && availability === "error")
                   ? "text-destructive-foreground"
                   : "text-muted-foreground",
@@ -495,7 +519,7 @@ export function CloudEnvironmentConnectRows({
             </Tooltip>
           ) : savedConnection ? (
             <Button size="sm" variant="outline" disabled>
-              {savedConnection.buttonLabel}
+              {waitingLabel ?? savedConnection.buttonLabel}
             </Button>
           ) : (
             <Button
@@ -511,6 +535,7 @@ export function CloudEnvironmentConnectRows({
             </Button>
           )}
         </div>
+        {approvalBlock}
       </div>
     );
   });

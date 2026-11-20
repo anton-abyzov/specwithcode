@@ -241,6 +241,8 @@ public struct MachineHTTP: Sendable {
     let code: String?
     let reason: String?
     let teamRulesMessage: String?
+    let refusal: String?
+    let approvalCode: String?
   }
 
   func makeRequest(_ base: URL, _ path: String, timeout: Duration) throws -> URLRequest {
@@ -274,6 +276,14 @@ public struct MachineHTTP: Sendable {
     }
     guard (200..<300).contains(response.statusCode) else {
       let body = try? JSONDecoder().decode(ErrorBody.self, from: data)
+      // The machine waits for its owner to type this phone's code (1327).
+      if body?.refusal == "device_not_approved" {
+        let code = body?.approvalCode ?? ""
+        throw TransportError.awaitingApproval(
+          code: code,
+          message: body?.teamRulesMessage ?? "Open SpecWithCode on the computer and type this code: \(code)"
+        )
+      }
       // Team rules said no: the credential is fine, so this is never "pair again".
       if let message = body?.teamRulesMessage, !message.isEmpty {
         throw TransportError.teamRules(message: message)

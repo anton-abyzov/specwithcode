@@ -9,16 +9,18 @@ import type {
   MachineHandoffSourceChanges,
   ProjectId,
 } from "@specweave-studio/contracts";
+import { useTx } from "../../i18n";
 import { retentionMovedText } from "./handoffRetention";
+import { sayLinkReason } from "../../studio/linkRefusals";
 import type { CopyLinkOutcome } from "../../studio/projectLink";
 import { copiedProjectFolder, copyDurationText, formatBytes } from "../../studio/folderCopy";
 import { statusProgressView } from "../../studio/copyProgress";
-import { CopyPhaseTrack } from "./CopyProgressPanel";
+import { CopyPhaseTrack, CopyRouteLine } from "./CopyProgressPanel";
 import { EllipsisIcon } from "lucide-react";
 import { MachineReadinessChecklist } from "../settings/MachineReadinessChecklist";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
-import { checkLabel, copyProblem } from "./handoffCopyNotices";
+import { checkLabel, copyProblem, copyProblemWords } from "./handoffCopyNotices";
 import { CopyUndoPreview } from "./HandoffCopyPreview";
 import { ProjectLinkDialog } from "./ProjectLinkDialog";
 import { useProjectMoveDialog } from "./ProjectMoveOptions";
@@ -75,7 +77,7 @@ export function HandoffCopyDone({
   readonly transferBusy?: TransferBusy | null;
   /** The person chose Move anyway: context transfers with the differences listed. */
   readonly movingAnyway?: boolean;
-  /** Copy again is offered; its advice is never shown without the button. */
+  /** Sync again is offered; its advice is never shown without the button. */
   readonly copyAgain?: boolean;
   /** The source's list of paths that changed after copying; the footer holds the choices. */
   readonly sourceReview?: MachineHandoffSourceChanges | null;
@@ -93,9 +95,16 @@ export function HandoffCopyDone({
   readonly onLinkDialogClose: () => void;
   readonly onLinked: () => void;
 }) {
-  const problem = copyProblem(copy, sourceLabel);
+  const tx = useTx();
+  // Said in the reader's language: the clause is this window's own.
+  const problemWords = copyProblemWords(copy, sourceLabel);
+  const problem = problemWords ? tx(problemWords.text, problemWords.values) : null;
   // Inside the dialog its title says it; standalone, the panel does.
-  const titled = useProjectMoveDialog() !== null;
+  const dialog = useProjectMoveDialog();
+  const titled = dialog !== null;
+  // Where the coordinator is, as the dialog's header named it; the other project's when not linked to it.
+  const other = dialog?.send?.otherProject ?? null;
+  const main = other ? other.main : (dialog?.send?.mainLabel ?? null);
   const moved = mode === "copy-and-move" && contextTransferred;
   const duration = copyDurationText(copy);
   const finished = statusProgressView(copy, sourceLabel, targetLabel);
@@ -109,6 +118,7 @@ export function HandoffCopyDone({
       {finished && (
         <CopyPhaseTrack view={finished} sourceLabel={sourceLabel} targetLabel={targetLabel} />
       )}
+      <CopyRouteLine view={finished} />
       {!titled && (
         <p className="text-base font-medium wrap-anywhere" data-slot="copy-done-title">
           {project.title} is on {targetLabel}
@@ -117,25 +127,42 @@ export function HandoffCopyDone({
       {problem && (
         <CopyProblems copy={copy} sourceLabel={sourceLabel}>
           {movingAnyway
-            ? `The files are on ${targetLabel}, but ${problem}. You chose Hand off anyway, so the coordinator ${contextTransferred ? "moved" : "moves"} with these differences.`
+            ? tx(
+                contextTransferred
+                  ? "The files are on {target}, but {problem}. You chose Continue on {target} anyway, so the coordinator moved with these differences."
+                  : "The files are on {target}, but {problem}. You chose Continue on {target} anyway, so the coordinator moves with these differences.",
+                { target: targetLabel, problem },
+              )
             : copyAgain
-              ? `The files are on ${targetLabel}, but ${problem}. Copy again: it compares first and moves only what changed.`
-              : `The files are on ${targetLabel}, but ${problem}.`}
+              ? tx(
+                  "The files are on {target}, but {problem}. Sync again: it compares first and moves only what changed.",
+                  { target: targetLabel, problem },
+                )
+              : tx("The files are on {target}, but {problem}.", { target: targetLabel, problem })}
         </CopyProblems>
       )}
       <div className="space-y-1" data-slot="copy-done-body">
         <p role="status">
           {moved
-            ? `The coordinator now runs on ${targetLabel}.`
+            ? tx("The coordinator continues on {target}.", { target: targetLabel })
             : mode === "copy-and-move"
               ? keptHere
-                ? `The coordinator stays on ${sourceLabel}. The copied files stay on ${targetLabel}.`
+                ? tx("The coordinator stays on {source}. The copied files stay on {target}.", {
+                    source: sourceLabel,
+                    target: targetLabel,
+                  })
                 : sourceReview && copyAgain
-                  ? "The coordinator stays here until you choose below."
+                  ? tx("The coordinator stays here until you choose below.")
                   : copyAgain
-                    ? "The coordinator stays here until you copy again."
-                    : "Files are copied. Hand off the coordinator once work here is idle."
-              : `${targetLabel} has a copy. The coordinator stays here.`}
+                    ? tx("The coordinator stays here until you sync again.")
+                    : tx("Files are copied. Hand off the coordinator once work here is idle.")
+              : main
+                ? tx("{project} is on {machine}. The coordinator stays on {main}.", {
+                    project: project.title,
+                    machine: targetLabel,
+                    main,
+                  })
+                : `${project.title} is on ${targetLabel}. The coordinator stays here.`}
         </p>
         <p className="text-xs text-muted-foreground wrap-anywhere">
           In{" "}
@@ -194,10 +221,23 @@ export function HandoffCopyDone({
           <p className="text-xs text-warning-foreground">{secretsNote}</p>
           {onSendSecrets && (
             <Button type="button" size="xs" variant="outline" onClick={onSendSecrets}>
-              Copy again with secrets
+              {tx("Sync again with secrets")}
             </Button>
           )}
         </div>
+      )}
+      {mode === "copy-only" && other && (
+        <p className="text-muted-foreground text-xs wrap-anywhere" data-slot="copy-not-linked">
+          {other.main
+            ? tx(
+                "{machine} has this repository as a separate project whose coordinator is on {main}. Nothing was linked.",
+                { machine: targetLabel, main: other.main, source: sourceLabel },
+              )
+            : tx("{machine} has this repository as a separate project. Nothing was linked.", {
+                machine: targetLabel,
+                source: sourceLabel,
+              })}
+        </p>
       )}
       {mode === "copy-only" && link && (
         <p
@@ -206,10 +246,15 @@ export function HandoffCopyDone({
           data-slot="copy-link"
         >
           {link.status === "linking"
-            ? `Linking the copy on ${targetLabel} to ${sourceLabel}…`
+            ? tx("Linking {target}…", { target: targetLabel })
             : link.status === "linked"
-              ? `Linked: ${sourceLabel} can send work to the copy on ${targetLabel}.`
-              : `Not linked yet. ${link.reason}`}
+              ? tx("Linked: {source} can start work on {target}.", {
+                  source: sourceLabel,
+                  target: targetLabel,
+                })
+              : tx("Not linked yet. {reason}", {
+                  reason: link.words ? sayLinkReason(link.words, tx) : link.reason,
+                })}
         </p>
       )}
       {copy.secrets && copy.secrets.length > 0 && (
@@ -419,10 +464,14 @@ function CopyUndoButton({
   );
 }
 
-/** A held move's buttons: Copy again leads; Move anyway commits and moves as it is. */
+/**
+ * A held move's buttons: Sync again leads; "Continue on {target} anyway" commits and moves
+ * as it is.
+ */
 function HandoffCopyHeldActions({
   copy,
   busy,
+  targetLabel,
   undoPreview,
   onCopyAgain,
   onMoveAnyway,
@@ -430,18 +479,20 @@ function HandoffCopyHeldActions({
 }: {
   readonly copy: FolderCopyStatus;
   readonly busy: boolean;
+  readonly targetLabel: string;
   readonly undoPreview: FolderCopyUndoResult | null;
   readonly onCopyAgain: () => void;
   readonly onMoveAnyway: () => void;
   readonly onUndo: (force: boolean, previewOnly: boolean) => void;
 }) {
+  const tx = useTx();
   return (
     <>
       <Button disabled={busy} onClick={onCopyAgain}>
-        Copy again
+        {tx("Sync again")}
       </Button>
       <Button variant="outline" disabled={busy} onClick={onMoveAnyway}>
-        Hand off anyway
+        {tx("Continue on {target} anyway, on its older commits", { target: targetLabel })}
       </Button>
       {copy.backupsDiscardedAt === undefined && (
         <CopyUndoButton busy={busy} undoPreview={undoPreview} onUndo={onUndo} />
@@ -479,6 +530,7 @@ export function HandoffCopyFailed({
       {stopped?.outcome === "failed" && (
         <CopyPhaseTrack view={stopped} sourceLabel={sourceLabel} targetLabel={targetLabel} />
       )}
+      <CopyRouteLine view={stopped} />
       <p role="alert" className="wrap-anywhere text-destructive-foreground">
         {copy.state === "applied"
           ? `The files are on ${targetLabel}, but the coordinator did not start there.`
@@ -503,6 +555,7 @@ export function HandoffCopyFailed({
 export function HandoffCopyFailedActions({
   copy,
   busy,
+  targetLabel,
   failedBeforeApply,
   undoPreview,
   onCopyAgain,
@@ -514,6 +567,8 @@ export function HandoffCopyFailedActions({
 }: {
   readonly copy: FolderCopyStatus;
   readonly busy: boolean;
+  /** The destination's name, for the held move's "Continue on {target} anyway". */
+  readonly targetLabel: string;
   readonly failedBeforeApply: boolean;
   readonly undoPreview: FolderCopyUndoResult | null;
   readonly onCopyAgain: () => void;
@@ -542,6 +597,7 @@ export function HandoffCopyFailedActions({
       <HandoffCopyHeldActions
         copy={copy}
         busy={busy}
+        targetLabel={targetLabel}
         undoPreview={undoPreview}
         onCopyAgain={onCopyAgain}
         onMoveAnyway={onRetry}
@@ -563,10 +619,11 @@ export function HandoffCopyFailedActions({
 }
 
 /**
- * The finished copy's buttons: Open on {machine} leads, unless Copy again (files changed
+ * The finished copy's buttons: Open on {machine} leads, unless Sync again (files changed
  * while copying or a check failed) or moving the coordinator comes first. A copy-only copy
- * offers Copy changes again, which leads to the form. Undo… sits left; the ⋯ menu holds
- * the rest.
+ * offers Sync again, which leads to the form, and "Continue the coordinator on {machine}" where the
+ * copy is linked and is not Main: the page's own switch, one click, confirmed there. Undo…
+ * sits left; the ⋯ menu holds the rest.
  */
 export function HandoffCopyDoneActions({
   copy,
@@ -591,7 +648,7 @@ export function HandoffCopyDoneActions({
   readonly mode: FolderCopyMode;
   readonly busy: boolean;
   readonly targetLabel: string;
-  /** Copy again is the answer: files changed while copying or a check failed. */
+  /** Sync again is the answer: files changed while copying or a check failed. */
   readonly copyAgain: boolean;
   /** A pointer is left to copy again from. */
   readonly canCopyAgain: boolean;
@@ -610,6 +667,7 @@ export function HandoffCopyDoneActions({
   readonly onLink: () => void;
   readonly onStartNew: () => void;
 }) {
+  const tx = useTx();
   const transfer = canTransfer && !copyAgain && onTransfer !== null;
   // A finished copy's next copy is one visible step away, and leads to the form.
   const changes = mode === "copy-only" && !copyAgain;
@@ -619,12 +677,12 @@ export function HandoffCopyDoneActions({
     <>
       {copyAgain && (
         <Button disabled={busy} onClick={onCopyAgain}>
-          Copy again
+          {tx("Sync again")}
         </Button>
       )}
       {transfer && (
         <Button disabled={busy} onClick={onTransfer}>
-          Hand off coordinator now
+          {tx("Continue the coordinator on {machine}", { machine: targetLabel })}
         </Button>
       )}
       <Button variant={copyAgain || transfer ? "outline" : "default"} onClick={onOpen}>
@@ -632,7 +690,7 @@ export function HandoffCopyDoneActions({
       </Button>
       {changes && (
         <Button variant="outline" disabled={busy || startNewLocked} onClick={onStartNew}>
-          Copy changes again
+          {tx("Sync again…")}
         </Button>
       )}
       {(again || review || !changes) && (
@@ -648,13 +706,13 @@ export function HandoffCopyDoneActions({
             {again && (
               // Copying again releases the source like a new copy, so the same lock holds it.
               <MenuItem disabled={startNewLocked} onClick={onCopyAgain}>
-                Copy again
+                {tx("Run the same sync again")}
               </MenuItem>
             )}
             {review && <MenuItem onClick={onLink}>Link…</MenuItem>}
             {!changes && (
               <MenuItem disabled={startNewLocked} onClick={onStartNew}>
-                Start a new copy
+                {tx("Add to another machine")}
               </MenuItem>
             )}
           </MenuPopup>

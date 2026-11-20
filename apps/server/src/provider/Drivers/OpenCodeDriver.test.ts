@@ -129,6 +129,42 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       yield* Fiber.join(capabilities);
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
+
+  it.effect("names the missing command on a local instance that cannot find it", () =>
+    Effect.gen(function* () {
+      const dataHome = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-opencode-absent-")),
+        ),
+        (folder) => Effect.sync(() => NodeFS.rmSync(folder, { recursive: true, force: true })),
+      );
+      const binaryPath = NodePath.join(dataHome, "opencode");
+      const instance = yield* OpenCodeDriver.create({
+        instanceId: ProviderInstanceId.make("opencode-absent"),
+        displayName: undefined,
+        // Its own data folder, so the usage read never opens the real sign-in file.
+        environment: [{ name: "XDG_DATA_HOME", value: dataHome, sensitive: false }],
+        enabled: true,
+        config: { ...OpenCodeDriver.defaultConfig(), binaryPath },
+      }).pipe(Effect.provideService(HttpClient.HttpClient, noHttp));
+      const checked = yield* instance.snapshot.refresh;
+      assert.deepInclude(checked, { installed: false, status: "error" });
+      // The path does not exist, so the probe finds nothing there.
+      assert.deepStrictEqual(checked.cli, { state: "missing", command: binaryPath });
+    }).pipe(
+      Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, {
+        ...openCode2Runtime,
+        runOpenCodeCommand: ({ binaryPath }: { readonly binaryPath: string }) =>
+          Effect.fail(
+            new OpenCodeRuntime.OpenCodeRuntimeError({
+              operation: "runOpenCodeCommand",
+              detail: `spawn ${binaryPath} ENOENT`,
+            }),
+          ),
+      } as unknown as OpenCodeRuntime.OpenCodeRuntimeShape),
+      Effect.scoped,
+    ),
+  );
 });
 
 // npm links `<prefix>/bin/opencode` into the package that installed it:

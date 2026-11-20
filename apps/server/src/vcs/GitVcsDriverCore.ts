@@ -4439,13 +4439,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       isMissingWorktreeStderr(result.stderr) &&
       !(yield* fileSystem.exists(input.path).pipe(Effect.orElseSucceed(() => false)));
     if (alreadyGone) {
-      yield* pruneWorktrees({ cwd: input.cwd });
+      // Unattended cleanup never prunes: that would also drop the registrations
+      // of worktrees on a drive that is not mounted right now.
+      if (input.keepLeftBehind !== true) yield* pruneWorktrees({ cwd: input.cwd });
       return;
     }
     // Git drops the registration even when it could not delete every file (one
     // was still being written), which leaves a folder nothing points to and no
-    // later removal can reach. The removal was asked for, so finish it.
+    // later removal can reach. The removal was asked for, so finish it, unless
+    // the caller is unattended cleanup: what Git left was never checked.
     if (
+      input.keepLeftBehind !== true &&
       wasRegistered &&
       !isSameOrInside(input.cwd, input.path, platform) &&
       (yield* registered) === "no" &&

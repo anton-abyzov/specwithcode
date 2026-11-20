@@ -64,8 +64,11 @@ export function ImportStep({
   setIsImporting,
   onBack,
   onDone,
+  onPickedChange,
 }: {
   readonly scans: ReturnType<typeof useProjectScans>;
+  /** Whether any folder is picked to become a project, for the step's picture. */
+  readonly onPickedChange?: ((picked: boolean) => void) | undefined;
   readonly isImporting: boolean;
   readonly setIsImporting: (value: boolean) => void;
   readonly onBack?: (() => void) | undefined;
@@ -82,6 +85,7 @@ export function ImportStep({
   const nickname = useMachineNicknames();
   const writableEnvironments = useEnvironmentsWithScope(scans, AuthOrchestrationOperateScope);
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
+  const createNewProject = useAtomCommand(projectEnvironment.createNew, { reportFailure: false });
   const importThreads = useAtomCommand(agentSessionImport, { reportFailure: false });
   const projects = useProjects();
   const [selectedPaths, setSelectedPaths] = useState<ReadonlySet<string> | null>(null);
@@ -173,6 +177,15 @@ export function ImportStep({
     } satisfies (typeof candidates)[number];
   }, [candidates, folder, folderEnvironmentId]);
   const selected = folderCandidate === null ? found : [...found, folderCandidate];
+  // 1396 AC-22: an empty folder picked here starts with SpecWeave as its box
+  // stands; undefined while there is no box (a folder with files), null while
+  // the server is still saying whether the folder is empty.
+  const [folderSpecweave, setFolderSpecweave] = useState<boolean | null | undefined>(undefined);
+  const folderSetsUpSpecweave =
+    environments.find((environment) => environment.environmentId === folderEnvironmentId)
+      ?.serverConfig?.specweaveSetUp === true;
+  const picked = selected.length > 0;
+  useEffect(() => onPickedChange?.(picked), [picked, onPickedChange]);
   const knownProjects = useMemo(
     () =>
       projects
@@ -237,6 +250,9 @@ export function ImportStep({
         : 0;
     let importedThreadCount = 0;
     let skippedThreadCount = 0;
+    // Why a picked folder's first commit was not made (no Git name or email,
+    // say): the project stands, and the person is told with the import's notice.
+    let commitNotice = "";
     const refreshEnvironments = new Set<EnvironmentId>();
     for (const candidate of selection) {
       const { environmentId } = candidate;
@@ -252,6 +268,45 @@ export function ImportStep({
       }
       if (importedProjects.has(candidate.key)) continue;
       let projectId = resolveOnboardingProjectId(readProjects(), environmentId, candidate);
+      // A folder picked here, not one setup found, goes through New project's
+      // rules: an empty folder starts as a Git repository with a first commit,
+      // and a folder with files is used as it is. The title is the folder's own
+      // name, so the server always takes the picked folder, never a new child.
+      if (
+        projectId === null &&
+        candidate.key === folderCandidate?.key &&
+        environments.find((environment) => environment.environmentId === environmentId)
+          ?.serverConfig?.specweaveSetUp === true
+      ) {
+        const created = await createNewProject({
+          environmentId,
+          input: {
+            name: candidate.title,
+            kind: "code",
+            parentPath: candidate.path,
+            // Decided again under the create's lock: files that appeared since get none.
+            ...(typeof folderSpecweave === "boolean"
+              ? { specweave: folderSpecweave, specweaveOnlyIfNew: true }
+              : {}),
+          },
+        });
+        if (
+          importGeneration !== importGenerationRef.current ||
+          importedProjects !== importedProjectsRef.current
+        ) {
+          return;
+        }
+        // The server may have used another folder only if the title and the
+        // folder disagree; then it is not this candidate, so fall back below.
+        if (created._tag === "Success" && sameFolder(created.value.workspaceRoot, candidate.path)) {
+          projectId = created.value.projectId;
+          if (created.value.commitError) commitNotice = created.value.commitError;
+        } else if (created._tag !== "Success" && isAtomCommandInterrupted(created)) {
+          continue;
+        }
+        // Any other failure (a folder New project refuses, say) falls back to
+        // adding the folder as it is, as first-run setup always did.
+      }
       if (projectId === null) {
         let attempt = projectAttempts.get(candidate.key);
         if (attempt === undefined) {
@@ -344,6 +399,11 @@ export function ImportStep({
         importWarningRef.current = t("wizard.import.historyFailed");
       }
     }
+    if (commitNotice) {
+      importWarningRef.current = [importWarningRef.current, commitNotice]
+        .filter(Boolean)
+        .join(t("common.sentenceSpace"));
+    }
     finishAfterImport();
   };
 
@@ -361,7 +421,7 @@ export function ImportStep({
         </div>
         <WizardStepFooter
           back={onBack ? { onClick: onBack } : undefined}
-          skip={{ label: t("wizard.import.skip"), onClick: () => void onDone() }}
+          skip={{ label: t("wizard.import.skip"), onClick: () => void onDone(), neutral: true }}
         />
       </div>
     );
@@ -458,6 +518,8 @@ export function ImportStep({
           projects={knownProjects}
           defaultOpen={candidates.length === 0}
           disabled={isImporting}
+          specweaveSetUp={folderSetsUpSpecweave}
+          onStartWithSpecweave={setFolderSpecweave}
           folder={folder}
           onFolderChange={(next) => {
             setFolder(next);
@@ -486,6 +548,7 @@ export function ImportStep({
           label: t("wizard.import.skip"),
           onClick: finishAfterImport,
           disabled: isImporting,
+          neutral: true,
         }}
         primary={{
           label: isImporting
@@ -494,7 +557,10 @@ export function ImportStep({
               ? tx("Add {folder}", { folder: folderCandidate.title })
               : t("wizard.import.importButton", { count: selected.length }),
           onClick: () => void runImport(selected),
-          disabled: !canImport || selected.length === 0,
+          disabled:
+            !canImport ||
+            selected.length === 0 ||
+            (folderCandidate !== null && folderSpecweave === null),
           busy: isImporting,
         }}
       />

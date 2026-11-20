@@ -37,13 +37,13 @@ const here = (extra: Partial<StudioWorkGrant> = {}): MachineWorkHere => ({
 
 describe("incomingLine", () => {
   const line = (workHere: MachineWorkHere | null, durations = true) =>
-    incomingLine({ there: "m4", workHere, durations, canSetUp: true });
+    incomingLine({ there: "m4", here: "linux-mini", workHere, durations, canSetUp: true });
 
   it("says one sentence with its time limit and Stop", () => {
     const endsAt = "2026-11-20T15:00:00.000Z";
     expect(line(here({ endsAt }))).toEqual({
       allowed: true,
-      sentence: "m4 can start work here",
+      sentence: "m4 can start work on linux-mini",
       facts: ["All projects", `until ${day(endsAt)}`],
       note: null,
       action: "stop",
@@ -57,7 +57,7 @@ describe("incomingLine", () => {
     const endsAt = "2026-11-20T15:00:00.000Z";
     expect(line(here({ status: "revoked", ended: true, endsAt, revokedAt: endsAt }))).toEqual({
       allowed: false,
-      sentence: "m4 can't start work here",
+      sentence: "m4 can't start work on linux-mini",
       facts: [],
       note: `Time limit ended ${day(endsAt)}.`,
       action: "allow",
@@ -76,7 +76,7 @@ describe("incomingLine", () => {
 
   it("offers the first-time setup for a machine never allowed", () => {
     expect(line(null)).toMatchObject({
-      sentence: "m4 can't start work here",
+      sentence: "m4 can't start work on linux-mini",
       facts: ["Not set up"],
       action: "allow-setup",
     });
@@ -101,10 +101,13 @@ describe("outgoingLine", () => {
     } as MachineWorkerGrant["workers"],
   });
 
+  const line = (workers: MachineWorkerGrant | null, canSetUp: boolean) =>
+    outgoingLine({ there: "m4", here: "linux-mini", workers, canSetUp });
+
   it("names the access this machine has there and offers Change…", () => {
-    expect(outgoingLine({ there: "m4", workers: workers("allowed"), canSetUp: true })).toEqual({
+    expect(line(workers("allowed"), true)).toEqual({
       allowed: true,
-      sentence: "This machine can start work on m4",
+      sentence: "linux-mini can start work on m4",
       facts: ["Full access"],
       note: null,
       action: "change",
@@ -112,13 +115,40 @@ describe("outgoingLine", () => {
   });
 
   it("says Not set up with Set up…, and who stopped it", () => {
-    expect(outgoingLine({ there: "m4", workers: null, canSetUp: true })).toMatchObject({
-      sentence: "This machine can't start work on m4",
+    expect(line(null, true)).toMatchObject({
+      sentence: "linux-mini can't start work on m4",
       facts: ["Not set up"],
       action: "set-up",
     });
-    expect(
-      outgoingLine({ there: "m4", workers: workers("not-allowed"), canSetUp: false }),
-    ).toMatchObject({ note: "m4 stopped it.", action: null });
+    expect(line(workers("not-allowed"), false)).toMatchObject({
+      note: "m4 stopped it.",
+      action: null,
+    });
+  });
+
+  it("says where to allow it, with no button, when this app cannot set it up", () => {
+    expect(line(null, false)).toEqual({
+      allowed: false,
+      sentence: "linux-mini can't start work on m4",
+      facts: ["Allow it on m4 in Settings > Machines"],
+      note: null,
+      action: null,
+    });
+  });
+
+  it('never calls either machine "this machine" or "main"', () => {
+    const sentences = [
+      line(null, true),
+      line(null, false),
+      line(workers("allowed"), true),
+      incomingLine({
+        there: "m4",
+        here: "linux-mini",
+        workHere: null,
+        durations: true,
+        canSetUp: true,
+      }),
+    ].flatMap((entry) => [entry.sentence, ...entry.facts]);
+    for (const text of sentences) expect(text).not.toMatch(/this machine|main/iu);
   });
 });

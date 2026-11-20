@@ -228,6 +228,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
       <MenuPopup
         align="start"
         side="top"
+        width="lg"
         className={previousWorktreeLabel ? "w-[min(21rem,calc(100vw-2rem))]" : undefined}
         {...composerFloatingLayerProps}
       >

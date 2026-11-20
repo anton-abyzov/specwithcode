@@ -15,6 +15,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as ProcessRunner from "../processRunner.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import { findVskillBinary } from "./ProjectSkillsActionsCommon.ts";
+import { readVskillApiToken } from "./vskillApiToken.ts";
 import {
   SkillPublishingAdapter,
   SkillPublishingError,
@@ -35,31 +36,13 @@ const make = Effect.gen(function* () {
   const home = expandHomePath("~");
   const http = yield* HttpClient.HttpClient;
   const installMutex = yield* Semaphore.make(1);
-  const token = Effect.gen(function* () {
-    // Read vskill's documented fallback store, never return its contents to the client.
-    const stored = yield* fs
-      .readFileString(path.join(home, ".vskill", "keys.env"))
-      .pipe(Effect.orElseSucceed(() => ""));
-    const match = stored.match(/^vskill-api-token=(vsk_[A-Za-z0-9_-]+)\s*$/m);
-    if (match) return match[1];
-    if (platform === "darwin") {
-      const key = yield* runner
-        .run({
-          command: "security",
-          args: ["find-generic-password", "-s", "vskill-token", "-a", "vskill-api-token", "-w"],
-          timeout: "10 seconds",
-          maxOutputBytes: 4096,
-        })
-        .pipe(Effect.option);
-      if (
-        key._tag === "Some" &&
-        Number(key.value.code) === 0 &&
-        /^vsk_[A-Za-z0-9_-]+$/.test(key.value.stdout.trim())
-      )
-        return key.value.stdout.trim();
-    }
-    return undefined;
-  });
+  // Read vskill's documented stores, never return the token to the client.
+  const token = readVskillApiToken.pipe(
+    Effect.provideService(FileSystem.FileSystem, fs),
+    Effect.provideService(Path.Path, path),
+    Effect.provideService(ProcessRunner.ProcessRunner, runner),
+    Effect.provideService(HostProcessPlatform, platform),
+  );
   const request = (
     url: string,
     headers: Record<string, string>,

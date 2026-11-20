@@ -271,3 +271,52 @@ it("closes the owned process before a failed handshake returns", async () => {
   await f.exited();
   expect((await f.events()).some((e) => e.type === "start")).toBe(true);
 });
+
+it.each(["partial", "line"] as const)(
+  "fails a call whose answer passes 8 MiB (%s) as too large and leaves no process",
+  async (flood) => {
+    const f = await fixture();
+    const [tool] = await run((s) => s.discover({ config: f.config, cwd: f.root }));
+    await f.configure({ flood });
+    const started = performance.now();
+    const failure = await run((s) =>
+      s
+        .call({ config: f.config, cwd: f.root, tool: tool!, arguments: { value: "x" } })
+        .pipe(Effect.flip),
+    );
+    expect(failure.reason).toBe("too_large");
+    expect(failure.message).toMatch(/too large/);
+    // Well inside the 20 s call timeout.
+    expect(performance.now() - started).toBeLessThan(8_000);
+    await f.stopped();
+  },
+);
+
+it("fails only the call whose answer has too many values", async () => {
+  const f = await fixture();
+  const [tool] = await run((s) => s.discover({ config: f.config, cwd: f.root }));
+  await f.configure({ manyValues: true });
+  const failure = await run((s) =>
+    s
+      .call({ config: f.config, cwd: f.root, tool: tool!, arguments: { value: "x" } })
+      .pipe(Effect.flip),
+  );
+  expect(failure.reason).toBe("too_large");
+  await f.configure();
+  const result = await run((s) =>
+    s.call({ config: f.config, cwd: f.root, tool: tool!, arguments: { value: "next" } }),
+  );
+  expect(JSON.parse(result.content).structuredContent.echo).toBe("next");
+  await f.stopped();
+});
+
+it("still lists 200 tools, and refuses a 201st", async () => {
+  const f = await fixture();
+  await f.configure({ toolCount: 200 });
+  const tools = await run((s) => s.discover({ config: f.config, cwd: f.root }));
+  expect(tools).toHaveLength(200);
+  await f.configure({ toolCount: 201 });
+  const failure = await run((s) => s.discover({ config: f.config, cwd: f.root }).pipe(Effect.flip));
+  expect(failure.reason).toBe("unavailable");
+  await f.stopped();
+});

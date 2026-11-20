@@ -1,0 +1,11 @@
+/* The message box's foot lines its parts up from the top (shell.css), so each part sits in
+   the middle of the 28px first row: the voice and state icons by height, the machine chip,
+   which is 24px tall from 640px up, by a margin. */
+.sws-composer-foot .sws-composer-aside {
+  min-height: 28px;
+}
+@media (width >= 40rem) {
+  .sws-composer-foot .sws-host {
+    margin-block: 2px;
+  }
+}

@@ -221,10 +221,33 @@ export function copyProblem(
   copy: Pick<FolderCopyStatus, "checks" | "unstable">,
   sourceLabel: string,
 ): string | null {
-  if (copy.unstable.length > 0) return `some files changed on ${sourceLabel} while copying`;
+  const words = copyProblemWords(copy, sourceLabel);
+  return words
+    ? words.text.replace(/\{(\w+)\}/g, (whole, name: string) => words.values?.[name] ?? whole)
+    : null;
+}
+
+/** The same clause as a sentence and its values, for `tx()`. */
+export function copyProblemWords(
+  copy: Pick<FolderCopyStatus, "checks" | "unstable">,
+  sourceLabel: string,
+): { readonly text: string; readonly values?: Readonly<Record<string, string>> } | null {
+  if (copy.unstable.length > 0)
+    return {
+      text: "some files changed on {source} while copying",
+      values: { source: sourceLabel },
+    };
   const failing = copy.checks.filter((check) => !check.ok);
-  if (failing.length === 1) return `the check of ${checkLabel(failing[0]!.repo)} failed`;
+  if (failing.length === 1) {
+    const repo = failing[0]!.repo;
+    return repo === "."
+      ? { text: "the check of Root failed" }
+      : { text: "the check of {repository} failed", values: { repository: repo } };
+  }
   if (failing.length > 1)
-    return `the checks of ${failing.length.toLocaleString()} repositories failed`;
+    return {
+      text: "the checks of {n} repositories failed",
+      values: { n: failing.length.toLocaleString() },
+    };
   return null;
 }

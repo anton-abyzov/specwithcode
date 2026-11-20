@@ -3744,7 +3744,10 @@ export function ArchivedThreadsPanel() {
       ),
     );
     const threads = archivedSnapshots.flatMap(({ environmentId, snapshot }) =>
-      snapshot.threads.map((thread) => presentThreadShell(environmentId, thread)),
+      snapshot.threads
+        // An advisor's own thread is archived once its advice is read; it is never a thread to restore.
+        .filter((thread) => thread.purpose !== "advisor")
+        .map((thread) => presentThreadShell(environmentId, thread)),
     );
 
     const archivedProjects = Array.from(projectsByEnvironmentAndId.values());

@@ -52,6 +52,7 @@ import {
   inspectApprovals,
   reserveApproval,
 } from "./native-approval.mjs";
+import { walkFirstRun } from "../studio-verify/first-run-walk.mjs";
 
 const ownPath = fileURLToPath(import.meta.url);
 
@@ -156,40 +157,13 @@ export function toolingIdentity() {
 export async function openOwnedProject(page, project) {
   await page.goto(NATIVE_ORIGIN, { waitUntil: "domcontentloaded" });
   const link = page.locator('a[href*="/projects/"]').filter({ hasText: project.title }).first();
-  const next = page.getByRole("button", { name: "Continue", exact: true });
-  const skip = page.getByRole("button", { name: "Do not import projects", exact: true });
-  // The access step: keep what the machine has, so the checks after setup run as before.
-  const keepAccess = page.getByRole("button", { name: /^Keep (Supervised|current access)$/ });
-  let continues = 0,
-    skipped = false,
-    accessKept = false;
-  for (let step = 0; step < 6; step++) {
-    // DOMContentLoaded precedes React hydration. Wait for a real control before choosing it.
-    await Promise.any(
-      [link, next, keepAccess, skip].map((control) =>
-        control.waitFor({ state: "visible", timeout: 30000 }),
-      ),
-    );
-    if (await next.isVisible()) {
-      assert.ok(continues < 3, "Unexpected extra onboarding step");
-      continues++;
-      await next.click();
-      continue;
-    }
-    if (await keepAccess.isVisible()) {
-      assert.equal(accessKept, false, "Repeated access prompt refused");
-      accessKept = true;
-      await keepAccess.click();
-      continue;
-    }
-    if (await skip.isVisible()) {
-      assert.equal(skipped, false, "Repeated import prompt refused");
-      skipped = true;
-      await skip.click();
-      continue;
-    }
-    break;
-  }
+  // First-run setup on each step's neutral action, keeping the machine's access. Five steps
+  // at most: a longer setup is unexpected here and fails.
+  const setupSteps = await walkFirstRun(page, {
+    until: () => link.isVisible(),
+    appearTimeoutMs: 30000,
+    maxSteps: 5,
+  });
   await link.waitFor({ state: "visible", timeout: 30000 });
   const href = await link.getAttribute("href");
   assert.ok(href, "Owned project link has no destination");
@@ -209,7 +183,7 @@ export async function openOwnedProject(page, project) {
     target.href,
     "Browser did not open the observed project link",
   );
-  return { url: target.href, continues, skippedImport: skipped };
+  return { url: target.href, setupSteps };
 }
 export function nativeEnvironment(source, fakeHome, execute) {
   const env = {

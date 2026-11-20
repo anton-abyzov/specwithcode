@@ -142,6 +142,7 @@ function world(input: World = {}) {
     authPrompt: null,
     openAuthPrompt,
     openSetupAuthPrompt: vi.fn(),
+    openRenewAuthPrompt: vi.fn(),
   });
   vi.mocked(useRememberConnectChoice).mockReturnValue(rememberConnectChoice);
   vi.mocked(useEnvironment).mockReturnValue({

@@ -16,6 +16,14 @@ describe("isSettingsNavItemActive", () => {
     expect(isSettingsNavItemActive("/settings/machines", "/settings/connections", null)).toBe(true);
   });
 
+  it("keeps Integrations selected on each of its tabs", () => {
+    for (const tab of ["access", "mcp", "devices", "preview"]) {
+      expect(
+        isSettingsNavItemActive("/settings/integrations", `/settings/integrations/${tab}`, null),
+      ).toBe(true);
+    }
+  });
+
   it("follows the location once nothing is pending", () => {
     expect(isSettingsNavItemActive("/settings/general", "/settings/general", null)).toBe(true);
     expect(isSettingsNavItemActive("/settings/providers", "/settings/providers/claude", null)).toBe(

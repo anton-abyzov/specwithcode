@@ -61,6 +61,7 @@ import { isCommandPaletteOpen, openCommandPalette } from "../../../commandPalett
 import { isElectron } from "../../../env";
 import { useComposerDraftStore } from "../../../composerDraftStore";
 import { useScratchProject } from "../../../hooks/useScratchProject";
+import { requestChatSettings } from "../../../studio/chatSettingsRequest";
 import { useLocalStorage } from "../../../hooks/useLocalStorage";
 import { useNowMinute } from "../../../hooks/useNowMinute";
 import { useOpenChat } from "../../../hooks/useOpenChat";
@@ -1397,6 +1398,18 @@ export default function StudioSidebar() {
                                     {tx("Resolve")}
                                   </MenuItem>
                                 )}
+                                {isStandaloneChat(thread) ? (
+                                  <MenuItem
+                                    onClick={() =>
+                                      requestChatSettings({
+                                        environmentId: thread.environmentId,
+                                        threadRef: ref,
+                                      })
+                                    }
+                                  >
+                                    {tx("Chat settings")}
+                                  </MenuItem>
+                                ) : null}
                                 <MenuSeparator />
                                 <MenuItem
                                   disabled={!threadRuntimeCanArchive(thread.runtime)}

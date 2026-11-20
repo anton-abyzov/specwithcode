@@ -1,7 +1,13 @@
 import { ArrowRightIcon, CheckIcon, ChevronDownIcon, LaptopIcon } from "lucide-react";
 import { useState, type ComponentProps, type ReactNode } from "react";
-import type { MachineHandoffRetention } from "@specweave-studio/contracts";
+import type {
+  MachineHandoffRetention,
+  MachineHandoffUpdateSkipped,
+} from "@specweave-studio/contracts";
+import { staleCopyText } from "../../studio/staleCopyText";
 import type { HandoffFolderMethod } from "../../studio/folderCopy";
+import { useTx } from "../../i18n";
+import { pickedHolding, sendHeader } from "../../studio/sendToMachine";
 import { cn } from "../../lib/utils";
 import { MachineOptionRows, type MachineOption } from "../handoff/MachineOptionRows";
 import { Button } from "../ui/button";
@@ -12,11 +18,12 @@ import { HandoffWorkspaceSummary, type HandoffWorkspaceContext } from "./Handoff
 import { HandoffCopyActionsTarget } from "./HandoffCopyActions";
 import {
   AlongLine,
-  CoordinatorChoice,
   FilesTravelChoice,
   FolderField,
   MoreOptions,
+  moveRefusal,
   ProjectMoveDialog,
+  SendSummary,
   useProjectMoveDialog,
   WhatComesAlong,
   type MoveIntent,
@@ -65,6 +72,7 @@ export interface HandoffPreview {
 }
 
 export function MachineHandoffButton({ className, ...props }: ComponentProps<typeof Button>) {
+  const tx = useTx();
   return (
     <Button
       {...props}
@@ -72,19 +80,17 @@ export function MachineHandoffButton({ className, ...props }: ComponentProps<typ
       size="sm"
       className={cn("h-6 gap-1.5 px-2 text-xs sm:h-6 sm:text-xs", className)}
       data-slot="handoff-trigger"
-      aria-label="Send this project to another machine"
+      aria-label={tx("Add this project to another machine")}
     >
       <LaptopIcon className="size-3.5 shrink-0" aria-hidden />
-      <span>Send to another machine</span>
+      <span>{tx("Add to another machine…")}</span>
     </Button>
   );
 }
 
-/** " (copied 2h ago)" for a finished copy's title; nothing when the time is unknown. */
-const copiedWhen = (finishedAt: string | null): string => {
-  const when = finishedAt ? formatRelativeTimeLabel(finishedAt) : "";
-  return when ? ` (copied ${when})` : "";
-};
+/** "2h ago" for a finished copy's title; null when the time is unknown. */
+const addedWhen = (finishedAt: string | null): string | null =>
+  (finishedAt ? formatRelativeTimeLabel(finishedAt) : "") || null;
 
 /** The transfer has one explicit destination and one commit point. */
 export function MachineHandoffDialog({
@@ -102,7 +108,6 @@ export function MachineHandoffDialog({
   machine = null,
   onMachineChange,
   intent = "move",
-  onIntentChange,
   preview,
   phase,
   error,
@@ -128,15 +133,33 @@ export function MachineHandoffDialog({
   machinesLoading = false,
   machinesExtra,
   sync = null,
+  wholeFolderOnly = false,
   send = null,
+  staleCopy = null,
+  mainLabel = null,
 }: {
-  /** What the chosen machine already holds, for Copy or Move and the plan sentence. */
+  /** What the chosen machine already holds, where Main is, and the plan sentence. */
   readonly send?: SendFacts | null;
+  /**
+   * The review found that the destination's existing copy cannot fast-forward to the source
+   * heads; the move waits for an explicit "anyway". Null when it can, or nothing was checked.
+   */
+  readonly staleCopy?: {
+    readonly skipped: MachineHandoffUpdateSkipped;
+    readonly accepted: boolean;
+    readonly onAccept: (accepted: boolean) => void;
+    /** Shown once the source fenced: releases the move so Main stays on the source. */
+    readonly onKeepHere?: () => void;
+  } | null;
+  /** The machine Main is on now, for the header before a machine is picked; null when unknown. */
+  readonly mainLabel?: string | null;
   /**
    * "Sync to X…": X already has this project at `folder`. The dialog copies only files into
    * that folder and says so; the coordinator stays here.
    */
   readonly sync?: { readonly machine: string; readonly folder: string } | null;
+  /** Add for a project with no Git remote: copying the whole folder is the only way. */
+  readonly wholeFolderOnly?: boolean;
   /** Shown under the machine list: machines that can be connected from here. */
   readonly machinesExtra?: ReactNode;
   /** The other machines' first status read has not settled: their list shows a loading row. */
@@ -162,9 +185,11 @@ export function MachineHandoffDialog({
   /** Saves a folder on `machine` for the Git move; shown when it has none, or on Browse…. */
   readonly folderPicker?: ReactNode;
   readonly sourceChanges?: HandoffSourceChanges | null;
-  /** Move continues the project there; copy only sends files. Titles the dialog. */
+  /**
+   * Move: Main goes there (Git only, or a move asked for with "Make X main"). Copy: only
+   * files go there and Main stays. Titles the dialog; the dialog itself never asks.
+   */
   readonly intent?: MoveIntent;
-  readonly onIntentChange?: (intent: MoveIntent) => void;
   /** The machines the Git move can choose from, and the chosen one. */
   readonly machines?: ReadonlyArray<MachineOption>;
   readonly machine?: string | null;
@@ -205,9 +230,31 @@ export function MachineHandoffDialog({
     machines.find((item) => item.value === machine)?.label ?? target?.label ?? null;
   const targetLabel = target?.label ?? machineLabel ?? "the other machine";
   const [copyActionsTarget, setCopyActionsTarget] = useState<HTMLDivElement | null>(null);
+  const tx = useTx();
+  // The copy flow names its machine once one is picked; the Git move names its own.
+  const there = copying ? copyTargetLabel : machineLabel;
+  const moving = !copying || intent === "move";
+  // Main may not move to the copy that is Main, nor into a project this one is not linked to.
+  const refused = moving ? moveRefusal(send) : null;
+  // Git only, into a copy the machine already has: nothing is copied, only Main switches, so
+  // the dialog reads as "Continue the coordinator on {machine}", not as a project move.
+  const switchesMain =
+    !copying &&
+    method === "folder" &&
+    refused === null &&
+    send !== null &&
+    pickedHolding(send.holding, send.picked).kind === "copy";
+  const header = sendHeader({
+    source: sourceLabel,
+    there,
+    move: moving && refused !== "main",
+    main: send?.mainLabel ?? mainLabel,
+    otherProject: there ? send?.otherProject : null,
+  });
   const close = () => {
     if (!locked) onOpenChange(false);
   };
+  const added = copying && copyDoneOn && intent === "copy" ? addedWhen(copyDoneAt) : null;
   return (
     <Dialog
       open={open}
@@ -226,6 +273,8 @@ export function MachineHandoffDialog({
             machinesLoading,
             machinesExtra,
             sync: sync !== null,
+            sourceLabel,
+            wholeFolderOnly,
             send,
           }}
         >
@@ -234,24 +283,63 @@ export function MachineHandoffDialog({
               {/* A finished copy says where the project is and when it got there. */}
               {copying && copyDoneOn
                 ? sync
-                  ? `${projectTitle} is synced to ${copyDoneOn}`
-                  : `${projectTitle} is on ${copyDoneOn}${intent === "copy" ? copiedWhen(copyDoneAt) : ""}`
+                  ? // The copy ended; whether the folders match is said below, by its checks.
+                    tx("Sync finished for {project}: {source} and {machine}", {
+                      project: projectTitle,
+                      source: sourceLabel,
+                      machine: copyDoneOn,
+                    })
+                  : added
+                    ? tx("{project} is on {machine} (added {when})", {
+                        project: projectTitle,
+                        machine: copyDoneOn,
+                        when: added,
+                      })
+                    : tx("{project} is on {machine}", {
+                        project: projectTitle,
+                        machine: copyDoneOn,
+                      })
                 : sync && copying
-                  ? `Sync ${projectTitle} to ${sync.machine}`
+                  ? tx("Sync {project}: {source} and {machine}", {
+                      project: projectTitle,
+                      source: sourceLabel,
+                      machine: sync.machine,
+                    })
                   : complete
-                    ? `${projectTitle} is on ${targetLabel}`
-                    : copying
-                      ? `Send ${projectTitle} to ${copyTargetLabel ?? "another machine"}`
-                      : `Move ${projectTitle} to ${machineLabel ?? "another machine"}`}
+                    ? tx("{project} is on {machine}", {
+                        project: projectTitle,
+                        machine: targetLabel,
+                      })
+                    : there
+                      ? tx(
+                          switchesMain || moving
+                            ? "Continue the coordinator on {machine}"
+                            : "Add {project} to {machine}",
+                          { project: projectTitle, machine: there },
+                        )
+                      : tx(
+                          moving
+                            ? "Continue the coordinator on another machine"
+                            : "Add {project} to another machine",
+                          { project: projectTitle },
+                        )}
             </DialogTitle>
             {/* A finished copy says what happened in its own body. */}
             {!(copying && copyDoneOn) && (
               <DialogDescription className="wrap-anywhere">
                 {complete
-                  ? `The coordinator now runs on ${targetLabel}.`
+                  ? tx("The coordinator continues on {target}.", { target: targetLabel })
                   : sync && copying
-                    ? `${sync.machine} already has this project at ${sync.folder}. Sync compares the two copies and adds what ${sync.machine} is missing: repositories or folders of the workspace, and files Git doesn't carry. Anything that differs there is shown to you before it changes. The coordinator stays on ${sourceLabel}.`
-                    : `From ${sourceLabel}. Nothing on ${(copying ? copyTargetLabel : machineLabel) ?? "the other machine"} is replaced without asking.`}
+                    ? // The Git-first sentence of Wording table 3 belongs to the Sync dialog; this
+                      // sync mode is the measured file compare, and says so.
+                      tx(
+                        "{machine} already has this project at {folder}. Compare all files compares the two folders and adds what {machine} is missing. The coordinator stays on {source}.",
+                        { machine: sync.machine, folder: sync.folder, source: sourceLabel },
+                      )
+                    : `${tx(header.text, header.values)} ${tx(
+                        "Nothing on {machine} is replaced without asking.",
+                        { machine: there ?? tx("the other machine") },
+                      )}`}
               </DialogDescription>
             )}
           </DialogHeader>
@@ -277,6 +365,7 @@ export function MachineHandoffDialog({
                 consent={consent}
                 onConsent={onConsent}
                 busy={busy}
+                staleCopy={staleCopy}
               />
             ) : (
               <GitWhere
@@ -288,7 +377,6 @@ export function MachineHandoffDialog({
                 machine={machine}
                 machineLabel={machineLabel}
                 onMachineChange={onMachineChange}
-                onIntentChange={onIntentChange}
                 folderPicker={folderPicker}
                 sourceChanges={sourceChanges}
                 busy={busy}
@@ -355,10 +443,22 @@ export function MachineHandoffDialog({
                 )}
                 <Button
                   className="h-auto min-h-9 min-w-0 max-w-full shrink whitespace-normal wrap-anywhere py-[calc(--spacing(1.5)-1px)] sm:h-auto sm:min-h-8 sm:py-[calc(--spacing(1)-1px)]"
-                  disabled={busy || !consent || !target || !!target.unavailable}
+                  disabled={
+                    busy ||
+                    !consent ||
+                    !target ||
+                    !!target.unavailable ||
+                    (staleCopy !== null && !staleCopy.accepted)
+                  }
                   onClick={onContinue}
                 >
-                  {busy ? "Moving…" : `Move project to ${target?.label ?? "selected machine"}`}
+                  {busy
+                    ? tx("Finishing the move…")
+                    : switchesMain
+                      ? tx("Continue here")
+                      : target
+                        ? tx("Continue the coordinator on {machine}", { machine: target.label })
+                        : tx("Continue the coordinator on another machine")}
                 </Button>
               </>
             ) : (
@@ -377,14 +477,16 @@ export function MachineHandoffDialog({
                 {/* One primary, filled even while off: never two outline buttons side by side. */}
                 <Button
                   className="min-w-0 max-w-full shrink"
-                  disabled={busy || !target || !!target.unavailable}
+                  disabled={busy || !target || !!target.unavailable || refused !== null}
                   onClick={onReview}
                 >
                   {busy
                     ? "Checking…"
                     : machineLabel
-                      ? `Move project to ${machineLabel}`
-                      : "Move project"}
+                      ? switchesMain
+                        ? tx("Continue here")
+                        : tx("Continue the coordinator on {machine}", { machine: machineLabel })
+                      : tx("Continue the coordinator on another machine")}
                 </Button>
               </>
             )}
@@ -396,8 +498,9 @@ export function MachineHandoffDialog({
 }
 
 /**
- * Screen 1 when files travel through Git only: the coordinator always moves, so choosing
- * Keep switches back to the copy. The paths and what Git leaves behind sit under Details.
+ * Screen 1 when files travel through Git only: Main always moves, and the plan says so. The
+ * way back to a plain copy is "How files travel" under Details, with the paths and what Git
+ * leaves behind.
  */
 function GitWhere({
   sourceLabel,
@@ -408,7 +511,6 @@ function GitWhere({
   machine,
   machineLabel,
   onMachineChange,
-  onIntentChange,
   folderPicker,
   sourceChanges,
   busy,
@@ -425,7 +527,6 @@ function GitWhere({
   readonly machine: string | null;
   readonly machineLabel: string | null;
   readonly onMachineChange: ((machine: string) => void) | undefined;
-  readonly onIntentChange: ((intent: MoveIntent) => void) | undefined;
   readonly folderPicker: ReactNode;
   readonly sourceChanges: HandoffSourceChanges | null;
   readonly busy: boolean;
@@ -501,14 +602,7 @@ function GitWhere({
           processes
         </AlongLine>
       </WhatComesAlong>
-      <CoordinatorChoice
-        value="move"
-        canMove
-        sourceLabel={sourceLabel}
-        targetLabel={machineLabel}
-        disabled={busy || !onIntentChange}
-        onChange={(next) => onIntentChange?.(next)}
-      />
+      <SendSummary move sourceLabel={sourceLabel} targetLabel={machineLabel} disabled={busy} />
       <MoreOptions disabled={busy}>
         {details}
         <FilesTravelChoice />
@@ -592,6 +686,7 @@ function GitReview({
   consent,
   onConsent,
   busy,
+  staleCopy = null,
 }: {
   readonly sourceLabel: string;
   readonly targetLabel: string;
@@ -600,7 +695,17 @@ function GitReview({
   readonly consent: boolean;
   readonly onConsent: (value: boolean) => void;
   readonly busy: boolean;
+  readonly staleCopy?: ComponentProps<typeof MachineHandoffDialog>["staleCopy"];
 }) {
+  const tx = useTx();
+  const stale = staleCopy
+    ? staleCopyText({
+        skipped: staleCopy.skipped,
+        source: sourceLabel,
+        target: targetLabel,
+        projectTitle,
+      })
+    : null;
   const repositories = preview.repositories.length;
   const unmerged = preview.retention ? unmergedWorkersText(preview.retention, sourceLabel) : null;
   const listed = preview.retention?.unmergedWorkers ?? [];
@@ -624,9 +729,36 @@ function GitReview({
           </>
         )}
         {preview.gitSync
-          ? "The folder there updates from origin. Unpushed commits, uncommitted files, sign-ins and running processes stay here."
+          ? stale
+            ? `${sourceLabel} pushes its commits. ${projectTitle} on ${targetLabel} fast-forwards only where nothing there would be overwritten. Uncommitted files, sign-ins and running processes stay here.`
+            : `${sourceLabel} pushes its commits, and ${projectTitle} on ${targetLabel} fast-forwards to them in every repository. Uncommitted files, sign-ins and running processes stay here.`
           : "Committed work only. Uncommitted files, sign-ins and running processes stay here."}
       </p>
+      {stale && staleCopy && (
+        <div
+          role="alert"
+          className="space-y-2 rounded-lg border border-warning/40 bg-warning/10 p-3"
+          data-slot="handoff-stale-copy"
+        >
+          <p className="font-medium text-warning-foreground">{stale.headline}</p>
+          <p className="wrap-anywhere text-muted-foreground">{stale.detail}</p>
+          <label className="flex cursor-pointer items-start gap-3">
+            <span className="flex h-5 shrink-0 items-center">
+              <Checkbox
+                checked={staleCopy.accepted}
+                disabled={busy}
+                onCheckedChange={(value) => staleCopy.onAccept(value === true)}
+              />
+            </span>
+            <span className="min-w-0 wrap-anywhere leading-5">{stale.anyway}</span>
+          </label>
+          {staleCopy.onKeepHere && (
+            <Button variant="outline" size="sm" disabled={busy} onClick={staleCopy.onKeepHere}>
+              Keep the coordinator on {sourceLabel}
+            </Button>
+          )}
+        </div>
+      )}
       {unmerged && (
         <div
           role="status"
@@ -646,7 +778,7 @@ function GitReview({
       )}
       <Collapsible data-slot="handoff-commits">
         <CollapsibleTrigger className="group -mx-1 inline-flex items-center gap-1 rounded-sm px-1 py-0.5 text-xs text-muted-foreground hover:text-foreground">
-          Details
+          {tx("Details")}
           <ChevronDownIcon
             className="size-3.5 transition-transform group-data-panel-open:rotate-180"
             aria-hidden
@@ -676,8 +808,12 @@ function GitReview({
         </span>
         <span className="min-w-0 wrap-anywhere leading-5">
           {preview.gitSync
-            ? `Continue the project on ${targetLabel}. Nothing is pushed.`
-            : `Push these commits to their remotes and continue the project on ${targetLabel}.`}
+            ? tx("Push these commits and continue the coordinator on {target}.", {
+                target: targetLabel,
+              })
+            : tx("Push these commits to their remotes and continue the coordinator on {target}.", {
+                target: targetLabel,
+              })}
         </span>
       </label>
     </div>
@@ -694,23 +830,34 @@ function SourceChangesLine({
   readonly sourceLabel: string;
   readonly busy: boolean;
 }) {
+  const tx = useTx();
   // Clean, as after Commit for me: say so, so the commit visibly took effect.
   if (changes?.state === "clean")
     return (
-      <AlongLine slot="handoff-source-changes">No uncommitted changes on {sourceLabel}.</AlongLine>
+      <AlongLine slot="handoff-source-changes">
+        {tx("No uncommitted changes on {source}.", { source: sourceLabel })}
+      </AlongLine>
     );
-  const count =
+  const stays =
     changes?.state === "dirty"
       ? changes.fileCount === 1
-        ? "1 uncommitted file stays"
-        : `${changes.fileCount.toLocaleString("en-US")} uncommitted files stay`
-      : "Uncommitted work stays";
+        ? tx(
+            "1 uncommitted file stays on {source}: Git carries commits only. Commit them, or choose Copy the whole folder under Details.",
+            { source: sourceLabel },
+          )
+        : tx(
+            "{count} uncommitted files stay on {source}: Git carries commits only. Commit them, or choose Copy the whole folder under Details.",
+            { count: changes.fileCount, source: sourceLabel },
+          )
+      : tx(
+          "Uncommitted work stays on {source}: Git carries commits only. Commit them, or choose Copy the whole folder under Details.",
+          { source: sourceLabel },
+        );
   const commit = changes?.state === "dirty" ? changes.onCommit : null;
   return (
     <>
       <AlongLine stays slot="handoff-source-changes">
-        {count} on {sourceLabel}: Git carries commits only. Commit them, or choose Copy everything
-        under Details.
+        {stays}
       </AlongLine>
       {(commit || changes?.error) && (
         <li className="min-w-0 space-y-1.5 ps-6.5">

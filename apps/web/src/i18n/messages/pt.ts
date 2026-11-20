@@ -100,7 +100,7 @@ export const pt: Messages = {
   "wizard.import.selectNone": "Desmarcar tudo",
   "wizard.import.looking": "Procurando projetos…",
   "wizard.import.checkFailed": "Não foi possível verificar os projetos. {error}",
-  "wizard.import.none": "Nenhum projeto existente do Claude Code ou do Codex encontrado.",
+  "wizard.import.none": "Nenhum projeto de agente existente encontrado.",
   "wizard.import.importing": "Importando…",
   "wizard.import.importButton": {
     one: "Importar {count} projeto",

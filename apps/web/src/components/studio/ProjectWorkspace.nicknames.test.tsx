@@ -14,10 +14,8 @@ vi.mock("../../studio/machineNickname", async (importOriginal) => {
   return {
     ...actual,
     useMachineNicknames: () => resolve,
-    useMachineNickname: (
-      environmentId: string | null | undefined,
-      fallbackLabel?: string | null,
-    ) => (environmentId ? resolve(environmentId, fallbackLabel) : (fallbackLabel ?? "")),
+    useMachineNickname: (environmentId: string | null | undefined, fallbackLabel?: string | null) =>
+      environmentId ? resolve(environmentId, fallbackLabel) : (fallbackLabel ?? ""),
   };
 });
 
@@ -31,13 +29,18 @@ it("names each orchestrator by its nickname, as typed", async () => {
   await act(async () =>
     root.render(<ProjectWorkspace projectKey="atlas" onSelectCheckout={vi.fn()} />),
   );
-  expect(container.querySelector(".sws-host-name")?.textContent).toBe("Runs on Studio M4");
+  // The chip names the machine shown, by its nickname.
+  expect(container.querySelector(".sws-host-name")?.textContent).toBe("On Studio M4");
   expect(container.querySelectorAll("[data-coordinator-machine]")).toHaveLength(1);
   await act(async () =>
     container.querySelector<HTMLButtonElement>('[aria-label^="Viewing Studio M4"]')!.click(),
   );
+  expect(
+    [...document.querySelectorAll('[data-slot="menu-label"]')].map((label) => label.textContent),
+  ).toContain("Atlas on your machines");
   expect(menuItem("menuitemradio", "Studio M4")).toBeDefined();
   expect(menuItem("menuitemradio", "Anna's Air")).toBeDefined();
+  expect(document.querySelector('[role="menu"]')?.textContent).not.toMatch(/\bMain\b|\bCopy\b/);
 });
 
 it("says which nicknamed machine is unreachable", async () => {

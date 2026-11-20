@@ -10,14 +10,10 @@
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import type { LogicalProjectMember } from "@specweave-studio/contracts";
 import { COORDINATOR_PENDING_PROBLEM, copyRoles, logicalCoordinators } from "./projectDomain";
-import { copyRoleLabel, type CopyRoleText } from "./workersOnlyCopy";
+import type { MachineRowRole } from "./machineRowState";
+import type { CopyRoleText } from "./workersOnlyCopy";
 
-export {
-  coordinatorCheckout,
-  coordinatorElsewhere,
-  copyRoleLabel,
-  workersOnlyProblem,
-} from "./workersOnlyCopy";
+export { coordinatorCheckout, coordinatorElsewhere } from "./workersOnlyCopy";
 
 export interface CoordinatorMachineMember {
   readonly environmentId: string;
@@ -29,12 +25,17 @@ export function coordinatorMachineKey(member: CoordinatorMachineMember): string 
   return `${member.environmentId}:${member.id}`;
 }
 
-export const SUPERSEDED_COORDINATOR_PROBLEM =
-  "Another machine took over this coordinator. It gives way once its machine is reachable; view the newer coordinator to send messages.";
-export const WORKERS_ONLY_PROBLEM =
-  "Work starts on another machine. This copy takes work from there. Switch to that machine above to send messages.";
+/** A machine on a version from before every machine ran its own coordinator. */
+export const COORDINATOR_NEEDS_UPDATE_PROBLEM =
+  "This machine needs an update before its coordinator can take messages. Update SpecWithCode there.";
 export const UNCONFIRMED_COORDINATOR_PROBLEM =
-  "This copy has not confirmed its coordinator yet. Reconnect its machine to send messages.";
+  "This machine has not confirmed where the coordinator is yet. Reconnect it to send messages.";
+
+/** The same for a machine this window can name: a phrase and its machine, translated where shown. */
+export const unconfirmedCoordinatorProblem = (machine: string): CopyRoleText => ({
+  text: "{machine} has not confirmed where the coordinator is yet. Reconnect it to send messages.",
+  values: { machine },
+});
 
 export interface CoordinatorView<T extends CoordinatorMachineMember> {
   readonly member: T | undefined;
@@ -147,11 +148,12 @@ function coordinatorProblem<T extends EnvironmentProject>(
   member: T,
   roles: NonNullable<ReturnType<typeof logicalCoordinators<T>>>,
 ): string | null {
-  if (roles.coordinators.includes(member)) return null;
+  // Every machine runs its own coordinator: an active one takes messages, whatever another
+  // machine's record claims about it.
+  if (roles.coordinators.includes(member) || roles.superseded.includes(member)) return null;
   if (roles.pending.includes(member)) return COORDINATOR_PENDING_PROBLEM;
-  if (roles.superseded.includes(member)) return SUPERSEDED_COORDINATOR_PROBLEM;
   if (member.workspaceSettings?.coordinatorBinding?.state === "transferred")
-    return WORKERS_ONLY_PROBLEM;
+    return COORDINATOR_NEEDS_UPDATE_PROBLEM;
   return UNCONFIRMED_COORDINATOR_PROBLEM;
 }
 
@@ -197,9 +199,11 @@ export interface OrchestratorCopy {
    * independent: the same repository, not linked, with its own orchestrator.
    */
   readonly role: "coordinator" | "workers" | "pending" | "independent";
-  /** This copy is the project's main (`copyRoles`), the one Settings also calls Main. */
+  /** The copy project-wide settings are read from and written to (`copyRoles`). */
   readonly main: boolean;
-  /** The badge Settings shows for the same copy: "Main", "Copy · main on m4", "Moving main". */
+  /** What the machine's menu row is built from (`machineRowState`). */
+  readonly rowRole: MachineRowRole;
+  /** "Separate project" for a checkout that is not linked; a linked machine has no word. */
   readonly label: CopyRoleText;
   /** A coordinator can be started on this linked copy now. */
   readonly canStart: boolean;
@@ -218,10 +222,6 @@ export function orchestratorCopies<T extends EnvironmentProject>(
   retired?: { has(environmentId: string): boolean },
 ): OrchestratorCopy[] {
   const roles = copyRoles(members, retired);
-  const machineNamed = (environmentId: string) => {
-    const member = members.find((candidate) => candidate.environmentId === environmentId);
-    return member ? machineOf(member) : null;
-  };
   return members.map((member) => {
     const of = member.workspaceSettings?.logicalProject
       ? roles.get(coordinatorMachineKey(member))
@@ -241,10 +241,9 @@ export function orchestratorCopies<T extends EnvironmentProject>(
       folder: member.workspaceRoot,
       role,
       main: of?.role === "main",
-      // A checkout registered on its own has no role in a linked project: it is "not linked".
-      label: of
-        ? copyRoleLabel(of.role, of.mainEnvironmentId ? machineNamed(of.mainEnvironmentId) : null)
-        : { text: role === "independent" ? "not linked" : "" },
+      rowRole: of ? "linked" : role === "independent" ? "independent" : "single",
+      // A checkout registered on its own is a separate project, not part of this one.
+      label: { text: !of && role === "independent" ? "Separate project" : "" },
       // Narrowed by keptCoordinatorCopies once the page has the threads.
       canStart:
         role === "workers" &&
@@ -259,8 +258,7 @@ export function orchestratorCopies<T extends EnvironmentProject>(
  * conversation exists in that copy's coordinator thread, and its coordinator moved
  * to another machine. A transferred binding alone does not say so: a copy that
  * joined as workers only is transferred too, and a move into a separate worktree
- * leaves the registered copy transferred with a successor on its own machine. Those
- * copies get "Move coordinator to" instead of the "coordinator paused" note.
+ * leaves the registered copy transferred with a successor on its own machine.
  */
 export function keptCoordinatorCopies<T extends EnvironmentProject>(
   copies: readonly OrchestratorCopy[],

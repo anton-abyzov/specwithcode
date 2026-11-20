@@ -72,9 +72,9 @@ const button = (label: string) =>
 it("moves to a picked machine in one screen, with the model as a summary", async () => {
   const view = props();
   await render(view);
-  expect(text()).toContain('Move "Fix the build"');
+  expect(text()).toContain('Hand off "Fix the build"');
   expect(text()).toContain(
-    "Its conversation and file changes go with it. This copy stops and stays here to read.",
+    "Its conversation and file changes go with it. It stops here and stays readable.",
   );
   // This machine is never a choice when moving; offline machines show, disabled, with a reason.
   const rows = [...document.querySelectorAll('[data-slot="machine-option"]')];
@@ -83,7 +83,7 @@ it("moves to a picked machine in one screen, with the model as a summary", async
   expect(text()).not.toContain("model-picker");
   expect(text()).toContain("Ready. The current turn keeps running there.");
   expect(button("Try again")).toBeUndefined();
-  const submit = button("Move to Minis")!;
+  const submit = button("Hand off to Minis")!;
   expect(submit.disabled).toBe(false);
   await act(async () => submit.click());
   expect(view.onSubmit).toHaveBeenCalledTimes(1);
@@ -94,7 +94,7 @@ it("opens the model choice when the thread has no model, so it is not a dead end
   expect(text()).toContain("model-picker");
   expect(text()).toContain("Choose a model to continue with.");
   expect(text()).toContain("Model on Minis");
-  expect(button("Move to Minis")!.disabled).toBe(true);
+  expect(button("Hand off to Minis")!.disabled).toBe(true);
 });
 
 it("shows the destination's failures verbatim and offers to try again", async () => {
@@ -114,7 +114,7 @@ it("shows the destination's failures verbatim and offers to try again", async ()
   expect(document.querySelector('[data-check="ignored-files"]')?.textContent).toBe(
     "Minis: no .env.local",
   );
-  expect(button("Move to Minis")!.disabled).toBe(true);
+  expect(button("Hand off to Minis")!.disabled).toBe(true);
   await act(async () => button("Try again")!.click());
   expect(view.onRecheck).toHaveBeenCalledTimes(1);
 });
@@ -138,7 +138,7 @@ it("hides the close button while moving", async () => {
   expect(document.querySelector('[data-slot="dialog-close"]')).not.toBeNull();
   await render(props({ submitting: true }));
   expect(document.querySelector('[data-slot="dialog-close"]')).toBeNull();
-  expect(button("Moving…")!.disabled).toBe(true);
+  expect(button("Handing off…")!.disabled).toBe(true);
   expect(button("Cancel")!.disabled).toBe(true);
 });
 
@@ -154,7 +154,7 @@ it("says so when no other machine is online", async () => {
     }),
   );
   expect(text()).toContain("No other machine is online. Pair one in Settings › Machines.");
-  expect(button("Move")!.disabled).toBe(true);
+  expect(button("Hand off")!.disabled).toBe(true);
 });
 
 it("ends on one done screen that opens the thread on the other machine", async () => {
@@ -165,7 +165,9 @@ it("ends on one done screen that opens the thread on the other machine", async (
     },
   });
   await render(view);
-  expect(document.querySelector('[data-slot="dialog-title"]')?.textContent).toBe("Moved to Minis");
+  expect(document.querySelector('[data-slot="dialog-title"]')?.textContent).toBe(
+    "Handed off to Minis",
+  );
   expect(document.querySelector('[role="status"]')?.textContent).toContain(
     '"Fix the build" continues on Minis.',
   );
@@ -214,8 +216,8 @@ it("says a chat outside Git can't move at all, not that the machine can't take i
   expect(text()).toContain("This thread can't move:");
   expect(text()).not.toContain("Minis can't take it yet");
   expect(text()).toContain("Only a thread whose folder is a Git repository can move");
-  expect(button("Move to Minis")).toBeUndefined();
-  expect(button("Can't move")!.disabled).toBe(true);
+  expect(button("Hand off to Minis")).toBeUndefined();
+  expect(button("Can't hand off")!.disabled).toBe(true);
 });
 
 it("keeps blaming the destination when its own folder is not a Git repository", async () => {
@@ -239,17 +241,30 @@ it("keeps blaming the destination when its own folder is not a Git repository", 
   );
   expect(text()).toContain("Minis can't take it yet");
   expect(text()).not.toContain("This thread can't move:");
-  expect(button("Can't move")).toBeUndefined();
+  expect(button("Can't hand off")).toBeUndefined();
 });
 
 it("labels the main button for each state", () => {
   const base = { mode: "move", submitting: false, checking: false, machine: "Minis" } as const;
-  expect(handOffPrimaryLabel(base)).toBe("Move to Minis");
+  expect(handOffPrimaryLabel(base)).toBe("Hand off to Minis");
   expect(handOffPrimaryLabel({ ...base, checking: true })).toBe("Checking…");
-  expect(handOffPrimaryLabel({ ...base, submitting: true })).toBe("Moving…");
-  expect(handOffPrimaryLabel({ ...base, blockedHere: true })).toBe("Can't move");
+  expect(handOffPrimaryLabel({ ...base, submitting: true })).toBe("Handing off…");
+  expect(handOffPrimaryLabel({ ...base, blockedHere: true })).toBe("Can't hand off");
   expect(handOffPrimaryLabel({ ...base, mode: "switch-model" })).toBe("Switch and continue");
   expect(handOffPrimaryLabel({ ...base, mode: "switch-model", submitting: true })).toBe(
     "Switching…",
   );
+});
+
+it("keeps confirm disabled and says why while Bring back is refused", async () => {
+  const view = props({
+    destinations: [{ environmentId: M4, label: "M4", state: "reachable" }],
+    destinationId: M4,
+    blockedReason: "Answer its question, approval or sign-in first.",
+  });
+  await render(view);
+  expect(text()).toContain("Answer its question, approval or sign-in first.");
+  const confirm = button("Hand off to M4");
+  expect(confirm).toBeDefined();
+  expect(confirm!.disabled).toBe(true);
 });

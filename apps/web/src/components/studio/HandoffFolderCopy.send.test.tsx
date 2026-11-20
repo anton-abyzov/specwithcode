@@ -33,7 +33,7 @@ vi.mock("../../state/filesystem", () => ({
 }));
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: (input: { environmentId: string } | null) => ({
-    data: input ? { parentPath: "/home/anton", entries: [] } : null,
+    data: input ? { parentPath: "/home/sam", entries: [] } : null,
     isPending: false,
   }),
 }));
@@ -86,8 +86,8 @@ afterEach(async () => {
 it("starts no copy while the machine's several copies wait for a pick", async () => {
   await act(async () => root.render(<CopyFixture chooseCopyFirst />));
   await settle();
-  expect((findButton(container, "Copy to M3") as HTMLButtonElement).disabled).toBe(true);
+  expect((findButton(container, "Copy to Kiosk D") as HTMLButtonElement).disabled).toBe(true);
   await act(async () => root.render(<CopyFixture />));
   await settle();
-  expect((findButton(container, "Copy to M3") as HTMLButtonElement).disabled).toBe(false);
+  expect((findButton(container, "Copy to Kiosk D") as HTMLButtonElement).disabled).toBe(false);
 });

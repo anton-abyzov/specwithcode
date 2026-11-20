@@ -1,3 +1,4 @@
+import { maskEmail } from "@specweave-studio/shared/maskEmail";
 import type { ServerProvider } from "@specweave-studio/contracts";
 import { CHATGPT_USAGE_URL, usesChatGptSharing } from "@specweave-studio/shared/usageLimits";
 import { Alert, Linking, Pressable, View } from "react-native";
@@ -16,7 +17,7 @@ export function ChatGptSharingStatus({ provider }: { provider: ServerProvider | 
           Alert.alert(
             "ChatGPT sharing is on",
             [
-              provider?.auth.email,
+              maskEmail(provider?.auth.email),
               "Eligible usage uses your ChatGPT plan. Credit settings and limits are managed in ChatGPT.",
             ]
               .filter(Boolean)

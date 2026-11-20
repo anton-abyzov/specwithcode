@@ -4,7 +4,11 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import type { FolderCopyLanPurpose } from "@specweave-studio/contracts";
 import { isSecretLikeProjectPath } from "../../workspace/WorkspaceSensitivePaths.ts";
+import type { TransferAuthority } from "./transferAuthority.ts";
+import { lanRootIdentity, type LanSource, type LanSourceAccess } from "./lanSource.ts";
+import { LAN_DENIALS, LAN_SELECTION_CEILING, lanCeilingOf, type LanDenial } from "./lanWire.ts";
 import { FILE_CLASSES, type FileClass } from "./classify.ts";
 import { seal } from "../fileTransfer/seal.ts";
 import { privateDirectory, readJson, writeJson } from "./durable.ts";
@@ -65,10 +69,12 @@ import {
   CHUNK_OK,
   CHUNK_UNKNOWN,
   type ChunkFrame,
+  encodeFrames,
   MAX_BATCH_BYTES,
   MAX_BATCH_CHUNKS_LARGE,
   OPERATION_ID,
   sha256Hex,
+  zstdAvailable,
 } from "./wire.ts";
 
 import {
@@ -125,12 +131,25 @@ export interface SourceOperationRecord {
     readonly summary?: SourceSummary;
   };
   readonly grant: TransferGrantRecord;
+  /** The approved device that asked for this copy (1327); it stops when that approval ends. */
+  readonly device?: { readonly key: string; readonly approval: string };
   readonly state: SourceState;
   readonly selection: ReadonlyArray<FileClass> | null;
   readonly summary: SourceSummary | null;
   readonly progress: SourceProgress | null;
   readonly error: string | null;
   readonly releaseReason: string | null;
+  /** Which of the two copies that may use the local network this is; absent for any other. */
+  readonly lanPurpose?: FolderCopyLanPurpose;
+  /** The local-network generation counter and when recent ones were issued (1334 S-1). */
+  readonly lan?: {
+    readonly generation: number;
+    readonly issued: ReadonlyArray<number>;
+    /** The file classes of the copy's first selection; a local-network copy never widens them. */
+    readonly ceiling?: ReadonlyArray<string>;
+    /** Device and inode of the source root when the offer was made. */
+    readonly rootIdentity?: string;
+  };
   /** Retried on a later terminal status read; never invalidates an applied copy. */
   readonly snapshotCleanupPending?: boolean;
   readonly snapshotCleanupCodes?: ReadonlyArray<string>;
@@ -184,6 +203,13 @@ interface Hooks {
   /** Returns the source coordinator to active after a copy-and-move fails before Apply. */
   readonly release?: (record: SourceOperationRecord, reason: string) => Promise<void>;
   readonly now?: () => number;
+  /** The local-network path, built over this service; absent means Connect only. */
+  readonly lan?: (access: LanSourceAccess) => LanSource;
+  /**
+   * The decision this machine makes for every Connect request of a copy (team rules,
+   * the offering device's approval), asked again for every local-network read.
+   */
+  readonly authority?: TransferAuthority;
   /** Proves a source filesystem for captured copies; tests stand in an unverifiable volume. */
   readonly verifyCaptureFilesystem?: (root: string, mode: CopyMode) => Promise<void>;
   /** The wall clock a capture compares file stamps with; tests move it past fresh files. */
@@ -223,6 +249,8 @@ interface Loaded {
   /** When `scan` was measured, on this service's clock. */
   scannedAt: number;
   readers: Set<Promise<void>>;
+  /** Chunk hashes a refresh added after the manifest was published; Connect only. */
+  later?: Set<string>;
   /** When the destination last asked for anything but a keepalive, on this service's clock. */
   pulledAt: number;
   terminalUpdate: Promise<void>;
@@ -308,6 +336,105 @@ export class SourceTransfers {
     this.sentSecrets = new SentSecretsLedger(stateRoot);
     this.hooks = hooks;
     this.now = hooks.now ?? (() => Date.now());
+    this.lan = hooks.lan?.(this.lanAccess()) ?? null;
+  }
+
+  /** The local-network half, when this machine has one. */
+  readonly lan: LanSource | null;
+
+  /** All the local-network path can reach: one copy's state, manifest and indexed chunks. */
+  private lanAccess(): LanSourceAccess {
+    const need = async (operationId: string) => {
+      const loaded = OPERATION_ID.test(operationId) ? await this.load(operationId) : null;
+      if (!loaded) throw new SourceTransferError(404, "not_found");
+      return loaded;
+    };
+    return {
+      lanState: async (operationId) => {
+        const loaded = OPERATION_ID.test(operationId) ? await this.load(operationId) : null;
+        if (!loaded) return null;
+        const { record } = loaded;
+        const reason = record.grant.revokedReason as LanDenial;
+        return {
+          operationId,
+          projectId: record.projectId,
+          folder: record.folder,
+          projectRelativePath: record.projectRelativePath ?? ".",
+          mode: record.mode,
+          destinationEnvironmentId: record.destinationEnvironmentId,
+          purpose: record.lanPurpose ?? null,
+          ceiling: record.lan?.ceiling ?? null,
+          rootIdentity: record.lan?.rootIdentity ?? null,
+          terminal: TERMINAL.has(record.state) || record.grant.revokedAt !== null,
+          denial: record.grant.revokedAt !== null && LAN_DENIALS.includes(reason) ? reason : null,
+          generation: record.lan?.generation ?? 0,
+          issued: record.lan?.issued ?? [],
+        };
+      },
+      lanSaveGeneration: async (operationId, generation, issued) => {
+        const loaded = await need(operationId);
+        await this.save(loaded, { lan: { ...loaded.record.lan, generation, issued } }, true);
+      },
+      lanAuthorize: async (operationId, used) => {
+        const loaded = await need(operationId);
+        const { grant } = loaded.record;
+        const now = this.now();
+        if (grant.revokedAt !== null || now >= transferGrantExpiresAt(grant)) return "revoked";
+        const refused = (await this.hooks.authority?.(loaded.record)) ?? null;
+        if (refused !== null) return refused.code === "team_rules" ? "refused" : "revoked";
+        // The grant as it stands now, not as it was read before the decision: a token
+        // minted again meanwhile, or a revocation, is never written over.
+        // The deadline too, on a fresh clock: the decision may have outlasted it.
+        const current = loaded.record.grant;
+        const decided = this.now();
+        if (current.revokedAt !== null || decided >= transferGrantExpiresAt(current))
+          return "revoked";
+        // A read on the local network is a use of the grant, as one over Connect is.
+        // Only the idle time changes, on the grant read in this same step.
+        if (used && decided - current.lastUsedAt > 60_000)
+          await this.save(loaded, { grant: { ...loaded.record.grant, lastUsedAt: decided } });
+        return null;
+      },
+      lanManifest: async (operationId) => {
+        const loaded = await need(operationId);
+        const result = await this.manifest(loaded);
+        return result.ready
+          ? { ready: true, bytes: result.bytes }
+          : {
+              ready: false,
+              body: { state: result.record.state, progress: result.record.progress },
+            };
+      },
+      lanChunks: async (operationId, hashes, zstd) => {
+        const loaded = await need(operationId);
+        // Only what the published manifest names: a chunk a refresh added is unknown here.
+        const bound = hashes.filter((sha256) => !loaded.later?.has(sha256));
+        const served = new Map(
+          (await this.chunks(loaded, bound)).map((frame) => [frame.sha256, frame]),
+        );
+        return encodeFrames(
+          hashes.map(
+            (sha256) =>
+              served.get(sha256) ?? { sha256, status: CHUNK_UNKNOWN, data: Buffer.alloc(0) },
+          ),
+          zstd && zstdAvailable() ? "zstd" : "gzip",
+        );
+      },
+      lanDeny: async (operationId, denial) => {
+        const loaded = await need(operationId);
+        await this.stopping(loaded, async () => {
+          if (loaded.building) await loaded.building;
+          if (!TERMINAL.has(loaded.record.state))
+            await this.save(loaded, {
+              state: "cancelled",
+              releaseReason: `The copy was stopped on the source: ${denial}.`,
+              grant: revokeTransferGrant(loaded.record.grant, denial, this.now()),
+            });
+          await this.clearSnapshot(loaded);
+          return loaded.record;
+        });
+      },
+    };
   }
 
   /**
@@ -324,6 +451,8 @@ export class SourceTransfers {
    * `persistsAfterClose` still reach disk.
    */
   async close(): Promise<ReadonlyArray<PendingAtClose>> {
+    // Shutdown ends every generation: listeners and accepted sockets.
+    this.lan?.close();
     const loaded = [...this.operations.values()];
     let timer: ReturnType<typeof setTimeout> | undefined;
     const bound = new Promise<"late">((resolve) => {
@@ -382,6 +511,9 @@ export class SourceTransfers {
     );
     loaded.saving = saved.catch(() => undefined);
     await saved;
+    // The end state or the denial is on disk first; only then do the generation's sockets close.
+    if ((patch.state !== undefined && TERMINAL.has(patch.state)) || patch.grant?.revokedAt)
+      this.lan?.ended(record.operationId, "terminal");
   }
 
   private async load(operationId: string): Promise<Loaded | null> {
@@ -420,6 +552,8 @@ export class SourceTransfers {
     readonly destinationEnvironmentId: string;
     readonly warnings?: ReadonlyArray<string>;
     readonly secretPatterns?: ReadonlyArray<string> | undefined;
+    readonly device?: { readonly key: string; readonly approval: string } | undefined;
+    readonly lanPurpose?: FolderCopyLanPurpose | undefined;
   }): Promise<{ readonly token: string; readonly record: SourceOperationRecord }> {
     this.assertOpen();
     const folder = await NodeFSP.realpath(input.folder);
@@ -450,11 +584,16 @@ export class SourceTransfers {
     });
     if (existing) {
       // A retried offer replaces the token; the old one stops working at once.
+      // A device's binding is never dropped by a retry, only added.
+      const device = existing.record.device ?? input.device;
       await this.save(existing, {
         grant: { ...minted.record, issuedAt: existing.record.grant.issuedAt },
+        ...(device === undefined ? {} : { device }),
       });
       return { token: minted.token, record: existing.record };
     }
+    const lanPurpose = input.mode === "copy-only" ? input.lanPurpose : undefined;
+    const rootIdentity = lanPurpose === undefined ? null : await lanRootIdentity(folder);
     const loaded = newLoaded({
       version: 1,
       operationId: input.operationId,
@@ -465,6 +604,7 @@ export class SourceTransfers {
       destinationEnvironmentId: input.destinationEnvironmentId,
       createdAt: this.now(),
       grant: minted.record,
+      ...(input.device === undefined ? {} : { device: input.device }),
       state: "scanning",
       selection: null,
       summary: null,
@@ -472,6 +612,8 @@ export class SourceTransfers {
       error: null,
       releaseReason: null,
       warnings: input.warnings ?? [],
+      ...(lanPurpose === undefined ? {} : { lanPurpose }),
+      ...(rootIdentity === null ? {} : { lan: { generation: 0, issued: [], rootIdentity } }),
       ...(input.secretPatterns?.length ? { secretPatterns: [...input.secretPatterns] } : {}),
     });
     this.operations.set(input.operationId, loaded);
@@ -648,22 +790,31 @@ export class SourceTransfers {
   async authorize(
     operationId: string,
     token: string | null,
-    action?: "commit" | "release" | "hello",
+    action?: "commit" | "release" | "hello" | "retire",
   ): Promise<Loaded> {
     const loaded = OPERATION_ID.test(operationId) ? await this.load(operationId) : null;
     const verdict = verifyTransferGrant(loaded?.record.grant ?? null, {
       operationId,
       token,
       now: this.now(),
-      ...(action !== undefined && loaded?.record.state === "committed"
+      ...(action !== undefined && action !== "retire" && loaded?.record.state === "committed"
         ? { revokedFor: "committed" }
         : {}),
     });
     if (!verdict.ok || !loaded) throw new SourceTransferError(401, "unauthorized");
+    // Ending a local-network generation is not a use of the grant: nothing of it is written.
+    if (action === "retire") return loaded;
     if (action !== "hello") loaded.pulledAt = this.now();
+    // A pull over Connect prompts a local-network offer; the offer itself goes by the control channel.
+    if (action === undefined) this.lan?.pulled(operationId);
     if (verdict.record.lastUsedAt - loaded.record.grant.lastUsedAt > 60_000)
       await this.save(loaded, { grant: verdict.record });
     return loaded;
+  }
+
+  /** The destination's side of a local-network generation ended; this side's ends with it. */
+  lanRetire(loaded: Loaded, generation: number): void {
+    this.lan?.retired(loaded.record.operationId, generation);
   }
 
   hello(loaded: Loaded, environmentId: string) {
@@ -687,6 +838,19 @@ export class SourceTransfers {
     loaded: Loaded,
     selection: ReadonlyArray<string>,
   ): Promise<SourceOperationRecord> {
+    // A selection outside the frozen ceiling stops a local-network copy as a changed scope.
+    const frozen = loaded.record.lan?.ceiling;
+    if (
+      this.lan !== null &&
+      loaded.record.lanPurpose !== undefined &&
+      selection.some(
+        (item) =>
+          !LAN_SELECTION_CEILING.includes(item) || (frozen !== undefined && !frozen.includes(item)),
+      )
+    ) {
+      await this.lan.deny(loaded.record.operationId, "scope_changed");
+      throw new SourceTransferError(401, "unauthorized");
+    }
     return this.transition(loaded, async () => {
       if (TERMINAL.has(loaded.record.state))
         throw new SourceTransferError(409, loaded.record.state);
@@ -704,17 +868,33 @@ export class SourceTransfers {
       if (loaded.stopRequested) throw new SourceTransferError(409, "stopping");
       if (loaded.record.state !== "scanned" && loaded.record.state !== "scanning")
         throw new SourceTransferError(409, loaded.record.state);
+      // The classes approved for this copy are frozen here, with its first selection.
+      const ceiling = loaded.record.lanPurpose === undefined ? null : lanCeilingOf(classes);
       await this.save(loaded, {
         state: "building",
         selection: classes,
         progress: { files: 0, bytes: 0 },
+        ...(ceiling === null
+          ? {}
+          : {
+              lan: {
+                generation: 0,
+                issued: [],
+                ...loaded.record.lan,
+                ceiling,
+              },
+            }),
       });
       loaded.building = this.build(loaded, new Set(classes));
+      // The scope is frozen now, so this is the first moment an offer can be made.
+      this.lan?.pulled(loaded.record.operationId);
       return loaded.record;
     });
   }
 
   private async build(loaded: Loaded, selection: ReadonlySet<FileClass>): Promise<void> {
+    // A generation is bound to one manifest; building one again ends it.
+    this.lan?.ended(loaded.record.operationId, "manifest_changed");
     const stop = new AbortController();
     loaded.stop = stop;
     if (loaded.stopRequested) stop.abort();
@@ -907,7 +1087,7 @@ export class SourceTransfers {
           throw new SourceTransferError(
             409,
             "snapshot_unavailable",
-            "The captured copy files are missing or changed. Measure and compare again.",
+            "The captured copy files are missing or changed. Compare again.",
           );
         }
       });
@@ -985,9 +1165,10 @@ export class SourceTransfers {
     for (const entry of entries) this.indexChunks(loaded, entry);
   }
 
-  private indexChunks(loaded: Loaded, entry: ManifestEntry) {
+  private indexChunks(loaded: Loaded, entry: ManifestEntry, later = false) {
     if (entry.type !== "file" || !entry.chunks) return;
     entry.chunks.forEach((sha, index) => {
+      if (later && !loaded.chunks!.has(sha)) (loaded.later ??= new Set()).add(sha);
       const place = {
         path: entry.path,
         offset: index * CHUNK_SIZE,
@@ -1031,7 +1212,7 @@ export class SourceTransfers {
         throw new SourceTransferError(
           409,
           "secret_reapproval_required",
-          "This saved comparison includes a newly protected secret-like file. Measure and compare again, then approve secrets separately.",
+          "This saved comparison includes a newly protected secret-like file. Compare again, then approve secrets separately.",
         );
   }
 
@@ -1200,7 +1381,7 @@ export class SourceTransfers {
           next = { ...previous, ...hashed, mode: stat.mode & 0o7777 };
         }
         loaded.entries!.set(path, next);
-        this.indexChunks(loaded, next);
+        this.indexChunks(loaded, next, true);
         updated.push(next);
       }
       return updated;

@@ -1,4 +1,6 @@
 import {
+  OrchestratorMcpAdvisorInput,
+  OrchestratorMcpAdvisorResult,
   OrchestratorMcpCapabilitiesInput,
   OrchestratorMcpCapabilitiesResult,
   OrchestratorMcpCreateThreadsInput,
@@ -43,7 +45,10 @@ import {
   OrchestratorMcpThreadsStopAllInput,
   ThreadMetadataMcpUpdateInput,
   ThreadMetadataMcpUpdateResult,
+  SPECWEAVE_SETUP_INSTRUCTION,
+  SpecweaveNeededLaunchResult,
 } from "@specweave-studio/contracts";
+import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
 import * as HandoffMode from "../../../handoff/HandoffMode.ts";
@@ -87,9 +92,13 @@ const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
 export const DelegateTaskTool = Tool.make("delegate_task", {
   description:
     "Needs an agent running inside a SpecWithCode thread. Delegate one task to a SpecWithCode-owned child of THIS thread (a coordinator's child is a worker; any other thread's child is its subagent) and run it with only the supplied task prompt, without copying parent conversation history. A model change is not a delegation: to carry this thread's work on another model use studio_thread_configure with continueWith, unless the user asks for a separate thread. Choose providers and models from orchestrator_capabilities, which uses the same live catalog as the composer. Prefer native subagent tools for same-provider work only when they support the chosen model. Use this for any model missing from the native tool, including same-provider work, for cross-provider work, or for explicitly SpecWithCode-owned child tasks. For a code review pass taskClass 'review' and no model: the app picks the reviewer from the project's reviewer order (Settings > Adversarial review), another model family than this thread's, narrowed by the increment's spec.md `## Review` policy, and refuses with each reason instead of substituting a same-family model; the result's review field names the reviewer and anything skipped, so tell the user. Name a model only when the user asks for that one. For every SpecWithCode delegated review round, call delegate_task again with the original brief, prior findings, responses, and unresolved objections in the task prompt. Pass title; it becomes the child thread's name and stays, so name the task's subject, not this round, its deadline or a PR number. End the task prompt by asking for a final result in your response style (a plain short message when that is enough). Track each round by its own taskId (internal; when talking to the user, refer to the child with the result's threadLink copied verbatim, and never build a thread link by hand) and use a distinct clientRequestId per round, stable across retries of that round. The childThreadId is backing storage, not the target for starting another delegated review round through studio_thread_send. Provider, model, model options (see orchestrator_capabilities), runtime mode, and interaction mode inherit unless target overrides them. When the user names a reasoning effort, pass it as target.effort (e.g. 'xhigh' for extra high); it maps to the model's nearest supported level, and unknown target keys are rejected. Prefer mode='async' for long work; mode='wait' blocks until completion or timeout. timeoutMs on mode=wait is only the parent's wait budget and does not cancel the child. waitTimedOut on that wait call means the timeout fired; keep that taskId and read status on later task_status. An async child's completion wakes this thread through a notification, steered into active turns where supported or queued otherwise, so end the turn instead of polling or spawning watchers; use task_status only when the result is needed mid-turn. " +
-    INCREMENT_LAUNCH_INSTRUCTION,
+    INCREMENT_LAUNCH_INSTRUCTION +
+    " " +
+    SPECWEAVE_SETUP_INSTRUCTION +
+    ' With increment "new" there it starts nothing and returns launched false, needs "specweave".',
   parameters: OrchestratorMcpDelegateTaskInput,
-  success: OrchestratorMcpDelegateTaskResult,
+  // increment "new" without SpecWeave starts nothing (1396 AC-06).
+  success: Schema.Union([OrchestratorMcpDelegateTaskResult, SpecweaveNeededLaunchResult]),
   failure: OrchestratorMcpFailure,
   failureMode: "return",
   dependencies,
@@ -97,6 +106,23 @@ export const DelegateTaskTool = Tool.make("delegate_task", {
   .annotate(Tool.Title, "Delegate a child task")
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
+
+export const AdvisorTool = Tool.make("advisor", {
+  description:
+    "Needs an agent running inside a SpecWithCode thread whose advisor is on. Asks a stronger model to review this thread's work so far; SpecWithCode sends it a brief of the thread (what was asked, what you did, where things stand), so no arguments are needed. Pass focus only to name the one question or decision you most want checked. Good moments: once you understand the task and before the substantive work, before you report the work as done (save results first), and when you are stuck or about to change approach. Results: advice is the review, weigh it and reconcile any conflict with evidence you hold; working means the advisor needs longer, so do what does not depend on it and end your turn, and the advice arrives as your next message (calling advisor again before it arrives picks up the same consult); refused started nothing and message says why; failed means no advice came, carry on without it. Consults are limited per turn; consultsRemaining says how many are left.",
+  parameters: OrchestratorMcpAdvisorInput,
+  success: OrchestratorMcpAdvisorResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Consult the advisor")
+  // Read-only so plan-mode and read-only-sandbox threads may consult: the
+  // advisor child runs read-only and the call changes nothing in the workspace.
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, false);
 
 const TaskStatusTool = Tool.make("task_status", {
   description:
@@ -197,7 +223,7 @@ const accessDependencies = [
 
 const RequestAccessTool = Tool.make("request_access", {
   description:
-    "Ask the user to let you use Mac apps (with the computer_* tools) or simulators and emulators (with the device_* tools), through one access card in this thread, and wait for Allow or Deny. Name every app and device you need in one call and give one sentence on why; the card shows each with its icon. The user picks whether the Allow lasts for this thread or always on this machine. Anything already allowed is not asked again. You do not need this before every app: opening or working in an app you were not allowed yet shows the same card by itself, but asking up front with your reason is clearer.",
+    "Ask the user to let you use Mac apps (with the computer_* tools) or simulators and emulators (with the device_* tools), through one access card in this thread, and wait for Allow or Deny. Name every app and device you need in one call and give one sentence on why; the card shows each with its icon. The user picks whether the Allow lasts for this thread or always on this machine. Anything already allowed is not asked again. You do not need this before every app: opening or working in an app you were not allowed yet shows the same card by itself, but asking up front with your reason is clearer. On a Mac, when reading another app's data (Chrome or Safari profiles, Mail, Messages) fails with 'Operation not permitted', ask with permission 'full-disk-access' alone: the card explains the risk, opens System Settings for the user and returns allowed once it is on. Never tell the user to open System Settings yourself.",
   parameters: OrchestratorMcpRequestAccessInput,
   success: OrchestratorMcpRequestAccessResult,
   failure: OrchestratorMcpFailure,
@@ -222,9 +248,12 @@ const AskUserTool = Tool.make("ask_user", {
 export const CreateThreadsTool = Tool.make("create_threads", {
   description:
     "Needs an agent running inside a SpecWithCode thread. Create one or more ORDINARY TOP-LEVEL SpecWithCode conversations. This is not delegation and does not create child agents/subagents. For delegated work, choose models from orchestrator_capabilities. Prefer native subagents only when they support the chosen model; otherwise call delegate_task, including for same-provider work. Use create_threads for a batch of separate top-level threads sharing this checkout. Prefer studio_thread_launch for a single thread. Both require the user to request separate/new/top-level threads or conversations. Give each thread a title that names the lasting goal it owns. Each entry may override provider, model, options, effort (target.effort, e.g. 'xhigh'), runtime mode, and interaction mode; omitted settings inherit. Project, branch, and worktree always inherit and cannot be overridden here. For independent implementation, use studio_thread_launch and let the project's Use worktrees setting decide the workspace; never ask the agent to create a worktree or clone in its prompt. Each run of a new thread that completes or fails wakes this thread, so end the turn instead of polling. " +
-    INCREMENT_LAUNCH_INSTRUCTION,
+    INCREMENT_LAUNCH_INSTRUCTION +
+    " " +
+    SPECWEAVE_SETUP_INSTRUCTION +
+    ' With increment "new" there it starts nothing and returns launched false, needs "specweave".',
   parameters: OrchestratorMcpCreateThreadsInput,
-  success: OrchestratorMcpCreateThreadsResult,
+  success: Schema.Union([OrchestratorMcpCreateThreadsResult, SpecweaveNeededLaunchResult]),
   failure: OrchestratorMcpFailure,
   failureMode: "return",
   dependencies,
@@ -361,20 +390,20 @@ const ThreadsContinueAllTool = Tool.make("studio_threads_continue_all", {
 
 const ThreadMigrateTool = Tool.make("studio_thread_migrate", {
   description:
-    "Move threads this coordinator owns to another machine through handoff. Each thread keeps its owner, the coordinator that started it; only where it runs moves. A file the thread needs that Git does not carry (a build, a .env) goes first with studio_file_transfer. Pass threadIds, or omit them to move every running handoff-mode thread of this project. Returns one result per thread: moved, stayed with the exact reason, or skipped. A machine that is offline, not granted, or not signed in is refused, never substituted.",
+    "Hand off threads this coordinator owns to another machine. Each thread keeps its owner, the coordinator that started it; only where it runs moves. A file the thread needs that Git does not carry (a build, a .env) goes first with studio_file_transfer. Pass threadIds, or omit them to hand off every running thread of this project that is set to hand off automatically. Returns one result per thread: moved, stayed with the exact reason, or skipped. A machine that is offline, not granted, or not signed in is refused, never substituted.",
   parameters: OrchestratorMcpThreadMigrateInput,
   success: OrchestratorMcpThreadMigrateResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
   dependencies: [...dependencies, ProjectService.ProjectService, HandoffMode.HandoffMode],
 })
-  .annotate(Tool.Title, "Move SpecWithCode threads to another machine")
+  .annotate(Tool.Title, "Hand off SpecWithCode threads to another machine")
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
 const HandoffReadyListTool = Tool.make("studio_handoff_ready_list", {
   description:
-    "List this project's threads that another machine replicated here through handoff mode and that this machine can continue, such as M4's threads when M4 is closed. Each row names the source machine, the checkpoint time, whether the source is unreachable and whether it can be continued now (false while the source still renews its lease).",
+    "List this project's threads that have a standby copy here from another machine and that this machine can continue, such as M4's threads when M4 is closed. Each row names the source machine, the checkpoint time, whether the source is unreachable and whether it can be continued now (false while the source still renews its lease).",
   parameters: OrchestratorMcpHandoffReadyListInput,
   success: OrchestratorMcpHandoffReadyListResult,
   failure: OrchestratorMcpFailure,
@@ -402,6 +431,7 @@ const ThreadContinueHereTool = Tool.make("studio_thread_continue_here", {
 export const OrchestratorToolkit = Toolkit.make(
   OrchestratorCapabilitiesTool,
   DelegateTaskTool,
+  AdvisorTool,
   TaskStatusTool,
   TaskCancelTool,
   ScheduleTaskTool,

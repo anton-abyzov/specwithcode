@@ -57,6 +57,8 @@ export interface FleetAddressBook {
 export interface FleetPeerRules {
   readonly teamRules?: TeamRulesPeerRules;
   readonly carried: boolean;
+  /** It keeps a review thread's reviewer lock (`handoffReviewLock`); absent or false: never sent one. */
+  readonly reviewLock?: boolean;
 }
 
 export function makeFleetAddressBook(ttlMs = FLEET_ADDRESS_TTL_MS): FleetAddressBook {
@@ -261,6 +263,7 @@ export async function reachFleetMachine(
       peerRules = {
         ...(descriptor.teamRules === undefined ? {} : { teamRules: descriptor.teamRules }),
         carried: descriptor.capabilities.teamRulesCarried === true,
+        reviewLock: descriptor.capabilities.handoffReviewLock === true,
       };
     } catch (error) {
       if (link.connectOnly && error instanceof FleetError && error.kind === "forbidden")

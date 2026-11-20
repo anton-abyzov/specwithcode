@@ -440,6 +440,10 @@ function SubagentTimelineLink(props: {
     environmentThreadDetails.threadAtom(props.parentRef),
     (thread) => thread?.projection.subagents.find((agent) => agent.id === props.subagentId) ?? null,
   );
+  const tx = useTx();
+  // An advisor consult runs as a subagent; it reads as the consult, not as delegated work.
+  const advisor = agent?.purpose === "advisor";
+  const title = advisor ? tx("Advisor consult") : props.title;
   const threadId = props.threadId;
   const liveStatus = agent?.status ?? props.status;
   const status = props.event ? props.event.status : liveStatus;
@@ -465,8 +469,11 @@ function SubagentTimelineLink(props: {
       />
       <span className="min-w-0 flex-1">
         <span className="flex items-baseline gap-2">
-          <span className="min-w-0 truncate text-xs font-medium text-foreground">
-            {props.title}
+          <span
+            className="min-w-0 truncate text-xs font-medium text-foreground"
+            {...(advisor ? { "data-advisor-consult": "subagent" } : {})}
+          >
+            {title}
           </span>
           {detail !== null && (props.event !== undefined || status !== "completed") ? (
             <span
@@ -520,7 +527,7 @@ function SubagentTimelineLink(props: {
             <button
               type="button"
               data-v2-item-type="subagent"
-              aria-label={`Open ${props.title}`}
+              aria-label={`Open ${title}`}
               aria-description={statusLabel}
               onClick={() => props.onOpenThread(threadId)}
               className={cn(
@@ -536,6 +543,7 @@ function SubagentTimelineLink(props: {
       <ThreadHoverCardPopup>
         <SubagentTimelineTooltip
           {...props}
+          title={title}
           elapsed={agent ? <AgentElapsed agent={projectedSubagentsToRuntime([agent])[0]!} /> : null}
           model={agent?.model ?? null}
           status={liveStatus}
@@ -561,7 +569,11 @@ function SubagentTimelineTooltip(
   const childProject = useProject(child ? scopeProjectRef(environmentId, child.projectId) : null);
   return (
     <SubagentTooltipContent
-      title={formatSubagentDisplayTitle(child?.title ?? props.title)}
+      title={
+        child?.purpose === "advisor"
+          ? props.title
+          : formatSubagentDisplayTitle(child?.title ?? props.title)
+      }
       model={props.model}
       providerInstanceId={props.providerInstanceId}
       origin={props.origin}

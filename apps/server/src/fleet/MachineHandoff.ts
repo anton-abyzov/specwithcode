@@ -70,6 +70,11 @@ import {
   type MachineReadiness,
   type MachineReadinessInput,
   type MachineNicknames,
+  type FolderCopyLanCheck,
+  type FolderCopyLanCheckAnswer,
+  type FolderCopyLanOffer,
+  type FolderCopyLanProbe,
+  type FolderCopyLanRetire,
 } from "@specweave-studio/contracts";
 import { busyHandoffError } from "./handoffBusyThreads.ts";
 import { normalizeMachineNickname } from "@specweave-studio/shared/machineNicknames";
@@ -120,6 +125,9 @@ import {
 } from "./handoffLaunchPrompt.ts";
 import { copiedContextPaths } from "./folderCopyContextPaths.ts";
 import { SecretsPeer, stageSealedSecrets } from "./folderTransfer/sealedSecrets.ts";
+import { lanHooks, lanSettingInEffect, newLanLink } from "./folderTransfer/lanRuntime.ts";
+import type { LanControlPeer } from "./folderTransfer/lanSource.ts";
+import { serveWithAuthority, type TransferAuthority } from "./folderTransfer/transferAuthority.ts";
 import { makeCopyRegistration } from "./folderCopyRegistration.ts";
 import { makeExistingCopyLocks } from "./existingCopyLocks.ts";
 import { existingCopyUpdate, gitGuarded } from "./machineHandoffGitGuard.ts";
@@ -127,6 +135,7 @@ import { decodeDestinationRecord, decodeSourceRecord } from "./machineHandoffRec
 import { leftBehindOf, markProjectMoved, projectRepositories } from "./repositorySync.ts";
 import { discoverCopyScopes, resolveCopyScope } from "./folderCopyScope.ts";
 import { checkMachineReadiness } from "./MachineReadiness.ts";
+import { checkPrivacyAccess } from "../access/privacyAccess.ts";
 import { newSourceRecord } from "./machineHandoffBundle.ts";
 import {
   type ContextThread,
@@ -147,12 +156,10 @@ import {
   DestinationCopies,
   type DestinationRecord as FolderDestinationRecord,
 } from "./folderTransfer/destinationService.ts";
-import {
-  handleSourceRequest,
-  type RawRequest,
-  type RawResponse,
-} from "./folderTransfer/sourceRoutes.ts";
+import type { RawRequest, RawResponse } from "./folderTransfer/sourceRoutes.ts";
 import { SourceTransfers } from "./folderTransfer/sourceService.ts";
+import * as ConnectDeviceTrust from "./ConnectDeviceTrust.ts";
+import { bindingRefused, requestDeviceBinding } from "./deviceBoundTransfers.ts";
 import { registerHandoff } from "./folderTransfer/folderWork.ts";
 import {
   busyCopyWarnings,
@@ -259,6 +266,28 @@ export class MachineHandoff extends Context.Service<
     ) => Effect.Effect<MachineReadiness, FolderCopyError>;
     /** Serves one request on the source's folder transfer endpoint. */
     readonly serveFolderTransfer: (request: RawRequest) => Effect.Effect<RawResponse>;
+    /** Destination: answers a source's `lanCheck` on the control channel (1390 T-17). */
+    readonly copyLanCheck: (
+      callerEnvironmentId: string,
+      body: FolderCopyLanCheck,
+    ) => Effect.Effect<FolderCopyLanCheckAnswer>;
+    /** Destination: takes or refuses a source's `lanOffer` on the control channel. */
+    readonly copyLanOffer: (
+      callerEnvironmentId: string,
+      body: { readonly operationId: string; readonly lan: FolderCopyLanOffer },
+    ) => Effect.Effect<boolean>;
+    /** Destination: yes or no to the local network for one copy, before any address is named. */
+    readonly copyLanProbe: (
+      callerEnvironmentId: string,
+      body: FolderCopyLanProbe,
+    ) => Effect.Effect<boolean>;
+    /** Destination: the source ended a generation; this side's ends with it. */
+    readonly copyLanRetire: (
+      callerEnvironmentId: string,
+      body: FolderCopyLanRetire,
+    ) => Effect.Effect<void>;
+    /** Gives the copy service its control line to other machines, once the fleet link exists. */
+    readonly attachLanPeer: (peer: LanControlPeer) => Effect.Effect<void>;
   }
 >()("specweave-studio/fleet/MachineHandoff") {}
 
@@ -272,6 +301,7 @@ const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const eventSink = yield* EventSink.EventSinkV2;
   const environment = yield* ServerEnvironment.ServerEnvironment;
+  const deviceTrust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
   const store = yield* MachineHandoffStore.MachineHandoffStore;
   const git = yield* HandoffGit.HandoffGit;
   const sql = yield* SqlClient.SqlClient;
@@ -456,13 +486,43 @@ const make = Effect.gen(function* () {
       }),
     );
   const registerCopy = makeCopyRegistration(projects);
+  // The local-network path of a copy: off unless this machine's setting and the review gate are on.
+  const lanLink = newLanLink();
+  const lan = lanHooks(lanLink);
+  lanLink.environmentId = yield* environment.getEnvironmentId;
+  const readLanSetting = serverSettings.getSettings.pipe(
+    Effect.map((settings) => {
+      lanLink.enabled = lanSettingInEffect(settings);
+    }),
+    Effect.ignore,
+  );
+  yield* readLanSetting;
+  yield* serverSettings.streamChanges.pipe(
+    Stream.runForEach(() => readLanSetting),
+    Effect.forkScoped,
+  );
+  // One decision for a copy's every read, on Connect and on the local network.
+  const transferAuthority: TransferAuthority = (record) =>
+    runPromise(
+      Effect.gen(function* () {
+        if (teamRulesMachineLinkRefusal(yield* currentTeamRules) !== null)
+          return { status: 403, code: "team_rules" } as const;
+        // A copy a device offered stops when that device is removed (1327).
+        if (yield* bindingRefused(deviceTrust, record?.device))
+          return { status: 401, code: "unauthorized" } as const;
+        return null;
+      }),
+    );
   const sources = new SourceTransfers(store.root, {
+    lan: lan.source,
+    authority: transferAuthority,
     release: (record, reason) =>
       runPromise(
         releaseCoordinator(ProjectId.make(record.projectId), record.operationId, reason),
       ).then(() => undefined),
   });
   const copies = new DestinationCopies(store.root, {
+    lan: lan.destination,
     register: (record) => runPromise(registerCopy(record)),
   });
   yield* Effect.addFinalizer(() => Effect.promise(() => copies.close()));
@@ -562,6 +622,10 @@ const make = Effect.gen(function* () {
               : Effect.fail(asCopyError(cause)),
           ),
         );
+        // A device's offer carries its approval on the record (1327): a device
+        // this machine does not approve gets nothing to hand out.
+        const device = yield* requestDeviceBinding(deviceTrust);
+        if (device === null) return yield* new FolderCopyError({ code: "refused" });
         const { sourceUrl, sourceConnectUrl } = yield* sourceAddressesNow;
         const sourceMachine = yield* ownMachineName(sourceEnvironmentId);
         const offered = yield* attempt(() =>
@@ -574,6 +638,8 @@ const make = Effect.gen(function* () {
             warnings,
             destinationEnvironmentId: input.destinationEnvironmentId,
             secretPatterns: current.workspaceSettings?.secretFiles,
+            ...(input.lanPurpose === undefined ? {} : { lanPurpose: input.lanPurpose }),
+            ...(device === undefined ? {} : { device }),
           }),
         );
         return offerResult({
@@ -757,17 +823,9 @@ const make = Effect.gen(function* () {
       );
     });
   const serveFolderTransfer: MachineHandoff["Service"]["serveFolderTransfer"] = (request) =>
-    Effect.gen(function* () {
-      const environmentId = yield* environment.getEnvironmentId;
-      if (teamRulesMachineLinkRefusal(yield* currentTeamRules) !== null) {
-        return {
-          status: 403,
-          contentType: "application/json",
-          body: new TextEncoder().encode('{"error":"team_rules"}'),
-        };
-      }
-      return yield* Effect.promise(() => handleSourceRequest(sources, environmentId, request));
-    });
+    Effect.flatMap(environment.getEnvironmentId, (environmentId) =>
+      Effect.promise(() => serveWithAuthority(transferAuthority, sources, environmentId, request)),
+    );
   const folderCopyManifest = makeFolderCopyManifest(sources, idle);
   const folderCopyDecision = makeFolderCopyDriftDecision(sources);
   const copyContextAvailable = makeFolderCopyContextCheck(sources);
@@ -1194,9 +1252,12 @@ const make = Effect.gen(function* () {
                     member.projectId !== input.projectId,
                 ) ||
                 (targetBinding && targetBinding.state !== "active"))) ||
+            // Work that lands beside this project leaves its coordinator running (1390 AC-35);
+            // only a handoff into the project's own folder replaces an active binding.
             (!joining &&
+              useProjectFolder &&
               targetBinding?.state === "active" &&
-              !(useProjectFolder && saved && targetBinding.operationId === input.operationId))
+              !(saved && targetBinding.operationId === input.operationId))
           )
             return yield* new MachineHandoffError({ code: "conflict" });
           const incomingBinding: ProjectCoordinatorBinding = {
@@ -1432,8 +1493,8 @@ const make = Effect.gen(function* () {
               `context-${input.operationId}-paths`,
               stringifyJson(copiedContextPaths(input.bundle, materialized.workspaceRoot), null, 2),
             );
-          // Joining a standalone registration preserves its history and fences its retained coordinator.
-          // Existing historical bindings keep their original successor; the active segment has the newest epoch.
+          // Joining a standalone registration preserves its history. Its coordinator stays its
+          // own: every machine runs one (1390 AC-35). A copy that gave way before keeps that binding.
           if (
             !(
               useProjectFolder &&
@@ -1453,14 +1514,7 @@ const make = Effect.gen(function* () {
                   ...(useProjectFolder ? { acceptedHandoffOperationId: input.operationId } : {}),
                   coordinatorBinding: useProjectFolder
                     ? incomingBinding
-                    : targetBinding?.state === "transferred"
-                      ? targetBinding
-                      : {
-                          epoch: targetBinding?.epoch ?? 0,
-                          state: "transferred",
-                          operationId: input.operationId,
-                          successor,
-                        },
+                    : (targetBinding ?? { epoch: 0, state: "active" }),
                 },
               }),
               "storage_failed",
@@ -1647,6 +1701,26 @@ const make = Effect.gen(function* () {
     copySecretsSealedTo,
     copyDestination,
     copySecretsKey,
+    copyLanCheck: (caller, body) =>
+      Effect.promise(() => copies.lan?.check(caller, body) ?? Promise.resolve({ lan: null })).pipe(
+        Effect.orElseSucceed(() => ({ lan: null })),
+      ),
+    copyLanOffer: (caller, body) =>
+      Effect.promise(() => copies.lan?.offer(caller, body) ?? Promise.resolve(false)).pipe(
+        Effect.orElseSucceed(() => false),
+      ),
+    copyLanProbe: (caller, body) =>
+      Effect.promise(() => copies.lan?.probe(caller, body) ?? Promise.resolve(false)).pipe(
+        Effect.orElseSucceed(() => false),
+      ),
+    copyLanRetire: (caller, body) =>
+      Effect.promise(() => copies.lan?.retired(caller, body) ?? Promise.resolve()).pipe(
+        Effect.ignore,
+      ),
+    attachLanPeer: (peer) =>
+      Effect.sync(() => {
+        lanLink.peer = peer;
+      }),
     sentSecrets,
     readiness,
     serveFolderTransfer,
@@ -1661,6 +1735,7 @@ export const layerFolderCopyRpcHandlers = WsFolderCopyRpcGroup.middleware(
   Effect.gen(function* () {
     const handoff = yield* MachineHandoff;
     const secretsPeer = yield* SecretsPeer;
+    if (secretsPeer.lan) yield* handoff.attachLanPeer(secretsPeer.lan);
     return {
       [WS_METHODS.machineHandoffCopyScopes]: handoff.copyScopes,
       [WS_METHODS.machineHandoffCopyLeftBehind]: handoff.copyLeftBehind,
@@ -1669,6 +1744,7 @@ export const layerFolderCopyRpcHandlers = WsFolderCopyRpcGroup.middleware(
           scopeVersion: 1 as const,
           contextRetention: 1 as const,
           existingCopyUpdate: 1 as const,
+          lanTransport: 1 as const,
         }),
       [WS_METHODS.machineHandoffCopyOffer]: (input) => unlessUpdating(handoff.copyOffer(input)),
       [WS_METHODS.machineHandoffCopySourceStatus]: handoff.copySourceStatus,
@@ -1689,6 +1765,7 @@ export const layerFolderCopyRpcHandlers = WsFolderCopyRpcGroup.middleware(
         unlessUpdating(stageSealedSecrets(handoff, secretsPeer, input)),
       [WS_METHODS.machineHandoffSentSecrets]: handoff.sentSecrets,
       [WS_METHODS.machineHandoffReadiness]: handoff.readiness,
+      [WS_METHODS.machineHandoffPrivacyAccess]: () => Effect.promise(() => checkPrivacyAccess()),
     };
   }),
 );

@@ -61,6 +61,7 @@ describe("serverSettings helpers", () => {
       logsAfterDays: 30,
       scratchAfterDays: null,
       removeMergedClones: true,
+      removeResolvedWorktrees: true,
       homeSizeWarningGb: 50,
       deletedThreadHistoryAfterDays: 7,
       archivedThreadHistoryAfterDays: 2,

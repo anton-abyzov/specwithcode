@@ -12,6 +12,7 @@ import * as NodePath from "node:path";
 
 import { JsonLog, lstatOrNull } from "./durable.ts";
 import { isSafeRelativePath } from "./paths.ts";
+import { isProviderSignInFile } from "../../workspace/WorkspaceSensitivePaths.ts";
 
 export const MAX_SECRET_FILE_BYTES = 1024 * 1024;
 export const MAX_SECRET_TOTAL_BYTES = 16 * 1024 * 1024;
@@ -61,6 +62,11 @@ export function selectSecretFiles(
   for (const path of paths) {
     if (seen.has(path)) throw new SecretStepError("duplicate", "A secret file is listed twice.");
     seen.add(path);
+    if (isProviderSignInFile(path))
+      throw new SecretStepError(
+        "not_offered",
+        `${path} is a provider sign-in, which never moves between machines. Sign in on the other machine instead.`,
+      );
     const file = byPath.get(path);
     if (!file || !isSafeRelativePath(path))
       throw new SecretStepError(
@@ -217,6 +223,8 @@ export async function writeSecretFile(input: {
   readonly sourceMachine: string;
 }): Promise<ReceivedSecret> {
   if (!isSafeRelativePath(input.path)) throw new Error("A received secret file path is unsafe.");
+  if (isProviderSignInFile(input.path))
+    throw new Error(`${input.path} is a provider sign-in, which never moves between machines.`);
   if (input.bytes.byteLength > MAX_SECRET_FILE_BYTES)
     throw new Error(`${input.path} is larger than the secret file limit.`);
   await ensureParents(input.targetRoot, input.path);

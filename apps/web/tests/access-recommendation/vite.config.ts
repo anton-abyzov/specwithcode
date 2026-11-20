@@ -14,6 +14,12 @@ const stubs = new Set(
     "state/environments",
     "components/onboarding/FirstRunUpdateNotice",
     "components/github/StarOnGitHub",
+    // The Access rows' live readers; the fixture draws each row's view itself.
+    "components/access/FullDiskAccess",
+    "state/query",
+    "state/use-atom-command",
+    "studio/projectWorkspace",
+    "browser/externalBrowsers",
   ].map((path) => NodePath.resolve(appSource, path)),
 );
 export default defineConfig({

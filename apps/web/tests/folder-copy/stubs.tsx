@@ -10,9 +10,9 @@ const SECRET_FILES = new URLSearchParams(location.search).has("secrets")
   ? [
       { path: ".env", size: 412 },
       { path: ".env.local", size: 188 },
-      { path: "repositories/anton-abyzov/specweave/.env", size: 96 },
-      { path: "repositories/anton-abyzov/vskill-platform/.dev.vars", size: 233 },
-      { path: "repositories/anton-abyzov/vskill/.npmrc", size: 64 },
+      { path: "repositories/acme/specweave/.env", size: 96 },
+      { path: "repositories/acme/vskill-platform/.dev.vars", size: 233 },
+      { path: "repositories/acme/vskill/.npmrc", size: 64 },
       { path: "keys/deploy_ed25519", size: 411 },
     ]
   : [];
@@ -166,7 +166,7 @@ export const linkCopyAsWorkers = async () => ({ status: "linked" });
 export const filesystemEnvironment = { browse: (value: unknown) => value };
 export const useFilesystemReadAccess = () => ({ canReadFiles: true });
 export const useEnvironmentQuery = () => ({
-  data: { parentPath: "/home/anton", entries: [] },
+  data: { parentPath: "/home/sam", entries: [] },
   isPending: false,
 });
 const fixtureParams = new URLSearchParams(location.search);
@@ -177,17 +177,17 @@ let attempted = false;
 let published = false;
 let op = incompleteUndo ? "00000000-0000-4000-8000-000000000009" : "";
 let mode = incompleteUndo && !undoCommitted ? "copy-and-move" : "copy-only";
-let targetFolder = incompleteUndo ? "/home/anton/Projects/project" : "";
-const umbrella = "/Users/you/Projects/github/specweave-umb";
-const child = "repositories/anton-abyzov/specweave";
+let targetFolder = incompleteUndo ? "/home/sam/Projects/project" : "";
+const umbrella = "/Users/you/projects/atlas";
+const child = "repositories/acme/specweave";
 let copyRoot = umbrella;
 let projectRelativePath = child;
 const FINISHED_AT = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
 const status = (state: string) => ({
   operationId: op,
-  sourceEnvironmentId: "m4",
+  sourceEnvironmentId: "laptopE",
   sourceProjectId: "source",
-  sourceMachine: "MacBook M4",
+  sourceMachine: "Laptop E",
   mode,
   targetFolder,
   copyRoot,
@@ -240,7 +240,7 @@ const status = (state: string) => ({
   unstable: [],
   committed: incompleteUndo ? undoCommitted : state === "applied",
   projectId: state === "applied" ? "copied" : null,
-  // Two hours before the page loaded, so the Done title reads "(copied 2h ago)".
+  // Two hours before the page loaded, so the Done title reads "(added 2h ago)".
   ...(state === "applied" ? { finishedAt: FINISHED_AT } : {}),
   createdAt: "2026-10-21T00:00:00Z",
   updatedAt: "2026-10-21T00:00:00Z",
@@ -324,11 +324,11 @@ export const useAtomCommand =
             copyRoot: umbrella,
             projectRelativePath: child,
             kind: "workspace",
-            label: "specweave-umb",
+            label: "atlas",
             repositories: [
               child,
-              "repositories/anton-abyzov/specwithcode",
-              "repositories/anton-abyzov/vskill",
+              "repositories/acme/specwithcode",
+              "repositories/acme/vskill",
               "custom/tools",
             ],
             truncated: false,
@@ -360,7 +360,7 @@ export const useAtomCommand =
           digest: "d".repeat(64),
           manifest: { operationId: input.operationId, repositories: [] },
           destination: input.destination,
-          sourceEnvironmentId: "m4",
+          sourceEnvironmentId: "laptopE",
           sourceProjectId: "source",
           sourceThreadId: "coordinator",
         },
@@ -382,10 +382,10 @@ export const useAtomCommand =
       published = false;
       value = {
         operationId: op,
-        sourceEnvironmentId: "m4",
+        sourceEnvironmentId: "laptopE",
         sourceProjectId: "source",
         sourceUrl: "https://fixture.example.ts.net",
-        sourceMachine: "MacBook M4",
+        sourceMachine: "Laptop E",
         token: "synthetic",
         title: "SpecWeave",
         mode,
@@ -475,8 +475,12 @@ export const useAtomCommand =
     return { _tag: "Success", value };
   };
 export const squashAtomCommandFailure = (value: any) => value.error;
-// Send to another machine… reads copy roles, whose module also reads interrupted commands.
+// The machine menu reads copy roles, whose module also reads interrupted commands.
 export const isAtomCommandInterrupted = () => false;
+// Shared UI (toasts) reaches modules that build their commands at import: inert here.
+export const createEnvironmentRpcCommand = () => ({});
+export const createEnvironmentRpcQueryAtomFamily = () => () => ({});
+export const runAtomCommand = async () => ({ _tag: "Success", value: undefined });
 export const MachineReadinessChecklist = () => (
   <p className="text-xs text-muted-foreground">
     Synthetic readiness fixture; no provider session started.

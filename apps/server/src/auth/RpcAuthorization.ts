@@ -1,3 +1,4 @@
+import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
 import {
   CLIENT_GUARDED_RPC_SCOPES,
   type DeviceListInput,
@@ -74,6 +75,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsEnvironmentImportPreview]: AuthOrchestrationReadScope,
   // The check walks the folder and reports its checkouts and planning roots.
   [WS_METHODS.projectsFolderCheck]: AuthFilesystemReadScope,
+  // Stops threads, like the Stop button.
+  [WS_METHODS.projectsFolderStop]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsWorktreesRead]: AuthFilesystemReadScope,
   // Lists the checkouts inside the project folder.
   [WS_METHODS.projectsRepositoriesRead]: AuthFilesystemReadScope,
@@ -91,6 +94,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsLibraryAddArtifact]: AuthFilesystemWriteScope,
   // Runs `specweave init`, which writes SpecWeave's files into the project folder.
   [WS_METHODS.projectsSpecweaveSetUp]: AuthFilesystemWriteScope,
+  // Answers that write no file, so a window without file access can give them (1396).
+  [WS_METHODS.projectsSpecweaveAnswer]: AuthOrchestrationOperateScope,
+  [WS_METHODS.projectsFirstFeatureGuide]: AuthOrchestrationOperateScope,
   // Search results quote Library files, so reading knowledge is a file read.
   [WS_METHODS.projectsKnowledgeRead]: AuthFilesystemReadScope,
   [WS_METHODS.designExport]: AuthFilesystemReadScope,
@@ -176,6 +182,10 @@ export const RPC_REQUIRED_SCOPES = {
   // The same quota the server config already carries, kept over time.
   [WS_METHODS.usageLimitsHistory]: AuthOrchestrationReadScope,
   [WS_METHODS.usageLimitsResets]: AuthOrchestrationReadScope,
+  // Team usage (0898): what this machine shares with a team, and whether it does.
+  [WS_METHODS.teamUsageStatus]: AuthSettingsWriteScope,
+  [WS_METHODS.teamUsageUpdate]: AuthSettingsWriteScope,
+  [WS_METHODS.teamUsageOrgs]: AuthSettingsWriteScope,
   [WS_METHODS.resetAnnouncementsList]: AuthOrchestrationReadScope,
   [WS_METHODS.serverRefreshUsageRates]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverSignalProcess]: AuthEnvironmentMaintainScope,
@@ -192,6 +202,10 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.personalDataStatus]: AuthSettingsWriteScope,
   [WS_METHODS.personalDataSetAccess]: AuthSettingsWriteScope,
   [WS_METHODS.serverCleanOldAppVersions]: AuthSettingsWriteScope,
+  // The plan names local folders and costs a host lookup per finished folder;
+  // the run removes folders. Both are this machine's storage settings.
+  [WS_METHODS.serverGetStorageCleanupPlan]: AuthSettingsWriteScope,
+  [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
   // Delivery logs hold request bodies, so they need the same scope as the URL.
   [WS_METHODS.scheduledTasksListWebhookDeliveries]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksGetWebhookDelivery]: AuthOrchestrationOperateScope,
@@ -374,6 +388,17 @@ export const PERSONAL_DATA_RPC_METHODS: ReadonlyArray<string> = [
   WS_METHODS.telegramChannelRemove,
 ];
 
+/**
+ * Team usage (0898): whether this machine sends its usage summary to a team,
+ * where, and under which labels. The member decides on the machine; another
+ * machine's key that reached this socket cannot opt it in or read the preview.
+ */
+export const TEAM_USAGE_OWNER_RPC_METHODS: ReadonlyArray<string> = [
+  WS_METHODS.teamUsageStatus,
+  WS_METHODS.teamUsageUpdate,
+  WS_METHODS.teamUsageOrgs,
+];
+
 const OWNER_ONLY_RPC_METHODS: ReadonlySet<string> = new Set([
   WS_METHODS.awayDecideAccess,
   // Away moves this machine's threads, routines and coordinator to another
@@ -389,6 +414,7 @@ const OWNER_ONLY_RPC_METHODS: ReadonlySet<string> = new Set([
   // running the copy decides that, never another machine's key that reached this socket.
   WS_METHODS.machineHandoffCopySealedSecrets,
   ...PERSONAL_DATA_RPC_METHODS,
+  ...TEAM_USAGE_OWNER_RPC_METHODS,
 ]);
 
 const ownerOnlyRpcMessage = (method: string) =>
@@ -396,9 +422,11 @@ const ownerOnlyRpcMessage = (method: string) =>
     ? "Only this machine's owner can approve access here."
     : method === WS_METHODS.machineHandoffCopySealedSecrets
       ? "Only a person running the copy can send this machine's secret files."
-      : PERSONAL_DATA_RPC_METHODS.includes(method)
-        ? "Only this machine's owner can see or change personal data access here."
-        : "Only this machine's owner can start, stop or change Away here.";
+      : TEAM_USAGE_OWNER_RPC_METHODS.includes(method)
+        ? "Only a person on this machine can change what it shares with a team."
+        : PERSONAL_DATA_RPC_METHODS.includes(method)
+          ? "Only this machine's owner can see or change personal data access here."
+          : "Only this machine's owner can start, stop or change Away here.";
 
 export const refusesOwnerOnlyRpc = (method: string, principal: AuthPrincipal | undefined) =>
   principal?.kind === "coordinator" && OWNER_ONLY_RPC_METHODS.has(method);
@@ -407,8 +435,14 @@ export const refusesOwnerOnlyRpc = (method: string, principal: AuthPrincipal | u
 export const layer = (
   scopes: ReadonlyArray<AuthEnvironmentScope>,
   principal?: AuthPrincipal | undefined,
+  /** The approved device behind this connection (1327); what its calls mint is bound to it. */
+  deviceKey?: string | undefined,
 ) =>
-  Layer.succeed(RpcScopeAuthorization)((effect, { rpc, payload }) => {
+  Layer.succeed(RpcScopeAuthorization)((call, { rpc, payload }) => {
+    const effect =
+      deviceKey === undefined
+        ? call
+        : call.pipe(Effect.provideService(ConnectDeviceTrust.RequestDevice, deviceKey));
     if (refusesOwnerOnlyRpc(rpc._tag, principal)) {
       return Effect.fail(
         new EnvironmentAuthorizationError({

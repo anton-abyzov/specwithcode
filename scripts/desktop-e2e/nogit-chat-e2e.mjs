@@ -30,6 +30,7 @@ import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import { walkFirstRun } from "../studio-verify/first-run-walk.mjs";
 
 process.env.PWDEBUG = "0";
 process.env.PLAYWRIGHT_HTML_OPEN = "never";
@@ -483,42 +484,22 @@ const main = async () => {
 
   const nav = page.getByRole("navigation", { name: "Projects and chats" });
   const wizardSteps = [];
-  // First-run wizard, as in installed-e2e.mjs: go on without an account,
-  // then skip the agent, access and project-import steps.
+  // First-run setup, as in installed-e2e.mjs: each step's neutral action
+  // (scripts/studio-verify/first-run-walk.mjs).
   const finishWizard = async () => {
-    const wizard = page.getByRole("dialog").filter({ hasText: "SpecWithCode" }).first();
-    const wizardButtons = [
-      /^Use without an account$/u,
-      /^Do not import projects$/u,
-      // The access step: new chats keep the access they start with.
-      /^Keep (Supervised|current access)$/u,
-      /^Skip/u,
-      /^Continue( without an agent)?$/u,
-      /^(Finish|Done|Get started|Close)$/u,
-    ];
-    const deadline = Date.now() + TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      if (await wizard.isVisible().catch(() => false)) {
-        let clicked = null;
-        for (const name of wizardButtons) {
-          const button = wizard.getByRole("button", { name }).last();
-          if (
-            (await button.isVisible().catch(() => false)) &&
-            (await button.isEnabled().catch(() => false))
-          ) {
-            clicked = (await button.innerText().catch(() => String(name))).trim().split("\n")[0];
-            await button.click();
-            break;
-          }
-        }
-        if (clicked) wizardSteps.push(clicked);
-        if (wizardSteps.length > 12) throw new Error("the first-run wizard did not finish");
-      } else if (await nav.isVisible().catch(() => false)) {
-        return;
-      }
-      await page.waitForTimeout(1000);
+    try {
+      wizardSteps.push(
+        ...(await walkFirstRun(page, {
+          until: () => nav.isVisible().catch(() => false),
+          appearTimeoutMs: TIMEOUT_MS,
+          timeoutMs: TIMEOUT_MS,
+        })),
+      );
+    } catch (error) {
+      wizardSteps.push(...(error.firstRunSteps ?? []));
+      throw error;
     }
-    throw new Error("the sidebar navigation 'Projects and chats' never became visible");
+    await nav.waitFor({ state: "visible", timeout: TIMEOUT_MS });
   };
   try {
     await page.goto(pairUrl, { waitUntil: "domcontentloaded", timeout: TIMEOUT_MS });

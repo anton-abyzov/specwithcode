@@ -262,3 +262,46 @@ it("Claude's on-disk switches override a snapshot taken before them, except plug
     ],
   );
 });
+
+it("reads an agent whose folder scan did not finish as incomplete, and leaves the others", () => {
+  const state = (instance: string, extra: Record<string, unknown> = {}) => ({
+    instanceId: ProviderInstanceId.make(instance),
+    driver: ProviderDriverKind.make("acpRegistry"),
+    label: instance,
+    state: "unsupported" as const,
+    skills: 3,
+    ...extra,
+  });
+  const source = (instance: string, scanIncomplete?: boolean, folderScanned?: boolean) => ({
+    instanceId: ProviderInstanceId.make(instance),
+    driver: ProviderDriverKind.make("acpRegistry"),
+    label: instance,
+    skills: [],
+    ...(scanIncomplete ? { scanIncomplete } : {}),
+    ...(folderScanned ? { folderScanned } : {}),
+  });
+  const states = [state("copilot"), state("gemini")];
+  assert.deepStrictEqual(
+    ProjectSkillsService.withIncompleteFolderScans(states, [
+      source("copilot", true),
+      source("gemini"),
+    ]),
+    [state("copilot", { incomplete: true }), state("gemini")],
+  );
+  // An agent whose folders the app scanned says so, so its files count as looked for.
+  assert.deepStrictEqual(
+    ProjectSkillsService.withIncompleteFolderScans(states, [
+      source("copilot", true, true),
+      source("gemini", false, true),
+    ]),
+    [
+      state("copilot", { discovery: "folder-scan", incomplete: true }),
+      state("gemini", { discovery: "folder-scan" }),
+    ],
+  );
+  // Nothing partial: the same array, so nothing downstream sees a change.
+  assert.strictEqual(
+    ProjectSkillsService.withIncompleteFolderScans(states, [source("copilot"), source("gemini")]),
+    states,
+  );
+});

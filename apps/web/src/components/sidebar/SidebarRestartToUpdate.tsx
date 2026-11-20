@@ -5,6 +5,8 @@ import { RotateCwIcon, SparklesIcon, XIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useTx } from "../../i18n";
+import { restartButtonLabel } from "../../studio/machineLabels";
 import { isElectron } from "../../env";
 import { getLocalStorageItem, setLocalStorageItem } from "../../hooks/useLocalStorage";
 import { cn } from "../../lib/utils";
@@ -69,9 +71,10 @@ import {
   describeReaskedRequests,
   restartWhenIdleNote,
   runningAppRelease,
-  SERVICE_UPDATE_NOW_DESCRIPTION,
+  serviceUpdateNowDescription,
   serviceInstallTarget,
   serviceUpdateButtonLabel,
+  UPDATE_PREFERENCES_CHANGED,
 } from "./SidebarRestartToUpdate.logic";
 
 // An accepted install quits the app; if it is still open after this long,
@@ -115,16 +118,19 @@ interface RestartOptions {
  * too, it goes first, now instead of after the next quiet period, and the app
  * restarts into its new version once the service runs the new one.
  */
-export function SidebarRestartToUpdate() {
-  return isElectron ? <SidebarRestartToUpdateButton /> : null;
+/** `machine`: the name of the machine the button acts on, this window's, for its words (1427). */
+export function SidebarRestartToUpdate({ machine = null }: { machine?: string | null } = {}) {
+  return isElectron ? <SidebarRestartToUpdateButton machine={machine} /> : null;
 }
 
-function SidebarRestartToUpdateButton() {
+function SidebarRestartToUpdateButton({ machine }: { machine: string | null }) {
   const appState = useDesktopUpdateState();
   const serviceState = useStudioServiceUpdateState();
   const service = useServiceUpdateFlow(serviceState);
   const [pending, setPending] = useState(false);
   const [installOnQuit, setInstallOnQuit] = useState(false);
+  // Null until read: only a known "off" is said beside Update now.
+  const [installAutomatically, setInstallAutomatically] = useState<boolean | null>(null);
   const [downloadsInBackground, setDownloadsInBackground] = useState(false);
   // The user chose to let running work finish: restart once nothing runs, or
   // once the hold window from Settings has passed, whichever comes first.
@@ -147,8 +153,18 @@ function SidebarRestartToUpdateButton() {
   const [fetching, setFetching] = useState<LatestUpdateProgress | null>(null);
   const navigate = useNavigate();
   const environmentId = usePrimaryEnvironmentId();
+  // The button acts on this window's machine: its words name it (1427).
+  const tx = useTx();
+  const named = (label: string) => {
+    const words = restartButtonLabel(label, machine);
+    return tx(words.text, words.values);
+  };
   const watchdog = useRef<number | null>(null);
-  const view = getRestartToUpdateView(appState, serviceState, { installOnQuit });
+  const view = getRestartToUpdateView(appState, serviceState, {
+    installOnQuit,
+    installAutomatically,
+    machine,
+  });
   // An update of the app or the service waits here; the wait for quiet covers both.
   const hasUpdate = Boolean(view?.app || view?.service);
   // An Update now run (0988): this window only follows it, in one toast.
@@ -231,19 +247,25 @@ function SidebarRestartToUpdateButton() {
 
   useEffect(() => {
     let active = true;
-    void window.desktopBridge
-      ?.getUpdatePreferences?.()
-      .then((preferences) => {
-        if (active) {
-          const allowed = preferences.automaticUpdatesAllowed !== false;
-          setInstallOnQuit(preferences.installAutomatically && allowed);
-          setDownloadsInBackground(preferences.downloadAutomatically && allowed);
-          setHoldMinutes(forceInstallAfterMinutes(preferences));
-        }
-      })
-      .catch(() => undefined);
+    const read = () =>
+      void window.desktopBridge
+        ?.getUpdatePreferences?.()
+        .then((preferences) => {
+          if (active) {
+            const allowed = preferences.automaticUpdatesAllowed !== false;
+            setInstallOnQuit(preferences.installAutomatically && allowed);
+            setInstallAutomatically(preferences.installAutomatically);
+            setDownloadsInBackground(preferences.downloadAutomatically && allowed);
+            setHoldMinutes(forceInstallAfterMinutes(preferences));
+          }
+        })
+        .catch(() => undefined);
+    read();
+    // Settings saved the switches: what is said beside the button follows at once.
+    window.addEventListener(UPDATE_PREFERENCES_CHANGED, read);
     return () => {
       active = false;
+      window.removeEventListener(UPDATE_PREFERENCES_CHANGED, read);
     };
   }, []);
 
@@ -746,7 +768,7 @@ function SidebarRestartToUpdateButton() {
   // the button says so, while the toast's Try again still asks the service.
   const appView =
     view?.app && serviceLacksRelease(serviceState)
-      ? getRestartToUpdateView(appState, null, { installOnQuit })
+      ? getRestartToUpdateView(appState, null, { installOnQuit, machine })
       : null;
   const shown = appView ?? view;
   const followed = appView === null ? progress : null;
@@ -754,7 +776,7 @@ function SidebarRestartToUpdateButton() {
     followed && !(pending && view?.app)
       ? serviceUpdateButtonLabel(followed, at)
       : service.starting || (pending && view?.service && !view.app)
-        ? (view?.label ?? "Update now")
+        ? named(view?.label ?? "Update now")
         : fetching?.phase === "checking"
           ? "Checking for a newer version…"
           : fetching?.phase === "downloading"
@@ -767,11 +789,11 @@ function SidebarRestartToUpdateButton() {
                   ? "Restarting…"
                   : idleSince !== null && hasUpdate
                     ? describeHoldCountdown(idleSince, now, holdMinutes)
-                    : (shown?.label ?? "Restart to update");
+                    : named(shown?.label ?? "Restart to update");
   const description =
     idleSince !== null && hasUpdate
       ? `SpecWithCode restarts to install ${view?.appVersion ?? view?.serviceVersion ?? "the update"} once running work finishes, or after ${forceInstallAfterLabel(holdMinutes)}: then the work is stopped for the update and continues after the restart. Click to restart now.`
-      : (shown?.description ?? SERVICE_UPDATE_NOW_DESCRIPTION);
+      : (shown?.description ?? serviceUpdateNowDescription(machine));
 
   const releaseUrl = view?.app ? getDesktopUpdateReleaseUrl(view.appVersion) : null;
   const notes = view?.app

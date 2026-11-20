@@ -146,22 +146,33 @@ export function findInlinedExternalPackages(source: string): {
   readonly inlined: ReadonlyArray<string>;
   readonly inlinedPackages: ReadonlyArray<string>;
 } {
-  // Rolldown marks each inlined module with a `//#region <path>` comment.
-  const regionPattern = /\/\/#region\s+(\S+)/g;
+  // Rolldown 1.0 wrote `//#region <path>`. Rolldown 1.2 (Vite+ 1.6) writes one
+  // path comment per module instead: `// ../../node_modules/.../file.js`.
+  // A bundle with neither marker means this scan went blind.
+  const legacyRegionPattern = /\/\/#region\s+(\S+)/g;
+  const modulePathPattern =
+    /(?:^|\n)\/\/[ \t]+(\S+\.(?:[cm]?js|jsx|tsx?|json|node))[ \t]*(?=\n|$)/g;
   const packagePattern = /node_modules\/((?:@[^/\s]+\/)?[^/\s]+)\//g;
 
   let regionCount = 0;
   const inlined = new Set<string>();
   const inlinedPackages = new Set<string>();
-  for (const region of source.matchAll(regionPattern)) {
+  const noteRegion = (regionPath: string) => {
+    if (regionPath.includes("://")) return;
+    if (!regionPath.includes("/") && regionPath !== "package.json") return;
     regionCount += 1;
-    const regionPath = region[1] ?? "";
     for (const candidate of regionPath.matchAll(packagePattern)) {
       const name = candidate[1];
       if (name === undefined || name === ".pnpm") continue;
       inlinedPackages.add(name);
       if (isExternalCliDependency(name)) inlined.add(name);
     }
+  };
+  for (const region of source.matchAll(legacyRegionPattern)) {
+    noteRegion(region[1] ?? "");
+  }
+  for (const region of source.matchAll(modulePathPattern)) {
+    noteRegion(region[1] ?? "");
   }
 
   return {

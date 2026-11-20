@@ -21,8 +21,6 @@ import {
   CircleCheckIcon,
   CopyIcon,
   ExternalLinkIcon,
-  EyeOffIcon,
-  KeyRoundIcon,
   PlugZapIcon,
   PuzzleIcon,
   RefreshCwIcon,
@@ -41,14 +39,21 @@ import { projectWorkspace } from "../../studio/projectWorkspace";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Input } from "../ui/input";
 import { Spinner } from "../ui/spinner";
 import { Switch } from "../ui/switch";
+import {
+  BROWSER_EXTENSION_POLL_MS,
+  BrowserExtensionSteps,
+  useChromeWhy,
+  usePairingCode,
+} from "./BrowserExtensionSetup";
 import { SettingsSection, useRelativeTimeTick } from "./settingsLayout";
+import { isDefaultProfileName } from "../../onboarding/chromeRowState.logic";
 
 /** Anchor for settings search. */
 export const BROWSER_EXTENSION_SECTION_ID = "chrome-browser-extension";
-export const BROWSER_EXTENSION_POLL_MS = 3_000;
+const NO_PROFILES: readonly string[] = [];
+export { BROWSER_EXTENSION_POLL_MS };
 
 const CHECK_LABELS: Record<
   BrowserExtensionCheck["state"],
@@ -77,16 +82,6 @@ function CopyButton({ value, label }: { value: string; label: string }) {
       <CopyIcon />
       {isCopied ? tx("Copied") : tx("Copy")}
     </Button>
-  );
-}
-
-function Steps({ items }: { items: ReadonlyArray<React.ReactNode> }) {
-  return (
-    <ol className="list-decimal space-y-1 ps-5 text-sm text-muted-foreground">
-      {items.map((item, index) => (
-        <li key={index}>{item}</li>
-      ))}
-    </ol>
   );
 }
 
@@ -126,10 +121,13 @@ export function BrowserExtensionCard({
   const reconnect = useAtomCommand(projectWorkspace.browserExtensionReconnect);
   const stop = useAtomCommand(projectWorkspace.browserExtensionStop);
   const answerPeer = useAtomCommand(projectWorkspace.browserExtensionPeer);
+  const why = useChromeWhy();
+  const pairingCode = usePairingCode(environmentId, {
+    profiles: query.data?.profiles.map((profile) => profile.label) ?? NO_PROFILES,
+  });
 
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [code, setCode] = useState<string | null>(null);
   const [check, setCheck] = useState<BrowserExtensionCheck | null>(null);
   useRelativeTimeTick(30_000);
 
@@ -160,18 +158,14 @@ export function BrowserExtensionCard({
     }
   }
 
-  const showCode = async () => {
+  const handOut = async (how: "copy" | "show") => {
     if (otherComputer) {
       const confirmed = await ensureLocalApi().dialogs.confirm(
-        `This code is for Chrome on ${machine}. You are on ${thisComputer}, and Chrome here rejects it. Show it anyway, to paste into Chrome on ${machine}?`,
+        `This code is for Chrome on ${machine}. You are on ${thisComputer}, and Chrome here rejects it. ${how === "copy" ? "Copy" : "Show"} it anyway, to paste into Chrome on ${machine}?`,
       );
       if (!confirmed) return;
     }
-    await run(
-      "pairing",
-      () => pairing({ environmentId, input: {} }),
-      (value) => setCode(value.pairingCode),
-    );
+    await (how === "copy" ? pairingCode.copy() : pairingCode.show());
   };
   const resetCode = async () => {
     const confirmed = await ensureLocalApi().dialogs.confirm(
@@ -182,8 +176,8 @@ export function BrowserExtensionCard({
     await run(
       "reset",
       () => pairing({ environmentId, input: { reset: true } }),
-      (value) => {
-        setCode(value.pairingCode);
+      () => {
+        pairingCode.hide();
         refresh();
       },
     );
@@ -247,100 +241,53 @@ export function BrowserExtensionCard({
     (check.state !== "connected" || check.profiles.some((profile) => !profile.ok));
 
   const setup = status && (
-    <div className="space-y-4" data-testid="browser-extension-setup">
-      <div className="space-y-2">
-        <p className="text-sm font-medium">{tx("1. Install the SpecWithCode Browser extension")}</p>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" render={<a href={storeUrl} target="_blank" rel="noreferrer" />}>
-            <ExternalLinkIcon />
-            {tx("Add to Chrome")}
-            <span className="sr-only"> {tx("(opens the Chrome Web Store)")}</span>
-          </Button>
-          <CopyButton value={storeUrl} label={tx("Chrome Web Store link")} />
-        </div>
-        {otherComputer ? (
-          <p className="flex items-start gap-1.5 text-xs text-warning-foreground">
-            <CircleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
-            {renderRich(
-              tx(
-                "Install it in Chrome on {machine}: copy the link and open it there, in the profile agents should use.",
-              ),
-              { machine: machine },
-            )}
-          </p>
-        ) : (
-          <p className="text-xs text-muted-foreground">
-            {tx(
-              "Open the link in the Chrome profile agents should use. Chrome keeps the extension up to date.",
-            )}
-          </p>
-        )}
-      </div>
-
-      <div className="space-y-2">
-        <p className="text-sm font-medium">
-          {renderRich(tx("2. Pair it with {machine}"), { machine: machine })}
-        </p>
-        {otherComputer && (
-          <p className="flex items-start gap-1.5 text-xs text-warning-foreground">
-            <CircleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
-            {renderRich(
-              tx("This code works only in Chrome on {machine}, not in Chrome on {thisComputer}."),
-              { machine: machine, thisComputer: thisComputer },
-            )}
-          </p>
-        )}
-        {code === null ? (
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={!canOperate || busy !== null}
-            onClick={() => void showCode()}
-          >
-            {busy === "pairing" ? <Spinner /> : <KeyRoundIcon />}
-            {tx("Show pairing code")}
-          </Button>
-        ) : (
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              nativeInput
-              readOnly
-              font="mono"
-              size="compact"
-              className="max-w-xs"
-              aria-label={tx("Pairing code")}
-              value={code}
-            />
-            <CopyButton value={code} label={tx("pairing code")} />
-            <Button size="sm" variant="outline" onClick={() => setCode(null)}>
-              <EyeOffIcon />
-              {tx("Hide")}
-            </Button>
-            <Button
-              size="sm"
-              variant="destructive-outline"
-              disabled={!canOperate || busy !== null}
-              onClick={() => void resetCode()}
-            >
-              {busy === "reset" ? <Spinner /> : <RefreshCwIcon />}
-              {tx("Reset code")}
-            </Button>
-          </div>
-        )}
-        <Steps
-          items={[
-            tx("Click the SpecWithCode icon in Chrome's toolbar."),
-            tx("Paste the pairing code."),
-            tx("Name the profile, for example Work or Marketing."),
-            tx("Click Pair."),
-          ]}
-        />
-        <p className="text-xs text-muted-foreground">
+    <div className="space-y-3" data-testid="browser-extension-setup">
+      <p className="text-sm text-muted-foreground">{why.open}</p>
+      {otherComputer ? (
+        <p className="flex items-start gap-1.5 text-xs text-warning-foreground">
+          <CircleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
           {renderRich(
-            tx("The code lets a Chrome profile act for agents on {machine}. Keep it private."),
+            tx(
+              "Install it in Chrome on {machine}: copy the link and open it there, in the profile agents should use.",
+            ),
             { machine: machine },
           )}
         </p>
+      ) : null}
+      <BrowserExtensionSteps
+        profiles={null}
+        chosen={null}
+        onChoose={() => {}}
+        storeUrl={storeUrl}
+        code={pairingCode.code}
+        onCopyCode={() => handOut("copy")}
+        onShowCode={() => handOut("show")}
+        onHideCode={pairingCode.hide}
+        canPair={canOperate && busy === null}
+        waiting={pairingCode.handedOut}
+        remote={
+          otherComputer ? (
+            <p className="flex items-start gap-1.5 text-xs text-warning-foreground">
+              <CircleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
+              {renderRich(
+                tx("This code works only in Chrome on {machine}, not in Chrome on {thisComputer}."),
+                { machine: machine, thisComputer: thisComputer },
+              )}
+            </p>
+          ) : null
+        }
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <CopyButton value={storeUrl} label={tx("Chrome Web Store link")} />
+        <Button
+          size="sm"
+          variant="destructive-outline"
+          disabled={!canOperate || busy !== null}
+          onClick={() => void resetCode()}
+        >
+          {busy === "reset" ? <Spinner /> : <RefreshCwIcon />}
+          {tx("Reset code")}
+        </Button>
       </div>
     </div>
   );
@@ -424,6 +371,7 @@ export function BrowserExtensionCard({
         </div>
 
         <PreferSpecWithCodeBrowser environmentId={environmentId} machine={machine} />
+        <AllowHandLoadedExtension environmentId={environmentId} machine={machine} />
 
         {!canOperate && (
           <p className="text-xs text-muted-foreground">
@@ -594,6 +542,9 @@ function CheckResult({ check }: { check: BrowserExtensionCheck }) {
   );
 }
 
+/** A profile still called by a default name; the rule first run's Chrome row uses too. */
+export const profileNeedsName = isDefaultProfileName;
+
 /** Threads acting in a profile; servers before per-tab ownership report one lease. */
 function threadsOf(profile: BrowserExtensionProfile): ReadonlyArray<BrowserExtensionThreadUse> {
   if (profile.threads) return profile.threads;
@@ -646,6 +597,59 @@ function PreferSpecWithCodeBrowser({
           void update({
             environmentId,
             input: { patch: { preferSpecWithCodeBrowser: checked } },
+          })
+        }
+      />
+    </div>
+  );
+}
+
+/**
+ * Developer switch. Off, the relay admits only the Chrome Web Store copy of
+ * the extension; on, a copy loaded by hand connects too, still with the code.
+ */
+function AllowHandLoadedExtension({
+  environmentId,
+  machine,
+}: {
+  environmentId: EnvironmentId;
+  machine: string;
+}) {
+  const tx = useTx();
+  const allow = useEnvironmentSettings(
+    environmentId,
+    (settings) => settings.allowHandLoadedBrowserExtension,
+  );
+  const canWrite = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
+  const update = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "save the hand-loaded extension switch",
+  });
+  return (
+    <div
+      className="flex items-start justify-between gap-4 rounded-md border border-border/60 px-3 py-2.5"
+      data-testid="allow-hand-loaded-extension"
+    >
+      <div className="min-w-0 max-w-prose space-y-0.5">
+        <p className="text-sm font-medium">
+          {tx("Developer: allow copies not from the Chrome Web Store")}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {renderRich(
+            tx(
+              "Off, only the SpecWithCode Browser from the Chrome Web Store can connect to {machine}. On, any other extension id can connect too, such as a copy loaded by hand in chrome://extensions, but still only with the pairing code, and it is marked not from the Chrome Web Store. Turning it off disconnects those copies.",
+            ),
+            { machine: machine },
+          )}
+        </p>
+      </div>
+      <Switch
+        aria-label={tx("Developer: allow copies not from the Chrome Web Store")}
+        checked={allow}
+        disabled={!canWrite}
+        onCheckedChange={(checked) =>
+          void update({
+            environmentId,
+            input: { patch: { allowHandLoadedBrowserExtension: checked } },
           })
         }
       />
@@ -736,6 +740,11 @@ function ConnectedProfiles({
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="min-w-0 space-y-0.5">
                   <p className="font-medium">{profile.label}</p>
+                  {profileNeedsName(profile.label) && (
+                    <p className="text-xs text-warning-foreground">
+                      {tx("Give it a name agents can tell apart")}
+                    </p>
+                  )}
                   <p className="text-xs text-muted-foreground">
                     {renderRich(
                       tx("{browser} · extension {extensionVersion} · connected {value} · {value2}"),

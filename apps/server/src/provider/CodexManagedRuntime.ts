@@ -1,5 +1,9 @@
 import { resolveManagedCodexHomeLayout } from "./CodexManagedHome.ts";
-import { CodexSettings, ProviderSetupError, type ProviderInstanceId } from "@specweave-studio/contracts";
+import {
+  CodexSettings,
+  ProviderSetupError,
+  type ProviderInstanceId,
+} from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -13,6 +17,8 @@ export interface CodexEffectiveRuntime {
   readonly config: CodexSettings;
   readonly environment: NodeJS.ProcessEnv;
   readonly revision: string;
+  /** When the access token handed to this launch expires (managed sign-in only). */
+  readonly accessExpiresAt?: number | null;
 }
 const decodeSettings = Schema.decodeSync(CodexSettings);
 // Managed sign-in stores tokens in Studio's credential store and never writes native auth.json.
@@ -106,6 +112,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
       }),
       environment,
       revision: credentials.accessToken,
+      accessExpiresAt: credentials.expiresAt,
     } satisfies CodexEffectiveRuntime;
   });
   return { auth, resolve, installation, homePath, homeLayout };

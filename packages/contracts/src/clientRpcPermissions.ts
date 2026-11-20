@@ -17,12 +17,14 @@ import { WS_METHODS } from "./rpc.ts";
 import { PROVISION_RPC_METHODS } from "./provision.ts";
 import { MACHINE_TOOLS_RPC_METHODS } from "./machineTools.ts";
 import { PROJECT_CREDENTIALS_RPC_METHODS } from "./projectCredentials.ts";
+import { PROJECT_SYNC_RPC_METHODS } from "./projectSync.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.voiceSynthesize]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsEnvironmentImport]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsThreadsDelete]: AuthOrchestrationOperateScope,
+  [WS_METHODS.projectsFolderStop]: AuthOrchestrationOperateScope,
   [WS_METHODS.nativeConnectionsRead]: AuthFilesystemReadScope,
   [WS_METHODS.browserBridgeStatus]: AuthFilesystemReadScope,
   // Both start Claude Code's browser server, a local process.
@@ -45,6 +47,13 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.projectsSkillsFleetPush]: AuthEnvironmentMaintainScope,
   [WS_METHODS.projectsSkillAuthoring]: AuthFilesystemWriteScope,
   [WS_METHODS.projectsSkillsStudioLink]: AuthOrchestrationOperateScope,
+  // Skill repos, search and updates on this machine. Each widens per operation below.
+  [WS_METHODS.projectsSkillRepos]: AuthOrchestrationReadScope,
+  [WS_METHODS.projectsSkillsSearch]: AuthFilesystemReadScope,
+  [WS_METHODS.projectsSkillsUpdate]: AuthFilesystemWriteScope,
+  // "Keep updated on these machines" records and Adopt. Each widens per operation below.
+  [WS_METHODS.projectsSkillsRolloutKeep]: AuthOrchestrationReadScope,
+  [WS_METHODS.projectsSkillsAdopt]: AuthFilesystemReadScope,
   [WS_METHODS.managedUpdatesEnroll]: AuthAccessWriteScope,
   [WS_METHODS.managedUpdatesRevoke]: AuthAccessWriteScope,
   [WS_METHODS.managedUpdatesCheck]: AuthEnvironmentMaintainScope,
@@ -61,6 +70,18 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [PROJECT_CREDENTIALS_RPC_METHODS.projectCredentialsSave]: AuthFilesystemWriteScope,
   // Sign-in state says which services a person uses and runs their tools: operate, not read.
   [PROJECT_CREDENTIALS_RPC_METHODS.projectCredentialsProbe]: AuthOrchestrationOperateScope,
+  // Project sync (1390). The status is a local Git read: path, branch, head commit, clean or not.
+  [PROJECT_SYNC_RPC_METHODS.projectSyncStatus]: AuthFilesystemReadScope,
+  // Names branches, counts and the files a snapshot would leave out.
+  [PROJECT_SYNC_RPC_METHODS.projectSyncInventory]: AuthOrchestrationOperateScope,
+  // `git fetch origin`, then a fast-forward or a clone, on this machine.
+  [PROJECT_SYNC_RPC_METHODS.projectSyncFetch]: AuthSourceControlWriteScope,
+  [PROJECT_SYNC_RPC_METHODS.projectSyncRun]: AuthSourceControlWriteScope,
+  // Writes hidden refs here and sends bundles to the other machine, like a checkpoint.
+  [PROJECT_SYNC_RPC_METHODS.projectSyncSendExtras]: AuthSourceControlWriteScope,
+  // The cleanup list names folders and chats; running it removes folders, like the settings that switch it on.
+  [WS_METHODS.serverGetStorageCleanupPlan]: AuthSettingsWriteScope,
+  [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
   // Reading a folder's repositories and a copy's notes before linking.
   [WS_METHODS.projectsFingerprint]: AuthFilesystemReadScope,
   [WS_METHODS.projectLinkPreview]: AuthOrchestrationReadScope,
@@ -89,6 +110,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.machineHandoffCopySealedSecrets]: AuthOrchestrationOperateScope,
   [WS_METHODS.machineHandoffSentSecrets]: AuthFilesystemReadScope,
   [WS_METHODS.machineHandoffReadiness]: AuthFilesystemReadScope,
+  [WS_METHODS.machineHandoffPrivacyAccess]: AuthFilesystemReadScope,
   // Handoff mode: settings, per-thread checkpoints (a Git ref, maybe pushed) and moving work.
   [WS_METHODS.handoffModeSnapshot]: AuthOrchestrationReadScope,
   [WS_METHODS.handoffModeUpdateConfig]: AuthSettingsWriteScope,
@@ -112,6 +134,12 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.awaySnapshot]: AuthOrchestrationReadScope,
   [WS_METHODS.awayUpdateConfig]: AuthSettingsWriteScope,
   [WS_METHODS.awayForceLocal]: AuthOrchestrationOperateScope,
+  // The hand off batch (1390 AC-33): starting one holds and moves threads, as `away.start`
+  // does; reading one shows rows a window that can only read this machine may see.
+  [WS_METHODS.handoffBatchStart]: AuthOrchestrationOperateScope,
+  [WS_METHODS.handoffBatchRead]: AuthFilesystemReadScope,
+  // Its rows name branches and folders, as a started batch's do; asking it weighs what would travel.
+  [WS_METHODS.handoffBatchPlan]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectLinkDigest]: AuthOrchestrationReadScope,
   [WS_METHODS.projectLinkSyncStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.projectLinkMemoryExport]: AuthOrchestrationReadScope,
@@ -140,6 +168,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.projectsLibraryAddArtifact]: AuthFilesystemWriteScope,
   // Runs `specweave init`, which writes SpecWeave's files into the project folder.
   [WS_METHODS.projectsSpecweaveSetUp]: AuthFilesystemWriteScope,
+  [WS_METHODS.projectsSpecweaveAnswer]: AuthOrchestrationOperateScope,
+  [WS_METHODS.projectsFirstFeatureGuide]: AuthOrchestrationOperateScope,
   // Designs are files in the project checkout or the app's Playground folder.
   [WS_METHODS.designList]: AuthFilesystemReadScope,
   [WS_METHODS.designGet]: AuthFilesystemReadScope,
@@ -211,6 +241,10 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.gitHubCredentialRemoveCopied]: AuthSettingsWriteScope,
   [WS_METHODS.gitHubCredentialCopyPreview]: AuthSettingsWriteScope,
   [WS_METHODS.gitHubCredentialCopy]: AuthSettingsWriteScope,
+  // Team usage (0898): what this machine shares with a team is the member's own setting.
+  [WS_METHODS.teamUsageStatus]: AuthSettingsWriteScope,
+  [WS_METHODS.teamUsageUpdate]: AuthSettingsWriteScope,
+  [WS_METHODS.teamUsageOrgs]: AuthSettingsWriteScope,
   // Runs git with this machine's credentials; only offered before a clone, which needs write.
   [WS_METHODS.sourceControlCheckRemoteAccess]: AuthSourceControlWriteScope,
   [WS_METHODS.sourceControlInspectDestination]: AuthSourceControlWriteScope,
@@ -275,6 +309,7 @@ function folderCopyScopes(method: string, input: unknown): readonly AuthEnvironm
     case WS_METHODS.machineHandoffCopyStatus:
     case WS_METHODS.machineHandoffSentSecrets:
     case WS_METHODS.machineHandoffReadiness:
+    case WS_METHODS.machineHandoffPrivacyAccess:
     case PROVISION_RPC_METHODS.provisionPreview:
       return read;
     // Sends secret files to another machine: as strong as granting it access. An empty
@@ -425,6 +460,34 @@ export function clientRpcRequiredScopes(
       : [AuthFilesystemReadScope, AuthFilesystemWriteScope];
   }
   if (method === WS_METHODS.projectsSkillsAction) return projectSkillsActionScopes(input);
+  const operation = (input as { operation?: unknown } | null | undefined)?.operation;
+  // Connecting or disconnecting a repo changes this machine's saved list.
+  if (method === WS_METHODS.projectsSkillRepos)
+    return operation === "read"
+      ? [AuthOrchestrationReadScope]
+      : [AuthOrchestrationReadScope, AuthSettingsWriteScope];
+  // Search quotes the person's notes; opening one starts a program on the machine.
+  if (method === WS_METHODS.projectsSkillsSearch)
+    return operation === "search"
+      ? [AuthOrchestrationReadScope, AuthFilesystemReadScope]
+      : [AuthFilesystemReadScope, AuthTerminalOperateScope];
+  // Updates and installs run vskill and write skill folders; an unreadable ask takes that set.
+  if (method === WS_METHODS.projectsSkillsUpdate)
+    return operation === "status"
+      ? [AuthOrchestrationReadScope]
+      : [AuthFilesystemWriteScope, AuthTerminalOperateScope];
+  // The record is this machine's own setting; reading it is like reading the page.
+  if (method === WS_METHODS.projectsSkillsRolloutKeep)
+    return operation === "read"
+      ? [AuthOrchestrationReadScope]
+      : [AuthOrchestrationReadScope, AuthSettingsWriteScope];
+  // Adopt writes the skill locks; a proposal opens a pull request on GitHub.
+  if (method === WS_METHODS.projectsSkillsAdopt)
+    return operation === "check" || operation === "propose-preview"
+      ? [AuthFilesystemReadScope]
+      : operation === "adopt"
+        ? [AuthFilesystemReadScope, AuthFilesystemWriteScope]
+        : [AuthFilesystemReadScope, AuthSourceControlWriteScope, AuthTerminalOperateScope];
   // Writes another tool's configuration, which that tool then runs as commands.
   if (method === WS_METHODS.nativeConnectionApply)
     return [AuthFilesystemWriteScope, AuthTerminalOperateScope];

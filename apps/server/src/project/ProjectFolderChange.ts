@@ -27,12 +27,16 @@ import {
   type OrchestrationV2ThreadShell,
   type Project,
   type ProjectFolderCheck,
+  type ProjectFolderStopInput,
+  type ProjectFolderStopResult,
   type ProjectId,
+  type RunId,
   type RuntimeRequestId,
   ThreadId,
 } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -44,6 +48,13 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import {
+  retryFailedStopTeardown,
+  stopTeardownFailed,
+  stopTeardownShown,
+  stopTeardownPending,
+  stopTeardownsThrough,
+} from "../process/stopTeardowns.ts";
 import {
   claudeHomeFromContinuationKey,
   relocateClaudeTranscript,
@@ -85,6 +96,10 @@ export class ProjectFolderService extends Context.Service<
       readonly workspaceRoot: string;
       readonly approvalRequestId?: RuntimeRequestId;
     }) => Effect.Effect<ProjectFolderCheck, ProjectFolderCheckError>;
+    /** Stops the listed threads that still keep the folder from changing. */
+    readonly stop: (
+      input: ProjectFolderStopInput,
+    ) => Effect.Effect<ProjectFolderStopResult, ProjectFolderCheckError>;
     readonly change: (
       input: ProjectFolderChangeInput,
     ) => Effect.Effect<
@@ -120,20 +135,39 @@ const PENDING_RUN_STATUSES: ReadonlySet<string> = new Set([
 
 /**
  * True while a thread holds work the folder must not move under: what
- * ProjectService.threadHasActiveWork counts, plus a queued or waiting run and
- * messages held in its queue. The run that asked for this change through
- * `approvalRequestId` waits on the change itself, so its status does not count.
+ * ProjectService.threadHasActiveWork counts, plus a queued or waiting run. The
+ * run that asked for this change through `approvalRequestId` waits on the
+ * change itself, so its status does not count. Messages held in a queue (after
+ * Stop) do not count: nothing runs them until someone resumes the thread, and
+ * then they run in the new folder like any next turn. Stop holds the queue, so
+ * counting them would leave the change blocked after every Stop.
  * Local on purpose: deleting and archiving keep the narrower rule.
  */
 export function threadBlocksFolderChange(
   thread: Pick<
     OrchestrationV2ThreadShell,
-    "activeRunId" | "pendingRuntimeRequest" | "status" | "activityRunStatus" | "heldQueuedCount"
-  >,
+    "id" | "activeRunId" | "pendingRuntimeRequest" | "status" | "activityRunStatus"
+  > &
+    Partial<Pick<OrchestrationV2ThreadShell, "pendingBackgroundTasks">>,
+  approvalRequestId?: RuntimeRequestId,
+): boolean {
+  // Its run settled, but Stop is still ending what its CLI started.
+  if (stopTeardownPending(thread.id)) return true;
+  return threadWorkBlocksFolderChange(thread, approvalRequestId);
+}
+
+/** The work part of `threadBlocksFolderChange`: what a Stop has to stop. */
+export function threadWorkBlocksFolderChange(
+  thread: Pick<
+    OrchestrationV2ThreadShell,
+    "activeRunId" | "pendingRuntimeRequest" | "status" | "activityRunStatus"
+  > &
+    Partial<Pick<OrchestrationV2ThreadShell, "pendingBackgroundTasks">>,
   approvalRequestId?: RuntimeRequestId,
 ): boolean {
   if (ProjectService.threadHasActiveWork(thread, approvalRequestId)) return true;
-  if ((thread.heldQueuedCount ?? 0) > 0) return true;
+  // A run that completed with a command still running in the folder: Stop ends it.
+  if ((thread.pendingBackgroundTasks?.length ?? 0) > 0) return true;
   const asking =
     approvalRequestId !== undefined && thread.pendingRuntimeRequest?.id === approvalRequestId;
   if (asking) return thread.status === "queued";
@@ -195,7 +229,7 @@ export function folderChangeRefusal(
   if (check.activeThreads.length > 0)
     return {
       reason: "active_work",
-      detail: `Stop the running work first: ${titles(check.activeThreads)}. ${check.activeThreads.length === 1 ? "It runs" : "They run"} in the folder this change moves, so the folder can change once ${check.activeThreads.length === 1 ? "it has" : "they have"} nothing queued, running or waiting for an answer. Threads on their own checkouts, or kept in the current folder, can go on working.`,
+      detail: `Stop the running work first: ${titles(check.activeThreads)}. ${check.activeThreads.length === 1 ? "It runs" : "They run"} in the folder this change moves, so the folder can change once ${check.activeThreads.length === 1 ? "it has" : "they have"} nothing running, about to start or waiting for an answer. Messages held after Stop can stay; they run in the new folder when the thread resumes. Threads on their own checkouts, or kept in the current folder, can go on working.`,
     };
   if (!check.sameRepository && !confirmDifferentRepository)
     return {
@@ -565,6 +599,25 @@ export const make = Effect.gen(function* () {
               realTarget === normalized.root ? [normalized.root] : [normalized.root, realTarget],
             )
           : null;
+      const blocking = shells
+        .filter(movesWithFolder(project, keep, rebound))
+        .filter((thread) => threadBlocksFolderChange(thread, input.approvalRequestId));
+      // What a Stop of queued or background work is bound to, picked from the thread's
+      // runs the way the orchestrator picks it (the shell's latest run can differ).
+      const executed = new Map(
+        yield* Effect.forEach(
+          blocking.filter((thread) => (thread.activeRunId ?? null) === null),
+          (thread) =>
+            threads.getThreadRecords(thread.id, ["runs"]).pipe(
+              Effect.map(
+                ({ runs }) =>
+                  [thread.id, runs.findLast((run) => run.status !== "queued")?.id ?? null] as const,
+              ),
+              Effect.orElseSucceed(() => [thread.id, undefined] as const),
+            ),
+          { concurrency: 4 },
+        ),
+      );
       return {
         projectId: project.id,
         currentRoot,
@@ -584,10 +637,29 @@ export const make = Effect.gen(function* () {
                 threadCount: conflictThreads,
                 archived: conflictingProject.workspaceSettings?.archived ?? false,
               },
-        activeThreads: shells
+        activeThreads: blocking.map((thread) => {
+          const latestExecutedRunId = executed.get(thread.id);
+          const teardownsThrough = stopTeardownsThrough(thread.id);
+          return {
+            id: thread.id,
+            title: thread.title || "Untitled thread",
+            runId: thread.activeRunId ?? null,
+            ...(latestExecutedRunId === undefined ? {} : { latestExecutedRunId }),
+            ...(teardownsThrough === undefined ? {} : { teardownsThrough }),
+          };
+        }),
+        heldThreads: shells
           .filter(movesWithFolder(project, keep, rebound))
-          .filter((thread) => threadBlocksFolderChange(thread, input.approvalRequestId))
-          .map((thread) => ({ id: thread.id, title: thread.title || "Untitled thread" })),
+          .filter(
+            (thread) =>
+              (thread.heldQueuedCount ?? 0) > 0 &&
+              !threadBlocksFolderChange(thread, input.approvalRequestId),
+          )
+          .map((thread) => ({
+            id: thread.id,
+            title: thread.title || "Untitled thread",
+            messageCount: thread.heldQueuedCount ?? 0,
+          })),
         threadCount: shells.length,
         reboundWorktreeCount: rebound.length,
         keptInPlaceCount: keep ? rootThreads(shells, project).length : 0,
@@ -851,7 +923,196 @@ export const make = Effect.gen(function* () {
     };
   });
 
-  return ProjectFolderService.of({ check, change });
+  const stop = Effect.fn("ProjectFolderService.stop")(function* (input: ProjectFolderStopInput) {
+    // The server's own classification, bound to the run the person saw: a thread that
+    // no longer blocks, or blocks with a newer run, is left alone.
+    const current = yield* check({
+      projectId: input.projectId,
+      workspaceRoot: input.workspaceRoot,
+    });
+    const seen = new Map(input.threads.map((thread) => [thread.id, thread] as const));
+    const stopped: ThreadId[] = [];
+    const failed: Array<{ id: ThreadId; title: string; message: string }> = [];
+    // Stop here exists only to let this change happen: when the change can no longer
+    // happen (the folder is gone, taken or refused), nothing is stopped for it.
+    const cannotMove = current.unchanged
+      ? `The project already uses ${current.targetRoot}.`
+      : !current.targetExists ||
+          current.conflictingProject !== null ||
+          current.refusal !== undefined
+        ? (folderChangeRefusal(current, true, true)?.detail ?? null)
+        : null;
+    if (cannotMove !== null) {
+      const titles = new Map(current.activeThreads.map((thread) => [thread.id, thread.title]));
+      for (const thread of input.threads) {
+        const title = titles.get(thread.id) ?? thread.id;
+        failed.push({
+          id: thread.id,
+          title,
+          message: `${cannotMove} "${title}" was not stopped.`,
+        });
+      }
+      return { stopped, failed } satisfies ProjectFolderStopResult;
+    }
+    const reason = "Stopped to change the project folder.";
+    const shells = new Map(
+      (yield* projectThreads(input.projectId)).map((shell) => [shell.id, shell] as const),
+    );
+    // An earlier Stop of a thread left processes it could not confirm gone: each is tried
+    // again once its thread's binding holds, alongside the new Stops, so a retry slow to
+    // answer never delays them, and none of work started since the check is ever tried.
+    const teardownRetries = new Map<ThreadId, Promise<boolean>>();
+    // Threads this request acted on: a Stop dispatched or a teardown retried. Only these
+    // can be reported stopped; one whose work ended by itself is neither stopped nor failed.
+    const acted = new Set<ThreadId>();
+    type Planned = {
+      readonly thread: (typeof current.activeThreads)[number];
+      readonly runId: RunId | null;
+      readonly binding: RunId | null | undefined;
+      readonly working: boolean;
+    };
+    const planned: Planned[] = [];
+    const outcomes: Array<{ readonly thread: Planned["thread"]; readonly stopFailed: boolean }> =
+      [];
+    // Every binding is checked and every retry admitted before any Stop is dispatched, with
+    // nothing awaited in between: work a thread starts while another's Stop is dispatched
+    // can never be mistaken for the work the person saw.
+    for (const thread of current.activeThreads) {
+      const saw = seen.get(thread.id);
+      if (saw === undefined) continue;
+      const runId = thread.runId ?? null;
+      // The run the check saw has ended since, still owning background work: the same work.
+      const sawRunEnded =
+        saw.runId !== null && runId === null && thread.latestExecutedRunId === saw.runId;
+      if (
+        (saw.runId !== runId && !sawRunEnded) ||
+        (saw.latestExecutedRunId !== undefined &&
+          thread.latestExecutedRunId !== undefined &&
+          saw.latestExecutedRunId !== thread.latestExecutedRunId)
+      ) {
+        failed.push({
+          id: thread.id,
+          title: thread.title,
+          message: `"${thread.title}" started other work after the check; press Stop again to stop it.`,
+        });
+        continue;
+      }
+      // A thread with no active run is bound by its latest executed run: unread now, the
+      // binding cannot be checked, so neither a Stop nor a retry goes out.
+      if (runId === null && thread.latestExecutedRunId === undefined) {
+        failed.push({
+          id: thread.id,
+          title: thread.title,
+          message: `"${thread.title}" could not be read, so nothing was stopped. Check again.`,
+        });
+        continue;
+      }
+      const shell = shells.get(thread.id);
+      const working =
+        runId !== null || (shell !== undefined && threadWorkBlocksFolderChange(shell));
+      // Bound to what the person's check showed. A check that could not read the thread's
+      // runs gave nothing to bind to; a newer reading here could name work they never saw.
+      const binding =
+        saw.latestExecutedRunId !== undefined
+          ? saw.latestExecutedRunId
+          : sawRunEnded
+            ? saw.runId
+            : undefined;
+      // Only the teardowns the person's check showed are tried, and only on a binding that
+      // check established: one that work started since left, even during this request, is
+      // left to its own Stop.
+      const through = saw.teardownsThrough;
+      const bound = runId !== null || binding !== undefined;
+      yield* Effect.sync(() => {
+        // Credited only when a teardown the person saw is there to retry: one that
+        // cleared since, replaced by a newer one, is not this request's to retry or claim.
+        if (bound && through !== undefined && stopTeardownShown(thread.id, through)) {
+          teardownRetries.set(thread.id, retryFailedStopTeardown(thread.id, undefined, through));
+          acted.add(thread.id);
+        }
+      });
+      planned.push({ thread, runId, binding, working });
+    }
+    for (const { thread, runId, binding, working } of planned) {
+      let stopFailed = false;
+      if (working && runId === null && binding === undefined) {
+        stopFailed = true;
+      } else if (working) {
+        // One command id per thread and run, so a replay of this request is answered from
+        // the first dispatch instead of acting again. Both commands are bound inside the
+        // orchestrator's serialized dispatch: a run id to that run (refused once it is
+        // over), and queued or background work to the thread's latest executed run
+        // (refused once another started), so work that started since is never stopped.
+        const operation = `${input.commandId}:${thread.id}:${runId ?? "no-run"}`;
+        const result = yield* threads
+          .dispatch(
+            runId === null
+              ? {
+                  type: "thread.stop",
+                  commandId: CommandId.make(operation),
+                  threadId: thread.id,
+                  reason,
+                  expectedLatestRunId: binding ?? null,
+                }
+              : {
+                  type: "run.interrupt",
+                  commandId: CommandId.make(operation),
+                  threadId: thread.id,
+                  runId,
+                  reason,
+                  holdQueue: true,
+                },
+          )
+          .pipe(Effect.exit);
+        if (Exit.isSuccess(result)) acted.add(thread.id);
+        if (Exit.isFailure(result)) {
+          stopFailed = true;
+          yield* Effect.logWarning("project.folder-stop.failed", {
+            projectId: input.projectId,
+            threadId: thread.id,
+            runId,
+            cause: result.cause,
+          });
+        }
+      }
+      outcomes.push({ thread, stopFailed });
+    }
+    // Only once every Stop went out: a retry of one thread never holds up another's Stop.
+    // Every retry ends before the registry is read for any thread, and all are read in one
+    // pass, so a teardown left while another retry was pending is reported too.
+    yield* Effect.promise(() => Promise.all(teardownRetries.values()));
+    yield* Effect.sync(() => {
+      for (const { thread, stopFailed } of outcomes) {
+        // A teardown the check did not show (left by a Stop since, even during this
+        // request) still holds the thread, and the person is told so.
+        if (stopFailed) {
+          failed.push({
+            id: thread.id,
+            title: thread.title,
+            message: `"${thread.title}" could not be stopped. Check again; if it still runs, open it and press Stop there.`,
+          });
+        } else if (stopTeardownFailed(thread.id)) {
+          failed.push({
+            id: thread.id,
+            title: thread.title,
+            message: `"${thread.title}" may still have processes running that Stop could not end. Press Stop again to retry; if it keeps failing, restart SpecWithCode on that machine.`,
+          });
+        } else if (stopTeardownPending(thread.id)) {
+          // An earlier Stop is still ending its processes: not stopped until it confirms.
+          failed.push({
+            id: thread.id,
+            title: thread.title,
+            message: `"${thread.title}" is still ending its processes. The folder can change once they are gone.`,
+          });
+        } else if (acted.has(thread.id)) {
+          stopped.push(thread.id);
+        }
+      }
+    });
+    return { stopped, failed } satisfies ProjectFolderStopResult;
+  });
+
+  return ProjectFolderService.of({ check, stop, change });
 });
 
 export const layer = Layer.effect(ProjectFolderService, make);

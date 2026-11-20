@@ -175,6 +175,9 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         initialSnapshot: (settings) =>
           buildInitialGrokProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
         checkProvider,
+        // The command `grok --version` runs as, with its environment, so an
+        // install or repair in a terminal shows without a click.
+        installProbe: { command: effectiveConfig.binaryPath || "grok", environment: processEnv },
         enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
           resolveMaintenance().pipe(
             Effect.flatMap((maintenanceCapabilities) =>

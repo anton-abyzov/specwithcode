@@ -85,7 +85,7 @@ final class LinkedProjectState {
     }
   }
 
-  static let changedWhileConfirming = "The coordinator changed while you confirmed. Check the machines and take over again if you still need to."
+  static let changedWhileConfirming = "The coordinator changed while you confirmed. Check the machines and continue here again if you still need to."
 
   /// `projectLink.takeover` on `copy`'s machine, then disarm any standby armed
   /// for the old coordinator on the other reachable copies, as the desktop does.
@@ -113,7 +113,7 @@ final class LinkedProjectState {
       message = (LinkedProjectResolver.takeoverDoneText(machine: copy.machineLabel, previous: coordinator.machineLabel, replicaFrom: replica, now: Date()), false)
       await refresh(model: model)
     } catch {
-      message = (error.localizedDescription.isEmpty ? "Take over did not finish. Retry it." : error.localizedDescription, true)
+      message = (error.localizedDescription.isEmpty ? "The coordinator did not continue here. Try again." : error.localizedDescription, true)
     }
   }
 }

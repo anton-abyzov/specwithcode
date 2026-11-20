@@ -66,10 +66,10 @@ export interface AwayPlanGroup {
 const GROUP_TITLES: Record<AwayPlanItemKind, string> = {
   thread: "Threads",
   routine: "Routines",
-  coordinator: "Coordinators",
+  coordinator: "Coordinator conversations",
 };
 
-/** Rows grouped Threads, Routines, Coordinators; empty groups are left out. */
+/** Rows grouped Threads, Routines, Coordinator conversations; empty groups are left out. */
 export function groupAwayPlan(plan: Pick<AwayPlan, "items">): AwayPlanGroup[] {
   return (["thread", "routine", "coordinator"] as const).flatMap((kind) => {
     const items = plan.items.filter((item) => item.kind === kind);

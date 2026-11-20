@@ -8,7 +8,7 @@ import { AuthAccessWriteScope, type EnvironmentId } from "@specweave-studio/cont
 import type { StudioFleetMachine } from "@specweave-studio/contracts/studioFleet";
 import { Link } from "@tanstack/react-router";
 import { EllipsisIcon, RefreshCwIcon } from "lucide-react";
-import { type ReactNode, useId, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { isThisMachineTarget } from "../../connection/desktopLocal";
 import { isElectron } from "../../env";
@@ -16,7 +16,11 @@ import { requestConfirmDialog } from "../../confirmDialog";
 import { displayFolder } from "../../lib/displayFolder";
 import { machineStatus } from "../../lib/machineStatus";
 import { useProjects, useServerConfigs } from "../../state/entities";
-import { useEnvironments, useRelayEnvironmentDiscovery } from "../../state/environments";
+import {
+  useEnvironments,
+  usePrimaryEnvironmentId,
+  useRelayEnvironmentDiscovery,
+} from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
 import { addVisibleMachineToStudioFleet, useMachineWorkGrants } from "../../studio/fleet";
 import { fleetMachineHasTailnetAddress } from "../../studio/fleetAutoConnect";
@@ -58,6 +62,7 @@ import {
   AddProjectToMachineDialog,
   type AddProjectTarget,
 } from "./AddProjectToMachine";
+import { ConnectDevicesSection } from "./ConnectDevicesSection";
 import { MachineSetupState, MachineSummary, type MachineSetup } from "./MachineSummary";
 import { MachineWorkGrants } from "./MachineWorkGrants";
 import { ConnectBothWays } from "./ConnectBothWays";
@@ -73,6 +78,7 @@ import { incomingLine, outgoingLine } from "./machineDirections.logic";
 import { AwayAccessRequestsAll } from "../away/AwayAccessRequests";
 import { HandoffModeSettings } from "./HandoffModeSettings";
 import { IncomingWorkerAction } from "./IncomingWorkerSetup";
+import { WaitingJoinCodes } from "./WaitingJoinCodes";
 import { isPhoneConnectShown, PhoneConnectSettings } from "./PhoneConnectSettings";
 import { SettingHelp } from "./SettingHelp";
 import {
@@ -213,6 +219,7 @@ export function MachinesSettingsPanel() {
       row={row}
       bare={bare}
       hereLabel={hereLabel}
+      primaryEnvironmentId={fleet.primaryEnvironmentId}
       grantChanges={grantChanges}
       durations={grants.snapshot?.durations === true}
       workersControl={workersControl}
@@ -278,8 +285,12 @@ export function MachinesSettingsPanel() {
           {error}
         </p>
       ) : null}
+      <WaitingJoinCodes />
       {setup && fleet.primaryEnvironmentId ? (
         <MachineSummary environmentId={fleet.primaryEnvironmentId} rows={rows} setup={setup} />
+      ) : null}
+      {fleet.primaryEnvironmentId ? (
+        <ConnectDevicesSection environmentId={fleet.primaryEnvironmentId} />
       ) : null}
       {hereRow ? (
         <details data-machine-here-details className="rounded-xl border border-border/60 text-sm">
@@ -697,19 +708,24 @@ function ProjectList({
       {projects.map((project) => (
         <li key={project.key} className="contents">
           <HoverText text={project.title} className="truncate text-foreground" />
-          <Tooltip>
-            <TooltipTrigger
-              delay={200}
-              render={<span className="inline-flex justify-self-start" />}
-            >
-              <Badge size="sm" variant={project.role ? ROLE_BADGE[project.role] : "secondary"}>
-                {tx(project.roleLabel, project.roleValues)}
-              </Badge>
-            </TooltipTrigger>
-            <TooltipPopup side="top" className="max-w-72">
-              {tx(project.roleHelp, project.roleValues)}
-            </TooltipPopup>
-          </Tooltip>
+          {project.roleLabel ? (
+            <Tooltip>
+              <TooltipTrigger
+                delay={200}
+                render={<span className="inline-flex justify-self-start" />}
+              >
+                <Badge size="sm" variant={project.role ? ROLE_BADGE[project.role] : "secondary"}>
+                  {tx(project.roleLabel, project.roleValues)}
+                </Badge>
+              </TooltipTrigger>
+              <TooltipPopup side="top" className="max-w-72">
+                {tx(project.roleHelp, project.roleValues)}
+              </TooltipPopup>
+            </Tooltip>
+          ) : (
+            // A machine with nothing to say about the coordinator has no badge.
+            <span />
+          )}
           <ProjectWhere project={project} here={here} />
         </li>
       ))}
@@ -765,6 +781,7 @@ export function MachineRow({
   connectBothWays,
   allowBack,
   addProject,
+  primaryEnvironmentId,
   grantChanges = null,
   durations = false,
   devices,
@@ -800,9 +817,15 @@ export function MachineRow({
   allowBack?: ReactNode;
   /** The next step for a connected machine with no project of its own: add one. */
   addProject?: ReactNode;
+  /** This machine's id, for whether this app can add the card's machine from here. */
+  primaryEnvironmentId?: EnvironmentId | null;
 }) {
   const tx = useTx();
   const seen = row.seen.state === "this-machine" || row.seen.state === "connected";
+  // Add for agents needs full access to both machines in the desktop app; without it,
+  // only that machine can allow this one, and the line says so instead of a button.
+  const addHere =
+    useAddForAgentsAllowed(row.environmentId, primaryEnvironmentId) && Boolean(addForAgents);
   const [renaming, setRenaming] = useState(false);
   const nickname = useMachineNickname(row.environmentId, row.label);
   const hostNames = [row.label === nickname ? null : row.label, row.machineName]
@@ -814,17 +837,50 @@ export function MachineRow({
   const [allProjects, setAllProjects] = useState(false);
   const panelIds = useId();
   const detailsPanel = { id: `${panelIds}-details`, open: detailsOpen };
+  const panelRef = useRef<HTMLDivElement>(null);
+  // A row's Set up…, Change… or first-time Allow…: which step in the panel to bring into view.
+  const [goTo, setGoTo] = useState<{ slot: "incoming" | "outgoing"; press: number } | null>(null);
+  const openAt = (slot: "incoming" | "outgoing") => {
+    setDetailsOpen(true);
+    setGoTo((last) => ({ slot, press: (last?.press ?? 0) + 1 }));
+  };
+  useEffect(() => {
+    if (!goTo || !detailsOpen) return;
+    const step =
+      panelRef.current?.querySelector<HTMLElement>(`[data-setup-step="${goTo.slot}"]`) ??
+      panelRef.current;
+    if (!step) return;
+    // The step's own action when it can be used, else its first control other than a help
+    // icon; otherwise the step itself, which says why not.
+    const target =
+      step.querySelector<HTMLElement>("[data-setup-action]:not([disabled])") ??
+      step.querySelector<HTMLElement>(
+        'select:not([disabled]), button:not([disabled]):not([aria-label^="About "])',
+      ) ??
+      step;
+    target.scrollIntoView?.({ block: "nearest" });
+    target.focus({ preventScroll: true });
+    // Handled: reopening the panel later from the ⋯ menu must not jump here again.
+    setGoTo(null);
+  }, [goTo, detailsOpen]);
   const projectsId = `${panelIds}-projects`;
   const thisMachine = row.seen.state === "this-machine";
   const incoming = incomingLine(
-    { there: nickname, workHere: row.workHere, durations, canSetUp: Boolean(allowBack) },
+    {
+      there: nickname,
+      here: hereLabel,
+      workHere: row.workHere,
+      durations,
+      canSetUp: Boolean(allowBack),
+    },
     tx,
   );
   const outgoing = outgoingLine(
     {
       there: nickname,
+      here: hereLabel,
       workers: row.workers,
-      canSetUp: Boolean(addForAgents) || Boolean(row.workers && workersControl),
+      canSetUp: addHere || Boolean(row.workers && workersControl),
     },
     tx,
   );
@@ -962,7 +1018,7 @@ export function MachineRow({
                 coordinatorEnvironmentId={row.environmentId}
                 durations={durations}
                 changes={grantChanges}
-                onSetUp={() => setDetailsOpen(true)}
+                onSetUp={() => openAt("incoming")}
                 details={detailsPanel}
               />
             }
@@ -973,9 +1029,10 @@ export function MachineRow({
             button={
               <OutgoingButton
                 line={outgoing}
+                here={hereLabel}
                 there={nickname}
                 details={detailsPanel}
-                onOpen={() => setDetailsOpen(true)}
+                onOpen={() => openAt("outgoing")}
               />
             }
           />
@@ -985,31 +1042,48 @@ export function MachineRow({
       {detailsOpen ? (
         <div
           id={detailsPanel.id}
-          className="ml-7 flex min-w-0 flex-col gap-3 rounded-lg border border-border/60 px-3 py-2.5 text-xs [&>.pl-7]:pl-0"
+          ref={panelRef}
+          tabIndex={-1}
+          className="ml-7 flex min-w-0 flex-col gap-3 rounded-lg border border-border/60 px-3 py-2.5 text-xs outline-none [&>.pl-7]:pl-0"
           data-slot="connection-details"
         >
           <p className="flex items-center gap-1 font-medium text-foreground/80">
             {tx("Connection details")}
             <SettingHelp label={tx("Connection details")}>
               {tx(
-                "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.",
-                { there: nickname },
+                "{there} can start work on {here}: agents on {there} may start threads in {here}'s projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. {here} can start work on {there}: agents on {here} may start threads there, up to the access {there} allows.",
+                { there: nickname, here: hereLabel },
               )}
             </SettingHelp>
           </p>
           {row.workers ? (
             workersControl ? (
-              <div className="min-w-0 space-y-1">
+              <div
+                className="min-w-0 space-y-1 outline-none"
+                data-setup-step="outgoing"
+                tabIndex={-1}
+              >
                 <p className="text-foreground/80">
                   {tx("Most access for agents from {hereLabel}", { hereLabel })}
                 </p>
                 {workersControl}
               </div>
             ) : null
-          ) : (
-            addForAgents
+          ) : addForAgents ? (
+            // Also without a way to add it from here: it says on which machine to allow it.
+            <div
+              className="min-w-0 outline-none [&>.pl-7]:pl-0"
+              data-setup-step="outgoing"
+              tabIndex={-1}
+            >
+              {addForAgents}
+            </div>
+          ) : null}
+          {row.workHere || !allowBack ? null : (
+            <div className="min-w-0 outline-none" data-setup-step="incoming" tabIndex={-1}>
+              {allowBack}
+            </div>
           )}
-          {row.workHere ? null : allowBack}
           {connectBothWays}
           {details}
           {actions ? <div className="flex flex-wrap items-center gap-1">{actions}</div> : null}
@@ -1147,8 +1221,7 @@ function AddForAgents({
   row: MachineRowModel;
   primaryEnvironmentId: EnvironmentId;
 }) {
-  const canInvite = useEnvironmentScope(row.environmentId, AuthAccessWriteScope);
-  const canAdd = useEnvironmentScope(primaryEnvironmentId, AuthAccessWriteScope);
+  const allowed = useAddForAgentsAllowed(row.environmentId, primaryEnvironmentId);
   const nickname = useMachineNickname(row.environmentId, row.label);
   const { environments } = useEnvironments();
   const hereLabel = useMachineNickname(
@@ -1183,13 +1256,28 @@ function AddForAgents({
     <AddForAgentsView
       machineLabel={nickname}
       hereLabel={hereLabel}
-      allowed={isElectron && canInvite && canAdd}
+      allowed={allowed}
       adding={adding}
       added={added}
       error={error}
       onAdd={() => void add()}
     />
   );
+}
+
+/**
+ * Whether this app can add `machine` to this machine's server from here: the desktop app,
+ * with full access to both. The card's Set up… and Add for agents read the same answer.
+ */
+export function useAddForAgentsAllowed(
+  machine: EnvironmentId,
+  primary?: EnvironmentId | null,
+): boolean {
+  const fallback = usePrimaryEnvironmentId();
+  const here = primary === undefined ? fallback : primary;
+  const manageThere = useEnvironmentScope(machine, AuthAccessWriteScope);
+  const manageHere = useEnvironmentScope(here, AuthAccessWriteScope);
+  return isElectron && here !== null && manageThere && manageHere;
 }
 
 export function AddForAgentsView({
@@ -1229,9 +1317,15 @@ export function AddForAgentsView({
               })}
             </>
           ) : allowed ? (
-            `Not set up yet. Step 1: add ${machineLabel} so this machine's server can reach it. Step 2: Allow.`
+            tx(
+              "Not set up yet. Step 1: add {machineLabel} so {hereLabel}'s server can reach it. Step 2: Allow.",
+              { machineLabel, hereLabel },
+            )
           ) : (
-            `Adding ${machineLabel} from here needs the desktop app with full access to it. Otherwise, on ${machineLabel}, choose Join a main machine under Settings > Machines.`
+            tx(
+              "Only {machineLabel} can allow this. On {machineLabel}, open Settings > Machines and find {hereLabel}'s card: if it offers Connect, connect first, then choose Allow… there.",
+              { machineLabel, hereLabel },
+            )
           )}
         </p>
         {allowed && !added ? (
@@ -1240,6 +1334,7 @@ export function AddForAgentsView({
             size="xs"
             variant="outline"
             disabled={adding}
+            data-setup-action=""
             onClick={onAdd}
           >
             {adding ? tx("Adding…") : tx("Add {machineLabel}", { machineLabel })}

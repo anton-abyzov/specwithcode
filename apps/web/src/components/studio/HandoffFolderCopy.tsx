@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTx } from "../../i18n";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import {
@@ -25,6 +26,7 @@ import {
 } from "../../studio/folderCopy";
 import { randomUUID } from "../../lib/utils";
 import { useCopyScope } from "./HandoffCopyScope";
+import { useSyncOffer } from "./useSyncOffer";
 import { useCopyDestination } from "./useCopyDestination";
 import { handoffErrorMarksStep } from "./handoffErrors";
 import {
@@ -125,6 +127,7 @@ export function HandoffFolderCopy({
   savedProject,
   preferredMachine = null,
   machineRequested = false,
+  addOnly = false,
   defaultMode,
   onChoicesChange,
   canMove,
@@ -149,6 +152,7 @@ export function HandoffFolderCopy({
   readonly preferredMachine?: EnvironmentId | null;
   /** True when the dialog was opened for that machine (Move coordinator to X): a draft keeps it. */
   readonly machineRequested?: boolean;
+  readonly addOnly?: boolean; // Add: an unfinished copy saved for another machine stays unopened.
   /** Move or copy, as the dialog was opened; it wins over a draft, a resumed copy keeps its own. */
   readonly defaultMode?: FolderCopyMode;
   /** The live choices and stage, so the dialog can title itself and remember the machine. */
@@ -158,6 +162,7 @@ export function HandoffFolderCopy({
     readonly done: boolean;
     readonly review?: boolean;
     readonly doneAt?: string | null;
+    readonly projectId?: string | null;
   }) => void;
   readonly canMove: boolean;
   /** Uncommitted files in the source, named in What comes along; null when unknown. */
@@ -175,7 +180,7 @@ export function HandoffFolderCopy({
 }) {
   const scope = useCopyScope(project);
   const capabilities = useAtomCommand(machineHandoff.copyCapabilities, { reportFailure: false });
-  const offerCopy = useAtomCommand(machineHandoff.copyOffer, { reportFailure: false });
+  const offerCopy = useSyncOffer();
   const sourceStatus = useAtomCommand(machineHandoff.copySourceStatus, { reportFailure: false });
   const sourceCancel = useAtomCommand(machineHandoff.copySourceCancel, { reportFailure: false });
   const release = useAtomCommand(machineHandoff.copyRelease, { reportFailure: false });
@@ -190,6 +195,7 @@ export function HandoffFolderCopy({
   const storageKey = folderCopyStorageKey(project.environmentId, project.id);
   const { machine, setMachine, folderDraft, setFolderDraft, folder, setFolder, findingHome } =
     useCopyDestination({ machines, preferredMachine, savedFolder, scope });
+  const tx = useTx();
   const [mode, setMode] = useState<FolderCopyMode>(
     canMove ? (defaultMode ?? "copy-only") : "copy-only",
   );
@@ -699,15 +705,13 @@ export function HandoffFolderCopy({
   const draft = useCopyDraft({
     project,
     machines,
-    canMove,
-    explicit: { mode: defaultMode !== undefined, machine: machineRequested },
+    explicit: { machine: machineRequested, fresh: addOnly },
     showFinished: !machineRequested && defaultMode !== "copy-and-move",
     form: { machine, folderDraft, mode, chooseFirst, secrets: secrets.chosen },
     latestPending,
     setForm: {
       machine: setMachine,
       folder: setFolder,
-      mode: setMode,
       chooseFirst: setChooseFirst,
       secrets: secrets.setChosen,
     },
@@ -825,7 +829,7 @@ export function HandoffFolderCopy({
     run(async () => {
       if (!offer || !pending) return;
       if (sourceChanged)
-        throw new Error("Measure and compare again before previewing this changed source.");
+        throw new Error(tx("Compare again before previewing this changed source."));
       await planNow(offer, pending, selection);
     });
 
@@ -897,8 +901,7 @@ export function HandoffFolderCopy({
   const applyNow = async (saved: PendingCopy, secretsSent = false) => {
     const environmentId = saved.environmentId as EnvironmentId;
     const operationId = saved.operationId;
-    if (sourceChanged)
-      throw new Error("The source changed. Measure and compare again before copying.");
+    if (sourceChanged) throw new Error(tx("The source changed. Compare again before copying."));
     await secrets.refreshRoute(saved);
     if (secretsBlockedNow(project.environmentId, environmentId) && secretsPromised(saved)) {
       // The form said included: the review says why not, and the person approves it there.
@@ -1342,11 +1345,6 @@ export function HandoffFolderCopy({
             }}
             findingHome={findingHome}
             mode={mode}
-            onModeChange={(next) => {
-              setMode(next);
-              draft.keepDraft({ mode: next });
-            }}
-            canMove={canMove}
             chooseFirst={chooseFirst}
             onChooseFirstChange={(next) => {
               setChooseFirst(next);
@@ -1421,6 +1419,7 @@ export function HandoffFolderCopy({
                 copy={copy}
                 sourceRoot={offer?.copyRoot ?? project.workspaceRoot}
                 targetLabel={targetLabel}
+                sourceLabel={sourceLabel}
                 method={pending?.method ?? method}
                 onChangeWhere={changeWhere}
                 changeDisabled={closeLocked || (working && stage !== "scanning")}
@@ -1433,7 +1432,9 @@ export function HandoffFolderCopy({
             <HandoffCopyScanFreshness
               capturedAt={copy?.capturedAt}
               status={scanStatus}
-              sourceChanged={sourceChanged}
+              // The footer offers Compare again only on Review; on What the
+              // freshness line holds it, or a changed source would leave no way forward.
+              sourceChanged={stage === "preview" && sourceChanged}
               busy={busy}
               onRefresh={() => void refreshScan()}
               onCompareAgain={rechoose}

@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from "react";
+import type { HandoffFolderMethod } from "../../studio/folderCopy";
 import type { MachineHandoffOpenRequest } from "./ProjectMachineHandoff";
 
 /**
@@ -9,10 +10,22 @@ import type { MachineHandoffOpenRequest } from "./ProjectMachineHandoff";
 export function useMachineHandoffRequest() {
   const [request, setRequest] = useState<MachineHandoffOpenRequest | null>(null);
   const seq = useRef(0);
-  const ask = useCallback((mode: MachineHandoffOpenRequest["mode"], target?: string) => {
-    seq.current += 1;
-    setRequest({ mode, seq: seq.current, ...(target ? { target } : {}) });
-  }, []);
+  /**
+   * `target` names the machine's copy for "sync" (`${environmentId}:${projectId}`); `method`
+   * replaces the default way files travel, "copy" for the measured per-file compare.
+   */
+  const ask = useCallback(
+    (mode: MachineHandoffOpenRequest["mode"], target?: string, method?: HandoffFolderMethod) => {
+      seq.current += 1;
+      setRequest({
+        mode,
+        seq: seq.current,
+        ...(target ? { target } : {}),
+        ...(method ? { method } : {}),
+      });
+    },
+    [],
+  );
   /** The dialog acted on this request; a newer one stays. */
   const handled = useCallback(
     (done: MachineHandoffOpenRequest) =>

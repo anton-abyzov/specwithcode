@@ -30,6 +30,27 @@ describe("searchProjectSettings", () => {
       "project-allowed-tools",
     ]);
   });
+
+  it.each(["advisor", "second opinion", "stronger model", "consult"])(
+    "finds the Advisor in the project dialog by %s",
+    (query) => {
+      const results = searchProjectSettings(query, PROJECT_SETTINGS_TABS);
+      expect(results.map((r) => r.id)).toContain("project-advisor");
+    },
+  );
+
+  it("leaves the Advisor out for machines that do not offer it", () => {
+    const ids = (hasAdvisor?: boolean) =>
+      searchProjectSettings(
+        "advisor",
+        PROJECT_SETTINGS_TABS,
+        hasAdvisor === undefined ? {} : { hasAdvisor },
+      ).map((r) => r.id);
+    expect(ids(false)).not.toContain("project-advisor");
+    expect(ids(true)).toContain("project-advisor");
+    // A caller with no project to ask keeps the row, as before.
+    expect(ids()).toContain("project-advisor");
+  });
 });
 
 describe("findProjectSettingsAnchor", () => {

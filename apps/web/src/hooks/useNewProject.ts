@@ -35,6 +35,7 @@ import { requestMachineToolInstall } from "~/components/machineTools/machineTool
 import { useNamedEnvironments } from "~/components/settings/useNamedEnvironments";
 import { useProjects, waitForProject } from "~/state/entities";
 import { projectEnvironment } from "~/state/projects";
+import { projectWorkspace } from "~/studio/projectWorkspace";
 import { sourceControlEnvironment } from "~/state/sourceControl";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useOrchestrationCommand } from "~/state/use-orchestration-command";
@@ -64,6 +65,9 @@ export function useNewProject() {
     reportFailure: false,
   });
   const publishRepository = useAtomCommand(sourceControlEnvironment.publishRepository, {
+    reportFailure: false,
+  });
+  const answerSpecweave = useAtomCommand(projectWorkspace.specweaveAnswer, {
     reportFailure: false,
   });
   const handleNewThread = useNewThreadHandler();
@@ -129,7 +133,10 @@ export function useNewProject() {
       readonly parentPath?: string;
       readonly kind?: "code" | "personal";
       readonly github: { readonly account: string | null } | null;
-      /** "Use SpecWeave" was ticked: run `specweave init` before the first commit. */
+      /**
+       * "Use SpecWeave" was ticked: run `specweave init` before the first commit.
+       * False when it was offered and unticked; omitted where it was not offered.
+       */
       readonly specweave?: boolean;
       /** The icon chosen for a new assistant; the server's own starting icon stays without it. */
       readonly icon?: ProjectIconOverride;
@@ -256,6 +263,14 @@ export function useNewProject() {
             }),
           );
         }
+      }
+      // Unticked for a new project: the line above the composer would offer it
+      // again, so the answer is stored as seen (1396). A failure only leaves it.
+      if (input.specweave === false && input.kind !== "personal" && existing !== true) {
+        void answerSpecweave({
+          environmentId: input.environmentId,
+          input: { projectId, answer: "advice_seen" },
+        });
       }
       // An existing folder keeps its own remotes; publishing is for new repositories.
       if (input.kind !== "personal" && input.github && existing !== true) {

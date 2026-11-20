@@ -243,6 +243,7 @@ describe("QueuedRunsControl reasons", () => {
       queuedRuns: [row("a")],
     };
     await render({ actionsUnavailableReason: "Studio Mac is not connected." });
+    await act(async () => button("Expand queued messages").click());
 
     expect(button("Steer now").disabled).toBe(true);
     expect(button("Steer now").dataset.disabledReason).toBe("Studio Mac is not connected.");
@@ -272,7 +273,11 @@ describe("QueuedRunsControl reasons", () => {
     await render();
     expect(button("Steer now").disabled).toBe(true);
     expect(button("Steer now").dataset.disabledReason).toMatch(/No provider turn is running/);
-    expect(container.querySelector("[data-queue-reason]")?.textContent).toMatch(
+    // A short muted hint on the header, not a paragraph; the reason is its title.
+    expect(container.querySelector("[data-queue-reason]")).toBeNull();
+    const hint = container.querySelector<HTMLElement>("[data-queue-steer-hint]");
+    expect(hint?.firstChild?.textContent).toBe("Can't steer now");
+    expect(hint?.dataset.queueSteerReason).toMatch(
       /Steer now is unavailable: No provider turn is running/,
     );
     expect(container.querySelector('[data-queued-sender="thread:release"]')?.textContent).toContain(
@@ -299,6 +304,10 @@ describe("QueuedRunsControl reasons", () => {
       };
       await render();
       expect(container.querySelector("[data-queue-wait]")?.textContent).toBe(header);
+      const toggle = container.querySelector<HTMLButtonElement>(
+        '[aria-label="Expand queued messages"]',
+      );
+      if (toggle) await act(async () => toggle.click());
       expect(container.querySelector("[data-queue-reason]")?.textContent?.length).toBeGreaterThan(
         20,
       );
@@ -365,5 +374,64 @@ describe("QueuedRunsControl automatic deliveries", () => {
       Array.from(container.querySelectorAll("button")).some((b) => b.textContent === "Steer now"),
     ).toBe(false);
     expect(button("Remove queued message").disabled).toBe(false);
+  });
+});
+
+describe("QueuedRunsControl compact header", () => {
+  const automaticOnly = () => ({
+    activeRun: { id: "run:active" },
+    canPromoteToSteer: false,
+    canReorder: true,
+    waitReason: "turn",
+    steerUnavailableReason:
+      "No provider turn is running right now, so there is nothing to steer into.",
+    queuedRuns: [
+      row("result", { automatic: true, createdBy: "agent", text: "Delegated task done" }),
+    ],
+  });
+
+  it("starts folded to one line that previews the next message, and opens on click", async () => {
+    state.workflow = automaticOnly();
+    await render();
+    const list = container.querySelector("ol")!;
+    expect(list.closest(".hidden")).not.toBeNull();
+    expect(container.querySelector("[data-queue-collapsed-preview]")?.textContent).toBe(
+      "Delegated task done",
+    );
+    await act(async () => button("Expand queued messages").click());
+    expect(container.querySelector("ol")!.closest(".hidden")).toBeNull();
+    expect(container.querySelector("[data-queue-collapsed-preview]")).toBeNull();
+    expect(button("Collapse queued messages").getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("shows no steer hint when only automatic deliveries wait", async () => {
+    state.workflow = automaticOnly();
+    await render();
+    expect(container.querySelector("[data-queue-steer-hint]")).toBeNull();
+    expect(container.querySelector("[data-queue-reason]")).toBeNull();
+  });
+
+  it("opens the list while one of its messages is being edited", async () => {
+    state.workflow = {
+      activeRun: { id: "run:active" },
+      canPromoteToSteer: true,
+      canReorder: true,
+      waitReason: "turn",
+      steerUnavailableReason: null,
+      queuedRuns: [row("a", { createdBy: "user" })],
+    };
+    await act(async () =>
+      root.render(
+        <QueuedRunsControl
+          environmentId={"environment:test" as never}
+          optimisticMessages={[]}
+          threadId={"thread:test" as never}
+          editingRunId={"run:a" as never}
+          onEditQueuedRun={() => undefined}
+          onCancelEdit={() => undefined}
+        />,
+      ),
+    );
+    expect(container.querySelector("ol")!.closest(".hidden")).toBeNull();
   });
 });

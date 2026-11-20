@@ -79,6 +79,57 @@ export const RemoteWorkerRecord = Schema.Struct({
    * this server shows the worker but never steers or follows it.
    */
   readOnly: Schema.optionalKey(Schema.Boolean),
+  /**
+   * A thread here that was handed off, followed so its result still reaches
+   * the thread that launched it. The row is that one delivery: `callerThreadId`
+   * is where the result goes and never changes, while the machine and
+   * `remoteThreadId` are where the work runs now and move with every further
+   * handoff. `remoteThreadId` is the continuation, known before the takeover
+   * is sent. See `handoffDelivery.ts` for what counts as the result.
+   */
+  handoff: Schema.optionalKey(
+    Schema.Struct({
+      /** The thread on this machine and the epoch of its handoff: the row's identity. */
+      sourceThreadId: Schema.String,
+      epoch: Schema.Int,
+      /**
+       * What the follower has not seen yet: the continuation itself (the
+       * takeover may still be on its way), or a run in it to wait for (it
+       * arrived idle, or its last run was stopped). Absent while a run is followed.
+       */
+      awaiting: Schema.optionalKey(Schema.Literals(["continuation", "run"])),
+      /**
+       * The run whose result is owed, by its id: the continuation's first run,
+       * or the run that took its place after it was only stopped. Set once it is
+       * seen; only its result, or that of the other machine's own continuation
+       * of its failure, is delivered.
+       */
+      runId: Schema.optionalKey(Schema.String),
+      /** A failed run whose continuation by the other machine is followed. */
+      failedRunId: Schema.optionalKey(Schema.String),
+      /** A failed run held back since then, in case the other machine continues it. */
+      held: Schema.optionalKey(Schema.Struct({ runId: Schema.String, since: Schema.String })),
+      /**
+       * Runs older than the other machine lists at once were looked up to this
+       * place in the thread, and none of them is the result.
+       */
+      scanFrom: Schema.optionalKey(Schema.Int),
+      /** How many times the work was handed on from the machine first followed. */
+      hops: Schema.optionalKey(Schema.Int),
+      /**
+       * The run that was the result, once the launcher has it. The handoff
+       * then owes nothing: a later run there is someone's own message.
+       */
+      resultRunId: Schema.optionalKey(Schema.String),
+      /**
+       * The launcher was told the result: when, and under which run's key. One
+       * handoff tells it once, under an id that is the row's: what the other
+       * machine's continuation of a reported failure ends as is shown on the
+       * card and sends no second message.
+       */
+      woke: Schema.optionalKey(Schema.Struct({ at: Schema.String, key: Schema.String })),
+    }),
+  ),
   /** The mode it was started with; rows written before this have none. */
   runtimeMode: Schema.optionalKey(StudioFleetWorkerAccess),
   /** The caller's own mode when the machine's worker grant lowered it to `runtimeMode`. */

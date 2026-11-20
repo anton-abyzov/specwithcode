@@ -7,6 +7,7 @@ import type {
   MachineHandoffSourceChanges,
 } from "@specweave-studio/contracts";
 import { useId } from "react";
+import { useTx } from "../../i18n";
 import type { CopyLinkOutcome } from "../../studio/projectLink";
 import { Button } from "../ui/button";
 import { HandoffCopyActions } from "./HandoffCopyActions";
@@ -15,7 +16,7 @@ import { HandoffCopyDoneActions, HandoffCopyFailedActions } from "./HandoffCopyD
 import { HandoffSourceChangesActions } from "./HandoffSourceChanges";
 import type { CopyStage } from "./handoffCopySteps";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { useProjectMoveDialog } from "./ProjectMoveOptions";
+import { moveRefusal, useProjectMoveDialog } from "./ProjectMoveOptions";
 import { plainHandoffError } from "./handoffErrors";
 
 /** Screen 1: Cancel closes the dialog, the primary starts (and with file types, stops to choose). */
@@ -183,9 +184,14 @@ export function HandoffCopyFooter({
   readonly onChangeSetup: () => void;
 }) {
   const availabilityId = useId();
+  const tx = useTx();
+  // A move never starts into the copy that is Main, nor into a project this copy is not
+  // linked to; the setup screen says which.
+  const send = useProjectMoveDialog()?.send;
+  const moveRefused = mode === "copy-and-move" && moveRefusal(send) !== null;
   const blockers = [
     ...(busy ? ["Wait for the current check to finish."] : []),
-    ...(sourceChanged ? ["The source changed. Measure and compare again."] : []),
+    ...(sourceChanged ? [tx("The source changed. Compare again.")] : []),
     ...(copy?.disk ? ["The destination needs more disk space before copying."] : []),
   ];
   const decisions = copy?.totals?.decisionsNeeded;
@@ -227,7 +233,7 @@ export function HandoffCopyFooter({
           </Button>
         ) : (
           <SetupActions
-            disabled={busy || setupBlocked}
+            disabled={busy || setupBlocked || moveRefused}
             hint={machine ? null : "Choose a machine above."}
             label={`${mode === "copy-and-move" ? "Copy and move" : "Copy"}${machine ? ` to ${targetLabel}` : ""}`}
             onStart={onMeasure}
@@ -257,7 +263,7 @@ export function HandoffCopyFooter({
           </p>
           {sourceChanged && onCompareAgain && (
             <Button disabled={busy} onClick={onCompareAgain}>
-              Measure and compare again
+              {tx("Compare again")}
             </Button>
           )}
           <Button
@@ -304,6 +310,7 @@ export function HandoffCopyFooter({
         <HandoffCopyFailedActions
           copy={copy}
           busy={busy}
+          targetLabel={targetLabel}
           failedBeforeApply={failedBeforeApply}
           undoPreview={undoPreview}
           onCopyAgain={onCopyAgain}
@@ -356,7 +363,7 @@ export function HandoffCopyFooter({
       )}
       {stage === "undone" && (
         <Button variant="outline" onClick={onStartNew}>
-          Start a new copy
+          {tx("Add to another machine")}
         </Button>
       )}
     </HandoffCopyActions>

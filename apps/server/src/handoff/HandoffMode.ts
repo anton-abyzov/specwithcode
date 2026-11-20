@@ -14,6 +14,11 @@ import {
   type HandOffInput,
   type HandOffMachineInput,
   type HandOffResult,
+  type HandoffBatchInput,
+  type HandoffBatchReadInput,
+  type HandoffBatchRun,
+  type HandoffPlanReadInput,
+  type HandoffPlanView,
   type HandoffCheckpoint,
   type HandoffChildDisposition,
   type HandoffCheckpointReason,
@@ -24,6 +29,8 @@ import {
   type HandoffModeSnapshot,
   type HandoffPreflightInput,
   type HandoffPreflightResult,
+  type HandoffTransferBatch,
+  type HandoffTransferRecord,
   type EnvironmentId,
   type ModelSelection,
   type HandoffNote,
@@ -57,12 +64,14 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { CheckpointError, pushCheckpointRef, writeCheckpoint } from "./checkpointGit.ts";
+import { checkpointFolder } from "./HandoffSetMoves.ts";
 import {
   capHandoffNote,
   fallbackHandoffNote,
   handoffTranscript,
   type NoteMessage,
 } from "./handoffNote.ts";
+import { SLEEP_MOVES_NOTHING } from "./HandoffAutoContinue.ts";
 import * as HandoffModeStore from "./HandoffModeStore.ts";
 import {
   acquireLease,
@@ -70,7 +79,9 @@ import {
   checkEpoch,
   deriveHandoffBadge,
   effectiveHandoffMode,
+  EMPTY_HANDOFF_DOCUMENT,
   emptyThreadRecord,
+  pendingDisarm,
   type EpochVerdict,
   guardSideEffect,
   type HandoffDocument,
@@ -102,25 +113,41 @@ export interface HandoffContinueHereOptions {
   readonly byAgent?: boolean;
 }
 
+/** What a window is shown of the transfer records: this machine's own moves and their batches. */
+export interface HandoffTransferView {
+  readonly transfers: ReadonlyArray<HandoffTransferRecord>;
+  readonly batches: ReadonlyArray<HandoffTransferBatch>;
+}
+
 /** The moves between machines and models, provided by HandoffMoves once the fleet exists. */
 export interface HandoffMovesPort {
   readonly handOff: (input: HandOffInput) => Effect.Effect<HandOffResult, HandoffModeError>;
   readonly handOffMachine: (
     input: HandOffMachineInput,
   ) => Effect.Effect<HandoffMachineRun, HandoffModeError>;
+  /** The hand off batch: threads with their dispositions, and project folder work. */
+  readonly handOffBatch: (
+    input: HandoffBatchInput,
+  ) => Effect.Effect<HandoffBatchRun, HandoffModeError>;
+  readonly readBatches: (
+    input: HandoffBatchReadInput,
+  ) => Effect.Effect<ReadonlyArray<HandoffBatchRun>, HandoffModeError>;
+  /** The Hand off dialog's rows and one machine's usage lines; nothing is held or sent. */
+  readonly readPlan: (
+    input: HandoffPlanReadInput,
+  ) => Effect.Effect<HandoffPlanView, HandoffModeError>;
   readonly continueHere: (
     input: HandoffContinueHereInput,
     options?: HandoffContinueHereOptions,
   ) => Effect.Effect<HandOffResult, HandoffModeError>;
-  /**
-   * Continue here under a given reason. Internal: automatic continuation passes
-   * "auto-takeover"; the WebSocket input stays `continueHere`.
-   */
-  readonly continueHereAs: (
-    input: HandoffContinueHereInput,
-    reason: "continue-here" | "auto-takeover",
-  ) => Effect.Effect<HandOffResult, HandoffModeError>;
   readonly resumeFenced: Effect.Effect<HandoffModeSnapshot, HandoffModeError>;
+  /** "Resume here" for one thread: releases its hold only when nothing was sent under it. */
+  readonly resumeThread: (
+    threadId: ThreadId,
+    operationId?: string,
+  ) => Effect.Effect<HandoffModeSnapshot, HandoffModeError>;
+  /** This machine's transfer records as the source, for the progress view. */
+  readonly transfers: Effect.Effect<HandoffTransferView, HandoffModeError>;
   readonly preflight: (
     input: HandoffPreflightInput,
   ) => Effect.Effect<ReadonlyArray<HandoffPreflightResult>, HandoffModeError>;
@@ -143,7 +170,14 @@ export class HandoffMode extends Context.Service<
       change: (document: HandoffDocument) => readonly [A, HandoffDocument],
     ) => Effect.Effect<A, HandoffModeError>;
     readonly attachMoves: (port: HandoffMovesPort) => Effect.Effect<void>;
+    /** Fails while the handoff file does not read. */
     readonly snapshot: Effect.Effect<HandoffModeSnapshot, HandoffModeError>;
+    /**
+     * What Settings and the thread rows show; never fails. While the handoff file does
+     * not read it is the empty state without `pendingDisarm` (unknown), so no earlier
+     * answer stays on screen and nothing promises that closing the lid moves nothing.
+     */
+    readonly viewSnapshot: Effect.Effect<HandoffModeSnapshot>;
     readonly updateConfig: (
       patch: HandoffConfigPatch,
     ) => Effect.Effect<HandoffModeSnapshot, HandoffModeError>;
@@ -167,17 +201,35 @@ export class HandoffMode extends Context.Service<
     readonly handOffMachine: (
       input: HandOffMachineInput,
     ) => Effect.Effect<HandoffMachineRun, HandoffModeError>;
+    /**
+     * The one way work leaves this machine (1390): a person's request and the
+     * usage-limit rule start the same batch. It moves no coordinator, no
+     * routine and no project memory.
+     */
+    readonly handOffBatch: (
+      input: HandoffBatchInput,
+    ) => Effect.Effect<HandoffBatchRun, HandoffModeError>;
+    readonly readBatches: (
+      input: HandoffBatchReadInput,
+    ) => Effect.Effect<ReadonlyArray<HandoffBatchRun>, HandoffModeError>;
+    readonly readPlan: (
+      input: HandoffPlanReadInput,
+    ) => Effect.Effect<HandoffPlanView, HandoffModeError>;
     readonly continueHere: (
       input: HandoffContinueHereInput,
       options?: HandoffContinueHereOptions,
     ) => Effect.Effect<HandOffResult, HandoffModeError>;
     readonly resumeFenced: Effect.Effect<HandoffModeSnapshot, HandoffModeError>;
+    readonly resumeThread: (
+      threadId: ThreadId,
+      operationId?: string,
+    ) => Effect.Effect<HandoffModeSnapshot, HandoffModeError>;
     readonly preflight: (
       input: HandoffPreflightInput,
     ) => Effect.Effect<ReadonlyArray<HandoffPreflightResult>, HandoffModeError>;
     /**
      * May this machine act for the thread now? `runId` checks the epoch the
-     * run started under. Never fails: a store it cannot read counts as unleased.
+     * run started under. Never fails: a store it cannot read counts as fenced.
      */
     readonly fence: (threadId: ThreadId, runId?: string | null) => Effect.Effect<EpochVerdict>;
     /** Before an external side effect: proceed, reuse the journaled result, or refuse. */
@@ -201,6 +253,9 @@ export class HandoffMode extends Context.Service<
 >()("specweave-studio/handoff/HandoffMode") {}
 
 const notStarted = new HandoffModeError({ code: "busy", message: "Handoff is still starting." });
+
+const STATE_UNREADABLE =
+  "This machine cannot read its handoff state, so it cannot tell whether another machine runs this thread; it does nothing for the thread until that state reads again.";
 
 const describe = (cause: unknown): string => {
   if (cause instanceof Error) return cause.message.slice(0, 500);
@@ -269,9 +324,32 @@ export const make = Effect.gen(function* () {
     incoming: document.incoming,
     pausedSince: document.pausedSince,
     machineRun: document.machineRun,
+    pendingDisarm: pendingDisarm(document).map((entry) => ({
+      ...entry,
+      machineLabel: entry.machineLabel.slice(0, 120),
+    })),
   });
 
-  const snapshot = Effect.map(store.read, toSnapshot);
+  // The records ride on the snapshot a window already polls. Before the moves
+  // exist, or when the records cannot be read, the field is left out: the
+  // settings and badges this snapshot also feeds must still load.
+  const transferView = Effect.suspend(() =>
+    moves === null ? Effect.succeed(null) : moves.transfers.pipe(Effect.orElseSucceed(() => null)),
+  );
+  const snapshot = Effect.gen(function* () {
+    const base = toSnapshot(yield* store.read);
+    const view = yield* transferView;
+    return view === null
+      ? base
+      : { ...base, transfers: view.transfers, transferBatches: view.batches };
+  });
+
+  const viewSnapshot = snapshot.pipe(
+    Effect.orElseSucceed((): HandoffModeSnapshot => {
+      const { pendingDisarm: _unknown, ...unread } = toSnapshot(EMPTY_HANDOFF_DOCUMENT);
+      return unread;
+    }),
+  );
 
   const updateThread = (
     threadId: ThreadId,
@@ -460,7 +538,11 @@ export const make = Effect.gen(function* () {
           message: PERSONAL_ASSISTANT_PRIVATE_MESSAGE,
         });
       }
-      const cwd = shell.worktreePath ?? project.value.workspaceRoot;
+      // A thread in a worktree set is checkpointed in the set's first member.
+      const cwd =
+        shell.worktreePath === null
+          ? project.value.workspaceRoot
+          : yield* Effect.promise(() => checkpointFolder(shell.worktreePath!));
       const written = yield* Effect.tryPromise({
         try: () => writeCheckpoint({ cwd, threadId }),
         catch: (cause) =>
@@ -595,6 +677,7 @@ export const make = Effect.gen(function* () {
         createdAt,
         reason,
         skipped: [...written.skipped],
+        overLimit: written.overLimit,
         excludedSecretCount: written.excludedSecretCount,
         requiredSecretPaths: [...written.requiredSecretPaths],
         transcriptMessageCount: messages.length,
@@ -665,9 +748,10 @@ export const make = Effect.gen(function* () {
         const epoch = runId == null ? undefined : record?.runEpochs[runId];
         return checkEpoch(record, environmentId, epoch);
       }),
+      // A lease state that does not read may hide a move: this copy acts on nothing.
       Effect.catchCause((cause) =>
         Effect.logWarning("Handoff mode could not read its lease state", { cause }).pipe(
-          Effect.as<EpochVerdict>({ kind: "unleased" }),
+          Effect.as<EpochVerdict>({ kind: "fenced", message: STATE_UNREADABLE }),
         ),
       ),
     );
@@ -687,13 +771,11 @@ export const make = Effect.gen(function* () {
             : { epoch: record.runEpochs[input.runId] }),
         });
       }),
+      // Neither the lease nor the journal reads: the effect may belong to another
+      // machine's copy now, or already be done, so it is not repeated here.
       Effect.catchCause((cause) =>
         Effect.logWarning("Handoff mode could not read its side-effect journal", { cause }).pipe(
-          Effect.as<SideEffectVerdict>({
-            kind: "proceed",
-            epoch: 0,
-            turnKey: threadTurnKey(input.threadId, input.runId),
-          }),
+          Effect.as<SideEffectVerdict>({ kind: "refuse", message: STATE_UNREADABLE }),
         ),
       ),
     );
@@ -841,15 +923,26 @@ export const make = Effect.gen(function* () {
         moves = port;
       }),
     snapshot,
+    viewSnapshot,
     updateConfig,
     setThreadMode,
     setProjectMode,
     checkpointNow,
     checkpoint,
     handOff: (input) => viaMoves((port) => port.handOff(input)),
-    handOffMachine: (input) => viaMoves((port) => port.handOffMachine(input)),
+    // Sleep starts nothing (1390 AC-36): a window still on an earlier build may ask on
+    // 'suspend', and gets a definite refusal before anything is planned or sent.
+    handOffMachine: (input) =>
+      input.reason === "sleep"
+        ? Effect.fail(new HandoffModeError({ code: "invalid", message: SLEEP_MOVES_NOTHING }))
+        : viaMoves((port) => port.handOffMachine(input)),
+    handOffBatch: (input) => viaMoves((port) => port.handOffBatch(input)),
+    readBatches: (input) => viaMoves((port) => port.readBatches(input)),
+    readPlan: (input) => viaMoves((port) => port.readPlan(input)),
     continueHere: (input, options) => viaMoves((port) => port.continueHere(input, options)),
     resumeFenced: viaMoves((port) => port.resumeFenced),
+    resumeThread: (threadId, operationId) =>
+      viaMoves((port) => port.resumeThread(threadId, operationId)),
     preflight: (input) => viaMoves((port) => port.preflight(input)),
     fence,
     guardSideEffect: guard,
@@ -867,7 +960,7 @@ export const layerRpcHandlers = WsHandoffModeRpcGroup.middleware(RpcInstrumentat
   Effect.gen(function* () {
     const handoff = yield* HandoffMode;
     return {
-      [WS_METHODS.handoffModeSnapshot]: () => handoff.snapshot,
+      [WS_METHODS.handoffModeSnapshot]: () => handoff.viewSnapshot,
       [WS_METHODS.handoffModeUpdateConfig]: handoff.updateConfig,
       [WS_METHODS.handoffModeSetThreadMode]: handoff.setThreadMode,
       [WS_METHODS.handoffModeSetProjectMode]: handoff.setProjectMode,
@@ -875,7 +968,10 @@ export const layerRpcHandlers = WsHandoffModeRpcGroup.middleware(RpcInstrumentat
       [WS_METHODS.handoffModeHandOff]: handoff.handOff,
       [WS_METHODS.handoffModeHandOffMachine]: handoff.handOffMachine,
       [WS_METHODS.handoffModeContinueHere]: (input) => handoff.continueHere(input),
-      [WS_METHODS.handoffModeResumeFenced]: () => handoff.resumeFenced,
+      [WS_METHODS.handoffModeResumeFenced]: (input) =>
+        input.threadId === undefined
+          ? handoff.resumeFenced
+          : handoff.resumeThread(input.threadId, input.operationId),
       [WS_METHODS.handoffModePreflight]: handoff.preflight,
     };
   }),
