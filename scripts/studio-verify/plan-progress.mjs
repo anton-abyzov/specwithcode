@@ -72,7 +72,7 @@ try {
     );
     // The header counts only verified criteria; an expanded increment card shows them.
     const acCount = card.locator("[data-plan-criteria-count]");
-    assert.equal((await acCount.locator("[aria-hidden]").textContent())?.trim(), "AC 1/4");
+    assert.equal((await acCount.locator("[aria-hidden]").textContent())?.trim(), "AC 1/4 verified");
     assert.match((await acCount.textContent()) ?? "", /1 of 4 acceptance criteria verified/);
     const criteriaToggle = card.getByRole("button", { name: /^Acceptance criteria/ });
     assert.equal(await criteriaToggle.getAttribute("aria-expanded"), "true");
