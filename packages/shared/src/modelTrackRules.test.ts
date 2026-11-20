@@ -373,4 +373,19 @@ describe("usage unknown in Review", () => {
     });
     expect(row?.sources[0]?.usage).toBe(null);
   });
+
+  it("does not describe another model's scoped denial as an Opus refusal", () => {
+    expect(reason(withLimits({
+      ordinaryUsageAllowed: false,
+      nativeDenialObservedAt: fresh,
+      windows: [{
+        id: "weekly_fable",
+        kind: "weekly",
+        label: "Fable weekly",
+        modelScope: "fable",
+        usedPercent: 100,
+        resetsAt: reset,
+      }],
+    }))).toEqual({ kind: "no-model-window" });
+  });
 });

@@ -323,7 +323,12 @@ export function usageUnknownReason(
   if (!Number.isFinite(observedAt) || observedAt > nowMs) return { kind: "stale", readAt: null };
   if (nowMs - observedAt > FALLBACK_USAGE_MAX_AGE_MS) return { kind: "stale", readAt: observedAt };
   const deniedAt = Date.parse(limits.nativeDenialObservedAt ?? "");
-  if (Number.isFinite(deniedAt) && deniedAt >= observedAt) return { kind: "refused" };
+  if (
+    Number.isFinite(deniedAt) &&
+    deniedAt >= observedAt &&
+    !denialSparesModel(provider, model, nowMs)
+  )
+    return { kind: "refused" };
   if (
     limits.windows.some(
       (window) =>
