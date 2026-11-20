@@ -373,13 +373,13 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
     dispatch(command).pipe(
       Effect.timeoutOrElse({
         duration: MESSAGE_DISPATCH_TIMEOUT,
-        orElse: () => Effect.fail(unconfirmed("did not confirm the message within 60 seconds.")),
+        orElse: () => Effect.fail(unconfirmed("did not confirm the message within 60 seconds. It may still arrive, so check the thread before sending it again.")),
       }),
     );
   // A send that is lost for good fails with an error the composer shows; an
   // interrupt would make the composer drop the message without a word.
   const lostForGood = () =>
-    Effect.fail(unconfirmed("lost the connection before it confirmed the message."));
+    Effect.fail(unconfirmed("lost the connection before it confirmed the message. It may still arrive, so check the thread before sending it again."));
   const sessionGone = Effect.fnUntraced(function* (
     attemptSession: Option.Option<RpcSession.RpcSession>,
   ) {
@@ -427,7 +427,16 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
         yield* Effect.forkChild(attempt(command), { startImmediately: true }),
       );
       if (Exit.isSuccess(exit)) return exit.value;
-      if (!lostTransport(exit.cause)) return yield* exit;
+      // A resend that found no session never left this window: the socket that
+      // served the refresh dropped before it. It waits for the next one too.
+      const unsentResend =
+        resends > 0 &&
+        exit.cause.reasons.some(
+          (reason) =>
+            reason._tag === "Fail" &&
+            (reason.error as { readonly _tag?: unknown })._tag === "EnvironmentRpcUnavailableError",
+        );
+      if (!lostTransport(exit.cause) && !unsentResend) return yield* exit;
       // A protocol error on a session that is still up (a reply that fails to
       // decode) brings no next session, so it fails now.
       if (!Cause.hasInterruptsOnly(exit.cause) && !(yield* sessionGone(attemptSession)))
@@ -458,7 +467,7 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
   return yield* send.pipe(
     Effect.timeoutOrElse({
       duration: MESSAGE_SEND_DEADLINE,
-      orElse: () => Effect.fail(unconfirmed("did not confirm the message within 2 minutes.")),
+      orElse: () => Effect.fail(unconfirmed("did not confirm the message within 2 minutes. It may still arrive, so check the thread before sending it again.")),
     }),
   );
 });

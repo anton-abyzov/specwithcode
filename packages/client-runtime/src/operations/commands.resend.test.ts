@@ -228,7 +228,7 @@ describe("message sends across a lost socket", () => {
 
       expect(error._tag).toBe("EnvironmentSendUnconfirmedError");
       expect(error.message).toBe(
-        "Test environment lost the connection before it confirmed the message.",
+        "Test environment lost the connection before it confirmed the message. It may still arrive, so check the thread before sending it again.",
       );
       expect(commands.map((command) => command.commandId)).toEqual([
         "command-socket-killer",
@@ -259,7 +259,7 @@ describe("message sends across a lost socket", () => {
 
       const error = yield* Fiber.join(waiting);
       expect(error._tag).toBe("EnvironmentSendUnconfirmedError");
-      expect(error.message).toBe("Test environment did not confirm the message within 2 minutes.");
+      expect(error.message).toBe("Test environment did not confirm the message within 2 minutes. It may still arrive, so check the thread before sending it again.");
       expect(commands.map((command) => command.commandId)).toEqual(["command-host-gone"]);
     }),
   );
@@ -324,7 +324,7 @@ describe("message sends across a lost socket", () => {
         const exit = yield* Fiber.await(waiting);
         expect(Exit.isSuccess(exit) && exit.value._tag).toBe("EnvironmentSendUnconfirmedError");
         expect(Exit.isSuccess(exit) && exit.value.message).toBe(
-          "Test environment lost the connection before it confirmed the message.",
+          "Test environment lost the connection before it confirmed the message. It may still arrive, so check the thread before sending it again.",
         );
         expect(commands.map((command) => command.commandId)).toEqual(["command-app-disconnected"]);
       }),
@@ -520,6 +520,61 @@ describe("message sends across a lost socket", () => {
     }),
   );
 
+  it.effect("waits for the next session when the socket drops between the refresh and the resend", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor();
+      const firstAttemptLost = yield* Deferred.make<void>();
+      const refreshedThenDropped = yield* Deferred.make<void>();
+      const healthy = makeSession(
+        (command) =>
+          Effect.sync(() => {
+            commands.push(command);
+            return { sequence: commands.length };
+          }),
+        { projection: () => v2Projection },
+      );
+      const lost = makeSession(
+        (command) =>
+          Effect.gen(function* () {
+            commands.push(command);
+            yield* SubscriptionRef.set(supervisor.session, Option.none());
+            yield* Deferred.succeed(firstAttemptLost, undefined);
+            return yield* socketClosed();
+          }),
+        { projection: () => v2Projection },
+      );
+      // The next socket answers the projection read, then drops before the resend.
+      const dropsAfterRefresh = makeSession(
+        (command) => Effect.sync(() => commands.push(command)),
+        {
+          projection: () => v2Projection,
+          readProjection: () =>
+            Effect.gen(function* () {
+              yield* SubscriptionRef.set(supervisor.session, Option.none());
+              yield* Deferred.succeed(refreshedThenDropped, undefined);
+              return v2Projection;
+            }),
+        },
+      );
+      yield* SubscriptionRef.set(supervisor.session, Option.some(lost));
+
+      const sendFiber = yield* send(supervisor, "refresh-then-drop").pipe(Effect.forkChild);
+      yield* Deferred.await(firstAttemptLost);
+      yield* SubscriptionRef.set(supervisor.session, Option.some(dropsAfterRefresh));
+      yield* Deferred.await(refreshedThenDropped);
+      yield* TestClock.adjust("1 second");
+      expect(sendFiber.pollUnsafe()).toBeUndefined();
+      yield* SubscriptionRef.set(supervisor.session, Option.some(healthy));
+
+      expect(yield* Fiber.join(sendFiber)).toEqual({ sequence: 2 });
+      expect(commands.map((command) => command.commandId)).toEqual([
+        "command-refresh-then-drop",
+        "command-refresh-then-drop",
+      ]);
+    }),
+  );
+
   it.effect("fails a send the host never answers on a live socket after 60 seconds", () =>
     Effect.gen(function* () {
       const commands: OrchestrationV2Command[] = [];
@@ -537,7 +592,7 @@ describe("message sends across a lost socket", () => {
 
       const error = yield* Fiber.join(sendFiber);
       expect(error._tag).toBe("EnvironmentSendUnconfirmedError");
-      expect(error.message).toBe("Test environment did not confirm the message within 60 seconds.");
+      expect(error.message).toBe("Test environment did not confirm the message within 60 seconds. It may still arrive, so check the thread before sending it again.");
       expect(commands.map((command) => command.commandId)).toEqual(["command-unanswered"]);
     }),
   );
