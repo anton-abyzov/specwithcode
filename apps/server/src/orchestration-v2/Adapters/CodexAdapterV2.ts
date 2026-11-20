@@ -2042,9 +2042,10 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           threadId: string,
           compactionId: string,
           snapshot: Fiber.Fiber<string, unknown> | undefined,
+          // The unload count when the pending restore was taken.
+          epoch: number,
         ) => {
           const key = JSON.stringify([threadId, compactionId]);
-          const epoch = threadUnloads.get(threadId) ?? 0;
           // Unloading the thread drops its restores: neither the project
           // context read (which retires the delivery receipt) nor the
           // injection may follow it.
@@ -2112,10 +2113,17 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         // turn on this thread waits for it (restoresInFlight).
         const startContextRestore = (threadId: string) =>
           Effect.gen(function* () {
-            if (unloadedThreads.has(threadId)) return;
-            const awaiting = compactionsAwaitingContextRestore.get(threadId);
-            if (awaiting === undefined) return;
-            compactionsAwaitingContextRestore.delete(threadId);
+            // Taken in one step with the unload count it belongs to, so an
+            // unload before the restore forks still stops it.
+            const taken = yield* Effect.sync(() => {
+              if (unloadedThreads.has(threadId)) return undefined;
+              const awaiting = compactionsAwaitingContextRestore.get(threadId);
+              if (awaiting === undefined) return undefined;
+              compactionsAwaitingContextRestore.delete(threadId);
+              return { awaiting, epoch: threadUnloads.get(threadId) ?? 0 };
+            });
+            if (taken === undefined) return;
+            const { awaiting, epoch } = taken;
             const done = yield* Deferred.make<void>();
             const pending = restoresInFlight.get(threadId) ?? new Set();
             pending.add(done);
@@ -2134,6 +2142,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               threadId,
               awaiting.compactionId,
               awaiting.snapshot,
+              epoch,
             ).pipe(
               Effect.ensuring(
                 Effect.sync(() => {
@@ -5234,21 +5243,26 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                       Effect.forkIn(scope, { startImmediately: true }),
                     )
                   : undefined;
-              // An unload while the read started has cleared what was pending;
-              // this compaction belongs to the unloaded thread too.
-              if (
-                unloadedThreads.has(payload.threadId) ||
-                (threadUnloads.get(payload.threadId) ?? 0) !== unloads
-              ) {
-                yield* discardSnapshot(snapshot);
-              } else if (!duplicate) {
-                yield* discardSnapshot(awaiting?.snapshot);
+              // Checked and written in one step, with no yield between: an
+              // unload while the read started has cleared what was pending,
+              // and this compaction belongs to the unloaded thread too.
+              // Snapshots are discarded only afterwards.
+              const discarded = yield* Effect.sync(() => {
+                if (
+                  unloadedThreads.has(payload.threadId) ||
+                  (threadUnloads.get(payload.threadId) ?? 0) !== unloads
+                )
+                  return snapshot;
+                const replaced = compactionsAwaitingContextRestore.get(payload.threadId);
+                if (duplicate || replaced?.compactionId === payload.item.id) return snapshot;
                 compactionsAwaitingContextRestore.set(payload.threadId, {
                   compactionId: payload.item.id,
                   turnId: payload.turnId,
                   ...(snapshot === undefined ? {} : { snapshot }),
                 });
-              }
+                return replaced?.snapshot;
+              });
+              yield* discardSnapshot(discarded);
             }
             if (
               (payload.item.type === "subAgentActivity" ||
@@ -7403,15 +7417,18 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           unloadThread: (unloadInput) =>
             Effect.gen(function* () {
               const nativeThreadId = yield* getNativeThreadId(unloadInput.providerThread);
-              unloadedThreads.add(nativeThreadId);
-              threadUnloads.set(nativeThreadId, (threadUnloads.get(nativeThreadId) ?? 0) + 1);
-              yield* discardSnapshot(
-                compactionsAwaitingContextRestore.get(nativeThreadId)?.snapshot,
-              );
-              compactionsAwaitingContextRestore.delete(nativeThreadId);
+              // Marked, counted and cleared in one step; reads and restores
+              // are stopped only afterwards.
+              const { dropped, running } = yield* Effect.sync(() => {
+                unloadedThreads.add(nativeThreadId);
+                threadUnloads.set(nativeThreadId, (threadUnloads.get(nativeThreadId) ?? 0) + 1);
+                const dropped = compactionsAwaitingContextRestore.get(nativeThreadId);
+                compactionsAwaitingContextRestore.delete(nativeThreadId);
+                return { dropped, running: [...(restoreFibers.get(nativeThreadId) ?? [])] };
+              });
+              yield* discardSnapshot(dropped?.snapshot);
               // A restore stops its own snapshot read when it ends.
-              for (const fiber of restoreFibers.get(nativeThreadId) ?? [])
-                yield* Fiber.interrupt(fiber).pipe(Effect.forkIn(scope));
+              for (const fiber of running) yield* Fiber.interrupt(fiber).pipe(Effect.forkIn(scope));
               yield* client.request("thread/unsubscribe", { threadId: nativeThreadId });
             }).pipe(
               Effect.mapError((cause) =>
