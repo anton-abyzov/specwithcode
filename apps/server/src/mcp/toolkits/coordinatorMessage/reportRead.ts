@@ -1,6 +1,6 @@
 /** Bounded report pages. Only a path already named in an outgoing message reaches here. */
 import { constants } from "node:fs";
-import { open, realpath } from "node:fs/promises";
+import { open, realpath, lstat } from "node:fs/promises";
 import path from "node:path";
 export const REPORT_MAX_BYTES = 256 * 1024;
 export const REPORT_PAGE_CHARS = 8000;
@@ -21,17 +21,39 @@ export async function readReportPage(root: string, namedPath: string, offset: nu
     throw new Error("Only a named project report may be read.");
   const resolved = await realpath(target);
   if (resolved !== target) throw new Error("A report reference cannot follow symbolic links.");
-  const file = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const before = await lstat(target, { bigint: true });
+  if (before.isSymbolicLink() || !before.isFile() || before.nlink !== 1n)
+    throw new Error("A report reference must name one regular file without links.");
+  const file = await open(target, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   try {
-    const stat = await file.stat();
-    if (!stat.isFile() || stat.size > REPORT_MAX_BYTES)
+    const stat = await file.stat({ bigint: true });
+    if (stat.dev !== before.dev || stat.ino !== before.ino || stat.nlink !== 1n)
+      throw new Error("The report changed while it was opened.");
+    if (!stat.isFile() || stat.size > BigInt(REPORT_MAX_BYTES))
       throw new Error("A report may contain at most 256 KB.");
     const bytes = Buffer.alloc(REPORT_MAX_BYTES + 1);
-    const count = await file.read(bytes, 0, bytes.length, 0);
-    if (count.bytesRead > REPORT_MAX_BYTES) throw new Error("A report may contain at most 256 KB.");
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(
-      bytes.subarray(0, count.bytesRead),
-    );
+    let count = 0;
+    while (count < bytes.length) {
+      const chunk = await file.read(bytes, count, bytes.length - count, count);
+      if (chunk.bytesRead === 0) break;
+      count += chunk.bytesRead;
+    }
+    if (count > REPORT_MAX_BYTES) throw new Error("A report may contain at most 256 KB.");
+    // Validate the opened inode against the named file again before releasing any content.
+    const after = await lstat(target, { bigint: true });
+    const finished = await file.stat({ bigint: true });
+    if (
+      (await realpath(target)) !== target ||
+      after.isSymbolicLink() ||
+      after.nlink !== 1n ||
+      after.dev !== stat.dev ||
+      after.ino !== stat.ino ||
+      finished.size !== stat.size ||
+      finished.mtimeNs !== stat.mtimeNs ||
+      finished.ctimeNs !== stat.ctimeNs
+    )
+      throw new Error("The report changed while it was read.");
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, count));
     if (offset > text.length) throw new Error("Invalid report offset.");
     const content = text.slice(offset, offset + REPORT_PAGE_CHARS);
     return {

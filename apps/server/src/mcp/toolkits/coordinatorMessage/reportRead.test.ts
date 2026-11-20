@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile, link } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { readReportPage, REPORT_MAX_BYTES } from "./reportRead.ts";
@@ -56,5 +56,10 @@ describe("named report pages", () => {
     await writeFile(path.join(root, named), "abc");
     for (const offset of [-1, 0.5, 4])
       await expect(readReportPage(root, named, offset)).rejects.toThrow("Invalid report offset");
+  });
+  it("refuses hard links to another file", async () => {
+    await writeFile(path.join(root, "private.md"), "private");
+    await link(path.join(root, "private.md"), path.join(root, named));
+    await expect(readReportPage(root, named, 0)).rejects.toThrow("without links");
   });
 });

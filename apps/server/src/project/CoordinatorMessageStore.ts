@@ -53,6 +53,8 @@ export const CoordinatorMessageRecord = Schema.Struct({
   direction: Schema.Literals(["incoming", "outgoing"]),
   /** Outgoing: the receiver's id, including the id of a merged earlier message. */
   receiverMessageId: Schema.optional(CoordinatorMessageId),
+  /** Outgoing: both link identities at send time, so a remove/rejoin cannot revive the old queue. */
+  outgoingMembership: Schema.optional(Schema.String),
   /** The other machine: the sender of an incoming message, the recipient of an outgoing one. */
   peerEnvironmentId: EnvironmentId,
   projectId: ProjectId,

@@ -174,11 +174,9 @@ export const makeOutbox = (deps: CoordinatorMessageOutboxDeps) =>
             }
             const projectId = yield* deps.receiverProject(row);
             // Resolution may wait on I/O. Recheck authority and the deadline immediately before sending.
+            const authorized = yield* deps.authorize(row);
             const sendAt = yield* Clock.currentTimeMillis;
-            if (
-              sendAt - row.receivedAt >= COORDINATOR_MESSAGE_OUTBOX_TTL_MS ||
-              !(yield* deps.authorize(row))
-            ) {
+            if (sendAt - row.receivedAt >= COORDINATOR_MESSAGE_OUTBOX_TTL_MS || !authorized) {
               yield* setState(row.id, "not_delivered");
               continue;
             }
@@ -270,13 +268,28 @@ export const layer = Layer.effect(
           (member) => member.environmentId === self && member.projectId === projectId,
         );
         const remote = identity.members.filter((member) => member.environmentId === peer);
-        return own.length === 1 && remote.length === 1 ? remote[0] : undefined;
+        return own.length === 1 && remote.length === 1
+          ? {
+              ...remote[0]!,
+              membershipStamp: JSON.stringify([
+                own[0]!.linkId,
+                own[0]!.generation,
+                remote[0]!.linkId,
+                remote[0]!.generation,
+              ]),
+            }
+          : undefined;
       });
     const box = yield* makeOutbox({
       store,
       authorize: (row) =>
         destination(row.projectId, row.peerEnvironmentId, row.logicalProjectId).pipe(
-          Effect.map((member) => member !== undefined),
+          Effect.map(
+            (member) =>
+              member !== undefined &&
+              row.outgoingMembership !== undefined &&
+              row.outgoingMembership === member.membershipStamp,
+          ),
           Effect.orElseSucceed(() => false),
         ),
       receiverProject: (row) =>
@@ -380,6 +393,9 @@ export const layer = Layer.effect(
             );
           message = { ...message, replyTo: original.externalId };
         }
+        const member = yield* destination(input.projectId, peer, logical.id);
+        if (member === undefined)
+          return yield* Effect.fail(new Error("The destination is no longer linked."));
         const externalId = `cm-${sha256(JSON.stringify([input.projectId, peer, input.clientRequestId])).toString("hex")}`;
         const row = {
           externalId,
@@ -387,6 +403,7 @@ export const layer = Layer.effect(
           peerEnvironmentId: peer,
           projectId: input.projectId,
           logicalProjectId: logical.id,
+          outgoingMembership: member.membershipStamp,
           clientRequestIds: [input.clientRequestId],
           ...message,
           dedupeKey: coordinatorMessageDedupeKey(message, peer),
