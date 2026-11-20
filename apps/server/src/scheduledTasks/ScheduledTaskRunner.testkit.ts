@@ -197,13 +197,15 @@ export const fleet = (
     /** How often a due pass looks for routines to settle; absent, the test settles by hand. */
     readonly pace?: number;
     /**
-     * The handoff gate a machine's scheduler gets in place of the stub that
-     * reads `state.movedThreads`, given its environment id; the server's own.
+     * Builds each machine's scheduler over the testkit's services, in place of
+     * `Service.layer` with the stub handoff gate that reads `state.movedThreads`:
+     * the server's own composition, given the machine's identity.
      */
-    readonly handoffGate?: (
+    readonly scheduler?: (
+      services: Layer.Layer<unknown>,
       environment: Layer.Layer<ServerEnvironment.ServerEnvironment>,
       environmentId: EnvironmentId,
-    ) => Layer.Layer<never>;
+    ) => Layer.Layer<Service.ScheduledTaskService, unknown, SqlClient.SqlClient>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -392,19 +394,29 @@ export const fleet = (
                 })),
             ),
           }),
-          options.handoffGate === undefined
-            ? Layer.succeed(HandoffTurnGate, {
+          options.scheduler !== undefined
+            ? Layer.empty
+            : Layer.succeed(HandoffTurnGate, {
                 ...HandoffTurnGate.defaultValue(),
                 continuedOn: (threadId) =>
-                  Effect.sync(() => state.movedThreads.get(threadId) ?? null),
-              })
-            : options.handoffGate(
+                  Effect.sync(() => {
+                    const label = state.movedThreads.get(threadId);
+                    return label === undefined
+                      ? ({ kind: "here" } as const)
+                      : ({ kind: "moved", machineLabel: label } as const);
+                  }),
+              }),
+        );
+        const scheduler =
+          options.scheduler === undefined
+            ? Service.layer.pipe(Layer.provide(dependencies))
+            : options.scheduler(
+                dependencies,
                 Layer.mock(ServerEnvironment.ServerEnvironment)({
                   getEnvironmentId: Effect.succeed(environmentId),
                 }),
                 environmentId,
-              ),
-        );
+              );
         const sqlRef: { current: SqlClient.SqlClient | null } = { current: null };
         const database = yield* Layer.build(Layer.fresh(Sqlite.layerMemory));
         const sql = Context.get(database, SqlClient.SqlClient);
@@ -434,10 +446,7 @@ export const fleet = (
         });
         const context = yield* Layer.build(
           Layer.fresh(
-            Service.layer.pipe(
-              Layer.provide(dependencies),
-              Layer.provide(Layer.succeed(SqlClient.SqlClient, watched)),
-            ),
+            scheduler.pipe(Layer.provide(Layer.succeed(SqlClient.SqlClient, watched))),
           ),
         );
         const old = options.release?.[name] === "1.0.377";
@@ -478,10 +487,7 @@ export const fleet = (
         const reopen = Effect.gen(function* () {
           const again = yield* Layer.buildWithScope(
             Layer.fresh(
-              Service.layer.pipe(
-                Layer.provide(dependencies),
-                Layer.provide(Layer.succeed(SqlClient.SqlClient, watched)),
-              ),
+              scheduler.pipe(Layer.provide(Layer.succeed(SqlClient.SqlClient, watched))),
             ),
             scope,
           );

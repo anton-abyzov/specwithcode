@@ -838,9 +838,9 @@ export const layer = Layer.effect(
           // A copy at rest never writes `running`; one that waits stays due.
           if (trigger === "scheduled")
             return hold.kind === "rest" ? yield* restRun(active, hold.note, startedAt) : active;
-          return yield* taskError(hold.kind === "rest" ? hold.note : hold.reason, {
-            taskId: active.id,
-          });
+          const said = hold.kind === "rest" ? hold.note : hold.reason;
+          if (webhook !== undefined) return yield* new WebhookDeliverySkipped({ reason: said });
+          return yield* taskError(said, { taskId: active.id });
         }
         // After the coordinator gate, so a copy at rest is never turned off here.
         const grant = yield* grantHold(active);
@@ -1985,7 +1985,7 @@ export const layer = Layer.effect(
         environment === undefined ? Effect.succeed(null) : environment.getEnvironmentId,
       threadMovedTo: (threadId) =>
         turnGate.continuedOn === undefined
-          ? Effect.succeed(null)
+          ? Effect.succeed({ kind: "here" } as const)
           : turnGate.continuedOn(ThreadId.make(threadId)),
       findTask,
       listTasks: listRows().pipe(

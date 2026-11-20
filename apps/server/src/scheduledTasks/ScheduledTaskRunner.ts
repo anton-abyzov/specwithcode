@@ -56,6 +56,7 @@ import * as Semaphore from "effect/Semaphore";
 import type * as SqlClient from "effect/sql/SqlClient";
 
 import type { AwayPeerError } from "../away/awayPeerCall.ts";
+import type { ThreadContinuation } from "../handoff/HandoffTurnGate.ts";
 import type * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import {
   HANDOFF_ROUTINE_WAIT,
@@ -96,6 +97,7 @@ import {
   OLDER_RUNNER_SAVE_REFUSAL,
   UNSEEN_ROUTINE_EDIT_REFUSAL,
   HANDOVER_RESTING_COPY_REFUSAL,
+  HANDOFF_STATE_UNREAD_WAIT,
   threadHandedOffNote,
 } from "./ScheduledTaskRunnerRecords.ts";
 
@@ -130,8 +132,8 @@ export interface RoutineRunnerDeps {
   readonly legacyOwner: (projectId: ProjectId) => Effect.Effect<boolean>;
   /** This machine, or null on a host with no identity (then nothing is settled with peers). */
   readonly selfEnvironmentId: Effect.Effect<string | null>;
-  /** The machine a thread was handed off to, when this copy of it no longer runs. */
-  readonly threadMovedTo: (threadId: string) => Effect.Effect<string | null>;
+  /** Whether a thread runs here, moved to another machine, or cannot be told. */
+  readonly threadMovedTo: (threadId: string) => Effect.Effect<ThreadContinuation>;
   readonly findTask: (
     id: ScheduledTaskId,
   ) => Effect.Effect<ScheduledTask | null, ScheduledTaskError>;
@@ -338,6 +340,15 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
 
     const hold = (task: GateTask): Effect.Effect<RoutineCoordinatorHold | null> =>
       Effect.gen(function* () {
+        // A worker's routine never runs here once its thread moved, whatever starts it,
+        // and waits while that cannot be read (1390 AC-45).
+        if (!isCoordinatorOwnedRoutine(task) && task.threadId != null) {
+          const moved = yield* deps.threadMovedTo(task.threadId);
+          if (moved.kind === "moved")
+            return { kind: "rest", note: threadHandedOffNote(moved.machineLabel) } as const;
+          if (moved.kind === "unknown")
+            return { kind: "wait", reason: HANDOFF_STATE_UNREAD_WAIT } as const;
+        }
         // A webhook routine stays with the machine its URL points to, and has no record.
         if (task.schedule.type === "webhook") return null;
         const record = task.id === undefined ? null : yield* records.readStrict(task.id);
@@ -347,14 +358,7 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
           if (record.state === "staged" || record.state === "moving")
             return { kind: "wait", reason: MOVING_ROUTINE_WAIT } as const;
         }
-        if (!isCoordinatorOwnedRoutine(task)) {
-          if (task.threadId != null) {
-            const movedTo = yield* deps.threadMovedTo(task.threadId);
-            if (movedTo !== null)
-              return { kind: "rest", note: threadHandedOffNote(movedTo) } as const;
-          }
-          return null;
-        }
+        if (!isCoordinatorOwnedRoutine(task)) return null;
         if (
           record !== null &&
           record.state === "settled" &&

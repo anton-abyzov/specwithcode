@@ -18,6 +18,15 @@ import { autoFenceRefusal } from "./HandoffAutoContinue.ts";
 import * as HandoffModeStore from "./HandoffModeStore.ts";
 import type { HandoffDocument } from "./handoffState.ts";
 
+/**
+ * Where a thread runs, as this machine's handoff state tells it: here, on the
+ * machine it was handed off to, or unknown while that state does not read.
+ */
+export type ThreadContinuation =
+  | { readonly kind: "here" }
+  | { readonly kind: "moved"; readonly machineLabel: string }
+  | { readonly kind: "unknown" };
+
 export interface HandoffTurnGateShape {
   /** Null when a turn may start; otherwise the reason it may not. Never fails. */
   readonly check: (threadId: ThreadId) => Effect.Effect<string | null>;
@@ -27,10 +36,11 @@ export interface HandoffTurnGateShape {
    */
   readonly pendingSeed?: (threadId: ThreadId) => Effect.Effect<string | null>;
   /**
-   * The machine this thread was handed off to, when this copy no longer runs
-   * it; null otherwise. Never fails. Absent means none (test gates).
+   * Whether this copy of the thread still runs here, was handed off to another
+   * machine, or cannot tell because the handoff state does not read. Never
+   * fails. Absent means here (test gates).
    */
-  readonly continuedOn?: (threadId: ThreadId) => Effect.Effect<string | null>;
+  readonly continuedOn?: (threadId: ThreadId) => Effect.Effect<ThreadContinuation>;
 }
 
 export class HandoffTurnGate extends Context.Reference<HandoffTurnGateShape>(
@@ -111,8 +121,16 @@ export const layer = Layer.effect(
         ),
       continuedOn: (threadId: ThreadId) =>
         store.read.pipe(
-          Effect.map((document) => document.threads[threadId]?.continuedOn?.machineLabel ?? null),
-          Effect.catchCause(() => Effect.succeed(null)),
+          Effect.map((document): ThreadContinuation => {
+            const label = document.threads[threadId]?.continuedOn?.machineLabel;
+            return label === undefined ? { kind: "here" } : { kind: "moved", machineLabel: label };
+          }),
+          // A state that does not read may say the thread moved: never "here" (1390 AC-45).
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Handoff mode could not read where a thread runs", { cause }).pipe(
+              Effect.as({ kind: "unknown" } as const),
+            ),
+          ),
         ),
     };
   }),

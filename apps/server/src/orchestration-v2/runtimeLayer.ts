@@ -430,18 +430,17 @@ const layerAccessRequestsProvided = AccessRequests.layer.pipe(
 const layerCoordinatorRoleProvided = CoordinatorRole.layer.pipe(Layer.provide(layerProjectService));
 
 /**
- * The handoff gate the scheduler reads to rest a routine whose thread moved to
- * another machine (1390 AC-45). The gate is a reference, so leaving it out
- * would give the scheduler a default that never names a machine. Same layer
- * reference as the orchestrator's, so both read one cached document. Exported
- * so a test builds the scheduler with this exact layer.
+ * The scheduler over `services`, with the handoff gate it reads to rest a
+ * routine whose thread moved to another machine (1390 AC-45). The gate is a
+ * reference, so leaving it out would give the scheduler a default that never
+ * names a machine. Same layer reference as the orchestrator's, so both read one
+ * cached document. Exported so a test builds the scheduler the way the server does.
  */
-export const layerScheduledTaskHandoffGate = HandoffTurnGate.layer;
+export const scheduledTaskLayerOver = <ROut, E, RIn>(services: Layer.Layer<ROut, E, RIn>) =>
+  ScheduledTaskService.layer.pipe(Layer.provide(Layer.mergeAll(HandoffTurnGate.layer, services)));
 
-const layerScheduledTaskProvided = ScheduledTaskService.layer.pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      layerScheduledTaskHandoffGate,
+const layerScheduledTaskProvided = scheduledTaskLayerOver(
+  Layer.mergeAll(
       layerThreadLaunchProvided,
       layerThreadManagementProvided,
       layerSecretRequestsProvided,
@@ -450,7 +449,6 @@ const layerScheduledTaskProvided = ScheduledTaskService.layer.pipe(
       // Routines fire only where this machine coordinates their project.
       layerCoordinatorRoleProvided,
       CoordinatorWakeGate.layer,
-    ),
   ),
 );
 // The routines a coordinator sends its standby, served by the scheduler above.

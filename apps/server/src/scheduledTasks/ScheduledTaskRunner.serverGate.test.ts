@@ -16,6 +16,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import type * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
@@ -28,6 +29,7 @@ import {
 import * as HandoffTurnGate from "../handoff/HandoffTurnGate.ts";
 import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import { fleet, type Machine } from "./ScheduledTaskRunner.testkit.ts";
+import type { ScheduledTaskService } from "./ScheduledTaskService.ts";
 import { threadHandedOffNote } from "./ScheduledTaskRunnerRecords.ts";
 
 const NOON = "2026-11-03T12:00:00.000Z";
@@ -60,12 +62,6 @@ afterEach(() => {
   for (const path of temporary.splice(0)) NodeFS.rmSync(path, { recursive: true, force: true });
 });
 
-/**
- * Each machine's scheduler over the handoff gate exactly as the server
- * composes it, on a state folder of its own; `alpha`'s handoff file holds
- * `alphaFile`. `rewrite` changes that file, and `platform` builds alpha's gate
- * by hand.
- */
 const platformOf = (
   stateDir: string,
   environment: Layer.Layer<ServerEnvironment.ServerEnvironment>,
@@ -77,12 +73,18 @@ const platformOf = (
     environment,
   );
 
+/**
+ * Each machine's scheduler composed exactly as the server composes it, on a state folder of its own; `alpha`'s handoff file holds
+ * `alphaFile`. `rewrite` changes that file, and `platform` builds alpha's gate
+ * by hand.
+ */
 const serverGates = (alphaFile: string) => {
   const folders = new Map<
     string,
     { readonly file: string; readonly platform: ReturnType<typeof platformOf> }
   >();
-  const gate = (
+  const scheduler = (
+    services: Layer.Layer<unknown>,
     environment: Layer.Layer<ServerEnvironment.ServerEnvironment>,
     environmentId: EnvironmentId,
   ) => {
@@ -94,10 +96,13 @@ const serverGates = (alphaFile: string) => {
     NodeFS.writeFileSync(file, environmentId === ALPHA ? alphaFile : NOT_MOVED);
     const platform = platformOf(stateDir, environment);
     folders.set(environmentId, { file, platform });
-    return RuntimeLayer.layerScheduledTaskHandoffGate.pipe(Layer.provide(platform));
+    // The server's own composition: delete its handoff gate and these tests fail.
+    return RuntimeLayer.scheduledTaskLayerOver(services).pipe(
+      Layer.provide(platform),
+    ) as unknown as Layer.Layer<ScheduledTaskService, unknown, SqlClient.SqlClient>;
   };
   return {
-    gate,
+    scheduler,
     rewrite: (text: string) => NodeFS.writeFileSync(folders.get(ALPHA)!.file, text),
     platform: () => folders.get(ALPHA)!.platform,
   };
@@ -113,7 +118,7 @@ it.effect("a worker's routine rests after the worker is handed off, with the ser
     yield* TestClock.setTime(Date.parse(NOON));
     const gates = serverGates(MOVED);
     const { machines, everyoneLooks, fires, network } = yield* fleet(["alpha", "beta"], {
-      handoffGate: gates.gate,
+      scheduler: gates.scheduler,
     });
     const [alpha, beta] = machines as [Machine, Machine];
 
@@ -142,7 +147,7 @@ it.effect("a webhook delivery after the handoff runs nothing, not even its check
   Effect.gen(function* () {
     yield* TestClock.setTime(Date.parse(NOON));
     const gates = serverGates(MOVED);
-    const { machines } = yield* fleet(["alpha"], { handoffGate: gates.gate });
+    const { machines } = yield* fleet(["alpha"], { scheduler: gates.scheduler });
     const [alpha] = machines as [Machine];
     yield* addWorker(alpha);
     const task = yield* alpha.seed({
@@ -179,7 +184,7 @@ it.effect("a handoff file that does not read makes the routine wait, and it runs
   Effect.gen(function* () {
     yield* TestClock.setTime(Date.parse(NOON));
     const gates = serverGates("{ not json");
-    const { machines } = yield* fleet(["alpha"], { handoffGate: gates.gate });
+    const { machines } = yield* fleet(["alpha"], { scheduler: gates.scheduler });
     const [alpha] = machines as [Machine];
     yield* addWorker(alpha);
     yield* alpha.seed({ threadId: WORKER, check: { command: "true" } });
