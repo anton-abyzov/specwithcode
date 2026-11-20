@@ -357,90 +357,102 @@ describe("estimateOutside", () => {
     }
   });
 
-  it("reads a reset the same whether its new reset time comes at once or late", () => {
-    // Random weekly series. In one copy every read carries the reset time
-    // ahead of it; in the other a read in the five minutes after a reset
-    // still carries the one just passed. Both must count the same.
+  it("counts every reset of a regular schedule once, whenever its reset time is told", () => {
+    // Random series on a fixed schedule, checked against that schedule: two
+    // reads in one window add what was gained, a read in a later window adds
+    // what it shows and marks one reset. Each series runs with every read
+    // carrying the reset time ahead of it, and with a read in the five
+    // minutes after a reset still carrying the one just passed.
     const minute = 60_000;
-    const week = 7 * DAY;
     const first = 5 * minute;
-    const nextReset = (at: number) => first + Math.ceil((at - first + 1) / week) * week;
-    const lastReset = (at: number) => nextReset(at) - week;
-    const late = (at: number) => lastReset(at) > 0 && at - lastReset(at) < 5 * minute;
-    let compared = 0;
-    for (let seed = 1; seed <= 3000; seed += 1) {
-      let state = seed;
-      const random = () => {
-        state = (state * 1664525 + 1013904223) % 2 ** 32;
-        return state / 2 ** 32;
-      };
-      const times = [0];
-      let at = 0;
-      const reads = 3 + Math.floor(random() * 6);
-      for (let read = 1; read < reads; read += 1) {
-        const pick = random();
-        at +=
-          pick < 0.3
-            ? (1 + Math.floor(random() * 20)) * minute
-            : pick < 0.6
-              ? (1 + random() * 30) * HOUR
-              : (0.5 + random() * 6) * DAY;
-        // Often land just after a reset.
-        if (random() < 0.35) {
-          at =
-            lastReset(at) + (random() < 0.5 ? 0 : week) + (1 + Math.floor(random() * 4)) * minute;
-        }
-        at = Math.max(Math.round(at / minute) * minute, times[times.length - 1]! + minute);
-        times.push(at);
-      }
-      const perDay = 2 + random() * 12;
-      const before = 20 + random() * 10;
-      const usedAt = (time: number) => {
-        const start = lastReset(time);
-        const used =
-          start < 0 ? before + (time / DAY) * perDay : 3 + ((time - start) / DAY) * perDay;
-        return Math.min(100, Math.round(used * 10) / 10);
-      };
-      // A late read that did not clearly fall cannot be told from a kept
-      // read from before the reset: no rule can settle those.
-      if (
-        times.some((time, i) => i > 0 && late(time) && usedAt(times[i - 1]!) - usedAt(time) <= 5)
-      ) {
-        continue;
-      }
-      if (!times.some(late)) continue;
-      compared += 1;
-      for (const windowDurationMins of [7 * 24 * 60, undefined]) {
-        const outcome = (lag: boolean) => {
-          const history = {
-            ...series(0, () => 0),
-            windowDurationMins,
-            samples: times.map((time) => ({
-              at: iso(t0 + time),
-              usedPercent: usedAt(time),
-              resetsAt: iso(t0 + (lag && late(time) ? lastReset(time) : nextReset(time))),
-            })),
-          } as UsageLimitHistorySeries;
-          const window = pickOutsideWindow([[history]], KEY)!;
-          const result = estimateOutside(
-            input(history, [], { periodEndMs: t0 + times[times.length - 1]! + minute }),
-          );
-          return {
-            resets: limitResets(window).length,
-            points: result.kind === "estimate" ? result.consumedPoints : 0,
-          };
+    let checked = 0;
+    for (const [kind, days] of [
+      ["weekly", 7],
+      ["monthly", 30],
+    ] as const) {
+      const length = days * DAY;
+      const windowOf = (at: number) => Math.floor((at - first) / length);
+      const startOf = (at: number) => first + windowOf(at) * length;
+      for (let seed = 1; seed <= 600; seed += 1) {
+        let state = seed;
+        const random = () => {
+          state = (state * 1664525 + 1013904223) % 2 ** 32;
+          return state / 2 ** 32;
         };
-        const prompt = outcome(false);
-        const lagged = outcome(true);
-        expect({ seed, windowDurationMins, ...lagged }).toEqual({
-          seed,
-          windowDurationMins,
-          resets: prompt.resets,
-          points: expect.closeTo(prompt.points, 1),
-        });
+        const times = [0];
+        let at = 0;
+        const reads = 3 + Math.floor(random() * 6);
+        for (let read = 1; read < reads; read += 1) {
+          const pick = random();
+          at +=
+            pick < 0.3
+              ? (1 + Math.floor(random() * 20)) * minute
+              : pick < 0.6
+                ? (1 + random() * 30) * HOUR
+                : (0.5 + random() * 0.9 * days) * DAY;
+          // Often land just after a reset, this window's or the next one's.
+          if (random() < 0.35) {
+            at = startOf(at) + (random() < 0.5 ? 0 : length) + (0.5 + random() * 4) * minute;
+          }
+          at = Math.max(Math.round(at / 30_000) * 30_000, times[times.length - 1]! + minute);
+          times.push(at);
+        }
+        const perDay = (2 + random() * 12) * (7 / days);
+        const before = 20 + random() * 10;
+        const fresh = random() * 6;
+        const usedAt = (time: number) => {
+          const start = startOf(time);
+          const used =
+            start < 0 ? before + (time / DAY) * perDay : fresh + ((time - start) / DAY) * perDay;
+          return Math.min(100, Math.round(used * 10) / 10);
+        };
+        let resets = 0;
+        let points = 0;
+        for (let read = 1; read < times.length; read += 1) {
+          const turned = windowOf(times[read]!) !== windowOf(times[read - 1]!);
+          if (turned) resets += 1;
+          points += turned
+            ? usedAt(times[read]!)
+            : Math.max(0, usedAt(times[read]!) - usedAt(times[read - 1]!));
+        }
+        const late = (time: number) => startOf(time) > 0 && time - startOf(time) < 5 * minute;
+        for (const lag of [false, true]) {
+          for (const withLength of [true, false]) {
+            const history = {
+              ...series(0, () => 0),
+              windowKind: kind,
+              windowDurationMins: withLength ? days * 24 * 60 : undefined,
+              samples: times.map((time) => ({
+                at: iso(t0 + time),
+                usedPercent: usedAt(time),
+                resetsAt: iso(t0 + startOf(time) + (lag && late(time) ? 0 : length)),
+              })),
+            } as UsageLimitHistorySeries;
+            const window = pickOutsideWindow([[history]], KEY)!;
+            const result = estimateOutside(
+              input(history, [], { periodEndMs: t0 + times[times.length - 1]! + minute }),
+            );
+            checked += 1;
+            expect({
+              kind,
+              seed,
+              lag,
+              withLength,
+              resets: limitResets(window).length,
+              points: result.kind === "estimate" ? result.consumedPoints : 0,
+            }).toEqual({
+              kind,
+              seed,
+              lag,
+              withLength,
+              resets,
+              points: points < 1 ? expect.any(Number) : expect.closeTo(points, 0),
+            });
+          }
+        }
       }
     }
-    expect(compared).toBeGreaterThan(300);
+    expect(checked).toBe(4800);
   });
 
   it("says so when the only movement was a read taken as a misread", () => {

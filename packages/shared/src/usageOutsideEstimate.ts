@@ -121,6 +121,10 @@ const DOUBT_REASON =
 /** How long a window of each kind lasts when the provider does not say. */
 const NOMINAL_WINDOW_MS = { weekly: 7 * 24 * HOUR_MS, monthly: 31 * 24 * HOUR_MS };
 
+function nominalLength(window: OutsideWindow): number {
+  return NOMINAL_WINDOW_MS[window.windowKind === "monthly" ? "monthly" : "weekly"];
+}
+
 type Read = OutsideWindow["samples"][number];
 
 /** What is known of the window the last counted restart opened. */
@@ -143,8 +147,7 @@ interface OpenedWindow {
  * known start can tell.
  */
 function stillIn(opened: OpenedWindow, read: Read, window: OutsideWindow): boolean {
-  const lengthMs =
-    window.lengthMs ?? NOMINAL_WINDOW_MS[window.windowKind === "monthly" ? "monthly" : "weekly"];
+  const lengthMs = window.lengthMs ?? nominalLength(window);
   if (read.resetsAt === null) return opened.start !== null && read.at < opened.start + lengthMs;
   if (read.at >= read.resetsAt) return read.resetsAt <= opened.readAt;
   if (opened.deadline !== null) return read.resetsAt - opened.deadline < lengthMs / 2;
@@ -182,6 +185,7 @@ function scanWindow(window: OutsideWindow): {
   let previous = samples[0];
   if (previous === undefined) return { stretches, doubts };
   let peak = previous.usedPercent;
+  const lengthMs = window.lengthMs ?? nominalLength(window);
   // The window the last counted restart opened.
   let opened: OpenedWindow | null = null;
   for (let index = 1; index < samples.length; index += 1) {
@@ -191,30 +195,35 @@ function scanWindow(window: OutsideWindow): {
     // A reset time that moves on while the read is still in a window already
     // counted is that same restart told late, not a second one.
     const told = opened !== null && stillIn(opened, current, window);
-    const announced = !told && resetBetween(previous, current, window.lengthMs);
-    // The provider's word that the window turned over: its reset time moved
-    // on, or the one it gave has passed. A fall alone is not.
-    const moved = announced && previous.resetsAt !== null && current.resetsAt !== null;
+    // The provider's word that the window turned over between the two reads:
+    // the read's own reset time has passed and lies after the read before; or
+    // its reset time is a good part of a window later than that read's; or
+    // that read's reset time has passed. A fall alone is not its word.
+    const passed =
+      current.resetsAt !== null && current.resetsAt <= current.at && current.resetsAt > previous.at
+        ? current.resetsAt
+        : null;
+    const advanced =
+      !told &&
+      previous.resetsAt !== null &&
+      current.resetsAt !== null &&
+      current.resetsAt - previous.resetsAt >= lengthMs / 2;
+    const announced =
+      passed !== null || advanced || (!told && resetBetween(previous, current, window.lengthMs));
     const due =
       previous.resetsAt !== null &&
       previous.resetsAt > previous.at &&
       previous.resetsAt <= current.at;
+    const worded = passed !== null || advanced || due;
     const turned = due && fell > NOISE_FALL_POINTS;
-    if (fell > NOISE_FALL_POINTS && !moved && !due && recovers(samples, index, peak)) {
+    if (fell > NOISE_FALL_POINTS && !worded && recovers(samples, index, peak)) {
       if (current.usedPercent < peak / 2) doubts.push(current.at);
       continue;
     }
     if (announced || turned || (fell > NOISE_FALL_POINTS && current.usedPercent < peak / 2)) {
-      // A reset time the read itself carries and that has passed is the
-      // latest restart before it; else the one the read before was due.
-      const passed =
-        current.resetsAt !== null &&
-        current.resetsAt <= current.at &&
-        current.resetsAt > previous.at
-          ? current.resetsAt
-          : null;
+      // The latest restart known before the read: the reset time it carries
+      // when that has passed, else the one the read before was due.
       const resetAt = passed ?? (due ? previous.resetsAt! : current.at);
-      const lengthMs = window.lengthMs ?? NOMINAL_WINDOW_MS.weekly;
       opened = {
         start: passed ?? (due && current.at < previous.resetsAt! + lengthMs ? resetAt : null),
         deadline:
