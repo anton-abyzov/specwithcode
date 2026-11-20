@@ -126,19 +126,25 @@ const makeUnsupportedTextGeneration = (): TextGeneration["Service"] => {
 };
 
 /**
- * Models an agent accepts through `session/set_model` but leaves out of its
- * catalog. Gemini CLI 0.63.0 lists no Gemini 4 Argon, yet runs it on Vertex AI
- * and paid Gemini API keys (verified with a coding turn whose `model_usage`
- * named gemini-4-argon). Free Google sign-ins have no Argon access; the agent
- * then fails the turn with its own error. An instance on a Gemini API key
- * also gets every model that key lists (see GeminiApiModelCatalog.ts), so a
- * new release such as Gemini 4 Neon shows without a code change.
+ * Official Cloud coding models accepted by Gemini CLI's unrestricted
+ * session/set_model, but missing from its bundled catalog (0.68 and 0.70).
+ * Google Cloud's Gemini 4 guide and publisher metadata confirm these IDs.
+ * This is model existence, not the selected account's inference entitlement.
+ * Keep the CLI/API-key catalog first and preserve its names and ordering.
  */
 const UNLISTED_AGENT_MODELS: Readonly<
   Record<string, ReadonlyArray<{ readonly id: string; readonly name: string }>>
 > = {
-  gemini: [{ id: "gemini-4-argon", name: "Gemini 4 Argon" }],
+  gemini: [
+    { id: "gemini-4-argon", name: "Gemini 4 Argon" },
+    { id: "gemini-4-carbon", name: "Gemini 4 Carbon" },
+    { id: "gemini-4-neon", name: "Gemini 4 Neon" },
+    { id: "gemini-4-hydrogen", name: "Gemini 4 Hydrogen" },
+  ],
 };
+
+const GEMINI_CATALOG_ACCESS_NOTE =
+  "Cloud models are listed; access depends on the selected account, project and region and has not been verified by an inference request.";
 
 function modelsFromDiscovery(
   discovery:
@@ -417,7 +423,11 @@ function baseSnapshot(
             ? (input.probeError?.authMethods?.length ?? 0) > 0
             : input.settings.agentId.length > 0),
     },
-    ...(input.message ? { message: input.message } : {}),
+    ...(input.message
+      ? { message: input.message }
+      : input.settings.agentId === "gemini" && (input.probe?.probe.models.length ?? 0) > 0
+        ? { message: GEMINI_CATALOG_ACCESS_NOTE }
+        : {}),
     models: withProviderListedFacts(
       modelsFromDiscovery(
         input.probe?.probe,
@@ -463,6 +473,9 @@ export function applyAcpRegistryLiveConfiguration(
   return {
     ...snapshot,
     status: provider.enabled ? "ready" : provider.status,
+    ...(settings.agentId === "gemini" && configuration.models.length > 0
+      ? { message: GEMINI_CATALOG_ACCESS_NOTE }
+      : {}),
     models: withProviderListedFacts(
       modelsFromDiscovery(configuration, settings.customModels, settings.agentId, providerListed),
       providerListed,
