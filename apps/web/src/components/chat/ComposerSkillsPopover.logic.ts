@@ -8,11 +8,23 @@ import type {
 import { claudeSkillInvocation } from "@specweave-studio/shared/toolActivity";
 
 import type { TimelineEntry } from "../../session-logic";
+import { paginate, type Page } from "~/lib/pagination";
 import { normalizeSearchText } from "~/lib/utils";
-import { projectSkillLevel, projectSkillLevelLabel } from "../settings/ProjectSkillsSettings.logic";
+import {
+  projectSkillLevel,
+  projectSkillLevelLabel,
+  projectSkillSourceLinks,
+} from "../settings/ProjectSkillsSettings.logic";
 
 /** Above this many skills the popover offers a search box. */
 export const COMPOSER_SKILLS_SEARCH_THRESHOLD = 12;
+/** Rows per page of the popover; search runs over every skill first. */
+export const COMPOSER_SKILLS_PAGE_SIZE = 20;
+
+/** A skill the agent advertises as a command, with no file path of its own. */
+export function isAdvertisedSkillPath(path: string): boolean {
+  return /^acp:\/\/(?:command|skill)\//.test(path);
+}
 
 /**
  * A skill this session used: a Claude `Skill` tool call (`tool`) or a
@@ -71,6 +83,8 @@ export type ComposerSkillGroupId =
   | "plugin"
   | "system"
   | "bundled"
+  | "several"
+  | "unknown"
   | "other";
 
 const GROUP_ORDER: ReadonlyArray<ComposerSkillGroupId> = [
@@ -80,6 +94,8 @@ const GROUP_ORDER: ReadonlyArray<ComposerSkillGroupId> = [
   "plugin",
   "system",
   "bundled",
+  "several",
+  "unknown",
   "other",
 ];
 
@@ -90,15 +106,47 @@ const GROUP_LABELS: Readonly<Record<ComposerSkillGroupId, string>> = {
   plugin: "Plugin",
   system: "System",
   bundled: "Bundled",
+  several: "Several matching files",
+  unknown: "Location unknown",
   other: "Other",
 };
 
 export interface ComposerSkillVersion {
-  /** The version text, or null when nothing records one ("untracked"). */
+  /** The version text, or null when nothing records one. */
   readonly value: string | null;
   readonly source: "lockfile" | "plugin" | "file" | null;
   readonly note?: string;
 }
+
+/** A file on this machine that an advertised skill's name matches. */
+export interface ComposerSkillFile {
+  readonly path: string;
+  /** Level from {@link projectSkillLevel}. */
+  readonly level: string;
+  readonly levelLabel: string;
+  /** Null when the file states none; undefined when the file was not read. */
+  readonly version: string | null | undefined;
+  /** The source of a lock of the file's own scope that lists it, else null. */
+  readonly lockSource: string | null;
+}
+
+/**
+ * Where a skill's file is, and how the popover knows:
+ * `reported` the agent reported the file's path itself;
+ * `matched` the agent advertised only a name, and the app found exactly one file under that name
+ *   in the folders it scanned for this agent (a match by name, not the agent's own word);
+ * `several` more than one such file, so none is picked;
+ * `unknown` the agent lists it and no scanned folder holds a file by that name;
+ * `pending` the folder inventory has not answered yet;
+ * `unread` the inventory is not available, so nothing is claimed.
+ */
+export type ComposerSkillLocation =
+  | { readonly kind: "reported" }
+  | { readonly kind: "matched"; readonly file: ComposerSkillFile }
+  | { readonly kind: "several"; readonly files: ReadonlyArray<ComposerSkillFile> }
+  | { readonly kind: "unknown" }
+  | { readonly kind: "pending" }
+  | { readonly kind: "unread" };
 
 export interface ComposerSkillItem {
   readonly name: string;
@@ -107,11 +155,16 @@ export interface ComposerSkillItem {
   readonly searchText?: string;
   readonly path: string | null;
   readonly enabled: boolean;
-  /** Level from {@link projectSkillLevel}: project, user, plugin, bundled, ... */
+  /** Level from {@link projectSkillLevel}, or `several`, `unknown`, `pending`, `unread`. */
   readonly level: string;
   readonly levelLabel: string;
+  readonly location: ComposerSkillLocation;
   /** Null until the versions snapshot answers. */
   readonly version: ComposerSkillVersion | null;
+  /** The second line of the row: version, lock and how the file was found. */
+  readonly detail: string;
+  /** False when Settings has no row to open for it. */
+  readonly inSettings: boolean;
   readonly used: SessionSkillUse["via"] | null;
   /** Used by name in this session, but this agent lists no skill by that name here. */
   readonly missing: boolean;
@@ -121,6 +174,8 @@ export interface ComposerSkillGroup {
   readonly id: ComposerSkillGroupId;
   readonly label: string;
   readonly items: ReadonlyArray<ComposerSkillItem>;
+  /** How many skills the whole group holds, when `items` is one page of it. */
+  readonly total?: number;
 }
 
 function rowMatches(row: ProjectSkillRow, name: string): boolean {
@@ -165,7 +220,11 @@ export function composerSkillVersion(
   return { value: null, source: null, ...(note ? { note } : {}) };
 }
 
-/** Count identities like Settings: several copies of one skill form one row. */
+/**
+ * The agent's skills, each once. Copies of one file the agent reported by path
+ * form one entry, as in Settings. A skill the agent only advertises by name is
+ * keyed by that exact name: a name is not proof that two commands are one file.
+ */
 export function composerSkillCatalog(
   skills: ReadonlyArray<ServerProviderSkill>,
   instanceId: string | null,
@@ -173,16 +232,16 @@ export function composerSkillCatalog(
 ): ReadonlyArray<ServerProviderSkill> {
   const catalog = new Map<string, ServerProviderSkill>();
   for (const skill of skills) {
-    const advertised = /^acp:\/\/(?:command|skill)\//.test(skill.path);
+    const advertised = isAdvertisedSkillPath(skill.path);
     if (!advertised && !isListableSkillPath(skill.path)) continue;
-    const row = snapshot?.rows.find((candidate) =>
-      candidate.providers.some(
-        (presence) =>
-          presence.instanceId === instanceId &&
-          (presence.path === skill.path || (advertised && rowMatches(candidate, skill.name))),
-      ),
-    );
-    const key = row?.name ?? skill.name;
+    const row = advertised
+      ? undefined
+      : snapshot?.rows.find((candidate) =>
+          candidate.providers.some(
+            (presence) => presence.instanceId === instanceId && presence.path === skill.path,
+          ),
+        );
+    const key = row ? `row:${row.name}` : `name:${skill.name}`;
     const previous = catalog.get(key);
     // Preserve the first enabled native invocation and its path, not a cross-agent display name.
     if (!previous || (!previous.enabled && skill.enabled)) catalog.set(key, skill);
@@ -190,12 +249,75 @@ export function composerSkillCatalog(
   return [...catalog.values()];
 }
 
+/**
+ * Files the app found for this agent instance under exactly `name`: the copy
+ * the scan lists first, then same-named files in lower-priority folders. Names
+ * that differ only in case count too, so a collision is shown instead of
+ * resolved. Another agent's files and other names of the same row never match.
+ */
+export function composerSkillFilesNamed(
+  snapshot: Pick<ProjectSkillsSnapshot, "rows">,
+  instanceId: string | null,
+  name: string,
+): ReadonlyArray<ComposerSkillFile> {
+  const wanted = name.toLowerCase();
+  const files = new Map<string, ComposerSkillFile>();
+  const add = (
+    row: ProjectSkillRow,
+    path: string,
+    scope: string | null,
+    version: string | null | undefined,
+  ) => {
+    if (isAdvertisedSkillPath(path) || files.has(path)) return;
+    const level = projectSkillLevel(scope, path);
+    files.set(path, {
+      path,
+      level,
+      levelLabel: projectSkillLevelLabel(level),
+      version,
+      lockSource:
+        row.lock?.lockScope === level
+          ? (projectSkillSourceLinks(row)?.label ?? row.lock.source ?? "vskill")
+          : null,
+    });
+  };
+  for (const row of snapshot.rows)
+    for (const presence of row.providers) {
+      if (presence.instanceId !== instanceId) continue;
+      if ((presence.name ?? row.name).toLowerCase() !== wanted) continue;
+      add(
+        row,
+        presence.path,
+        presence.scope,
+        presence.pluginVersion ?? presence.fileVersion ?? null,
+      );
+      // Lower-priority copies were found but not read, so their version is not known.
+      for (const copy of presence.otherCopies ?? []) add(row, copy.path, copy.scope, undefined);
+    }
+  return [...files.values()];
+}
+
+const LOCKABLE_LEVELS = new Set(["project", "user"]);
+
+/** "v1.2.0", "no version", or nothing when the file was not read. */
+function versionWords(version: string | null | undefined): string | null {
+  if (version === undefined) return null;
+  return version ? `v${version.replace(/^v/i, "")}` : "no version";
+}
+
+function lockWords(level: string, lockSource: string | null): string | null {
+  if (!LOCKABLE_LEVELS.has(level)) return null;
+  return lockSource ? `lock: ${lockSource}` : "no matching lock entry";
+}
+
 function groupOfLevel(level: string): ComposerSkillGroupId {
   return level === "project" ||
     level === "user" ||
     level === "plugin" ||
     level === "system" ||
-    level === "bundled"
+    level === "bundled" ||
+    level === "several" ||
+    level === "unknown"
     ? level
     : "other";
 }
@@ -209,6 +331,7 @@ function matchesQuery(item: ComposerSkillItem, query: string): boolean {
       item.description ?? "",
       item.searchText ?? "",
       item.levelLabel,
+      item.detail,
     ].join(" "),
   );
   return query.split(/\s+/).every((token) => haystack.includes(token));
@@ -224,13 +347,116 @@ export function buildComposerSkillGroups(input: {
   readonly skills: ReadonlyArray<ServerProviderSkill>;
   readonly instanceId: string | null;
   readonly snapshot: Pick<ProjectSkillsSnapshot, "rows"> | null;
+  /**
+   * False once the folder inventory is known to be unavailable (it failed, or
+   * there is no project). Then a missing snapshot is "not read", not "checking".
+   */
+  readonly snapshotPending?: boolean;
   readonly uses: ReadonlyArray<SessionSkillUse>;
   readonly query?: string;
 }): ReadonlyArray<ComposerSkillGroup> {
   const query = normalizeSearchText(input.query ?? "").trim();
   const usedBy = new Map(input.uses.map((use) => [use.name, use.via] as const));
+  const pending = input.snapshotPending !== false;
+  const located = (
+    skill: ServerProviderSkill,
+  ): Pick<ComposerSkillItem, "level" | "levelLabel" | "location" | "version" | "detail"> => {
+    const snapshot = input.snapshot;
+    if (!isAdvertisedSkillPath(skill.path)) {
+      // The agent reported this file itself.
+      const level = projectSkillLevel(skill.scope ?? null, skill.path);
+      const version = snapshot ? composerSkillVersion(snapshot, input.instanceId, skill) : null;
+      const row = snapshot?.rows.find((candidate) =>
+        candidate.providers.some(
+          (presence) => presence.instanceId === input.instanceId && presence.path === skill.path,
+        ),
+      );
+      const lockSource =
+        row?.lock && row.lock.lockScope === level
+          ? (projectSkillSourceLinks(row)?.label ?? row.lock.source ?? "vskill")
+          : null;
+      const words = version
+        ? [
+            version.value ? `v${version.value.replace(/^v/i, "")}` : "no version",
+            ...(version.note && version.note !== "copies differ" ? [version.note] : []),
+            ...(row ? [lockWords(level, lockSource) ?? []].flat() : []),
+          ]
+        : pending
+          ? ["Checking…"]
+          : [];
+      return {
+        level,
+        levelLabel: projectSkillLevelLabel(level),
+        location: { kind: "reported" },
+        version,
+        detail: words.join(" · "),
+      };
+    }
+    // The agent advertised a name only: nothing here is the agent's own word about a file.
+    if (!snapshot)
+      return pending
+        ? {
+            level: "pending",
+            levelLabel: "Checking…",
+            location: { kind: "pending" },
+            version: null,
+            detail: "Listed by the agent. Looking for its file…",
+          }
+        : {
+            level: "unread",
+            levelLabel: "Not checked",
+            location: { kind: "unread" },
+            version: null,
+            detail:
+              "Listed by the agent. Skill folders were not read, so its location is not known.",
+          };
+    const files = composerSkillFilesNamed(snapshot, input.instanceId, skill.name);
+    if (files.length === 0)
+      return {
+        level: "unknown",
+        levelLabel: "Location unknown",
+        location: { kind: "unknown" },
+        version: { value: null, source: null },
+        detail: "Listed by the agent. No file by this name in the folders scanned here.",
+      };
+    if (files.length > 1)
+      return {
+        level: "several",
+        levelLabel: `${files.length} matching files`,
+        location: { kind: "several", files },
+        version: { value: null, source: null },
+        detail: `Found at ${files
+          .map((file) => [file.levelLabel, versionWords(file.version)].filter(Boolean).join(" "))
+          .join(", ")}. The agent does not report which it uses.`,
+      };
+    const file = files[0]!;
+    const row = snapshot.rows.find((candidate) =>
+      candidate.providers.some(
+        (presence) => presence.instanceId === input.instanceId && presence.path === file.path,
+      ),
+    );
+    const note = row?.divergent ? "copies differ" : row?.drift === "drift" ? "modified" : undefined;
+    return {
+      level: file.level,
+      levelLabel: file.levelLabel,
+      location: { kind: "matched", file },
+      version: {
+        value: file.version ?? null,
+        source: file.version ? "file" : null,
+        ...(note ? { note } : {}),
+      },
+      detail: [
+        "Matching file",
+        versionWords(file.version),
+        ...(note && note !== "copies differ" ? [note] : []),
+        lockWords(file.level, file.lockSource),
+      ]
+        .filter(Boolean)
+        .join(" · "),
+    };
+  };
   const toItem = (skill: ServerProviderSkill): ComposerSkillItem => {
-    const level = projectSkillLevel(skill.scope ?? null, skill.path);
+    const where = located(skill);
     return {
       name: skill.name,
       displayName: skill.displayName ?? skill.name,
@@ -238,11 +464,12 @@ export function buildComposerSkillGroups(input: {
       searchText: [skill.name, skill.description, skill.shortDescription].filter(Boolean).join(" "),
       path: skill.path,
       enabled: skill.enabled,
-      level,
-      levelLabel: projectSkillLevelLabel(level),
-      version: input.snapshot
-        ? composerSkillVersion(input.snapshot, input.instanceId, skill)
-        : null,
+      ...where,
+      // A skill with no file has no row in Settings to open.
+      inSettings:
+        where.location.kind === "reported" ||
+        where.location.kind === "matched" ||
+        where.location.kind === "several",
       used: usedBy.get(skill.name) ?? null,
       missing: false,
     };
@@ -259,7 +486,10 @@ export function buildComposerSkillGroups(input: {
       enabled: true,
       level: "other",
       levelLabel: "Not listed",
+      location: { kind: "unread" } as const,
       version: input.snapshot ? { value: null, source: null } : null,
+      detail: "Used in this session. This agent does not list it now.",
+      inSettings: false,
       used: use.via,
       missing: true,
     }));
@@ -285,6 +515,67 @@ export function buildComposerSkillGroups(input: {
           );
     return [{ id, label: GROUP_LABELS[id], items: sorted }];
   });
+}
+
+/** One page of the popover's groups, cut after search, with each group's own total kept. */
+export interface ComposerSkillPage {
+  readonly groups: ReadonlyArray<ComposerSkillGroup>;
+  readonly page: Omit<Page<ComposerSkillItem>, "items">;
+}
+
+/**
+ * Pages groups that were already filtered and sorted. Rows keep their order
+ * across pages; a group that continues from the previous page shows again with
+ * its heading, and every heading carries the whole group's count.
+ */
+export function pageComposerSkillGroups(
+  groups: ReadonlyArray<ComposerSkillGroup>,
+  page: number,
+  pageSize: number = COMPOSER_SKILLS_PAGE_SIZE,
+): ComposerSkillPage {
+  const flat = groups.flatMap((group) => group.items.map((item) => ({ group, item })));
+  const { items, ...rest } = paginate(flat, page, pageSize);
+  const paged: Array<{ group: ComposerSkillGroup; items: Array<ComposerSkillItem> }> = [];
+  for (const { group, item } of items) {
+    const last = paged.at(-1);
+    if (last?.group === group) last.items.push(item);
+    else paged.push({ group, items: [item] });
+  }
+  return {
+    groups: paged.map(({ group, items: shown }) => ({
+      id: group.id,
+      label: group.label,
+      items: shown,
+      total: group.items.length,
+    })),
+    page: rest,
+  };
+}
+
+/**
+ * One line under the heading: whose list this is and how far it can be trusted.
+ * `machine`: the agent keeps one list for the whole machine (it advertises its
+ * skills as commands), so the list is not a reading of this folder.
+ */
+export function composerSkillsSourceLine(input: {
+  readonly agent: string;
+  readonly machine: string | null;
+  readonly listScope: "machine" | "folder";
+}): string {
+  if (input.listScope === "machine")
+    return `${input.agent}'s own list for ${input.machine ?? "this machine"}, not checked for this folder. Files, versions and locks come from the app's scan of its skill folders.`;
+  return `${input.agent}'s own list for this folder.`;
+}
+
+/** `machine` when the agent's list is one per machine, not one per folder. */
+export function composerSkillsListScope(input: {
+  readonly skills: ReadonlyArray<Pick<ServerProviderSkill, "path">>;
+  readonly workspaceDiscovery: "machine" | null | undefined;
+}): "machine" | "folder" {
+  return input.workspaceDiscovery === "machine" ||
+    input.skills.some((skill) => isAdvertisedSkillPath(skill.path))
+    ? "machine"
+    : "folder";
 }
 
 /** "Claude on Anton's M4 · specweave-umb" */

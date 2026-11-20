@@ -250,4 +250,168 @@ describe("ComposerSkillsPopover", () => {
       skillContext: "host:project",
     });
   });
+
+  const copilot = {
+    instanceId: "copilot",
+    displayName: "Copilot",
+    snapshot: {
+      status: "ready",
+      workspaceSnapshots: [{ cwd: "/work/app", skillsDiscovery: "machine" }],
+    },
+  } as never;
+  const advertised = (name: string): ServerProviderSkill => ({
+    name,
+    path: `acp://command/${name}`,
+    scope: "agent",
+    enabled: true,
+  });
+  const fileRow = (name: string, extra: Record<string, unknown> = {}) => ({
+    name,
+    status: "ok",
+    attention: false,
+    issues: [],
+    doctor: [],
+    drift: "match",
+    copies: 1,
+    divergent: false,
+    lock: {
+      lockPath: "/work/app/vskill.lock",
+      lockScope: "project",
+      version: "1.0.12",
+      tier: "VERIFIED",
+      source: "github:acme/skills",
+      sha: null,
+      installedAt: null,
+    },
+    providers: [
+      {
+        instanceId: "copilot",
+        driver: "acpRegistry",
+        label: "Copilot",
+        path: `/work/app/.agents/skills/${name}/SKILL.md`,
+        scope: "project",
+        enabled: true,
+        fileVersion: "1.0.12",
+        discovery: "folder-scan",
+        ...extra,
+      },
+    ],
+  });
+  const open = async (list: ReadonlyArray<ServerProviderSkill>) => {
+    await act(async () =>
+      root.render(
+        <ComposerSkillsPopover
+          environmentId={EnvironmentId.make("host")}
+          projectId={ProjectId.make("project")}
+          cwd="/work/app"
+          provider={copilot}
+          machineLabel="Desk"
+          skills={list}
+        />,
+      ),
+    );
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>("[data-testid=composer-skills-trigger]")!.click(),
+    );
+    return document.querySelector<HTMLElement>("[data-testid=composer-skills-popover]")!;
+  };
+  const rowOf = (panel: HTMLElement, name: string) =>
+    panel.querySelector<HTMLElement>(`[data-skill-name='${name}']`)!;
+
+  it("shows an advertised skill's matching file, scope, version and lock, never untracked", async () => {
+    queryState.snapshot = { rows: [fileRow("notes")], providers: [] };
+    const panel = await open([advertised("notes"), advertised("ghost")]);
+    expect(panel.textContent).not.toMatch(/untracked/i);
+    expect(panel.querySelector("[data-testid=composer-skills-source]")!.textContent).toBe(
+      "Copilot's own list for Desk, not checked for this folder. Files, versions and locks come from the app's scan of its skill folders.",
+    );
+    const notes = rowOf(panel, "notes");
+    expect(notes.getAttribute("data-skill-level")).toBe("project");
+    expect(notes.querySelector("[data-testid=composer-skill-level]")!.textContent).toBe("Project");
+    expect(notes.querySelector("[data-testid=composer-skill-detail]")!.textContent).toBe(
+      "Matching file · v1.0.12 · lock: acme/skills",
+    );
+    expect(notes.querySelector("a")!.getAttribute("href")).toContain("skill=notes");
+
+    // Listed by the agent, no file found: unknown, not absent, and nothing to open in Settings.
+    const ghost = rowOf(panel, "ghost");
+    expect(ghost.querySelector("[data-testid=composer-skill-level]")!.textContent).toBe(
+      "Location unknown",
+    );
+    expect(ghost.querySelector("a")).toBeNull();
+    expect(panel.querySelector('[aria-label="Location unknown"]')).not.toBeNull();
+    expect(panel.querySelector('[aria-label="Other"]')).toBeNull();
+  });
+
+  it("names both scopes when two files match, and picks neither", async () => {
+    queryState.snapshot = {
+      rows: [
+        fileRow("notes", {
+          otherCopies: [{ path: "/home/me/.agents/skills/notes/SKILL.md", scope: "user" }],
+        }),
+      ],
+      providers: [],
+    };
+    const notes = rowOf(await open([advertised("notes")]), "notes");
+    expect(notes.querySelector("[data-testid=composer-skill-level]")!.textContent).toBe(
+      "2 matching files",
+    );
+    expect(notes.querySelector("[data-testid=composer-skill-detail]")!.textContent).toBe(
+      "Found at Project v1.0.12, User. The agent does not report which it uses.",
+    );
+  });
+
+  it("says Checking while the inventory has not answered", async () => {
+    const notes = rowOf(await open([advertised("notes")]), "notes");
+    expect(notes.querySelector("[data-testid=composer-skill-level]")!.textContent).toBe(
+      "Checking…",
+    );
+    expect(notes.querySelector("a")).toBeNull();
+  });
+
+  it("searches every skill, then pages twenty at a time", async () => {
+    const list = Array.from({ length: 45 }, (_, index) =>
+      advertised(`skill-${String(index + 1).padStart(2, "0")}`),
+    );
+    queryState.snapshot = { rows: [], providers: [] };
+    const panel = await open(list);
+    const names = () =>
+      [...panel.querySelectorAll("[data-skill-name]")].map((node) =>
+        node.getAttribute("data-skill-name"),
+      );
+    expect(names()).toHaveLength(20);
+    expect(panel.querySelector("[data-testid=pager-range]")!.textContent).toBe("1–20 of 45");
+    // The heading counts the whole group, not the twenty shown.
+    expect(panel.querySelector('[aria-label="Location unknown"] h3')!.textContent).toBe(
+      "Location unknown45",
+    );
+    expect(panel.textContent).toContain("45 skills · 45 enabled");
+
+    const press = async (label: string) =>
+      act(async () =>
+        [...panel.querySelectorAll("button")]
+          .find((button) => button.getAttribute("aria-label")?.startsWith(label))!
+          .click(),
+      );
+    await press("Next page");
+    await press("Next page");
+    expect(names()).toEqual(["skill-41", "skill-42", "skill-43", "skill-44", "skill-45"]);
+    expect(panel.querySelector("[data-testid=pager-range]")!.textContent).toBe("41–45 of 45");
+
+    // From page 3, a query for a skill on page 1 finds it and returns to the first page.
+    const input = panel.querySelector<HTMLInputElement>('input[aria-label="Search skills"]')!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => {
+      setter.call(input, "skill-07");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(names()).toEqual(["skill-07"]);
+    expect(panel.textContent).toContain("1 of 45 skills");
+    expect(panel.querySelector("[data-testid=skills-pager]")).toBeNull();
+    await act(async () => {
+      setter.call(input, "");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(panel.querySelector("[data-testid=pager-range]")!.textContent).toBe("1–20 of 45");
+  });
 });
