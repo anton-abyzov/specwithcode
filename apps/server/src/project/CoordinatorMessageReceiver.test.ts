@@ -10,6 +10,7 @@ import {
 } from "@specweave-studio/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import { parseTeamRulesText, type TeamRulesState } from "@specweave-studio/shared/teamRules";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -30,6 +31,7 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as CoordinatorMessageReceiver from "./CoordinatorMessageReceiver.ts";
 import * as CoordinatorMessageStore from "./CoordinatorMessageStore.ts";
+import * as TeamRules from "../teamRules/TeamRules.ts";
 import * as ProjectService from "./ProjectService.ts";
 
 // M5 receives; linux-mini and M4 are the other members; studio-host is outside the project.
@@ -174,12 +176,15 @@ interface Harness {
   >;
   /** Runs on M5's coordinator thread by id, as its projection shows them. */
   readonly runs: Map<string, string>;
-  /** Whether withdrawing a queued send fails. */
-  cancelFails: boolean;
-  /** Commands the receiver dispatched to the orchestrator. */
+  /** Commands the receiver dispatched to the orchestrator itself; a message needs none. */
   readonly dispatched: Array<{ readonly type: string; readonly runId?: string }>;
-  /** What a send to the coordinator thread reports. */
-  delivery: "started" | "queued";
+  /**
+   * What a send does: starts a turn, is refused because the thread cannot
+   * start one now (nothing recorded), or fails after it may have started one.
+   */
+  send: "started" | "refused" | "unknown";
+  /** This machine's team rules. */
+  teamRules: TeamRulesState;
   /** Runs while a send is in flight, after the receiver read the store. */
   duringSend: Effect.Effect<unknown> | undefined;
   readonly policies: Map<string, Policy>;
@@ -231,9 +236,9 @@ const setup = (initial: CoordinatorMessageStore.CoordinatorMessageRecord[] = [])
       ]),
     ),
     runs: new Map(),
-    cancelFails: false,
     dispatched: [],
-    delivery: "started",
+    send: "started",
+    teamRules: { status: "none" },
     duringSend: undefined,
     sends: [],
     threadCalls: [],
@@ -269,7 +274,11 @@ const setup = (initial: CoordinatorMessageStore.CoordinatorMessageRecord[] = [])
             harness.duringSend = undefined;
             yield* during;
           }
-          return { delivery: harness.delivery, run: { id: `run-${harness.sends.length}` } };
+          if (harness.send === "refused")
+            return yield* Effect.fail({ _tag: "OrchestratorDispatchError", cause: "Would queue." });
+          if (harness.send === "unknown")
+            return yield* Effect.fail({ _tag: "ThreadManagementDurableRunProjectionError" });
+          return { delivery: "started", run: { id: `run-${harness.sends.length}` } };
         })) as never,
     },
     harness.threadCalls,
@@ -316,11 +325,13 @@ const setup = (initial: CoordinatorMessageStore.CoordinatorMessageRecord[] = [])
                 type: command.type,
                 ...(command.runId === undefined ? {} : { runId: command.runId }),
               });
-              return harness.cancelFails
-                ? Effect.die("The orchestrator is not answering.")
-                : Effect.succeed({});
+              return Effect.succeed({});
             }),
         } as unknown as Orchestrator.OrchestratorV2["Service"]),
+        Layer.succeed(TeamRules.TeamRules, {
+          current: Effect.sync(() => harness.teamRules),
+          forFolder: () => Effect.sync(() => harness.teamRules),
+        }),
         Layer.succeed(RemoteWorkers.RemoteWorkers, {
           machineLabels: Effect.succeed(labels),
         } as unknown as RemoteWorkers.RemoteWorkersShape),
@@ -338,9 +349,15 @@ const deliver = (
   input: CoordinatorMessageDeliverRequest,
   /** Whether the caller's credential holds the operate scope. */
   operate = true,
+  /** The team rules the caller named on the request. */
+  teamRulesFingerprint?: string,
 ) =>
   receiver
-    .deliver(caller, input, { operate, sessionId: `session-${caller.sourceEnvironmentId}` })
+    .deliver(caller, input, {
+      operate,
+      sessionId: `session-${caller.sourceEnvironmentId}`,
+      ...(teamRulesFingerprint === undefined ? {} : { teamRulesFingerprint }),
+    })
     .pipe(
       Effect.result,
       Effect.map((result) =>
@@ -1040,39 +1057,68 @@ describe("CoordinatorMessageReceiver thread refs (review finding 5)", () => {
   );
 });
 
-describe("CoordinatorMessageReceiver hands over only a turn that starts now (delta finding 1)", () => {
-  it.effect("withdraws a send the thread queued and keeps the message waiting", () =>
+describe("CoordinatorMessageReceiver starts a turn now or keeps the message (round 3 finding 1)", () => {
+  it.effect("asks for a turn that starts now, never one that waits in the thread's queue", () =>
     run((receiver, harness) =>
       Effect.gen(function* () {
         yield* deliver(receiver, callerFrom(LINUX), request());
-        // A usage-limit stop leaves no active run, yet the orchestrator queues the send.
-        harness.delivery = "queued";
         yield* settle;
-        expect(harness.sends).toHaveLength(1);
-        expect(harness.dispatched).toEqual([{ type: "queued-run.cancel", runId: "run-1" }]);
-        expect((yield* records)[0]!.state).toBe("settling");
-        // Every check runs again on the next try: a revoke now keeps it from the agent.
-        harness.policies.set(LINUX, policyFor(LINUX, { revokedAt: "1970-01-01T00:01:00.000Z" }));
-        harness.delivery = "started";
-        yield* receiver.flush;
-        expect(harness.sends).toHaveLength(1);
-        expect((yield* records)[0]!.state).toBe("refused");
+        expect(harness.sends[0]!.startOnly).toBe(true);
+        expect(harness.sends[0]!.mode).toBe("queue");
+        expect(harness.dispatched).toEqual([]);
       }),
     ),
   );
 
-  it.effect("tries again with a new command once the thread can start it", () =>
+  it.effect("keeps a message the thread cannot start now, and checks it all again next time", () =>
     run((receiver, harness) =>
       Effect.gen(function* () {
         yield* deliver(receiver, callerFrom(LINUX), request());
-        harness.delivery = "queued";
+        harness.send = "refused";
         yield* settle;
-        harness.delivery = "started";
+        expect(harness.sends).toHaveLength(1);
+        expect((yield* records)[0]!.state).toBe("settling");
+        // Nothing waits anywhere but the store, so a revoke now keeps it from the agent.
+        harness.policies.set(LINUX, policyFor(LINUX, { revokedAt: "1970-01-01T00:01:00.000Z" }));
+        harness.send = "started";
         yield* receiver.flush;
-        expect(harness.sends).toHaveLength(2);
-        expect(harness.sends[1]!.commandId).not.toBe(harness.sends[0]!.commandId);
-        expect(harness.sends[1]!.messageId).not.toBe(harness.sends[0]!.messageId);
+        expect(harness.sends).toHaveLength(1);
+        expect((yield* records)[0]!.state).toBe("refused");
+        expect(harness.dispatched).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("retries a send under the same ids, so one that started is never sent twice", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        yield* deliver(receiver, callerFrom(LINUX), request());
+        harness.send = "unknown";
+        yield* settle;
+        expect((yield* records)[0]!.state).toBe("settling");
+        harness.send = "refused";
+        yield* receiver.flush;
+        harness.send = "started";
+        yield* receiver.flush;
+        expect(harness.sends).toHaveLength(3);
+        expect(new Set(harness.sends.map((send) => send.commandId)).size).toBe(1);
+        expect(new Set(harness.sends.map((send) => send.messageId)).size).toBe(1);
         expect((yield* records)[0]!.state).toBe("delivered");
+      }),
+    ),
+  );
+
+  it.effect("sends newer merged text under a new id", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        yield* deliver(receiver, callerFrom(LINUX), request());
+        harness.send = "refused";
+        yield* settle;
+        yield* deliver(receiver, callerFrom(LINUX), request({ text: "Newer text." }));
+        harness.send = "started";
+        yield* receiver.flush;
+        expect(harness.sends[1]!.text).toContain("Newer text.");
+        expect(harness.sends[1]!.commandId).not.toBe(harness.sends[0]!.commandId);
       }),
     ),
   );
@@ -1095,48 +1141,87 @@ describe("CoordinatorMessageReceiver hands over only a turn that starts now (del
   );
 });
 
-describe("CoordinatorMessageReceiver settles a send it could not withdraw (delta finding 1)", () => {
-  it.effect(
-    "sends nothing new while the queued send is still there, and again once it is gone",
-    () =>
-      run((receiver, harness) =>
-        Effect.gen(function* () {
-          yield* deliver(receiver, callerFrom(LINUX), request());
-          harness.delivery = "queued";
-          harness.cancelFails = true;
-          yield* settle;
-          expect(harness.sends).toHaveLength(1);
-          // The withdraw failed: the send still waits in the thread's queue.
-          harness.runs.set("run-1", "queued");
-          harness.delivery = "started";
-          harness.cancelFails = false;
-          yield* receiver.flush;
-          expect(harness.sends).toHaveLength(1);
-          expect(harness.dispatched).toEqual([
-            { type: "queued-run.cancel", runId: "run-1" },
-            { type: "queued-run.cancel", runId: "run-1" },
-          ]);
-          expect((yield* records)[0]!.state).toBe("settling");
-          harness.runs.set("run-1", "cancelled");
-          yield* receiver.flush;
-          expect(harness.sends).toHaveLength(2);
-          expect((yield* records)[0]!.state).toBe("delivered");
-        }),
-      ),
-  );
+const rulesWith = (reach: Record<string, unknown>, fingerprint = "3a9f"): TeamRulesState => {
+  const parsed = parseTeamRulesText(JSON.stringify({ version: 1, owner: "Release notes", reach }));
+  if (!parsed.ok) throw new Error(parsed.issues.join("\n"));
+  return { status: "active", rules: parsed.rules, fingerprint, warnings: [] };
+};
 
-  it.effect("counts a queued send that ran anyway as delivered, once", () =>
+describe("CoordinatorMessageReceiver applies the reach rules again at delivery (round 3 finding 2)", () => {
+  it.effect("drops a message after the rules stop other machines reaching this one", () =>
     run((receiver, harness) =>
       Effect.gen(function* () {
         yield* deliver(receiver, callerFrom(LINUX), request());
-        harness.delivery = "queued";
-        harness.cancelFails = true;
+        harness.teamRules = rulesWith({ machines: "none" });
         yield* settle;
-        harness.runs.set("run-1", "completed");
-        harness.delivery = "started";
-        yield* receiver.flush;
+        expect(harness.sends).toHaveLength(0);
+        expect((yield* records)[0]!.state).toBe("refused");
+      }),
+    ),
+  );
+
+  it.effect("drops a message after this machine's rules no longer match the sender's", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        harness.teamRules = rulesWith({ machines: "same-rules" });
+        yield* deliver(receiver, callerFrom(LINUX), request(), true, "3a9f");
+        yield* settle;
         expect(harness.sends).toHaveLength(1);
-        expect((yield* records)[0]!.state).toBe("delivered");
+        yield* deliver(receiver, callerFrom(LINUX), request({ subject: "Second subject" }), true, "3a9f");
+        harness.teamRules = rulesWith({ machines: "same-rules" }, "77bb");
+        yield* settle;
+        expect(harness.sends).toHaveLength(1);
+        expect((yield* records)[1]!.state).toBe("refused");
+      }),
+    ),
+  );
+
+  it.effect("checks each message at its own time, not the time the pass began", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        harness.policies.set(LINUX, policyFor(LINUX, { endsAt: "1970-01-01T00:00:50.000Z" }));
+        yield* deliver(receiver, callerFrom(LINUX), request({ kind: "finding", subject: "First", refs: [] }));
+        yield* deliver(receiver, callerFrom(LINUX), request({ kind: "finding", subject: "Second", refs: [] }));
+        // The first send takes ten seconds; the grant ends during it.
+        harness.duringSend = TestClock.adjust("10 seconds");
+        yield* settle;
+        expect(harness.sends).toHaveLength(1);
+        expect((yield* records).map((row) => row.state)).toEqual(["delivered", "refused"]);
+      }),
+    ),
+  );
+});
+
+describe("CoordinatorMessageReceiver binds a message to its exact member copies (round 3 finding 3)", () => {
+  it.effect("drops a message after its destination copy rejoined while another copy here stayed", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        const second = memberOf(M5, "project-m5-second");
+        harness.projects.set(PROJECT, projectOf(PROJECT, { members: [second, ...members] }));
+        yield* deliver(receiver, callerFrom(LINUX), request());
+        harness.projects.set(
+          PROJECT,
+          projectOf(PROJECT, {
+            members: [second, memberOf(M5, PROJECT, 2), members[1]!, members[2]!],
+          }),
+        );
+        yield* settle;
+        expect(harness.sends).toHaveLength(0);
+        expect((yield* records)[0]!.state).toBe("refused");
+      }),
+    ),
+  );
+
+  it.effect("refuses a sender with two copies in the project: it cannot say which one sent", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        harness.projects.set(
+          PROJECT,
+          projectOf(PROJECT, { members: [...members, memberOf(LINUX, "project-linux-second")] }),
+        );
+        const refusal = yield* refusedWith(receiver, callerFrom(LINUX), request());
+        expect(refusal.code).toBe("needs_grant");
+        namesBoth(refusal, "linux-mini");
       }),
     ),
   );
