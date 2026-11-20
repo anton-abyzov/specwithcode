@@ -4077,7 +4077,7 @@ export const ko: PhraseCatalog = {
   "Loading sign-in…": "로그인 불러오는 중…",
   "One account for all your machines and your phone.": "모든 컴퓨터와 휴대폰을 하나의 계정으로.",
   "On {hereLabel}, open Settings > Machines > Join one of your machines, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow on {hereLabel}'s card.":
-    "{hereLabel}에서 설정 > 머신 > ‘내 컴퓨터 중 하나에 연결’을 열고 {coordinatorLabel}을 선택한 뒤 줄을 복사하세요. {coordinatorLabel}에서 설정 > 머신 > ‘컴퓨터 추가’를 열어 줄을 붙여넣고 {hereLabel} 카드에서 ‘허용’를 선택하세요.",
+    "{hereLabel}에서 설정 > 머신 > ‘내 컴퓨터 중 하나에 연결’을 열고 {coordinatorLabel}을 선택한 뒤 줄을 복사하세요. {coordinatorLabel}에서 설정 > 머신 > ‘컴퓨터 추가’를 열어 줄을 붙여넣고 {hereLabel} 카드에서 ‘허용’을 선택하세요.",
   "Join one of your machines": "내 컴퓨터 중 하나에 연결",
   "Your other machines are listed here once this {machine} is linked.":
     "이 {machine}가 연결되면 다른 컴퓨터가 여기에 표시됩니다.",

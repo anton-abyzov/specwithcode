@@ -3758,7 +3758,7 @@ export const es: PhraseCatalog = {
   "Open Settings > Machines > SpecWithCode Connect there, or run this command. Any Connect account works. This machine does not need to be signed in.":
     "Allí, abre Ajustes > Máquinas > SpecWithCode Connect o ejecuta este comando. Sirve cualquier cuenta de Connect. Esta máquina no necesita tener sesión iniciada.",
   "There, choose Join one of your machines under Settings > Machines and enter this machine’s ID:":
-    "Allí, elige Únete a uno de tus equipos en Ajustes > Máquinas e introduce el ID de esta máquina:",
+    "Allí, elige Únete a uno de tus equipos en Ajustes > Equipos e introduce el ID de esta máquina:",
   "Picks the model for this project's delegated workers by what the task needs: routine work such as translation, transcripts or a first animation draft can run on a cheaper model, while final code, review and design stay on a strong one. A model named for a thread always wins. Decided by rules, without a model call.":
     "Elige el modelo para los workers delegados de este proyecto según lo que necesita la tarea: el trabajo rutinario como traducciones, transcripciones o un primer borrador de animación puede ir en un modelo más barato, mientras que el código final, la revisión y el diseño se quedan en uno potente. Un modelo indicado para un hilo siempre gana. Lo deciden reglas, sin llamar a un modelo.",
   "Picks the model for delegated workers by what the task needs: routine work such as translation, transcripts or a first animation draft can run on a cheaper model, while final code, review and design stay on a strong one. A model named for a thread always wins. Decided by rules, without a model call. Projects can override it.":
@@ -4142,7 +4142,7 @@ export const es: PhraseCatalog = {
   "One account for all your machines and your phone.":
     "Una cuenta para todos tus equipos y tu teléfono.",
   "On {hereLabel}, open Settings > Machines > Join one of your machines, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow on {hereLabel}'s card.":
-    "En {hereLabel}, abre Ajustes > Máquinas > «Únete a uno de tus equipos», elige {coordinatorLabel} y copia la línea. En {coordinatorLabel}, abre Ajustes > Máquinas > «Añadir un equipo», pega la línea y elige «Permitir» en la tarjeta de {hereLabel}.",
+    "En {hereLabel}, abre Ajustes > Equipos > «Únete a uno de tus equipos», elige {coordinatorLabel} y copia la línea. En {coordinatorLabel}, abre Ajustes > Equipos > «Añadir un equipo», pega la línea y elige «Permitir» en la tarjeta de {hereLabel}.",
   "Join one of your machines": "Únete a uno de tus equipos",
   "Your other machines are listed here once this {machine} is linked.":
     "Tus otros equipos aparecen aquí cuando este {machine} esté vinculado.",
