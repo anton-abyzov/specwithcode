@@ -748,6 +748,21 @@ export function shareBreakdown(
     const known = group.get(key);
     group.set(key, { key, label, ...plus(known ?? ZERO, row) });
   };
+  // Each machine has its own id for a project, so one project worked on from
+  // two machines is matched by its title. A title that names two projects on
+  // one machine is not an identity: those stay apart, by id.
+  const idsByTitle = new Map<string, Map<string, Set<string>>>();
+  for (const row of share.rows) {
+    if (row.accountKey !== accountKey || row.origin !== "app") continue;
+    if (row.projectId === null || row.projectTitle === null) continue;
+    const machines = idsByTitle.get(row.projectTitle) ?? new Map<string, Set<string>>();
+    idsByTitle.set(row.projectTitle, machines);
+    const ids = machines.get(row.machineId) ?? new Set<string>();
+    machines.set(row.machineId, ids);
+    ids.add(row.projectId);
+  }
+  const sharedTitle = (title: string) =>
+    [...(idsByTitle.get(title)?.values() ?? [])].every((ids) => ids.size === 1);
   let total = ZERO;
   for (const row of share.rows) {
     if (row.accountKey !== accountKey) continue;
@@ -757,12 +772,11 @@ export function shareBreakdown(
     add(groups.days, row.day, row.day, row);
     add(groups.origins, row.origin, ORIGIN_LABELS[row.origin], row);
     if (row.origin === "app") {
-      // Each machine has its own id for a project: the title is what they share.
       add(
         groups.projects,
         row.projectId === null
           ? ""
-          : row.projectTitle === null
+          : row.projectTitle === null || !sharedTitle(row.projectTitle)
             ? row.projectId
             : `\u0001${row.projectTitle}`,
         row.projectId === null ? "No project" : (row.projectTitle ?? "Removed project"),

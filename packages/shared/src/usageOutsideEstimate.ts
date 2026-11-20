@@ -114,6 +114,10 @@ const NOISE_FALL_POINTS = 5;
 /** A fall the next reads undo within this long was a stale read, not a fall. */
 const STALE_READ_MS = 30 * 60 * 1000;
 
+/** Said when a read that could have been a restart was taken as a misread. */
+const DOUBT_REASON =
+  "A limit reading dropped and was back within 30 minutes; it was taken as a misread, not a reset.";
+
 /** True when a read soon after `index` is back within the noise of `peak`. */
 function recovers(samples: OutsideWindow["samples"], index: number, peak: number): boolean {
   const until = samples[index]!.at + STALE_READ_MS;
@@ -127,33 +131,42 @@ function recovers(samples: OutsideWindow["samples"], index: number, peak: number
  * Gains count against the highest read of the period so far, so two feeds
  * that round differently (50, 49, 51) add one point, not two. A read far
  * below that mark which the next reads undo (24, 5, 24 within a minute) is a
- * stale read and is left out. A fall that stays, by more than the noise to
- * under half, is a restart the provider did not announce by moving the reset
- * time; a smaller large fall only lowers the mark.
+ * stale read and is left out, unless the reset time says the window did turn
+ * over. One that fell to under half could also be a restart followed by very
+ * heavy use: it is still left out, and listed in `doubts` so the estimate can
+ * say so. A fall that stays, by more than the noise to under half, is a
+ * restart the provider did not announce by moving the reset time; a smaller
+ * large fall only lowers the mark.
  */
-function stretchesOf(window: OutsideWindow): readonly Stretch[] {
+function scanWindow(window: OutsideWindow): {
+  readonly stretches: readonly Stretch[];
+  readonly doubts: readonly number[];
+} {
   const samples = window.samples;
   const stretches: Stretch[] = [];
+  const doubts: number[] = [];
   let previous = samples[0];
-  if (previous === undefined) return stretches;
+  if (previous === undefined) return { stretches, doubts };
   let peak = previous.usedPercent;
   for (let index = 1; index < samples.length; index += 1) {
     const current = samples[index]!;
     if (current.at <= previous.at) continue;
     const fell = peak - current.usedPercent;
     const announced = resetBetween(previous, current, window.lengthMs);
-    // A reset time that moved on is the provider's word; a fall alone is not.
+    // The provider's word that the window turned over: its reset time moved
+    // on, or the one it gave has passed. A fall alone is not.
     const moved = announced && previous.resetsAt !== null && current.resetsAt !== null;
-    if (fell > NOISE_FALL_POINTS && !moved && recovers(samples, index, peak)) continue;
+    const due =
+      previous.resetsAt !== null &&
+      previous.resetsAt > previous.at &&
+      previous.resetsAt <= current.at;
+    if (fell > NOISE_FALL_POINTS && !moved && !due && recovers(samples, index, peak)) {
+      if (current.usedPercent < peak / 2) doubts.push(current.at);
+      continue;
+    }
     if (announced || (fell > NOISE_FALL_POINTS && current.usedPercent < peak / 2)) {
       // What was gained before the reset is not known; what shows after it is.
-      const resetAt =
-        announced &&
-        previous.resetsAt !== null &&
-        previous.resetsAt > previous.at &&
-        previous.resetsAt <= current.at
-          ? previous.resetsAt
-          : current.at;
+      const resetAt = announced && due ? previous.resetsAt! : current.at;
       stretches.push({
         from: Math.min(resetAt, current.at - 1),
         to: current.at,
@@ -172,7 +185,11 @@ function stretchesOf(window: OutsideWindow): readonly Stretch[] {
     }
     previous = current;
   }
-  return stretches;
+  return { stretches, doubts };
+}
+
+function stretchesOf(window: OutsideWindow): readonly Stretch[] {
+  return scanWindow(window).stretches;
 }
 
 /** When the window restarted, oldest first: where the trend draws its reset markers. */
@@ -325,7 +342,7 @@ export function estimateOutside(input: OutsideEstimateInput): OutsideResult {
     };
   }
 
-  const stretches = stretchesOf(window);
+  const { stretches, doubts } = scanWindow(window);
   const firstSampleAt = window.samples[0]!.at;
   const historyFrom = Math.max(firstSampleAt, input.recordedSinceMs ?? firstSampleAt);
   const coveredFromMs = Math.max(input.periodStartMs, historyFrom);
@@ -399,11 +416,16 @@ export function estimateOutside(input: OutsideEstimateInput): OutsideResult {
   }
   const resets = limitResets(window).filter((at) => at >= coveredFromMs && at < coveredToMs);
 
+  // A read that fell to under half and came straight back: taken as a misread.
+  const doubted = doubts.some((at) => at >= coveredFromMs && at < coveredToMs);
+
   if (consumedPoints < 1) {
     return {
       kind: "unavailable",
       reason: "noUse",
-      detail: "The limit did not move in this period.",
+      detail: doubted
+        ? `The limit did not move in this period. ${DOUBT_REASON}`
+        : "The limit did not move in this period.",
       lastCheckedAt,
     };
   }
@@ -414,6 +436,7 @@ export function estimateOutside(input: OutsideEstimateInput): OutsideResult {
   const partial = coveredFromMs > input.periodStartMs + 12 * HOUR_MS;
   if (partial) reasons.push("History starts after the period does, so only part of it is covered.");
   if (coverage < 0.8) reasons.push("The limit was read rarely for part of the period.");
+  if (doubted) reasons.push(DOUBT_REASON);
 
   // No machine recorded anything, yet the limit moved: all of it was elsewhere.
   if (recordedWeight <= 0) {
@@ -437,7 +460,7 @@ export function estimateOutside(input: OutsideEstimateInput): OutsideResult {
       outsideWeight: null,
       weightPerPoint: null,
       detected: consumedPoints >= margin,
-      confidence: coverage >= 0.8 && !partial ? "high" : "medium",
+      confidence: coverage >= 0.8 && !partial && !doubted ? "high" : "medium",
       reasons: ["No reporting machine recorded any use of this account in the period.", ...reasons],
       days,
       resets,
@@ -471,7 +494,7 @@ export function estimateOutside(input: OutsideEstimateInput): OutsideResult {
   }
   if (usedChunks.length < 8) reasons.push("The rate rests on little history.");
   let confidence: OutsideConfidence = "high";
-  if (spreadShare > 0.15 || usedChunks.length < 8 || coverage < 0.8 || partial) {
+  if (spreadShare > 0.15 || usedChunks.length < 8 || coverage < 0.8 || partial || doubted) {
     confidence = "medium";
   }
   if (spreadShare > 0.35 || usedChunks.length < 5 || coverage < 0.5) confidence = "low";

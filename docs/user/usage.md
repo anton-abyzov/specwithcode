@@ -151,6 +151,9 @@ several accounts on one provider, a guess would charge old sessions to the wrong
 the app started counts as in SpecWithCode; any other session on that machine counts as outside
 the app. A session two machines both hold is counted once.
 
+A project you work on from two machines is listed once, matched by its name. When one machine
+has two projects with the same name, they stay as separate rows.
+
 **Reset window** counts the day of the reset from the reset on, to the hour, separately for use
 in SpecWithCode and outside the app. The split of that day by model and project is in proportion.
 Hours are kept for 14 days, so for a reset further back, or a machine on an older version, that
@@ -167,6 +170,8 @@ estimate, shown with a range and a confidence. It is an estimate, not a measurem
 - If a machine signed in to the account did not report, there is no estimate, since its use
   cannot be told from use elsewhere. Open the app on that machine or update it.
 - A provider that reports no weekly or monthly limit gets no estimate.
+- A limit reading that drops and is back within 30 minutes is taken as a misread, not a reset,
+  unless the limit's reset time had passed. The estimate says when it read one that way.
 
 On iPhone, Machines shows the bars and the estimate; the days and the breakdown are on web and
 desktop.

@@ -147,6 +147,43 @@ describe("mergeMachineShare", () => {
     expect(drill.projects.map((entry) => [entry.label, entry.costUsd])).toEqual([["Site", 10]]);
   });
 
+  it("keeps two projects of one machine apart when they share a title", () => {
+    const share = mergeMachineShare(
+      [
+        machine("desk", {
+          report: report({
+            accounts: [account(A)],
+            projects: [
+              { projectId: "shop", title: "Website" },
+              { projectId: "blog", title: "Website" },
+            ] as ShareReport["projects"],
+            cells: [
+              cell({ costUsd: 10, projectId: "shop" as ShareCell["projectId"] }),
+              cell({ costUsd: 20, projectId: "blog" as ShareCell["projectId"] }),
+            ],
+          }),
+        }),
+        machine("laptop", {
+          report: report({
+            accounts: [account(A)],
+            projects: [{ projectId: "p9", title: "Website" }] as ShareReport["projects"],
+            cells: [cell({ costUsd: 4, projectId: "p9" as ShareCell["projectId"] })],
+          }),
+        }),
+      ],
+      options,
+    );
+    // Which of the desk's two the laptop's is cannot be told from the title.
+    const drill = shareBreakdown(share, A, null, "cost");
+    expect(drill.projects.map((entry) => [entry.label, entry.costUsd])).toEqual([
+      ["Website", 20],
+      ["Website", 10],
+      ["Website", 4],
+    ]);
+    const desk = shareBreakdown(share, A, "desk", "cost");
+    expect(desk.projects.map((entry) => entry.costUsd)).toEqual([20, 10]);
+  });
+
   it("counts a folder two environments read once, for the live one", () => {
     const sources = [
       { key: "host claude /home 1:2", provider: "claude" },

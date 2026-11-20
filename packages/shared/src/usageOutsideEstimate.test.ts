@@ -213,6 +213,43 @@ describe("estimateOutside", () => {
     expect(result.kind).toBe("estimate");
     if (result.kind !== "estimate") return;
     expect(result.consumedPoints).toBeCloseTo(60, 0);
+    // A fall to under half could have been a restart: the estimate says how it was read.
+    expect(result.reasons.some((reason) => reason.includes("taken as a misread"))).toBe(true);
+    expect(result.confidence).not.toBe("high");
+  });
+
+  it("keeps a reset whose time had passed, though the next reads come straight back", () => {
+    // 24, then 0 after the reset time, then 24 again ten minutes later.
+    const reads = [24, 0, 24, 24.5];
+    const history = {
+      ...series(0, () => 0),
+      samples: reads.map((usedPercent, step) => ({
+        at: iso(t0 + step * 10 * 60_000),
+        usedPercent,
+        ...(step === 0 ? { resetsAt: iso(t0 + 5 * 60_000) } : {}),
+      })),
+    } as UsageLimitHistorySeries;
+    const window = pickOutsideWindow([[history]], KEY)!;
+    expect(limitResets(window)).toEqual([t0 + 5 * 60_000]);
+    const result = estimateOutside(input(history, [], { periodEndMs: t0 + HOUR }));
+    expect(result.kind).toBe("estimate");
+    if (result.kind !== "estimate") return;
+    expect(result.consumedPoints).toBeCloseTo(24.5, 1);
+  });
+
+  it("says so when the only movement was a read taken as a misread", () => {
+    const reads = [24, 0, 24];
+    const history = {
+      ...series(0, () => 0),
+      samples: reads.map((usedPercent, step) => ({
+        at: iso(t0 + step * 10 * 60_000),
+        usedPercent,
+      })),
+    } as UsageLimitHistorySeries;
+    const result = estimateOutside(input(history, [], { periodEndMs: t0 + HOUR }));
+    expect(result).toMatchObject({ kind: "unavailable", reason: "noUse" });
+    if (result.kind !== "unavailable") return;
+    expect(result.detail).toContain("taken as a misread");
   });
 
   it("sees a restart the reset time did not announce", () => {
