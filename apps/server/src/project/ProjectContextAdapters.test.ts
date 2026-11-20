@@ -608,14 +608,14 @@ it.effect(
             const frame = "frame" in entry ? (entry.frame as Record<string, unknown>) : {};
             return { ...entry, frame: "id" in frame ? { ...frame, id } : frame };
           }) as CodexReplay.CodexAppServerReplayEntry[];
-      const compacted = (id: string): CodexReplay.CodexAppServerReplayEntry => ({
+      const compacted = (id: string, turnId: string): CodexReplay.CodexAppServerReplayEntry => ({
         type: "emit_inbound",
         label: `compacted ${id}`,
         frame: {
           method: "item/completed",
           params: {
             threadId: nativeThreadId,
-            turnId: "first-turn",
+            turnId,
             item: { type: "contextCompaction", id },
           },
         },
@@ -643,7 +643,7 @@ it.effect(
           scenario: "project-restore-unsettled",
           entries: [
             ...preamble,
-            compacted("compaction-1"),
+            compacted("compaction-1", "first-turn"),
             {
               type: "emit_inbound",
               label: "first done",
@@ -661,7 +661,7 @@ it.effect(
               frame: { id: 4, error: { code: -32000, message: "request timed out" } },
             },
             ...nextTurn("second", "second-turn", 5),
-            compacted("compaction-2"),
+            compacted("compaction-2", "second-turn"),
             {
               type: "emit_inbound",
               label: "second done",

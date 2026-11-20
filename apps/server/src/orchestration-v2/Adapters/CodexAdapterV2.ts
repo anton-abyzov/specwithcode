@@ -2093,7 +2093,11 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             const pending = restoresInFlight.get(threadId) ?? new Set();
             pending.add(done);
             restoresInFlight.set(threadId, pending);
-            yield* restoreAdditionalContext(threadId, awaiting.compactionId, awaiting.snapshot).pipe(
+            yield* restoreAdditionalContext(
+              threadId,
+              awaiting.compactionId,
+              awaiting.snapshot,
+            ).pipe(
               Effect.ensuring(
                 Effect.sync(() => {
                   pending.delete(done);
