@@ -29,6 +29,7 @@ import { EditorId, FileManagerRevealKind, RemoteOpenTarget } from "./editor.ts";
 import { ModelCapabilities } from "./model.ts";
 import { RuntimeMode } from "./providerPolicy.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { ServerProviderSkillCopy, ServerProviderSkillDiscovery } from "./skillDiscovery.ts";
 import { ServerProviderUsageLimits, UsageLimitSourceSnapshots } from "./providerUsageLimits.ts";
 import { ServerSettings } from "./settings.ts";
 
@@ -179,6 +180,10 @@ export const ServerProviderSkill = Schema.Struct({
    * edits only that file, so other agents keep loading the skill.
    */
   switchFile: Schema.optional(TrimmedNonEmptyString),
+  /** See {@link ServerProviderSkillDiscovery}. Display only. */
+  discovery: Schema.optional(ServerProviderSkillDiscovery),
+  /** Same-named files the folder scan found behind this one, in scan order. Display only. */
+  otherCopies: Schema.optional(Schema.Array(ServerProviderSkillCopy)),
 });
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 

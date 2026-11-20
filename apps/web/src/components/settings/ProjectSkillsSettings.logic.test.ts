@@ -14,6 +14,8 @@ import {
   projectSkillLevelLabel,
   projectSkillLevels,
   projectSkillProviderBadges,
+  projectSkillReadLines,
+  projectSkillScopeChips,
   projectSkillSourceLinks,
   projectSkillStatusBadge,
   projectSkillTierLabel,
@@ -467,5 +469,153 @@ describe("pickSkillsMember", () => {
 
   it("returns null when nothing matches", () => {
     expect(pickSkillsMember([local], { ...base, machine: "m1" })).toBeNull();
+  });
+});
+
+describe("scope chips", () => {
+  it("lists each level once, project first, and marks a level only a lower-priority copy has", () => {
+    const both = row("notes", {
+      providers: [
+        presence("Claude", "/home/me/.claude/skills/notes/SKILL.md", true, "user"),
+        {
+          ...presence("Copilot", "/work/.agents/skills/notes/SKILL.md", true, "project"),
+          otherCopies: [
+            { path: "/home/me/.agents/skills/notes/SKILL.md", scope: "user" },
+            { path: "/home/me/.claude/plugins/cache/x/skills/notes/SKILL.md", scope: "user" },
+          ],
+        },
+      ],
+    });
+    expect(projectSkillScopeChips(both)).toEqual([
+      { level: "project", label: "Project", alsoFound: false },
+      // An agent lists a user copy itself, so that level is not "also found".
+      { level: "user", label: "User", alsoFound: false },
+      { level: "plugin", label: "Plugin", alsoFound: true },
+    ]);
+  });
+
+  it("counts a lock-only row at its lock's level and a plain row at its own", () => {
+    expect(projectSkillScopeChips(row("deploy"))).toEqual([
+      { level: "user", label: "User", alsoFound: false },
+    ]);
+    const lockOnly = row("ghost", {
+      providers: [],
+      lock: {
+        lockPath: "/work/vskill.lock",
+        lockScope: "project",
+        version: "1.0.0",
+        tier: null,
+        source: null,
+        sha: null,
+        installedAt: null,
+      },
+    });
+    expect(projectSkillScopeChips(lockOnly)).toEqual([
+      { level: "project", label: "Project", alsoFound: false },
+    ]);
+  });
+});
+
+describe("agent badges and discovery", () => {
+  it("marks a badge whose every copy the app found by scanning, with what that means", () => {
+    const scanned = row("notes", {
+      providers: [
+        {
+          ...presence("Copilot", "/work/.agents/skills/notes/SKILL.md", true, "project"),
+          discovery: "folder-scan",
+          otherCopies: [{ path: "/home/me/.agents/skills/notes/SKILL.md", scope: "user" }],
+        },
+        presence("Claude", "/work/.claude/skills/notes/SKILL.md", true, "project"),
+      ],
+    });
+    const [claude, copilot] = projectSkillProviderBadges(scanned).toSorted((a, b) =>
+      a.label.localeCompare(b.label),
+    );
+    expect(claude).toMatchObject({ label: "Claude", folderScan: false });
+    expect(claude!.title).not.toMatch(/scan/);
+    expect(copilot).toMatchObject({ label: "Copilot", folderScan: true });
+    expect(copilot!.title.split("\n")).toEqual([
+      "Copilot",
+      "Project: /work/.agents/skills/notes/SKILL.md",
+      "Also found, User: /home/me/.agents/skills/notes/SKILL.md",
+      "Found by the app's scan of Copilot's skill folders. Copilot's own list is not checked for this folder.",
+      "The first file is the one the app's scan order puts first. Copilot does not report which copy it uses.",
+    ]);
+  });
+});
+
+describe("agent read lines", () => {
+  const provider = (label: string, extra: Record<string, unknown>) => ({
+    instanceId: ProviderInstanceId.make(label.toLowerCase()),
+    driver: ProviderDriverKind.make(label.toLowerCase()),
+    label,
+    state: "ok" as const,
+    skills: 1,
+    ...extra,
+  });
+  it("gives no line to an agent that was read in full", () => {
+    expect(projectSkillReadLines({ providers: [provider("Claude", {})], rows: [] })).toEqual([]);
+  });
+
+  it("says a folder was scanned even when the scan found no skill in it", () => {
+    const lines = projectSkillReadLines({
+      providers: [
+        provider("Copilot", { state: "unsupported", skills: 0, discovery: "folder-scan" }),
+        provider("Grok", { state: "unsupported" }),
+      ],
+      rows: [],
+    });
+    expect(lines.map((line) => [line.label, line.kind])).toEqual([
+      ["Copilot", "note"],
+      ["Grok", "note"],
+    ]);
+    expect(lines[0]!.text).toMatch(/not checked for this folder/);
+    expect(lines[0]!.text).not.toBe(lines[1]!.text);
+  });
+
+  it("puts agents that could not answer first, and never says a skill is absent", () => {
+    const scanned = row("notes", {
+      providers: [
+        {
+          ...presence("Copilot", "/work/.agents/skills/notes/SKILL.md", true, "project"),
+          discovery: "folder-scan",
+        },
+      ],
+    });
+    const lines = projectSkillReadLines({
+      providers: [
+        provider("Copilot", { state: "unsupported" }),
+        provider("Grok", { state: "unsupported" }),
+        provider("Codex", { state: "timeout" }),
+        provider("Cursor", { state: "error", message: "Not installed." }),
+        provider("Gemini", { state: "unsupported", incomplete: true }),
+        provider("Pi", { state: "cached" }),
+        provider("Claude", {}),
+      ],
+      rows: [scanned],
+    });
+    expect(lines.map((line) => [line.label, line.kind])).toEqual([
+      ["Codex", "partial"],
+      ["Cursor", "partial"],
+      ["Gemini", "partial"],
+      ["Pi", "partial"],
+      ["Copilot", "note"],
+      ["Grok", "note"],
+    ]);
+    const text = (label: string) => lines.find((line) => line.label === label)!.text;
+    expect(text("Codex")).toBe(
+      "The folder scan did not finish. A skill it does not show here may still be installed.",
+    );
+    expect(text("Cursor")).toBe(
+      "Could not be read (Not installed). A skill it does not show here may still be installed.",
+    );
+    expect(text("Gemini")).toMatch(/^Some of its skill folders could not be opened\./);
+    expect(text("Copilot")).toMatch(/not checked for this folder/);
+    expect(text("Grok")).toBe(
+      "Reports one skill list for the whole machine, not one for this folder.",
+    );
+    expect(lines.map((line) => line.text).join(" ")).not.toMatch(
+      /not installed here|absent|not listed/i,
+    );
   });
 });

@@ -2181,7 +2181,6 @@ export const ja: PhraseCatalog = {
     "このマシンで、各エージェントがすべてのプロジェクトで検出するすべてのスキルです。オフにしてもそのエージェント自身の設定が変わるだけなので、他のエージェントでは残り、何も削除されません。プロジェクトを選ぶと、そのプロジェクトのスキルも表示されます。スキルをクリックすると詳細を確認できます。",
   "Which skills each agent discovers in {span}, and whether each still matches the version vskill installed. Filter by agent or by level: project skills live in this folder, user skills apply to every project. Click a skill for details.":
     "各エージェントが {span} で検出するスキルと、それぞれが vskill のインストールしたバージョンと一致しているかを示します。エージェントまたはレベルで絞り込めます。プロジェクトのスキルはこのフォルダーにあり、ユーザーのスキルはすべてのプロジェクトに適用されます。スキルをクリックすると詳細を確認できます。",
-  "{span} is not loaded in this project.": "{span} はこのプロジェクトでは読み込まれていません。",
   "· showing {length}": "· {length} 件を表示",
   "Search skills": "スキルを検索",
   "Search skills, agents, sources": "スキル、エージェント、ソースを検索",
@@ -2191,8 +2190,6 @@ export const ja: PhraseCatalog = {
   Tier: "レベル",
   "Scanning skill folders and lockfiles…":
     "スキルのフォルダーとロックファイルをスキャンしています…",
-  "No agent loads any skill in this folder, and no vskill lockfile lists one.":
-    "このフォルダーでスキルを読み込むエージェントはなく、vskill のロックファイルにもスキルはありません。",
   "The last rescan failed ({error}); showing the previous result.":
     "前回の再スキャンに失敗しました（{error}）。前の結果を表示しています。",
   "Project skills": "プロジェクトのスキル",
@@ -5384,7 +5381,6 @@ export const ja: PhraseCatalog = {
   "No machines": "マシンがありません",
   "Each machine keeps its own. Changes here only affect {machine}.":
     "マシンごとに別々に保持されます。ここでの変更は {machine} にのみ反映されます。",
-  "On this machine": "このマシンにあります",
   "Not on {machine}": "{machine} にはありません",
   "Needs sign-in": "サインインが必要",
   "Update available {version}": "更新あり {version}",
@@ -5396,9 +5392,7 @@ export const ja: PhraseCatalog = {
   "Could not be read": "読み取れませんでした",
   "copies differ": "コピーに差異あり",
   "Across machines": "マシン間の比較",
-  "Read-only. Each machine reports its own skills. A machine that could not be read is never shown as missing.":
-    "読み取り専用です。各マシンが自分のスキルを報告します。読み取れなかったマシンを「ない」と表示することはありません。",
-  "No skills on the machines that were read.": "読み取ったマシンにスキルはありません。",
+  "No skills reported in these reads.": "今回の読み取りではスキルが報告されませんでした。",
   "Showing the first 32 machines. Open Connections to inspect the rest.":
     "最初の 32 台を表示しています。残りは「接続」で確認できます。",
   "The machine list could not be refreshed. Listed machines may be out of date.":

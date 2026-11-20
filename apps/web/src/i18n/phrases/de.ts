@@ -2191,7 +2191,6 @@ export const de: PhraseCatalog = {
     "Jeder Skill, den jeder Agent auf diesem Rechner für dich erkennt, in jedem Projekt. Einen auszuschalten ändert nur die eigenen Einstellungen dieses Agents, andere Agents behalten ihn und nichts wird gelöscht. Wähle ein Projekt, um auch seine Projekt-Skills zu sehen. Klicke auf einen Skill für Details.",
   "Which skills each agent discovers in {span}, and whether each still matches the version vskill installed. Filter by agent or by level: project skills live in this folder, user skills apply to every project. Click a skill for details.":
     "Welche Skills jeder Agent in {span} erkennt und ob jeder noch zur von vskill installierten Version passt. Filtere nach Agent oder Ebene: Projekt-Skills liegen in diesem Ordner, Benutzer-Skills gelten für jedes Projekt. Klicke auf einen Skill für Details.",
-  "{span} is not loaded in this project.": "{span} wird in diesem Projekt nicht geladen.",
   "· showing {length}": "· {length} angezeigt",
   "Search skills": "Skills suchen",
   "Search skills, agents, sources": "Skills, Agents, Quellen suchen",
@@ -2200,8 +2199,6 @@ export const de: PhraseCatalog = {
   Agent: "Agent",
   Tier: "Ebene",
   "Scanning skill folders and lockfiles…": "Skill-Ordner und Lockfiles werden gescannt…",
-  "No agent loads any skill in this folder, and no vskill lockfile lists one.":
-    "Kein Agent lädt in diesem Ordner einen Skill, und keine vskill-Lockfile listet einen auf.",
   "The last rescan failed ({error}); showing the previous result.":
     "Der letzte erneute Scan ist fehlgeschlagen ({error}); das vorherige Ergebnis wird angezeigt.",
   "Project skills": "Projekt-Skills",
@@ -5418,7 +5415,6 @@ export const de: PhraseCatalog = {
   "No machines": "Keine Computer",
   "Each machine keeps its own. Changes here only affect {machine}.":
     "Jeder Computer hat seine eigenen. Änderungen hier betreffen nur {machine}.",
-  "On this machine": "Auf diesem Computer",
   "Not on {machine}": "Nicht auf {machine}",
   "Needs sign-in": "Anmeldung nötig",
   "Update available {version}": "Update verfügbar: {version}",
@@ -5430,9 +5426,7 @@ export const de: PhraseCatalog = {
   "Could not be read": "Konnte nicht gelesen werden",
   "copies differ": "Kopien weichen ab",
   "Across machines": "Alle Computer im Vergleich",
-  "Read-only. Each machine reports its own skills. A machine that could not be read is never shown as missing.":
-    "Nur lesen. Jeder Computer meldet seine eigenen Skills. Ein Computer, der nicht gelesen werden konnte, wird nie als fehlend angezeigt.",
-  "No skills on the machines that were read.": "Auf den gelesenen Computern gibt es keine Skills.",
+  "No skills reported in these reads.": "In diesen Lesevorgängen wurden keine Skills gemeldet.",
   "Showing the first 32 machines. Open Connections to inspect the rest.":
     "Die ersten 32 Computer werden angezeigt. Öffnen Sie Verbindungen für die übrigen.",
   "The machine list could not be refreshed. Listed machines may be out of date.":

@@ -2174,7 +2174,6 @@ export const ru: PhraseCatalog = {
     "Все навыки, которые каждый агент обнаруживает для вас на этой машине, во всех проектах. Выключение навыка меняет только собственные настройки этого агента, поэтому у других агентов он остаётся и ничего не удаляется. Выберите проект, чтобы увидеть и его навыки. Нажмите на навык, чтобы увидеть подробности.",
   "Which skills each agent discovers in {span}, and whether each still matches the version vskill installed. Filter by agent or by level: project skills live in this folder, user skills apply to every project. Click a skill for details.":
     "Какие навыки каждый агент обнаруживает в {span} и совпадает ли каждый с версией, установленной vskill. Фильтруйте по агенту или уровню: навыки проекта лежат в этой папке, навыки пользователя применяются ко всем проектам. Нажмите на навык, чтобы увидеть подробности.",
-  "{span} is not loaded in this project.": "{span} не загружается в этом проекте.",
   "· showing {length}": "· показано {length}",
   "Search skills": "Поиск навыков",
   "Search skills, agents, sources": "Поиск навыков, агентов, источников",
@@ -2183,8 +2182,6 @@ export const ru: PhraseCatalog = {
   Agent: "Агент",
   Tier: "Уровень",
   "Scanning skill folders and lockfiles…": "Сканирование папок навыков и lock-файлов…",
-  "No agent loads any skill in this folder, and no vskill lockfile lists one.":
-    "Ни один агент не загружает навыков в этой папке, и ни один lock-файл vskill их не содержит.",
   "The last rescan failed ({error}); showing the previous result.":
     "Последнее повторное сканирование не удалось ({error}); показан предыдущий результат.",
   "Project skills": "Навыки проекта",
@@ -5381,7 +5378,6 @@ export const ru: PhraseCatalog = {
   "No machines": "Нет компьютеров",
   "Each machine keeps its own. Changes here only affect {machine}.":
     "У каждого компьютера свой набор. Изменения здесь касаются только {machine}.",
-  "On this machine": "На этом компьютере",
   "Not on {machine}": "Нет на {machine}",
   "Needs sign-in": "Нужен вход",
   "Update available {version}": "Доступно обновление {version}",
@@ -5393,9 +5389,7 @@ export const ru: PhraseCatalog = {
   "Could not be read": "Не удалось прочитать",
   "copies differ": "копии различаются",
   "Across machines": "По всем компьютерам",
-  "Read-only. Each machine reports its own skills. A machine that could not be read is never shown as missing.":
-    "Только чтение. Каждый компьютер сообщает о своих навыках. Компьютер, который не удалось прочитать, никогда не показывается как без навыка.",
-  "No skills on the machines that were read.": "На прочитанных компьютерах нет навыков.",
+  "No skills reported in these reads.": "В этих чтениях навыки не найдены.",
   "Showing the first 32 machines. Open Connections to inspect the rest.":
     "Показаны первые 32 компьютера. Остальные смотрите в разделе «Подключения».",
   "The machine list could not be refreshed. Listed machines may be out of date.":
