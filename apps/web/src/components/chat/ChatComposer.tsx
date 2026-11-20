@@ -7378,7 +7378,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       onDismiss={onDismissActivePendingUserInput}
                       onReplyInChat={replyToPendingQuestionInChat}
                       askedBy={pendingQuestionAsker}
-                    machine={actionMachine}
+                      machine={actionMachine}
                       renderText={renderPendingQuestionText}
                       collapseKey={pendingQuestionCollapseKey}
                     />
@@ -7491,8 +7491,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               composerProviderState.composerSurfaceClassName,
             )}
           >
-            <ComposerModelIntent state={chipModel.state}
-              routed={routesProjectMessage || !isServerThread || multipleModelSelections !== null} />
+            <ComposerModelIntent
+              state={chipModel.state}
+              routed={
+                routesProjectMessage ||
+                !isServerThread ||
+                multipleModelSelections !== null ||
+                selectedProviderUnavailable ||
+                isComposerApprovalState ||
+                isComposerCollapsedMobile ||
+                activePendingProgress !== null
+              }
+            />
             {showCollapsedMobilePromptRow ? (
               <div className="flex items-center justify-between gap-2 px-3 py-2">
                 <button
