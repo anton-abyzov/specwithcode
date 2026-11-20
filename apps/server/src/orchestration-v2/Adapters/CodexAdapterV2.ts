@@ -109,6 +109,9 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
+import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
+import { ownMachineLabel } from "../../fleet/machineNames.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import {
   buildCodexAdditionalContext,
@@ -1210,8 +1213,10 @@ const CODEX_SIGN_IN_EXPIRED_PATTERN =
   /\btoken_expired\b|authentication token is expired|refresh[_ ]token[_ ](?:expired|reused|invalidated)|refresh token (?:has |was )?(?:expired|revoked|already been used)/iu;
 export const CODEX_SIGN_IN_EXPIRED_RESTART_REASON =
   "Codex's sign-in expired while its process was running.";
-export const CODEX_SIGN_IN_EXPIRED_FAILURE_MESSAGE =
-  "Codex's sign-in expired. SpecWithCode restarts Codex with a renewed sign-in for the next message, so press Continue once. If it fails again, sign in to Codex again in Settings > Providers on this machine.";
+/** Names the machine to sign in again on: a coordinator elsewhere quotes it exactly. */
+export const codexSignInExpiredMessage = (machine: string | undefined) =>
+  `Codex's sign-in expired. SpecWithCode restarts Codex with a renewed sign-in for the next message, so press Continue once. If it fails again, sign in to Codex again in Settings > Providers on ${machine ?? "this machine"}.`;
+export const CODEX_SIGN_IN_EXPIRED_FAILURE_MESSAGE = codexSignInExpiredMessage(undefined);
 /** Renew a managed sign-in this long before it expires, so no turn starts on a dying token. */
 export const CODEX_ACCESS_RENEW_BEFORE_MS = 10 * 60_000;
 export const CODEX_ACCESS_EXPIRING_REASON =
@@ -1241,9 +1246,9 @@ export function codexAccessExpiryReplacement(
   return accessExpiresAt - nowMs <= lead ? CODEX_ACCESS_EXPIRING_REASON : null;
 }
 
-const codexSignInExpiredFailure = () =>
+const codexSignInExpiredFailure = (machine: string | undefined) =>
   makeProviderFailure({
-    message: CODEX_SIGN_IN_EXPIRED_FAILURE_MESSAGE,
+    message: codexSignInExpiredMessage(machine),
     code: PROVIDER_SIGN_IN_EXPIRED_FAILURE_CODE,
     class: "provider_error",
     retryable: true,
@@ -1835,6 +1840,10 @@ export const createCodexAdapterV2 = (
       idAllocator,
       serverConfig,
       continuationRequests,
+      machineLabel: ownMachineLabel(
+        yield* Effect.serviceOption(ServerEnvironment.ServerEnvironment),
+        yield* Effect.serviceOption(ServerSettings.ServerSettingsService),
+      ),
       ...hooks,
     });
   });
@@ -1905,6 +1914,8 @@ export interface CodexAdapterV2Options {
    * whose token is about to expire is replaced only when this is later.
    */
   readonly renewedAccessExpiresAt?: Effect.Effect<number | null>;
+  /** This machine's name for failure texts; undefined keeps "this machine". */
+  readonly machineLabel?: Effect.Effect<string | undefined>;
   readonly crypto: Crypto.Crypto;
   readonly fileSystem: FileSystem.FileSystem;
   readonly idAllocator: IdAllocatorV2Shape;
@@ -1922,6 +1933,7 @@ export interface CodexAdapterV2Options {
 export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): ProviderAdapterV2Shape {
   const { clientFactory, crypto, fileSystem, idAllocator, serverConfig } = adapterOptions;
   const continuationRequests = adapterOptions.continuationRequests;
+  const machineLabel = adapterOptions.machineLabel ?? Effect.succeed(undefined);
 
   return ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
@@ -4652,7 +4664,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             if (tokenRejected && !payload.willRetry) {
               context.latestProviderFailure = {
                 nativeMessage: payload.error.message,
-                failure: codexSignInExpiredFailure(),
+                failure: codexSignInExpiredFailure(yield* machineLabel),
               };
               return;
             }
@@ -5738,7 +5750,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               const failure = accountChanged
                 ? codexAuthChangedFailure()
                 : tokenRejected
-                  ? codexSignInExpiredFailure()
+                  ? codexSignInExpiredFailure(yield* machineLabel)
                   : previousFailure !== undefined &&
                       (input.failureMessage === undefined ||
                         input.failureMessage === previousFailure.nativeMessage) &&
