@@ -1,3 +1,8 @@
+import { readReportPage } from "../mcp/toolkits/coordinatorMessage/reportRead.ts";
+import type {
+  CoordinatorMessageReadRequest,
+  CoordinatorMessageReadResponse,
+} from "../handoff/coordinatorMessageWire.ts";
 /**
  * The receiving side of coordinator messages (`coordinator-message`): another
  * machine's coordinator in the same linked project tells this machine's
@@ -130,6 +135,11 @@ export class CoordinatorMessageReceiver extends Context.Service<
         readonly credentialExpiresAt?: number | undefined;
       },
     ) => Effect.Effect<CoordinatorMessageDeliverResponse, HandoffRefusal>;
+    readonly read: (
+      caller: ReceiverCaller,
+      request: CoordinatorMessageReadRequest,
+      access: Parameters<CoordinatorMessageReceiver["Service"]["deliver"]>[2],
+    ) => Effect.Effect<CoordinatorMessageReadResponse, HandoffRefusal>;
     /**
      * The grant this machine keeps for the credential's coordinator, read
      * without creating, settling or migrating a policy; undefined when none
@@ -1286,7 +1296,74 @@ export const make = Effect.gen(function* () {
       Effect.map((label) => ungrantedMessageRefusal(label(selfEnvironmentId), label(sender))),
     );
 
-  return CoordinatorMessageReceiver.of({ deliver, grantFor, flush, revoked, ungranted });
+  const read: CoordinatorMessageReceiver["Service"]["read"] = (caller, request, access) =>
+    Effect.gen(function* () {
+      const label = yield* namer;
+      const denied = () =>
+        refuse(
+          403,
+          "needs_grant",
+          `${label(selfEnvironmentId)} refused ${label(caller.sourceEnvironmentId)}'s report read.`,
+        );
+      const check = Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis;
+        if (
+          (yield* livePresentedSession(
+            access.sessionId,
+            caller.sourceEnvironmentId,
+            access.credentialExpiresAt,
+            now,
+          )) === undefined ||
+          (yield* deviceStandsNow(access.device)) !== "stands" ||
+          !(yield* reachStandsNow(access.teamRulesFingerprint))
+        )
+          return yield* denied();
+        return yield* authorize({
+          peer: caller.sourceEnvironmentId,
+          projectId: request.projectId,
+          logicalProjectId: request.logicalProjectId,
+          kind: "finding",
+          operate: false,
+          capabilities: request.capabilities,
+          routeGrant: caller.grant,
+          now,
+          label,
+        });
+      });
+      const authority = yield* check;
+      const row = (yield* store.all.pipe(Effect.mapError(keptFailure))).find(
+        (record) =>
+          record.direction === "outgoing" &&
+          record.projectId === request.projectId &&
+          record.logicalProjectId === request.logicalProjectId &&
+          record.peerEnvironmentId === caller.sourceEnvironmentId &&
+          record.externalId === request.messageId &&
+          record.state !== "not_delivered",
+      );
+      if (
+        row === undefined ||
+        !row.refs.some(
+          (ref) =>
+            ref.kind === "report" &&
+            ref.environmentId === selfEnvironmentId &&
+            ref.path === request.path,
+        )
+      )
+        return yield* denied();
+      const page = yield* Effect.tryPromise({
+        try: () => readReportPage(authority.project.workspaceRoot, request.path, request.offset),
+        catch: () =>
+          refuse(
+            403,
+            "needs_grant",
+            "The named report cannot be read within this project's report limits.",
+          ),
+      });
+      // File I/O cannot extend a credential's authority.
+      yield* check;
+      return { ...page, capabilities: COORDINATOR_MESSAGE_CAPABILITIES };
+    });
+  return CoordinatorMessageReceiver.of({ deliver, read, grantFor, flush, revoked, ungranted });
 });
 
 /**

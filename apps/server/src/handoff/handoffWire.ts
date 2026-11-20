@@ -613,7 +613,8 @@ export type PeerPath =
   | "review-takeover"
   | "check"
   | "folder-work"
-  | "coordinator-message";
+  | "coordinator-message"
+  | "coordinator-message-read";
 export const PEER_PATHS: ReadonlySet<string> = new Set<PeerPath>([
   "negotiate",
   "replicate",
@@ -640,6 +641,7 @@ export const PEER_PATHS: ReadonlySet<string> = new Set<PeerPath>([
   "check",
   "folder-work",
   "coordinator-message",
+  "coordinator-message-read",
 ]);
 
 /**

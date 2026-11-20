@@ -191,6 +191,16 @@ export class CoordinatorMessageOutbox extends Context.Service<
       readonly clientRequestId: string;
       readonly message: CoordinatorMessageBody;
     }) => Effect.Effect<CoordinatorMessageRecord, unknown>;
+    readonly read: (input: {
+      readonly projectId: ProjectId;
+      readonly threadId: ThreadId;
+      readonly messageId: string;
+      readonly path: string;
+      readonly offset: number;
+    }) => Effect.Effect<
+      { readonly content: string; readonly offset: number; readonly nextOffset: number | null },
+      unknown
+    >;
     readonly flush: Effect.Effect<void, unknown>;
   }
 >()("specweave-studio/project/CoordinatorMessageOutbox") {}
@@ -327,7 +337,48 @@ export const layer = Layer.effect(
           return yield* Effect.fail(new Error("The outgoing message could not be read."));
         return result;
       });
-    return CoordinatorMessageOutbox.of({ send, flush: box.flush });
+    const read: CoordinatorMessageOutbox["Service"]["read"] = (input) =>
+      Effect.gen(function* () {
+        if (input.threadId !== `project-coordinator:${input.projectId}`)
+          return yield* Effect.fail(
+            new Error("Only this project's coordinator may read a coordinator report."),
+          );
+        const row = (yield* store.all).find(
+          (record) =>
+            record.direction === "incoming" &&
+            record.projectId === input.projectId &&
+            (record.id === input.messageId || record.externalId === input.messageId),
+        );
+        if (
+          row === undefined ||
+          !row.refs.some(
+            (ref) =>
+              ref.kind === "report" &&
+              ref.environmentId === row.peerEnvironmentId &&
+              ref.path === input.path,
+          )
+        )
+          return yield* Effect.fail(new Error("The message does not name that report."));
+        const member = yield* destination(
+          row.projectId,
+          row.peerEnvironmentId,
+          row.logicalProjectId,
+        );
+        if (member === undefined)
+          return yield* Effect.fail(new Error("This project is no longer linked to that machine."));
+        const page = yield* peers.coordinatorMessageRead(row.peerEnvironmentId, {
+          capabilities: [COORDINATOR_MESSAGE_CAPABILITY],
+          logicalProjectId: row.logicalProjectId,
+          projectId: member.projectId,
+          messageId: row.externalId,
+          path: input.path,
+          offset: input.offset,
+        });
+        if (!page.capabilities.includes(COORDINATOR_MESSAGE_CAPABILITY))
+          return yield* Effect.fail(new Error("The report's machine needs an update."));
+        return { content: page.content, offset: page.offset, nextOffset: page.nextOffset };
+      });
+    return CoordinatorMessageOutbox.of({ send, read, flush: box.flush });
   }),
 ).pipe(Layer.provide(storeLayer));
 
