@@ -24,6 +24,8 @@ import {
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
 } from "./chatAttachment.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import { SpecweaveState } from "./threadIncrementProgress.ts";
+import { SpecweaveSetupRequest } from "./specweaveSetupRequest.ts";
 import {
   SERVICE_UPDATE_IN_PROGRESS_MESSAGE,
   SERVICE_UPDATE_VERIFYING_MESSAGE,
@@ -118,6 +120,29 @@ export const ProjectSecretFiles = Schema.Array(Schema.String.check(Schema.isMaxL
   Schema.isMaxLength(MAX_PROJECT_SECRET_FILES),
 );
 
+/** The sample a project was made as (1398): the first feature guide's project. */
+export const FIRST_FEATURE_SAMPLE = "first-feature";
+export const ProjectSample = Schema.Literal(FIRST_FEATURE_SAMPLE);
+export type ProjectSample = typeof ProjectSample.Type;
+/** How the first feature guide ended: the person left it, or it reached its end. */
+export const FirstFeatureGuideEnd = Schema.Literals(["left", "finished"]);
+export type FirstFeatureGuideEnd = typeof FirstFeatureGuideEnd.Type;
+/**
+ * The first feature guide's two stored facts (1398 AC-03). Everything else
+ * the guide shows is read from live state.
+ */
+export const FirstFeatureGuide = Schema.Struct({
+  /** When the guide started: the sample's creation, or its reopening after it was left. */
+  started: Schema.optionalKey(IsoDateTime),
+  /**
+   * `left` or `finished` (FirstFeatureGuideEnd); absent while the guide runs.
+   * A string on the wire, so a value a newer version adds reads as unknown
+   * instead of failing the whole project.
+   */
+  ended: Schema.optionalKey(Schema.String),
+});
+export type FirstFeatureGuide = typeof FirstFeatureGuide.Type;
+
 export const ProjectWorkspaceSettings = Schema.Struct({
   /** Server-managed identity and transfer fence; absent on legacy independent projects. */
   logicalProject: Schema.optional(LogicalProject),
@@ -164,6 +189,15 @@ export const ProjectWorkspaceSettings = Schema.Struct({
    * a `~/` path in the home folder (`~/.config/acme/token.json`). Absent: none.
    */
   secretFiles: Schema.optionalKey(ProjectSecretFiles),
+  /**
+   * Server-managed: the sample this project was made as, `first-feature` for
+   * the first feature guide's project (1398 AC-01). Set only by
+   * projects.createNew; no settings patch can set or clear it. A string on the
+   * wire, like `origin`.
+   */
+  sample: Schema.optionalKey(Schema.String),
+  /** Server-managed: the sample's guide (1398 AC-03), set by projects.firstFeatureGuide. */
+  firstFeatureGuide: Schema.optionalKey(FirstFeatureGuide),
 });
 export type ProjectWorkspaceSettings = typeof ProjectWorkspaceSettings.Type;
 export const DEFAULT_PROJECT_WORKSPACE_SETTINGS: ProjectWorkspaceSettings = {
@@ -208,6 +242,14 @@ export const ProjectMemoryFile = Schema.Struct({
   content: Schema.String,
 });
 export type ProjectMemoryFile = typeof ProjectMemoryFile.Type;
+/** A setup that failed, kept on the server for the project until the next success. */
+export const SpecweaveSetupFailure = Schema.Struct({
+  detail: Schema.String,
+  /** Node.js is missing on this machine, which the app can install. */
+  needsNode: Schema.optionalKey(Schema.Boolean),
+  failedAt: IsoDateTime,
+});
+export type SpecweaveSetupFailure = typeof SpecweaveSetupFailure.Type;
 export const ProjectWorkspaceReadResult = Schema.Struct({
   settings: ProjectWorkspaceSettings,
   memory: Schema.Struct({ files: Schema.Array(ProjectMemorySummary), totalBytes: NonNegativeInt }),
@@ -222,6 +264,24 @@ export const ProjectWorkspaceReadResult = Schema.Struct({
    * from disk. False offers "Set up Git and SpecWeave"; older servers leave it out.
    */
   gitRepository: Schema.optionalKey(Schema.Boolean),
+  /**
+   * The one SpecWeave state (1396): `on` as `specweave`, `unfinished` for a
+   * folder with increments that was never set up, `off`. A client that gets no
+   * state reads `specweave` as before.
+   */
+  specweaveState: Schema.optionalKey(SpecweaveState),
+  /** With `unfinished`: how many increments are there and the first three titles. */
+  specweaveUnfinished: Schema.optionalKey(
+    Schema.Struct({ count: NonNegativeInt, titles: Schema.Array(Schema.String) }),
+  ),
+  /** The last setup that failed, until one succeeds. */
+  specweaveSetupFailure: Schema.optionalKey(SpecweaveSetupFailure),
+  /** The person chose "Plan without it", "Not now" or dismissed the offer; a setup clears it. */
+  specweaveDeclined: Schema.optionalKey(Schema.Boolean),
+  /** The line above the composer was acted on once and never returns. */
+  specweaveAdviceSeen: Schema.optionalKey(Schema.Boolean),
+  /** The project's open "Set up SpecWeave" card and the thread it shows in. */
+  specweaveSetupRequest: Schema.optionalKey(SpecweaveSetupRequest),
 });
 export type ProjectWorkspaceReadResult = typeof ProjectWorkspaceReadResult.Type;
 /** Runs `specweave init` in the project's folder, on the person's request. */
@@ -232,6 +292,11 @@ export const ProjectSpecweaveSetUpInput = Schema.Struct({
    * `git init` runs first. Without it such a folder is refused, as older servers do.
    */
   initGit: Schema.optionalKey(Schema.Boolean),
+  /**
+   * The "Set up SpecWeave" card this press answers (1396). Its thread is woken
+   * once setup succeeds; any successful setup also settles the project's open card.
+   */
+  requestId: Schema.optionalKey(Schema.String),
 });
 export type ProjectSpecweaveSetUpInput = typeof ProjectSpecweaveSetUpInput.Type;
 export const ProjectSpecweaveSetUpResult = Schema.Struct({
@@ -259,6 +324,133 @@ export class ProjectSpecweaveSetUpError extends Schema.TaggedError<ProjectSpecwe
       : "SpecWeave could not be set up in this folder.";
   }
 }
+/**
+ * The answers that are not a setup (1396 AC-07): the card's "Plan without it"
+ * (with its requestId), the Board's "Not now", and the line above the
+ * composer: its dismiss, or "Set up SpecWeave" / "See the board" (seen).
+ */
+export const ProjectSpecweaveAnswer = Schema.Literals([
+  "plan_without",
+  "not_now",
+  "advice_dismissed",
+  "advice_seen",
+]);
+export type ProjectSpecweaveAnswer = typeof ProjectSpecweaveAnswer.Type;
+export const ProjectSpecweaveAnswerInput = Schema.Struct({
+  projectId: ProjectId,
+  answer: ProjectSpecweaveAnswer,
+  /** With "plan_without": the card it answers; its thread is woken. */
+  requestId: Schema.optionalKey(Schema.String),
+});
+export type ProjectSpecweaveAnswerInput = typeof ProjectSpecweaveAnswerInput.Type;
+export const ProjectSpecweaveAnswerResult = Schema.Struct({
+  specweaveDeclined: Schema.Boolean,
+  specweaveAdviceSeen: Schema.Boolean,
+  /** The card after the answer, when it named one. */
+  specweaveSetupRequest: Schema.optionalKey(SpecweaveSetupRequest),
+});
+export type ProjectSpecweaveAnswerResult = typeof ProjectSpecweaveAnswerResult.Type;
+/**
+ * Records a step of the sample project's first feature guide (1398 AC-03):
+ * `started` when it is opened again after it was left, `left` for "Leave the
+ * guide", `finished` at its end. Refused for a project that is not a sample.
+ */
+export const ProjectFirstFeatureGuideMark = Schema.Literals(["started", "left", "finished"]);
+export type ProjectFirstFeatureGuideMark = typeof ProjectFirstFeatureGuideMark.Type;
+
+/** The guide's end, when it has one this version knows. */
+export function firstFeatureGuideEnd(
+  guide: FirstFeatureGuide | undefined,
+): FirstFeatureGuideEnd | undefined {
+  return guide?.ended === "left" || guide?.ended === "finished" ? guide.ended : undefined;
+}
+
+/**
+ * The guide's facts after a mark, planned against the stored facts so racing
+ * marks cannot undo each other. `started` opens a left guide again (a new start
+ * time, no end) and changes nothing on a running one; `left` and `finished`
+ * end it. A finished guide stays finished: its end is for good (AC-12).
+ */
+export function firstFeatureGuideAfterMark(
+  current: FirstFeatureGuide | undefined,
+  mark: ProjectFirstFeatureGuideMark,
+  now: string,
+): FirstFeatureGuide {
+  const guide = current ?? {};
+  const end = firstFeatureGuideEnd(guide);
+  if (end === "finished") return guide;
+  switch (mark) {
+    case "started":
+      return end === undefined && guide.started !== undefined ? guide : { started: now };
+    case "left":
+    case "finished":
+      return { ...(guide.started === undefined ? {} : { started: guide.started }), ended: mark };
+  }
+}
+
+/** Whether two sets of guide facts say the same. */
+export const sameFirstFeatureGuide = (
+  left: FirstFeatureGuide | undefined,
+  right: FirstFeatureGuide | undefined,
+) => left?.started === right?.started && left?.ended === right?.ended;
+/** The fields the first feature rules read; a removed project carries `deletedAt`. */
+interface FirstFeatureCandidate {
+  readonly workspaceSettings?:
+    | {
+        readonly sample?: string | undefined;
+        readonly firstFeatureGuide?: FirstFeatureGuide | undefined;
+      }
+    | null
+    | undefined;
+  readonly deletedAt?: string | null | undefined;
+}
+
+/** Whether the project was made as the first feature sample. Renaming it changes nothing. */
+export const isFirstFeatureSample = (project: FirstFeatureCandidate): boolean =>
+  project.workspaceSettings?.sample === FIRST_FEATURE_SAMPLE;
+
+/**
+ * "The sample" on a machine (1398 AC-12): a live project made as the sample
+ * whose guide has not ended, the most recently started first. Undefined when
+ * there is none, so a new one may be made. The server and the window share it.
+ */
+export function activeFirstFeatureSample<P extends FirstFeatureCandidate>(
+  projects: ReadonlyArray<P>,
+): P | undefined {
+  return projects
+    .filter(
+      (project) =>
+        (project.deletedAt ?? null) === null &&
+        isFirstFeatureSample(project) &&
+        firstFeatureGuideEnd(project.workspaceSettings?.firstFeatureGuide) === undefined,
+    )
+    .toSorted((left, right) =>
+      (right.workspaceSettings?.firstFeatureGuide?.started ?? "").localeCompare(
+        left.workspaceSettings?.firstFeatureGuide?.started ?? "",
+      ),
+    )[0];
+}
+
+/**
+ * Whether any of these projects, removed ones included, is a sample whose
+ * guide ended `finished` (1398 AC-21): the offer is then gone for good.
+ */
+export const firstFeatureGuideFinishedIn = (projects: ReadonlyArray<FirstFeatureCandidate>) =>
+  projects.some(
+    (project) =>
+      isFirstFeatureSample(project) &&
+      firstFeatureGuideEnd(project.workspaceSettings?.firstFeatureGuide) === "finished",
+  );
+export const ProjectFirstFeatureGuideInput = Schema.Struct({
+  projectId: ProjectId,
+  mark: ProjectFirstFeatureGuideMark,
+});
+export type ProjectFirstFeatureGuideInput = typeof ProjectFirstFeatureGuideInput.Type;
+export const ProjectFirstFeatureGuideResult = Schema.Struct({
+  /** The guide's facts after the mark, as `settings.firstFeatureGuide` now reads. */
+  firstFeatureGuide: FirstFeatureGuide,
+});
+export type ProjectFirstFeatureGuideResult = typeof ProjectFirstFeatureGuideResult.Type;
 export const ProjectMemoryReadInput = Schema.Struct({
   projectId: ProjectId,
   name: ProjectMemoryName,
@@ -336,7 +528,7 @@ export class ProjectWorkspaceError extends Schema.TaggedError<ProjectWorkspaceEr
     projectId: ProjectId,
     /** With `update_in_progress`: the update is installed and its release is being checked. */
     verifying: Schema.optional(Schema.Boolean),
-    /** With `provider_unavailable`: which provider cannot run and why, in a sentence or two. */
+    /** With `provider_unavailable` or `invalid`: what cannot be done and why, in a sentence or two. */
     detail: Schema.optional(Schema.String),
   },
 ) {
@@ -345,6 +537,7 @@ export class ProjectWorkspaceError extends Schema.TaggedError<ProjectWorkspaceEr
       not_found: "The project or memory file is no longer available.",
       conflict: "This project changed elsewhere. Reload before saving.",
       invalid:
+        this.detail ??
         "The project memory name or content is invalid, or the project is at its memory limit (256 KiB per file, 16 MiB and 4,096 files per project).",
       empty_message: "Enter a message or attach a file before sending to the coordinator.",
       invalid_attachments:
@@ -381,3 +574,6 @@ export class ProjectWorkspaceError extends Schema.TaggedError<ProjectWorkspaceEr
     return messages[this.code];
   }
 }
+
+// The card's own schema, exported with the snapshot that carries it.
+export * from "./specweaveSetupRequest.ts";

@@ -49,6 +49,10 @@ export const DAY_MS = 24 * HOUR_MS;
 export const PROJECT_ID = ProjectId.make("project-1");
 export const OFF_PROJECT_ID = ProjectId.make("project-off");
 
+/** A member's own path from the path it was set aside at for removal. */
+export const fromAside = (target: string) =>
+  target.replace(/\/\.([^/]+)\.retiring-\d{8}-\d{6}$/, "/$1");
+
 export const at = (offsetMs: number) => DateTime.makeUnsafe(NOW_MS + offsetMs);
 
 export function shell(
@@ -301,7 +305,8 @@ export const sweepFixture = Effect.gen(function* () {
             touched.push(cwd);
             gitCalls.push(key);
             if (key === "removeWorktree") {
-              removed.push(String((first as { readonly path: string }).path));
+              // Recorded by the member's own path: the sweep removes it from where it was set aside.
+              removed.push(fromAside(String((first as { readonly path: string }).path)));
               removeCalls.push(first as (typeof removeCalls)[number]);
             }
             return (value as (...input: ReadonlyArray<unknown>) => unknown)(...args);

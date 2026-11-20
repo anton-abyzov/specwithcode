@@ -13,10 +13,12 @@
  * that points elsewhere is neither read further nor removed.
  *
  * Removal runs under the workspace lease, after every fact that can change
- * quickly is read again; any change keeps the folder. Ignored media is copied
- * to `<baseDir>/evidence/removed-worktrees/` first. Members go deepest
- * first, never forced; branches and the worktree-set manifest stay, so a chat
- * that resumes gets its folder back.
+ * quickly is read again; any change keeps the folder. Ignored media, reports
+ * and SpecWeave state are copied to `<baseDir>/evidence/removed-worktrees/`
+ * first. Members go deepest first, never forced; branches and the
+ * worktree-set manifest stay, so a chat that resumes gets its folder back. A
+ * removal Git could not finish leaves the folder untouched and on record
+ * (worktreeRemovalFailures.ts).
  *
  * @module worktreeCleanupSweep
  */
@@ -31,8 +33,9 @@ import {
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { resolveWorktreeCleanup } from "@specweave-studio/shared/projectSettings";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -46,13 +49,10 @@ import {
   decideFinishedWorktree,
   type FinishedChatState,
   type FinishedFolderFacts,
-  type FinishedMemberGit,
-  type FinishedPullRequest,
   type FinishedWorktreeDecision,
   type FinishedWorktreeNeed,
 } from "./finishedWorktrees.ts";
 import * as GitManager from "./git/GitManager.ts";
-import { worktreeHasNoAdditionalChanges } from "./git/worktreeIntegration.ts";
 import {
   canonicalPath,
   isOpenThreadOwner,
@@ -60,7 +60,6 @@ import {
   ownWorktreeThreadState,
   pathSpellings,
   pathWithin,
-  type WorktreeBindings,
   worktreeOwnersOf,
   worktreeThreadState,
 } from "./git/worktreeOwnership.ts";
@@ -68,11 +67,9 @@ import { checkWorktreeRegistration } from "./git/worktreeRegistration.ts";
 import { listProcessCwds } from "./homeUsage/processCwds.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
-import { onlyRebuildableUntracked } from "./orphanWorktrees.ts";
 import * as Settings from "./serverSettings.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
-import { hiddenTrackedChangeReason } from "./worktreeHiddenWork.ts";
 import {
   readWorktreeSet,
   worktreeSetManifestPath,
@@ -81,37 +78,41 @@ import {
 } from "./worktreeSet.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirectory.ts";
 import {
+  type Assessment,
+  type DeletedChat,
+  encodeJson,
+  type FolderGroup,
+  makeMemberFacts,
+  type MemberState,
+  reflogOnlyCommits,
+  type SweepContext,
+  type WorktreeSweepMode,
+} from "./worktreeCleanupMemberFacts.ts";
+import { makeRemoval } from "./worktreeCleanupRemoval.ts";
+import {
   anyWorktreePolicy,
   folderRules,
   storageCleanupActivityAt,
+  storageCleanupThreadFinished,
   storageCleanupThreadIdle,
 } from "./worktreeCleanupRules.ts";
 import {
-  classifyIgnored,
   entriesOutsideMembers,
-  findRepository,
   folderBytes,
-  type MediaFile,
-  NESTED_WALK_TIMEOUT,
-  SIZE_WALK_TIMEOUT,
+  SIZE_WALK_BUDGET_MS,
+  SIZE_WALK_TIMEOUT_MS,
 } from "./worktreeCleanupWalks.ts";
+import {
+  removalFailureDetail,
+  removalFailureStands,
+  WorktreeRemovalFailures,
+} from "./worktreeRemovalFailures.ts";
 
-export { anyWorktreePolicy, storageCleanupActivityAt, storageCleanupThreadIdle };
+export { anyWorktreePolicy, reflogOnlyCommits, storageCleanupActivityAt, storageCleanupThreadIdle };
 
 const decodeDeletedThread = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2AppThreadJson),
 );
-/** Fingerprints and the evidence manifest; plain values only, so encoding cannot fail. */
-const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
-
-/**
- * A pull request's state is asked of its host once per branch head in this
- * long, however often sweeps and plans run: event sweeps can follow each other
- * every two minutes, and a lookup per folder on each would exhaust the host's
- * rate limit. The hourly sweep still reads every state again.
- */
-const PULL_REQUEST_REUSE_MS = 50 * 60_000;
-const PULL_REQUEST_CACHE_ENTRIES = 2_000;
 
 /**
  * Working directories of running processes for the sweep, or null to read
@@ -125,112 +126,31 @@ export const WorktreeSweepProcessCwds =
     },
   );
 
-export type WorktreeSweepMode = "plan" | "apply";
+export type { WorktreeSweepMode };
 
 export interface WorktreeSweepResult {
   readonly items: ReadonlyArray<StorageCleanupPlanItem>;
   /** Folders removed in apply mode, with their size outside dependency installs. */
   readonly removed: ReadonlyArray<{ readonly path: string; readonly bytes: number | null }>;
-  /** False when ownership could not be read, a folder could not be checked or a size is missing. */
+  /** False when ownership could not be read or a folder could not be checked. A missing size leaves it true. */
   readonly complete: boolean;
 }
 
-type DeletedChat = typeof OrchestrationV2AppThreadJson.Type;
-
-interface FolderGroup {
-  /** Real path, the grouping key. */
-  readonly key: string;
-  /** As its first chat recorded it, resolved. */
-  readonly folder: string;
-  readonly chats: ReadonlyArray<OrchestrationV2ThreadShell>;
-  /** Deleted chats that recorded it; only for a folder no live chat records. */
-  readonly deleted: ReadonlyArray<DeletedChat>;
-}
-
-interface MemberState {
-  readonly member: WorktreeSetMember;
-  readonly path: string;
-  /** The checkout whose `git worktree` commands own this member. */
-  readonly repository: string;
-  readonly registration: string | null;
-  readonly locked: boolean;
-  /** Other members inside this one, relative and with forward slashes. */
-  readonly inside: ReadonlyArray<string>;
-  head: string | null;
-  base: string | null;
-  media: ReadonlyArray<MediaFile>;
-  fingerprint: string;
-  git: FinishedMemberGit | undefined;
-}
-
-interface Assessment {
-  readonly group: FolderGroup;
-  readonly decision: FinishedWorktreeDecision;
-  readonly members: ReadonlyArray<MemberState>;
-  /** The quickly changing facts; any difference at removal keeps the folder. */
-  readonly fingerprint: string;
-  /** The part of it that says who uses the folder (`readLive`). */
-  readonly liveness: string;
-  /** The one branch its chats record, or null. */
-  readonly chatBranch: string | null;
-  readonly head: { readonly id: string; readonly title: string } | null;
-  readonly threadCount: number;
-}
-
-interface SweepContext {
-  readonly mode: WorktreeSweepMode;
-  readonly settings: ServerSettings;
-  readonly now: number;
-  readonly bindings: WorktreeBindings;
-  readonly projects: ReadonlyArray<{ readonly id: ProjectId; readonly workspaceRoot: string }>;
-  readonly roots: ReadonlyArray<string>;
-  readonly processCwds: ReadonlyArray<string> | null;
-  /** Default-branch refs fetched in this sweep, per repository; null when there is none. */
-  readonly defaultRefs: Map<string, string | null>;
+export interface WorktreeSweepOptions {
+  /**
+   * Only the folders these chats use are checked: the pass an event asks for.
+   * Without it every folder is.
+   */
+  readonly onlyThreads?: ReadonlySet<string>;
 }
 
 const toPosix = (value: string) => value.split("\\").join("/");
 
-function chatState(thread: OrchestrationV2ThreadShell): FinishedChatState {
+function chatState(thread: OrchestrationV2ThreadShell, now: number): FinishedChatState {
   if (thread.archivedAt !== null) return "archived";
-  return thread.settledOverride === "settled" ? "resolved" : "open";
+  if (thread.settledOverride === "settled") return "resolved";
+  return storageCleanupThreadFinished(thread, now) ? "finished" : "open";
 }
-
-/**
- * Commits the worktree's own HEAD reaches, through its reflog or directly,
- * that no remote or local branch holds: removing the worktree deletes that
- * reflog, and with it the only reference. HEAD itself is always counted, so a
- * detached HEAD with an empty or expired reflog is not missed. Null when unreadable.
- */
-export const reflogOnlyCommits = Effect.fn("WorktreeCleanupSweep.reflogOnly")(function* (
-  git: GitVcsDriver.GitVcsDriver["Service"],
-  cwd: string,
-) {
-  const reflog = yield* git.execute({
-    operation: "WorktreeCleanupSweep.reflog",
-    cwd,
-    args: ["log", "-g", "--format=%H", "HEAD"],
-    maxOutputBytes: 4 * 1024 * 1024,
-    allowNonZeroExit: true,
-  });
-  if (reflog.stdoutTruncated || reflog.exitCode !== 0) return null;
-  const commits = [
-    ...new Set([...reflog.stdout.split("\n").filter((line) => line !== ""), "HEAD"]),
-  ];
-  const unreached = yield* git.execute({
-    operation: "WorktreeCleanupSweep.reflogUnreached",
-    cwd,
-    args: ["rev-list", "--count", ...commits, "--not", "--remotes", "--branches"],
-    maxOutputBytes: 1024,
-    allowNonZeroExit: true,
-  });
-  const count = Number.parseInt(unreached.stdout.trim(), 10);
-  return unreached.exitCode === 0 && Number.isFinite(count) ? count : null;
-});
-
-/** `yyyyMMdd-HHmmss` in UTC, for an evidence folder name. */
-const evidenceStamp = (now: number) =>
-  DateTime.formatIso(DateTime.makeUnsafe(now)).slice(0, 19).replace(/[-:]/g, "").replace("T", "-");
 
 export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(function* (options: {
   /** Live terminals, as the storage cleanup tracks them. */
@@ -269,12 +189,6 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
   };
   const realOrNull = (value: string) =>
     fs.realPath(value).pipe(Effect.orElseSucceed((): string | null => null));
-  const run = (
-    cwd: string,
-    operation: string,
-    args: ReadonlyArray<string>,
-    maxOutputBytes = 4096,
-  ) => git.execute({ operation, cwd, args, maxOutputBytes, allowNonZeroExit: true });
 
   const readThreads = Effect.fn("WorktreeCleanupSweep.readThreads")(function* () {
     const active = yield* projections.getShellSnapshot();
@@ -425,321 +339,8 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
     return { problem: null, unreadable: null, localRepository };
   });
 
-  const commitCount = (cwd: string, operation: string, args: ReadonlyArray<string>) =>
-    run(cwd, operation, args, 1024).pipe(
-      Effect.map((result) => {
-        const count = Number.parseInt(result.stdout.trim(), 10);
-        return result.exitCode === 0 && Number.isFinite(count) ? count : null;
-      }),
-      Effect.orElseSucceed(() => null),
-    );
-
-  /** A stash entry made on `branch` (stashes are shared by every worktree of a repository). */
-  const stashOnBranch = (cwd: string, branch: string | null) =>
-    branch === null
-      ? Effect.succeed(false)
-      : run(cwd, "WorktreeCleanupSweep.stash", ["stash", "list", "--format=%gs"], 256 * 1024).pipe(
-          Effect.map((result) =>
-            result.exitCode !== 0 || result.stdoutTruncated
-              ? null
-              : result.stdout
-                  .split("\n")
-                  .some(
-                    (line) =>
-                      line.startsWith(`WIP on ${branch}:`) || line.startsWith(`On ${branch}:`),
-                  ),
-          ),
-          Effect.orElseSucceed(() => null),
-        );
-
-  /** Git's `--directory` listing of a member without the members inside it; null when unreadable. */
-  const listOthers = (state: MemberState, args: ReadonlyArray<string>, maxOutputBytes: number) =>
-    run(
-      state.path,
-      "WorktreeCleanupSweep.listFiles",
-      ["ls-files", "--others", ...args, "--directory", "-z"],
-      maxOutputBytes,
-    ).pipe(
-      Effect.flatMap((result) =>
-        result.exitCode !== 0 || result.stdoutTruncated
-          ? Effect.succeed(null)
-          : Effect.tryPromise(() =>
-              entriesOutsideMembers(
-                state.path,
-                result.stdout.split("\0").filter((entry) => entry !== ""),
-                state.inside,
-              ),
-            ).pipe(Effect.map((entries) => ({ raw: result.stdout, entries }))),
-      ),
-      Effect.orElseSucceed(() => null),
-    );
-
-  /** Everything a member's own Git and folder say, short of the network. */
-  const readMemberGit = Effect.fn("WorktreeCleanupSweep.readMemberGit")(function* (
-    state: MemberState,
-    chatBranch: string | null,
-    inSet: boolean,
-  ) {
-    const status = yield* git.statusDetailsLocal(state.path).pipe(Effect.option);
-    const statusRead = Option.isSome(status) && status.value.isRepo ? status.value : null;
-    const branch = statusRead?.branch ?? null;
-    state.head = yield* git.resolveCommit({ cwd: state.path, revision: "HEAD" }).pipe(
-      Effect.map((commit) => commit.commitSha),
-      Effect.orElseSucceed((): string | null => null),
-    );
-    // status.showUntrackedFiles=no hides new files from the status check.
-    const untracked = yield* listOthers(state, ["--exclude-standard"], 64 * 1024);
-    const ignored = yield* listOthers(state, ["--ignored", "--exclude-standard"], 1024 * 1024);
-    const classified =
-      ignored === null
-        ? null
-        : yield* Effect.tryPromise(() => classifyIgnored(state.path, ignored.entries)).pipe(
-            Effect.orElseSucceed(() => null),
-          );
-    state.media = classified?.media ?? [];
-    const hidden = yield* hiddenTrackedChangeReason(git, state.path).pipe(
-      Effect.map((reason) => reason !== null),
-      Effect.orElseSucceed(() => null),
-    );
-    const restorable =
-      chatBranch === null
-        ? null
-        : !inSet
-          ? true
-          : yield* run(state.repository, "WorktreeCleanupSweep.branchExists", [
-              "rev-parse",
-              "--verify",
-              "--quiet",
-              `refs/heads/${chatBranch}`,
-            ]).pipe(
-              Effect.map((result) => result.exitCode === 0),
-              Effect.orElseSucceed(() => null),
-            );
-    const facts: FinishedMemberGit = {
-      branch,
-      changes: statusRead === null ? null : statusRead.hasWorkingTreeChanges,
-      untracked:
-        untracked === null
-          ? null
-          : untracked.entries
-              .filter((entry) => !onlyRebuildableUntracked(entry))
-              .map((entry) => path.basename(entry.replace(/\/$/, ""))),
-      ignoredOther: classified?.other ?? null,
-      media:
-        classified === null
-          ? null
-          : {
-              files: classified.media.length,
-              bytes: classified.media.reduce((total, file) => total + file.bytes, 0),
-            },
-      hiddenTrackedChanges: hidden,
-      stash: yield* stashOnBranch(state.path, branch),
-      reflogOnlyCommits: yield* reflogOnlyCommits(git, state.path).pipe(
-        Effect.orElseSucceed(() => null),
-      ),
-      unpushedCommits: yield* commitCount(state.path, "WorktreeCleanupSweep.unpushed", [
-        "rev-list",
-        "--count",
-        "HEAD",
-        "--not",
-        "--remotes",
-      ]),
-      restorable,
-      nestedRepository: undefined,
-      headInDefault: undefined,
-      pullRequest: undefined,
-    };
-    state.git = facts;
-    state.fingerprint = encodeJson([
-      state.path,
-      branch,
-      state.head,
-      facts.changes,
-      untracked?.raw ?? null,
-      ignored?.raw ?? null,
-      // Files inside an ignored folder do not show in Git's listing of it.
-      classified?.other ?? null,
-      classified?.media ?? null,
-      hidden,
-      facts.stash,
-      facts.unpushedCommits,
-      // A side branch deleted or a remote ref pruned makes commits reflog-only.
-      facts.reflogOnlyCommits,
-      facts.restorable,
-    ]);
-  });
-
-  /** Host answers kept between sweeps, by repository, branch and head commit. */
-  const pullRequestStates = new Map<
-    string,
-    { readonly state: FinishedPullRequest["state"]; readonly at: number }
-  >();
-
-  /**
-   * The repository's default branch on its primary remote, fetched once per
-   * apply sweep. A plan changes nothing, so it reads the ref as the last fetch
-   * left it; a missing ref reads as unknown, and apply fetches before deciding.
-   */
-  const defaultRef = Effect.fn("WorktreeCleanupSweep.defaultRef")(function* (
-    repository: string,
-    ctx: SweepContext,
-  ) {
-    if (ctx.defaultRefs.has(repository)) return ctx.defaultRefs.get(repository)!;
-    const ref = yield* Effect.gen(function* () {
-      const remote = yield* git.resolvePrimaryRemoteName(repository);
-      const branch = yield* git.resolveDefaultBranchName(repository, remote);
-      if (branch === null) return null;
-      if (ctx.mode === "apply")
-        yield* git.fetchRemoteTrackingBranch({
-          cwd: repository,
-          remoteName: remote,
-          remoteBranch: branch,
-        });
-      return `refs/remotes/${remote}/${branch}`;
-    }).pipe(Effect.orElseSucceed(() => null));
-    ctx.defaultRefs.set(repository, ref);
-    return ref;
-  });
-
-  const readHeadInDefault = Effect.fn("WorktreeCleanupSweep.readHeadInDefault")(function* (
-    state: MemberState,
-    ctx: SweepContext,
-    previous: MemberState | undefined,
-  ) {
-    if (state.git === undefined) return;
-    if (
-      previous?.git !== undefined &&
-      previous.head === state.head &&
-      previous.git.headInDefault !== undefined
-    ) {
-      state.base = previous.base;
-      state.git = { ...state.git, headInDefault: previous.git.headInDefault };
-      return;
-    }
-    let headInDefault: boolean | null = null;
-    const ref = yield* defaultRef(state.repository, ctx);
-    if (ref !== null && state.head !== null) {
-      state.base = yield* git.resolveCommit({ cwd: state.path, revision: ref }).pipe(
-        Effect.map((commit) => commit.commitSha),
-        Effect.orElseSucceed((): string | null => null),
-      );
-      if (state.base !== null) {
-        const ancestor = yield* run(state.path, "WorktreeCleanupSweep.integratedBranch", [
-          "merge-base",
-          "--is-ancestor",
-          state.head,
-          state.base,
-        ]).pipe(Effect.orElseSucceed(() => null));
-        headInDefault = ancestor?.exitCode === 0 ? true : ancestor?.exitCode === 1 ? false : null;
-      }
-    }
-    state.git = { ...state.git, headInDefault };
-  });
-
-  const readPullRequest = Effect.fn("WorktreeCleanupSweep.readPullRequest")(function* (
-    state: MemberState,
-    previous: MemberState | undefined,
-    ctx: SweepContext,
-    /** A chat's own synced pull request says merged or closed. */
-    finishedHint: boolean,
-  ) {
-    const facts = state.git;
-    if (facts === undefined) return;
-    if (facts.branch === null) {
-      state.git = { ...facts, pullRequest: { state: "none", contentIntegrated: false } };
-      return;
-    }
-    // A closed pull request can be reopened: before a removal that rests on
-    // "closed", the host is asked again instead of trusting an earlier answer.
-    const closedBefore = previous?.git?.pullRequest?.state === "closed";
-    if (
-      !closedBefore &&
-      previous?.git !== undefined &&
-      previous.head === state.head &&
-      previous.git.pullRequest !== undefined
-    ) {
-      state.git = { ...facts, pullRequest: previous.git.pullRequest };
-      return;
-    }
-    const branch = facts.branch;
-    const cacheKey = encodeJson([state.repository, branch, state.head]);
-    const cached = pullRequestStates.get(cacheKey);
-    // Merged is final for this head. Other answers are reused for a while,
-    // except an open or missing one the chat's own record already contradicts.
-    const reusable =
-      !closedBefore &&
-      cached !== undefined &&
-      (cached.state === "merged" ||
-        (cached.at <= ctx.now &&
-          ctx.now - cached.at < PULL_REQUEST_REUSE_MS &&
-          !(finishedHint && cached.state !== "closed")));
-    const pullRequest = reusable
-      ? cached.state
-      : yield* gitManager.branchPullRequest({ cwd: state.path, branch }, { refresh: true }).pipe(
-          Effect.map((found) => found?.state ?? ("none" as const)),
-          Effect.orElseSucceed(() => null),
-        );
-    if (pullRequest === null) {
-      // A host that gave no answer is never remembered; the folder stays.
-      state.git = { ...facts, pullRequest: null };
-      return;
-    }
-    if (!reusable) {
-      if (pullRequestStates.size >= PULL_REQUEST_CACHE_ENTRIES) pullRequestStates.clear();
-      pullRequestStates.set(cacheKey, { state: pullRequest, at: ctx.now });
-    }
-    const contentIntegrated =
-      pullRequest === "merged" &&
-      (facts.headInDefault === true ||
-        (state.head !== null &&
-          state.base !== null &&
-          (yield* worktreeHasNoAdditionalChanges(git, state.path, state.head, state.base).pipe(
-            Effect.orElseSucceed(() => false),
-          ))));
-    state.git = { ...facts, pullRequest: { state: pullRequest, contentIntegrated } };
-  });
-
-  // Walked on every look, the one under the lease included: a repository
-  // cloned into an ignored dependency folder changes nothing else Git reports.
-  const readNested = Effect.fn("WorktreeCleanupSweep.readNested")(function* (state: MemberState) {
-    const facts = state.git;
-    if (facts === undefined) return;
-    // Git refuses to remove a worktree with a checked-out submodule, and its
-    // commits may be nowhere else: it counts as a repository inside.
-    const submodule = !(yield* fs
-      .exists(path.join(state.path, ".gitmodules"))
-      .pipe(Effect.orElseSucceed(() => true)))
-      ? false
-      : yield* run(
-          state.path,
-          "WorktreeCleanupSweep.submodules",
-          ["submodule", "status"],
-          256 * 1024,
-        ).pipe(
-          Effect.map((result) =>
-            result.exitCode !== 0 || result.stdoutTruncated
-              ? null
-              : result.stdout.split("\n").some((line) => line !== "" && !line.startsWith("-")),
-          ),
-          Effect.orElseSucceed(() => null),
-        );
-    // No exclude rules: every untracked path, ignored ones included.
-    const listing = submodule === false ? yield* listOthers(state, [], 1024 * 1024) : null;
-    const nestedRepository =
-      submodule === true
-        ? true
-        : listing === null
-          ? null
-          : yield* Effect.tryPromise({
-              try: (signal) => findRepository(state.path, listing.entries, signal),
-              catch: () => null,
-            }).pipe(
-              Effect.timeoutOption(NESTED_WALK_TIMEOUT),
-              Effect.map((found) => (Option.isSome(found) ? found.value : null)),
-              Effect.orElseSucceed(() => null),
-            );
-    state.git = { ...facts, nestedRepository };
-  });
+  const facts = makeMemberFacts({ git, gitManager, fs, path });
+  const { readMemberGit, readHeadInDefault, readPullRequest, readNested } = facts;
 
   /**
    * Who uses the folder right now: its chats and their states, chats of
@@ -754,12 +355,15 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
     const { folder, key } = group;
     const spellings = [...new Set([...(yield* spellingsOf(folder)), key])];
     const owners = new Map(ctx.bindings.threads.map((owner) => [owner.threadId, owner]));
-    // A chat is closed only when its shell and its stored row both say so.
+    // A chat is closed only when its shell and its stored row both say so,
+    // and finished only when its stored runs show none in progress either.
     const stateOf = (chat: OrchestrationV2ThreadShell): FinishedChatState => {
       const owner = owners.get(chat.id);
-      return owner === undefined || ownWorktreeThreadState(owner) === "open"
-        ? "open"
-        : chatState(chat);
+      if (owner === undefined) return "open";
+      const shell = chatState(chat, ctx.now);
+      if (ownWorktreeThreadState(owner) === "open")
+        return shell === "finished" && owner.busy === false ? "finished" : "open";
+      return shell === "finished" ? "open" : shell;
     };
     const {
       threads: nearbyOwners,
@@ -778,10 +382,18 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
       ctx.processCwds?.some(
         (cwd) => pathWithin(path, realFolder, cwd) || pathWithin(path, folder, cwd),
       ) ?? false;
+    // A session record of a chat of this folder that is itself finished is a
+    // session at rest: the process list below still catches one that works.
+    const atRest = new Set(
+      group.chats.filter((chat) => stateOf(chat) !== "open").map((chat) => chat.id as string),
+    );
+    const working = sessions.filter(
+      (session) => session.threadId === null || !atRest.has(session.threadId),
+    );
     const inUse =
       terminals.length > 0
         ? "A terminal is open in it."
-        : sessions.length > 0
+        : working.length > 0
           ? "An agent session works in it."
           : processInside
             ? "A process works in it."
@@ -853,10 +465,15 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
         : [{ repository: "", relativePath: "" }];
       for (const member of listed) {
         const memberPath = worktreeSetMemberPath(folder, member, path);
-        // A member already gone has nothing left to lose.
+        // A member already gone has nothing left to lose; neither has the
+        // empty folder a removal left where it was.
         if (
           member.relativePath !== "" &&
-          !(yield* fs.exists(memberPath).pipe(Effect.orElseSucceed(() => true)))
+          (!(yield* fs.exists(memberPath).pipe(Effect.orElseSucceed(() => true))) ||
+            (yield* fs.readDirectory(memberPath).pipe(
+              Effect.map((names) => names.every((name) => name === ".DS_Store")),
+              Effect.orElseSucceed(() => false),
+            )))
         )
           continue;
         // A member is a folder of this folder: one that leads elsewhere (a
@@ -1039,211 +656,33 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
     } satisfies Assessment;
   });
 
-  /**
-   * Copies ignored media to a new evidence folder and checks each copy by
-   * size. Returns that folder, or null when a copy failed; what a failed run
-   * copied is removed again, so retries never pile up copies.
-   */
-  const copyMedia = Effect.fn("WorktreeCleanupSweep.copyMedia")(function* (
-    assessment: Assessment,
-    now: number,
-  ) {
-    const files = assessment.members.flatMap((state) =>
-      state.media.map((file) => ({ state, file })),
-    );
-    const base = path.join(
-      config.baseDir,
-      "evidence",
-      "removed-worktrees",
-      `${path.basename(assessment.group.folder)}-${evidenceStamp(now)}`,
-    );
-    let target = base;
-    for (let index = 2; ; index += 1) {
-      // An unreadable evidence folder is a failed copy, not a reason to keep looking.
-      const taken = yield* fs.exists(target).pipe(Effect.orElseSucceed(() => null));
-      if (taken === false) break;
-      if (taken === null || index > 100) return null;
-      target = `${base}-${index}`;
-    }
-    const copied = yield* Effect.gen(function* () {
-      for (const { state, file } of files) {
-        const source = path.join(state.path, file.relative);
-        const copy = path.join(target, state.member.relativePath, file.relative);
-        yield* fs.makeDirectory(path.dirname(copy), { recursive: true });
-        yield* fs.copyFile(source, copy);
-        const sizes = [(yield* fs.stat(source)).size, (yield* fs.stat(copy)).size];
-        if (sizes.some((size) => Number(size) !== file.bytes)) return false;
-      }
-      yield* fs.writeFileString(
-        path.join(target, "manifest.json"),
-        `${encodeJson({
-          folder: assessment.group.folder,
-          removedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
-          reason: assessment.decision.reason,
-          members: assessment.members.map((state) => ({
-            relativePath: state.member.relativePath,
-            repository: state.repository,
-            branch: state.git?.branch ?? null,
-            head: state.head,
-          })),
-          files: files.map(({ state, file }) => ({
-            member: state.member.relativePath,
-            path: file.relative,
-            bytes: file.bytes,
-          })),
-        })}\n`,
-      );
-      return true;
-    }).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("storage cleanup could not copy media to evidence", {
-          folder: assessment.group.folder,
-          error,
-        }).pipe(Effect.as(false)),
-      ),
-    );
-    if (copied) return target;
-    yield* discardEvidence(target);
-    return null;
+  const failures = new WorktreeRemovalFailures(config.stateDir);
+  const { copyMedia, discardEvidence, removeMembers } = makeRemoval({
+    git,
+    gitManager,
+    fs,
+    path,
+    baseDir: config.baseDir,
+    platform,
+    inside,
+    realOrNull,
+    memberStaysInside,
+    readMemberGit,
+    readNested,
   });
 
-  /** Removes an evidence folder this run made for a removal that then did not happen. */
-  const discardEvidence = (target: string) =>
-    fs.remove(target, { recursive: true, force: true }).pipe(Effect.ignore);
-
-  /** Removes a folder that holds nothing, or only Finder's `.DS_Store`. */
-  const removeIfEmpty = (folder: string) =>
-    fs.readDirectory(folder).pipe(
-      Effect.flatMap((names) =>
-        names.every((name) => name === ".DS_Store")
-          ? fs.remove(folder, { recursive: true })
-          : Effect.void,
-      ),
-      Effect.ignore,
-    );
-
-  /**
-   * One member read again right before it goes: false when anything in it or
-   * about it differs from the assessment the removal rests on. Git deletes
-   * ignored files without asking, and earlier members can take minutes.
-   */
-  const memberUnchanged = Effect.fn("WorktreeCleanupSweep.memberUnchanged")(
-    function* (assessment: Assessment, state: MemberState) {
-      if (
-        state.member.relativePath !== "" &&
-        !(yield* memberStaysInside(assessment.group.folder, state.path))
-      )
-        return false;
-      const registration = yield* checkWorktreeRegistration(state.path);
-      if (!registration.ok || registration.locked) return false;
-      // The same repository the assessment found, by the same rule.
-      const inSet = state.member.repository !== "";
-      if (inSet) {
-        if ((yield* realOrNull(path.join(state.repository, ".git"))) !== registration.commonDir)
-          return false;
-      } else if (registration.repository !== state.repository) return false;
-      // A volume mounted at the folder itself has the same real path and other files.
-      if (state.member.relativePath === "") {
-        const real = yield* realOrNull(state.path);
-        if (real === null) return false;
-        const [own, parent] = yield* Effect.all([fs.stat(real), fs.stat(path.dirname(real))]);
-        if (own.dev !== parent.dev) return false;
-      }
-      const again: MemberState = {
-        ...state,
-        head: null,
-        base: null,
-        media: [],
-        fingerprint: "",
-        git: undefined,
-      };
-      yield* readMemberGit(
-        again,
-        assessment.chatBranch,
-        assessment.members.length > 1 || state.member.repository !== "",
-      );
-      if (again.fingerprint !== state.fingerprint) return false;
-      yield* readNested(again);
-      return again.git?.nestedRepository === false;
-      // Anything unreadable counts as changed.
-    },
-    Effect.orElseSucceed(() => false),
-  );
-
-  /**
-   * Removes the members deepest first without force, stopping at the first
-   * that changed or that Git refuses, then removes the folders left empty.
-   * Branches and the manifest stay.
-   */
-  const removeMembers = Effect.fn("WorktreeCleanupSweep.removeMembers")(function* (
-    assessment: Assessment,
-    /** Read right before each member goes: false when the folder's use changed. */
-    stillFree: Effect.Effect<boolean>,
-  ) {
-    const depth = (state: MemberState) =>
-      state.member.relativePath === "" ? 0 : state.member.relativePath.split(path.sep).length;
-    let gone = 0;
-    for (const state of assessment.members.toSorted((left, right) => depth(right) - depth(left))) {
-      // Removing a member can take minutes: a chat may have been reopened meanwhile.
-      // Use, then the member itself, then use again: the member walk takes time too.
-      if (
-        !(yield* stillFree) ||
-        !(yield* memberUnchanged(assessment, state)) ||
-        !(yield* stillFree)
-      )
-        return { stopped: "changed" as const, member: "", gone };
-      // Files Git leaves behind were checked by nobody: they stay, and so does the rest.
-      const removal = yield* git
-        .removeWorktree({
-          cwd: state.repository,
-          path: state.path,
-          force: false,
-          keepLeftBehind: true,
-        })
-        .pipe(Effect.result);
-      if (removal._tag === "Failure") {
-        yield* Effect.logWarning("storage cleanup could not remove a worktree; the rest stays", {
-          folder: assessment.group.folder,
-          member: state.member.relativePath,
-          removedBefore: gone,
-          error: removal.failure,
-        });
-        return {
-          stopped: "refused" as const,
-          member: state.member.relativePath === "" ? "the folder" : state.member.relativePath,
-          gone,
-        };
-      }
-      gone += 1;
-    }
-    // No `git worktree prune`: a removal that succeeded dropped its own
-    // registration, and a prune would also drop every other worktree of the
-    // repository whose folder is missing right now, such as one on a drive
-    // that is not mounted.
-    for (const repository of new Set(assessment.members.map((state) => state.repository)))
-      yield* gitManager.invalidateStatus(repository);
-    const folder = assessment.group.folder;
-    for (const state of assessment.members) {
-      let parent = path.dirname(state.path);
-      while (inside(folder, parent)) {
-        yield* removeIfEmpty(parent);
-        parent = path.dirname(parent);
-      }
-    }
-    if (yield* fs.exists(folder).pipe(Effect.orElseSucceed(() => false)))
-      yield* removeIfEmpty(folder);
-    return { stopped: null, member: "", gone };
-  });
-
-  const measure = (folder: string) =>
-    Effect.tryPromise({
-      try: (signal) => folderBytes(folder, signal),
-      catch: () => null,
-    }).pipe(
-      Effect.timeoutOption(SIZE_WALK_TIMEOUT),
-      Effect.map((bytes) => (Option.isSome(bytes) ? bytes.value : null)),
-      Effect.orElseSucceed(() => null),
-    );
+  /** A folder's size within `budgetMs`; null (size unknown) past it or past the entry limit. */
+  const measure = (folder: string, budgetMs: number) =>
+    budgetMs <= 0
+      ? Effect.succeed(null)
+      : Effect.tryPromise({
+          try: (signal) => folderBytes(folder, signal),
+          catch: () => null,
+        }).pipe(
+          Effect.timeoutOption(Duration.millis(Math.min(SIZE_WALK_TIMEOUT_MS, budgetMs))),
+          Effect.map((bytes) => (Option.isSome(bytes) ? bytes.value : null)),
+          Effect.orElseSucceed(() => null),
+        );
 
   /**
    * Under the lease: reads everything again, keeps the folder on any change,
@@ -1323,14 +762,24 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
       return live.key === liveness;
       // Anything unreadable counts as changed.
     }).pipe(Effect.orElseSucceed(() => false));
-    const removal = yield* removeMembers(last, stillFree);
+    const removal = yield* removeMembers(last, stillFree, evidence);
     if (removal.stopped !== null) {
-      // Nothing went, so the copies made for this removal are not needed.
-      if (removal.gone === 0 && evidence !== null) yield* discardEvidence(evidence);
-      const why =
-        removal.stopped === "changed"
-          ? "It changed, or its use did, right before removal"
-          : `Git refused to remove ${removal.member}`;
+      // Nothing went and Git was never asked, so the copies made for this
+      // removal are not needed. After any attempt they stay: Git may have
+      // deleted an ignored file before it gave up, and the copy is all left.
+      if (removal.stopped === "changed" && removal.gone === 0 && evidence !== null)
+        yield* discardEvidence(evidence);
+      if (removal.failure !== null) {
+        failures.record(first.group.key, removal.failure);
+        yield* Effect.logWarning("storage cleanup left a worktree Git could not remove", {
+          folder: first.group.folder,
+          member: removal.failure.member,
+          what: removal.failure.what,
+          holders: removal.failure.holders,
+        });
+        return changed(removalFailureDetail(removal.failure));
+      }
+      const why = "It changed, or its use did, right before removal";
       return changed(
         removal.gone === 0
           ? `${why}; nothing was removed.`
@@ -1340,6 +789,7 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
     // Counted as removed only when the folder is gone.
     if (yield* fs.exists(first.group.folder).pipe(Effect.orElseSucceed(() => true)))
       return changed("Its worktrees were removed; what is left in the folder stays.");
+    failures.clear(first.group.key);
     yield* Effect.logInfo("storage cleanup removed worktree", {
       folder: first.group.folder,
       reason: last.decision.reason,
@@ -1352,6 +802,7 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
     mode: WorktreeSweepMode,
     settings: ServerSettings,
     now: number,
+    sweepOptions: WorktreeSweepOptions,
   ) {
     const empty: WorktreeSweepResult = { items: [], removed: [], complete: false };
     const roots: Array<string> = [];
@@ -1369,8 +820,18 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
       bindings: readBindings,
     }).pipe(Effect.option);
     if (Option.isNone(read)) return empty;
-    const groups = yield* readGroups(read.value.snapshot.threads, settings).pipe(Effect.option);
-    if (Option.isNone(groups)) return empty;
+    const allGroups = yield* readGroups(read.value.snapshot.threads, settings).pipe(Effect.option);
+    if (Option.isNone(allGroups)) return empty;
+    const only = sweepOptions.onlyThreads;
+    const groups = {
+      value:
+        only === undefined
+          ? allGroups.value
+          : allGroups.value.filter((group) =>
+              [...group.chats, ...group.deleted].some((chat) => only.has(chat.id)),
+            ),
+    };
+    const sizesStartedAt = yield* Clock.currentTimeMillis;
     const ctx: SweepContext = {
       mode,
       settings,
@@ -1387,7 +848,11 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
     for (const group of groups.value) {
       const outcome = yield* Effect.gen(function* () {
         const assessment = yield* assess(group, ctx, null);
-        if (assessment === null) return null;
+        if (assessment === null) {
+          // The folder is gone, so what Git once left in it is too.
+          if (mode === "apply") failures.clear(group.key);
+          return null;
+        }
         let decision = assessment.decision;
         let bytes: number | null = null;
         if (mode === "plan" || decision.action === "remove") {
@@ -1396,8 +861,22 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
             (total, state) => total + state.media.reduce((sum, file) => sum + file.bytes, 0),
             0,
           );
-          const measured = yield* measure(group.folder);
+          // The walks of one plan share a budget; a folder past it reads "size unknown".
+          const spent = (yield* Clock.currentTimeMillis) - sizesStartedAt;
+          const measured = yield* measure(group.folder, SIZE_WALK_BUDGET_MS - spent);
           bytes = measured === null ? null : Math.max(0, measured - media);
+        }
+        // A folder Git could not remove says so until it is gone; it is not
+        // tried again while Git has no registration to remove it by.
+        const failure = failures.get(group.key);
+        if (failure !== undefined) {
+          const stands = removalFailureStands(failure, {
+            registrationBroken: assessment.members.some((state) => state.registration !== null),
+            now,
+          });
+          if (stands)
+            decision = { action: "keep", reason: "unknown", detail: removalFailureDetail(failure) };
+          else if (mode === "apply") failures.clear(group.key);
         }
         if (mode === "apply" && decision.action === "remove") {
           const leasePaths = [...new Set([group.folder, group.key])].sort();
@@ -1425,7 +904,7 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
           ? { action: "keep", reason: "unknown", detail: "It could not be checked." }
           : outcome.decision;
       const bytes = outcome === "failed" ? null : outcome.bytes;
-      if (outcome === "failed" || (mode === "plan" && bytes === null)) complete = false;
+      if (outcome === "failed") complete = false;
       if (decision.action === "keep" && mode === "apply")
         yield* Effect.logDebug("storage cleanup kept worktree", {
           folder: group.folder,
@@ -1446,6 +925,10 @@ export const makeWorktreeCleanupSweep = Effect.fn("WorktreeCleanupSweep.make")(f
     }
     return { items, removed, complete } satisfies WorktreeSweepResult;
   });
-  return (mode: WorktreeSweepMode, settings: ServerSettings, now: number) =>
-    runSweep(mode, settings, now).pipe(Effect.provideContext(services));
+  return (
+    mode: WorktreeSweepMode,
+    settings: ServerSettings,
+    now: number,
+    sweepOptions: WorktreeSweepOptions = {},
+  ) => runSweep(mode, settings, now, sweepOptions).pipe(Effect.provideContext(services));
 });

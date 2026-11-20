@@ -263,6 +263,7 @@ function AddToMachineBody({
       destinationEnvironmentId: destination,
       operationId,
       signal: controller.signal,
+      wholeFolder: true,
     }).then(
       ({ offer, summary }) => {
         if (!controller.signal.aborted) setScan({ state: "ready", offer, summary });
@@ -316,7 +317,10 @@ function AddToMachineBody({
     : !checksSupported
       ? `${destName} needs a newer SpecWithCode to add projects. Update SpecWithCode on ${destName}, then try again.`
       : !urls
-        ? `This project has no Git remote, so ${destName} has nothing to clone from. Copy its folder there instead: the project's menu > Add to another machine… > Review files to transfer.`
+        ? tx(
+            "This project has no Git remote, so {machine} has nothing to clone from. Copy its folder there instead: the machine menu > Add to another machine… > Copy the whole folder.",
+            { machine: destName },
+          )
         : null;
 
   const run = async (work: (signal: AbortSignal | undefined) => Promise<void>) => {

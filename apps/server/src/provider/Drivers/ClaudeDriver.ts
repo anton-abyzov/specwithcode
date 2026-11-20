@@ -37,7 +37,14 @@ import {
 import * as ServerSettings from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeClaudeScopedLimitNames } from "../claudeUsageLimits.ts";
-import { claudeAccountConfigPath, claudeLoginIdentity, watchLoginChanges } from "../loginWatch.ts";
+import {
+  anthropicProfileDirectory,
+  anthropicProfileMark,
+  claudeAccountConfigPath,
+  claudeLoginIdentity,
+  readLoginIdentity,
+  watchMarkChanges,
+} from "../loginWatch.ts";
 import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
 import {
   checkClaudeProviderStatus,
@@ -49,7 +56,7 @@ import {
 } from "../ClaudeProvider.ts";
 import { makeClaudeCliAuth } from "../ClaudeCliLogin.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
-import { makeSubscriptionMemory } from "../subscriptionIdentity.ts";
+import { claudeSubscriptionReadOf, makeSubscriptionMemory } from "../subscriptionIdentity.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import { resolveClaudeModelCatalog, scopeClaudeModelCatalog } from "../ClaudeModelCatalog.ts";
 import { createClaudeNativeCatalog } from "../ClaudeNativeModels.ts";
@@ -206,6 +213,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         {
           scopedLimitNames,
           onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+          subscription: Effect.suspend(() => snapshot.getSnapshot).pipe(
+            Effect.map(claudeSubscriptionReadOf),
+          ),
           modelCatalog: () => scopeClaudeModelCatalog(catalogState.current(), config.customModels),
         },
       ).pipe(
@@ -253,6 +263,26 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         cwd,
         processEnv,
       );
+      // Who this instance is signed in as, from files only (no command, no
+      // token read): the claude.ai account in `.claude.json` and a mark of the
+      // Anthropic profile folder, whose Console sign-in outranks it. The probe
+      // cache is keyed on it, so whatever asks next (a pressed Refresh, the
+      // timer, a new turn) reads a terminal `/login` past the cache even when
+      // no file event reached the watcher below.
+      const profileDirectory = yield* anthropicProfileDirectory(processEnv);
+      const readLoginKey = Effect.all([
+        readLoginIdentity(accountConfigPath, claudeLoginIdentity),
+        anthropicProfileMark(profileDirectory),
+      ]).pipe(
+        Effect.map(([account, profile]) => JSON.stringify([account ?? null, profile])),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      );
+      const readCapabilities = readLoginKey.pipe(
+        Effect.flatMap((loginKey) =>
+          Cache.get(capabilitiesProbeCache, `${capabilitiesCacheKey}\0${loginKey}`),
+        ),
+      );
 
       // Start the TTL-gated refresh without delaying provider readiness. The
       // next check observes a remote manifest after the background fetch lands.
@@ -265,7 +295,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
             Effect.flatMap((manifest) =>
               checkClaudeProviderStatus(
                 effectiveConfig,
-                () => Cache.get(capabilitiesProbeCache, capabilitiesCacheKey),
+                () => readCapabilities,
                 processEnv,
                 cwd,
                 resolveClaudeModelCatalog(manifest),
@@ -357,12 +387,20 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         Effect.provideService(Path.Path, path),
       );
 
-      // A `/login` in a terminal switches the account under this instance; drop
-      // the cached probe so the meter shows the new account, not the old one.
+      // A `/login` in a terminal switches the account under this instance, and
+      // so does a Console sign-in or sign-out in the Anthropic profile folder;
+      // re-check straight away so the meter shows the new account, not the old one.
       if (enabled) {
-        yield* watchLoginChanges({
-          filePath: accountConfigPath,
-          readIdentity: claudeLoginIdentity,
+        yield* watchMarkChanges({
+          watches: [
+            {
+              directory: path.dirname(accountConfigPath),
+              fileName: path.basename(accountConfigPath),
+            },
+            { directory: profileDirectory },
+            { directory: path.join(profileDirectory, "configs") },
+          ],
+          readMark: readLoginKey,
           onChange: Cache.invalidateAll(capabilitiesProbeCache).pipe(
             Effect.andThen(snapshot.refresh),
             Effect.ignoreCause({ log: true }),

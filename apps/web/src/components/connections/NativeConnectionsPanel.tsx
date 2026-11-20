@@ -145,6 +145,7 @@ export function NativeConnectionsPanel({
     const steps = serverRowSteps(row, action);
     if (steps.length === 0) return;
     setPendingId(`row:${row.name}`);
+    setBatch(null);
     setSaved(null);
     setResults(null);
     setProposal(null);
@@ -360,6 +361,7 @@ export function NativeConnectionsPanel({
                   rows={rows}
                   machine={machine}
                   busy={pendingId !== null}
+                  canAdd={canEdit && !legacy && !adding}
                   onAct={canEdit && !legacy ? (row, action) => void act(row, action) : undefined}
                 />
               </>

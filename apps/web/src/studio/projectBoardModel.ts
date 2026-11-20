@@ -661,3 +661,62 @@ export function boardPullRequestChip(urls: ReadonlyArray<string>): BoardPullRequ
     items: urls.map((url) => ({ url, label: pullRequestLabel(url) })),
   };
 }
+
+/* Where a card was read from, and how far the project folder lags ---------- */
+
+/** Fills `{name}` slots in an English phrase, translated or not (`useTx`). */
+type BoardPhrase = (english: string, values?: Readonly<Record<string, string | number>>) => string;
+
+/**
+ * Increments of the project that are not done: Planned, Active and In review.
+ * The server's whole-project count when it sends one, so a search does not
+ * change it; an older server's column counts otherwise.
+ */
+export function boardNotDone(result: Pick<ProjectBoardResult, "counts" | "notDone">): number {
+  return result.notDone ?? result.counts.planned + result.counts.active + result.counts.review;
+}
+
+/** The tooltip of a card's source line. */
+export const boardSourceTitle = (tx: BoardPhrase) =>
+  tx("This is the newest copy of the increment. The project folder's copy is older or missing.");
+
+/**
+ * "From worktree fix-x" or "From origin/main" for a card whose copy is not the
+ * project folder's. With `age` (compactAge of when the branch was last
+ * fetched: "2h", "now", or "" when unknown) a remote copy also says that.
+ */
+export function boardSourceLine(
+  source: NonNullable<ProjectBoardCard["source"]>,
+  tx: BoardPhrase,
+  age = "",
+): string {
+  if (source.kind === "worktree") return tx("From worktree {name}", { name: source.name });
+  if (age === "now") return tx("From {branch}, fetched just now", { branch: source.name });
+  if (age !== "") return tx("From {branch}, fetched {age} ago", { branch: source.name, age });
+  return tx("From {branch}", { branch: source.name });
+}
+
+/**
+ * "Project folder is 61 commits behind origin/main", with a title that adds
+ * when the branch was last fetched; null when it is not behind or the server
+ * does not say.
+ */
+export function boardBehindLine(
+  behind: ProjectBoardResult["behind"],
+  tx: BoardPhrase,
+  age = "",
+): { readonly text: string; readonly title: string } | null {
+  if (behind === undefined || behind.count <= 0) return null;
+  const values = { count: behind.count, branch: behind.ref };
+  const text =
+    behind.count === 1
+      ? tx("Project folder is {count} commit behind {branch}", values)
+      : tx("Project folder is {count} commits behind {branch}", values);
+  const fetched =
+    age === "now"
+      ? tx("Last fetched just now.")
+      : age !== ""
+        ? tx("Last fetched {age} ago.", { age })
+        : null;
+  return { text, title: fetched ? `${text}. ${fetched}` : `${text}.` };
+}

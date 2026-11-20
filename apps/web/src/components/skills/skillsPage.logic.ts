@@ -31,14 +31,19 @@ export function builtInSkillSource(row: ProjectSkillRow): string {
 }
 
 /**
- * Agents this machine has whose scan answered with no skills at all. A scan
- * that failed, timed out or is unsupported did not report zero.
+ * Agents this machine has whose own fresh, complete read of this folder
+ * answered with no skills at all. A scan that failed, timed out, is cached,
+ * partial or unsupported did not report zero, and neither did the app's scan
+ * of an agent's usual folders, which is not every place that agent reads.
  */
 export function emptySkillAgents(snapshot: ProjectSkillsSnapshot): ReadonlyArray<string> {
   return snapshot.providers
     .filter(
       (provider) =>
-        (provider.state === "ok" || provider.state === "cached") && provider.skills === 0,
+        provider.state === "ok" &&
+        provider.incomplete !== true &&
+        provider.discovery !== "folder-scan" &&
+        provider.skills === 0,
     )
     .map((provider) => provider.label);
 }

@@ -222,7 +222,9 @@ describe("the Skills page on one machine", () => {
       "notes",
       "planBuilt into the agent",
     ]);
-    expect(matrix.querySelectorAll('button, input, [role="switch"]')).toHaveLength(0);
+    // Read-only: the search box is the only control.
+    expect(matrix.querySelectorAll('button, [role="switch"]')).toHaveLength(0);
+    expect(matrix.querySelectorAll("input")).toHaveLength(1);
     expect(view.querySelector('[data-testid="skills-table"]')).toBeNull();
     expect(view.querySelector('[data-testid="skills-built-in"]')).toBeNull();
     await act(async () => button("On Desk").click());

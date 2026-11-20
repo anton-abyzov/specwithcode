@@ -1889,6 +1889,12 @@ export const ServerSettings = Schema.Struct({
    * `STUDIO_CRASH_REPORTS=false` turns them off regardless of this setting.
    */
   crashReportsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
+   * "Copy over the local network when both machines are on it" (1390 T-17). Off by
+   * default on every machine. It takes effect only where the review gate is open
+   * (`folderCopyLanGateOpen`), and both machines of a copy must have it on.
+   */
+  folderCopyOverLan: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   worktreeCleanup: WorktreeCleanup.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   storageCleanup: StorageCleanupSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed(Schema.decodeSync(StorageCleanupSettings)({}))),
@@ -2033,6 +2039,14 @@ export const ServerSettings = Schema.Struct({
    * of asking the user to pick an unnamed browser. Off keeps Claude in Chrome.
    */
   preferSpecWithCodeBrowser: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
+   * Developer switch: the Chrome relay also admits a copy of the SpecWithCode
+   * Browser extension loaded by hand (any extension id). Off, only the Chrome
+   * Web Store copy may connect. The pairing token is still required either way.
+   */
+  allowHandLoadedBrowserExtension: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   /** A machine-wide choice with no project override; see `ProviderSessionIdleMinutes`. */
   providerSessionIdleMinutes: ProviderSessionIdleMinutes.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_SESSION_IDLE_MINUTES)),
@@ -2536,6 +2550,7 @@ const OpenCodeSettingsPatch = Schema.Struct({
 export const ServerSettingsPatch = Schema.Struct({
   agentInstructions: Schema.optionalKey(AgentInstructions),
   crashReportsEnabled: Schema.optionalKey(Schema.Boolean),
+  folderCopyOverLan: Schema.optionalKey(Schema.Boolean),
   claudeWorkflowMode: Schema.optionalKey(ClaudeWorkflowMode),
   responseStyle: Schema.optionalKey(ResponseStyle),
   worktreeCleanup: Schema.optionalKey(
@@ -2603,6 +2618,7 @@ export const ServerSettingsPatch = Schema.Struct({
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
   enableAgentComputerAccess: Schema.optionalKey(Schema.Boolean),
   preferSpecWithCodeBrowser: Schema.optionalKey(Schema.Boolean),
+  allowHandLoadedBrowserExtension: Schema.optionalKey(Schema.Boolean),
   providerSessionIdleMinutes: Schema.optionalKey(ProviderSessionIdleMinutes),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
   aideEnabled: Schema.optionalKey(Schema.Boolean),

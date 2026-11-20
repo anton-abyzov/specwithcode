@@ -1,0 +1,1009 @@
+// @effect-diagnostics nodeBuiltinImport:off - the receiver writes bundles and worktrees with Git.
+/**
+ * The destination half of a handoff in the previous release, v1.0.378, copied
+ * verbatim with `git show v1.0.378:apps/server/src/handoff/HandoffReceiver.ts`
+ * so the compatibility tests run today's source against a destination that has
+ * not updated yet. The takeover decisions it makes come from the same tag:
+ * `takeoverVerdict`, `markContinued` and `replaceIncoming` are copied below from
+ * `apps/server/src/handoff/handoffState.ts:603-613,653-738`, and
+ * `heartbeatContinued` is `previousHeartbeatContinued` (`previousRelease.test.fixture.ts`).
+ *
+ * Changed from the tag, and nothing else:
+ * - `HandoffRefusal` and `ReceiverCaller` are imported from today's module, where
+ *   they are unchanged since the tag, so both receivers fit one network stub;
+ * - `idleSeed` and `continuationThreadId` are no longer exported; the service
+ *   class is an interface of the same members, `make` returns them without
+ *   `HandoffReceiver.of`, and the layer is gone: tests build `make` on a
+ *   machine's services;
+ * - the imports follow from that.
+ * Never edit a body here: replace it from the tag of the release a later test pins.
+ */
+/**
+ * The destination half of a handoff (0967). Another machine (or this one,
+ * for a model change or "Continue here") replicates checkpoints here,
+ * preflights threads, takes one over at a newer lease epoch, and heartbeats
+ * the leases it holds. A takeover puts the work where the project's Use
+ * worktrees switch says: a new worktree (the base commit plus the checkpoint
+ * tree) when it is on, the project folder when it is off and can take it
+ * safely. Then it starts the continuation thread: a fresh provider session
+ * seeded from the checkpoint, never a migrated process.
+ *
+ * Every request names its source; a remote request arrives with the source's
+ * work grant, and a project joins only through an explicit link (0948).
+ */
+import {
+  teamRulesArrivingCarried,
+  teamRulesClampToCarried,
+  teamRulesClampMode,
+} from "@specweave-studio/shared/teamRules";
+import { teamRulesForFolder } from "../teamRules/TeamRules.ts";
+import { FLEET_ORIGIN_APP_LABEL } from "../mcp/threadOrigin.ts";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
+import {
+  appendThreadExecutionHistory,
+  CommandId,
+  type HandoffIncomingReplica,
+  type HandoffModeErrorCode,
+  type HandoffPreflightCheck,
+  type HandoffPreflightFailure,
+  type ModelSelection,
+  type Project,
+  type ProjectId,
+  type ServerProvider,
+  ThreadId,
+  type ThreadExecutionReason,
+  type ThreadExecutionRecord,
+} from "@specweave-studio/contracts";
+import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
+import * as KeyedLock from "@specweave-studio/shared/KeyedLock";
+import { projectUsesWorktrees } from "../mcp/toolkits/project/launchWorkspace.ts";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+
+import * as ServerSettings from "../serverSettings.ts";
+import { resolveHandoffPlacement } from "./handoffPlacement.ts";
+import * as ServerConfig from "../config.ts";
+import { clampRuntimeMode } from "../fleet/remoteWorkerMatching.ts";
+import { accountInGrant, projectInGrant } from "../fleet/workGrantPolicy.ts";
+import * as WorkGrants from "../fleet/WorkGrants.ts";
+import { runGit } from "../fleet/folderTransfer/git.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import {
+  applyBundle,
+  applyCheckpointInPlace,
+  applyCheckpointToWorktree,
+  availableBranch,
+  BundleError,
+  copyRequiredFiles,
+  type InPlaceRefusal,
+  incomingRef,
+  knownCommits,
+  missingFiles,
+  pinCommit,
+  refCommit,
+  resolveRepositoryPath,
+} from "./bundleGit.ts";
+import { refComponent } from "./checkpointGit.ts";
+import { HandoffMode } from "./HandoffMode.ts";
+import {
+  HANDOFF_CONTINUE_TEXT,
+  handoffSeed,
+  HANDOFF_SEED_MAX_CHARS,
+  type PreflightProvider,
+  NOT_LINKED_HERE,
+  preflightFailures,
+  shouldResume,
+} from "./handoffPreflight.ts";
+import { HandoffRefusal, type ReceiverCaller } from "./HandoffReceiver.ts";
+import {
+  emptyThreadRecord,
+  findIncoming,
+  type HandoffDocument,
+  incomingKey,
+  ambiguousLinkMessage,
+  linkedLocalProject,
+  type TakeoverVerdict,
+  upsertIncoming,
+} from "./handoffState.ts";
+import { previousHeartbeatContinued as heartbeatContinued } from "./previousRelease.test.fixture.ts";
+import type {
+  HeartbeatRequest,
+  HeartbeatResponse,
+  NegotiateRequest,
+  NegotiateResponse,
+  PeerPreflightRequest,
+  PeerPreflightResponse,
+  ReplicateMeta,
+  ReplicateResponse,
+  TakeoverReason,
+  TakeoverRequest,
+  TakeoverResponse,
+} from "./handoffWire.ts";
+import { HANDOFF_APP_VERSION, HANDOFF_PROTOCOL_VERSION, versionFailure } from "./handoffWire.ts";
+
+const refuse = (
+  status: number,
+  code: HandoffModeErrorCode,
+  message: string,
+  check?: HandoffPreflightCheck,
+) => new HandoffRefusal({ status, code, message, ...(check === undefined ? {} : { check }) });
+
+/**
+ * The seed an idle continuation keeps for its first turn: the same note and
+ * transcript, framed as context for the user's message rather than an order
+ * to resume.
+ */
+const idleSeed = (seed: string) =>
+  `Context from the handoff (the user's message follows):${
+    seed.startsWith(HANDOFF_CONTINUE_TEXT)
+      ? seed.slice(HANDOFF_CONTINUE_TEXT.length)
+      : `\n\n${seed}`
+  }`;
+
+const describe = (cause: unknown) =>
+  (cause instanceof Error ? cause.message : String(cause)).slice(0, 500);
+
+const fromBundleError = (label: string, cause: unknown) => {
+  if (cause instanceof BundleError) {
+    const code: HandoffModeErrorCode =
+      cause.code === "too_large" ? "too_large" : cause.code === "failed" ? "failed" : "invalid";
+    return refuse(cause.code === "failed" ? 500 : 409, code, `${label}: ${cause.message}`);
+  }
+  return refuse(500, "failed", `${label}: ${describe(cause)}`);
+};
+
+const noticeOf = (parts: ReadonlyArray<string | null>) => {
+  const notice = parts.filter((part): part is string => part !== null).join(" ");
+  return notice.length === 0 ? null : notice.slice(0, 500);
+};
+
+/** Why a project with Use worktrees off still got a worktree for arriving work. */
+const IN_PLACE_REFUSAL: Readonly<Record<InPlaceRefusal | "nested", string>> = {
+  dirty: "has uncommitted changes",
+  moved: "is at a different commit than the work started from",
+  blocked: "has files in the way",
+  midway: "is in the middle of a merge or rebase",
+  nested: "is not the repository this work belongs to",
+};
+
+const EXECUTION_REASON: Readonly<Record<TakeoverReason, ThreadExecutionReason>> = {
+  handoff: "handoff",
+  "machine-handoff": "machine-handoff",
+  sleep: "sleep",
+  "continue-here": "continue-here",
+  "auto-takeover": "auto-takeover",
+};
+
+/** The continuation's id: the same for every attempt at one takeover, so a retry never forks. */
+function continuationThreadId(
+  sourceEnvironmentId: string,
+  sourceThreadId: string,
+  epoch: number,
+): ThreadId {
+  const digest = NodeCrypto.createHash("sha256")
+    .update(`${sourceEnvironmentId}\u0000${sourceThreadId}\u0000${epoch}`)
+    .digest("hex")
+    .slice(0, 32);
+  return ThreadId.make(`handoff:${digest}`);
+}
+
+function toPreflightProvider(provider: ServerProvider): PreflightProvider {
+  return {
+    instanceId: provider.instanceId,
+    driver: provider.driver,
+    displayName: provider.displayName,
+    enabled: provider.enabled,
+    installed: provider.installed,
+    authStatus: provider.auth.status,
+    models: provider.models.map((model) => ({
+      slug: model.slug,
+      ...(model.aliases === undefined ? {} : { aliases: model.aliases }),
+    })),
+  };
+}
+
+/** The service the tag declared, by its shape alone: no second key for one service. */
+interface HandoffReceiver {
+  readonly negotiate: (
+    caller: ReceiverCaller,
+    request: NegotiateRequest,
+  ) => Effect.Effect<NegotiateResponse, HandoffRefusal>;
+  /** `bundle` null or empty: the checkpoint commit must already be here. */
+  readonly replicate: (
+    caller: ReceiverCaller,
+    meta: ReplicateMeta,
+    bundle: Uint8Array | null,
+  ) => Effect.Effect<ReplicateResponse, HandoffRefusal>;
+  readonly preflight: (
+    caller: ReceiverCaller,
+    request: PeerPreflightRequest,
+  ) => Effect.Effect<PeerPreflightResponse, HandoffRefusal>;
+  readonly takeover: (
+    caller: ReceiverCaller,
+    request: TakeoverRequest,
+  ) => Effect.Effect<TakeoverResponse, HandoffRefusal>;
+  readonly heartbeat: (
+    caller: ReceiverCaller,
+    request: HeartbeatRequest,
+  ) => Effect.Effect<HeartbeatResponse, HandoffRefusal>;
+}
+
+export const make = Effect.gen(function* () {
+  const handoff = yield* HandoffMode;
+  const projects = yield* ProjectService.ProjectService;
+  const providers = yield* ProviderRegistry.ProviderRegistry;
+  const launches = yield* ThreadLaunchService.ThreadLaunchService;
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const config = yield* ServerConfig.ServerConfig;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const grants = yield* WorkGrants.WorkGrants;
+  const locks = yield* KeyedLock.make<string>();
+  const label = handoff.machineLabel;
+  const at = (message: string) => `${label}: ${message}`;
+  const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+
+  const sameSource = (caller: ReceiverCaller, sourceEnvironmentId: string) =>
+    caller.sourceEnvironmentId === sourceEnvironmentId
+      ? Effect.void
+      : Effect.fail(
+          refuse(403, "invalid", at("the request names another machine than the one asking")),
+        );
+
+  const document = handoff.document.pipe(
+    Effect.mapError((error) => refuse(500, "failed", at(error.message))),
+  );
+  const updateDocument = <A>(
+    change: Parameters<typeof handoff.updateDocument<A>>[0],
+  ): Effect.Effect<A, HandoffRefusal> =>
+    handoff
+      .updateDocument(change)
+      .pipe(Effect.mapError((error) => refuse(500, "failed", at(error.message))));
+
+  /** The local project for the source project: the same one on this machine, else an explicit link. */
+  const localProject = (sourceEnvironmentId: string, sourceProjectId: ProjectId) =>
+    projects.snapshot.pipe(
+      Effect.mapError(() => refuse(500, "failed", at("could not read its projects"))),
+      Effect.flatMap((snapshot) => {
+        if (sourceEnvironmentId === handoff.environmentId)
+          return Effect.succeed(
+            snapshot.projects.find((project) => project.id === sourceProjectId) ?? null,
+          );
+        const found = linkedLocalProject(
+          snapshot.projects,
+          handoff.environmentId,
+          sourceEnvironmentId,
+          sourceProjectId,
+        );
+        return found.kind === "ambiguous"
+          ? Effect.fail(
+              refuse(409, "invalid", at(ambiguousLinkMessage(found.projects)), "project-link"),
+            )
+          : Effect.succeed(found.kind === "linked" ? found.project : null);
+      }),
+    );
+
+  const inGrant = (caller: ReceiverCaller, project: Project) =>
+    caller.grant === null ||
+    projectInGrant(caller.grant.projects, caller.sourceEnvironmentId, project);
+
+  /** Why the grant does not let the source run on this sign-in, or null when it does. */
+  const accountRefusal = (
+    caller: ReceiverCaller,
+    sourceLabel: string,
+    instanceId: ModelSelection["instanceId"],
+  ) => {
+    if (caller.grant === null || accountInGrant(caller.grant.accounts, instanceId)) return null;
+    const allowed =
+      caller.grant.accounts.kind === "listed" ? caller.grant.accounts.instanceIds : [];
+    return at(
+      allowed.length === 0
+        ? `this machine lets ${sourceLabel} use none of its sign-ins, so it cannot continue work here. The user can allow sign-ins in Settings > Machines > Who can run work here.`
+        : `this machine lets ${sourceLabel} use only these sign-ins: ${allowed.join(", ")}. The user can allow ${instanceId} in Settings > Machines > Who can run work here.`,
+    );
+  };
+
+  const requireProject = (caller: ReceiverCaller, sourceProjectId: ProjectId) =>
+    Effect.gen(function* () {
+      const project = yield* localProject(caller.sourceEnvironmentId, sourceProjectId);
+      if (project === null) {
+        return yield* refuse(409, "invalid", at(NOT_LINKED_HERE), "project-link");
+      }
+      if (!inGrant(caller, project)) {
+        return yield* refuse(403, "needs_grant", at(`no work grant for ${project.title}`), "grant");
+      }
+      return project;
+    });
+
+  const repositoryRoot = (project: Project, repositoryPath: string) =>
+    Effect.tryPromise({
+      try: () => resolveRepositoryPath(project.workspaceRoot, repositoryPath),
+      catch: (cause) => fromBundleError(label, cause),
+    });
+
+  const negotiate = (caller: ReceiverCaller, request: NegotiateRequest) =>
+    Effect.gen(function* () {
+      yield* sameSource(caller, request.sourceEnvironmentId);
+      const project = yield* requireProject(caller, request.sourceProjectId);
+      const root = yield* repositoryRoot(project, request.repositoryPath);
+      const known = yield* Effect.tryPromise({
+        try: () => knownCommits(root, request.candidates),
+        catch: (cause) => fromBundleError(label, cause),
+      });
+      return { known } satisfies NegotiateResponse;
+    });
+
+  const replicate = (caller: ReceiverCaller, meta: ReplicateMeta, bundle: Uint8Array | null) =>
+    Effect.gen(function* () {
+      yield* sameSource(caller, meta.sourceEnvironmentId);
+      const project = yield* requireProject(caller, meta.sourceProjectId);
+      const root = yield* repositoryRoot(project, meta.repositoryPath);
+      const targetRef = incomingRef(meta.sourceEnvironmentId, meta.sourceThreadId);
+      const commit = meta.checkpoint.commit;
+      yield* Effect.tryPromise({
+        try: async () => {
+          if (bundle === null || bundle.byteLength === 0) {
+            await pinCommit({ root, commit, targetRef });
+            return;
+          }
+          const scratch = await NodeFSP.mkdtemp(
+            NodePath.join(NodeOS.tmpdir(), "swc-handoff-incoming-"),
+          );
+          try {
+            const bundlePath = NodePath.join(scratch, "checkpoint.bundle");
+            await NodeFSP.writeFile(bundlePath, bundle, { mode: 0o600 });
+            await applyBundle({ root, bundlePath, commit, targetRef });
+          } finally {
+            await NodeFSP.rm(scratch, { recursive: true, force: true });
+          }
+        },
+        catch: (cause) => fromBundleError(label, cause),
+      });
+      const now = yield* nowIso;
+      const verdict = yield* updateDocument((current) => {
+        const result = upsertIncoming(current, {
+          meta,
+          projectId: project.id,
+          machineLabel: label,
+          now,
+        });
+        return [result, result.kind === "stored" ? result.document : current] as const;
+      });
+      if (verdict.kind === "refused") return yield* refuse(409, verdict.code, verdict.message);
+      const stored = findIncoming(verdict.document, meta.sourceEnvironmentId, meta.sourceThreadId);
+      return { sequence: stored?.checkpoint.sequence ?? meta.checkpoint.sequence };
+    });
+
+  const providerFor = (modelSelection: ModelSelection) =>
+    providers.getProviders.pipe(
+      Effect.map(
+        (list) =>
+          list.find((provider) => provider.instanceId === modelSelection.instanceId) ?? null,
+      ),
+      Effect.map((provider) => (provider === null ? null : toPreflightProvider(provider))),
+    );
+
+  /** Every failing check for one thread, worded for the user. */
+  const threadFailures = (
+    caller: ReceiverCaller,
+    input: {
+      readonly sourceThreadId: ThreadId;
+      readonly sourceProjectId: ProjectId;
+      readonly sequence: number;
+      readonly modelSelection: ModelSelection | null;
+    },
+  ) =>
+    Effect.gen(function* () {
+      const current = yield* document;
+      const replica = findIncoming(current, caller.sourceEnvironmentId, input.sourceThreadId);
+      const detail = (current.incomingDetails ?? {})[
+        incomingKey(caller.sourceEnvironmentId, input.sourceThreadId)
+      ];
+      const project = yield* localProject(caller.sourceEnvironmentId, input.sourceProjectId);
+      const modelSelection = input.modelSelection ?? detail?.modelSelection ?? null;
+      let missing: ReadonlyArray<string> = [];
+      if (project !== null && replica !== undefined && detail !== undefined) {
+        const required = replica.checkpoint.requiredSecretPaths ?? [];
+        if (required.length > 0) {
+          missing = yield* repositoryRoot(project, detail.repositoryPath).pipe(
+            Effect.flatMap((root) => Effect.promise(() => missingFiles(root, required))),
+            Effect.orElseSucceed(() => required),
+          );
+        }
+      }
+      const provider = modelSelection === null ? null : yield* providerFor(modelSelection);
+      const holder = replica?.lease;
+      const failures: Array<HandoffPreflightFailure> = preflightFailures({
+        machineLabel: label,
+        project:
+          project === null ? null : { title: project.title, inGrant: inGrant(caller, project) },
+        checkpointSequence: replica?.checkpoint.sequence ?? null,
+        requiredSequence: input.sequence,
+        missingFiles: missing,
+        modelSelection: modelSelection ?? {
+          instanceId: "unknown" as ModelSelection["instanceId"],
+          model: "unknown",
+        },
+        provider,
+        otherHolder:
+          holder !== undefined &&
+          holder.holderEnvironmentId !== caller.sourceEnvironmentId &&
+          holder.holderEnvironmentId !== handoff.environmentId
+            ? holder.holderLabel
+            : null,
+      });
+      const account =
+        modelSelection === null
+          ? null
+          : accountRefusal(
+              caller,
+              replica?.sourceLabel ?? "the source machine",
+              modelSelection.instanceId,
+            );
+      if (account !== null) failures.push({ check: "grant", message: account });
+      if (replica?.continuedThreadId != null) {
+        failures.push({ check: "lease", message: at("already continues this thread") });
+      }
+      return failures;
+    });
+
+  const preflight = (caller: ReceiverCaller, request: PeerPreflightRequest) =>
+    Effect.gen(function* () {
+      yield* sameSource(caller, request.sourceEnvironmentId);
+      const mismatch = versionFailure({
+        peerLabel: "The source machine",
+        peerProtocolVersion: request.protocolVersion,
+        peerAppVersion: request.appVersion,
+        selfLabel: label,
+      });
+      // A source from before the version check cannot decode check "version";
+      // it still reads the message under a check it knows.
+      const version =
+        mismatch === null
+          ? null
+          : request.protocolVersion === undefined
+            ? { ...mismatch, check: "checkpoint" as const }
+            : mismatch;
+      const results = yield* Effect.forEach(request.threads, (thread) =>
+        threadFailures(caller, thread).pipe(
+          Effect.map((failures) => ({
+            sourceThreadId: thread.sourceThreadId,
+            failures: version === null ? failures : [version, ...failures],
+          })),
+        ),
+      );
+      return {
+        machineLabel: label,
+        protocolVersion: HANDOFF_PROTOCOL_VERSION,
+        appVersion: HANDOFF_APP_VERSION,
+        results,
+      } satisfies PeerPreflightResponse;
+    });
+
+  /** A worktree at the checkpoint's base commit holding its files as uncommitted changes. */
+  const materialize = (input: {
+    readonly root: string;
+    readonly placement: { readonly worktreePath: string; readonly existing: boolean };
+    readonly sourceLabel: string;
+    readonly sourceThreadId: ThreadId;
+    readonly branch: string | null;
+    readonly baseCommit: string;
+    readonly commit: string;
+    readonly requiredFiles: ReadonlyArray<string>;
+  }) =>
+    Effect.tryPromise({
+      try: async () => {
+        const { worktreePath, existing } = input.placement;
+        if (existing) {
+          // A retried takeover finds the worktree its first attempt made.
+          const branch = (
+            await runGit(worktreePath, ["rev-parse", "--abbrev-ref", "HEAD"], {
+              allowFailure: true,
+            })
+          ).stdout.trim();
+          if (branch.length === 0) {
+            throw new BundleError("failed", `${worktreePath} exists and is not a worktree.`);
+          }
+          return { worktreePath, branch };
+        }
+        const branch = await availableBranch({
+          root: input.root,
+          branch: input.branch,
+          sourceLabel: input.sourceLabel,
+          sourceThreadId: input.sourceThreadId,
+        });
+        await NodeFSP.mkdir(NodePath.dirname(worktreePath), { recursive: true, mode: 0o700 });
+        await runGit(input.root, [
+          "worktree",
+          "add",
+          "-q",
+          "-b",
+          branch,
+          worktreePath,
+          input.baseCommit,
+        ]);
+        try {
+          await applyCheckpointToWorktree({
+            worktreePath,
+            baseCommit: input.baseCommit,
+            checkpointCommit: input.commit,
+          });
+          await copyRequiredFiles({
+            fromRoot: input.root,
+            toRoot: worktreePath,
+            paths: input.requiredFiles,
+          });
+        } catch (error) {
+          await runGit(input.root, ["worktree", "remove", "--force", worktreePath], {
+            allowFailure: true,
+          });
+          await runGit(input.root, ["branch", "-D", branch], { allowFailure: true });
+          throw error;
+        }
+        return { worktreePath, branch };
+      },
+      catch: (cause) => fromBundleError(label, cause),
+    });
+
+  const takeoverLocked = (caller: ReceiverCaller, request: TakeoverRequest) =>
+    Effect.gen(function* () {
+      const verdict = takeoverVerdict(yield* document, request, label);
+      if (verdict.kind === "repeat") return verdict.response;
+      if (verdict.kind === "refuse") {
+        return yield* refuse(409, verdict.code, verdict.message, verdict.check);
+      }
+      const { replica, detail } = verdict;
+      const failures = yield* threadFailures(caller, {
+        sourceThreadId: request.sourceThreadId,
+        sourceProjectId: detail.sourceProjectId,
+        sequence: request.sequence,
+        modelSelection: request.modelSelection,
+      });
+      if (failures.length > 0) {
+        const first = failures[0]!;
+        return yield* refuse(
+          first.check === "grant" ? 403 : 409,
+          first.check === "grant" ? "needs_grant" : "invalid",
+          failures.map((failure) => failure.message).join("; "),
+          first.check,
+        );
+      }
+      const project = yield* requireProject(caller, detail.sourceProjectId);
+      const root = yield* repositoryRoot(project, detail.repositoryPath);
+      const checkpoint = replica.checkpoint;
+      if (checkpoint.children?.some((child) => child.disposition === "unknown")) {
+        return yield* refuse(
+          409,
+          "invalid",
+          at(
+            "A child still has unknown execution ownership. Reconcile it on its owning host before takeover.",
+          ),
+          "checkpoint",
+        );
+      }
+      const seed = handoffSeed({
+        sourceLabel: replica.sourceLabel,
+        reason: request.reason,
+        checkpoint,
+        lastMessages: detail.transcript,
+      });
+      if (seed.length > HANDOFF_SEED_MAX_CHARS) {
+        return yield* refuse(
+          409,
+          "invalid",
+          at(
+            "The child context and irreversible-effect receipts exceed the handoff envelope. Keep the source paused and reduce optional context before retrying.",
+          ),
+          "checkpoint",
+        );
+      }
+      const held = yield* Effect.promise(() =>
+        refCommit(root, incomingRef(caller.sourceEnvironmentId, request.sourceThreadId)),
+      );
+      if (held !== checkpoint.commit) {
+        return yield* refuse(409, "invalid", at("no checkpoint for this thread"), "checkpoint");
+      }
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.mapError(() =>
+          refuse(500, "failed", at("could not read destination worktree settings")),
+        ),
+      );
+      const name = `${refComponent(project.title).slice(0, 32)}-handoff-${refComponent(
+        request.sourceThreadId,
+      ).slice(-16)}-e${request.epoch}`;
+      const placed = resolveHandoffPlacement({
+        repository: root,
+        name,
+        defaultDirectory: config.worktreesDir,
+        settings: resolveProjectSettings(settings, project.id).settings,
+      }).pipe(
+        Effect.mapError((cause) => refuse(409, "invalid", at(describe(cause)), "checkpoint")),
+      );
+      // With Use worktrees off the work belongs in the project folder, as every
+      // other thread's does. A folder that cannot take it safely keeps the
+      // worktree, and the answer says why.
+      const usesWorktrees = projectUsesWorktrees(
+        resolveProjectSettings(settings, project.id, project),
+      );
+      const placement = yield* Effect.exit(placed);
+      // A worktree already made for this takeover wins: a retry never moves the work.
+      const retriedInWorktree = Exit.isSuccess(placement) && placement.value.existing;
+      // A thread started in the project folder runs git in the repository that
+      // holds the folder. Work for a repository nested below it would sit where
+      // the thread's own checkpoints never look, so that keeps its worktree.
+      const nested = detail.repositoryPath
+        .split("/")
+        .some((segment) => segment.length > 0 && segment !== "." && segment !== "..");
+      const inPlace =
+        usesWorktrees || retriedInWorktree
+          ? null
+          : nested
+            ? ({ applied: false, reason: "nested" } as const)
+            : yield* Effect.tryPromise({
+                try: () =>
+                  applyCheckpointInPlace({
+                    root,
+                    baseCommit: checkpoint.baseCommit,
+                    checkpointCommit: checkpoint.commit,
+                  }),
+                catch: (cause) => fromBundleError(label, cause),
+              });
+      const workspace =
+        inPlace?.applied === true
+          ? null
+          : yield* materialize({
+              root,
+              placement: yield* placement,
+              sourceLabel: replica.sourceLabel,
+              sourceThreadId: request.sourceThreadId,
+              branch: checkpoint.branch,
+              baseCommit: checkpoint.baseCommit,
+              commit: checkpoint.commit,
+              requiredFiles: checkpoint.requiredSecretPaths ?? [],
+            });
+      const workspaceNotice =
+        inPlace === null
+          ? null
+          : inPlace.applied
+            ? `Use worktrees is off for this project, so the work is in the project folder as uncommitted changes${
+                checkpoint.branch === null || inPlace.branch === checkpoint.branch
+                  ? "."
+                  : `, on ${inPlace.branch ?? "no branch"} (it was on ${checkpoint.branch}).`
+              }`
+            : `Use worktrees is off for this project, but the project folder ${
+                IN_PLACE_REFUSAL[inPlace.reason]
+              }, so the work is in its own worktree at ${workspace?.worktreePath}.`;
+      const threadId = continuationThreadId(
+        caller.sourceEnvironmentId,
+        request.sourceThreadId,
+        request.epoch,
+      );
+      const now = yield* nowIso;
+      const modelSelection = request.modelSelection ?? detail.modelSelection;
+      const resume = shouldResume(checkpoint.runEnding);
+      const ceiling = caller.runtimeCeiling ?? null;
+      const clamped =
+        ceiling === null
+          ? null
+          : clampRuntimeMode({ started: detail.runtimeMode, requested: undefined, ceiling });
+      const grantedMode = clamped?.ok === true ? clamped.mode : detail.runtimeMode;
+      // The thread must exist here to be repaired, so this machine's ceiling
+      // lowers it on arrival and records that it did.
+      const carried = teamRulesArrivingCarried(detail.carried, handoff.environmentId);
+      const runtimeMode = teamRulesClampToCarried(
+        teamRulesClampMode(
+          yield* teamRulesForFolder(workspace?.worktreePath ?? project.workspaceRoot),
+          grantedMode,
+        ),
+        carried,
+      );
+      const loweredFrom =
+        runtimeMode !== detail.runtimeMode
+          ? detail.runtimeMode
+          : clamped?.ok === true
+            ? clamped.loweredFrom
+            : undefined;
+      if (caller.grant !== null) {
+        // The route checked the grant before the move began; a revoke since then wins.
+        const current = yield* grants
+          .forCoordinator(caller.sourceEnvironmentId)
+          .pipe(Effect.mapError(() => refuse(500, "failed", at("could not read its work grants"))));
+        if (current.revoked) {
+          return yield* refuse(
+            403,
+            "needs_grant",
+            at(`this machine revoked ${replica.sourceLabel}'s work here`),
+            "grant",
+          );
+        }
+        // The continuation is the source's work: the revoke sweeper and its own
+        // later calls see it under the source's grant, as delegated work is.
+        yield* grants
+          .recordOrigin(threadId, {
+            coordinatorEnvironmentId: caller.sourceEnvironmentId,
+            path: [caller.sourceEnvironmentId],
+            hops: 1,
+          })
+          .pipe(
+            Effect.mapError(() => refuse(500, "failed", at("could not record the work's origin"))),
+          );
+      } else {
+        // A self continue is this machine's own work, even where an earlier failed
+        // move of the same epoch recorded the source as its origin.
+        yield* grants.forgetOrigin(threadId).pipe(Effect.ignore);
+      }
+      yield* Effect.gen(function* () {
+        // The lease and journal land before the thread exists, so its first run
+        // starts under the takeover epoch and never repeats the source's side effects.
+        yield* updateDocument((current) => {
+          const record = current.threads[threadId] ?? emptyThreadRecord(project.id);
+          const next = {
+            ...record,
+            projectId: project.id,
+            mode: "on" as const,
+            lease: {
+              holderEnvironmentId: handoff.environmentId,
+              holderLabel: label,
+              holderThreadId: threadId,
+              epoch: request.epoch,
+              renewedAt: now,
+              state: "active" as const,
+            },
+            sideEffects: [...checkpoint.sideEffects],
+            resumeTurnKey: checkpoint.turnKey,
+            // An idle continuation starts no run; its first turn carries the note and transcript.
+            pendingSeed: resume ? null : idleSeed(seed),
+          };
+          return [next, { ...current, threads: { ...current.threads, [threadId]: next } }] as const;
+        });
+        yield* launches
+          .launch({
+            commandId: CommandId.make(`handoff-takeover:${threadId}`),
+            threadId,
+            projectId: project.id,
+            title: replica.title,
+            modelSelection,
+            runtimeMode,
+            interactionMode: detail.interactionMode,
+            workspaceStrategy:
+              workspace === null
+                ? { type: "root" }
+                : {
+                    type: "existing_worktree",
+                    worktreePath: workspace.worktreePath,
+                    branch: workspace.branch,
+                  },
+            ...(resume ? { initialMessage: { text: seed, attachments: [] } } : {}),
+            createdBy: "system",
+            creationSource: "server",
+            ...(carried === undefined
+              ? {}
+              : {
+                  origin: {
+                    kind: "fleet_machine" as const,
+                    label: FLEET_ORIGIN_APP_LABEL,
+                    machineLabel: replica.sourceLabel,
+                    environmentId: caller.sourceEnvironmentId,
+                    carried,
+                  },
+                }),
+          })
+          .pipe(Effect.mapError((error) => refuse(500, "failed", at(error.message))));
+      }).pipe(
+        // A failed move leaves no origin behind: the same id may later be continued
+        // here by this machine's own user.
+        Effect.onError(() =>
+          caller.grant === null ? Effect.void : grants.forgetOrigin(threadId).pipe(Effect.ignore),
+        ),
+      );
+      const previous = detail.execution;
+      const execution: ThreadExecutionRecord = {
+        ownerMachineId: previous?.ownerMachineId ?? caller.sourceEnvironmentId,
+        ...(previous?.ownerMachineLabel === undefined
+          ? previous === null
+            ? { ownerMachineLabel: replica.sourceLabel }
+            : {}
+          : { ownerMachineLabel: previous.ownerMachineLabel }),
+        executionMachineId: handoff.environmentId,
+        executionMachineLabel: label,
+        epoch: request.epoch,
+        sourceRoot: {
+          environmentId: caller.sourceEnvironmentId,
+          machineLabel: replica.sourceLabel,
+          projectId: detail.sourceProjectId,
+          threadId: request.sourceThreadId,
+          workspaceRoot: checkpoint.sourceRoot?.workspaceRoot ?? root,
+          branch: checkpoint.branch,
+        },
+        history: appendThreadExecutionHistory(
+          previous?.history.length
+            ? previous.history
+            : [
+                {
+                  machine: caller.sourceEnvironmentId,
+                  machineLabel: replica.sourceLabel,
+                  from: replica.receivedAt,
+                  to: null,
+                  reason: "created",
+                  epoch: checkpoint.epoch,
+                },
+              ],
+          {
+            machine: handoff.environmentId,
+            machineLabel: label,
+            from: now,
+            to: null,
+            reason: EXECUTION_REASON[request.reason],
+            epoch: request.epoch,
+          },
+        ),
+      };
+      yield* orchestrator
+        .dispatch({
+          type: "thread.execution.record",
+          commandId: CommandId.make(`handoff-execution:${threadId}`),
+          threadId,
+          execution,
+        })
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Handoff could not record the continuation's execution", { cause }),
+          ),
+        );
+      const response: TakeoverResponse = {
+        threadId,
+        projectId: project.id,
+        machineLabel: label,
+        modelSelection,
+        resumed: resume,
+        notice: noticeOf([
+          loweredFrom === undefined
+            ? null
+            : `Runs at ${runtimeMode} here (lowered from ${loweredFrom}) under this machine's limits for ${replica.sourceLabel}.`,
+          workspaceNotice,
+          checkpoint.skipped.length > 0
+            ? `Not carried over: ${checkpoint.skipped
+                .slice(0, 5)
+                .map((file) => file.path)
+                .join(", ")}`
+            : null,
+        ]),
+      };
+      yield* updateDocument((current) => {
+        const next = markContinued(current, request, response, now);
+        return [next, next] as const;
+      });
+      return response;
+    });
+
+  const takeover = (caller: ReceiverCaller, request: TakeoverRequest) =>
+    sameSource(caller, request.sourceEnvironmentId).pipe(
+      Effect.andThen(
+        locks.withLock(
+          incomingKey(request.sourceEnvironmentId, request.sourceThreadId),
+          takeoverLocked(caller, request),
+        ),
+      ),
+    );
+
+  const heartbeat = (caller: ReceiverCaller, request: HeartbeatRequest) =>
+    Effect.gen(function* () {
+      yield* sameSource(caller, request.sourceEnvironmentId);
+      const now = yield* nowIso;
+      const continued = yield* updateDocument((current) => {
+        const [fenced, next] = heartbeatContinued(current, request, now);
+        return [fenced, next] as const;
+      });
+      return { machineLabel: label, continued } satisfies HeartbeatResponse;
+    });
+
+  return { negotiate, replicate, preflight, takeover, heartbeat } satisfies HandoffReceiver;
+});
+
+// From v1.0.378 apps/server/src/handoff/handoffState.ts.
+
+function replaceIncoming(
+  document: HandoffDocument,
+  replica: HandoffIncomingReplica,
+): HandoffDocument {
+  const others = document.incoming.filter(
+    (entry) =>
+      entry.sourceEnvironmentId !== replica.sourceEnvironmentId ||
+      entry.sourceThreadId !== replica.sourceThreadId,
+  );
+  return { ...document, incoming: [...others, replica] };
+}
+
+/**
+ * May this machine continue the thread at `request.epoch`? A repeat of the
+ * takeover it already did answers the same thread (idempotent); a lower or
+ * equal epoch than the newest it saw is stale and refused.
+ */
+function takeoverVerdict(
+  document: HandoffDocument,
+  request: TakeoverRequest,
+  machineLabel: string,
+): TakeoverVerdict {
+  const at = (message: string) => `${machineLabel}: ${message}`;
+  const replica = findIncoming(document, request.sourceEnvironmentId, request.sourceThreadId);
+  const detail = (document.incomingDetails ?? {})[
+    incomingKey(request.sourceEnvironmentId, request.sourceThreadId)
+  ];
+  if (replica === undefined || detail === undefined) {
+    return {
+      kind: "refuse",
+      code: "not_found",
+      message: at("no checkpoint for this thread"),
+      check: "checkpoint",
+    };
+  }
+  if (replica.continuedThreadId !== null) {
+    if (detail.takeoverEpoch === request.epoch && detail.takeover !== null) {
+      return { kind: "repeat", response: detail.takeover };
+    }
+    return {
+      kind: "refuse",
+      code: "fenced",
+      message: at(`already continued this thread at epoch ${detail.takeoverEpoch ?? 0}`),
+      check: "lease",
+    };
+  }
+  if (replica.checkpoint.sequence < request.sequence) {
+    return {
+      kind: "refuse",
+      code: "invalid",
+      message: at(
+        `checkpoint ${request.sequence} not received yet (has ${replica.checkpoint.sequence})`,
+      ),
+      check: "checkpoint",
+    };
+  }
+  if (request.epoch <= replica.lease.epoch) {
+    return {
+      kind: "refuse",
+      code: "fenced",
+      message: at(
+        `stale lease epoch ${request.epoch}; this machine saw epoch ${replica.lease.epoch}`,
+      ),
+      check: "lease",
+    };
+  }
+  return { kind: "proceed", replica, detail };
+}
+
+/** Marks the replica continued here; a heartbeat from the source then fences it. */
+function markContinued(
+  document: HandoffDocument,
+  request: TakeoverRequest,
+  response: TakeoverResponse,
+  now: string,
+): HandoffDocument {
+  const key = incomingKey(request.sourceEnvironmentId, request.sourceThreadId);
+  const replica = findIncoming(document, request.sourceEnvironmentId, request.sourceThreadId);
+  const detail = (document.incomingDetails ?? {})[key];
+  if (replica === undefined || detail === undefined) return document;
+  const next = replaceIncoming(document, {
+    ...replica,
+    continuedThreadId: response.threadId,
+    lease: {
+      ...replica.lease,
+      epoch: request.epoch,
+      renewedAt: now,
+      state: "fenced",
+    },
+  });
+  return {
+    ...next,
+    incomingDetails: {
+      ...next.incomingDetails,
+      [key]: { ...detail, takeoverEpoch: request.epoch, takeover: response },
+    },
+  };
+}

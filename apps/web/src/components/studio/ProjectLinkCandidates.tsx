@@ -10,15 +10,13 @@ import {
 import type { LinkCandidate } from "../../studio/projectLink";
 import { useRetiredMachineRecords } from "../settings/useReplacedMachineRecords";
 import { Radio, RadioGroup } from "../ui/radio-group";
-import { useLinkMachines } from "./useLinkMachines";
 
 const keyOf = (candidate: LinkCandidate) =>
   `${candidate.project.environmentId}:${candidate.project.id}`;
 
 /**
- * The first step's subtitle. A project already linked with another copy names where Main
- * is, by the role derivation the menus, Settings and the copy dialog share. One that is
- * not linked yet names none: its review decides which side keeps the coordinator.
+ * The first step's subtitle. Linking never moves or removes a coordinator: every machine
+ * keeps its own, whether the project is already linked with another machine or not.
  */
 export function ProjectLinkChooseDescription({
   project,
@@ -27,18 +25,17 @@ export function ProjectLinkChooseDescription({
 }) {
   const tx = useTx();
   const projects = useProjects();
-  const machines = useLinkMachines();
   const retired = useRetiredMachineRecords();
   const main = linkedMainEnvironmentId(project, projects, retired);
   const title = logicalProjectTitle(project);
   return main === null
     ? tx(
-        "Pick the copy of {project} on another machine. Each copy keeps its own coordinator, and you can switch Main any time.",
+        "Pick {project} on another machine. Linking makes them one project; each machine keeps its own coordinator.",
         { project: title },
       )
     : tx(
-        "Pick the copy of {project} on another machine. Each copy keeps its own coordinator; Main stays on {main} and you can switch it any time.",
-        { project: title, main: machines.label(main as EnvironmentId) },
+        "Pick {project} on another machine. It joins this project and keeps its own coordinator.",
+        { project: title },
       );
 }
 
@@ -119,7 +116,7 @@ export function ProjectLinkCandidates({
     <RadioGroup
       value={selected}
       onValueChange={(value) => onSelect(String(value))}
-      aria-label={tx("Other copy")}
+      aria-label={tx("Other machine")}
     >
       {copies.map(row)}
       {copies.length === 0 && (
@@ -128,7 +125,7 @@ export function ProjectLinkCandidates({
           {...(noCopy ? { "data-link-no-copy": "" } : { role: "status" })}
         >
           {noCopy
-            ? tx("No copy of {project} was found on another machine.", { project: projectTitle })
+            ? tx("{project} was not found on another machine.", { project: projectTitle })
             : tx("Reading folders…")}
         </p>
       )}

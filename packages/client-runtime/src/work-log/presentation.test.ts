@@ -1693,6 +1693,18 @@ describe("advisorConsultView", () => {
     ).toMatchObject({ state: "failed", detail: "The advisor declined to advise." });
   });
 
+  it("tells an answer from Claude's own settings from one the app passed", () => {
+    const view = (title: string) =>
+      advisorConsultView(tool({ toolName: "advisor", title, output: "Split the migration." }));
+    expect(view("Asked the advisor (claude-fable-5-2) from Claude's settings")).toMatchObject({
+      advisor: "claude-fable-5-2",
+      builtIn: true,
+      fromClaudeSettings: true,
+    });
+    expect(view("Asked the advisor (claude-fable-5-2)")).not.toHaveProperty("fromClaudeSettings");
+    expect(view("Asked the advisor (claude-fable-5-2)")?.advisor).toBe("claude-fable-5-2");
+  });
+
   it("never shows a cut studio-code result as advice", () => {
     const cut = `${JSON.stringify({ status: "advice", advice: "x".repeat(40) }).slice(0, 30)}...`;
     expect(advisorConsultView(tool({ output: cut }))).toMatchObject({

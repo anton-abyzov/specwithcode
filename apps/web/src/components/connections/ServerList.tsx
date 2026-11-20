@@ -63,11 +63,13 @@ export function ServerList({
   rows,
   machine,
   busy,
+  canAdd,
   onAct,
 }: {
   readonly rows: ReadonlyArray<ServerListRow>;
   readonly machine: string;
   readonly busy: boolean;
+  readonly canAdd: boolean;
   /** Absent when this sign-in may not change the machine's files. */
   readonly onAct?: ((row: ServerListRow, action: ServerRowAction) => void) | undefined;
 }) {
@@ -80,15 +82,17 @@ export function ServerList({
         data-testid="server-list-empty"
       >
         <p className="text-sm font-medium">{tx("No MCP servers on {machine} yet", { machine })}</p>
-        <p className="text-xs text-muted-foreground">
-          {tx("Add one with “Enter details by hand”.")}
-        </p>
+        {canAdd ? (
+          <p className="text-xs text-muted-foreground">
+            {tx("Add one with “Enter details by hand”.")}
+          </p>
+        ) : null}
       </div>
     );
   const shown = filterServerRows(rows, query, toolLabel);
   return (
     <div className="space-y-2" data-testid="server-list">
-      {rows.length > SERVER_LIST_SEARCH_ABOVE ? (
+      {rows.length > SERVER_LIST_SEARCH_ABOVE || query !== "" ? (
         <label className="connection-search">
           <SearchIcon aria-hidden className="size-3.5 text-muted-foreground" />
           <input
@@ -108,6 +112,9 @@ export function ServerList({
         <ul className="divide-y divide-border/60 rounded-lg border border-border/60">
           {shown.map((row) => {
             const origins = originLines(row, tx);
+            const manualEnable = row.entries.filter(
+              (entry) => entry.editable && entry.state === "disabled" && !entry.canTurnOn,
+            );
             const actions = onAct
               ? ACTIONS.filter((action) => serverRowSteps(row, action.id).length > 0)
               : [];
@@ -137,6 +144,11 @@ export function ServerList({
                       </li>
                     ))}
                   </ul>
+                  {manualEnable.map((entry) => (
+                    <p key={entry.tool} className="text-xs text-muted-foreground">
+                      {tx("Turn it on in {tool}.", { tool: toolLabel(entry.tool) })}
+                    </p>
+                  ))}
                   {origins.map((line) => (
                     <p key={line} className="text-xs text-muted-foreground">
                       {line}

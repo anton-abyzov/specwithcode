@@ -2,7 +2,11 @@ import { TeamRulesCarried } from "./teamRules.ts";
 import { LifecycleReceipt, LifecycleReceiptReport } from "./threadLifecycleEvidence.ts";
 import { ThreadRuntimeModeSetCommand } from "./threadRuntimeModeCommand.ts";
 import { ManualCodexCreditIntent } from "./manualCodexCredits.ts";
-import { StartAdversarialReviewInput, StartAdversarialReviewResult } from "./adversarialReview.ts";
+import {
+  StartAdversarialReviewInput,
+  StartAdversarialReviewResult,
+  ThreadReviewMode,
+} from "./adversarialReview.ts";
 import { AdvisorTaskPurpose, ThreadAdvisorMode } from "./advisor.ts";
 export {
   ManualCodexCreditIntent,
@@ -21,6 +25,8 @@ export {
   OrchestrationV2LimitRecoveryUpdate,
 } from "./orchestrationV2LimitRecovery.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
+import { CoordinatorPeerMessage } from "./coordinatorMessage.ts";
+export * from "./coordinatorMessage.ts";
 import {
   AccessRequestScope,
   AccessRequestSubject,
@@ -513,6 +519,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   /** The thread's own advisor choice; absent or null follows the project. */
   advisorMode: Schema.optional(Schema.NullOr(ThreadAdvisorMode)),
+  /** The thread's own adversarial review choice; absent or null follows the project. */
+  reviewMode: Schema.optional(Schema.NullOr(ThreadReviewMode)),
   /** Set on a child that exists only to advise its parent; never changed. */
   purpose: Schema.optional(AdvisorTaskPurpose),
   // Fractional-index slot in the user-arranged pinned order. Optional so
@@ -759,6 +767,10 @@ export const OrchestrationV2Run = Schema.Struct({
   queueHeldForRestart: Schema.optional(Schema.Boolean),
   /** A service update cancelled this queued run; the restart queues its message again. */
   cancelledForUpdate: Schema.optional(Schema.Boolean),
+  /** Starts at once or never: not queued or continued before a provider takes it (1427). */
+  startOnly: Schema.optional(Schema.Boolean),
+  /** Epoch milliseconds a start-only run must reach its provider before. */
+  authorityEndsAt: Schema.optional(Schema.Number),
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -1163,6 +1175,8 @@ export const OrchestrationV2HistoricalMessage = Schema.Struct({
   providerThreadId: Schema.NullOr(ProviderThreadId),
   status: Schema.String,
   kind: Schema.String,
+  /** The turn item's ordinal in its thread; absent on older handoffs. */
+  ordinal: Schema.optional(NonNegativeInt),
   /** Compact identity for bounded worker selection; absent on older handoffs. */
   worker: Schema.optional(
     Schema.Struct({
@@ -1391,6 +1405,7 @@ export const OrchestrationV2ConversationMessage = Schema.Struct({
   scheduledTaskId: Schema.optional(ScheduledTaskId),
   // The sending agent's thread in this environment, separate from the receiving thread.
   senderThreadId: Schema.optional(ThreadId),
+  peerMessage: Schema.optional(CoordinatorPeerMessage), // Another machine's coordinator message.
   id: MessageId,
   threadId: ThreadId,
   runId: Schema.NullOr(RunId),
@@ -2321,6 +2336,12 @@ export const OrchestrationV2PendingRuntimeRequestSummary = Schema.Struct({
   reopenedFromAskedAt: Schema.optional(Schema.NullOr(Schema.String)),
   /** What a waiting access request asks for; absent for every other request. */
   access: Schema.optional(OrchestrationV2PendingAccessRequest),
+  /**
+   * A question card in a row's words ("MCP sign-in: Ship without it or I will
+   * sign in once"), at most 160 characters. Absent for other requests and from
+   * older servers, whose rows then say only "Answer needed".
+   */
+  prompt: Schema.optional(Schema.String),
 });
 export type OrchestrationV2PendingRuntimeRequestSummary =
   typeof OrchestrationV2PendingRuntimeRequestSummary.Type;
@@ -2474,6 +2495,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   /** The thread's own advisor choice; absent or null follows the project. */
   advisorMode: Schema.optional(Schema.NullOr(ThreadAdvisorMode)),
+  /** The thread's own adversarial review choice; absent or null follows the project. */
+  reviewMode: Schema.optional(Schema.NullOr(ThreadReviewMode)),
   /** Set on a child that exists only to advise its parent; never changed. */
   purpose: Schema.optional(AdvisorTaskPurpose),
   /** Slot in the user-arranged pinned order; omitted by pre-reorder servers. */
@@ -3442,6 +3465,12 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     modelSelection: ModelSelection,
+    /**
+     * The selection the move was planned from. When set, the move is refused
+     * if the thread's selection changed since, so a server move never
+     * replaces a pick made after it was planned.
+     */
+    expectedModelSelection: Schema.optional(ModelSelection),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.advisor-mode.set"),
@@ -3449,6 +3478,13 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     /** null follows the project again. */
     advisorMode: Schema.NullOr(ThreadAdvisorMode),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.review-mode.set"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    /** null follows the project again. */
+    reviewMode: Schema.NullOr(ThreadReviewMode),
   }),
   Schema.Struct({
     type: Schema.Literal("provider-session.detach"),
@@ -3478,6 +3514,10 @@ export const OrchestrationV2Command = Schema.Union([
     usageLimitContinuationOfRunId: Schema.optional(RunId),
     manualContinuationOfRunId: Schema.optional(RunId),
     usageLimitRecoveryRequestId: Schema.optional(CommandId),
+    /** Start a turn now or refuse, never queue; the refusal is not recorded. */
+    startOnly: Schema.optional(Schema.Boolean),
+    /** Epoch milliseconds: refused, unrecorded, if the start commits at or after this. */
+    authorityEndsAt: Schema.optional(Schema.Number),
     /** Resolve untargeted delivery against the server's serialized thread state. */
     deliveryIntent: Schema.optional(Schema.Literals(["auto", "steer", "restart"])),
     delegatedCompletion: Schema.optional(
@@ -3849,6 +3889,13 @@ const OrchestrationV2InternalCommand = Schema.Union([
     threadId: ThreadId,
     reason: Schema.optional(Schema.String),
     cause: Schema.optional(OrchestrationV2RunInterruptCause),
+    /**
+     * Stop only while nothing newer ran: refused when the thread's latest executed run
+     * (its last run that is not queued) is no longer this one, and when a run is
+     * preparing, starting or running. Checked inside the serialized dispatch,
+     * so work that started after the sender looked is left alone.
+     */
+    expectedLatestRunId: Schema.optional(Schema.NullOr(RunId)),
   }),
   /**
    * Records or updates a secret an agent asked the user for. Internal so no
@@ -3929,6 +3976,12 @@ export type OrchestrationV2ServerCommand =
        * provider sessions stay attached.
        */
       readonly sameWorkingFolder?: true;
+      /**
+       * Server only: an agent moves its own thread into a worktree and has
+       * queued the prompt that continues its work there, so the turn it stops
+       * is a pause: a delegated task's parent is not told the child stopped.
+       */
+      readonly continuesInWorktree?: true;
       readonly limitRecoveryAffinity?: NonNullable<OrchestrationV2LimitAvailability["affinity"]>;
       readonly limitAvailability?: {
         readonly runId: RunId;

@@ -213,7 +213,7 @@ export function SignInFirstStep({
   const machinesRow: { state: RowState; title: string; detail: string | null } = !linked
     ? {
         state: "later",
-        title: tx("Choose your main machine"),
+        title: tx("Join one of your machines"),
         detail: tx("Your other machines are listed here once this {machine} is linked.", {
           machine,
         }),
@@ -238,7 +238,7 @@ export function SignInFirstStep({
           }
         : {
             state: "next",
-            title: tx("Choose your main machine"),
+            title: tx("Join one of your machines"),
             detail:
               toAllow > 0
                 ? tx("Pick it below and press Allow. Nothing to copy or paste.")

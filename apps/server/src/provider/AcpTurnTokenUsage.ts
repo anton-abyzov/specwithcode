@@ -24,8 +24,27 @@ function record(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+/** The counts a `session/prompt` response reported, before they are interpreted. */
+export interface AcpRawPromptUsage {
+  readonly inputTokens: number | undefined;
+  readonly outputTokens: number | undefined;
+  readonly cachedReadTokens: number | undefined;
+  readonly cachedWriteTokens: number | undefined;
+  readonly reasoningTokens: number | undefined;
+  readonly totalTokens: number | undefined;
+}
+
+const RAW_KEYS = [
+  "inputTokens",
+  "outputTokens",
+  "cachedReadTokens",
+  "cachedWriteTokens",
+  "reasoningTokens",
+  "totalTokens",
+] as const;
+
 /**
- * Reads the usage of a `session/prompt` response.
+ * Reads the counts of a `session/prompt` response.
  *
  * Three shapes exist. The ACP `usage` field (still marked unstable) carries
  * `inputTokens`, `outputTokens`, `thoughtTokens`, `cachedReadTokens` and
@@ -35,24 +54,44 @@ function record(value: unknown): Record<string, unknown> | undefined {
  * count, cache included) and `output_tokens` (candidates only, no thinking).
  * An agent that reports none leaves the turn unreported; nothing is estimated.
  */
-export function readAcpPromptUsage(result: unknown): AcpTurnUsageCounts | undefined {
+export function readAcpRawPromptUsage(result: unknown): AcpRawPromptUsage | undefined {
   const response = record(result);
   const meta = record(response?._meta);
   const usage = record(response?.usage) ?? record(meta?.usage);
-  if (!usage) return readGeminiCliQuota(record(record(meta?.quota)?.token_count));
+  const raw: AcpRawPromptUsage = usage
+    ? {
+        inputTokens: count(usage.inputTokens),
+        outputTokens: count(usage.outputTokens),
+        cachedReadTokens: count(usage.cachedReadTokens),
+        cachedWriteTokens: count(usage.cachedWriteTokens ?? usage.cacheCreationTokens),
+        reasoningTokens: count(usage.thoughtTokens ?? usage.reasoningTokens),
+        totalTokens: count(usage.totalTokens),
+      }
+    : (() => {
+        const tokenCount = record(record(meta?.quota)?.token_count);
+        return {
+          inputTokens: count(tokenCount?.input_tokens),
+          outputTokens: count(tokenCount?.output_tokens),
+          cachedReadTokens: undefined,
+          cachedWriteTokens: undefined,
+          reasoningTokens: undefined,
+          totalTokens: undefined,
+        };
+      })();
+  return raw.inputTokens === undefined && raw.outputTokens === undefined ? undefined : raw;
+}
 
-  const reportedInput = count(usage.inputTokens);
-  const outputTokens = count(usage.outputTokens);
-  const cachedInputTokens = count(usage.cachedReadTokens);
-  const cacheCreationTokens = count(usage.cachedWriteTokens ?? usage.cacheCreationTokens);
-  const reasoning = count(usage.thoughtTokens ?? usage.reasoningTokens);
-  if (reportedInput === undefined && outputTokens === undefined) return undefined;
-
+/** Interprets reported counts as one prompt's usage, input including the cache. */
+export function normalizeAcpPromptUsage(raw: AcpRawPromptUsage): AcpTurnUsageCounts {
+  const reportedInput = raw.inputTokens;
+  const outputTokens = raw.outputTokens;
+  const cachedInputTokens = raw.cachedReadTokens;
+  const cacheCreationTokens = raw.cachedWriteTokens;
   // Agents disagree on whether `inputTokens` already contains the cached part.
   // The total settles it: when it only adds up with the cache counted on top,
   // the cache was reported separately and belongs in the input.
   const cache = (cachedInputTokens ?? 0) + (cacheCreationTokens ?? 0);
-  const total = count(usage.totalTokens);
+  const total = raw.totalTokens;
   const cacheIsSeparate =
     reportedInput !== undefined &&
     cache > 0 &&
@@ -64,32 +103,67 @@ export function readAcpPromptUsage(result: unknown): AcpTurnUsageCounts | undefi
       : cacheIsSeparate
         ? reportedInput + cache
         : reportedInput;
-
   return {
     inputTokens,
     outputTokens,
     cachedInputTokens,
     cacheCreationTokens,
     reasoningTokens:
-      reasoning !== undefined && outputTokens !== undefined
-        ? Math.min(outputTokens, reasoning)
+      raw.reasoningTokens !== undefined && outputTokens !== undefined
+        ? Math.min(outputTokens, raw.reasoningTokens)
         : undefined,
   };
 }
 
-function readGeminiCliQuota(
-  tokenCount: Record<string, unknown> | undefined,
-): AcpTurnUsageCounts | undefined {
-  const inputTokens = count(tokenCount?.input_tokens);
-  const outputTokens = count(tokenCount?.output_tokens);
-  if (inputTokens === undefined && outputTokens === undefined) return undefined;
-  return {
-    inputTokens,
-    outputTokens,
-    cachedInputTokens: undefined,
-    cacheCreationTokens: undefined,
-    reasoningTokens: undefined,
+/** Reads and interprets the usage of a `session/prompt` response. */
+export function readAcpPromptUsage(result: unknown): AcpTurnUsageCounts | undefined {
+  const raw = readAcpRawPromptUsage(result);
+  return raw === undefined ? undefined : normalizeAcpPromptUsage(raw);
+}
+
+/**
+ * GitHub Copilot answers each `session/prompt` with the running totals of its
+ * live session, not what that prompt used: consecutive prompts of one process
+ * only ever rise, and the counters start again in a new process. Given the
+ * previous totals of the same live session, this returns what the prompt
+ * itself reported using, as raw counts to interpret afterwards (so a cache
+ * reported on top of input is judged on the prompt's own numbers). Without a
+ * baseline (first prompt of the process), or when any count fell (the
+ * counters were reset), the reported totals are the usage. `complete` is
+ * false when a count the prompt reports was missing from the baseline, since
+ * it cannot be subtracted and stays unknown.
+ */
+export function acpSessionUsageIncrease(
+  baseline: AcpRawPromptUsage | undefined,
+  totals: AcpRawPromptUsage,
+): { readonly usage: AcpRawPromptUsage; readonly complete: boolean } {
+  if (!baseline) return { usage: totals, complete: true };
+  const fell = RAW_KEYS.some((key) => {
+    const before = baseline[key];
+    const now = totals[key];
+    return before !== undefined && now !== undefined && now < before;
+  });
+  if (fell) return { usage: totals, complete: true };
+  let complete = true;
+  const increase = (key: (typeof RAW_KEYS)[number]) => {
+    const before = baseline[key];
+    const now = totals[key];
+    if (now === undefined) return undefined;
+    if (before === undefined) {
+      complete = false;
+      return undefined;
+    }
+    return now - before;
   };
+  const usage: AcpRawPromptUsage = {
+    inputTokens: increase("inputTokens"),
+    outputTokens: increase("outputTokens"),
+    cachedReadTokens: increase("cachedReadTokens"),
+    cachedWriteTokens: increase("cachedWriteTokens"),
+    reasoningTokens: increase("reasoningTokens"),
+    totalTokens: increase("totalTokens"),
+  };
+  return { usage, complete };
 }
 
 /**
@@ -117,6 +191,8 @@ export function normalizeAcpTurnTokenUsage(
   counts: AcpTurnUsageCounts,
   hasSubagents: boolean,
   terminalStatus: string,
+  /** False when the counts may hold usage of another prompt or miss some of this one. */
+  countsAreThisTurns = true,
 ): TurnTokenUsage {
   const common = {
     usageScope: "main_agent",
@@ -130,6 +206,7 @@ export function normalizeAcpTurnTokenUsage(
     hasSubagents,
   } as const;
   if (
+    countsAreThisTurns &&
     terminalStatus === "completed" &&
     counts.inputTokens !== undefined &&
     counts.outputTokens !== undefined

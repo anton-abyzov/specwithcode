@@ -89,6 +89,37 @@ describe("connection presentation", () => {
     );
     expect(connection.phase).toBe("error");
     expect(connection.blockedReason).toBe("authentication");
+    // A machine refusing its own credential is fixed by pairing, not by a Connect sign-in.
+    expect(connection.connectSignInRequired).toBeUndefined();
+  });
+
+  it("says when a blocked connection needs a SpecWithCode Connect sign-in", () => {
+    const connection = presentConnectionState(
+      supervisorState({
+        phase: "blocked",
+        lastFailure: new ConnectionBlockedError({
+          reason: "authentication",
+          detail: "Sign in to SpecWithCode Connect to connect this environment.",
+          connectSignInRequired: true,
+        }),
+      }),
+    );
+    expect(connection.phase).toBe("error");
+    expect(connection.connectSignInRequired).toBe(true);
+  });
+
+  it("drops the sign-in flag once the connection is retrying", () => {
+    const connection = presentConnectionState(
+      supervisorState({
+        phase: "backoff",
+        lastFailure: new ConnectionBlockedError({
+          reason: "authentication",
+          detail: "Sign in to SpecWithCode Connect to connect this environment.",
+          connectSignInRequired: true,
+        }),
+      }),
+    );
+    expect(connection.connectSignInRequired).toBeUndefined();
   });
 
   it("preserves profile display information without exposing credentials", () => {

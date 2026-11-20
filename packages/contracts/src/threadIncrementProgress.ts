@@ -3,6 +3,13 @@ import * as Schema from "effect/Schema";
 import { ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /**
+ * Whether SpecWeave is on in a project (1396): `on` (set up, or an umbrella
+ * above plans it), `unfinished` (increment folders but never set up) or `off`.
+ */
+export const SpecweaveState = Schema.Literals(["on", "unfinished", "off"]);
+export type SpecweaveState = typeof SpecweaveState.Type;
+
+/**
  * The SpecWeave increment each thread of a project works on, with its tasks
  * and acceptance criteria folded from `spec.md` and `ledger.jsonl`. Read-only:
  * Studio never runs the CLI for this and never writes derived state back.
@@ -220,6 +227,8 @@ export const ThreadIncrementProgressSnapshot = Schema.Struct({
   documentation: Schema.optional(Schema.Array(ThreadId)),
   /** Whether the project plans with SpecWeave; absent from older servers. */
   specweave: Schema.optional(Schema.Boolean),
+  /** `on`, `unfinished` or `off` (1396); absent from older servers. */
+  specweaveState: Schema.optional(SpecweaveState),
 });
 export type ThreadIncrementProgressSnapshot = typeof ThreadIncrementProgressSnapshot.Type;
 

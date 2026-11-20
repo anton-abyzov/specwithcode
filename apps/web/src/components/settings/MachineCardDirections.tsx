@@ -1,7 +1,9 @@
 /**
  * The machine card's two direction rows and the grant changes behind them. Each row
- * is one sentence with one button: Stop, Allow… (1 hour, 1 day, 1 week, Until I stop
- * it), Set up… or Change…. A stopped or ended row says what happened above its button.
+ * is one sentence with at most one button: Stop, Allow… (1 hour, 1 day, 1 week, Until I
+ * stop it), Set up… or Change…. A stopped or ended row says what happened above its button.
+ * Set up…, Change… and the first-time Allow… open Connection details and move focus to
+ * the step there, so a press always lands somewhere, even with the panel already open.
  *
  * @module MachineCardDirections
  */
@@ -213,7 +215,7 @@ export function IncomingButton({
   coordinatorEnvironmentId: EnvironmentId;
   durations: boolean;
   changes: WorkGrantChanges | null;
-  /** Opens the first-time setup in Connection details. */
+  /** Opens Connection details and moves focus to the first-time setup there. */
   onSetUp: () => void;
   /** The Connection details panel Allow… opens, for assistive technology. */
   details: DetailsPanel;
@@ -289,14 +291,20 @@ export interface DetailsPanel {
   readonly open: boolean;
 }
 
-/** The outgoing row's button: Set up… or Change…, both opening Connection details. */
+/**
+ * The outgoing row's button: Set up… or Change…, both opening Connection details and
+ * moving focus to the step there.
+ */
 export function OutgoingButton({
   line,
+  here,
   there,
   details,
   onOpen,
 }: {
   line: DirectionLine;
+  /** This machine's name, for the button's accessible name. */
+  here: string;
   there: string;
   details: DetailsPanel;
   onOpen: () => void;
@@ -310,8 +318,8 @@ export function OutgoingButton({
       className="shrink-0"
       aria-label={
         line.action === "set-up"
-          ? tx("Set up this machine to start work on {there}", { there })
-          : tx("Change what this machine may do on {there}", { there })
+          ? tx("Set up {here} to start work on {there}", { here, there })
+          : tx("Change what {here} may do on {there}", { here, there })
       }
       aria-expanded={details.open}
       aria-controls={details.id}

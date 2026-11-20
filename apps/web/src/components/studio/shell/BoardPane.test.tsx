@@ -299,6 +299,62 @@ describe("BoardPane", () => {
     expect(article("0004-shipped").querySelector(".sws-board-action")).toBeNull();
   });
 
+  it("says how many increments are not done, and how far the project folder lags", async () => {
+    runtime.reply = {
+      ...board(
+        [
+          card("0001-plan", "planned"),
+          card("0002-build", "active", {
+            source: { kind: "worktree", name: "fix-lane" },
+          }),
+          card("0003-check", "review", {
+            source: { kind: "remote", name: "origin/main", fetchedAt: null },
+          }),
+          card("0004-shipped", "done"),
+        ],
+        { done: 558 },
+      ),
+      // The whole project's number: a search narrows the columns, not this.
+      notDone: 12,
+      behind: { ref: "origin/main", count: 61, fetchedAt: "2026-11-14T09:00:00.000Z" },
+    };
+    await render();
+    const summary = container.querySelector(".sws-board-summary");
+    expect(summary?.querySelector(".sws-board-not-done")?.textContent).toBe("12 not done");
+    const behind = summary?.querySelector<HTMLElement>(".sws-board-behind");
+    expect(behind?.textContent).toBe("Project folder is 61 commits behind origin/main");
+    // The column counts stay plain numbers.
+    expect(headings()).toContain("Planned1 increment");
+    expect(article("0002-build").querySelector(".sws-board-card-source")?.textContent).toBe(
+      "From worktree fix-lane",
+    );
+    expect(article("0003-check").querySelector(".sws-board-card-source")?.textContent).toBe(
+      "From origin/main",
+    );
+    expect(article("0001-plan").querySelector(".sws-board-card-source")).toBeNull();
+  });
+
+  it("keeps the not-done count when nothing is listed", async () => {
+    // A search that matches nothing: the project still has work open.
+    runtime.reply = { ...board([], { done: 0 }), notDone: 7 };
+    await render();
+    expect(container.querySelector(".sws-board-not-done")?.textContent).toBe("7 not done");
+    // An empty project says so too.
+    runtime.reply = { ...board([], { done: 0 }), notDone: 0 };
+    await render();
+    expect(container.querySelector(".sws-board-not-done")?.textContent).toBe("0 not done");
+  });
+
+  it("adds up the columns for an older server, with no behind line", async () => {
+    runtime.reply = board([card("0001-plan", "planned"), card("0002-build", "active")], {
+      review: 3,
+      done: 9,
+    });
+    await render();
+    expect(container.querySelector(".sws-board-not-done")?.textContent).toBe("5 not done");
+    expect(container.querySelector(".sws-board-behind")).toBeNull();
+  });
+
   it("puts Blocked before the columns in the order work moves when side by side", async () => {
     runtime.reply = board([
       card("0001-plan", "planned"),
@@ -345,12 +401,11 @@ describe("BoardPane", () => {
     );
   });
 
-  it("offers to turn the board on in a project without SpecWeave, and reads nothing", async () => {
+  it("shows its setup in a project without SpecWeave, and reads nothing", async () => {
     await render({ specweave: false });
-    expect(container.querySelector("#sws-pane-board h3")?.textContent).toBe(
-      "Start a board for this project",
-    );
-    expect(container.textContent).toContain("Set up SpecWeave");
+    // The tab's own words come from BoardSetup (1396); the old heading is gone.
+    expect(container.textContent).not.toContain("Start a board for this project");
+    expect(container.querySelector("#sws-pane-board button")?.textContent).toBe("Set up SpecWeave");
     expect(runtime.inputs).toEqual([]);
   });
 
@@ -592,7 +647,21 @@ describe("BoardPane", () => {
   it("says so when there are no increments or the read fails", async () => {
     runtime.reply = board([]);
     await render();
-    expect(container.textContent).toContain("No increments yet.");
+    // 1396 AC-15: a planning request for the coordinator, not a CLI hint.
+    expect(container.textContent).toContain("No work planned yet.");
+    expect(container.textContent).not.toContain("create-increment");
+    const plan = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "Plan the first piece of work",
+    );
+    await act(async () => plan!.click());
+    expect(asked).toEqual([
+      "Let's plan the first piece of work for this project. Ask me what it should be, then plan it as an increment.",
+    ]);
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    await render({ canAsk: false });
+    expect(container.textContent).toContain("No work planned yet.");
+    expect(container.textContent).not.toContain("Plan the first piece of work");
     await act(async () => root.unmount());
     root = createRoot(container);
     runtime.reply = null;

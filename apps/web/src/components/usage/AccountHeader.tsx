@@ -4,6 +4,7 @@
  * own usage page. Where it was read and its fallback place are small marks with
  * the sentence in their tooltip. Nothing is printed for what is not known.
  */
+import { maskEmail } from "@specweave-studio/shared/maskEmail";
 import type { ProviderDriverKind } from "@specweave-studio/contracts";
 import {
   providerUsageLink,
@@ -78,7 +79,7 @@ export function AccountHeader(props: AccountHeaderProps) {
         {props.email ? (
           <Tip label={props.email} side="top">
             <span className="sws-account-email" tabIndex={0}>
-              {props.email}
+              {maskEmail(props.email) ?? props.email}
             </span>
           </Tip>
         ) : null}

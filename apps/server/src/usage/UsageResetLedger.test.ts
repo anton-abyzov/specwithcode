@@ -109,6 +109,7 @@ describe("UsageResetLedger", () => {
           windowDurationMins: 10_080,
           endedAt: iso(reset1),
           lastReadAt: iso(reset1 - HOUR),
+          announcedAt: iso(reset1),
           usedPercentAtReset: 59,
           lostPercent: 41,
           cause: "scheduled",

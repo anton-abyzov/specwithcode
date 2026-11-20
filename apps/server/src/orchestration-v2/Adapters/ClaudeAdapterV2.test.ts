@@ -1,3 +1,4 @@
+import { stopTeardownPending } from "../../process/stopTeardowns.ts";
 import { DesignScreenshotToolkit, DesignToolkit } from "../../mcp/toolkits/design/tools.ts";
 import { ProjectPlanToolkit } from "../../mcp/toolkits/projectPlan/tools.ts";
 import { ProjectMemoryToolkit } from "../../mcp/toolkits/projectMemory/tools.ts";
@@ -204,6 +205,27 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.include(options.settings, { enableWorkflows: true, ultracode: true });
     assert.equal(options.systemPrompt.snapshot, false);
     assert.deepEqual(options.settingSources, ["user", "project", "local"]);
+  });
+
+  it("makeClaudeQueryOptions keeps per-session sections out of a worker's system prompt", () => {
+    const preset = (sharedSystemPromptCache?: boolean) => {
+      const prompt = ClaudeAdapterV2.makeClaudeQueryOptions({
+        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+        nativeThreadId: "shared-cache",
+        resume: false,
+        cwd: "/workspace",
+        ...(sharedSystemPromptCache === undefined ? {} : { sharedSystemPromptCache }),
+      }).systemPrompt;
+      if (typeof prompt !== "object" || Array.isArray(prompt) || prompt.type !== "preset")
+        throw new Error("Expected native Claude preset prompt");
+      return prompt;
+    };
+    assert.equal(preset(true).excludeDynamicSections, true);
+    // The coordinator and user threads keep Claude Code's default prompt.
+    assert.notProperty(preset(), "excludeDynamicSections");
+    assert.notProperty(preset(false), "excludeDynamicSections");
+    // Instructions are unchanged either way.
+    assert.equal(preset(true).append, preset().append);
   });
 
   it("makeClaudeQueryOptions writes concisely by default and in detail when chosen", () => {
@@ -2965,7 +2987,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   const makeWakeHarnessWithOptions = (options?: {
     readonly settings?: ClaudeSettings;
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
-    readonly interrupt?: Effect.Effect<void>;
+    readonly interrupt?: Effect.Effect<void, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
+    readonly rememberProcessTree?: Effect.Effect<void>;
+    readonly endProcessTree?: Effect.Effect<void>;
     readonly environment?: NodeJS.ProcessEnv;
     readonly browserExtensionPairingFile?: string;
   }) =>
@@ -3056,6 +3080,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   }),
                 interrupt: options?.interrupt ?? Effect.void,
                 close: options?.close?.(sdkMessages) ?? Effect.void,
+                ...(options?.rememberProcessTree === undefined
+                  ? {}
+                  : { rememberProcessTree: options.rememberProcessTree }),
+                ...(options?.endProcessTree === undefined
+                  ? {}
+                  : { endProcessTree: options.endProcessTree }),
               };
             }),
           forkSession: () => Effect.die("unused forkSession"),
@@ -3396,6 +3426,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly uuid: string;
     readonly content?: unknown;
     readonly inputTokens?: number;
+    /** The model Claude reports in `usage.iterations` for the advisor's answer. */
+    readonly answeredBy?: string;
   }) =>
     claudeSdkFrame({
       type: "assistant",
@@ -3430,9 +3462,74 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           output_tokens: 1,
           cache_creation_input_tokens: 0,
           cache_read_input_tokens: 0,
+          ...(input.answeredBy === undefined
+            ? {}
+            : {
+                iterations: [
+                  { type: "message", input_tokens: 1, output_tokens: 1 },
+                  { type: "advisor_message", model: input.answeredBy, output_tokens: 1 },
+                ],
+              }),
         },
       },
     });
+
+  it.effect.each([
+    {
+      name: "in pass-through, where the app passed no advisor",
+      policy: CLAUDE_TEST_RUNTIME_POLICY,
+      answeredBy: "claude-fable-5-2",
+      title: "Asked the advisor (claude-fable-5-2) from Claude's settings",
+    },
+    {
+      name: "over the model the app passed",
+      policy: advisorPolicy(100_000),
+      answeredBy: "claude-opus-5-5",
+      title: "Asked the advisor (claude-opus-5-5)",
+    },
+    {
+      name: "and says nothing when neither names one",
+      policy: CLAUDE_TEST_RUNTIME_POLICY,
+      answeredBy: undefined,
+      title: "Asked the advisor",
+    },
+  ])(
+    "names the model Claude reports for its advisor's answer $name",
+    ({ policy, answeredBy, title }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("claude-advisor-usage"),
+            text: "Plan the change",
+            attachments: [],
+            runtimePolicy: policy,
+          }),
+        );
+        yield* harness.offerAndWait(
+          advisorFrame({
+            uuid: "advisor-usage",
+            content: { type: "advisor_result", text: "Fine.", stop_reason: "end_turn" },
+            ...(answeredBy === undefined ? {} : { answeredBy }),
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "advisor-usage-terminal", result: "Planned" }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        const items = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+            ? [event.turnItem]
+            : [],
+        );
+        assert.isAbove(items.length, 0);
+        for (const item of items) assert.equal(item.title, title);
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
 
   it.effect.each([
     {
@@ -7906,6 +8003,92 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* Fiber.join(stopped);
         yield* awaitUntil(() => harness.terminalEvents().length === 1, "interrupted terminal");
         assert.equal(harness.terminalEvents()[0]?.status, "interrupted");
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("holds the folder change until Stop has closed the CLI and its tools", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const calls: string[] = [];
+        let threadId = "";
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: (sdkMessages) =>
+            Effect.sync(() => calls.push(`close held=${stopTeardownPending(threadId)}`)).pipe(
+              Effect.andThen(Queue.shutdown(sdkMessages)),
+            ),
+          rememberProcessTree: Effect.sync(() =>
+            calls.push(`remember held=${stopTeardownPending(threadId)}`),
+          ),
+          endProcessTree: Effect.sync(() => calls.push("end")),
+        });
+        threadId = harness.threadId;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const now = yield* DateTime.now;
+        const attemptId = RunAttemptId.make("attempt-claude-stop-ends-tools");
+        const providerTurnId = idAllocator.derive.providerTurn({
+          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+          nativeTurnId: `turn:${attemptId}`,
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId,
+            text: "Run the tests.",
+            attachments: [],
+          }),
+        );
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId,
+        });
+        // The CLI's output ended, so the runner ended its tree; no second end here.
+        assert.deepEqual(calls, ["remember held=true", "remember held=true", "close held=true"]);
+        assert.equal(stopTeardownPending(harness.threadId), false);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("still closes the CLI when it rejects the interrupt", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const closes: string[] = [];
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: (sdkMessages) =>
+            Effect.sync(() => closes.push("close")).pipe(
+              Effect.andThen(Queue.shutdown(sdkMessages)),
+            ),
+          interrupt: Effect.fail(
+            new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+              method: "interrupt",
+              cause: "interrupt rejected",
+            }),
+          ),
+        });
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const now = yield* DateTime.now;
+        const attemptId = RunAttemptId.make("attempt-claude-stop-rejected");
+        const providerTurnId = idAllocator.derive.providerTurn({
+          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+          nativeTurnId: `turn:${attemptId}`,
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId,
+            text: "Run the tests.",
+            attachments: [],
+          }),
+        );
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId,
+        });
+        assert.deepEqual(closes, ["close"]);
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );

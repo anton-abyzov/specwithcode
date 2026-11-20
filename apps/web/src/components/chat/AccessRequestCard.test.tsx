@@ -198,3 +198,35 @@ describe("accessAgentLabel", () => {
     expect(accessAgentLabel(null)).toBe(null);
   });
 });
+
+describe("AccessRequestPrompt machine (1427 AC-07)", () => {
+  const onM5 = (): AccessRequestItem => ({
+    ...item(),
+    subjects: item().subjects.map((subject) =>
+      subject.kind === "app" ? { ...subject, hostLabel: "M5" } : subject,
+    ),
+  });
+
+  it("says Always allow on the other machine, in its colour, and names it in the header", () => {
+    const markup = renderToStaticMarkup(
+      <AccessRequestPrompt
+        item={onM5()}
+        agentLabel="Claude"
+        onAnswer={noAnswer}
+        machine={{ name: "M5", color: "teal" } as const}
+      />,
+    );
+    expect(markup).toMatch(/data-access-scope="machine"[^>]*>Always allow on <span[^>]*data-machine-color="teal"[^>]*>M5</);
+    expect(markup).not.toContain("Always allow on this machine");
+    expect(markup).toContain("data-action-machine-tag");
+  });
+
+  it("keeps this machine on the window's own and never prints an app's host label", () => {
+    const markup = renderToStaticMarkup(
+      <AccessRequestPrompt item={onM5()} agentLabel="Claude" onAnswer={noAnswer} machine={null} />,
+    );
+    expect(markup).toContain("Always allow on this machine");
+    expect(markup).not.toContain(" on M5");
+    expect(markup).not.toContain("data-action-machine");
+  });
+});

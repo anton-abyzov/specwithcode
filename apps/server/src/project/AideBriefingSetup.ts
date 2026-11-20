@@ -186,7 +186,13 @@ const replaceEarlyBriefings = Effect.gen(function* () {
     );
     if (step === null) continue;
     yield* (step.kind === "replace" ? scheduledTasks.upsert(step.input) : Effect.void).pipe(
-      Effect.andThen(scheduledTasks.delete({ id: task.id })),
+      Effect.andThen(
+        scheduledTasks.delete({
+          id: task.id,
+          // Read just above: a copy another machine runs is deleted as it was listed.
+          ...(task.definitionHash === undefined ? {} : { expectedDefinition: task.definitionHash }),
+        }),
+      ),
       Effect.andThen(
         Effect.logInfo("Replaced an early briefing that waited on approval", { taskId: task.id }),
       ),

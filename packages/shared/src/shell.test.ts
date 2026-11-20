@@ -413,6 +413,7 @@ describe("resolveKnownPosixCliDirs", () => {
   it("lists the per-user installer folders on macOS, newest Node first", () => {
     expect(resolveKnownPosixCliDirs({ HOME: "/Users/test" }, "darwin", versions)).toEqual([
       "/Users/test/.local/bin",
+      "/Users/test/.local/share/fnm/aliases/default/bin",
       "/Users/test/.npm-global/bin",
       "/Users/test/.nvm/versions/node/v22.20.0/bin",
       "/Users/test/.nvm/versions/node/v22.3.1/bin",
@@ -442,6 +443,7 @@ describe("resolveKnownPosixCliDirs", () => {
       ),
     ).toEqual([
       "/home/test/.local/bin",
+      "/home/test/.local/share/fnm/aliases/default/bin",
       "/home/test/.npm-packages/bin",
       "/home/test/.npm-global/bin",
       "/opt/nvm/versions/node/v20.1.0/bin",

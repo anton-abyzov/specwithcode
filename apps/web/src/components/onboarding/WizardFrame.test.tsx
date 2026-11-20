@@ -96,6 +96,23 @@ it("draws Back on the left, then the skip action and the primary with its Enter 
   expect([back, skip, primary].map((fn) => fn.mock.calls.length)).toEqual([1, 1, 0]);
 });
 
+it("shows no Enter key on a primary that is off, and a warning note in its colour", async () => {
+  await act(async () =>
+    root.render(
+      <WizardStepFooter
+        note="No agent is ready yet, so chats will not start. Sign in or install one above."
+        noteTone="warning"
+        skip={{ label: "Do not import projects", onClick: vi.fn() }}
+        primary={{ label: "Import 0 projects", onClick: vi.fn(), disabled: true }}
+      />,
+    ),
+  );
+  const primary = button("Import 0 projects")!;
+  expect(primary.querySelector("kbd")).toBeNull();
+  expect(primary.hasAttribute("aria-keyshortcuts")).toBe(false);
+  expect(container.querySelector("[role=status]")?.className).toContain("text-warning-foreground");
+});
+
 it("has no Back on the first step", async () => {
   await act(async () =>
     root.render(<WizardStepFooter primary={{ label: "Continue", onClick: vi.fn() }} />),
@@ -158,6 +175,9 @@ it("says in the footer why its actions are off", async () => {
     "Setup can be closed once the import finishes.",
   );
   expect(buttons().every((b) => b.disabled)).toBe(true);
+  // A busy primary does not take Enter either, so it shows no Enter hint.
+  expect(button("Importing…")!.querySelector("kbd")).toBeNull();
+  expect(button("Importing…")!.hasAttribute("aria-keyshortcuts")).toBe(false);
 });
 
 function Frame({ onPrimary, disabled = false }: { onPrimary: () => void; disabled?: boolean }) {

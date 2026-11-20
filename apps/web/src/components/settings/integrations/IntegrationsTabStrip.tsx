@@ -5,7 +5,7 @@ import { useRef, type KeyboardEvent, type ReactNode } from "react";
 
 import { useTx } from "../../../i18n";
 import { cn } from "../../../lib/utils";
-import { hostReachOr, machineReachWords } from "../../../lib/machineStatus";
+import { hostDownNote, hostReachOr, machineReachWords } from "../../../lib/machineStatus";
 import { useEnvironmentScopeAccess } from "../../../state/session";
 import { useSettingsScope } from "../SettingsScopeContext";
 import { SettingsRowsLockedContext } from "../settingsRowsLocked";
@@ -195,9 +195,21 @@ export function IntegrationsMachineState({
         className="rounded-xl border border-border bg-card px-4 py-6 text-center"
       >
         <p className="text-base font-medium">
-          {tx(machineReachWords(reach, machine.connection.phase).headline, {
-            machine: scope.label,
-          })}
+          {tx(
+            machineReachWords(
+              reach,
+              machine.connection.phase,
+              false,
+              // Signed out of Connect says so here too (1417).
+              hostDownNote({
+                connectSignInRequired: machine.connection.connectSignInRequired,
+                reachableFromMachine: false,
+              }),
+            ).headline,
+            {
+              machine: scope.label,
+            },
+          )}
         </p>
         {arriving ? null : (
           <p className="mt-1 text-sm text-muted-foreground">

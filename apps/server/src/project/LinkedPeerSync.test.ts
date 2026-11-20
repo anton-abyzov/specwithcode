@@ -88,7 +88,10 @@ const harness = (input: {
   /** The members this copy lists; read on every pass. */
   readonly listed?: () => ReadonlyArray<LogicalProjectMember>;
   /** What the peer's `linked-members` does. */
-  readonly linkedMembers?: () => Effect.Effect<unknown, HandoffPeerError>;
+  readonly linkedMembers?: (request: {
+    readonly members: ReadonlyArray<unknown>;
+    readonly removed?: ReadonlyArray<{ readonly environmentId: string }>;
+  }) => Effect.Effect<unknown, HandoffPeerError>;
   /** What the peer answers to `linked-supersede`. */
   readonly supersedeAnswer?: unknown;
   /** Runs when this copy adopts a list. */
@@ -122,11 +125,14 @@ const harness = (input: {
       linkedSupersede: record("linked-supersede", input.supersedeAnswer ?? {}),
       linkedMembers: (
         _environmentId: EnvironmentId,
-        request: { members: ReadonlyArray<unknown> },
+        request: {
+          members: ReadonlyArray<unknown>;
+          removed?: ReadonlyArray<{ readonly environmentId: string }>;
+        },
       ) =>
         Effect.sync(() => calls.push(`linked-members ${request.members.length}`)).pipe(
           Effect.andThen(
-            input.linkedMembers?.() ?? Effect.succeed({ replayed: false, changed: true }),
+            input.linkedMembers?.(request) ?? Effect.succeed({ replayed: false, changed: true }),
           ),
         ),
       planExport: record("plan-export", {}),
@@ -1150,6 +1156,34 @@ describe("LinkedPeerSync", () => {
         yield* run.sync.grantCheck;
         yield* run.sync.tick;
         assert.include(run.calls, "linked-members 3");
+      }),
+    );
+
+    it.effect("a one-way grant: the peer that still lists an unlinked member is told", () =>
+      Effect.gen(function* () {
+        // This copy unlinked `b`. `c` cannot call here, still lists `b`, and lacks nobody.
+        const told: Array<ReadonlyArray<string>> = [];
+        const run = yield* harness({
+          self: a,
+          binding: {
+            epoch: 0,
+            state: "active",
+            removedMembers: [{ environmentId: b.environmentId, projectId: b.projectId }],
+          },
+          listed: () => [a, c],
+          peer: () =>
+            Effect.succeed(
+              described(c, { binding: { epoch: 0, state: "active" }, members: [a, b, c] }),
+            ),
+          linkedMembers: (request) =>
+            Effect.sync(() => {
+              told.push((request.removed ?? []).map((member) => member.environmentId));
+              return { replayed: false, changed: true };
+            }),
+        });
+        yield* run.sync.tick;
+        assert.include(run.calls, "linked-members 2");
+        assert.deepStrictEqual(told, [[b.environmentId]]);
       }),
     );
 

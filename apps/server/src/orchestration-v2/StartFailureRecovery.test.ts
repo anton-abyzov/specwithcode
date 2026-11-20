@@ -149,6 +149,8 @@ const runRoot = (input: {
   readonly previousTurnOwnedByLiveRun?: (
     providerTurnId: ProviderTurnId | null,
   ) => Effect.Effect<boolean | "unknown", never>;
+  /** Fields the run carries, such as a start-only dispatch's. */
+  readonly run?: Partial<OrchestrationV2Run>;
 }) =>
   Effect.gen(function* () {
     const key = ids(input.key);
@@ -217,6 +219,7 @@ const runRoot = (input: {
             threadId: key.threadId,
             ordinal: 1,
             providerInstanceId,
+            ...input.run,
           } as OrchestrationV2Run,
           rootNode: {
             id: key.rootNodeId,
@@ -276,6 +279,8 @@ const runRoot = (input: {
         )[0] as OrchestrationV2ProviderFailure | undefined,
         interrupts: yield* Ref.get(interrupts),
         starts: yield* Ref.get(starts),
+        // A provider turn is what reads as "the provider took the prompt" later.
+        providerTurnWrites: events.filter((event) => event.type === "provider-turn.updated").length,
       };
     }).pipe(Effect.provide(layer));
   });
@@ -357,6 +362,44 @@ it.effect("queues a busy start behind its live owner without interrupting it", (
     assert.equal(result.starts, 1);
     assert.deepEqual(result.runStatuses, ["queued"]);
     assert.isUndefined(result.failure);
+  }),
+);
+
+it.effect("fails a start-only start behind a live owner instead of queueing it (1427)", () =>
+  Effect.gen(function* () {
+    const key = "recovery:start-only-busy-turn";
+    const result = yield* runRoot({
+      key,
+      events: () => Stream.never,
+      startTurn: () =>
+        Effect.fail(stillActive(ids(key).runId, ids(key).threadId, ids(key).providerThreadId)),
+      previousTurnOwnedByLiveRun: () => Effect.succeed(true),
+      run: { startOnly: true },
+    });
+    assert.deepEqual(result.interrupts, []);
+    assert.equal(result.starts, 1);
+    // Never queued: it would start later on its own, after its authority ended.
+    assert.deepEqual(result.runStatuses, ["failed"]);
+    assert.equal(result.failure?.code, PREVIOUS_TURN_ACTIVE_FAILURE_CODE);
+    assert.equal(result.providerTurnWrites, 0);
+  }),
+);
+
+it.effect("offers a start-only turn to no provider once its authority ended (1427)", () =>
+  Effect.gen(function* () {
+    const key = "recovery:start-only-deadline";
+    const result = yield* runRoot({
+      key,
+      events: () => Stream.never,
+      startTurn: () =>
+        Effect.fail(stillActive(ids(key).runId, ids(key).threadId, ids(key).providerThreadId)),
+      // The clock starts at 0, so the deadline has passed when the start runs.
+      run: { startOnly: true, authorityEndsAt: 0 },
+    });
+    assert.equal(result.starts, 0);
+    assert.deepEqual(result.runStatuses, ["failed"]);
+    assert.notEqual(result.failure?.code, PREVIOUS_TURN_ACTIVE_FAILURE_CODE);
+    assert.equal(result.providerTurnWrites, 0);
   }),
 );
 

@@ -2,6 +2,11 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+
+import {
+  linkRefusalsForTest as refusalsKept,
+  resetLinkRefusalsForTest,
+} from "../../studio/linkRefusals";
 import { HandoffFolderCopyWatcher } from "./HandoffFolderCopyWatcher";
 
 const state = vi.hoisted(() => ({
@@ -79,6 +84,7 @@ beforeEach(() => {
   root = createRoot(container);
 });
 afterEach(async () => {
+  resetLinkRefusalsForTest();
   await act(async () => root.unmount());
   container.remove();
 });
@@ -369,14 +375,21 @@ it("stops waiting for a machine that stays unreachable after a restart", async (
 });
 
 it.each([
-  { how: "it needs review", link: async () => ({ status: "review", reason: "Notes differ." }) },
+  {
+    how: "it needs review",
+    link: async () => ({
+      status: "review",
+      reason: "Notes differ.",
+      words: { text: "Notes differ.", verbatim: true },
+    }),
+  },
   {
     how: "a machine did not answer",
     link: async () => {
       throw new Error("offline");
     },
   },
-])("leaves the link to the dialog when $how", async ({ link }) => {
+])("leaves the link to the dialog when $how", async ({ how, link }) => {
   vi.useFakeTimers();
   try {
     state.link = vi.fn<(...args: unknown[]) => Promise<unknown>>(link);
@@ -386,6 +399,10 @@ it.each([
     await act(async () => vi.advanceTimersByTimeAsync(2000));
     expect(state.link).toHaveBeenCalledOnce();
     expect(saved().linked).toBeUndefined();
+    // Kept for the machine menu either way: what was returned, or what the failure said.
+    expect(refusalsKept()).toEqual([
+      { text: how === "it needs review" ? "Notes differ." : "offline", verbatim: true },
+    ]);
     // The copy is still announced as done.
     expect(state.toasts).toHaveLength(1);
   } finally {
@@ -395,11 +412,6 @@ it.each([
 
 it.each([
   { how: "a copy already linked", extra: { linked: true }, status: () => copyStatus("applied") },
-  {
-    how: "a move, whose coordinator carries the project identity",
-    extra: { mode: "copy-and-move" },
-    status: () => copyStatus("applied", "copy-and-move"),
-  },
   {
     how: "a copy not registered as a project yet",
     extra: {},

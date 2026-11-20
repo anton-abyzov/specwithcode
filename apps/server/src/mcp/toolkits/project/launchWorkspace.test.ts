@@ -177,7 +177,8 @@ it.effect("a coordinator's launch follows the project's Use worktrees switch", (
       toolkit
         .handle("studio_thread_launch", params)
         .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
-    const base = { title: "Fix", message: "Fix it", modelSelection, increment: "new" } as const;
+    // "none": this test is about the workspace, and "new" needs SpecWeave set up (1396).
+    const base = { title: "Fix", message: "Fix it", modelSelection, increment: "none" } as const;
 
     yield* handle(base);
     expect(launched[0]?.workspaceStrategy).toEqual({

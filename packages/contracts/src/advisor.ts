@@ -45,8 +45,8 @@ export const AdvisorBriefTokenBudget = Schema.Int.check(
 
 /**
  * The advisor policy. Off by default: a consult spends the strongest model's
- * tokens. `model` null means the built-in order (Claude Fable 5.2, then the
- * Review track).
+ * tokens. `model` null means the project's Complex track alone (built in:
+ * Claude Fable 5.2, then GPT-6 Astra).
  */
 export const AdvisorSettings = Schema.Struct({
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),

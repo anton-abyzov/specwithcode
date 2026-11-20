@@ -113,6 +113,14 @@ describe("orphan worktree removal", () => {
     expect(onlyDependencyIgnores("node_modules/\0apps/web/node_modules/\0")).toBe(true);
     expect(onlyDependencyIgnores("node_modules/\0.env\0")).toBe(false);
     expect(onlyDependencyIgnores(".cache/\0")).toBe(false);
+    // SpecWeave's housekeeping marker and Python's bytecode hold no data.
+    expect(onlyDependencyIgnores(".specweave/state/.gc-last\0")).toBe(true);
+    expect(onlyDependencyIgnores("repositories/a/b/.specweave/state/.gc-last\0")).toBe(true);
+    expect(onlyDependencyIgnores("scripts/__pycache__/tool.pyc\0scripts/tool.pyc\0")).toBe(true);
+    // A cache folder is looked into, not passed whole.
+    expect(onlyDependencyIgnores("scripts/__pycache__/\0")).toBe(false);
+    expect(onlyDependencyIgnores(".specweave/state/claims.json\0")).toBe(false);
+    expect(onlyDependencyIgnores(".specweave/state/\0")).toBe(false);
     // A pnpm workspace link, Finder files, build info and hook shims rebuild.
     expect(
       onlyDependencyIgnores(

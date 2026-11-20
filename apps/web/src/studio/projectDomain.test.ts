@@ -1,4 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
+import { englishPhrase } from "../i18n";
+
+/** A phrase with its values filled in, as the sidebar shows it in English. */
+const said = (words: { text: string; values: Readonly<Record<string, string>> } | null) =>
+  words ? englishPhrase(words.text, words.values) : null;
 import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   EnvironmentId,
@@ -54,8 +59,9 @@ describe("logical project execution", () => {
     const both = [projects[2]!, m4];
     expect(logicalCoordinator(both)).toEqual({ member: projects[2], problem: null });
     expect(logicalCoordinators(both)?.coordinators).toEqual([projects[2], m4]);
-    // Each runs its own coordinator; the newest epoch, then the machine, names Main.
-    expect(copyRolesSummary(both)).toBe("Machine: Main · Machine: Copy");
+    // Each runs its own coordinator; the newest epoch, then the machine, names the one that
+    // holds the coordinator conversation. No machine is called Main or Copy.
+    expect(said(copyRolesSummary(both))).toBe("On Machine (coordinator) and Machine");
   });
   it("keeps the transferring source mounted for retry but blocks sending", () => {
     const source = {
@@ -228,7 +234,7 @@ it("retains the current host scope while a new project's member list is empty", 
 });
 
 describe("copyRolesSummary with retired records", () => {
-  it("names the live machine Main, never a re-joined machine's old record", () => {
+  it("names the live machine the coordinator, never a re-joined machine's old record", () => {
     const member = (environmentId: string, id: string, epoch: number) =>
       ({
         environmentId,
@@ -240,16 +246,24 @@ describe("copyRolesSummary with retired records", () => {
         },
       }) as never;
     const members = [member("old", "a", 9), member("m4", "b", 3)];
-    expect(copyRolesSummary(members, (m: { environmentId: string }) => m.environmentId)).toBe(
-      "old: Main · m4: Copy",
+    expect(said(copyRolesSummary(members, (m: { environmentId: string }) => m.environmentId))).toBe(
+      "On old (coordinator) and m4",
     );
+    // The coordinator's machine leads, so one phrase per shape translates.
     expect(
-      copyRolesSummary(
-        members,
-        (m: { environmentId: string }) => m.environmentId,
-        new Map([["old", "m1"]]),
+      said(
+        copyRolesSummary(
+          members,
+          (m: { environmentId: string }) => m.environmentId,
+          new Map([["old", "m1"]]),
+        ),
       ),
-    ).toBe("old: Copy · m4: Main");
+    ).toBe("On m4 (coordinator) and old");
+    const three = [...members, member("m5", "c", 1)];
+    expect(copyRolesSummary(three, (m: { environmentId: string }) => m.environmentId)).toEqual({
+      text: "On {coordinator} (coordinator), {machines} and {last}",
+      values: { coordinator: "old", machines: "m4", last: "m5" },
+    });
   });
 });
 

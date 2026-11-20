@@ -17,9 +17,11 @@ import {
   TurnItemId,
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -801,7 +803,7 @@ const seedRestartCancelledChild = (input: {
   readonly completionWake: "always" | "settled_only";
   readonly continuationPending: boolean;
   /** "completed" seeds a settled turn whose background work the restart cancelled. */
-  readonly runStatus?: "cancelled" | "completed" | "failed";
+  readonly runStatus?: "cancelled" | "completed" | "failed" | "running";
   readonly now: DateTime.Utc;
 }) =>
   Effect.gen(function* () {
@@ -1363,6 +1365,168 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
       const finishedTask = finished.subagents.find((row) => row.id === resumed.taskId);
       assert.equal(finishedTask?.status, "completed");
       assert.equal(finishedTask?.result, "Finished after the restart.");
+    }),
+  );
+
+  // November 18, 2026: a subagent read Stopped and woke its parent when its
+  // first run only moved into its own worktree.
+  it.effect.each([
+    ["continues", "holds a child moved into a worktree until its continuation ends"],
+    ["plain", "delivers a child moved into a worktree without a continuation"],
+    ["lost", "delivers a moved child whose continuation never ran once the wait ends"],
+  ] as const)("$1", ([move]) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      const name = `worktree-move-${move}`;
+      const threadId = ThreadId.make(`thread:${name}:parent`);
+      const projectId = ProjectId.make(`project:${name}`);
+      const parentRunId = RunId.make(`run:${name}:parent`);
+      const rootNodeId = NodeId.make(`node:${name}:root`);
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId,
+        runId: parentRunId,
+        rootNodeId,
+        taskId: NodeId.make(`node:${name}:sibling`),
+        deliveryState: "delivered",
+        now,
+      });
+      const child = yield* seedRestartCancelledChild({
+        parentThreadId: threadId,
+        projectId,
+        parentRunId,
+        rootNodeId,
+        name,
+        completionWake: "always",
+        continuationPending: false,
+        runStatus: "running",
+        now,
+      });
+      yield* eventSink.write({
+        commandId: CommandId.make(`command:${name}:moved`),
+        events: [
+          {
+            id: EventId.make(`event:${name}:interrupt`),
+            type: "turn-item.updated",
+            threadId: child.childThreadId,
+            runId: child.childRunId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make(`turn-item:${name}:interrupt`),
+              threadId: child.childThreadId,
+              runId: child.childRunId,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 90,
+              status: "completed",
+              title: "Interrupt requested",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "run_interrupt_request",
+              message:
+                move === "plain"
+                  ? Orchestrator.WORKSPACE_MOVE_STOP_MESSAGE
+                  : Orchestrator.WORKSPACE_MOVE_CONTINUES_MESSAGE,
+              cause: "agent",
+            },
+          },
+          runEvent({
+            threadId: child.childThreadId,
+            runId: child.childRunId,
+            ordinal: 1,
+            status: "interrupted",
+            now,
+          }),
+        ],
+      });
+      yield* orchestrator.recoverDelegatedTask(child.childThreadId, child.childRunId);
+      if (move === "lost") {
+        const held = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(held.subagents.find((row) => row.id === child.taskId)?.status, "running");
+        // No continuation run appeared: the recheck the hold scheduled settles
+        // the task once the wait ends, with nothing else calling in.
+        const afterSequence = yield* eventSink.latestSequence();
+        yield* TestClock.adjust(Duration.millis(Orchestrator.WORKSPACE_MOVE_CONTINUATION_WAIT_MS));
+        const settled = yield* eventSink
+          .stream({ afterSequence, eventType: "subagent.updated" })
+          .pipe(
+            Stream.filter(
+              (stored) =>
+                stored.event.type === "subagent.updated" &&
+                stored.event.payload.id === child.taskId &&
+                stored.event.payload.status === "interrupted",
+            ),
+            Stream.take(1),
+            Stream.runHead,
+          );
+        assert.isTrue(settled._tag === "Some");
+      }
+      const moved = yield* orchestrator.getThreadProjection(threadId);
+      const task = moved.subagents.find((row) => row.id === child.taskId);
+      const transfers = moved.contextTransfers.filter(
+        (row) => row.sourceThreadId === child.childThreadId,
+      );
+      // task_status reads the same hold, so a lead asking meanwhile is told
+      // the child still works, not that it stopped.
+      assert.equal(
+        yield* orchestrator.delegatedTaskResultPending(child.childThreadId),
+        move === "continues",
+      );
+      if (move !== "continues") {
+        assert.equal(task?.status, "interrupted");
+        assert.equal(transfers.length, 1);
+        return;
+      }
+      assert.equal(task?.status, "running");
+      assert.isNull(task?.result ?? null);
+      assert.equal(transfers.length, 0);
+
+      // The continuation's end delivers the result.
+      const continuationRunId = RunId.make(`run:${name}:2`);
+      yield* eventSink.write({
+        commandId: CommandId.make(`command:${name}:continued`),
+        events: [
+          {
+            id: EventId.make(`event:${name}:result`),
+            type: "message.updated",
+            threadId: child.childThreadId,
+            runId: continuationRunId,
+            occurredAt: now,
+            payload: {
+              id: MessageId.make(`message:${name}:result`),
+              threadId: child.childThreadId,
+              runId: continuationRunId,
+              nodeId: null,
+              role: "assistant",
+              text: "Finished in the worktree.",
+              attachments: [],
+              streaming: false,
+              createdBy: "agent",
+              creationSource: "server",
+              createdAt: now,
+              updatedAt: now,
+            },
+          },
+          runEvent({
+            threadId: child.childThreadId,
+            runId: continuationRunId,
+            ordinal: 2,
+            status: "completed",
+            now,
+          }),
+        ],
+      });
+      yield* orchestrator.recoverDelegatedTask(child.childThreadId, continuationRunId);
+      const finished = yield* orchestrator.getThreadProjection(threadId);
+      const done = finished.subagents.find((row) => row.id === child.taskId);
+      assert.equal(done?.status, "completed");
+      assert.equal(done?.result, "Finished in the worktree.");
     }),
   );
 

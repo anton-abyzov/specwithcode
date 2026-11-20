@@ -30,6 +30,7 @@ import {
 } from "../../studio/fleetWorkers";
 import { useMachineNicknames } from "../../studio/machineNickname";
 import { useStudioConnectAuthPrompt } from "../clerk/useStudioConnectAuthPrompt";
+import { reopenJoinCodes } from "../devices/closedJoinCodes";
 import { Button } from "../ui/button";
 import {
   canChooseJoinCardMachine,
@@ -236,6 +237,8 @@ export function AccountJoinCardBody({
     if (opening || allowing || !canChooseJoinCardMachine(machine)) return;
     setOpenError(null);
     setSelected(machine.environmentId);
+    // A join the owner starts: a code card closed earlier for this machine shows again.
+    reopenJoinCodes([machine.environmentId]);
     const record = accountOnly.find((item) => item.environmentId === machine.environmentId);
     if (!record) return;
     // Choosing an account machine opens it through SpecWithCode Connect; Allow follows.
@@ -287,8 +290,13 @@ export function AccountJoinCardBody({
             </p>
             <p className="text-xs text-muted-foreground" data-testid="join-next-step">
               {tx(
-                "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.",
-                { coordinatorLabel: saved.coordinatorLabel },
+                "Once {machineLabel} is open on {coordinatorLabel}, you can add a project copy there. In the project’s machine menu, choose “{addAction}”. In a new chat, choose {machineLabel} under “{runOn}”.",
+                {
+                  coordinatorLabel: saved.coordinatorLabel,
+                  addAction: tx("Add to another machine…"),
+                  machineLabel: name(environmentId, here?.label),
+                  runOn: tx("Run on"),
+                },
               )}
             </p>
             {machines.length ? (
@@ -705,6 +713,13 @@ function JoinCardAction({
         <dd>
           {tx(
             "Not sent on their own. Each secret transfer asks first, and that card appears on the machine that asks, not on this one.",
+          )}
+        </dd>
+        {/* 1422 AC-03: the other machine's app is a separate device approval here. */}
+        <dt className="text-muted-foreground">{tx("Its app")}</dt>
+        <dd>
+          {tx(
+            "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.",
           )}
         </dd>
       </dl>

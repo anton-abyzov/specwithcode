@@ -241,11 +241,14 @@ export interface AdvisorConsultView {
   readonly consultsRemaining: number | null;
   /** Claude's own advisor, not the studio-code tool. */
   readonly builtIn: boolean;
+  /** Claude's own advisor answered from Claude Code's settings: the app passed no advisor. */
+  readonly fromClaudeSettings?: true;
 }
 
 const ADVISOR_HIDDEN_TEXT = "Advice applied (hidden by Claude)";
 const ADVISOR_UNAVAILABLE = /^Advisor unavailable(?: \((?<code>[^)]*)\))?$/;
-const ADVISOR_TITLE_MODEL = /^Asked the advisor \((?<model>.+)\)$/;
+const ADVISOR_TITLE_MODEL =
+  /^Asked the advisor \((?<model>[^()]+)\)(?<settings> from Claude's settings)?$/;
 
 /** True for a consult of the advisor: the studio-code tool or Claude's own. */
 export function isAdvisorConsultItem(item: OrchestrationV2TurnItem | undefined): boolean {
@@ -263,9 +266,8 @@ export function isAdvisorConsultItem(item: OrchestrationV2TurnItem | undefined):
 export function advisorConsultView(item: OrchestrationV2TurnItem): AdvisorConsultView | null {
   if (item.type !== "dynamic_tool" || !isAdvisorConsultItem(item)) return null;
   const live = isOrchestrationV2WorkActive(item.status);
-  const titleModel = item.title
-    ? (ADVISOR_TITLE_MODEL.exec(item.title.trim())?.groups?.model ?? null)
-    : null;
+  const titleMatch = item.title ? ADVISOR_TITLE_MODEL.exec(item.title.trim()) : null;
+  const titleModel = titleMatch?.groups?.model ?? null;
   const consult = readAdvisorConsultResult(item.output);
   if (consult !== null) {
     return {
@@ -281,7 +283,14 @@ export function advisorConsultView(item: OrchestrationV2TurnItem): AdvisorConsul
   // studio-code tool is its result cut short, never advice to show as is.
   const builtIn = item.toolName?.trim() === "advisor";
   const textOutput = builtIn && typeof item.output === "string" ? item.output.trim() : "";
-  const base = { advisor: titleModel, consultsRemaining: null, builtIn } as const;
+  const base = {
+    advisor: titleModel,
+    consultsRemaining: null,
+    builtIn,
+    ...(builtIn && titleMatch?.groups?.settings !== undefined
+      ? { fromClaudeSettings: true as const }
+      : {}),
+  } as const;
   if (live && textOutput === "") return { ...base, state: "running", detail: null, code: null };
   const unavailable = ADVISOR_UNAVAILABLE.exec(textOutput);
   if (unavailable) {

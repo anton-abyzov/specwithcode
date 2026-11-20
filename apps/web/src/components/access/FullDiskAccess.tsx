@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckIcon, CircleAlertIcon, RotateCwIcon, ShieldAlertIcon } from "lucide-react";
 import {
   FULL_DISK_ACCESS_UNLOCKS,
-  fullDiskAccessRiskLine,
   type EnvironmentId,
   type PrivacyAccess,
 } from "@specweave-studio/contracts";
@@ -44,7 +43,8 @@ export function useCanOpenSettingsFor(environmentId: EnvironmentId | null): bool
 export function settingsRequestFor(access: PrivacyAccess | null) {
   const host = access?.agentHost;
   if (host === undefined || host === null) return "full-disk-access" as const;
-  if (host.kind === "app" && host.name.startsWith("SpecWithCode")) return "full-disk-access" as const;
+  if (host.kind === "app" && host.name.startsWith("SpecWithCode"))
+    return "full-disk-access" as const;
   return { pane: "full-disk-access" as const, agentHost: { path: host.path, name: host.name } };
 }
 
@@ -105,6 +105,26 @@ export function useFullDiskAccess(environmentId: EnvironmentId, enabled = true) 
   return { access, error, refresh, openSettings };
 }
 
+/**
+ * The unlock list and the risk line in words the phrase catalogs translate.
+ * They match the contracts' `FULL_DISK_ACCESS_UNLOCKS` and risk line, and
+ * `i18n.test.ts` checks that they stay the same.
+ */
+export const FULL_DISK_ACCESS_UNLOCK_PHRASES: Record<
+  (typeof FULL_DISK_ACCESS_UNLOCKS)[number],
+  string
+> = {
+  "Chrome and Safari profiles and history": "Chrome and Safari profiles and history",
+  Mail: "Mail",
+  Messages: "Messages",
+  Notes: "Notes",
+  "Photos library": "Photos library",
+  "Time Machine backups": "Time Machine backups",
+  "Other apps' data": "Other apps' data",
+};
+export const FULL_DISK_ACCESS_RISK_PHRASE =
+  "Every agent on {machine}, in every project and with every provider, gets this until you turn it off in System Settings.";
+
 /** What it unlocks, the risk, and why some tasks need it. Shared by Settings, first run and the card. */
 export function FullDiskAccessExplanation({
   machine,
@@ -125,7 +145,7 @@ export function FullDiskAccessExplanation({
       <ul className="flex flex-wrap gap-1.5" aria-label={tx("What it unlocks")}>
         {FULL_DISK_ACCESS_UNLOCKS.map((item) => (
           <li key={item} className="rounded-full border border-border bg-secondary px-2 py-0.5">
-            {tx(item)}
+            {tx(FULL_DISK_ACCESS_UNLOCK_PHRASES[item])}
           </li>
         ))}
       </ul>
@@ -135,7 +155,7 @@ export function FullDiskAccessExplanation({
       >
         <ShieldAlertIcon aria-hidden className="mt-0.5 size-3.5 shrink-0 text-warning-foreground" />
         <span>
-          {fullDiskAccessRiskLine(machine)}{" "}
+          {tx(FULL_DISK_ACCESS_RISK_PHRASE, { machine })}{" "}
           {tx(
             "A prompt hidden in a web page or file could ask an agent to read your mail. Turn it on only if you need it.",
           )}
@@ -190,21 +210,36 @@ export function FullDiskAccessRow({
   return (
     <div data-slot="machine-readiness-privacy" className="space-y-1">
       <h4 className="text-xs font-medium text-muted-foreground">{tx("Privacy access")}</h4>
-      <div className="flex min-w-0 items-start gap-2" data-slot="fda-row" data-state={access.fullDiskAccess}>
+      <div
+        className="flex min-w-0 items-start gap-2"
+        data-slot="fda-row"
+        data-state={access.fullDiskAccess}
+      >
         {allowed && !access.runningAgentsNeedRestart ? (
-          <CheckIcon aria-label={tx("Ready")} className="mt-0.5 size-3.5 shrink-0 text-success-foreground" />
+          <CheckIcon
+            aria-label={tx("Ready")}
+            className="mt-0.5 size-3.5 shrink-0 text-success-foreground"
+          />
         ) : access.runningAgentsNeedRestart ? (
-          <RotateCwIcon aria-label={tx("Restart needed")} className="mt-0.5 size-3.5 shrink-0 text-warning-foreground" />
+          <RotateCwIcon
+            aria-label={tx("Restart needed")}
+            className="mt-0.5 size-3.5 shrink-0 text-warning-foreground"
+          />
         ) : (
-          <CircleAlertIcon aria-label={tx("Optional")} className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+          <CircleAlertIcon
+            aria-label={tx("Optional")}
+            className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
+          />
         )}
         <div className="min-w-0 flex-1 space-y-1">
           <p className="wrap-anywhere">{title}</p>
           {allowed ? (
             <p className="text-xs text-muted-foreground">
               {access.runningAgentsNeedRestart
-                ? tx("New agent runs have it. Threads that were already running get it after they restart.")
-                : `${fullDiskAccessRiskLine(environmentLabel)}`}
+                ? tx(
+                    "New agent runs have it. Threads that were already running get it after they restart.",
+                  )
+                : tx(FULL_DISK_ACCESS_RISK_PHRASE, { machine: environmentLabel })}
             </p>
           ) : (
             <p className="text-xs text-muted-foreground">
@@ -213,7 +248,9 @@ export function FullDiskAccessRow({
           )}
           {!allowed ? (
             <details className="text-xs">
-              <summary className="cursor-pointer text-muted-foreground">{tx("What this allows")}</summary>
+              <summary className="cursor-pointer text-muted-foreground">
+                {tx("What this allows")}
+              </summary>
               <div className="mt-2">
                 <FullDiskAccessExplanation machine={environmentLabel} access={access} />
               </div>
@@ -253,31 +290,68 @@ export function FullDiskAccessRow({
  * never part of what Continue needs, so people learn the option exists without
  * being pushed into it. Shown only in the desktop app on a Mac.
  */
-export function FirstRunFullDiskAccess() {
+export function FirstRunFullDiskAccess({
+  onAllowedChange,
+  open,
+  onOpenChange,
+}: {
+  /** Whether Full Disk Access is allowed, as last read; for first run's picture. */
+  readonly onAllowedChange?: ((allowed: boolean) => void) | undefined;
+  /** Given by a list that keeps one row open at a time; left out, the item opens on its own. */
+  readonly open?: boolean | undefined;
+  readonly onOpenChange?: ((open: boolean) => void) | undefined;
+} = {}) {
   const tx = useTx();
   const primary = usePrimaryEnvironment();
   const local = useCanOpenSettingsFor(primary?.environmentId ?? null);
   if (!local || primary === null) return null;
-  return <FirstRunFullDiskAccessBody environmentId={primary.environmentId} machine={primary.label} tx={tx} />;
+  return (
+    <FirstRunFullDiskAccessBody
+      environmentId={primary.environmentId}
+      machine={primary.label}
+      tx={tx}
+      onAllowedChange={onAllowedChange}
+      open={open}
+      onOpenChange={onOpenChange}
+    />
+  );
 }
 
 function FirstRunFullDiskAccessBody({
   environmentId,
   machine,
   tx,
+  onAllowedChange,
+  ...props
 }: {
   readonly environmentId: EnvironmentId;
   readonly machine: string;
   readonly tx: ReturnType<typeof useTx>;
+  readonly onAllowedChange?: ((allowed: boolean) => void) | undefined;
+  readonly open?: boolean | undefined;
+  readonly onOpenChange?: ((open: boolean) => void) | undefined;
 }) {
-  const [open, setOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const open = props.open ?? ownOpen;
   const { access, openSettings } = useFullDiskAccess(environmentId, open);
+  // Told only once read: an unread status on a fresh mount is not "not allowed".
+  const read = access !== null;
+  const allowed = access?.fullDiskAccess === "allowed";
+  useEffect(() => {
+    if (read) onAllowedChange?.(allowed);
+  }, [read, allowed, onAllowedChange]);
   if (access?.fullDiskAccess === "not-applicable") return null;
   return (
     <details
       data-slot="first-run-fda"
       className="mt-3 rounded-xl border border-border bg-card p-4 text-sm"
-      onToggle={(event) => setOpen((event.currentTarget as HTMLDetailsElement).open)}
+      open={open}
+      onToggle={(event) => {
+        const next = (event.currentTarget as HTMLDetailsElement).open;
+        if (next === open) return;
+        setOwnOpen(next);
+        props.onOpenChange?.(next);
+      }}
     >
       <summary className="cursor-pointer font-semibold text-foreground">
         {tx("Full Disk Access for agents (optional)")}
@@ -292,7 +366,9 @@ function FirstRunFullDiskAccessBody({
           </Button>
         )}
         <p className="text-xs text-muted-foreground">
-          {tx("You can skip this. It is also in Settings › Machines, and agents ask when a task needs it.")}
+          {tx(
+            "You can skip this. It is also in Settings › Machines, and agents ask when a task needs it.",
+          )}
         </p>
       </div>
     </details>

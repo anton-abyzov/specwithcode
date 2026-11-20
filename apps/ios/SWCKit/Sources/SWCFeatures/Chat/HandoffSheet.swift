@@ -21,7 +21,7 @@ struct HandoffSheet: View {
     NavigationStack {
       List {
         Section {
-          Text("Move this conversation and its checkpoint to another machine. The source becomes read-only. Opening these options does not move anything.")
+          Text("Hand off this conversation and its files to another machine. It becomes read-only here. Opening these options moves nothing.")
             .font(.subheadline)
         }
         if let continued, let selection {
@@ -93,12 +93,12 @@ struct HandoffSheet: View {
 
   static func badgeTitle(_ badge: String) -> String {
     switch badge {
-    case "ready": "Handoff ready"
-    case "behind": "Checkpoint catching up"
+    case "ready": "Standby copy ready"
+    case "behind": "Standby copy catching up"
     case "handing-off": "Handing off"
     case "continued": "Continued on another machine"
     case "source-unreachable": "Source unreachable"
-    case "paused": "Handoff paused"
+    case "paused": "Hand off paused"
     default: "Handoff status unavailable"
     }
   }

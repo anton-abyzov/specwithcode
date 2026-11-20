@@ -3,6 +3,9 @@ import { threadIdNearMisses } from "@specweave-studio/shared/studioThreadLinks";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { ownMachineLabel } from "../fleet/machineNames.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { loadCaller } from "./threadAccess.ts";
 import { workGrantOf } from "./workGrantAccess.ts";
 
@@ -31,8 +34,8 @@ const foreignSessionMessage = (threadId: string) =>
  */
 const COORDINATOR_ID = /^project-coordinator:./;
 
-const coordinatorNotStartedMessage = (threadId: string) =>
-  `Thread ${threadId} was not found on this machine. If you copied it exactly from a project's record, the ID is fine: a coordinator thread is created on its first run, so no coordinator has run under this ID here. A linked copy usually leaves coordinating to another machine: read that machine's coordinator, or list this project's threads with studio_thread_list. If you typed it, ${COPY_EXACTLY}`;
+const coordinatorNotStartedMessage = (threadId: string, here: string | undefined) =>
+  `Thread ${threadId} was not found on ${here ?? "this machine"}. If you copied it exactly from a project's record, the ID is fine: a coordinator thread is created on its first run, so no coordinator has run under this ID here. Each machine runs its own coordinator: read another machine's with studio_thread_read {machine}, or list this project's threads with studio_thread_list. If you typed it, ${COPY_EXACTLY}`;
 
 /**
  * A `thread_not_found` an agent can act on. When the ID it passed is a
@@ -67,7 +70,14 @@ export const explainThreadNotFound = (threadId: string, failure: OrchestratorMcp
         meant !== undefined
           ? `Thread ${threadId} was not found. Did you mean ${meant}? ${COPY_EXACTLY}`
           : COORDINATOR_ID.test(threadId)
-            ? coordinatorNotStartedMessage(threadId)
+            ? coordinatorNotStartedMessage(
+                threadId,
+                // The machine that answered: a coordinator elsewhere quotes this exactly.
+                yield* ownMachineLabel(
+                  yield* Effect.serviceOption(ServerEnvironment.ServerEnvironment),
+                  yield* Effect.serviceOption(ServerSettings.ServerSettingsService),
+                ),
+              )
             : `Thread ${threadId} was not found. ${COPY_EXACTLY} Find the thread with studio_thread_search or studio_thread_list.`,
     });
   }).pipe(Effect.orElseSucceed(() => failure));

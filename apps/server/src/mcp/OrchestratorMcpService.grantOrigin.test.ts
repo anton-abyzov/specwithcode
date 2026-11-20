@@ -40,6 +40,7 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import * as McpProviderSession from "./McpProviderSession.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
+import { launchedOrThrow } from "./toolkits/orchestrator/requestSpecweaveSetup.ts";
 
 const projectId = ProjectId.make("project:mcp-grant-origin");
 const instanceId = ProviderInstanceId.make("codex");
@@ -224,10 +225,12 @@ const launchOne = (
 ) =>
   Effect.gen(function* () {
     const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-    return yield* service.createThreads(scope, {
-      threads: [{ title: "Worker", prompt: "Draft the release notes.", target: launchTarget }],
-      clientRequestId: key,
-    });
+    return launchedOrThrow(
+      yield* service.createThreads(scope, {
+        threads: [{ title: "Worker", prompt: "Draft the release notes.", target: launchTarget }],
+        clientRequestId: key,
+      }),
+    );
   });
 
 it.effect("a thread created under a grant carries the grant's origin", () =>

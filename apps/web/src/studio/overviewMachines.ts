@@ -5,7 +5,7 @@
  */
 import type { MachineReachState } from "@specweave-studio/client-runtime/connection";
 
-import { machineReachWords } from "../lib/machineStatus";
+import { machineReachWords, type HostDownNote } from "../lib/machineStatus";
 
 export type MachineTone = "moss" | "amber" | "red";
 
@@ -45,12 +45,14 @@ export function overviewMachineState(input: {
   readonly reach: MachineReachState;
   readonly reported: boolean;
   readonly stale: boolean;
+  /** Why it is down beyond its reach state: signed out of Connect, or only this window cut off. */
+  readonly note?: HostDownNote | null;
 }): OverviewMachineState {
   const reach = input.reach === "connected" && input.stale ? "catching-up" : input.reach;
   if (reach === "connected")
     return { state: "Online", tone: "moss", word: "online", counted: true };
   return {
-    state: machineReachWords(reach).short.replace(/…$/, ""),
+    state: machineReachWords(reach, undefined, false, input.note ?? null).short.replace(/…$/, ""),
     tone: reach === "stopped" ? "red" : "amber",
     word: AFTER_IS[reach],
     counted: input.reported,

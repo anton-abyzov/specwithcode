@@ -11,6 +11,7 @@ import type { StudioFleetMachine } from "@specweave-studio/contracts/studioFleet
 import { createModelSelection } from "@specweave-studio/shared/model";
 import {
   orderFallbackCandidates,
+  TRACK_BEFORE_ORDER_LINE,
   sameMachineTarget,
 } from "@specweave-studio/shared/machineFallback";
 import { fallbackModelOrder } from "@specweave-studio/shared/providerFallback";
@@ -327,7 +328,11 @@ export function MachineFallbackSettings() {
             </Select>
           </TeamRulesInert>
         }
-      />
+      >
+        <p className="text-xs text-muted-foreground" aria-label={tx("Tracks")}>
+          {tx(TRACK_BEFORE_ORDER_LINE)}
+        </p>
+      </SettingsRow>
       <SettingsRow
         serverScoped
         settingKeys={["providerLimitUnknownUsageEligible"]}

@@ -18,6 +18,7 @@ import {
   isLedgerWindow,
   ledgerWindowLengthMs,
   resetPeriods,
+  sameResetRecord,
 } from "@specweave-studio/shared/usageResetLedger";
 import { windowModelScope } from "@specweave-studio/shared/usageWindows";
 
@@ -64,6 +65,8 @@ export interface LedgerPeriod {
   readonly startedAt: number | null;
   readonly endedAt: number;
   readonly lastReadAt: number;
+  /** The reset time the ended window announced; null when unknown or saved before it was kept. */
+  readonly announcedAt: number | null;
   readonly usedPercentAtReset: number;
   readonly lostPercent: number;
   readonly cause: UsageResetCause;
@@ -219,10 +222,9 @@ export function backfillLedger(state: LedgerState, history: HistoryState): numbe
           other.accountKey === series.accountKey &&
           other.windowKind === series.windowKind &&
           other.windowId === series.windowId &&
-          // The same record again (its span may be a single instant), or one whose span
-          // from last read to reset overlaps: another read of the same reset.
-          ((other.endedAt === period.endedAt && other.lastReadAt === period.lastReadAt) ||
-            (period.lastReadAt < other.endedAt && other.lastReadAt < period.endedAt)),
+          // The same reset already recorded, from this history or a live read whose
+          // last read fell a few minutes past the announced time.
+          sameResetRecord(other, period),
       );
       if (overlaps) continue;
       added.push({
@@ -235,6 +237,7 @@ export function backfillLedger(state: LedgerState, history: HistoryState): numbe
         startedAt: period.startedAt,
         endedAt: period.endedAt,
         lastReadAt: period.lastReadAt,
+        announcedAt: period.announcedAt ?? null,
         usedPercentAtReset: period.usedPercentAtReset,
         lostPercent: period.lostPercent,
         cause: period.cause,
@@ -295,6 +298,7 @@ export function readLedger(state: LedgerState, since: number): UsageResetPeriod[
       ...(period.startedAt === null ? {} : { startedAt: isoAt(period.startedAt) }),
       endedAt: isoAt(period.endedAt),
       lastReadAt: isoAt(period.lastReadAt),
+      ...(period.announcedAt === null ? {} : { announcedAt: isoAt(period.announcedAt) }),
       usedPercentAtReset: period.usedPercentAtReset,
       lostPercent: period.lostPercent,
       cause: period.cause,
@@ -389,7 +393,8 @@ export function decodeLedgerFile(raw: string): LedgerState {
   for (const entry of Array.isArray(parsed.periods) ? parsed.periods : []) {
     if (!isRecord(entry)) continue;
     const window = decodeWindow(entry);
-    const { startedAt, endedAt, lastReadAt, usedPercentAtReset, lostPercent, cause } = entry;
+    const { startedAt, endedAt, lastReadAt, announcedAt, usedPercentAtReset, lostPercent, cause } =
+      entry;
     if (!window || !isFiniteNumber(endedAt) || !isFiniteNumber(lastReadAt)) continue;
     if (!isTimeOrNull(startedAt)) continue;
     if (!isFiniteNumber(usedPercentAtReset) || !isFiniteNumber(lostPercent)) continue;
@@ -399,6 +404,8 @@ export function decodeLedgerFile(raw: string): LedgerState {
       startedAt,
       endedAt,
       lastReadAt,
+      // A file written before `announcedAt` was kept has none.
+      announcedAt: isFiniteNumber(announcedAt) ? announcedAt : null,
       usedPercentAtReset: clampPercent(usedPercentAtReset),
       lostPercent: clampPercent(lostPercent),
       cause: cause as UsageResetCause,

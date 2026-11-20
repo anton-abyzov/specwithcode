@@ -1,3 +1,4 @@
+import { maskEmail } from "@specweave-studio/shared/maskEmail";
 import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
 import type { ProviderInstanceEntry } from "../../providerInstances";
@@ -49,7 +50,7 @@ export function describeProviderRow(
     lines.push(subProvider ? `${entry.displayName} · ${subProvider}` : entry.displayName);
     const auth = entry.snapshot.auth;
     if (auth.status === "authenticated") {
-      const account = [auth.label, auth.email].filter(Boolean).join(" · ");
+      const account = [auth.label, maskEmail(auth.email) ?? auth.email].filter(Boolean).join(" · ");
       if (account) lines.push(account);
     }
     const harness = describeHarness(entry);

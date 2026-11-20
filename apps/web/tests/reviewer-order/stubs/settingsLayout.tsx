@@ -12,6 +12,7 @@ export {
 export function SettingsRow(props: {
   readonly id?: string;
   readonly title: ReactNode;
+  readonly titleInfo?: ReactNode;
   readonly description?: ReactNode;
   readonly status?: ReactNode;
   readonly resetAction?: ReactNode;
@@ -28,6 +29,9 @@ export function SettingsRow(props: {
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex min-h-5 min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
             <h3 className="min-w-0 text-sm font-medium text-foreground">{props.title}</h3>
+            {props.titleInfo ? (
+              <span className="inline-flex h-5 shrink-0 items-center">{props.titleInfo}</span>
+            ) : null}
             {props.resetAction ? (
               <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
                 {props.resetAction}

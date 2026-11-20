@@ -18,8 +18,9 @@ import {
   threadHeldQueue,
 } from "./projectWorkspaceModel";
 import type { MachineReachState } from "@specweave-studio/client-runtime/connection";
-import { hostDownWord } from "../lib/machineStatus";
+import { hostDownWord, type HostDownNote } from "../lib/machineStatus";
 import { approvalWaitLabel } from "./accessWait";
+import { blockerAsk } from "@specweave-studio/shared/attentionAsk";
 
 /** The slice of a provider instance that names it; `ProviderInstanceEntry` satisfies it. */
 export type ProviderNameSource = {
@@ -331,6 +332,16 @@ export type ChatGroup = {
   readonly threads: readonly EnvironmentThreadShell[];
 };
 
+/**
+ * A status group's heading (1417). The "Offline" group holds threads of every
+ * machine this window cannot reach, a running one included (signed out of
+ * Connect, or only this window cut off), so its heading says that; each row
+ * says why. The key stays "Offline", so folded groups keep their state.
+ */
+export function threadGroupHeading(group: string): string {
+  return group === "Offline" ? "Not reachable from here" : group;
+}
+
 const STATUS_GROUP_ORDER: readonly ProjectThreadGroup[] = [
   "Needs you",
   "Working",
@@ -405,7 +416,8 @@ export function buildChatGroups(
         labels.set(key, input.machine?.(thread).label ?? thread.environmentId);
     }
   }
-  const labelOf = (key: string) => labels.get(key) ?? key;
+  const labelOf = (key: string) =>
+    labels.get(key) ?? (options.groupBy === "status" ? threadGroupHeading(key) : key);
   const fixed: readonly string[] | null =
     options.groupBy === "date"
       ? DATE_BUCKETS
@@ -630,6 +642,10 @@ export function threadTone(thread: EnvironmentThreadShell, hostOffline = false):
   return group === "Working" ? "working" : "idle";
 }
 
+/** "Reply needed · Do you accept this plan?": what the person must do, then what about. */
+const withAsk = (word: string, ask: string | null | undefined): string =>
+  ask ? `${word} · ${ask}` : word;
+
 /**
  * The word a row leads its second line with when the thread wants something
  * or is busy; a quiet thread says nothing and lets its model speak.
@@ -641,14 +657,17 @@ export function threadStatusWord(
   hostReach?: MachineReachState,
   /** The fleet says the host's address now answers as a different SpecWithCode. */
   hostIdentityMismatch = false,
+  /** Why the host is out of reach beyond its reach state ("Needs sign-in"). */
+  hostNote: HostDownNote | null = null,
 ): string | null {
   if (threadTone(thread, hostOffline) === "resolved") return null;
   // Its last known state is stale; "Blocked" or "Working" would be a guess.
-  if (hostOffline) return hostDownWord(hostReach, hostIdentityMismatch);
+  if (hostOffline) return hostDownWord(hostReach, hostIdentityMismatch, hostNote);
   const status = resolveSidebarThreadStatus(thread);
   if (status === "approval" && thread.source?.pendingRuntimeRequest !== null)
     return approvalWaitLabel(thread);
-  if (status === "input" && thread.source?.pendingRuntimeRequest !== null) return "Answer needed";
+  if (status === "input" && thread.source?.pendingRuntimeRequest !== null)
+    return withAsk("Answer needed", thread.source?.pendingRuntimeRequest?.prompt);
   const dependency = threadDependencyWait(thread);
   if (dependency) return dependency;
   if (status === "limited") return "Usage limit reached";
@@ -656,7 +675,10 @@ export function threadStatusWord(
   // ask the reader to act, so the word agrees with the Idle group it sits in.
   if (status === "failed") return "Run failed";
   if (threadHeldQueue(thread) !== null) return "Queue held";
-  if (threadBlocker(thread) !== null) return "Blocked";
+  // A report's Blockers part is a decision only the person can make: say so,
+  // and what it is, rather than "Blocked", which reads as broken work.
+  const blocker = threadBlocker(thread);
+  if (blocker !== null) return withAsk("Reply needed", blockerAsk(blocker));
   const tone = threadTone(thread);
   if (tone === "waiting") return thread.hasActionableProposedPlan ? "Plan ready" : "Needs you";
   return tone === "working" ? "Working" : null;

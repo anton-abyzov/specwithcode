@@ -60,6 +60,16 @@ const state = vi.hoisted(() => ({
 }));
 
 // The machine choice and its invitation have their own tests.
+// The Chrome and Mac apps rows read live machine state; their own tests cover them.
+vi.mock("./ChromeAccessRow", () => ({
+  ChromeAccessRow: () => <li data-access-row="browser" />,
+}));
+vi.mock("./MacAppsRow", () => ({
+  MacAppsRow: () => <li data-access-row="mac-apps" />,
+}));
+vi.mock("./IPhoneRow", () => ({
+  IPhoneRow: () => <li data-access-row="iphone" />,
+}));
 // The Full Disk Access row and first-run item have their own test.
 vi.mock("../access/FullDiskAccess", () => ({
   FullDiskAccessRow: () => null,
@@ -676,6 +686,22 @@ describe("the agents step: Git", () => {
 });
 
 describe("the agents step: sign-in", () => {
+  it("keeps Continue pressable during a sign-in, but not as the step's neutral action", async () => {
+    await enterRemoteAgents();
+    const neutrals = () =>
+      renderer!.root.findAll(
+        (node) => typeof node.type === "string" && node.props["data-wizard-neutral"] !== undefined,
+      );
+    expect(neutrals()).toHaveLength(1);
+    await click("Sign in");
+    expect(hasViewport()).toBe(true);
+    expect(neutrals()).toHaveLength(0);
+    const primary = renderer!.root.find(
+      (node) => typeof node.type === "string" && node.props["data-wizard-primary"] !== undefined,
+    );
+    expect(primary.props.disabled).not.toBe(true);
+  });
+
   it("runs the agent's own sign-in in the panel, with nothing to type", async () => {
     setAccess(primaryId, false);
     await enterRemoteAgents();
@@ -962,7 +988,10 @@ describe("the agents step: readiness", () => {
     await enterRemoteAgents();
     state.refresh.mockClear();
     await click("Check again");
-    expect(state.refresh).toHaveBeenCalledExactlyOnceWith({ environmentId: remoteId, input: {} });
+    expect(state.refresh).toHaveBeenCalledExactlyOnceWith({
+      environmentId: remoteId,
+      input: { fresh: true },
+    });
     expect(state.find).toHaveBeenCalledOnce();
   });
 });
