@@ -2014,10 +2014,14 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         // is acknowledged (each resends the full snapshot) until a restore
         // completes.
         const unsettledRestores = new Set<string>();
+        // Suspended: the set is read when the wait runs, after any restore
+        // started just before it.
         const awaitRestores = (threadId: string) =>
-          Effect.forEach([...(restoresInFlight.get(threadId) ?? [])], Deferred.await, {
-            discard: true,
-          });
+          Effect.suspend(() =>
+            Effect.forEach([...(restoresInFlight.get(threadId) ?? [])], Deferred.await, {
+              discard: true,
+            }),
+          );
         // Codex drops client developer messages during compaction but only
         // resends additionalContext when it changes. Restore the current entries
         // after turn/completed: items injected mid-turn make the turn sample again.
@@ -7174,15 +7178,17 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               if (turnInput.manualCodexCreditIntent !== undefined)
                 return yield* Effect.fail("Credit submissions cannot compact a native thread.");
               const threadId = yield* getNativeThreadId(turnInput.providerThread);
+              if (turnInput.projectContext)
+                projectContextByNativeThread.set(threadId, turnInput.projectContext);
+              // A restore landing inside the compaction turn would make it sample.
+              // Waited for before the compaction claims the next native turn, so a
+              // Stop during the wait leaves nothing for a later turn/started to adopt.
+              yield* settleContextRestores(threadId);
               yield* Ref.update(pendingRootTurns, (current) =>
                 new Map(current).set(threadId, turnInput),
               );
               // Cleared on interrupt too, as startTurn does: an interrupted start
               // must not adopt the native turn that a late turn/started reports.
-              if (turnInput.projectContext)
-                projectContextByNativeThread.set(threadId, turnInput.projectContext);
-              // A restore landing inside the compaction turn would make it sample.
-              yield* settleContextRestores(threadId);
               yield* onLoadedNativeThread(
                 threadId,
                 turnInput.providerThread.appThreadId ?? null,

@@ -1148,6 +1148,7 @@ it.effect(
       const { compacted, inject, nextTurn } = restoreFixture(nativeThreadId);
       const methods: Array<string> = [];
       const compactionHandled = yield* Deferred.make<void>();
+      const releaseRestore = yield* Deferred.make<void>();
       const harness = yield* openCodex(
         makeCodexReplayTranscript({
           scenario: "stop-restore",
@@ -1186,7 +1187,10 @@ it.effect(
           attemptId: RunAttemptId.make(attempt),
           text,
         }),
-        projectContext: { accepted: Effect.void, restore: Effect.succeed("restored memory") },
+        projectContext: {
+          accepted: Effect.void,
+          restore: Deferred.await(releaseRestore).pipe(Effect.as("restored memory")),
+        },
       });
       yield* harness.runtime.startTurn(turn("stop-restore-1", "work"));
       yield* Deferred.await(compactionHandled);
@@ -1199,7 +1203,89 @@ it.effect(
         .pipe(Effect.exit, Effect.forkScoped);
       yield* TestClock.adjust("10 seconds");
       yield* Fiber.join(stop);
-      yield* harness.runtime.startTurn(turn("stop-restore-2", "next"));
+      // The restore is still reading its snapshot when the next prompt arrives.
+      const next = yield* harness.runtime
+        .startTurn(turn("stop-restore-2", "next"))
+        .pipe(Effect.forkScoped);
+      yield* TestClock.adjust("1 second");
+      assert.equal(methods.filter((method) => method === "turn/start").length, 1);
+      yield* Deferred.succeed(releaseRestore, undefined);
+      yield* Fiber.join(next);
       assert.deepEqual(methods.slice(-2), ["thread/inject_items", "turn/start"]);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+// Live clock: the compaction is cancelled while it waits for the restore.
+it.live("Codex leaves no compaction run for a late native turn after Stop cancels its wait", () =>
+  Effect.gen(function* () {
+    const nativeThreadId = "compact-cancel-native";
+    const { compacted, completed, inject } = restoreFixture(nativeThreadId);
+    const releaseRestore = yield* Deferred.make<void>();
+    const lateTurnHandled = yield* Deferred.make<void>();
+    let turnsStarted = 0;
+    const harness = yield* openCodex(
+      makeCodexReplayTranscript({
+        scenario: "compact-cancel",
+        entries: [
+          ...codexReplayPreamble({ nativeThreadId, nativeTurnId: "first-turn", prompt: "work" }),
+          compacted("first-turn"),
+          completed("first-turn"),
+          ...inject(4),
+          {
+            type: "emit_inbound",
+            label: "late turn",
+            frame: {
+              method: "turn/started",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: "late-turn", status: "inProgress" }),
+              },
+            },
+          },
+        ],
+      }),
+      undefined,
+      {
+        handled: (method) =>
+          method === "turn/started" && ++turnsStarted === 2
+            ? Deferred.succeed(lateTurnHandled, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+      },
+    );
+    const events: Array<unknown> = [];
+    const terminals = yield* Queue.unbounded<void>();
+    yield* harness.runtime.events.pipe(
+      Stream.runForEach((event) =>
+        Effect.sync(() => events.push(event)).pipe(
+          Effect.andThen(
+            event.type === "turn.terminal" ? Queue.offer(terminals, undefined) : Effect.void,
+          ),
+        ),
+      ),
+      Effect.forkScoped,
+    );
+    const turn = (attempt: string, text: string) => ({
+      ...makeCodexTestTurnInput({
+        ...harness,
+        now: DateTime.nowUnsafe(),
+        attemptId: RunAttemptId.make(attempt),
+        text,
+      }),
+      projectContext: {
+        accepted: Effect.void,
+        restore: Deferred.await(releaseRestore).pipe(Effect.as("restored memory")),
+      },
+    });
+    yield* harness.runtime.startTurn(turn("compact-cancel-1", "work"));
+    yield* Queue.take(terminals);
+    const compact = yield* harness.runtime.compactThread!(
+      turn("compact-cancel-2", "/compact"),
+    ).pipe(Effect.forkScoped);
+    yield* Effect.sleep("50 millis");
+    // Stop cancels the compaction while it waits for the restore.
+    yield* Fiber.interrupt(compact);
+    yield* Deferred.succeed(releaseRestore, undefined);
+    yield* Deferred.await(lateTurnHandled);
+    assert.notInclude(JSON.stringify(events), "run-compact-cancel-2");
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
