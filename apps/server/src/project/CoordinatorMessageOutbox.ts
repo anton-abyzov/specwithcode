@@ -35,22 +35,40 @@ export const COORDINATOR_MESSAGE_OUTBOX_TTL_MS = 24 * 60 * 60 * 1000;
 
 export interface CoordinatorMessageOutboxDeps {
   readonly store: CoordinatorMessageStoreShape;
-  /** Rechecks current link membership, grant, capabilities and coordinator authority. */
-  readonly authorize: (record: CoordinatorMessageRecord) => Effect.Effect<boolean>;
+  /**
+   * Rechecks current link membership, grant, capabilities and coordinator
+   * authority. A failure is transient: the row waits for the next pass.
+   */
+  readonly authorize: (record: CoordinatorMessageRecord) => Effect.Effect<boolean, OutboxFailure>;
   readonly deliver: (
     record: CoordinatorMessageRecord,
     request: CoordinatorMessageDeliverRequest,
   ) => Effect.Effect<CoordinatorMessageDeliverResponse, OutboxFailure>;
   readonly receipt?: (
     record: CoordinatorMessageRecord,
-  ) => Effect.Effect<"read" | "not_delivered" | undefined, OutboxFailure>;
-  /** Resolve the receiver's project from the current link, never a cached project id. */
-  readonly receiverProject: (record: CoordinatorMessageRecord) => Effect.Effect<ProjectId>;
+  ) => Effect.Effect<"read" | "quiet" | "not_delivered" | undefined, OutboxFailure>;
+  /**
+   * Resolve the receiver's project from the current link, never a cached
+   * project id. `undefined` means it is no longer linked.
+   */
+  readonly receiverProject: (
+    record: CoordinatorMessageRecord,
+  ) => Effect.Effect<ProjectId | undefined, OutboxFailure>;
 }
+
+/** Only an answer that may change on retry keeps a message queued. */
+const transientFailure = (error: OutboxFailure) =>
+  error._tag !== "HandoffPeerError" ||
+  error.uncertain ||
+  error.code === "unreachable" ||
+  error.code === "busy" ||
+  error.code === "failed";
 
 export const makeOutbox = (deps: CoordinatorMessageOutboxDeps) =>
   Effect.gen(function* () {
     const lock = yield* Semaphore.make(1);
+    /** The peer's definite refusal of a row, so the sender hears why (1427 AC-12). */
+    const refusals = new Map<string, string>();
     const setState = (
       id: string,
       state: CoordinatorMessageRecord["state"],
@@ -62,7 +80,8 @@ export const makeOutbox = (deps: CoordinatorMessageOutboxDeps) =>
           records: rows.map((row) =>
             row.id === id &&
             (row.state === "queued" ||
-              (row.state === "delivered" && (state === "read" || state === "not_delivered")))
+              (row.state === "delivered" &&
+                (state === "read" || state === "quiet" || state === "not_delivered")))
               ? {
                   ...row,
                   state,
@@ -184,10 +203,15 @@ export const makeOutbox = (deps: CoordinatorMessageOutboxDeps) =>
           for (const row of rows) {
             if (row.direction !== "outgoing") continue;
             if (row.state === "delivered" && deps.receipt !== undefined) {
-              if (!(yield* deps.authorize(row))) continue;
-              const receipt = yield* deps.receipt(row).pipe(Effect.option);
-              if (receipt._tag === "Some" && receipt.value !== undefined)
-                yield* setState(row.id, receipt.value);
+              const allowed = yield* deps.authorize(row).pipe(Effect.result);
+              if (allowed._tag === "Failure" || !allowed.success) continue;
+              const receipt = yield* deps.receipt(row).pipe(Effect.result);
+              if (receipt._tag === "Success") {
+                if (receipt.success !== undefined) yield* setState(row.id, receipt.success);
+              } else if (!transientFailure(receipt.failure)) {
+                // The receiver no longer keeps it or refuses to answer: stop asking.
+                yield* setState(row.id, "not_delivered");
+              }
               continue;
             }
             if (row.state !== "queued") continue;
@@ -196,15 +220,24 @@ export const makeOutbox = (deps: CoordinatorMessageOutboxDeps) =>
               yield* setState(row.id, "not_delivered");
               continue;
             }
-            if (!(yield* deps.authorize(row))) {
+            const allowed = yield* deps.authorize(row).pipe(Effect.result);
+            if (allowed._tag === "Failure") continue;
+            if (!allowed.success) {
               yield* setState(row.id, "not_delivered");
               continue;
             }
-            const projectId = yield* deps.receiverProject(row);
+            const resolved = yield* deps.receiverProject(row).pipe(Effect.result);
+            if (resolved._tag === "Failure") continue;
+            const projectId = resolved.success;
             // Resolution may wait on I/O. Recheck authority and the deadline immediately before sending.
-            const authorized = yield* deps.authorize(row);
+            const recheck = yield* deps.authorize(row).pipe(Effect.result);
+            if (recheck._tag === "Failure") continue;
             const sendAt = yield* Clock.currentTimeMillis;
-            if (sendAt - row.receivedAt >= COORDINATOR_MESSAGE_OUTBOX_TTL_MS || !authorized) {
+            if (
+              projectId === undefined ||
+              sendAt - row.receivedAt >= COORDINATOR_MESSAGE_OUTBOX_TTL_MS ||
+              !recheck.success
+            ) {
               yield* setState(row.id, "not_delivered");
               continue;
             }
@@ -217,22 +250,32 @@ export const makeOutbox = (deps: CoordinatorMessageOutboxDeps) =>
                 clientRequestId: row.clientRequestIds[0]!,
                 message: row,
               })
-              .pipe(Effect.option);
+              .pipe(Effect.result);
+            if (response._tag === "Failure") {
+              if (!transientFailure(response.failure)) {
+                refusals.set(row.id, response.failure.message);
+                yield* setState(row.id, "not_delivered");
+              }
+              continue;
+            }
             if (
-              response._tag === "Some" &&
-              response.value.capabilities.includes(COORDINATOR_MESSAGE_CAPABILITY) &&
-              (response.value.messageId === row.externalId ||
-                response.value.outcome === "merged" ||
-                response.value.outcome === "duplicate")
+              response.success.capabilities.includes(COORDINATOR_MESSAGE_CAPABILITY) &&
+              (response.success.messageId === row.externalId ||
+                response.success.outcome === "merged" ||
+                response.success.outcome === "duplicate")
             )
-              yield* setState(row.id, "delivered", response.value.messageId);
+              yield* setState(row.id, "delivered", response.success.messageId);
           }
         }),
       ),
+      /** Why the receiver definitely refused a row, when it said. */
+      refusal: (id: string) => refusals.get(id),
     };
   });
 
 import {
+  COORDINATOR_MESSAGE_PATH_MAX,
+  COORDINATOR_MESSAGE_REPORT_PATH,
   type CoordinatorMessageBody,
   type EnvironmentId,
   type ThreadId,
@@ -246,6 +289,7 @@ import * as Schedule from "effect/Schedule";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { HandoffPeers } from "../handoff/handoffPeers.ts";
 import { CoordinatorMessageStore, layer as storeLayer } from "./CoordinatorMessageStore.ts";
+import { membershipOf } from "./CoordinatorMessageFrame.ts";
 import { ProjectService } from "./ProjectService.ts";
 import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 
@@ -296,16 +340,10 @@ export const layer = Layer.effect(
           (member) => member.environmentId === self && member.projectId === projectId,
         );
         const remote = identity.members.filter((member) => member.environmentId === peer);
-        return own.length === 1 && remote.length === 1
-          ? {
-              ...remote[0]!,
-              membershipStamp: stringifyJson([
-                own[0]!.linkId,
-                own[0]!.generation,
-                remote[0]!.linkId,
-                remote[0]!.generation,
-              ]),
-            }
+        // The receiver's orientation (own first), so both ends compare one stamp.
+        const membershipStamp = membershipOf(found.value, peer, self);
+        return own.length === 1 && remote.length === 1 && membershipStamp !== undefined
+          ? { ...remote[0]!, membershipStamp }
           : undefined;
       });
     const box = yield* makeOutbox({
@@ -318,20 +356,10 @@ export const layer = Layer.effect(
               row.outgoingMembership !== undefined &&
               row.outgoingMembership === member.membershipStamp,
           ),
-          Effect.orElseSucceed(() => false),
         ),
       receiverProject: (row) =>
         destination(row.projectId, row.peerEnvironmentId, row.logicalProjectId).pipe(
-          Effect.flatMap((member) =>
-            member === undefined
-              ? Effect.fail(
-                  new CoordinatorMessageOutboxError({
-                    message: "The project is no longer linked.",
-                  }),
-                )
-              : Effect.succeed(member.projectId),
-          ),
-          Effect.orDie,
+          Effect.map((member) => member?.projectId),
         ),
       deliver: (row, request) => peers.coordinatorMessage(row.peerEnvironmentId, request),
       receipt: (row) =>
@@ -361,6 +389,8 @@ export const layer = Layer.effect(
             receipt.state === "not_delivered"
           )
             return "not_delivered" as const;
+          // The receiver folded it away without waking anyone: final, stop asking.
+          if (receipt.state === "quiet") return "quiet" as const;
           return undefined;
         }),
     });
@@ -378,11 +408,9 @@ export const layer = Layer.effect(
               message: "clientRequestId must contain 1 to 128 characters.",
             }),
           );
+        // Labels are free text two machines may share; only stable ids pick a peer.
         const target = (yield* peers.targets).filter(
-          (item) =>
-            item.machineId === input.machine ||
-            item.environmentId === input.machine ||
-            item.label === input.machine,
+          (item) => item.machineId === input.machine || item.environmentId === input.machine,
         );
         if (target.length !== 1)
           return yield* Effect.fail(
@@ -402,30 +430,54 @@ export const layer = Layer.effect(
           );
         const peer = target[0]!.environmentId;
         let message = input.message;
+        const refuse = (text: string) =>
+          Effect.fail(new CoordinatorMessageOutboxError({ message: text }));
+        // Without a run the wake rule cannot be checked, so nothing is sent (1427 AC-14).
+        if (input.runId === null)
+          return yield* refuse("A coordinator message is sent from a running coordinator turn.");
+        for (const ref of message.refs)
+          if (
+            ref.kind === "report" &&
+            (ref.environmentId !== self ||
+              ref.path.length > COORDINATOR_MESSAGE_PATH_MAX ||
+              !COORDINATOR_MESSAGE_REPORT_PATH.test(ref.path))
+          )
+            return yield* refuse(
+              "A report reference names a report of this machine under .specweave/increments/<increment>/reports/.",
+            );
         const rows = yield* store.all;
+        // Every message that woke this run, from any machine: a woken turn only answers.
         const wakes = rows.filter(
           (row) =>
             row.direction === "incoming" &&
             row.projectId === input.projectId &&
-            row.peerEnvironmentId === peer &&
-            input.runId !== null &&
             (row.wokenRunId === input.runId || row.startedRun?.runId === input.runId),
         );
-        if (
-          wakes.length > 0 &&
-          (message.kind !== "reply" ||
-            !wakes.some(
-              (row) =>
-                row.kind !== "reply" &&
-                (row.id === message.replyTo || row.externalId === message.replyTo),
-            ))
-        )
-          return yield* Effect.fail(
-            new CoordinatorMessageOutboxError({
-              message:
-                "A turn woken by this machine may only reply to its incoming non-reply message.",
-            }),
+        const waking = wakes.filter((row) => row.kind !== "reply");
+        if (wakes.length > 0) {
+          const answered = waking.find(
+            (row) => row.id === message.replyTo || row.externalId === message.replyTo,
           );
+          if (
+            message.kind !== "reply" ||
+            answered === undefined ||
+            answered.peerEnvironmentId !== peer
+          )
+            return yield* refuse(
+              "A turn woken by a coordinator message may only reply to that message, on the machine that sent it.",
+            );
+          if (
+            rows.some(
+              (row) =>
+                row.direction === "outgoing" &&
+                row.projectId === input.projectId &&
+                row.peerEnvironmentId === peer &&
+                row.replyTo === answered.externalId &&
+                !row.clientRequestIds.includes(input.clientRequestId),
+            )
+          )
+            return yield* refuse("A woken turn sends one reply.");
+        }
         if (message.replyTo !== undefined) {
           const original = rows.find(
             (row) =>
@@ -435,10 +487,17 @@ export const layer = Layer.effect(
               (row.id === message.replyTo || row.externalId === message.replyTo),
           );
           if (original === undefined || original.kind === "reply")
-            return yield* Effect.fail(
-              new CoordinatorMessageOutboxError({
-                message: "A reply must answer an incoming message that is not itself a reply.",
-              }),
+            return yield* refuse(
+              "A reply must answer an incoming message that is not itself a reply.",
+            );
+          if (
+            original.state === "revoked" ||
+            original.state === "refused" ||
+            original.state === "not_delivered" ||
+            original.state === "quiet"
+          )
+            return yield* refuse(
+              "That message never reached this coordinator, so it takes no reply.",
             );
           message = { ...message, replyTo: original.externalId };
         }
@@ -479,6 +538,9 @@ export const layer = Layer.effect(
               message: "The outgoing message could not be read.",
             }),
           );
+        const refused = result.state === "not_delivered" ? box.refusal(result.id) : undefined;
+        if (refused !== undefined)
+          return yield* Effect.fail(new CoordinatorMessageOutboxError({ message: refused }));
         return result;
       });
     const read: CoordinatorMessageOutbox["Service"]["read"] = (input) =>
@@ -489,14 +551,26 @@ export const layer = Layer.effect(
               message: "Only this project's coordinator may read a coordinator report.",
             }),
           );
-        const row = (yield* store.all).find(
+        const rows = yield* store.all;
+        // A row id names one peer; an external id only within the peer it came from.
+        const byId = rows.find(
           (record) =>
             record.direction === "incoming" &&
             record.projectId === input.projectId &&
-            (record.id === input.messageId || record.externalId === input.messageId),
+            record.id === input.messageId,
         );
+        const byExternal = rows.filter(
+          (record) =>
+            record.direction === "incoming" &&
+            record.projectId === input.projectId &&
+            record.externalId === input.messageId,
+        );
+        const row = byId ?? (byExternal.length === 1 ? byExternal[0] : undefined);
         if (
           row === undefined ||
+          row.state === "revoked" ||
+          row.state === "refused" ||
+          row.state === "not_delivered" ||
           !row.refs.some(
             (ref) =>
               ref.kind === "report" &&
@@ -514,7 +588,7 @@ export const layer = Layer.effect(
           row.peerEnvironmentId,
           row.logicalProjectId,
         );
-        if (member === undefined)
+        if (member === undefined || row.admittedUnder?.membership !== member.membershipStamp)
           return yield* Effect.fail(
             new CoordinatorMessageOutboxError({
               message: "This project is no longer linked to that machine.",

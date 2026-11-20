@@ -9,6 +9,8 @@ import {
   run,
   outgoing,
   records,
+  refusedWith,
+  M5,
 } from "../../../project/CoordinatorMessageReceiver.testkit.ts";
 const access = (peer: string) => ({
   operate: false,
@@ -77,6 +79,69 @@ describe("coordinator message receipts", () => {
           expect(error.code).toBe("needs_grant");
         }),
       [outgoing("message-report-owner", "finding")],
+    ),
+  );
+  it.effect("a reply leaves rows of another membership or still queued unanswered", () =>
+    run(
+      (receiver) =>
+        Effect.gen(function* () {
+          const answer = yield* deliver(
+            receiver,
+            callerFrom(LINUX),
+            request({ kind: "reply", replyTo: "message-original" }),
+          );
+          expect(answer.ok).toBe(true);
+          const sent = (yield* records).filter((row) => row.direction === "outgoing");
+          expect(Object.fromEntries(sent.map((row) => [row.externalId, row.state]))).toEqual({
+            "message-original": "delivered",
+            "message-queued": "queued",
+          });
+        }),
+      [
+        outgoing("message-original", "finding", { outgoingMembership: "before-rejoin" }),
+        outgoing("message-queued", "finding", {
+          state: "queued",
+          receiverMessageId: "message-original",
+        }),
+      ],
+    ),
+  );
+  it.effect("a reply from another machine answers nothing", () =>
+    run(
+      (receiver) =>
+        Effect.gen(function* () {
+          yield* deliver(
+            receiver,
+            callerFrom(BUILD_HOST),
+            request({ kind: "reply", replyTo: "message-original" }),
+          );
+          const sent = (yield* records).filter((row) => row.direction === "outgoing");
+          expect(sent.map((row) => row.state)).toEqual(["delivered"]);
+        }),
+      [outgoing("message-original", "finding")],
+    ),
+  );
+  it.effect("refuses a message naming a report that is not on its sender", () =>
+    run((receiver) =>
+      Effect.gen(function* () {
+        const refusal = yield* refusedWith(
+          receiver,
+          callerFrom(LINUX),
+          request({
+            refs: [
+              {
+                kind: "report",
+                environmentId: M5,
+                path: ".specweave/increments/1427-test/reports/m5.md",
+                bytes: 10,
+              },
+            ],
+          }),
+        );
+        expect(refusal).toMatchObject({ status: 409, code: "invalid" });
+        expect(refusal.message).toContain("not on");
+        expect(yield* records).toEqual([]);
+      }),
     ),
   );
 });

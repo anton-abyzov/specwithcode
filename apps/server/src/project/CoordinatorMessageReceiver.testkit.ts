@@ -27,6 +27,7 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as CoordinatorMessageReceiver from "./CoordinatorMessageReceiver.ts";
 import * as CoordinatorMessageStore from "./CoordinatorMessageStore.ts";
+import { membershipOf } from "./CoordinatorMessageFrame.ts";
 import * as TeamRules from "../teamRules/TeamRules.ts";
 import * as ProjectService from "./ProjectService.ts";
 
@@ -523,5 +524,7 @@ export const outgoing = (
   state: "delivered",
   receivedAt: 0,
   updatedAt: 0,
+  // A sent row records the membership it was sent under.
+  outgoingMembership: membershipOf(projectOf(PROJECT), LINUX, M5),
   ...overrides,
 });

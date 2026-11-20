@@ -114,7 +114,24 @@ const LEAVES_THIS_MACHINE: ReadonlySet<PeerPath> = new Set([
   "extras-replicate",
   "review-replicate",
   "review-takeover",
+  // A message and a report read carry this project's words and files to another machine.
+  "coordinator-message",
+  "coordinator-message-read",
 ]);
+
+/** A request this machine cannot encode never leaves it: a definite, local refusal. */
+const encodeLocal = <S extends Schema.Top>(schema: S, value: S["Type"]) =>
+  Schema.encodeEffect(schema)(value).pipe(
+    Effect.mapError(
+      (error) =>
+        new HandoffPeerError({
+          code: "invalid",
+          message: `The request is not valid: ${error.message}`,
+          uncertain: false,
+          local: true,
+        }),
+    ),
+  );
 const TIMEOUT_MS: Record<PeerPath, number> = {
   negotiate: 15_000,
   replicate: 120_000,
@@ -643,6 +660,21 @@ export const make = Effect.gen(function* () {
       if (answer.status === 404 && path === "folder-work") {
         return yield* new HandoffPeerError(unknownFolderWorkPath(target.label));
       }
+      // A machine from before coordinator messages has no such path. It took nothing.
+      if (
+        answer.status === 404 &&
+        (path === "coordinator-message" ||
+          path === "coordinator-message-read" ||
+          path === "coordinator-message-receipt")
+      ) {
+        return yield* new HandoffPeerError({
+          code: "invalid",
+          message: `Needs update: ${target.label} runs a SpecWithCode from before coordinator messages. Update SpecWithCode on ${target.label}.`,
+          check: "version",
+          uncertain: false,
+          needsUpdate: true,
+        });
+      }
       if (!answer.ok) return yield* refusedAnswer(target.label, answer.status, json);
       const decoded = decode(json);
       if (Option.isSome(decoded)) return decoded.value;
@@ -716,25 +748,37 @@ export const make = Effect.gen(function* () {
     heartbeat: (environmentId, request) =>
       postJson(environmentId, "heartbeat", encodeHeartbeat(request), decodeHeartbeat),
     coordinatorMessageReceipt: (environmentId, request) =>
-      postJson(
-        environmentId,
-        "coordinator-message-receipt",
-        Schema.encodeSync(CoordinatorMessageReceiptRequest)(request),
-        Schema.decodeUnknownOption(CoordinatorMessageReceiptResponse),
+      encodeLocal(CoordinatorMessageReceiptRequest, request).pipe(
+        Effect.flatMap((body) =>
+          postJson(
+            environmentId,
+            "coordinator-message-receipt",
+            body,
+            Schema.decodeUnknownOption(CoordinatorMessageReceiptResponse),
+          ),
+        ),
       ),
     coordinatorMessageRead: (environmentId, request) =>
-      postJson(
-        environmentId,
-        "coordinator-message-read",
-        Schema.encodeSync(CoordinatorMessageReadRequest)(request),
-        Schema.decodeUnknownOption(CoordinatorMessageReadResponse),
+      encodeLocal(CoordinatorMessageReadRequest, request).pipe(
+        Effect.flatMap((body) =>
+          postJson(
+            environmentId,
+            "coordinator-message-read",
+            body,
+            Schema.decodeUnknownOption(CoordinatorMessageReadResponse),
+          ),
+        ),
       ),
     coordinatorMessage: (environmentId, request) =>
-      postJson(
-        environmentId,
-        "coordinator-message",
-        Schema.encodeSync(CoordinatorMessageDeliverRequest)(request),
-        Schema.decodeUnknownOption(CoordinatorMessageDeliverResponse),
+      encodeLocal(CoordinatorMessageDeliverRequest, request).pipe(
+        Effect.flatMap((body) =>
+          postJson(
+            environmentId,
+            "coordinator-message",
+            body,
+            Schema.decodeUnknownOption(CoordinatorMessageDeliverResponse),
+          ),
+        ),
       ),
     coordinatorLease: (environmentId, request) =>
       postJson(

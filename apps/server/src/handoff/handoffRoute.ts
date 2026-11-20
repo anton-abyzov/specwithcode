@@ -172,15 +172,23 @@ export const layer = HttpRouter.add(
     if (Option.isNone(client))
       return yield* unread(refusal(401, "unauthorized", { code: "needs_grant" }));
     const grants = yield* WorkGrants.WorkGrants;
-    // A message reads the kept grant and never creates or settles one (1427).
-    const grant = yield* (
+    const messagePath =
       (path === "coordinator-message" ||
         path === "coordinator-message-read" ||
         path === "coordinator-message-receipt") &&
-      Option.isSome(messages)
-        ? messages.value.grantFor(client.value)
-        : grants.forClient(client.value)
-    ).pipe(Effect.option);
+      Option.isSome(messages);
+    // A message reads the kept grant and never creates or settles one (1427).
+    // An unreadable grant store is this machine's failure, never the sender's missing grant.
+    const lookup = messagePath
+      ? yield* messages.value.grantFor(client.value).pipe(Effect.option)
+      : Option.some(undefined);
+    if (messagePath && Option.isNone(lookup))
+      return yield* unread(
+        refusal(500, "This machine could not read its work grants; try again.", {
+          code: "failed",
+        }),
+      );
+    const grant = messagePath ? lookup : yield* grants.forClient(client.value).pipe(Effect.option);
     if (Option.isNone(grant) || grant.value === undefined) {
       const sender = coordinatorOfPrincipal(client.value.principal);
       if (
@@ -190,7 +198,7 @@ export const layer = HttpRouter.add(
         Option.isSome(messages) &&
         sender !== undefined
       )
-        return fromRefusal(yield* messages.value.ungranted(sender));
+        return yield* unread(fromRefusal(yield* messages.value.ungranted(sender)));
       return yield* unread(
         refusal(403, "Only a paired machine's worker credential may hand off here.", {
           code: "needs_grant",
@@ -209,7 +217,9 @@ export const layer = HttpRouter.add(
           path === "coordinator-message-receipt") &&
         Option.isSome(messages)
       )
-        return fromRefusal(yield* messages.value.revoked(grant.value.coordinatorEnvironmentId));
+        return yield* unread(
+          fromRefusal(yield* messages.value.revoked(grant.value.coordinatorEnvironmentId)),
+        );
       return yield* unread(
         refusal(403, "This machine revoked that machine's work here.", {
           code: "needs_grant",

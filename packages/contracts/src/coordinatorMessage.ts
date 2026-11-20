@@ -18,6 +18,11 @@ export const COORDINATOR_MESSAGE_SUBJECT_MAX = 120;
 export const COORDINATOR_MESSAGE_STEP_MAX = 200;
 export const COORDINATOR_MESSAGE_REFS_MAX = 8;
 export const COORDINATOR_MESSAGE_DEDUPE_KEY_MAX = 200;
+/** A report or file path a message names, and the path a report read asks for. */
+export const COORDINATOR_MESSAGE_PATH_MAX = 1024;
+/** The only files a report ref may name: a report in an increment's reports folder. */
+export const COORDINATOR_MESSAGE_REPORT_PATH =
+  /^\.specweave\/increments\/[^/]+\/reports\/.+\.(md|txt|html|json)$/i;
 /** A direction carries at most this many messages per project in an hour; more fold into a digest. */
 export const COORDINATOR_MESSAGE_HOURLY_CAP = 6;
 
@@ -120,6 +125,14 @@ export function coordinatorMessageProblem(
     message.dedupeKey.length > COORDINATOR_MESSAGE_DEDUPE_KEY_MAX
   )
     return tooLarge(`The dedupe key is over ${COORDINATOR_MESSAGE_DEDUPE_KEY_MAX} characters.`);
+  if (
+    message.refs.some(
+      (ref) =>
+        (ref.kind === "report" || ref.kind === "file") &&
+        ref.path.length > COORDINATOR_MESSAGE_PATH_MAX,
+    )
+  )
+    return invalid(`A referenced path is over ${COORDINATOR_MESSAGE_PATH_MAX} characters.`);
   if (message.subject.trim() === "") return invalid("A message needs a subject.");
   if (message.kind === "reply" && message.replyTo === undefined)
     return invalid("A reply names the message it answers (replyTo).");

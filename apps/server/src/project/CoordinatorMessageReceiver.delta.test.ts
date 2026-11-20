@@ -344,7 +344,7 @@ describe("CoordinatorMessageReceiver frames only current members (delta finding 
             userStep: { environmentId: BUILD_HOST, text: "Restart the build on build-host" },
             refs: [
               { kind: "thread", environmentId: M5, threadId: WORKER, title: "In the project" },
-              { kind: "report", environmentId: BUILD_HOST, path: "reports/build.md", bytes: 900 },
+              { kind: "file", environmentId: BUILD_HOST, path: "logs/build-2.log", bytes: 900 },
               { kind: "file", environmentId: BUILD_HOST, path: "logs/build.log", bytes: 1200 },
               { kind: "report", environmentId: LINUX, path: "reports/kept.md", bytes: 300 },
             ],
