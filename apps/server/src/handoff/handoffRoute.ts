@@ -1,3 +1,4 @@
+import { CoordinatorMessageReceiptRequest } from "./coordinatorMessageWire.ts";
 /**
  * The machine-to-machine handoff API (`/api/handoff/v1/<path>`). Only a
  * paired machine's worker credential gets in: the work grant it holds here
@@ -173,7 +174,9 @@ export const layer = HttpRouter.add(
     const grants = yield* WorkGrants.WorkGrants;
     // A message reads the kept grant and never creates or settles one (1427).
     const grant = yield* (
-      (path === "coordinator-message" || path === "coordinator-message-read") &&
+      (path === "coordinator-message" ||
+        path === "coordinator-message-read" ||
+        path === "coordinator-message-receipt") &&
       Option.isSome(messages)
         ? messages.value.grantFor(client.value)
         : grants.forClient(client.value)
@@ -181,7 +184,9 @@ export const layer = HttpRouter.add(
     if (Option.isNone(grant) || grant.value === undefined) {
       const sender = coordinatorOfPrincipal(client.value.principal);
       if (
-        (path === "coordinator-message" || path === "coordinator-message-read") &&
+        (path === "coordinator-message" ||
+          path === "coordinator-message-read" ||
+          path === "coordinator-message-receipt") &&
         Option.isSome(messages) &&
         sender !== undefined
       )
@@ -199,7 +204,9 @@ export const layer = HttpRouter.add(
         yield* (yield* CoordinatorLeaseReceiver).grantRefused(grant.value.coordinatorEnvironmentId);
       // A message's refusal names both machines (1427 AC-12).
       if (
-        (path === "coordinator-message" || path === "coordinator-message-read") &&
+        (path === "coordinator-message" ||
+          path === "coordinator-message-read" ||
+          path === "coordinator-message-receipt") &&
         Option.isSome(messages)
       )
         return fromRefusal(yield* messages.value.revoked(grant.value.coordinatorEnvironmentId));
@@ -326,6 +333,24 @@ export const layer = HttpRouter.add(
         return Option.isNone(input)
           ? invalid
           : yield* answer((yield* LinkedMemoryPeerReceiver).memoryMerge(caller, input.value));
+      }
+      case "coordinator-message-receipt": {
+        const input = decodeJson(CoordinatorMessageReceiptRequest, body.value);
+        return Option.isNone(input)
+          ? invalid
+          : Option.isNone(messages)
+            ? refusal(404, "not_found", { code: "not_found" })
+            : yield* answer(
+                messages.value.receipt(caller, input.value, {
+                  operate: client.value.access !== "read-only",
+                  sessionId: client.value.sessionId,
+                  teamRulesFingerprint: callerFingerprint(request.headers),
+                  ...(client.value.device === undefined ? {} : { device: client.value.device }),
+                  ...(client.value.credentialExpiresAt === undefined
+                    ? {}
+                    : { credentialExpiresAt: client.value.credentialExpiresAt }),
+                }),
+              );
       }
       case "coordinator-message-read": {
         const input = decodeJson(CoordinatorMessageReadRequest, body.value);

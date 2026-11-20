@@ -130,4 +130,36 @@ describe("coordinator message outbox", () => {
       expect((yield* store.all)[0]!.text).toBe(record.text);
     }).pipe(Effect.provide(layerMemory())),
   );
+  it.effect("records read receipts without resending a delivered message", () =>
+    Effect.gen(function* () {
+      const store = yield* CoordinatorMessageStore;
+      const box = yield* makeOutbox({
+        store,
+        authorize: () => Effect.succeed(true),
+        receiverProject: () => Effect.succeed(PROJECT),
+        deliver: () => Effect.die("must not resend"),
+        receipt: () => Effect.succeed("read" as const),
+      });
+      yield* box.flush;
+      expect((yield* store.all)[0]!.state).toBe("read");
+    }).pipe(Effect.provide(layerMemory([outgoing("message-read-receipt", "finding")]))),
+  );
+  it.effect("does not downgrade an answered message during a receipt request", () =>
+    Effect.gen(function* () {
+      const store = yield* CoordinatorMessageStore;
+      const box = yield* makeOutbox({
+        store,
+        authorize: () => Effect.succeed(true),
+        receiverProject: () => Effect.succeed(PROJECT),
+        deliver: () => Effect.die("must not resend"),
+        receipt: () =>
+          store.update(0, (rows) => ({
+            records: rows.map((row) => ({ ...row, state: "answered" as const })),
+            result: "read" as const,
+          })),
+      });
+      yield* box.flush;
+      expect((yield* store.all)[0]!.state).toBe("answered");
+    }).pipe(Effect.provide(layerMemory([outgoing("message-answer-receipt", "finding")]))),
+  );
 });

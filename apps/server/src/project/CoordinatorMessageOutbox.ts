@@ -27,6 +27,9 @@ export interface CoordinatorMessageOutboxDeps {
     record: CoordinatorMessageRecord,
     request: CoordinatorMessageDeliverRequest,
   ) => Effect.Effect<CoordinatorMessageDeliverResponse, unknown>;
+  readonly receipt?: (
+    record: CoordinatorMessageRecord,
+  ) => Effect.Effect<"read" | "not_delivered" | undefined, unknown>;
   /** Resolve the receiver's project from the current link, never a cached project id. */
   readonly receiverProject: (record: CoordinatorMessageRecord) => Effect.Effect<ProjectId>;
 }
@@ -43,7 +46,9 @@ export const makeOutbox = (deps: CoordinatorMessageOutboxDeps) =>
         const now = yield* Clock.currentTimeMillis;
         yield* deps.store.update(now, (rows) => ({
           records: rows.map((row) =>
-            row.id === id && row.state === "queued"
+            row.id === id &&
+            (row.state === "queued" ||
+              (row.state === "delivered" && (state === "read" || state === "not_delivered")))
               ? {
                   ...row,
                   state,
@@ -149,7 +154,15 @@ export const makeOutbox = (deps: CoordinatorMessageOutboxDeps) =>
         Effect.gen(function* () {
           const rows = yield* deps.store.all;
           for (const row of rows) {
-            if (row.direction !== "outgoing" || row.state !== "queued") continue;
+            if (row.direction !== "outgoing") continue;
+            if (row.state === "delivered" && deps.receipt !== undefined) {
+              if (!(yield* deps.authorize(row))) continue;
+              const receipt = yield* deps.receipt(row).pipe(Effect.option);
+              if (receipt._tag === "Some" && receipt.value !== undefined)
+                yield* setState(row.id, receipt.value);
+              continue;
+            }
+            if (row.state !== "queued") continue;
             const now = yield* Clock.currentTimeMillis;
             if (now - row.receivedAt >= COORDINATOR_MESSAGE_OUTBOX_TTL_MS) {
               yield* setState(row.id, "not_delivered");
@@ -276,6 +289,35 @@ export const layer = Layer.effect(
           Effect.orDie,
         ),
       deliver: (row, request) => peers.coordinatorMessage(row.peerEnvironmentId, request),
+      receipt: (row) =>
+        Effect.gen(function* () {
+          const member = yield* destination(
+            row.projectId,
+            row.peerEnvironmentId,
+            row.logicalProjectId,
+          );
+          if (member === undefined) return undefined;
+          const receipt = yield* peers.coordinatorMessageReceipt(row.peerEnvironmentId, {
+            capabilities: [COORDINATOR_MESSAGE_CAPABILITY],
+            logicalProjectId: row.logicalProjectId,
+            projectId: member.projectId,
+            messageId: row.receiverMessageId ?? row.externalId,
+          });
+          if (!receipt.capabilities.includes(COORDINATOR_MESSAGE_CAPABILITY)) return undefined;
+          if (
+            receipt.state === "delivered" ||
+            receipt.state === "read" ||
+            receipt.state === "answered"
+          )
+            return "read" as const;
+          if (
+            receipt.state === "revoked" ||
+            receipt.state === "refused" ||
+            receipt.state === "not_delivered"
+          )
+            return "not_delivered" as const;
+          return undefined;
+        }),
     });
     const send: CoordinatorMessageOutbox["Service"]["send"] = (input) =>
       Effect.gen(function* () {

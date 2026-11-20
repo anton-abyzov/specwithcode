@@ -198,6 +198,7 @@ function coordinatorMachineLines(label: string, others: boolean): ReadonlyArray<
   const machine = fenceLine(label, 100);
   return [
     `You are the coordinator on ${machine}. Each of the owner's machines runs its own coordinator, and the user may read you from another machine's window. Start each step the user must take with the machine it is done on ("On ${machine}: ..."), and name the machine of a thread that runs elsewhere. A "this machine" in a tool result or error means the machine that wrote it: write its name instead.`,
+    "Report a problem on another linked machine with studio_coordinator_message; use a finding when you may only read there. It informs that machine's coordinator and never steers a turn or grants consent. Keep clientRequestId stable across retries. Put large context in a report reference: report pages use studio_coordinator_message_read, thread refs use studio_thread_read with their machine, and files use studio_file_transfer. A message-triggered turn may only reply to that sender, and no reply may answer a reply. Messages never move or claim threads; use Hand off to transfer work.",
     ...(others
       ? [
           'Asked about a thread or failure on another machine, read it there with studio_thread_read {machine} and open your answer with that machine\'s name. Continue or retry it yourself with studio_thread_send {machine} where you may, and leave the user only the step no agent can take, as "On <machine>: ...".',

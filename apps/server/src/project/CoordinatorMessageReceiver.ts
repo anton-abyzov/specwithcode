@@ -1,3 +1,7 @@
+import type {
+  CoordinatorMessageReceiptRequest,
+  CoordinatorMessageReceiptResponse,
+} from "../handoff/coordinatorMessageWire.ts";
 import { readReportPage } from "../mcp/toolkits/coordinatorMessage/reportRead.ts";
 import type {
   CoordinatorMessageReadRequest,
@@ -135,6 +139,11 @@ export class CoordinatorMessageReceiver extends Context.Service<
         readonly credentialExpiresAt?: number | undefined;
       },
     ) => Effect.Effect<CoordinatorMessageDeliverResponse, HandoffRefusal>;
+    readonly receipt: (
+      caller: ReceiverCaller,
+      request: CoordinatorMessageReceiptRequest,
+      access: Parameters<CoordinatorMessageReceiver["Service"]["deliver"]>[2],
+    ) => Effect.Effect<CoordinatorMessageReceiptResponse, HandoffRefusal>;
     readonly read: (
       caller: ReceiverCaller,
       request: CoordinatorMessageReadRequest,
@@ -956,6 +965,22 @@ export const make = Effect.gen(function* () {
           "busy",
           `${receiver} keeps as many messages from ${sender} as it can until its coordinator reads them; ${sender} may try again later.`,
         );
+      if (message.kind === "reply" && message.replyTo !== undefined) {
+        yield* store
+          .update(now, (records) => ({
+            records: records.map((record) =>
+              record.direction === "outgoing" &&
+              record.projectId === admittedProject.id &&
+              record.peerEnvironmentId === peer &&
+              (record.externalId === message.replyTo ||
+                record.receiverMessageId === message.replyTo)
+                ? { ...record, state: "answered" as const, updatedAt: now }
+                : record,
+            ),
+            result: undefined,
+          }))
+          .pipe(Effect.mapError(keptFailure));
+      }
       return outcome;
     });
 
@@ -1296,16 +1321,20 @@ export const make = Effect.gen(function* () {
       Effect.map((label) => ungrantedMessageRefusal(label(selfEnvironmentId), label(sender))),
     );
 
-  const read: CoordinatorMessageReceiver["Service"]["read"] = (caller, request, access) =>
+  const inspectAuthority = (
+    caller: ReceiverCaller,
+    request: CoordinatorMessageReceiptRequest,
+    access: Parameters<CoordinatorMessageReceiver["Service"]["deliver"]>[2],
+  ) =>
     Effect.gen(function* () {
       const label = yield* namer;
       const denied = () =>
         refuse(
           403,
           "needs_grant",
-          `${label(selfEnvironmentId)} refused ${label(caller.sourceEnvironmentId)}'s report read.`,
+          `${label(selfEnvironmentId)} refused ${label(caller.sourceEnvironmentId)}'s message inspection.`,
         );
-      const check = Effect.gen(function* () {
+      return yield* Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis;
         if (
           (yield* livePresentedSession(
@@ -1330,8 +1359,21 @@ export const make = Effect.gen(function* () {
           label,
         });
       });
+    });
+  const read: CoordinatorMessageReceiver["Service"]["read"] = (caller, request, access) =>
+    Effect.gen(function* () {
+      const label = yield* namer;
+      const denied = () =>
+        refuse(
+          403,
+          "needs_grant",
+          `${label(selfEnvironmentId)} refused ${label(caller.sourceEnvironmentId)}'s report read.`,
+        );
+      const check = inspectAuthority(caller, request, access);
       const authority = yield* check;
-      const row = (yield* store.all.pipe(Effect.mapError(keptFailure))).find(
+      const row = (yield* store.all.pipe(
+        Effect.mapError(() => refuse(500, "failed", "The coordinator messages could not be read.")),
+      )).find(
         (record) =>
           record.direction === "outgoing" &&
           record.projectId === request.projectId &&
@@ -1363,7 +1405,33 @@ export const make = Effect.gen(function* () {
       yield* check;
       return { ...page, capabilities: COORDINATOR_MESSAGE_CAPABILITIES };
     });
-  return CoordinatorMessageReceiver.of({ deliver, read, grantFor, flush, revoked, ungranted });
+  const receipt: CoordinatorMessageReceiver["Service"]["receipt"] = (caller, request, access) =>
+    Effect.gen(function* () {
+      yield* inspectAuthority(caller, request, access);
+      const row = (yield* store.all.pipe(
+        Effect.mapError(() => refuse(500, "failed", "The coordinator messages could not be read.")),
+      )).find(
+        (record) =>
+          record.direction === "incoming" &&
+          record.projectId === request.projectId &&
+          record.logicalProjectId === request.logicalProjectId &&
+          record.peerEnvironmentId === caller.sourceEnvironmentId &&
+          record.externalId === request.messageId,
+      );
+      if (row === undefined)
+        return yield* refuse(404, "not_found", "That coordinator message is not kept here.");
+      yield* inspectAuthority(caller, request, access);
+      return { capabilities: COORDINATOR_MESSAGE_CAPABILITIES, state: row.state };
+    });
+  return CoordinatorMessageReceiver.of({
+    deliver,
+    read,
+    receipt,
+    grantFor,
+    flush,
+    revoked,
+    ungranted,
+  });
 });
 
 /**

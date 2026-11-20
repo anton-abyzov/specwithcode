@@ -1,4 +1,8 @@
 import {
+  CoordinatorMessageReceiptRequest,
+  CoordinatorMessageReceiptResponse,
+} from "./coordinatorMessageWire.ts";
+import {
   CoordinatorMessageReadRequest,
   CoordinatorMessageReadResponse,
 } from "./coordinatorMessageWire.ts";
@@ -140,6 +144,7 @@ const TIMEOUT_MS: Record<PeerPath, number> = {
   // A message is small and the receiver answers before its agent reads it.
   "coordinator-message": 15_000,
   "coordinator-message-read": 15_000,
+  "coordinator-message-receipt": 15_000,
 };
 /** A memory page, a coordinator's content or a plan answers with up to the link cap; the rest is small. */
 const answerLimit = (path: PeerPath) =>
@@ -203,6 +208,10 @@ export class HandoffPeers extends Context.Service<
      * there: an address answers as that machine. Sends no request.
      */
     readonly reachable: (environmentId: EnvironmentId) => Effect.Effect<boolean>;
+    readonly coordinatorMessageReceipt: (
+      environmentId: EnvironmentId,
+      request: CoordinatorMessageReceiptRequest,
+    ) => Effect.Effect<CoordinatorMessageReceiptResponse, HandoffPeerError>;
     readonly coordinatorMessageRead: (
       environmentId: EnvironmentId,
       request: CoordinatorMessageReadRequest,
@@ -706,6 +715,13 @@ export const make = Effect.gen(function* () {
       ),
     heartbeat: (environmentId, request) =>
       postJson(environmentId, "heartbeat", encodeHeartbeat(request), decodeHeartbeat),
+    coordinatorMessageReceipt: (environmentId, request) =>
+      postJson(
+        environmentId,
+        "coordinator-message-receipt",
+        Schema.encodeSync(CoordinatorMessageReceiptRequest)(request),
+        Schema.decodeUnknownOption(CoordinatorMessageReceiptResponse),
+      ),
     coordinatorMessageRead: (environmentId, request) =>
       postJson(
         environmentId,
