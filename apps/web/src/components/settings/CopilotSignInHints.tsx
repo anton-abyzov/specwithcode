@@ -74,16 +74,18 @@ export function pickedCopilotHost(value: CopilotHostChoice): string | null | und
   return value.choice;
 }
 
-/** github.com and every enterprise host gh is signed in to, github.com first. */
-export function copilotHostOptions(found: ProviderAuthState["copilotExistingSignIns"]): string[] {
-  const hosts = new Set([
-    "github.com",
-    ...(found?.ghAccounts.flatMap((account) => {
-      const host = normalizeGitHubHost(account.host);
-      return host ? [host] : [];
-    }) ?? []),
-  ]);
+function githubCliHosts(found: ProviderAuthState["copilotExistingSignIns"]): ReadonlyArray<string> {
+  const hosts = new Set<string>();
+  for (const account of found?.ghAccounts ?? []) {
+    const host = normalizeGitHubHost(account.host);
+    if (host) hosts.add(host);
+  }
   return [...hosts];
+}
+
+/** github.com and every valid enterprise host gh is signed in to, github.com first. */
+export function copilotHostOptions(found: ProviderAuthState["copilotExistingSignIns"]): string[] {
+  return [...new Set(["github.com", ...githubCliHosts(found)])];
 }
 
 export function CopilotSignInHints({
@@ -116,7 +118,7 @@ export function CopilotSignInHints({
   const needsNode = copilotNeedsNode(message);
   const needsInstall = canInstallAgent && !needsNode && copilotNeedsAgentInstall(message);
   // The host device sign-in goes to: one enterprise host and no other, as on the server.
-  const hosts = [...new Set(found?.ghAccounts.map((account) => account.host) ?? [])];
+  const hosts = githubCliHosts(found);
   const enterprise = hosts.length === 1 && hosts[0] !== "github.com" ? hosts : [];
   const picked = host ? pickedCopilotHost(host) : undefined;
   const codeHost = picked ?? (picked === null ? undefined : (enterprise[0] ?? "github.com"));

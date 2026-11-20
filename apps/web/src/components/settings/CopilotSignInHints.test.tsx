@@ -173,6 +173,7 @@ describe("GitHub host helpers", () => {
         vscodeCopilot: false,
         ghAccounts: [
           { host: "aaby.ghe.com", account: "a" },
+          { host: "127.0.0.1", account: "stale" },
           { host: "aaby.ghe.com", account: "b" },
         ],
       }),

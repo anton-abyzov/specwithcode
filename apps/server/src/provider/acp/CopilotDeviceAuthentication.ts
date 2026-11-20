@@ -128,7 +128,7 @@ export function resolveCopilotLoginHost(input: {
   const fromEnvironment =
     normalizeCopilotHost(input.environment.COPILOT_GH_HOST) ??
     normalizeCopilotHost(input.environment.GH_HOST);
-  const host = input.picked ?? fromEnvironment ?? input.ghEnterpriseHost;
+  const host = input.picked ?? fromEnvironment ?? normalizeCopilotHost(input.ghEnterpriseHost);
   return host === "github.com" && (fromEnvironment ?? "github.com") === "github.com"
     ? undefined
     : host;
