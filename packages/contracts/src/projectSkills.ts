@@ -176,6 +176,12 @@ export const ProjectSkillsProviderState = Schema.Struct({
    * does not list is unknown here, never missing. Absent from older machines.
    */
   incomplete: Schema.optional(Schema.Boolean),
+  /**
+   * `folder-scan`: the app scanned this agent's skill folders for this folder
+   * itself, so an `unsupported` agent's files were still looked for. Absent
+   * from older machines, where an `unsupported` agent proves no absence.
+   */
+  discovery: Schema.optional(ServerProviderSkillDiscovery),
 });
 export type ProjectSkillsProviderState = typeof ProjectSkillsProviderState.Type;
 

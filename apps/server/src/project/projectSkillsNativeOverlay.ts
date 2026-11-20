@@ -168,13 +168,18 @@ export const applyNativeSkillSwitches = Effect.fn("projectSkills.applyNativeSkil
           let skills: ReadonlyArray<ServerProviderSkill> = source.skills;
           // A folder scan that could not finish: a skill missing here may still be installed.
           let scanIncomplete = false;
+          let folderScanned = false;
           if (harness === "gemini" || harness === "copilot") {
-            const scanned = yield* scanSkillRoots(
-              cliSkillRoots(harness, input.cwd, input.home, control.environment, path.join),
-            );
-            scanIncomplete = scanned.failureReason !== undefined;
             const named = (skill: ServerProviderSkill) =>
               cliSkillName(harness, skill.displayName ?? skill.name);
+            // Keyed by the name the CLI uses, so same-named folders that declare
+            // different names stay two skills.
+            const scanned = yield* scanSkillRoots(
+              cliSkillRoots(harness, input.cwd, input.home, control.environment, path.join),
+              named,
+            );
+            scanIncomplete = scanned.failureReason !== undefined;
+            folderScanned = true;
             // Same-named files in lower-priority folders, in scan order, by the name the CLI uses.
             const behind = new Map<string, Array<{ path: string; scope: string | null }>>();
             for (const copy of scanned.shadowed) {
@@ -194,8 +199,11 @@ export const applyNativeSkillSwitches = Effect.fn("projectSkills.applyNativeSkil
               };
             });
           }
-          const reported = <Source extends ProviderSkillSource>(next: Source): Source =>
-            scanIncomplete ? { ...next, scanIncomplete: true } : next;
+          const reported = <Source extends ProviderSkillSource>(next: Source): Source => ({
+            ...next,
+            ...(folderScanned ? { folderScanned: true } : {}),
+            ...(scanIncomplete ? { scanIncomplete: true } : {}),
+          });
           // An unreadable file switches nothing here, and its skills offer no switch.
           if (read.status === "invalid") return reported({ ...source, skills });
           const state = read.state;

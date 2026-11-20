@@ -14,7 +14,7 @@ export type SkillStatus =
   | { readonly kind: "update-available"; readonly version: string }
   | {
       readonly kind: "not-read";
-      readonly reason: "checking" | "unlinked" | "failed" | "incomplete";
+      readonly reason: "checking" | "unlinked" | "failed" | "incomplete" | "machine-list";
     }
   | { readonly kind: "built-in" };
 
@@ -65,7 +65,9 @@ export function SkillStatusChip({ status }: { status: SkillStatus }) {
               ? tx("No project there")
               : status.reason === "incomplete"
                 ? tx("Scan incomplete")
-                : tx("Could not be read")}
+                : status.reason === "machine-list"
+                  ? tx("Not checked per folder")
+                  : tx("Could not be read")}
         </Badge>
       );
     case "built-in":

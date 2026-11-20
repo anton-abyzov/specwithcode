@@ -118,7 +118,10 @@ export function providerSkillsForCwd(
   };
 }
 
-/** Marks the state of every agent whose app-run folder scan did not finish as incomplete. */
+/**
+ * Marks the state of every agent whose folders the app scanned itself, and of
+ * every one whose scan did not finish as incomplete.
+ */
 export function withIncompleteFolderScans(
   states: ReadonlyArray<ProjectSkillsProviderState>,
   sources: ReadonlyArray<ProviderSkillSource>,
@@ -126,12 +129,21 @@ export function withIncompleteFolderScans(
   const incomplete = new Set(
     sources.filter((source) => source.scanIncomplete === true).map((source) => source.instanceId),
   );
-  if (incomplete.size === 0) return states;
-  return states.map((state) =>
-    incomplete.has(state.instanceId) && state.incomplete !== true
-      ? { ...state, incomplete: true }
-      : state,
+  const scanned = new Set(
+    sources.filter((source) => source.folderScanned === true).map((source) => source.instanceId),
   );
+  if (incomplete.size === 0 && scanned.size === 0) return states;
+  return states.map((state) => {
+    const mark = incomplete.has(state.instanceId) && state.incomplete !== true;
+    const tag = scanned.has(state.instanceId) && state.discovery === undefined;
+    return mark || tag
+      ? {
+          ...state,
+          ...(tag ? { discovery: "folder-scan" as const } : {}),
+          ...(mark ? { incomplete: true } : {}),
+        }
+      : state;
+  });
 }
 
 /**

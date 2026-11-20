@@ -127,6 +127,8 @@ const snapshotOf = (rows: ReadonlyArray<unknown>, checkedAt: string, complete = 
         driver: "copilot",
         label: "Copilot",
         state: "unsupported",
+        // The app scanned its skill folders itself.
+        discovery: "folder-scan",
         skills: 36,
       },
       { instanceId: "codex", driver: "codex", label: "Codex", state: "ok", skills: 18 },

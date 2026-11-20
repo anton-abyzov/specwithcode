@@ -235,10 +235,13 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
 /**
  * Agent Skills (`<name>/SKILL.md`) under `roots`, in order, the first copy of
  * a name winning. Other agents that read plain skill folders (Gemini CLI,
- * Copilot CLI) are scanned the same way.
+ * Copilot CLI) are scanned the same way. `nameOf` is the name the agent knows
+ * a skill by, when that is not its folder: two folders called the same that
+ * declare different names are two skills, not a skill and its copy.
  */
 export const scanSkillRoots = Effect.fn("scanSkillRoots")(function* (
   roots: ReadonlyArray<{ readonly directory: string; readonly scope: "user" | "project" }>,
+  nameOf: (skill: ServerProviderSkill) => string = (skill) => skill.name,
 ) {
   const skillsByName = new Map<string, ServerProviderSkill>();
   // Same-named files in later roots. The first root wins the name; these are
@@ -254,8 +257,8 @@ export const scanSkillRoots = Effect.fn("scanSkillRoots")(function* (
     if (budget.exhausted) break;
     const skills = yield* discoverSkillsInRoot({ ...root, budget });
     for (const skill of skills) {
-      const winner = skillsByName.get(skill.name);
-      if (winner === undefined) skillsByName.set(skill.name, skill);
+      const winner = skillsByName.get(nameOf(skill));
+      if (winner === undefined) skillsByName.set(nameOf(skill), skill);
       else if (winner.path !== skill.path) shadowed.push(skill);
     }
   }

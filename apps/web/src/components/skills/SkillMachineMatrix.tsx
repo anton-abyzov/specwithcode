@@ -230,7 +230,7 @@ export function SkillMachineMatrix({
       ))}
       <p className="text-sm text-muted-foreground">
         {tx(
-          "Read-only. Each machine reports its own skills. “Not on” means the machine was read and no agent there reported the skill; a machine that was not read in full says why instead.",
+          "Read-only. Each machine reports its own skills. “Not on” means every agent on that machine was read for this folder and none has the skill; a machine that was not read in full says why instead.",
         )}
       </p>
       {matrix.rows.length > 0 ? (

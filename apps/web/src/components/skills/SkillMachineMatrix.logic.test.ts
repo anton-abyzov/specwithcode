@@ -238,6 +238,35 @@ describe("buildSkillMatrix", () => {
     ]);
   });
 
+  it("says missing only when every agent there was read for the folder", () => {
+    const agents = (copilot: Record<string, unknown>) =>
+      ({
+        ...snapshot([]),
+        providers: [
+          { instanceId: "codex", driver: "codex", label: "Codex", state: "ok", skills: 0 },
+          {
+            instanceId: "copilot",
+            driver: "acpRegistry",
+            label: "Copilot",
+            state: "unsupported",
+            skills: 0,
+            ...copilot,
+          },
+        ],
+      }) as unknown as ProjectSkillsSnapshot;
+    const matrix = buildSkillMatrix([
+      machine("desk", { current: true, snapshot: snapshot([row("notes")]) }),
+      // One machine-wide list and no folder scan: the skill may be there unseen.
+      machine("mini", { snapshot: agents({}) }),
+      // The app scanned that agent's folders itself: absence is known.
+      machine("tower", { snapshot: agents({ discovery: "folder-scan" }) }),
+    ]);
+    expect(matrix.rows[0]?.cells.slice(1)).toEqual([
+      { kind: "unknown", reason: "machine-list" },
+      { kind: "missing" },
+    ]);
+  });
+
   it("shows unknown, never missing, on a machine whose skill folders could not all be read", () => {
     const unreadable = {
       ...snapshot([]),

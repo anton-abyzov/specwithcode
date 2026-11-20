@@ -272,12 +272,13 @@ it("reads an agent whose folder scan did not finish as incomplete, and leaves th
     skills: 3,
     ...extra,
   });
-  const source = (instance: string, scanIncomplete?: boolean) => ({
+  const source = (instance: string, scanIncomplete?: boolean, folderScanned?: boolean) => ({
     instanceId: ProviderInstanceId.make(instance),
     driver: ProviderDriverKind.make("acpRegistry"),
     label: instance,
     skills: [],
     ...(scanIncomplete ? { scanIncomplete } : {}),
+    ...(folderScanned ? { folderScanned } : {}),
   });
   const states = [state("copilot"), state("gemini")];
   assert.deepStrictEqual(
@@ -286,6 +287,17 @@ it("reads an agent whose folder scan did not finish as incomplete, and leaves th
       source("gemini"),
     ]),
     [state("copilot", { incomplete: true }), state("gemini")],
+  );
+  // An agent whose folders the app scanned says so, so its files count as looked for.
+  assert.deepStrictEqual(
+    ProjectSkillsService.withIncompleteFolderScans(states, [
+      source("copilot", true, true),
+      source("gemini", false, true),
+    ]),
+    [
+      state("copilot", { discovery: "folder-scan", incomplete: true }),
+      state("gemini", { discovery: "folder-scan" }),
+    ],
   );
   // Nothing partial: the same array, so nothing downstream sees a change.
   assert.strictEqual(

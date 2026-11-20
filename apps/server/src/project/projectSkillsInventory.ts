@@ -34,6 +34,8 @@ export interface ProviderSkillSource {
    * them, so a skill missing from `skills` may still be installed.
    */
   readonly scanIncomplete?: boolean;
+  /** The app scanned this agent's skill folders for this folder itself. */
+  readonly folderScanned?: boolean;
 }
 
 /** The subset of a `vskill.lock` entry the view uses. */

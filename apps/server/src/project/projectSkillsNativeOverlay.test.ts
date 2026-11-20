@@ -262,6 +262,35 @@ describe("agents' own skill switches in the Skills view", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live(
+    "Copilot: same-named folders that declare different names stay two skills, not one and a copy",
+    () =>
+      Effect.gen(function* () {
+        const root = yield* setup({
+          "work/.agents/skills/foo/SKILL.md": skillFile("alpha"),
+          "home/.agents/skills/foo/SKILL.md": skillFile("beta"),
+          // Different folders that declare one name are one skill and its copy.
+          "work/.agents/skills/one/SKILL.md": skillFile("same"),
+          "home/.agents/skills/two/SKILL.md": skillFile("same"),
+        });
+        const [copilot] = yield* run(root, [source("acpRegistry", [], "copilot")], {
+          copilot: "copilot",
+        });
+        expect(copilot!.skills.map((skill) => [skill.name, skill.path, skill.otherCopies])).toEqual(
+          [
+            ["alpha", join(root, "work/.agents/skills/foo/SKILL.md"), undefined],
+            ["beta", join(root, "home/.agents/skills/foo/SKILL.md"), undefined],
+            [
+              "same",
+              join(root, "work/.agents/skills/one/SKILL.md"),
+              [{ path: join(root, "home/.agents/skills/two/SKILL.md"), scope: "user" }],
+            ],
+          ],
+        );
+        expect(copilot).toMatchObject({ folderScanned: true });
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("an agent the app does not scan folders for carries no discovery claim", () =>
     Effect.gen(function* () {
       const root = yield* setup({ "home/.grok/config.toml": "" });
@@ -272,6 +301,7 @@ describe("agents' own skill switches in the Skills view", () => {
       );
       expect(grok!.skills[0]).not.toHaveProperty("discovery");
       expect(grok!.skills[0]).not.toHaveProperty("otherCopies");
+      expect(grok).not.toHaveProperty("folderScanned");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

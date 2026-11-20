@@ -29,7 +29,13 @@ export interface SkillMatrixMachine {
  * `failed` the read failed, `incomplete` the read answered but some agent or
  * skill folder did not, so a skill it does not list may still be there.
  */
-export type SkillMatrixUnknownReason = "checking" | "unlinked" | "failed" | "incomplete";
+export type SkillMatrixUnknownReason =
+  | "checking"
+  | "unlinked"
+  | "failed"
+  | "incomplete"
+  /** An agent there keeps one machine-wide list and its folders were not scanned. */
+  | "machine-list";
 
 /**
  * One skill on one machine. Only `missing` says the machine was read and does
@@ -179,6 +185,14 @@ function cellFor(
   // Codex system skills), and an older app does not read those folders at all:
   // nobody can install one, so its absence is never "Not on".
   if (builtIn) return { kind: "unreported" };
+  // An agent that keeps one list for the whole machine, whose folders the app
+  // did not scan either, may hold the skill for this folder without saying so.
+  if (
+    machine.snapshot?.providers.some(
+      (provider) => provider.state === "unsupported" && provider.discovery !== "folder-scan",
+    )
+  )
+    return { kind: "unknown", reason: "machine-list" };
   return { kind: "missing" };
 }
 
