@@ -22,6 +22,7 @@ import {
   run,
   namesBoth,
 } from "./CoordinatorMessageReceiver.testkit.ts";
+import { COORDINATOR_MESSAGE_STALE_MS } from "./CoordinatorMessageReceiver.ts";
 
 describe("CoordinatorMessageReceiver starts a turn now or keeps the message (round 3 finding 1)", () => {
   it.effect("asks for a turn that starts now, never one that waits in the thread's queue", () =>
@@ -551,6 +552,21 @@ describe("CoordinatorMessageReceiver counts a message delivered once a provider 
         yield* settle;
         expect(harness.sends).toHaveLength(1);
         expect((yield* records)[0]!.state).toBe("refused");
+      }),
+    ),
+  );
+});
+
+describe("CoordinatorMessageReceiver bounds how stale a send's authority can get (round 6, held)", () => {
+  it.effect("a start must reach its provider within 30 seconds of the last full check", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        // Far-off time limits: only the staleness bound applies.
+        yield* deliver(receiver, callerFrom(LINUX), request(), true);
+        yield* settle;
+        const recheckedAt = 46_000;
+        expect(harness.sends[0]!.authorityEndsAt).toBe(recheckedAt + COORDINATOR_MESSAGE_STALE_MS);
+        expect(COORDINATOR_MESSAGE_STALE_MS).toBe(30_000);
       }),
     ),
   );
