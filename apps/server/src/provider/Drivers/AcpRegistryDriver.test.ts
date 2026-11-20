@@ -373,6 +373,9 @@ describe("acpRegistrySnapshotReadiness", () => {
       ["auto", false],
       ["gemini-3.8-flash", false],
       ["gemini-4-argon", false],
+      ["gemini-4-carbon", false],
+      ["gemini-4-neon", false],
+      ["gemini-4-hydrogen", false],
     ]);
     // A catalog that lists Argon, or a custom entry typed earlier, is not duplicated.
     expect(
@@ -383,7 +386,7 @@ describe("acpRegistrySnapshotReadiness", () => {
         },
         { customModels: [], agentId: "gemini" },
       ),
-    ).toEqual([["gemini-4-argon", false]]);
+    ).toEqual([["gemini-4-argon", false], ["gemini-4-carbon", false], ["gemini-4-neon", false], ["gemini-4-hydrogen", false]]);
     expect(
       slugs(geminiCatalog, {
         customModels: ["gemini-4-argon"],
