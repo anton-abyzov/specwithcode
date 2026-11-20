@@ -264,8 +264,6 @@ export const pt: Messages = {
   "fallback.moveUp": "Mover {label} para cima",
   "fallback.moveDown": "Mover {label} para baixo",
   "fallback.remove": "Remover {label}",
-  "fallback.sameModelAria": "Mesmo modelo em outros provedores, depois de {label}",
-  "fallback.sameModelOn": "Mesmo modelo em {provider}",
   "fallback.orderLabel": "Ordem de fallback",
   "fallback.status.ready": "Pode assumir uma thread limitada",
   "fallback.status.unverified": "Conectado, sem leitura de uso recente",

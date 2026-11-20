@@ -180,6 +180,13 @@ async function advance(ms: number) {
   });
 }
 
+async function passInstallDeadline() {
+  // The deadline uses wall time. Let the next poll observe it without replaying
+  // thousands of identical clock ticks and polls against the same agent state.
+  vi.setSystemTime(Date.now() + 45 * 60_000);
+  await advance(2_000);
+}
+
 /** The newest options the persistent service-update toast was given. */
 function lastToast() {
   const updates = state.updateToast.mock.calls;
@@ -406,7 +413,7 @@ describe("a window that only follows another window's request", () => {
       await advance(2_000);
       expect(lastToast()).toMatchObject({ type: "error", description: SERVICE_REQUEST_EXPIRED });
       const renewedAt = Date.now();
-      await advance(16 * 60_000);
+      vi.setSystemTime(Date.now() + 16 * 60_000);
       // A publish still shows the renewal, whose hold ran out a minute ago;
       // the desktop no longer reports it.
       state.service = { ...agent, pendingInstall: pendingForce(renewedAt) };
@@ -436,7 +443,7 @@ describe("a window that only follows another window's request", () => {
       };
       await advance(2_000);
       expect(label()).toBe("Installing…");
-      await advance(45 * 60_000);
+      await passInstallDeadline();
       expect(lastToast().description).toContain("has not finished after 45 minutes");
       calls.length = 0;
       await closeToast();
@@ -503,7 +510,7 @@ describe("an old failure's toast closed after another window pressed", () => {
     await advance(2_000);
     expect(label()).toBe("Installing…");
     // The install outlasts its budget: the failure stays, and the agent may still install.
-    await advance(45 * 60_000);
+    await passInstallDeadline();
     expect(lastToast().description).toContain("has not finished after 45 minutes");
     // The install ended since, and another window pressed Update now.
     const otherAt = Date.now();
@@ -540,7 +547,7 @@ describe("a window that reloaded during its own Update now", () => {
     expect(calls).toEqual(STOP_AND_INSTALL);
     // The window reloads once the hold ran out; the agent never took the request up.
     reloadWindow(store);
-    await advance(16 * 60_000);
+    vi.setSystemTime(Date.now() + 16 * 60_000);
     agent = { ...agent, pendingInstall: pendingForce(pressedAt) };
     state.service = agent;
     checked = { ...IDLE, held: false };

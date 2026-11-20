@@ -29,10 +29,13 @@ import { type ModelFamily, modelFamily } from "./modelVendor.ts";
 import {
   canTakeTurn,
   isGeminiSpendProvider,
+  isPaidModelOn,
   isPerTokenProvider,
   isUnknownBillingAgent,
   providerUsedPercent,
   usageResetAt,
+  type UsageUnknownReason,
+  usageUnknownReason,
 } from "./providerFallback.ts";
 
 export type SourceState = "ready" | "limited" | "sign-in" | "not-installed" | "not-ready";
@@ -177,9 +180,15 @@ export interface TrackSource {
   readonly hold: SourceHold | null;
   /**
    * Whether the app starts work here by itself. False for a held source nobody
-   * named, and for any held source in Review, which never reviews on one.
+   * named. Review also excludes per-use sources other than explicitly named Gemini.
    */
   readonly used: boolean;
+  /**
+   * Review only: why a ready source's usage is unknown. A review prefers a
+   * source with a fresh reading, so such a row can lose to a lower one, unless
+   * its usage was never read, which keeps its place.
+   */
+  readonly usage: UsageUnknownReason | null;
 }
 
 export interface TrackRow {
@@ -249,7 +258,13 @@ export function describeTrack(input: {
         slug: served,
         status: sourceStatus(provider, input.nowMs, served),
         hold,
-        used: hold === null || (provider.instanceId === named && input.track !== "review"),
+        used:
+          hold === null ||
+          (provider.instanceId === named &&
+            (input.track !== "review" ||
+              !isPaidModelOn(provider, served) ||
+              isGeminiSpendProvider(provider))),
+        usage: input.track === "review" ? usageUnknownReason(provider, input.nowMs, served) : null,
       };
     });
   };

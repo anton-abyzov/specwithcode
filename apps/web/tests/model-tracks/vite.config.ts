@@ -13,6 +13,8 @@ function fixtureStores(): Plugin {
     "../../state/environments": here("../reviewer-order/stubs/environments.ts"),
     "./useScopedSettings": here("../reviewer-order/stubs/scopedSettings.ts"),
     "./SettingsScopeContext": here("../reviewer-order/stubs/scope.ts"),
+    "../../state/server": here("../reviewer-order/stubs/serverState.ts"),
+    "../../state/use-atom-command": here("../reviewer-order/stubs/atomCommand.ts"),
     "./settingsLayout": here("../reviewer-order/stubs/settingsLayout.tsx"),
   };
   return {

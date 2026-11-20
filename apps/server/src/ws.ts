@@ -1333,6 +1333,7 @@ const layerWsRpc = (
   ServerWsCoreRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
+      const copilotCanSelectHost = RpcAuthorization.canSelectCopilotSignInHost(currentSession);
       const sql = yield* SqlClient.SqlClient;
       const threadManagement = yield* ThreadManagementService.ThreadManagementService;
       const intakeContext = yield* Effect.context<
@@ -2622,7 +2623,15 @@ const layerWsRpc = (
             );
             return { outcome };
           }),
-        [WS_METHODS.providerAuthStart]: (input) => providerAuth.start(input, currentSessionId),
+        [WS_METHODS.providerAuthStart]: (input) =>
+          input.host !== undefined && !copilotCanSelectHost
+            ? Effect.fail(
+                new EnvironmentAuthorizationError({
+                  message: "Only this machine's owner can choose a Copilot sign-in host.",
+                  requiredScope: "access:write",
+                }),
+              )
+            : providerAuth.start(input, currentSessionId),
         [WS_METHODS.providerAuthRespond]: (input) =>
           Effect.annotateCurrentSpan({ instanceId: input.instanceId }).pipe(
             Effect.andThen(providerAuth.respond(input, currentSessionId)),
@@ -2637,7 +2646,11 @@ const layerWsRpc = (
         [WS_METHODS.providerAuthCancel]: (input) => providerAuth.cancel(input, currentSessionId),
         [WS_METHODS.providerAuthLogout]: (input) => providerAuth.logout(input),
         [WS_METHODS.providerAuthSubscribe]: (input) =>
-          providerAuth.subscribe(input, currentSessionId),
+          providerAuth.subscribe(input, currentSessionId).pipe(
+            Stream.map((state) =>
+              state.copilotExistingSignIns === undefined ? state : { ...state, copilotCanSelectHost },
+            ),
+          ),
         [WS_METHODS.providerInstallStart]: (input) => providerInstallation.start(input),
         [WS_METHODS.providerInstallCancel]: (input) => providerInstallation.cancel(input),
         [WS_METHODS.providerInstallSubscribe]: (input) => providerInstallation.subscribe(input),
