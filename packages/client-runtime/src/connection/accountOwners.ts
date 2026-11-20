@@ -29,10 +29,11 @@ export interface AccountOwners {
 export interface PendingOwnerSave {
   /** The owner the save records once it is in the catalog. */
   readonly owner: string;
-  /** The route the save adds or replaces. */
-  readonly routeId: string;
-  /** Whether that route was already saved before, so its presence proves nothing. */
-  readonly routeWasSaved: boolean;
+  /**
+   * A fingerprint of the exact routes the save writes. Finding them in the
+   * catalog after a stop means the save landed.
+   */
+  readonly fingerprint: string;
 }
 
 export interface AccountOwnersInput {
@@ -134,23 +135,32 @@ export function cancelPendingSave(stored: AccountOwners, environmentId: string):
 }
 
 /**
- * Settles saves the app stopped in the middle of. A save counts only when its
- * route is saved now and was not before; otherwise the machine keeps the owner
- * it had, so a save that never reached the catalog changes nobody's machine.
+ * Settles saves the app stopped in the middle of. A save counts when the
+ * catalog holds exactly the routes it wrote; otherwise it never landed and the
+ * machine keeps the owner it had. A save identical to what was already saved
+ * counts too: it carried nothing new, and a save that takes a machine from
+ * another account clears that account's cached data before writing.
  */
 export function settlePendingSaves(
   stored: AccountOwners,
-  savedRoutes: ReadonlyMap<string, ReadonlySet<string>>,
+  savedFingerprints: ReadonlyMap<string, string>,
 ): AccountOwners {
   let next = stored;
   for (const [environmentId, pending] of Object.entries(stored.saving ?? {})) {
-    const committed =
-      !pending.routeWasSaved && (savedRoutes.get(environmentId)?.has(pending.routeId) ?? false);
-    next = committed
-      ? finishPendingSave(next, environmentId)
-      : cancelPendingSave(next, environmentId);
+    next =
+      savedFingerprints.get(environmentId) === pending.fingerprint
+        ? finishPendingSave(next, environmentId)
+        : cancelPendingSave(next, environmentId);
   }
   return next;
+}
+
+/**
+ * Whether a save by `owner` takes the machine from another account, whose
+ * cached projects, chats and drafts must go before the save is written.
+ */
+export function saveTakesMachineFrom(prior: string | undefined, owner: string): boolean {
+  return prior !== undefined && prior !== SAVED_SIGNED_OUT && prior !== owner;
 }
 
 /** The owner a save records for a machine that has none yet. */

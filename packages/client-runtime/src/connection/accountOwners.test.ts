@@ -8,6 +8,7 @@ import {
   cancelPendingSave,
   finishPendingSave,
   ownerForNewSave,
+  saveTakesMachineFrom,
   settlePendingSaves,
   planAccountOwners,
   type AccountOwners,
@@ -152,26 +153,35 @@ describe("pending saves (1434)", () => {
   const stored: AccountOwners = { lastAccount: A, machines: { m4: SAVED_SIGNED_OUT } };
 
   it("finishing records the owner; cancelling keeps the one it had", () => {
-    const begun = beginPendingSave(stored, "m4", { owner: A, routeId: "r", routeWasSaved: true });
+    const begun = beginPendingSave(stored, "m4", { owner: A, fingerprint: "f" });
     expect(finishPendingSave(begun, "m4")).toEqual({ lastAccount: A, machines: { m4: A } });
     expect(cancelPendingSave(begun, "m4")).toEqual(stored);
   });
 
-  it("settles a save cut short only when its new route reached the catalog", () => {
+  it("settles a save cut short by whether the catalog holds exactly what it wrote", () => {
     const begun = beginPendingSave(
-      beginPendingSave(stored, "m4", { owner: A, routeId: "r", routeWasSaved: true }),
+      beginPendingSave(stored, "m4", { owner: A, fingerprint: "written" }),
       "new",
-      { owner: A, routeId: "n", routeWasSaved: false },
+      { owner: A, fingerprint: "n" },
     );
-    const routes = new Map([
-      ["m4", new Set(["r"])],
-      ["new", new Set(["n"])],
-    ]);
-    expect(settlePendingSaves(begun, routes)).toEqual({
-      lastAccount: A,
-      machines: { m4: SAVED_SIGNED_OUT, new: A },
-    });
-    // The new route never landed: no owner is invented.
-    expect(settlePendingSaves(begun, new Map([["m4", new Set(["r"])]]))).toEqual(stored);
+    expect(
+      settlePendingSaves(
+        begun,
+        new Map([
+          ["m4", "written"],
+          ["new", "n"],
+        ]),
+      ),
+    ).toEqual({ lastAccount: A, machines: { m4: A, new: A } });
+    // Neither landed: nobody's machine changes, and no owner is invented.
+    expect(settlePendingSaves(begun, new Map([["m4", "before"]]))).toEqual(stored);
+  });
+
+  it("a save takes a machine only from another account", () => {
+    expect(saveTakesMachineFrom(A, B)).toBe(true);
+    expect(saveTakesMachineFrom(SAVED_BY_UNKNOWN, B)).toBe(true);
+    expect(saveTakesMachineFrom(SAVED_SIGNED_OUT, B)).toBe(false);
+    expect(saveTakesMachineFrom(B, B)).toBe(false);
+    expect(saveTakesMachineFrom(undefined, B)).toBe(false);
   });
 });

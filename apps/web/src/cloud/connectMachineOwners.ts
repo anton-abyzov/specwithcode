@@ -35,13 +35,9 @@ export function readConnectMachineOwners(store: Storage | null = storage()): Acc
     const pending: Record<string, PendingOwnerSave> = {};
     if (typeof saving === "object" && saving !== null) {
       for (const [id, entry] of Object.entries(saving)) {
-        const { owner, routeId, routeWasSaved } = (entry ?? {}) as Record<string, unknown>;
-        if (
-          typeof owner === "string" &&
-          typeof routeId === "string" &&
-          typeof routeWasSaved === "boolean"
-        ) {
-          pending[id] = { owner, routeId, routeWasSaved };
+        const { owner, fingerprint } = (entry ?? {}) as Record<string, unknown>;
+        if (typeof owner === "string" && typeof fingerprint === "string") {
+          pending[id] = { owner, fingerprint };
         }
       }
     }

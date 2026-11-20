@@ -54,7 +54,8 @@ describe("EnvironmentRegistry when owner storage refuses writes (1434)", () => {
         const targets = yield* Ref.get(harness.storedTargets);
         expect(hasRoutes(targets, MACHINE)).toBe(false);
         expect(hasRoutes(targets, RELAY)).toBe(true);
-        expect((yield* Ref.get(harness.cacheClears)).includes(RELAY)).toBe(false);
+        // A's cached data went when B took the machine; the cleanup did not remove B's save.
+        expect((yield* Ref.get(harness.cacheClears)).filter((id) => id === RELAY)).toHaveLength(1);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );
@@ -84,7 +85,8 @@ describe("EnvironmentRegistry when owner storage refuses writes (1434)", () => {
         accountOwners: {
           lastAccount: A,
           machines: { [RELAY]: A },
-          saving: { [RELAY]: { owner: B, routeId: "relay", routeWasSaved: true } },
+          // B's save of another route set never reached the catalog.
+          saving: { [RELAY]: { owner: B, fingerprint: "routes-that-never-landed" } },
         },
       });
       yield* Effect.gen(function* () {

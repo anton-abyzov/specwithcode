@@ -31,7 +31,7 @@ import {
   planAccountOwners,
   settlePendingSaves,
 } from "./accountOwners.ts";
-import { makeOwnerMemory, makeOwnerSaves, savedRouteIds } from "./registryOwnerSaves.ts";
+import { makeOwnerMemory, makeOwnerSaves, savedFingerprints } from "./registryOwnerSaves.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
 import * as Connectivity from "./connectivity.ts";
@@ -683,16 +683,21 @@ export const make = Effect.gen(function* () {
         // The save is noted before the catalog write and its owner recorded
         // after it, so a save that fails or is cut short changes nobody's
         // machine, and one that lands is never left without its owner.
-        const routeId = connectionRouteId(route.target);
-        const begun = yield* beginOwnerSaveLocked(environmentId, scope, {
-          routeId,
-          routeWasSaved:
-            previous !== undefined &&
-            connectionRoutes(previous).some((saved) => connectionRouteId(saved.target) === routeId),
-        });
-        yield* registrations
-          .register(registration, persistedRoutes(entry))
-          .pipe(Effect.tapError(() => endOwnerSaveLocked(environmentId, begun, cancelPendingSave)));
+        const { begun, takesFrom } = yield* beginOwnerSaveLocked(
+          environmentId,
+          scope,
+          persistedRoutes(entry),
+        );
+        yield* Effect.gen(function* () {
+          // Taken from another account: its cached projects, chats and drafts
+          // go first, so this account never sees them.
+          if (takesFrom) {
+            yield* closeServiceScope(environmentId);
+            yield* cache.clear(environmentId);
+            yield* ownedDataCleanup.clear(environmentId);
+          }
+          yield* registrations.register(registration, persistedRoutes(entry));
+        }).pipe(Effect.tapError(() => endOwnerSaveLocked(environmentId, begun, cancelPendingSave)));
         // The Connect routes were removed while this save was being written:
         // put the saved routes back as they were, still under the lock, so a
         // later save for the new account is never undone by this one.
@@ -768,7 +773,7 @@ export const make = Effect.gen(function* () {
     const stored =
       read === null
         ? null
-        : settlePendingSaves(read, savedRouteIds(yield* SubscriptionRef.get(entries), saved));
+        : settlePendingSaves(read, savedFingerprints(yield* SubscriptionRef.get(entries), saved));
     const failed = yield* Ref.get(failedRemovals);
     const plan = planAccountOwners({
       stored,

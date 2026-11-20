@@ -2,9 +2,14 @@ import type { EnvironmentId } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 
 import type * as Persistence from "../platform/persistence.ts";
-import { type AccountOwners, beginPendingSave, ownerForNewSave } from "./accountOwners.ts";
+import {
+  type AccountOwners,
+  beginPendingSave,
+  ownerForNewSave,
+  saveTakesMachineFrom,
+} from "./accountOwners.ts";
 import type { ConnectionCatalogEntry } from "./catalog.ts";
-import { connectionRouteId, connectionRoutes } from "./routes.ts";
+import { connectionRoutes } from "./routes.ts";
 
 type OwnersStore = {
   readonly read: Effect.Effect<AccountOwners | null>;
@@ -83,15 +88,17 @@ export function makeOwnerSaves(owners: ReturnType<typeof makeOwnerMemory>) {
   const beginOwnerSaveLocked = Effect.fn("EnvironmentRegistry.beginOwnerSaveLocked")(function* (
     environmentId: EnvironmentId,
     scope: string | null | undefined,
-    route: { readonly routeId: string; readonly routeWasSaved: boolean },
+    routes: ReadonlyArray<unknown>,
   ) {
     const owner = ownerForNewSave(scope);
     const stored = yield* owners.read;
-    if (owner === undefined || stored === null) return false;
+    if (owner === undefined || stored === null) return { begun: false, takesFrom: false };
     // Notes left by an earlier session are settled by the first plan, before
     // any save can begin, so a note here is never overwritten.
-    yield* owners.writeOrFail(beginPendingSave(stored, environmentId, { owner, ...route }));
-    return true;
+    yield* owners.writeOrFail(
+      beginPendingSave(stored, environmentId, { owner, fingerprint: routesFingerprint(routes) }),
+    );
+    return { begun: true, takesFrom: saveTakesMachineFrom(stored.machines[environmentId], owner) };
   });
 
   /** Finishes or cancels the note this save made. */
@@ -110,18 +117,34 @@ export function makeOwnerSaves(owners: ReturnType<typeof makeOwnerMemory>) {
   return { beginOwnerSaveLocked, endOwnerSaveLocked };
 }
 
-/** The route ids each saved machine has now, to settle saves cut short. */
-export function savedRouteIds(
+/** A stable fingerprint of a list of saved routes: key order never matters. */
+export function routesFingerprint(routes: ReadonlyArray<unknown>): string {
+  const stable = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(stable);
+    if (value !== null && typeof value === "object") {
+      return Object.fromEntries(
+        Object.keys(value)
+          .filter((key) => (value as Record<string, unknown>)[key] !== undefined)
+          .sort()
+          .map((key) => [key, stable((value as Record<string, unknown>)[key])]),
+      );
+    }
+    return value;
+  };
+  return JSON.stringify(stable(routes));
+}
+
+/** The fingerprint of each saved machine's routes now, to settle saves cut short. */
+export function savedFingerprints(
   entries: ReadonlyMap<EnvironmentId, ConnectionCatalogEntry>,
   saved: ReadonlyArray<EnvironmentId>,
-): ReadonlyMap<string, ReadonlySet<string>> {
+): ReadonlyMap<string, string> {
   return new Map(
-    saved.map((environmentId) => {
+    saved.flatMap((environmentId) => {
       const entry = entries.get(environmentId);
-      const routes = entry === undefined ? [] : connectionRoutes(entry);
+      if (entry === undefined) return [];
       return [
-        environmentId as string,
-        new Set(routes.map((route) => connectionRouteId(route.target))),
+        [environmentId as string, routesFingerprint(connectionRoutes(entry).map((r) => r.target))],
       ];
     }),
   );

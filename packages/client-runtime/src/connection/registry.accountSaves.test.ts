@@ -12,8 +12,10 @@ import { RelayConnectionRegistration } from "./catalog.ts";
 import { ConnectionCredentialStore } from "./credentialStore.ts";
 import { make as makeOnboarding } from "./onboarding.ts";
 import * as EnvironmentRegistry from "./registry.ts";
+import { routesFingerprint } from "./registryOwnerSaves.ts";
 import {
   RELAY_TARGET,
+  SECOND_RELAY_TARGET,
   SSH_TARGET,
   TARGET,
   hasRoutes,
@@ -25,6 +27,7 @@ const A = "user_fixture_a";
 const B = "user_fixture_b";
 const RELAY = RELAY_TARGET.environmentId;
 const MACHINE = TARGET.environmentId;
+const RELAY_2 = SECOND_RELAY_TARGET.environmentId;
 
 describe("EnvironmentRegistry saves and removals across an account switch (1434)", () => {
   it.effect("an SSH machine added under A and answered after the switch to B is not saved", () =>
@@ -101,7 +104,7 @@ describe("EnvironmentRegistry saves and removals across an account switch (1434)
         expect(yield* Ref.get(atWrite)).toEqual({
           lastAccount: B,
           machines: {},
-          saving: { [RELAY]: { owner: B, routeId: "relay", routeWasSaved: false } },
+          saving: { [RELAY]: { owner: B, fingerprint: routesFingerprint([RELAY_TARGET]) } },
         });
         expect(yield* Ref.get(harness.storedOwners)).toEqual({
           lastAccount: B,
@@ -143,14 +146,21 @@ describe("EnvironmentRegistry saves and removals across an account switch (1434)
 
   it.effect("saves the app stopped in the middle of are settled by what reached the catalog", () =>
     Effect.gen(function* () {
-      // RELAY: a re-save of a route it already had; MACHINE: a new route that landed.
-      const harness = yield* makeHarness([RELAY_TARGET, TARGET], [], [], {
+      const harness = yield* makeHarness([RELAY_TARGET, SECOND_RELAY_TARGET, TARGET], [], [], {
         accountOwners: {
           lastAccount: A,
-          machines: { [RELAY]: "" },
+          machines: { [RELAY]: "", [RELAY_2]: A, [MACHINE]: "" },
           saving: {
-            [RELAY]: { owner: A, routeId: "relay", routeWasSaved: true },
-            [MACHINE]: { owner: A, routeId: "primary", routeWasSaved: false },
+            // A's save never reached the catalog: the signed-out machine stays.
+            [RELAY]: {
+              owner: A,
+              fingerprint: routesFingerprint([RELAY_TARGET, SECOND_RELAY_TARGET]),
+            },
+            // B re-saved A's machine and it landed, though its owner was never
+            // recorded: it is B's, and B's drafts on it stay.
+            [RELAY_2]: { owner: B, fingerprint: routesFingerprint([SECOND_RELAY_TARGET]) },
+            // A's new route landed: the machine leaves with A.
+            [MACHINE]: { owner: A, fingerprint: routesFingerprint([TARGET]) },
           },
         },
       });
@@ -159,13 +169,59 @@ describe("EnvironmentRegistry saves and removals across an account switch (1434)
         yield* registry.setAccount(B);
 
         const targets = yield* Ref.get(harness.storedTargets);
-        // The signed-out machine stays; the one A saved leaves with A.
         expect(hasRoutes(targets, RELAY)).toBe(true);
+        expect(hasRoutes(targets, RELAY_2)).toBe(true);
         expect(hasRoutes(targets, MACHINE)).toBe(false);
+        expect((yield* Ref.get(harness.ownedDataClears)).includes(RELAY_2)).toBe(false);
         expect(yield* Ref.get(harness.storedOwners)).toEqual({
           lastAccount: B,
-          machines: { [RELAY]: "" },
+          machines: { [RELAY]: "", [RELAY_2]: B },
         });
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("a save that takes A's machine clears A's cached data before it is written", () =>
+    Effect.gen(function* () {
+      const failRemoval = yield* Ref.make(true);
+      const clearedBeforeWrite = yield* Ref.make<ReadonlyArray<string> | null>(null);
+      let readClears: Effect.Effect<ReadonlyArray<string>> = Effect.succeed([]);
+      const harness = yield* makeHarness([RELAY_TARGET], [], [], {
+        accountOwners: { lastAccount: A, machines: { [RELAY]: A } },
+        // A's machine could not be removed at the switch, so it is still A's.
+        beforeRegistrationRemove: () =>
+          Ref.getAndSet(failRemoval, false).pipe(
+            Effect.flatMap((fail) =>
+              fail
+                ? Effect.fail(
+                    new Persistence.ConnectionPersistenceError({
+                      operation: "remove-connection",
+                      message: "Fixture: storage refused the removal",
+                    }),
+                  )
+                : Effect.void,
+            ),
+          ),
+        beforeRegistrationRegister: () =>
+          Effect.suspend(() => readClears).pipe(
+            Effect.flatMap((clears) => Ref.set(clearedBeforeWrite, clears)),
+          ),
+      });
+      readClears = Ref.get(harness.ownedDataClears);
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.setAccount(B);
+        const clearsAfterSwitch = (yield* Ref.get(harness.ownedDataClears)).length;
+        // B pairs the same machine on purpose.
+        yield* registry.register(new RelayConnectionRegistration({ target: RELAY_TARGET }), {
+          forAccount: B,
+        });
+
+        const before = (yield* Ref.get(clearedBeforeWrite)) ?? [];
+        expect(before.length).toBeGreaterThan(clearsAfterSwitch);
+        expect(before.at(-1)).toBe(RELAY);
+        expect(hasRoutes(yield* Ref.get(harness.storedTargets), RELAY)).toBe(true);
+        expect((yield* Ref.get(harness.storedOwners))?.machines[RELAY]).toBe(B);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );
