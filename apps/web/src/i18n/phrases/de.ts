@@ -5391,7 +5391,7 @@ export const de: PhraseCatalog = {
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine} lässt dieses Gerät nicht mehr zu. Gib es in SpecWithCode auf {machine} erneut frei.",
   "Allow lets that device's SpecWithCode app open {machine} and use its chats and the work they start, terminals, files, settings and sign-ins, and approve or remove other devices. Letting another machine's agents run work here is a separate choice.":
-    "Mit „Erlauben“ kann die SpecWithCode-App auf diesem Gerät {machine} öffnen und dort Chats und die Arbeit, die sie starten, Terminals, Dateien, Einstellungen und Anmeldungen nutzen sowie andere Geräte erlauben oder entfernen. Ob die Agenten einer anderen Maschine hier arbeiten dürfen, ist eine eigene Entscheidung.",
+    "Mit „Erlauben“ kann die SpecWithCode-App auf dem anfragenden Gerät {machine} öffnen und dort Chats und die Arbeit, die sie starten, Terminals, Dateien, Einstellungen und Anmeldungen nutzen sowie andere Geräte erlauben oder entfernen. Ob die Agenten einer anderen Maschine hier arbeiten dürfen, ist eine eigene Entscheidung.",
   "Asked at {time}": "Angefragt um {time}",
   "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.":
     "Den Namen gibt sich das Gerät selbst. Nur der Code beweist, dass es das Gerät vor dir ist, also erlaube nur einen Code, den du darauf lesen kannst.",
