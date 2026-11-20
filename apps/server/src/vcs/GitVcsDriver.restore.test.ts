@@ -71,6 +71,19 @@ const makeGitForWindowsCleanLayer = (cleanRuns: Array<ReadonlyArray<string>>) =>
     }),
   ).pipe(Layer.provide(VcsProcess.layer), Layer.provideMerge(NodeServices.layer));
 
+// Rewrites a checkpoint as one written before ignored paths were recorded.
+const dropIgnoredRecord = (root: string, checkpointRef: string) =>
+  Effect.gen(function* () {
+    const tree = yield* runGit(root, ["rev-parse", `${checkpointRef}^{tree}`]);
+    const commit = yield* runGit(root, [
+      "commit-tree",
+      tree.stdout.trim(),
+      "-m",
+      `specweave-studio checkpoint ref=${checkpointRef}`,
+    ]);
+    yield* runGit(root, ["update-ref", checkpointRef, commit.stdout.trim()]);
+  });
+
 const stagedPaths = (cwd: string) =>
   runGit(cwd, ["diff", "--cached", "--name-only"]).pipe(
     Effect.map((result) => result.stdout.trim()),
@@ -296,7 +309,6 @@ it.effect("restoring a checkpoint keeps ignored files a turn's negation exposed"
     const path = yield* Path.Path;
     const driver = yield* GitVcsDriver.makeVcsDriverShape();
     for (const mode of ["recorded", "legacy", "fallback"] as const) {
-      const recorded = mode === "recorded";
       const root = yield* makeRepository("studio-restore-negation-");
       yield* fileSystem.writeFileString(path.join(root, ".gitignore"), "*.log\n");
       yield* runGit(root, ["add", "."]);
@@ -329,17 +341,7 @@ it.effect("restoring a checkpoint keeps ignored files a turn's negation exposed"
       } else {
         yield* driver.checkpoints.captureCheckpoint({ cwd: root, checkpointRef });
       }
-      if (mode === "legacy") {
-        // A checkpoint written before ignored paths were recorded.
-        const tree = yield* runGit(root, ["rev-parse", `${checkpointRef}^{tree}`]);
-        const commit = yield* runGit(root, [
-          "commit-tree",
-          tree.stdout.trim(),
-          "-m",
-          `specweave-studio checkpoint ref=${checkpointRef}`,
-        ]);
-        yield* runGit(root, ["update-ref", checkpointRef, commit.stdout.trim()]);
-      }
+      if (mode === "legacy") yield* dropIgnoredRecord(root, checkpointRef);
 
       // The turn un-ignores the ignore file itself and the log.
       yield* fileSystem.writeFileString(
@@ -353,21 +355,58 @@ it.effect("restoring a checkpoint keeps ignored files a turn's negation exposed"
         fallbackToHead: mode === "fallback",
       });
 
-      if (recorded) {
-        assert.isTrue(yield* restore);
-        assert.isFalse(yield* fileSystem.exists(path.join(sub, ".gitignore")));
-        assert.isTrue(yield* fileSystem.exists(path.join(local, ".gitignore")));
-        assert.strictEqual(yield* fileSystem.readFileString(path.join(sub, "x.log")), "keep\n");
-      } else {
-        // Without the record one pass runs, and what it exposes is reported, not deleted.
-        // (That pass still removes the log the turn un-ignored, as Revert always has.)
-        const error = yield* restore.pipe(Effect.flip);
-        assert.include(error.message, "untracked files remain");
-      }
+      // Without a record the turn's visible .gitignore files are set aside before cleaning,
+      // and the one the checkpoint's rules ignore is put back.
+      assert.isTrue(yield* restore);
+      assert.isFalse(yield* fileSystem.exists(path.join(sub, ".gitignore")));
+      assert.isTrue(yield* fileSystem.exists(path.join(local, ".gitignore")));
+      assert.strictEqual(yield* fileSystem.readFileString(path.join(sub, "x.log")), "keep\n");
+      assert.strictEqual(
+        yield* fileSystem.readFileString(path.join(sub, "bulk-7.log")),
+        "keep\n",
+      );
       assert.strictEqual(
         yield* fileSystem.readFileString(path.join(local, "secret.txt")),
         "keep\n",
       );
+    }
+  }).pipe(Effect.scoped, Effect.provide(layerGitRestore)),
+);
+
+it.effect("restoring keeps a force-staged file that was ignored before the turn", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    for (const mode of ["turn", "turn-legacy", "unborn", "unborn-legacy"] as const) {
+      const unborn = mode.startsWith("unborn");
+      const root = yield* makeRepository("studio-restore-force-staged-");
+      yield* fileSystem.writeFileString(path.join(root, ".git", "info", "exclude"), "secret\n");
+      yield* fileSystem.writeFileString(path.join(root, "tracked.txt"), "original\n");
+      yield* fileSystem.writeFileString(path.join(root, "secret"), "keep\n");
+      if (unborn) {
+        // The user force-staged it before the turn, before any commit.
+        yield* runGit(root, ["add", "-f", "secret"]);
+      } else {
+        yield* runGit(root, ["add", "tracked.txt"]);
+        yield* runGit(root, ["commit", "-m", "initial"]);
+      }
+      const checkpointRef = CheckpointRef.make("refs/studio/checkpoints/force-staged");
+      yield* driver.checkpoints.captureCheckpoint({ cwd: root, checkpointRef });
+      if (mode.endsWith("legacy")) yield* dropIgnoredRecord(root, checkpointRef);
+      // The turn force-stages the ignored file.
+      if (!unborn) yield* runGit(root, ["add", "-f", "secret"]);
+
+      assert.isTrue(
+        yield* driver.checkpoints.restoreCheckpoint({
+          cwd: root,
+          checkpointRef,
+          fallbackToHead: false,
+        }),
+      );
+
+      assert.strictEqual(yield* fileSystem.readFileString(path.join(root, "secret")), "keep\n");
+      assert.strictEqual(yield* stagedPaths(root), unborn ? "secret" : "");
     }
   }).pipe(Effect.scoped, Effect.provide(layerGitRestore)),
 );

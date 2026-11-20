@@ -37,7 +37,7 @@ export function checkpointIgnoredPaths(message: string): ReadonlyArray<string> |
   const match = /^ignored=([A-Za-z0-9+/]*={0,2})$/m.exec(message);
   if (!match) return null;
   try {
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(
+    const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
       Buffer.from(match[1]!, "base64"),
     );
     return text.length === 0 ? [] : text.split("\0");
