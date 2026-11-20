@@ -431,18 +431,29 @@ const ownerOnlyRpcMessage = (method: string) =>
 export const refusesOwnerOnlyRpc = (method: string, principal: AuthPrincipal | undefined) =>
   principal?.kind === "coordinator" && OWNER_ONLY_RPC_METHODS.has(method);
 
-/** The trusted desktop session may explicitly choose the host for a Copilot login. */
+const LOCAL_COPILOT_OWNER_SUBJECTS: ReadonlySet<string> = new Set([
+  "desktop-bootstrap",
+  "administrative-bootstrap",
+  "local-cli-owner",
+  "reusable-dev-token",
+  "reusable-dev-token-child",
+]);
+
+/** Host selection belongs to local owners, including headless and service installs. */
 export function canSelectCopilotSignInHost(session: {
   readonly subject: string;
   readonly principal?: AuthPrincipal | undefined;
   readonly deviceKey?: string | undefined;
+  readonly boundDevice?: unknown;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
 }): boolean {
   return (
-    session.subject === "desktop-bootstrap" &&
     session.principal === undefined &&
     session.deviceKey === undefined &&
-    session.scopes.includes(AuthProvidersManageScope)
+    session.boundDevice === undefined &&
+    session.scopes.includes(AuthProvidersManageScope) &&
+    (LOCAL_COPILOT_OWNER_SUBJECTS.has(session.subject) ||
+      (session.subject === "one-time-token" && session.scopes.includes(AuthAccessWriteScope)))
   );
 }
 

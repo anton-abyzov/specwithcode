@@ -153,6 +153,7 @@ export function ProviderAuthenticationSection({
     !active &&
     !needsExternalSetup &&
     signIn.installed &&
+    provider.enabled &&
     query.error === null;
   const host = showCopilotHost ? pickedCopilotHost(copilotHost) : undefined;
   const draftId = `${auth?.flowId ?? ""}:${interaction?.id ?? ""}`;

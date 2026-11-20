@@ -78,7 +78,10 @@ export function pickedCopilotHost(value: CopilotHostChoice): string | null | und
 export function copilotHostOptions(found: ProviderAuthState["copilotExistingSignIns"]): string[] {
   const hosts = new Set([
     "github.com",
-    ...(found?.ghAccounts.map((account) => account.host) ?? []),
+    ...(found?.ghAccounts.flatMap((account) => {
+      const host = normalizeGitHubHost(account.host);
+      return host ? [host] : [];
+    }) ?? []),
   ]);
   return [...hosts];
 }

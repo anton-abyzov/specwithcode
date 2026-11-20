@@ -1,4 +1,5 @@
 import {
+  AuthAccessWriteScope,
   AuthEnvironmentMaintainScope,
   AuthDiagnosticsReadScope,
   AuthFilesystemReadScope,
@@ -40,9 +41,17 @@ import {
 import * as RpcAuthorization from "./RpcAuthorization.ts";
 
 describe("RPC authorization scopes", () => {
-  it("allows Copilot host selection only in the desktop owner session", () => {
+  it("allows only local owner sessions to select a Copilot sign-in host", () => {
     const owner = { subject: "desktop-bootstrap", scopes: [AuthProvidersManageScope] } as const;
-    expect(RpcAuthorization.canSelectCopilotSignInHost(owner)).toBe(true);
+    for (const subject of ["desktop-bootstrap", "administrative-bootstrap", "local-cli-owner"]) {
+      expect(RpcAuthorization.canSelectCopilotSignInHost({ ...owner, subject })).toBe(true);
+    }
+    const serviceOwner = {
+      subject: "one-time-token",
+      scopes: [AuthProvidersManageScope, AuthAccessWriteScope],
+    } as const;
+    expect(RpcAuthorization.canSelectCopilotSignInHost(serviceOwner)).toBe(true);
+    expect(RpcAuthorization.canSelectCopilotSignInHost({ ...serviceOwner, boundDevice: {} })).toBe(false);
     expect(RpcAuthorization.canSelectCopilotSignInHost({ ...owner, scopes: [] })).toBe(false);
     expect(
       RpcAuthorization.canSelectCopilotSignInHost({ ...owner, subject: "managed-relay-bootstrap" }),
