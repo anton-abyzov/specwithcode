@@ -1,4 +1,7 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as SchemaIssue from "effect/SchemaIssue";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import {
   EnvironmentId,
@@ -33,10 +36,23 @@ export const CodexAuthCallbackState = Schema.Union([
 
 const SetupOperationId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 // An environment supplies these links and the client opens them, so anything
-// but a web address (a `javascript:` URL runs as the client) is refused.
-const SignInUrl = TrimmedNonEmptyString.check(
-  Schema.isMaxLength(16_384),
-  Schema.isPattern(/^https?:\/\//i),
+// but a web address (a `javascript:` URL runs as the client) is refused. Only
+// decoding checks: the server encodes any link it has, and the client drops it.
+const SignInUrl = Schema.String.pipe(
+  Schema.decodeTo(
+    Schema.String,
+    SchemaTransformation.transformEffect({
+      decode: (raw, options) => {
+        const url = raw.trim();
+        return url.length <= 16_384 && /^https?:\/\//i.test(url)
+          ? Effect.succeed(url)
+          : Effect.fail(
+              new SchemaIssue.InvalidValue({ message: "Expected a web address" }, raw, options),
+            );
+      },
+      encode: (url) => Effect.succeed(url),
+    }),
+  ),
 );
 
 export const ProviderAuthMethod = Schema.Struct({
