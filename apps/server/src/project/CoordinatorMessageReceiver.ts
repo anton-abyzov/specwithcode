@@ -893,11 +893,12 @@ export const make = Effect.gen(function* () {
       )
         return undefined;
       // The device approval the route checked, read again; it fails closed when it cannot tell.
+      // A row that kept no device facts cannot be checked, so it is refused.
       const deviceStands =
-        auth.mcpClientDeviceStands === undefined
+        auth.mcpClientDeviceStands === undefined || admitted.device === undefined
           ? false
           : yield* auth
-              .mcpClientDeviceStands(mcpClientDeviceOf(admitted.device ?? {}))
+              .mcpClientDeviceStands(mcpClientDeviceOf(admitted.device))
               .pipe(Effect.catchCause(() => Effect.succeed(false)));
       if (!deviceStands) return undefined;
       // The machine-reach rules the route applied, with the rules the sender named then.
