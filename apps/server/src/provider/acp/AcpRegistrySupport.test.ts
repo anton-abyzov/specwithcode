@@ -818,7 +818,8 @@ describe("AcpRegistrySupport", () => {
         Effect.provideService(HostProcessPlatform, "win32"),
         Effect.provideService(SpawnExecutableResolution, (command) => {
           if (command === "uv") return toolchain.uvPath;
-          if (command === "fast-agent") return toolchain.executablePath;
+          // The managed command is looked up by its full path in the uv bin folder.
+          if (command.endsWith("\\fast-agent")) return toolchain.executablePath;
           return undefined;
         }),
       );
