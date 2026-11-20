@@ -148,11 +148,19 @@ function scanWindow(window: OutsideWindow): {
   let previous = samples[0];
   if (previous === undefined) return { stretches, doubts };
   let peak = previous.usedPercent;
+  // The reset time whose passing is already counted as a restart.
+  let counted: number | null = null;
   for (let index = 1; index < samples.length; index += 1) {
     const current = samples[index]!;
     if (current.at <= previous.at) continue;
     const fell = peak - current.usedPercent;
-    const announced = resetBetween(previous, current, window.lengthMs);
+    // A read that still carries a reset time already counted, then one with
+    // the next reset time, is that same restart told late, not a second one.
+    const told =
+      counted !== null &&
+      previous.resetsAt === counted &&
+      (window.lengthMs === null || current.at - previous.at < window.lengthMs);
+    const announced = !told && resetBetween(previous, current, window.lengthMs);
     // The provider's word that the window turned over: its reset time moved
     // on, or the one it gave has passed. A fall alone is not.
     const moved = announced && previous.resetsAt !== null && current.resetsAt !== null;
@@ -160,13 +168,15 @@ function scanWindow(window: OutsideWindow): {
       previous.resetsAt !== null &&
       previous.resetsAt > previous.at &&
       previous.resetsAt <= current.at;
+    const turned = due && fell > NOISE_FALL_POINTS;
     if (fell > NOISE_FALL_POINTS && !moved && !due && recovers(samples, index, peak)) {
       if (current.usedPercent < peak / 2) doubts.push(current.at);
       continue;
     }
-    if (announced || (fell > NOISE_FALL_POINTS && current.usedPercent < peak / 2)) {
+    if (announced || turned || (fell > NOISE_FALL_POINTS && current.usedPercent < peak / 2)) {
       // What was gained before the reset is not known; what shows after it is.
-      const resetAt = announced && due ? previous.resetsAt! : current.at;
+      const resetAt = due ? previous.resetsAt! : current.at;
+      if (due) counted = previous.resetsAt;
       stretches.push({
         from: Math.min(resetAt, current.at - 1),
         to: current.at,

@@ -237,6 +237,37 @@ describe("estimateOutside", () => {
     expect(result.consumedPoints).toBeCloseTo(24.5, 1);
   });
 
+  it("counts a reset once when the first read after it still carries the old reset time", () => {
+    // Reset at minute 5. The read at minute 6 keeps the old reset time; the next has the new one.
+    for (const [middle, expected] of [
+      [10, 24],
+      [14, 24],
+      [0, 24],
+    ] as const) {
+      const minute = 60_000;
+      const reads = [
+        { at: 0, usedPercent: 24, resetsAt: 5 * minute },
+        { at: 6 * minute, usedPercent: middle, resetsAt: 5 * minute },
+        { at: 16 * minute, usedPercent: 24, resetsAt: 5 * minute + 7 * DAY },
+      ];
+      const history = {
+        ...series(0, () => 0),
+        samples: reads.map((read) => ({
+          at: iso(t0 + read.at),
+          usedPercent: read.usedPercent,
+          resetsAt: iso(t0 + read.resetsAt),
+        })),
+      } as UsageLimitHistorySeries;
+      const window = pickOutsideWindow([[history]], KEY)!;
+      expect(window.samples).toHaveLength(3);
+      expect(limitResets(window)).toEqual([t0 + 5 * minute]);
+      const result = estimateOutside(input(history, [], { periodEndMs: t0 + HOUR }));
+      expect(result.kind).toBe("estimate");
+      if (result.kind !== "estimate") return;
+      expect(result.consumedPoints).toBeCloseTo(expected, 1);
+    }
+  });
+
   it("says so when the only movement was a read taken as a misread", () => {
     const reads = [24, 0, 24];
     const history = {
