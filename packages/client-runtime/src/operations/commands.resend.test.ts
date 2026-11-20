@@ -73,7 +73,10 @@ interface SessionOptions {
   /** A host without server-resolved command context: the client reads the projection. */
   readonly projection?: () => OrchestrationV2ThreadProjection;
   /** Replaces the projection read, for a read that loses its socket. */
-  readonly readProjection?: () => Effect.Effect<OrchestrationV2ThreadProjection, unknown>;
+  readonly readProjection?: () => Effect.Effect<
+    OrchestrationV2ThreadProjection,
+    RpcClientError.RpcClientError
+  >;
 }
 
 const makeSession = (
