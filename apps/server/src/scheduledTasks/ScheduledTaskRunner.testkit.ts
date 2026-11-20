@@ -112,6 +112,8 @@ export interface Machine {
     /** How many project lookups this machine made, and how many when its last check started. */
     projectLookups: number;
     lookupsAtCheck: number | null;
+    /** How many project lookups this machine made when it last sent a routine's prompt. */
+    lookupsAtSend: number | null;
     /** Runs inside this machine's project lookup number `at`, before it answers. */
     duringProjectLookup: { readonly at: number; readonly run: Effect.Effect<void> } | null;
   };
@@ -295,6 +297,7 @@ export const fleet = (
           beforeRecordsRead: null,
           projectLookups: 0,
           lookupsAtCheck: null,
+          lookupsAtSend: null,
           duringProjectLookup: null,
         };
         // The binding this copy's project row carries, as the release before wrote it.
@@ -351,6 +354,7 @@ export const fleet = (
             sendToThread: () =>
               Effect.sync(() => {
                 state.sends++;
+                state.lookupsAtSend = state.projectLookups;
                 return {} as never;
               }),
           }),

@@ -322,14 +322,14 @@ it.effect("a due slot waits while its worker is handed off, and runs once if it 
  * One due run of a worker's routine. With `at`, the takeover is sent while the
  * run waits on its project lookup number `at`: after the run passed its gate.
  */
-const dueRun = (at: number | null) =>
+const dueRun = (at: number | null, check: boolean = true) =>
   Effect.gen(function* () {
     yield* TestClock.setTime(Date.parse(NOON));
     const gates = serverGates(NOT_MOVED);
     const { machines } = yield* fleet(["alpha"], { scheduler: gates.scheduler });
     const [alpha] = machines as [Machine];
     yield* addWorker(alpha);
-    yield* alpha.seed({ threadId: WORKER, check: { command: "true" } });
+    yield* alpha.seed({ threadId: WORKER, ...(check ? { check: { command: "true" } } : {}) });
     yield* alpha.makeDue(DUE);
     yield* settle(alpha);
     const before = alpha.state.projectLookups;
@@ -374,6 +374,35 @@ it.effect("a handoff that starts during a due run's project lookup starts no che
         yield* alpha.due;
         yield* alpha.due;
         assert.equal(alpha.state.checks, 1);
+        assert.equal(alpha.fires(), 1);
+      }).pipe(Effect.scoped);
+    }
+  }),
+);
+
+it.effect("a handoff that starts during a due run's project lookup sends no prompt", () =>
+  Effect.gen(function* () {
+    // A routine with no check: the lookups the run makes before its prompt goes out.
+    const plain = yield* dueRun(null, false).pipe(
+      Effect.map(({ alpha, before }) => ({
+        sends: alpha.state.sends,
+        lookups: (alpha.state.lookupsAtSend ?? 0) - before,
+      })),
+      Effect.scoped,
+    );
+    assert.equal(plain.sends, 1);
+    assert.isAtLeast(plain.lookups, 1);
+    for (let at = 1; at <= plain.lookups; at++) {
+      yield* Effect.gen(function* () {
+        const { alpha, gates } = yield* dueRun(at, false);
+        assert.isNull(alpha.state.duringProjectLookup, `lookup ${at} ran`);
+        assert.equal(alpha.fires(), 0, `fence during lookup ${at}`);
+        const row = yield* alpha.row;
+        assert.isAtMost(Date.parse(row!.next_run_at!), Date.parse(NOON));
+        assert.equal(row?.run_count, 0);
+        yield* gates.update((record) => ({ ...record!, lease: { ...LEASE, state: "active" } }));
+        yield* alpha.due;
+        yield* alpha.due;
         assert.equal(alpha.fires(), 1);
       }).pipe(Effect.scoped);
     }
