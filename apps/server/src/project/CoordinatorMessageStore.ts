@@ -113,6 +113,8 @@ export const CoordinatorMessageRecord = Schema.Struct({
   startedRun: Schema.optional(
     Schema.Struct({ threadId: Schema.String, runId: Schema.String, revision: NonNegativeInt }),
   ),
+  /** Incoming: the turn this message woke, retained after delivery for reply-loop fencing. */
+  wokenRunId: Schema.optional(Schema.String),
   /** Incoming: sends that ended before any provider took them; each retry gets new ids. */
   startAttempt: Schema.optional(NonNegativeInt),
   /** Incoming: thread refs left out because this machine could not place them in the project. */

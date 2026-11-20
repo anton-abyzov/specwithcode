@@ -1263,6 +1263,7 @@ export const make = Effect.gen(function* () {
       // Delivered once a provider takes the prompt; settled below or on a later flush.
       yield* patchRows(seen, now, (record) => ({
         ...record,
+        wokenRunId: sent.run.id,
         startedRun: {
           threadId: target.shell.id,
           runId: sent.run.id,

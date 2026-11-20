@@ -23,6 +23,7 @@ export const layer = Access.toLayer(CoordinatorMessageToolkit, {
         .send({
           projectId: caller.caller.projectId,
           threadId: caller.caller.id,
+          runId: caller.caller.activeRunId,
           machine,
           clientRequestId,
           message,

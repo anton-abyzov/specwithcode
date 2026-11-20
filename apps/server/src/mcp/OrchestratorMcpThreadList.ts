@@ -81,6 +81,14 @@ function listItemFromShell(
     createdBy: shell.createdBy,
     creationSource: shell.creationSource,
     status: shell.activityRunStatus ?? shell.status,
+    ...(shell.pendingRuntimeRequest === null
+      ? {}
+      : {
+          waiting: {
+            requestId: shell.pendingRuntimeRequest.id,
+            kind: shell.pendingRuntimeRequest.kind,
+          },
+        }),
     latestRunId: shell.latestRunId,
     providerInstanceId: shell.modelSelection.instanceId,
     model: shell.modelSelection.model,

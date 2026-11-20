@@ -186,6 +186,7 @@ export class CoordinatorMessageOutbox extends Context.Service<
     readonly send: (input: {
       readonly projectId: ProjectId;
       readonly threadId: ThreadId;
+      readonly runId: string | null;
       readonly machine: string;
       readonly clientRequestId: string;
       readonly message: CoordinatorMessageBody;
@@ -261,6 +262,28 @@ export const layer = Layer.effect(
         const peer = target[0]!.environmentId;
         let message = input.message;
         const rows = yield* store.all;
+        const wakes = rows.filter(
+          (row) =>
+            row.direction === "incoming" &&
+            row.projectId === input.projectId &&
+            row.peerEnvironmentId === peer &&
+            input.runId !== null &&
+            (row.wokenRunId === input.runId || row.startedRun?.runId === input.runId),
+        );
+        if (
+          wakes.length > 0 &&
+          (message.kind !== "reply" ||
+            !wakes.some(
+              (row) =>
+                row.kind !== "reply" &&
+                (row.id === message.replyTo || row.externalId === message.replyTo),
+            ))
+        )
+          return yield* Effect.fail(
+            new Error(
+              "A turn woken by this machine may only reply to its incoming non-reply message.",
+            ),
+          );
         if (message.replyTo !== undefined) {
           const original = rows.find(
             (row) =>
