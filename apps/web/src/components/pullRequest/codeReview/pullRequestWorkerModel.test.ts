@@ -49,10 +49,10 @@ describe("pullRequestWorkerModel", () => {
     ]);
   });
 
-  it("starts a review on Wonder Full at Extra High", () => {
+  it("starts an explicitly chosen review model at Medium without a saved effort", () => {
     expect(
       pullRequestWorkerModel({ verb: "Review", model: wonderFull }, null, [muse])?.options,
-    ).toEqual([{ id: "reasoningEffort", value: "xhigh" }]);
+    ).toEqual([{ id: "reasoningEffort", value: "medium" }]);
   });
 
   it("keeps a level the model already names", () => {

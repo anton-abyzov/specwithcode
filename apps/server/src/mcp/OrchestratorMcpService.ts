@@ -1,3 +1,4 @@
+import { accountInGrant } from "../fleet/workGrantPolicy.ts";
 import { launchTierModel } from "./launchTier.ts";
 import {
   type ReviewDelegationDecision,
@@ -3676,7 +3677,9 @@ const make = Effect.gen(function* () {
         const project = yield* requireProject(parent.thread.projectId);
         const work = yield* workGrantOf({ scope, caller: parent.thread });
         const workerProject = yield* workerProjectOf(project, parent.thread.id, work);
-        const providers = yield* loadProviders;
+        const providers = (yield* loadProviders).filter(
+          (provider) => work === undefined || accountInGrant(work.grant.accounts, provider.instanceId),
+        );
         const hostDefault = defaultWorkerModelSelection(providers);
         // A review with no model named goes to the project's reviewer order,
         // another family than the author's (review/reviewDelegation.ts).
@@ -4160,12 +4163,14 @@ const make = Effect.gen(function* () {
         const parentRun = yield* callerRun(scope, parent, "record");
         const parentNodeId = parentRun.rootNodeId;
         const project = yield* requireProject(parent.thread.projectId);
-        const providers = yield* loadProviders;
-        const hostDefault = defaultWorkerModelSelection(providers);
         const key = yield* requestKey(input.clientRequestId);
         // Threads that another machine's work starts here stay under its grant.
         const work = yield* workGrantOf({ scope, caller: parent.thread });
         if (work !== undefined) yield* refuseRevoked(work);
+        const providers = (yield* loadProviders).filter(
+          (provider) => work === undefined || accountInGrant(work.grant.accounts, provider.instanceId),
+        );
+        const hostDefault = defaultWorkerModelSelection(providers);
         // Every entry's increment resolves before any thread exists: a bad ref creates none.
         const increments = yield* Effect.forEach(input.threads, (request) =>
           launchIncrementFor(project, parent.thread, { ref: request.increment }, stateDir),

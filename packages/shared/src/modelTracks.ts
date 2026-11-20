@@ -224,6 +224,7 @@ export function defaultTrackSelections(
   order?: ReadonlyArray<ProviderInstanceId> | null,
   /** Per-model routes: a dropped source never serves an entry, a pinned one alone does. */
   routes?: ModelRoutes | null,
+  askable = false,
 ): ReadonlyArray<ModelSelection> {
   return DEFAULT_MODEL_TRACKS[track].flatMap((entry) => {
     // Never a source billed per token or with unknown billing: a built-in
@@ -242,7 +243,7 @@ export function defaultTrackSelections(
     ).find(({ provider, slug }) => {
       const held = isHeldSource(provider as Partial<ServerProvider> as ServerProvider, slug);
       const consent = routeConsent(route, provider.instanceId, held);
-      return consent === "plan" || consent === "allowed";
+      return consent === "plan" || (track !== "review" && (consent === "allowed" || (askable && consent === "ask")));
     });
     return best === undefined
       ? []
@@ -423,6 +424,7 @@ export function effectiveModelLanes(
   providers: ReadonlyArray<TrackProvider>,
   order?: ReadonlyArray<ProviderInstanceId> | null,
   routes?: ModelRoutes | null,
+  askable = false,
 ): EffectiveModelLanes {
   // A saved entry without an effort runs at its start level, as the Models page shows it;
   // one saved from a built-in row runs on the release of its family a source lists.
@@ -441,7 +443,7 @@ export function effectiveModelLanes(
   };
   const fit = (lane: ModelLane) => {
     if (builtIn[lane]) {
-      const entries = defaultTrackSelections(TRACK_OF_LANE[lane], providers, order, routes);
+      const entries = defaultTrackSelections(TRACK_OF_LANE[lane], providers, order, routes, askable);
       return { entries, family: entries.map(() => true) };
     }
     const list = saved(lane);
@@ -492,7 +494,7 @@ export function launchTrackLanes(
   options?: { readonly routes?: ModelRoutes | null | undefined; readonly askable?: boolean },
 ): ModelLanes {
   const routes = options?.routes;
-  const { lanes: fitted, family: follows } = effectiveModelLanes(lanes, providers, order, routes);
+  const { lanes: fitted, family: follows } = effectiveModelLanes(lanes, providers, order, routes, options?.askable);
   // A built-in entry runs on any release of its family; a saved one on its own
   // model, unless it was saved from a built-in row (`followsBuiltInFamily`).
   const expand = (

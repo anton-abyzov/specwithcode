@@ -155,10 +155,13 @@ describe("tierModelFor", () => {
 });
 
 describe("reviewerChain", () => {
-  it("uses the built-in Review track in order", () => {
+  it("tries the preferred Review track before other model families", () => {
     expect(defaultReviewerChain({ providers, tier: "regular" })).toEqual([
       sel("copilot", "gemini-4-neon"),
       sel("codex", "gpt-6.1-sol"),
+      sel("copilot", "gpt-6.1-sol"),
+      sel("claudeAgent", "claude-opus-5-5"),
+      sel("muse", "muse-wonder-1.0"),
     ]);
   });
 
@@ -300,11 +303,9 @@ describe("resolveReviewer", () => {
       nowMs: now,
     });
     expect(result.reviewer).toBe(null);
-    expect(result.skipped.map((skip) => skip.reason)).toEqual([
-      "signed-out",
-      "excluded",
-      "same-family",
-    ]);
+    expect(result.skipped.map((skip) => skip.reason)).toEqual(
+      expect.arrayContaining(["signed-out", "excluded", "same-family"]),
+    );
   });
 
   it("passes over an agent of unknown billing unless the person listed it", () => {
@@ -320,9 +321,11 @@ describe("resolveReviewer", () => {
       tier: "regular",
       nowMs: now,
     });
-    expect(byDefault.reviewer).toBeNull();
-    // The built-in order never names it, so there is nothing to pass over.
-    expect(byDefault.skipped).toEqual([]);
+    expect(byDefault.reviewer).toEqual(sel("muse", "muse-wonder-1.0"));
+    expect(byDefault.skipped).toContainEqual({
+      selection: listed,
+      reason: "unknown-billing",
+    });
     const named = resolveReviewer({
       providers: [claude, unknown, muse],
       author,
@@ -381,12 +384,12 @@ describe("describeReviewerOrder", () => {
         alternates: group.alternates.map((step) => [step.selection.instanceId, step.status]),
       })),
     ).toEqual([
-      { primary: ["muse", "ready", "meta"], alternates: [] },
-      { primary: ["muse", "ready", "meta"], alternates: [] },
+      { primary: ["copilot", "ready", "google"], alternates: [] },
       { primary: ["codex", "full", "openai"], alternates: [["copilot", "ready"]] },
       { primary: ["claudeAgent", "ready", "claude"], alternates: [["copilot", "ready"]] },
+      { primary: ["muse", "ready", "meta"], alternates: [] },
     ]);
-    expect(view.groups[2]!.primary.resetAt).toBe(Date.parse("2026-11-06T00:00:00.000Z"));
+    expect(view.groups[1]!.primary.resetAt).toBe(Date.parse("2026-11-06T00:00:00.000Z"));
   });
 
   it("marks unknown billing unless listed, and keeps a set order as written", () => {

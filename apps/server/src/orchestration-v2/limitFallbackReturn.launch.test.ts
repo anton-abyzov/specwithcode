@@ -92,7 +92,7 @@ describe("launchReturnCommand", () => {
     ).toBeNull();
   });
 
-  it("goes back to a pick with no usage read once nothing holds it (Muse)", () => {
+  it("requires a usage reading or positive evidence that the pick is unmetered", () => {
     const unread = { ...claude(40), usageLimits: undefined };
     const unmetered = {
       ...claude(40),
@@ -112,10 +112,10 @@ describe("launchReturnCommand", () => {
     } as ServerProvider;
     expect(launchReturnCommand(thread, home, providers(denied), rule, nowMs)).toBeNull();
     // Once the hold clears, the idle thread goes back.
-    for (const pick of [unread, unmetered])
-      expect(
-        launchReturnCommand(thread, home, providers(pick), rule, nowMs)?.modelSelection,
-      ).toEqual(home);
+    expect(launchReturnCommand(thread, home, providers(unread), rule, nowMs)).toBeNull();
+    expect(
+      launchReturnCommand(thread, home, providers(unmetered), rule, nowMs)?.modelSelection,
+    ).toEqual(home);
     // Never onto a pick that cannot take a turn.
     const notReady = { ...unread, status: "error" } as ServerProvider;
     expect(launchReturnCommand(thread, home, providers(notReady), rule, nowMs)).toBeNull();

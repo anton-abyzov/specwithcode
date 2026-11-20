@@ -1,4 +1,3 @@
-import { reviewOnlyModel } from "@specweave-studio/shared/regularTrack";
 import { teamRulesClampMode } from "@specweave-studio/shared/teamRules";
 import { useTeamRules } from "../../../teamRules/useTeamRules";
 import { useAtomValue } from "@effect/atom-react";
@@ -62,12 +61,6 @@ export function pullRequestWorkerModel(
   providers: ReadonlyArray<ServerProvider>,
 ): ModelSelection | null {
   const model = task.model ?? defaultModel;
-  if (
-    task.model === undefined &&
-    task.verb !== "Review" &&
-    model !== null &&
-    reviewOnlyModel({})(model)
-  ) return null;
   if (model === null) return null;
   const track = task.verb === "Review" ? "review" : "complex";
   return withTrackEffort(model, providers, trackStartEffort(track, model.model));

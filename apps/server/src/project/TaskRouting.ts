@@ -225,15 +225,6 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
       : null;
   // A paid source the person refused for this launch is passed over, and the lanes resolve again.
   const refused = new Set<string>();
-  const runnable = (): ReadonlySet<string> | undefined =>
-    refused.size === 0
-      ? input.runnableInstanceIds
-      : new Set(
-          [
-            ...(input.runnableInstanceIds ??
-              input.providers.map((provider) => provider.instanceId as string)),
-          ].filter((instanceId) => !refused.has(instanceId)),
-        );
   const resolveLane = () =>
     resolveLaneRouting({
       lanes: rule.modelLanes,
@@ -248,7 +239,8 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
       policy: rule.taskRouting,
       switchAtPercent: rule.providerLimitSwitchAtPercent,
       limitedInstanceIds: limited,
-      ...(runnable() === undefined ? {} : { runnableInstanceIds: runnable()! }),
+      runnableInstanceIds: input.runnableInstanceIds,
+      refusedSelections: refused,
     });
   let lane = lanesSet ? resolveLane() : null;
   while (tracks && lane !== null && lane.found) {
@@ -285,7 +277,7 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
       );
     }
     if (answer !== "no") break;
-    refused.add(provider.instanceId);
+    refused.add(`${selection.instanceId}\u0000${selection.model}`);
     lane = resolveLane();
   }
   if (lane !== null) {
