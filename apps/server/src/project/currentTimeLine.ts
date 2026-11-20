@@ -6,13 +6,18 @@
  * and wake instead; without it a coordinator answered "what time is it?" by
  * starting a worker. Workers read the time themselves.
  */
+import { fenceLine } from "./promptFence.ts";
+
 export const CURRENT_TIME_PREFIX = "Current local time on this machine:";
 
-/** The clock's opening words; `machine` is the label of the machine the agent runs on. */
+/**
+ * The clock's opening words; `machine` is the label of the machine the agent runs on,
+ * fenced because the owner names it and the line reaches the adapter as prompt text.
+ */
 export const currentTimePrefix = (machine: string | undefined) =>
   machine === undefined
     ? CURRENT_TIME_PREFIX
-    : `Current local time on ${machine}, the machine this agent runs on:`;
+    : `Current local time on ${fenceLine(machine, 100)}, the machine this agent runs on:`;
 
 /** The machine's IANA zone, or UTC when the runtime cannot name one. */
 export function machineTimeZone(): string {

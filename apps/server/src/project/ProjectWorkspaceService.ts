@@ -70,7 +70,7 @@ import {
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectKnowledge from "./knowledge/ProjectKnowledge.ts";
 import { knowledgeSections } from "./knowledge/knowledgeSections.ts";
-import { fenceText } from "./promptFence.ts";
+import { fenceLine, fenceText } from "./promptFence.ts";
 import {
   insideGitWorkTree,
   isSpecweaveProject,
@@ -172,10 +172,14 @@ export function workerMachineLines(
   // Only machine ids are read here, so the local entry's environment id is never used.
   const order = projectWorkerMachineOrder(settings, EnvironmentId.make("local"));
   if (order.length === 1 && isLocalWorkerMachine(order[0]!)) return [];
+  // Machine names are the owner's text: fenced so a mention or tag in one is not syntax.
   const label = (machineId: string) =>
-    machineId === LOCAL_WORKER_MACHINE_ID
-      ? here
-      : (fleet?.find((machine) => machine.id === machineId)?.label ?? "another machine");
+    fenceLine(
+      machineId === LOCAL_WORKER_MACHINE_ID
+        ? here
+        : (fleet?.find((machine) => machine.id === machineId)?.label ?? "another machine"),
+      100,
+    );
   const names = order.map((entry) => label(entry.machineId));
   const lines = [
     order.length === 1
@@ -190,7 +194,8 @@ export function workerMachineLines(
 }
 
 /** The coordinator's own machine, and what it does about another machine's work. */
-function coordinatorMachineLines(machine: string, others: boolean): ReadonlyArray<string> {
+function coordinatorMachineLines(label: string, others: boolean): ReadonlyArray<string> {
+  const machine = fenceLine(label, 100);
   return [
     `You are the coordinator on ${machine}. Each of the owner's machines runs its own coordinator, and the user may read you from another machine's window. Start each step the user must take with the machine it is done on ("On ${machine}: ..."), and name the machine of a thread that runs elsewhere. A "this machine" in a tool result or error means the machine that wrote it: write its name instead.`,
     ...(others
@@ -202,8 +207,10 @@ function coordinatorMachineLines(machine: string, others: boolean): ReadonlyArra
 }
 
 /** A worker's or chat's own machine: the user may read it from another machine's window. */
-export const workerMachineLine = (machine: string) =>
-  `You run on ${machine}. The user may read you from another machine's window: start each step they must take with the machine it is done on ("On ${machine}: ...").`;
+export const workerMachineLine = (label: string) => {
+  const machine = fenceLine(label, 100);
+  return `You run on ${machine}. The user may read you from another machine's window: start each step they must take with the machine it is done on ("On ${machine}: ...").`;
+};
 
 export function projectContextText(input: {
   projectId: string;
