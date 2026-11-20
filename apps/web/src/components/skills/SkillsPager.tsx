@@ -53,7 +53,7 @@ export function SkillsPager({
                 key={size}
                 type="button"
                 size="micro"
-                variant={size === page.pageSize ? "secondary" : "ghost"}
+                variant={size === page.pageSize ? "secondary" : "outline"}
                 aria-pressed={size === page.pageSize}
                 onClick={() => onPageSize(size)}
               >
