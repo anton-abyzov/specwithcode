@@ -1452,58 +1452,81 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           (name) => !inCheckpoint.has(name) && preservedEntry(name) !== null,
         );
       }
-      // The index as it was, byte for byte (intent-to-add flags included), for putting entries
-      // back before the first commit and for undoing our own index edits if restoring fails.
-      const indexFile = (yield* execute({
-        operation,
-        cwd: input.cwd,
-        args: ["rev-parse", "--path-format=absolute", "--git-path", "index"],
-      })).stdout.replace(/\n$/, "");
-      const indexSnapshot =
-        indexBefore !== null || keepOnDisk.length > 0
-          ? yield* Effect.gen(function* () {
-              // A repository where nothing was ever staged has no index file yet.
-              if (!(yield* fileSystem.exists(indexFile))) return "absent" as const;
-              return yield* fileSystem.readFile(indexFile);
-            }).pipe(
-              Effect.catch((cause) =>
-                failBeforeRestore(`Could not read the index: ${cause.message}`),
-              ),
-            )
-          : null;
-      // Writes the snapshot back under Git's own index lock.
-      const restoreIndexSnapshot = Effect.gen(function* () {
-        if (indexSnapshot === null) return;
-        if (indexSnapshot === "absent") {
-          yield* fileSystem.remove(indexFile, { force: true });
-          return;
+      const zeroOid = "0".repeat(commitOid.length);
+      // Intent-to-add entries carry the empty blob but, unlike a staged empty file, are left
+      // out of `git diff --cached`. None of the entries checked here can be in HEAD.
+      const intentToAdd = (entries: ReadonlyMap<string, string>, names: ReadonlyArray<string>) =>
+        Effect.gen(function* () {
+          if (names.length === 0) return new Set<string>();
+          const emptyBlob = (yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: ["hash-object", "-t", "blob", "--stdin"],
+            stdin: "",
+          })).stdout.replace(/\n$/, "");
+          const candidates = names.filter((name) =>
+            entries.get(name)?.split(" ")[1] === emptyBlob,
+          );
+          if (candidates.length === 0) return new Set<string>();
+          const staged = yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: ["diff", "--cached", "--name-only", "--no-renames", "-z", "--", "."],
+            maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+          });
+          const listed = new Set(splitNullSeparatedGitStdoutPaths(staged));
+          return new Set(candidates.filter((name) => !listed.has(name)));
+        });
+      // Index entries, as recorded before the revert, that it may change.
+      const recordedEntries = new Map(indexBefore ?? []);
+      if (indexBefore === null && keepOnDisk.length > 0) {
+        const staged = yield* indexEntries;
+        for (const name of keepOnDisk) {
+          const entry = staged?.get(name);
+          if (entry !== undefined) recordedEntries.set(name, entry);
         }
-        const lock = `${indexFile}.lock`;
-        yield* fileSystem.writeFile(lock, indexSnapshot, { flag: "wx" });
-        yield* fileSystem
-          .rename(lock, indexFile)
-          .pipe(Effect.tapError(() => fileSystem.remove(lock).pipe(Effect.ignore)));
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new VcsProcessExitError({
-              operation,
-              command: "git restore",
-              cwd: input.cwd,
-              exitCode: 0,
-              detail: `Could not put the index back: ${cause.message}`,
-            }),
-        ),
-      );
+      }
+      const recordedIntent = yield* intentToAdd(recordedEntries, [...recordedEntries.keys()]);
+      // Writes back the recorded entries for these paths through Git, which takes the index
+      // lock; paths with no recorded entry are removed from the index.
+      const writeEntries = (names: ReadonlyArray<string>) =>
+        Effect.gen(function* () {
+          if (names.length === 0) return;
+          yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: ["update-index", "-z", "--index-info"],
+            stdin: names
+              .map((name) =>
+                recordedEntries.has(name) && !recordedIntent.has(name)
+                  ? `${recordedEntries.get(name)}\0`
+                  : `0 ${zeroOid}\t${name}\0`,
+              )
+              .join(""),
+          });
+          const intent = names.filter((name) => recordedIntent.has(name));
+          if (intent.length === 0) return;
+          yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: [
+              "--literal-pathspecs",
+              "add",
+              "--force",
+              "--intent-to-add",
+              "--pathspec-from-file=-",
+              "--pathspec-file-nul",
+            ],
+            stdin: intent.map((name) => `${name.slice(workspacePrefix.length)}\0`).join(""),
+          });
+        });
       yield* Effect.gen(function* () {
         if (keepOnDisk.length > 0) {
           yield* execute({
             operation,
             cwd: input.cwd,
             args: ["update-index", "-z", "--index-info"],
-            stdin: keepOnDisk
-              .map((name) => `0 ${"0".repeat(commitOid.length)}\t${name}\0`)
-              .join(""),
+            stdin: keepOnDisk.map((name) => `0 ${zeroOid}\t${name}\0`).join(""),
           });
         }
         const tracked = yield* execute({
@@ -1524,9 +1547,22 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         Effect.catch((error) =>
           keepOnDisk.length === 0
             ? Effect.fail(error)
-            : restoreIndexSnapshot.pipe(
-                Effect.catch(() => Effect.void),
-                Effect.andThen(Effect.fail(error)),
+            : writeEntries(keepOnDisk).pipe(
+                Effect.matchEffect({
+                  onSuccess: () => Effect.fail(error),
+                  onFailure: (rollbackError) =>
+                    Effect.fail(
+                      new VcsProcessExitError({
+                        operation,
+                        command: "git restore",
+                        cwd: input.cwd,
+                        exitCode: 0,
+                        detail:
+                          `${error.message} Putting the index back also failed: ` +
+                          rollbackError.message,
+                      }),
+                    ),
+                }),
               ),
         ),
       );
@@ -1556,19 +1592,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           });
           return;
         }
-        // The snapshot gives back the user's entries, flags included; then drop the ones the
-        // restore removed (mode 0 removes an entry). Entries it added are not in the snapshot.
-        yield* restoreIndexSnapshot;
-        const removed = [...indexBefore.keys()].filter(
-          (name) => !indexAfter.has(name) && !keepOnDisk.includes(name),
-        );
-        if (removed.length === 0) return;
-        yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: ["update-index", "-z", "--index-info"],
-          stdin: removed.map((name) => `0 ${"0".repeat(commitOid.length)}\t${name}\0`).join(""),
-        });
+        // The user's entries come back as they were; entries the restore added are removed.
+        yield* writeEntries([...new Set([...indexAfter.keys(), ...keepOnDisk])]);
       });
       // Report why the workspace is not clean even if unstaging fails too.
       const failRestore = (exitCode: number, detail: string) =>
