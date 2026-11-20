@@ -86,7 +86,7 @@ try {
       assert.match(readText, /Copilot[\s\S]*not checked for this folder/);
       assert.doesNotMatch(readText, /not installed here|not listed/i);
       assert.ok((await table.getByTestId("skill-folder-scan").count()) > 0);
-      assert.ok((await table.getByText("No lock entry").count()) > 0);
+      assert.ok((await table.getByText("No lock entry found").count()) > 0);
       assert.ok((await table.getByText("Lock names no source").count()) > 0);
       assert.ok((await table.getByText(/also found/).count()) > 0);
       assert.equal(await fits(), true);

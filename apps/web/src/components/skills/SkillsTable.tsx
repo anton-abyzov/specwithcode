@@ -126,16 +126,16 @@ function ScopeCell({ row }: { row: ProjectSkillRow }) {
 function SourceCell({ row }: { row: ProjectSkillRow }) {
   const tx = useTx();
   const source = row.lock?.source;
-  // No dash: a dash reads as "nothing here", and the fact is that no lock lists the skill.
+  // No dash: a dash reads as "nothing here", and the fact is that no lock that was read lists the skill.
   if (!row.lock)
     return (
       <Hinted
         hint={tx(
-          "No vskill lockfile lists this skill, so where it came from is not recorded. It may have been copied in by hand or installed by another tool.",
+          "No vskill lockfile read here lists this skill, so where it came from is not known. It may have been copied in by hand or installed by another tool.",
         )}
         className="text-muted-foreground"
       >
-        <span data-testid="skill-source-none">{tx("No lock entry")}</span>
+        <span data-testid="skill-source-none">{tx("No lock entry found")}</span>
       </Hinted>
     );
   if (!source)

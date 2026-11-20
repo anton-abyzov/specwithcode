@@ -331,7 +331,7 @@ describe("ProjectSkillsView", () => {
     // No lock lists these two, and the cell says so instead of a dash.
     expect(
       container.querySelector("tr[data-skill=review] [data-testid=skill-source-none]")?.textContent,
-    ).toBe("No lock entry");
+    ).toBe("No lock entry found");
     expect(container.textContent).toContain("vskill doctor is not available here");
   });
 
@@ -732,7 +732,7 @@ describe("ProjectSkillsView", () => {
     state.error = null;
     state.data = { ...snapshot, rows: [] };
     await render();
-    expect(container.textContent).toContain("No skill was found in this folder");
+    expect(container.textContent).toContain("No skills or lock entries were found in this read.");
   });
   it("preselects the linked instance and queries its thread folder", async () => {
     state.data = {

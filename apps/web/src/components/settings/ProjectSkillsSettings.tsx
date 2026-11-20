@@ -927,7 +927,7 @@ function ScopedProjectSkillsView({
       ) : snapshot.rows.length === 0 ? (
         <>
           <p className="px-3 py-4 text-sm text-muted-foreground sm:px-4">
-            {tx("No skill was found in this folder, and no vskill lockfile lists one.")}
+            {tx("No skills or lock entries were found in this read.")}
           </p>
           <div className="px-3 pb-2 sm:px-4">
             <SkillsReadState snapshot={snapshot} machine={machineName} />
