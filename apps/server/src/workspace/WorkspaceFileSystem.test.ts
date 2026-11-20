@@ -5,6 +5,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, describe, expect, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -101,6 +102,34 @@ const shortenFirstRead = Effect.fn("shortenFirstRead")(function* (
 });
 
 const isWindows = HostProcessPlatform.defaultValue() === "win32";
+
+/** Runs `action` once, right after the first file read returns. */
+const afterFirstRead = Effect.fn("afterFirstRead")(function* (action: () => Promise<void>) {
+  const prototype = yield* fileHandlePrototype;
+  const original: (
+    this: NodeFSP.FileHandle,
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position: number | bigint,
+  ) => Promise<{ readonly bytesRead: number; readonly buffer: Buffer }> = prototype.read;
+  const state = { done: false };
+  const spy = vi.spyOn(prototype, "read").mockImplementation(async function (
+    this: NodeFSP.FileHandle,
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position: number | bigint,
+  ) {
+    const result = await original.call(this, buffer, offset, length, position);
+    if (!state.done) {
+      state.done = true;
+      await action();
+    }
+    return result;
+  } as unknown as typeof prototype.read);
+  return { state, restore: () => spy.mockRestore() };
+});
 
 it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (it) => {
   describe("readFile", () => {
@@ -633,41 +662,152 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         yield* writeTextFile(cwd, "notes.md", "before\n");
         // Once the check has read the UTF-8 file, a Latin-1 copy replaces it.
         const latin1 = Uint8Array.from([0x63, 0x61, 0x66, 0xe9, 0x0a]);
+        const swap = yield* afterFirstRead(async () => {
+          const copy = path.join(cwd, "notes.latin1");
+          await NodeFSP.writeFile(copy, latin1);
+          await NodeFSP.rename(copy, absolutePath);
+        });
+
+        const error = yield* workspaceFileSystem
+          .writeFile({ cwd, relativePath: "notes.md", contents: "after\n" })
+          .pipe(Effect.flip, Effect.ensuring(Effect.sync(swap.restore)));
+        const saved = yield* fileSystem.readFile(absolutePath).pipe(Effect.orDie);
+
+        expect(swap.state.done).toBe(true);
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileSystemOperationError);
+        expect(error).toMatchObject({ relativePath: "notes.md" });
+        expect([...saved]).toEqual([...latin1]);
+      }),
+    );
+
+    it.effect("refuses to save over a file rewritten in place during the check", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const absolutePath = path.join(cwd, "notes.md");
+        yield* writeTextFile(cwd, "notes.md", "before\n");
+        // Same file and same size, now Latin-1.
+        const latin1 = Uint8Array.from([0x63, 0x61, 0x66, 0xe9, 0x0a, 0x0a, 0x0a]);
+        const rewrite = yield* afterFirstRead(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          await NodeFSP.writeFile(absolutePath, latin1);
+        });
+
+        const error = yield* workspaceFileSystem
+          .writeFile({ cwd, relativePath: "notes.md", contents: "after\n" })
+          .pipe(Effect.flip, Effect.ensuring(Effect.sync(rewrite.restore)));
+        const saved = yield* fileSystem.readFile(absolutePath).pipe(Effect.orDie);
+
+        expect(rewrite.state.done).toBe(true);
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileSystemOperationError);
+        expect([...saved]).toEqual([...latin1]);
+      }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "refuses to save when the link it names is retargeted during the check",
+      () =>
+        Effect.gen(function* () {
+          const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          const link = path.join(cwd, "notes.md");
+          yield* writeTextFile(cwd, "a.md", "a\n");
+          yield* writeTextFile(cwd, "b.md", "b\n");
+          yield* Effect.promise(() => NodeFSP.symlink("a.md", link));
+          const retarget = yield* afterFirstRead(async () => {
+            await NodeFSP.unlink(link);
+            await NodeFSP.symlink("b.md", link);
+          });
+
+          const error = yield* workspaceFileSystem
+            .writeFile({ cwd, relativePath: "notes.md", contents: "after\n" })
+            .pipe(Effect.flip, Effect.ensuring(Effect.sync(retarget.restore)));
+          const a = yield* fileSystem.readFileString(path.join(cwd, "a.md")).pipe(Effect.orDie);
+          const b = yield* fileSystem.readFileString(path.join(cwd, "b.md")).pipe(Effect.orDie);
+
+          expect(retarget.state.done).toBe(true);
+          expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileSystemOperationError);
+          expect(error).toMatchObject({ relativePath: "notes.md", operation: "write-file" });
+          expect([a, b]).toEqual(["a\n", "b\n"]);
+        }),
+    );
+
+    it.effect("reads only the size found at open and refuses a file still growing", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const absolutePath = path.join(cwd, "growing.log");
+        yield* writeTextFile(cwd, "growing.log", "start\n");
+        // Every read finds more appended, up to a cap so an unbounded scan still ends.
         const prototype = yield* fileHandlePrototype;
         const original: (
           this: NodeFSP.FileHandle,
           buffer: Buffer,
           offset: number,
           length: number,
-          position: number,
+          position: number | bigint,
         ) => Promise<{ readonly bytesRead: number; readonly buffer: Buffer }> = prototype.read;
-        let swapped = false;
+        let reads = 0;
         const spy = vi.spyOn(prototype, "read").mockImplementation(async function (
           this: NodeFSP.FileHandle,
           buffer: Buffer,
           offset: number,
           length: number,
-          position: number,
+          position: number | bigint,
         ) {
           const result = await original.call(this, buffer, offset, length, position);
-          if (!swapped) {
-            swapped = true;
-            const copy = path.join(cwd, "notes.latin1");
-            await NodeFSP.writeFile(copy, latin1);
-            await NodeFSP.rename(copy, absolutePath);
-          }
+          reads += 1;
+          if (reads <= 50) await NodeFSP.appendFile(absolutePath, "more\n");
           return result;
         } as unknown as typeof prototype.read);
 
         const error = yield* workspaceFileSystem
-          .writeFile({ cwd, relativePath: "notes.md", contents: "after\n" })
+          .writeFile({ cwd, relativePath: "growing.log", contents: "after\n" })
           .pipe(Effect.flip, Effect.ensuring(Effect.sync(() => spy.mockRestore())));
-        const saved = yield* fileSystem.readFile(absolutePath).pipe(Effect.orDie);
+        const saved = yield* fileSystem.readFileString(absolutePath).pipe(Effect.orDie);
 
-        expect(swapped).toBe(true);
+        expect(reads).toBe(1);
         expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileSystemOperationError);
-        expect(error).toMatchObject({ relativePath: "notes.md", operation: "write-file" });
-        expect([...saved]).toEqual([...latin1]);
+        expect(saved.startsWith("start\nmore\n")).toBe(true);
+      }),
+    );
+
+    it.effect("finishes a save interrupted while it truncates", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const absolutePath = path.join(cwd, "notes.md");
+        yield* writeTextFile(cwd, "notes.md", "before\n");
+        const prototype = yield* fileHandlePrototype;
+        const original: (this: NodeFSP.FileHandle, length?: number) => Promise<void> =
+          prototype.truncate;
+        let started!: () => void;
+        const truncating = new Promise<void>((resolve) => (started = resolve));
+        const spy = vi.spyOn(prototype, "truncate").mockImplementation(async function (
+          this: NodeFSP.FileHandle,
+          length?: number,
+        ) {
+          started();
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          return original.call(this, length);
+        } as unknown as typeof prototype.truncate);
+
+        const fiber = yield* workspaceFileSystem
+          .writeFile({ cwd, relativePath: "notes.md", contents: "after\n" })
+          .pipe(Effect.forkChild);
+        yield* Effect.promise(() => truncating);
+        yield* Fiber.interrupt(fiber).pipe(Effect.ensuring(Effect.sync(() => spy.mockRestore())));
+        const saved = yield* fileSystem.readFileString(absolutePath).pipe(Effect.orDie);
+
+        expect(saved).toBe("after\n");
       }),
     );
 
