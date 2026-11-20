@@ -64,6 +64,7 @@ import {
   type OrchestratorMcpFailure,
   type Project,
   ThreadId,
+  orchestrationV2RunStartMessageId,
 } from "@specweave-studio/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -72,6 +73,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
+import * as Semaphore from "effect/Semaphore";
 import {
   latestRootProviderFailure,
   usageLimitBlockedRun,
@@ -242,7 +244,6 @@ const fromCopyRefusal = (error: HandoffRefusal, receiver: string, sender: string
           );
 
 const TERMINAL_RUN = new Set(["completed", "interrupted", "failed", "cancelled", "rolled_back"]);
-const FENCE_ENDS: ReadonlySet<string> = new Set(["not_delivered", "refused", "revoked", "quiet"]);
 
 /** How long a send no provider took waits before it goes again, under fresh checks. */
 const START_RETRY_MS = 5 * 60_000;
@@ -311,6 +312,8 @@ export const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const threads = yield* ThreadManagementService.ThreadManagementService;
+  // One flush at a time: settling a wake must never race a send still in flight.
+  const flushLock = yield* Semaphore.make(1);
   const store = yield* CoordinatorMessageStore.CoordinatorMessageStore;
   const grants = yield* WorkGrants.WorkGrants;
   const auth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -958,21 +961,53 @@ export const make = Effect.gen(function* () {
 
   const withoutWake = ({ wakePending: _wake, ...record }: CoordinatorMessageRecord) => record;
 
-  /** A row that will not wake a turn keeps no pending wake to fence one. */
+  /** A pending wake outlives the state: a send whose answer was lost may still have started a turn. */
   const setState = (
     seen: ReadonlyMap<string, number>,
     state: CoordinatorMessageRecord["state"],
     now: number,
-  ) =>
-    patchRows(seen, now, (record) =>
-      FENCE_ENDS.has(state) ? { ...withoutWake(record), state } : { ...record, state },
-    );
+  ) => patchRows(seen, now, (record) => ({ ...record, state }));
 
-  /** Clears the wake recorded for a send that started no turn. */
+  /** Clears the wake recorded for a send refused before it dispatched anything. */
   const dropWake = (seen: ReadonlyMap<string, number>, now: number) =>
     patchRows(seen, now, withoutWake, true);
 
   const withoutStart = ({ startedRun: _started, ...record }: CoordinatorMessageRecord) => record;
+
+  /**
+   * A pending wake whose send gave no clear answer is settled from the thread:
+   * the run its send started becomes the woken run; with no such run it ends.
+   * An unreadable thread keeps it, and the woken turn stays fenced (1427 AC-14).
+   */
+  const settleWakes = (now: number) =>
+    Effect.gen(function* () {
+      const records = yield* store.all.pipe(Effect.orElseSucceed(() => []));
+      const pending = records.filter(
+        (record) => record.direction === "incoming" && record.wakePending !== undefined,
+      );
+      for (const threadId of new Set(pending.map((record) => record.wakePending!.threadId))) {
+        const projection = yield* threads
+          .getThreadProjection(ThreadId.make(threadId))
+          .pipe(Effect.orElseSucceed(() => undefined));
+        if (projection === undefined) continue;
+        const rows = pending.filter((record) => record.wakePending!.threadId === threadId);
+        yield* patchRows(
+          revisions(rows),
+          now,
+          (record) => {
+            const wake = record.wakePending;
+            if (wake === undefined || wake.threadId !== threadId) return record;
+            const run = projection.runs.find(
+              (each) => orchestrationV2RunStartMessageId(each) === wake.commandId,
+            );
+            return run === undefined
+              ? withoutWake(record)
+              : { ...withoutWake(record), wokenRunId: run.id };
+          },
+          true,
+        );
+      }
+    });
 
   /**
    * Rows sent as a turn count as delivered once a provider took its prompt
@@ -982,6 +1017,7 @@ export const make = Effect.gen(function* () {
    */
   const settleStarted = (now: number) =>
     Effect.gen(function* () {
+      yield* settleWakes(now);
       const records = yield* store.all.pipe(Effect.orElseSucceed(() => []));
       const byRun = new Map<string, Array<CoordinatorMessageRecord>>();
       for (const record of records) {
@@ -1225,23 +1261,23 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.catch((error) =>
-            (error._tag === "OrchestratorDispatchError" &&
+            error._tag === "OrchestratorDispatchError" &&
             (error.cause === START_ONLY_WOULD_QUEUE || error.cause === START_AUTHORITY_ENDED)
-              ? Effect.void
+              ? Effect.succeed("refused" as const)
               : Effect.logWarning("Could not deliver a coordinator message.", {
                   messageId: first.record.id,
                   error: error._tag,
-                })
-            ).pipe(Effect.as(undefined)),
+                }).pipe(Effect.as(undefined)),
           ),
         );
-      if (sent === undefined) {
-        yield* dropWake(seen, now);
+      // Only a start refused before dispatch surely started nothing; any other
+      // failure may come after the turn started, so its wake stays until settled.
+      if (sent === "refused") yield* dropWake(seen, now);
+      if (sent === undefined || sent === "refused") {
         if (expired) yield* setState(seen, "not_delivered", now);
         continue;
       }
       if (sent.delivery !== "started") {
-        yield* dropWake(seen, now);
         // A start-only send never queues; anything else is kept and tried again.
         yield* Effect.logWarning("A coordinator message did not start a turn.", {
           messageId: first.record.id,
@@ -1270,7 +1306,7 @@ export const make = Effect.gen(function* () {
     }
     yield* settleStarted(yield* Clock.currentTimeMillis);
     return woken;
-  });
+  }).pipe(flushLock.withPermit);
 
   const revoked: CoordinatorMessageReceiver["Service"]["revoked"] = (sender) =>
     namer.pipe(
