@@ -99,11 +99,14 @@ export const ComputerUseWindowBounds = Schema.Struct({
 });
 export type ComputerUseWindowBounds = typeof ComputerUseWindowBounds.Type;
 
+const SessionKey = TrimmedNonEmptyString.check(Schema.isMaxLength(256));
+
 export const ComputerUseAction = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("status") }),
   Schema.Struct({
     kind: Schema.Literal("screenshot"),
     application: Schema.optional(ApplicationName),
+    sessionKey: Schema.optional(SessionKey),
   }),
   Schema.Struct({
     kind: Schema.Literal("click"),
@@ -113,14 +116,21 @@ export const ComputerUseAction = Schema.Union([
     count: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3 }))),
     modifiers: Schema.optional(Modifiers),
     application: Schema.optional(ApplicationName),
+    sessionKey: Schema.optional(SessionKey),
   }),
-  Schema.Struct({ kind: Schema.Literal("move"), x: Coordinate, y: Coordinate }),
+  Schema.Struct({
+    kind: Schema.Literal("move"),
+    x: Coordinate,
+    y: Coordinate,
+    sessionKey: Schema.optional(SessionKey),
+  }),
   Schema.Struct({
     kind: Schema.Literal("drag"),
     fromX: Coordinate,
     fromY: Coordinate,
     toX: Coordinate,
     toY: Coordinate,
+    sessionKey: Schema.optional(SessionKey),
   }),
   Schema.Struct({
     kind: Schema.Literal("scroll"),
@@ -129,16 +139,19 @@ export const ComputerUseAction = Schema.Union([
     direction: Schema.Literals(["up", "down", "left", "right"]),
     amount: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
     application: Schema.optional(ApplicationName),
+    sessionKey: Schema.optional(SessionKey),
   }),
   Schema.Struct({
     kind: Schema.Literal("type"),
     text: Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(10_000)),
     application: Schema.optional(ApplicationName),
+    sessionKey: Schema.optional(SessionKey),
   }),
   Schema.Struct({
     kind: Schema.Literal("key"),
     keys: KeyChord,
     repeat: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
+    sessionKey: Schema.optional(SessionKey),
   }),
   Schema.Struct({
     kind: Schema.Literal("open"),

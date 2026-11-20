@@ -7,12 +7,15 @@ import {
   applicationAtPoint,
   applicationName,
   canAttemptBackgroundAxClick,
+  canSafelyFallbackHidClick,
+  canSafelyFallbackHidType,
   clickStepsAtPoint,
   ComputerUseInputError,
   findWindowForApplication,
   frontMirroringWindow,
   type InputStep,
   IPHONE_MIRRORING_BUNDLE_ID,
+  isWindowCaptureFresh,
   MIRRORING_REPEAT_GAP_MS,
   MIRRORING_REPEAT_HOLD_MS,
   JXA_AX_ACTION_SCRIPT,
@@ -699,32 +702,143 @@ describe("background computer use helpers", () => {
     );
   });
 
-  it("exposes windowId and pid in JXA_WINDOWS_SCRIPT and uses void* AX bindings", () => {
+  it("exposes windowId and pid in JXA_WINDOWS_SCRIPT and uses void* AX bindings without AXFocused", () => {
     expect(JXA_WINDOWS_SCRIPT).toContain("kCGWindowNumber");
     expect(JXA_WINDOWS_SCRIPT).toContain("kCGWindowOwnerPID");
     expect(JXA_AX_ACTION_SCRIPT).toContain('AXUIElementCreateApplication", ["void *"');
     expect(JXA_AX_ACTION_SCRIPT).toContain("AXUIElementCopyElementAtPosition");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("AXUIElementIsAttributeSettable");
+    expect(JXA_AX_ACTION_SCRIPT).not.toContain("AXSelectedText");
     expect(JXA_AX_ACTION_SCRIPT).toContain("AXPress");
     expect(JXA_AX_ACTION_SCRIPT).toContain("AXValue");
     expect(JXA_AX_ACTION_SCRIPT).toContain("CFRelease");
+    // Never request focus during background AX clicks.
+    expect(JXA_AX_ACTION_SCRIPT).not.toContain("AXFocused");
   });
 
-  it("yields for active human input and restores cursor position when options are enabled", () => {
+  it("rejects stale window captures when a window moves, resizes, or closes", () => {
+    const capture = {
+      windowId: 42,
+      pid: 100,
+      bounds: { x: 100, y: 120, width: 500, height: 400 },
+    };
+    expect(
+      isWindowCaptureFresh(
+        {
+          windows: [
+            {
+              owner: "Notes",
+              layer: 0,
+              alpha: 1,
+              windowId: 42,
+              pid: 100,
+              x: 100,
+              y: 120,
+              width: 500,
+              height: 400,
+            },
+          ],
+        },
+        capture,
+      ),
+    ).toBe(true);
+    // Moved window is stale.
+    expect(
+      isWindowCaptureFresh(
+        {
+          windows: [
+            {
+              owner: "Notes",
+              layer: 0,
+              alpha: 1,
+              windowId: 42,
+              pid: 100,
+              x: 140,
+              y: 120,
+              width: 500,
+              height: 400,
+            },
+          ],
+        },
+        capture,
+      ),
+    ).toBe(false);
+    // Closed window is stale.
+    expect(isWindowCaptureFresh({ windows: [] }, capture)).toBe(false);
+  });
+
+  it("blocks foreground HID fallback when an occluded or different app would receive input", () => {
+    const ownPid = 999;
+    const occludedBySpecWithCode = {
+      frontmost: "SpecWithCode",
+      windows: [
+        {
+          owner: "SpecWithCode",
+          layer: 0,
+          alpha: 1,
+          pid: ownPid,
+          x: 0,
+          y: 0,
+          width: 900,
+          height: 700,
+        },
+        { owner: "Notes", layer: 0, alpha: 1, pid: 100, x: 100, y: 100, width: 500, height: 400 },
+      ],
+    };
+    expect(
+      canSafelyFallbackHidClick(occludedBySpecWithCode, { x: 200, y: 200 }, "Notes", ownPid),
+    ).toEqual({ ok: false, actualOwner: "SpecWithCode" });
+    expect(canSafelyFallbackHidType(occludedBySpecWithCode, "Notes")).toEqual({
+      ok: false,
+      actualFrontmost: "SpecWithCode",
+    });
+
+    const visibleNotes = {
+      frontmost: "Notes",
+      windows: [
+        { owner: "Notes", layer: 0, alpha: 1, pid: 100, x: 100, y: 100, width: 500, height: 400 },
+        {
+          owner: "SpecWithCode",
+          layer: 0,
+          alpha: 1,
+          pid: ownPid,
+          x: 0,
+          y: 0,
+          width: 900,
+          height: 700,
+        },
+      ],
+    };
+    expect(canSafelyFallbackHidClick(visibleNotes, { x: 200, y: 200 }, "Notes", ownPid)).toEqual({
+      ok: true,
+    });
+    expect(canSafelyFallbackHidType(visibleNotes, "Notes")).toEqual({ ok: true });
+  });
+
+  it("yields for active human input (including drags) and restores cursor only when human did not move", () => {
     const posted: Array<{ type: number; x?: number; y?: number }> = [];
     const delays: Array<number> = [];
     let poll = 0;
+    let cursorPos = { x: 900, y: 600 };
     const bridge = {
       NSWorkspace: {
         sharedWorkspace: {
-          frontmostApplication: { isNil: () => false, localizedName: { js: "SpecWithCode" } },
+          frontmostApplication: {
+            isNil: () => false,
+            localizedName: { js: "Notes" },
+            processIdentifier: 100,
+          },
         },
       },
       CGEventSourceSecondsSinceLastEventType: (_: number, eventType: number) => {
-        if (eventType === 5) poll++;
-        return poll <= 2 ? 0.02 : 0.5;
+        if (eventType === 6) {
+          poll++;
+          return poll <= 2 ? 0.02 : 0.5;
+        }
+        return 0.5;
       },
       CGEventCreate: () => ({ loc: true }),
-      CGEventGetLocation: () => ({ x: 900, y: 600 }),
+      CGEventGetLocation: () => ({ ...cursorPos }),
       CGEventCreateMouseEvent: (_: unknown, type: number, point: { x: number; y: number }) => ({
         type,
         x: point.x,
@@ -733,6 +847,9 @@ describe("background computer use helpers", () => {
       CGEventSetIntegerValueField: () => undefined,
       CGEventSetFlags: () => undefined,
       CGEventPost: (_: number, event: { type: number; x?: number; y?: number }) => {
+        if (typeof event.x === "number" && typeof event.y === "number") {
+          cursorPos = { x: event.x, y: event.y };
+        }
         posted.push({ ...event });
       },
     };
@@ -743,13 +860,71 @@ describe("background computer use helpers", () => {
     });
     NodeVM.runInContext(JXA_INPUT_SCRIPT, context);
     const steps = clickStepsAtPoint({ x: 100, y: 200 });
-    const options: ReplayOptions = { yieldForHumanInput: true, restoreCursor: true };
+    const options: ReplayOptions = {
+      yieldForHumanInput: true,
+      restoreCursor: true,
+      forbidPid: 999,
+    };
     (context.run as (argv: Array<string>) => string)([
       JSON.stringify(steps),
       JSON.stringify(options),
     ]);
-    // Yielded twice (0.05s each) while mouse was active, then ran click, then restored cursor to (900, 600).
+    // Yielded twice (0.05s each) while drag was active, then ran click, then restored cursor to (900, 600).
     expect(delays.filter((d) => d === 0.05)).toHaveLength(2);
     expect(posted.at(-1)).toEqual({ type: 5, x: 900, y: 600 });
+  });
+
+  it("skips cursor restore if the human moved the pointer during replay, and aborts on forbidden PID", () => {
+    const posted: Array<{ type: number; x?: number; y?: number }> = [];
+    let cursorPos = { x: 900, y: 600 };
+    const bridge = {
+      NSWorkspace: {
+        sharedWorkspace: {
+          frontmostApplication: {
+            isNil: () => false,
+            localizedName: { js: "Notes" },
+            processIdentifier: 100,
+          },
+        },
+      },
+      CGEventSourceSecondsSinceLastEventType: () => 1,
+      CGEventCreate: () => ({ loc: true }),
+      CGEventGetLocation: () => ({ ...cursorPos }),
+      CGEventCreateMouseEvent: (_: unknown, type: number, point: { x: number; y: number }) => ({
+        type,
+        x: point.x,
+        y: point.y,
+      }),
+      CGEventSetIntegerValueField: () => undefined,
+      CGEventSetFlags: () => undefined,
+      CGEventPost: (_: number, event: { type: number; x?: number; y?: number }) => {
+        posted.push({ ...event });
+        // Simulate the user grabbing the mouse during replay and moving it to (450, 450).
+        cursorPos = { x: 450, y: 450 };
+      },
+    };
+    const context = NodeVM.createContext({
+      ObjC: { import: () => undefined },
+      $: bridge,
+      delay: () => undefined,
+    });
+    NodeVM.runInContext(JXA_INPUT_SCRIPT, context);
+    const steps = clickStepsAtPoint({ x: 100, y: 200 });
+    (context.run as (argv: Array<string>) => string)([
+      JSON.stringify(steps),
+      JSON.stringify({ restoreCursor: true }),
+    ]);
+    // Last posted event is mouse up at (100, 200), NOT a warp back to (900, 600).
+    expect(posted.at(-1)).toEqual({ type: 2, x: 100, y: 200 });
+
+    // Refuses to post when forbidPid matches frontmost app.
+    const countBefore = posted.length;
+    expect(() =>
+      (context.run as (argv: Array<string>) => string)([
+        JSON.stringify(steps),
+        JSON.stringify({ forbidPid: 100 }),
+      ]),
+    ).toThrow(/forbidden-frontmost-pid/);
+    expect(posted).toHaveLength(countBefore);
   });
 });

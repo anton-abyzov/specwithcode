@@ -114,6 +114,10 @@ export interface ReplayOptions {
   readonly yieldForHumanInput?: boolean;
   /** Restore the physical pointer to its pre-action coordinates once steps finish. */
   readonly restoreCursor?: boolean;
+  /** Abort before posting any HID event if this app is not frontmost (case-insensitive). */
+  readonly expectedFrontmost?: string;
+  /** Abort before posting any HID event if this PID (e.g. SpecWithCode) is frontmost. */
+  readonly forbidPid?: number;
 }
 
 /** Builds Quartz mouse steps for a click at an already-resolved display point. */
@@ -157,7 +161,7 @@ export function clickStepsAtPoint(
     );
     if (click < count) steps.push({ type: "sleep", ms: 40 });
   }
-  for (const modifier of [...modifiers].reverse()) {
+  for (const modifier of modifiers.toReversed()) {
     steps.push({ type: "key", keyCode: MODIFIER_KEY_CODES[modifier], down: false, flags: 0 });
   }
   return steps;
@@ -501,11 +505,37 @@ export const PASTE_STEPS: ReadonlyArray<InputStep> = chordSteps({
 export const JXA_INPUT_SCRIPT = `
 ObjC.import("CoreGraphics");
 ObjC.import("AppKit");
-function frontBundleId() {
+function frontApp() {
   var front = $.NSWorkspace.sharedWorkspace.frontmostApplication;
-  if (front.isNil()) return null;
+  return front.isNil() ? null : front;
+}
+function frontBundleId() {
+  var front = frontApp();
+  if (front === null) return null;
   var id = front.bundleIdentifier;
   return id && typeof id.isNil === "function" && !id.isNil() ? id.js : null;
+}
+function frontLocalizedName() {
+  var front = frontApp();
+  return front === null ? null : front.localizedName.js;
+}
+function frontPid() {
+  var front = frontApp();
+  return front === null ? -1 : Number(front.processIdentifier);
+}
+// Mouse move, drags, button downs, scroll wheel, and key down.
+var HUMAN_INPUT_EVENTS = [5, 6, 7, 27, 1, 3, 25, 22, 10];
+function humanInputIdle() {
+  for (var e = 0; e < HUMAN_INPUT_EVENTS.length; e++) {
+    if ($.CGEventSourceSecondsSinceLastEventType(1, HUMAN_INPUT_EVENTS[e]) < 0.15) return false;
+  }
+  return true;
+}
+function currentCursor() {
+  var probe = $.CGEventCreate(null);
+  if (!probe) return null;
+  var loc = $.CGEventGetLocation(probe);
+  return { x: Number(loc.x), y: Number(loc.y) };
 }
 // Mouse button down event types and the up that releases each; the dragged events in between.
 var MOUSE_UPS = { 1: 2, 3: 4, 25: 26 };
@@ -517,21 +547,24 @@ function run(argv) {
   if (opts.yieldForHumanInput) {
     var yieldWaited = 0;
     while (yieldWaited < 500) {
-      var sinceMouse = $.CGEventSourceSecondsSinceLastEventType(1, 5);
-      var sinceKey = $.CGEventSourceSecondsSinceLastEventType(1, 10);
-      if (sinceMouse >= 0.15 && sinceKey >= 0.15) break;
+      if (humanInputIdle()) break;
       delay(0.05);
       yieldWaited += 50;
     }
   }
-  var savedCursor = null;
-  if (opts.restoreCursor) {
-    var probe = $.CGEventCreate(null);
-    if (probe) {
-      var loc = $.CGEventGetLocation(probe);
-      savedCursor = { x: Number(loc.x), y: Number(loc.y) };
+  if (steps.length > 0) {
+    if (typeof opts.forbidPid === "number" && opts.forbidPid > 0 && frontPid() === opts.forbidPid) {
+      throw new Error("forbidden-frontmost-pid: " + opts.forbidPid);
+    }
+    if (typeof opts.expectedFrontmost === "string" && opts.expectedFrontmost.trim() !== "") {
+      var actualFront = frontLocalizedName();
+      if (!actualFront || actualFront.trim().toLowerCase() !== opts.expectedFrontmost.trim().toLowerCase()) {
+        throw new Error("not-frontmost-app: " + (actualFront || "unknown"));
+      }
     }
   }
+  var savedCursor = opts.restoreCursor ? currentCursor() : null;
+  var lastSyntheticCursor = null;
   var hid = null;
   // Once an awaitFront step passes, every later event first checks that its app is still in front.
   var guarded = null;
@@ -593,6 +626,7 @@ function run(argv) {
     if (step.flags !== undefined) $.CGEventSetFlags(event, step.flags);
     $.CGEventPost(0, event);
     if (step.type === "mouse") {
+      lastSyntheticCursor = { x: Number(step.x), y: Number(step.y) };
       var at = heldIndex("mouse", step.button);
       if (MOUSE_UPS[step.event] !== undefined) {
         if (at < 0) held.push({ type: "mouse", id: step.button, event: step.event, button: step.button, x: step.x, y: step.y, clickState: step.clickState, flags: step.flags });
@@ -613,8 +647,16 @@ function run(argv) {
     }
   }
   if (savedCursor !== null) {
-    var restore = $.CGEventCreateMouseEvent(null, 5, savedCursor, 0);
-    $.CGEventPost(0, restore);
+    var nowCursor = currentCursor();
+    var movedByHuman =
+      nowCursor !== null &&
+      lastSyntheticCursor !== null &&
+      (Math.abs(nowCursor.x - lastSyntheticCursor.x) > 2 ||
+        Math.abs(nowCursor.y - lastSyntheticCursor.y) > 2);
+    if (!movedByHuman) {
+      var restore = $.CGEventCreateMouseEvent(null, 5, savedCursor, 0);
+      $.CGEventPost(0, restore);
+    }
   }
   var front = $.NSWorkspace.sharedWorkspace.frontmostApplication;
   return JSON.stringify({ frontmostApplication: front.isNil() ? null : front.localizedName.js });
@@ -752,10 +794,77 @@ export function findWindowForApplication(
 }
 
 /**
+ * Checks whether a previously captured window still exists on screen with the
+ * same PID and unchanged bounds so cached window-relative coordinates remain valid.
+ */
+export function isWindowCaptureFresh(
+  scene: ScreenScene,
+  capture: { readonly windowId: number; readonly pid: number; readonly bounds: ScreenArea },
+): boolean {
+  const live = scene.windows.find(
+    (w) => w.windowId === capture.windowId && w.pid === capture.pid && w.layer === 0 && w.alpha > 0,
+  );
+  if (live === undefined) return false;
+  return (
+    Math.round(live.x) === capture.bounds.x &&
+    Math.round(live.y) === capture.bounds.y &&
+    Math.round(live.width) === capture.bounds.width &&
+    Math.round(live.height) === capture.bounds.height
+  );
+}
+
+/**
+ * Verifies whether a foreground HID click at `point` will actually land on the
+ * approved `expectedApplication` (and never on `ownPid` / SpecWithCode).
+ */
+export function canSafelyFallbackHidClick(
+  scene: ScreenScene,
+  point: { readonly x: number; readonly y: number },
+  expectedApplication: string,
+  ownPid: number,
+): { readonly ok: true } | { readonly ok: false; readonly actualOwner: string } {
+  const hit = windowAtPoint(scene.windows, scene.screens, point);
+  if (hit === "menu-bar") {
+    const front = named(scene.frontmost);
+    if (front !== undefined && front.toLowerCase() === expectedApplication.trim().toLowerCase()) {
+      return { ok: true };
+    }
+    return { ok: false, actualOwner: front ?? "the menu bar" };
+  }
+  if (hit === undefined) {
+    return { ok: false, actualOwner: "no visible window" };
+  }
+  if (hit.pid !== undefined && hit.pid === ownPid) {
+    return { ok: false, actualOwner: named(hit.owner) ?? "SpecWithCode" };
+  }
+  const owner = hit.owner === DOCK && hit.layer !== 0 ? DOCK : named(hit.owner);
+  if (owner !== undefined && owner.toLowerCase() === expectedApplication.trim().toLowerCase()) {
+    return { ok: true };
+  }
+  return { ok: false, actualOwner: owner ?? "another application" };
+}
+
+/**
+ * Verifies whether a foreground HID paste/type will actually land on the
+ * approved `expectedApplication` (and never on `ownPid` / SpecWithCode).
+ */
+export function canSafelyFallbackHidType(
+  scene: ScreenScene,
+  expectedApplication: string,
+): { readonly ok: true } | { readonly ok: false; readonly actualFrontmost: string } {
+  const front = named(scene.frontmost);
+  if (front !== undefined && front.toLowerCase() === expectedApplication.trim().toLowerCase()) {
+    return { ok: true };
+  }
+  return { ok: false, actualFrontmost: front ?? "another application" };
+}
+
+/**
  * Performs a background Accessibility click (`AXPress` or editable field probe)
- * or text entry (`AXValue`) on an approved app PID at global display coordinates,
- * without moving the physical cursor, stealing foreground focus, or touching
- * the clipboard. Uses public ApplicationServices AXUIElement C APIs.
+ * or text entry (`AXValue`) on an approved app PID at global display
+ * coordinates, without moving the physical cursor, stealing foreground focus,
+ * or touching the clipboard. Uses public ApplicationServices AXUIElement C
+ * APIs.
  */
 export const JXA_AX_ACTION_SCRIPT = `
 ObjC.import("ApplicationServices");
@@ -765,6 +874,7 @@ ObjC.bindFunction("AXUIElementCopyElementAtPosition", ["int", ["void *", "float"
 ObjC.bindFunction("AXUIElementPerformAction", ["int", ["void *", "id"]]);
 ObjC.bindFunction("AXUIElementSetAttributeValue", ["int", ["void *", "id", "id"]]);
 ObjC.bindFunction("AXUIElementCopyAttributeValue", ["int", ["void *", "id", "void **"]]);
+ObjC.bindFunction("AXUIElementIsAttributeSettable", ["int", ["void *", "id", "bool *"]]);
 ObjC.bindFunction("AXUIElementCopyActionNames", ["int", ["void *", "void **"]]);
 ObjC.bindFunction("CFRelease", ["void", ["void *"]]);
 var EDITABLE_ROLES = {
@@ -776,6 +886,29 @@ var EDITABLE_ROLES = {
 function frontName() {
   var front = $.NSWorkspace.sharedWorkspace.frontmostApplication;
   return front.isNil() ? null : front.localizedName.js;
+}
+function copyStringAttr(el, name) {
+  var ref = Ref();
+  var err = $.AXUIElementCopyAttributeValue(el, $(name), ref);
+  if (err !== 0 || !ref[0]) return { ok: false, err: err, value: null };
+  var unwrapped = ObjC.unwrap(ObjC.castRefToObject(ref[0]));
+  $.CFRelease(ref[0]);
+  if (typeof unwrapped !== "string") return { ok: false, err: 0, value: null };
+  return { ok: true, err: 0, value: unwrapped };
+}
+function isAttrSettable(el, name) {
+  var settableRef = Ref();
+  var err = $.AXUIElementIsAttributeSettable(el, $(name), settableRef);
+  return err === 0 && Boolean(settableRef[0]);
+}
+function readFieldKey(el) {
+  var id = copyStringAttr(el, "AXIdentifier");
+  if (id.ok && id.value) return "id:" + id.value;
+  var title = copyStringAttr(el, "AXTitle");
+  if (title.ok && title.value) return "title:" + title.value;
+  var desc = copyStringAttr(el, "AXDescription");
+  if (desc.ok && desc.value) return "desc:" + desc.value;
+  return "";
 }
 function run(argv) {
   var req = JSON.parse(argv[0]);
@@ -794,16 +927,15 @@ function run(argv) {
   }
   var el = elRef[0];
   try {
-    var roleRef = Ref();
-    var role = "";
-    if ($.AXUIElementCopyAttributeValue(el, $("AXRole"), roleRef) === 0 && roleRef[0]) {
-      role = ObjC.unwrap(ObjC.castRefToObject(roleRef[0])) || "";
-      $.CFRelease(roleRef[0]);
-    }
+    var roleAttr = copyStringAttr(el, "AXRole");
+    var role = roleAttr.ok ? roleAttr.value : "";
+    var fieldKey = readFieldKey(el);
     if (req.mode === "click") {
       if (EDITABLE_ROLES[role]) {
-        $.AXUIElementSetAttributeValue(el, $("AXFocused"), $.kCFBooleanTrue);
-        return JSON.stringify({ ok: true, kind: "editable", role: role, frontmostApplication: frontName() });
+        if (!isAttrSettable(el, "AXValue")) {
+          return JSON.stringify({ ok: false, reason: "value-not-settable", role: role, frontmostApplication: frontName() });
+        }
+        return JSON.stringify({ ok: true, kind: "editable", role: role, fieldKey: fieldKey, frontmostApplication: frontName() });
       }
       var actionsRef = Ref();
       var actions = [];
@@ -824,14 +956,36 @@ function run(argv) {
       if (!EDITABLE_ROLES[role]) {
         return JSON.stringify({ ok: false, reason: "not-editable", role: role, frontmostApplication: frontName() });
       }
-      var current = "";
-      var valRef = Ref();
-      if ($.AXUIElementCopyAttributeValue(el, $("AXValue"), valRef) === 0 && valRef[0]) {
-        var unwrapped = ObjC.unwrap(ObjC.castRefToObject(valRef[0]));
-        if (typeof unwrapped === "string") current = unwrapped;
-        $.CFRelease(valRef[0]);
+      if (req.expectedRole && req.expectedRole !== role) {
+        return JSON.stringify({ ok: false, reason: "stale-field-role", role: role, frontmostApplication: frontName() });
       }
-      var nextValue = current + String(req.text || "");
+      if (req.expectedFieldKey && fieldKey && req.expectedFieldKey !== fieldKey) {
+        return JSON.stringify({ ok: false, reason: "stale-field-key", role: role, frontmostApplication: frontName() });
+      }
+      var text = String(req.text || "");
+      if (!isAttrSettable(el, "AXValue")) {
+        return JSON.stringify({ ok: false, reason: "value-not-settable", role: role, frontmostApplication: frontName() });
+      }
+      var valAttr = copyStringAttr(el, "AXValue");
+      var current;
+      if (valAttr.ok) {
+        current = valAttr.value;
+      } else if (valAttr.err === -25212) {
+        var lenRef = Ref();
+        var lenErr = $.AXUIElementCopyAttributeValue(el, $("AXNumberOfCharacters"), lenRef);
+        var charCount = 0;
+        if (lenErr === 0 && lenRef[0]) {
+          charCount = Number(ObjC.unwrap(ObjC.castRefToObject(lenRef[0]))) || 0;
+          $.CFRelease(lenRef[0]);
+        }
+        if (charCount > 0) {
+          return JSON.stringify({ ok: false, reason: "ax-value-unreadable", role: role, frontmostApplication: frontName() });
+        }
+        current = "";
+      } else {
+        return JSON.stringify({ ok: false, reason: "ax-value-unreadable", err: valAttr.err, role: role, frontmostApplication: frontName() });
+      }
+      var nextValue = current + text;
       var setErr = $.AXUIElementSetAttributeValue(el, $("AXValue"), $(nextValue));
       if (setErr === 0) {
         return JSON.stringify({ ok: true, kind: "typed", role: role, frontmostApplication: frontName() });

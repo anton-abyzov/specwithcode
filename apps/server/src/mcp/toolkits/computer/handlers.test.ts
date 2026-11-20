@@ -409,9 +409,9 @@ it.effect(
       expect(typed.isError).toBe(false);
       expect(asked).toHaveLength(0);
       expect(actions).toEqual([
-        { kind: "screenshot", application: "Notes" },
-        { kind: "click", x: 20, y: 30, application: "Notes" },
-        { kind: "type", text: "hello", application: "Notes" },
+        { kind: "screenshot", application: "Notes", sessionKey: "thread-computer-test" },
+        { kind: "click", x: 20, y: 30, application: "Notes", sessionKey: "thread-computer-test" },
+        { kind: "type", text: "hello", application: "Notes", sessionKey: "thread-computer-test" },
       ]);
 
       // Unapproved background app triggers an access card and does not run when denied.
@@ -435,7 +435,13 @@ it.effect(
       const click = yield* call("computer_click", { x: 25, y: 35, application: "Notes" });
       expect(click.isError).toBe(false);
       expect(asked).toHaveLength(1);
-      expect(actions.at(-1)).toEqual({ kind: "click", x: 25, y: 35, application: "Notes" });
+      expect(actions.at(-1)).toEqual({
+        kind: "click",
+        x: 25,
+        y: 35,
+        application: "Notes",
+        sessionKey: "thread-computer-test",
+      });
     }).pipe(Effect.scoped, Effect.provide(layer));
   },
 );

@@ -192,12 +192,29 @@ const allowed = Effect.gen(function* () {
   return yield* requireComputerAccess;
 });
 
+const withSessionKey = (action: ComputerUseAction, sessionKey: string): ComputerUseAction => {
+  switch (action.kind) {
+    case "screenshot":
+    case "click":
+    case "move":
+    case "drag":
+    case "scroll":
+    case "type":
+    case "key":
+      return { ...action, sessionKey };
+    default:
+      return action;
+  }
+};
+
 /** A screenshot changes nothing in any app, so it needs no app access. */
 const look = (action: ComputerUseAction) =>
   Effect.gen(function* () {
     const scope = yield* allowed;
     const broker = yield* ComputerUseBroker.ComputerUseBroker;
-    return yield* broker.invoke(action, { threadId: scope.thread.threadId });
+    return yield* broker.invoke(withSessionKey(action, scope.thread.threadId), {
+      threadId: scope.thread.threadId,
+    });
   });
 
 const run = (action: ComputerUseAction) =>
@@ -205,14 +222,16 @@ const run = (action: ComputerUseAction) =>
     const scope = yield* allowed;
     const broker = yield* ComputerUseBroker.ComputerUseBroker;
     const names = yield* requireAppAccess(action, scope, broker);
-    const enriched: ComputerUseAction =
+    const withApp: ComputerUseAction =
       (action.kind === "click" || action.kind === "type") &&
       action.application === undefined &&
       names.length === 1 &&
       names[0] !== undefined
         ? { ...action, application: names[0] }
         : action;
-    return yield* broker.invoke(enriched, { threadId: scope.thread.threadId });
+    return yield* broker.invoke(withSessionKey(withApp, scope.thread.threadId), {
+      threadId: scope.thread.threadId,
+    });
   });
 
 /** Everything but the image: action tools report where things stand afterwards. */
