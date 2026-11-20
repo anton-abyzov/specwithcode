@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { Button } from "../ui/button";
 import { requestConnectionRetry } from "../../connection/retryRequests";
 import { paneWords } from "../../studio/assistantTerms";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
