@@ -85,6 +85,11 @@ export interface OwnerSyncInput {
    * account change, and the previous account stays recorded until they go.
    */
   readonly pending?: ReadonlySet<string>;
+  /**
+   * Machines forgotten moments ago that are saved again (a pairing answered
+   * after the removal): they leave again whoever is signed in.
+   */
+  readonly forceDrop?: ReadonlySet<string>;
 }
 
 export interface OwnerSyncPlan {
@@ -111,6 +116,7 @@ export function planConnectMachineOwners(input: OwnerSyncInput): OwnerSyncPlan {
   const firstRecord = input.stored === null || input.stored.inventoried === false;
   const stored = input.stored ?? { lastAccount: null, machines: {} };
   const pending = input.pending ?? new Set<string>();
+  const forceDrop = input.forceDrop ?? new Set<string>();
   const switched =
     account !== null && stored.lastAccount !== null && stored.lastAccount !== account;
 
@@ -123,12 +129,19 @@ export function planConnectMachineOwners(input: OwnerSyncInput): OwnerSyncPlan {
       machines[id] = owner;
       continue;
     }
+    if (account !== null && forceDrop.has(id)) {
+      drop.push(id);
+      machines[id] = owner ?? SAVED_BY_UNKNOWN;
+      continue;
+    }
     if (account !== null) {
       const leaves = switched
         ? owner !== undefined && owner !== account && owner !== SAVED_SIGNED_OUT
         : isAccount(owner) && owner !== account;
       if (leaves) {
+        // Its owner stays recorded until it is gone, so a restart retries it.
         drop.push(id);
+        machines[id] = owner ?? SAVED_BY_UNKNOWN;
         continue;
       }
     }
@@ -142,7 +155,8 @@ export function planConnectMachineOwners(input: OwnerSyncInput): OwnerSyncPlan {
       machines[id] = owner;
     }
   }
-  const stillPending = savedMachines.some((id) => pending.has(id) && machines[id] !== undefined);
+  const stillPending =
+    drop.length > 0 || savedMachines.some((id) => pending.has(id) && machines[id] !== undefined);
   return {
     drop,
     next: {

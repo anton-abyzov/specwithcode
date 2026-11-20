@@ -91,6 +91,12 @@ function AutoConnectFleet({ environmentId }: { readonly environmentId: Environme
           attempted.current.set(machine.environmentId, Date.now());
           try {
             const credential = await pairStudioFleet(environmentId, machine.id);
+            // Skipped while the pairing was out (removed by hand, or dropped on a
+            // Connect account switch): its answer is not saved.
+            if (readSkippedFleetEnvironments().has(machine.environmentId)) {
+              markFleetAutoConnectSettled(machine.environmentId);
+              continue;
+            }
             const result = await connect({
               host: credential.host,
               pairingCode: credential.pairingCode,

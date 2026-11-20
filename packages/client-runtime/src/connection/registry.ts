@@ -606,7 +606,6 @@ export const make = Effect.gen(function* () {
     const route: ConnectionRoute = { target: registered.target, profile: registered.profile };
     const isRelay = registration.target._tag === "RelayConnectionTarget";
     const startedInEpoch = yield* Ref.get(relayRouteEpoch);
-    let undoAfterLock = false;
     yield* withLeaseLock(
       environmentId,
       Effect.gen(function* () {
@@ -657,9 +656,31 @@ export const make = Effect.gen(function* () {
             ),
           );
           if (restored) return;
-          // The saved route could not be put back: keep it visible so the
-          // removal below (and any later sign-out cleanup) can find it.
-          undoAfterLock = true;
+          // The saved route could not be put back. Install what was written and
+          // remove the Connect route now, still under this lock, so no later
+          // save for this machine can be caught by it.
+          yield* Ref.update(persistedEnvironmentIds, (current) =>
+            new Set(current).add(environmentId),
+          );
+          const remaining = routesAfterRemoving(connectionRoutes(entry), RELAY_ROUTE_ID);
+          const logRemoveFailure = (error: unknown) =>
+            Effect.logWarning("Could not remove a Connect route saved after a sign-out.", {
+              environmentId,
+              error,
+            });
+          if (remaining.length > 0) {
+            const kept = withRoutes(entry, remaining).entry;
+            yield* registrations
+              .setRoutes(environmentId, persistedRoutes(kept))
+              .pipe(Effect.catch(logRemoveFailure));
+            yield* installEntryLocked(kept);
+          } else {
+            yield* installEntryLocked(entry);
+            yield* removeLocked(environmentId, { keepRemote: true }).pipe(
+              Effect.catch(logRemoveFailure),
+            );
+          }
+          return;
         }
         yield* Ref.update(persistedEnvironmentIds, (current) =>
           new Set(current).add(environmentId),
@@ -667,16 +688,6 @@ export const make = Effect.gen(function* () {
         yield* installEntryLocked(entry);
       }),
     );
-    if (undoAfterLock) {
-      yield* removeRoute(environmentId, RELAY_ROUTE_ID).pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("Could not remove a Connect route saved after a sign-out.", {
-            environmentId,
-            error,
-          }),
-        ),
-      );
-    }
   });
 
   /** Writes a new route list for a user-saved environment and restarts its connection. */

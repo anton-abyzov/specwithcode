@@ -152,9 +152,21 @@ export function createEnvironmentCatalogAtoms<R, E>(
     label: "environment-catalog:forget",
     scheduler: commandScheduler,
     concurrency: serial,
-    execute: (environmentId: EnvironmentIdType) =>
-      EnvironmentRegistry.EnvironmentRegistry.pipe(
-        Effect.flatMap((registry) => registry.remove(environmentId, { keepRemote: true })),
+    // `proceed` is asked when the command reaches the front of the queue, so a
+    // removal queued for one account never runs after the account changed.
+    execute: (input: {
+      readonly environmentId: EnvironmentIdType;
+      readonly proceed: () => boolean;
+    }) =>
+      Effect.suspend(() =>
+        input.proceed()
+          ? EnvironmentRegistry.EnvironmentRegistry.pipe(
+              Effect.flatMap((registry) =>
+                registry.remove(input.environmentId, { keepRemote: true }),
+              ),
+              Effect.as(true),
+            )
+          : Effect.succeed(false),
       ),
   });
   const removeRelayEnvironments = createRuntimeCommand(runtime, {

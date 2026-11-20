@@ -55,7 +55,15 @@ describe("planConnectMachineOwners", () => {
       accountMachines: new Set(["m5"]),
     });
     expect(plan.drop).toEqual(["m4", "m5"]);
-    expect(plan.next).toEqual({ lastAccount: B, machines: { lan: SAVED_SIGNED_OUT, mine: B } });
+    // Recorded as they were until the removals finish.
+    expect(plan.next).toEqual({ lastAccount: A, machines: stored.machines });
+    const after = planConnectMachineOwners({
+      stored: plan.next,
+      account: B,
+      savedMachines: ["lan", "mine"],
+      accountMachines: NONE,
+    });
+    expect(after.next).toEqual({ lastAccount: B, machines: { lan: SAVED_SIGNED_OUT, mine: B } });
   });
 
   it("a sign-out keeps every saved machine and remembers the account that left", () => {

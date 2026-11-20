@@ -10,7 +10,9 @@ import { ConnectMachineOwnersSync } from "./ConnectMachineOwnersSync";
 const A = "user_fixture_a";
 const B = "user_fixture_b";
 
-type Settled = { readonly _tag: "Success" } | { readonly _tag: "Failure"; readonly tag: string };
+type Settled =
+  | { readonly _tag: "Success"; readonly value?: boolean }
+  | { readonly _tag: "Failure"; readonly tag: string };
 
 const state = vi.hoisted(() => ({
   catalog: {
@@ -21,6 +23,7 @@ const state = vi.hoisted(() => ({
   removals: [] as Array<string>,
   skipped: new Set<string>(),
   answer: (_id: string): Promise<Settled> => Promise.resolve({ _tag: "Success" }),
+  resetLane: () => {},
 }));
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => state.catalog }));
@@ -34,14 +37,28 @@ vi.mock("../connection/catalog", () => ({
 vi.mock("../state/environments", () => ({
   useRelayEnvironmentDiscovery: () => ({ environments: state.discovery }),
 }));
-vi.mock("../state/use-atom-command", () => ({
-  useAtomCommand: () => async (id: string) => {
-    state.removals.push(id);
-    const result = await state.answer(id);
-    if (result._tag === "Success") state.catalog.entries.delete(id);
-    return result;
-  },
-}));
+vi.mock("../state/use-atom-command", () => {
+  // One command at a time, as the catalog's serial lane runs them.
+  let lane: Promise<unknown> = Promise.resolve();
+  state.resetLane = () => {
+    lane = Promise.resolve();
+  };
+  return {
+    useAtomCommand: () => (input: { environmentId: string; proceed: () => boolean }) => {
+      const run = lane.then(async () => {
+        if (!input.proceed()) return { _tag: "Success", value: false } as const;
+        state.removals.push(input.environmentId);
+        const result = await state.answer(input.environmentId);
+        if (result._tag !== "Success") return result;
+        state.catalog.entries.delete(input.environmentId);
+        state.catalog = { ...state.catalog, entries: new Map(state.catalog.entries) };
+        return { _tag: "Success", value: true } as const;
+      });
+      lane = run.catch(() => {});
+      return run;
+    },
+  };
+});
 vi.mock("../studio/fleetAutoConnect", () => ({
   setFleetEnvironmentSkipped: (id: string, skipped: boolean) => {
     if (skipped) state.skipped.add(id);
@@ -79,6 +96,7 @@ async function restart(account: string | null | undefined) {
 }
 
 beforeEach(() => {
+  state.resetLane();
   window.localStorage.clear();
   state.removals = [];
   state.skipped = new Set();
@@ -218,6 +236,42 @@ describe("ConnectMachineOwnersSync (1434)", () => {
 
     expect(state.removals).toEqual(["legacy"]);
     expect(readConnectMachineOwners()).toEqual({ lastAccount: B, machines: {} });
+  });
+
+  it("B to A while a removal is still running keeps B's new machine as B's", async () => {
+    saved("m4");
+    writeConnectMachineOwners({ lastAccount: A, machines: { m4: A } });
+    let release: (value: Settled) => void = () => {};
+    state.answer = () => new Promise((resolve) => (release = resolve));
+
+    await show(B);
+    state.catalog.entries.set("bmac", { target: { _tag: "BearerConnectionTarget" } });
+    state.catalog = { ...state.catalog, entries: new Map(state.catalog.entries) };
+    await show(B);
+    expect(readConnectMachineOwners()?.machines).toEqual({ m4: A, bmac: B });
+
+    state.answer = () => Promise.resolve({ _tag: "Success" });
+    await show(A);
+    await act(async () => release({ _tag: "Success" }));
+    await show(A);
+
+    expect(state.removals).toEqual(["m4", "bmac"]);
+    expect(readConnectMachineOwners()).toEqual({ lastAccount: A, machines: {} });
+  });
+
+  it("a forgotten machine saved again by a late answer leaves again", async () => {
+    saved("m4");
+    writeConnectMachineOwners({ lastAccount: A, machines: { m4: A } });
+
+    await show(B);
+    expect(state.removals).toEqual(["m4"]);
+    // A pairing that was already out saves it again.
+    state.catalog.entries.set("m4", { target: { _tag: "BearerConnectionTarget" } });
+    state.catalog = { ...state.catalog, entries: new Map(state.catalog.entries) };
+    await show(B);
+
+    expect(state.removals).toEqual(["m4", "m4"]);
+    expect(state.catalog.entries.has("m4")).toBe(false);
   });
 
   it("a machine already gone counts as removed", async () => {
