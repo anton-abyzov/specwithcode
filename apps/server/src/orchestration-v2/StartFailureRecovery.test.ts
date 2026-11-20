@@ -279,6 +279,8 @@ const runRoot = (input: {
         )[0] as OrchestrationV2ProviderFailure | undefined,
         interrupts: yield* Ref.get(interrupts),
         starts: yield* Ref.get(starts),
+        // A provider turn is what reads as "the provider took the prompt" later.
+        providerTurnWrites: events.filter((event) => event.type === "provider-turn.updated").length,
       };
     }).pipe(Effect.provide(layer));
   });
@@ -379,6 +381,7 @@ it.effect("fails a start-only start behind a live owner instead of queueing it (
     // Never queued: it would start later on its own, after its authority ended.
     assert.deepEqual(result.runStatuses, ["failed"]);
     assert.equal(result.failure?.code, PREVIOUS_TURN_ACTIVE_FAILURE_CODE);
+    assert.equal(result.providerTurnWrites, 0);
   }),
 );
 
@@ -396,6 +399,7 @@ it.effect("offers a start-only turn to no provider once its authority ended (142
     assert.equal(result.starts, 0);
     assert.deepEqual(result.runStatuses, ["failed"]);
     assert.notEqual(result.failure?.code, PREVIOUS_TURN_ACTIVE_FAILURE_CODE);
+    assert.equal(result.providerTurnWrites, 0);
   }),
 );
 

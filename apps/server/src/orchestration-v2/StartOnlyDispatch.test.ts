@@ -8,6 +8,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
+  type OrchestrationV2Run,
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -22,7 +23,7 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { LIMIT_FALLBACK_MESSAGE_PREFIX } from "./providerOpenFailure.ts";
-import { START_AUTHORITY_ENDED } from "./startOnlyDispatch.ts";
+import { missedBeforeRun, START_AUTHORITY_ENDED } from "./startOnlyDispatch.ts";
 
 const projectId = ProjectId.make("project:start-only");
 const instanceId = ProviderInstanceId.make("codex");
@@ -279,5 +280,51 @@ it.effect("a server continuation of a start-only run the provider never took is 
       .pipe(Effect.flip);
     assert.equal(refused._tag, "OrchestratorDispatchError");
     assert.deepEqual(yield* statuses(cutThread), ["failed"]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it("a start-only run no provider took does not ride into the next turn as missed history", () => {
+  const failed = {
+    ordinal: 1,
+    providerThreadId: "provider-thread:a",
+    status: "failed",
+    activeAttemptId: "attempt:a",
+  } as OrchestrationV2Run;
+  const next = { ordinal: 2 };
+  // An ordinary failed run's items go with the next turn on that provider thread.
+  assert.isTrue(missedBeforeRun(failed, next, "provider-thread:a", new Set()));
+  // A start-only one's message reaches the agent only through a send checked again.
+  assert.isFalse(
+    missedBeforeRun({ ...failed, startOnly: true }, next, "provider-thread:a", new Set()),
+  );
+});
+
+it.effect("a turn restarted by a steer leaves the start-only restriction behind", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    const steerThread = ThreadId.make("thread:start-only-steer");
+    yield* createThread(steerThread);
+    yield* threads.sendToThread({ ...message("steered", steerThread), authorityEndsAt: 9e15 });
+    const target = (yield* orchestrator.getThreadProjection(steerThread)).runs[0]!;
+    assert.isTrue(target.startOnly);
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("command:steer"),
+      threadId: steerThread,
+      messageId: MessageId.make("message:steer"),
+      text: "Look at the release notes first.",
+      attachments: [],
+      dispatchMode: { type: "restart_active", targetRunId: target.id },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    // The person's steer is their own send: its turn carries no sender's deadline.
+    const restarted = (yield* orchestrator.getThreadProjection(steerThread)).runs.find(
+      (run) => run.id === target.id,
+    )!;
+    assert.equal(restarted.userMessageId, MessageId.make("message:steer"));
+    assert.isUndefined(restarted.startOnly);
+    assert.isUndefined(restarted.authorityEndsAt);
   }).pipe(Effect.provide(layerTest)),
 );
