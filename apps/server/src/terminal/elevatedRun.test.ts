@@ -23,7 +23,13 @@ const MARKER_PASSWORD = "marker-password-1438";
 const FAKE_SUDO = `#!/bin/sh
 state="$FAKE_STATE"
 case "$1" in
-  -n) [ -f "$state/ticket" ] || [ -f "$state/nopasswd" ]; exit $? ;;
+  -n)
+    if [ "$2" = "-l" ]; then
+      [ -f "$state/ticket" ] || [ -f "$state/nopasswd" ] || [ -f "$state/nopasswd-cmd" ]
+      exit $?
+    fi
+    [ -f "$state/ticket" ] || [ -f "$state/nopasswd" ]
+    exit $? ;;
   -k) /bin/rm -f "$state/ticket"; exit 0 ;;
   -A)
     tries=0
@@ -249,6 +255,67 @@ describe("administrator code-block runs", () => {
     expect(NodeFS.readdirSync(NodePath.join(root, "runs"))).toEqual([]);
   });
 
+  it("cleans up the password helper, run folder and ticket when killed with SIGKILL while prompting", async () => {
+    setState("dialog", "hang");
+    const runsDir = NodePath.join(root, "runs");
+    const wrapped = await prepare(`touch "${NodePath.join(state, "block-ran")}"`, runsDir);
+    const dir = NodePath.dirname(wrapped.slice("/bin/sh '".length, -1));
+    const child = NodeChildProcess.spawn("/bin/sh", ["-c", `exec ${wrapped}`], {
+      env: environment(),
+      stdio: "ignore",
+    });
+    waitUntil(
+      '[ -e "$1" ] && [ -s "$2" ]',
+      NodePath.join(state, "shown-count"),
+      NodePath.join(dir, "askpass.pid"),
+    );
+    const askpassPid = NodeFS.readFileSync(NodePath.join(dir, "askpass.pid"), "utf8")
+      .trim()
+      .split(/\s+/)[0]!;
+    // Simulate a ticket that was primed just as SIGKILL landed.
+    setState("ticket", "");
+    child.kill("SIGKILL");
+    await new Promise((resolve) => child.on("exit", resolve));
+    waitUntil('[ -z "$(ls "$1")" ] && ! kill -0 "$2" 2>/dev/null', runsDir, askpassPid);
+    expect(hasState("block-ran")).toBe(false);
+    expect(hasState("ticket")).toBe(false);
+    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+  });
+
+  it.each(["SIGTERM", "SIGKILL"] as const)(
+    "kills nested background grandchildren and SIGTERM-ignoring children on %s",
+    async (signal) => {
+      const runsDir = NodePath.join(root, "runs");
+      const grandchildFile = NodePath.join(state, `grandchild-${signal}`);
+      const stubbornFile = NodePath.join(state, `stubborn-${signal}`);
+      const wrapped = await prepare(
+        [
+          `/bin/sh -c 'echo $$ > "${grandchildFile}"; exec /bin/sleep 30' &`,
+          `/bin/sh -c 'trap "" TERM; echo $$ > "${stubbornFile}"; exec /bin/sleep 30' &`,
+          "wait",
+        ].join("\n"),
+        runsDir,
+      );
+      const child = NodeChildProcess.spawn("/bin/sh", ["-c", `exec ${wrapped}`], {
+        env: environment(),
+        stdio: "ignore",
+      });
+      waitUntil('[ -s "$1" ] && [ -s "$2" ]', grandchildFile, stubbornFile);
+      const grandchildPid = NodeFS.readFileSync(grandchildFile, "utf8").trim();
+      const stubbornPid = NodeFS.readFileSync(stubbornFile, "utf8").trim();
+      child.kill(signal);
+      await new Promise((resolve) => child.on("exit", resolve));
+      waitUntil(
+        '[ -z "$(ls "$1")" ] && ! kill -0 "$2" 2>/dev/null && ! kill -0 "$3" 2>/dev/null',
+        runsDir,
+        grandchildPid,
+        stubbornPid,
+      );
+      expect(hasState("ticket")).toBe(false);
+      expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+    },
+  );
+
   it.each(["SIGTERM", "SIGKILL"] as const)(
     "ends the block, drops the ticket and removes the folder on %s",
     async (signal) => {
@@ -401,13 +468,23 @@ describe("administrator code-block runs", () => {
 
   it.each([
     ["a Mac service with no desktop session", "session", "Background"],
-    ["Linux", "system", "Linux"],
+    ["Linux without passwordless sudo", "system", "Linux"],
   ])("does not start the block on %s", async (_name, key, value) => {
     setState(key, value);
     const result = await run(`touch "${NodePath.join(state, "block-ran")}"`);
     expect(terminalElevationState(result.output)).toBe("unavailable");
     expect(result.exitCode).toBe(1);
     expect(hasState("block-ran")).toBe(false);
+    expect(hasState("shown-count")).toBe(false);
+  });
+
+  it("runs on Linux when command-specific NOPASSWD is allowed even if sudo -n true fails", async () => {
+    setState("system", "Linux");
+    setState("nopasswd-cmd", "");
+    const result = await run("echo linux-nopasswd-cmd-ok");
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toContain("linux-nopasswd-cmd-ok");
+    expect(terminalElevationState(result.output)).toBe("started");
     expect(hasState("shown-count")).toBe(false);
   });
 

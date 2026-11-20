@@ -42,6 +42,9 @@ export interface ElevatedRunTools {
   readonly cat: string;
   readonly rm: string;
   readonly sleep: string;
+  readonly ps: string;
+  readonly awk: string;
+  readonly perl: string;
 }
 const SYSTEM_TOOLS: ElevatedRunTools = {
   sudo: "/usr/bin/sudo",
@@ -51,6 +54,9 @@ const SYSTEM_TOOLS: ElevatedRunTools = {
   cat: "/bin/cat",
   rm: "/bin/rm",
   sleep: "/bin/sleep",
+  ps: "/bin/ps",
+  awk: "/usr/bin/awk",
+  perl: "/usr/bin/perl",
 };
 
 export interface ElevatedRunInput {
@@ -197,7 +203,7 @@ function askpassScript(dir: string, osascriptPath: string): string {
   return `#!/bin/sh
 # Shows the password dialog for sudo and prints the answer to sudo's pipe.
 dir=${shellQuote(dir)}
-echo $$ > "$dir/askpass.pid"
+printf '%s 0\\n' "$$" > "$dir/askpass.pid"
 exec ${shellQuote(osascriptPath)} - "$dir/label.txt" "$dir/answer" <<'OSA'
 on run argv
   set labelText to read POSIX file (item 1 of argv) as «class utf8»
@@ -228,37 +234,131 @@ function wrapperScript(dir: string, tools: ElevatedRunTools): string {
   const sudo = shellQuote(tools.sudo);
   const cat = shellQuote(tools.cat);
   const rm = shellQuote(tools.rm);
+  const sleep = shellQuote(tools.sleep);
+  const ps = shellQuote(tools.ps);
+  const awk = shellQuote(tools.awk);
+  const perl = shellQuote(tools.perl);
   return `#!/bin/sh
 # Asks for the administrator password once, runs the block, forgets the ticket.
 dir=${shellQuote(dir)}
+wrapper_pid=$$
 # The value that signs this run's states leaves the disk before the block starts.
 nonce="$(${cat} "$dir/nonce" 2>/dev/null)"
 ${rm} -f "$dir/nonce"
 mark() { printf '\\033]${TERMINAL_ELEVATION_OSC};elevation=%s;%s\\007' "$1" "$nonce"; }
-stop_block() {
-  if [ -f "$dir/block.pid" ]; then
-    block_pid="$(${cat} "$dir/block.pid")"
-    ${rm} -f "$dir/block.pid"
-    if [ -n "$block_pid" ]; then
-      kill -STOP "$block_pid" 2>/dev/null
-      [ -x /usr/bin/pkill ] && /usr/bin/pkill -TERM -P "$block_pid" 2>/dev/null
-      kill -TERM "$block_pid" 2>/dev/null
-      kill -CONT "$block_pid" 2>/dev/null
-    fi
+collect_tree() {
+  root="$1"
+  own_pgid="\${2:-0}"
+  [ -n "$root" ] || return 0
+  if [ -x ${ps} ] && [ -x ${awk} ]; then
+    ${ps} -eo pid=,ppid=,pgid= 2>/dev/null | ${awk} -v root="$root" -v own_pgid="$own_pgid" -v wrap="$wrapper_pid" '
+      BEGIN {
+        root = root + 0
+        own_pgid = own_pgid + 0
+        wrap = wrap + 0
+      }
+      {
+        pid = $1 + 0; ppid = $2 + 0; pgid = $3 + 0
+        if (pid <= 1) next
+        parent[pid] = ppid
+        group[pid] = pgid
+        all[++n] = pid
+        if (pid == root) root_pgid = pgid
+      }
+      END {
+        if (root <= 1) exit 0
+        seen[root] = 1
+        if (own_pgid == 1 || root_pgid == root) {
+          for (i = 1; i <= n; i++) {
+            p = all[i]
+            if (group[p] == root) seen[p] = 1
+          }
+        }
+        changed = 1
+        while (changed) {
+          changed = 0
+          for (i = 1; i <= n; i++) {
+            p = all[i]
+            if (!(p in seen) && (parent[p] in seen)) {
+              seen[p] = 1
+              changed = 1
+            }
+          }
+        }
+        for (p in seen) {
+          if (seen[p] == 1 && (p + 0) > 1 && (p + 0) != wrap) print p
+        }
+      }
+    '
+  else
+    printf '%s\\n' "$root"
   fi
 }
-primed=0
+stop_target() {
+  pidfile="$1"
+  [ -f "$pidfile" ] || return 0
+  target_pid=
+  own_pgid=0
+  read target_pid own_pgid < "$pidfile" 2>/dev/null
+  ${rm} -f "$pidfile"
+  case "$target_pid" in
+    ""|*[!0-9]*|0|1) return 0 ;;
+  esac
+  own_pgid="\${own_pgid:-0}"
+  # Freeze first so a shell cannot advance to the next command or fork while stopping.
+  [ "$own_pgid" = 1 ] && kill -STOP -- -"$target_pid" 2>/dev/null
+  kill -STOP "$target_pid" 2>/dev/null
+  pids="$(collect_tree "$target_pid" "$own_pgid")"
+  [ -n "$pids" ] && kill -STOP $pids 2>/dev/null
+  pids="$(collect_tree "$target_pid" "$own_pgid")"
+  [ "$own_pgid" = 1 ] && kill -TERM -- -"$target_pid" 2>/dev/null
+  [ -n "$pids" ] && kill -TERM $pids 2>/dev/null
+  [ "$own_pgid" = 1 ] && kill -CONT -- -"$target_pid" 2>/dev/null
+  [ -n "$pids" ] && kill -CONT $pids 2>/dev/null
+  i=0
+  while [ "$i" -lt 5 ]; do
+    alive=0
+    for p in $pids; do
+      if kill -0 "$p" 2>/dev/null; then alive=1; break; fi
+    done
+    [ "$alive" = 0 ] && break
+    ${sleep} 0.2 2>/dev/null || ${sleep} 1
+    i=$((i + 1))
+  done
+  [ "$own_pgid" = 1 ] && kill -KILL -- -"$target_pid" 2>/dev/null
+  more="$(collect_tree "$target_pid" "$own_pgid")"
+  for p in $more $pids; do
+    kill -0 "$p" 2>/dev/null && kill -KILL "$p" 2>/dev/null
+  done
+}
+run_isolated() {
+  pidfile="$1"
+  grab_tty="$2"
+  shift 2
+  if [ -x ${perl} ]; then
+    ${perl} -e 'use POSIX qw(setpgid tcsetpgrp isatty); setpgid(0, 0); if ($ARGV[1] && isatty(0)) { local $SIG{TTOU} = "IGNORE"; tcsetpgrp(0, $$); } open my $f, ">", $ARGV[0] or die $!; print $f "$$ 1\\n"; close $f; splice @ARGV, 0, 2; exec @ARGV or exit 127' "$pidfile" "$grab_tty" "$@"
+  else
+    /bin/sh -c 'printf "%s 0\\n" "$$" > "$1"; shift; exec "$@"' sh "$pidfile" "$@"
+  fi
+}
+reclaim_tty() {
+  if [ -x ${perl} ]; then
+    ${perl} -e 'use POSIX qw(tcsetpgrp isatty); if (isatty(0)) { local $SIG{TTOU} = "IGNORE"; tcsetpgrp(0, getpgrp()); }' 2>/dev/null
+  fi
+}
 phase=check
 ask_pid=
 watch_pid=
 cleanup() {
-  [ -n "$watch_pid" ] && kill "$watch_pid" 2>/dev/null
-  stop_block
+  stop_target "$dir/block.pid"
+  stop_target "$dir/ask.pid"
+  stop_target "$dir/askpass.pid"
+  [ -n "$ask_pid" ] && kill -TERM "$ask_pid" 2>/dev/null
+  reclaim_tty
   # Only a ticket this run asked for is dropped.
-  [ "$primed" = 1 ] && ${sudo} -k 2>/dev/null
-  [ -n "$ask_pid" ] && kill "$ask_pid" 2>/dev/null
-  [ -f "$dir/askpass.pid" ] && kill "$(${cat} "$dir/askpass.pid")" 2>/dev/null
+  [ -f "$dir/need-drop" ] && ${sudo} -k 2>/dev/null
   ${rm} -rf "$dir"
+  [ -n "$watch_pid" ] && kill -KILL "$watch_pid" 2>/dev/null
 }
 stop() {
   if [ "$phase" = prompt ]; then
@@ -273,49 +373,62 @@ if [ ! -x ${sudo} ]; then
   mark unavailable
   exit 1
 fi
-if ! ${sudo} -n true 2>/dev/null; then
-  if [ "$(${shellQuote(tools.uname)} -s)" != "Darwin" ] || [ "$(${shellQuote(tools.launchctl)} managername 2>/dev/null)" != "Aqua" ]; then
-    mark unavailable
-    exit 1
-  fi
-  mark waiting
-  phase=prompt
-  # In the background, so Stop and a closed terminal end the prompt at once.
-  SUDO_ASKPASS="$dir/askpass.sh" ${sudo} -A -v 2>/dev/null &
-  ask_pid=$!
-  wait "$ask_pid"
-  asked=$?
-  ask_pid=
-  if [ "$asked" != 0 ]; then
-    state=denied
-    [ -f "$dir/answer" ] && state="$(${cat} "$dir/answer")"
-    case "$state" in cancelled|timeout|unavailable) ;; *) state=denied ;; esac
-    phase=done
-    mark "$state"
-    exit 1
-  fi
-  primed=1
-fi
-phase=run
-block="$(${cat} "$dir/block.sh")"
-${rm} -f "$dir/block.sh" "$dir/label.txt" "$dir/askpass.sh" "$dir/answer" "$dir/askpass.pid"
-# The block must run in the foreground so the tty delivers Ctrl-C (SIGINT) with
-# default handling instead of POSIX sh ignoring SIGINT on background commands.
-# This watcher outlives the wrapper on TERM/HUP/KILL to end the block, drop the
-# ticket and remove the folder.
+# Start the watcher before prompting so SIGKILL during authentication still
+# kills the helper, drops any newly primed ticket and removes the run folder.
 (
-  trap '' HUP INT
-  while kill -0 "$$" 2>/dev/null; do ${shellQuote(tools.sleep)} 1; done
-  stop_block
-  [ "$primed" = 1 ] && ${sudo} -k 2>/dev/null
+  trap '' HUP INT TERM
+  while kill -0 "$wrapper_pid" 2>/dev/null; do
+    ${sleep} 0.2 2>/dev/null || ${sleep} 1
+  done
+  stop_target "$dir/ask.pid"
+  stop_target "$dir/askpass.pid"
+  stop_target "$dir/block.pid"
+  [ -f "$dir/need-drop" ] && ${sudo} -k 2>/dev/null
   ${rm} -rf "$dir"
 ) </dev/null >/dev/null 2>&1 &
 watch_pid=$!
+if ! ${sudo} -n true 2>/dev/null; then
+  if [ "$(${shellQuote(tools.uname)} -s)" != "Darwin" ]; then
+    if ! ${sudo} -n -l >/dev/null 2>&1; then
+      mark unavailable
+      exit 1
+    fi
+  elif [ "$(${shellQuote(tools.launchctl)} managername 2>/dev/null)" != "Aqua" ]; then
+    mark unavailable
+    exit 1
+  else
+    mark waiting
+    phase=prompt
+    # sudo -n true just failed, so any ticket created from here on belongs to this run.
+    : > "$dir/need-drop"
+    # In the background, so Stop and a closed terminal end the prompt at once.
+    SUDO_ASKPASS="$dir/askpass.sh" run_isolated "$dir/ask.pid" 0 ${sudo} -A -v 2>/dev/null &
+    ask_pid=$!
+    wait "$ask_pid"
+    asked=$?
+    ask_pid=
+    ${rm} -f "$dir/ask.pid" "$dir/askpass.pid"
+    if [ "$asked" != 0 ]; then
+      state=denied
+      [ -f "$dir/answer" ] && state="$(${cat} "$dir/answer")"
+      case "$state" in cancelled|timeout|unavailable) ;; *) state=denied ;; esac
+      phase=done
+      mark "$state"
+      exit 1
+    fi
+  fi
+fi
+phase=run
+block="$(${cat} "$dir/block.sh")"
+${rm} -f "$dir/block.sh" "$dir/label.txt" "$dir/askpass.sh" "$dir/answer" "$dir/askpass.pid" "$dir/ask.pid"
+# The block runs in the foreground in its own process group (with the tty
+# foreground transferred to it when stdin is a tty) so Ctrl-C delivers SIGINT
+# immediately while abnormal termination still tears down the whole tree.
 trap - TERM HUP
 mark started
-# The block runs unchanged in the user's shell; the first shell only records its process.
-/bin/sh -c 'echo "$$" > "$1"; shift; exec "$@"' sh "$dir/block.pid" "\${SHELL:-/bin/sh}" -c "$block"
+run_isolated "$dir/block.pid" 1 "\${SHELL:-/bin/sh}" -c "$block"
 code=$?
+reclaim_tty
 ${rm} -f "$dir/block.pid"
 exit "$code"
 `;

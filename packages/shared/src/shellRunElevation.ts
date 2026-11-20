@@ -14,12 +14,16 @@ export interface ShellRunElevation {
   readonly sudo: boolean;
   /** System paths or commands the block changes, in the order they appear. */
   readonly systemChanges: ReadonlyArray<string>;
+  /** True when unclosed quotes or substitutions kept the parser from safely classifying the block. */
+  readonly uncertain?: boolean;
 }
 
 interface Word {
   readonly text: string;
-  /** Quoted text is never an option, an assignment or a redirection. */
+  /** Quoted text is never an option or a redirection target. */
   readonly quoted: boolean;
+  /** True when an unquoted `NAME=` prefix started the word, even if its value is quoted. */
+  readonly assignment: boolean;
 }
 
 interface SimpleCommand {
@@ -29,43 +33,153 @@ interface SimpleCommand {
 }
 
 const SEPARATORS = new Set([";", "&", "|", "\n", "(", ")", "{", "}", "`"]);
+const WORD_BOUNDARY_CHARS = new Set([
+  " ",
+  "\t",
+  "\n",
+  ";",
+  "&",
+  "|",
+  "(",
+  ")",
+  "{",
+  "}",
+  "<",
+  ">",
+  "`",
+]);
 
-/** The index of the `)` that closes a `$(` whose body starts at `start`. */
-function substitutionEnd(code: string, start: number): number {
+interface ScanResult {
+  readonly index: number;
+  readonly closed: boolean;
+}
+
+/**
+ * The index of the `)` that closes a `$(` whose body starts at `start`.
+ * Honours quotes, escapes, comments, backticks and `case ... ) ... esac` patterns.
+ */
+function substitutionEnd(code: string, start: number): ScanResult {
   let depth = 1;
-  for (let index = start; index < code.length; index += 1) {
-    const char = code[index];
-    if (char === "\\") index += 1;
-    else if (char === "'") {
-      const close = code.indexOf("'", index + 1);
-      index = close === -1 ? code.length : close;
-    } else if (char === '"') index = doubleQuoteEnd(code, index + 1);
-    else if (char === "(") depth += 1;
-    else if (char === ")") {
-      depth -= 1;
-      if (depth === 0) return index;
+  let caseDepth = 0;
+  let inCasePattern = false;
+  let word = "";
+  let wordClean = true;
+
+  const flushWord = () => {
+    if (wordClean && word.length > 0) {
+      if (word === "case") caseDepth += 1;
+      else if (word === "in" && caseDepth > 0) inCasePattern = true;
+      else if (word === "esac" && caseDepth > 0) {
+        caseDepth -= 1;
+        inCasePattern = false;
+      }
     }
+    word = "";
+    wordClean = true;
+  };
+
+  for (let index = start; index < code.length; index += 1) {
+    const char = code[index] ?? "";
+    if (char === "\\") {
+      wordClean = false;
+      index += 1;
+      continue;
+    }
+    if (char === "'") {
+      wordClean = false;
+      const close = code.indexOf("'", index + 1);
+      if (close === -1) return { index: code.length, closed: false };
+      index = close;
+      continue;
+    }
+    if (char === '"') {
+      wordClean = false;
+      const dq = doubleQuoteEnd(code, index + 1);
+      if (!dq.closed) return { index: code.length, closed: false };
+      index = dq.index;
+      continue;
+    }
+    if (char === "`") {
+      wordClean = false;
+      let end = index + 1;
+      while (end < code.length) {
+        if (code[end] === "\\") {
+          end += 2;
+          continue;
+        }
+        if (code[end] === "`") break;
+        end += 1;
+      }
+      if (end >= code.length) return { index: code.length, closed: false };
+      index = end;
+      continue;
+    }
+    if (
+      char === "#" &&
+      word.length === 0 &&
+      wordClean &&
+      (index === start || WORD_BOUNDARY_CHARS.has(code[index - 1] ?? ""))
+    ) {
+      const lineEnd = code.indexOf("\n", index);
+      if (lineEnd === -1) return { index: code.length, closed: false };
+      index = lineEnd;
+      continue;
+    }
+    if (char === ";" && code[index + 1] === ";") {
+      flushWord();
+      if (caseDepth > 0) inCasePattern = true;
+      index += 1;
+      continue;
+    }
+    if (char === "(") {
+      flushWord();
+      depth += 1;
+      continue;
+    }
+    if (char === ")") {
+      flushWord();
+      if (inCasePattern && depth === 1) {
+        inCasePattern = false;
+        continue;
+      }
+      depth -= 1;
+      if (depth === 1 && inCasePattern) inCasePattern = false;
+      if (depth === 0) return { index, closed: true };
+      continue;
+    }
+    if (WORD_BOUNDARY_CHARS.has(char)) {
+      flushWord();
+      continue;
+    }
+    word += char;
   }
-  return code.length;
+  return { index: code.length, closed: false };
 }
 
 /**
  * The end of a double-quoted string that starts after `start`. `\"` does not
  * end it, and neither does a quote inside `$( )`: "$(echo "a"; sudo id)".
  */
-function doubleQuoteEnd(code: string, start: number): number {
+function doubleQuoteEnd(code: string, start: number): ScanResult {
   for (let index = start; index < code.length; index += 1) {
     const char = code[index];
     if (char === "\\") index += 1;
-    else if (char === "$" && code[index + 1] === "(") index = substitutionEnd(code, index + 2);
-    else if (char === '"') return index;
+    else if (char === "$" && code[index + 1] === "(") {
+      const sub = substitutionEnd(code, index + 2);
+      if (!sub.closed) return { index: code.length, closed: false };
+      index = sub.index;
+    } else if (char === '"') return { index, closed: true };
   }
-  return code.length;
+  return { index: code.length, closed: false };
 }
 
 /** Command substitution bodies (`$(...)` and `` `...` ``) embedded in a double-quoted string. */
-function doubleQuoteSubstitutions(inner: string): string[] {
+function doubleQuoteSubstitutions(inner: string): {
+  readonly bodies: string[];
+  readonly uncertain: boolean;
+} {
   const bodies: string[] = [];
+  let uncertain = false;
   for (let index = 0; index < inner.length; index += 1) {
     const char = inner[index];
     if (char === "\\") {
@@ -73,9 +187,10 @@ function doubleQuoteSubstitutions(inner: string): string[] {
       continue;
     }
     if (char === "$" && inner[index + 1] === "(") {
-      const end = substitutionEnd(inner, index + 2);
-      bodies.push(inner.slice(index + 2, end));
-      index = end;
+      const sub = substitutionEnd(inner, index + 2);
+      if (!sub.closed) uncertain = true;
+      bodies.push(inner.slice(index + 2, sub.index));
+      index = sub.index;
       continue;
     }
     if (char === "`") {
@@ -88,29 +203,39 @@ function doubleQuoteSubstitutions(inner: string): string[] {
         if (inner[end] === "`") break;
         end += 1;
       }
+      if (end >= inner.length) uncertain = true;
       bodies.push(inner.slice(index + 1, end).replace(/\\(["\\$`])/g, "$1"));
       index = end;
     }
   }
-  return bodies;
+  return { bodies, uncertain };
 }
 
 /** Splits a block into simple commands; quotes, comments and substitutions are honoured. */
-function simpleCommands(code: string): SimpleCommand[] {
+function simpleCommands(code: string): {
+  readonly commands: SimpleCommand[];
+  readonly uncertain: boolean;
+} {
   const commands: SimpleCommand[] = [];
+  let uncertain = false;
   let words: Word[] = [];
   let writes: string[] = [];
   let text = "";
   let quoted = false;
+  let hasEscape = false;
+  let assignment = false;
   let started = false;
   let redirecting = false;
+  let inBacktick = false;
 
   const endWord = () => {
     if (!started) return;
     if (redirecting) writes.push(text);
-    else words.push({ text, quoted });
+    else words.push({ text, quoted, assignment });
     text = "";
     quoted = false;
+    hasEscape = false;
+    assignment = false;
     started = false;
     redirecting = false;
   };
@@ -130,12 +255,14 @@ function simpleCommands(code: string): SimpleCommand[] {
       if (next !== "\n") {
         text += next;
         started = true;
+        hasEscape = true;
       }
       index += 1;
       continue;
     }
     if (char === "'") {
       const close = code.indexOf("'", index + 1);
+      if (close === -1) uncertain = true;
       const end = close === -1 ? code.length : close;
       text += code.slice(index + 1, end);
       quoted = true;
@@ -144,14 +271,21 @@ function simpleCommands(code: string): SimpleCommand[] {
       continue;
     }
     if (char === '"') {
-      const end = doubleQuoteEnd(code, index + 1);
-      const inner = code.slice(index + 1, end);
+      const dq = doubleQuoteEnd(code, index + 1);
+      if (!dq.closed) uncertain = true;
+      const inner = code.slice(index + 1, dq.index);
       text += inner.replace(/\\(["\\$`])/g, "$1");
       quoted = true;
       started = true;
-      index = end;
+      index = dq.index;
       // Commands still run inside double quotes: "$(sudo id)" and "`sudo id`".
-      for (const body of doubleQuoteSubstitutions(inner)) commands.push(...simpleCommands(body));
+      const subs = doubleQuoteSubstitutions(inner);
+      if (subs.uncertain) uncertain = true;
+      for (const body of subs.bodies) {
+        const nested = simpleCommands(body);
+        if (nested.uncertain) uncertain = true;
+        commands.push(...nested.commands);
+      }
       continue;
     }
     if (char === "#" && !started) {
@@ -160,8 +294,14 @@ function simpleCommands(code: string): SimpleCommand[] {
       continue;
     }
     if (char === "$" && code[index + 1] === "(") {
+      if (!substitutionEnd(code, index + 2).closed) uncertain = true;
       endCommand();
       index += 1;
+      continue;
+    }
+    if (char === "`") {
+      inBacktick = !inBacktick;
+      endCommand();
       continue;
     }
     if (char === ">") {
@@ -187,11 +327,21 @@ function simpleCommands(code: string): SimpleCommand[] {
       endWord();
       continue;
     }
+    if (
+      char === "=" &&
+      !assignment &&
+      !quoted &&
+      !hasEscape &&
+      /^[A-Za-z_][A-Za-z0-9_]*$/.test(text)
+    ) {
+      assignment = true;
+    }
     text += char;
     started = true;
   }
   endCommand();
-  return commands;
+  if (inBacktick) uncertain = true;
+  return { commands, uncertain };
 }
 
 /** Shell keywords that stand in front of the command they run. */
@@ -238,8 +388,7 @@ const SUDO_VALUE_LONG_OPTIONS = new Set([
 const SUDO_VALUE_SHORT_OPTION = /^-[A-Za-z]*[ughpCDRTUrt]$/;
 
 const baseName = (word: string): string => word.slice(word.lastIndexOf("/") + 1);
-const isAssignment = (word: Word): boolean =>
-  !word.quoted && /^[A-Za-z_][A-Za-z0-9_]*=/.test(word.text);
+const isAssignment = (word: Word): boolean => word.assignment;
 const isOption = (word: Word | undefined): word is Word =>
   word !== undefined && !word.quoted && word.text.startsWith("-");
 
@@ -305,7 +454,7 @@ function effectiveCommand(command: SimpleCommand): {
     }
     // `sudoedit /etc/hosts` edits what follows it.
     if (name === "sudoedit") {
-      words = [{ text: "sudoedit", quoted: false }, ...words];
+      words = [{ text: "sudoedit", quoted: false, assignment: false }, ...words];
       break;
     }
   }
@@ -481,17 +630,22 @@ export function shellRunElevation(code: string): ShellRunElevation {
   let sudo = false;
   let administrator = SCRIPTED_ADMINISTRATOR_REGEX.test(code);
   const systemChanges: string[] = [];
-  for (const command of simpleCommands(code)) {
+  const parsed = simpleCommands(code);
+  for (const command of parsed.commands) {
     const effective = effectiveCommand(command);
     sudo ||= effective.sudo;
     administrator ||= effective.sudo || effective.otherAdministrator;
     for (const change of systemChangesOf(command, effective.words))
       if (!systemChanges.includes(change)) systemChanges.push(change);
   }
-  return { administrator, sudo, systemChanges };
+  return parsed.uncertain
+    ? { administrator, sudo, systemChanges, uncertain: true }
+    : { administrator, sudo, systemChanges };
 }
 
 /** Whether a block must ask before it runs, in every permission mode. */
 export function shellRunNeedsElevationConfirm(elevation: ShellRunElevation): boolean {
-  return elevation.administrator || elevation.systemChanges.length > 0;
+  return (
+    elevation.administrator || elevation.systemChanges.length > 0 || elevation.uncertain === true
+  );
 }

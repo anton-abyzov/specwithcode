@@ -174,13 +174,28 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
     command !== null && environmentId !== null
       ? shellRunMachineWarning(command, environmentId, hostLabel)
       : null;
+  const runKey =
+    environmentId !== null && threadId !== null && terminalId !== null && command !== null
+      ? `${environmentId}\n${threadId}\n${terminalId}\n${target?.worktreePath ?? target?.cwd ?? ""}\n${command}`
+      : null;
   const knownSessions = useKnownTerminalSessions({ environmentId, threadId });
   const known =
     terminalId !== null &&
     (knownSessions?.some((session) => session.target.terminalId === terminalId) ?? false);
-  const [opened, setOpened] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [openedKey, setOpenedKey] = useState<string | null>(null);
+  const [confirmingKey, setConfirmingKey] = useState<string | null>(null);
+  const [errorState, setErrorState] = useState<{
+    readonly key: string;
+    readonly message: string;
+  } | null>(null);
+  const latestRunKeyRef = useRef<string | null>(runKey);
+  const runAttemptRef = useRef(0);
+  useLayoutEffect(() => {
+    latestRunKeyRef.current = runKey;
+  }, [runKey]);
+  const opened = runKey !== null && openedKey === runKey;
+  const confirming = runKey !== null && confirmingKey === runKey;
+  const error = runKey !== null && errorState?.key === runKey ? errorState.message : null;
   const attached = active && canOperate && (known || opened);
   const terminal = useMemo(
     () => (attached && threadId !== null && terminalId !== null ? { threadId, terminalId } : null),
@@ -205,7 +220,9 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
 
   const run = useCallback(
     async (mode: "plain" | "prompt" | "terminal-app") => {
-      if (!target || command === null || terminalId === null) return;
+      if (!target || command === null || terminalId === null || runKey === null) return;
+      const requestKey = runKey;
+      const attempt = ++runAttemptRef.current;
       const runNonce = mode === "plain" ? null : newElevationNonce();
       if (nonceKey !== null) {
         if (runNonce === null) elevationNonces.delete(nonceKey);
@@ -217,8 +234,8 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
           ? null
           : (readThreadShell({ environmentId: target.environmentId, threadId: target.threadId })
               ?.title ?? null);
-      setConfirming(false);
-      setError(null);
+      setConfirmingKey(null);
+      setErrorState(null);
       const result = await openTerminal({
         environmentId: target.environmentId,
         input: {
@@ -245,16 +262,20 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
               }),
         },
       });
+      if (latestRunKeyRef.current !== requestKey || runAttemptRef.current !== attempt) return;
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
           const cause = squashAtomCommandFailure(result);
-          setError(cause instanceof Error ? cause.message : "The command could not start.");
+          setErrorState({
+            key: requestKey,
+            message: cause instanceof Error ? cause.message : "The command could not start.",
+          });
         }
         return;
       }
-      setOpened(true);
+      setOpenedKey(requestKey);
     },
-    [command, localMachine, nonceKey, openTerminal, primaryLabel, target, terminalId],
+    [command, localMachine, nonceKey, openTerminal, primaryLabel, runKey, target, terminalId],
   );
   const runDefault = useCallback(
     () => run(sendsElevation ? "prompt" : "plain"),
@@ -262,17 +283,17 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
   );
 
   const requestRun = useCallback(() => {
-    if (running) return;
+    if (running || runKey === null) return;
     if (
       warning !== null ||
       shellRunNeedsConfirmation(target?.runtimeMode ?? null) ||
       (elevation !== null && shellRunNeedsElevationConfirm(elevation))
     ) {
-      setConfirming(true);
+      setConfirmingKey(runKey);
       return;
     }
     void runDefault();
-  }, [elevation, runDefault, running, target?.runtimeMode, warning]);
+  }, [elevation, runDefault, runKey, running, target?.runtimeMode, warning]);
 
   const stop = useCallback(() => {
     if (!target || terminalId === null) return;
@@ -285,8 +306,10 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
 
   const clear = useCallback(() => {
     if (!target || terminalId === null) return;
-    setOpened(false);
-    setError(null);
+    runAttemptRef.current += 1;
+    setOpenedKey(null);
+    setConfirmingKey(null);
+    setErrorState(null);
     void closeTerminal({
       environmentId: target.environmentId,
       input: { threadId: target.threadId, terminalId, deleteHistory: true },
@@ -329,7 +352,7 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
     confirmRun: () => void runDefault(),
     runWithPrompt: () => void run("prompt"),
     openInTerminal: () => void run("terminal-app"),
-    cancelRun: () => setConfirming(false),
+    cancelRun: () => setConfirmingKey(null),
     stop,
     clear,
   };

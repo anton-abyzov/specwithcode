@@ -11,6 +11,7 @@ import {
   type AuthEnvironmentScope,
   type RuntimeMode,
 } from "@specweave-studio/contracts";
+import * as Exit from "effect/Exit";
 import { act, type ComponentProps, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -700,5 +701,49 @@ describe("administrator code blocks", () => {
     const plainNote = allText(reader.root.findByProps({ "data-shell-run-note": "protected-file" }));
     expect(plainNote).toContain("macOS blocked a protected file.");
     expect(plainNote).not.toContain("administrator");
+  });
+
+  it("resets pending confirmation and error when a reused component changes command or target", async () => {
+    const renderer = await render(fence(ADMIN_COMMAND), target("full-access"));
+    await clickRun(renderer);
+    expect(renderer.root.findAllByProps({ "data-shell-run": "confirm" })).toHaveLength(1);
+
+    await act(async () => renderer.update(tree(fence("echo hello"), target("full-access"))));
+    expect(renderer.root.findAllByProps({ "data-shell-run": "confirm" })).toHaveLength(0);
+
+    commands.open.mockResolvedValueOnce(Exit.die(new Error("old open failed")) as never);
+    await clickRun(renderer);
+    expect(allText(renderer.root)).toContain("old open failed");
+
+    await act(async () =>
+      renderer.update(
+        tree(fence("echo hello"), {
+          ...target("full-access"),
+          threadId: ThreadId.make("thread-2"),
+        }),
+      ),
+    );
+    expect(allText(renderer.root)).not.toContain("old open failed");
+  });
+
+  it("ignores stale in-flight openTerminal outcomes after the command changes", async () => {
+    let resolveFirst!: (value: unknown) => void;
+    commands.open.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirst = resolve;
+        }) as never,
+    );
+
+    const renderer = await render(fence("echo first"), target("full-access"));
+    const firstClick = act(async () => {
+      button(renderer, "Run command").onClick?.({} as never);
+    });
+    await act(async () => renderer.update(tree(fence("echo second"), target("full-access"))));
+
+    resolveFirst(Exit.die(new Error("stale failure")));
+    await firstClick;
+    expect(allText(renderer.root)).not.toContain("stale failure");
+    expect(renderer.root.findAllByProps({ "data-shell-run-status": "" })).toHaveLength(0);
   });
 });

@@ -1334,6 +1334,7 @@ const layerWsRpc = (
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const copilotCanSelectHost = RpcAuthorization.canSelectCopilotSignInHost(currentSession);
+      const canOpenLocalTerminalApp = RpcAuthorization.canOpenInLocalTerminalApp(currentSession);
       const sql = yield* SqlClient.SqlClient;
       const threadManagement = yield* ThreadManagementService.ThreadManagementService;
       const intakeContext = yield* Effect.context<
@@ -2646,11 +2647,15 @@ const layerWsRpc = (
         [WS_METHODS.providerAuthCancel]: (input) => providerAuth.cancel(input, currentSessionId),
         [WS_METHODS.providerAuthLogout]: (input) => providerAuth.logout(input),
         [WS_METHODS.providerAuthSubscribe]: (input) =>
-          providerAuth.subscribe(input, currentSessionId).pipe(
-            Stream.map((state) =>
-              state.copilotExistingSignIns === undefined ? state : { ...state, copilotCanSelectHost },
+          providerAuth
+            .subscribe(input, currentSessionId)
+            .pipe(
+              Stream.map((state) =>
+                state.copilotExistingSignIns === undefined
+                  ? state
+                  : { ...state, copilotCanSelectHost },
+              ),
             ),
-          ),
         [WS_METHODS.providerInstallStart]: (input) => providerInstallation.start(input),
         [WS_METHODS.providerInstallCancel]: (input) => providerInstallation.cancel(input),
         [WS_METHODS.providerInstallSubscribe]: (input) => providerInstallation.subscribe(input),
@@ -3219,7 +3224,15 @@ const layerWsRpc = (
           vcsProvisioning.initRepository(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.reviewGetDiffPreview]: (input) => review.getDiffPreview(input),
         [WS_METHODS.reviewGetDiffFileContents]: (input) => review.getDiffFileContents(input),
-        [WS_METHODS.terminalOpen]: (input) => terminalManager.open(input),
+        [WS_METHODS.terminalOpen]: (input) =>
+          input.elevation?.openIn === "terminal-app" && !canOpenLocalTerminalApp
+            ? Effect.fail(
+                new EnvironmentAuthorizationError({
+                  message: "Only this machine's owner can open a command in Terminal.",
+                  requiredScope: "terminal:operate",
+                }),
+              )
+            : terminalManager.open(input),
         [WS_METHODS.terminalAttach]: (input) =>
           Stream.callback<TerminalAttachStreamEvent, TerminalError>((queue) =>
             Effect.acquireRelease(

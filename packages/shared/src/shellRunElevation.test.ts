@@ -224,6 +224,63 @@ describe("shellRunElevation", () => {
     });
   });
 
+  it("handles quoted environment assignments before administrator or system commands", () => {
+    expect(shellRunElevation('LC_ALL="C" sudo -n true')).toEqual({
+      administrator: true,
+      sudo: true,
+      systemChanges: [],
+    });
+    expect(shellRunElevation("A='1' B=\"2\" sudo rm /etc/hosts")).toEqual({
+      administrator: true,
+      sudo: true,
+      systemChanges: ["/etc/hosts"],
+    });
+    expect(shellRunElevation('sudo LC_ALL="C" rm /etc/hosts')).toEqual({
+      administrator: true,
+      sudo: true,
+      systemChanges: ["/etc/hosts"],
+    });
+    expect(shellRunElevation('"FOO=bar" sudo id').administrator).toBe(false);
+    expect(shellRunElevation("FOO\\=bar sudo id").administrator).toBe(false);
+  });
+
+  it("handles comments, case patterns and backticks inside double-quoted substitutions", () => {
+    expect(shellRunElevation('echo "$(# note )\nsudo rm -rf /etc/hosts)"')).toEqual({
+      administrator: true,
+      sudo: true,
+      systemChanges: ["/etc/hosts"],
+    });
+    expect(shellRunElevation('echo "$(case x in a) echo ok;; esac; sudo id)"')).toEqual({
+      administrator: true,
+      sudo: true,
+      systemChanges: [],
+    });
+    expect(shellRunElevation('echo "$(case x in (a) echo ok;; esac; sudo id)"')).toEqual({
+      administrator: true,
+      sudo: true,
+      systemChanges: [],
+    });
+    expect(shellRunElevation('echo "$(echo `echo ")"`; sudo id)"')).toEqual({
+      administrator: true,
+      sudo: true,
+      systemChanges: [],
+    });
+  });
+
+  it("requires confirmation when unclosed quotes or substitutions leave parsing uncertain", () => {
+    for (const code of [
+      "echo 'unterminated",
+      'echo "unterminated',
+      "echo $(sudo id",
+      'echo "$(echo hi',
+      "echo `echo hi",
+    ]) {
+      const elevation = shellRunElevation(code);
+      expect(elevation.uncertain).toBe(true);
+      expect(shellRunNeedsElevationConfirm(elevation)).toBe(true);
+    }
+  });
+
   it("asks first for administrator work or a system change, and for nothing else", () => {
     expect(shellRunNeedsElevationConfirm(shellRunElevation("sudo ls"))).toBe(true);
     expect(shellRunNeedsElevationConfirm(shellRunElevation("csrutil disable"))).toBe(true);

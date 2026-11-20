@@ -64,7 +64,7 @@ echo "as_other=\$(sudo -n -u nobody id -un 2>/dev/null)" >> "\$out"
 /usr/bin/script -q /dev/null sudo -n true >/dev/null 2>&1; echo "other_terminal=\$?" >> "\$out"
 /usr/bin/perl -e 'use POSIX; if (fork) { wait; exit(\$? >> 8) } setsid(); exec @ARGV' sudo -n true </dev/null >/dev/null 2>&1
 echo "no_terminal=\$?" >> "\$out"
-sudo -n sh -c ': >> /Library/Preferences/com.apple.networkextension.plist' 2>"$work/write.err"
+sudo -n /usr/bin/perl -MFcntl -e 'exit 2 unless -e \$ARGV[0]; sysopen(my \$f, \$ARGV[0], O_WRONLY) or die "\$!\\n"' /Library/Preferences/com.apple.networkextension.plist 2>"$work/write.err"
 echo "protected_write=\$?" >> "\$out"
 sudo -k
 sudo -n true 2>/dev/null; echo "after_drop=\$?" >> "\$out"
