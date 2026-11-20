@@ -340,10 +340,17 @@ describe("shellRunElevation", () => {
     for (const code of [
       "command -v sudo",
       "command -V sudo",
+      'command "-v" sudo',
+      "command '-V' sudo",
       "command -pv sudo",
+      'command "-pv" sudo',
       "command -pV sudo",
       "command -p -v sudo",
+      'command -p "-v" sudo',
+      'command "-p" "-V" sudo',
       "command -v -- sudo",
+      'command "-v" "--" sudo',
+      '"command" "-v" sudo',
       "if command -v sudo >/dev/null; then echo ok; fi",
     ]) {
       expect(shellRunElevation(code), code).toEqual({
@@ -355,10 +362,16 @@ describe("shellRunElevation", () => {
     for (const code of [
       "command sudo id",
       "command -p sudo id",
+      'command "-p" "sudo" id',
       "command -- sudo -v",
+      'command "--" sudo -v',
+      'command "--" "sudo" id',
+      'command "--" -v sudo',
       "command sudo -v",
       "command -v sudo && sudo id",
       'command -v "$(sudo id)"',
+      'command "-v" "$(sudo id)"',
+      "command '-V' \"$(sudo id)\"",
     ]) {
       expect(shellRunElevation(code), code).toMatchObject({
         administrator: true,

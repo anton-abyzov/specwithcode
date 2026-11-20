@@ -499,7 +499,7 @@ describe("administrator code-block runs", () => {
 
   it.each([
     ["a Mac service with no desktop session", "session", "Background"],
-    ["Linux without passwordless sudo", "system", "Linux"],
+    ["Linux", "system", "Linux"],
   ])("does not start the block on %s", async (_name, key, value) => {
     setState(key, value);
     const result = await run(`touch "${NodePath.join(state, "block-ran")}"`);
@@ -510,30 +510,25 @@ describe("administrator code-block runs", () => {
   });
 
   it.each([
-    ["sudo -n -l passes for one command", "nopasswd-cmd"],
-    ["sudo -n true is NOPASSWD while other commands need a password", "nopasswd-true"],
+    ["sudo -n -l passes for one command", ["nopasswd-cmd"]],
+    ["sudo -n true is NOPASSWD while other commands need a password", ["nopasswd-true"]],
     [
       "Defaults verifypw=never lets sudo -n -v pass while commands need a password",
-      "verifypw-never",
+      ["verifypw-never"],
     ],
-  ])("fails closed on Linux under mixed sudoers policy when %s", async (_label, stateKey) => {
+    [
+      "Defaults verifypw=never and NOPASSWD true both pass while other commands need a password",
+      ["verifypw-never", "nopasswd-true"],
+    ],
+    ["a host has nopasswd sudo but no native desktop prompt", ["nopasswd"]],
+  ])("fails closed on Linux before running any part of the block when %s", async (_label, keys) => {
     setState("system", "Linux");
-    setState(stateKey, "");
+    for (const key of keys) setState(key, "");
     const blockRan = NodePath.join(state, "block-ran");
     const result = await run(`touch "${blockRan}" && "${tools().sudo}" -n id`);
     expect(terminalElevationState(result.output)).toBe("unavailable");
     expect(result.exitCode).toBe(1);
     expect(hasState("block-ran")).toBe(false);
-    expect(hasState("shown-count")).toBe(false);
-  });
-
-  it("runs on Linux when both sudo -n -v and sudo -n true succeed", async () => {
-    setState("system", "Linux");
-    setState("nopasswd", "");
-    const result = await run(`"${tools().sudo}" -n id && echo linux-nopasswd-ok`);
-    expect(result.exitCode).toBe(0);
-    expect(result.output).toContain("linux-nopasswd-ok");
-    expect(terminalElevationState(result.output)).toBe("started");
     expect(hasState("shown-count")).toBe(false);
   });
 

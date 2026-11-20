@@ -164,6 +164,39 @@ describe("Open in Terminal", () => {
     expect(NodeFS.existsSync(file)).toBe(false);
   });
 
+  it("removes a partially written .command file on post-create write failure without deleting an existing file on EEXIST", async () => {
+    const partialFile = NodePath.join(root, "run-partial.command");
+    await expect(
+      prepareTerminalAppRun({
+        command: "echo partial",
+        cwd,
+        dir: root,
+        name: "run-partial",
+        nonce: NONCE,
+        openPath: fakeOpen,
+        writeScript: async (handle) => {
+          await handle.write("#!/bin/zsh -l\n");
+          throw new Error("ENOSPC: simulated disk full");
+        },
+      }),
+    ).rejects.toThrow("ENOSPC: simulated disk full");
+    expect(NodeFS.existsSync(partialFile)).toBe(false);
+
+    const existingFile = NodePath.join(root, "run-existing.command");
+    NodeFS.writeFileSync(existingFile, "keep-me", { mode: 0o600 });
+    await expect(
+      prepareTerminalAppRun({
+        command: "echo collide",
+        cwd,
+        dir: root,
+        name: "run-existing",
+        nonce: NONCE,
+        openPath: fakeOpen,
+      }),
+    ).rejects.toThrow(/EEXIST/);
+    expect(NodeFS.readFileSync(existingFile, "utf8")).toBe("keep-me");
+  });
+
   it("is what a code-block run gets when it asks for Terminal on a Mac, and only there", async () => {
     const base = {
       command: "sudo ls",

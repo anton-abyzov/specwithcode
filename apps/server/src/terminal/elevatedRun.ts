@@ -397,14 +397,14 @@ fi
   ${rm} -rf "$dir"
 ) </dev/null >/dev/null 2>&1 &
 watch_pid=$!
+if [ "$(${shellQuote(tools.uname)} -s)" != "Darwin" ] || [ "$(${shellQuote(tools.launchctl)} managername 2>/dev/null)" != "Aqua" ]; then
+  # Non-macOS hosts and headless Mac services have no native password prompt here.
+  # Fail closed before running any part of the block rather than relying on an
+  # inconclusive sudo -n preflight that can pass under mixed sudoers policies.
+  mark unavailable
+  exit 1
+fi
 if ! ${sudo} -n -v 2>/dev/null || ! ${sudo} -n true 2>/dev/null; then
-  # Non-macOS hosts have no native askpass prompt here. sudo -n -v requires a
-  # valid cached timestamp or NOPASSWD on every sudoers entry (default verifypw=all),
-  # and sudo -n true guards against verifypw=never when commands still need a password.
-  if [ "$(${shellQuote(tools.uname)} -s)" != "Darwin" ] || [ "$(${shellQuote(tools.launchctl)} managername 2>/dev/null)" != "Aqua" ]; then
-    mark unavailable
-    exit 1
-  fi
   mark waiting
   phase=prompt
   # sudo validation just failed, so any ticket created from here on belongs to this run.

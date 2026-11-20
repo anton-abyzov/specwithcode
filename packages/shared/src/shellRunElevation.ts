@@ -693,7 +693,7 @@ const SUDO_VALUE_SHORT_OPTION = /^-[A-Za-z]*[ughpCDRTUrt]$/;
 const baseName = (word: string): string => word.slice(word.lastIndexOf("/") + 1);
 const isAssignment = (word: Word): boolean => word.assignment;
 const isOption = (word: Word | undefined): word is Word =>
-  word !== undefined && !word.quoted && word.text.startsWith("-");
+  word !== undefined && word.text.startsWith("-") && word.text !== "-";
 
 /** The command a simple command really runs, and how it asks for administrator rights. */
 function effectiveCommand(command: SimpleCommand): {
@@ -714,13 +714,14 @@ function effectiveCommand(command: SimpleCommand): {
     const name = baseName(first.text);
     const runner = RUNNERS.get(name);
     if (runner !== undefined) {
-      // `command -v` / `command -V` (including `-pv`, `-p -v`, `-v --`) only look up a command.
+      // `command -v` / `command -V` (including quoted or combined flags before `--`) only look up a command.
       if (name === "command") {
         let lookupOnly = false;
         for (let index = 1; index < words.length; index += 1) {
           const arg = words[index];
-          if (!isOption(arg) || arg.text === "--") break;
-          if (/^-[pVv]+$/.test(arg.text) && /[vV]/.test(arg.text)) {
+          if (arg === undefined || arg.text === "--" || !arg.text.startsWith("-")) break;
+          if (!/^-[pVv]+$/.test(arg.text)) break;
+          if (/[vV]/.test(arg.text)) {
             lookupOnly = true;
             break;
           }

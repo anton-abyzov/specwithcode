@@ -22,6 +22,8 @@ export interface TerminalAppRunInput {
   readonly shell?: string;
   /** Test seam: the program that opens a file in an app. */
   readonly openPath?: string;
+  /** Test seam: writes the script to an exclusively created file handle. */
+  readonly writeScript?: (handle: NodeFSP.FileHandle, content: string) => Promise<void>;
 }
 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", `'\\''`)}'`;
@@ -56,7 +58,23 @@ export async function prepareTerminalAppRunHandle(
 ${folders} || cd "$HOME" || exit 1
 ${input.command}
 `;
-  await NodeFSP.writeFile(file, script, { mode: 0o700, flag: "wx" });
+  let handle: NodeFSP.FileHandle | undefined;
+  try {
+    handle = await NodeFSP.open(file, "wx", 0o700);
+    if (input.writeScript) {
+      await input.writeScript(handle, script);
+    } else {
+      await handle.writeFile(script);
+    }
+    await handle.close();
+    handle = undefined;
+  } catch (error) {
+    if (handle) {
+      await handle.close().catch(() => {});
+      await NodeFSP.rm(file, { force: true }).catch(() => {});
+    }
+    throw error;
+  }
   const marker = `\\033]${TERMINAL_ELEVATION_OSC};elevation=terminal-app;${input.nonce}\\007`;
   return {
     command: `if ${shellQuote(input.openPath ?? "/usr/bin/open")} -a Terminal ${quotedFile}; then printf '${marker}'; else code=$?; /bin/rm -f -- ${quotedFile}; exit "$code"; fi`,

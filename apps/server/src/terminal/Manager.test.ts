@@ -43,6 +43,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "./Manager.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
+import { prepareElevatedRunHandle } from "./elevatedRun.ts";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -250,6 +251,7 @@ interface CreateManagerOptions {
   managedBinaryCacheDir?: string;
   managedBinaryToolsDir?: string;
   elevatedRunsDir?: string;
+  prepareElevatedRun?: typeof prepareElevatedRunHandle;
   launchctlGetenvSshAuthSock?: Effect.Effect<string | undefined>;
 }
 
@@ -309,6 +311,9 @@ const createManager = (
             }),
         ...(options.elevatedRunsDir !== undefined
           ? { elevatedRunsDir: options.elevatedRunsDir }
+          : {}),
+        ...(options.prepareElevatedRun !== undefined
+          ? { prepareElevatedRun: options.prepareElevatedRun }
           : {}),
       });
       const eventsRef = yield* Ref.make<ReadonlyArray<TerminalEvent>>([]);
@@ -3264,10 +3269,15 @@ it.layer(
         const elevatedRunsDir = yield* fs.makeTempDirectoryScoped({ prefix: "elevated-runs-" });
         const missingCwd = path.join(elevatedRunsDir, "does-not-exist");
 
+        let prepareCalls = 0;
         const ptyAdapter = new FakePtyAdapter();
         const { manager } = yield* createManager(5, {
           ptyAdapter,
           elevatedRunsDir,
+          prepareElevatedRun: async (input) => {
+            prepareCalls += 1;
+            return prepareElevatedRunHandle(input);
+          },
         });
 
         for (const elevation of [
@@ -3277,7 +3287,7 @@ it.layer(
           const exit = yield* Effect.exit(
             manager.open(
               openInput({
-                terminalId: "code-block-cwd-fail",
+                terminalId: "run-cwd-fail",
                 cwd: missingCwd,
                 command: "sudo id",
                 elevation,
@@ -3287,6 +3297,7 @@ it.layer(
           expect(Exit.isFailure(exit)).toBe(true);
           expect(yield* fs.readDirectory(elevatedRunsDir)).toEqual([]);
         }
+        expect(prepareCalls).toBe(0);
 
         for (const elevation of [
           { nonce: "nonce-spawn-1" },
@@ -3297,7 +3308,7 @@ it.layer(
           );
           const snapshot = yield* manager.open(
             openInput({
-              terminalId: "code-block-spawn-fail",
+              terminalId: "run-spawn-fail",
               command: "sudo id",
               elevation,
             }),
@@ -3305,6 +3316,59 @@ it.layer(
           expect(snapshot.status).toBe("error");
           expect(yield* fs.readDirectory(elevatedRunsDir)).toEqual([]);
         }
+        expect(prepareCalls).toBe(2);
       }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
+  );
+
+  it.effect("cleans up staged elevated-run artifacts when open is interrupted during staging", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const elevatedRunsDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "elevated-runs-interrupt-",
+      });
+
+      for (const elevation of [
+        { nonce: "nonce-interrupt-1" },
+        { nonce: "nonce-interrupt-2", openIn: "terminal-app" as const },
+      ]) {
+        let releaseStaging!: () => void;
+        const stagingStarted = yield* Deferred.make<void>();
+        const stagingGate = new Promise<void>((resolve) => {
+          releaseStaging = resolve;
+        });
+        const ptyAdapter = new FakePtyAdapter();
+        const { manager } = yield* createManager(5, {
+          ptyAdapter,
+          elevatedRunsDir,
+          prepareElevatedRun: async (input) => {
+            const staged = await prepareElevatedRunHandle(input);
+            Deferred.doneUnsafe(stagingStarted, Effect.void);
+            await stagingGate;
+            return staged;
+          },
+        });
+
+        const fiber = yield* Effect.forkChild(
+          manager.open(
+            openInput({
+              terminalId: "run-interrupt",
+              command: "sudo id",
+              elevation,
+            }),
+          ),
+        );
+        yield* Deferred.await(stagingStarted);
+        expect((yield* fs.readDirectory(elevatedRunsDir)).length).toBeGreaterThan(0);
+
+        const interruptFiber = yield* Effect.forkChild(Fiber.interrupt(fiber));
+        yield* Effect.yieldNow;
+        releaseStaging();
+        yield* Fiber.join(interruptFiber);
+        const exit = yield* Fiber.await(fiber);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(ptyAdapter.spawnInputs).toHaveLength(0);
+        expect(yield* fs.readDirectory(elevatedRunsDir)).toEqual([]);
+      }
+    }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
   );
 });

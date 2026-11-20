@@ -1443,6 +1443,8 @@ interface TerminalManagerOptions {
   env?: NodeJS.ProcessEnv;
   /** Test seam for the private directory that holds staged elevated run artifacts. */
   elevatedRunsDir?: string;
+  /** Test seam for staging elevated run artifacts. */
+  prepareElevatedRun?: typeof prepareElevatedRunHandle;
   /** Test seam for the macOS `launchctl getenv SSH_AUTH_SOCK` lookup. */
   launchctlGetenvSshAuthSock?: Effect.Effect<string | undefined>;
   /**
@@ -2891,6 +2893,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       openWithWorkspaceLease(input),
     );
 
+  const stageElevatedRun = options.prepareElevatedRun ?? prepareElevatedRunHandle;
+
   /** A code-block run that asked for it runs behind the administrator prompt. */
   const withElevatedRun = (input: TerminalOpenInput) =>
     input.command !== undefined &&
@@ -2902,7 +2906,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       elevation: input.elevation,
     })
       ? Effect.tryPromise(() =>
-          prepareElevatedRunHandle({
+          stageElevatedRun({
             command: input.command ?? "",
             cwd: input.worktreePath ?? input.cwd,
             ...(input.fallbackCwd ? { fallbackCwd: input.fallbackCwd } : {}),
@@ -2938,12 +2942,21 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               path.resolve(resolvedInput.worktreePath ?? resolvedInput.cwd),
               Effect.gen(function* () {
                 yield* assertValidCwd(resolvedInput.cwd);
-                const prepared = yield* withElevatedRun(resolvedInput);
-                return yield* openWithWorkspaceLease(prepared.input).pipe(
-                  Effect.tap((result) =>
-                    result.status === "error" ? prepared.cleanup : Effect.void,
-                  ),
-                  Effect.onExit((exit) => (Exit.isFailure(exit) ? prepared.cleanup : Effect.void)),
+                return yield* Effect.uninterruptibleMask((restore) =>
+                  Effect.gen(function* () {
+                    const prepared = yield* withElevatedRun(resolvedInput);
+                    let keepStaged = false;
+                    return yield* restore(openWithWorkspaceLease(prepared.input)).pipe(
+                      Effect.tap((result) =>
+                        Effect.sync(() => {
+                          keepStaged = result.status !== "error";
+                        }),
+                      ),
+                      Effect.ensuring(
+                        Effect.suspend(() => (keepStaged ? Effect.void : prepared.cleanup)),
+                      ),
+                    );
+                  }),
                 );
               }),
             ),
