@@ -59,7 +59,11 @@ const memberOf = (environmentId: EnvironmentId, projectId: string, generation = 
   linkId: `link-${projectId}-${generation}`,
   generation,
 });
-const members = [memberOf(M5, PROJECT), memberOf(LINUX, "project-linux"), memberOf(M4, "project-m4")];
+const members = [
+  memberOf(M5, PROJECT),
+  memberOf(LINUX, "project-linux"),
+  memberOf(M4, "project-m4"),
+];
 
 const projectOf = (
   id: ProjectId,
@@ -128,7 +132,13 @@ const body = (overrides: Partial<CoordinatorMessageBody> = {}): CoordinatorMessa
   subject: "Codex sign-in expired on M5",
   text: "A worker on M5 stopped with token_expired. A sign-in on M5 fixes it.",
   refs: [
-    { kind: "thread", environmentId: M5, threadId: WORKER, title: "Release notes", statusAtSend: "failed" },
+    {
+      kind: "thread",
+      environmentId: M5,
+      threadId: WORKER,
+      title: "Release notes",
+      statusAtSend: "failed",
+    },
     { kind: "report", environmentId: LINUX, path: "reports/codex-token-expired.md", bytes: 6210 },
   ],
   ...overrides,
@@ -156,7 +166,11 @@ interface Harness {
   /** Live sessions by id: the peer each acts for and its scopes. */
   readonly sessions: Map<
     string,
-    { readonly peer: EnvironmentId; readonly scopes: ReadonlyArray<string>; readonly expiresAt?: number }
+    {
+      readonly peer: EnvironmentId;
+      readonly scopes: ReadonlyArray<string>;
+      readonly expiresAt?: number;
+    }
   >;
   /** Runs on M5's coordinator thread by id, as its projection shows them. */
   readonly runs: Map<string, string>;
@@ -275,7 +289,8 @@ const setup = (initial: CoordinatorMessageStore.CoordinatorMessageRecord[] = [])
       Layer.mergeAll(
         CoordinatorMessageStore.layerMemory(initial),
         Layer.succeed(ProjectService.ProjectService, {
-          getById: (id: ProjectId) => Effect.succeed(Option.fromNullishOr(harness.projects.get(id))),
+          getById: (id: ProjectId) =>
+            Effect.succeed(Option.fromNullishOr(harness.projects.get(id))),
         } as unknown as ProjectService.ProjectService["Service"]),
         Layer.succeed(ServerEnvironment.ServerEnvironment, {
           getEnvironmentId: Effect.succeed(M5),
@@ -297,8 +312,13 @@ const setup = (initial: CoordinatorMessageStore.CoordinatorMessageRecord[] = [])
         Layer.succeed(Orchestrator.OrchestratorV2, {
           dispatch: (command: { readonly type: string; readonly runId?: string }) =>
             Effect.suspend(() => {
-              harness.dispatched.push({ type: command.type, ...(command.runId === undefined ? {} : { runId: command.runId }) });
-              return harness.cancelFails ? Effect.die("The orchestrator is not answering.") : Effect.succeed({});
+              harness.dispatched.push({
+                type: command.type,
+                ...(command.runId === undefined ? {} : { runId: command.runId }),
+              });
+              return harness.cancelFails
+                ? Effect.die("The orchestrator is not answering.")
+                : Effect.succeed({});
             }),
         } as unknown as Orchestrator.OrchestratorV2["Service"]),
         Layer.succeed(RemoteWorkers.RemoteWorkers, {
@@ -319,14 +339,16 @@ const deliver = (
   /** Whether the caller's credential holds the operate scope. */
   operate = true,
 ) =>
-  receiver.deliver(caller, input, { operate, sessionId: `session-${caller.sourceEnvironmentId}` }).pipe(
-    Effect.result,
-    Effect.map((result) =>
-      Result.isSuccess(result)
-        ? { ok: true as const, value: result.success }
-        : { ok: false as const, refusal: result.failure as HandoffRefusal },
-    ),
-  );
+  receiver
+    .deliver(caller, input, { operate, sessionId: `session-${caller.sourceEnvironmentId}` })
+    .pipe(
+      Effect.result,
+      Effect.map((result) =>
+        Result.isSuccess(result)
+          ? { ok: true as const, value: result.success }
+          : { ok: false as const, refusal: result.failure as HandoffRefusal },
+      ),
+    );
 
 const refusedWith = (
   receiver: Receiver,
@@ -345,7 +367,10 @@ const settle = Effect.gen(function* () {
   return yield* (yield* CoordinatorMessageReceiver.CoordinatorMessageReceiver).flush;
 });
 
-const records = Effect.flatMap(CoordinatorMessageStore.CoordinatorMessageStore, (store) => store.all);
+const records = Effect.flatMap(
+  CoordinatorMessageStore.CoordinatorMessageStore,
+  (store) => store.all,
+);
 
 const run = <A, E>(
   test: (
@@ -354,7 +379,8 @@ const run = <A, E>(
   ) => Effect.Effect<
     A,
     E,
-    CoordinatorMessageReceiver.CoordinatorMessageReceiver | CoordinatorMessageStore.CoordinatorMessageStore
+    | CoordinatorMessageReceiver.CoordinatorMessageReceiver
+    | CoordinatorMessageStore.CoordinatorMessageStore
   >,
   initial?: CoordinatorMessageStore.CoordinatorMessageRecord[],
 ) => {
@@ -439,7 +465,11 @@ describe("CoordinatorMessageReceiver admission (AC-12)", () => {
   it.effect("refuses a personal assistant project", () =>
     run((receiver) =>
       Effect.gen(function* () {
-        const refusal = yield* refusedWith(receiver, callerFrom(LINUX), request({}, { projectId: PERSONAL }));
+        const refusal = yield* refusedWith(
+          receiver,
+          callerFrom(LINUX),
+          request({}, { projectId: PERSONAL }),
+        );
         expect(refusal).toMatchObject({ status: 403, code: "needs_grant" });
         namesBoth(refusal, "linux-mini");
       }),
@@ -496,7 +526,11 @@ describe("CoordinatorMessageReceiver admission (AC-12)", () => {
   it.effect("refuses a sender that does not advertise coordinator-message.v1", () =>
     run((receiver) =>
       Effect.gen(function* () {
-        const refusal = yield* refusedWith(receiver, callerFrom(LINUX), request({}, { capabilities: [] }));
+        const refusal = yield* refusedWith(
+          receiver,
+          callerFrom(LINUX),
+          request({}, { capabilities: [] }),
+        );
         expect(refusal).toMatchObject({ status: 409, code: "invalid", check: "version" });
         expect(refusal.message).toContain("Needs update");
         namesBoth(refusal, "linux-mini");
@@ -507,7 +541,11 @@ describe("CoordinatorMessageReceiver admission (AC-12)", () => {
   it.effect("refuses a text over the limit with the report hint", () =>
     run((receiver) =>
       Effect.gen(function* () {
-        const refusal = yield* refusedWith(receiver, callerFrom(LINUX), request({ text: "x".repeat(1501) }));
+        const refusal = yield* refusedWith(
+          receiver,
+          callerFrom(LINUX),
+          request({ text: "x".repeat(1501) }),
+        );
         expect(refusal).toMatchObject({ status: 413, code: "too_large" });
         expect(refusal.message).toContain(COORDINATOR_MESSAGE_TOO_LONG);
         namesBoth(refusal, "linux-mini");
@@ -540,7 +578,11 @@ describe("CoordinatorMessageReceiver read-only senders (review finding 2, D-03)"
         ]) {
           harness.policies.set(LINUX, policyFor(LINUX, { accounts }));
           for (const kind of ["problem", "request"] as const) {
-            const refusal = yield* refusedWith(receiver, callerFrom(LINUX, grantFor(LINUX, { accounts })), request({ kind }));
+            const refusal = yield* refusedWith(
+              receiver,
+              callerFrom(LINUX, grantFor(LINUX, { accounts })),
+              request({ kind }),
+            );
             expect(refusal).toMatchObject({ status: 403, code: "needs_grant" });
             expect(refusal.message).toContain("only findings and replies");
             namesBoth(refusal, "linux-mini");
@@ -556,10 +598,20 @@ describe("CoordinatorMessageReceiver read-only senders (review finding 2, D-03)"
     run((receiver) =>
       Effect.gen(function* () {
         // Every sign-in is allowed, but the credential itself may only read.
-        const refusal = yield* refusedWith(receiver, callerFrom(LINUX), request({ kind: "request" }), false);
+        const refusal = yield* refusedWith(
+          receiver,
+          callerFrom(LINUX),
+          request({ kind: "request" }),
+          false,
+        );
         expect(refusal).toMatchObject({ status: 403, code: "needs_grant" });
         expect(refusal.message).toContain("only findings and replies");
-        const finding = yield* deliver(receiver, callerFrom(LINUX), request({ kind: "finding" }), false);
+        const finding = yield* deliver(
+          receiver,
+          callerFrom(LINUX),
+          request({ kind: "finding" }),
+          false,
+        );
         expect(finding).toMatchObject({ ok: true, value: { outcome: "admitted" } });
       }),
     ),
@@ -569,7 +621,10 @@ describe("CoordinatorMessageReceiver read-only senders (review finding 2, D-03)"
     run((receiver, harness) =>
       Effect.gen(function* () {
         yield* deliver(receiver, callerFrom(LINUX), request());
-        harness.policies.set(LINUX, policyFor(LINUX, { accounts: { kind: "listed", instanceIds: [] } }));
+        harness.policies.set(
+          LINUX,
+          policyFor(LINUX, { accounts: { kind: "listed", instanceIds: [] } }),
+        );
         yield* settle;
         expect(harness.sends).toHaveLength(0);
         expect((yield* records)[0]!.state).toBe("refused");
@@ -598,7 +653,10 @@ describe("CoordinatorMessageReceiver delivery keeps its authority (review findin
     refusedAtDelivery((harness) =>
       harness.policies.set(
         LINUX,
-        policyFor(LINUX, { revokedAt: "1970-01-01T00:00:10.000Z", updatedAt: "1970-01-01T00:00:10.000Z" }),
+        policyFor(LINUX, {
+          revokedAt: "1970-01-01T00:00:10.000Z",
+          updatedAt: "1970-01-01T00:00:10.000Z",
+        }),
       ),
     ),
   );
@@ -623,12 +681,17 @@ describe("CoordinatorMessageReceiver delivery keeps its authority (review findin
 
   it.effect("drops a message after the project left the sender's grant", () =>
     refusedAtDelivery((harness) =>
-      harness.policies.set(LINUX, policyFor(LINUX, { projects: { kind: "listed", projectIds: [] } })),
+      harness.policies.set(
+        LINUX,
+        policyFor(LINUX, { projects: { kind: "listed", projectIds: [] } }),
+      ),
     ),
   );
 
   it.effect("drops a message whose project became a personal assistant project", () =>
-    refusedAtDelivery((harness) => harness.projects.set(PROJECT, projectOf(PROJECT, { kind: "personal" }))),
+    refusedAtDelivery((harness) =>
+      harness.projects.set(PROJECT, projectOf(PROJECT, { kind: "personal" })),
+    ),
   );
 
   it.effect("waits for an idle coordinator and checks again at that moment", () =>
@@ -679,10 +742,22 @@ describe("CoordinatorMessageReceiver identities (review finding 3)", () => {
   it.effect("keeps two peers' messages apart when they choose the same ids", () =>
     run((receiver, harness) =>
       Effect.gen(function* () {
-        const fromLinux = request({ subject: "From linux-mini" }, { messageId: "message-same", clientRequestId: "client-same" });
-        const fromM4 = request({ subject: "From M4" }, { messageId: "message-same", clientRequestId: "client-same" });
-        expect(yield* deliver(receiver, callerFrom(LINUX), fromLinux)).toMatchObject({ ok: true, value: { outcome: "admitted" } });
-        expect(yield* deliver(receiver, callerFrom(M4), fromM4)).toMatchObject({ ok: true, value: { outcome: "admitted" } });
+        const fromLinux = request(
+          { subject: "From linux-mini" },
+          { messageId: "message-same", clientRequestId: "client-same" },
+        );
+        const fromM4 = request(
+          { subject: "From M4" },
+          { messageId: "message-same", clientRequestId: "client-same" },
+        );
+        expect(yield* deliver(receiver, callerFrom(LINUX), fromLinux)).toMatchObject({
+          ok: true,
+          value: { outcome: "admitted" },
+        });
+        expect(yield* deliver(receiver, callerFrom(M4), fromM4)).toMatchObject({
+          ok: true,
+          value: { outcome: "admitted" },
+        });
         const kept = yield* records;
         expect(kept).toHaveLength(2);
         expect(new Set(kept.map((row) => row.id)).size).toBe(2);
@@ -720,8 +795,16 @@ describe("CoordinatorMessageReceiver identities (review finding 3)", () => {
     run((receiver) =>
       Effect.gen(function* () {
         const key = { dedupeKey: "the-same-key" };
-        yield* deliver(receiver, callerFrom(LINUX), request({ ...key, userStep: { environmentId: M5, text: "Sign in" } }));
-        const finding = yield* deliver(receiver, callerFrom(LINUX), request({ ...key, kind: "finding" }));
+        yield* deliver(
+          receiver,
+          callerFrom(LINUX),
+          request({ ...key, userStep: { environmentId: M5, text: "Sign in" } }),
+        );
+        const finding = yield* deliver(
+          receiver,
+          callerFrom(LINUX),
+          request({ ...key, kind: "finding" }),
+        );
         expect(finding).toMatchObject({ ok: true, value: { outcome: "admitted" } });
         const kept = yield* records;
         expect(kept).toHaveLength(2);
@@ -736,10 +819,22 @@ describe("CoordinatorMessageReceiver identities (review finding 3)", () => {
       (receiver) =>
         Effect.gen(function* () {
           const reply = { kind: "reply" as const, dedupeKey: "the-same-key", refs: [] };
-          yield* deliver(receiver, callerFrom(LINUX), request({ ...reply, replyTo: "outgoing-problem-a" }));
-          const other = yield* deliver(receiver, callerFrom(LINUX), request({ ...reply, replyTo: "outgoing-problem-b" }));
+          yield* deliver(
+            receiver,
+            callerFrom(LINUX),
+            request({ ...reply, replyTo: "outgoing-problem-a" }),
+          );
+          const other = yield* deliver(
+            receiver,
+            callerFrom(LINUX),
+            request({ ...reply, replyTo: "outgoing-problem-b" }),
+          );
           expect(other).toMatchObject({ ok: true, value: { outcome: "admitted" } });
-          const same = yield* deliver(receiver, callerFrom(LINUX), request({ ...reply, replyTo: "outgoing-problem-a" }));
+          const same = yield* deliver(
+            receiver,
+            callerFrom(LINUX),
+            request({ ...reply, replyTo: "outgoing-problem-a" }),
+          );
           expect(same).toMatchObject({ ok: true, value: { outcome: "merged", count: 2 } });
           expect((yield* records).filter((row) => row.direction === "incoming")).toHaveLength(2);
         }),
@@ -750,8 +845,16 @@ describe("CoordinatorMessageReceiver identities (review finding 3)", () => {
   it.effect("drops an earlier step when a merged repeat names none", () =>
     run((receiver, harness) =>
       Effect.gen(function* () {
-        yield* deliver(receiver, callerFrom(LINUX), request({ userStep: { environmentId: M5, text: "Sign in" } }));
-        const repeat = yield* deliver(receiver, callerFrom(LINUX), request({ text: "Fixed by itself." }));
+        yield* deliver(
+          receiver,
+          callerFrom(LINUX),
+          request({ userStep: { environmentId: M5, text: "Sign in" } }),
+        );
+        const repeat = yield* deliver(
+          receiver,
+          callerFrom(LINUX),
+          request({ text: "Fixed by itself." }),
+        );
         expect(repeat).toMatchObject({ ok: true, value: { outcome: "merged", count: 2 } });
         yield* settle;
         expect(harness.sends[0]!.text).not.toContain("User step proposed");
@@ -766,7 +869,11 @@ describe("CoordinatorMessageReceiver storage bounds (review finding 4)", () => {
       Effect.gen(function* () {
         // A paused project holds every message, so nothing leaves the store.
         harness.projects.set(PROJECT, projectOf(PROJECT, { paused: true }));
-        for (let index = 0; index < CoordinatorMessageReceiver.COORDINATOR_MESSAGE_PEER_PENDING_MAX; index += 1) {
+        for (
+          let index = 0;
+          index < CoordinatorMessageReceiver.COORDINATOR_MESSAGE_PEER_PENDING_MAX;
+          index += 1
+        ) {
           const answer = yield* deliver(
             receiver,
             callerFrom(LINUX),
@@ -781,9 +888,13 @@ describe("CoordinatorMessageReceiver storage bounds (review finding 4)", () => {
         );
         expect(refusal).toMatchObject({ status: 503, code: "busy" });
         namesBoth(refusal, "linux-mini");
-        expect((yield* records).length).toBe(CoordinatorMessageReceiver.COORDINATOR_MESSAGE_PEER_PENDING_MAX);
+        expect((yield* records).length).toBe(
+          CoordinatorMessageReceiver.COORDINATOR_MESSAGE_PEER_PENDING_MAX,
+        );
         // Another peer still gets through.
-        expect(yield* deliver(receiver, callerFrom(M4), request({ kind: "finding", refs: [] }))).toMatchObject({ ok: true });
+        expect(
+          yield* deliver(receiver, callerFrom(M4), request({ kind: "finding", refs: [] })),
+        ).toMatchObject({ ok: true });
       }),
     ),
   );
@@ -792,15 +903,19 @@ describe("CoordinatorMessageReceiver storage bounds (review finding 4)", () => {
     run((receiver, harness) =>
       Effect.gen(function* () {
         for (let index = 0; index < 40; index += 1)
-          yield* deliver(receiver, callerFrom(LINUX), request({ kind: "finding", subject: `Finding ${index}`, refs: [] }));
+          yield* deliver(
+            receiver,
+            callerFrom(LINUX),
+            request({ kind: "finding", subject: `Finding ${index}`, refs: [] }),
+          );
         yield* settle;
         yield* TestClock.adjust("1 hour");
         yield* receiver.flush;
         const digest = harness.sends.at(-1)!.text;
         expect(digest).toContain("34 more messages from linux-mini's coordinator");
-        expect(digest.split("\n").filter((line) => line.startsWith("- ")).length).toBeLessThanOrEqual(
-          CoordinatorMessageReceiver.COORDINATOR_MESSAGE_DIGEST_LIST_MAX,
-        );
+        expect(
+          digest.split("\n").filter((line) => line.startsWith("- ")).length,
+        ).toBeLessThanOrEqual(CoordinatorMessageReceiver.COORDINATOR_MESSAGE_DIGEST_LIST_MAX);
         expect(digest).toContain("and 14 more");
       }),
     ),
@@ -810,14 +925,24 @@ describe("CoordinatorMessageReceiver storage bounds (review finding 4)", () => {
     Effect.gen(function* () {
       const store = yield* CoordinatorMessageStore.CoordinatorMessageStore;
       const row = outgoing("budget-message", "finding");
-      const tooMany = Array.from({ length: CoordinatorMessageStore.COORDINATOR_MESSAGE_MAX_ROWS + 1 }, (_, index) => ({
-        ...row,
-        id: `row-${index}`,
-      }));
-      const rows = yield* store.update(0, () => ({ records: tooMany, result: undefined })).pipe(Effect.flip);
+      const tooMany = Array.from(
+        { length: CoordinatorMessageStore.COORDINATOR_MESSAGE_MAX_ROWS + 1 },
+        (_, index) => ({
+          ...row,
+          id: `row-${index}`,
+        }),
+      );
+      const rows = yield* store
+        .update(0, () => ({ records: tooMany, result: undefined }))
+        .pipe(Effect.flip);
       expect(rows.operation).toBe("full");
-      const big = { ...row, text: "x".repeat(CoordinatorMessageStore.COORDINATOR_MESSAGE_MAX_FILE_BYTES) };
-      const bytes = yield* store.update(0, () => ({ records: [big], result: undefined })).pipe(Effect.flip);
+      const big = {
+        ...row,
+        text: "x".repeat(CoordinatorMessageStore.COORDINATOR_MESSAGE_MAX_FILE_BYTES),
+      };
+      const bytes = yield* store
+        .update(0, () => ({ records: [big], result: undefined }))
+        .pipe(Effect.flip);
       expect(bytes.operation).toBe("full");
       expect(yield* store.all).toEqual([]);
     }).pipe(Effect.provide(CoordinatorMessageStore.layerMemory())),
@@ -831,7 +956,10 @@ describe("CoordinatorMessageReceiver storage bounds (review finding 4)", () => {
       yield* fileSystem.makeDirectory(config.stateDir, { recursive: true });
       const file = path.join(config.stateDir, "coordinator-messages.json");
       const store = yield* CoordinatorMessageStore.CoordinatorMessageStore;
-      yield* store.update(0, () => ({ records: [outgoing("kept-message", "finding")], result: undefined }));
+      yield* store.update(0, () => ({
+        records: [outgoing("kept-message", "finding")],
+        result: undefined,
+      }));
       expect((yield* store.all).map((row) => row.externalId)).toEqual(["kept-message"]);
       // Valid JSON, padded past the budget: only a size check before parsing refuses it.
       yield* fileSystem.writeFileString(
@@ -843,7 +971,9 @@ describe("CoordinatorMessageReceiver storage bounds (review finding 4)", () => {
     }).pipe(
       Effect.provide(
         CoordinatorMessageStore.layer.pipe(
-          Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "coordinator-messages-test-" })),
+          Layer.provideMerge(
+            ServerConfig.layerTest(process.cwd(), { prefix: "coordinator-messages-test-" }),
+          ),
           Layer.provideMerge(NodeServices.layer),
         ),
       ),
@@ -861,15 +991,32 @@ describe("CoordinatorMessageReceiver thread refs (review finding 5)", () => {
           request({
             refs: [
               { kind: "thread", environmentId: M5, threadId: WORKER, title: "In the project" },
-              { kind: "thread", environmentId: M5, threadId: OTHER_WORKER, title: "In another project" },
-              { kind: "thread", environmentId: M5, threadId: ThreadId.make("thread-missing"), title: "Not on M5" },
-              { kind: "thread", environmentId: LINUX, threadId: ThreadId.make("thread-on-linux"), title: "On linux-mini" },
+              {
+                kind: "thread",
+                environmentId: M5,
+                threadId: OTHER_WORKER,
+                title: "In another project",
+              },
+              {
+                kind: "thread",
+                environmentId: M5,
+                threadId: ThreadId.make("thread-missing"),
+                title: "Not on M5",
+              },
+              {
+                kind: "thread",
+                environmentId: LINUX,
+                threadId: ThreadId.make("thread-on-linux"),
+                title: "On linux-mini",
+              },
             ],
           }),
         );
         expect(answer.ok).toBe(true);
         const row = (yield* records)[0]!;
-        expect(row.refs.map((ref) => (ref.kind === "thread" ? ref.title : ""))).toEqual(["In the project"]);
+        expect(row.refs.map((ref) => (ref.kind === "thread" ? ref.title : ""))).toEqual([
+          "In the project",
+        ]);
         yield* settle;
         const text = harness.sends[0]!.text;
         expect(text).toContain("In the project");
@@ -949,31 +1096,33 @@ describe("CoordinatorMessageReceiver hands over only a turn that starts now (del
 });
 
 describe("CoordinatorMessageReceiver settles a send it could not withdraw (delta finding 1)", () => {
-  it.effect("sends nothing new while the queued send is still there, and again once it is gone", () =>
-    run((receiver, harness) =>
-      Effect.gen(function* () {
-        yield* deliver(receiver, callerFrom(LINUX), request());
-        harness.delivery = "queued";
-        harness.cancelFails = true;
-        yield* settle;
-        expect(harness.sends).toHaveLength(1);
-        // The withdraw failed: the send still waits in the thread's queue.
-        harness.runs.set("run-1", "queued");
-        harness.delivery = "started";
-        harness.cancelFails = false;
-        yield* receiver.flush;
-        expect(harness.sends).toHaveLength(1);
-        expect(harness.dispatched).toEqual([
-          { type: "queued-run.cancel", runId: "run-1" },
-          { type: "queued-run.cancel", runId: "run-1" },
-        ]);
-        expect((yield* records)[0]!.state).toBe("settling");
-        harness.runs.set("run-1", "cancelled");
-        yield* receiver.flush;
-        expect(harness.sends).toHaveLength(2);
-        expect((yield* records)[0]!.state).toBe("delivered");
-      }),
-    ),
+  it.effect(
+    "sends nothing new while the queued send is still there, and again once it is gone",
+    () =>
+      run((receiver, harness) =>
+        Effect.gen(function* () {
+          yield* deliver(receiver, callerFrom(LINUX), request());
+          harness.delivery = "queued";
+          harness.cancelFails = true;
+          yield* settle;
+          expect(harness.sends).toHaveLength(1);
+          // The withdraw failed: the send still waits in the thread's queue.
+          harness.runs.set("run-1", "queued");
+          harness.delivery = "started";
+          harness.cancelFails = false;
+          yield* receiver.flush;
+          expect(harness.sends).toHaveLength(1);
+          expect(harness.dispatched).toEqual([
+            { type: "queued-run.cancel", runId: "run-1" },
+            { type: "queued-run.cancel", runId: "run-1" },
+          ]);
+          expect((yield* records)[0]!.state).toBe("settling");
+          harness.runs.set("run-1", "cancelled");
+          yield* receiver.flush;
+          expect(harness.sends).toHaveLength(2);
+          expect((yield* records)[0]!.state).toBe("delivered");
+        }),
+      ),
   );
 
   it.effect("counts a queued send that ran anyway as delivered, once", () =>
@@ -1012,7 +1161,10 @@ describe("CoordinatorMessageReceiver never creates the grant it checks (delta fi
           label: "linux-mini",
           access: "auto",
         };
-        expect(yield* receiver.grantFor(client)).toMatchObject({ coordinatorEnvironmentId: LINUX, revoked: false });
+        expect(yield* receiver.grantFor(client)).toMatchObject({
+          coordinatorEnvironmentId: LINUX,
+          revoked: false,
+        });
         harness.policies.delete(LINUX);
         expect(yield* receiver.grantFor(client)).toBeUndefined();
         expect(yield* receiver.grantFor({ label: "a browser", access: "auto" })).toBeUndefined();
@@ -1057,7 +1209,11 @@ describe("CoordinatorMessageReceiver checks the admitting credential again (delt
     run((receiver, harness) =>
       Effect.gen(function* () {
         yield* deliver(receiver, callerFrom(LINUX), request());
-        yield* deliver(receiver, callerFrom(LINUX), request({ kind: "finding", subject: "A finding", refs: [] }));
+        yield* deliver(
+          receiver,
+          callerFrom(LINUX),
+          request({ kind: "finding", subject: "A finding", refs: [] }),
+        );
         harness.sessions.set(`session-${LINUX}`, { peer: LINUX, scopes: ["orchestration:read"] });
         yield* settle;
         expect(harness.sends).toHaveLength(1);
@@ -1075,7 +1231,10 @@ describe("CoordinatorMessageReceiver checks the admitting credential again (delt
     run((receiver, harness) =>
       Effect.gen(function* () {
         yield* deliver(receiver, callerFrom(LINUX), request());
-        harness.sessions.set(`session-${LINUX}`, { peer: M4, scopes: ["orchestration:read", "orchestration:operate"] });
+        harness.sessions.set(`session-${LINUX}`, {
+          peer: M4,
+          scopes: ["orchestration:read", "orchestration:operate"],
+        });
         yield* settle;
         expect(harness.sends).toHaveLength(0);
       }),
@@ -1090,7 +1249,9 @@ describe("CoordinatorMessageReceiver ties a message to its membership (delta fin
         yield* deliver(receiver, callerFrom(LINUX), request());
         harness.projects.set(
           PROJECT,
-          projectOf(PROJECT, { members: [members[0]!, memberOf(LINUX, "project-linux", 2), members[2]!] }),
+          projectOf(PROJECT, {
+            members: [members[0]!, memberOf(LINUX, "project-linux", 2), members[2]!],
+          }),
         );
         yield* settle;
         expect(harness.sends).toHaveLength(0);
@@ -1182,7 +1343,10 @@ describe("CoordinatorMessageReceiver quiet rules (AC-15)", () => {
         const first = request();
         yield* deliver(receiver, callerFrom(LINUX), first);
         const again = yield* deliver(receiver, callerFrom(LINUX), first);
-        expect(again).toMatchObject({ ok: true, value: { outcome: "duplicate", messageId: first.messageId } });
+        expect(again).toMatchObject({
+          ok: true,
+          value: { outcome: "duplicate", messageId: first.messageId },
+        });
         yield* settle;
         expect(harness.sends).toHaveLength(1);
         expect(yield* records).toHaveLength(1);
@@ -1196,7 +1360,11 @@ describe("CoordinatorMessageReceiver quiet rules (AC-15)", () => {
         const first = request();
         yield* deliver(receiver, callerFrom(LINUX), first);
         harness.policies.set(LINUX, policyFor(LINUX, { revokedAt: "1970-01-01T00:00:00.000Z" }));
-        const refusal = yield* refusedWith(receiver, callerFrom(LINUX, grantFor(LINUX, { revoked: true })), first);
+        const refusal = yield* refusedWith(
+          receiver,
+          callerFrom(LINUX, grantFor(LINUX, { revoked: true })),
+          first,
+        );
         expect(refusal.message).toContain("M5 no longer takes messages from linux-mini");
       }),
     ),
@@ -1207,8 +1375,15 @@ describe("CoordinatorMessageReceiver quiet rules (AC-15)", () => {
       Effect.gen(function* () {
         const first = request();
         yield* deliver(receiver, callerFrom(LINUX), first);
-        const repeat = yield* deliver(receiver, callerFrom(LINUX), request({ text: "Still failing at 5:41 PM." }));
-        expect(repeat).toMatchObject({ ok: true, value: { outcome: "merged", messageId: first.messageId, count: 2 } });
+        const repeat = yield* deliver(
+          receiver,
+          callerFrom(LINUX),
+          request({ text: "Still failing at 5:41 PM." }),
+        );
+        expect(repeat).toMatchObject({
+          ok: true,
+          value: { outcome: "merged", messageId: first.messageId, count: 2 },
+        });
         yield* settle;
         expect(harness.sends).toHaveLength(1);
         expect(harness.sends[0]!.text).toContain("Still failing at 5:41 PM.");
@@ -1220,35 +1395,49 @@ describe("CoordinatorMessageReceiver quiet rules (AC-15)", () => {
     ),
   );
 
-  it.effect("folds a seventh message in an hour into one digest, except a problem with a step", () =>
-    run((receiver, harness) =>
-      Effect.gen(function* () {
-        for (let index = 0; index < 6; index += 1) {
-          const answer = yield* deliver(receiver, callerFrom(LINUX), request({ kind: "finding", subject: `Finding ${index}`, refs: [] }));
-          expect(answer).toMatchObject({ ok: true, value: { outcome: "admitted" } });
-        }
-        const seventh = yield* deliver(receiver, callerFrom(LINUX), request({ kind: "finding", subject: "Finding 6", refs: [] }));
-        expect(seventh).toMatchObject({ ok: true, value: { outcome: "folded" } });
-        const eighth = yield* deliver(receiver, callerFrom(LINUX), request({ kind: "request", subject: "Finding 7", refs: [] }));
-        expect(eighth).toMatchObject({ ok: true, value: { outcome: "folded" } });
-        const step = yield* deliver(
-          receiver,
-          callerFrom(LINUX),
-          request({ userStep: { environmentId: M5, text: "Sign in to Codex" } }),
-        );
-        expect(step).toMatchObject({ ok: true, value: { outcome: "admitted" } });
-        yield* settle;
-        expect(harness.sends).toHaveLength(7);
-        expect(harness.sends.at(-1)!.text).toContain("On M5: Sign in to Codex");
-        yield* TestClock.adjust("1 hour");
-        yield* receiver.flush;
-        expect(harness.sends).toHaveLength(8);
-        const digest = harness.sends.at(-1)!.text;
-        expect(digest).toContain("2 more messages from linux-mini's coordinator");
-        expect(digest).toContain("Finding 6");
-        expect(digest).toContain("Finding 7");
-      }),
-    ),
+  it.effect(
+    "folds a seventh message in an hour into one digest, except a problem with a step",
+    () =>
+      run((receiver, harness) =>
+        Effect.gen(function* () {
+          for (let index = 0; index < 6; index += 1) {
+            const answer = yield* deliver(
+              receiver,
+              callerFrom(LINUX),
+              request({ kind: "finding", subject: `Finding ${index}`, refs: [] }),
+            );
+            expect(answer).toMatchObject({ ok: true, value: { outcome: "admitted" } });
+          }
+          const seventh = yield* deliver(
+            receiver,
+            callerFrom(LINUX),
+            request({ kind: "finding", subject: "Finding 6", refs: [] }),
+          );
+          expect(seventh).toMatchObject({ ok: true, value: { outcome: "folded" } });
+          const eighth = yield* deliver(
+            receiver,
+            callerFrom(LINUX),
+            request({ kind: "request", subject: "Finding 7", refs: [] }),
+          );
+          expect(eighth).toMatchObject({ ok: true, value: { outcome: "folded" } });
+          const step = yield* deliver(
+            receiver,
+            callerFrom(LINUX),
+            request({ userStep: { environmentId: M5, text: "Sign in to Codex" } }),
+          );
+          expect(step).toMatchObject({ ok: true, value: { outcome: "admitted" } });
+          yield* settle;
+          expect(harness.sends).toHaveLength(7);
+          expect(harness.sends.at(-1)!.text).toContain("On M5: Sign in to Codex");
+          yield* TestClock.adjust("1 hour");
+          yield* receiver.flush;
+          expect(harness.sends).toHaveLength(8);
+          const digest = harness.sends.at(-1)!.text;
+          expect(digest).toContain("2 more messages from linux-mini's coordinator");
+          expect(digest).toContain("Finding 6");
+          expect(digest).toContain("Finding 7");
+        }),
+      ),
   );
 
   it.effect("holds a message while the project is paused and delivers it after", () =>
@@ -1294,7 +1483,9 @@ describe("CoordinatorMessageReceiver never steers (AC-13)", () => {
         // No work origin is recorded and no policy is created for the sender.
         expect(new Set(harness.grantCalls)).toEqual(new Set(["peekPolicy", "managers"]));
         // The step is the sender's proposal, never the user's consent.
-        expect(sent.text).toContain("User step proposed by linux-mini: On M5: Approve the pending request");
+        expect(sent.text).toContain(
+          "User step proposed by linux-mini: On M5: Approve the pending request",
+        );
         expect(sent.text).toContain("never counts as the user's consent");
       }),
     ),

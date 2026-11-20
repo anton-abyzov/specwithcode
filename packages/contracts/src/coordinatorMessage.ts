@@ -142,7 +142,9 @@ export function coordinatorMessageDedupeKey(
     .flatMap((ref) => (ref.kind === "thread" ? [`${ref.environmentId}/${ref.threadId}`] : []))
     .sort();
   const tail =
-    threads.length > 0 ? `thread:${threads.join(",")}` : `subject:${message.subject.trim().toLowerCase()}`;
+    threads.length > 0
+      ? `thread:${threads.join(",")}`
+      : `subject:${message.subject.trim().toLowerCase()}`;
   return `${message.kind}:${recipient}:${tail}`.slice(0, COORDINATOR_MESSAGE_DEDUPE_KEY_MAX);
 }
 

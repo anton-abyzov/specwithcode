@@ -778,7 +778,9 @@ export const make = Effect.gen(function* () {
           return file.policies.find(
             (policy) => policy.coordinatorEnvironmentId === coordinatorEnvironmentId,
           );
-        }).pipe(Effect.mapError((cause) => (isWorkGrantsError(cause) ? cause : storageError(cause)))),
+        }).pipe(
+          Effect.mapError((cause) => (isWorkGrantsError(cause) ? cause : storageError(cause))),
+        ),
       ),
     managers: readManagers.pipe(Effect.mapError(storageError)),
     origins: lock.withPermit(read).pipe(Effect.map((file) => file.origins)),

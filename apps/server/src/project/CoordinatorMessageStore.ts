@@ -154,12 +154,8 @@ export class CoordinatorMessageStore extends Context.Service<
 >()("specweave-studio/project/CoordinatorMessageStore") {}
 
 /** Records still waiting to go out; never pruned. */
-export const COORDINATOR_MESSAGE_PENDING_STATES: ReadonlySet<CoordinatorMessageRecord["state"]> = new Set([
-  "settling",
-  "held",
-  "folded",
-  "queued",
-]);
+export const COORDINATOR_MESSAGE_PENDING_STATES: ReadonlySet<CoordinatorMessageRecord["state"]> =
+  new Set(["settling", "held", "folded", "queued"]);
 const pending = COORDINATOR_MESSAGE_PENDING_STATES;
 
 /** Drops records that settled more than a week ago; nothing still waiting is dropped. */
@@ -184,8 +180,13 @@ const makeWith = (
             if (records !== before) {
               const kept = pruneRecords(records, now);
               // Budgets before the write, whatever the records' states.
-              const bytes = new TextEncoder().encode(stringifyJson({ version: 1, messages: kept })).byteLength;
-              if (kept.length > COORDINATOR_MESSAGE_MAX_ROWS || bytes > COORDINATOR_MESSAGE_MAX_FILE_BYTES)
+              const bytes = new TextEncoder().encode(
+                stringifyJson({ version: 1, messages: kept }),
+              ).byteLength;
+              if (
+                kept.length > COORDINATOR_MESSAGE_MAX_ROWS ||
+                bytes > COORDINATOR_MESSAGE_MAX_FILE_BYTES
+              )
                 return yield* new CoordinatorMessageStoreError({
                   operation: "full",
                   cause: new Error(`${kept.length} records, ${bytes} bytes`),
