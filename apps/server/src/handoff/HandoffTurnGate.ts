@@ -74,7 +74,9 @@ export const routineThreadPlace = (
 ): Effect.Effect<RoutineThreadPlace> =>
   Effect.gen(function* () {
     const continued =
-      gate.continuedOn === undefined ? { kind: "here" as const } : yield* gate.continuedOn(threadId);
+      gate.continuedOn === undefined
+        ? { kind: "here" as const }
+        : yield* gate.continuedOn(threadId);
     if (continued.kind === "moved") return continued;
     if (continued.kind === "unknown")
       return { kind: "wait", reason: HANDOFF_STATE_UNREAD_WAIT } as const;
