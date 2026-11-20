@@ -422,7 +422,7 @@ export function buildComposerSkillGroups(input: {
         levelLabel: "Location unknown",
         location: { kind: "unknown" },
         version: { value: null, source: null },
-        detail: "Listed by the agent. No file by this name in the folders scanned here.",
+        detail: "Listed by the agent. No file found under this name.",
       };
     if (files.length > 1)
       return {
