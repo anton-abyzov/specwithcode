@@ -49,7 +49,7 @@ describe("fallbackStatusHeader", () => {
       mode: "auto",
       text: "Goes back on its own once the original model can take a turn.",
     });
-    expect(unreported.back?.label).toBe("Return to Opus 5.5");
+    expect(unreported.back?.label).toBe("Return to Opus 5.5 now");
   });
 
   it("lets a person try the way back when room is unknown", () => {

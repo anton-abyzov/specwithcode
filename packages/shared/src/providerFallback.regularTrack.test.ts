@@ -416,7 +416,7 @@ describe("a real post-stop snapshot", () => {
     ).toEqual(opus);
   });
 
-  it("waits when the Complex track is out, even with Daily and other providers ready", () => {
+  it("waits when Complex is out, even if a retained fallback list names a ready Daily model", () => {
     expect(
       resolveProviderFallback({
         providers: [deniedClaude, codex, muse],
@@ -427,7 +427,7 @@ describe("a real post-stop snapshot", () => {
           ...rule,
           threadModelMode: "tracks",
           defaultModelSelection: opus,
-          providerLimitFallbackModels: [],
+          providerLimitFallbackModels: [opus],
           providerLimitFallbackModelSelection: null,
           modelLanes: { complex: [fable], routine: [opus] },
         },
@@ -435,6 +435,43 @@ describe("a real post-stop snapshot", () => {
         anyReady: true,
       }),
     ).toBeNull();
+  });
+
+  it("fits a saved Neon entry to a listed newer release and retains Review effort", () => {
+    const neon = {
+      ...copilotEnterprise,
+      models: [{
+        ...copilotEnterprise.models[0]!,
+        slug: "gemini-4.5-neon",
+        name: "Gemini 4.5 Neon",
+        capabilities: {
+          optionDescriptors: [{
+            id: "reasoningEffort",
+            label: "Reasoning effort",
+            type: "select" as const,
+            options: [{ id: "medium", label: "Medium" }, { id: "high", label: "High" }],
+          }],
+        },
+      }],
+    };
+    expect(resolveProviderFallback({
+      providers: [neon],
+      currentInstanceId: id("codex"),
+      currentModel: "gpt-6.2-sol",
+      review: true,
+      rule: {
+        ...rule,
+        threadModelMode: "tracks",
+        adversarialReview: {
+          reviewers: [{ instanceId: id("antigravity"), model: "gemini-4-neon" }],
+        },
+      },
+      nowMs: now,
+    })).toEqual({
+      instanceId: neon.instanceId,
+      model: "gemini-4.5-neon",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    });
   });
 
   it("keeps a newer release of a built-in Daily model on the Regular side", () => {

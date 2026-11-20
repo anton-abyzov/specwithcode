@@ -175,7 +175,7 @@ export function fallbackStatusHeader(input: {
     : preswitched
       ? "Neared its usage limit."
       : "Hit its usage limit.";
-  const noUsage = roomUnknown === "unreported" || input.pickReportsNoUsage === true;
+  const noUsage = input.pickReportsNoUsage ?? roomUnknown === "unreported";
   const byHandOnly = noUsage && !launched && !resetLabel;
   const returns = returnBlock
     ? {
@@ -203,7 +203,7 @@ export function fallbackStatusHeader(input: {
             mode: "auto" as const,
             text: hasRoom
               ? "Has room again. Goes back on its own when this thread is idle."
-              : roomUnknown === "unreported"
+              : roomUnknown === "unreported" && resetLabel
                 ? `Goes back on its own after ${resetLabel}.`
                 : roomUnknown
                   ? "Goes back on its own once a fresh usage reading shows room."

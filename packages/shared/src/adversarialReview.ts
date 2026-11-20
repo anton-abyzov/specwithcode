@@ -39,12 +39,12 @@ import {
 
 /** Families a default reviewer chain tries first; the author's own family is always skipped. */
 const REVIEWER_FAMILY_ORDER: ReadonlyArray<ModelFamily> = [
-  "openai",
-  "meta",
   "google",
-  "xai",
-  "other",
+  "openai",
   "claude",
+  "meta",
+  "other",
+  "xai",
 ];
 
 /** Why a reviewer entry was passed over. */
@@ -74,8 +74,8 @@ export function selectionFamily(
 }
 
 /**
- * The built-in Review track fitted to this machine. An explicit frontier
- * preference continues to use each enabled provider's frontier model.
+ * Start with the built-in Review track, then keep other tier models available
+ * when the preferred choices cannot review the author's family.
  */
 export function defaultReviewerChain(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
@@ -84,8 +84,7 @@ export function defaultReviewerChain(input: {
   /** The saved Sources order (`defaultModelProviders`): which source of a model is tried first. */
   readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | undefined;
 }): ReadonlyArray<ModelSelection> {
-  if (input.tier === "regular")
-    return defaultTrackSelections("review", input.providers, input.sourceOrder);
+  const preferred = defaultTrackSelections("review", input.providers, input.sourceOrder);
   const picks = input.providers
     .filter((provider) => provider.enabled)
     .flatMap((provider) => {
@@ -98,7 +97,13 @@ export function defaultReviewerChain(input: {
     .map((selection, index) => ({ selection, index }))
     .sort((a, b) => rank(a.selection) - rank(b.selection) || a.index - b.index)
     .map((entry) => entry.selection);
-  return byFamily.filter((entry) => selectionFamily(input.providers, entry) !== "xai");
+  const seen = new Set<string>();
+  return [...preferred, ...byFamily].filter((entry) => {
+    const key = fallbackSelectionKey(entry);
+    if (seen.has(key) || selectionFamily(input.providers, entry) === "xai") return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /** One step of the reviewer order: a model, then the same model on other providers. */

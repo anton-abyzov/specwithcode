@@ -35,7 +35,8 @@ import {
   fallbackSelectionKey,
   namedFallbackOrder,
 } from "./modelTiers.ts";
-import { defaultTrackSelections } from "./modelTracks.ts";
+import { reviewerChain } from "./adversarialReview.ts";
+import { defaultTrackSelections, isHeldSource } from "./modelTracks.ts";
 import { providerSetupProblem } from "./providerSetup.ts";
 import {
   denialSparesModel,
@@ -338,6 +339,15 @@ export function reportsNoUsage(provider: ServerProvider): boolean {
   const limits = provider.usageLimits;
   return (
     limits === undefined || (limits.unavailable?.unmetered === true && limits.windows.length === 0)
+  );
+}
+
+/** Whether a launch fallback may return without waiting for usage evidence. */
+export function launchPickReportsNoUsage(provider: ServerProvider): boolean {
+  return reportsNoUsage(provider) && (
+    provider.usageLimits !== undefined ||
+    provider.driver === "muse" ||
+    isGitHubCopilotIcon(null, provider.iconUrl)
   );
 }
 
@@ -898,7 +908,7 @@ function resolveProviderFallbackPass(input: {
         !input.excludedSelections?.has(fallbackSelectionKey(entry.selection)) &&
         allow(entry.selection),
     )?.selection;
-  if (input.rule.threadModelMode === "tracks" && fallbackModelOrder(input.rule).length === 0) {
+  if (input.rule.threadModelMode === "tracks") {
     if (input.currentModel !== undefined) {
       const same = resolveSameModelElsewhere({
         providers: input.providers,
@@ -923,9 +933,28 @@ function resolveProviderFallbackPass(input: {
         ? saved
         : defaultTrackSelections("review", input.providers, input.rule.defaultModelProviders);
       if (reviewers.length === 0) return null;
+      const explicitlyNamed = new Set((saved ?? []).map(fallbackSelectionKey));
+      const order = reviewerChain({
+        providers: input.providers,
+        reviewers,
+        tier: "regular",
+        sourceOrder: input.rule.defaultModelProviders,
+      }).filter((selection) => {
+        const provider = input.providers.find((item) => item.instanceId === selection.instanceId);
+        return provider !== undefined && (
+          explicitlyNamed.has(fallbackSelectionKey(selection)) ||
+          !isHeldSource(provider, selection.model)
+        );
+      });
+      if (order.length === 0) return null;
       return describeFallbackOrder({
         ...input,
-        rule: { ...input.rule, providerLimitFallbackModels: reviewers },
+        rule: {
+          ...input.rule,
+          threadModelMode: "model",
+          providerLimitFallbackModelSelection: null,
+          providerLimitFallbackModels: order,
+        },
       }).find((entry) =>
         entry.unavailable === null &&
         !input.excludedSelections?.has(fallbackSelectionKey(entry.selection)),

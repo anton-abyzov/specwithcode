@@ -214,7 +214,7 @@ export function effectiveFallbackOrder(
   providers: ReadonlyArray<ServerProvider> = [],
   options: TierChainOptions = {},
 ): FallbackChain {
-  const explicit = fallbackModelOrder(rule);
+  const explicit = rule.threadModelMode === "tracks" ? [] : fallbackModelOrder(rule);
   if (explicit.length > 0) return { order: explicit, fromTiers: false, builtIn: NO_KEYS };
   return { ...tierFallbackChain(rule, currentModel, providers, options), fromTiers: true };
 }
@@ -320,7 +320,7 @@ const VERSIONED_SLUG = /^(.*[a-z])-(\d{1,3}(?:[.-]\d{1,3})*)$/;
  * Sol never follows into Astra. A word not listed here (`mini`, `preview`)
  * leaves the slug without a family.
  */
-export const MODEL_CODENAMES: ReadonlyArray<string> = ["sol", "astra", "luna", "carbon"];
+export const MODEL_CODENAMES: ReadonlyArray<string> = ["sol", "astra", "luna", "carbon", "neon"];
 
 const CODENAME_SLUG = new RegExp(
   `^(.*[a-z])-(\\d{1,3}(?:[.-]\\d{1,3})*)-(${MODEL_CODENAMES.join("|")})$`,

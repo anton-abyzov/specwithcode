@@ -269,6 +269,7 @@ import {
   provenFallbackSelection,
   providerUsedPercent,
   reportsNoUsage,
+  launchPickReportsNoUsage,
   resolveApiCreditSelections,
   describeFallbackOrder,
   resolveProviderFallback,
@@ -11142,7 +11143,7 @@ export default function ChatView(props: ChatViewProps) {
           minute: "2-digit",
         });
   // One status in the picker: what runs now, the pick and why not, the way back
-  // (automatic after a limit, by hand for a launch stand-in) and the fallback order.
+  // and the fallback order.
   // No thread banner repeats the way back.
   const modelStateHeader =
     pairing && pairingStandIn
@@ -11156,7 +11157,11 @@ export default function ChatView(props: ChatViewProps) {
           canPickBack: pairingStandIn.canPickBack,
           hasRoom: pairingStandIn.hasRoom,
           roomUnknown: pairingStandIn.roomUnknown,
-          pickReportsNoUsage: pairingProvider !== undefined && reportsNoUsage(pairingProvider),
+          pickReportsNoUsage:
+            pairingProvider !== undefined &&
+            (pairing.launched === true
+              ? launchPickReportsNoUsage(pairingProvider)
+              : reportsNoUsage(pairingProvider)),
           resetLabel: pairingResetLabel,
           chain: fallbackChain({
             pick: {
