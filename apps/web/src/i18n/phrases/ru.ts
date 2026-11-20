@@ -2,12 +2,14 @@ import type { PhraseCatalog } from "../phrases";
 import { syncRu } from "./sync/ru";
 import { handoffRu } from "./handoff/ru";
 import { iphoneRu } from "./iphone/ru";
+import { machineLabelsRu } from "./machineLabels/ru";
 
 /** Russian Settings titles and labels. "тред" for thread, as in the message catalog. */
 export const ru: PhraseCatalog = {
   ...syncRu,
   ...handoffRu,
   ...iphoneRu,
+  ...machineLabelsRu,
   About: "О приложении",
   "Accent color": "Акцентный цвет",
   Account: "Аккаунт",
@@ -5517,13 +5519,7 @@ export const ru: PhraseCatalog = {
   "Joining the other machine…": "Присоединение другой машины…",
   "Copying notes and listing both machines…":
     "Копирование заметок и добавление обеих машин в список…",
-  "{machine} joins {project}. The coordinator stays on {main}: linking does not move it.":
-    "{machine} присоединяется к {project}. Координатор остаётся на {main}: связывание его не переносит.",
   "Reading both machines…": "Чтение обеих машин…",
-  "The coordinator stays on {main}. To continue it on {machine}, use Continue here after linking.":
-    "Координатор остаётся на {main}. Чтобы продолжить его работу на {machine}, после связывания нажмите «Продолжить здесь».",
-  "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if the coordinator continues there. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. The coordinator stays on {main}. Files are not copied.":
-    "Связать {machine} с этим проектом. {machine} отказывается от собственных цели и инструкций: с этого момента он следует цели и инструкциям этого проекта, а его собственные будут заменены, если координатор продолжит работу там. Его собственный координатор останавливается, а тот разговор остаётся на {machine} как история. Его воркеры продолжают работать. Координатор остаётся на {main}. Файлы не копируются.",
   "The coordinator cannot continue on {machine}: it has this repository as a separate project. Link it first.":
     "Координатор не может продолжить работу на {machine}: там этот репозиторий добавлен как отдельный проект. Сначала свяжите его.",
   "Continues in a folder already saved there, which updates from origin. Always moves the coordinator there.":

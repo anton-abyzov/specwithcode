@@ -41,7 +41,7 @@ import { CoordinatorSpecweaveCard } from "../chat/CoordinatorSpecweaveCard";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
-import { LaptopIcon, PanelRightIcon, SettingsIcon } from "lucide-react";
+import { PanelRightIcon, SettingsIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
 import {
   AuthOrchestrationOperateScope,
@@ -193,6 +193,7 @@ import { useOpenLink } from "../../browser/useOpenLink";
 import { ProjectWorkerPane } from "./ProjectWorkerPane";
 import { coordinatorProgress } from "../../studio/coordinatorProgress";
 import { Tip } from "./shell/Tip";
+import { CoordinatorMachineTag } from "./CoordinatorMachineTag";
 import { useCoordinatorVoiceAsk, useVoiceCall, VoiceCallBar } from "./VoiceCall";
 import { useDictationShortcut } from "./dictationShortcut";
 import { useVoiceDictation, VoiceDictationBar } from "./VoiceDictation";
@@ -212,7 +213,6 @@ import {
 } from "../../studio/projectCoordinatorMachine";
 import { useMachineNickname } from "../../studio/machineNickname";
 import { machineColorProps, useMachineIdentity } from "../../studio/machineIdentity";
-import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import {
   useHostIdentityMismatch,
   useHostReach,
@@ -1810,29 +1810,12 @@ export function ProjectWorkspaceSurface({
                 >
                   <h1>{projectTitle}</h1>
                 </Tip>
-                {primaryEnvironmentId !== null && project.environmentId !== primaryEnvironmentId ? (
-                  // The page shows another machine: its workers and sign-ins. The coordinator may
-                  // be on a third one, which the tag names.
-                  <Tip
-                    label={
-`On ${machineName}, not this computer`
-                    }
-                  >
-                    <span
-                      className="sws-tag sws-project-machine machine-chip"
-                      data-project-machine
-                      {...machineColorProps(machineIdentity)}
-                    >
-                      {machineIdentity ? (
-                        <EnvironmentMachineIcon kind={machineIdentity.icon} aria-hidden />
-                      ) : (
-                        <LaptopIcon aria-hidden />
-                      )}
-                      <span className="sr-only">On </span>
-                      {machineName}
-                    </span>
-                  </Tip>
-                ) : null}
+                {/* Another machine's coordinator: its name and the window's, both visible. */}
+                <CoordinatorMachineTag
+                  shownEnvironmentId={project.environmentId}
+                  shownLabel={environment?.label}
+                  windowEnvironmentId={primaryEnvironmentId}
+                />
                 {snapshot?.settings.kind === "personal" ? (
                   <Tip label={PERSONAL_ASSISTANT_DESCRIPTION}>
                     <span className="sws-tag">
@@ -2515,7 +2498,9 @@ export function ProjectWorkspaceSurface({
             canOperate={canOperate && connected}
             accessNotice={
               !connected
-                ? "This machine is not connected. Changes can be made once it reconnects."
+                ? tx("{machine} is not connected. Changes can be made once it reconnects.", {
+                    machine: machineName,
+                  })
                 : operateAccess === "unknown"
                   ? "Checking this connection's access…"
                   : undefined

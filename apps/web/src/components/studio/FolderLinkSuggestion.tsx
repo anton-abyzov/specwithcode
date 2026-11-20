@@ -81,7 +81,7 @@ export function FolderLinkSuggestionDialog({
             {matches.length === 1 ? `${linkLabel(match)}?` : "This folder is a copy of a project"}
           </DialogTitle>
           <DialogDescription className="wrap-anywhere">
-            {`${folder} matches a project on another machine. Linking makes them one shared project; you choose which coordinator stays next.`}
+            {`${folder} matches a project on another machine. Linking makes them one shared project; each machine keeps its own coordinator.`}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>

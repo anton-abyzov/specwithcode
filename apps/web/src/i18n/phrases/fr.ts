@@ -2,12 +2,14 @@ import type { PhraseCatalog } from "../phrases";
 import { syncFr } from "./sync/fr";
 import { handoffFr } from "./handoff/fr";
 import { iphoneFr } from "./iphone/fr";
+import { machineLabelsFr } from "./machineLabels/fr";
 
 /** French Settings titles and labels. "fil" for thread, as in the message catalog. */
 export const fr: PhraseCatalog = {
   ...syncFr,
   ...handoffFr,
   ...iphoneFr,
+  ...machineLabelsFr,
   About: "À propos",
   "Accent color": "Couleur d’accent",
   Account: "Compte",
@@ -5563,13 +5565,7 @@ export const fr: PhraseCatalog = {
     "Préparation de la machine qui garde son coordinateur…",
   "Joining the other machine…": "Jonction avec l’autre machine…",
   "Copying notes and listing both machines…": "Copie des notes et inscription des deux machines…",
-  "{machine} joins {project}. The coordinator stays on {main}: linking does not move it.":
-    "{machine} rejoint {project}. Le coordinateur reste sur {main} : lier ne le déplace pas.",
   "Reading both machines…": "Lecture des deux machines…",
-  "The coordinator stays on {main}. To continue it on {machine}, use Continue here after linking.":
-    "Le coordinateur reste sur {main}. Pour le continuer sur {machine}, utilisez Continuer ici après la liaison.",
-  "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if the coordinator continues there. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. The coordinator stays on {main}. Files are not copied.":
-    "Lier {machine} à ce projet. {machine} renonce à son propre objectif et à ses instructions : elle suit désormais ceux de ce projet, et les siens sont remplacés si le coordinateur continue sur cette machine. Son propre coordinateur s’arrête, et cette conversation reste sur {machine} comme historique. Ses workers continuent de tourner. Le coordinateur reste sur {main}. Les fichiers ne sont pas copiés.",
   "The coordinator cannot continue on {machine}: it has this repository as a separate project. Link it first.":
     "Le coordinateur ne peut pas continuer sur {machine} : elle a ce dépôt dans un projet distinct. Liez-la d’abord.",
   "Continues in a folder already saved there, which updates from origin. Always moves the coordinator there.":

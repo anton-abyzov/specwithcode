@@ -2,12 +2,14 @@ import type { PhraseCatalog } from "../phrases";
 import { syncKo } from "./sync/ko";
 import { handoffKo } from "./handoff/ko";
 import { iphoneKo } from "./iphone/ko";
+import { machineLabelsKo } from "./machineLabels/ko";
 
 /** Korean Settings titles and labels. "스레드" for thread, as in the message catalog. */
 export const ko: PhraseCatalog = {
   ...syncKo,
   ...handoffKo,
   ...iphoneKo,
+  ...machineLabelsKo,
   About: "정보",
   "Accent color": "강조 색상",
   Account: "계정",
@@ -5451,13 +5453,7 @@ export const ko: PhraseCatalog = {
   "Preparing the machine that keeps its coordinator…": "코디네이터를 유지할 컴퓨터를 준비하는 중…",
   "Joining the other machine…": "다른 컴퓨터를 합치는 중…",
   "Copying notes and listing both machines…": "노트를 복사하고 두 컴퓨터를 등록하는 중…",
-  "{machine} joins {project}. The coordinator stays on {main}: linking does not move it.":
-    "{machine}이(가) {project}에 참여합니다. 코디네이터는 {main}에 그대로 있으며, 연결해도 옮겨지지 않습니다.",
   "Reading both machines…": "두 컴퓨터를 읽는 중…",
-  "The coordinator stays on {main}. To continue it on {machine}, use Continue here after linking.":
-    "코디네이터는 {main}에 그대로 있습니다. {machine}에서 이어 가려면 연결한 뒤 여기서 계속을 사용하세요.",
-  "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if the coordinator continues there. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. The coordinator stays on {main}. Files are not copied.":
-    "{machine}을(를) 이 프로젝트에 연결합니다. {machine}은(는) 자체 목표와 지침을 포기하고 지금부터 이 프로젝트의 것을 따르며, 코디네이터가 거기서 이어지면 자체 목표와 지침은 대체됩니다. 자체 코디네이터는 멈추고 그 대화는 기록으로 {machine}에 남습니다. 워커는 계속 실행됩니다. 코디네이터는 {main}에 그대로 있습니다. 파일은 복사되지 않습니다.",
   "The coordinator cannot continue on {machine}: it has this repository as a separate project. Link it first.":
     "{machine}에서는 코디네이터를 이어 갈 수 없습니다. 이 저장소가 별도 프로젝트로 있기 때문입니다. 먼저 연결하세요.",
   "Continues in a folder already saved there, which updates from origin. Always moves the coordinator there.":

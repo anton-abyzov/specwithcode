@@ -116,6 +116,8 @@ export interface MachineRowState {
    * and wherever the caller passes none.
    */
   readonly sync: MachineSyncFact | null;
+  /** The machine this window is served by: its row says "this window" (1427). */
+  readonly window?: true;
 }
 
 export interface MachineRowInput {
@@ -132,6 +134,8 @@ export interface MachineRowInput {
    * version when the window knows it.
    */
   readonly needsUpdate?: { readonly version: string | null } | null;
+  /** This window is served by the machine. */
+  readonly window?: boolean;
 }
 
 /** The row for one machine: the first state that matches, then its notes. */
@@ -169,6 +173,7 @@ export function machineRowState(input: MachineRowInput): MachineRowState {
     action,
     notes,
     sync: input.sync ?? null,
+    ...(input.window === true ? { window: true as const } : {}),
   });
   switch (input.role) {
     case "independent":
