@@ -661,104 +661,116 @@ export const make = Effect.gen(function* () {
         if (options?.knownAddressOnly === true) {
           yield* assertKnownAddress(route);
         }
-        // A machine this account's switch still owes a removal (another
-        // account's, whose removal failed or has not run yet) is removed first,
-        // as the switch would: its cached projects, chats and drafts and its
-        // saved entry go, and this save adds it as a new machine. A save never
-        // takes over another account's entry, so recovery never has to tell an
-        // unwritten save from a landed one over the same routes.
-        if (
-          (yield* SubscriptionRef.get(entries)).has(environmentId) &&
-          (yield* takesMachineLocked(environmentId, scope))
-        ) {
-          yield* dropMachineLocked(environmentId).pipe(
-            Effect.mapError((error) =>
-              error._tag === "ConnectionPersistenceError"
-                ? error
-                : new Persistence.ConnectionPersistenceError({
-                    operation: "remove-connection",
-                    message: `Could not first remove the machine another account saved: ${error._tag}`,
-                  }),
-            ),
-          );
-        }
-        // A new route joins the environment's saved routes. Registering one it
-        // already has (the same id, or a pairing to the same address) replaces
-        // it in place. Editing keeps the disabled state.
-        const previous = (yield* SubscriptionRef.get(entries)).get(environmentId);
-        let entry = registered;
-        if (previous !== undefined) {
-          const existing = connectionRoutes(previous);
-          const sameAddress = findRouteToSameAddress(existing, route);
-          const routes = existing.filter(
-            (existing) =>
-              existing !== sameAddress ||
-              connectionRouteId(existing.target) === connectionRouteId(route.target),
-          );
-          const next = withRoutes(previous, upsertRoute(routes, route));
-          if (next.addressesChanged) {
-            yield* forgetRoutingTrust(environmentId, "register-connection");
-          }
-          entry = next.entry;
-        }
-        // The save is noted before the catalog write and its owner recorded
-        // after it, so a save that fails or is cut short changes nobody's
-        // machine, and one that lands is never left without its owner.
-        const begun = yield* beginOwnerSaveLocked(environmentId, scope, persistedRoutes(entry));
-        yield* registrations
-          .register(registration, persistedRoutes(entry))
-          .pipe(Effect.tapError(() => endOwnerSaveLocked(environmentId, begun, cancelPendingSave)));
-        // The Connect routes were removed while this save was being written:
-        // put the saved routes back as they were, still under the lock, so a
-        // later save for the new account is never undone by this one.
-        if (isRelay && (yield* Ref.get(relayRouteEpoch)) !== startedInEpoch) {
-          const restored = yield* (
-            previous === undefined
-              ? registrations.remove(environmentId)
-              : registrations.setRoutes(environmentId, persistedRoutes(previous))
-          ).pipe(
-            Effect.as(true),
-            Effect.catch((error) =>
-              Effect.logWarning("Could not undo a Connect route saved after a sign-out.", {
-                environmentId,
-                error,
-              }).pipe(Effect.as(false)),
-            ),
-          );
-          // Either way the machine keeps the owner it had.
-          yield* endOwnerSaveLocked(environmentId, begun, cancelPendingSave);
-          if (restored) return;
-          // The saved route could not be put back. Install what was written and
-          // remove the Connect route now, still under this lock, so no later
-          // save for this machine can be caught by it.
-          yield* Ref.update(persistedEnvironmentIds, (current) =>
-            new Set(current).add(environmentId),
-          );
-          const remaining = routesAfterRemoving(connectionRoutes(entry), RELAY_ROUTE_ID);
-          const logRemoveFailure = (error: unknown) =>
-            Effect.logWarning("Could not remove a Connect route saved after a sign-out.", {
-              environmentId,
-              error,
-            });
-          if (remaining.length > 0) {
-            const kept = withRoutes(entry, remaining).entry;
+        // From here the save runs to its end: an interruption between the
+        // catalog write and the owner record would leave a landed save that a
+        // later switch in this session could give to the wrong account.
+        yield* Effect.uninterruptible(
+          Effect.gen(function* () {
+            // A machine this account's switch still owes a removal (another
+            // account's, whose removal failed or has not run yet) is removed first,
+            // as the switch would: its cached projects, chats and drafts and its
+            // saved entry go, and this save adds it as a new machine. A save never
+            // takes over another account's entry, so recovery never has to tell an
+            // unwritten save from a landed one over the same routes.
+            if (
+              (yield* SubscriptionRef.get(entries)).has(environmentId) &&
+              (yield* takesMachineLocked(environmentId, scope))
+            ) {
+              // Recorded first, as the switch does, so automatic pairing leaves it
+              // even if this save then fails.
+              yield* accountOwners.forgotten(environmentId);
+              yield* dropMachineLocked(environmentId).pipe(
+                Effect.mapError((error) =>
+                  error._tag === "ConnectionPersistenceError"
+                    ? error
+                    : new Persistence.ConnectionPersistenceError({
+                        operation: "remove-connection",
+                        message: `Could not first remove the machine another account saved: ${error._tag}`,
+                      }),
+                ),
+              );
+            }
+            // A new route joins the environment's saved routes. Registering one it
+            // already has (the same id, or a pairing to the same address) replaces
+            // it in place. Editing keeps the disabled state.
+            const previous = (yield* SubscriptionRef.get(entries)).get(environmentId);
+            let entry = registered;
+            if (previous !== undefined) {
+              const existing = connectionRoutes(previous);
+              const sameAddress = findRouteToSameAddress(existing, route);
+              const routes = existing.filter(
+                (existing) =>
+                  existing !== sameAddress ||
+                  connectionRouteId(existing.target) === connectionRouteId(route.target),
+              );
+              const next = withRoutes(previous, upsertRoute(routes, route));
+              if (next.addressesChanged) {
+                yield* forgetRoutingTrust(environmentId, "register-connection");
+              }
+              entry = next.entry;
+            }
+            // The save is noted before the catalog write and its owner recorded
+            // after it, so a save that fails or is cut short changes nobody's
+            // machine, and one that lands is never left without its owner.
+            const begun = yield* beginOwnerSaveLocked(environmentId, scope, persistedRoutes(entry));
             yield* registrations
-              .setRoutes(environmentId, persistedRoutes(kept))
-              .pipe(Effect.catch(logRemoveFailure));
-            yield* installEntryLocked(kept);
-          } else {
-            yield* installEntryLocked(entry);
-            yield* removeLocked(environmentId, { keepRemote: true }).pipe(
-              Effect.catch(logRemoveFailure),
+              .register(registration, persistedRoutes(entry))
+              .pipe(
+                Effect.tapError(() => endOwnerSaveLocked(environmentId, begun, cancelPendingSave)),
+              );
+            // The Connect routes were removed while this save was being written:
+            // put the saved routes back as they were, still under the lock, so a
+            // later save for the new account is never undone by this one.
+            if (isRelay && (yield* Ref.get(relayRouteEpoch)) !== startedInEpoch) {
+              const restored = yield* (
+                previous === undefined
+                  ? registrations.remove(environmentId)
+                  : registrations.setRoutes(environmentId, persistedRoutes(previous))
+              ).pipe(
+                Effect.as(true),
+                Effect.catch((error) =>
+                  Effect.logWarning("Could not undo a Connect route saved after a sign-out.", {
+                    environmentId,
+                    error,
+                  }).pipe(Effect.as(false)),
+                ),
+              );
+              // Either way the machine keeps the owner it had.
+              yield* endOwnerSaveLocked(environmentId, begun, cancelPendingSave);
+              if (restored) return;
+              // The saved route could not be put back. Install what was written and
+              // remove the Connect route now, still under this lock, so no later
+              // save for this machine can be caught by it.
+              yield* Ref.update(persistedEnvironmentIds, (current) =>
+                new Set(current).add(environmentId),
+              );
+              const remaining = routesAfterRemoving(connectionRoutes(entry), RELAY_ROUTE_ID);
+              const logRemoveFailure = (error: unknown) =>
+                Effect.logWarning("Could not remove a Connect route saved after a sign-out.", {
+                  environmentId,
+                  error,
+                });
+              if (remaining.length > 0) {
+                const kept = withRoutes(entry, remaining).entry;
+                yield* registrations
+                  .setRoutes(environmentId, persistedRoutes(kept))
+                  .pipe(Effect.catch(logRemoveFailure));
+                yield* installEntryLocked(kept);
+              } else {
+                yield* installEntryLocked(entry);
+                yield* removeLocked(environmentId, { keepRemote: true }).pipe(
+                  Effect.catch(logRemoveFailure),
+                );
+              }
+              return;
+            }
+            yield* Ref.update(persistedEnvironmentIds, (current) =>
+              new Set(current).add(environmentId),
             );
-          }
-          return;
-        }
-        yield* Ref.update(persistedEnvironmentIds, (current) =>
-          new Set(current).add(environmentId),
+            yield* installEntryLocked(entry);
+            yield* endOwnerSaveLocked(environmentId, begun, finishPendingSave);
+          }),
         );
-        yield* installEntryLocked(entry);
-        yield* endOwnerSaveLocked(environmentId, begun, finishPendingSave);
       }),
     );
   });

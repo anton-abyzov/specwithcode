@@ -52,6 +52,8 @@ describe("EnvironmentRegistry when B saves a machine A still owns (1434)", () =>
         expect(routes.map((target) => target._tag)).toEqual(["RelayConnectionTarget"]);
         expect(yield* Ref.get(harness.ownedDataClears)).toContain(MACHINE);
         expect((yield* Ref.get(harness.storedOwners))?.machines[MACHINE]).toBe(B);
+        // Recorded as the switch does, so automatic pairing leaves it.
+        expect(yield* Ref.get(harness.forgottenMachines)).toContain(MACHINE);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );
@@ -157,6 +159,38 @@ describe("EnvironmentRegistry when B saves a machine A still owns (1434)", () =>
         // catalog, leaves the note for the next start.
         yield* registry.setAccount(A);
         expect((yield* Ref.get(harness.storedOwners))?.saving?.[RELAY]?.owner).toBe(B);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("a save interrupted during its catalog write still records its owner", () =>
+    Effect.gen(function* () {
+      const writing = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const harness = yield* makeHarness([], [], [], {
+        accountOwners: { lastAccount: A, machines: {} },
+        beforeRegistrationRegister: () =>
+          Deferred.succeed(writing, undefined).pipe(Effect.andThen(Deferred.await(release))),
+      });
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.setAccount(A);
+        const save = yield* registry
+          .register(new RelayConnectionRegistration({ target: RELAY_TARGET }), { forAccount: A })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(writing);
+        const interrupting = yield* Fiber.interrupt(save).pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(interrupting);
+
+        // Owned by A, so B's switch removes it.
+        expect(yield* Ref.get(harness.storedOwners)).toEqual({
+          lastAccount: A,
+          machines: { [RELAY]: A },
+        });
+        yield* registry.setAccount(B);
+        expect(hasRoutes(yield* Ref.get(harness.storedTargets), RELAY)).toBe(false);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );
