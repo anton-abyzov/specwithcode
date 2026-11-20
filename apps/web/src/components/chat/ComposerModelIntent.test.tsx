@@ -4,10 +4,13 @@ import { describe, expect, it } from "vite-plus/test";
 import { ComposerModelIntent } from "./ComposerModelIntent";
 import { composerChipModel } from "./composerModelDisplay";
 const saved = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
-const picked = { instanceId: ProviderInstanceId.make("acpRegistry_copilot"), model: "claude-opus-5.5" };
+const picked = {
+  instanceId: ProviderInstanceId.make("acpRegistry_copilot"),
+  model: "claude-opus-5.5",
+};
 function render(current = saved, pick = picked, explicit = true, running = false, routed = false) {
   const chip = composerChipModel({ current, pick, pickExplicit: explicit, turnRunning: running });
-  return renderToStaticMarkup(<ComposerModelIntent state={chip.state} routed={routed}/>);
+  return renderToStaticMarkup(<ComposerModelIntent state={chip.state} routed={routed} />);
 }
 describe("composer model intent with resolved chip state", () => {
   it("explains the idle resolved pick without changing either identity", () => {
@@ -15,8 +18,12 @@ describe("composer model intent with resolved chip state", () => {
     expect(render()).toContain("Composer selection differs from the thread model.");
     expect(JSON.stringify({ saved, picked })).toBe(before);
   });
-  it("clears after server adoption", () => { expect(render(picked)).toBe(""); });
-  it("does not label a seeded draft", () => { expect(render(saved, picked, false)).toBe(""); });
+  it("clears after server adoption", () => {
+    expect(render(picked)).toBe("");
+  });
+  it("does not label a seeded draft", () => {
+    expect(render(saved, picked, false)).toBe("");
+  });
   it("does not duplicate the running next-model chip", () => {
     expect(render(saved, picked, true, true)).toBe("");
   });
