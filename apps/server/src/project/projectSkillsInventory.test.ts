@@ -301,6 +301,30 @@ describe("buildProjectSkillRows", () => {
     assert.strictEqual(withCopies.lock?.lockScope, "project");
   });
 
+  it("does not call a copy clean when its lock names another folder", () => {
+    const content = "---\nname: notes\n---\nBody\n";
+    const build = (folder: string, installedPath: string | null) => {
+      const path = `${CWD}/${folder}/notes/SKILL.md`;
+      return buildProjectSkillRows({
+        cwd: CWD,
+        providers: [provider("copilot", "acpRegistry", "GitHub Copilot", [skill("notes", path)])],
+        locks: [
+          lock("project", {
+            notes: lockEntry({ sha: vskillContentSha(content), installedPath }),
+          }),
+        ],
+        files: new Map([[path, fact(path, content)]]),
+        doctor: [],
+      })[0]!;
+    };
+    const elsewhere = build("drafts", ".agents/skills/notes");
+    assert.strictEqual(elsewhere.drift, "unknown");
+    assert.match(elsewhere.issues.join(" "), /names another folder \(\.agents\/skills\/notes\)/);
+    // The folder the lock names, and a lock that names none, compare as before.
+    assert.strictEqual(build(".agents/skills", ".agents/skills/notes").drift, "match");
+    assert.strictEqual(build("drafts", null).drift, "match");
+  });
+
   it("joins providers by name, with lock info and a matching digest", () => {
     const content = "---\nname: deploy\n---\nBody\n";
     const projectPath = `${CWD}/.claude/skills/deploy/SKILL.md`;

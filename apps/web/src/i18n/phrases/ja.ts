@@ -5391,7 +5391,7 @@ export const ja: PhraseCatalog = {
   "Could not be read": "読み取れませんでした",
   "copies differ": "コピーに差異あり",
   "Across machines": "マシン間の比較",
-  "No skills on the machines that were read.": "読み取ったマシンにスキルはありません。",
+  "No skills reported in these reads.": "今回の読み取りではスキルが報告されませんでした。",
   "Showing the first 32 machines. Open Connections to inspect the rest.":
     "最初の 32 台を表示しています。残りは「接続」で確認できます。",
   "The machine list could not be refreshed. Listed machines may be out of date.":

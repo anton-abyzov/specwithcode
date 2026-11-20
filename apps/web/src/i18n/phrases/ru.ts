@@ -5388,7 +5388,7 @@ export const ru: PhraseCatalog = {
   "Could not be read": "Не удалось прочитать",
   "copies differ": "копии различаются",
   "Across machines": "По всем компьютерам",
-  "No skills on the machines that were read.": "На прочитанных компьютерах нет навыков.",
+  "No skills reported in these reads.": "В этих чтениях навыки не найдены.",
   "Showing the first 32 machines. Open Connections to inspect the rest.":
     "Показаны первые 32 компьютера. Остальные смотрите в разделе «Подключения».",
   "The machine list could not be refreshed. Listed machines may be out of date.":

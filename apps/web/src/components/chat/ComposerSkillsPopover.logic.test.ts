@@ -628,6 +628,52 @@ describe("skills an agent only advertises by name", () => {
     });
   });
 
+  it("does not settle on one file, or on none, when the scan could not open every folder", () => {
+    const notes = row({
+      name: "notes",
+      providers: [
+        file({
+          path: "/work/.agents/skills/notes/SKILL.md",
+          scope: "project",
+          fileVersion: "1.0.0",
+        }),
+      ],
+    });
+    const partial = (rows: ProjectSkillRow[]) =>
+      only(
+        buildComposerSkillGroups({
+          skills: [advertised("notes")],
+          instanceId: "copilot",
+          snapshot: {
+            rows,
+            providers: [
+              {
+                instanceId: "copilot",
+                driver: "acpRegistry",
+                label: "Copilot",
+                state: "unsupported",
+                skills: rows.length,
+                incomplete: true,
+              },
+            ] as never,
+          },
+          uses: [],
+        }),
+      );
+    expect(partial([notes])).toMatchObject({
+      level: "several",
+      levelLabel: "1 file found",
+      version: { value: null, source: null },
+      detail:
+        "Found at Project v1.0.0. Some skill folders could not be opened, so another copy may exist.",
+    });
+    expect(partial([]).detail).toBe(
+      "Listed by the agent. No file found, but some skill folders could not be opened.",
+    );
+    // A complete scan still settles on the one file.
+    expect(only(build([advertised("notes")], [notes])).location.kind).toBe("matched");
+  });
+
   it("opens Settings under the row's own name when the advertised name differs in case", () => {
     const unlocked = row({
       name: "notes",

@@ -689,7 +689,25 @@ export function buildProjectSkillRows(
       const compared = (scoped.length > 0 ? scoped : facts).flatMap(({ fact }) =>
         fact.digest === null ? [] : [{ fact, digest: fact.digest }],
       );
-      if (!entry.sha || !lockSupportsDrift(entry)) {
+      // A lock that names its own folder vouches for the copies in that folder only.
+      const lockedFolder = entry.installedPath
+        ? NodePath.resolve(source.root, entry.installedPath)
+        : null;
+      const elsewhere =
+        lockedFolder !== null &&
+        !entry.pluginDir &&
+        row.presences.length > 0 &&
+        !row.presences.some(
+          (pending) =>
+            isInside(lockedFolder, pending.presence.path) ||
+            isInside(lockedFolder, pending.realPath),
+        );
+      if (elsewhere) {
+        drift = "unknown";
+        issues.push(
+          `The lock entry names another folder (${entry.installedPath}); these copies were not compared with it.`,
+        );
+      } else if (!entry.sha || !lockSupportsDrift(entry)) {
         drift = "unknown";
       } else if (compared.length === 0) {
         drift = "unknown";
@@ -710,7 +728,9 @@ export function buildProjectSkillRows(
     const missing = presences.length === 0;
     const staleLock = missing && staleKeys.has(row.name);
     if (staleLock) {
-      issues.push("Stale lock entry: a vskill lockfile lists it, but nothing is on disk.");
+      issues.push(
+        "Stale lock entry: a vskill lockfile lists it, but no copy was found in the paths checked.",
+      );
     } else if (missing) {
       issues.push("A vskill lockfile lists it, but no agent listed a copy in this read.");
     }

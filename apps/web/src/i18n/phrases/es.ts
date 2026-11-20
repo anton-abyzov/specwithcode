@@ -5413,7 +5413,7 @@ export const es: PhraseCatalog = {
   "Could not be read": "No se pudo leer",
   "copies differ": "las copias difieren",
   "Across machines": "Entre equipos",
-  "No skills on the machines that were read.": "No hay skills en los equipos leídos.",
+  "No skills reported in these reads.": "No se informó de ningún skill en estas lecturas.",
   "Showing the first 32 machines. Open Connections to inspect the rest.":
     "Se muestran los primeros 32 equipos. Abre Conexiones para ver el resto.",
   "The machine list could not be refreshed. Listed machines may be out of date.":

@@ -351,7 +351,9 @@ function matchesQuery(item: ComposerSkillItem, query: string): boolean {
 export function buildComposerSkillGroups(input: {
   readonly skills: ReadonlyArray<ServerProviderSkill>;
   readonly instanceId: string | null;
-  readonly snapshot: Pick<ProjectSkillsSnapshot, "rows"> | null;
+  readonly snapshot:
+    | (Pick<ProjectSkillsSnapshot, "rows"> & Partial<Pick<ProjectSkillsSnapshot, "providers">>)
+    | null;
   /**
    * False once the folder inventory is known to be unavailable (it failed, or
    * there is no project). Then a missing snapshot is "not read", not "checking".
@@ -416,14 +418,32 @@ export function buildComposerSkillGroups(input: {
               "Listed by the agent. Skill folders were not read, so its location is not known.",
           };
     const files = composerSkillFilesNamed(snapshot, input.instanceId, skill.name);
+    // A scan that could not open every folder proves neither absence nor a single copy.
+    const partial =
+      snapshot.providers?.find((provider) => provider.instanceId === input.instanceId)
+        ?.incomplete === true;
     if (files.length === 0)
       return {
         level: "unknown",
         levelLabel: "Location unknown",
         location: { kind: "unknown" },
         version: { value: null, source: null },
-        detail: "Listed by the agent. No file found under this name.",
+        detail: partial
+          ? "Listed by the agent. No file found, but some skill folders could not be opened."
+          : "Listed by the agent. No file found under this name.",
       };
+    if (files.length === 1 && partial) {
+      const found = files[0]!;
+      return {
+        level: "several",
+        levelLabel: "1 file found",
+        location: { kind: "several", files },
+        version: { value: null, source: null },
+        detail: `Found at ${[found.levelLabel, versionWords(found.version)]
+          .filter(Boolean)
+          .join(" ")}. Some skill folders could not be opened, so another copy may exist.`,
+      };
+    }
     if (files.length > 1)
       return {
         level: "several",

@@ -5324,7 +5324,7 @@ export const ko: PhraseCatalog = {
   "Could not be read": "읽을 수 없음",
   "copies differ": "사본이 서로 다름",
   "Across machines": "컴퓨터 간 비교",
-  "No skills on the machines that were read.": "읽은 컴퓨터에 스킬이 없습니다.",
+  "No skills reported in these reads.": "이번 읽기에서 보고된 스킬이 없습니다.",
   "Showing the first 32 machines. Open Connections to inspect the rest.":
     "처음 32대만 표시합니다. 나머지는 연결에서 확인하세요.",
   "The machine list could not be refreshed. Listed machines may be out of date.":

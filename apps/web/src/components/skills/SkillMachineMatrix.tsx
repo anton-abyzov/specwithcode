@@ -265,9 +265,7 @@ export function SkillMachineMatrix({
           </p>
         </div>
       ) : (
-        <p className="text-sm text-muted-foreground">
-          {tx("No skills on the machines that were read.")}
-        </p>
+        <p className="text-sm text-muted-foreground">{tx("No skills reported in these reads.")}</p>
       )}
       {matrix.rows.length > 0 && matched.length === 0 ? (
         <p className="text-sm text-muted-foreground">{tx("No skills match.")}</p>

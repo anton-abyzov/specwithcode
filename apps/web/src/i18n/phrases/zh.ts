@@ -5173,7 +5173,7 @@ export const zh: PhraseCatalog = {
   "Could not be read": "无法读取",
   "copies differ": "副本不一致",
   "Across machines": "跨计算机",
-  "No skills on the machines that were read.": "已读取的计算机上没有技能。",
+  "No skills reported in these reads.": "这些读取未报告任何技能。",
   "Showing the first 32 machines. Open Connections to inspect the rest.":
     "显示前 32 台计算机。其余请在“连接”中查看。",
   "The machine list could not be refreshed. Listed machines may be out of date.":

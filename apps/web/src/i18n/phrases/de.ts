@@ -5425,7 +5425,7 @@ export const de: PhraseCatalog = {
   "Could not be read": "Konnte nicht gelesen werden",
   "copies differ": "Kopien weichen ab",
   "Across machines": "Alle Computer im Vergleich",
-  "No skills on the machines that were read.": "Auf den gelesenen Computern gibt es keine Skills.",
+  "No skills reported in these reads.": "In diesen Lesevorgängen wurden keine Skills gemeldet.",
   "Showing the first 32 machines. Open Connections to inspect the rest.":
     "Die ersten 32 Computer werden angezeigt. Öffnen Sie Verbindungen für die übrigen.",
   "The machine list could not be refreshed. Listed machines may be out of date.":

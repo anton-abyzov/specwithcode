@@ -5433,7 +5433,7 @@ export const fr: PhraseCatalog = {
   "Could not be read": "Lecture impossible",
   "copies differ": "les copies diffèrent",
   "Across machines": "Entre machines",
-  "No skills on the machines that were read.": "Aucun skill sur les machines lues.",
+  "No skills reported in these reads.": "Aucun skill signalé dans ces lectures.",
   "Showing the first 32 machines. Open Connections to inspect the rest.":
     "Les 32 premières machines sont affichées. Ouvrez Connexions pour voir les autres.",
   "The machine list could not be refreshed. Listed machines may be out of date.":
