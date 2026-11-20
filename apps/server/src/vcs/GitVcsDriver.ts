@@ -1387,7 +1387,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             });
       const preserved =
         checkpointBody !== null && checkpointBody.exitCode === 0 && !checkpointBody.stdoutTruncated
-          ? checkpointIgnoredPaths(checkpointBody.stdout)?.toSorted() ?? null
+          ? checkpointIgnoredPaths(checkpointBody.stdout)
           : null;
       const preservedSet = new Set(preserved ?? []);
       // Git prints the prefix with one trailing newline; directory names may have spaces.
@@ -1491,15 +1491,14 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         Effect.map((entries) => entries.length === 0),
         Effect.orElseSucceed(() => false),
       );
-      const isPreserved = (fullName: string) => {
-        if (preservedSet.has(fullName)) return true;
+      // The recorded entry that is or contains this path, if any.
+      const preservedEntry = (fullName: string) => {
         for (let slash = fullName.indexOf("/"); slash !== -1; ) {
-          if (slash < fullName.length - 1 && preservedSet.has(fullName.slice(0, slash + 1))) {
-            return true;
-          }
+          const directory = fullName.slice(0, slash + 1);
+          if (preservedSet.has(directory)) return directory;
           slash = fullName.indexOf("/", slash + 1);
         }
-        return false;
+        return preservedSet.has(fullName) ? fullName : null;
       };
       // Git cannot list with NUL separators while cleaning, so list first.
       const listUntracked = (ignored: boolean) =>
@@ -1509,9 +1508,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           args: [
             "ls-files",
             "--others",
-            ...(ignored ? ["--ignored"] : []),
+            // Visible files are listed one by one, so each exposed recorded path shows.
+            ...(ignored ? ["--ignored", "--directory"] : []),
             "--exclude-standard",
-            "--directory",
             "--full-name",
             "-z",
             "--",
@@ -1534,19 +1533,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         if (visible === null) return null;
         const exposed = new Set<string>();
         for (const entry of visible) {
-          if (isPreserved(entry)) exposed.add(entry);
-          if (!entry.endsWith("/")) continue;
-          // Everything recorded inside a visible directory sorts right after it.
-          let low = 0;
-          let high = preserved.length;
-          while (low < high) {
-            const middle = (low + high) >> 1;
-            if (preserved[middle]! < entry) low = middle + 1;
-            else high = middle;
-          }
-          for (let index = low; preserved[index]?.startsWith(entry); index++) {
-            exposed.add(preserved[index]!);
-          }
+          const kept = preservedEntry(entry);
+          if (kept !== null) exposed.add(kept);
         }
         const args = [...exposed].flatMap((entry) => {
           const literal = entry.replace(/[\\*?[]/g, "\\$&");
@@ -1579,7 +1567,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           (entry) =>
             (entry === ".gitignore" || entry.endsWith("/.gitignore")) &&
             entry.startsWith(workspacePrefix) &&
-            !isPreserved(entry),
+            preservedEntry(entry) === null,
         );
         for (const entry of created) {
           const relative = entry.slice(workspacePrefix.length);
