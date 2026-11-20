@@ -180,7 +180,7 @@ export interface TrackSource {
   readonly hold: SourceHold | null;
   /**
    * Whether the app starts work here by itself. False for a held source nobody
-   * named, and for any held source in Review, which never reviews on one.
+   * named. Review also excludes per-use sources other than explicitly named Gemini.
    */
   readonly used: boolean;
   /**

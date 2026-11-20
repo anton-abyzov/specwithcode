@@ -15,10 +15,11 @@ const state = vi.hoisted(() => ({
   update: vi.fn(),
   refresh: vi.fn(() => Promise.resolve()),
   providers: [] as unknown[],
+  projectModel: null as { instanceId: string; model: string } | null,
 }));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({
-    environments: [{ environmentId: "mac", serverConfig: { providers: state.providers } }],
+    environments: [{ environmentId: "mac", serverConfig: { providers: state.providers, settings: state.settings } }],
   }),
 }));
 vi.mock("../../state/server", () => ({
@@ -27,7 +28,12 @@ vi.mock("../../state/server", () => ({
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.refresh }));
 vi.mock("./SettingsScopeContext", () => ({
-  useSettingsScope: () => ({ scope: { kind: "machine" }, target: { environmentId: "mac" } }),
+  useSettingsScope: () => state.projectModel
+    ? {
+        scope: { kind: "project", members: [{ id: "project", environmentId: "mac", defaultModelSelection: state.projectModel }] },
+        target: { environmentId: "mac", projectId: "project" },
+      }
+    : { scope: { kind: "environment" }, target: { environmentId: "mac" } },
 }));
 vi.mock("./useScopedSettings", () => ({
   useScopedSettings: () => state.settings,
@@ -140,6 +146,7 @@ beforeEach(() => {
     },
   } as typeof DEFAULT_SERVER_SETTINGS;
   state.providers = [claude, muse, codex];
+  state.projectModel = null;
   state.update.mockReset();
   state.refresh.mockClear();
 });
@@ -168,6 +175,17 @@ describe("ModelTracksSettings Review card", () => {
     expect(line).toContain("Work by claude-opus-5-5 or claude-fable-5-2");
     expect(line).toContain("muse-wonder-full-1.0 on Muse Code");
     expect(line).toContain("claude-opus-5-5 skipped: same family");
+  });
+
+  it("previews reviews for the saved one-model project selection", () => {
+    state.settings = { ...state.settings, threadModelMode: "model" };
+    state.projectModel = sel("codex", "gpt-6.1-sol");
+    act(() => {
+      renderer = create(<ModelTracksSettings tracks={["review"]} />);
+    });
+    const rule = renderer!.root.find((node) => node.props["data-review-rule"] !== undefined);
+    expect(textOf(rule)).toContain("Work by gpt-6.1-sol");
+    expect(textOf(rule)).not.toContain("Work by claude-opus-5-5");
   });
 
   it("says why Claude's usage is unknown and checks it again", () => {

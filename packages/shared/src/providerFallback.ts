@@ -244,11 +244,12 @@ export function hasUsableFallbackCapacity(
   if (
     limits.windows.some(
       (window) =>
-        !Number.isFinite(window.usedPercent) ||
-        window.usedPercent < 0 ||
-        (window.usedPercent >= 100 &&
-          window.resetsAt !== undefined &&
-          Date.parse(window.resetsAt) <= nowMs),
+        windowAppliesToModel(window, model) &&
+        (!Number.isFinite(window.usedPercent) ||
+          window.usedPercent < 0 ||
+          (window.usedPercent >= 100 &&
+            window.resetsAt !== undefined &&
+            Date.parse(window.resetsAt) <= nowMs)),
     )
   )
     return false;
