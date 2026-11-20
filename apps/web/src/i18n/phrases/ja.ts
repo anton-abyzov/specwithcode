@@ -4,6 +4,7 @@ import { handoffJa } from "./handoff/ja";
 import { iphoneJa } from "./iphone/ja";
 import { machineLabelsJa } from "./machineLabels/ja";
 import { actionMachineJa } from "./actionMachine/ja";
+import { providerSignInJa } from "./providerSignIn/ja";
 
 /** Japanese Settings titles and labels. "スレッド" for thread, as in the message catalog. */
 export const ja: PhraseCatalog = {
@@ -12,6 +13,7 @@ export const ja: PhraseCatalog = {
   ...iphoneJa,
   ...machineLabelsJa,
   ...actionMachineJa,
+  ...providerSignInJa,
   About: "このアプリについて",
   "Accent color": "アクセントカラー",
   Account: "アカウント",
@@ -4946,7 +4948,6 @@ export const ja: PhraseCatalog = {
   "{count} tools are missing or out of date on this machine.":
     "このマシンで {count} 個のツールが不足しているか古くなっています。",
   "Install everything missing": "不足しているものをすべてインストール",
-  "Already on {environmentLabel}": "{environmentLabel} にすでにあります",
   "GitHub Copilot in VS Code": "VS Code の GitHub Copilot",
   "GitHub CLI signed in as {account} on {host}":
     "GitHub CLI は {host} で {account} としてサインイン済み",

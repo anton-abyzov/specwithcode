@@ -4,6 +4,7 @@ import { handoffFr } from "./handoff/fr";
 import { iphoneFr } from "./iphone/fr";
 import { machineLabelsFr } from "./machineLabels/fr";
 import { actionMachineFr } from "./actionMachine/fr";
+import { providerSignInFr } from "./providerSignIn/fr";
 
 /** French Settings titles and labels. "fil" for thread, as in the message catalog. */
 export const fr: PhraseCatalog = {
@@ -12,6 +13,7 @@ export const fr: PhraseCatalog = {
   ...iphoneFr,
   ...machineLabelsFr,
   ...actionMachineFr,
+  ...providerSignInFr,
   About: "À propos",
   "Accent color": "Couleur d’accent",
   Account: "Compte",
@@ -4986,7 +4988,6 @@ export const fr: PhraseCatalog = {
   "{count} tools are missing or out of date on this machine.":
     "{count} outils manquent ou sont obsolètes sur cette machine.",
   "Install everything missing": "Installer tout ce qui manque",
-  "Already on {environmentLabel}": "Déjà sur {environmentLabel}",
   "GitHub Copilot in VS Code": "GitHub Copilot dans VS Code",
   "GitHub CLI signed in as {account} on {host}":
     "GitHub CLI connecté en tant que {account} sur {host}",

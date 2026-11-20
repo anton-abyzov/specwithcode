@@ -4,6 +4,7 @@ import { handoffKo } from "./handoff/ko";
 import { iphoneKo } from "./iphone/ko";
 import { machineLabelsKo } from "./machineLabels/ko";
 import { actionMachineKo } from "./actionMachine/ko";
+import { providerSignInKo } from "./providerSignIn/ko";
 
 /** Korean Settings titles and labels. "스레드" for thread, as in the message catalog. */
 export const ko: PhraseCatalog = {
@@ -12,6 +13,7 @@ export const ko: PhraseCatalog = {
   ...iphoneKo,
   ...machineLabelsKo,
   ...actionMachineKo,
+  ...providerSignInKo,
   About: "정보",
   "Accent color": "강조 색상",
   Account: "계정",
@@ -4888,7 +4890,6 @@ export const ko: PhraseCatalog = {
   "{count} tools are missing or out of date on this machine.":
     "이 컴퓨터에 도구 {count}개가 없거나 오래되었습니다.",
   "Install everything missing": "없는 항목 모두 설치",
-  "Already on {environmentLabel}": "이미 {environmentLabel}에 있음",
   "GitHub Copilot in VS Code": "VS Code의 GitHub Copilot",
   "GitHub CLI signed in as {account} on {host}": "GitHub CLI가 {host}에 {account}(으)로 로그인됨",
   "Copilot CLI keeps its own sign-in. Sign in once with the same account; the code goes to {host}.":

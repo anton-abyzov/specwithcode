@@ -4,6 +4,7 @@ import { handoffRu } from "./handoff/ru";
 import { iphoneRu } from "./iphone/ru";
 import { machineLabelsRu } from "./machineLabels/ru";
 import { actionMachineRu } from "./actionMachine/ru";
+import { providerSignInRu } from "./providerSignIn/ru";
 
 /** Russian Settings titles and labels. "тред" for thread, as in the message catalog. */
 export const ru: PhraseCatalog = {
@@ -12,6 +13,7 @@ export const ru: PhraseCatalog = {
   ...iphoneRu,
   ...machineLabelsRu,
   ...actionMachineRu,
+  ...providerSignInRu,
   About: "О приложении",
   "Accent color": "Акцентный цвет",
   Account: "Аккаунт",
@@ -4941,7 +4943,6 @@ export const ru: PhraseCatalog = {
   "{count} tools are missing or out of date on this machine.":
     "Инструментов отсутствует или устарело на этой машине: {count}.",
   "Install everything missing": "Установить всё недостающее",
-  "Already on {environmentLabel}": "Уже на {environmentLabel}",
   "GitHub Copilot in VS Code": "GitHub Copilot в VS Code",
   "GitHub CLI signed in as {account} on {host}":
     "GitHub CLI: вход выполнен как {account} на {host}",

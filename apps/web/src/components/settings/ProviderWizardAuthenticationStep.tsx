@@ -7,6 +7,7 @@ import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { Button } from "../ui/button";
 import { WizardFooter, WizardPanel } from "../ui/wizard";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
+import { resolveProviderSignInState } from "./providerSignInState.logic";
 import { SettingsGroup } from "./SettingsGroup";
 import { SettingsRow } from "./settingsLayout";
 
@@ -30,13 +31,15 @@ export function ProviderWizardAuthenticationStep({
     serverEnvironment.providerAuthState({ environmentId, input: { instanceId } }),
   );
   const auth = query.data;
-  const active =
-    auth?.phase === "starting" || auth?.phase === "waiting" || auth?.phase === "verifying";
-  const signedIn =
-    provider?.auth.status === "authenticated" ||
-    (provider?.auth.status === "unknown" && auth?.phase === "succeeded");
-  const isDiscovering = !signedIn && !query.error && auth?.methods === undefined;
-  const canAuthenticate = (auth?.methods?.length ?? 0) > 0;
+  const { active, signedIn } = resolveProviderSignInState({
+    provider,
+    auth,
+    queryError: query.error,
+  });
+  const isDiscovering =
+    provider !== undefined && !signedIn && !query.error && auth?.methods === undefined;
+  // A failed attempt may list no methods; the Account row still offers its next action.
+  const canAuthenticate = (auth?.methods?.length ?? 0) > 0 || auth?.phase === "failed";
 
   return (
     <>
@@ -61,11 +64,28 @@ export function ProviderWizardAuthenticationStep({
             <SettingsRow
               title="Account"
               description={
-                isDiscovering
-                  ? "Discovering sign-in methods…"
-                  : (query.error ??
-                    auth?.message ??
-                    "No in-app sign-in advertised. Follow the provider's docs to finish setup.")
+                isDiscovering ? (
+                  "Discovering sign-in methods…"
+                ) : provider === undefined && !query.error ? (
+                  // The machine has not listed the new provider: its state is unknown, not absent.
+                  <span role="status">
+                    {tx(
+                      "Waiting for {environmentLabel} to report this provider. Its sign-in state is not known yet.",
+                      { environmentLabel },
+                    )}
+                  </span>
+                ) : query.error ? (
+                  // Unread is unknown: say so with the machine, then what went wrong.
+                  <span role="status">
+                    {tx("Could not read the sign-in state on {environmentLabel}.", {
+                      environmentLabel,
+                    })}{" "}
+                    {query.error}
+                  </span>
+                ) : (
+                  (auth?.message ??
+                  "No in-app sign-in advertised. Follow the provider's docs to finish setup.")
+                )
               }
               control={
                 isDiscovering ? (
@@ -88,7 +108,18 @@ export function ProviderWizardAuthenticationStep({
           )}
         </SettingsGroup>
       </WizardPanel>
-      <WizardFooter>
+      <WizardFooter
+        leading={
+          signedIn ? undefined : (
+            <p className="max-w-prose text-xs text-muted-foreground" data-skip-explanation>
+              {tx(
+                "Skip keeps this provider on {environmentLabel} without a sign-in. It cannot run threads there until you sign in under Settings > Providers.",
+                { environmentLabel },
+              )}
+            </p>
+          )
+        }
+      >
         <Button
           size="sm"
           variant={signedIn ? "default" : "outline"}

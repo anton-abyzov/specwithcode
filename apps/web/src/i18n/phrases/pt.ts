@@ -4,6 +4,7 @@ import { handoffPt } from "./handoff/pt";
 import { iphonePt } from "./iphone/pt";
 import { machineLabelsPt } from "./machineLabels/pt";
 import { actionMachinePt } from "./actionMachine/pt";
+import { providerSignInPt } from "./providerSignIn/pt";
 
 /** Brazilian Portuguese Settings titles and labels, "você", as in the message catalog. */
 export const pt: PhraseCatalog = {
@@ -12,6 +13,7 @@ export const pt: PhraseCatalog = {
   ...iphonePt,
   ...machineLabelsPt,
   ...actionMachinePt,
+  ...providerSignInPt,
   About: "Sobre",
   "Accent color": "Cor de destaque",
   Account: "Conta",
@@ -4950,7 +4952,6 @@ export const pt: PhraseCatalog = {
   "{count} tools are missing or out of date on this machine.":
     "{count} ferramentas estão faltando ou desatualizadas nesta máquina.",
   "Install everything missing": "Instalar tudo o que falta",
-  "Already on {environmentLabel}": "Já está em {environmentLabel}",
   "GitHub Copilot in VS Code": "GitHub Copilot no VS Code",
   "GitHub CLI signed in as {account} on {host}": "GitHub CLI conectado como {account} em {host}",
   "Copilot CLI keeps its own sign-in. Sign in once with the same account; the code goes to {host}.":

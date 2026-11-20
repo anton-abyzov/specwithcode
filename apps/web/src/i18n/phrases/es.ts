@@ -4,6 +4,7 @@ import { handoffEs } from "./handoff/es";
 import { iphoneEs } from "./iphone/es";
 import { machineLabelsEs } from "./machineLabels/es";
 import { actionMachineEs } from "./actionMachine/es";
+import { providerSignInEs } from "./providerSignIn/es";
 
 /** Spanish Settings titles and labels. "hilo" for thread, as in the message catalog. */
 export const es: PhraseCatalog = {
@@ -12,6 +13,7 @@ export const es: PhraseCatalog = {
   ...iphoneEs,
   ...machineLabelsEs,
   ...actionMachineEs,
+  ...providerSignInEs,
   About: "Acerca de",
   "Accent color": "Color de acento",
   Account: "Cuenta",
@@ -4969,7 +4971,6 @@ export const es: PhraseCatalog = {
   "{count} tools are missing or out of date on this machine.":
     "Faltan {count} herramientas o están desactualizadas en este equipo.",
   "Install everything missing": "Instalar todo lo que falta",
-  "Already on {environmentLabel}": "Ya está en {environmentLabel}",
   "GitHub Copilot in VS Code": "GitHub Copilot en VS Code",
   "GitHub CLI signed in as {account} on {host}":
     "GitHub CLI con sesión iniciada como {account} en {host}",
