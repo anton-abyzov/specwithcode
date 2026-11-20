@@ -1031,22 +1031,13 @@ export const pt: PhraseCatalog = {
   "Tried top to bottom; the first ready model outside the author's family reviews.{policyTooltip}":
     "Tentados de cima para baixo; revisa o primeiro modelo pronto fora da família do autor.{policyTooltip}",
   "reviewer order": "ordem de revisores",
-  "Customize reviewer order": "Personalizar ordem de revisores",
-  Customize: "Personalizar",
   "No providers available": "Nenhum provedor disponível",
-  "{badge}Each provider's {tierWord} model, other families first. Customize to reorder, add or remove models.":
-    "{badge}O modelo {tierWord} de cada provedor, outras famílias primeiro. Personalize para reordenar, adicionar ou remover modelos.",
   Default: "Padrão",
-  "Reviewer order steps": "Etapas da ordem de revisores",
-  "No provider on this machine has a {tierWord} model to review with.":
-    "Nenhum provedor nesta máquina tem um modelo {tierWord} para revisar.",
   "{value}Availability follows the {button} rules.":
     "{value}A disponibilidade segue as regras da {button}.",
   "This project's own order; reset it to use the {button}.":
     "Ordem própria deste projeto; redefina para usar a {button}.",
   "app-wide reviewer order": "ordem de revisores do app inteiro",
-  "Uses the {button}; customize to give this project its own.":
-    "Usa a {button}; personalize para dar a este projeto uma própria.",
   "App-wide for this machine; a project can set its own in its settings.":
     "Para o app inteiro nesta máquina; um projeto pode definir a sua nas configurações dele.",
   "fallback order": "ordem de fallback",

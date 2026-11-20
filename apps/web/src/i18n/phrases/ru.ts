@@ -1026,22 +1026,13 @@ export const ru: PhraseCatalog = {
   "Tried top to bottom; the first ready model outside the author's family reviews.{policyTooltip}":
     "Перебираются сверху вниз; проверяет первая готовая модель не из семейства автора.{policyTooltip}",
   "reviewer order": "порядок рецензентов",
-  "Customize reviewer order": "Настроить порядок рецензентов",
-  Customize: "Настроить",
   "No providers available": "Нет доступных провайдеров",
-  "{badge}Each provider's {tierWord} model, other families first. Customize to reorder, add or remove models.":
-    "{badge}Модель уровня «{tierWord}» каждого провайдера, сначала другие семейства. Настройте, чтобы менять порядок, добавлять или убирать модели.",
   Default: "По умолчанию",
-  "Reviewer order steps": "Шаги порядка рецензентов",
-  "No provider on this machine has a {tierWord} model to review with.":
-    "Ни у одного провайдера на этой машине нет модели уровня «{tierWord}» для проверки.",
   "{value}Availability follows the {button} rules.":
     "{value}Доступность определяется правилами {button}.",
   "This project's own order; reset it to use the {button}.":
     "Собственный порядок этого проекта; сбросьте его, чтобы использовать {button}.",
   "app-wide reviewer order": "общий порядок рецензентов приложения",
-  "Uses the {button}; customize to give this project its own.":
-    "Используется {button}; настройте, чтобы задать проекту собственный.",
   "App-wide for this machine; a project can set its own in its settings.":
     "Для всего приложения на этой машине; проект может задать свой в своих настройках.",
   "fallback order": "порядка резервирования",

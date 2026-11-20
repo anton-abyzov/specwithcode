@@ -244,17 +244,78 @@ export function hasUsableFallbackCapacity(
   if (
     limits.windows.some(
       (window) =>
-        !Number.isFinite(window.usedPercent) ||
-        window.usedPercent < 0 ||
-        (window.usedPercent >= 100 &&
-          window.resetsAt !== undefined &&
-          Date.parse(window.resetsAt) <= nowMs),
+        windowAppliesToModel(window, model) &&
+        (!Number.isFinite(window.usedPercent) ||
+          window.usedPercent < 0 ||
+          (window.usedPercent >= 100 &&
+            window.resetsAt !== undefined &&
+            Date.parse(window.resetsAt) <= nowMs)),
     )
   )
     return false;
   const used = providerUsedPercent(provider, nowMs, model);
   // A reset passing is not evidence of renewed allowance. Refresh first.
   return used !== null && Number.isFinite(used) && used >= 0 && used < 100;
+}
+
+/**
+ * Why a source that can take a turn still has no usable usage reading: the
+ * reasons `hasUsableFallbackCapacity` says no. Such a source is "usage
+ * unknown", so a fallback or a review prefers a source with a fresh reading.
+ */
+export type UsageUnknownReason =
+  /** This sign-in never reports usage (an API key or a cloud account). */
+  | { readonly kind: "cannot-report" }
+  /** The last usage check failed. */
+  | { readonly kind: "check-failed"; readonly message: string | null }
+  /** No reading in the last five minutes; `readAt` is the last one, when there was one. */
+  | { readonly kind: "stale"; readonly readAt: number | null }
+  /** The check returned no usable allowance for this model. */
+  | { readonly kind: "no-model-window" }
+  /** A turn was refused after the last reading. */
+  | { readonly kind: "refused" }
+  /** A limit reset passed since the last reading. */
+  | { readonly kind: "reset-passed" }
+  /** The sign-in is not confirmed yet. */
+  | { readonly kind: "sign-in-unconfirmed" };
+
+/**
+ * The reason a signed-in, ready source counts as "usage unknown", or null when
+ * its usage is known (or it reports none, or it cannot take a turn at all,
+ * which other states describe).
+ */
+export function usageUnknownReason(
+  provider: ServerProvider,
+  nowMs: number,
+  model?: string | null,
+): UsageUnknownReason | null {
+  if (reportsNoUsage(provider) || !canTakeTurn(provider, model)) return null;
+  if (provider.auth.status === "unauthenticated") return null;
+  if (hasUsableFallbackCapacity(provider, nowMs, model)) return null;
+  const used = providerUsedPercent(provider, nowMs, model);
+  if (used !== null && used >= 100) return null;
+  if (provider.auth.status !== "authenticated") return { kind: "sign-in-unconfirmed" };
+  const limits = provider.usageLimits;
+  if (limits === undefined) return null;
+  if (limits.unavailable?.reason === "unsupported") return { kind: "cannot-report" };
+  if (limits.unavailable !== undefined)
+    return { kind: "check-failed", message: limits.unavailable.message ?? null };
+  const observedAt = Date.parse(limits.nativeAllowanceObservedAt ?? limits.checkedAt);
+  if (!Number.isFinite(observedAt) || observedAt > nowMs) return { kind: "stale", readAt: null };
+  if (nowMs - observedAt > FALLBACK_USAGE_MAX_AGE_MS) return { kind: "stale", readAt: observedAt };
+  const deniedAt = Date.parse(limits.nativeDenialObservedAt ?? "");
+  if (Number.isFinite(deniedAt) && deniedAt >= observedAt) return { kind: "refused" };
+  if (
+    limits.windows.some(
+      (window) =>
+        windowAppliesToModel(window, model) &&
+        window.usedPercent >= 100 &&
+        window.resetsAt !== undefined &&
+        Date.parse(window.resetsAt) <= nowMs,
+    )
+  )
+    return { kind: "reset-passed" };
+  return { kind: "no-model-window" };
 }
 
 /**

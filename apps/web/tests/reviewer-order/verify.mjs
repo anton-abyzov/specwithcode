@@ -55,22 +55,18 @@ try {
     });
     page.on("pageerror", (error) => errors.push(String(error)));
     await page.goto(`${origin}/?theme=${theme}&scope=${scope}&state=${state}&fallback=1`);
-    const steps = page.getByRole("list", { name: "Reviewer order steps" });
+    const steps = page.getByRole("list", { name: "Review order", exact: true });
     await steps.waitFor();
     const rows = steps.locator(":scope > li");
     if (state === "default") {
-      NodeAssert.equal(await page.locator("[data-reviewer-order=default]").count(), 1);
-      // Codex is at its weekly limit, so its Copilot alternates are tried next.
-      NodeAssert.match(await rows.nth(0).innerText(), /GPT-6\.1 Sol[\s\S]*Full until/);
-      const alternates = await rows.nth(0).getByRole("list").innerText();
-      NodeAssert.match(alternates, /Copilot Enterprise \(abycrash\)[\s\S]*Ready/);
-      NodeAssert.match(alternates, /Copilot personal \(anton-abyzov\)[\s\S]*Signed out/);
-      NodeAssert.match(alternates, /Devin[\s\S]*Billing unknown/);
-      NodeAssert.equal(await steps.getByRole("button", { name: /^Move / }).count(), 0);
+      const sol = rows.filter({ hasText: "GPT-6.1 Sol" });
+      NodeAssert.match(await sol.innerText(), /Limit until/);
+      NodeAssert.match(await sol.innerText(), /Copilot Enterprise/);
+      NodeAssert.match(await sol.innerText(), /Copilot personal/);
+      NodeAssert.match(await sol.innerText(), /Devin[\s\S]*Billing unknown/);
     } else {
-      NodeAssert.equal(await page.locator("[data-reviewer-order=custom]").count(), 1);
       NodeAssert.match(await rows.nth(0).innerText(), /Muse Wonder 1\.0[\s\S]*Ready/);
-      await page.getByRole("button", { name: "Add a reviewer model" }).waitFor();
+      await page.getByRole("button", { name: "Add model to Review" }).waitFor();
       NodeAssert.ok(await page.getByText("app-wide reviewer order").isVisible());
     }
     const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
@@ -81,22 +77,16 @@ try {
     await page.close();
   }
 
-  // Customize turns the default into an editable order, then a step moves.
+  // A saved order can remove a reviewer and return to the built-in order.
   const page = await browser.newPage({ viewport: { width: 1024, height: 900 } });
   page.on("pageerror", (error) => errors.push(String(error)));
-  await page.goto(`${origin}/?scope=app&state=default`);
-  await page.getByRole("button", { name: "Customize reviewer order" }).click();
-  await page.locator("[data-reviewer-order=custom]").waitFor();
-  const first = page
-    .getByRole("list", { name: "Reviewer order steps" })
-    .locator(":scope > li")
-    .first();
-  NodeAssert.match(await first.innerText(), /GPT-6\.1 Sol/);
-  await page.getByRole("button", { name: "Move Codex · GPT-6.1 Sol down" }).click();
-  NodeAssert.doesNotMatch(await first.innerText(), /^1?\s*GPT-6\.1 Sol/);
-  await page.getByRole("button", { name: /Reset reviewer order/ }).click();
-  await page.locator("[data-reviewer-order=default]").waitFor();
-  console.log("ok customize, move, reset");
+  await page.goto(`${origin}/?scope=project&state=custom`);
+  const review = page.getByRole("list", { name: "Review order", exact: true });
+  await review.getByRole("button", { name: "Remove Muse Wonder 1.0" }).click();
+  await review.getByRole("button", { name: "Remove Muse Wonder 1.0" }).waitFor({ state: "hidden" });
+  await page.getByRole("button", { name: "Use the built-in order" }).click();
+  await page.getByRole("button", { name: "Use the built-in order" }).waitFor({ state: "hidden" });
+  console.log("ok remove and reset");
   await page.close();
   NodeAssert.deepEqual(errors, []);
 } finally {

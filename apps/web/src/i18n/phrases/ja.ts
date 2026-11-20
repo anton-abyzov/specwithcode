@@ -1028,22 +1028,13 @@ export const ja: PhraseCatalog = {
   "Tried top to bottom; the first ready model outside the author's family reviews.{policyTooltip}":
     "上から順に試し、作成者と別系統で最初に準備できたモデルがレビューします。{policyTooltip}",
   "reviewer order": "レビュアーの順序",
-  "Customize reviewer order": "レビュアーの順序をカスタマイズ",
-  Customize: "カスタマイズ",
   "No providers available": "利用できるプロバイダーがありません",
-  "{badge}Each provider's {tierWord} model, other families first. Customize to reorder, add or remove models.":
-    "{badge}各プロバイダーの{tierWord}モデル。別系統を優先します。カスタマイズで並べ替えや、モデルの追加・削除ができます。",
   Default: "既定",
-  "Reviewer order steps": "レビュアーの順序のステップ",
-  "No provider on this machine has a {tierWord} model to review with.":
-    "このマシンには、レビューに使える{tierWord}モデルを持つプロバイダーがありません。",
   "{value}Availability follows the {button} rules.":
     "{value}利用可否は{button}のルールに従います。",
   "This project's own order; reset it to use the {button}.":
     "このプロジェクト独自の順序です。リセットすると{button}を使います。",
   "app-wide reviewer order": "アプリ全体のレビュアーの順序",
-  "Uses the {button}; customize to give this project its own.":
-    "{button}を使用中です。カスタマイズすると、このプロジェクト独自の順序にできます。",
   "App-wide for this machine; a project can set its own in its settings.":
     "このマシンのアプリ全体に適用されます。プロジェクトは自身の設定で独自に指定できます。",
   "fallback order": "フォールバック順序",

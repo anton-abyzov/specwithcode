@@ -3,15 +3,7 @@ import type { ReviewerStepStatus } from "@specweave-studio/shared/adversarialRev
 import { MODEL_FAMILY_LABELS, type ModelFamily } from "@specweave-studio/shared/fallbackOptions";
 import { createModelSelection } from "@specweave-studio/shared/model";
 import { describeModel } from "@specweave-studio/shared/modelIdentity";
-import {
-  ArrowDownIcon,
-  ArrowUpIcon,
-  ChevronDownIcon,
-  ChevronRightIcon,
-  CornerDownRightIcon,
-  GripVerticalIcon,
-  XIcon,
-} from "lucide-react";
+import { ArrowDownIcon, ArrowUpIcon, GripVerticalIcon, XIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { cn } from "../../lib/utils";
@@ -20,7 +12,6 @@ import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { getLocale, t, useT, type Translate } from "../../i18n";
-import { renderRich } from "../../i18n/rich";
 
 /** At most this many fallback models; the contract refuses more. */
 export const MAX_FALLBACK_MODELS = 8;
@@ -126,8 +117,6 @@ export interface ModelOrderStep {
   readonly status?: ModelOrderStatus | undefined;
   readonly resetAt?: number | null | undefined;
   readonly family?: ModelFamily | undefined;
-  /** The same model on other providers, tried right after this step. */
-  readonly alternates?: ReadonlyArray<ModelOrderStep> | undefined;
 }
 
 function StatusChip(props: { readonly step: ModelOrderStep }) {
@@ -143,8 +132,7 @@ function StatusChip(props: { readonly step: ModelOrderStep }) {
 
 /**
  * A numbered model order, one row per step: provider mark, model, provider
- * account and family, and whether it can take work now. The same model on
- * other providers sits indented under its step. Rows can be moved and removed
+ * account and family, and whether it can take work now. Rows can be moved and removed
  * when `onChange` is given; a default order shows read-only.
  */
 export function ModelOrderList(props: {
@@ -159,8 +147,6 @@ export function ModelOrderList(props: {
   const tr = useT();
   const { label, steps, providers, order, onChange } = props;
   const entries = useMemo(() => deriveProviderInstanceEntries(providers), [providers]);
-  // Alternates start collapsed behind a "+N" chip; a step expands in place.
-  const [expandedAlternates, setExpandedAlternates] = useState<ReadonlySet<string>>(new Set());
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   if (steps.length === 0) return null;
   const editable = onChange !== undefined && order !== undefined;
@@ -206,7 +192,6 @@ export function ModelOrderList(props: {
             )
           : -1;
         const stepKey = `${step.selection.instanceId}:${step.selection.model}`;
-        const alternatesOpen = expandedAlternates.has(stepKey);
         return (
           <li
             key={stepKey}
@@ -291,70 +276,6 @@ export function ModelOrderList(props: {
                 </span>
               ) : null}
             </div>
-            {step.alternates && step.alternates.length > 0 ? (
-              <button
-                type="button"
-                aria-expanded={alternatesOpen}
-                aria-label={`${tr("fallback.sameModelAria", { label: rowLabel })} (${step.alternates.length})`}
-                data-alternates-toggle={rowLabel}
-                className="mt-1.5 ml-[1.375rem] flex items-center gap-1.5 rounded-full border border-border/70 py-0.5 pr-2 pl-1.5 text-xs text-muted-foreground hover:text-foreground"
-                onClick={() =>
-                  setExpandedAlternates((open) => {
-                    const next = new Set(open);
-                    if (next.has(stepKey)) next.delete(stepKey);
-                    else next.add(stepKey);
-                    return next;
-                  })
-                }
-              >
-                {alternatesOpen ? (
-                  <ChevronDownIcon aria-hidden className="size-3 shrink-0" />
-                ) : (
-                  <ChevronRightIcon aria-hidden className="size-3 shrink-0" />
-                )}
-                <span aria-hidden className="flex items-center -space-x-1">
-                  {step.alternates.map((alternate) => (
-                    <span key={`${alternate.selection.instanceId}:${alternate.selection.model}`}>
-                      {icon(identity(alternate.selection).entry, "size-3.5")}
-                    </span>
-                  ))}
-                </span>
-                +{step.alternates.length}
-              </button>
-            ) : null}
-            {step.alternates && step.alternates.length > 0 && alternatesOpen ? (
-              <ul
-                aria-label={tr("fallback.sameModelAria", { label: rowLabel })}
-                className="mt-1.5 ml-[1.375rem] flex flex-col gap-1 border-l border-border/70 pl-3"
-              >
-                {step.alternates.map((alternate) => {
-                  const alt = identity(alternate.selection);
-                  return (
-                    <li
-                      key={`${alternate.selection.instanceId}:${alternate.selection.model}`}
-                      className="flex min-w-0 items-start gap-2 [&>svg]:mt-0.5 [&>span:first-of-type]:mt-px"
-                    >
-                      <CornerDownRightIcon
-                        aria-hidden
-                        className="size-3 shrink-0 text-icon-muted"
-                      />
-                      {icon(alt.entry, "size-3.5")}
-                      <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
-                        <span
-                          className="min-w-[10rem] flex-1 truncate text-xs text-muted-foreground"
-                          data-label={`${alt.providerName} · ${alt.modelName}`}
-                        >
-                          {renderRich(tr("fallback.sameModelOn"), {
-                            provider: <span className="text-foreground">{alt.providerName}</span>,
-                          })}
-                        </span>
-                        <StatusChip step={alternate} />
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-            ) : null}
           </li>
         );
       })}

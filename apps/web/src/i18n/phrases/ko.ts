@@ -1020,22 +1020,13 @@ export const ko: PhraseCatalog = {
   "Tried top to bottom; the first ready model outside the author's family reviews.{policyTooltip}":
     "위에서부터 차례로 시도하며, 작성자와 다른 계열에서 처음 준비된 모델이 검토합니다.{policyTooltip}",
   "reviewer order": "검토자 순서",
-  "Customize reviewer order": "검토자 순서 사용자 지정",
-  Customize: "사용자 지정",
   "No providers available": "사용 가능한 제공업체가 없습니다",
-  "{badge}Each provider's {tierWord} model, other families first. Customize to reorder, add or remove models.":
-    "{badge}각 제공업체의 {tierWord} 모델이며, 다른 계열이 먼저입니다. 사용자 지정으로 순서를 바꾸거나 모델을 추가·제거하세요.",
   Default: "기본값",
-  "Reviewer order steps": "검토자 순서 단계",
-  "No provider on this machine has a {tierWord} model to review with.":
-    "이 컴퓨터에는 검토에 쓸 {tierWord} 모델을 가진 제공업체가 없습니다.",
   "{value}Availability follows the {button} rules.":
     "{value}사용 가능 여부는 {button} 규칙을 따릅니다.",
   "This project's own order; reset it to use the {button}.":
     "이 프로젝트 고유의 순서입니다. 재설정하면 {button}을(를) 사용합니다.",
   "app-wide reviewer order": "앱 전체 검토자 순서",
-  "Uses the {button}; customize to give this project its own.":
-    "{button}을(를) 사용합니다. 사용자 지정하면 이 프로젝트만의 순서를 정할 수 있습니다.",
   "App-wide for this machine; a project can set its own in its settings.":
     "이 컴퓨터의 앱 전체에 적용됩니다. 프로젝트는 자체 설정에서 따로 정할 수 있습니다.",
   "fallback order": "대체 순서",
