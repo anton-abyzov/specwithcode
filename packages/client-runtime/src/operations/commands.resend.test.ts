@@ -727,14 +727,56 @@ describe("message sends across a lost socket", () => {
     }),
   );
 
+  it.effect("keeps waiting without a request when the session it heard about is already gone", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor();
+      const firstAttemptLost = yield* Deferred.make<void>();
+      const record = (command: OrchestrationV2Command) =>
+        Effect.sync(() => {
+          commands.push(command);
+          return { sequence: commands.length };
+        });
+      const lost = makeSession((command) =>
+        Effect.gen(function* () {
+          commands.push(command);
+          yield* SubscriptionRef.set(supervisor.session, Option.none());
+          yield* Deferred.succeed(firstAttemptLost, undefined);
+          return yield* socketClosed();
+        }),
+      );
+      yield* SubscriptionRef.set(supervisor.session, Option.some(lost));
+
+      const unsent: Array<unknown> = [];
+      const sendFiber = yield* send(supervisor, "gone-before-look").pipe(
+        Effect.withTracer(unsentRequests(unsent)),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(firstAttemptLost);
+      yield* TestClock.adjust("1 second");
+      // Subscribers hear about a session the supervisor no longer holds.
+      yield* Effect.sync(() => {
+        PubSub.publishUnsafe(supervisor.session.pubsub, Option.some(makeSession(record)));
+        PubSub.publishUnsafe(supervisor.session.pubsub, Option.none());
+      });
+      yield* TestClock.adjust("1 second");
+      expect(unsent).toEqual([]);
+      expect(sendFiber.pollUnsafe()).toBeUndefined();
+      yield* SubscriptionRef.set(supervisor.session, Option.some(makeSession(record)));
+
+      expect(yield* Fiber.join(sendFiber)).toEqual({ sequence: 2 });
+      expect(unsent).toEqual([]);
+    }),
+  );
+
   it.effect("fails after 2 minutes when the host never answers the projection read", () =>
     Effect.gen(function* () {
       const commands: OrchestrationV2Command[] = [];
       const supervisor = yield* makeSupervisor();
-      const silent = makeSession(
-        (command) => Effect.sync(() => commands.push(command)),
-        { projection: () => v2Projection, readProjection: () => Effect.never },
-      );
+      const silent = makeSession((command) => Effect.sync(() => commands.push(command)), {
+        projection: () => v2Projection,
+        readProjection: () => Effect.never,
+      });
       yield* SubscriptionRef.set(supervisor.session, Option.some(silent));
 
       const waiting = yield* send(supervisor, "read-unanswered").pipe(

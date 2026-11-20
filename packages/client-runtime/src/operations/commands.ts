@@ -496,8 +496,7 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
           break;
         }
         // The socket can also drop before the read acquires it.
-        if (!lostTransport(refreshed.cause) && !noSession(refreshed.cause))
-          return yield* refreshed;
+        if (!lostTransport(refreshed.cause) && !noSession(refreshed.cause)) return yield* refreshed;
         if (!Cause.hasInterruptsOnly(refreshed.cause) && !(yield* sessionGone(refreshSession)))
           return yield* refreshed;
         lostSession = refreshSession;
