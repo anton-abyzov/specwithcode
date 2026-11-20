@@ -22,6 +22,7 @@ import {
   writeConnectSessionRecord,
 } from "./connectSessionRecord";
 import { ConnectRenewResume } from "./ConnectRenewResume";
+import { ConnectMachineOwnersSync } from "./ConnectMachineOwnersSync";
 import { ConnectRouteReconciler } from "./ConnectRouteReconciler";
 import { ConnectSessionGuard } from "./ConnectSessionGuard";
 import { resolveRelayClerkTokenOptions } from "./publicConfig";
@@ -197,6 +198,9 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
       value={isSignedIn && accountPolicy?.accountId === userId ? accountPolicy.policy : null}
     >
       {children}
+      <ConnectMachineOwnersSync
+        account={isLoaded ? (isSignedIn && userId ? userId : null) : undefined}
+      />
       {isLoaded && isSignedIn && userId ? <ConnectRouteReconciler key={userId} /> : null}
       {isLoaded && isSignedIn && userId ? <ConnectSessionGuard key={`guard-${userId}`} /> : null}
       {isLoaded && !isSignedIn ? <ConnectRenewResume /> : null}

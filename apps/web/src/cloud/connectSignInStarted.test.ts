@@ -59,14 +59,24 @@ it("does not follow up a renew that brings back the same account (1417)", () => 
   expect(readConnectSignInStartedNote(2_000)).toEqual({ origin: "renew", renewing: "user-1" });
   for (const sawSignedOut of [true, false])
     expect(
-      signInDialogFollowsUp({ sawSignedOut, started: "renew", renewing: "user-1", account: "user-1" }),
+      signInDialogFollowsUp({
+        sawSignedOut,
+        started: "renew",
+        renewing: "user-1",
+        account: "user-1",
+      }),
     ).toBe(false);
 });
 
 it("follows up another account signing in at the renew's sign-in, or one it cannot tell", () => {
   for (const sawSignedOut of [true, false]) {
     expect(
-      signInDialogFollowsUp({ sawSignedOut, started: "renew", renewing: "user-1", account: "user-2" }),
+      signInDialogFollowsUp({
+        sawSignedOut,
+        started: "renew",
+        renewing: "user-1",
+        account: "user-2",
+      }),
     ).toBe(true);
     expect(
       signInDialogFollowsUp({ sawSignedOut, started: "renew", renewing: null, account: "user-1" }),
