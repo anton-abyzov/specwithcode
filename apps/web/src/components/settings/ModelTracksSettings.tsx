@@ -47,7 +47,7 @@ import {
   type TrackSource,
 } from "@specweave-studio/shared/modelTrackRules";
 import { TRACK_LANES } from "@specweave-studio/shared/modelTracks";
-import { GripVerticalIcon, XIcon } from "lucide-react";
+import { ArrowUpIcon, GripVerticalIcon, XIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import { useTx } from "../../i18n";
@@ -65,6 +65,7 @@ import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { clock } from "./FallbackOrderList";
@@ -79,6 +80,7 @@ import {
   useScopedSettings,
   useScopedSettingsMixed,
   useUpdateScopedSettings,
+  useUpdateTargetEnvironmentSettings,
 } from "./useScopedSettings";
 
 type Tx = ReturnType<typeof useTx>;
@@ -308,6 +310,57 @@ const Note = (props: { readonly tone?: "warning"; readonly children: ReactNode }
   </p>
 );
 
+function replaceEntry(
+  entries: ReadonlyArray<ModelSelection>,
+  selection: ModelSelection,
+  nextModel: string,
+): ReadonlyArray<ModelSelection> | null {
+  const index = entries.findIndex(
+    (entry) => entry.instanceId === selection.instanceId && entry.model === selection.model,
+  );
+  if (index < 0) return null;
+  return entries.map((entry, at) => (at === index ? { ...entry, model: nextModel } : entry));
+}
+
+/** Writes one saved slug to the newer release. Keeps the account and the effort. */
+function TrackUpdateButton(props: {
+  readonly label: string;
+  readonly onHere: () => void;
+  readonly onMachine: (() => void) | null;
+}) {
+  const tx = useTx();
+  const icon = <ArrowUpIcon className="size-3.5" />;
+  if (props.onMachine === null) {
+    return (
+      <Button
+        type="button"
+        variant="outline"
+        size="xs"
+        aria-label={props.label}
+        title={props.label}
+        onClick={props.onHere}
+      >
+        {icon}
+        {tx("Update")}
+      </Button>
+    );
+  }
+  return (
+    <Menu>
+      <MenuTrigger
+        render={<Button type="button" variant="outline" size="xs" aria-label={props.label} />}
+      >
+        {icon}
+        {tx("Update")}
+      </MenuTrigger>
+      <MenuPopup align="end">
+        <MenuItem onClick={props.onHere}>{tx("This project")}</MenuItem>
+        <MenuItem onClick={props.onMachine}>{tx("This machine")}</MenuItem>
+      </MenuPopup>
+    </Menu>
+  );
+}
+
 function TrackCard(props: {
   readonly track: ModelTrack;
   readonly saved: ReadonlyArray<ModelSelection>;
@@ -321,6 +374,16 @@ function TrackCard(props: {
   /** A line under the list, such as when the track applies. */
   readonly note?: ReactNode;
   readonly onSave: (models: ReadonlyArray<ModelSelection>) => void;
+  /**
+   * When set, Update can also write this machine's own list. Absent when the
+   * page is already one machine, or the project spans more than one.
+   */
+  readonly machineUpgrade?:
+    | {
+        readonly can: (selection: ModelSelection) => boolean;
+        readonly write: (selection: ModelSelection, nextModel: string) => void;
+      }
+    | undefined;
 }) {
   const tx = useTx();
   const { track, saved, providers } = props;
@@ -400,6 +463,31 @@ function TrackCard(props: {
                     {tx("Follows newest")}
                   </Badge>
                 ) : null}
+                {row.follows !== null && row.selection !== null && !props.mixed
+                  ? (() => {
+                      const selection = row.selection;
+                      const nextModel = row.follows;
+                      const nextName =
+                        describeModel(
+                          providers.find((entry) => entry.instanceId === selection.instanceId),
+                          nextModel,
+                        ).name ?? nextModel;
+                      const updated = replaceEntry(current, selection, nextModel);
+                      if (updated === null) return null;
+                      const machine = props.machineUpgrade;
+                      return (
+                        <TrackUpdateButton
+                          label={tx("Update to {model}", { model: nextName })}
+                          onHere={() => props.onSave(updated)}
+                          onMachine={
+                            machine !== undefined && machine.can(selection)
+                              ? () => machine.write(selection, nextModel)
+                              : null
+                          }
+                        />
+                      );
+                    })()
+                  : null}
               </div>
               <ul
                 aria-label={`${tx("Sources for")} ${row.name}`}
@@ -574,9 +662,10 @@ function SourcesCard(props: {
  */
 export function ModelTracksSettings({ sources = true }: { readonly sources?: boolean } = {}) {
   const tx = useTx();
-  const { target } = useSettingsScope();
+  const { target, scope } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
+  const updateEnvironment = useUpdateTargetEnvironmentSettings();
   const { environments } = useEnvironments();
   const providers =
     environments.find((environment) => environment.environmentId === target?.environmentId)
@@ -600,6 +689,45 @@ export function ModelTracksSettings({ sources = true }: { readonly sources?: boo
         updateSettings({
           modelLanes: { [TRACK_LANES[track]]: [...models] } as unknown as ModelLanes,
         });
+  const oneMachine =
+    (scope.kind === "project" || scope.kind === "checkout") && scope.environmentIds.length === 1;
+  const machineSettings = oneMachine
+    ? (environments.find((environment) => environment.environmentId === target?.environmentId)
+        ?.serverConfig?.settings ?? null)
+    : null;
+  const machineList = (track: ModelTrack) => {
+    if (machineSettings === null) return [];
+    const saved = savedModelTracks(machineSettings)[track];
+    return describeTrack({
+      track,
+      saved,
+      providers,
+      // The machine's own source order. The page's order can be a project override.
+      sourceOrder: machineSettings.defaultModelProviders ?? [],
+      nowMs,
+    }).flatMap((row) => (row.selection === null ? [] : [row.selection]));
+  };
+  const machineUpgrade = (track: ModelTrack) =>
+    machineSettings === null
+      ? undefined
+      : {
+          can: (selection: ModelSelection) =>
+            machineList(track).some(
+              (entry) =>
+                entry.instanceId === selection.instanceId && entry.model === selection.model,
+            ),
+          write: (selection: ModelSelection, nextModel: string) => {
+            const updated = replaceEntry(machineList(track), selection, nextModel);
+            if (updated === null) return;
+            if (track === "review") {
+              updateEnvironment({ adversarialReview: { reviewers: [...updated] } });
+              return;
+            }
+            updateEnvironment({
+              modelLanes: { [TRACK_LANES[track]]: [...updated] } as unknown as ModelLanes,
+            });
+          },
+        };
 
   const sourceName = (provider: ServerProvider) =>
     entries.find((entry) => entry.instanceId === provider.instanceId)?.displayName ??
@@ -644,6 +772,7 @@ export function ModelTracksSettings({ sources = true }: { readonly sources?: boo
           mixed={track === "review" ? mixedReview : mixedLanes}
           picker={picker(track)}
           onSave={(models) => save(track, models)}
+          machineUpgrade={machineUpgrade(track)}
           note={
             track === "review" && review.tier === "frontier" ? (
               <Note>

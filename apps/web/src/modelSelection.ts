@@ -89,6 +89,10 @@ export interface AppModelOption {
   isDefault?: boolean;
   isLegacy?: boolean;
   isUnavailable?: boolean;
+  /** The release this model replaces, from the provider catalog. */
+  succeeds?: string;
+  /** Absent when the catalog did not report billing. */
+  billing?: ServerProvider["models"][number]["billing"];
 }
 
 function appendUnavailableDynamicModelSelection(
@@ -124,6 +128,8 @@ function toAppModelOption(model: ServerProvider["models"][number]): AppModelOpti
   if (model.badge) option.badge = model.badge;
   if (model.isDefault) option.isDefault = true;
   if (model.isLegacy) option.isLegacy = true;
+  if (model.succeeds) option.succeeds = model.succeeds;
+  if (model.billing) option.billing = model.billing;
   return option;
 }
 

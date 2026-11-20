@@ -831,6 +831,57 @@ describe("a session that would not open for any other reason", () => {
     ).toBeNull();
   });
 
+  it("moves a second barren pending session, and not one failure, work, or Overloaded", () => {
+    const pending = (id: string, ordinal: number, at: number) => ({
+      ...ownRun(id, ordinal, at),
+      providerThreadId: `native-thread:pending:run:${id}` as never,
+    });
+    const barren = {
+      class: "provider_error",
+      code: null,
+      message:
+        "The provider ended this turn with an error but sent no details. Send your message again; if it keeps failing, check the provider setup.",
+    };
+    const first = pending("r40", 40, stoppedAt);
+    const again = pending("r41", 41, stoppedAt + 60_000);
+    const thread = { ...onCopilot(again), latestRunId: again.id };
+    expect(unopenableStop(thread, [again], [failureItem(again, barren)])).toBeNull();
+    expect(
+      unopenableStop(thread, [first, again], [
+        failureItem(first, barren),
+        failureItem(again, barren),
+      ]),
+    ).toMatchObject({ runId: "r41", originRunId: "r41", nextHop: 0, originIsLimit: false });
+    const worked = {
+      type: "assistant_message",
+      id: `${again.id}-assistant`,
+      status: "completed",
+      runId: again.id,
+      nodeId: again.rootNodeId,
+      ordinal: 0,
+      updatedAt: again.completedAt,
+      text: "did work",
+    } as unknown as OrchestrationV2TurnItem;
+    expect(
+      unopenableStop(thread, [first, again], [
+        failureItem(first, barren),
+        worked,
+        failureItem(again, barren),
+      ]),
+    ).toBeNull();
+    const overloaded = { ...again, providerThreadId: null };
+    expect(
+      unopenableStop(
+        { ...onCopilot(overloaded), latestRunId: overloaded.id },
+        [first, overloaded],
+        [
+          failureItem(first, barren),
+          failureItem(overloaded, { class: "provider_error", code: null, message: "Overloaded" }),
+        ],
+      ),
+    ).toBeNull();
+  });
+
   it("stops a chain of fallback targets that would not open after the hop cap", () => {
     const providers = [claudeAt(100), copilotCheckedAt(stoppedAt), codexAt(30)];
     const stepAt = (hop: number) => {

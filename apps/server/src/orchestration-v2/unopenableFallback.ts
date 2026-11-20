@@ -25,8 +25,8 @@ import { CONTEXT_COMPACT_MESSAGE_PREFIX } from "./contextRecoveryIds.ts";
 import {
   apiCreditOrigin,
   epochMs,
+  failedToOpen,
   fallbackMove,
-  isOpenFailure,
   LIMIT_FALLBACK_MESSAGE_PREFIX,
   LIMIT_STOP_MAX_AGE_MS,
   previousOpenFailure,
@@ -140,7 +140,8 @@ type StopThread = Pick<
 
 /**
  * Whether the thread's latest run failed to open its provider, read from the
- * run's own failure (see `isOpenFailure`).
+ * run's own failure (see `isOpenFailure`). A barren pending session, one that
+ * never opened and produced no work, counts as the same kind of failure.
  */
 export function latestOpenFailure(
   thread: StopThread,
@@ -151,7 +152,7 @@ export function latestOpenFailure(
   const run = runs.find((candidate) => candidate.id === thread.latestRunId);
   if (run === undefined) return null;
   const failure = latestRootProviderFailure(run, turnItems);
-  if (!isOpenFailure(failure)) return null;
+  if (!failedToOpen(run, failure, turnItems)) return null;
   return {
     runId: run.id,
     instanceId: run.providerInstanceId,

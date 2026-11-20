@@ -1,11 +1,59 @@
-import type { ProviderInstanceId } from "@specweave-studio/contracts";
+import type { ProviderInstanceId, ServerProviderModel } from "@specweave-studio/contracts";
+import { newerOfFamily } from "@specweave-studio/shared/modelTiers";
 import { modelSearchIdentity } from "./components/chat/modelSearchGroups";
 
 type FollowableModel = {
   readonly slug: string;
   readonly name: string;
   readonly isUnavailable?: boolean | undefined;
+  readonly isCustom?: boolean | undefined;
+  readonly succeeds?: string | undefined;
+  readonly billing?: ServerProviderModel["billing"] | undefined;
 };
+
+/**
+ * The release that replaces `slug` on this provider's list: the same successor a
+ * track row follows (`newerOfFamily`). Same billing only. A custom model and an
+ * unavailable release are not successors. Undefined when the slug is already newest.
+ */
+export function sameBillingSuccessor<T extends FollowableModel>(
+  models: ReadonlyArray<T>,
+  slug: string,
+): string | undefined {
+  const current = models.find((model) => model.slug === slug);
+  if (!current || current.isCustom) return undefined;
+  const catalog = models.flatMap((model) =>
+    model.isUnavailable
+      ? []
+      : [
+          {
+            slug: model.slug,
+            name: model.name,
+            isCustom: model.isCustom === true,
+            capabilities: null,
+            ...(model.succeeds ? { succeeds: model.succeeds } : {}),
+            ...(model.billing ? { billing: model.billing } : {}),
+          },
+        ],
+  );
+  return newerOfFamily({ models: catalog }, slug);
+}
+
+/** One device-local star moves from `from` to `to`. A star already on `to` drops the old one. */
+export function replaceFavoriteModel(
+  favorites: ReadonlyArray<{ readonly provider: ProviderInstanceId; readonly model: string }>,
+  instanceId: ProviderInstanceId,
+  from: string,
+  to: string,
+): Array<{ provider: ProviderInstanceId; model: string }> {
+  const already = favorites.some(
+    (favorite) => favorite.provider === instanceId && favorite.model === to,
+  );
+  return favorites.flatMap((favorite) => {
+    if (favorite.provider !== instanceId || favorite.model !== from) return [favorite];
+    return already ? [] : [{ provider: instanceId, model: to }];
+  });
+}
 
 function compareVersions(a: ReadonlyArray<number>, b: ReadonlyArray<number>): number {
   for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
@@ -58,14 +106,17 @@ export function followedModelUpdates(input: {
     // a brief fallback list) can't be compared, so it stays.
     const currentModel = models.find((model) => model.slug === current);
     if (current !== null && !currentModel) continue;
+    // A sticky model already in the followed family moves only to the successor
+    // a track row would follow. That keeps the saved effort's model line and
+    // refuses a release that costs money or whose billing is unknown.
     if (
       currentModel &&
-      modelSearchIdentity(currentModel).family === family &&
-      compareVersions(
-        modelSearchIdentity(newest).version,
-        modelSearchIdentity(currentModel).version,
-      ) <= 0
+      current !== null &&
+      modelSearchIdentity(currentModel).family === family
     ) {
+      const successor = sameBillingSuccessor(models, current);
+      if (successor && successor !== current)
+        updates.push({ instanceId, from: current, to: successor });
       continue;
     }
     updates.push({ instanceId, from: current, to: newest.slug });

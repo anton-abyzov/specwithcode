@@ -1,7 +1,7 @@
 import { useTx } from "../../i18n";
 import { type ProviderDriverKind, type ProviderInstanceId } from "@specweave-studio/contracts";
 import { memo } from "react";
-import { CheckIcon, StarIcon } from "lucide-react";
+import { ArrowUpIcon, CheckIcon, StarIcon } from "lucide-react";
 import {
   getDisplayModelName,
   getTriggerDisplayModelLabel,
@@ -60,6 +60,11 @@ export const ModelListRow = memo(function ModelListRow(props: {
   warningReason?: string | null;
   /** Its part in a fallback: `Now`, `Your pick`, `Fallback 2`. */
   fallbackRole?: { readonly label: string; readonly tone: "now" | "pick" | "order" } | null;
+  /**
+   * A newer same-billing release of this starred model. The click moves the
+   * star on this device. It does not change a track.
+   */
+  upgradeTo?: { readonly label: string; readonly onUpgrade: () => void } | null;
   onToggleFavorite: () => void;
 }) {
   const tx = useTx();
@@ -169,6 +174,31 @@ export const ModelListRow = memo(function ModelListRow(props: {
           <span className={cn(QUIET, "inline-flex pointer-coarse:hidden")} data-model-row-jump="">
             <Kbd>{props.jumpLabel}</Kbd>
           </span>
+        ) : null}
+        {props.upgradeTo ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="icon-xs"
+                  variant="ghost-muted"
+                  className="shrink-0"
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    props.upgradeTo?.onUpgrade();
+                  }}
+                  onKeyDown={(event) => event.stopPropagation()}
+                  aria-label={props.upgradeTo.label}
+                >
+                  <ArrowUpIcon className="size-3.5 sm:size-3" />
+                </Button>
+              }
+            />
+            <TooltipPopup side="top" align="center">
+              {props.upgradeTo.label}
+            </TooltipPopup>
+          </Tooltip>
         ) : null}
         <span
           className={cn("inline-flex", !props.isFavorite && QUIET)}

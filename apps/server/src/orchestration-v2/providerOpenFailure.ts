@@ -67,6 +67,30 @@ export function fallbackMove(
 const LEGACY_OPEN_FAILURE_MESSAGE = /^Failed to open \S+ provider session\b/;
 
 /**
+ * A native session id that still says the provider never accepted the turn.
+ * A null id is not this: older failures, including a bare "Overloaded", have none.
+ */
+export const PENDING_NATIVE_THREAD_MARK = "native-thread:pending";
+
+/** Turn items that mean the provider did something. A user message and an error do not. */
+const WORK_TURN_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
+  "assistant_message",
+  "reasoning",
+  "proposed_plan",
+  "todo_list",
+  "user_input_request",
+  "file_change",
+  "command_execution",
+  "file_search",
+  "web_search",
+  "dynamic_tool",
+  "subagent",
+  "approval_request",
+  "secret_request",
+  "access_request",
+]);
+
+/**
  * Whether a run's failure says its provider session never opened: the setup
  * code (`provider_unavailable`), the exhausted-retry code
  * (`provider_open_failed`), or the message such a failure carried before
@@ -88,6 +112,45 @@ export function isOpenFailure(
   );
 }
 
+/** The provider session id still names a pending native thread, so the session never opened. */
+export function sessionNeverOpened(run: {
+  readonly providerThreadId: string | null;
+}): boolean {
+  return run.providerThreadId?.includes(PENDING_NATIVE_THREAD_MARK) === true;
+}
+
+/**
+ * A provider error from a session that never opened and never did any work.
+ * One is treated like an open failure, so a repeat on the same instance can
+ * move the thread. A generic error whose session id is missing, a usage
+ * limit, a permission or validation error, and a turn that produced work
+ * stay where they are.
+ */
+export function isBarrenPendingFailure(
+  run: Pick<OrchestrationV2Run, "id" | "providerThreadId">,
+  failure: OrchestrationV2ProviderFailure | null | undefined,
+  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
+): boolean {
+  // `isOpenFailure` is a type predicate, so it cannot share this guard: its
+  // false branch would narrow `failure` to never before `.class` is read.
+  if (failure == null) return false;
+  if (!sessionNeverOpened(run)) return false;
+  if (failure.class !== "provider_error" && failure.class !== "unknown") return false;
+  if (isOpenFailure(failure)) return false;
+  return !turnItems.some(
+    (item) => item.runId === run.id && WORK_TURN_TYPES.has(item.type),
+  );
+}
+
+/** An open failure, or a barren pending failure read as one. */
+export function failedToOpen(
+  run: Pick<OrchestrationV2Run, "id" | "providerThreadId">,
+  failure: OrchestrationV2ProviderFailure | null | undefined,
+  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
+): failure is OrchestrationV2ProviderFailure {
+  return isOpenFailure(failure) || isBarrenPendingFailure(run, failure, turnItems);
+}
+
 /**
  * Whether the run before `run` on the same provider instance in its thread
  * also failed to open, within one session window of `atMs`. A repeat says
@@ -106,7 +169,7 @@ export function previousOpenFailure(
   return (
     Number.isFinite(failedAtMs) &&
     atMs - failedAtMs < LIMIT_STOP_MAX_AGE_MS &&
-    isOpenFailure(latestRootProviderFailure(previous, turnItems))
+    failedToOpen(previous, latestRootProviderFailure(previous, turnItems), turnItems)
   );
 }
 

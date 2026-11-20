@@ -92,6 +92,7 @@ import {
   isProviderInstancePickerVisible,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
+import { replaceFavoriteModel, sameBillingSuccessor } from "../../modelFamilyFollow";
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { ModelPickerAlternativesNote } from "./ModelPickerAlternativesNote";
@@ -731,6 +732,17 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       updateSettings({ favorites: newFavorites });
     },
     [familyFavorites, favorites, isFamilyFavorite, modelOptionsByInstance, updateSettings],
+  );
+
+  // Moves one starred slug to the release a track row would follow. Device only.
+  // Order, hidden models and the family star stay as they are.
+  const upgradeFavorite = useCallback(
+    (instanceId: ProviderInstanceId, from: string, to: string) => {
+      updateSettings({
+        favorites: replaceFavoriteModel(favorites, instanceId, from, to),
+      });
+    },
+    [favorites, updateSettings],
   );
 
   const modelJumpCommandByKey = useMemo(() => {
@@ -1434,6 +1446,28 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                                 onToggleFavorite={() =>
                                   toggleFavorite(model.instanceId, model.slug)
                                 }
+                                upgradeTo={(() => {
+                                  const starred = favorites.some(
+                                    (favorite) =>
+                                      favorite.provider === model.instanceId &&
+                                      favorite.model === model.slug,
+                                  );
+                                  if (!starred) return null;
+                                  const next = sameBillingSuccessor(
+                                    modelOptionsByInstance.get(model.instanceId) ?? [],
+                                    model.slug,
+                                  );
+                                  if (!next) return null;
+                                  const named =
+                                    modelOptionsByInstance
+                                      .get(model.instanceId)
+                                      ?.find((option) => option.slug === next)?.name ?? next;
+                                  return {
+                                    label: tx("Update to {model}", { model: named }),
+                                    onUpgrade: () =>
+                                      upgradeFavorite(model.instanceId, model.slug, next),
+                                  };
+                                })()}
                               />
                             </>
                           );

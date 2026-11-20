@@ -27,6 +27,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { requestConfirmDialog } from "../../confirmDialog";
 import { toastManager } from "../ui/toast";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
+import type { ResolvedSettingsScope } from "./settingsScope";
 import {
   persistScopedSettingsPatch,
   planProjectOverrideEdits,
@@ -170,6 +171,29 @@ export function useUpdateScopedSettings() {
   return useCallback(
     (patch: ScopedSettingsPatch) => void run(planScopedSettingsPatch(scope, environments, patch)),
     [environments, run, scope],
+  );
+}
+
+/**
+ * Write one machine's own settings, even while the page is a project.
+ * Other projects' overrides are left alone.
+ */
+export function useUpdateTargetEnvironmentSettings() {
+  const { environments, target } = useSettingsScope();
+  const run = useRunScopedPlan();
+  return useCallback(
+    (patch: ScopedSettingsPatch) => {
+      if (target === null) return;
+      const environmentScope: ResolvedSettingsScope = {
+        kind: "environment",
+        environmentId: target.environmentId,
+        label: target.label,
+        members: [],
+        environmentIds: [target.environmentId],
+      };
+      void run(planScopedSettingsPatch(environmentScope, environments, patch));
+    },
+    [environments, run, target],
   );
 }
 

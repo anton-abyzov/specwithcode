@@ -8,6 +8,11 @@ export type ModelEsque = {
   badge?: "new" | undefined;
   isLegacy?: boolean | undefined;
   isUnavailable?: boolean | undefined;
+  isCustom?: boolean | undefined;
+  /** The release this model replaces, when the catalog says so. */
+  succeeds?: string | undefined;
+  /** Absent when the catalog did not report billing. */
+  billing?: "subscription" | "local" | "paid-router" | "api" | "unknown" | undefined;
 };
 
 function escapeRegExp(value: string): string {

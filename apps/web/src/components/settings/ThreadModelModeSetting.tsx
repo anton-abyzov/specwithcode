@@ -29,11 +29,15 @@ export function ThreadModelModeSetting() {
       id="thread-model-mode"
       title={tx("New threads use")}
       description={
-        settings.threadModelMode === "tracks"
+        mixed
           ? tx(
-              "A thread started without a named model takes the first available model of the Complex track for hard work, else the Daily track.",
+              "The selected projects disagree. Tracks and One model are the only choices, and picking one writes it for every project in this view.",
             )
-          : tx("A thread started without a named model takes the model below.")
+          : settings.threadModelMode === "tracks"
+            ? tx(
+                "A thread started without a named model takes the first available model of the Complex track for hard work, else the Daily track.",
+              )
+            : tx("A thread started without a named model takes the model below.")
       }
       resetAction={
         settings.threadModelMode !== "model" ? (
