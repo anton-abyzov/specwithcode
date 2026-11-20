@@ -13,7 +13,10 @@
  *     findings and replies, a reply never answers a reply.
  * Right before the row is inserted or merged, the live session, its signed
  * expiry, the device, reach, the grant and both members are checked again.
- * A refusal returns before the write, so an unread row is left as it was.
+ * Under the store permit, the earliest of the signed expiry, the session
+ * expiry and the grant end is compared with a clock read there. A miss
+ * leaves the previous row unchanged. A refusal before that returns without
+ * writing.
  * A retry with a known `clientRequestId` is one message, an unread repeat
  * merges into the earlier one, and a direction carries at most six messages
  * an hour per project; more fold into one digest at the hour, except a
@@ -615,13 +618,30 @@ export const make = Effect.gen(function* () {
       return session;
     });
 
-  /** The device the route checked. Fails closed when the facts or the check are missing. */
-  const deviceStandsNow = (device: Parameters<typeof mcpClientDeviceOf>[0] | undefined) =>
-    auth.mcpClientDeviceStands === undefined || device === undefined
-      ? Effect.succeed(false)
-      : auth
-          .mcpClientDeviceStands(mcpClientDeviceOf(device))
-          .pipe(Effect.catchCause(() => Effect.succeed(false)));
+  /**
+   * The device the route checked.
+   * `closed`: the facts are missing, or the check refuses or fails.
+   * `damaged`: a proof key with no binding, and the device list cannot be read.
+   * An unbound bearer is not this case. A verified absence of denial needs no binding.
+   */
+  const deviceStandsNow = (
+    device: Parameters<typeof mcpClientDeviceOf>[0] | undefined,
+  ): Effect.Effect<"stands" | "closed" | "damaged"> =>
+    Effect.gen(function* () {
+      if (auth.mcpClientDeviceStands === undefined || device === undefined) return "closed";
+      const facts = mcpClientDeviceOf(device);
+      if (facts.proofKeyThumbprint !== undefined && facts.boundDevice === undefined) {
+        const readable = auth.mcpClientDeviceListReadable;
+        const listOk =
+          readable !== undefined &&
+          (yield* readable().pipe(Effect.catchCause(() => Effect.succeed(false))));
+        if (!listOk) return "damaged";
+      }
+      const stands = yield* auth
+        .mcpClientDeviceStands(facts)
+        .pipe(Effect.catchCause(() => Effect.succeed(false)));
+      return stands ? "stands" : "closed";
+    });
 
   /** The reach rules the route applied, with the fingerprint the sender named. */
   const reachStandsNow = (fingerprint: string | undefined) =>
@@ -731,7 +751,9 @@ export const make = Effect.gen(function* () {
       }
       // The route checked the session, device and reach before it read the body.
       // Read them again here, with the grant and both members, and do not write
-      // when any of them has ended: an unread row keeps its text and admission.
+      // when any of them has ended. The earliest time bound is checked again
+      // under the store permit. A non-time revoke during that wait is not
+      // re-read here; it stays inside the 30 second send bound.
       const writeAt = yield* Clock.currentTimeMillis;
       const session = yield* livePresentedSession(
         access.sessionId,
@@ -739,18 +761,23 @@ export const make = Effect.gen(function* () {
         access.credentialExpiresAt,
         writeAt,
       );
-      if (session === undefined)
+      if (session === undefined || access.credentialExpiresAt === undefined)
         return yield* refuse(
           403,
           "needs_grant",
           `${receiver} refused ${sender}'s message: the sign-in that sent it has ended.`,
           "grant",
         );
-      if (!(yield* deviceStandsNow(access.device)))
+      const signedEnds = access.credentialExpiresAt;
+      const sessionEnds = DateTime.toEpochMillis(session.expiresAt);
+      const device = yield* deviceStandsNow(access.device);
+      if (device !== "stands")
         return yield* refuse(
           403,
           "needs_grant",
-          `${receiver} refused ${sender}'s message: the device that sent it is no longer approved.`,
+          device === "damaged"
+            ? `${receiver} refused ${sender}'s message: ${receiver} cannot read which devices it turned away, so it will not take this one from ${sender}.`
+            : `${receiver} refused ${sender}'s message: the device that sent it is no longer approved.`,
           "grant",
         );
       if (!(yield* reachStandsNow(access.teamRulesFingerprint)))
@@ -773,6 +800,7 @@ export const make = Effect.gen(function* () {
         label,
       });
       const project = fresh.project;
+      const earliest = Math.min(signedEnds, sessionEnds, fresh.endsAt ?? sessionEnds);
       const paused =
         project.workspaceSettings?.paused === true || project.workspaceSettings?.archived === true;
       const dedupeKey = coordinatorMessageDedupeKey(message, selfEnvironmentId);
@@ -799,7 +827,9 @@ export const make = Effect.gen(function* () {
         }) satisfies CoordinatorMessageDeliverResponse;
 
       const outcome = yield* store
-        .update<CoordinatorMessageDeliverResponse | "full">(now, (records) => {
+        .update<CoordinatorMessageDeliverResponse | "full" | "expired">(now, (records, at) => {
+          // The same array: the store writes only when the records change.
+          if (!(earliest > at)) return { records, result: "expired" as const };
           const ours = (record: CoordinatorMessageRecord) =>
             record.direction === "incoming" &&
             record.peerEnvironmentId === peer &&
@@ -902,6 +932,13 @@ export const make = Effect.gen(function* () {
                 ? Effect.succeed("full" as const)
                 : Effect.fail(keptFailure()),
           }),
+        );
+      if (outcome === "expired")
+        return yield* refuse(
+          403,
+          "needs_grant",
+          `${receiver} refused ${sender}'s message: the time ${sender} may send it has passed.`,
+          "grant",
         );
       if (outcome === "full")
         return yield* refuse(
@@ -1052,9 +1089,10 @@ export const make = Effect.gen(function* () {
         now,
       );
       if (session === undefined || credentialEnds === undefined) return undefined;
-      // The device approval the route checked, read again; it fails closed when it cannot tell.
-      // A row that kept no device facts cannot be checked, so it is refused.
-      if (!(yield* deviceStandsNow(admitted.device))) return undefined;
+      // The device approval the route checked, read again. A proof key with no
+      // binding is refused when the device list cannot be read. A row that
+      // kept no device facts cannot be checked, so it is refused.
+      if ((yield* deviceStandsNow(admitted.device)) !== "stands") return undefined;
       // The machine-reach rules the route applied, with the rules the sender named then.
       if (!(yield* reachStandsNow(admitted.teamRulesFingerprint))) return undefined;
       const authority = yield* authorize({

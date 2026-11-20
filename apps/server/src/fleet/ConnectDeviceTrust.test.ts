@@ -511,9 +511,7 @@ it.effect(
       Effect.gen(function* () {
         const auth = yield* EnvironmentAuth.EnvironmentAuth;
         const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
-        const code = refusedCode(
-          yield* trust.check(connect("m1-key", "Laptop")),
-        );
+        const code = refusedCode(yield* trust.check(connect("m1-key", "Laptop")));
         const approved = yield* trust.approve({
           code,
           approvedBy: "this machine",
@@ -715,6 +713,8 @@ it.effect(
         expect(yield* damaged.check({ subject: "mcp-client", proofKeyThumbprint: "x" })).toEqual({
           _tag: "allowed",
         });
+        // The shared check still allows a proof key when the list cannot be read.
+        expect(yield* damaged.listReadable).toBe(false);
         const approveError = yield* damaged
           .approve({ code: "AAAAAA", approvedBy: "this machine", approverKey: null })
           .pipe(Effect.flip);
@@ -722,6 +722,7 @@ it.effect(
 
         yield* damaged.repair;
         expect((yield* damaged.snapshot).health).toBe("ok");
+        expect(yield* damaged.listReadable).toBe(true);
         refusedCode(yield* damaged.check(connect("any")));
       }),
     ),

@@ -315,9 +315,16 @@ export class EnvironmentAuth extends Context.Service<
     >;
     /**
      * Whether an MCP client credential's device approval still stands, the
-     * check `authenticateMcpClient` makes, read only; false when it cannot tell.
+     * check `authenticateMcpClient` makes, read only. False when that check
+     * refuses or fails. A proof key with no binding still reads as standing
+     * when the device list cannot be read.
      */
     readonly mcpClientDeviceStands?: (device: McpClientDevice) => Effect.Effect<boolean>;
+    /**
+     * Whether the device list could be read. Coordinator messages refuse a
+     * proof key with no binding when this is false. `check` does not.
+     */
+    readonly mcpClientDeviceListReadable?: () => Effect.Effect<boolean>;
     readonly listSessions: () => Effect.Effect<
       ReadonlyArray<AuthClientSession>,
       ServerAuthInternalError
@@ -1779,6 +1786,8 @@ export const make = Effect.gen(function* () {
     listSessions,
     mcpClientDeviceStands: (device) =>
       mcpClientDeviceStands(deviceTrust, MCP_CLIENT_SUBJECT, device),
+    mcpClientDeviceListReadable: () =>
+      deviceTrust.listReadable.pipe(Effect.orElseSucceed(() => false)),
     revokeSession,
     revokeOtherSessionsExcept,
     listClientSessions,

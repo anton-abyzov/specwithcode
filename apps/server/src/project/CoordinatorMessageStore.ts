@@ -20,6 +20,7 @@ import {
   NonNegativeInt,
   ProjectId,
 } from "@specweave-studio/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -155,11 +156,12 @@ export interface CoordinatorMessageStoreShape {
   readonly all: Effect.Effect<Records, CoordinatorMessageStoreError>;
   /**
    * Runs `change` on every record under one lock and writes what it returns.
+   * `at` is the clock after the permit is held and the records are read.
    * `now` drops records settled longer than a week.
    */
   readonly update: <A>(
     now: number,
-    change: (records: Records) => { readonly records: Records; readonly result: A },
+    change: (records: Records, at: number) => { readonly records: Records; readonly result: A },
   ) => Effect.Effect<A, CoordinatorMessageStoreError>;
   /** Runs `effect` under the same permit `update` waits for. */
   readonly withPermit: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
@@ -194,7 +196,8 @@ const makeWith = (
         lock.withPermit(
           Effect.gen(function* () {
             const before = yield* read;
-            const { records, result } = change(before);
+            const at = yield* Clock.currentTimeMillis;
+            const { records, result } = change(before, at);
             if (records !== before) {
               const kept = pruneRecords(records, now);
               // Budgets before the write, whatever the records' states.

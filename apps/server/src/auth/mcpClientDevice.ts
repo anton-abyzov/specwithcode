@@ -25,9 +25,11 @@ export const mcpClientDeviceOf = (session: {
 });
 
 /**
- * The check `authenticateMcpClient` makes, read only: an MCP client is gated
- * by its binding or a turned-away key, and neither check writes. False when
- * it cannot tell.
+ * The check `authenticateMcpClient` makes, read only. False when that check
+ * refuses or fails. A proof key with no device binding still reads as
+ * standing when the device list cannot be read, because the check treats an
+ * unreadable list as not turned away. An unbound bearer, with no proof key
+ * and no binding, stands when the check allows it.
  */
 export const mcpClientDeviceStands = (
   trust: ConnectDeviceTrust.ConnectDeviceTrustShape,
