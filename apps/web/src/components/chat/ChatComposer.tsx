@@ -1,3 +1,4 @@
+import { ComposerModelIntent } from "./ComposerModelIntent";
 import { VoiceConsentDialog } from "../studio/VoiceCall";
 import { ComposerVoiceMenu } from "../studio/ComposerVoiceMenu";
 import { useTx } from "../../i18n";
@@ -7490,6 +7491,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               composerProviderState.composerSurfaceClassName,
             )}
           >
+            <ComposerModelIntent state={chipModel.state}
+              routed={routesProjectMessage || !isServerThread || multipleModelSelections !== null} />
             {showCollapsedMobilePromptRow ? (
               <div className="flex items-center justify-between gap-2 px-3 py-2">
                 <button

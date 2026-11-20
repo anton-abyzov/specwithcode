@@ -1,22 +1,11 @@
-import type { ModelSelection } from "@specweave-studio/contracts";
-import { modelSelectionsEqual } from "@specweave-studio/shared/model";
-
-/** A composer pick is local intent until a send makes it the thread selection. */
-export function ComposerModelIntent({
-  threadSelection,
-  draftSelection,
-  explicit,
-}: {
-  threadSelection: ModelSelection | null;
-  draftSelection: ModelSelection | null;
-  explicit: boolean;
+/** Uses the composer's resolved chip state, never the raw persisted draft. */
+export function ComposerModelIntent({ state, routed }: {
+  state: "thread" | "next" | "pick";
+  routed: boolean;
 }) {
-  if (!explicit || !threadSelection || !draftSelection ||
-      modelSelectionsEqual(threadSelection, draftSelection)) return null;
-  return (
-    <p role="status" data-composer-model-intent="pending"
-      className="px-3 pt-2 text-xs text-muted-foreground">
-      Next message: your selected model applies when you send.
-    </p>
-  );
+  if (routed || state !== "pick") return null;
+  return <p role="status" data-composer-model-intent="pending"
+    className="px-3 pt-2 text-xs text-muted-foreground">
+    Composer selection differs from the thread model.
+  </p>;
 }
