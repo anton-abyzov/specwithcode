@@ -435,6 +435,69 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
     ),
   );
 
+  it.effect("never credits a retry when no teardown the check showed is left", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { scenario, parent } = yield* makeScenario;
+        const worker = ThreadId.make("worker");
+        const other = ThreadId.make("coordinator");
+        const run = RunId.make("run-worker");
+        const otherRun = RunId.make("run-coordinator");
+        scenario.threads[0] = shell(other, { status: "running", activeRunId: otherRun });
+        scenario.threads[1] = shell(worker, { status: "completed", latestRunId: run });
+        scenario.runs.set(worker, [{ id: run, status: "completed" }]);
+        let retries = 0;
+        const retry = async () => {
+          retries += 1;
+          return true;
+        };
+        const releaseOld = holdFailedStopTeardown(worker, retry);
+        let releaseNew: (() => void) | undefined;
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            releaseOld();
+            releaseNew?.();
+          }),
+        );
+        yield* withFolders(scenario, (folders) =>
+          Effect.gen(function* () {
+            const input = { projectId, workspaceRoot: parent };
+            const checked = yield* folders.check(input);
+            const looked = checked.activeThreads.find((thread) => thread.id === worker)!;
+            expect(looked.latestExecutedRunId).toBe(run);
+            expect(looked.teardownsThrough).toBeDefined();
+            let reads = 0;
+            scenario.beforeShellRead = () => {
+              if (++reads !== 2) return;
+              releaseOld();
+              releaseNew = holdFailedStopTeardown(worker, retry);
+              expect(stopTeardownsThrough(worker)).toBeGreaterThan(looked.teardownsThrough!);
+            };
+            scenario.afterDispatch = () => releaseNew?.();
+            const result = yield* folders.stop({
+              ...input,
+              commandId,
+              threads: [
+                { id: other, runId: otherRun },
+                {
+                  id: worker,
+                  runId: null,
+                  latestExecutedRunId: run,
+                  teardownsThrough: looked.teardownsThrough!,
+                },
+              ],
+            });
+            expect(reads).toBe(2);
+            expect(retries).toBe(0);
+            expect(scenario.dispatched).toMatchObject([{ type: "run.interrupt", threadId: other }]);
+            expect(stopTeardownPending(worker)).toBe(false);
+            expect(result).toEqual({ stopped: [other], failed: [] });
+          }),
+        );
+      }),
+    ),
+  );
+
   it.effect("reports a thread whose earlier Stop is still ending its processes", () =>
     Effect.scoped(
       Effect.gen(function* () {

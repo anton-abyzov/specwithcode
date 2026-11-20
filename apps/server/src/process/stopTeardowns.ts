@@ -72,6 +72,12 @@ export function stopTeardownsThrough(threadId: string): number | undefined {
   return Math.max(...[...entries].map((entry) => entry.sequence));
 }
 
+/** Whether a failed teardown of the thread up to `through` (one a person saw) still holds it. */
+export function stopTeardownShown(threadId: string, through: number): boolean {
+  const entries = failed.get(threadId);
+  return entries !== undefined && [...entries].some((entry) => entry.sequence <= through);
+}
+
 /** The longest one retry may take: one that never answers keeps its hold. */
 const RETRY_TIMEOUT_MS = 20_000;
 

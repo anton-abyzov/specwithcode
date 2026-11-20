@@ -203,6 +203,45 @@ describe("ProjectFolderChange", () => {
     }
   });
 
+  it("ends the Stop wait at once when a check rules the move out", async () => {
+    vi.useFakeTimers();
+    try {
+      const activeThreads = [
+        { id: "t1", title: "Write project memory", runId: "run-1" },
+      ] as unknown as ProjectFolderCheck["activeThreads"];
+      state.folderCheck
+        .mockResolvedValueOnce({ _tag: "Success", value: check({ activeThreads }) })
+        .mockResolvedValue({
+          _tag: "Success",
+          value: check({ targetExists: false, activeThreads }),
+        });
+      const refused = `${parent} does not exist. Create or clone it first, then choose it again. "Write project memory" was not stopped.`;
+      state.folderStop.mockResolvedValue({
+        _tag: "Success",
+        value: {
+          stopped: [],
+          failed: [{ id: "t1", title: "Write project memory", message: refused }],
+        },
+      });
+      render();
+      await typeFolder(parent);
+      await click("Check");
+      await click("Stop 1 run");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+      expect(state.folderStop).toHaveBeenCalledTimes(1);
+      expect(container.textContent).toContain(refused);
+      expect(
+        container.querySelector<HTMLInputElement>('[aria-label="New project folder"]')!.disabled,
+      ).toBe(false);
+      expect(button("Check").disabled).toBe(false);
+      expect(container.textContent).not.toContain("Stopped");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("stops running work, waits until it has stopped and keeps what was ticked", async () => {
     vi.useFakeTimers();
     try {

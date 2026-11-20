@@ -136,6 +136,16 @@ const REFUSAL_TEXT = {
   environment_invalid: "The project's approved folders do not fit this folder.",
 } as const;
 
+/** A check that rules the move out whatever is stopped: Stop has nothing to wait for. */
+function moveRuledOut(check: ProjectFolderCheck): boolean {
+  return (
+    check.unchanged ||
+    !check.targetExists ||
+    check.conflictingProject !== null ||
+    check.refusal !== undefined
+  );
+}
+
 /** Why the folder cannot be used at all, or null. Exported for tests. */
 export function refusalSummary(check: Pick<ProjectFolderCheck, "refusal">): string | null {
   const refusal = check.refusal;
@@ -516,6 +526,9 @@ export function ProjectFolderChange({
         setConfirmPlanning(false);
       }
       setCheck(latest);
+      // The move cannot happen any more (the folder is gone, taken, refused or already in
+      // use): the server stops nothing for it, so there is nothing to wait for.
+      if (moveRuledOut(latest)) break;
       const still = latest.activeThreads.filter((thread) => stoppingIds.has(thread.id));
       if (still.length === 0) break;
     }
@@ -525,6 +538,13 @@ export function ProjectFolderChange({
     if (checkFailure !== null) {
       setCheck(null);
       failed(checkFailure, "The folder could not be checked after Stop. Check it again.");
+      return;
+    }
+    if (latest !== null && moveRuledOut(latest)) {
+      // The check above says why; the server's answer names what was left running.
+      if (reasons.length === 0) await within(answered, remaining(), timers.current);
+      if (run !== generation.current) return;
+      setError(reasons.length > 0 ? [...new Set(reasons)].join(" ") : null);
       return;
     }
     const still =

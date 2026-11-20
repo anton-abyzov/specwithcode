@@ -51,6 +51,7 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import {
   retryFailedStopTeardown,
   stopTeardownFailed,
+  stopTeardownShown,
   stopTeardownPending,
   stopTeardownsThrough,
 } from "../process/stopTeardowns.ts";
@@ -1023,7 +1024,9 @@ export const make = Effect.gen(function* () {
       const through = saw.teardownsThrough;
       const bound = runId !== null || binding !== undefined;
       yield* Effect.sync(() => {
-        if (bound && through !== undefined && stopTeardownFailed(thread.id)) {
+        // Credited only when a teardown the person saw is there to retry: one that
+        // cleared since, replaced by a newer one, is not this request's to retry or claim.
+        if (bound && through !== undefined && stopTeardownShown(thread.id, through)) {
           teardownRetries.set(thread.id, retryFailedStopTeardown(thread.id, undefined, through));
           acted.add(thread.id);
         }
