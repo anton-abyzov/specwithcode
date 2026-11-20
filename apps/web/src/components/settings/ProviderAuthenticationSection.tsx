@@ -616,7 +616,7 @@ export function ProviderAuthenticationSection({
         instanceId={instanceId}
         canInstallAgent={auth?.copilotCanInstallAgent === true}
         showExistingSignIns={!signedIn}
-        found={auth?.copilotExistingSignIns}
+        found={signedIn && !showCopilotHost ? undefined : auth?.copilotExistingSignIns}
         message={statusMessage ?? error}
         readOnly={readOnly}
         {...(showCopilotHost
