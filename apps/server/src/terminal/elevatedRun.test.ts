@@ -174,6 +174,30 @@ describe("administrator code-block runs", () => {
     expect(hasState("shown-count")).toBe(false);
   });
 
+  // The stand-in dialog never parses the script; the real compiler does.
+  it.skipIf(process.platform !== "darwin")("writes a dialog script macOS accepts", async () => {
+    const wrapped = await prepareElevatedRun({
+      command: "sudo ls",
+      threadId: "thread-1",
+      terminalId: "run-abc-3",
+      elevation: {},
+      platform: "darwin",
+      runsDir: NodePath.join(root, "runs"),
+    });
+    const dir = NodePath.dirname(wrapped.slice("/bin/sh '".length, -1));
+    const helper = NodeFS.readFileSync(NodePath.join(dir, "askpass.sh"), "utf8");
+    const source = helper.slice(helper.indexOf("<<'OSA'\n") + 8, helper.lastIndexOf("\nOSA"));
+    const file = NodePath.join(root, "dialog.applescript");
+    NodeFS.writeFileSync(file, source);
+    const compiled = NodeChildProcess.spawnSync(
+      "/usr/bin/osacompile",
+      ["-o", NodePath.join(root, "dialog.scpt"), file],
+      { encoding: "utf8" },
+    );
+    expect(compiled.stderr).toBe("");
+    expect(compiled.status).toBe(0);
+  });
+
   it("keeps the run folder private", async () => {
     const runsDir = NodePath.join(root, "runs");
     const wrapped = await prepareElevatedRun({

@@ -102,18 +102,18 @@ on run argv
   try
     set answer to display dialog labelText default answer "" with hidden answer with title "SpecWithCode" buttons {"Cancel", "OK"} default button "OK" giving up after ${ELEVATION_PROMPT_TIMEOUT_SECONDS} with icon caution
   on error number -128
-    my note(item 2 of argv, "cancelled")
+    my recordAnswer(item 2 of argv, "cancelled")
     error number -128
   end try
   if gave up of answer then
-    my note(item 2 of argv, "timeout")
+    my recordAnswer(item 2 of argv, "timeout")
     error number -128
   end if
   return text returned of answer
 end run
-on note(answerPath, state)
+on recordAnswer(answerPath, state)
   do shell script "printf %s " & quoted form of state & " > " & quoted form of answerPath
-end note
+end recordAnswer
 OSA
 `;
 }
