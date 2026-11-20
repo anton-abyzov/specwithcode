@@ -456,7 +456,7 @@ function ComposerSkillRow({
       </span>
       {item.detail ? (
         <span
-          className="block truncate text-2xs text-muted-foreground"
+          className="line-clamp-2 text-2xs text-muted-foreground text-pretty"
           data-testid="composer-skill-detail"
           data-version-source={item.version?.source ?? "none"}
           data-location={item.location.kind}

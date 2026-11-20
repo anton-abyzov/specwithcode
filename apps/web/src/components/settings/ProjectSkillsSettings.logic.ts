@@ -113,6 +113,8 @@ const LEVEL_LABELS: Readonly<Record<string, string>> = {
   plugin: "Plugin",
   bundled: "Bundled",
   system: "System",
+  // A product name, not a word to capitalise.
+  "claude.ai": "claude.ai",
   other: "Other",
 };
 

@@ -5316,7 +5316,6 @@ export const ko: PhraseCatalog = {
   "No machines": "컴퓨터 없음",
   "Each machine keeps its own. Changes here only affect {machine}.":
     "컴퓨터마다 따로 보관합니다. 여기서 바꾼 내용은 {machine}에만 적용됩니다.",
-  "On this machine": "이 컴퓨터에 있음",
   "Not on {machine}": "{machine}에 없음",
   "Needs sign-in": "로그인 필요",
   "Update available {version}": "업데이트 가능 {version}",
@@ -5328,8 +5327,6 @@ export const ko: PhraseCatalog = {
   "Could not be read": "읽을 수 없음",
   "copies differ": "사본이 서로 다름",
   "Across machines": "컴퓨터 간 비교",
-  "Read-only. Each machine reports its own skills. A machine that could not be read is never shown as missing.":
-    "읽기 전용입니다. 컴퓨터마다 자기 스킬을 보고합니다. 읽지 못한 컴퓨터는 없는 것으로 표시하지 않습니다.",
   "No skills on the machines that were read.": "읽은 컴퓨터에 스킬이 없습니다.",
   "Showing the first 32 machines. Open Connections to inspect the rest.":
     "처음 32대만 표시합니다. 나머지는 연결에서 확인하세요.",

@@ -115,8 +115,14 @@ function MatrixCell({ cell, column }: { cell: SkillMatrixCell; column: SkillMatr
       return <SkillStatusChip status={{ kind: "not-on", machine: column.label }} />;
     case "unreported":
       return (
-        <span className="text-xs text-muted-foreground" data-status="unreported">
-          {tx("Comes with the agent")}
+        <span
+          className="text-xs text-muted-foreground"
+          data-status="unreported"
+          title={tx(
+            "This machine did not report built-in skills. They may be there with a different agent version.",
+          )}
+        >
+          {tx("Not reported here")}
         </span>
       );
     case "offline":

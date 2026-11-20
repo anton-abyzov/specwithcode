@@ -5417,7 +5417,6 @@ export const de: PhraseCatalog = {
   "No machines": "Keine Computer",
   "Each machine keeps its own. Changes here only affect {machine}.":
     "Jeder Computer hat seine eigenen. Änderungen hier betreffen nur {machine}.",
-  "On this machine": "Auf diesem Computer",
   "Not on {machine}": "Nicht auf {machine}",
   "Needs sign-in": "Anmeldung nötig",
   "Update available {version}": "Update verfügbar: {version}",
@@ -5429,8 +5428,6 @@ export const de: PhraseCatalog = {
   "Could not be read": "Konnte nicht gelesen werden",
   "copies differ": "Kopien weichen ab",
   "Across machines": "Alle Computer im Vergleich",
-  "Read-only. Each machine reports its own skills. A machine that could not be read is never shown as missing.":
-    "Nur lesen. Jeder Computer meldet seine eigenen Skills. Ein Computer, der nicht gelesen werden konnte, wird nie als fehlend angezeigt.",
   "No skills on the machines that were read.": "Auf den gelesenen Computern gibt es keine Skills.",
   "Showing the first 32 machines. Open Connections to inspect the rest.":
     "Die ersten 32 Computer werden angezeigt. Öffnen Sie Verbindungen für die übrigen.",

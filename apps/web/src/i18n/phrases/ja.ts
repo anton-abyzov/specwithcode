@@ -5383,7 +5383,6 @@ export const ja: PhraseCatalog = {
   "No machines": "マシンがありません",
   "Each machine keeps its own. Changes here only affect {machine}.":
     "マシンごとに別々に保持されます。ここでの変更は {machine} にのみ反映されます。",
-  "On this machine": "このマシンにあります",
   "Not on {machine}": "{machine} にはありません",
   "Needs sign-in": "サインインが必要",
   "Update available {version}": "更新あり {version}",
@@ -5395,8 +5394,6 @@ export const ja: PhraseCatalog = {
   "Could not be read": "読み取れませんでした",
   "copies differ": "コピーに差異あり",
   "Across machines": "マシン間の比較",
-  "Read-only. Each machine reports its own skills. A machine that could not be read is never shown as missing.":
-    "読み取り専用です。各マシンが自分のスキルを報告します。読み取れなかったマシンを「ない」と表示することはありません。",
   "No skills on the machines that were read.": "読み取ったマシンにスキルはありません。",
   "Showing the first 32 machines. Open Connections to inspect the rest.":
     "最初の 32 台を表示しています。残りは「接続」で確認できます。",

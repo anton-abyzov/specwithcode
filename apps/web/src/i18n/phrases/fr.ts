@@ -5425,7 +5425,6 @@ export const fr: PhraseCatalog = {
   "No machines": "Aucune machine",
   "Each machine keeps its own. Changes here only affect {machine}.":
     "Chaque machine a les siens. Les changements ici ne concernent que {machine}.",
-  "On this machine": "Sur cette machine",
   "Not on {machine}": "Absent de {machine}",
   "Needs sign-in": "Connexion requise",
   "Update available {version}": "Mise à jour disponible : {version}",
@@ -5437,8 +5436,6 @@ export const fr: PhraseCatalog = {
   "Could not be read": "Lecture impossible",
   "copies differ": "les copies diffèrent",
   "Across machines": "Entre machines",
-  "Read-only. Each machine reports its own skills. A machine that could not be read is never shown as missing.":
-    "Lecture seule. Chaque machine indique ses propres skills. Une machine qui n'a pas pu être lue n'est jamais affichée comme n'ayant pas le skill.",
   "No skills on the machines that were read.": "Aucun skill sur les machines lues.",
   "Showing the first 32 machines. Open Connections to inspect the rest.":
     "Les 32 premières machines sont affichées. Ouvrez Connexions pour voir les autres.",

@@ -5380,7 +5380,6 @@ export const ru: PhraseCatalog = {
   "No machines": "Нет компьютеров",
   "Each machine keeps its own. Changes here only affect {machine}.":
     "У каждого компьютера свой набор. Изменения здесь касаются только {machine}.",
-  "On this machine": "На этом компьютере",
   "Not on {machine}": "Нет на {machine}",
   "Needs sign-in": "Нужен вход",
   "Update available {version}": "Доступно обновление {version}",
@@ -5392,8 +5391,6 @@ export const ru: PhraseCatalog = {
   "Could not be read": "Не удалось прочитать",
   "copies differ": "копии различаются",
   "Across machines": "По всем компьютерам",
-  "Read-only. Each machine reports its own skills. A machine that could not be read is never shown as missing.":
-    "Только чтение. Каждый компьютер сообщает о своих навыках. Компьютер, который не удалось прочитать, никогда не показывается как без навыка.",
   "No skills on the machines that were read.": "На прочитанных компьютерах нет навыков.",
   "Showing the first 32 machines. Open Connections to inspect the rest.":
     "Показаны первые 32 компьютера. Остальные смотрите в разделе «Подключения».",

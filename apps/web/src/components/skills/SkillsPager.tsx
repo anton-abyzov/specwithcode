@@ -37,13 +37,17 @@ export function SkillsPager({
       data-testid="skills-pager"
       className={cn("flex flex-wrap items-center justify-between gap-2 text-xs", className)}
     >
-      <span className="tabular-nums text-muted-foreground" role="status" data-testid="pager-range">
+      <span
+        className="whitespace-nowrap tabular-nums text-muted-foreground"
+        role="status"
+        data-testid="pager-range"
+      >
         {tx("{from}–{to} of {total}", { from: page.from, to: page.to, total: page.total })}
       </span>
-      <span className="flex items-center gap-1">
+      <span className="flex flex-wrap items-center gap-1">
         {pageSizes && onPageSize ? (
           <span className="me-1 flex items-center gap-1" role="group" aria-label={tx("Per page")}>
-            <span className="text-muted-foreground">{tx("Per page")}</span>
+            <span className="whitespace-nowrap text-muted-foreground">{tx("Per page")}</span>
             {pageSizes.map((size) => (
               <Button
                 key={size}
@@ -69,7 +73,10 @@ export function SkillsPager({
           <ChevronLeftIcon aria-hidden="true" />
           {tx("Previous")}
         </Button>
-        <span className="px-1 tabular-nums text-muted-foreground" data-testid="pager-page">
+        <span
+          className="px-1 whitespace-nowrap tabular-nums text-muted-foreground"
+          data-testid="pager-page"
+        >
           {tx("Page {page} of {count}", { page: page.page, count: page.pageCount })}
         </span>
         <Button

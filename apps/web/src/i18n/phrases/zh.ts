@@ -5165,7 +5165,6 @@ export const zh: PhraseCatalog = {
   "No machines": "没有计算机",
   "Each machine keeps its own. Changes here only affect {machine}.":
     "每台计算机各自保存。此处的更改只影响 {machine}。",
-  "On this machine": "在这台计算机上",
   "Not on {machine}": "{machine} 上没有",
   "Needs sign-in": "需要登录",
   "Update available {version}": "可更新到 {version}",
@@ -5177,8 +5176,6 @@ export const zh: PhraseCatalog = {
   "Could not be read": "无法读取",
   "copies differ": "副本不一致",
   "Across machines": "跨计算机",
-  "Read-only. Each machine reports its own skills. A machine that could not be read is never shown as missing.":
-    "只读。每台计算机报告自己的技能。无法读取的计算机绝不会显示为缺少技能。",
   "No skills on the machines that were read.": "已读取的计算机上没有技能。",
   "Showing the first 32 machines. Open Connections to inspect the rest.":
     "显示前 32 台计算机。其余请在“连接”中查看。",

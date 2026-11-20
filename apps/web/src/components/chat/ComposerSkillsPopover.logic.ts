@@ -307,7 +307,7 @@ function versionWords(version: string | null | undefined): string | null {
 
 function lockWords(level: string, lockSource: string | null): string | null {
   if (!LOCKABLE_LEVELS.has(level)) return null;
-  return lockSource ? `lock: ${lockSource}` : "no matching lock entry";
+  return lockSource ? `lock: ${lockSource}` : "no lock entry";
 }
 
 function groupOfLevel(level: string): ComposerSkillGroupId {

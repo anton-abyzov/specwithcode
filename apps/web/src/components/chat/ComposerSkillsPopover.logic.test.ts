@@ -593,7 +593,7 @@ describe("skills an agent only advertises by name", () => {
       providers: [file({ path: "/work/.agents/skills/notes/SKILL.md", scope: "project" })],
     });
     expect(only(build([advertised("notes")], [unlocked])).detail).toBe(
-      "Matching file · no version · no matching lock entry",
+      "Matching file · no version · no lock entry",
     );
     // A user-scope lock says nothing about a project file.
     const foreign = locked(
@@ -606,7 +606,7 @@ describe("skills an agent only advertises by name", () => {
       "user",
     );
     expect(only(build([advertised("notes")], [foreign])).detail).toBe(
-      "Matching file · no version · no matching lock entry",
+      "Matching file · no version · no lock entry",
     );
   });
 

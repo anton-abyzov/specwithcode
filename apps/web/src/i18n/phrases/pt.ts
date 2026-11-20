@@ -5382,7 +5382,6 @@ export const pt: PhraseCatalog = {
   "No machines": "Nenhuma máquina",
   "Each machine keeps its own. Changes here only affect {machine}.":
     "Cada máquina tem os seus. As alterações aqui afetam apenas {machine}.",
-  "On this machine": "Nesta máquina",
   "Not on {machine}": "Não está em {machine}",
   "Needs sign-in": "Requer início de sessão",
   "Update available {version}": "Atualização disponível: {version}",
@@ -5394,8 +5393,6 @@ export const pt: PhraseCatalog = {
   "Could not be read": "Não foi possível ler",
   "copies differ": "as cópias diferem",
   "Across machines": "Entre máquinas",
-  "Read-only. Each machine reports its own skills. A machine that could not be read is never shown as missing.":
-    "Só leitura. Cada máquina informa as suas próprias skills. Uma máquina que não pôde ser lida nunca aparece como se faltasse algo.",
   "No skills on the machines that were read.": "Não há skills nas máquinas lidas.",
   "Showing the first 32 machines. Open Connections to inspect the rest.":
     "A mostrar as primeiras 32 máquinas. Abra Ligações para ver as restantes.",
