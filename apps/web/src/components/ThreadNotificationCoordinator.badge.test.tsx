@@ -53,6 +53,9 @@ vi.mock("../notificationTarget", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../notificationTarget")>()),
   readNotificationTarget: () => Promise.resolve(state.target),
 }));
+vi.mock("./CoordinatorStepNotifications", () => ({
+  CoordinatorStepNotifications: () => null,
+}));
 vi.mock("../lib/backgroundActivityReporter", () => ({
   backgroundActivityClientId: () => "client-self",
   interactedRecentlyHere: () => false,

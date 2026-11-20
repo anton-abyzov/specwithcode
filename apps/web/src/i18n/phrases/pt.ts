@@ -4,6 +4,7 @@ import { handoffPt } from "./handoff/pt";
 import { iphonePt } from "./iphone/pt";
 import { machineLabelsPt } from "./machineLabels/pt";
 import { actionMachinePt } from "./actionMachine/pt";
+import { coordinatorMessagesPt } from "./coordinatorMessages/pt";
 import { providerSignInPt } from "./providerSignIn/pt";
 
 /** Brazilian Portuguese Settings titles and labels, "você", as in the message catalog. */
@@ -13,6 +14,7 @@ export const pt: PhraseCatalog = {
   ...iphonePt,
   ...machineLabelsPt,
   ...actionMachinePt,
+  ...coordinatorMessagesPt,
   ...providerSignInPt,
   About: "Sobre",
   "Accent color": "Cor de destaque",

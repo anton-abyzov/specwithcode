@@ -194,6 +194,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.projectsBoard]: "projects",
   [WS_METHODS.projectsBoardIncrement]: "projects",
   [WS_METHODS.projectsThreadIncrementLink]: "projects",
+  [WS_METHODS.projectsCoordinatorMessages]: "projects",
   [WS_METHODS.projectsThreadReportSave]: "projects",
   [WS_METHODS.projectsMemoryWrite]: "projects",
   [WS_METHODS.projectsMemoryDelete]: "projects",

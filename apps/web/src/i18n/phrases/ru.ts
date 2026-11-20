@@ -4,6 +4,7 @@ import { handoffRu } from "./handoff/ru";
 import { iphoneRu } from "./iphone/ru";
 import { machineLabelsRu } from "./machineLabels/ru";
 import { actionMachineRu } from "./actionMachine/ru";
+import { coordinatorMessagesRu } from "./coordinatorMessages/ru";
 import { providerSignInRu } from "./providerSignIn/ru";
 
 /** Russian Settings titles and labels. "тред" for thread, as in the message catalog. */
@@ -13,6 +14,7 @@ export const ru: PhraseCatalog = {
   ...iphoneRu,
   ...machineLabelsRu,
   ...actionMachineRu,
+  ...coordinatorMessagesRu,
   ...providerSignInRu,
   About: "О приложении",
   "Accent color": "Акцентный цвет",
