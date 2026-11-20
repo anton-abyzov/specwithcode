@@ -673,6 +673,10 @@ export const make = Effect.gen(function* () {
           }
           entry = next.entry;
         }
+        // The owner is written before the machine is, so a save that is cut
+        // short never leaves a saved machine without one; an owner for a
+        // machine that is not saved is dropped by the next plan.
+        const priorOwner = yield* recordOwnerLocked(environmentId, scope);
         yield* registrations.register(registration, persistedRoutes(entry));
         // The Connect routes were removed while this save was being written:
         // put the saved routes back as they were, still under the lock, so a
@@ -691,7 +695,10 @@ export const make = Effect.gen(function* () {
               }).pipe(Effect.as(false)),
             ),
           );
-          if (restored) return;
+          if (restored) {
+            yield* restoreOwnerLocked(environmentId, priorOwner);
+            return;
+          }
           // The saved route could not be put back. Install what was written and
           // remove the Connect route now, still under this lock, so no later
           // save for this machine can be caught by it.
@@ -722,7 +729,6 @@ export const make = Effect.gen(function* () {
           new Set(current).add(environmentId),
         );
         yield* installEntryLocked(entry);
-        yield* recordOwnerLocked(environmentId, scope);
       }),
     );
   });
@@ -737,12 +743,31 @@ export const make = Effect.gen(function* () {
     scope: string | null | undefined,
   ) {
     const owner = ownerForNewSave(scope);
-    if (owner === undefined) return;
+    if (owner === undefined) return undefined;
     const stored = yield* accountOwners.read;
-    if (stored === null || stored.machines[environmentId] === owner) return;
+    if (stored === null) return undefined;
+    const prior = stored.machines[environmentId];
+    if (prior !== owner) {
+      yield* accountOwners.write({
+        ...stored,
+        machines: { ...stored.machines, [environmentId]: owner },
+      });
+    }
+    return { prior };
+  });
+
+  /** Puts back the owner a save replaced, when that save was undone. */
+  const restoreOwnerLocked = Effect.fn("EnvironmentRegistry.restoreOwnerLocked")(function* (
+    environmentId: EnvironmentId,
+    recorded: { readonly prior: string | undefined } | undefined,
+  ) {
+    if (recorded === undefined) return;
+    const stored = yield* accountOwners.read;
+    if (stored === null) return;
+    const { [environmentId]: _replaced, ...rest } = stored.machines;
     yield* accountOwners.write({
       ...stored,
-      machines: { ...stored.machines, [environmentId]: owner },
+      machines: recorded.prior === undefined ? rest : { ...rest, [environmentId]: recorded.prior },
     });
   });
 
@@ -812,6 +837,12 @@ export const make = Effect.gen(function* () {
             // Planned again here: the new account may have saved it since.
             if (!(yield* stillLeavesLocked(environmentId, account))) return;
             yield* accountOwners.forgotten(environmentId);
+            // Cached projects and chats go before the saved entry: if the app
+            // stops in between, the machine is still saved and still owed, so
+            // the next start removes it again.
+            yield* closeServiceScope(environmentId);
+            yield* cache.clear(environmentId);
+            yield* ownedDataCleanup.clear(environmentId);
             yield* removeLocked(environmentId, { keepRemote: true });
           }),
         ),
