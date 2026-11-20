@@ -256,7 +256,6 @@ export const ko: PhraseCatalog = {
   "Restart when idle waits up to": "유휴 시 다시 시작 최대 대기 시간",
   "Retry once on the usual model": "평소 모델로 한 번 다시 시도",
   "Review depth": "리뷰 깊이",
-  "Review finished features automatically": "완성된 기능 자동 리뷰",
   "Reviewer order": "리뷰어 순서",
   "Rich text composer": "서식 있는 입력창",
   "Routine unavailable": "루틴을 사용할 수 없음",
@@ -3589,10 +3588,6 @@ export const ko: PhraseCatalog = {
     "{owner}에서 관리합니다. 도구는 필요할 때 이 호스트에서 자동으로 업데이트됩니다.",
   "Tools update automatically on this host when needed.":
     "도구는 필요할 때 이 호스트에서 자동으로 업데이트됩니다.",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Turn it on for the projects where a second opinion is worth the usage.":
-    "스레드가 끝나고 해당 증분의 모든 작업이 완료되면 다른 계열의 모델이 새 스레드에서 작업을 검토합니다. 두 번째 의견에 사용량을 쓸 가치가 있는 프로젝트에서 켜세요.",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Off by default; projects can turn it on.":
-    "스레드가 끝나고 해당 증분의 모든 작업이 완료되면 다른 계열의 모델이 새 스레드에서 작업을 검토합니다. 기본값은 꺼짐이며 프로젝트에서 켤 수 있습니다.",
   "Additional rules for this project. Global instructions are always included before these additions.":
     "이 프로젝트의 추가 규칙입니다. 전역 지침은 항상 이 추가 내용보다 먼저 포함됩니다.",
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
@@ -5165,6 +5160,12 @@ export const ko: PhraseCatalog = {
   "Link {machine} to this project…": "{machine}을(를) 이 프로젝트에 연결…",
   "Link {machine} to this project": "{machine}을(를) 이 프로젝트에 연결",
   "Link {machine}": "{machine} 연결",
+  "Review each finished increment automatically": "완료된 인크리먼트마다 자동으로 리뷰",
+  "Review each finished increment": "완료된 인크리먼트마다 리뷰",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "직접 시작한 스레드가 끝나고 해당 인크리먼트의 모든 작업이 완료되거나 건너뛰어지면, 다른 계열의 모델이 새 스레드에서 작업을 리뷰합니다. 인크리먼트마다 한 번입니다. 프로젝트가 따로 정하지 않으면 이 머신의 프로젝트에 적용됩니다. 직접 또는 에이전트가 요청한 리뷰와 인크리먼트 종료 시 리뷰는 이 설정과 상관없이 실행됩니다.",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "직접 시작한 스레드가 끝나고 해당 인크리먼트의 모든 작업이 완료되거나 건너뛰어지면, 다른 계열의 모델이 새 스레드에서 작업을 리뷰합니다. 인크리먼트마다 한 번입니다. 이 프로젝트에만 적용됩니다. 직접 또는 에이전트가 요청한 리뷰와 인크리먼트 종료 시 리뷰는 이 설정과 상관없이 실행됩니다.",
   "Nothing on {machine} is replaced without asking.":
     "{machine}에 있는 것은 묻지 않고 바꾸지 않습니다.",
   "the other machine": "다른 기기",

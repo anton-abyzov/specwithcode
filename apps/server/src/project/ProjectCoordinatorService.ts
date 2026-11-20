@@ -60,6 +60,7 @@ import {
   ProviderFallbackEnv,
 } from "../orchestration-v2/ProviderFallbackWorker.ts";
 import { heldInstances } from "../orchestration-v2/UnopenableHolds.ts";
+import { limitStopIsAccountWide } from "@specweave-studio/shared/regularTrack";
 import { isClaudePlanLimitStop } from "../provider/claudeLimitReset.ts";
 import { requestCapacityRecheck } from "../studio/Capacity.ts";
 
@@ -336,7 +337,14 @@ const make = Effect.gen(function* () {
             resetAt: shell.usageLimitResetAt,
             waitUnderMinutes: rule.providerLimitWaitUnderMinutes,
             nowMs,
-          })
+          }) &&
+          // A stop on one model's own window (Fable's weekly) leaves the
+          // account's other models running: only an account-wide stop holds it.
+          limitStopIsAccountWide(
+            providers.find((provider) => provider.instanceId === shell.providerInstanceId),
+            shell.modelSelection.model,
+            nowMs,
+          )
         )
           limited.add(shell.providerInstanceId);
         // Moved off the saved model: when its last run there stopped on a usage

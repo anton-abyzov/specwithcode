@@ -35,14 +35,21 @@ describe("fallbackStatusHeader", () => {
     );
   });
 
-  it("says a launch stand-in only returns by hand", () => {
+  it("says a launch stand-in goes back on its own once its pick has room", () => {
     const status = header({ launched: true, hasRoom: true });
     expect(status.pick?.why).toBe("Had no room when this thread started.");
     expect(status.returns).toEqual({
-      mode: "manual",
-      text: "Has room now. It does not switch back on its own.",
+      mode: "auto",
+      text: "Has room again. Goes back on its own when this thread is idle.",
     });
-    expect(status.back).toMatchObject({ label: "Return to Opus 5.5", disabledReason: null });
+    expect(status.back).toMatchObject({ label: "Return to Opus 5.5 now", disabledReason: null });
+    // An unmetered launch pick can return once it can take a turn.
+    const unreported = header({ launched: true, hasRoom: false, pickReportsNoUsage: true });
+    expect(unreported.returns).toEqual({
+      mode: "auto",
+      text: "Goes back on its own once the original model can take a turn.",
+    });
+    expect(unreported.back?.label).toBe("Return to Opus 5.5 now");
   });
 
   it("lets a person try the way back when room is unknown", () => {

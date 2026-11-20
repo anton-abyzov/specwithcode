@@ -16,14 +16,20 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
 } from "@specweave-studio/contracts";
+import { modelSelectionEffortValue } from "./effortLevel.ts";
 import { describeModel, isSameModel } from "./modelIdentity.ts";
 import { newerOfFamily } from "./modelTiers.ts";
 import {
   builtInTrackSelection,
+  followsBuiltInFamily,
+  TRACK_DEFAULT_EFFORT,
   isFreePlanProvider,
   isFreeTrackModel,
+  makerInstanceId,
   providerHomeFamily,
   providersForModel,
+  trackStartEffort,
+  withTrackEffort,
 } from "./modelTracks.ts";
 import { type ModelFamily, modelFamily } from "./modelVendor.ts";
 import {
@@ -206,6 +212,11 @@ export interface TrackRow {
   readonly follows: string | null;
   /** Where the model runs, first tried first. Empty when nothing here lists it. */
   readonly sources: ReadonlyArray<TrackSource>;
+  /**
+   * The effort the entry starts at before a source lists its levels: a built-in
+   * entry's own level (Medium unless it names one), a saved entry's saved one.
+   */
+  readonly effort: string | null;
 }
 
 /**
@@ -225,13 +236,20 @@ export function describeTrack(input: {
   // the best one before room is read), then the others by the Sources order,
   // the maker's harness and, outside Review, the most room. Held sources come
   // last and are never started on unless the person named one.
-  const sourcesOf = (slug: string, free: boolean, named?: ProviderInstanceId) => {
+  const sourcesOf = (
+    slug: string,
+    free: boolean,
+    named?: ProviderInstanceId,
+    family = named === undefined,
+  ) => {
     const ranked = (withRoom: boolean) =>
       providersForModel({
         providers: input.providers,
         model: { slug },
         order: input.sourceOrder ?? undefined,
         preferFree: free,
+        // A built-in row runs on whichever release of its family a source lists.
+        family,
         ...(withRoom && input.track !== "review"
           ? {
               usedPercent: (provider: ServerProvider, served: string) =>
@@ -274,19 +292,36 @@ export function describeTrack(input: {
       const names = describeModel(provider, selection.model);
       const freeModel = isFreeTrackModel(names);
       const free = input.track === "daily" && freeModel;
+      // Saved from a built-in row: it runs and reads like that row (`followsBuiltInFamily`).
+      const family = followsBuiltInFamily(input.track, selection.model);
+      const sources = sourcesOf(selection.model, free, selection.instanceId, family);
+      const first = family ? sources.find((source) => source.used) : undefined;
+      const listedName =
+        first === undefined ? undefined : describeModel(first.provider, first.slug).name;
+      const builtInName = family
+        ? DEFAULT_MODEL_TRACKS[input.track].find((entry) => entry.model === selection.model)?.name
+        : undefined;
       const newer =
-        provider !== undefined && provider.models.some((model) => model.slug === selection.model)
-          ? newerOfFamily(provider, selection.model)
-          : undefined;
+        first !== undefined
+          ? newerOfFamily(first.provider, first.slug)
+          : provider !== undefined &&
+              provider.models.some((model) => model.slug === selection.model)
+            ? newerOfFamily(provider, selection.model)
+            : undefined;
       return {
         selection,
         model: selection.model,
-        name: names.name ?? selection.model,
+        name:
+          listedName !== undefined && listedName !== first?.slug
+            ? listedName
+            : (builtInName ?? names.name ?? selection.model),
         builtIn: false,
         free,
         misplaced: freeModel && input.track !== "daily",
         follows: newer ?? null,
-        sources: sourcesOf(selection.model, free, selection.instanceId),
+        sources,
+        effort:
+          modelSelectionEffortValue(selection) ?? trackStartEffort(input.track, selection.model),
       };
     });
   }
@@ -295,20 +330,43 @@ export function describeTrack(input: {
     const sources = sourcesOf(entry.model, free);
     // A built-in row starts only on a source the app picks by itself.
     const first = sources.find((source) => source.used);
+    const effort = entry.effort ?? TRACK_DEFAULT_EFFORT;
+    // A source that names the model by its bare id reads worse than the built-in name.
+    const listedName =
+      first === undefined ? undefined : describeModel(first.provider, first.slug).name;
     return {
       selection:
-        first === undefined ? null : builtInTrackSelection(entry, first.provider, first.slug),
+        first === undefined ? null : builtInTrackSelection({ effort }, first.provider, first.slug),
       model: entry.model,
-      name:
-        first === undefined
-          ? entry.name
-          : (describeModel(first.provider, first.slug).name ?? entry.name),
+      name: listedName === undefined || listedName === first?.slug ? entry.name : listedName,
       builtIn: true,
       free,
       misplaced: false,
       follows: first === undefined ? null : (newerOfFamily(first.provider, first.slug) ?? null),
       sources,
+      effort,
     };
+  });
+}
+
+/**
+ * A built-in track saved as the person's own list with one row changed, such
+ * as its effort: every built-in entry as it is, by its maker's name
+ * (`gpt-6.2-sol`, so it keeps following its newest release), at the level its
+ * row shows; a model no source here lists is kept under its maker's own
+ * harness. Only the row at `at` takes `selection`'s options.
+ */
+export function savedBuiltInTrack(input: {
+  readonly rows: ReadonlyArray<TrackRow>;
+  readonly at: number;
+  readonly selection: ModelSelection;
+}): ReadonlyArray<ModelSelection> {
+  return input.rows.flatMap((row, index) => {
+    const instanceId =
+      row.selection?.instanceId ?? makerInstanceId({ slug: row.model, name: row.name });
+    if (instanceId === null) return [];
+    const options = index === input.at ? input.selection.options : row.selection?.options;
+    return [{ instanceId, model: row.model, ...(options === undefined ? {} : { options }) }];
   });
 }
 
@@ -381,7 +439,13 @@ export function addTrackEntry(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly entry: ModelSelection;
 }): ReadonlyArray<ModelSelection> {
-  if (input.track !== "daily") return [...input.entries, input.entry];
+  // A new entry carries the level it starts at, so the list saves what it shows.
+  const entry = withTrackEffort(
+    input.entry,
+    input.providers,
+    trackStartEffort(input.track, input.entry.model),
+  );
+  if (input.track !== "daily") return [...input.entries, entry];
   const isFree = (entry: ModelSelection) =>
     isFreeTrackModel(
       describeModel(
@@ -389,11 +453,11 @@ export function addTrackEntry(input: {
         entry.model,
       ),
     );
-  if (isFree(input.entry)) return [...input.entries, input.entry];
+  if (isFree(entry)) return [...input.entries, entry];
   const tail = input.entries.findIndex(isFree);
   return tail === -1
-    ? [...input.entries, input.entry]
-    : [...input.entries.slice(0, tail), input.entry, ...input.entries.slice(tail)];
+    ? [...input.entries, entry]
+    : [...input.entries.slice(0, tail), entry, ...input.entries.slice(tail)];
 }
 
 /** The single family every Review row belongs to, when a review could not cross families. */

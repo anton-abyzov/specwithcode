@@ -10,6 +10,7 @@ import {
 } from "@specweave-studio/contracts/settings";
 import { describe, expect, it } from "vite-plus/test";
 import { createModelSelection } from "@specweave-studio/shared/model";
+import { strongestVariantsFirst } from "@specweave-studio/shared/modelVariants";
 import { deriveEffectiveComposerModelState } from "./composerDraftStore";
 import { getComposerProviderState } from "./components/chat/composerProviderState";
 import { deriveProviderInstanceEntries, NO_PROVIDER_MODEL_SELECTION } from "./providerInstances";
@@ -938,5 +939,50 @@ describe("Team rules and custom models", () => {
     ).map((option) => option.slug);
     expect(slugs).toContain("gpt-mine");
     expect(slugs).not.toContain("unapproved");
+  });
+});
+
+describe("Muse with Wonder Full ranked first", () => {
+  // The server's ranked snapshot: Full first and recommended, Wonder second.
+  const muse: ServerProvider = {
+    ...provider({ provider: ProviderDriverKind.make("muse"), instanceId: "muse" }),
+    models: strongestVariantsFirst([
+      {
+        slug: "muse-wonder-1.0",
+        name: "Muse Wonder 1.0",
+        isCustom: false,
+        isDefault: true,
+        capabilities: null,
+      },
+      {
+        slug: "muse-wonder-full-1.0",
+        name: "Muse Wonder Full 1.0",
+        isCustom: false,
+        capabilities: null,
+      },
+    ]),
+  };
+  const settings: UnifiedSettings = {
+    ...DEFAULT_UNIFIED_SETTINGS,
+    providerInstances: {
+      [ProviderInstanceId.make("muse")]: { driver: ProviderDriverKind.make("muse"), enabled: true },
+    },
+  };
+
+  it("starts a new thread on Wonder Full", () => {
+    expect(
+      resolveAppModelSelectionForInstance(ProviderInstanceId.make("muse"), settings, [muse], null),
+    ).toBe("muse-wonder-full-1.0");
+  });
+
+  it("keeps an existing thread on the Wonder it chose", () => {
+    expect(
+      resolveAppModelSelectionForInstance(
+        ProviderInstanceId.make("muse"),
+        settings,
+        [muse],
+        "muse-wonder-1.0",
+      ),
+    ).toBe("muse-wonder-1.0");
   });
 });

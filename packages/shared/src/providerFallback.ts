@@ -9,6 +9,7 @@ import {
   isGitHubCopilotIcon,
   isPaidModelBilling,
   isProviderAvailable,
+  type ModelLane,
   type ModelLanes,
   type ModelSelection,
   type OrchestrationV2ProviderThread,
@@ -20,6 +21,12 @@ import {
   type ServerProvider,
   type ThreadId,
 } from "@specweave-studio/contracts";
+import {
+  modelSelectionEffortValue,
+  resolveEffort,
+  withEffortForModel,
+  withEffortSelection,
+} from "./effortLevel.ts";
 import { describeModel, isSameModel, sameModelOn } from "./modelIdentity.ts";
 import {
   chainNamedByPerson,
@@ -28,11 +35,20 @@ import {
   fallbackSelectionKey,
   namedFallbackOrder,
 } from "./modelTiers.ts";
+import { namedReviewSourceKeys, reviewerChain, usageNeverRead } from "./adversarialReview.ts";
+import { isHeldSource } from "./modelTracks.ts";
 import { providerSetupProblem } from "./providerSetup.ts";
+import {
+  denialSparesModel,
+  namedModelElsewhere,
+  type RegularTrackRule,
+  reviewOnlyModel,
+} from "./regularTrack.ts";
 export { fallbackModelOrder, fallbackSelectionKey };
 import { effectiveUsedPercent, isLiveWindow, windowAppliesToModel } from "./usageWindows.ts";
 
 export interface ProviderFallbackRule {
+  readonly threadModelMode?: "tracks" | "model" | undefined;
   readonly providerLimitAction: ProviderLimitAction;
   readonly providerLimitFallbackModelSelection: ModelSelection | null;
   /** The models to continue on, best first; empty uses the single model above. */
@@ -63,6 +79,8 @@ export interface ProviderFallbackRule {
   readonly defaultModelProviders?: ReadonlyArray<ProviderInstanceId> | undefined;
   /** The ranked model tiers: the fallback chain when no explicit order is set (see `modelTiers`). */
   readonly modelLanes?: ModelLanes | null | undefined;
+  /** The Review track (`reviewers`): regular work never falls back to it (see `reviewOnlyModel`). */
+  readonly adversarialReview?: RegularTrackRule["adversarialReview"];
 }
 
 /** A model the user keeps out of automatic limit continuation. */
@@ -240,7 +258,8 @@ export function hasUsableFallbackCapacity(
   )
     return false;
   const deniedAt = Date.parse(limits.nativeDenialObservedAt ?? "");
-  if (Number.isFinite(deniedAt) && deniedAt >= observedAt) return false;
+  const denied = Number.isFinite(deniedAt) && deniedAt >= observedAt;
+  if (denied && !denialSparesModel(provider, model, nowMs)) return false;
   if (
     limits.windows.some(
       (window) =>
@@ -304,7 +323,12 @@ export function usageUnknownReason(
   if (!Number.isFinite(observedAt) || observedAt > nowMs) return { kind: "stale", readAt: null };
   if (nowMs - observedAt > FALLBACK_USAGE_MAX_AGE_MS) return { kind: "stale", readAt: observedAt };
   const deniedAt = Date.parse(limits.nativeDenialObservedAt ?? "");
-  if (Number.isFinite(deniedAt) && deniedAt >= observedAt) return { kind: "refused" };
+  if (
+    Number.isFinite(deniedAt) &&
+    deniedAt >= observedAt &&
+    !denialSparesModel(provider, model, nowMs)
+  )
+    return { kind: "refused" };
   if (
     limits.windows.some(
       (window) =>
@@ -381,6 +405,15 @@ export function reportsNoUsage(provider: ServerProvider): boolean {
   const limits = provider.usageLimits;
   return (
     limits === undefined || (limits.unavailable?.unmetered === true && limits.windows.length === 0)
+  );
+}
+
+/** Whether a launch fallback may return without waiting for usage evidence. */
+export function launchPickReportsNoUsage(provider: ServerProvider): boolean {
+  return reportsNoUsage(provider) && (
+    provider.usageLimits !== undefined ||
+    provider.driver === "muse" ||
+    isGitHubCopilotIcon(null, provider.iconUrl)
   );
 }
 
@@ -693,12 +726,14 @@ export function describeFallbackOrder(input: {
   readonly currentInstanceId: ProviderInstanceId;
   /** The thread's model: picks which tier the tiers chain starts with. */
   readonly currentModel?: string | undefined;
+  readonly lane?: ModelLane | undefined;
   readonly rule: Pick<
     ProviderFallbackRule,
     | "providerLimitFallbackModels"
     | "providerLimitFallbackModelSelection"
     | "providerLimitExcludedModels"
     | "modelLanes"
+    | "threadModelMode"
     | "defaultModelProviders"
   > & { readonly defaultModelSelection?: ModelSelection | null | undefined };
   readonly nowMs: number;
@@ -707,6 +742,7 @@ export function describeFallbackOrder(input: {
   readonly contextFit?: ContextFitRequirement | undefined;
 }): ReadonlyArray<FallbackOrderEntry> {
   const chain = effectiveFallbackOrder(input.rule, input.currentModel, input.providers, {
+    lane: input.lane,
     usedPercent: (provider, slug) => providerUsedPercent(provider, input.nowMs, slug),
   });
   // An expansion is eligible for an unknown-billing agent only if the person
@@ -714,7 +750,7 @@ export function describeFallbackOrder(input: {
   // built-in track entry is nobody's choice, so it gets the expansion's trust.
   const namedTiers = chain.fromTiers
     ? new Set(
-        namedFallbackOrder(input.rule, input.currentModel, input.providers)
+        effectiveFallbackOrder(input.rule, input.currentModel, input.providers, { expand: false, lane: input.lane })
           .order.map(fallbackSelectionKey)
           .filter((key) => !chain.builtIn.has(key)),
       )
@@ -794,17 +830,53 @@ type ResolveProviderFallbackInput = Parameters<typeof resolveProviderFallbackPas
 export function resolveProviderFallback(
   input: ResolveProviderFallbackInput,
 ): ModelSelection | null {
-  return (
+  const target =
     resolveProviderFallbackPass({ ...input, verifiedOnly: true }) ??
-    resolveProviderFallbackPass({ ...input, verifiedOnly: false })
-  );
+    resolveProviderFallbackPass({ ...input, verifiedOnly: false, allowLastResort: true });
+  return target === null ? null : withMovedEffort(target, input);
 }
+
+/**
+ * A fallback onto another model runs at the thread's own level, else Medium,
+ * matched to the nearest level that model offers. With no level it ran at the
+ * provider's default, which is Max on Muse. A move that keeps the model is
+ * left as it is; a target that names its own level keeps it, moved to the
+ * option id its model reads (a track entry saved on another harness).
+ */
+function withMovedEffort(
+  target: ModelSelection,
+  input: Pick<ResolveProviderFallbackInput, "providers" | "currentInstanceId" | "currentModel" | "currentOptions">,
+): ModelSelection {
+  const descriptors = input.providers
+    .find((provider) => provider.instanceId === target.instanceId)
+    ?.models.find((model) => model.slug === target.model)?.capabilities?.optionDescriptors;
+  // A target's own level stays, under the option id and at the nearest level its model reads.
+  if (modelSelectionEffortValue(target) !== undefined)
+    return withEffortForModel(target, descriptors);
+  if (
+    target.model === input.currentModel &&
+    input.providers.find((provider) => provider.instanceId === target.instanceId)?.driver ===
+      input.providers.find((provider) => provider.instanceId === input.currentInstanceId)?.driver
+  ) return target;
+  const carried =
+    input.currentOptions === undefined
+      ? undefined
+      : modelSelectionEffortValue({ options: input.currentOptions });
+  const kept = carried === undefined ? null : resolveEffort(carried, descriptors);
+  const resolved = kept?.ok === true ? kept : resolveEffort(START_EFFORT, descriptors);
+  if (!resolved.ok) return target;
+  return { ...target, options: withEffortSelection(target.options, resolved) };
+}
+
+/** The level a model nobody chose a level for starts at (`TRACK_DEFAULT_EFFORT`). */
+const START_EFFORT = "medium";
 
 function resolveProviderFallbackPass(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly currentInstanceId: ProviderInstanceId;
   /** The model the thread runs on, kept when another account of its driver lists it. */
   readonly currentModel?: string | undefined;
+  readonly lane?: ModelLane | undefined;
   /** The thread's options on `currentModel` (effort); kept by a same-driver same-model fallback. */
   readonly currentOptions?: ModelSelection["options"] | undefined;
   readonly rule: Pick<
@@ -816,10 +888,14 @@ function resolveProviderFallbackPass(input: {
     | "defaultModelSelection"
     | "defaultModelProviders"
     | "modelLanes"
+    | "threadModelMode"
+    | "adversarialReview"
   >;
   readonly nowMs: number;
   readonly belowPercent?: number | null;
   readonly anyReady?: boolean;
+  /** Review work may fall back to the Review track; regular work never does. */
+  readonly review?: boolean;
   /** Instances known to be limited whatever their usage read says (a current limit stop). */
   readonly limitedInstanceIds?: ReadonlySet<string>;
   /**
@@ -843,8 +919,10 @@ function resolveProviderFallbackPass(input: {
   readonly preferDefault?: boolean;
   /** Internal: leave out providers that report no usage unless the user named them. */
   readonly verifiedOnly?: boolean;
+  readonly allowLastResort?: boolean;
 }): ModelSelection | null {
   const verifiedOnly = input.verifiedOnly === true;
+  const reviewOnly = input.review === true ? () => false : reviewOnlyModel(input.rule);
   // Every step below skips what this stop already tried, not only the user's order,
   // and every target whose window cannot hold the thread.
   const excluded = (instanceId: ProviderInstanceId, model: string | undefined) =>
@@ -883,6 +961,7 @@ function resolveProviderFallbackPass(input: {
       providers: input.providers,
       currentInstanceId: input.currentInstanceId,
       currentModel: input.currentModel,
+      lane: input.lane,
       rule: input.rule,
       nowMs: input.nowMs,
       belowPercent: input.belowPercent,
@@ -895,6 +974,63 @@ function resolveProviderFallbackPass(input: {
         !input.excludedSelections?.has(fallbackSelectionKey(entry.selection)) &&
         allow(entry.selection),
     )?.selection;
+  if (input.rule.threadModelMode === "tracks") {
+    if (input.currentModel !== undefined) {
+      const same = resolveSameModelElsewhere({
+        providers: input.providers,
+        current: {
+          instanceId: input.currentInstanceId,
+          model: input.currentModel,
+          ...(input.currentOptions === undefined ? {} : { options: input.currentOptions }),
+        },
+        order: input.rule.defaultModelProviders,
+        nowMs: input.nowMs,
+        belowPercent: input.belowPercent,
+        limitedInstanceIds: input.limitedInstanceIds,
+        excludedSelections: input.excludedSelections,
+        excludedModels: input.rule.providerLimitExcludedModels,
+        contextFit: input.contextFit,
+      });
+      if (same !== null) return same;
+    }
+    if (input.review === true) {
+      const reviewers = input.rule.adversarialReview?.reviewers ?? [];
+      const explicitlyNamed = namedReviewSourceKeys(reviewers, input.providers);
+      const order = reviewerChain({
+        providers: input.providers,
+        reviewers,
+        trackOnly: true,
+        tier: "regular",
+        sourceOrder: input.rule.defaultModelProviders,
+      }).filter((selection) => {
+        const provider = input.providers.find((item) => item.instanceId === selection.instanceId);
+        return provider !== undefined && (
+          explicitlyNamed.has(fallbackSelectionKey(selection)) ||
+          !isHeldSource(provider, selection.model)
+        );
+      });
+      if (order.length === 0) return null;
+      return describeFallbackOrder({
+        ...input,
+        rule: {
+          ...input.rule,
+          threadModelMode: "model",
+          providerLimitFallbackModelSelection: null,
+          providerLimitFallbackModels: order,
+        },
+      }).find((entry) =>
+        (entry.unavailable === null ||
+          (entry.unavailable === "unverified" && usageNeverRead(entry.provider))) &&
+        !input.excludedSelections?.has(fallbackSelectionKey(entry.selection)),
+      )?.selection ?? null;
+    }
+    const reserved = reviewOnlyModel({ adversarialReview: input.rule.adversarialReview });
+    return (
+      firstAvailable((selection) => !reserved(selection)) ??
+      (input.allowLastResort ? firstAvailable((selection) => !reviewOnly(selection)) : undefined) ??
+      null
+    );
+  }
   const home = (allowUnreported = !verifiedOnly) => {
     const selection = input.rule.defaultModelSelection;
     if (selection === null) return null;
@@ -950,16 +1086,27 @@ function resolveProviderFallbackPass(input: {
     });
     if (elsewhere !== null) return elsewhere;
   }
+  // A Review-track model the person saved on their list (Muse Wonder Full on
+  // Daily) is the last resort for regular work: it runs only once every other
+  // entry of the list, the same model elsewhere and the project model have no
+  // room. It is one that would be Review-only had nobody named it, so GPT-6.1
+  // Sol, on the built-in Daily and Review tracks both, keeps its place.
+  const onReviewTrack =
+    input.review === true
+      ? () => false
+      : reviewOnlyModel({ adversarialReview: input.rule.adversarialReview });
+  let lastResort: ModelSelection | undefined;
   if (explicitOrder) {
     // The person's own entries only. A built-in entry of a track they left
     // empty waits its turn below, after the same model elsewhere, the project
     // model and the coordinator's proven model.
-    const ordered = firstAvailable(
-      (selection) => !orderChain.builtIn.has(fallbackSelectionKey(selection)),
-    );
+    const personal = (selection: ModelSelection) =>
+      !orderChain.builtIn.has(fallbackSelectionKey(selection));
+    const ordered = firstAvailable((selection) => personal(selection) && !onReviewTrack(selection));
     if (ordered !== undefined) return ordered;
+    if (input.allowLastResort) lastResort = firstAvailable(personal);
     // The user said this list is the whole chain: past it the thread waits.
-    if (listOnly) return null;
+    if (listOnly) return lastResort ?? null;
   }
   const same =
     input.currentModel === undefined
@@ -1024,9 +1171,19 @@ function resolveProviderFallbackPass(input: {
     const back = home();
     if (back !== null) return back;
   }
+  const named = chain.fromTiers
+    ? null
+    : namedModelElsewhere({
+        ...input,
+        order: chain.order,
+        excludedModels: input.rule.providerLimitExcludedModels,
+        sourceOrder: input.rule.defaultModelProviders,
+      });
+  if (named !== null) return named;
   const proven = input.proven ?? null;
   if (
     proven !== null &&
+    !reviewOnly(proven) &&
     proven.instanceId !== input.currentInstanceId &&
     !excluded(proven.instanceId, proven.model)
   ) {
@@ -1057,7 +1214,7 @@ function resolveProviderFallbackPass(input: {
       };
     }
   }
-  if (!input.anyReady) return perTokenHome;
+  if (!input.anyReady) return lastResort ?? perTokenHome;
   // Nothing the person named can take the thread: the built-in tracks rank
   // what is left, ahead of the guess below.
   // Like that guess, they never keep the thread on the account that stopped it.
@@ -1065,11 +1222,13 @@ function resolveProviderFallbackPass(input: {
     const ranked = firstAvailable(
       (selection) =>
         orderChain.builtIn.has(fallbackSelectionKey(selection)) &&
+        !reviewOnly(selection) &&
         selection.instanceId !== input.currentInstanceId &&
         (perTokenHome === null || !isReportsNoUsage(selection)),
     );
     if (ranked !== undefined) return ranked;
   }
+  if (lastResort !== undefined) return lastResort;
   const driver = input.providers.find(
     (provider) => provider.instanceId === input.currentInstanceId,
   )?.driver;
@@ -1106,7 +1265,8 @@ function resolveProviderFallbackPass(input: {
         (perTokenHome === null || !reportsNoUsage(provider)) &&
         !isPaidModelOn(provider, candidateModel(provider)) &&
         !isUnknownBillingAgent(provider, candidateModel(provider)) &&
-        !excluded(provider.instanceId, candidateModel(provider)),
+        !excluded(provider.instanceId, candidateModel(provider)) &&
+        !reviewOnly({ model: candidateModel(provider) ?? "" }),
     )
     .map((provider, order) => ({ provider, order, rank: rank(provider) }))
     .sort((a, b) => a.rank[0] - b.rank[0] || a.rank[1] - b.rank[1] || a.order - b.order);
@@ -1209,6 +1369,7 @@ export function resolveWorkerLaunchSelection(input: {
   )
     return { selection: preferred, reason: "preferred-resets-soon" };
   const listOnly =
+    input.rule.threadModelMode !== "tracks" &&
     input.rule.providerLimitFallbackListOnly === true &&
     chainNamedByPerson(effectiveFallbackOrder(input.rule, preferred.model));
   const same = listOnly
@@ -1227,7 +1388,14 @@ export function resolveWorkerLaunchSelection(input: {
       });
   if (same !== null) return { selection: same, reason: "same-model" };
   const coordinator = input.coordinator;
-  if (!listOnly && coordinator !== null && coordinator.instanceId !== preferred.instanceId) {
+  // A worker does regular work: never on a Review-track model the coordinator runs.
+  if (
+    input.rule.threadModelMode !== "tracks" &&
+    !listOnly &&
+    coordinator !== null &&
+    coordinator.instanceId !== preferred.instanceId &&
+    !reviewOnlyModel(input.rule)(coordinator)
+  ) {
     const provider = input.providers.find((entry) => entry.instanceId === coordinator.instanceId);
     if (
       provider !== undefined &&
@@ -1261,6 +1429,7 @@ export function resolveWorkerLaunchSelection(input: {
     currentModel: preferred.model,
     currentOptions: preferred.options,
     rule: {
+      threadModelMode: input.rule.threadModelMode,
       providerLimitFallbackModelSelection: input.rule.providerLimitFallbackModelSelection,
       providerLimitFallbackModels: input.rule.providerLimitFallbackModels,
       providerLimitFallbackListOnly: input.rule.providerLimitFallbackListOnly,
@@ -1268,6 +1437,7 @@ export function resolveWorkerLaunchSelection(input: {
       defaultModelSelection: null,
       defaultModelProviders: input.rule.defaultModelProviders,
       modelLanes: input.rule.modelLanes,
+      adversarialReview: input.rule.adversarialReview,
     },
     nowMs: input.nowMs,
     belowPercent: threshold,
@@ -1535,7 +1705,12 @@ export function resolveCoordinatorTurnSelection(input: {
   )
     return { selection: input.saved, reason: "saved-resets-soon" };
   const thread = input.thread;
-  if (thread !== null && thread.instanceId !== input.saved.instanceId) {
+  // Never staying on a Review-track model a move put it on (a pick saves `saved`).
+  if (
+    thread !== null &&
+    thread.instanceId !== input.saved.instanceId &&
+    !reviewOnlyModel(input.rule)(thread)
+  ) {
     const current = input.providers.find((provider) => provider.instanceId === thread.instanceId);
     // Gemini/Vertex never continue as an automatic fallback, including one
     // selected before this guard, nor does a model a paid router or API bills.

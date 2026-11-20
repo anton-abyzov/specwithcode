@@ -108,11 +108,11 @@ export function AdversarialReviewSettings({ part }: { readonly part?: "depth" } 
             settingKeys={["adversarialReview"]}
             mixed={mixed}
             id="adversarial-review-auto"
-            title={tx("Review finished features automatically")}
+            title={tx("Review each finished increment automatically")}
             titleInfo={
               <PolicyTooltip
                 label={tx(SLOWER_WORK_NOTE_LABEL, {
-                  setting: tx("Review finished features automatically"),
+                  setting: tx("Review each finished increment automatically"),
                 })}
               >
                 {tx(ADVERSARIAL_REVIEW_TIME_NOTE)}
@@ -120,8 +120,8 @@ export function AdversarialReviewSettings({ part }: { readonly part?: "depth" } 
             }
             description={tx(
               isProjectScope
-                ? "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Turn it on for the projects where a second opinion is worth the usage."
-                : "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Off by default; projects can turn it on.",
+                ? "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way."
+                : "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.",
             )}
             resetAction={
               review.autoOnFeatureComplete ? (
@@ -133,7 +133,7 @@ export function AdversarialReviewSettings({ part }: { readonly part?: "depth" } 
             }
             control={
               <Switch
-                aria-label={tx("Review finished features automatically")}
+                aria-label={tx("Review each finished increment automatically")}
                 checked={mixed ? false : review.autoOnFeatureComplete}
                 onCheckedChange={(checked) => save({ autoOnFeatureComplete: Boolean(checked) })}
               />

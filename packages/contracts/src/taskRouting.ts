@@ -248,6 +248,8 @@ export const TaskRoutingChunkPlan = Schema.Struct({
 });
 export type TaskRoutingChunkPlan = typeof TaskRoutingChunkPlan.Type;
 
+const ReviewModelFamily = Schema.Literals(["claude", "openai", "google", "xai", "meta"]);
+
 /**
  * What Auto decided for one task. `moved` says whether it left the baseline
  * (the model the app would have used without Auto); `escalation` is the one
@@ -280,7 +282,9 @@ export const TaskRoutingDecision = Schema.Struct({
    * machine handoff continue the thread only on a model of this family, so a
    * review never moves to the author's family; with none, it waits.
    */
-  reviewFamily: Schema.optionalKey(Schema.Literals(["claude", "openai", "google", "xai", "meta"])),
+  reviewFamily: Schema.optionalKey(ReviewModelFamily),
+  /** The author family a review without a fixed reviewer family may never fall back to. */
+  reviewAuthorFamily: Schema.optionalKey(ReviewModelFamily),
   /** The model the increment's review policy pins, when it pins one: recovery keeps to it too. */
   reviewModel: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
   decidedAt: IsoDateTime,

@@ -199,7 +199,7 @@ afterEach(() => {
 describe("AdversarialReviewSettings", () => {
   it("is off by default and writes only the switch when turned on", () => {
     render(<AdversarialReviewSettings />);
-    const toggle = byLabel("Review finished features automatically").findByType("input");
+    const toggle = byLabel("Review each finished increment automatically").findByType("input");
     expect(toggle.props.checked).toBe(false);
     act(() => toggle.props.onChange({ target: { checked: true } }));
     expect(state.update).toHaveBeenCalledWith({
@@ -209,8 +209,9 @@ describe("AdversarialReviewSettings", () => {
 
   it("notes beside the switch how much longer review makes the work", () => {
     render(<AdversarialReviewSettings />);
-    const note = byLabel("Review finished features automatically").findByProps({
-      "data-note-label": "How much longer work takes with Review finished features automatically",
+    const note = byLabel("Review each finished increment automatically").findByProps({
+      "data-note-label":
+        "How much longer work takes with Review each finished increment automatically",
     });
     expect(note.children.join("")).toContain("a median 2.6 times as long");
   });

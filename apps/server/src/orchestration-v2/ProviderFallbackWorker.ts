@@ -82,6 +82,7 @@ import {
   type ApiCreditOrigin,
   apiCreditOrigin,
   apiCreditReturnCommand,
+  launchReturnCommand,
   limitFallbackReturnCommand,
   limitResetAt,
   preswitchReturnBlock,
@@ -98,7 +99,7 @@ import {
   LIMIT_STOP_MAX_AGE_MS,
   previousRunOnInstance,
 } from "./providerOpenFailure.ts";
-import { UnopenableHolds, UsageLimitHolds } from "./UnopenableHolds.ts";
+import { heldInstances, UnopenableHolds, UsageLimitHolds } from "./UnopenableHolds.ts";
 import { contextOverflowStop } from "./contextOverflowFallback.ts";
 import {
   PRESWITCH_TURN_STARTED,
@@ -116,6 +117,7 @@ import {
   type OpenFailure,
   PROVIDER_FALLBACK_CONTINUE_TEXT,
   PROVIDER_RETRY_MESSAGE_PREFIX,
+  isReviewWork,
   providerRetryAwaitsRead,
   providerRetryCommand,
   threadIsFree,
@@ -178,6 +180,8 @@ interface WayBack {
   readonly attemptKey: string;
   /** Set for the way back from a usage pre-switch, which its thread record holds. */
   readonly preswitch: PreswitchOrigin | null;
+  /** Set for the way back from a launch fallback: the pick its thread record holds. */
+  readonly launch?: ModelSelection;
   readonly returnCommand: (
     current: FallbackThread,
     attempt: number,
@@ -243,6 +247,8 @@ export function providerFallbackCommand(
       belowPercent: rule.providerLimitSwitchAtPercent ?? 100,
       anyReady: true,
       proven,
+      review: isReviewWork(thread),
+      lane: thread.routing?.lane,
       ...(limited === undefined ? {} : { limitedInstanceIds: limited }),
       ...(failed === undefined ? {} : { excludedSelections: failed }),
     });
@@ -281,6 +287,8 @@ export function providerFallbackCommand(
     belowPercent: rule.providerLimitSwitchAtPercent,
     anyReady: true,
     proven,
+    review: isReviewWork(thread),
+      lane: thread.routing?.lane,
     ...(limited === undefined ? {} : { limitedInstanceIds: limited }),
   });
   if (target === null) return null;
@@ -673,7 +681,7 @@ function limitStep(
 
 /** The limit step, held inside a marked review's reviewer lock (see `reviewFallbackLock.ts`). */
 export const providerLimitStep: typeof limitStep = (thread, providers, rule, nowMs, options) => {
-  const proven = lockedProven(thread.routing, options.proven);
+  const proven = lockedProven(thread.routing, providers, options.proven);
   return lockedStep(
     thread,
     providers,
@@ -753,13 +761,14 @@ function idlePreswitchCommand(
   const command = providerFallbackCommand(
     thread,
     providers,
-    rule,
+    lockedRule(rule, thread.routing, providers),
     nowMs,
-    options.proven ?? null,
+    lockedProven(thread.routing, providers, options.proven),
     options.limited,
   );
   return command?.type === "thread.model-selection.set"
-    ? { ...command, commandId: CommandId.make(id) }
+    ? lockedStep(thread, providers, { command: { ...command, commandId: CommandId.make(id) } })
+        ?.command ?? null
     : null;
 }
 
@@ -1038,7 +1047,13 @@ export const makeSweep = Effect.gen(function* () {
     );
   // Runs are read once per thread, latest run and instance; the rest repeats each sweep.
   const origins = yield* Ref.make(
-    new Map<string, ApiCreditOrigin | { readonly preswitch: PreswitchOrigin } | null>(),
+    new Map<
+      string,
+      | ApiCreditOrigin
+      | { readonly preswitch: PreswitchOrigin }
+      | { readonly launch: ModelSelection }
+      | null
+    >(),
   );
   // Whether a stop was its own instance's Claude plan limit, read once per stopped run.
   const planStops = yield* Ref.make(new Map<string, boolean>());
@@ -1138,7 +1153,12 @@ export const makeSweep = Effect.gen(function* () {
       // the runs show, and its origin is where the thread ran before it. On
       // per-token API credits the way off them comes first (#599).
       if (preswitch !== null && !apiCredits) found = null;
-      if (found === null) origin = preswitch === null ? null : { preswitch };
+      // A worker that started on a stand-in has neither: its thread record
+      // keeps the pick it stands in for.
+      const launch = records.thread?.launchFallbackFrom ?? null;
+      if (found === null)
+        origin =
+          preswitch !== null ? { preswitch } : launch !== null && !apiCredits ? { launch } : null;
       else {
         let resetAt = yield* stoppedResetAt(found.stoppedRunId);
         if (resetAt === undefined) return null;
@@ -1201,6 +1221,18 @@ export const makeSweep = Effect.gen(function* () {
         returnCommand: (current, attempt) =>
           preswitchReturnCommand(current, preswitch, providers, rule, nowMs, attempt),
       };
+    } else if ("launch" in origin) {
+      const home = origin.launch;
+      // A pick that reports no usage goes back once nothing holds it (see launchReturnCommand).
+      const held = yield* heldInstances(nowMs);
+      way = {
+        home,
+        attemptKey: `launch:${thread.id}:${home.instanceId}/${home.model}`,
+        preswitch: null,
+        launch: home,
+        returnCommand: (current, attempt) =>
+          launchReturnCommand(current, home, providers, rule, nowMs, attempt, held),
+      };
     } else {
       const found = origin;
       way = {
@@ -1262,7 +1294,7 @@ export const makeSweep = Effect.gen(function* () {
   ) {
     const plan = yield* apiCreditReturnPlan(thread, providers, nowMs, ruleOn, rule);
     if (plan === null) return null;
-    const { home, attemptKey, tries, returnCommand, preswitch, originKey } = plan;
+    const { home, attemptKey, tries, returnCommand, preswitch, launch, originKey } = plan;
     // Checked against the thread as it is now: a turn may have started since the snapshot.
     const shell = yield* projections
       .getThreadShell(thread.id)
@@ -1290,6 +1322,15 @@ export const makeSweep = Effect.gen(function* () {
       // A person's Stop holds the thread where it is, whatever its last run's status.
       if (yield* stopHoldsLatestRun(current)) return null;
     }
+    if (launch !== undefined) {
+      // A pick since the launch cleared the record; the cached origin is stale.
+      const recorded = records.value.thread?.launchFallbackFrom;
+      if (recorded?.instanceId !== launch.instanceId || recorded.model !== launch.model) {
+        yield* forgetOrigin(originKey);
+        return null;
+      }
+      if (yield* stopHoldsLatestRun(current)) return null;
+    }
     const pinned = queuedRunsPinnedTo(records.value.runs, thread.providerInstanceId);
     if (pinned.length > 0) {
       const { messages = [] } = yield* projections
@@ -1304,7 +1345,12 @@ export const makeSweep = Effect.gen(function* () {
       );
       if (holding.length > 0) return null;
     }
-    return { command, attemptKey, tries, originKey: preswitch === null ? null : originKey };
+    return {
+      command,
+      attemptKey,
+      tries,
+      originKey: preswitch === null && launch === undefined ? null : originKey,
+    };
   });
   // A thread the provider never answered resends its request instead of
   // continuing nothing (see limitRestartRequest).

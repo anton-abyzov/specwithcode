@@ -257,7 +257,6 @@ export const ru: PhraseCatalog = {
   "Restart when idle waits up to": "Перезапуск в простое ждёт до",
   "Retry once on the usual model": "Повторить один раз на обычной модели",
   "Review depth": "Глубина ревью",
-  "Review finished features automatically": "Автоматически проверять готовые функции",
   "Reviewer order": "Порядок ревьюеров",
   "Rich text composer": "Форматированный ввод",
   "Routine unavailable": "Рутина недоступна",
@@ -3615,10 +3614,6 @@ export const ru: PhraseCatalog = {
     "Управляет: {owner}. Инструменты обновляются на этом хосте автоматически, когда нужно.",
   "Tools update automatically on this host when needed.":
     "Инструменты обновляются на этом хосте автоматически, когда нужно.",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Turn it on for the projects where a second opinion is worth the usage.":
-    "Когда тред завершается и все задачи его инкремента выполнены, модель из другого семейства проверяет работу в новом треде. Включайте для проектов, где второе мнение стоит затрат.",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Off by default; projects can turn it on.":
-    "Когда тред завершается и все задачи его инкремента выполнены, модель из другого семейства проверяет работу в новом треде. По умолчанию выключено; проекты могут включить.",
   "Additional rules for this project. Global instructions are always included before these additions.":
     "Дополнительные правила для этого проекта. Глобальные инструкции всегда идут перед этими дополнениями.",
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
@@ -5224,6 +5219,13 @@ export const ru: PhraseCatalog = {
   "Link {machine} to this project…": "Связать {machine} с этим проектом…",
   "Link {machine} to this project": "Связать {machine} с этим проектом",
   "Link {machine}": "Связать {machine}",
+  "Review each finished increment automatically":
+    "Автоматически проверять каждый готовый инкремент",
+  "Review each finished increment": "Проверять каждый готовый инкремент",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "Когда запущенный вами тред завершается и все задачи его инкремента выполнены или пропущены, модель из другого семейства проверяет работу в новом треде, один раз на инкремент. Действует для проектов этой машины, если проект не задал своё. Проверки, которые просите вы или агент, и проверка при закрытии инкремента идут в любом случае.",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "Когда запущенный вами тред завершается и все задачи его инкремента выполнены или пропущены, модель из другого семейства проверяет работу в новом треде, один раз на инкремент. Действует только для этого проекта. Проверки, которые просите вы или агент, и проверка при закрытии инкремента идут в любом случае.",
   "Nothing on {machine} is replaced without asking.":
     "На {machine} ничего не заменяется без вопроса.",
   "the other machine": "другой машине",

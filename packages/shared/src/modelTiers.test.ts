@@ -100,6 +100,12 @@ describe("tierOfModel", () => {
 });
 
 describe("tierFallbackOrder", () => {
+  it("starts with Daily for an unranked thread in Tracks mode despite a saved single-model default", () => {
+    expect(
+      tierFallbackOrder({ ...rule, threadModelMode: "tracks" }, "unranked", providers),
+    ).toEqual(lanes.routine);
+  });
+
   it("walks the thread's tier first, each model on its other providers, then the other tier", () => {
     expect(tierFallbackOrder(rule, "claude-opus-5-5", providers)).toEqual([
       sel("claudeAgent", "claude-opus-5-5"),

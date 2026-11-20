@@ -258,7 +258,6 @@ export const ja: PhraseCatalog = {
   "Restart when idle waits up to": "アイドル時の再起動の最大待機時間",
   "Retry once on the usual model": "いつものモデルで 1 回再試行",
   "Review depth": "レビューの深さ",
-  "Review finished features automatically": "完成した機能を自動でレビュー",
   "Reviewer order": "レビュアーの順序",
   "Rich text composer": "リッチテキストの入力欄",
   "Routine unavailable": "ルーティンを利用できません",
@@ -3621,10 +3620,6 @@ export const ja: PhraseCatalog = {
     "{owner} が管理しています。ツールは必要に応じてこのホストで自動更新されます。",
   "Tools update automatically on this host when needed.":
     "ツールは必要に応じてこのホストで自動更新されます。",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Turn it on for the projects where a second opinion is worth the usage.":
-    "スレッドが終了し、そのインクリメントのタスクがすべて完了すると、別系統のモデルが新しいスレッドで作業をレビューします。セカンドオピニオンに使用量をかける価値があるプロジェクトでオンにしてください。",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Off by default; projects can turn it on.":
-    "スレッドが終了し、そのインクリメントのタスクがすべて完了すると、別系統のモデルが新しいスレッドで作業をレビューします。既定ではオフで、プロジェクトごとにオンにできます。",
   "Additional rules for this project. Global instructions are always included before these additions.":
     "このプロジェクトの追加ルール。グローバルな指示は常にこれらの追加より前に含まれます。",
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
@@ -5228,6 +5223,12 @@ export const ja: PhraseCatalog = {
   "Link {machine} to this project…": "{machine} をこのプロジェクトにリンク…",
   "Link {machine} to this project": "{machine} をこのプロジェクトにリンク",
   "Link {machine}": "{machine} をリンク",
+  "Review each finished increment automatically": "完了したインクリメントを毎回自動でレビュー",
+  "Review each finished increment": "完了したインクリメントを毎回レビュー",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "自分で始めたスレッドが終わり、そのインクリメントのタスクがすべて完了またはスキップになると、別ファミリーのモデルが新しいスレッドで作業をレビューします。インクリメントごとに 1 回です。プロジェクトが個別に設定しない限り、このマシンのプロジェクトに適用されます。あなたやエージェントが依頼するレビューと、インクリメント終了時のレビューは、この設定に関係なく実行されます。",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "自分で始めたスレッドが終わり、そのインクリメントのタスクがすべて完了またはスキップになると、別ファミリーのモデルが新しいスレッドで作業をレビューします。インクリメントごとに 1 回です。このプロジェクトにのみ適用されます。あなたやエージェントが依頼するレビューと、インクリメント終了時のレビューは、この設定に関係なく実行されます。",
   "Nothing on {machine} is replaced without asking.":
     "{machine} 上のものが確認なしに置き換えられることはありません。",
   "the other machine": "別のマシン",

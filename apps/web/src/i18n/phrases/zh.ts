@@ -256,7 +256,6 @@ export const zh: PhraseCatalog = {
   "Restart when idle waits up to": "空闲重启最多等待",
   "Retry once on the usual model": "用常用模型重试一次",
   "Review depth": "审查深度",
-  "Review finished features automatically": "自动审查已完成的功能",
   "Reviewer order": "审查者顺序",
   "Rich text composer": "富文本输入框",
   "Routine unavailable": "例行任务不可用",
@@ -3497,10 +3496,6 @@ export const zh: PhraseCatalog = {
   "Managed by {owner}. Tools update automatically on this host when needed.":
     "由 {owner} 管理。工具会在需要时在此主机上自动更新。",
   "Tools update automatically on this host when needed.": "工具会在需要时在此主机上自动更新。",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Turn it on for the projects where a second opinion is worth the usage.":
-    "当一个线程完成且其增量的所有任务都已完成时，另一个系列的模型会在新线程中审查这项工作。请在值得花费用量获取第二意见的项目中开启。",
-  "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Off by default; projects can turn it on.":
-    "当一个线程完成且其增量的所有任务都已完成时，另一个系列的模型会在新线程中审查这项工作。默认关闭；项目可以开启。",
   "Additional rules for this project. Global instructions are always included before these additions.":
     "此项目的附加规则。全局指令始终放在这些附加内容之前。",
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
@@ -5020,6 +5015,12 @@ export const zh: PhraseCatalog = {
   "Link {machine} to this project…": "将 {machine} 关联到此项目…",
   "Link {machine} to this project": "将 {machine} 关联到此项目",
   "Link {machine}": "关联 {machine}",
+  "Review each finished increment automatically": "自动审查每个完成的增量",
+  "Review each finished increment": "审查每个完成的增量",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "当你启动的线程结束，且其增量的所有任务都已完成或跳过时，另一系列的模型会在新线程中审查这些工作，每个增量一次。适用于本机的项目，除非某个项目单独设置。你或智能体请求的审查，以及关闭增量时的审查，都会照常进行。",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "当你启动的线程结束，且其增量的所有任务都已完成或跳过时，另一系列的模型会在新线程中审查这些工作，每个增量一次。仅适用于此项目。你或智能体请求的审查，以及关闭增量时的审查，都会照常进行。",
   "Nothing on {machine} is replaced without asking.": "{machine} 上的内容不会未经询问就被替换。",
   "the other machine": "另一台机器",
   "Link with a project on another machine": "与另一台机器上的项目关联",
