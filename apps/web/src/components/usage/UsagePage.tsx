@@ -15,6 +15,7 @@ import {
   CircleDollarSignIcon,
   CoinsIcon,
   GaugeIcon,
+  MonitorIcon,
   SlidersHorizontalIcon,
 } from "lucide-react";
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
@@ -85,6 +86,7 @@ import {
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageLimitsSection } from "./UsageLimits";
+import { UsageMachinesSection } from "./machines/UsageMachinesSection";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart } from "./UsageProviderChart";
 import { SpeedPremium, UsageModelDialog } from "./UsageModelDialog";
@@ -176,6 +178,10 @@ export function UsagePage({
   }));
   const metric = preferences.metric;
   const showingLimits = metric === "limits";
+  const showingMachines = metric === "machines";
+  // Limits and Machines choose their own period and read on their own.
+  const ownsPeriod = showingLimits || showingMachines;
+  const [machinesRefreshKey, setMachinesRefreshKey] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [limitsNow, setLimitsNow] = useState(() => Date.now());
   const refreshingRef = useRef(false);
@@ -339,7 +345,7 @@ export function UsagePage({
     });
   };
   const selectMetric = (nextMetric: UsageMetric) => {
-    if (nextMetric === "limits") setLimitsNow(Date.now());
+    if (nextMetric === "limits" || nextMetric === "machines") setLimitsNow(Date.now());
     const nextPreferences = { metric: nextMetric, windowDays };
     setPreferences(nextPreferences);
     saveUsagePagePreferences(nextPreferences);
@@ -382,7 +388,7 @@ export function UsagePage({
     event.preventDefault();
     event.stopPropagation();
     if (metricOption) selectMetric(metricOption.value);
-    if (periodOption && !showingLimits) selectWindow(periodOption.days);
+    if (periodOption && !ownsPeriod) selectWindow(periodOption.days);
   });
 
   useEffect(() => {
@@ -393,7 +399,11 @@ export function UsagePage({
   const refreshWindow = () => {
     if (refreshingRef.current) return;
 
-    if (showingLimits) {
+    if (ownsPeriod) {
+      if (showingMachines) {
+        setLimitsNow(Date.now());
+        setMachinesRefreshKey((key) => key + 1);
+      }
       refreshingRef.current = true;
       setIsRefreshing(true);
       void refreshLimits().finally(() => {
@@ -446,8 +456,8 @@ export function UsagePage({
     void refreshLimits(true);
   });
   useEffect(() => {
-    if (showingLimits && connectedLimitsEnvironments) autoRefreshLimits();
-  }, [showingLimits, connectedLimitsEnvironments]);
+    if (ownsPeriod && connectedLimitsEnvironments) autoRefreshLimits();
+  }, [ownsPeriod, connectedLimitsEnvironments]);
 
   const windowLabel =
     isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined
@@ -466,7 +476,7 @@ export function UsagePage({
             selectedEnvironments={selectedEnvironments}
             selectedEnvironmentIds={selectedEnvironmentIds}
             onSelectionChange={setSelectedEnvironmentIds}
-            showUsageStatus={!showingLimits}
+            showUsageStatus={!ownsPeriod}
             isPartial={isPartial}
             duplicateSources={merged.duplicateSources}
             contractMismatches={merged.contractMismatches}
@@ -474,7 +484,7 @@ export function UsagePage({
           />
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
-      {!showingLimits ? (
+      {!ownsPeriod ? (
         <span className="hidden min-w-0 truncate text-xs text-muted-foreground 2xl:block">
           {windowLabel}
         </span>
@@ -503,7 +513,7 @@ export function UsagePage({
           aria-label="Usage period"
           variant="segmented"
           value={[String(windowDays)]}
-          disabled={showingLimits}
+          disabled={ownsPeriod}
           onValueChange={(next) => {
             const value = next[0];
             if (value) selectWindow(Number(value));
@@ -517,9 +527,15 @@ export function UsagePage({
         </ToggleGroup>
         <Button
           onClick={refreshWindow}
-          aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
+          aria-label={
+            showingLimits
+              ? "Refresh limits"
+              : showingMachines
+                ? "Refresh machines"
+                : "Refresh usage"
+          }
           aria-busy={isRefreshing}
-          disabled={isRefreshing || (!showingLimits && !canReadDiagnostics)}
+          disabled={isRefreshing || (!ownsPeriod && !canReadDiagnostics)}
           size="icon-sm"
           variant="ghost"
         >
@@ -555,7 +571,7 @@ export function UsagePage({
         )}
         <Select
           value={String(windowDays)}
-          disabled={showingLimits}
+          disabled={ownsPeriod}
           onValueChange={(value) => selectWindow(Number(value))}
         >
           <SelectTrigger
@@ -582,9 +598,15 @@ export function UsagePage({
         </Select>
         <Button
           onClick={refreshWindow}
-          aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
+          aria-label={
+            showingLimits
+              ? "Refresh limits"
+              : showingMachines
+                ? "Refresh machines"
+                : "Refresh usage"
+          }
           aria-busy={isRefreshing}
-          disabled={isRefreshing || (!showingLimits && !canReadDiagnostics)}
+          disabled={isRefreshing || (!ownsPeriod && !canReadDiagnostics)}
           size="icon-sm"
           variant="ghost"
         >
@@ -611,6 +633,13 @@ export function UsagePage({
                   ? `Connect an environment to see ${showingLimits ? "limits" : "usage"}.`
                   : `Select an environment to see ${showingLimits ? "limits" : "usage"}.`}
               </p>
+            ) : showingMachines ? (
+              <UsageMachinesSection
+                selectedEnvironmentIds={selectedEnvironmentIds}
+                usage={selectedEnvironments}
+                refreshKey={machinesRefreshKey}
+                now={limitsNow}
+              />
             ) : showingLimits ? (
               <UsageLimitsSection
                 selectedEnvironmentIds={selectedEnvironmentIds}
@@ -1057,7 +1086,7 @@ export function UsagePage({
           </WorkspacePageContainer>
         </ScrollArea>
       </div>
-      {selectedModel !== undefined && !showingLimits ? (
+      {selectedModel !== undefined && !ownsPeriod ? (
         <UsageModelDialog
           model={selectedModel}
           pinnedPeriod={filters.period}
@@ -1146,6 +1175,7 @@ const METRIC_ICONS: Record<UsageMetric, typeof CircleDollarSignIcon> = {
   cost: CircleDollarSignIcon,
   tokens: CoinsIcon,
   limits: GaugeIcon,
+  machines: MonitorIcon,
 };
 
 const CURSOR_KEYCHAIN_COPY = "Requires access to your Cursor login in macOS Keychain.";

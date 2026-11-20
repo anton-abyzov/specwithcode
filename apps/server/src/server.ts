@@ -135,6 +135,7 @@ import * as DeviceSignInHttp from "./auth/deviceSignInHttp.ts";
 import * as ConnectDevicesHttp from "./auth/connectDevicesHttp.ts";
 import * as ProviderUsageLimitsIngestion from "./provider/ProviderUsageLimitsIngestion.ts";
 import * as UsageLimitHistory from "./usage/UsageLimitHistory.ts";
+import * as UsageMachineReport from "./usage/UsageMachineReport.ts";
 import * as TeamUsageReporter from "./teamUsage/TeamUsageReporter.ts";
 import * as ResetAnnouncementMonitor from "./resetAnnouncements/ResetAnnouncementMonitor.ts";
 import * as UsageResetLedger from "./usage/UsageResetLedger.ts";
@@ -949,8 +950,11 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // and the opt-in team summary (0898) that reads it. Its RPC handlers are
   // registered here, not in ws.ts, which sits at TypeScript's instantiation limit;
   // connections read handlers from the request context.
-  TeamUsageReporter.layerRpcHandlers.pipe(
+  // The same goes for the per-machine usage report, which reads the history
+  // for accounts seen before it kept its own record.
+  Layer.mergeAll(TeamUsageReporter.layerRpcHandlers, UsageMachineReport.layerRpcHandlers).pipe(
     Layer.provideMerge(TeamUsageReporter.layer),
+    Layer.provideMerge(UsageMachineReport.layer),
     Layer.provideMerge(UsageLimitHistory.layer),
   ),
   // What each subscription window had used when it reset, kept for a year.
