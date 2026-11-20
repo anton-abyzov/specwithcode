@@ -6,7 +6,7 @@ import {
 
 import { normalizeSearchText } from "~/lib/utils";
 import { projectSkillLevel } from "../settings/ProjectSkillsSettings.logic";
-import { skillAvailabilityState } from "./SkillAvailability";
+import { skillAbsenceUnproven, skillAvailabilityState } from "./SkillAvailability";
 
 /** One machine's read of its own skills, as "Available on" already makes it. */
 export interface SkillMatrixMachine {
@@ -34,7 +34,7 @@ export type SkillMatrixUnknownReason =
   | "unlinked"
   | "failed"
   | "incomplete"
-  /** An agent there keeps one machine-wide list and its folders were not scanned. */
+  /** An agent there cannot say the skill is absent from this folder. */
   | "machine-list";
 
 /**
@@ -179,20 +179,16 @@ function cellFor(
     };
   }
   // A scan that did not finish cannot say the skill is absent.
-  if (state === "partial" || availability.state !== "missing")
-    return { kind: "unknown", reason: "incomplete" };
+  if (state === "partial") return { kind: "unknown", reason: "incomplete" };
+  // Nor can an agent that keeps one list for the whole machine, or one whose
+  // usual folders the app scanned without covering every place it reads.
+  if (machine.snapshot && skillAbsenceUnproven(machine.snapshot))
+    return { kind: "unknown", reason: "machine-list" };
+  if (availability.state !== "missing") return { kind: "unknown", reason: "incomplete" };
   // What ships with an agent depends on its version and account (claude.ai sync,
   // Codex system skills), and an older app does not read those folders at all:
   // nobody can install one, so its absence is never "Not on".
   if (builtIn) return { kind: "unreported" };
-  // An agent that keeps one list for the whole machine, whose folders the app
-  // did not scan either, may hold the skill for this folder without saying so.
-  if (
-    machine.snapshot?.providers.some(
-      (provider) => provider.state === "unsupported" && provider.discovery !== "folder-scan",
-    )
-  )
-    return { kind: "unknown", reason: "machine-list" };
   return { kind: "missing" };
 }
 

@@ -247,6 +247,8 @@ export const applyNativeSkillSwitches = Effect.fn("projectSkills.applyNativeSkil
                 control.environment,
                 path.join,
               ),
+              // By the declared name, so same-named folders stay two skills.
+              (skill) => skill.displayName ?? skill.name,
             )).skills.map(({ displayName, ...skill }) => ({
               ...skill,
               name: displayName ?? skill.name,

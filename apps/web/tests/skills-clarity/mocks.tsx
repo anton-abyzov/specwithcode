@@ -122,15 +122,20 @@ const snapshotOf = (rows: ReadonlyArray<unknown>, checkedAt: string, complete = 
         state: "ok",
         skills: 54,
       },
-      {
-        instanceId: "copilot",
-        driver: "copilot",
-        label: "Copilot",
-        state: "unsupported",
-        // The app scanned its skill folders itself.
-        discovery: "folder-scan",
-        skills: 36,
-      },
+      // The second machine has no agent with a machine-wide list, so it can say "Not on".
+      ...(complete
+        ? []
+        : [
+            {
+              instanceId: "copilot",
+              driver: "copilot",
+              label: "Copilot",
+              state: "unsupported",
+              // The app scanned its skill folders itself.
+              discovery: "folder-scan",
+              skills: 36,
+            },
+          ]),
       { instanceId: "codex", driver: "codex", label: "Codex", state: "ok", skills: 18 },
       // One agent whose folder scan did not finish, unless the read is complete.
       ...(complete
@@ -153,16 +158,21 @@ const SNAPSHOTS: Readonly<Record<string, ProjectSkillsSnapshot>> = {
   laptop: snapshotOf(ROWS, "2026-11-18T15:04:00.000Z"),
   // The other machine holds fewer, some at an older version.
   desktop: snapshotOf(
-    ROWS.filter((_, index) => index % 4 !== 2).map((row, index) =>
-      index % 7 === 0
-        ? {
-            ...row,
-            providers: row.providers.map((entry) =>
-              "fileVersion" in entry ? { ...entry, fileVersion: "0.9.0" } : entry,
-            ),
-          }
-        : row,
-    ),
+    ROWS.filter((_, index) => index % 4 !== 2)
+      .map((row) => ({
+        ...row,
+        providers: row.providers.filter((entry) => entry.instanceId !== "copilot"),
+      }))
+      .map((row, index) =>
+        index % 7 === 0
+          ? {
+              ...row,
+              providers: row.providers.map((entry) =>
+                "fileVersion" in entry ? { ...entry, fileVersion: "0.9.0" } : entry,
+              ),
+            }
+          : row,
+      ),
     "2026-11-18T15:03:00.000Z",
     true,
   ),

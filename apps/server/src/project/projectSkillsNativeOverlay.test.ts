@@ -291,6 +291,22 @@ describe("agents' own skill switches in the Skills view", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("OpenCode: a switched-off skill comes back under its declared name", () =>
+    Effect.gen(function* () {
+      const root = yield* setup({
+        "home/.config/opencode/opencode.json": JSON.stringify({
+          permission: { skill: { beta: "deny" } },
+        }),
+        "work/.opencode/skills/foo/SKILL.md": skillFile("alpha"),
+        "home/.config/opencode/skills/foo/SKILL.md": skillFile("beta"),
+      });
+      const [opencode] = yield* run(root, [source("opencode", [])], { opencode: "opencode" });
+      expect(opencode!.skills.map((skill) => [skill.name, skill.enabled])).toEqual([
+        ["beta", false],
+      ]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("an agent the app does not scan folders for carries no discovery claim", () =>
     Effect.gen(function* () {
       const root = yield* setup({ "home/.grok/config.toml": "" });

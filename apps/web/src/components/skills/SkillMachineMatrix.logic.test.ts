@@ -256,12 +256,17 @@ describe("buildSkillMatrix", () => {
       }) as unknown as ProjectSkillsSnapshot;
     const matrix = buildSkillMatrix([
       machine("desk", { current: true, snapshot: snapshot([row("notes")]) }),
-      // One machine-wide list and no folder scan: the skill may be there unseen.
+      // One machine-wide list: the skill may be there unseen.
       machine("mini", { snapshot: agents({}) }),
-      // The app scanned that agent's folders itself: absence is known.
+      // The app's own scan does not cover every place the agent reads.
       machine("tower", { snapshot: agents({ discovery: "folder-scan" }) }),
+      machine("rack", { snapshot: agents({ state: "ok", discovery: "folder-scan" }) }),
+      // Every agent read for the folder: absence is known.
+      machine("box", { snapshot: snapshot([]) }),
     ]);
     expect(matrix.rows[0]?.cells.slice(1)).toEqual([
+      { kind: "unknown", reason: "machine-list" },
+      { kind: "unknown", reason: "machine-list" },
       { kind: "unknown", reason: "machine-list" },
       { kind: "missing" },
     ]);

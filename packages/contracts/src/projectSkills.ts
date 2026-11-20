@@ -177,9 +177,10 @@ export const ProjectSkillsProviderState = Schema.Struct({
    */
   incomplete: Schema.optional(Schema.Boolean),
   /**
-   * `folder-scan`: the app scanned this agent's skill folders for this folder
-   * itself, so an `unsupported` agent's files were still looked for. Absent
-   * from older machines, where an `unsupported` agent proves no absence.
+   * `folder-scan`: the app scanned this agent's usual skill folders itself.
+   * That finds files but not every place the agent reads (plugins, extra
+   * folders from its environment), so it proves presence, never absence.
+   * Absent from older machines.
    */
   discovery: Schema.optional(ServerProviderSkillDiscovery),
 });

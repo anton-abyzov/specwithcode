@@ -43,6 +43,21 @@ describe("skill availability evidence", () => {
     expect(state.state).toBe("unknown");
     expect(state.text).toBe("Scan incomplete · refresh");
   });
+  it("says unknown, not missing, beside an agent that cannot speak for the folder", () => {
+    const beside = (extra: Record<string, unknown>) =>
+      skillAvailabilityState({
+        ...input,
+        snapshot: {
+          ...snapshot,
+          providers: [...snapshot.providers, { ...snapshot.providers[0]!, ...extra }],
+        } as never,
+      });
+    // One list for the whole machine, or the app's own scan of the usual folders.
+    for (const extra of [{ state: "unsupported" }, { discovery: "folder-scan" }])
+      expect(beside(extra)).toMatchObject({ state: "unknown", text: "Not checked per folder" });
+    expect(beside({}).state).toBe("missing");
+  });
+
   it("reports missing only from a successful supported scan", () => {
     expect(skillAvailabilityState(input).state).toBe("missing");
     expect(
