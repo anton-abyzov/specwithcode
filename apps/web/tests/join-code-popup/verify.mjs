@@ -109,6 +109,8 @@ try {
         await page.locator("[data-sidebar-join-code-show]").click();
         await card.waitFor();
       } else {
+        // No sidebar at this width: start over as a window that never closed it.
+        await page.evaluate(() => localStorage.clear());
         await page.reload();
         await card.waitFor();
       }
@@ -116,6 +118,50 @@ try {
       await page.keyboard.press("Escape");
       NodeAssert.equal(await card.count(), 0);
       receipt.checks.push(`${size}: Escape closes it`);
+      // Closed stays closed: a reload, a new code, a dropped connection and a restart.
+      const quiet = async (query, what) => {
+        await page.goto(`${origin}/?theme=${theme}${query}`);
+        await page.waitForTimeout(400);
+        NodeAssert.equal(await card.count(), 0, `${size}: card stays closed after ${what}`);
+        receipt.checks.push(`${size}: stays closed after ${what}`);
+      };
+      await page.reload();
+      await page.waitForTimeout(400);
+      NodeAssert.equal(await card.count(), 0, `${size}: card stays closed after a reload`);
+      receipt.checks.push(`${size}: stays closed after a reload`);
+      await quiet("&code=Q8LM3D", "a new code");
+      await quiet("&state=offline", "the connection drops");
+      await quiet("&code=T2VN6H", "a reconnect with another code");
+      const stored = await page.evaluate(() => JSON.stringify({ ...localStorage }));
+      NodeAssert.doesNotMatch(stored, /UN5MBB|Q8LM3D|T2VN6H/, `${size}: no code is stored`);
+      NodeAssert.match(stored, /join-code-closed/);
+      receipt.checks.push(`${size}: storage holds the machine and this device's ID, no code`);
+      if (width > 700) {
+        await shoot(page, `quiet-new-code-${size}`);
+        // The current code is one press away.
+        await page.locator("[data-sidebar-join-code-show]").click();
+        await card.waitFor();
+        NodeAssert.match(await card.textContent(), /T2VN6H/);
+        receipt.checks.push(`${size}: "Show code" opens it with the current code`);
+        await page.keyboard.press("Escape");
+        NodeAssert.equal(await card.count(), 0);
+      }
+      // A new key on this device: the machine sees a new device, so the card shows once.
+      await page.goto(`${origin}/?theme=${theme}&code=H4WP9C&device=N7XE`);
+      await card.waitFor();
+      NodeAssert.match(await card.textContent(), /H4WP9C/);
+      receipt.checks.push(`${size}: shows once for this device under a new key`);
+      await page.keyboard.press("Escape");
+      await quiet("&code=B6RD2K&device=N7XE", "the new device's next code");
+      // The machine let this device in; asked again later, that is a new ask.
+      await page.goto(`${origin}/?theme=${theme}&state=connected&device=N7XE`);
+      await page.waitForTimeout(400);
+      NodeAssert.equal(await card.count(), 0);
+      await page.goto(`${origin}/?theme=${theme}&code=M3TY8L&device=N7XE`);
+      await card.waitFor();
+      NodeAssert.match(await card.textContent(), /M3TY8L/);
+      receipt.checks.push(`${size}: shows again when it must ask again after being let in`);
+      await page.keyboard.press("Escape");
       // Settings > Machines shows the code, this device's ID and Copy; the floating card stays away.
       await page.goto(`${origin}/?theme=${theme}&scene=settings`);
       const section = page.locator("[data-waiting-join-codes]");

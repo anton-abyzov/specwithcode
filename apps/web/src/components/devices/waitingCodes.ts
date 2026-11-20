@@ -1,13 +1,22 @@
 /**
  * The machines this device waits on for a typed code (1327), and which of those
- * codes the owner closed the floating card over. Closing only hides the card:
- * the join stays pending, Settings > Machines still shows the code, and the
- * sidebar's "Show code" brings the card back. A new code shows the card again.
+ * the owner closed the floating card over. Closing only hides the card: the
+ * join stays pending, Settings > Machines still shows the code, and the
+ * sidebar's "Show code" brings the card back. A closed card stays closed when
+ * the machine gives a new code, and across reloads and restarts (see
+ * closedJoinCodes for what does bring it back).
  */
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import { useSyncExternalStore } from "react";
 
 import { useEnvironments } from "../../state/environments";
+import {
+  closeJoinCodes,
+  closedJoinCodesVersion,
+  joinCodeClosed,
+  reopenJoinCodes,
+  subscribeClosedJoinCodes,
+} from "./closedJoinCodes";
 
 /** One machine this device waits on, and the code to type there. */
 export interface WaitingCode {
@@ -16,35 +25,23 @@ export interface WaitingCode {
   readonly code: string;
 }
 
-// Replaced, never changed in place, so a render that reads it sees each change.
-let hidden: ReadonlySet<string> = new Set();
-const listeners = new Set<() => void>();
-const keyOf = (entry: Pick<WaitingCode, "id" | "code">) => `${entry.id}\u0000${entry.code}`;
-const replace = (next: ReadonlySet<string>) => {
-  hidden = next;
-  for (const listener of listeners) listener();
-};
-const subscribe = (listener: () => void) => {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
-};
-
-/** Close the floating card over these codes; the join itself stays pending. */
-export function hideWaitingCodes(entries: ReadonlyArray<Pick<WaitingCode, "id" | "code">>) {
-  if (entries.length === 0) return;
-  replace(new Set([...hidden, ...entries.map(keyOf)]));
+/** Close the floating card over these machines; the join itself stays pending. */
+export function hideWaitingCodes(entries: ReadonlyArray<Pick<WaitingCode, "id">>) {
+  closeJoinCodes(entries.map((entry) => entry.id));
 }
 
-/** Bring the floating card back for every waiting code. */
-export function showWaitingCodes() {
-  if (hidden.size === 0) return;
-  replace(new Set());
+/** Bring the floating card back for these machines. */
+export function showWaitingCodes(entries: ReadonlyArray<Pick<WaitingCode, "id">>) {
+  reopenJoinCodes(entries.map((entry) => entry.id));
 }
 
-/** Whether the owner closed the card over a code; re-renders when that changes. */
-export function useWaitingCodeHidden(): (entry: Pick<WaitingCode, "id" | "code">) => boolean {
-  const current = useSyncExternalStore(subscribe, () => hidden);
-  return (entry) => current.has(keyOf(entry));
+// Takes the version it was read at, so a render after a change asks again.
+const closedAt = (_version: number, machine: string) => joinCodeClosed(machine);
+
+/** Whether the owner closed the card over a machine; re-renders when that changes. */
+export function useWaitingCodeHidden(): (entry: Pick<WaitingCode, "id">) => boolean {
+  const version = useSyncExternalStore(subscribeClosedJoinCodes, closedJoinCodesVersion);
+  return (entry) => closedAt(version, entry.id);
 }
 
 /** Every machine this device waits on, whether or not its card is hidden. */
@@ -61,9 +58,4 @@ export function useWaitingCodes(): ReadonlyArray<WaitingCode> {
         ]
       : [],
   );
-}
-
-/** Test hook: forget every hidden code. */
-export function resetWaitingCodesForTest() {
-  hidden = new Set();
 }

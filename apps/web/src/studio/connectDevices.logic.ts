@@ -98,27 +98,15 @@ export const laterKey = (request: Pick<ConnectDeviceRequest, "id" | "device">) =
   request.device ? `device:${request.device}` : request.id;
 
 /**
- * The pop-up's waiting list: every request while at least one of them was not
- * put off with Later, else none. A new device brings the hidden ones back with it.
+ * The pop-up's waiting list: the requests not put off with Later. A new device
+ * opens the pop-up for itself only; the ones put off stay quiet, listed under
+ * Settings > Machines, where their code can still be typed.
  */
 export function requestsToPrompt(
   pending: ReadonlyArray<ConnectDeviceRequest>,
   later: ReadonlySet<string>,
 ): ReadonlyArray<ConnectDeviceRequest> {
-  return pending.some((request) => !later.has(laterKey(request))) ? pending : [];
-}
-
-/**
- * What the pop-up shows: Later decides whether it opens, and once open it keeps
- * every waiting device until nothing waits or the owner presses Later or closes
- * it. So allowing a new device does not close it over one put off earlier.
- */
-export function requestsToShow(
-  pending: ReadonlyArray<ConnectDeviceRequest>,
-  later: ReadonlySet<string>,
-  open: boolean,
-): ReadonlyArray<ConnectDeviceRequest> {
-  return open ? pending : requestsToPrompt(pending, later);
+  return pending.filter((request) => !later.has(laterKey(request)));
 }
 
 /** "macOS · SpecWithCode 1.0.338 · First seen November 17, 2026": what tells devices apart. */

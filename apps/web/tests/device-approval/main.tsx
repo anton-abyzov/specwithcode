@@ -20,6 +20,8 @@ import {
   inlineCodesVersion,
   subscribeInlineCodes,
 } from "../../src/components/devices/inlineApprovalCode";
+import { makeLaterStore } from "../../src/components/devices/laterStore";
+import { laterKey, requestsToPrompt } from "../../src/studio/connectDevices.logic";
 import {
   Collapsible,
   CollapsiblePanel,
@@ -122,6 +124,52 @@ function TwoPhones({ note }: { note: (line: string) => void }) {
       }}
       onLater={() => note("later")}
     />
+  );
+}
+
+/**
+ * The pop-up as the machine's app decides it: the real Later list in this page's
+ * storage and the real rule for what to list. ?asking=a,b names the phones that
+ * wait, ?round= is their request (a new one means a new code) and ?rekey=a is
+ * phone a back under a new key.
+ */
+const fixtureLater = makeLaterStore(() => localStorage);
+function PutOff({ note }: { note: (line: string) => void }) {
+  const asking = (params.get("asking") ?? "a").split(",");
+  const round = params.get("round") ?? "1";
+  const rekeyed = (params.get("rekey") ?? "").split(",");
+  const pending = twoPhones.flatMap((phone, index) => {
+    const name = index === 0 ? "a" : "b";
+    return asking.includes(name)
+      ? [
+          {
+            ...phone,
+            id: `${phone.id}-${round}`,
+            device: rekeyed.includes(name) ? `reference-${name}-new-key` : `reference-${name}`,
+          },
+        ]
+      : [];
+  });
+  const [, setVersion] = useState(0);
+  const requests = requestsToPrompt(pending, fixtureLater.keys("env-m4"));
+  return (
+    <>
+      <p data-fixture-waiting={pending.length} className="fixture-thread">
+        Settings &gt; Machines lists {pending.length} waiting
+      </p>
+      <DeviceApprovalPrompt
+        machine="m4"
+        account="owner@example.com"
+        requests={requests}
+        onApprove={async () => null}
+        onDeny={async () => undefined}
+        onLater={() => {
+          fixtureLater.add("env-m4", requests.map(laterKey));
+          note("later");
+          setVersion((version) => version + 1);
+        }}
+      />
+    </>
   );
 }
 
@@ -362,6 +410,16 @@ function Fixture() {
         <div className="fixture-page">
           <div className="fixture-thread">m4 · Connecting…</div>
         </div>
+      </div>
+    );
+  if (scene === "put-off")
+    return (
+      <div className="fixture-shell">
+        <div className="fixture-bar">SpecWithCode · m4</div>
+        <div className="fixture-page">
+          <PutOff note={note} />
+        </div>
+        {fixtureLog}
       </div>
     );
   if (scene === "two-phones")
