@@ -285,6 +285,11 @@ export function ProviderAuthenticationSection({
                       variant="ghost-muted"
                       disabled={disabled}
                       onClick={() => {
+                        // The same guard as Open: no copy and no consent for a non-web link.
+                        if (!isWebUrl(url)) {
+                          setError("This sign-in link is not a web address, so it was not copied.");
+                          return;
+                        }
                         // Copy inside the click so the clipboard keeps the user
                         // activation; the link only works once consent is recorded.
                         const copied = writeTextToClipboard(url, "Provider sign-in link");

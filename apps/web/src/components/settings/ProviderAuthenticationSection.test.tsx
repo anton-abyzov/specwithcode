@@ -230,6 +230,11 @@ describe("provider device consent", () => {
         expect(state.open).not.toHaveBeenCalled();
         expect(state.command).not.toHaveBeenCalled();
         expect(JSON.stringify(render())).toContain("not a web address");
+        click(render(), "Copy sign-in link");
+        await flush();
+        expect(state.copy).not.toHaveBeenCalled();
+        expect(state.command).not.toHaveBeenCalled();
+        expect(JSON.stringify(render())).toContain("so it was not copied");
       } finally {
         vi.unstubAllGlobals();
       }
