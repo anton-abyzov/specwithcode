@@ -89,6 +89,7 @@ import {
   SquarePenIcon,
   SunIcon,
   TextSearchIcon,
+  SignpostIcon,
 } from "lucide-react";
 import { requestAway } from "../studio/awayRequest";
 import { requestHandOffMachine } from "./handoff/HandOffMachineDialog";
@@ -112,6 +113,8 @@ import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useStartAdversarialReview } from "../hooks/useStartAdversarialReview";
+import { useFirstFeatureStart } from "./studio/firstFeature/FirstFeatureOffer";
+import { PALETTE_TITLE } from "./studio/firstFeature/firstFeature.logic";
 import { ADVERSARIAL_REVIEW_DESCRIPTION, ADVERSARIAL_REVIEW_LABEL } from "./threadActionMenu.logic";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
@@ -274,10 +277,11 @@ import { ProjectFavicon } from "./ProjectFavicon";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { openLinkIncrementDialog } from "./chat/LinkIncrementDialog";
+import { requestChatSettings } from "../studio/chatSettingsRequest";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { toggleThemeEditorForTheme } from "./settings/themeEditorStore";
 import { searchSettingsBySection, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
-import { useTx } from "../i18n";
+import { txNow, useTx } from "../i18n";
 import {
   PROJECT_SETTINGS_TAB_LABELS,
   PROJECT_SETTINGS_TABS,
@@ -903,6 +907,7 @@ function OpenCommandPaletteDialog(props: {
     reportFailure: false,
   });
   const startAdversarialReview = useStartAdversarialReview();
+  const firstFeature = useFirstFeatureStart();
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
@@ -1082,7 +1087,7 @@ function OpenCommandPaletteDialog(props: {
   const newProjectSubmittingRef = useRef(false);
   const createNewProject = useNewProject();
   const newProjectEnvironmentId = newProjectFlow?.environmentId ?? null;
-  // Older servers drop the `specweave` field without a word, so only offer it where it works.
+  // Older servers drop the `specweave` field without a word: the row shows off there (1396 AC-16).
   const newProjectSupportsSpecweave =
     environments.find((environment) => environment.environmentId === newProjectEnvironmentId)
       ?.serverConfig?.specweaveSetUp === true;
@@ -2888,6 +2893,20 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
+  // 1398: opens the machine's sample in progress, or makes a new one, even after a guide finished.
+  if (firstFeature.supported) {
+    actionItems.push({
+      kind: "action",
+      value: "action:first-feature",
+      searchTerms: ["first feature", "guide", "sample", "tutorial", "learn", "walkthrough"],
+      title: txNow(PALETTE_TITLE),
+      icon: <SignpostIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await firstFeature.start();
+      },
+    });
+  }
+
   actionItems.push({
     kind: "action",
     value: "action:usage",
@@ -2984,19 +3003,63 @@ function OpenCommandPaletteDialog(props: {
     },
   });
 
+  // A chat without a project has its own settings, never a project's (not even the
+  // first sidebar group's, which the fallback below would otherwise pick).
+  const contextualChatProject =
+    routeProjectKey === null && (activeThread || activeDraftThread) && contextualProjectRef
+      ? allProjects.find(
+          (project) =>
+            project.environmentId === contextualProjectRef.environmentId &&
+            project.id === contextualProjectRef.projectId,
+        )
+      : undefined;
+  const contextualChat =
+    contextualChatProject !== undefined &&
+    isScratchProject(
+      contextualChatProject,
+      environments.find(
+        (environment) => environment.environmentId === contextualChatProject.environmentId,
+      )?.serverConfig?.scratchWorkspaceRoot,
+    )
+      ? contextualChatProject
+      : null;
+  if (contextualChat) {
+    const chatThreadRef =
+      activeThread &&
+      activeThread.environmentId === contextualChat.environmentId &&
+      activeThread.projectId === contextualChat.id
+        ? scopeThreadRef(activeThread.environmentId, activeThread.id)
+        : null;
+    actionItems.push({
+      kind: "action",
+      value: "action:chat-settings",
+      searchTerms: ["chat", "settings", "model", "folder", "machine"],
+      title: tx("Chat settings"),
+      description: activeThread?.title ?? tx("New chat"),
+      icon: <SettingsIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "projectSettings.open",
+      run: async () => {
+        requestChatSettings({
+          environmentId: contextualChat.environmentId,
+          threadRef: chatThreadRef,
+        });
+      },
+    });
+  }
   // Target the project whose workspace is open, then the active thread or
   // draft's project, falling back to the first sidebar group.
-  const contextualProjectGroup =
-    (routeProjectKey === null
-      ? null
-      : projectGroups.find((group) => group.projectKey === routeProjectKey)) ??
-    (contextualProjectRef
-      ? projectGroupByTargetKey.get(
-          `${contextualProjectRef.environmentId}:${contextualProjectRef.projectId}`,
-        )
-      : null) ??
-    projectGroups[0] ??
-    null;
+  const contextualProjectGroup = contextualChat
+    ? null
+    : ((routeProjectKey === null
+        ? null
+        : projectGroups.find((group) => group.projectKey === routeProjectKey)) ??
+      (contextualProjectRef
+        ? projectGroupByTargetKey.get(
+            `${contextualProjectRef.environmentId}:${contextualProjectRef.projectId}`,
+          )
+        : null) ??
+      projectGroups[0] ??
+      null);
   if (contextualProjectGroup) {
     actionItems.push({
       kind: "action",
@@ -3441,8 +3504,10 @@ function OpenCommandPaletteDialog(props: {
           folderChoice.outcome?.kind !== "use"
             ? newProjectGitHubTarget
             : null,
-        specweave:
-          newProjectFlow.kind === "code" && newProjectSupportsSpecweave && newProjectUsesSpecweave,
+        // Unoffered (a personal assistant, an older server) it is left out.
+        ...(newProjectFlow.kind === "code" && newProjectSupportsSpecweave
+          ? { specweave: newProjectUsesSpecweave }
+          : {}),
       });
       if (created) {
         if (newProjectFlow.kind === "code" && folderChoice.path) {
@@ -3747,12 +3812,11 @@ function OpenCommandPaletteDialog(props: {
         checked: newProjectPublishesToGitHub,
         toggle: () => setNewProjectPublishesToGitHub((value) => !value),
       }),
-      specweave: newProjectSupportsSpecweave
-        ? {
-            checked: newProjectUsesSpecweave,
-            toggle: () => setNewProjectUsesSpecweave((value) => !value),
-          }
-        : null,
+      specweave: {
+        checked: newProjectUsesSpecweave,
+        toggle: () => setNewProjectUsesSpecweave((value) => !value),
+        unavailable: !newProjectSupportsSpecweave,
+      },
     });
   } else if (addProjectCloneFlow?.step === "repository") {
     displayedGroups = [];

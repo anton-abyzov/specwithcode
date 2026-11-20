@@ -18,6 +18,8 @@ vi.mock("../../state/use-atom-command", () => ({
 }));
 vi.mock("../../studio/projectWorkspace", () => ({
   projectWorkspace: {
+    skillFleetPush: { fn: vi.fn() },
+    skillsRolloutKeep: { fn: vi.fn() },
     skillsUpdate: { fn: mocks.update },
     skillReposChange: { fn: mocks.reposChange },
     skillRepos: (arg: unknown) => ({ kind: "repos", arg }),
@@ -41,7 +43,15 @@ vi.mock("../../state/server", () => ({
 vi.mock("../../state/session", () => ({
   useEnvironmentScope: (_environmentId: unknown, scope: string) => mocks.scopes.has(scope),
 }));
-vi.mock("../../studio/machineNickname", () => ({ useMachineNickname: () => "M4" }));
+vi.mock("../../studio/machineNickname", () => ({
+  useMachineNickname: () => "M4",
+  useMachineNicknames: () => (_id: string, label: string) => label,
+}));
+// No other machine is paired here, so "Also add on" stays out of these tests.
+vi.mock("../../studio/fleet", () => ({
+  useStudioFleet: () => ({ snapshot: null }),
+  useFleetSkillGithubSupported: () => true,
+}));
 import { SkillUpdatePanel } from "./SkillUpdatePanel";
 import { SkillUpdateRepos } from "./SkillUpdateRepos";
 

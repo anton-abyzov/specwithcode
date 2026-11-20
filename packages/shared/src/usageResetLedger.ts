@@ -30,6 +30,8 @@ export interface ResetPeriod {
   readonly endedAt: number;
   /** The last read before the reset; spend after it is unknown. */
   readonly lastReadAt: number;
+  /** The reset time the ended window announced; null or absent when unknown. */
+  readonly announcedAt?: number | null | undefined;
   readonly usedPercentAtReset: number;
   readonly lostPercent: number;
   readonly cause: UsageResetCause;
@@ -65,6 +67,7 @@ export function ledgerWindowLengthMs(
 export interface ClosedReset {
   readonly endedAt: number;
   readonly lastReadAt: number;
+  readonly announcedAt: number | null;
   readonly usedPercentAtReset: number;
   readonly lostPercent: number;
   readonly cause: UsageResetCause;
@@ -102,6 +105,7 @@ export function closedReset(
   return {
     endedAt,
     lastReadAt: previous.at,
+    announcedAt: previous.resetsAt,
     usedPercentAtReset: used,
     lostPercent: roundPercent(100 - used),
     cause: early ? (redeemed ? "redeemed" : "early") : "scheduled",
@@ -137,14 +141,62 @@ export function resetPeriods(
 }
 
 /**
+ * A read up to five minutes past the announced reset still counts as before
+ * it, and closes its period at that read. The same reset seen from a read
+ * before the announced time ends there instead, up to this much earlier.
+ */
+export const SAME_RESET_MS = 15 * MINUTE;
+/** Providers round one announced reset differently between reads, by up to this much. */
+export const SAME_ANNOUNCED_RESET_MS = 5 * MINUTE;
+
+type ResetIdentity = Pick<ResetPeriod, "lastReadAt" | "endedAt" | "announcedAt">;
+
+/**
+ * Whether two records of one window are the same reset.
+ *
+ * When both know the reset time their ended window announced, that names the
+ * window: they are one reset exactly when those times are within the
+ * providers' rounding. A later reset, early or scheduled, ends a window that
+ * announced another time, however soon after it comes.
+ *
+ * Otherwise (no announced time, or a record saved before it was kept), they
+ * are one when their spans from last read to end overlap (both reads bracket
+ * it), or one was closed at a read just past its announced time (its span is
+ * a single instant) and the other ended at or up to `SAME_RESET_MS` before it.
+ * Two such records of one reset that neither overlap nor include a late read
+ * stay apart: the known limit of records without an announced time.
+ *
+ * The other known limit: two resets less than five minutes apart (an early
+ * reset of a window opened under five minutes before) announce times within
+ * the rounding and read as one.
+ */
+export function sameResetRecord(left: ResetIdentity, right: ResetIdentity): boolean {
+  const leftAnnounced = left.announcedAt ?? null;
+  const rightAnnounced = right.announcedAt ?? null;
+  if (leftAnnounced !== null && rightAnnounced !== null) {
+    return Math.abs(leftAnnounced - rightAnnounced) <= SAME_ANNOUNCED_RESET_MS;
+  }
+  if (left.lastReadAt < right.endedAt && right.lastReadAt < left.endedAt) return true;
+  return lateReadOf(left, right) || lateReadOf(right, left);
+}
+
+/** `late` was closed at a read just past the announced reset, and `other` ended shortly before it. */
+function lateReadOf(late: ResetIdentity, other: ResetIdentity): boolean {
+  return (
+    late.lastReadAt === late.endedAt &&
+    other.endedAt <= late.endedAt &&
+    late.endedAt - other.endedAt <= SAME_RESET_MS
+  );
+}
+
+/**
  * One list from the ledgers of several machines. Two machines signed in to
  * one account each record the same reset from their own reads; the one that
  * read last before the reset knows the spend best, so it is kept.
  *
- * Two records are one reset when the spans between each one's last read and
- * its end overlap: both machines had the reset inside their own gap. Two
- * resets one machine saw in a row never overlap, however close they are, so
- * an early reset and a redeemed one hours apart both stay.
+ * Two records are one reset when `sameResetRecord` says so, matched against
+ * every record of the window kept so far. Two resets one machine saw in a row
+ * announced different times, so an early reset and a redeemed one both stay.
  */
 export function mergeResetPeriods<Period extends ResetPeriod>(
   ledgers: ReadonlyArray<ReadonlyArray<Period>>,
@@ -159,25 +211,40 @@ export function mergeResetPeriods<Period extends ResetPeriod>(
     );
   const merged: Period[] = [];
   for (const period of sorted) {
-    const last = merged[merged.length - 1];
-    if (
-      last &&
-      last.accountKey === period.accountKey &&
-      last.windowId === period.windowId &&
-      period.lastReadAt < last.endedAt
+    // Every record of this window kept so far: another reset can sort between two records of one.
+    let index = merged.length - 1;
+    while (
+      index >= 0 &&
+      merged[index]!.accountKey === period.accountKey &&
+      merged[index]!.windowId === period.windowId &&
+      !sameResetRecord(merged[index]!, period)
     ) {
-      if (period.lastReadAt > last.lastReadAt) {
-        merged[merged.length - 1] = {
-          ...period,
-          endedAt: Math.max(period.endedAt, last.endedAt),
-          startedAt: period.startedAt ?? last.startedAt,
-        };
-      } else if (last.startedAt === null && period.startedAt !== null) {
-        merged[merged.length - 1] = { ...last, startedAt: period.startedAt };
-      }
+      index -= 1;
+    }
+    const kept = index >= 0 ? merged[index]! : undefined;
+    if (
+      !kept ||
+      kept.accountKey !== period.accountKey ||
+      kept.windowId !== period.windowId
+    ) {
+      merged.push(period);
       continue;
     }
-    merged.push(period);
+    if (period.lastReadAt > kept.lastReadAt) {
+      merged[index] = {
+        ...period,
+        endedAt: Math.max(period.endedAt, kept.endedAt),
+        startedAt: period.startedAt ?? kept.startedAt,
+        announcedAt: period.announcedAt ?? kept.announcedAt,
+      };
+    } else {
+      // Keep the latest read's spend, but what an earlier record knows still names the reset.
+      merged[index] = {
+        ...kept,
+        startedAt: kept.startedAt ?? period.startedAt,
+        announcedAt: kept.announcedAt ?? period.announcedAt,
+      };
+    }
   }
   return merged.toSorted((left, right) => left.endedAt - right.endedAt);
 }

@@ -56,7 +56,10 @@ vi.mock("../ui/tooltip", () => {
     ),
   };
 });
-vi.mock("../../state/entities", () => ({ useThreadShell: () => state.shell }));
+vi.mock("../../state/entities", () => ({
+  useThreadShell: () => state.shell,
+  useThreadVisibleTurnItems: () => [],
+}));
 vi.mock("../../state/environments", () => ({
   useEnvironment: () => ({
     serverConfig: {

@@ -166,6 +166,17 @@ describe("ledger file", () => {
     expect(decodeLedgerFile(damaged).cursors.size).toBe(0);
   });
 
+  it("reads a period saved before announced times were kept as having none", () => {
+    const state = emptyLedger();
+    advanceLedger(state, reading(reset1 - HOUR, [weekly(59, reset1)], 1));
+    advanceLedger(state, reading(reset1 + HOUR, [weekly(2, reset2)], 1));
+    expect(state.periods[0]?.announcedAt).toBe(reset1);
+    const { announcedAt: _announcedAt, ...older } = state.periods[0]!;
+    const file = JSON.stringify({ version: 1, cursors: [], periods: [older] });
+    expect(decodeLedgerFile(file).periods).toEqual([{ ...older, announcedAt: null }]);
+    expect(readLedger(decodeLedgerFile(file), t0)[0]).not.toHaveProperty("announcedAt");
+  });
+
   it("serves periods since a time, as wire values", () => {
     const state = emptyLedger();
     advanceLedger(state, reading(reset1 - HOUR, [weekly(59, reset1)]));
@@ -180,6 +191,7 @@ describe("ledger file", () => {
         windowDurationMins: 10_080,
         endedAt: isoAt(reset1),
         lastReadAt: isoAt(reset1 - HOUR),
+        announcedAt: isoAt(reset1),
         usedPercentAtReset: 59,
         lostPercent: 41,
         cause: "scheduled",
@@ -362,6 +374,211 @@ describe("backfillLedger", () => {
     expect(backfillLedger(state, past)).toBe(1);
     expect(state.periods[0]).toMatchObject({ lastReadAt: reset1, endedAt: reset1 });
     expect(backfillLedger(state, past)).toBe(0);
+    expect(backfillLedger(state, past)).toBe(0);
+    expect(state.periods).toHaveLength(1);
+  });
+
+  it("adds nothing for a reset the live ledger closed at a read just past its announced time", () => {
+    const state = emptyLedger();
+    const live = (checkedAt: number, used: number, resetsAt: number) =>
+      advanceLedger(state, {
+        accountKey: "claude:max@example.com",
+        driver: claude,
+        checkedAt,
+        windows: [{ ...weekly(used, resetsAt), id: "seven_day" }],
+        resetCredits: null,
+      });
+    live(reset1 - 10 * MINUTE, 90, reset1);
+    // Still fresh five minutes past the reset; the history skipped it as unchanged.
+    live(reset1 + 2 * MINUTE, 90, reset1);
+    live(reset1 + 6 * MINUTE, 2, reset2);
+    expect(state.periods.map((period) => [period.lastReadAt, period.endedAt])).toEqual([
+      [reset1 + 2 * MINUTE, reset1 + 2 * MINUTE],
+    ]);
+    const past = history(
+      series("seven_day", "weekly", [
+        [reset1 - 10 * MINUTE, 90, reset1],
+        [reset1 + 6 * MINUTE, 2, reset2],
+      ]),
+    );
+    expect(backfillLedger(state, past)).toBe(0);
+    expect(state.periods).toHaveLength(1);
+  });
+
+  it("backfills an early reset minutes after another the ledger already holds", () => {
+    const state = emptyLedger();
+    const live = (checkedAt: number, used: number, resetsAt: number) =>
+      advanceLedger(state, {
+        accountKey: "claude:max@example.com",
+        driver: claude,
+        checkedAt,
+        windows: [{ ...weekly(used, resetsAt), id: "seven_day" }],
+        resetCredits: null,
+      });
+    live(t0, 80, reset1);
+    live(t0 + HOUR, 5, reset1 + DAY);
+    expect(state.periods).toHaveLength(1);
+    const past = history(
+      series("seven_day", "weekly", [
+        [t0 + HOUR, 5, reset1 + DAY],
+        [t0 + HOUR + 5 * MINUTE, 30, reset1 + DAY],
+        [t0 + HOUR + 10 * MINUTE, 1, reset1 + 2 * DAY],
+      ]),
+    );
+    expect(backfillLedger(state, past)).toBe(1);
+    expect(state.periods).toHaveLength(2);
+  });
+
+  it("backfills an early reset minutes after a reset the ledger closed at a late read", () => {
+    const state = emptyLedger();
+    const live = (checkedAt: number, used: number, resetsAt: number) =>
+      advanceLedger(state, {
+        accountKey: "claude:max@example.com",
+        driver: claude,
+        checkedAt,
+        windows: [{ ...weekly(used, resetsAt), id: "seven_day" }],
+        resetCredits: null,
+      });
+    live(reset1 - 10 * MINUTE, 90, reset1);
+    live(reset1 + 2 * MINUTE, 90, reset1);
+    live(reset1 + 4 * MINUTE, 1, reset2);
+    expect(state.periods.map((period) => period.endedAt)).toEqual([reset1 + 2 * MINUTE]);
+    const past = history(
+      series("seven_day", "weekly", [
+        [reset1 + 4 * MINUTE, 1, reset2],
+        [reset1 + 8 * MINUTE, 30, reset2],
+        [reset1 + 12 * MINUTE, 1, reset2 + DAY],
+      ]),
+    );
+    expect(backfillLedger(state, past)).toBe(1);
+    expect(state.periods.map((period) => period.endedAt)).toEqual([
+      reset1 + 2 * MINUTE,
+      reset1 + 12 * MINUTE,
+    ]);
+  });
+
+  it("adds nothing for a reset the history saw with a differently rounded time", () => {
+    const state = emptyLedger();
+    const live = (checkedAt: number, used: number, resetsAt: number) =>
+      advanceLedger(state, {
+        accountKey: "claude:max@example.com",
+        driver: claude,
+        checkedAt,
+        windows: [{ ...weekly(used, resetsAt), id: "seven_day" }],
+        resetCredits: null,
+      });
+    live(reset1 - 10 * MINUTE, 90, reset1);
+    live(reset1 + MINUTE, 90, reset1);
+    live(reset1 + 6 * MINUTE, 1, reset2);
+    expect(state.periods.map((period) => period.endedAt)).toEqual([reset1 + MINUTE]);
+    const past = history(
+      series("seven_day", "weekly", [
+        [reset1 - 10 * MINUTE, 90, reset1 + 3 * MINUTE],
+        [reset1 + 2 * MINUTE, 90, reset1 + 3 * MINUTE],
+        [reset1 + 6 * MINUTE, 1, reset2],
+      ]),
+    );
+    expect(backfillLedger(state, past)).toBe(0);
+    expect(state.periods).toHaveLength(1);
+  });
+
+  it("adds nothing when the ledger and the history both read a reset before its rounded time", () => {
+    const state = emptyLedger();
+    const live = (checkedAt: number, used: number, resetsAt: number) =>
+      advanceLedger(state, {
+        accountKey: "claude:max@example.com",
+        driver: claude,
+        checkedAt,
+        windows: [{ ...weekly(used, resetsAt), id: "seven_day" }],
+        resetCredits: null,
+      });
+    live(reset1 - 10 * MINUTE, 90, reset1 + 3 * MINUTE);
+    live(reset1 + 2 * MINUTE, 90, reset1 + 3 * MINUTE);
+    live(reset1 + 6 * MINUTE, 1, reset2);
+    expect(state.periods.map((period) => period.endedAt)).toEqual([reset1 + 3 * MINUTE]);
+    const past = history(
+      series("seven_day", "weekly", [
+        [reset1 - 10 * MINUTE, 90, reset1 + 4 * MINUTE],
+        [reset1 + 3.5 * MINUTE, 90, reset1 + 4 * MINUTE],
+        [reset1 + 6 * MINUTE, 1, reset2],
+      ]),
+    );
+    expect(backfillLedger(state, past)).toBe(0);
+    expect(state.periods).toHaveLength(1);
+  });
+
+  it("backfills an early reset four minutes after a scheduled one the ledger holds", () => {
+    const state = emptyLedger();
+    const live = (checkedAt: number, used: number, resetsAt: number) =>
+      advanceLedger(state, {
+        accountKey: "claude:max@example.com",
+        driver: claude,
+        checkedAt,
+        windows: [{ ...weekly(used, resetsAt), id: "seven_day" }],
+        resetCredits: null,
+      });
+    live(reset1 - 10 * MINUTE, 90, reset1);
+    live(reset1 + 2 * MINUTE, 90, reset1);
+    live(reset1 + 3 * MINUTE, 1, reset2);
+    expect(state.periods.map((period) => period.endedAt)).toEqual([reset1 + 2 * MINUTE]);
+    const past = history(
+      series("seven_day", "weekly", [
+        [reset1 + 3 * MINUTE, 1, reset2],
+        [reset1 + 4 * MINUTE, 30, reset2],
+        [reset1 + 6 * MINUTE, 1, reset2 + DAY],
+      ]),
+    );
+    expect(backfillLedger(state, past)).toBe(1);
+    expect(state.periods.map((period) => period.endedAt)).toEqual([
+      reset1 + 2 * MINUTE,
+      reset1 + 6 * MINUTE,
+    ]);
+  });
+
+  it("backfills a reset four minutes after another when no read announced a time", () => {
+    const state = emptyLedger();
+    const live = (checkedAt: number, used: number) =>
+      advanceLedger(state, {
+        accountKey: "claude:max@example.com",
+        driver: claude,
+        checkedAt,
+        windows: [{ ...weekly(used, null), id: "seven_day" }],
+        resetCredits: null,
+      });
+    live(reset1, 90);
+    live(reset1 + 2 * MINUTE, 1);
+    expect(state.periods.map((period) => period.endedAt)).toEqual([reset1 + 2 * MINUTE]);
+    const past = history(
+      series("seven_day", "weekly", [
+        [reset1 + 2 * MINUTE, 1, null],
+        [reset1 + 4 * MINUTE, 30, null],
+        [reset1 + 6 * MINUTE, 1, null],
+      ]),
+    );
+    expect(backfillLedger(state, past)).toBe(1);
+    expect(state.periods).toHaveLength(2);
+  });
+
+  it("adds nothing for a reset one read saw early and another just before its time", () => {
+    const state = emptyLedger();
+    const announced = reset1 + 12 * MINUTE;
+    const live = (checkedAt: number, used: number, resetsAt: number) =>
+      advanceLedger(state, {
+        accountKey: "claude:max@example.com",
+        driver: claude,
+        checkedAt,
+        windows: [{ ...weekly(used, resetsAt), id: "seven_day" }],
+        resetCredits: null,
+      });
+    live(reset1 - MINUTE, 90, announced);
+    live(reset1 + MINUTE, 1, announced + WEEK);
+    expect(state.periods.map((period) => period.cause)).toEqual(["early"]);
+    const past = history(
+      series("seven_day", "weekly", [
+        [reset1 + 2 * MINUTE, 90, announced],
+        [reset1 + 4 * MINUTE, 1, announced + WEEK],
+      ]),
+    );
     expect(backfillLedger(state, past)).toBe(0);
     expect(state.periods).toHaveLength(1);
   });

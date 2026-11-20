@@ -452,7 +452,16 @@ export interface UnreportedLimitAccount {
   readonly plan: string | undefined;
   readonly reason: "apiBilling" | "signedOut" | "unread";
   readonly message: string;
+  /** Only with `drivers: "all"`: the machine the instance runs on. */
+  readonly environmentId?: EnvironmentId;
+  /** Only with `drivers: "all"`: the instance, for one row per instance per machine. */
+  readonly instanceId?: ProviderInstanceId;
+  /** Only with `drivers: "all"`: the instance's configured name, when it has one. */
+  readonly displayName?: string | undefined;
 }
+
+/** What a board row says for an account without a reading, by its reason. */
+export const NO_READING_API_BILLING = "Billed by API key. No plan limits.";
 
 export function collectUnreportedLimitAccounts(
   presentations: LimitPresentations,
@@ -460,8 +469,17 @@ export function collectUnreportedLimitAccounts(
   options: {
     /** The display name for a machine: its nickname when the user set one. */
     readonly machineName?: (environmentId: EnvironmentId, hostLabel: string) => string;
+    /**
+     * "all" is the Subscriptions board's list: every enabled, installed instance
+     * without a reading, of any driver, with its machine, instance and name.
+     * The default keeps the pooled view's Claude and Codex list as it was.
+     */
+    readonly drivers?: "subscription" | "all";
+    /** The driver's name for a row whose instance has none; used only with `drivers: "all"`. */
+    readonly driverLabel?: (driver: ServerProvider["driver"]) => string;
   } = {},
 ): readonly UnreportedLimitAccount[] {
+  if (options.drivers === "all") return collectNoReadingAccounts(presentations, pooled, options);
   const pooledKeys = new Set(
     pooled.map((account) => accountKey(account.driver, account.email, account.limits)),
   );
@@ -504,6 +522,77 @@ export function collectUnreportedLimitAccounts(
     }
   }
   return unreported;
+}
+
+/**
+ * Every enabled, installed instance on every machine that has no reading, for
+ * the Subscriptions board. Claude and Codex keep their reasons; any other
+ * driver says what its reader said, or that it reports no usage. A signed-out
+ * instance of another driver, usage tracked elsewhere and an account a reading
+ * row already holds get no row. An instance without an account key always
+ * gets its own: nothing ties it to a reading of the same account.
+ */
+function collectNoReadingAccounts(
+  presentations: LimitPresentations,
+  pooled: readonly LimitAccount[],
+  options: {
+    readonly machineName?: (environmentId: EnvironmentId, hostLabel: string) => string;
+    readonly driverLabel?: (driver: ServerProvider["driver"]) => string;
+  },
+): readonly UnreportedLimitAccount[] {
+  const pooledKeys = new Set(
+    pooled.map((account) => accountKey(account.driver, account.email, account.limits)),
+  );
+  const rows: UnreportedLimitAccount[] = [];
+  for (const [environmentId, presentation] of presentations) {
+    for (const provider of presentation.serverConfig?.providers ?? []) {
+      if (!provider.enabled || !provider.installed) continue;
+      const limits = provider.usageLimits;
+      if (limits?.externalUsage) continue;
+      if (limits && limitsNotice(limits) === null && isProviderAvailable(provider)) continue;
+      const subscription = SUBSCRIPTION_DRIVERS.has(provider.driver);
+      const signedOut = provider.auth.status === "unauthenticated";
+      if (signedOut && !subscription) continue;
+      const key = accountKey(provider.driver, provider.auth.email, limits);
+      if (key !== null && pooledKeys.has(key)) continue;
+      const displayName = provider.displayName?.trim() || undefined;
+      const name =
+        displayName ?? options.driverLabel?.(provider.driver) ?? String(provider.driver);
+      const readerNotice =
+        limits?.unavailable?.message?.trim() ||
+        (limits?.unavailable?.reason === "probeFailed" ? "Could not read limits." : undefined);
+      const reason: UnreportedLimitAccount["reason"] = signedOut
+        ? "signedOut"
+        : subscription &&
+            (provider.auth.type === "apiKey" ||
+              provider.auth.apiKeyBilling === true ||
+              (limits?.unavailable?.reason === "unsupported" && !readerNotice))
+          ? "apiBilling"
+          : "unread";
+      const message =
+        reason === "signedOut"
+          ? provider.message?.trim() || "Signed out"
+          : reason === "apiBilling"
+            ? NO_READING_API_BILLING
+            : (readerNotice ?? `Usage not reported by ${name}`);
+      rows.push({
+        key: `${environmentId}:${provider.instanceId}`,
+        driver: provider.driver,
+        environmentLabel:
+          options.machineName?.(environmentId, presentation.entry.target.label) ??
+          presentation.entry.target.label,
+        offline: !isConnected(presentation),
+        email: provider.auth.email,
+        plan: provider.auth.label,
+        reason,
+        message,
+        environmentId,
+        instanceId: provider.instanceId,
+        displayName,
+      });
+    }
+  }
+  return rows;
 }
 
 /**

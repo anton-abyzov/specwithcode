@@ -6,7 +6,8 @@ import type { FolderCopyStatus } from "@specweave-studio/contracts";
 import { cn } from "../../lib/utils";
 import { copiedProjectFolder, type HandoffFolderMethod } from "../../studio/folderCopy";
 import type { PendingCopy } from "./handoffFolderCopyPending";
-import { methodLabel } from "./ProjectMoveOptions";
+import { methodLabel, useProjectMoveDialog } from "./ProjectMoveOptions";
+import { useTx } from "../../i18n";
 import { Button } from "../ui/button";
 import { HandoffCopyActions } from "./HandoffCopyActions";
 
@@ -129,6 +130,7 @@ export function CopyChoicesSummary({
   copy,
   sourceRoot,
   targetLabel,
+  sourceLabel,
   method,
   changeDisabled,
   onChange,
@@ -138,10 +140,18 @@ export function CopyChoicesSummary({
   /** The folder copied from, when neither the copy nor the pointer names it. */
   readonly sourceRoot: string;
   readonly targetLabel: string;
+  /** The machine copied from, named by the whole-folder way. */
+  readonly sourceLabel?: string;
   readonly method: HandoffFolderMethod;
   readonly changeDisabled: boolean;
   readonly onChange: (() => void) | null;
 }) {
+  const tx = useTx();
+  const dialog = useProjectMoveDialog();
+  const way = methodLabel(method, {
+    sync: dialog?.sync,
+    sourceLabel: sourceLabel ?? dialog?.sourceLabel,
+  });
   const source = copy?.copyRoot ?? pending.copyRoot ?? sourceRoot;
   const target = copy?.targetFolder ?? pending.targetFolder;
   const projectFolder =
@@ -178,7 +188,7 @@ export function CopyChoicesSummary({
           )}
         </span>
       </p>
-      <p className="text-muted-foreground">{methodLabel(method)}</p>
+      <p className="text-muted-foreground">{tx(way.text, way.values)}</p>
     </div>
   );
 }
@@ -219,6 +229,7 @@ export function CopyCheckingStep({
   /** The last copy opened with View: put it back and start a new copy instead of waiting. */
   readonly onStartNew?: (() => void) | undefined;
 }) {
+  const tx = useTx();
   return (
     <>
       <p
@@ -244,7 +255,7 @@ export function CopyCheckingStep({
         )}
         {checking === "unreachable" && onStartNew && (
           <Button variant="outline" onClick={onStartNew}>
-            Start a new copy
+            {tx("Add to another machine")}
           </Button>
         )}
         {checking === "unreachable" && <Button onClick={onCheckAgain}>Check the copy again</Button>}

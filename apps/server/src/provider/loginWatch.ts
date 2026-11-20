@@ -15,6 +15,7 @@ import * as NodeOS from "node:os";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -148,6 +149,181 @@ export const loginFileMark = (
 const LOGIN_FILE_MARK_MAX_BYTES = 1_048_576;
 
 /**
+ * The account recorded in a login file, by `readIdentity`. Never fails: a
+ * missing or unreadable file is undefined, which counts as signed out.
+ */
+export const readLoginIdentity = (
+  filePath: string,
+  readIdentity: (contents: string) => string | undefined,
+): Effect.Effect<string | undefined, never, FileSystem.FileSystem> =>
+  Effect.flatMap(FileSystem.FileSystem, (fs) =>
+    fs.readFileString(filePath).pipe(
+      Effect.map(readIdentity),
+      Effect.orElseSucceed(() => undefined),
+    ),
+  );
+
+/**
+ * Where Claude Code keeps Anthropic profiles (a Claude Console sign-in):
+ * `ANTHROPIC_CONFIG_DIR`, else `$XDG_CONFIG_HOME/anthropic`, else
+ * `~/.config/anthropic`. A profile there outranks the claude.ai login in every
+ * Claude config folder, so signing in or out of one switches the account
+ * without touching `.claude.json`.
+ */
+export const anthropicProfileDirectory = (environment: NodeJS.ProcessEnv) =>
+  Effect.map(Path.Path, (path) => {
+    const explicit = environment.ANTHROPIC_CONFIG_DIR?.trim();
+    if (explicit) return path.resolve(explicit);
+    const configHome =
+      environment.XDG_CONFIG_HOME?.trim() ||
+      path.join(environment.HOME?.trim() || NodeOS.homedir(), ".config");
+    return path.join(configHome, "anthropic");
+  });
+
+/** Profile folders are small; a folder with more entries than this is not walked further. */
+const PROFILE_MARK_MAX_ENTRIES = 200;
+
+/**
+ * A mark of the Anthropic profile folder: the names, sizes and modified times
+ * of what is in it and one level below. It never reads a file, so no token or
+ * address can be read back from it. It changes when a profile is signed in,
+ * out or switched (and on a token refresh, which is harmless). Never fails: a
+ * missing folder is its own mark.
+ */
+export const anthropicProfileMark = (
+  directory: string,
+): Effect.Effect<string, never, FileSystem.FileSystem | Path.Path> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const entries: Array<string> = [];
+    const walk = (folder: string, prefix: string, depth: number): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        const names = yield* fs
+          .readDirectory(folder)
+          .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+        for (const name of [...names].sort()) {
+          if (entries.length >= PROFILE_MARK_MAX_ENTRIES) return;
+          const full = path.join(folder, name);
+          const info = yield* fs.stat(full).pipe(Effect.option);
+          if (Option.isNone(info)) continue;
+          const modified = Option.match(info.value.mtime, {
+            onNone: () => 0,
+            onSome: (date) => date.getTime(),
+          });
+          entries.push(
+            `${prefix}${name}:${info.value.type}:${Number(info.value.size)}:${modified}`,
+          );
+          if (info.value.type === "Directory" && depth > 0) {
+            yield* walk(full, `${prefix}${name}/`, depth - 1);
+          }
+        }
+      });
+    const root = yield* fs.stat(directory).pipe(Effect.option);
+    if (Option.isNone(root) || root.value.type !== "Directory") return "none";
+    yield* walk(directory, "", 1);
+    return `${entries.length}:${textHash(entries.join("\n"))}`;
+  });
+
+/** How many missing parent folders a watch climbs to wait for its folder to appear. */
+const WATCH_PARENT_LEVELS = 3;
+/** The pause before a watch that ended (its folder was removed) is set up again. */
+const WATCH_REARM_DELAY: Duration.Input = "1 second";
+
+/**
+ * Changes in `directory` (to the entry named `fileName` only, when given). A
+ * folder that does not exist yet is waited for from the nearest parent that
+ * does, and its appearing counts as a change: a first Console sign-in creates
+ * the Anthropic profile folder. A watch that ends is set up again. Never fails.
+ */
+const folderChanges = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  directory: string,
+  fileName: string | undefined,
+  levels: number,
+): Stream.Stream<void> =>
+  Stream.unwrap(
+    Effect.gen(function* () {
+      const exists = yield* fs.exists(directory).pipe(Effect.orElseSucceed(() => false));
+      if (exists) {
+        // A watch that ends (its folder went away) is set up again; one that
+        // fails (no watches left on this system) stays off, as before.
+        return fs.watch(directory).pipe(
+          Stream.filter(
+            (event) => fileName === undefined || path.basename(event.path) === fileName,
+          ),
+          Stream.as(undefined),
+          Stream.concat(
+            Stream.fromEffect(Effect.sleep(WATCH_REARM_DELAY)).pipe(
+              Stream.flatMap(() =>
+                Stream.concat(
+                  Stream.succeed(undefined),
+                  folderChanges(fs, path, directory, fileName, levels),
+                ),
+              ),
+            ),
+          ),
+          Stream.catchCause((cause) =>
+            Stream.fromEffect(Effect.logDebug("login watch stopped", { directory, cause })).pipe(
+              Stream.drain,
+            ),
+          ),
+        );
+      }
+      const parent = path.dirname(directory);
+      if (levels <= 0 || parent === directory) return Stream.empty;
+      return folderChanges(fs, path, parent, path.basename(directory), levels - 1).pipe(
+        Stream.filterEffect(() => fs.exists(directory).pipe(Effect.orElseSucceed(() => false))),
+        Stream.take(1),
+        Stream.flatMap(() =>
+          Stream.concat(
+            Stream.succeed(undefined),
+            folderChanges(fs, path, directory, fileName, levels),
+          ),
+        ),
+      );
+    }),
+  );
+
+/**
+ * Runs `onChange` whenever `readMark` answers differently from before, after
+ * something changes in one of the watched directories (to the file named
+ * `fileName` only, when given). A directory that does not exist yet is
+ * watched for from its parent. Never fails: a directory that cannot be
+ * watched leaves the periodic probe and the account-keyed probe cache in charge.
+ */
+export const watchMarkChanges = (input: {
+  readonly watches: ReadonlyArray<{ readonly directory: string; readonly fileName?: string }>;
+  readonly readMark: Effect.Effect<string | undefined>;
+  readonly onChange: Effect.Effect<void>;
+  readonly debounce?: Duration.Input;
+}): Effect.Effect<void, never, FileSystem.FileSystem | Path.Path | Scope.Scope> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    let last = yield* input.readMark;
+    const check = Effect.gen(function* () {
+      const next = yield* input.readMark;
+      if (next === last) return;
+      last = next;
+      yield* input.onChange;
+    });
+    const changes = Stream.mergeAll(
+      input.watches.map(({ directory, fileName }) =>
+        folderChanges(fs, path, directory, fileName, WATCH_PARENT_LEVELS),
+      ),
+      { concurrency: "unbounded" },
+    );
+    yield* changes.pipe(
+      Stream.debounce(Duration.fromInputUnsafe(input.debounce ?? "500 millis")),
+      Stream.runForEach(() => check),
+      Effect.ignoreCause({ log: true }),
+      Effect.forkScoped,
+    );
+  });
+
+/**
  * Runs `onChange` whenever the account in `filePath` differs from the one
  * seen before. A missing or unreadable file counts as signed out. Never fails:
  * a directory that cannot be watched leaves the periodic probe in charge.
@@ -161,25 +337,14 @@ export const watchLoginChanges = (input: {
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const directory = path.dirname(input.filePath);
-    const fileName = path.basename(input.filePath);
-    const readIdentity = fs.readFileString(input.filePath).pipe(
-      Effect.map(input.readIdentity),
-      Effect.orElseSucceed(() => undefined),
-    );
-    let last = yield* readIdentity;
-    yield* fs.watch(directory).pipe(
-      Stream.filter((event) => path.basename(event.path) === fileName),
-      Stream.debounce(Duration.fromInputUnsafe(input.debounce ?? "500 millis")),
-      Stream.runForEach(() =>
-        Effect.gen(function* () {
-          const next = yield* readIdentity;
-          if (next === last) return;
-          last = next;
-          yield* input.onChange;
-        }),
+    yield* watchMarkChanges({
+      watches: [
+        { directory: path.dirname(input.filePath), fileName: path.basename(input.filePath) },
+      ],
+      readMark: readLoginIdentity(input.filePath, input.readIdentity).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
       ),
-      Effect.ignoreCause({ log: true }),
-      Effect.forkScoped,
-    );
+      onChange: input.onChange,
+      ...(input.debounce === undefined ? {} : { debounce: input.debounce }),
+    });
   });

@@ -1,0 +1,17 @@
+@import "../../src/index.css";
+@source "../../src";
+@source ".";
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+}
+/* The project top bar; the runner sets its width with the viewport. */
+[data-bar] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 44px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+}

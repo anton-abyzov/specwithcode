@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { readAwayRequest } from "../../studio/awayRequest";
+import { closeHandOffMachine, readHandOffMachineRequest } from "../handoff/HandOffMachineDialog";
 import { submitCoordinatorDraft } from "./CoordinatorComposer";
 
 const composerWith = (prompt: string) => {
@@ -17,25 +18,34 @@ const composerWith = (prompt: string) => {
   };
 };
 
-describe("submitCoordinatorDraft Away commands", () => {
-  it("opens the Away dialog for /away and $back even where app commands are not offered", async () => {
-    for (const [text, intent] of [
-      ["/away", "away"],
-      ["$back", "back"],
-    ] as const) {
-      const onSend = vi.fn();
-      const { composer, setPrompt } = composerWith(text);
-      await submitCoordinatorDraft({
-        composer,
-        attached: {} as never,
-        onAppCommand: null,
-        onSend,
-        onError: vi.fn(),
-      });
-      expect(onSend).not.toHaveBeenCalled();
-      expect(setPrompt).toHaveBeenCalledWith("");
-      expect(readAwayRequest()).toBe(intent);
-    }
+describe("submitCoordinatorDraft machine commands", () => {
+  const submit = async (text: string) => {
+    const onSend = vi.fn();
+    const { composer, setPrompt } = composerWith(text);
+    await submitCoordinatorDraft({
+      composer,
+      attached: {} as never,
+      onAppCommand: null,
+      onSend,
+      onError: vi.fn(),
+    });
+    expect(onSend).not.toHaveBeenCalled();
+    expect(setPrompt).toHaveBeenCalledWith("");
+  };
+
+  it("opens Hand off for every project on /away, even where app commands are not offered", async () => {
+    closeHandOffMachine();
+    await submit("/away");
+    // No project in the request: the dialog's scope is every project on this machine.
+    expect(readHandOffMachineRequest()).toEqual({ environmentId: null });
+    expect(readAwayRequest()).toBeNull();
+  });
+
+  it("asks to bring work back on $back", async () => {
+    closeHandOffMachine();
+    await submit("$back");
+    expect(readAwayRequest()).toBe("back");
+    expect(readHandOffMachineRequest()).toBeNull();
   });
 });
 

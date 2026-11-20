@@ -5,10 +5,12 @@ import * as NodeURL from "node:url";
 
 // The settings frame pulls environment state and routing; the team-rules fixture's mocks stand in.
 const mocks = NodeURL.fileURLToPath(new URL("../team-rules/mocks.tsx", import.meta.url));
+const ownDeviceId = NodeURL.fileURLToPath(new URL("./ownDeviceId.mock.ts", import.meta.url));
 const owners = /settingsLayout\.tsx?$/;
 const mocked =
   /(\/state\/environments|\/state\/session|\/hooks\/useSettings|\/useScopedSettings|\/SettingInheritance|\/SettingsScopeSentence|\/scopedSettings|\/projectListVisibility|\/WorkspacePageContainer|^@tanstack\/react-router)$/;
-// Renders the device approval pop-up, the waiting card and the device list (1327).
+// Renders the device approval pop-up, the waiting card and the device list (1327),
+// and the setup dialog with a waiting machine and the floating card above it (1416).
 export default defineConfig({
   root: NodeURL.fileURLToPath(new URL(".", import.meta.url)),
   plugins: [
@@ -17,6 +19,7 @@ export default defineConfig({
       enforce: "pre",
       resolveId(id, importer) {
         if (importer && owners.test(importer) && mocked.test(id)) return mocks;
+        if (id.endsWith("/ownDeviceId")) return ownDeviceId;
       },
     },
     react(),

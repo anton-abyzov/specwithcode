@@ -72,6 +72,7 @@ import {
   threadStatusWord,
   threadTone,
   type ThreadSort,
+  threadGroupHeading,
 } from "../../../studio/shellModel";
 import {
   Menu,
@@ -100,8 +101,11 @@ import { UnplannedThreadChip, UnplannedThreadsFilter } from "./UnplannedThreads"
 import { useUnplannedNotice } from "../../../studio/unplannedNotice";
 import { HandoffRowAction, HandoffRowBadge } from "../../handoff/HandoffBadge";
 import { designRoute } from "../../design/gallery/designLinks";
+import { SignedOutBanner } from "./SignedOutBanner";
+import { useTx } from "../../../i18n";
 import {
   useHostReachStates,
+  useHostDownNotes,
   useIdentityMismatchedHosts,
   useUnreachableHosts,
 } from "../../../studio/unreachableHosts";
@@ -203,6 +207,7 @@ export function ThreadsPane({
   const entriesByEnvironment = useProviderEntriesByEnvironment();
   const router = useRouter();
   const say = paneWords(props.personal);
+  const tx = useTx();
   const now = nowFromMinute(useNowMinute());
   const [sortBy, setSortBy] = useLocalStorage<ThreadSort, ThreadSort>(
     SORT_STORAGE_KEY,
@@ -232,6 +237,7 @@ export function ThreadsPane({
   const unreachable = useUnreachableHosts();
   const hostReach = useHostReachStates();
   const identityMismatched = useIdentityMismatchedHosts();
+  const hostNotes = useHostDownNotes();
   const { environments } = useEnvironments();
   const nickname = useMachineNicknames();
   const machineIdentity = useMachineIdentities();
@@ -745,13 +751,17 @@ export function ThreadsPane({
                     return (
                       <Tip
                         key={choice.machineId}
-                        label={choice.current ? `${choice.label} · this machine` : choice.label}
+                        label={
+                          choice.current
+                            ? tx("{machine} · this window", { machine: choice.label })
+                            : choice.label
+                        }
                       >
                         <button
                           type="button"
                           className="sws-filter-choice"
                           aria-pressed={machineFilter === choice.machineId}
-                          aria-label={`${choice.label}${choice.current ? ", this machine" : ""}, ${choice.count} open ${say(choice.count === 1 ? "thread" : "threads")}${waiting > 0 ? `, ${waiting} ${waiting === 1 ? "needs" : "need"} you` : ""}`}
+                          aria-label={`${choice.label}${choice.current ? ", this window" : ""}, ${choice.count} open ${say(choice.count === 1 ? "thread" : "threads")}${waiting > 0 ? `, ${waiting} ${waiting === 1 ? "needs" : "need"} you` : ""}`}
                           data-machine-choice={choice.machineId}
                           data-current={choice.current || undefined}
                           onClick={() =>
@@ -875,6 +885,7 @@ export function ThreadsPane({
           ) : null}
         </header>
         {props.shelf}
+        <SignedOutBanner />
         {props.renderNotice?.({ machineFilter })}
         <div id="sws-threads-find">
           {findShown ? (
@@ -952,7 +963,7 @@ export function ThreadsPane({
                   onClick={openEverything ? undefined : () => setGroupFolded(group, !isFolded)}
                 >
                   {isFolded ? <ChevronRightIcon aria-hidden /> : <ChevronDownIcon aria-hidden />}
-                  {group}
+                  {threadGroupHeading(group)}
                   <span className="sws-group-count">
                     {threads.length}
                     {openEverything ? " shown" : ""}
@@ -1002,6 +1013,7 @@ export function ThreadsPane({
                               hostOffline,
                               hostReach.get(thread.environmentId),
                               identityMismatched.has(thread.environmentId),
+                              hostNotes.get(thread.environmentId) ?? null,
                             ),
                             subagentsWorking,
                           ));
@@ -1059,7 +1071,7 @@ export function ThreadsPane({
                                             {rowStatus}
                                           </span>
                                         );
-                                        // Blocked says on hover what the report asks of the reader.
+                                        // A report blocker's whole ask shows on hover; the row shows its first sentence.
                                         return blocker ? (
                                           <Tip label={blocker} side="top">
                                             {word}
@@ -1286,7 +1298,8 @@ export function ThreadsPane({
                 >
                   Show more
                   <span className="sr-only">
-                    , {Math.min(hidden, THREAD_GROUP_PAGE_STEP)} of {hidden} hidden {group} threads
+                    , {Math.min(hidden, THREAD_GROUP_PAGE_STEP)} of {hidden} hidden{" "}
+                    {threadGroupHeading(group)} threads
                   </span>
                 </Button>
               ) : !openEverything && threads.length > THREAD_GROUP_PAGE ? (

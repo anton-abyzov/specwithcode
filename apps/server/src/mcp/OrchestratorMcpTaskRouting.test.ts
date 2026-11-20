@@ -36,6 +36,7 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
+import { launchedOrThrow } from "./toolkits/orchestrator/requestSpecweaveSetup.ts";
 
 const parentThreadId = ThreadId.make("thread:routing-parent");
 const childThreadId = ThreadId.make("thread:routing-child");
@@ -306,11 +307,13 @@ describe("OrchestratorMcpService task routing", () => {
     () =>
       run({ policy: { mode: "auto" } }, (service, dispatched) =>
         Effect.gen(function* () {
-          const result = yield* service.delegateTask(scope, {
-            task: "Translate the onboarding emails into Spanish.",
-            mode: "async",
-            clientRequestId: "route-translation",
-          });
+          const result = launchedOrThrow(
+            yield* service.delegateTask(scope, {
+              task: "Translate the onboarding emails into Spanish.",
+              mode: "async",
+              clientRequestId: "route-translation",
+            }),
+          );
           const request = yield* delegated(dispatched);
           assert.deepInclude(request.modelSelection, {
             instanceId: claude,
@@ -328,11 +331,13 @@ describe("OrchestratorMcpService task routing", () => {
   it.effect("keeps today's worker model when Auto is off", () =>
     run({}, (service, dispatched) =>
       Effect.gen(function* () {
-        yield* service.delegateTask(scope, {
-          task: "Translate the onboarding emails into Spanish.",
-          mode: "async",
-          clientRequestId: "route-off",
-        });
+        launchedOrThrow(
+          yield* service.delegateTask(scope, {
+            task: "Translate the onboarding emails into Spanish.",
+            mode: "async",
+            clientRequestId: "route-off",
+          }),
+        );
         const request = yield* delegated(dispatched);
         assert.equal(request.modelSelection?.model, "claude-opus-5-5");
         assert.isUndefined(request.routing);
@@ -343,12 +348,14 @@ describe("OrchestratorMcpService task routing", () => {
   it.effect("never overrides a named model", () =>
     run({ policy: { mode: "auto" } }, (service, dispatched) =>
       Effect.gen(function* () {
-        yield* service.delegateTask(scope, {
-          task: "Translate the onboarding emails into Spanish.",
-          target: { providerInstanceId: claude, model: "claude-opus-5-5", effort: "high" },
-          mode: "async",
-          clientRequestId: "route-pinned",
-        });
+        launchedOrThrow(
+          yield* service.delegateTask(scope, {
+            task: "Translate the onboarding emails into Spanish.",
+            target: { providerInstanceId: claude, model: "claude-opus-5-5", effort: "high" },
+            mode: "async",
+            clientRequestId: "route-pinned",
+          }),
+        );
         const request = yield* delegated(dispatched);
         assert.equal(request.modelSelection?.model, "claude-opus-5-5");
         assert.isUndefined(request.routing);
@@ -359,11 +366,13 @@ describe("OrchestratorMcpService task routing", () => {
   it.effect("keeps code and review work on the baseline and says so", () =>
     run({ policy: { mode: "auto" } }, (service, dispatched) =>
       Effect.gen(function* () {
-        yield* service.delegateTask(scope, {
-          task: "Implement the billing endpoint and its unit tests.",
-          mode: "async",
-          clientRequestId: "route-code",
-        });
+        launchedOrThrow(
+          yield* service.delegateTask(scope, {
+            task: "Implement the billing endpoint and its unit tests.",
+            mode: "async",
+            clientRequestId: "route-code",
+          }),
+        );
         const request = yield* delegated(dispatched);
         assert.equal(request.modelSelection?.model, "claude-opus-5-5");
         assert.equal(request.routing?.taskClass, "code");
@@ -376,21 +385,25 @@ describe("OrchestratorMcpService task routing", () => {
   it.effect("leaves a non-coordinator's inherited model alone unless it passes a task class", () =>
     run({ policy: { mode: "auto" }, coordinator: false }, (service, dispatched) =>
       Effect.gen(function* () {
-        yield* service.delegateTask(scope, {
-          task: "Translate the onboarding emails into Spanish.",
-          mode: "async",
-          clientRequestId: "route-lane",
-        });
+        launchedOrThrow(
+          yield* service.delegateTask(scope, {
+            task: "Translate the onboarding emails into Spanish.",
+            mode: "async",
+            clientRequestId: "route-lane",
+          }),
+        );
         const inherited = yield* delegated(dispatched);
         assert.equal(inherited.modelSelection?.model, "claude-opus-5-5");
         assert.isUndefined(inherited.routing);
         yield* Ref.set(dispatched, []);
-        yield* service.delegateTask(scope, {
-          task: "Handle the strings in docs/es.",
-          taskClass: "translation",
-          mode: "async",
-          clientRequestId: "route-lane-hint",
-        });
+        launchedOrThrow(
+          yield* service.delegateTask(scope, {
+            task: "Handle the strings in docs/es.",
+            taskClass: "translation",
+            mode: "async",
+            clientRequestId: "route-lane-hint",
+          }),
+        );
         const hinted = yield* delegated(dispatched);
         assert.equal(hinted.modelSelection?.model, "claude-sonnet-5-5");
         assert.equal(hinted.routing?.confidence, "hint");
@@ -401,15 +414,17 @@ describe("OrchestratorMcpService task routing", () => {
   it.effect("keeps Auto off for work under a grant that names its sign-ins", () =>
     run({ policy: { mode: "auto" } }, (service, dispatched) =>
       Effect.gen(function* () {
-        yield* service.delegateTask(
-          scope,
-          {
-            task: "Translate the emails.",
-            taskClass: "translation",
-            mode: "async",
-            clientRequestId: "route-grant",
-          },
-          { autoRouting: false },
+        launchedOrThrow(
+          yield* service.delegateTask(
+            scope,
+            {
+              task: "Translate the emails.",
+              taskClass: "translation",
+              mode: "async",
+              clientRequestId: "route-grant",
+            },
+            { autoRouting: false },
+          ),
         );
         const request = yield* delegated(dispatched);
         assert.equal(request.modelSelection?.model, "claude-opus-5-5");
@@ -423,11 +438,13 @@ describe("OrchestratorMcpService task routing", () => {
     () =>
       run({ policy: { mode: "auto", excludedProviders: [claude] } }, (service, dispatched) =>
         Effect.gen(function* () {
-          yield* service.delegateTask(scope, {
-            task: "Summarize the meeting notes.",
-            mode: "async",
-            clientRequestId: "route-excluded",
-          });
+          launchedOrThrow(
+            yield* service.delegateTask(scope, {
+              task: "Summarize the meeting notes.",
+              mode: "async",
+              clientRequestId: "route-excluded",
+            }),
+          );
           const request = yield* delegated(dispatched);
           assert.deepInclude(request.modelSelection, {
             instanceId: copilot,
@@ -440,11 +457,13 @@ describe("OrchestratorMcpService task routing", () => {
   it.effect("tells a long-audio worker to transcribe with ASR before the text model", () =>
     run({ policy: { mode: "auto" } }, (service, dispatched) =>
       Effect.gen(function* () {
-        yield* service.delegateTask(scope, {
-          task: "Process an hour of speech from the keynote recording into chapter notes.",
-          mode: "async",
-          clientRequestId: "route-audio",
-        });
+        launchedOrThrow(
+          yield* service.delegateTask(scope, {
+            task: "Process an hour of speech from the keynote recording into chapter notes.",
+            mode: "async",
+            clientRequestId: "route-audio",
+          }),
+        );
         const request = yield* delegated(dispatched);
         assert.equal(request.routing?.taskClass, "transcript");
         assert.include(request.task, "speech-to-text (ASR)");
@@ -463,11 +482,13 @@ describe("OrchestratorMcpService task routing", () => {
       },
       (service, dispatched) =>
         Effect.gen(function* () {
-          yield* service.delegateTask(scope, {
-            task: "Design an end-to-end distributed consensus architecture and evaluate trade-offs.",
-            mode: "async",
-            clientRequestId: "route-complex-lane",
-          });
+          launchedOrThrow(
+            yield* service.delegateTask(scope, {
+              task: "Design an end-to-end distributed consensus architecture and evaluate trade-offs.",
+              mode: "async",
+              clientRequestId: "route-complex-lane",
+            }),
+          );
           const request = yield* delegated(dispatched);
           assert.equal(request.modelSelection?.model, "claude-opus-5-5");
           assert.equal(request.routing?.lane, "complex");
@@ -485,11 +506,13 @@ describe("OrchestratorMcpService task routing", () => {
       },
       (service, dispatched) =>
         Effect.gen(function* () {
-          yield* service.delegateTask(scope, {
-            task: "Fix a typo in README.md and update changelog.",
-            mode: "async",
-            clientRequestId: "route-routine-lane",
-          });
+          launchedOrThrow(
+            yield* service.delegateTask(scope, {
+              task: "Fix a typo in README.md and update changelog.",
+              mode: "async",
+              clientRequestId: "route-routine-lane",
+            }),
+          );
           const request = yield* delegated(dispatched);
           assert.equal(request.modelSelection?.model, "claude-haiku-5-5");
           assert.equal(request.routing?.lane, "routine");
@@ -507,12 +530,14 @@ describe("OrchestratorMcpService task routing", () => {
       },
       (service, dispatched) =>
         Effect.gen(function* () {
-          yield* service.delegateTask(scope, {
-            task: "Brief one-line update.",
-            taskLane: "complex",
-            mode: "async",
-            clientRequestId: "route-hinted-lane",
-          });
+          launchedOrThrow(
+            yield* service.delegateTask(scope, {
+              task: "Brief one-line update.",
+              taskLane: "complex",
+              mode: "async",
+              clientRequestId: "route-hinted-lane",
+            }),
+          );
           const request = yield* delegated(dispatched);
           assert.equal(request.modelSelection?.model, "claude-opus-5-5");
           assert.equal(request.routing?.lane, "complex");
@@ -537,11 +562,13 @@ describe("OrchestratorMcpService task routing", () => {
         },
         (service, dispatched) =>
           Effect.gen(function* () {
-            yield* service.delegateTask(scope, {
-              task: "Fix a typo in README.md and update changelog.",
-              mode: "async",
-              clientRequestId: "route-skip-exhausted",
-            });
+            launchedOrThrow(
+              yield* service.delegateTask(scope, {
+                task: "Fix a typo in README.md and update changelog.",
+                mode: "async",
+                clientRequestId: "route-skip-exhausted",
+              }),
+            );
             const request = yield* delegated(dispatched);
             assert.equal(request.modelSelection?.model, "claude-haiku-5-5");
             assert.equal(request.routing?.lane, "routine");
@@ -571,11 +598,13 @@ describe("OrchestratorMcpService task routing", () => {
       },
       (service, dispatched) =>
         Effect.gen(function* () {
-          yield* service.delegateTask(scope, {
-            task: "Update the project readme docs with setup instructions.",
-            mode: "async",
-            clientRequestId: "route-learned-pref",
-          });
+          launchedOrThrow(
+            yield* service.delegateTask(scope, {
+              task: "Update the project readme docs with setup instructions.",
+              mode: "async",
+              clientRequestId: "route-learned-pref",
+            }),
+          );
           const request = yield* delegated(dispatched);
           assert.equal(request.modelSelection?.model, "claude-sonnet-5-5");
           assert.equal(request.routing?.preferenceId, "pref-custom-1");
@@ -642,11 +671,13 @@ describe("OrchestratorMcpService task routing", () => {
       },
       (service, dispatched) =>
         Effect.gen(function* () {
-          yield* service.delegateTask(scope, {
-            task: "Update the changelog",
-            mode: "async",
-            clientRequestId: "floor-lane",
-          });
+          launchedOrThrow(
+            yield* service.delegateTask(scope, {
+              task: "Update the changelog",
+              mode: "async",
+              clientRequestId: "floor-lane",
+            }),
+          );
           assert.equal((yield* delegated(dispatched)).modelSelection?.model, "claude-opus-5-5");
         }),
     ),
@@ -706,20 +737,26 @@ describe("OrchestratorMcpService task routing", () => {
         },
         (service, dispatched) =>
           Effect.gen(function* () {
-            yield* service.delegateTask(scope, {
-              task: "Fix a typo in README.md and update changelog.",
-              taskClass: "translation",
-              mode: "async",
-              clientRequestId: "project-model-delegate",
-            });
+            launchedOrThrow(
+              yield* service.delegateTask(scope, {
+                task: "Fix a typo in README.md and update changelog.",
+                taskClass: "translation",
+                mode: "async",
+                clientRequestId: "project-model-delegate",
+              }),
+            );
             const request = yield* delegated(dispatched);
             assert.deepInclude(request.modelSelection, opus);
             assert.isUndefined(request.routing);
             yield* Ref.set(dispatched, []);
-            yield* service.createThreads(scope, {
-              threads: [{ prompt: "Make a first draft of the promo storyboard.", title: "Draft" }],
-              clientRequestId: "project-model-create",
-            });
+            launchedOrThrow(
+              yield* service.createThreads(scope, {
+                threads: [
+                  { prompt: "Make a first draft of the promo storyboard.", title: "Draft" },
+                ],
+                clientRequestId: "project-model-create",
+              }),
+            );
             const create = (yield* Ref.get(dispatched)).find(
               (command) => command.type === "thread.create",
             );
@@ -727,12 +764,14 @@ describe("OrchestratorMcpService task routing", () => {
             assert.isUndefined(create?.routing);
             // A named model still wins.
             yield* Ref.set(dispatched, []);
-            yield* service.delegateTask(scope, {
-              task: "Translate the emails.",
-              target: { providerInstanceId: claude, model: "claude-sonnet-5-5" },
-              mode: "async",
-              clientRequestId: "project-model-named",
-            });
+            launchedOrThrow(
+              yield* service.delegateTask(scope, {
+                task: "Translate the emails.",
+                target: { providerInstanceId: claude, model: "claude-sonnet-5-5" },
+                mode: "async",
+                clientRequestId: "project-model-named",
+              }),
+            );
             assert.equal((yield* delegated(dispatched)).modelSelection?.model, "claude-sonnet-5-5");
           }),
       ),
@@ -741,16 +780,18 @@ describe("OrchestratorMcpService task routing", () => {
   it.effect("routes create_threads per thread and keeps the decision on the thread", () =>
     run({ policy: { mode: "auto" } }, (service, dispatched) =>
       Effect.gen(function* () {
-        const result = yield* service.createThreads(scope, {
-          threads: [
-            {
-              prompt: "Make a first draft of the promo animation storyboard.",
-              title: "Promo draft",
-            },
-            { prompt: "Render the final promo animation for publishing.", title: "Promo final" },
-          ],
-          clientRequestId: "route-create",
-        });
+        const result = launchedOrThrow(
+          yield* service.createThreads(scope, {
+            threads: [
+              {
+                prompt: "Make a first draft of the promo animation storyboard.",
+                title: "Promo draft",
+              },
+              { prompt: "Render the final promo animation for publishing.", title: "Promo final" },
+            ],
+            clientRequestId: "route-create",
+          }),
+        );
         const creates = (yield* Ref.get(dispatched)).filter(
           (command) => command.type === "thread.create",
         );
@@ -797,12 +838,14 @@ describe("OrchestratorMcpService review delegation", () => {
     () =>
       run({ providers: withCodex(3), reviewers }, (service, dispatched) =>
         Effect.gen(function* () {
-          const result = yield* service.delegateTask(scope, {
-            task: "Review PR 345.",
-            taskClass: "review",
-            mode: "async",
-            clientRequestId: "review-pick",
-          });
+          const result = launchedOrThrow(
+            yield* service.delegateTask(scope, {
+              task: "Review PR 345.",
+              taskClass: "review",
+              mode: "async",
+              clientRequestId: "review-pick",
+            }),
+          );
           const request = yield* delegated(dispatched);
           assert.deepEqual(request.modelSelection, { instanceId: codex, model: "gpt-6.1-sol" });
           assert.include(
@@ -848,13 +891,15 @@ describe("OrchestratorMcpService review delegation", () => {
   it.effect("runs a named same-family reviewer as asked and warns", () =>
     run({ providers: withCodex(3), reviewers }, (service, dispatched) =>
       Effect.gen(function* () {
-        const result = yield* service.delegateTask(scope, {
-          task: "Review PR 345.",
-          taskClass: "review",
-          target: { providerInstanceId: claude, model: "claude-sonnet-5-5" },
-          mode: "async",
-          clientRequestId: "review-named",
-        });
+        const result = launchedOrThrow(
+          yield* service.delegateTask(scope, {
+            task: "Review PR 345.",
+            taskClass: "review",
+            target: { providerInstanceId: claude, model: "claude-sonnet-5-5" },
+            mode: "async",
+            clientRequestId: "review-named",
+          }),
+        );
         const request = yield* delegated(dispatched);
         assert.equal(request.modelSelection?.model, "claude-sonnet-5-5");
         assert.equal(request.routing?.reviewFamily, "claude");

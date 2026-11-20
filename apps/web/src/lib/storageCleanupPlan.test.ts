@@ -109,6 +109,20 @@ describe("storageCleanupReasonSentence", () => {
       "It could not be fully checked, so it is kept. (It is reached through a symbolic link.)",
     );
   });
+
+  it("shows a Git removal failure's detail alone, untranslated", () => {
+    const detail =
+      "Git could not remove it: fatal: 'app/1370' contains modified or untracked files. Open files: node (4512).";
+    expect(describeStorageCleanupReason({ reason: "unknown", detail })).toBe(detail);
+    const bracket = (english: string) => `[${english}]`;
+    expect(describeStorageCleanupReason({ reason: "unknown", detail: `  ${detail}\n` }, bracket)).toBe(
+      detail,
+    );
+    // Only for reason "unknown": another reason keeps its sentence.
+    expect(describeStorageCleanupReason({ reason: "in-use", detail })).toBe(
+      `Something is working in it, or it is locked. (${detail})`,
+    );
+  });
 });
 
 describe("plan helpers", () => {
@@ -155,6 +169,10 @@ describe("plan helpers", () => {
   it("says the total as a lower bound and what a run removed", () => {
     expect(describeStorageCleanupTotal(plan([], 1_312_000_000))).toBe(
       "At least 1.3 GB would be freed.",
+    );
+    // A removable folder without a size still leaves the total a lower bound.
+    expect(describeStorageCleanupTotal(plan([{ action: "remove", path: "/a" }], 512_000_000))).toBe(
+      "At least 512 MB would be freed.",
     );
     const result = (removed: ReadonlyArray<string>, removedBytes: number) => ({
       removed,

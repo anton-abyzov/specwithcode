@@ -1,3 +1,4 @@
+import { reopenJoinCodes } from "../components/devices/closedJoinCodes";
 import {
   RELAY_ROUTE_ID,
   type ConnectionCatalogEntry,
@@ -133,6 +134,8 @@ const connectRouteRequestListeners = new Set<(environmentIds: ReadonlyArray<stri
  */
 export function requestConnectRoutes(environmentIds: ReadonlyArray<string>): void {
   for (const environmentId of environmentIds) setConnectRouteDeclined(environmentId, false);
+  // The owner asks for these machines: a join code card closed earlier shows again.
+  reopenJoinCodes(environmentIds);
   for (const listener of connectRouteRequestListeners) listener(environmentIds);
 }
 

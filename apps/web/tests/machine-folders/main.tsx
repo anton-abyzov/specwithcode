@@ -9,32 +9,32 @@ function Fixture() {
   const [selected, setSelected] = useState("");
   const [phase, setPhase] = useState<"choose" | "review">("choose");
   const [consent, setConsent] = useState(false);
-  const [machine, setMachine] = useState<string | null>("m3");
+  const [machine, setMachine] = useState<string | null>("kioskD");
   const [dirty, setDirty] = useState(true);
   const [destinations, setDestinations] = useState([
     {
-      key: "m1:easychamp",
-      environmentId: "m1",
-      label: "MacBook Pro M1",
-      folder: "/Users/you/Projects/sw-easychamp",
+      key: "deskB:atlas",
+      environmentId: "deskB",
+      label: "Desk B",
+      folder: "/Users/you/Projects/atlas",
       unavailable: null,
     },
   ]);
   return (
     <main className="min-h-screen bg-background p-8 text-foreground">
-      <h1>EasyChamp</h1>
+      <h1>Atlas</h1>
       <MachineHandoffDialog
         open
         onOpenChange={() => {}}
-        sourceLabel="MacBook Pro M4"
-        projectTitle="EasyChamp"
+        sourceLabel="Laptop E"
+        projectTitle="Atlas"
         destinations={destinations}
         selected={selected}
         onSelect={setSelected}
         machines={[
-          { value: "m1", label: "MacBook Pro M1", tone: "ready" },
-          { value: "m3", label: "MacBook Pro M3", tone: "ready" },
-          { value: "m2", label: "Mac mini", tone: "off", reason: "Offline", disabled: true },
+          { value: "deskB", label: "Desk B", tone: "ready" },
+          { value: "kioskD", label: "Kiosk D", tone: "ready" },
+          { value: "hubC", label: "Hub C", tone: "off", reason: "Offline", disabled: true },
         ]}
         machine={machine}
         onMachineChange={(value) => {
@@ -65,14 +65,14 @@ function Fixture() {
         folderPicker={
           phase === "choose" ? (
             <HandoffFolderPicker
-              title="EasyChamp"
+              title="Atlas"
               key={machine ?? ""}
               machine={machine as never}
-              sourceFolder="/Users/anton/Projects/sw-easychamp"
+              sourceFolder="/Users/sam/Projects/atlas"
               machines={[
                 {
-                  id: "m1" as never,
-                  label: "MacBook Pro M1",
+                  id: "deskB" as never,
+                  label: "Desk B",
                   online: true,
                   unavailable: null,
                   workersAllowed: false,
@@ -80,8 +80,8 @@ function Fixture() {
                   lastOnlineAt: null,
                 },
                 {
-                  id: "m3" as never,
-                  label: "MacBook Pro M3",
+                  id: "kioskD" as never,
+                  label: "Kiosk D",
                   online: true,
                   unavailable: null,
                   workersAllowed: true,
@@ -89,8 +89,8 @@ function Fixture() {
                   lastOnlineAt: null,
                 },
                 {
-                  id: "m2" as never,
-                  label: "Mac mini",
+                  id: "hubC" as never,
+                  label: "Hub C",
                   online: false,
                   unavailable: "Connect first",
                   workersAllowed: false,
@@ -105,7 +105,7 @@ function Fixture() {
                   {
                     key,
                     environmentId,
-                    label: environmentId === "m1" ? "MacBook Pro M1" : "MacBook Pro M3",
+                    label: environmentId === "deskB" ? "Desk B" : "Kiosk D",
                     folder: path,
                     unavailable: null,
                   },

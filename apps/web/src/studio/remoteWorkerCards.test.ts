@@ -56,6 +56,38 @@ describe("remote worker cards", () => {
     expect(remoteWorkerCardStatus({ ...held, reachable: false }).label).toContain("unreachable");
   });
 
+  it("shows a handed-off worker as waiting, not working, until a run is seen", () => {
+    const target = { ...worker, machineLabel: "Target", lastStatus: null };
+    const handoff = { ...target, awaiting: "handoff" as const };
+    expect(remoteWorkerCardStatus(handoff)).toEqual({
+      tone: "idle",
+      label: "Waiting for handoff to Target",
+    });
+    const firstRun = { ...target, awaiting: "run" as const };
+    expect(remoteWorkerCardStatus(firstRun)).toEqual({
+      tone: "idle",
+      label: "Waiting for first run on Target",
+    });
+    // A run that was only stopped there ended nothing: the worker still owes its result.
+    const stopped = { ...firstRun, lastStatus: "interrupted" };
+    expect(remoteWorkerCardStatus(stopped).tone).toBe("idle");
+    expect(remoteWorkerCardStatus(stopped).label).toContain("waiting for its next run");
+    // Neither waiting state is an ending: the card keeps its place among live work.
+    for (const waiting of [handoff, firstRun, stopped]) {
+      expect(remoteWorkerNeedsPlace(waiting)).toBe(true);
+      expect(["done", "failed"]).not.toContain(remoteWorkerCardStatus(waiting).tone);
+    }
+    // A run observed there is working, as before.
+    expect(remoteWorkerCardStatus({ ...target, lastStatus: "running" })).toEqual({
+      tone: "working",
+      label: "Working",
+    });
+    // Out of touch says so, whatever is awaited.
+    expect(remoteWorkerCardStatus({ ...handoff, reachable: false }).label).toContain(
+      "Target unreachable",
+    );
+  });
+
   it("drops closed rows and keeps the server order", () => {
     const later = { ...worker, id: "rwt:2", updatedAt: "2026-10-11T00:00:00.000Z" };
     expect(

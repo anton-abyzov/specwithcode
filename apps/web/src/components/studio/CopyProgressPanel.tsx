@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   addRateSample,
   COPY_PHASES,
+  COPY_ROUTE_TEXT,
   countsText,
   formatRate,
   phaseLabel,
@@ -14,6 +15,7 @@ import {
   type RateSample,
 } from "../../studio/copyProgress";
 import { formatDuration } from "../../studio/folderCopy";
+import { useTx } from "../../i18n";
 
 /**
  * Bytes per second for the step a view is in, from what the counts did over the last few
@@ -176,6 +178,16 @@ export function CopyPhaseTrack({
   );
 }
 
+/** Which route the file contents took: the local network, Connect, or both. */
+export function CopyRouteLine({ view }: { readonly view: CopyProgressView | null }) {
+  const tx = useTx();
+  return view?.route ? (
+    <p className="text-xs text-muted-foreground" data-slot="copy-route" data-route={view.route}>
+      {tx(COPY_ROUTE_TEXT[view.route])}
+    </p>
+  ) : null;
+}
+
 /**
  * The running copy, in the dialog: what is happening now and how far, the three phases,
  * how much of what has moved, and the speed and time left once there is a pace to go by.
@@ -237,7 +249,7 @@ export function CopyProgressPanel({
         targetLabel={targetLabel}
         live={rate !== null}
       />
-      {(counts.bytes || counts.files || rate || elapsed) && (
+      {(counts.bytes || counts.files || rate || elapsed || view.route) && (
         <div className="space-y-0.5 text-xs tabular-nums" aria-live="off">
           {(counts.bytes || counts.files) && (
             <p className="flex flex-wrap gap-x-4" data-slot="copy-progress-counts">
@@ -246,6 +258,7 @@ export function CopyProgressPanel({
               {local && <span className="text-muted-foreground">{local}</span>}
             </p>
           )}
+          <CopyRouteLine view={view} />
           {(rate || left || elapsed) && (
             <p
               className="flex flex-wrap gap-x-4 text-muted-foreground"

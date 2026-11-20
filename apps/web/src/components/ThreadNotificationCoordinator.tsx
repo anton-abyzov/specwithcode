@@ -1,7 +1,9 @@
 import { observeNotificationEpisode } from "../notificationEpisodes";
 import {
+  attentionLeadThreadId,
   attentionOwnerMachine,
   observeProjectThread,
+  subagentQuestionWait,
 } from "@specweave-studio/client-runtime/state/projectAttention";
 import {
   classifyProjectActions,
@@ -24,11 +26,12 @@ import {
   MessageCircleQuestionIcon,
   ShieldQuestionIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useOpenChat } from "../hooks/useOpenChat";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import {
+  useEnvironment,
   useEnvironmentIds,
   usePrimaryEnvironmentId,
   useUnreachableEnvironmentIds,
@@ -64,10 +67,13 @@ import {
   interactedRecentlyHere,
 } from "../lib/backgroundActivityReporter";
 import { toastManager } from "./ui/toast";
+import { HandoffNotices } from "./handoff/HandoffNotices";
 import { isAccessWait } from "../studio/accessWait";
 import { paneWords } from "../studio/assistantTerms";
 import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import { currentRemoteWorkerLaunchers } from "../studio/remoteWorkerLaunchers";
+import { useMachineIdentities } from "../studio/machineIdentity";
+import { ActionMachineName, actionMachineAt, onMachineText } from "../studio/actionMachine";
 
 /** A system notification still on screen, until the user comes back. */
 // The desktop bridge accepts notification titles up to 256 characters.
@@ -95,6 +101,27 @@ export function isStaleExecutionCopy(
 
 /** Records a shown notification, or forgets it with `posted` false when the system declined it. */
 type OnNotification = (tag: string, shown: ShownNotification, posted?: boolean) => void;
+
+/**
+ * Whether a thread's open question is its lead's to settle (see
+ * subagentQuestionWait), so it alerts nobody, as Needs you counts it.
+ */
+function questionGoesToLeadIn(
+  environmentId: EnvironmentId,
+  thread: ReturnType<typeof presentThreadShell>,
+  threadById: (id: string) => OrchestrationV2ThreadShell | undefined,
+  coordinatorThreadId: string | null,
+): boolean {
+  const leadId = attentionLeadThreadId(thread);
+  const leadRaw = leadId === null ? undefined : threadById(leadId);
+  return (
+    subagentQuestionWait(
+      thread,
+      leadRaw === undefined ? undefined : presentThreadShell(environmentId, leadRaw),
+      coordinatorThreadId,
+    ) !== null
+  );
+}
 
 export function ThreadNotificationCoordinator() {
   const environmentIds = useEnvironmentIds();
@@ -189,12 +216,15 @@ export function ThreadNotificationCoordinator() {
   if (mode === "off" && !inAppNotificationsEnabled && !inputNeededAlertsEnabled) return null;
 
   return environmentIds.map((environmentId) => (
-    <EnvironmentNotifications
-      key={environmentId}
-      environmentId={environmentId}
-      onNotification={onNotification}
-      onWithdraw={onWithdraw}
-    />
+    <Fragment key={environmentId}>
+      <EnvironmentNotifications
+        environmentId={environmentId}
+        onNotification={onNotification}
+        onWithdraw={onWithdraw}
+      />
+      {/* An automatic hand off, on the source and the destination (1390 AC-28). */}
+      <HandoffNotices environmentId={environmentId} />
+    </Fragment>
   ));
 }
 
@@ -226,6 +256,14 @@ function EnvironmentNotifications({
   useLayoutEffect(() => {
     presence.current = { ownEnvironmentId, knownEnvironmentIds, unreachableEnvironmentIds };
   }, [ownEnvironmentId, knownEnvironmentIds, unreachableEnvironmentIds]);
+  // An alert names the machine to act on when it is not this window's (1427 AC-07).
+  // It names where Open thread goes, this environment, by its own label.
+  const identityOf = useMachineIdentities();
+  const environmentLabel = useEnvironment(environmentId)?.label;
+  const identityOfRef = useRef({ identityOf, environmentLabel });
+  useLayoutEffect(() => {
+    identityOfRef.current = { identityOf, environmentLabel };
+  }, [identityOf, environmentLabel]);
   // The shell reducer keeps the thread list and unchanged thread objects
   // stable, so this only rescans when a thread actually changed.
   const threads =
@@ -243,8 +281,17 @@ function EnvironmentNotifications({
   const levels = useRef(new Map<ProjectId, ProjectNotificationLevel>());
   // Percy's threads are topics, so its alerts say topic.
   const assistantIds = useRef(new Set<ProjectId>());
+  // A coordinator under a custom id still has workers that ask the person.
+  const coordinatorIds = useRef(new Map<ProjectId, string>());
   useLayoutEffect(() => {
     const here = projects.filter((project) => project.environmentId === environmentId);
+    coordinatorIds.current = new Map(
+      here.flatMap((project) =>
+        project.workspaceSettings?.coordinatorThreadId
+          ? [[project.id, project.workspaceSettings.coordinatorThreadId] as const]
+          : [],
+      ),
+    );
     levels.current = new Map(
       here.map((project) => [project.id, projectNotificationLevel(project)]),
     );
@@ -296,6 +343,9 @@ function EnvironmentNotifications({
       return;
     }
     const next = new Map<ThreadId, NotificationState>();
+    const threadById = new Map<string, (typeof threads)[number]>(
+      threads.map((rawThread) => [rawThread.id, rawThread]),
+    );
     for (const rawThread of threads) {
       // A provider's own subagents are part of their parent's turn. A worker a
       // coordinator delegated is its own thread: its status and this alert
@@ -308,7 +358,16 @@ function EnvironmentNotifications({
       const thread = presentThreadShell(environmentId, rawThread);
       let status = resolveThreadAlertStatus(thread);
       if (status === "ready" && thread.latestRun?.status === "failed") status = "failed";
-      const observation = observeProjectThread(thread, "live");
+      const observation = observeProjectThread(
+        thread,
+        "live",
+        questionGoesToLeadIn(
+          environmentId,
+          thread,
+          (id) => threadById.get(id),
+          coordinatorIds.current.get(thread.projectId) ?? null,
+        ),
+      );
       const observedActions = classifyProjectActions(observation);
       // Baseline absence must end persisted episodes too, including after every client restarted.
       for (const reason of ["plan", "held"] as const) {
@@ -476,9 +535,22 @@ function EnvironmentNotifications({
                   currentRaw.pendingRuntimeRequest?.id !== rawThread.pendingRuntimeRequest?.id)
               )
                 return null;
+              // The lead may have taken the question over since it was seen.
               if (
                 action &&
-                !projectActionIsCurrent(action, observeProjectThread(currentThread, "live"))
+                !projectActionIsCurrent(
+                  action,
+                  observeProjectThread(
+                    currentThread,
+                    "live",
+                    questionGoesToLeadIn(
+                      environmentId,
+                      currentThread,
+                      (id) => latest.current.threads?.find((candidate) => candidate.id === id),
+                      coordinatorIds.current.get(currentThread.projectId) ?? null,
+                    ),
+                  ),
+                )
               )
                 return null;
               if (
@@ -501,7 +573,20 @@ function EnvironmentNotifications({
             const say = paneWords(
               thread.projectId != null && assistantIds.current.has(thread.projectId),
             );
-            const title = say(
+            // "Sign-in needed on M5": the machine Open thread goes to, when it is not
+            // this window's. A finished thread asks nothing, so its alert names no machine.
+            const actionMachine =
+              kind === "completion"
+                ? null
+                : actionMachineAt({
+                    dispatchEnvironmentId: environmentId,
+                    windowEnvironmentId: presence.current.ownEnvironmentId,
+                    identityOf: identityOfRef.current.identityOf,
+                    labelOf: (id) =>
+                      id === environmentId ? identityOfRef.current.environmentLabel : undefined,
+                  });
+            const onActionMachine = (text: string) => onMachineText(text, actionMachine?.name);
+            const baseTitle = say(
               kind === "stalled"
                 ? "No activity in thread"
                 : kind === "completion"
@@ -521,6 +606,15 @@ function EnvironmentNotifications({
                             : status === "failed"
                               ? "Thread failed"
                               : "Input needed",
+            );
+            const title = onActionMachine(baseTitle);
+            // In the app the machine's name wears its colour, as on the cards it acts through.
+            const toastTitle = actionMachine ? (
+              <>
+                {baseTitle} on <ActionMachineName machine={actionMachine} />
+              </>
+            ) : (
+              title
             );
             // A thread stopped until the user answers or approves.
             const needsUser = action !== undefined && inputNeededAlertsEnabled;
@@ -609,7 +703,7 @@ function EnvironmentNotifications({
                     : status === "failed" && kind !== "stalled"
                       ? "error"
                       : "warning",
-                title,
+                title: toastTitle,
                 description: thread.title,
                 data: {
                   hideCopyButton: true,
@@ -658,7 +752,7 @@ function EnvironmentNotifications({
                 : threadName.length > SYSTEM_TITLE_MAX_LENGTH
                   ? `${threadName.slice(0, SYSTEM_TITLE_MAX_LENGTH - 1).replace(/[\uD800-\uDBFF]$/, "")}…`
                   : threadName;
-            const systemBody =
+            const systemBody = onActionMachine(
               kind === "stalled" && health !== null
                 ? `No activity for ${Math.floor(health.idleMs / 60_000)} min. Stop or continue it.`
                 : kind === "completion"
@@ -675,7 +769,8 @@ function EnvironmentNotifications({
                             ? "Usage limit reached"
                             : status === "failed"
                               ? "Stopped with an error"
-                              : "Waiting for your answer";
+                              : "Waiting for your answer",
+            );
             const bridge = window.desktopBridge;
             if (bridge?.showThreadNotification) {
               // An OS denial must not turn every token/shell update into another native request.

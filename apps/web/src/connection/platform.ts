@@ -23,6 +23,7 @@ import { fetchRemoteEnvironmentDescriptor } from "@specweave-studio/client-runti
 import {
   managedRelayAccountChanges,
   managedRelaySessionAtom,
+  type ManagedRelaySession,
 } from "@specweave-studio/client-runtime/relay";
 import { EnvironmentRpcRequestObserver } from "@specweave-studio/client-runtime/rpc";
 import {
@@ -50,7 +51,10 @@ import {
   readPrimaryEnvironmentTarget,
   type PrimaryEnvironmentTarget,
 } from "../environments/primary/target";
+import { readConnectMachineOwners, writeConnectMachineOwners } from "../cloud/connectMachineOwners";
 import { clearComposerDraftsEnvironment } from "../composerDraftStore";
+import { setFleetEnvironmentSkipped } from "../studio/fleetAutoConnect";
+import { noteMachineRemoved } from "../studio/knownMachines";
 import { isHostedStaticApp } from "../hostedPairing";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -285,6 +289,42 @@ export const provisionDesktopSshEnvironment = Effect.fn(
   };
 });
 
+/**
+ * The Connect token a relay route sends (1417, AC-14). Only a missing
+ * session or a session with no token is a sign-out. A failed read (offline,
+ * a slow Clerk refresh) is a network retry, so a short outage never shows
+ * "Sign in" or reaches the session guard.
+ */
+export const readConnectClerkToken = (
+  session: ManagedRelaySession | null,
+): Effect.Effect<string, ConnectionBlockedError | ConnectionTransientError> =>
+  Effect.gen(function* () {
+    if (session === null) {
+      return yield* new ConnectionBlockedError({
+        reason: "authentication",
+        detail: "Sign in to SpecWithCode Connect to connect this environment.",
+        connectSignInRequired: true,
+      });
+    }
+    const token = yield* session.readClerkToken().pipe(
+      Effect.mapError(
+        (error) =>
+          new ConnectionTransientError({
+            reason: "network",
+            detail: error.message,
+          }),
+      ),
+    );
+    if (token === null) {
+      return yield* new ConnectionBlockedError({
+        reason: "authentication",
+        detail: "The SpecWithCode Connect session is unavailable.",
+        connectSignInRequired: true,
+      });
+    }
+    return token;
+  });
+
 const layerCapabilities = Layer.effectContext(
   Effect.sync(() => {
     const presentation = ClientCapabilities.ClientPresentation.of({
@@ -297,31 +337,9 @@ const layerCapabilities = Layer.effectContext(
       identity: Effect.sync(() =>
         Option.fromNullishOr(appAtomRegistry.get(managedRelaySessionAtom)),
       ),
-      clerkToken: Effect.gen(function* () {
-        const session = appAtomRegistry.get(managedRelaySessionAtom);
-        if (session === null) {
-          return yield* new ConnectionBlockedError({
-            reason: "authentication",
-            detail: "Sign in to SpecWithCode Connect to connect this environment.",
-          });
-        }
-        const token = yield* session.readClerkToken().pipe(
-          Effect.mapError(
-            (error) =>
-              new ConnectionTransientError({
-                reason: "network",
-                detail: error.message,
-              }),
-          ),
-        );
-        if (token === null) {
-          return yield* new ConnectionBlockedError({
-            reason: "authentication",
-            detail: "The SpecWithCode Connect session is unavailable.",
-          });
-        }
-        return token;
-      }),
+      clerkToken: Effect.suspend(() =>
+        readConnectClerkToken(appAtomRegistry.get(managedRelaySessionAtom)),
+      ),
     });
     const identity = ClientCapabilities.RelayDeviceIdentity.of({
       deviceId: Effect.succeedNone,
@@ -816,6 +834,31 @@ const layerEnvironmentOwnedDataCleanup = Layer.succeed(
   }),
 );
 
+// Which Connect account saved each machine, kept in this window's local storage (1434).
+const layerAccountOwners = Layer.succeed(
+  Persistence.AccountOwnersStore,
+  Persistence.AccountOwnersStore.of({
+    read: Effect.sync(() => readConnectMachineOwners()),
+    write: (owners) =>
+      Effect.suspend(() =>
+        writeConnectMachineOwners(owners)
+          ? Effect.void
+          : Effect.fail(
+              new Persistence.ConnectionPersistenceError({
+                operation: "save-account-owners",
+                message: "This window could not store which Connect account saved its machines.",
+              }),
+            ),
+      ),
+    forgotten: (environmentId) =>
+      Effect.sync(() => {
+        // Recorded first, so automatic pairing from a stale machine list skips it.
+        setFleetEnvironmentSkipped(environmentId, true);
+        noteMachineRemoved(environmentId, true);
+      }),
+  }),
+);
+
 const layerRpcRequestObserver = Layer.succeed(
   EnvironmentRpcRequestObserver,
   EnvironmentRpcRequestObserver.of({
@@ -838,6 +881,7 @@ type ConnectionPlatformLayerSource =
   | typeof layerCapabilities
   | typeof layerPlatformConnectionSource
   | typeof layerEnvironmentOwnedDataCleanup
+  | typeof layerAccountOwners
   | typeof layerRpcRequestObserver;
 
 export const layer: Layer.Layer<
@@ -851,5 +895,6 @@ export const layer: Layer.Layer<
   layerCapabilities,
   layerPlatformConnectionSource,
   layerEnvironmentOwnedDataCleanup,
+  layerAccountOwners,
   layerRpcRequestObserver,
 );

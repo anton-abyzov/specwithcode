@@ -3,6 +3,7 @@
  * machine's connected repos, and versions with updates. Mounted by the Skills
  * view; nothing here writes to another machine.
  */
+import { SkillAdoptPanel } from "./SkillAdoptPanel";
 import { SkillSearch } from "./SkillSearch";
 import type { SkillFolderScope } from "./SkillUpdate.logic";
 import { SkillUpdatePanel } from "./SkillUpdatePanel";
@@ -19,6 +20,13 @@ export function SkillUpdateCenter(
       <SkillSearch {...props} />
       <SkillUpdatePanel {...props} />
       <SkillUpdateRepos {...props} />
+      {props.userLevel ? (
+        <SkillAdoptPanel
+          environmentId={props.environmentId}
+          projectId={props.projectId}
+          onChanged={props.onChanged}
+        />
+      ) : null}
     </div>
   );
 }

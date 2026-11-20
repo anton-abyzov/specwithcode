@@ -20,6 +20,9 @@ it("links to the thread machine's Chrome settings", async () => {
   });
   expect(JSON.stringify(renderer.toJSON())).toMatch(/Chrome is not connected on ","M4 Max/);
   expect(JSON.stringify(renderer.toJSON())).toContain("Copy the pairing code");
+  expect(JSON.stringify(renderer.toJSON())).toContain(
+    "Agents use only the Chrome profiles you pair, and only while they are paired.",
+  );
   const link = renderer.root.findAll((node) => node.props.to === "/settings/chrome")[0]!;
   expect(link.props.search).toEqual({ machine: environmentId });
   await act(() => renderer.unmount());

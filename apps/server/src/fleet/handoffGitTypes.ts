@@ -181,6 +181,13 @@ export interface ExistingCopyGuard {
 
 /** What the Git side of a machine handoff offers; `handoffGit.ts` implements it. */
 export interface HandoffGitService {
+  /**
+   * The project's root repository and every nested one, relative to the folder with `/`
+   * separators, the root (".") first. Fails with `scan-limit` for a tree past the scan limits.
+   */
+  readonly discover: (input: {
+    readonly workspaceRoot: string;
+  }) => Effect.Effect<ReadonlyArray<string>, HandoffGitError>;
   readonly inspect: (input: {
     readonly operationId: string;
     readonly workspaceRoot: string;

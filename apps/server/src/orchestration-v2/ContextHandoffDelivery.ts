@@ -1,5 +1,6 @@
 import type {
   OrchestrationV2ContextHandoff,
+  OrchestrationV2HistoricalMessage,
   OrchestrationV2ProviderThread,
 } from "@specweave-studio/contracts";
 import type { ProviderAdapterV2HistoricalContext } from "./ProviderAdapter.ts";
@@ -21,6 +22,84 @@ export function isPromptlessContinuation(message: {
   readonly creationSource: string;
 }): boolean {
   return message.createdBy === "agent" && message.creationSource === "provider";
+}
+
+/**
+ * Merges pending histories into one chronological list, leaving out delivered
+ * items. Each history is in order, so its sequence is the base constraint and
+ * an item shared by two histories keeps both orders: `[later]` and
+ * `[earlier, later]` merge to `[earlier, later]`. Delivered items still carry
+ * order between the others. Between items no history orders, the turn-item
+ * ordinal decides when both come from the same thread, otherwise first
+ * appearance does. Ordinals of different threads (a fork's source) are never
+ * compared.
+ */
+export function mergePendingHistories(
+  histories: ReadonlyArray<ReadonlyArray<OrchestrationV2HistoricalMessage>>,
+  skip: ReadonlySet<string>,
+): ReadonlyArray<OrchestrationV2HistoricalMessage> {
+  interface Node {
+    readonly message: OrchestrationV2HistoricalMessage;
+    readonly seen: number;
+    readonly next: Set<Node>;
+    waiting: number;
+    done: boolean;
+  }
+  const nodes = new Map<string, Node>();
+  for (const history of histories) {
+    let previous: Node | undefined;
+    for (const message of history) {
+      let node = nodes.get(message.itemId);
+      if (node === undefined) {
+        node = { message, seen: nodes.size, next: new Set(), waiting: 0, done: false };
+        nodes.set(message.itemId, node);
+      }
+      if (previous !== undefined && previous !== node && !previous.next.has(node)) {
+        previous.next.add(node);
+        node.waiting += 1;
+      }
+      previous = node;
+    }
+  }
+  const order = [...nodes.values()];
+  const emit = (node: Node) => !skip.has(node.message.itemId);
+  if (histories.length <= 1) return order.filter(emit).map((node) => node.message);
+  let ready = order.filter((node) => node.waiting === 0);
+  let cursor = 0;
+  let placed = 0;
+  const merged: Array<OrchestrationV2HistoricalMessage> = [];
+  while (placed < order.length) {
+    if (ready.length === 0) {
+      // Histories that disagree form a cycle: the earliest seen item breaks it.
+      while (order[cursor]!.done) cursor += 1;
+      ready = [order[cursor]!];
+    }
+    // The lowest ordinal of each thread among ready items; a ready item with
+    // a higher one waits for it.
+    const lowest = new Map<string, number>();
+    for (const node of ready) {
+      const ordinal = node.message.ordinal;
+      if (ordinal === undefined) continue;
+      const current = lowest.get(node.message.threadId);
+      if (current === undefined || ordinal < current) lowest.set(node.message.threadId, ordinal);
+    }
+    let pick: Node | undefined;
+    for (const node of ready) {
+      const ordinal = node.message.ordinal;
+      if (ordinal !== undefined && ordinal > lowest.get(node.message.threadId)!) continue;
+      if (pick === undefined || node.seen < pick.seen) pick = node;
+    }
+    const chosen = pick!;
+    ready = ready.filter((node) => node !== chosen);
+    chosen.done = true;
+    placed += 1;
+    if (emit(chosen)) merged.push(chosen.message);
+    for (const next of chosen.next) {
+      next.waiting -= 1;
+      if (next.waiting === 0 && !next.done) ready.push(next);
+    }
+  }
+  return merged;
 }
 
 /**
@@ -95,14 +174,10 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     ) {
       coverage = `${input.preface}\n\n${coverage}`;
     }
-    const seen = new Set(input.alreadyDeliveredItemIds);
-    const messages = pending
-      .flatMap((handoff) => handoff.history?.messages ?? [])
-      .filter((message) => {
-        if (seen.has(message.itemId)) return false;
-        seen.add(message.itemId);
-        return true;
-      });
+    const messages = mergePendingHistories(
+      pending.map((handoff) => handoff.history?.messages ?? []),
+      input.alreadyDeliveredItemIds,
+    );
     // Old preview handoffs remain readable. Their preformatted context is included
     // as a whole when it fits, otherwise the coverage marker points to retrieval.
     const oldContext = pending

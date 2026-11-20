@@ -67,7 +67,10 @@ struct AccessRequestCardRenderTests {
 
   @Test func cardButtonsAnswerWithTheirScope() {
     #expect(AccessRequestCard.allowTitle == "Allow for this session")
-    #expect(AccessRequestCard.alwaysTitle == "Always allow on this machine")
+    #expect(AccessRequestCard.alwaysTitle(on: "M5") == "Always allow on M5")
+    #expect(AccessRequestCard.alwaysTitle(on: nil) == "Always allow on the agent's machine")
+    #expect(ApprovalCard.title("Command approval", on: "M5") == "Command approval on M5")
+    #expect(ApprovalCard.title("Command approval", on: nil) == "Command approval")
     #expect(AccessRequestCard.Answer.allow(.thread).engineAnswer == .allow(.thread))
     #expect(AccessRequestCard.Answer.allow(.machine).engineAnswer == .allow(.machine))
     #expect(AccessRequestCard.Answer.deny.engineAnswer == .deny)

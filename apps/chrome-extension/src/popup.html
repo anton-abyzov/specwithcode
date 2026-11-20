@@ -31,18 +31,30 @@
       </div>
     </section>
 
+    <p id="name-needed" class="note" hidden>Give it a name agents can tell apart.</p>
+
     <form id="pair-form">
+      <p class="where">
+        Copy the code from SpecWithCode: first-run setup, or Settings &gt; Chrome.
+      </p>
+      <p id="replaces" class="note" hidden></p>
       <label for="code">Pairing code</label>
       <textarea
         id="code"
         rows="3"
         spellcheck="false"
-        placeholder="Paste the code from SpecWithCode › Settings › Chrome"
+        placeholder="Paste the code here"
         required
       ></textarea>
       <label for="label">Name this Chrome profile</label>
-      <input id="label" maxlength="60" placeholder="For example: Personal, EasyChamp admin" />
-      <button type="submit">Pair this profile</button>
+      <input id="label" maxlength="60" autocomplete="off" />
+      <div class="suggestions" role="group" aria-label="Suggested names">
+        <button type="button" class="chip" data-name="Personal">Personal</button>
+        <button type="button" class="chip" data-name="Work">Work</button>
+        <button type="button" class="chip" data-name="Agents">Agents</button>
+      </div>
+      <p id="name-hint" class="hint" hidden>Give it a name agents can tell apart first.</p>
+      <button id="pair-button" type="submit" disabled>Pair this profile</button>
       <p id="error" class="error" role="alert"></p>
     </form>
 

@@ -77,8 +77,8 @@ export function copilotOutputShowsNodeMissing(exitCode: number, output: string):
 }
 
 /**
- * Reads `X.Y.Z` from `copilot --version` output. Copilot CLI 1.0.104 prints
- * `GitHub Copilot CLI 1.0.104.`, so sentence punctuation after the version is
+ * Reads `X.Y.Z` from `copilot --version` output. Copilot CLI 1.0.114 prints
+ * `GitHub Copilot CLI 1.0.114.`, so sentence punctuation after the version is
  * allowed; a pre-release suffix (`1.0.95-preview`) or a fourth part is not.
  */
 export const readCopilotVersion = (output: string): string | undefined =>

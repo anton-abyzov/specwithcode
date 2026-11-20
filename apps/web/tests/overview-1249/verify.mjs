@@ -40,9 +40,9 @@ const browser = await chromium.launch({
     : {}),
 });
 const receipt = { headless: true, checks: [], screenshots: [] };
+// Every check is recorded and the run fails once at the end, so one run reports every miss.
 const check = (name, ok, detail = "") => {
-  receipt.checks.push({ name, ok, detail });
-  NodeAssert.ok(ok, `${name} ${detail}`);
+  receipt.checks.push({ name, ok: Boolean(ok), detail });
 };
 try {
   // 580 is the content beside the sidebar in the desktop app's 840 px minimum window.
@@ -58,6 +58,25 @@ try {
       await page.locator("#studio-heading").waitFor();
       const label = `${theme} ${width}`;
       check(`${label}: no page errors`, errors.length === 0, errors.join("; "));
+      // 1398 AC-11: the Overview offers the first feature in one card with one action.
+      const offer = await page.evaluate(() => {
+        const cards = [...document.querySelectorAll("[data-first-feature-offer]")];
+        return {
+          cards: cards.length,
+          title: cards[0]?.querySelector("h2")?.textContent ?? null,
+          actions: [...(cards[0]?.querySelectorAll("[data-first-feature-offer-action]") ?? [])].map(
+            (action) => action.textContent?.trim(),
+          ),
+        };
+      });
+      check(
+        `${label}: the first feature card, its title and its one action`,
+        offer.cards === 1 &&
+          offer.title === "Build a first feature" &&
+          offer.actions.length === 1 &&
+          offer.actions[0] === "Try a first feature",
+        JSON.stringify(offer),
+      );
       const overflow = await page.evaluate(() => {
         const scroller = document.querySelector(".studio-scroll");
         const wide = [...document.querySelectorAll(".studio-content *")].filter(
@@ -197,9 +216,7 @@ try {
           ),
         ) &&
           names.machines.some((row) => /^m1Online · .* projects1\.0\.306 · current$/.test(row)) &&
-          names.machines.includes(
-            "MacBook ProCan’t reach it · retryingChats and projects not counted",
-          ),
+          names.machines.includes("MacBook ProNot answeringChats and projects not counted"),
         JSON.stringify(names.machines),
       );
       const file = NodePath.join(output, `overview-${theme}-${width}.png`);
@@ -255,4 +272,7 @@ try {
   server.close();
   await NodeFSP.writeFile(NodePath.join(output, "receipt.json"), JSON.stringify(receipt, null, 2));
 }
+const failed = receipt.checks.filter((entry) => !entry.ok);
+for (const entry of failed) console.error(`FAIL ${entry.name} ${entry.detail}`);
+NodeAssert.equal(failed.length, 0, `${failed.length} of ${receipt.checks.length} checks failed`);
 console.log(`${receipt.checks.length} checks passed; evidence in ${output}`);

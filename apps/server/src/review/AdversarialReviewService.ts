@@ -18,7 +18,12 @@ import {
   type StartAdversarialReviewResult,
   ThreadId,
 } from "@specweave-studio/contracts";
-import { resolveReviewer, selectionFamily } from "@specweave-studio/shared/adversarialReview";
+import {
+  ADVERSARIAL_REVIEW_TITLE_PREFIX,
+  isAdversarialReviewThreadTitle,
+  resolveReviewer,
+  selectionFamily,
+} from "@specweave-studio/shared/adversarialReview";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -40,16 +45,16 @@ import * as ServerSettings from "../serverSettings.ts";
 import { adversarialReviewPrompt } from "./adversarialReviewPrompt.ts";
 
 /**
- * Every review thread's title starts with this. It is how a review thread is
- * told apart later (the thread record has no kind): the reactor never reviews
- * a review, even when the review's branch or title binds it to an increment.
+ * Every review thread's title starts with this (shared, so the composer can
+ * hide the review row there). The reactor never reviews a review, even when
+ * the review's branch or title binds it to an increment.
  */
-export const ADVERSARIAL_REVIEW_TITLE_PREFIX = "Adversarial review:";
+export { ADVERSARIAL_REVIEW_TITLE_PREFIX };
 const MAX_SOURCE_TITLE_CHARS = 80;
 
 /** Whether a thread is an adversarial review thread, by its title. */
 export function isAdversarialReviewThread(thread: Pick<OrchestrationV2AppThread, "title">) {
-  return thread.title.startsWith(ADVERSARIAL_REVIEW_TITLE_PREFIX);
+  return isAdversarialReviewThreadTitle(thread.title);
 }
 
 export function adversarialReviewTitle(sourceTitle: string): string {

@@ -224,6 +224,18 @@ describe("SettingsScopeSentence", () => {
     }
   });
 
+  it("says nothing on a per-machine tab while there is no machine at all", () => {
+    const all = environments.splice(0);
+    try {
+      expect(
+        render({ pathname: "/settings/integrations/access", search: {}, singleEnvironment: true })
+          .textContent,
+      ).toBe("");
+    } finally {
+      environments.push(...all);
+    }
+  });
+
   it("says the preview tab is saved in this app window and offers no machine", () => {
     const view = render({
       pathname: "/settings/integrations/preview",

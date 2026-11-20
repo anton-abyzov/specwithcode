@@ -7,8 +7,6 @@ import {
   ThreadId,
 } from "@specweave-studio/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
-import { PERSONAL_ASSISTANT_PRIVATE_MESSAGE } from "@specweave-studio/shared/personalAssistant";
-import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
 import {
@@ -16,7 +14,6 @@ import {
   logicalProjectBindingMatch,
 } from "../fleet/remoteWorkerMatching.ts";
 import * as ProjectLink from "./ProjectLink.ts";
-import { autoTakeoverOperationId } from "./ProjectLinkStandby.ts";
 import {
   checkout,
   legacyPair,
@@ -24,7 +21,6 @@ import {
   machine,
   operationId,
   removeCheckouts,
-  thirdLinkId,
   unlinkId,
   withoutRoot,
 } from "./ProjectLink.testkit.ts";
@@ -41,16 +37,18 @@ describe("ProjectLink", () => {
     expect(prepared.coordinatorBinding).toEqual({ epoch: 0, state: "active" });
     const kept = pair.m4.projects.get(pair.kept.projectId)!;
     const joined = pair.m3.projects.get(pair.joining.projectId)!;
-    // The kept binding never changes; the joined copy relinquished beside it at the same epoch.
+    // The kept binding never changes; the joined copy keeps its own coordinator beside it.
     expect(kept.workspaceSettings?.coordinatorBinding).toEqual({ epoch: 0, state: "active" });
     expect(joined.workspaceSettings?.coordinatorBinding).toEqual({
       epoch: 0,
-      state: "transferred",
+      state: "active",
       operationId,
-      successor: pair.kept,
+      routineOwner: false,
     });
-    expect(committed.logicalProject.members).toEqual([pair.kept, pair.joining]);
-    expect(accepted.logicalProject.members).toEqual([pair.kept, pair.joining]);
+    // Both ends name the membership by the link that made it.
+    const linkedAs = { ...pair.joining, linkId: operationId, generation: 1 };
+    expect(committed.logicalProject.members).toEqual([pair.kept, linkedAs]);
+    expect(accepted.logicalProject.members).toEqual([pair.kept, linkedAs]);
     // The kept copy records which folder on which machine each member maps to.
     expect(
       kept.workspaceSettings!.logicalProject!.members.map((member) => [
@@ -99,7 +97,7 @@ describe("ProjectLink", () => {
       pair.m3.projects.get(pair.joining.projectId)!.workspaceSettings!.coordinatorBinding,
     ).toMatchObject({
       epoch: 3,
-      state: "transferred",
+      state: "active",
     });
     expect(pair.m4.ownershipModes).toEqual(["link-member"]);
     expect(pair.m3.ownershipModes).toEqual(["join-as-member"]);
@@ -290,17 +288,6 @@ describe("ProjectLink", () => {
         )
       ).code,
     ).toBe("same_machine");
-    // A relinquished copy cannot be the one that keeps its coordinator.
-    await accept(pair.m3, pair.joining.projectId);
-    expect(
-      (
-        await pair.m3.fails(
-          pair.m3.run((service) =>
-            service.prepare({ operationId, projectId: pair.joining.projectId, joining: pair.kept }),
-          ),
-        )
-      ).code,
-    ).toBe("not_coordinator");
   });
 
   it("never previews or links a personal assistant, and returns none of its notes", async () => {
@@ -451,7 +438,8 @@ describe("ProjectLink", () => {
       }),
     );
     expect(unlinked.logicalProject.id).not.toBe(prepared.logicalProject.id);
-    expect(unlinked.logicalProject.members).toEqual([pair.joining]);
+    // Its own project again; it keeps the count of its links for the next one.
+    expect(unlinked.logicalProject.members).toEqual([{ ...pair.joining, generation: 1 }]);
     expect(unlinked.coordinatorBinding).toEqual({
       epoch: 0,
       state: "active",
@@ -473,11 +461,24 @@ describe("ProjectLink", () => {
         side: "coordinator",
         operationId: unlinkId,
         projectId: pair.kept.projectId,
-        member: pair.joining,
+        member: { ...pair.joining, linkId: operationId, generation: 1 },
       }),
     );
     expect(removed.logicalProject.members).toEqual([pair.kept]);
-    expect(removed.coordinatorBinding).toEqual({ epoch: 0, state: "active" });
+    // It remembers whom it unlinked, so another copy's older list never brings the member back.
+    expect(removed.coordinatorBinding).toEqual({
+      epoch: 0,
+      state: "active",
+      removedMembers: [
+        {
+          environmentId: pair.joining.environmentId,
+          projectId: pair.joining.projectId,
+          linkId: operationId,
+          generation: 1,
+          removedAt: expect.any(String),
+        },
+      ],
+    });
     expect(
       (
         await pair.m4.run((service) =>
@@ -485,7 +486,7 @@ describe("ProjectLink", () => {
             side: "coordinator",
             operationId: unlinkId,
             projectId: pair.kept.projectId,
-            member: pair.joining,
+            member: { ...pair.joining, linkId: operationId, generation: 1 },
           }),
         )
       ).replayed,
@@ -533,12 +534,13 @@ describe("ProjectLink", () => {
     // The kept server fills its own folder in; the joining server fills in its own.
     expect(prepared.kept).toEqual(pair.kept);
     expect(prepared.logicalProject.members).toEqual([pair.kept, m2]);
-    expect(accepted.member).toEqual(pair.joining);
-    expect(accepted.logicalProject.members).toEqual([pair.kept, m2, pair.joining]);
-    expect(committed.logicalProject.members).toEqual([pair.kept, m2, pair.joining]);
+    const joined = { ...pair.joining, linkId: operationId, generation: 1 };
+    expect(accepted.member).toEqual(joined);
+    expect(accepted.logicalProject.members).toEqual([pair.kept, m2, joined]);
+    expect(committed.logicalProject.members).toEqual([pair.kept, m2, joined]);
     const stored = () =>
       pair.m4.projects.get(pair.kept.projectId)!.workspaceSettings!.logicalProject!.members;
-    expect(stored()).toEqual([pair.kept, m2, pair.joining]);
+    expect(stored()).toEqual([pair.kept, m2, joined]);
     // Retries that carry no folders still match the rooted entries.
     const retried = await pair.m3.run((service) =>
       service.accept({
@@ -560,14 +562,14 @@ describe("ProjectLink", () => {
       }),
     );
     expect(recommitted.replayed).toBe(true);
-    expect(stored()).toEqual([pair.kept, m2, pair.joining]);
+    expect(stored()).toEqual([pair.kept, m2, joined]);
     // Unlinking matches by machine and project whether or not either side has a folder.
     const removed = await pair.m4.run((service) =>
       service.unlink({
         side: "coordinator",
         operationId: unlinkId,
         projectId: pair.kept.projectId,
-        member: withoutRoot(pair.joining),
+        member: { ...withoutRoot(pair.joining), linkId: operationId, generation: 1 },
       }),
     );
     expect(removed.logicalProject.members).toEqual([pair.kept, m2]);
@@ -634,850 +636,8 @@ describe("ProjectLink", () => {
     expect(await digest()).not.toBe(second);
   });
 
-  describe("coordinator takeover", () => {
-    const takeoverId = "33333333-3333-4333-8333-333333333333";
-    /** M4 coordinates; the M3 copy runs workers and holds a replica of M4's notes. */
-    const linkedWithReplica = async () => {
-      const pair = legacyPair();
-      const { prepared } = await link(pair);
-      pair.m4.notes(pair.kept.projectId).set("decisions.md", { content: "Ship 2.0", revision: 3 });
-      const kept = pair.m4.projects.get(pair.kept.projectId)!;
-      pair.m4.projects.set(pair.kept.projectId, {
-        ...kept,
-        workspaceSettings: { ...kept.workspaceSettings!, goal: "Launch EasyChamp 2.0" },
-      });
-      const owner = await pair.m4.run((service) =>
-        service.preview({ projectId: pair.kept.projectId }),
-      );
-      const ownerDigest = await pair.m4.run((service) =>
-        service.digest({ projectId: pair.kept.projectId }),
-      );
-      const replica = {
-        from: pair.kept,
-        logicalProjectId: prepared.logicalProject.id,
-        digest: ownerDigest.digest,
-        replicatedAt: "2026-10-19T12:00:00.000Z",
-        goal: owner.goal,
-        instructions: owner.instructions,
-        notes: owner.notes,
-        notesTruncated: owner.notesTruncated,
-      };
-      return { pair, replica, ownerDigest };
-    };
-
-    it("keeps a replica of the coordinator's notes and starts a takeover from it", async () => {
-      const { pair, replica, ownerDigest } = await linkedWithReplica();
-      const first = await pair.m3.run((service) =>
-        service.replicate({ projectId: pair.joining.projectId, replica }),
-      );
-      expect(first.replayed).toBe(false);
-      const again = await pair.m3.run((service) =>
-        service.replicate({ projectId: pair.joining.projectId, replica }),
-      );
-      expect(again.replayed).toBe(true);
-      const held = await pair.m3.run((service) =>
-        service.digest({ projectId: pair.joining.projectId }),
-      );
-      expect(held.replica).toMatchObject({ from: pair.kept, digest: ownerDigest.digest });
-      // The member's own older note is kept beside the coordinator's version.
-      pair.m3
-        .notes(pair.joining.projectId)
-        .set("decisions.md", { content: "Old plan", revision: 1 });
-      const taken = await pair.m3.run((service) =>
-        service.takeover({ operationId: takeoverId, projectId: pair.joining.projectId }),
-      );
-      expect(taken.replayed).toBe(false);
-      expect(taken.notesWritten).toBe(2);
-      expect(taken.replicaFrom).toBe(first.replicatedAt);
-      expect(taken.coordinatorBinding).toMatchObject({
-        epoch: 1,
-        state: "active",
-        operationId: takeoverId,
-        predecessor: pair.kept,
-      });
-      expect(taken.coordinatorBinding.takenOverAt).toBeDefined();
-      const notes = pair.m3.notes(pair.joining.projectId);
-      expect(notes.get("decisions.md")?.content).toBe("Ship 2.0");
-      expect(notes.get("decisions-before-takeover.md")?.content).toBe("Old plan");
-      const joined = pair.m3.projects.get(pair.joining.projectId)!.workspaceSettings!;
-      expect(joined.goal).toBe("Launch EasyChamp 2.0");
-      expect(joined.logicalProject?.members).toEqual([pair.kept, pair.joining]);
-      expect(pair.m3.ownershipModes).toEqual(["join-as-member", "takeover"]);
-      const retried = await pair.m3.run((service) =>
-        service.takeover({ operationId: takeoverId, projectId: pair.joining.projectId }),
-      );
-      expect(retried.replayed).toBe(true);
-    });
-
-    it("keeps every earlier takeover backup and replays onto its own backup", async () => {
-      const { pair, replica } = await linkedWithReplica();
-      await pair.m3.run((service) =>
-        service.replicate({ projectId: pair.joining.projectId, replica }),
-      );
-      const notes = pair.m3.notes(pair.joining.projectId);
-      notes.set("decisions.md", { content: "Old plan", revision: 4 });
-      notes.set("decisions-before-takeover.md", { content: "Earlier backup", revision: 2 });
-      const taken = await pair.m3.run((service) =>
-        service.takeover({ operationId: takeoverId, projectId: pair.joining.projectId }),
-      );
-      expect(taken.notesWritten).toBe(2);
-      expect(notes.get("decisions-before-takeover.md")).toEqual({
-        content: "Earlier backup",
-        revision: 2,
-      });
-      expect(notes.get("decisions-before-takeover-2.md")?.content).toBe("Old plan");
-      expect(notes.get("decisions.md")?.content).toBe("Ship 2.0");
-    });
-
-    it("saves the backup before replacing a note, so a takeover stopped partway loses nothing", async () => {
-      const { pair, replica } = await linkedWithReplica();
-      await pair.m3.run((service) =>
-        service.replicate({ projectId: pair.joining.projectId, replica }),
-      );
-      const notes = pair.m3.notes(pair.joining.projectId);
-      notes.set("decisions.md", { content: "Old plan", revision: 4 });
-      notes.set("decisions-before-takeover.md", { content: "Earlier backup", revision: 2 });
-      // The first attempt stops at the replacement, after the backup was saved.
-      pair.m3.failingWrites.add("decisions.md");
-      expect(
-        (
-          await pair.m3.fails(
-            pair.m3.run((service) =>
-              service.takeover({ operationId: takeoverId, projectId: pair.joining.projectId }),
-            ),
-          )
-        ).code,
-      ).toBe("storage_failed");
-      expect(notes.get("decisions.md")?.content).toBe("Old plan");
-      expect(notes.get("decisions-before-takeover-2.md")).toEqual({
-        content: "Old plan",
-        revision: 1,
-      });
-      // The retry finds that backup instead of making another.
-      const taken = await pair.m3.run((service) =>
-        service.takeover({ operationId: takeoverId, projectId: pair.joining.projectId }),
-      );
-      expect(taken.notesWritten).toBe(1);
-      expect([...notes.keys()].filter((name) => name.includes("before-takeover")).sort()).toEqual([
-        "decisions-before-takeover-2.md",
-        "decisions-before-takeover.md",
-      ]);
-      expect(notes.get("decisions-before-takeover-2.md")?.revision).toBe(1);
-      expect(notes.get("decisions-before-takeover.md")?.content).toBe("Earlier backup");
-      expect(notes.get("decisions.md")?.content).toBe("Ship 2.0");
-    });
-
-    it("never puts a backup on a name the replica itself writes", async () => {
-      const pair = legacyPair();
-      const { prepared } = await link(pair);
-      const owner = pair.m4.notes(pair.kept.projectId);
-      owner.set("decisions.md", { content: "Ship 2.0", revision: 3 });
-      owner.set("decisions-before-takeover.md", { content: "Old plan", revision: 1 });
-      const ownerNotes = await pair.m4.run((service) =>
-        service.preview({ projectId: pair.kept.projectId }),
-      );
-      const ownerDigest = await pair.m4.run((service) =>
-        service.digest({ projectId: pair.kept.projectId }),
-      );
-      await pair.m3.run((service) =>
-        service.replicate({
-          projectId: pair.joining.projectId,
-          replica: {
-            from: pair.kept,
-            logicalProjectId: prepared.logicalProject.id,
-            digest: ownerDigest.digest,
-            replicatedAt: "2026-10-19T12:00:00.000Z",
-            goal: ownerNotes.goal,
-            instructions: ownerNotes.instructions,
-            notes: ownerNotes.notes,
-            notesTruncated: ownerNotes.notesTruncated,
-          },
-        }),
-      );
-      const notes = pair.m3.notes(pair.joining.projectId);
-      notes.set("decisions.md", { content: "Old plan", revision: 4 });
-      notes.set("decisions-before-takeover.md", { content: "Local backup B", revision: 2 });
-      const taken = await pair.m3.run((service) =>
-        service.takeover({ operationId: takeoverId, projectId: pair.joining.projectId }),
-      );
-      expect(taken.notesWritten).toBe(4);
-      expect(notes.get("decisions.md")?.content).toBe("Ship 2.0");
-      expect(notes.get("decisions-before-takeover.md")?.content).toBe("Old plan");
-      expect(notes.get("decisions-before-takeover-2.md")?.content).toBe("Old plan");
-      expect(notes.get("decisions-before-takeover-before-takeover.md")?.content).toBe(
-        "Local backup B",
-      );
-    });
-
-    it("demotes the returning coordinator and lists the turns it ran while disconnected", async () => {
-      const { pair } = await linkedWithReplica();
-      const taken = await pair.m3.run((service) =>
-        service.takeover({
-          operationId: takeoverId,
-          projectId: pair.joining.projectId,
-          knownEpoch: 4,
-        }),
-      );
-      expect(taken.coordinatorBinding.epoch).toBe(5);
-      pair.m4.runs.set(pair.kept.coordinatorThreadId, [
-        { id: "run-before", requestedAt: "2020-01-01T00:00:00.000Z", text: "Before the takeover" },
-        { id: "run-after", requestedAt: "2099-01-01T00:00:00.000Z", text: "Plan the release" },
-      ]);
-      const supersede = () =>
-        pair.m4.run((service) =>
-          service.supersede({
-            projectId: pair.kept.projectId,
-            logicalProjectId: taken.logicalProject.id,
-            successor: pair.joining,
-            coordinatorBinding: taken.coordinatorBinding,
-          }),
-        );
-      const demoted = await supersede();
-      expect(demoted.replayed).toBe(false);
-      expect(demoted.coordinatorBinding).toEqual({
-        epoch: 5,
-        state: "transferred",
-        operationId: takeoverId,
-        successor: pair.joining,
-        takenOverAt: taken.coordinatorBinding.takenOverAt,
-      });
-      expect(demoted.ranWhileDisconnected).toEqual([
-        {
-          threadId: pair.kept.coordinatorThreadId,
-          runId: "run-after",
-          requestedAt: "2099-01-01T00:00:00.000Z",
-          request: "Plan the release",
-        },
-      ]);
-      expect((await supersede()).replayed).toBe(true);
-      expect(pair.m4.ownershipModes).toEqual(["adopt-identity", "link-member", "superseded"]);
-      const preview = await pair.m4.run((service) =>
-        service.preview({ projectId: pair.kept.projectId }),
-      );
-      expect(preview.ranWhileDisconnected).toHaveLength(1);
-      expect(preview.keepRefusal).toBe("not_coordinator");
-    });
-
-    it("never takes over, starts or supersedes a linked copy that became a personal assistant", async () => {
-      const { pair, replica } = await linkedWithReplica();
-      await pair.m3.run((service) =>
-        service.replicate({ projectId: pair.joining.projectId, replica }),
-      );
-      // Before the kind was fixed at creation, a linked copy could be switched to personal.
-      for (const [machine, projectId] of [
-        [pair.m3, pair.joining.projectId],
-        [pair.m4, pair.kept.projectId],
-      ] as const) {
-        const project = machine.projects.get(projectId)!;
-        machine.projects.set(projectId, {
-          ...project,
-          workspaceSettings: { ...project.workspaceSettings!, kind: "personal" },
-        });
-      }
-      const before = pair.m3.projects.get(pair.joining.projectId);
-      const m3Modes = [...pair.m3.ownershipModes];
-      const m4Modes = [...pair.m4.ownershipModes];
-      const refusals = [
-        await pair.m3.fails(
-          pair.m3.run((service) =>
-            service.takeover({ operationId: takeoverId, projectId: pair.joining.projectId }),
-          ),
-        ),
-        await pair.m3.fails(
-          pair.m3.run((service) =>
-            service.startCoordinator({
-              operationId: takeoverId,
-              projectId: pair.joining.projectId,
-            }),
-          ),
-        ),
-        await pair.m4.fails(
-          pair.m4.run((service) =>
-            service.supersede({
-              projectId: pair.kept.projectId,
-              logicalProjectId: replica.logicalProjectId,
-              successor: pair.joining,
-              coordinatorBinding: {
-                epoch: 1,
-                state: "active",
-                operationId: takeoverId,
-                predecessor: pair.kept,
-              },
-            }),
-          ),
-        ),
-      ];
-      for (const refused of refusals) {
-        expect(refused.code).toBe("not_code_project");
-        expect(refused.message).toContain(PERSONAL_ASSISTANT_PRIVATE_MESSAGE);
-      }
-      expect(pair.m3.projects.get(pair.joining.projectId)).toBe(before);
-      expect(pair.m3.notes(pair.joining.projectId).get("decisions.md")).toBeUndefined();
-      expect(pair.m3.ownershipModes).toEqual(m3Modes);
-      expect(pair.m4.ownershipModes).toEqual(m4Modes);
-    });
-
-    it("refuses takeovers and demotions that do not follow from the link", async () => {
-      const { pair, replica } = await linkedWithReplica();
-      expect(
-        (
-          await pair.m4.fails(
-            pair.m4.run((service) =>
-              service.takeover({ operationId: takeoverId, projectId: pair.kept.projectId }),
-            ),
-          )
-        ).code,
-      ).toBe("not_member");
-      expect(
-        (
-          await pair.m4.fails(
-            pair.m4.run((service) =>
-              service.replicate({ projectId: pair.kept.projectId, replica }),
-            ),
-          )
-        ).code,
-      ).toBe("not_member");
-      expect(
-        (
-          await pair.m3.fails(
-            pair.m3.run((service) =>
-              service.replicate({
-                projectId: pair.joining.projectId,
-                replica: { ...replica, goal: "Tampered" },
-              }),
-            ),
-          )
-        ).code,
-      ).toBe("invalid");
-      const taken = await pair.m3.run((service) =>
-        service.takeover({ operationId: takeoverId, projectId: pair.joining.projectId }),
-      );
-      const supersede = (coordinatorBinding: typeof taken.coordinatorBinding) =>
-        pair.m4.fails(
-          pair.m4.run((service) =>
-            service.supersede({
-              projectId: pair.kept.projectId,
-              logicalProjectId: taken.logicalProject.id,
-              successor: pair.joining,
-              coordinatorBinding,
-            }),
-          ),
-        );
-      // It names another coordinator as the one it replaced.
-      expect(
-        (await supersede({ ...taken.coordinatorBinding, predecessor: pair.joining })).code,
-      ).toBe("invalid");
-      // Not above the coordinator's own epoch.
-      expect((await supersede({ ...taken.coordinatorBinding, epoch: 0 })).code).toBe(
-        "superseded_conflict",
-      );
-      expect(
-        pair.m4.projects.get(pair.kept.projectId)!.workspaceSettings!.coordinatorBinding,
-      ).toEqual({ epoch: 0, state: "active" });
-    });
-
-    describe("automatic takeover", () => {
-      const standbyId = "55555555-5555-4555-8555-555555555555";
-      const iso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
-      /** M4 names the M3 copy its standby and the M3 copy accepts M4 at epoch 0. */
-      const armed = async () => {
-        const linked = await linkedWithReplica();
-        const { pair } = linked;
-        await pair.m4.run((service) =>
-          service.setStandby({
-            operationId: standbyId,
-            projectId: pair.kept.projectId,
-            standby: { member: pair.joining, afterMinutes: 15 },
-          }),
-        );
-        const logicalProjectId = linked.replica.logicalProjectId;
-        await pair.m3.run((service) =>
-          service.acceptStandby({
-            projectId: pair.joining.projectId,
-            logicalProjectId,
-            standby: { coordinator: pair.kept, epoch: 0, afterMinutes: 15 },
-          }),
-        );
-        /** A lease heard `minutesAgo`, inside an unbroken watch. */
-        const heard = (minutesAgo: number, epoch = 0) => {
-          const record = pair.m3.standby.get(logicalProjectId)!;
-          const at = DateTime.toEpochMillis(DateTime.nowUnsafe()) - minutesAgo * 60_000;
-          pair.m3.standby.set(logicalProjectId, {
-            ...record,
-            epoch,
-            lastLeaseAt: iso(at),
-            lastSeq: 3,
-            watchingSince: iso(at - 60_000),
-            leaseSinceWatching: true,
-          });
-        };
-        return { ...linked, logicalProjectId, heard };
-      };
-
-      it("is armed only by the owner on both machines, and the standby never runs a coordinator", async () => {
-        const { pair, replica } = await linkedWithReplica();
-        const logicalProjectId = replica.logicalProjectId;
-        const accept = (machine: typeof pair.m3, projectId: ProjectId, coordinator = pair.kept) =>
-          machine.run((service) =>
-            service.acceptStandby({
-              projectId,
-              logicalProjectId,
-              standby: { coordinator, epoch: 0, afterMinutes: 15 },
-            }),
-          );
-        // The active copy runs its own coordinator, so it cannot stand by.
-        expect((await pair.m4.fails(accept(pair.m4, pair.kept.projectId, pair.joining))).code).toBe(
-          "not_member",
-        );
-        pair.m3.capabilities.coordinatorStandby = false;
-        expect((await pair.m3.fails(accept(pair.m3, pair.joining.projectId))).code).toBe("invalid");
-        pair.m3.capabilities.coordinatorStandby = true;
-        expect(
-          (await pair.m3.fails(accept(pair.m3, pair.joining.projectId, pair.joining))).code,
-        ).toBe("invalid");
-        expect(pair.m3.standby.size).toBe(0);
-
-        const set = (machine: typeof pair.m4, projectId: ProjectId, member: LogicalProjectMember) =>
-          machine.run((service) =>
-            service.setStandby({
-              operationId: standbyId,
-              projectId,
-              standby: { member, afterMinutes: 15 },
-            }),
-          );
-        expect((await pair.m4.fails(set(pair.m4, pair.kept.projectId, pair.kept))).code).toBe(
-          "invalid",
-        );
-        expect((await pair.m3.fails(set(pair.m3, pair.joining.projectId, pair.kept))).code).toBe(
-          "not_coordinator",
-        );
-        const chosen = await set(pair.m4, pair.kept.projectId, pair.joining);
-        expect(chosen.replayed).toBe(false);
-        expect(chosen.coordinatorBinding).toMatchObject({
-          epoch: 0,
-          state: "active",
-          standby: { member: pair.joining, afterMinutes: 15 },
-        });
-        expect((await set(pair.m4, pair.kept.projectId, pair.joining)).replayed).toBe(true);
-        expect(pair.m4.ownershipModes.filter((mode) => mode === "set-standby")).toHaveLength(1);
-
-        const accepted = await accept(pair.m3, pair.joining.projectId);
-        expect(accepted).toMatchObject({
-          replayed: false,
-          standby: { coordinator: pair.kept, epoch: 0, afterMinutes: 15 },
-        });
-        expect(pair.m3.standby.get(logicalProjectId)).toMatchObject({
-          projectId: pair.joining.projectId,
-          lastLeaseAt: null,
-          lastSeq: null,
-          leaseSinceWatching: false,
-        });
-        expect((await accept(pair.m3, pair.joining.projectId)).replayed).toBe(true);
-        // A new delay keeps the watch that is running.
-        const watching = pair.m3.standby.get(logicalProjectId)!.watchingSince;
-        await pair.m3.run((service) =>
-          service.acceptStandby({
-            projectId: pair.joining.projectId,
-            logicalProjectId,
-            standby: { coordinator: pair.kept, epoch: 0, afterMinutes: 30 },
-          }),
-        );
-        expect(pair.m3.standby.get(logicalProjectId)).toMatchObject({
-          afterMinutes: 30,
-          watchingSince: watching,
-        });
-
-        // Off on both sides.
-        const off = await pair.m3.run((service) =>
-          service.acceptStandby({
-            projectId: pair.joining.projectId,
-            logicalProjectId,
-            standby: null,
-          }),
-        );
-        expect(off).toEqual({ standby: null, replayed: false });
-        expect(pair.m3.standby.size).toBe(0);
-        const cleared = await pair.m4.run((service) =>
-          service.setStandby({
-            operationId: standbyId,
-            projectId: pair.kept.projectId,
-            standby: null,
-          }),
-        );
-        expect(cleared.coordinatorBinding).toEqual({ epoch: 0, state: "active" });
-      });
-
-      it("takes over only when its clock fires, at the epoch its operation names", async () => {
-        const { pair, logicalProjectId, heard, replica } = await armed();
-        await pair.m3.run((service) =>
-          service.replicate({ projectId: pair.joining.projectId, replica }),
-        );
-        const auto = () => pair.m3.run((service) => service.autoTakeover({ logicalProjectId }));
-        // Accepted, but no lease heard while watching.
-        expect(await auto()).toEqual({ outcome: "not-due", reason: "no-lease-while-watching" });
-        heard(2);
-        expect(await auto()).toEqual({ outcome: "not-due", reason: "waiting" });
-        expect(pair.m3.ownershipModes).toEqual(["join-as-member"]);
-
-        // Silent for 20 minutes, and the lease named epoch 4: the new epoch is 5.
-        heard(20, 4);
-        const taken = await auto();
-        if (taken.outcome !== "taken-over") throw new Error(taken.outcome);
-        const operationId = autoTakeoverOperationId(logicalProjectId, 5);
-        expect(operationId.length).toBeLessThanOrEqual(128);
-        expect(taken.result.replayed).toBe(false);
-        expect(taken.result.coordinatorBinding).toMatchObject({
-          epoch: 5,
-          state: "active",
-          operationId,
-          predecessor: pair.kept,
-          takenOverBy: "auto",
-        });
-        expect(taken.result.coordinatorBinding.standby).toBeUndefined();
-        expect(pair.m3.notes(pair.joining.projectId).get("decisions.md")?.content).toBe("Ship 2.0");
-        expect(pair.m3.ownershipModes).toEqual(["join-as-member", "takeover"]);
-        // Asked again, it replays instead of moving the epoch on.
-        const again = await auto();
-        expect(again).toMatchObject({ outcome: "taken-over", result: { replayed: true } });
-        // A person's takeover is recorded as such.
-        const { pair: other } = await armed();
-        const manual = await other.m3.run((service) =>
-          service.takeover({ operationId: takeoverId, projectId: other.joining.projectId }),
-        );
-        expect(manual.coordinatorBinding.takenOverBy).toBe("person");
-      });
-
-      it("keeps the coordinator's own copy as the replica and says when it changed the instructions", async () => {
-        const { pair, logicalProjectId, heard, replica } = await armed();
-        await pair.m3.run((service) =>
-          service.replicate({ projectId: pair.joining.projectId, replica }),
-        );
-        const pushed = {
-          goal: replica.goal,
-          instructions: "Ship on Fridays only.",
-          notes: replica.notes,
-          notesTruncated: false,
-        };
-        const content = { ...pushed, digest: ProjectLink.coordinatorContentDigest(pushed) };
-        const push = (input: { callerEnvironmentId?: string; epoch?: number; digest?: string }) =>
-          pair.m3.run((service) =>
-            service.replicateFromPeer({
-              logicalProjectId,
-              callerEnvironmentId: input.callerEnvironmentId ?? "m4",
-              epoch: input.epoch ?? 0,
-              content: { ...content, digest: input.digest ?? content.digest },
-            }),
-          );
-        expect((await pair.m3.fails(push({ callerEnvironmentId: "m1" }))).code).toBe("not_member");
-        expect((await pair.m3.fails(push({ epoch: 1 }))).code).toBe("not_member");
-        expect((await pair.m3.fails(push({ digest: "0".repeat(64) }))).code).toBe("invalid");
-        expect((await push({})).replayed).toBe(false);
-        expect((await push({})).replayed).toBe(true);
-        const held = pair.m3.replicas.get(pair.joining.projectId)!;
-        expect(held).toMatchObject({ from: pair.kept, instructions: "Ship on Fridays only." });
-        expect(held.peer?.instructionsChangedAt).toBe(held.replicatedAt);
-        // The app's own copy is the baseline again; it never claims to come from the peer.
-        await pair.m3.run((service) =>
-          service.replicate({
-            projectId: pair.joining.projectId,
-            replica: { ...replica, peer: held.peer },
-          }),
-        );
-        expect(pair.m3.replicas.get(pair.joining.projectId)!.peer).toBeUndefined();
-        await push({});
-        heard(20);
-        const taken = await pair.m3.run((service) => service.autoTakeover({ logicalProjectId }));
-        if (taken.outcome !== "taken-over") throw new Error(taken.outcome);
-        expect(taken.instructionsChangedAt).not.toBeNull();
-        expect(pair.m3.projects.get(pair.joining.projectId)!.workspaceSettings!.instructions).toBe(
-          "Ship on Fridays only.",
-        );
-      });
-      it("keeps the coordinator's routines on the standby, sent again only when they change", async () => {
-        const { pair, logicalProjectId, replica } = await armed();
-        await pair.m3.run((service) =>
-          service.replicate({ projectId: pair.joining.projectId, replica }),
-        );
-        const pushed = {
-          goal: replica.goal,
-          instructions: replica.instructions,
-          notes: replica.notes,
-          notesTruncated: false,
-        };
-        const routine = {
-          id: "daily-review",
-          title: "Daily review",
-          prompt: "Review open pull requests",
-          enabled: true,
-          schedule: { type: "fixed_time", timeOfDay: "09:00" },
-          workspaceStrategy: { type: "root" },
-          modelSelection: { instanceId: "codex", model: "fixture" },
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          createdBy: "user",
-        } as const;
-        const push = (routines: ReadonlyArray<typeof routine>, routinesDigest: string) =>
-          pair.m3.run((service) =>
-            service.replicateFromPeer({
-              logicalProjectId,
-              callerEnvironmentId: "m4",
-              epoch: 0,
-              content: {
-                ...pushed,
-                digest: ProjectLink.coordinatorContentDigest(pushed),
-                routines: routines as never,
-                routinesDigest,
-              },
-            }),
-          );
-        expect((await push([routine], "a".repeat(64))).replayed).toBe(false);
-        expect(pair.m3.keptRoutines.get(pair.joining.projectId)).toEqual({
-          logicalProjectId,
-          ids: ["daily-review"],
-        });
-        expect(pair.m3.replicas.get(pair.joining.projectId)?.routinesDigest).toBe("a".repeat(64));
-        // The same content and routines replay; changed routines are kept again.
-        expect((await push([routine], "a".repeat(64))).replayed).toBe(true);
-        expect((await push([], "b".repeat(64))).replayed).toBe(false);
-        expect(pair.m3.keptRoutines.get(pair.joining.projectId)?.ids).toEqual([]);
-        // The app's own replica write keeps the routines digest the coordinator sent.
-        await pair.m3.run((service) =>
-          service.replicate({ projectId: pair.joining.projectId, replica }),
-        );
-        expect(pair.m3.replicas.get(pair.joining.projectId)?.routinesDigest).toBe("b".repeat(64));
-        expect(
-          (await pair.m3.run((service) => service.digest({ projectId: pair.joining.projectId })))
-            .replica?.routinesDigest,
-        ).toBe("b".repeat(64));
-      });
-    });
-  });
-
   describe("a coordinator on each machine", () => {
     const startId = "44444444-4444-4444-8444-444444444444";
-    it("starts the member's own coordinator beside the active one, replacing nothing", async () => {
-      const pair = legacyPair();
-      const { prepared } = await link(pair);
-      pair.m4.notes(pair.kept.projectId).set("decisions.md", { content: "Ship 2.0", revision: 3 });
-      pair.m4
-        .notes(pair.kept.projectId)
-        .set("MEMORY.md", { content: "- decisions.md", revision: 1 });
-      const owner = await pair.m4.run((service) =>
-        service.preview({ projectId: pair.kept.projectId }),
-      );
-      const ownerDigest = await pair.m4.run((service) =>
-        service.digest({ projectId: pair.kept.projectId }),
-      );
-      await pair.m3.run((service) =>
-        service.replicate({
-          projectId: pair.joining.projectId,
-          replica: {
-            from: pair.kept,
-            logicalProjectId: prepared.logicalProject.id,
-            digest: ownerDigest.digest,
-            replicatedAt: "2026-10-19T12:00:00.000Z",
-            goal: owner.goal,
-            instructions: owner.instructions,
-            notes: owner.notes,
-            notesTruncated: owner.notesTruncated,
-          },
-        }),
-      );
-      // The member's own note stays as it is; memory replication reconciles it.
-      pair.m3
-        .notes(pair.joining.projectId)
-        .set("decisions.md", { content: "Minis plan", revision: 1 });
-      const started = await pair.m3.run((service) =>
-        service.startCoordinator({
-          operationId: startId,
-          projectId: pair.joining.projectId,
-          knownEpoch: 2,
-        }),
-      );
-      expect(started.replayed).toBe(false);
-      expect(started.notesWritten).toBe(1);
-      expect(started.coordinatorBinding).toEqual({
-        epoch: 3,
-        state: "active",
-        operationId: startId,
-      });
-      const notes = pair.m3.notes(pair.joining.projectId);
-      expect(notes.get("decisions.md")?.content).toBe("Minis plan");
-      expect(notes.get("MEMORY.md")?.content).toBe("- decisions.md");
-      expect(notes.has("decisions-before-takeover.md")).toBe(false);
-      const joined = pair.m3.projects.get(pair.joining.projectId)!.workspaceSettings!;
-      expect(joined.logicalProject?.members).toEqual([pair.kept, pair.joining]);
-      expect(pair.m3.ownershipModes).toEqual(["join-as-member", "start-coordinator"]);
-      // Both machines now run a coordinator; M4's binding was never touched.
-      expect(
-        pair.m4.projects.get(pair.kept.projectId)!.workspaceSettings!.coordinatorBinding,
-      ).toEqual({ epoch: 0, state: "active" });
-      const retried = await pair.m3.run((service) =>
-        service.startCoordinator({ operationId: startId, projectId: pair.joining.projectId }),
-      );
-      expect(retried.replayed).toBe(true);
-      expect(retried.coordinatorBinding).toEqual(started.coordinatorBinding);
-      // A started coordinator names no predecessor, so M4 is never asked to give way.
-      expect(
-        (
-          await pair.m4.fails(
-            pair.m4.run((service) =>
-              service.supersede({
-                projectId: pair.kept.projectId,
-                logicalProjectId: started.logicalProject.id,
-                successor: pair.joining,
-                coordinatorBinding: started.coordinatorBinding,
-              }),
-            ),
-          )
-        ).code,
-      ).toBe("invalid");
-    });
-
-    it("lets a coordinator started beside main leave the link, only when asked to", async () => {
-      const pair = legacyPair();
-      await link(pair);
-      const started = await pair.m3.run((service) =>
-        service.startCoordinator({
-          operationId: startId,
-          projectId: pair.joining.projectId,
-          knownEpoch: 1,
-        }),
-      );
-      const leave = (env: typeof pair.m3, projectId: ProjectId, leaveCoordinator?: boolean) =>
-        env.fails(
-          env.run((service) =>
-            service.unlink({
-              side: "member",
-              operationId: unlinkId,
-              projectId,
-              notes: [],
-              ...(leaveCoordinator === undefined ? {} : { leaveCoordinator }),
-            }),
-          ),
-        );
-      // Without the flag a running coordinator is not a copy that can leave; main never can.
-      expect((await leave(pair.m3, pair.joining.projectId)).code).toBe("not_linked");
-      expect((await leave(pair.m4, pair.kept.projectId, true)).code).toBe("not_linked");
-      const left = await pair.m3.run((service) =>
-        service.unlink({
-          side: "member",
-          operationId: unlinkId,
-          projectId: pair.joining.projectId,
-          notes: [],
-          leaveCoordinator: true,
-        }),
-      );
-      expect(left.replayed).toBe(false);
-      expect(left.logicalProject.id).not.toBe(started.logicalProject.id);
-      expect(left.logicalProject.members).toEqual([pair.joining]);
-      expect(left.coordinatorBinding).toEqual({ epoch: 0, state: "active", operationId: unlinkId });
-      expect(pair.m3.ownershipModes).toEqual(["join-as-member", "start-coordinator", "unlink"]);
-      expect(
-        pair.m4.projects.get(pair.kept.projectId)!.workspaceSettings!.coordinatorBinding,
-      ).toEqual({ epoch: 0, state: "active" });
-    });
-
-    it("keeps a started coordinator that took over, or is alone", async () => {
-      const pair = legacyPair();
-      await link(pair);
-      await pair.m3.run((service) =>
-        service.startCoordinator({ operationId: startId, projectId: pair.joining.projectId }),
-      );
-      const joined = pair.m3.projects.get(pair.joining.projectId)!;
-      const settings = joined.workspaceSettings!;
-      const binding = settings.coordinatorBinding!;
-      for (const next of [
-        { ...settings, coordinatorBinding: { ...binding, predecessor: pair.kept } },
-        { ...settings, logicalProject: { ...settings.logicalProject!, members: [pair.joining] } },
-      ]) {
-        pair.m3.projects.set(pair.joining.projectId, { ...joined, workspaceSettings: next });
-        expect(
-          (
-            await pair.m3.fails(
-              pair.m3.run((service) =>
-                service.unlink({
-                  side: "member",
-                  operationId: unlinkId,
-                  projectId: pair.joining.projectId,
-                  notes: [],
-                  leaveCoordinator: true,
-                }),
-              ),
-            )
-          ).code,
-        ).toBe("not_linked");
-      }
-    });
-
-    it("lets a copy leave while another names it as coordinator, as a plain unlink always has", async () => {
-      const pair = legacyPair();
-      await link(pair);
-      await pair.m3.run((service) =>
-        service.startCoordinator({ operationId: startId, projectId: pair.joining.projectId }),
-      );
-      const m1 = machine("m1");
-      const root = m1.add(
-        "easychamp-m1",
-        checkout("git@github.com:anton/sw-easychamp.git"),
-      ).workspaceRoot;
-      const joining = { ...m1.member("easychamp-m1"), workspaceRoot: root };
-      const prepared = await pair.m3.run((service) =>
-        service.prepare({ operationId: thirdLinkId, projectId: pair.joining.projectId, joining }),
-      );
-      const accepted = await m1.run((service) =>
-        service.accept({
-          operationId: thirdLinkId,
-          projectId: joining.projectId,
-          kept: prepared.kept,
-          logicalProject: prepared.logicalProject,
-          coordinatorBinding: prepared.coordinatorBinding,
-          keptFingerprint: prepared.fingerprint,
-        }),
-      );
-      await pair.m3.run((service) =>
-        service.commit({
-          operationId: thirdLinkId,
-          projectId: pair.joining.projectId,
-          joining: accepted.member,
-          notes: [],
-        }),
-      );
-      // M1 now works for M3. Neither server can see that from M3's own record: the
-      // shipped unlink of a relinquished copy (M3 after giving way) never could either.
-      expect(
-        m1.projects.get(joining.projectId)!.workspaceSettings!.coordinatorBinding,
-      ).toMatchObject({ state: "transferred", successor: { environmentId: "m3" } });
-      const started = pair.m3.projects.get(pair.joining.projectId)!;
-      const leave = (leaveCoordinator?: true) =>
-        pair.m3.run((service) =>
-          service.unlink({
-            side: "member",
-            operationId: unlinkId,
-            projectId: pair.joining.projectId,
-            notes: [],
-            ...(leaveCoordinator ? { leaveCoordinator } : {}),
-          }),
-        );
-      pair.m3.projects.set(pair.joining.projectId, {
-        ...started,
-        workspaceSettings: {
-          ...started.workspaceSettings!,
-          coordinatorBinding: {
-            epoch: 3,
-            state: "transferred",
-            operationId: "55555555-5555-4555-8555-555555555555",
-            successor: pair.kept,
-          },
-        },
-      });
-      expect((await leave()).logicalProject.members).toEqual([pair.joining]);
-      // The same holds for the coordinator started beside main; the app checks the copies
-      // it can see before it offers Unlink (ProjectMachinesSettings).
-      pair.m3.projects.set(pair.joining.projectId, started);
-      expect((await leave(true)).logicalProject.members).toEqual([pair.joining]);
-    });
-
     it("is a no-op on an active coordinator and refuses copies that are not linked members", async () => {
       const pair = legacyPair();
       await link(pair);

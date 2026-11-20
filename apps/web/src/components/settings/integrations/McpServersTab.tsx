@@ -1,4 +1,4 @@
-import { AuthFilesystemWriteScope } from "@specweave-studio/contracts";
+import { AuthFilesystemWriteScope, AuthTerminalOperateScope } from "@specweave-studio/contracts";
 
 import { ConnectionsLibrarySettings } from "../ConnectionsLibrarySettings";
 import { IntegrationsMachineState, IntegrationsTabPanel } from "./IntegrationsTabStrip";
@@ -7,10 +7,15 @@ import { IntegrationsMachineState, IntegrationsTabPanel } from "./IntegrationsTa
 export function McpServersTab() {
   return (
     <IntegrationsTabPanel tab="mcp">
-      {/* Servers are entries in the tools' own files, so changing them takes
-          the right to write files; the panel turns its own controls off and
-          keeps each server's details open to read. */}
-      <IntegrationsMachineState changeScope={AuthFilesystemWriteScope} disableRows={false}>
+      {/* Servers are entries in the tools' own files, and the panel changes
+          them only for a sign-in that may both write files and operate the
+          terminal. It turns its own controls off and keeps each server's
+          details open to read. */}
+      <IntegrationsMachineState
+        changeScope={AuthFilesystemWriteScope}
+        alsoScope={AuthTerminalOperateScope}
+        disableRows={false}
+      >
         <ConnectionsLibrarySettings />
       </IntegrationsMachineState>
     </IntegrationsTabPanel>

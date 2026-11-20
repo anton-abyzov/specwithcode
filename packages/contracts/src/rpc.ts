@@ -12,9 +12,12 @@ import { PROJECT_LINK_RPC_METHODS, projectLinkRpcs } from "./projectLinkRpc.ts";
 import { LINKED_MEMORY_RPC_METHODS, linkedMemoryRpcs } from "./linkedMemoryRpc.ts";
 import { HANDOFF_MODE_RPC_METHODS, handoffModeRpcs } from "./handoffModeRpc.ts";
 import { AWAY_RPC_METHODS, awayRpcs } from "./awayRpc.ts";
+import { HANDOFF_BATCH_RPC_METHODS, handoffBatchRpcs } from "./handoffBatchRpc.ts";
+import { projectSyncRpcs } from "./projectSync.ts";
 import { PROJECT_PLAN_LINK_RPC_METHODS, projectPlanLinkRpcs } from "./projectPlanLinkRpc.ts";
 import { LIMIT_HANDOFF_RPC_METHODS, limitHandoffRpcs } from "./limitHandoff.ts";
 import { USAGE_LIMIT_HISTORY_RPC_METHODS, usageLimitHistoryRpcs } from "./usageLimitHistory.ts";
+import { TEAM_USAGE_RPC_METHODS, teamUsageRpcs } from "./teamUsage.ts";
 import { USAGE_RESET_LEDGER_RPC_METHODS, usageResetLedgerRpcs } from "./usageResetLedger.ts";
 import { RESET_ANNOUNCEMENT_RPC_METHODS, resetAnnouncementRpcs } from "./resetAnnouncements.ts";
 import { provisionRpcs } from "./provision.ts";
@@ -453,9 +456,11 @@ export const WS_METHODS = {
   ...LINKED_MEMORY_RPC_METHODS,
   ...HANDOFF_MODE_RPC_METHODS,
   ...AWAY_RPC_METHODS,
+  ...HANDOFF_BATCH_RPC_METHODS,
   ...PROJECT_PLAN_LINK_RPC_METHODS,
   ...LIMIT_HANDOFF_RPC_METHODS,
   ...USAGE_LIMIT_HISTORY_RPC_METHODS,
+  ...TEAM_USAGE_RPC_METHODS,
   ...USAGE_RESET_LEDGER_RPC_METHODS,
   ...RESET_ANNOUNCEMENT_RPC_METHODS,
   ...MANAGED_UPDATES_RPC_METHODS,
@@ -752,8 +757,11 @@ const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProviders, 
      */
     instanceId: Schema.optional(ProviderInstanceId),
     cwd: Schema.optional(TrimmedNonEmptyString),
-    /** With `instanceId` and `cwd`: rescan the workspace's skills and slash
-     * commands even when a snapshot for that cwd already exists. */
+    /** A person asked: read past the cached account and status probes (of
+     * `instanceId`, or of every instance when it is omitted), so a sign-in to
+     * another account in a terminal shows. With `instanceId` and `cwd`, also
+     * rescan the workspace's skills and slash commands even when a snapshot
+     * for that cwd already exists. */
     fresh: Schema.optional(Schema.Boolean),
     /** Explicit user request: bypass Studio-owned caches and rediscover models.
      * Background status refreshes must not open agent sessions. */
@@ -2431,6 +2439,11 @@ export const WsUsageLimitHistoryRpcGroup = RpcGroup.make(...usageLimitHistoryRpc
   RpcScopeAuthorization,
 );
 
+/** Team usage opt-in and preview (0898); its own group for the same depth reason. */
+export const WsTeamUsageRpcGroup = RpcGroup.make(...teamUsageRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
 /** Closed quota periods per account; its own group for the same depth reason. */
 export const WsUsageResetLedgerRpcGroup = RpcGroup.make(...usageResetLedgerRpcs).middleware(
   RpcScopeAuthorization,
@@ -2480,8 +2493,18 @@ export const WsHandoffModeRpcGroup = RpcGroup.make(...handoffModeRpcs).middlewar
   RpcScopeAuthorization,
 );
 
-/** Away mode preflight and access requests; its own group for the same depth reason. */
-export const WsAwayRpcGroup = RpcGroup.make(...awayRpcs).middleware(RpcScopeAuthorization);
+/**
+ * Away mode preflight and access requests, and the hand off batch's two calls;
+ * its own group for the same depth reason.
+ */
+export const WsAwayRpcGroup = RpcGroup.make(...awayRpcs, ...handoffBatchRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
+/** Project sync between machines (`projectSync.ts`); its own group for the same depth reason. */
+export const WsProjectSyncRpcGroup = RpcGroup.make(...projectSyncRpcs).middleware(
+  RpcScopeAuthorization,
+);
 
 /** Provisioning a fleet machine's packages and service; its own group for the same depth reason. */
 export const WsProvisionRpcGroup = RpcGroup.make(...provisionRpcs).middleware(
@@ -2532,6 +2555,7 @@ export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsProjectPlanLinkRpcGroup)
   .merge(WsLimitHandoffRpcGroup)
   .merge(WsUsageLimitHistoryRpcGroup)
+  .merge(WsTeamUsageRpcGroup)
   .merge(WsUsageResetLedgerRpcGroup)
   .merge(WsResetAnnouncementRpcGroup)
   .merge(WsFolderCopyRpcGroup)
@@ -2540,6 +2564,7 @@ export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsProjectSkillsActionsRpcGroup)
   .merge(WsHandoffModeRpcGroup)
   .merge(WsAwayRpcGroup)
+  .merge(WsProjectSyncRpcGroup)
   .merge(WsCloneDestinationRpcGroup)
   .merge(WsProvisionRpcGroup)
   .merge(WsMachineToolsRpcGroup)

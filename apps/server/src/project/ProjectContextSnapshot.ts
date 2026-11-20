@@ -4,6 +4,7 @@ import {
   PROJECT_KNOWLEDGE_INLINE_CHARACTER_LIMIT,
 } from "@specweave-studio/contracts";
 import { isKnowledgeDocumentSection } from "./knowledge/knowledgeSections.ts";
+import { projectContextLineDiff } from "./ProjectContextLineDiff.ts";
 
 export type ProjectContextSection = {
   readonly name: string;
@@ -28,11 +29,16 @@ export const MEMORY_INDEX_FLOOR = 2_048;
  * (up to its own length) so long earlier sections cannot starve it completely.
  */
 export function projectContextSnapshot(
-  sections: ReadonlyArray<readonly [string, string]>,
+  /**
+   * Name, content and, optionally, extra revision input: state the text does
+   * not show (such as files beyond a bounded list) that must still mark the
+   * section changed.
+   */
+  sections: ReadonlyArray<readonly [string, string] | readonly [string, string, string]>,
   floors: Readonly<Record<string, number>> = { memory_index: MEMORY_INDEX_FLOOR },
 ): ProjectContextSnapshot {
   let remaining = PROJECT_CONTEXT_CHARACTER_LIMIT - 1500;
-  return sections.map(([name, content], index) => {
+  return sections.map(([name, content, revisionInput], index) => {
     const suffix =
       "\n[Project context truncated. Read project memory details with studio_project_memory_read.]";
     const reserved = sections
@@ -44,8 +50,38 @@ export function projectContextSnapshot(
         ? content
         : boundProjectContext(content, Math.max(0, budget - suffix.length)) + suffix;
     remaining = Math.max(0, remaining - value.length);
-    return { name, value, revision: contextDigest(value) };
+    return {
+      name,
+      value,
+      revision:
+        revisionInput === undefined
+          ? contextDigest(value)
+          : contextDigest(`${value}\u0000${revisionInput}`),
+    };
   });
+}
+
+/** Long sections whose edits usually touch a few lines; a delta sends those lines. */
+const LINE_DIFF_SECTIONS = new Set(["memory_index", "memory_inventory"]);
+/** A diff is used only when it is at most this share of the section's full text. */
+const LINE_DIFF_MAX_SHARE = 0.6;
+
+/** A changed section's text in a delta: a line diff when one is much shorter. */
+function changedSectionText(
+  section: ProjectContextSection,
+  previous: ProjectContextSection | undefined,
+): string {
+  if (!section.value) return previous?.value ? "(empty; previous content removed)" : "(empty)";
+  if (previous?.value && LINE_DIFF_SECTIONS.has(section.name)) {
+    const diff = projectContextLineDiff(previous.value, section.value);
+    if (diff === "")
+      return section.name === "memory_inventory"
+        ? "(list unchanged; a memory file beyond this list changed: studio_project_memory_list shows every revision)"
+        : section.value;
+    if (diff.length <= section.value.length * LINE_DIFF_MAX_SHARE)
+      return `(line changes to the previous [${section.name}]; every other line is unchanged)\n${diff}`;
+  }
+  return section.value;
 }
 
 /**
@@ -87,10 +123,7 @@ export function projectContextDelta(
       heading,
       // An empty section says content was removed only when it had some before;
       // a never-set goal in a first snapshot is just empty.
-      ...sent.map(
-        (s) =>
-          `[${s.name}]\n${s.value || (before.get(s.name)?.value ? "(empty; previous content removed)" : "(empty)")}`,
-      ),
+      ...sent.map((s) => `[${s.name}]\n${changedSectionText(s, before.get(s.name))}`),
       ...removedLines,
       ...(collapse
         ? [

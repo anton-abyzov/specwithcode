@@ -21,20 +21,20 @@ import * as NodeFSP from "node:fs/promises";
 import type { ThreadId } from "@specweave-studio/contracts";
 
 import { nodePath as NodePath } from "../nodePath.ts";
-import { INCREMENTS_DIR } from "./ThreadReports.ts";
 import {
   bindingRootAccepted,
   CLOSED_INCREMENT_STATES,
   hasSpecweaveConfig,
   incrementExists,
   incrementRootFor,
-  isSpecweaveProject,
   readRequireIncrementMode,
   readThreadIncrementProgress,
   registeredRootAccepted,
   resolveIncrementRef,
   resolveRegisteredIncrementRef,
+  specweaveState,
   writeLaunchBinding,
+  type SpecweaveState,
   type ThreadIncrementSource,
 } from "./ThreadIncrementProgress.ts";
 
@@ -70,6 +70,13 @@ export interface LaunchIncrementOutcome {
   /** The line the worker's brief ends with. */
   readonly brief?: string;
   readonly warning?: string;
+  /**
+   * "new" in a project without SpecWeave that has not declined it: start no
+   * thread, raise the setup card, and answer `{ launched: false, needs: "specweave" }`.
+   */
+  readonly needsSpecweave?: true;
+  /** The launch goes on, and the project's setup card is raised beside it. */
+  readonly raiseSetupCard?: true;
 }
 
 export type LaunchIncrementResolution =
@@ -128,6 +135,9 @@ export const NO_INCREMENT_BRIEF = `If you change code, run \`specweave small-fix
 export const SPECWEAVE_OFF_BRIEF =
   "SpecWeave is off in this project, so it has no increments: do not run `specweave create-increment` or `specweave small-fix`, do not create .specweave folders, and do not call the work an increment. If the user asks for increments, tell them SpecWeave can be turned on in one click from the project's Board (Set up SpecWeave), which sets up Git too when the folder has none.";
 export const SPECWEAVE_OFF_NEW_BRIEF = `Plan the work in your reply before you edit code. ${SPECWEAVE_OFF_BRIEF}`;
+/** An explicit increment in a project whose setup is unfinished (1396 AC-03). */
+export const SPECWEAVE_UNFINISHED_WARNING =
+  "SpecWeave setup is unfinished in this project. The Board cannot show this increment until the user finishes setup.";
 export const SPECWEAVE_OFF_WARNING =
   'SpecWeave is off in this project, so increment "new" made no increment and the worker plans in its reply. To plan with increments, offer the user Board > Set up SpecWeave (one click; it sets up Git too when the folder has none).';
 
@@ -214,13 +224,20 @@ export async function resolveLaunchIncrement(input: {
   /** The launching thread; null for a caller outside a thread or on another machine. */
   readonly caller: Omit<ThreadIncrementSource, "link"> | null;
   readonly isCoordinator: boolean;
+  /**
+   * The user chose "Plan without it" (or "Not now") for this project: "new"
+   * then plans in the worker's reply instead of raising the setup card.
+   */
+  readonly specweaveDeclined?: boolean;
 }): Promise<LaunchIncrementResolution> {
   const ref = input.ref?.trim();
+  const state = await launchState(input.workspaceRoot, input.worktreePath);
   if (ref === "none" || ref === "new") {
-    if (!(await usesSpecweave(input.workspaceRoot, input.worktreePath))) {
-      return ref === "new"
+    if (state !== "on") {
+      if (ref === "none") return { ok: true, value: { brief: SPECWEAVE_OFF_BRIEF } };
+      return input.specweaveDeclined === true
         ? { ok: true, value: { brief: SPECWEAVE_OFF_NEW_BRIEF, warning: SPECWEAVE_OFF_WARNING } }
-        : { ok: true, value: { brief: SPECWEAVE_OFF_BRIEF } };
+        : { ok: true, value: { needsSpecweave: true } };
     }
     return { ok: true, value: { brief: ref === "new" ? NEW_INCREMENT_BRIEF : NO_INCREMENT_BRIEF } };
   }
@@ -278,26 +295,32 @@ export async function resolveLaunchIncrement(input: {
             specPath: resolved.specPath,
             ...(registered ? { registered: true as const } : {}),
           };
-          const warning = registered
+          const located = registered
             ? registeredWarning(increment.incrementId, increment.root)
             : fellBack
               ? fallbackWarning(increment.incrementId)
               : undefined;
+          // Work on it goes on; the Board shows it once setup is finished.
+          const unfinished = state === "unfinished";
+          const warnings = [
+            ...(located === undefined ? [] : [located]),
+            ...(unfinished ? [SPECWEAVE_UNFINISHED_WARNING] : []),
+          ];
           return {
             ok: true,
             value: {
               increment,
               brief: existingBrief(increment),
-              ...(warning === undefined ? {} : { warning }),
+              ...(warnings.length === 0 ? {} : { warning: warnings.join(" ") }),
+              ...(unfinished ? { raiseSetupCard: true as const } : {}),
             },
           };
         }
       }
     }
-    // Only a SpecWeave project has increments to inherit or require.
-    const root = await incrementRootFor(input.workspaceRoot, input.worktreePath);
-    if (!(await hasSpecweaveConfig(root)) && !(await hasIncrements(root)))
-      return { ok: true, value: {} };
+    // Only a SpecWeave project has increments to inherit or require; a bare
+    // increments folder is not one, so no `specweave` command is handed out there.
+    if (state !== "on") return { ok: true, value: {} };
     const inherited =
       input.isCoordinator || input.caller === null
         ? null
@@ -334,22 +357,23 @@ export async function resolveLaunchIncrement(input: {
 }
 
 /**
- * Whether `specweave` planning works for this launch: the checkout it reads, or
- * the project, was set up with `specweave init` (or an umbrella plans for it).
- * An increment folder written without that does not count. Never rejects.
+ * The SpecWeave state this launch plans under: `on` when the checkout it
+ * reads was set up with `specweave init` (a worktree with its own config),
+ * otherwise the project's own state. An increment folder written without
+ * `init` is `unfinished`, never `on`. Reads as `on` when the disk cannot be
+ * read, so a launch is never blocked by an unreadable folder.
  */
-async function usesSpecweave(workspaceRoot: string, worktreePath: string | null) {
+async function launchState(
+  workspaceRoot: string,
+  worktreePath: string | null,
+): Promise<SpecweaveState> {
   try {
     const root = await incrementRootFor(workspaceRoot, worktreePath);
-    return (await hasSpecweaveConfig(root)) || (await isSpecweaveProject(workspaceRoot));
+    if (await hasSpecweaveConfig(root)) return "on";
+    return await specweaveState(workspaceRoot);
   } catch {
-    return true;
+    return "on";
   }
-}
-
-async function hasIncrements(root: string): Promise<boolean> {
-  const stat = await NodeFSP.stat(NodePath.join(root, INCREMENTS_DIR)).catch(() => null);
-  return stat?.isDirectory() ?? false;
 }
 
 /** The prompt with the increment line appended. */

@@ -75,22 +75,27 @@ vi.mock("../ui/button", () => ({
 }));
 vi.mock("./settingsLayout", () => ({
   SETTINGS_PICKER_TRIGGER_CLASSNAME: "",
-  PolicyTooltip: () => null,
+  PolicyTooltip: ({ label, children }: { label?: string; children: string }) => (
+    <span data-note-label={label}>{children}</span>
+  ),
   useRelativeTimeTick: () => Date.now(),
   SettingsRow: ({
     title,
+    titleInfo,
     control,
     status,
     resetAction,
     children,
   }: {
     title: string;
+    titleInfo?: ReactNode;
     control?: ReactNode;
     status?: string;
     resetAction?: ReactNode;
     children?: ReactNode;
   }) => (
     <section aria-label={title} data-status={status}>
+      {titleInfo}
       {control}
       {resetAction}
       {children}
@@ -195,6 +200,14 @@ describe("AdversarialReviewSettings", () => {
     expect(state.update).toHaveBeenCalledWith({
       adversarialReview: { autoOnFeatureComplete: true },
     });
+  });
+
+  it("notes beside the switch how much longer review makes the work", () => {
+    render(<AdversarialReviewSettings />);
+    const note = byLabel("Review finished features automatically").findByProps({
+      "data-note-label": "How much longer work takes with Review finished features automatically",
+    });
+    expect(note.children.join("")).toContain("a median 2.6 times as long");
   });
 
   it("writes only the review depth", () => {

@@ -4,7 +4,7 @@
  */
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import { CheckIcon, CopyIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useTx } from "../../i18n";
 import { Button } from "../ui/button";
@@ -82,6 +82,14 @@ export function DeviceApprovalCode({
   );
 }
 
+/**
+ * The floating card's layer: above dialogs and their backdrop (z-50) and media
+ * (z-[60]), below toasts, so the code stays readable while a dialog is open (1416).
+ * It sits below the top bar, so the project header and its settings stay in reach.
+ */
+export const FLOATING_CODE_LAYER_CLASS =
+  "pointer-events-none fixed inset-x-0 top-[calc(var(--workspace-controls-top,0px)+var(--workspace-topbar-height,2.5rem)+0.5rem)] z-[70] flex flex-col items-center gap-2";
+
 /** Machines whose code a join or first-run card already shows, so the floating card stays away. */
 const inlineCodes = new Map<string, number>();
 const inlineListeners = new Set<() => void>();
@@ -101,8 +109,59 @@ const changeInline = (environmentId: string, by: 1 | -1) => {
 };
 
 /**
+ * True when the middle of the code is the topmost thing there, so a dialog's
+ * backdrop or sheet over the row counts as covering it. Where the browser
+ * cannot say (tests without layout), the code counts as on top.
+ */
+function codeOnTop(code: Element): boolean {
+  const view = code.ownerDocument;
+  if (typeof view.elementFromPoint !== "function") return true;
+  const box = code.getBoundingClientRect();
+  if (box.width === 0 || box.height === 0) return false;
+  const top = view.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+  return top !== null && (top === code || code.contains(top));
+}
+
+/**
+ * Whether this code can be read: in view and not covered. Only then does it
+ * stand in for the floating card (1416). A collapsed panel that keeps its rows
+ * mounted, a row scrolled out of view, and a dialog opened over the row all
+ * leave the floating card up, which is drawn above dialogs. Dialogs and sheets
+ * mount in portals on the page body, so a change there checks again. Counts as
+ * readable until the browser says otherwise, and always where there is no
+ * IntersectionObserver.
+ */
+function useCodeOnScreen(ref: { readonly current: HTMLElement | null }) {
+  const [onScreen, setOnScreen] = useState(true);
+  useEffect(() => {
+    const code = ref.current?.querySelector("[data-device-waiting-code]") ?? ref.current;
+    if (!code || typeof IntersectionObserver === "undefined") return;
+    let inView = true;
+    const check = () => setOnScreen(inView && codeOnTop(code));
+    const intersection = new IntersectionObserver(
+      (entries) => {
+        const entry = entries.at(-1);
+        if (entry) inView = entry.isIntersecting && entry.intersectionRatio > 0.9;
+        check();
+      },
+      { threshold: [0, 0.9, 1] },
+    );
+    intersection.observe(code);
+    const overlays =
+      typeof MutationObserver === "undefined" ? null : new MutationObserver(() => check());
+    overlays?.observe(code.ownerDocument.body, { childList: true });
+    return () => {
+      intersection.disconnect();
+      overlays?.disconnect();
+    };
+  }, [ref]);
+  return onScreen;
+}
+
+/**
  * The code to type on a machine, inside a card that is waiting on it (1327):
- * the join card and first run. The floating card hides that machine meanwhile.
+ * the join card and first run. The floating card hides that machine while
+ * this code is on screen.
  */
 export function InlineDeviceApprovalCode({
   environmentId,
@@ -113,13 +172,17 @@ export function InlineDeviceApprovalCode({
   machine: string;
   code: string;
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const onScreen = useCodeOnScreen(ref);
   useEffect(() => {
+    if (!onScreen) return;
     changeInline(environmentId, 1);
     return () => changeInline(environmentId, -1);
-  }, [environmentId]);
+  }, [environmentId, onScreen]);
   const deviceId = useOwnDeviceShortId();
   return (
     <div
+      ref={ref}
       role="status"
       className="rounded-lg border border-border bg-muted/40 p-3"
       data-inline-device-approval={environmentId}

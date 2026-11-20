@@ -104,7 +104,7 @@ try {
   NodeAssert.equal(await page.getByTestId("settings-scope-seat").count(), 0);
   await page.getByRole("button", { name: "Machine: Desk" }).click();
   NodeAssert.equal(await page.getByRole("menuitemradio", { name: /All environments/ }).count(), 0);
-  await page.getByRole("menuitemradio", { name: /Studio Mini/ }).click();
+  await page.getByRole("menuitemradio", { name: /Loft Mini/ }).click();
   // The picker stays open on a choice, as it does on the other settings pages.
   await page.keyboard.press("Escape");
   await page.getByRole("menu").waitFor({ state: "hidden" });
@@ -161,7 +161,7 @@ try {
   page = await open({ state: "connecting", open: "/settings/integrations/devices" });
   NodeAssert.equal(
     await page.getByTestId("integrations-machine-away").innerText(),
-    "Connecting to Studio Mini…",
+    "Connecting to Loft Mini…",
   );
   NodeAssert.equal(await page.getByTestId("settings-scope-status").innerText(), "Connecting");
   await page.close();
@@ -187,6 +187,20 @@ try {
     false,
   );
   await shot(page, "view-only-1100-light");
+  await page.close();
+  // Adding a server needs two rights. Without the second the tab says so, and its
+  // rows stay in reach because the list gates its own buttons.
+  page = await open({ state: "noterminal", open: "/settings/integrations/mcp" });
+  await page.getByTestId("integrations-machine-view-only").waitFor();
+  NodeAssert.equal(
+    await page.getByTestId("integrations-machine-rows").getAttribute("inert"),
+    null,
+    "the MCP tab's rows went out of reach",
+  );
+  await page.close();
+  page = await open({ state: "noterminal", open: "/settings/integrations/access" });
+  await page.getByTestId("integrations-machine-rows").waitFor();
+  NodeAssert.equal(await page.getByTestId("integrations-machine-view-only").count(), 0);
   await page.close();
   page = await open({ state: "unavailable", open: "/settings/integrations/mcp" });
   await page.getByText("This environment is no longer available.").first().waitFor();

@@ -265,7 +265,7 @@ export function useIncomingWorkerAllow({
           ? tx("Manage access is needed on {hereLabel}.", { hereLabel })
           : !manageThere && coordinatorFleetId === undefined && !throughAccount
             ? tx(
-                "On {hereLabel}, open Settings > Machines > Join a main machine, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow on {hereLabel}'s card.",
+                "On {hereLabel}, open Settings > Machines > Join one of your machines, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow on {hereLabel}'s card.",
                 { hereLabel, coordinatorLabel },
               )
             : null;
@@ -376,7 +376,12 @@ export function IncomingWorkerAction({
       </label>
       {/* The selects do not save on their own, so the button always shows. */}
       <div className="space-y-1">
-        <Button size="xs" disabled={pending || unavailable !== null} onClick={() => void allow()}>
+        <Button
+          size="xs"
+          disabled={pending || unavailable !== null}
+          data-setup-action=""
+          onClick={() => void allow()}
+        >
           {pending
             ? tx("Setting up…")
             : (actionLabel ?? tx("Allow {coordinatorLabel}", { coordinatorLabel }))}

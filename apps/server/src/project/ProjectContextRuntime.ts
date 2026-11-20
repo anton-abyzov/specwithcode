@@ -22,7 +22,16 @@ export function withProjectContext(
   const start = (input: ProviderAdapterV2TurnInput, compact = false) =>
     Effect.gen(function* () {
       const projectId = input.appThread.projectId;
-      const restoring = delivery.restore(projectId, input.threadId).pipe(
+      const identity = {
+        projectId,
+        threadId: input.threadId,
+        runId: input.runId,
+        driver: session.driver,
+        providerInstanceId: input.modelSelection.instanceId,
+        providerThreadId: input.providerThread.id,
+        nativeThreadId: input.providerThread.nativeThreadRef?.nativeId ?? null,
+      };
+      const restoring = delivery.restore(identity).pipe(
         Effect.catchCause(() =>
           Effect.logWarning("Project context restoration unavailable", {
             threadId: input.threadId,
@@ -35,13 +44,7 @@ export function withProjectContext(
       const prepared = nativeOnly
         ? null
         : yield* delivery.prepare({
-            projectId,
-            threadId: input.threadId,
-            runId: input.runId,
-            driver: session.driver,
-            providerInstanceId: input.modelSelection.instanceId,
-            providerThreadId: input.providerThread.id,
-            nativeThreadId: input.providerThread.nativeThreadRef?.nativeId ?? null,
+            ...identity,
             inlineKnowledge: RECEIPT_DRIVERS.has(session.driver) && !nativeCommand,
           });
       const contextInput: ProviderAdapterV2TurnInput = {

@@ -256,6 +256,8 @@ const sourceRpc = (
   principal: AuthPrincipal = connectDevice,
 ) => {
   const source = Layer.mock(MachineHandoff.MachineHandoff)({
+    // The real peer brings its control line for the local network; nothing here uses it.
+    attachLanPeer: () => Effect.void,
     copyDestination: (operationId) =>
       attempt(() => transfers.read(operationId)).pipe(
         Effect.map((record) => record?.destinationEnvironmentId ?? ""),

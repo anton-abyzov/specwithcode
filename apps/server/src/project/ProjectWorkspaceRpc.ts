@@ -1,4 +1,5 @@
 import * as MachineHandoff from "../fleet/MachineHandoff.ts";
+import { withoutCoordinatorMove } from "./EqualCoordinatorMigration.ts";
 import * as ProjectConnectionRpc from "./ProjectConnectionRpc.ts";
 import * as ProjectEnvironmentService from "./ProjectEnvironmentService.ts";
 import {
@@ -9,7 +10,14 @@ import {
   ProjectEnvironmentError,
   type ProjectEnvironmentPrepareInput,
   type ProjectEnvironmentReadInput,
+  CommandId,
+  MessageId,
+  ProjectWorkspaceError,
+  ThreadId,
   type ProjectId,
+  type ProjectFirstFeatureGuideInput,
+  type ProjectSpecweaveAnswerInput,
+  type ProjectSpecweaveSetUpInput,
   type ProjectThreadsDeleteInput,
   type ProjectMemoryWriteInput,
   type AssetAccessError,
@@ -19,7 +27,11 @@ import {
   type WsDesignSystemImportRpcGroup,
 } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
+import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import type * as Layer from "effect/Layer";
 import type * as Rpc from "effect/rpc/Rpc";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
@@ -32,8 +44,12 @@ import * as ProjectUsageService from "../usage/ProjectUsageService.ts";
 import * as ProjectPlanRpc from "./ProjectPlanRpc.ts";
 import * as ProjectSkillsService from "./ProjectSkillsService.ts";
 import * as ThreadReportService from "./ThreadReportService.ts";
+import * as SpecweaveSetupRequests from "./SpecweaveSetupRequests.ts";
+import * as ServerConfig from "../config.ts";
+import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadIncrementProgressService from "./ThreadIncrementProgressService.ts";
 import * as ProjectService from "./ProjectService.ts";
+import * as FirstFeatureSample from "./firstFeatureSample.ts";
 import * as ThreadRepositories from "./ThreadRepositories.ts";
 import { ProjectFolderService } from "./ProjectFolderChange.ts";
 import * as ProjectWorktreeCleanup from "./ProjectWorktreeCleanup.ts";
@@ -61,8 +77,43 @@ export const handlers = Effect.gen(function* () {
   const coordinator = yield* ProjectCoordinatorService.ProjectCoordinatorService;
   const starters = yield* ProjectStarterSuggestions.ProjectStarterSuggestionsService;
   const reports = yield* ThreadReportService.ThreadReportService;
+  const specweaveFile = SpecweaveSetupRequests.specweaveSetupFile(
+    (yield* ServerConfig.ServerConfig).stateDir,
+  );
+  const threads = yield* ThreadManagementService.ThreadManagementService;
+  /** Wakes the card's thread with an AC-07 sentence; a repeat of the same command is ignored. */
+  const wakeForSpecweave = (
+    projectId: ProjectId,
+    wake: SpecweaveSetupRequests.SpecweaveWake | undefined,
+  ) => {
+    if (wake === undefined) return Effect.void;
+    const message = SpecweaveSetupRequests.specweaveWakeMessage(wake);
+    return threads
+      .sendToThread({
+        projectId,
+        commandId: CommandId.make(message.id),
+        threadId: ThreadId.make(wake.threadId),
+        messageId: MessageId.make(message.id),
+        text: message.text,
+        attachments: [],
+        // Never interrupts what the thread is doing.
+        mode: "queue",
+        createdBy: "agent",
+        creationSource: "server",
+      })
+      .pipe(
+        Effect.asVoid,
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not wake the thread after a SpecWeave answer.", {
+            projectId,
+            threadId: wake.threadId,
+            cause,
+          }),
+        ),
+      );
+  };
   return {
-    [WS_METHODS.machineHandoffPrepare]: handoff.prepare,
+    [WS_METHODS.machineHandoffPrepare]: withoutCoordinatorMove(handoff.prepare),
     [WS_METHODS.machineHandoffReceive]: handoff.receive,
     ...(yield* ProjectPlanRpc.handlers),
     ...(yield* ProjectConnectionRpc.handlers),
@@ -99,7 +150,57 @@ export const handlers = Effect.gen(function* () {
     [WS_METHODS.projectsUsageRead]: usage.read,
     [WS_METHODS.projectsSkillsRead]: skills.read,
     [WS_METHODS.projectsWorkspaceRead]: workspace.readWorkspace,
-    [WS_METHODS.projectsSpecweaveSetUp]: workspace.setUpSpecweave,
+    // 1396: the card's press and every other setup settle the project's card and wake its thread.
+    [WS_METHODS.projectsSpecweaveSetUp]: (input: ProjectSpecweaveSetUpInput) =>
+      Effect.gen(function* () {
+        if (input.requestId !== undefined) {
+          const requestId = input.requestId;
+          // The card's state is a convenience: a state file that cannot be written never stops setup.
+          yield* Effect.tryPromise(() =>
+            SpecweaveSetupRequests.markSettingUp(specweaveFile, input.projectId, requestId),
+          ).pipe(Effect.ignore);
+        }
+        const exit = yield* Effect.exit(workspace.setUpSpecweave(input));
+        const failure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
+        const settled = yield* Effect.promise(() =>
+          SpecweaveSetupRequests.settleAfterSetup(specweaveFile, {
+            projectId: input.projectId,
+            requestId: input.requestId,
+            result: Exit.isSuccess(exit)
+              ? { ok: true }
+              : {
+                  ok: false,
+                  detail: Option.match(failure, {
+                    onNone: () => "SpecWeave could not be set up in this folder.",
+                    onSome: (error) => error.message,
+                  }),
+                  needsNode: Option.match(failure, {
+                    onNone: () => false,
+                    onSome: (error) => error.needs === "node",
+                  }),
+                },
+          }),
+        ).pipe(Effect.orElseSucceed(() => ({}) as { wake?: SpecweaveSetupRequests.SpecweaveWake }));
+        yield* wakeForSpecweave(input.projectId, settled.wake);
+        return yield* exit;
+      }),
+    [WS_METHODS.projectsSpecweaveAnswer]: (input: ProjectSpecweaveAnswerInput) =>
+      Effect.gen(function* () {
+        const answered = yield* Effect.tryPromise(() =>
+          SpecweaveSetupRequests.answerSpecweave(specweaveFile, input),
+        ).pipe(
+          Effect.mapError(
+            () =>
+              new ProjectWorkspaceError({ code: "operation_failed", projectId: input.projectId }),
+          ),
+        );
+        yield* wakeForSpecweave(input.projectId, answered.wake);
+        return {
+          specweaveDeclined: answered.facts.declined === true,
+          specweaveAdviceSeen: answered.facts.adviceSeen === true,
+          ...(answered.request === undefined ? {} : { specweaveSetupRequest: answered.request }),
+        };
+      }),
     [WS_METHODS.projectsStarterSuggestions]: starters.read,
     [WS_METHODS.projectsMemoryRead]: workspace.readMemory,
     // People edit memory here; while the project moves, the move's copy must stay the last word.
@@ -172,6 +273,12 @@ export const layerPlanningRpcHandlers = WsProjectPlanningRpcGroup.middleware(
         Effect.provideService(ProjectWorkspaceService.ProjectWorkspaceService, workspace),
       );
     return {
+      // 1398: the sample's guide is left, finished or opened again; only a sample takes marks.
+      [WS_METHODS.projectsFirstFeatureGuide]: (input: ProjectFirstFeatureGuideInput) =>
+        Effect.gen(function* () {
+          const now = DateTime.formatIso(yield* DateTime.now);
+          return yield* FirstFeatureSample.firstFeatureGuideRpc(projects, input, now);
+        }),
       [WS_METHODS.projectsRepositoriesRead]: (
         input: import("@specweave-studio/contracts").ProjectRepositoriesReadInput,
       ) =>
@@ -182,6 +289,9 @@ export const layerPlanningRpcHandlers = WsProjectPlanningRpcGroup.middleware(
       [WS_METHODS.projectsFolderCheck]: (
         input: import("@specweave-studio/contracts").ProjectFolderCheckInput,
       ) => folders.check(input),
+      [WS_METHODS.projectsFolderStop]: (
+        input: import("@specweave-studio/contracts").ProjectFolderStopInput,
+      ) => folders.stop(input),
       [WS_METHODS.projectsWorktreesRead]: worktrees.read,
       [WS_METHODS.projectsWorktreesRemove]: worktrees.remove,
       [WS_METHODS.projectsThreadsDelete]: (input: ProjectThreadsDeleteInput) =>

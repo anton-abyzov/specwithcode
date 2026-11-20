@@ -101,7 +101,7 @@ describe("ProjectRow shared badge", () => {
   it("shows the shared label as a hover tooltip on the coordinator's copy", async () => {
     const badge = await render(copy("m4", "m4"));
     expect(badge?.dataset.sharedProject).toBe("coordinator");
-    expect(badge?.getAttribute("aria-label")).toBe("Shared from M4 Max with Ministorm");
+    expect(badge?.getAttribute("aria-label")).toBe("On M4 Max and Ministorm");
     expect(badge?.getAttribute("title")).toBe(badge?.getAttribute("aria-label"));
     expect(badge?.getAttribute("role")).toBe("img");
     expect(badge?.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
@@ -110,9 +110,7 @@ describe("ProjectRow shared badge", () => {
   it("shows the handed-off label as a hover tooltip on a workers' copy", async () => {
     const badge = await render(copy("m1", "m4"));
     expect(badge?.dataset.sharedProject).toBe("workers");
-    expect(badge?.getAttribute("title")).toBe(
-      "Handed off: coordinator on M4 Max, Ministorm runs workers",
-    );
+    expect(badge?.getAttribute("title")).toBe("Coordinator on M4 Max");
     expect(badge?.getAttribute("aria-label")).toBe(badge?.getAttribute("title"));
   });
 });

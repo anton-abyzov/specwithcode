@@ -119,7 +119,29 @@ describe("the pointer's step fields", () => {
       replaceAllOutcome: "copy-kept",
     };
     save(pendingKey, old);
-    expect(readPendingCopy(pendingKey)).toEqual(old);
+    // Its coordinator step is retired with the move: the files it copied stay a copy.
+    expect(readPendingCopy(pendingKey)).toEqual({ ...old, mode: "copy-only" });
+  });
+
+  it("reads a copy saved as a move, after its files were applied, as a copy of files only (AC-35)", () => {
+    save(pendingKey, {
+      ...pointer,
+      mode: "copy-and-move",
+      projectId: "project-1",
+      moveAnyway: true,
+      acceptedSourceChanges: { digest: "abc", rows: [], truncated: false },
+    });
+    const read = readPendingCopy(pendingKey);
+    expect(read?.mode).toBe("copy-only");
+    // Nothing of the copy is lost: the same operation, machine, folder and project.
+    expect(read).toMatchObject({
+      operationId: pointer.operationId,
+      environmentId: "m3",
+      targetFolder: pointer.targetFolder,
+      projectId: "project-1",
+    });
+    // The choice to move despite differences has nothing left to apply to.
+    expect(read).not.toHaveProperty("moveAnyway");
   });
 
   it("keeps an accepted change list and drops a malformed one", () => {
@@ -193,7 +215,8 @@ describe("the setup draft", () => {
 
   it("round-trips and is removed with null", () => {
     expect(writeCopyDraft(draftKey, draft)).toBe(true);
-    expect(readCopyDraft(draftKey)).toEqual(draft);
+    // A draft saved as a move comes back as a copy: the coordinator no longer moves.
+    expect(readCopyDraft(draftKey)).toEqual({ ...draft, mode: "copy-only" });
     expect(writeCopyDraft(draftKey, null)).toBe(true);
     expect(readCopyDraft(draftKey)).toBeNull();
   });

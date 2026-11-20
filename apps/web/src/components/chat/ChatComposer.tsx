@@ -1,3 +1,4 @@
+import { ComposerModelIntent } from "./ComposerModelIntent";
 import { VoiceConsentDialog } from "../studio/VoiceCall";
 import { ComposerVoiceMenu } from "../studio/ComposerVoiceMenu";
 import { useTx } from "../../i18n";
@@ -16,6 +17,7 @@ import {
   composerAccessRecommendationFor,
   type ComposerAccessRecommendation,
 } from "./AccessRecommendation";
+import { composerNotice } from "./composerNotice.logic";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useMachineNickname } from "../../studio/machineNickname";
@@ -79,6 +81,7 @@ import {
   memo,
   type ComponentProps,
   type ReactNode,
+  use,
   useCallback,
   useEffect,
   useId,
@@ -106,6 +109,7 @@ import {
 import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
 import {
   COMPOSER_APP_COMMANDS,
+  composerAppCommandDescription,
   matchAwaySkillCommands,
   type ComposerAppCommand,
 } from "../../studio/composerAppCommands";
@@ -308,6 +312,9 @@ import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
+import { foldedMachineSend } from "./machineSendLabel";
+import { MachineSendTargetContext } from "~/studio/machineIdentity";
+import { useActionMachine } from "~/studio/actionMachine";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import {
   ComposerPendingUserInputPanel,
@@ -1479,6 +1486,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   preserveComposerFocusOnPointerDown?: boolean;
   isEditingQueuedMessage: boolean;
   sendWithCredits: boolean;
+  startsThreads: number | null;
   onSubmitMessage: React.MouseEventHandler<HTMLButtonElement>;
   onResume: () => void;
   onPreviousPendingQuestion: () => void;
@@ -1522,6 +1530,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
         isEditingQueuedMessage={props.isEditingQueuedMessage}
         sendWithCredits={props.sendWithCredits}
+        startsThreads={props.startsThreads}
         onSubmitMessage={props.onSubmitMessage}
         onResume={props.onResume}
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
@@ -1674,6 +1683,8 @@ export interface ChatComposerProps {
   // Pending approvals / inputs
   /** The pending access request card, shown above the composer in place of its approval row. */
   accessRequestCard?: ReactNode;
+  /** The coordinator's SpecWeave line (1396); the Full access recommendation wins over it. */
+  specweaveOffer?: ReactNode;
   activePendingApproval: PendingApproval | null;
   pendingApprovals: PendingApproval[];
   pendingUserInputs: PendingUserInput[];
@@ -1830,6 +1841,9 @@ export interface ChatComposerProps {
 
 export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
   const tx = useTx();
+  const sendTarget = use(MachineSendTargetContext);
+  // The thread's machine, named on its cards when it is not this window's (1427 AC-07).
+  const actionMachine = useActionMachine();
   const {
     composerDraftTarget,
     environmentId,
@@ -3063,7 +3077,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             type: "app-command" as const,
             command: entry.command,
             label: entry.label,
-            description: entry.description,
+            description: composerAppCommandDescription(entry),
           }))
         : [];
       // The app runs these itself; a provider command of the same name is shadowed.
@@ -3090,7 +3104,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               type: "app-command" as const,
               command: entry.command,
               label: `$${entry.command}`,
-              description: entry.description,
+              description: composerAppCommandDescription(entry),
             }))
           : [];
       const awayNames = new Set<string>(awayItems.map((item) => item.command));
@@ -3269,6 +3283,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           title: activeThread?.title,
           isCoordinator: projectRouting?.coordinatorThreadId === activeThreadId,
         });
+  // Folding the question card is remembered per thread.
+  const pendingQuestionCollapseKey =
+    activeThreadId === null ? undefined : `${environmentId}:${activeThreadId}`;
   const isChoiceOnlyPendingQuestion =
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
   const showComposerTopDrawer =
@@ -3452,11 +3469,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectSelectionRequired ||
     environmentUnavailable !== null ||
     (!composerSendState.hasSendableContent && !showResumeAction);
+  // A new draft has no thread yet: its send starts one, or one per selected model.
+  const startsThreads = routeKind === "draft" ? (multipleModelSelections?.length ?? 1) : null;
+  // The folded phone box sends a saved draft without opening: a plain send to another
+  // machine wears that machine's color and says where it goes, as the open box's Send does.
   const collapsedComposerPrimaryActionLabel = showResumeAction
     ? "Resume thread"
     : explicitCreditOffer !== null
       ? "Send with credits"
       : "Send message";
+  const foldedSend = foldedMachineSend({
+    label: collapsedComposerPrimaryActionLabel,
+    plainSend: !showResumeAction && explicitCreditOffer === null && phase !== "running",
+    target: sendTarget,
+    startsThreads,
+    tx,
+  });
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
 
@@ -7231,6 +7259,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             restingControlsHost,
           )
         : null}
+      {composerNotice({
+        accessRecommended: accessRecommendation !== null,
+        specweaveOffered: props.specweaveOffer != null,
+      }) === "specweave"
+        ? props.specweaveOffer
+        : null}
       {props.accessRequestCard ? (
         <div data-chat-composer-access-request="true" className="mb-3 min-w-0">
           {props.accessRequestCard}
@@ -7281,6 +7315,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       <ComposerPendingApprovalPanel
                         approval={activePendingApproval}
                         pendingCount={pendingApprovals.length}
+                        machine={actionMachine}
                       />
                     </ComposerBanner.Content>
                     <ComposerBanner.Actions>
@@ -7316,7 +7351,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onDismiss={onDismissActivePendingUserInput}
                     onReplyInChat={replyToPendingQuestionInChat}
                     askedBy={pendingQuestionAsker}
+                    machine={actionMachine}
                     renderText={renderPendingQuestionText}
+                    collapseKey={pendingQuestionCollapseKey}
                   />
                 ) : !isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan ? (
                   <ComposerPlanFollowUpBanner
@@ -7341,7 +7378,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       onDismiss={onDismissActivePendingUserInput}
                       onReplyInChat={replyToPendingQuestionInChat}
                       askedBy={pendingQuestionAsker}
+                      machine={actionMachine}
                       renderText={renderPendingQuestionText}
+                      collapseKey={pendingQuestionCollapseKey}
                     />
                     {!isChoiceOnlyPendingQuestion ? (
                       // Multi-select steps live in the card's own footer above.
@@ -7452,6 +7491,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               composerProviderState.composerSurfaceClassName,
             )}
           >
+            <ComposerModelIntent
+              state={chipModel.state}
+              routed={
+                routesProjectMessage ||
+                !isServerThread ||
+                multipleModelSelections !== null ||
+                selectedProviderUnavailable ||
+                isComposerApprovalState ||
+                isComposerCollapsedMobile ||
+                activePendingProgress !== null
+              }
+            />
             {showCollapsedMobilePromptRow ? (
               <div className="flex items-center justify-between gap-2 px-3 py-2">
                 <button
@@ -7487,9 +7538,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   className={cn(
                     "flex size-8 shrink-0 items-center justify-center rounded-full bg-message-action text-message-action-foreground hover:bg-message-action-hover disabled:opacity-(--disabled-opacity)",
                     explicitCreditOffer !== null && "w-auto gap-1.5 px-3 text-xs",
+                    foldedSend.className,
                   )}
                   disabled={collapsedComposerPrimaryActionDisabled}
-                  aria-label={collapsedComposerPrimaryActionLabel}
+                  aria-label={foldedSend.label}
+                  {...foldedSend.attributes}
                   onPointerDown={(event) => event.preventDefault()}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -8239,6 +8292,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     preserveComposerFocusOnPointerDown={isMobileViewport || isComposerResting}
                     isEditingQueuedMessage={isEditingQueuedMessage}
                     sendWithCredits={explicitCreditOffer !== null}
+                    startsThreads={startsThreads}
                     onSubmitMessage={handleSubmitMessage}
                     onResume={onResume}
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}

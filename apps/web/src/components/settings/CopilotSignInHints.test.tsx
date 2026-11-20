@@ -81,6 +81,10 @@ describe("Copilot sign-in hints", () => {
       },
     });
     const shown = text(renderer.root);
+    // The box must not read as "Copilot is already signed in here".
+    expect(shown).toContain("Other GitHub sign-ins on win");
+    expect(shown).toContain("These are not Copilot CLI's own sign-in.");
+    expect(shown).not.toContain("Already on");
     expect(shown).toContain("GitHub Copilot in VS Code");
     expect(shown).toContain("GitHub CLI signed in as anton_aaby on aaby.ghe.com");
     expect(shown).toContain("the code goes to aaby.ghe.com");

@@ -120,6 +120,10 @@ export function createProjectEnvironmentAtoms<R, E>(
       label: "environment-data:projects:folder-check",
       tag: WS_METHODS.projectsFolderCheck,
     }),
+    folderStop: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:folder-stop",
+      tag: WS_METHODS.projectsFolderStop,
+    }),
     repositoriesRead: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:projects:repositories-read",
       tag: WS_METHODS.projectsRepositoriesRead,

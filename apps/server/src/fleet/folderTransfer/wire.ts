@@ -21,6 +21,11 @@ export const MAX_BATCH_CHUNKS_LARGE = 1024;
 /** ...and the destination keeps each batch under this many bytes. */
 export const MAX_BATCH_BYTES = 64 * 1024 * 1024;
 export const MAX_REQUEST_BYTES = 4 * 1024 * 1024;
+/** A `lan-retire` body names one generation and nothing else. */
+export const LAN_RETIRE_BYTES = 1024;
+/** The most a request to this route may carry; enforced before its body is read. */
+export const requestBytesFor = (method: string, path: string): number =>
+  method === "POST" && path.endsWith("/lan-retire") ? LAN_RETIRE_BYTES : MAX_REQUEST_BYTES;
 
 export const CHUNK_OK = 0;
 /** The chunk is not in this operation's manifest. */

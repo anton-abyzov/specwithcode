@@ -237,6 +237,7 @@ private struct ChatScreen: View {
             onOpenThread: { router.pushThread($0, on: nav, in: model) },
             onOpenLink: { openThreadLink($0, in: row) },
             environmentId: target.environmentId,
+            machineLabel: session.machineLabel.isEmpty ? nil : session.machineLabel,
             onToggleFold: { id in
               if expandedFolds.contains(id) { expandedFolds.remove(id) } else { expandedFolds.insert(id) }
             }
@@ -1009,7 +1010,7 @@ private struct ChatScreen: View {
         Banner(error, kind: .fail, onDismiss: { dictation.clearError() })
       }
       if let request = pendingAccess {
-        request.card(agent: agentName, style: .composer, isBusy: busyRequests.contains(request.itemId), maxHeight: accessCardMaxHeight, waitingCount: pendingAccesses.count) { answer in
+        request.card(agent: agentName, style: .composer, isBusy: busyRequests.contains(request.itemId), maxHeight: accessCardMaxHeight, waitingCount: pendingAccesses.count, machine: session.machineLabel.isEmpty ? nil : session.machineLabel) { answer in
           answerAccess(request, answer)
         }
         .id(request.itemId)

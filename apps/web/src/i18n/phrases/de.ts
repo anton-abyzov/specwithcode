@@ -1,7 +1,19 @@
 import type { PhraseCatalog } from "../phrases";
+import { syncDe } from "./sync/de";
+import { handoffDe } from "./handoff/de";
+import { iphoneDe } from "./iphone/de";
+import { machineLabelsDe } from "./machineLabels/de";
+import { actionMachineDe } from "./actionMachine/de";
+import { providerSignInDe } from "./providerSignIn/de";
 
 /** German Settings titles and labels, informal "du", as in the message catalog. */
 export const de: PhraseCatalog = {
+  ...syncDe,
+  ...handoffDe,
+  ...iphoneDe,
+  ...machineLabelsDe,
+  ...actionMachineDe,
+  ...providerSignInDe,
   About: "Über",
   "Accent color": "Akzentfarbe",
   Account: "Konto",
@@ -9,6 +21,22 @@ export const de: PhraseCatalog = {
   "Accounts & integrations": "Konten & Integrationen",
   Actions: "Aktionen",
   "Add a device with a code": "Gerät mit einem Code hinzufügen",
+  "Add this project on another machine. Every machine runs its own coordinator.":
+    "Füge dieses Projekt auf einer anderen Maschine hinzu. Jede Maschine führt ihren eigenen Koordinator aus.",
+  "Make this project and the same project on another machine one project. Each machine keeps its own coordinator.":
+    "Mache dieses Projekt und dasselbe Projekt auf einer anderen Maschine zu einem Projekt. Jede Maschine behält ihren eigenen Koordinator.",
+  "Needs an update: this machine is on a version from before every machine ran its own coordinator.":
+    "Update nötig: Diese Maschine läuft mit einer Version aus der Zeit, bevor jede Maschine ihren eigenen Koordinator hatte.",
+  "Pick {project} on another machine. It joins this project and keeps its own coordinator.":
+    "Wähle {project} auf einer anderen Maschine. Es tritt diesem Projekt bei und behält seinen eigenen Koordinator.",
+  "Pick {project} on another machine. Linking makes them one project; each machine keeps its own coordinator.":
+    "Wähle {project} auf einer anderen Maschine. Durch das Verknüpfen werden sie ein Projekt; jede Maschine behält ihren eigenen Koordinator.",
+  "{joining} has joined the project; retry to finish listing it on {kept}.":
+    "{joining} ist dem Projekt beigetreten; versuche es erneut, um es auf {kept} fertig einzutragen.",
+  "Runs its own coordinator for this project.":
+    "Führt einen eigenen Koordinator für dieses Projekt aus.",
+  "Update SpecWithCode on {machine} to link projects.":
+    "Aktualisiere SpecWithCode auf {machine}, um Projekte zu verknüpfen.",
   "Use this machine from a browser on a phone or another computer, also when SpecWithCode Connect is off or cannot be reached. The SpecWithCode app signed in to the same Connect account needs no code.":
     "Nutze diesen Rechner im Browser eines Telefons oder eines anderen Computers, auch wenn SpecWithCode Connect aus ist oder nicht erreichbar ist. Die SpecWithCode-App, die mit demselben Connect-Konto angemeldet ist, braucht keinen Code.",
   "Add a device": "Gerät hinzufügen",
@@ -82,8 +110,6 @@ export const de: PhraseCatalog = {
   Confirmations: "Bestätigungen",
   "Connect private machines automatically": "Private Rechner automatisch verbinden",
   "Context window indicator": "Anzeige des Kontextfensters",
-  "Continue automatically when a machine stops answering":
-    "Automatisch weitermachen, wenn ein Rechner nicht mehr antwortet",
   "Continue threads after restarts": "Threads nach Neustarts fortsetzen",
   Contrast: "Kontrast",
   "Could not check SpecWithCode Connect": "SpecWithCode Connect konnte nicht geprüft werden",
@@ -149,7 +175,6 @@ export const de: PhraseCatalog = {
   Integrations: "Integrationen",
   Interface: "Oberfläche",
   "Interface font": "Schrift der Oberfläche",
-  "Join a main machine": "Einem Hauptrechner beitreten",
   "Keep active chats per project": "Aktive Chats pro Projekt",
   "Keep awake while sessions work": "Wach halten, solange Sitzungen arbeiten",
   "Keep this project's threads ready to move": "Threads dieses Projekts umzugsbereit halten",
@@ -574,8 +599,6 @@ export const de: PhraseCatalog = {
     "Dann wird laufende Arbeit für das Update gestoppt, die App startet neu, und laufende und wartende Threads machen danach weiter.",
   "This routine no longer exists or is outside the selected project scope.":
     "Diese Routine existiert nicht mehr oder liegt außerhalb der ausgewählten Projekte.",
-  "Threads in handoff mode continue on your chosen Mac after this long. Off means they wait for your click. Coordinator threads never move this way.":
-    "Threads im Übergabemodus machen nach dieser Zeit auf dem gewählten Mac weiter. Aus bedeutet, dass sie auf deinen Klick warten. Koordinator-Threads werden nie so verschoben.",
   "Try again in a moment.": "Versuche es gleich noch einmal.",
   "Update this environment to manage Antigravity.":
     "Aktualisiere diese Umgebung, um Antigravity zu verwalten.",
@@ -722,6 +745,7 @@ export const de: PhraseCatalog = {
   "Its machine": "Sein Rechner",
   Machine: "Rechner",
   "Move to project…": "In Projekt verschieben…",
+  "Chat settings": "Chat-Einstellungen",
   "New chat": "Neuer Chat",
   "New project": "Neues Projekt",
   "No chats on {machine} match this filter.": "Keine Chats auf {machine} passen zu diesem Filter.",
@@ -1066,24 +1090,16 @@ export const de: PhraseCatalog = {
   Copy: "Kopieren",
   "This device cannot read that machine's settings.":
     "Dieses Gerät kann die Einstellungen dieses Rechners nicht lesen.",
-  "1. Install the SpecWithCode Browser extension":
-    "1. SpecWithCode Browser-Erweiterung installieren",
   "Add to Chrome": "Zu Chrome hinzufügen",
   "(opens the Chrome Web Store)": "(öffnet den Chrome Web Store)",
   "Chrome Web Store link": "Link zum Chrome Web Store",
   "Install it in Chrome on {machine}: copy the link and open it there, in the profile agents should use.":
     "Installiere sie in Chrome auf {machine}: Kopiere den Link und öffne ihn dort, im Profil, das Agents nutzen sollen.",
-  "Open the link in the Chrome profile agents should use. Chrome keeps the extension up to date.":
-    "Öffne den Link im Chrome-Profil, das Agents nutzen sollen. Chrome hält die Erweiterung aktuell.",
-  "2. Pair it with {machine}": "2. Mit {machine} koppeln",
   "This code works only in Chrome on {machine}, not in Chrome on {thisComputer}.":
     "Dieser Code funktioniert nur in Chrome auf {machine}, nicht in Chrome auf {thisComputer}.",
-  "Show pairing code": "Kopplungscode anzeigen",
   "Pairing code": "Kopplungscode",
   "pairing code": "Kopplungscode",
   "Reset code": "Code zurücksetzen",
-  "The code lets a Chrome profile act for agents on {machine}. Keep it private.":
-    "Mit dem Code kann ein Chrome-Profil für Agents auf {machine} handeln. Halte ihn geheim.",
   "You are on {b}. This sets up Chrome on {b2}, a different computer; its pairing code does not work in Chrome here.":
     "Du bist auf {b}. Hier wird Chrome auf {b2} eingerichtet, einem anderen Computer; sein Kopplungscode funktioniert hier in Chrome nicht.",
   "Set up Chrome on {thisComputer}": "Chrome auf {thisComputer} einrichten",
@@ -1335,8 +1351,8 @@ export const de: PhraseCatalog = {
   Host: "Host",
   "Paste a full pairing URL here to fill both fields automatically.":
     "Füge hier eine vollständige Kopplungs-URL ein, um beide Felder automatisch auszufüllen.",
-  "This machine is on your SpecWithCode Connect account. Use it as a fallback route.":
-    "Dieser Rechner ist in deinem SpecWithCode-Connect-Konto. Nutze ihn als Ausweichroute.",
+  "This machine is on your SpecWithCode Connect account. This app can open it through Connect too.":
+    "Dieser Rechner ist in deinem SpecWithCode-Connect-Konto. Diese App kann ihn auch über Connect öffnen.",
   "Add SpecWithCode Connect": "SpecWithCode Connect hinzufügen",
   "Add route": "Route hinzufügen",
   "SSH host or alias": "SSH-Host oder Alias",
@@ -1713,7 +1729,6 @@ export const de: PhraseCatalog = {
   "Use default": "Standard nutzen",
   "A removed machine": "Ein entfernter Rechner",
   "More options": "Weitere Optionen",
-  "Automatic takeover": "Automatische Übernahme",
   "inactive chat archiving": "Archivierung inaktiver Chats",
   "After 30 days": "Nach 30 Tagen",
   Never: "Nie",
@@ -2178,7 +2193,6 @@ export const de: PhraseCatalog = {
     "Jeder Skill, den jeder Agent auf diesem Rechner für dich erkennt, in jedem Projekt. Einen auszuschalten ändert nur die eigenen Einstellungen dieses Agents, andere Agents behalten ihn und nichts wird gelöscht. Wähle ein Projekt, um auch seine Projekt-Skills zu sehen. Klicke auf einen Skill für Details.",
   "Which skills each agent discovers in {span}, and whether each still matches the version vskill installed. Filter by agent or by level: project skills live in this folder, user skills apply to every project. Click a skill for details.":
     "Welche Skills jeder Agent in {span} erkennt und ob jeder noch zur von vskill installierten Version passt. Filtere nach Agent oder Ebene: Projekt-Skills liegen in diesem Ordner, Benutzer-Skills gelten für jedes Projekt. Klicke auf einen Skill für Details.",
-  "{span} is not loaded in this project.": "{span} wird in diesem Projekt nicht geladen.",
   "· showing {length}": "· {length} angezeigt",
   "Search skills": "Skills suchen",
   "Search skills, agents, sources": "Skills, Agents, Quellen suchen",
@@ -2187,8 +2201,6 @@ export const de: PhraseCatalog = {
   Agent: "Agent",
   Tier: "Ebene",
   "Scanning skill folders and lockfiles…": "Skill-Ordner und Lockfiles werden gescannt…",
-  "No agent loads any skill in this folder, and no vskill lockfile lists one.":
-    "Kein Agent lädt in diesem Ordner einen Skill, und keine vskill-Lockfile listet einen auf.",
   "The last rescan failed ({error}); showing the previous result.":
     "Der letzte erneute Scan ist fehlgeschlagen ({error}); das vorherige Ergebnis wird angezeigt.",
   "Project skills": "Projekt-Skills",
@@ -2333,19 +2345,6 @@ export const de: PhraseCatalog = {
   "Remove the old record of {name} ({host}) from this device?\nThis machine joined again as a new one and keeps working; only the dead record and its cached threads here go.":
     "Den alten Eintrag von {name} ({host}) von diesem Gerät entfernen?\nDie Maschine ist neu beigetreten und läuft weiter; nur der tote Eintrag und seine zwischengespeicherten Threads hier verschwinden.",
   "Use 2 or 3 characters.": "Verwende 2 oder 3 Zeichen.",
-  "Not shared": "Nicht geteilt",
-  "{machine} is main now, with machines not yet following it":
-    "{machine} ist jetzt Haupt, aber einige Maschinen folgen noch nicht",
-  "These machines did not take the new main yet: {machines}. They keep refusing work from the old main only once they do.":
-    "Diese Maschinen haben die neue Haupt noch nicht übernommen: {machines}. Sie lehnen Arbeit der alten Haupt erst ab, wenn sie es tun.",
-  "Not linked · also on {machine}": "Nicht verknüpft · auch auf {machine}",
-  "This copy is not linked to the copies on {machine}. Link them from the project menu to share one coordinator.":
-    "Diese Kopie ist nicht mit den Kopien auf {machine} verknüpft. Verknüpfe sie über das Projektmenü, um einen Koordinator zu teilen.",
-  "No other machine has a copy of this project.":
-    "Keine andere Maschine hat eine Kopie dieses Projekts.",
-  "Connect to see its role": "Verbinden, um die Rolle zu sehen",
-  "This app cannot see this machine, so it cannot tell what this copy does.":
-    "Diese App sieht die Maschine nicht und kann daher nicht sagen, was diese Kopie tut.",
   "{name} wears {color}": "{name} trägt {color}",
   "Change the color of {name}, now {color}": "Farbe von {name} ändern, jetzt {color}",
   "Change color": "Farbe ändern",
@@ -3043,6 +3042,9 @@ export const de: PhraseCatalog = {
   "Enable a provider in Settings": "Aktiviere einen Anbieter in den Einstellungen",
   "Ask anything...": "Frag einfach...",
   "Send with credits": "Mit Guthaben senden",
+  "Send to this thread on {machine}": "An diesen Thread auf {machine} senden",
+  "Start a thread on {machine}": "Thread auf {machine} starten",
+  "Start one thread per model on {machine}": "Einen Thread pro Modell auf {machine} starten",
   "Finding pull request...": "Pull Request wird gesucht...",
   "Searching workspace files...": "Workspace-Dateien werden durchsucht...",
   "Draft attachment may not persist": "Anhang des Entwurfs bleibt evtl. nicht erhalten",
@@ -3093,6 +3095,10 @@ export const de: PhraseCatalog = {
   "Supplied patch": "Übergebener Patch",
   "Previous file path": "Vorheriger Dateipfad",
   "Show the question and its options": "Frage und Optionen anzeigen",
+  "Question:": "Frage:",
+  "Can't steer now": "Lenken gerade nicht möglich",
+  "Show the full description": "Vollständige Beschreibung anzeigen",
+  "Hide the full description": "Vollständige Beschreibung ausblenden",
   "Hide the question and its options": "Frage und Optionen ausblenden",
   "+{waitingCount} more": "+{waitingCount} weitere",
   "Dismiss question without answering": "Frage ohne Antwort schließen",
@@ -3162,7 +3168,6 @@ export const de: PhraseCatalog = {
   "Run this draft on": "Diesen Entwurf ausführen auf",
   "Auto balance matching projects": "Passende Projekte automatisch verteilen",
   "Add to another machine…": "Auf anderem Rechner hinzufügen…",
-  "Send to another machine…": "An anderen Rechner senden…",
   Link: "Verknüpfen",
   "Leave this machine…": "Diesen Rechner verlassen…",
   "Another project or no project": "Anderes Projekt oder kein Projekt",
@@ -3222,8 +3227,6 @@ export const de: PhraseCatalog = {
   "Jump to latest": "Zum Neuesten",
   "Jump to latest{value}": "Zum Neuesten{value}",
   New: "Neu",
-  "This server can't move threads to another machine yet.":
-    "Dieser Server kann Threads noch nicht auf einen anderen Rechner verschieben.",
   "No other machine can take this thread now.":
     "Gerade kann kein anderer Rechner diesen Thread übernehmen.",
   "Link increment": "Inkrement verknüpfen",
@@ -3647,12 +3650,6 @@ export const de: PhraseCatalog = {
   "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.":
     "Deine eigenen Regeln, gesendet mit jeder Anfrage von Koordinator und Workern, bei jedem Anbieter, in jedem Projekt in jeder ausgewählten Umgebung. Standardmäßig leer.",
   "Effective instructions for {label}": "Wirksame Anweisungen für {label}",
-  "Click the SpecWithCode icon in Chrome's toolbar.":
-    "Klicke in der Chrome-Symbolleiste auf das SpecWithCode-Symbol.",
-  "Paste the pairing code.": "Füge den Kopplungscode ein.",
-  "Name the profile, for example Work or Marketing.":
-    "Benenne das Profil, zum Beispiel Arbeit oder Marketing.",
-  "Click Pair.": "Klicke auf Koppeln.",
   "Ask Google for {service}": "Google nach {service} fragen",
   "Edit shortcut for {command}: {shortcut}": "Tastenkürzel für {command} bearbeiten: {shortcut}",
   "Edit when clause for {command}": "Bedingung für {command} bearbeiten",
@@ -3758,8 +3755,8 @@ export const de: PhraseCatalog = {
   "Could not verify {label}. {detail}": "{label} konnte nicht geprüft werden. {detail}",
   "Open Settings > Machines > SpecWithCode Connect there, or run this command. Any Connect account works. This machine does not need to be signed in.":
     "Öffne dort Einstellungen > Rechner > SpecWithCode Connect oder führe diesen Befehl aus. Jedes Connect-Konto funktioniert. Dieser Rechner muss nicht angemeldet sein.",
-  "There, choose Join a main machine under Settings > Machines and enter this machine’s ID:":
-    "Wähle dort unter Einstellungen > Rechner „Einem Hauptrechner beitreten“ und gib die ID dieses Rechners ein:",
+  "There, choose Join one of your machines under Settings > Machines and enter this machine’s ID:":
+    "Wähle dort unter Einstellungen > Rechner „Einem deiner Rechner beitreten“ und gib die ID dieses Rechners ein:",
   "Picks the model for this project's delegated workers by what the task needs: routine work such as translation, transcripts or a first animation draft can run on a cheaper model, while final code, review and design stay on a strong one. A model named for a thread always wins. Decided by rules, without a model call.":
     "Wählt das Modell für die delegierten Worker dieses Projekts nach dem, was die Aufgabe braucht: Routinearbeit wie Übersetzungen, Transkripte oder ein erster Animationsentwurf kann auf einem günstigeren Modell laufen, während finaler Code, Review und Design auf einem starken bleiben. Ein für einen Thread genanntes Modell gewinnt immer. Entschieden durch Regeln, ohne Modellaufruf.",
   "Picks the model for delegated workers by what the task needs: routine work such as translation, transcripts or a first animation draft can run on a cheaper model, while final code, review and design stay on a strong one. A model named for a thread always wins. Decided by rules, without a model call. Projects can override it.":
@@ -4094,10 +4091,10 @@ export const de: PhraseCatalog = {
   "Each new thread gets its own branch and worktree, so parallel threads never share a checkout. Off: threads work in the project folder.":
     "Jeder neue Thread bekommt einen eigenen Branch und Worktree, sodass parallele Threads nie einen Checkout teilen. Aus: Threads arbeiten im Projektordner.",
   "Adding a machine to this one?": "Einen Rechner zu diesem hinzufügen?",
-  "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
-    "Agents auf {here} starten bereits Arbeit auf {machines}. Eine hier erstellte Zeile erlaubt dem gewählten Rechner, Arbeit auf {here} zu starten. Um stattdessen einen neuen Rechner zu {here} hinzuzufügen, öffne SpecWithCode auf dem neuen Rechner, wähle dort „Einem Hauptrechner beitreten“ und füge dessen Zeile hier unter „Rechner hinzufügen“ ein.",
-  "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join a main machine there and paste its line here under Add a machine.":
-    "Agents auf diesem Rechner starten bereits Arbeit auf {machines}. Eine hier erstellte Zeile erlaubt dem gewählten Rechner, Arbeit auf diesem zu starten. Um stattdessen einen neuen Rechner zu diesem hinzuzufügen, öffne SpecWithCode auf dem neuen Rechner, wähle dort „Einem Hauptrechner beitreten“ und füge dessen Zeile hier unter „Rechner hinzufügen“ ein.",
+  "Agents on {here} already start work on {machines}. A line made here lets the machine you pick start work on {here}. To add a new machine to {here} instead, open SpecWithCode on the new machine, choose Join one of your machines there and paste its line here under Add a machine.":
+    "Agents auf {here} starten bereits Arbeit auf {machines}. Eine hier erstellte Zeile erlaubt dem gewählten Rechner, Arbeit auf {here} zu starten. Um stattdessen einen neuen Rechner zu {here} hinzuzufügen, öffne SpecWithCode auf dem neuen Rechner, wähle dort „Einem deiner Rechner beitreten“ und füge dessen Zeile hier unter „Rechner hinzufügen“ ein.",
+  "Agents here already start work on {machines}. A line made here lets the machine you pick start work on this one. To add a new machine to this one instead, open SpecWithCode on the new machine, choose Join one of your machines there and paste its line here under Add a machine.":
+    "Agents auf diesem Rechner starten bereits Arbeit auf {machines}. Eine hier erstellte Zeile erlaubt dem gewählten Rechner, Arbeit auf diesem zu starten. Um stattdessen einen neuen Rechner zu diesem hinzuzufügen, öffne SpecWithCode auf dem neuen Rechner, wähle dort „Einem deiner Rechner beitreten“ und füge dessen Zeile hier unter „Rechner hinzufügen“ ein.",
   "{count} more": "{count} weitere",
   "The app updates when idle if enabled below, or the next time you quit it. The service updates once no session is working. With “Pause running work for updates” on, running work pauses for it after the wait below and continues after the update. Off means you install from here.":
     "Die App aktualisiert sich im Leerlauf, wenn das unten aktiviert ist, sonst beim nächsten Beenden. Der Dienst aktualisiert sich, sobald keine Sitzung arbeitet. Ist „Laufende Arbeit für Updates pausieren“ an, pausiert laufende Arbeit dafür nach der Wartezeit unten und läuft nach dem Update weiter. Aus bedeutet, dass du hier installierst.",
@@ -4133,13 +4130,15 @@ export const de: PhraseCatalog = {
     "{name} kann nur ein Projekt ausführen, von dem es eine Kopie hat. Füge eines hinzu und wähle dann {name} in einem Chat unter „Ausführen auf“ oder trage es in den Projekteinstellungen unter „Machines for workers“ ein.",
   "Add {project} to {name}": "{project} zu {name} hinzufügen",
   "Add a project to {name}": "Projekt zu {name} hinzufügen",
-  "Next, on {coordinatorLabel}: this machine can only run a project it has a copy of. Open Settings > Machines there and add a project to this machine. Then choose it under Run on in a chat, or list it under Machines for workers in the project's settings.":
-    "Als Nächstes auf {coordinatorLabel}: Dieser Rechner kann nur ein Projekt ausführen, von dem er eine Kopie hat. Öffne dort Einstellungen > Rechner und füge diesem Rechner ein Projekt hinzu. Wähle ihn dann in einem Chat unter „Ausführen auf“ oder trage ihn in den Projekteinstellungen unter „Machines for workers“ ein.",
+  "Once {machineLabel} is open on {coordinatorLabel}, you can add a project copy there. In the project’s machine menu, choose “{addAction}”. In a new chat, choose {machineLabel} under “{runOn}”.":
+    "Sobald {machineLabel} auf {coordinatorLabel} geöffnet ist, kannst du dort eine Projektkopie anlegen. Wähle im Rechnermenü des Projekts „{addAction}“. Wähle in einem neuen Chat unter „{runOn}“ den Rechner {machineLabel}.",
   "Signed in as {account}": "Angemeldet als {account}",
   "Loading sign-in…": "Anmeldung wird geladen…",
   "One account for all your machines and your phone.":
     "Ein Konto für alle deine Rechner und dein Telefon.",
-  "Choose your main machine": "Wähle deinen Hauptrechner",
+  "On {hereLabel}, open Settings > Machines > Join one of your machines, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow on {hereLabel}'s card.":
+    "Öffne auf {hereLabel} Einstellungen > Rechner > „Einem deiner Rechner beitreten“, wähle {coordinatorLabel} und kopiere die Zeile. Öffne auf {coordinatorLabel} Einstellungen > Rechner > „Rechner hinzufügen“, füge die Zeile ein und wähle auf der Karte von {hereLabel} „Erlauben“.",
+  "Join one of your machines": "Einem deiner Rechner beitreten",
   "Your other machines are listed here once this {machine} is linked.":
     "Deine anderen Rechner erscheinen hier, sobald dieser {machine} verknüpft ist.",
   "{label} can start work on this {machine}": "{label} kann auf diesem {machine} Arbeit starten",
@@ -4475,6 +4474,7 @@ export const de: PhraseCatalog = {
   "Setup can be closed once the import finishes.":
     "Die Einrichtung lässt sich schließen, sobald der Import fertig ist.",
   "Add a folder on this machine": "Einen Ordner auf diesem Rechner hinzufügen",
+  "Start with SpecWeave, for plans and a board": "Mit SpecWeave starten, für Pläne und ein Board",
   "Type a path, browse or drop a folder": "Pfad eingeben, durchsuchen oder Ordner ablegen",
   "Starting from nothing?": "Bei null anfangen?",
   "New empty project or clone a repository": "Neues leeres Projekt oder Repository klonen",
@@ -4593,17 +4593,9 @@ export const de: PhraseCatalog = {
   "Installs from npm could not be read.":
     "Die Installationen über npm konnten nicht gelesen werden.",
   "Installs from npm": "Installationen über npm",
-  "View this project on": "Projekt ansehen auf",
-  "coordinator paused": "Koordinator pausiert",
   "Machine access settings": "Zugriffseinstellungen der Rechner",
   "{machine} offline": "{machine} offline",
-  "workers only": "nur Worker",
   coordinator: "Koordinator",
-  "not linked": "nicht verknüpft",
-  "Not linked: {machine} runs its own coordinator, threads and memory for this repository.":
-    "Nicht verknüpft: {machine} hat für dieses Repository einen eigenen Koordinator, eigene Threads und eigenen Speicher.",
-  "Not linked: these are separate projects for this repository, each with its own coordinator, threads and memory. That does not stop you viewing or messaging any of them.":
-    "Nicht verknüpft: Das sind getrennte Projekte für dieses Repository, jedes mit eigenem Koordinator, eigenen Threads und eigenem Speicher. Das hindert dich nicht daran, jedes davon anzusehen oder ihm Nachrichten zu senden.",
   "Link them below to make one project.": "Verknüpfe sie unten zu einem Projekt.",
   "{value}Messages go to Percy. {value2}": "{value}Nachrichten gehen an Percy. {value2}",
   "Show only topics that need you in {project}":
@@ -4673,8 +4665,12 @@ export const de: PhraseCatalog = {
     "{machineLabel} hinzugefügt. Wähle nach dem Aktualisieren auf dieser Zeile „Erlauben“.",
   "After each turn, copies this machine's threads, existing ones too, to your other machines with the same project, so any of them can pick up. Uses a few more tokens.":
     "Kopiert nach jedem Turn die Threads dieses Rechners, auch bestehende, auf deine anderen Rechner mit demselben Projekt, damit jeder von ihnen weitermachen kann. Verbraucht etwas mehr Tokens.",
-  "After work left while it slept. Ask shows one button to bring it back.":
-    "Nachdem Arbeit im Ruhezustand weitergegeben wurde. „Fragen“ zeigt einen Button, um sie zurückzuholen.",
+  "After you left with Away. Ask shows one button to bring it back.":
+    "Nachdem du mit „Abwesend“ gegangen bist. „Fragen“ zeigt einen Button, um die Arbeit zurückzuholen.",
+  "This machine has not confirmed yet that closing the lid moves nothing. Another machine may still continue a thread when this one goes quiet. This copy pauses when that can happen.":
+    "Dieser Rechner hat noch nicht bestätigt, dass das Zuklappen nichts verschiebt. Ein anderer Rechner könnte einen Thread noch fortsetzen, wenn dieser hier nicht mehr antwortet. Diese Kopie pausiert, wenn das passieren kann.",
+  "{machine} may still run an older version that continues a thread when this machine goes quiet. Until it confirms, such a thread pauses here. Update {machine} to end this.":
+    "Auf {machine} läuft vielleicht noch eine ältere Version, die einen Thread fortsetzt, wenn dieser Rechner nicht mehr antwortet. Bis {machine} das bestätigt, pausiert ein solcher Thread hier. Aktualisiere {machine}, um das zu beenden.",
   "Agents on {hereLabel} can start work on {thereLabel}":
     "Agents auf {hereLabel} dürfen Arbeit auf {thereLabel} starten",
   "All sign-ins": "Alle Anmeldungen",
@@ -4710,18 +4706,12 @@ export const de: PhraseCatalog = {
     "Abgelaufen: Dieser Rechner muss Worker von hier erneut erlauben",
   Filter: "Filter",
   "Filter: {label}": "Filter: {label}",
-  "Grace time": "Wartezeit",
-  "Hands work to the Away target when this Mac sleeps. The target waits the grace time first, and nothing moves if you're back sooner. Mac only.":
-    "Gibt Arbeit an das Ziel bei Abwesenheit ab, wenn dieser Mac in den Ruhezustand geht. Das Ziel wartet zuerst die Wartezeit ab, und nichts wird verschoben, wenn du früher zurück bist. Nur Mac.",
-  "How long the target waits after the lid closes before it takes over.":
-    "Wie lange das Ziel nach dem Zuklappen wartet, bevor es übernimmt.",
   "Its app sees this machine": "Seine App sieht diesen Rechner",
   "Its work may use any sign-in on this machine.":
     "Seine Arbeit darf jede Anmeldung auf diesem Rechner nutzen.",
   "Its work may use no sign-in here, so every launch is refused.":
     "Seine Arbeit darf hier keine Anmeldung nutzen, daher wird jeder Start abgelehnt.",
   Lasts: "Gültig",
-  "Leave automatically when the lid closes": "Beim Zuklappen automatisch abgeben",
   "Let another of your machines run work here":
     "Einen anderen deiner Rechner hier Arbeit ausführen lassen",
   "Let {machine} manage scheduled routines": "{machine} geplante Routinen verwalten lassen",
@@ -4807,8 +4797,10 @@ export const de: PhraseCatalog = {
   "Until you stop it, here or on that machine.":
     "Bis du es beendest, hier oder auf diesem Rechner.",
   "When this machine wakes": "Wenn dieser Rechner aufwacht",
-  "Where Away sends your threads, routines and coordinators. Also used when this machine sleeps; locking the screen doesn't count.":
-    "Wohin „Abwesend“ deine Threads, Routinen und Koordinatoren schickt. Gilt auch, wenn dieser Rechner schläft; das Sperren des Bildschirms zählt nicht.",
+  "Where Away sends your threads, routines and coordinators when you leave this machine.":
+    "Wohin „Abwesend“ deine Threads, Routinen und Koordinatoren schickt, wenn du diesen Rechner verlässt.",
+  "Where Away sends your threads, routines and coordinators when you leave this machine. Closing the lid moves nothing.":
+    "Wohin „Abwesend“ deine Threads, Routinen und Koordinatoren schickt, wenn du diesen Rechner verlässt. Das Zuklappen verschiebt nichts.",
   "Who is it for": "Für wen ist er",
   "Whose machine {machine} is": "Wem {machine} gehört",
   "Work from {machine}": "Arbeit von {machine}",
@@ -4838,8 +4830,6 @@ export const de: PhraseCatalog = {
     "{machine} legt es fest, wenn er das nächste Mal hier Arbeit startet. Es ist das Höchste, was ein Thread, den er hier startet, ohne Nachfrage tun darf.",
   "{title} (archived)": "{title} (archiviert)",
   "{title} (automated)": "{title} (automatisiert)",
-  "This app isn't connected to {machine}, so its copy can't be shown. Connect it in Settings > Machines.":
-    "Diese App ist nicht mit {machine} verbunden und kann dessen Kopie nicht zeigen. Verbinde ihn unter Einstellungen > Rechner.",
   "This window is signed out": "Dieses Fenster ist abgemeldet",
   "Quit and reopen the app to sign in again.":
     "Beende die App und öffne sie erneut, um dich wieder anzumelden.",
@@ -4867,14 +4857,11 @@ export const de: PhraseCatalog = {
   "Last synced {age}.": "Zuletzt synchronisiert {age}.",
   "Synced just now.": "Gerade eben synchronisiert.",
   "Hide details": "Details ausblenden",
-  "Runs on {machine}": "Läuft auf {machine}",
   connected: "verbunden",
   "Last viewed machine not listed": "Zuletzt angesehener Rechner nicht aufgeführt",
   "Viewing {machine}. Choose a machine to view":
     "Ansicht von {machine}. Wähle einen Rechner zum Ansehen",
   "{machine}: this project's machines": "{machine}: die Rechner dieses Projekts",
-  "Viewing moves nothing: work stays on each machine. Adding or moving the project asks first.":
-    "Ansehen verschiebt nichts: Die Arbeit bleibt auf jedem Rechner. Hinzufügen oder Verschieben des Projekts fragt vorher.",
   "Nothing is sent to another machine.": "Nichts wird an einen anderen Rechner gesendet.",
   "Your draft stays here until it reconnects.":
     "Dein Entwurf bleibt hier, bis die Verbindung wieder steht.",
@@ -4932,8 +4919,6 @@ export const de: PhraseCatalog = {
     "Nicht installiert. Hol es von seiner eigenen Website oder bitte jemanden, der diesen Rechner verwalten darf, es hier zu installieren.",
   "Browse…": "Durchsuchen…",
   "Add to this machine…": "Zu diesem Rechner hinzufügen…",
-  "Runs on {machine}. No copy on this device.":
-    "Läuft auf {machine}. Keine Kopie auf diesem Gerät.",
   "Agent status": "Agentenstatus",
   "Last time it was not signed in.": "Beim letzten Mal war er nicht angemeldet.",
   "Last time it was signed in as {account}.": "Beim letzten Mal war er als {account} angemeldet.",
@@ -4994,7 +4979,6 @@ export const de: PhraseCatalog = {
   "{count} tools are missing or out of date on this machine.":
     "{count} Tools fehlen oder sind veraltet auf diesem Rechner.",
   "Install everything missing": "Alles Fehlende installieren",
-  "Already on {environmentLabel}": "Bereits auf {environmentLabel}",
   "GitHub Copilot in VS Code": "GitHub Copilot in VS Code",
   "GitHub CLI signed in as {account} on {host}": "GitHub CLI angemeldet als {account} auf {host}",
   "Copilot CLI keeps its own sign-in. Sign in once with the same account; the code goes to {host}.":
@@ -5132,21 +5116,6 @@ export const de: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "Der Pfad des AppImage lässt sich nicht in den Befehl schreiben. Verschieben Sie das AppImage in einen einfacheren Ordner und öffnen Sie es dort.",
   "Could not write {path} ({error}).": "{path} konnte nicht geschrieben werden ({error}).",
-  Main: "Haupt",
-  "Moving main": "Haupt zieht um",
-  "Copy · main on {machine}": "Kopie · Haupt auf {machine}",
-  "Work for this project starts here. Copies on other machines take work from it.":
-    "Die Arbeit für dieses Projekt startet hier. Kopien auf anderen Maschinen übernehmen Arbeit von hier.",
-  "Main is on {machine}. This copy can also start work of its own.":
-    "Haupt ist auf {machine}. Diese Kopie kann auch eigene Arbeit starten.",
-  "Work starts on {machine}. This copy takes work from there.":
-    "Die Arbeit startet auf {machine}. Diese Kopie übernimmt Arbeit von dort.",
-  "Main is moving between machines right now.": "Haupt zieht gerade zwischen Maschinen um.",
-  "{there} can start work here": "{there} kann hier Arbeit starten",
-  "{there} can't start work here": "{there} kann hier keine Arbeit starten",
-  "This machine can start work on {there}": "Dieser Rechner kann Arbeit auf {there} starten",
-  "This machine can't start work on {there}":
-    "Dieser Rechner kann keine Arbeit auf {there} starten",
   "until you stop it": "bis du es beendest",
   "1 running thread stops at {time}.": "1 laufender Thread stoppt um {time}.",
   "{count} running threads stop at {time}.": "{count} laufende Threads stoppen um {time}.",
@@ -5164,25 +5133,27 @@ export const de: PhraseCatalog = {
   "More for {machine}": "Mehr für {machine}",
   "Hide connection details": "Verbindungsdetails ausblenden",
   "Let {thereLabel} start work here": "{thereLabel} hier Arbeit starten lassen",
-  "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
-    "{there} kann hier Arbeit starten: Seine Agenten dürfen Threads in den Projekten dieses Rechners starten. Stoppen lehnt neue Arbeit sofort ab; laufende Threads stoppen 2 Minuten später. Dieser Rechner kann Arbeit auf {there} starten: Agenten hier dürfen dort Threads starten, bis zu dem Zugriff, den {there} erlaubt.",
   "Allow {there} to start work here": "{there} erlauben, hier Arbeit zu starten",
   "Stop {there} starting work here": "{there} stoppen, hier Arbeit zu starten",
   "Allow {there} again to start work here": "{there} wieder erlauben, hier Arbeit zu starten",
-  "Set up this machine to start work on {there}":
-    "Diese Maschine einrichten, um auf {there} Arbeit zu starten",
-  "Change what this machine may do on {there}": "Ändern, was diese Maschine auf {there} darf",
   Advisor: "Berater",
   "Let threads ask a stronger model": "Threads ein stärkeres Modell fragen lassen",
   "A thread can ask a stronger model to review its approach, then keep working. Each consult spends the advisor model's usage.":
     "Ein Thread kann ein stärkeres Modell bitten, seinen Ansatz zu prüfen, und arbeitet dann weiter. Jede Konsultation verbraucht Nutzung des Beratermodells.",
   advisor: "Berater",
   "Advisor model": "Beratermodell",
-  "A thread is never advised by its own model; the next model in the order answers instead.":
-    "Ein Thread wird nie von seinem eigenen Modell beraten; stattdessen antwortet das nächste Modell der Reihenfolge.",
+  "Claude's own advisor can be the thread's own model. A brief always goes to another model, the next one in the order.":
+    "Claudes eigener Berater kann das eigene Modell des Threads sein. Eine Zusammenfassung geht immer an ein anderes Modell, das nächste der Reihenfolge.",
   "advisor model": "Beratermodell",
   "Use the default advisor order": "Standardreihenfolge der Berater verwenden",
-  "Fable 5.2, then the Review track": "Fable 5.2, dann der Review-Track",
+  "The Complex track": "Der Complex-Track",
+  "Advisor: {model}": "Advisor: {model}",
+  "Advisor: {model}, same model as this thread":
+    "Advisor: {model}, dasselbe Modell wie dieser Thread",
+  "Past {limit} tokens: {model}": "Ab {limit} Tokens: {model}",
+  "No model can advise this thread right now.": "Gerade kann kein Modell diesen Thread beraten.",
+  "Claude's own advisor setting answered here: {model}":
+    "Hier hat Claudes eigene Advisor-Einstellung geantwortet: {model}",
   "On Claude threads, Claude's built-in advisor reads the whole conversation on each consult. A Fable advisor is billed to Claude usage credits.":
     "In Claude-Threads liest Claudes eingebauter Berater bei jeder Konsultation die ganze Unterhaltung. Ein Fable-Berater wird über Claude-Nutzungsguthaben abgerechnet.",
   "Claude's own advisor": "Claudes eigener Berater",
@@ -5215,6 +5186,8 @@ export const de: PhraseCatalog = {
   "Follow project (off)": "Wie im Projekt (aus)",
   "Lets this thread ask a stronger model to check its work.":
     "Erlaubt diesem Thread, ein stärkeres Modell um eine Prüfung seiner Arbeit zu bitten.",
+  "Has a model from another family review this thread's work when its feature is finished.":
+    "Lässt ein Modell einer anderen Familie die Arbeit dieses Threads prüfen, sobald sein Feature fertig ist.",
   "Remove worktrees whose chats are resolved or archived and have been inactive for this many days. Branches and chat history are kept.":
     "Worktrees entfernen, deren Chats erledigt oder archiviert und so viele Tage inaktiv sind. Branches und Chatverlauf bleiben erhalten.",
   "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. A chat that is still open loses its folder after 6 quiet hours; a chat that is running or waiting always keeps it. The branch stays, so a reopened chat gets its folder back. Also removes clean, pushed worktrees agents made without a chat once their pull request is merged or closed and they have been idle for a day.":
@@ -5233,8 +5206,9 @@ export const de: PhraseCatalog = {
   "At least {size} would be freed.": "Mindestens {size} würden frei.",
   "Dependency folders are left out: their files are shared with the package store.":
     "Abhängigkeitsordner sind nicht mitgezählt: Ihre Dateien teilen sie mit dem Paketspeicher.",
-  "Some folders could not be fully checked or measured.":
-    "Einige Ordner konnten nicht vollständig geprüft oder gemessen werden.",
+  "Some folders could not be fully checked.":
+    "Einige Ordner konnten nicht vollständig geprüft werden.",
+  "size unknown": "Größe unbekannt",
   "Leftover files of stopped downloads": "Reste abgebrochener Downloads",
   "Nothing to remove right now.": "Gerade gibt es nichts zu entfernen.",
   "Nothing was removed.": "Nichts wurde entfernt.",
@@ -5288,136 +5262,25 @@ export const de: PhraseCatalog = {
   "Waiting for the install. This page updates by itself.":
     "Warte auf die Installation. Diese Seite aktualisiert sich von selbst.",
   "After it installs, choose Check again.": "Wähle nach der Installation Erneut prüfen.",
-  "{main} must be unreachable for 10 minutes before {machine} can become main. That unlocks in {minutes} min.":
-    "{main} muss 10 Minuten lang unerreichbar sein, bevor {machine} Haupt werden kann. Das wird in {minutes} Min. freigeschaltet.",
-  "in {minutes} min": "in {minutes} Min.",
-  "This window can only read {main}, so it cannot move main from there. Open SpecWithCode on {main}, or connect to it with full access, to make {machine} main.":
-    "Dieses Fenster kann {main} nur lesen und Haupt deshalb nicht von dort verschieben. Öffne SpecWithCode auf {main} oder verbinde dich mit vollem Zugriff, um {machine} zu Haupt zu machen.",
-  "read-only on {main}": "nur Lesezugriff auf {main}",
-  "Connect {machine} first to make it main.":
-    "Verbinde zuerst {machine}, um es zu Haupt zu machen.",
-  "{machine} cannot take over yet. Update SpecWithCode there, or connect to it with permission to change settings and run work.":
-    "{machine} kann noch nicht übernehmen. Aktualisiere SpecWithCode dort oder verbinde dich mit der Berechtigung, Einstellungen zu ändern und Arbeit auszuführen.",
-  "not ready": "nicht bereit",
-  "Main cannot move from this machine yet.":
-    "Haupt kann von diesem Rechner noch nicht verschoben werden.",
-  "Send this project its first message here, then try again.":
-    "Sende diesem Projekt hier seine erste Nachricht und versuche es dann erneut.",
-  "{machine} cannot become main yet.": "{machine} kann noch nicht Haupt werden.",
-  "{machine} is main now": "{machine} ist jetzt Haupt",
-  "It starts from the shared goal, memory and plan. The conversation on {main} stays there as history, and {main} gives way when it is back.":
-    "Es startet mit dem gemeinsamen Ziel, Gedächtnis und Plan. Das Gespräch auf {main} bleibt dort als Verlauf, und {main} gibt nach, sobald es zurück ist.",
-  "{machine} did not become main": "{machine} ist nicht Haupt geworden",
-  "Retry it.": "Versuche es erneut.",
-  "the old main": "das alte Haupt",
-  "Make {machine} main?": "{machine} zu Haupt machen?",
-  "{main} has been unreachable for 10 minutes or more. {machine} becomes main and starts from the shared goal, memory and plan. The conversation on {main} stays there as history. Until {main} is back it can still start work on its own machine; then it gives way and lists what it ran meanwhile.":
-    "{main} ist seit 10 Minuten oder länger unerreichbar. {machine} wird Haupt und startet mit dem gemeinsamen Ziel, Gedächtnis und Plan. Das Gespräch auf {main} bleibt dort als Verlauf. Bis {main} zurück ist, kann es auf seinem eigenen Rechner noch Arbeit starten; dann gibt es nach und listet auf, was es inzwischen ausgeführt hat.",
   "Switching…": "Wird umgeschaltet…",
-  "Make {machine} main": "{machine} zu Haupt machen",
-  "Make {machine} main for {project}": "{machine} für {project} zu Haupt machen",
-  "Main for {project} is {machine}. This copy takes work from there.":
-    "Haupt für {project} ist {machine}. Diese Kopie übernimmt Arbeit von dort.",
-  "Main for {project} is on another machine. This copy takes work from there.":
-    "Haupt für {project} ist auf einem anderen Rechner. Diese Kopie übernimmt Arbeit von dort.",
-  "The conversation here is kept as history.": "Das Gespräch hier bleibt als Verlauf erhalten.",
-  "Write to {machine}'s coordinator": "An den Koordinator auf {machine} schreiben",
-  "Write to main's coordinator": "An den Koordinator von Haupt schreiben",
-  "Write opens {machine}'s page for this project, where its coordinator answers. Nothing is sent from here.":
-    "Schreiben öffnet die Seite dieses Projekts auf {machine}, wo dessen Koordinator antwortet. Von hier wird nichts gesendet.",
-  "Write opens main's page for this project, where its coordinator answers. Nothing is sent from here.":
-    "Schreiben öffnet die Seite dieses Projekts auf dem Haupt-Rechner, wo dessen Koordinator antwortet. Von hier wird nichts gesendet.",
-  "{main} has been unreachable for 10 minutes or more. Making {machine} main starts from the shared goal, memory and plan; the conversation on {main} stays there as history.":
-    "{main} ist seit 10 Minuten oder länger unerreichbar. Wird {machine} zu Haupt, startet es mit dem gemeinsamen Ziel, Gedächtnis und Plan; das Gespräch auf {main} bleibt dort als Verlauf.",
-  "Making {machine} main moves the coordinator and its conversation here from {main}, which becomes a copy.":
-    "Wird {machine} zu Haupt, ziehen der Koordinator und sein Gespräch von {main} hierher um, und {main} wird eine Kopie.",
-  "{machine} became main while {main} was unreachable. It started from the shared goal, memory and plan; the earlier conversation stays on {main} as history.":
-    "{machine} wurde Haupt, während {main} unerreichbar war. Es startete mit dem gemeinsamen Ziel, Gedächtnis und Plan; das frühere Gespräch bleibt als Verlauf auf {main}.",
-  "{machine} became main while the old main was unreachable. It started from the shared goal, memory and plan; the earlier conversation stays on the old machine as history.":
-    "{machine} wurde Haupt, während das alte Haupt unerreichbar war. Es startete mit dem gemeinsamen Ziel, Gedächtnis und Plan; das frühere Gespräch bleibt als Verlauf auf dem alten Rechner.",
-  "Got it": "Verstanden",
-  "{machine} kept its coordinator conversation from before as history. View it to read that conversation.":
-    "{machine} hat sein früheres Koordinator-Gespräch als Verlauf behalten. Öffne es, um dieses Gespräch zu lesen.",
-  "Makes the project on {machine} part of this one. Main does not change, and threads and files stay where they are. You confirm what {machine} gives up first.":
-    "Macht das Projekt auf {machine} zu einem Teil von diesem. Haupt ändert sich nicht, und Threads und Dateien bleiben, wo sie sind. Du bestätigst vorher, was {machine} aufgibt.",
   "Link {machine} to this project…": "{machine} mit diesem Projekt verknüpfen…",
-  "{main} is unreachable: {machine} takes over and starts from the shared goal, memory and plan. You confirm first.":
-    "{main} ist unerreichbar: {machine} übernimmt und startet mit dem gemeinsamen Ziel, Gedächtnis und Plan. Du bestätigst vorher.",
-  "Moves the coordinator and its conversation from {main} to {machine}. {main} becomes a copy. You confirm first.":
-    "Verschiebt den Koordinator und sein Gespräch von {main} auf {machine}. {main} wird eine Kopie. Du bestätigst vorher.",
   "Link {machine} to this project": "{machine} mit diesem Projekt verknüpfen",
-  "{machine} joins {project} as a copy. Main stays on {main}: linking does not change it.":
-    "{machine} tritt {project} als Kopie bei. Haupt bleibt auf {main}: Verknüpfen ändert das nicht.",
   "Link {machine}": "{machine} verknüpfen",
-  "Main stays on {main}. To have main on {machine}, make {machine} main after linking.":
-    "Haupt bleibt auf {main}. Soll Haupt auf {machine} sein, mache {machine} nach dem Verknüpfen zu Haupt.",
-  "Link {machine} to this project. {machine} gives up its own goal and instructions: it follows this project's from now on, and its own are replaced if it becomes main. Its own coordinator stops, and that conversation stays on {machine} as history. Its workers keep running. Main stays on {main}. Files are not copied.":
-    "{machine} mit diesem Projekt verknüpfen. {machine} gibt sein eigenes Ziel und seine eigenen Anweisungen auf: Es folgt ab jetzt denen dieses Projekts, und seine eigenen werden ersetzt, falls es Haupt wird. Sein eigener Koordinator stoppt, und dieses Gespräch bleibt als Verlauf auf {machine}. Seine Worker laufen weiter. Haupt bleibt auf {main}. Dateien werden nicht kopiert.",
-  "Work for {project} starts on {machine}.": "Arbeit an {project} beginnt auf {machine}.",
-  "Work for {project} starts on another machine.":
-    "Arbeit an {project} beginnt auf einem anderen Rechner.",
-  "Connect {main} first. This window has not loaded main's copy on {main}, so it cannot make {machine} main yet.":
-    "Verbinde zuerst {main}. Dieses Fenster hat die Hauptkopie auf {main} nicht geladen und kann {machine} deshalb noch nicht zu Haupt machen.",
-  "connect {main} first": "zuerst {main} verbinden",
-  "Copy {project} to {machine}": "{project} auf {machine} kopieren",
-  "Move {project} to {machine}": "{project} auf {machine} verschieben",
-  "Copy {project} to another machine": "{project} auf einen anderen Rechner kopieren",
-  "Move {project} to another machine": "{project} auf einen anderen Rechner verschieben",
   "Nothing on {machine} is replaced without asking.":
     "Auf {machine} wird nichts ungefragt ersetzt.",
   "the other machine": "dem anderen Rechner",
-  "From {source}. Main stays on {main}.": "Von {source}. Haupt bleibt auf {main}.",
-  "From {source}. Main stays where it is.": "Von {source}. Haupt bleibt, wo es ist.",
-  "From {source}. Main moves to {machine}.": "Von {source}. Haupt zieht auf {machine} um.",
-  "From {source}. Main moves to the machine you choose.":
-    "Von {source}. Haupt zieht auf den Rechner um, den du wählst.",
-  "From {source}. {source}'s copy is not linked to the project {machine} belongs to (Main: {main}).":
-    "Von {source}. Die Kopie auf {source} ist nicht mit dem Projekt verknüpft, zu dem {machine} gehört (Haupt: {main}).",
-  "From {source}. {source}'s copy is not linked to the project {machine} belongs to.":
-    "Von {source}. Die Kopie auf {source} ist nicht mit dem Projekt verknüpft, zu dem {machine} gehört.",
-  "Only files are copied into {machine}'s copy. Main stays on {main}, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.":
-    "Es werden nur Dateien in die Kopie auf {machine} kopiert. Haupt bleibt auf {main}, und {source} ist nicht mit diesem Projekt verknüpft. Sollen beide ein Projekt werden, verknüpfe {source} über das Rechner-Menü damit.",
-  "Only files are copied into {machine}'s copy. Its Main does not change, and {source} is not linked to that project. To make them one project, link {source} to it from the machine menu.":
-    "Es werden nur Dateien in die Kopie auf {machine} kopiert. Deren Haupt ändert sich nicht, und {source} ist nicht mit diesem Projekt verknüpft. Sollen beide ein Projekt werden, verknüpfe {source} über das Rechner-Menü damit.",
-  "Main cannot move to {machine} from here: {source} is not linked to the project {machine} belongs to. Link {source} to it from the machine menu first, or copy the files instead.":
-    "Haupt kann von hier nicht auf {machine} umziehen: {source} ist nicht mit dem Projekt verknüpft, zu dem {machine} gehört. Verknüpfe {source} zuerst über das Rechner-Menü damit oder kopiere stattdessen die Dateien.",
-  "Not available: that machine already has Main.":
-    "Nicht verfügbar: Dieser Rechner hat bereits Haupt.",
-  "Not available: it would move Main into a project this copy is not linked to.":
-    "Nicht verfügbar: Haupt würde in ein Projekt umziehen, mit dem diese Kopie nicht verknüpft ist.",
-  "{machine} has a copy. Main stays on {main}.":
-    "{machine} hat eine Kopie. Haupt bleibt auf {main}.",
-  "Not linked: the copy on {machine} belongs to a project whose Main is {main}, and {source} is not part of it. Nothing was linked.":
-    "Nicht verknüpft: Die Kopie auf {machine} gehört zu einem Projekt, dessen Haupt {main} ist, und {source} gehört nicht dazu. Es wurde nichts verknüpft.",
-  "Not linked: the copy on {machine} belongs to another project, and {source} is not part of it. Nothing was linked.":
-    "Nicht verknüpft: Die Kopie auf {machine} gehört zu einem anderen Projekt, und {source} gehört nicht dazu. Es wurde nichts verknüpft.",
   "Link with a project on another machine":
     "Mit einem Projekt auf einem anderen Rechner verknüpfen",
-  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator; Main stays on {main} and you can switch it any time.":
-    "Wähle die Kopie von {project} auf einem anderen Rechner. Jede Kopie behält ihren eigenen Koordinator; Haupt bleibt auf {main}, und du kannst es jederzeit wechseln.",
-  "Pick the copy of {project} on another machine. Each copy keeps its own coordinator, and you can switch Main any time.":
-    "Wähle die Kopie von {project} auf einem anderen Rechner. Jede Kopie behält ihren eigenen Koordinator, und du kannst Haupt jederzeit wechseln.",
-  "Other copy": "Andere Kopie",
   "No project on another connected machine. Add the folder on that machine first, then link it here.":
     "Kein Projekt auf einem anderen verbundenen Rechner. Füge den Ordner zuerst auf diesem Rechner hinzu und verknüpfe ihn dann hier.",
   "{project} on {machine}": "{project} auf {machine}",
   "Not a copy:": "Keine Kopie:",
   "Compared when you review the link.": "Wird beim Prüfen der Verknüpfung verglichen.",
   "Reading folders…": "Ordner werden gelesen…",
-  "No copy of {project} was found on another machine.":
-    "Auf einem anderen Rechner wurde keine Kopie von {project} gefunden.",
   "Other projects ({count})": "Andere Projekte ({count})",
   "Not copies of {project} as far as their folders show. Pick one only if it is a renamed or re-cloned copy.":
     "Nach ihren Ordnern sind das keine Kopien von {project}. Wähle eines nur, wenn es eine umbenannte oder neu geklonte Kopie ist.",
   "Review link": "Verknüpfung prüfen",
-  "Message {machine}'s coordinator for {project}.":
-    "{machine}s Koordinator für {project} schreiben.",
-  "Send delivers your message to {machine}'s coordinator and opens its page, where the answer comes.":
-    "Senden stellt deine Nachricht an {machine}s Koordinator zu und öffnet dessen Seite, wo die Antwort kommt.",
-  "Send delivers your message to main's coordinator and opens its page, where the answer comes.":
-    "Senden stellt deine Nachricht an den Koordinator des Hauptrechners zu und öffnet dessen Seite, wo die Antwort kommt.",
-  "Files stay on this machine. Remove them to send the text to main, or open main's page to attach them there.":
-    "Dateien bleiben auf diesem Rechner. Entferne sie, um den Text an den Hauptrechner zu senden, oder öffne dessen Seite, um sie dort anzuhängen.",
   "1 device waiting": "1 Gerät wartet",
   "A Linux computer": "Ein Linux-Computer",
   "A Mac": "Ein Mac",
@@ -5474,8 +5337,8 @@ export const de: PhraseCatalog = {
     "Es erhält außerdem für ein Jahr einen Schlüssel zu diesem Rechner: Terminals, Dateien, Einstellungen und Anmeldungen, dazu Zugriff, Updates und Skills. Projektgrenzen gelten weiter.",
   "It stops using {machine} right away. To use it again, it asks with a new code.":
     "Es nutzt {machine} ab sofort nicht mehr. Um ihn wieder zu nutzen, fragt es mit einem neuen Code an.",
-  "Its app was approved here with a code, so it can use this machine, and agents on this machine can now run work on it. You can change or remove it in Settings > Machines.":
-    "Seine App wurde hier mit einem Code freigegeben, daher kann er diesen Rechner nutzen, und Agents auf diesem Rechner können jetzt Arbeit auf ihm ausführen. Du kannst das unter Einstellungen > Rechner ändern oder entfernen.",
+  "Its app was approved here with a code, so it can open this machine. Agents here can now run work on {label}; its agents can't run work here unless you allow that in Settings > Machines. To open {label} from this app, type the code shown here into {label} once.":
+    "Seine App wurde hier mit einem Code freigegeben, daher kann sie diesen Rechner öffnen. Agents hier können jetzt Arbeit auf {label} ausführen; seine Agents können hier nur arbeiten, wenn du das unter Einstellungen > Rechner erlaubst. Um {label} aus dieser App zu öffnen, gib den hier angezeigten Code einmal auf {label} ein.",
   "Kept by the update": "Vom Update behalten",
   "Kept by the update. Check this list.": "Vom Update behalten. Prüfe diese Liste.",
   Later: "Später",
@@ -5525,8 +5388,8 @@ export const de: PhraseCatalog = {
   "{label} joined": "{label} ist beigetreten",
   "{machine} no longer lets this device in. Approve it again in SpecWithCode on {machine}.":
     "{machine} lässt dieses Gerät nicht mehr zu. Gib es in SpecWithCode auf {machine} erneut frei.",
-  "Allow lets it use terminals, files, settings and sign-ins on {machine} and start work there, as this app can.":
-    "Mit „Erlauben“ kann es Terminals, Dateien, Einstellungen und Anmeldungen auf {machine} nutzen und dort Arbeit starten, so wie diese App.",
+  "Allow lets that device's SpecWithCode app open {machine} and use its chats and the work they start, terminals, files, settings and sign-ins, and approve or remove other devices. Letting another machine's agents run work here is a separate choice.":
+    "Mit „Erlauben“ kann die SpecWithCode-App auf dem anfragenden Gerät {machine} öffnen und dort Chats und die Arbeit, die sie starten, Terminals, Dateien, Einstellungen und Anmeldungen nutzen sowie andere Geräte erlauben oder entfernen. Ob die Agenten einer anderen Maschine hier arbeiten dürfen, ist eine eigene Entscheidung.",
   "Asked at {time}": "Angefragt um {time}",
   "The name is what the device calls itself. The code is what proves it is the device in front of you, so allow only a code you can read on it.":
     "Den Namen gibt sich das Gerät selbst. Nur der Code beweist, dass es das Gerät vor dir ist, also erlaube nur einen Code, den du darauf lesen kannst.",
@@ -5553,7 +5416,6 @@ export const de: PhraseCatalog = {
   "No machines": "Keine Computer",
   "Each machine keeps its own. Changes here only affect {machine}.":
     "Jeder Computer hat seine eigenen. Änderungen hier betreffen nur {machine}.",
-  "On this machine": "Auf diesem Computer",
   "Not on {machine}": "Nicht auf {machine}",
   "Needs sign-in": "Anmeldung nötig",
   "Update available {version}": "Update verfügbar: {version}",
@@ -5565,9 +5427,7 @@ export const de: PhraseCatalog = {
   "Could not be read": "Konnte nicht gelesen werden",
   "copies differ": "Kopien weichen ab",
   "Across machines": "Alle Computer im Vergleich",
-  "Read-only. Each machine reports its own skills. A machine that could not be read is never shown as missing.":
-    "Nur lesen. Jeder Computer meldet seine eigenen Skills. Ein Computer, der nicht gelesen werden konnte, wird nie als fehlend angezeigt.",
-  "No skills on the machines that were read.": "Auf den gelesenen Computern gibt es keine Skills.",
+  "No skills reported in these reads.": "In diesen Lesevorgängen wurden keine Skills gemeldet.",
   "Showing the first 32 machines. Open Connections to inspect the rest.":
     "Die ersten 32 Computer werden angezeigt. Öffnen Sie Verbindungen für die übrigen.",
   "The machine list could not be refreshed. Listed machines may be out of date.":
@@ -5657,4 +5517,483 @@ export const de: PhraseCatalog = {
   "Agents use your signed-in Chrome through the SpecWithCode extension. It has its own settings page.":
     "Agenten nutzen dein angemeldetes Chrome über die SpecWithCode-Erweiterung. Dafür gibt es eine eigene Einstellungsseite.",
   "Open Chrome settings": "Chrome-Einstellungen öffnen",
+  "Manage hosts": "Hosts verwalten",
+  "Manage profiles": "Profile verwalten",
+  "Profiles: {count}": "Profile: {count}",
+  "Device hosts: {count}": "Geräte-Hosts: {count}",
+  "Let this machine continue a coordinator": "Diesen Rechner einen Koordinator fortsetzen lassen",
+  "Separate project · also on {machine}": "Separates Projekt · auch auf {machine}",
+  "{machine} has this repository as a separate project. Link them from the project menu to share one coordinator, plan and memory.":
+    "{machine} hat dieses Repository als separates Projekt. Verknüpfe sie über das Projektmenü, um einen Koordinator, Plan und ein Gedächtnis zu teilen.",
+  "No other machine has this project.": "Kein anderer Rechner hat dieses Projekt.",
+  "Connect to see its state": "Verbinden, um den Zustand zu sehen",
+  "This app cannot see this machine, so it cannot tell what it does for this project.":
+    "Diese App sieht den Rechner nicht und kann daher nicht sagen, was er für dieses Projekt tut.",
+  "Continue here": "Hier fortsetzen",
+  "{project} is on {machine}. The coordinator stays on {main}.":
+    "{project} ist auf {machine}. Der Koordinator bleibt auf {main}.",
+  "{machine} has this repository as a separate project whose coordinator is on {main}. Nothing was linked.":
+    "{machine} hat dieses Repository als separates Projekt, dessen Koordinator auf {main} ist. Es wurde nichts verknüpft.",
+  "{machine} has this repository as a separate project. Nothing was linked.":
+    "{machine} hat dieses Repository als separates Projekt. Es wurde nichts verknüpft.",
+  "Continue the coordinator on {machine}": "Koordinator auf {machine} fortsetzen",
+  "{project} on your machines": "{project} auf deinen Rechnern",
+  "Separate project: {machine} added this repository on its own, with its own coordinator, threads and memory.":
+    "Separates Projekt: {machine} hat dieses Repository eigenständig hinzugefügt, mit eigenem Koordinator, eigenen Threads und eigenem Speicher.",
+  "Pick a machine to see its threads and files. Nothing moves until you sync or hand off.":
+    "Wähle einen Rechner, um seine Threads und Dateien zu sehen. Nichts wird verschoben, bis du synchronisierst oder übergibst.",
+  "These are separate projects for this repository, each with its own coordinator, threads and memory. You can still open and message each one.":
+    "Das sind separate Projekte für dieses Repository, jedes mit eigenem Koordinator, eigenen Threads und eigenem Speicher. Du kannst trotzdem jedes öffnen und ihm Nachrichten senden.",
+  "Connect…": "Verbinden…",
+  "Makes the project on {machine} part of this one. The coordinator stays where it is, and threads and files stay where they are. You confirm what {machine} gives up first.":
+    "Macht das Projekt auf {machine} zu einem Teil von diesem. Der Koordinator bleibt, wo er ist, und Threads und Dateien bleiben, wo sie sind. Du bestätigst vorher, was {machine} aufgibt.",
+  "Work on {machine}": "Arbeit auf {machine}",
+  "Continue in the folder already there": "Im dort vorhandenen Ordner fortsetzen",
+  "Other machine": "Anderer Rechner",
+  "{project} was not found on another machine.":
+    "{project} wurde auf keinem anderen Rechner gefunden.",
+  "Preparing the machine that keeps its coordinator…":
+    "Rechner, der seinen Koordinator behält, wird vorbereitet…",
+  "Joining the other machine…": "Anderer Rechner wird eingebunden…",
+  "Copying notes and listing both machines…":
+    "Notizen werden kopiert und beide Rechner eingetragen…",
+  "Reading both machines…": "Beide Rechner werden gelesen…",
+  "The coordinator cannot continue on {machine}: it has this repository as a separate project. Link it first.":
+    "Der Koordinator kann nicht auf {machine} fortgesetzt werden: Der Rechner hat dieses Repository als separates Projekt. Verknüpfe ihn zuerst.",
+  "Continues in a folder already saved there, which updates from origin. Always moves the coordinator there.":
+    "Setzt in einem dort bereits gespeicherten Ordner fort, der von origin aktualisiert wird. Verschiebt den Koordinator immer dorthin.",
+  "Not available: that machine already has the coordinator.":
+    "Nicht verfügbar: Dieser Rechner hat bereits den Koordinator.",
+  "Not available: it would move the coordinator into a separate project.":
+    "Nicht verfügbar: Der Koordinator würde in ein separates Projekt verschoben.",
+  "On {machine}. Not on this device.": "Auf {machine}. Nicht auf diesem Gerät.",
+  "This machine has not confirmed where the coordinator is yet. Reconnect it to send messages.":
+    "Dieser Rechner hat noch nicht bestätigt, wo der Koordinator ist. Verbinde ihn neu, um Nachrichten zu senden.",
+  "Separate project": "Separates Projekt",
+  "From {source}. {machine} has this repository as a separate project (coordinator on {main}).":
+    "Von {source}. {machine} hat dieses Repository als separates Projekt (Koordinator auf {main}).",
+  "From {source}. {machine} has this repository as a separate project.":
+    "Von {source}. {machine} hat dieses Repository als separates Projekt.",
+  "From {source}. The coordinator continues on {machine}.":
+    "Von {source}. Der Koordinator läuft auf {machine} weiter.",
+  "From {source}. The coordinator continues on the machine you choose.":
+    "Von {source}. Der Koordinator läuft auf dem Rechner weiter, den du wählst.",
+  "From {source}. The coordinator stays on {main}.":
+    "Von {source}. Der Koordinator bleibt auf {main}.",
+  "From {source}.": "Von {source}.",
+  "Only files go into {machine}'s folder. Its coordinator stays on {main}. To make them one project, link {source} to it from the machine menu.":
+    "Nur Dateien kommen in den Ordner auf {machine}. Sein Koordinator bleibt auf {main}. Sollen beide ein Projekt werden, verknüpfe {source} über das Rechner-Menü damit.",
+  "Only files go into {machine}'s folder. Its coordinator does not change. To make them one project, link {source} to it from the machine menu.":
+    "Nur Dateien kommen in den Ordner auf {machine}. Sein Koordinator ändert sich nicht. Sollen beide ein Projekt werden, verknüpfe {source} über das Rechner-Menü damit.",
+  "The coordinator stays where it is.": "Der Koordinator bleibt, wo er ist.",
+  "Finishing the move…": "Umzug wird abgeschlossen…",
+  "This window cannot open {machine}": "Dieses Fenster kann {machine} nicht öffnen",
+  "Offline · last seen {time}": "Offline · zuletzt gesehen {time}",
+  "this project": "dieses Projekt",
+  Send: "Senden",
+  "{machine} has not confirmed where the coordinator is yet. Reconnect it to send messages.":
+    "{machine} hat noch nicht bestätigt, wo der Koordinator ist. Verbinde den Rechner neu, um Nachrichten zu senden.",
+  "Coordinator conversations": "Koordinator-Gespräche",
+  Threads: "Threads",
+  "another machine": "ein anderer Rechner",
+  "Coordinator on {machine}": "Koordinator auf {machine}",
+  "On {here} and {machines}": "Auf {here} und {machines}",
+  "On {machines} and {last}": "Auf {machines} und {last}",
+  "On {coordinator} (coordinator) and {last}": "Auf {coordinator} (Koordinator) und {last}",
+  "On {coordinator} (coordinator), {machines} and {last}":
+    "Auf {coordinator} (Koordinator), {machines} und {last}",
+  "Connect {machine}": "{machine} verbinden",
+  "Project on another machine": "Projekt auf einem anderen Rechner",
+  "Not reachable from here": "Von hier nicht erreichbar",
+  "Sign in to reach {machine}": "Anmelden, um {machine} zu erreichen",
+  "Can't reach {machine} from this window": "{machine} ist von diesem Fenster aus nicht erreichbar",
+  "Signed out of SpecWithCode Connect": "Von SpecWithCode Connect abgemeldet",
+  "This machine is not affected.": "Dieser Rechner ist nicht betroffen.",
+  "Needs sign-in. Sign in to SpecWithCode Connect to reach it from this window":
+    "Anmeldung nötig. Melde dich bei SpecWithCode Connect an, um ihn von diesem Fenster aus zu erreichen",
+  "Sign in to SpecWithCode Connect to reach it from this window.":
+    "Melde dich bei SpecWithCode Connect an, um ihn von diesem Fenster aus zu erreichen.",
+  "This window reaches it through SpecWithCode Connect and is signed out. Sign in to reach it again.":
+    "Dieses Fenster erreicht ihn über SpecWithCode Connect und ist abgemeldet. Melde dich an, um ihn wieder zu erreichen.",
+  "{machines} can't be reached from this window until you sign in.":
+    "{machines} ist von diesem Fenster aus erst nach der Anmeldung erreichbar.",
+  "Still connected: {machines}.": "Weiter verbunden: {machines}.",
+  "Some of your machines can't be reached from this window until you sign in. This machine is not affected.":
+    "Einige deiner Rechner sind von diesem Fenster aus erst nach der Anmeldung erreichbar. Dieser Rechner ist nicht betroffen.",
+  "{machine} is running, but this window can't reach it until you sign in.":
+    "{machine} läuft, aber dieses Fenster erreicht ihn erst nach der Anmeldung.",
+  "{machines} are running, but this window can't reach them until you sign in.":
+    "{machines} laufen, aber dieses Fenster erreicht sie erst nach der Anmeldung.",
+  "Sign in to reach this machine": "Anmelden, um diesen Rechner zu erreichen",
+  // First-run setup: the Access step, its rows and the shared Chrome steps.
+  "Chrome and Safari profiles and history": "Chrome- und Safari-Profile und -Verlauf",
+  Mail: "Mail",
+  Messages: "Nachrichten",
+  "Photos library": "Fotos-Mediathek",
+  "Time Machine backups": "Time Machine-Backups",
+  "Other apps' data": "Daten anderer Apps",
+  "Screen Recording": "Bildschirmaufnahme",
+  Accessibility: "Bedienungshilfen",
+  "Every agent on {machine}, in every project and with every provider, gets this until you turn it off in System Settings.":
+    "Jeder Agent auf {machine} bekommt das, in jedem Projekt und mit jedem Anbieter, bis du es in den Systemeinstellungen ausschaltest.",
+  "Setup works without Connect, and you can add it later in Settings > Machines.":
+    "Die Einrichtung funktioniert ohne Connect, und du kannst es später unter Einstellungen > Rechner hinzufügen.",
+  "Each row has its own button. Change any of it later in Settings.":
+    "Jede Zeile hat ihre eigene Schaltfläche. Du kannst alles später in den Einstellungen ändern.",
+  "Continue changes nothing.": "Weiter ändert nichts.",
+  "On {machines}.": "Auf {machines}.",
+  "Full access: agents edit and run without asking each time.":
+    "Voller Zugriff: Agenten bearbeiten und führen aus, ohne jedes Mal zu fragen.",
+  "What it allows": "Was er erlaubt",
+  "New chats start with Full access.": "Neue Chats starten mit vollem Zugriff.",
+  "New chats stay Supervised.": "Neue Chats bleiben beaufsichtigt.",
+  "New chats keep their current access.": "Neue Chats behalten ihren aktuellen Zugriff.",
+  "Change it in Settings > General.": "Ändern unter Einstellungen > Allgemein.",
+  "Files and commands": "Dateien und Befehle",
+  "Not changed": "Nicht geändert",
+  Change: "Ändern",
+  "Checking Chrome…": "Chrome wird geprüft…",
+  "{machine} is offline.": "{machine} ist offline.",
+  "Turned off by your team's rules.": "Durch die Regeln deines Teams ausgeschaltet.",
+  "This window cannot pair a browser with {machine}.":
+    "Dieses Fenster kann keinen Browser mit {machine} koppeln.",
+  "Chrome is not installed on {machine}.": "Chrome ist auf {machine} nicht installiert.",
+  "{asking} asks to use this Chrome for its threads.":
+    "{asking} möchte dieses Chrome für seine Threads nutzen.",
+  "{asking} asks to use this Chrome for its threads. This window cannot answer it: answer in Settings > Chrome where you can change access.":
+    "{asking} möchte dieses Chrome für seine Threads nutzen. Dieses Fenster kann nicht antworten: Antworte unter Einstellungen > Chrome, wo du den Zugriff ändern kannst.",
+  "Paired, not answering. Open Chrome, or reconnect.":
+    "Gekoppelt, antwortet nicht. Öffne Chrome oder verbinde neu.",
+  "{profiles}: an older extension.": "{profiles}: eine ältere Erweiterung.",
+  "Update the extension": "Erweiterung aktualisieren",
+  "{profiles}: not from the Chrome Web Store.": "{profiles}: nicht aus dem Chrome Web Store.",
+  "{profiles}: give it a name agents can tell apart.":
+    "{profiles}: Gib ihm einen Namen, den Agenten unterscheiden können.",
+  "Paired: {names}": "Gekoppelt: {names}",
+  "Pair another profile": "Weiteres Profil koppeln",
+  "Your browser": "Dein Browser",
+  "That did not go through. Try again.": "Das hat nicht geklappt. Versuch es noch einmal.",
+  "Screen Recording and Accessibility are allowed.":
+    "Bildschirmaufnahme und Bedienungshilfen sind erlaubt.",
+  "Partly allowed: {missing} is still off.": "Teilweise erlaubt: Noch einzuschalten: {missing}.",
+  "Needs reopening: macOS applies Screen Recording after SpecWithCode reopens.":
+    "Neustart nötig: macOS wendet die Bildschirmaufnahme erst an, wenn SpecWithCode neu geöffnet wird.",
+  "Could not check the Mac's permissions.":
+    "Die Berechtigungen des Mac konnten nicht geprüft werden.",
+  "Agents see the screen and click and type in any app.":
+    "Agenten sehen den Bildschirm und klicken und tippen in jeder App.",
+  "Mac apps": "Mac-Apps",
+  "Agents use only the Chrome profiles you pair, and only while they are paired.":
+    "Agenten nutzen nur die Chrome-Profile, die du koppelst, und nur, solange sie gekoppelt sind.",
+  "They work in the live browser, in a blue tab group you can pull a tab out of. They never read Chrome's files on disk, which Full Disk Access would open to every agent.":
+    "Sie arbeiten im laufenden Browser, in einer blauen Tab-Gruppe, aus der du einen Tab herausziehen kannst. Sie lesen nie die Dateien von Chrome auf der Festplatte, die der Festplattenvollzugriff jedem Agenten öffnen würde.",
+  "SpecWithCode reads Chrome's profile names to show this list.":
+    "SpecWithCode liest die Profilnamen von Chrome, um diese Liste zu zeigen.",
+  "Pick the profile where the accounts agents need are signed in.":
+    "Wähle das Profil, in dem die Konten angemeldet sind, die Agenten brauchen.",
+  "One profile is enough when everything agents need is signed in there. Pair a second one for a work account or another brand's accounts. The browser tools never reach a profile you did not pair.":
+    "Ein Profil reicht, wenn dort alles angemeldet ist, was Agenten brauchen. Kopple ein zweites für ein Arbeitskonto oder die Konten einer anderen Marke. Die Browser-Werkzeuge erreichen nie ein Profil, das du nicht gekoppelt hast.",
+  "Agents use the profile you name.": "Agenten nutzen das Profil, das du nennst.",
+  "It opens in the Chrome profile you used last. To pair another, switch to it in Chrome first.":
+    "Er öffnet sich im zuletzt verwendeten Chrome-Profil. Um ein anderes zu koppeln, wechsle zuerst in Chrome dorthin.",
+  "Anyone with this code can pair a browser with this computer.":
+    "Jeder mit diesem Code kann einen Browser mit diesem Computer koppeln.",
+  "Chrome profile": "Chrome-Profil",
+  "Pick a profile above first.": "Wähle zuerst oben ein Profil.",
+  "Opens the store page in {profile}.": "Öffnet die Store-Seite in {profile}.",
+  "Opens the store page in Chrome.": "Öffnet die Store-Seite in Chrome.",
+  "Paste it in the extension's page, or click its icon in Chrome's toolbar and paste it there.":
+    "Füge ihn auf der Seite der Erweiterung ein, oder klicke auf ihr Symbol in der Chrome-Symbolleiste und füge ihn dort ein.",
+  "Waiting for Chrome…": "Warte auf Chrome…",
+  "The pairing code could not be read. Try again.":
+    "Der Kopplungscode konnte nicht gelesen werden. Versuch es noch einmal.",
+  "The code could not be copied. Press Show instead.":
+    "Der Code konnte nicht kopiert werden. Drücke stattdessen auf Zeigen.",
+  "Developer: allow copies not from the Chrome Web Store":
+    "Entwickler: Kopien zulassen, die nicht aus dem Chrome Web Store stammen",
+  "Off, only the SpecWithCode Browser from the Chrome Web Store can connect to {machine}. On, any other extension id can connect too, such as a copy loaded by hand in chrome://extensions, but still only with the pairing code, and it is marked not from the Chrome Web Store. Turning it off disconnects those copies.":
+    "Aus: Nur der SpecWithCode Browser aus dem Chrome Web Store kann sich mit {machine} verbinden. An: Auch jede andere Erweiterungs-ID kann sich verbinden, etwa eine Kopie, die von Hand in chrome://extensions geladen wurde, aber weiterhin nur mit dem Kopplungscode, und sie wird als nicht aus dem Chrome Web Store markiert. Ausschalten trennt diese Kopien.",
+  "Give it a name agents can tell apart": "Gib ihm einen Namen, den Agenten unterscheiden können",
+  "What agents can use on this {machine}": "Was Agenten auf diesem {machine} nutzen können",
+  "What agents can use": "Was Agenten nutzen können",
+  "Some tasks need it: listing Chrome profiles, reading Mail or Messages, searching Safari history, or working with another app's files. macOS blocks these for every app until you allow it.":
+    "Manche Aufgaben brauchen ihn: Chrome-Profile auflisten, Mail oder Nachrichten lesen, den Safari-Verlauf durchsuchen oder mit den Dateien einer anderen App arbeiten. macOS sperrt das für jede App, bis du es erlaubst.",
+  "What it unlocks": "Was er freischaltet",
+  "A prompt hidden in a web page or file could ask an agent to read your mail. Turn it on only if you need it.":
+    "Eine Anweisung, die in einer Webseite oder Datei versteckt ist, könnte einen Agenten auffordern, deine Mails zu lesen. Schalte ihn nur ein, wenn du ihn brauchst.",
+  "In System Settings › Privacy & Security › Full Disk Access, turn on":
+    "Schalte unter Systemeinstellungen › Datenschutz & Sicherheit › Festplattenvollzugriff Folgendes ein:",
+  "Agents here run under a background service, so macOS asks about it, not the app. In System Settings › Privacy & Security › Full Disk Access, add":
+    "Agenten laufen hier unter einem Hintergrunddienst, daher fragt macOS nach ihm und nicht nach der App. Füge unter Systemeinstellungen › Datenschutz & Sicherheit › Festplattenvollzugriff Folgendes hinzu:",
+  "How Full Disk Access works and how to turn it off":
+    "Wie der Festplattenvollzugriff funktioniert und wie du ihn ausschaltest",
+  "Full Disk Access for agents: allowed, restart running threads":
+    "Festplattenvollzugriff für Agenten: erlaubt, laufende Threads neu starten",
+  "Full Disk Access for agents: allowed": "Festplattenvollzugriff für Agenten: erlaubt",
+  "Full Disk Access for agents: could not be checked":
+    "Festplattenvollzugriff für Agenten: konnte nicht geprüft werden",
+  "Full Disk Access for agents: off": "Festplattenvollzugriff für Agenten: aus",
+  "Privacy access": "Datenschutzzugriff",
+  "Restart needed": "Neustart nötig",
+  Optional: "Optional",
+  "New agent runs have it. Threads that were already running get it after they restart.":
+    "Neue Agentenläufe haben ihn. Threads, die schon liefen, bekommen ihn nach einem Neustart.",
+  "Optional. Agents on": "Optional. Agenten auf",
+  "can't read Chrome or Safari profiles, Mail, Messages, Notes or other apps' data.":
+    "können keine Chrome- oder Safari-Profile, Mail, Nachrichten, Notizen oder Daten anderer Apps lesen.",
+  "What this allows": "Was das erlaubt",
+  "Open System Settings": "Systemeinstellungen öffnen",
+  "Open SpecWithCode on": "Öffne SpecWithCode auf",
+  "to allow it there.": "und erlaube es dort.",
+  "Full Disk Access for agents (optional)": "Festplattenvollzugriff für Agenten (optional)",
+  "Already allowed on this Mac.": "Auf diesem Mac schon erlaubt.",
+  "You can skip this. It is also in Settings › Machines, and agents ask when a task needs it.":
+    "Du kannst das überspringen. Es ist auch unter Einstellungen › Rechner, und Agenten fragen, wenn eine Aufgabe es braucht.",
+  "Use claude, codex and specweave in Terminal too. Adds one marked block to your shell startup file; turn it off any time in Settings > General.":
+    "Nutze claude, codex und specweave auch im Terminal. Fügt deiner Shell-Startdatei einen markierten Block hinzu; du kannst das jederzeit unter Einstellungen > Allgemein ausschalten.",
+  "Your Connect sign-in ends at {time}": "Deine Connect-Anmeldung endet um {time}",
+  "Sign in again to keep reaching {machines} from this window.":
+    "Melde dich erneut an, um {machines} weiter von diesem Fenster aus zu erreichen.",
+  "Sign in again now": "Jetzt erneut anmelden",
+  "SpecWithCode Connect did not accept this sign-in":
+    "SpecWithCode Connect hat diese Anmeldung nicht angenommen",
+  "Sign in again to reach your machines through SpecWithCode Connect.":
+    "Melde dich erneut an, um deine Rechner über SpecWithCode Connect zu erreichen.",
+  "Sign in again": "Erneut anmelden",
+  first: "zuerst",
+  "None of the ready agents runs a model on this list.":
+    "Keiner der bereiten Agenten nutzt ein Modell auf dieser Liste.",
+  "No reviewer yet.": "Noch kein Prüfer.",
+  "A review needs a model from a second family, such as {first} or {second}.":
+    "Eine Prüfung braucht ein Modell aus einer zweiten Familie, etwa {first} oder {second}.",
+  "Add one": "Eines hinzufügen",
+  "+{n} more": "+{n} weitere",
+  "Ready once an agent is signed in.": "Bereit, sobald ein Agent angemeldet ist.",
+  // 1398: the first feature guide and its offer.
+  "Your first feature": "Deine erste Funktion",
+  "Turn SpecWeave on": "SpecWeave einschalten",
+  "Ask for it whole": "Alles auf einmal anfragen",
+  "Read the review": "Review lesen",
+  "This project has no plans or board yet. Turn SpecWeave on.":
+    "Dieses Projekt hat noch keine Pläne und kein Board. Schalte SpecWeave ein.",
+  "Show me": "Zeig es mir",
+  "Ask for the whole feature in one request. Your agents plan it, build it, review it and close it.":
+    "Frag die ganze Funktion in einer Anfrage an. Deine Agenten planen sie, bauen sie, prüfen sie und schließen sie ab.",
+  "Ask for the whole feature in one request. Your agents plan it, build it and close it.":
+    "Frag die ganze Funktion in einer Anfrage an. Deine Agenten planen sie, bauen sie und schließen sie ab.",
+  "Write it for me": "Für mich schreiben",
+  "Open the thread": "Thread öffnen",
+  Planning: "Planung",
+  "Working: {done} of {total} tasks": "In Arbeit: {done} von {total} Aufgaben",
+  "In review": "Im Review",
+  "Fixing what the review found": "Behebt, was das Review gefunden hat",
+  "When the card is in Done, open it and read what the review found.":
+    "Sobald die Karte in Erledigt ist, öffne sie und lies, was das Review gefunden hat.",
+  "Open the review": "Review öffnen",
+  Ship: "Freigegeben",
+  "Fix first": "Erst beheben",
+  "No verdict": "Kein Urteil",
+  "A reviewer": "Ein Reviewer",
+  "Reviewed by {model}, the same family that built it.":
+    "Geprüft von {model}, aus derselben Familie, die sie gebaut hat.",
+  "No review ran. A review needs a model from a second family, such as {codex} or {muse}.":
+    "Es lief kein Review. Ein Review braucht ein Modell aus einer zweiten Familie, etwa {codex} oder {muse}.",
+  "No review is recorded for this feature.": "Für diese Funktion ist kein Review erfasst.",
+  "Skip this step": "Schritt überspringen",
+  "Leave the guide": "Anleitung verlassen",
+  "Waiting on this step. The Board tab says what went wrong.":
+    "Dieser Schritt wartet. Der Tab Board sagt, was schiefging.",
+  "Waiting on this step. The coordinator's last message says why.":
+    "Dieser Schritt wartet. Die letzte Nachricht des Koordinators sagt, warum.",
+  "That is the loop: plan, board, work, review, done.":
+    "Das ist der Ablauf: Plan, Board, Arbeit, Review, erledigt.",
+  "Review finished features in all projects on this Mac":
+    "Fertige Funktionen in allen Projekten auf diesem Mac prüfen",
+  "Each review uses the reviewer's plan.": "Jedes Review nutzt das Abo des Reviewers.",
+  "On for all projects on this Mac. Each review uses the reviewer's plan.":
+    "Für alle Projekte auf diesem Mac eingeschaltet. Jedes Review nutzt das Abo des Reviewers.",
+  "Remove the sample project": "Beispielprojekt entfernen",
+  "Remove {name} from SpecWithCode? Its folder and files stay on disk.":
+    "{name} aus SpecWithCode entfernen? Ordner und Dateien bleiben auf der Festplatte.",
+  "Build a first feature": "Bau eine erste Funktion",
+  "Your agents plan and build one small feature and another model reviews it, on your own plans.":
+    "Deine Agenten planen und bauen eine kleine Funktion, und ein anderes Modell prüft sie, mit deinen eigenen Abos.",
+  "Try a first feature": "Erste Funktion ausprobieren",
+  "Sign in an agent first": "Melde zuerst einen Agenten an",
+  "Continue your first feature": "Mach mit deiner ersten Funktion weiter",
+  "Your sample project is where you left it.": "Dein Beispielprojekt ist da, wo du aufgehört hast.",
+  "Open it": "Öffnen",
+  "Dismiss Build a first feature": "Bau eine erste Funktion ausblenden",
+  "First feature guide": "Anleitung zur ersten Funktion",
+  "Automatic review is still on for the sample":
+    "Automatisches Review ist im Beispiel noch eingeschaltet",
+  done: "erledigt",
+  skipped: "übersprungen",
+  Reviews: "Reviews",
+  "Removed {name}": "{name} entfernt",
+  "Its folder and files stay on disk.": "Ordner und Dateien bleiben auf der Festplatte.",
+  "The guide could not be updated. Try again.":
+    "Die Anleitung konnte nicht aktualisiert werden. Versuch es noch einmal.",
+  "The setting was not saved. Try again.":
+    "Die Einstellung wurde nicht gespeichert. Versuch es noch einmal.",
+  "The sample project was not removed. Try again.":
+    "Das Beispielprojekt wurde nicht entfernt. Versuch es noch einmal.",
+  "Could not make the sample project": "Das Beispielprojekt konnte nicht angelegt werden",
+  "The sample project has no first commit": "Das Beispielprojekt hat keinen ersten Commit",
+  "The sample project is ready": "Das Beispielprojekt ist bereit",
+  "It appears in the sidebar once this window catches up.":
+    "Es erscheint in der Seitenleiste, sobald dieses Fenster aktuell ist.",
+  "This connection cannot change the settings of this Mac.":
+    "Diese Verbindung kann die Einstellungen dieses Mac nicht ändern.",
+  "How much longer work takes with {setting}": "Wie viel länger die Arbeit mit „{setting}“ dauert",
+  "Can make work take much longer to finish: in measured runs, reviewed work took a median 2.6 times as long as the same work before review (half of runs 1.6 to 3.6 times), because each review round and its fixes add time.":
+    "Kann die Arbeit deutlich verlängern: In Messungen dauerte geprüfte Arbeit im Median 2,6-mal so lange wie dieselbe Arbeit vor dem Review (die Hälfte der Läufe 1,6- bis 3,6-mal), weil jede Review-Runde und ihre Korrekturen Zeit kosten.",
+  "Can make work take longer: each consult adds about 2 minutes. In measured runs, threads that asked took about 1.1 times as long, and 1 in 10 took 1.4 times as long or more.":
+    "Kann die Arbeit verlängern: Jede Konsultation kostet etwa 2 Minuten. In Messungen dauerten Threads mit Konsultationen etwa 1,1-mal so lange, jeder zehnte 1,4-mal so lange oder länger.",
+  "{count} not done": "{count} nicht erledigt",
+  "Project folder is {count} commit behind {branch}":
+    "Projektordner ist {count} Commit hinter {branch}",
+  "Project folder is {count} commits behind {branch}":
+    "Projektordner ist {count} Commits hinter {branch}",
+  "Last fetched just now.": "Zuletzt gerade eben abgerufen.",
+  "Last fetched {age} ago.": "Zuletzt vor {age} abgerufen.",
+  "From worktree {name}": "Aus Worktree {name}",
+  "From {branch}": "Aus {branch}",
+  "From {branch}, fetched just now": "Aus {branch}, gerade eben abgerufen",
+  "From {branch}, fetched {age} ago": "Aus {branch}, vor {age} abgerufen",
+  "This is the newest copy of the increment. The project folder's copy is older or missing.":
+    "Das ist die neueste Kopie des Inkrements. Die Kopie im Projektordner ist älter oder fehlt.",
+  "This copy's files could not be read on this machine.":
+    "Die Dateien dieser Kopie konnten auf diesem Rechner nicht gelesen werden.",
+  "Review stays here: no permitted reviewer on {machine}":
+    "Das Review bleibt hier: kein zugelassener Reviewer auf {machine}",
+  "Review stays here: update SpecWithCode on {machine}":
+    "Das Review bleibt hier: SpecWithCode auf {machine} aktualisieren",
+  "Close. The code stays in Settings > Machines.":
+    "Schließen. Der Code bleibt unter Einstellungen > Rechner.",
+  "Waiting for {machine}": "Warte auf {machine}",
+  "Waiting for machines to allow this device": "Warte, bis Rechner dieses Gerät zulassen",
+  "Waiting to join": "Wartet auf Beitritt",
+  "Sign in or switch account": "Anmelden oder Konto wechseln",
+  "Reinstall or update": "Neu installieren oder aktualisieren",
+  "Pick command": "Befehl wählen",
+  "The sign-in looks expired or missing. Sign in again, with this account or another.":
+    "Die Anmeldung scheint abgelaufen oder fehlt. Melde dich erneut an, mit diesem oder einem anderen Konto.",
+  "The install looks broken. Reinstall or update it, then check again.":
+    "Die Installation scheint defekt. Installiere neu oder aktualisiere, dann prüfe erneut.",
+  "The command could not be started. Pick the command to run, or reinstall.":
+    "Der Befehl ließ sich nicht starten. Wähle den Befehl aus oder installiere neu.",
+  "Checked at {time}. Still not working.": "Geprüft um {time}. Funktioniert noch nicht.",
+  "Checked at {time}.": "Geprüft um {time}.",
+  "This folder belongs to one terminal session and disappears when it closes. The app looks up the command again on the next check.":
+    "Dieser Ordner gehört zu einer Terminalsitzung und verschwindet, wenn sie endet. Die App sucht den Befehl bei der nächsten Prüfung neu.",
+  Pending: "Ausstehend",
+  "Held on {machine}": "Angehalten auf {machine}",
+  "Waiting for confirmation": "Wartet auf Bestätigung",
+  Resumed: "Fortgesetzt",
+  "Resumed on {machine}": "Auf {machine} fortgesetzt",
+  "Ready on {machine}": "Bereit auf {machine}",
+  Stayed: "Geblieben",
+  "Not held yet": "Noch nicht angehalten",
+  "Paused on {machine}, not sent yet": "Auf {machine} pausiert, noch nicht gesendet",
+  "{machine} has not answered yet": "{machine} hat noch nicht geantwortet",
+  "Sent at {time}. {machine} has not answered yet":
+    "Um {time} gesendet. {machine} hat noch nicht geantwortet",
+  "Its interrupted run continues there": "Der unterbrochene Lauf geht dort weiter",
+  "Idle. Installed on {machine}; nothing started":
+    "Inaktiv. Auf {machine} eingerichtet; nichts gestartet",
+  "It stays on {machine}": "Er bleibt auf {machine}",
+  "{target} did not accept it. It runs on {source} again":
+    "{target} hat ihn nicht angenommen. Er läuft wieder auf {source}",
+  "Same-account and unknown-usage machines are never chosen automatically, and no other track is used.":
+    "Rechner mit demselben Konto oder unbekannter Nutzung werden nie automatisch gewählt, und es wird kein anderer Track verwendet.",
+  "{track} track is out on every machine": "Der Track {track} ist auf jedem Rechner aufgebraucht",
+  "1 thread stays on {machine}. Nothing moves.":
+    "1 Thread bleibt auf {machine}. Nichts wird verschoben.",
+  "{n} threads stay on {machine}. Nothing moves.":
+    "{n} Threads bleiben auf {machine}. Nichts wird verschoben.",
+  "Next reset: {machine} at {time}": "Nächste Zurücksetzung: {machine} um {time}",
+  "Checked again then.": "Dann wird erneut geprüft.",
+  "Reset unknown": "Zurücksetzung unbekannt",
+  "No eligible sign-in reports when it resets.":
+    "Keine geeignete Anmeldung meldet, wann sie zurückgesetzt wird.",
+  "Threads finished": "Abgeschlossene Threads",
+  Wait: "Warten",
+  "Open on {machine}": "Auf {machine} öffnen",
+  "Resume here": "Hier fortsetzen",
+  "It is being sent now, so it was not released. Nothing changed.":
+    "Er wird gerade gesendet und wurde deshalb nicht freigegeben. Nichts hat sich geändert.",
+  "Hand off progress": "Fortschritt der Übergabe",
+  "This machine keeps no record of that hand off any more.":
+    "Dieser Rechner hat keinen Eintrag mehr zu dieser Übergabe.",
+  "All {n} on {machine}": "Alle {n} auf {machine}",
+  "{f} of {n} finished": "{f} von {n} abgeschlossen",
+  "{f} of {n} finished: {counts}": "{f} von {n} abgeschlossen: {counts}",
+  "{track} track out of tokens on {machine}": "Track {track} hat auf {machine} keine Tokens mehr",
+  "Out of tokens on {machine}": "Keine Tokens mehr auf {machine}",
+  "You asked to hand off": "Du hast eine Übergabe angefordert",
+  "You asked to continue on {machine}": "Du wolltest auf {machine} fortfahren",
+  "You asked to hand off to {machine}": "Du hast die Übergabe an {machine} angefordert",
+  "Hand off “{project}”": "„{project}“ übergeben",
+  "Hand off “{project}” to {machine}": "„{project}“ an {machine} übergeben",
+  "Waiting is not failed. {source} runs none of these threads while {target} has not answered.":
+    "Warten ist kein Fehlschlag. {source} führt keinen dieser Threads aus, solange {target} nicht geantwortet hat.",
+  "Ready means installed idle: nothing starts on {machine} until you write.":
+    "Bereit heißt inaktiv eingerichtet: Auf {machine} startet nichts, bis du schreibst.",
+  "{n} resumed": "{n} fortgesetzt",
+  "{n} ready": "{n} bereit",
+  "{n} stayed": "{n} geblieben",
+  "{n} failed": "{n} fehlgeschlagen",
+  "Hand off work from {machine}": "Arbeit von {machine} übergeben",
+  "Scope: {project}": "Umfang: {project}",
+  "Scope: every project on {machine}": "Umfang: jedes Projekt auf {machine}",
+  "Handing off…": "Wird übergeben…",
+  "Nothing can go": "Nichts kann gehen",
+  "Hand off to {machine}": "An {machine} übergeben",
+  "Hand off": "Übergeben",
+  "Tick what goes. It continues on the machine you pick. Anything that cannot go stays here, untouched, with its reason.":
+    "Hake an, was geht. Es läuft auf dem Rechner weiter, den du auswählst. Was nicht gehen kann, bleibt unverändert hier, mit dem Grund.",
+  "Hand off to": "Übergeben an",
+  "Running ({n})": "Läuft ({n})",
+  "Running threads": "Laufende Threads",
+  Goes: "Geht",
+  "{machine} finishes this hand off by itself. You can close this.":
+    "{machine} schließt diese Übergabe selbst ab. Du kannst das hier schließen.",
+  "This machine can't hand threads off yet.": "Dieser Rechner kann Threads noch nicht übergeben.",
+  "Hand off work to another machine": "Arbeit an einen anderen Rechner übergeben",
+  "Hand off every project on this machine": "Jedes Projekt auf diesem Rechner übergeben",
+  "{machine} no longer keeps every thread of this hand off, so this list is not all of it.":
+    "{machine} hat nicht mehr jeden Thread dieser Übergabe gespeichert, diese Liste ist also unvollständig.",
+  "Show hand off progress": "Fortschritt der Übergabe anzeigen",
+  "Nothing in {project} on {machine} can go.": "Nichts in {project} auf {machine} kann gehen.",
+  "Nothing here can go.": "Nichts von hier kann gehen.",
+  "Waiting for your next message ({n})": "Wartet auf deine nächste Nachricht ({n})",
+  "Waiting for your next message": "Wartet auf deine nächste Nachricht",
+  "Stays ({n})": "Bleibt ({n})",
+  "Stays here": "Bleibt hier",
+  "Answer it first": "Beantworte es zuerst",
+  "The personal assistant stays on this machine.":
+    "Der persönliche Assistent bleibt auf diesem Rechner.",
+  "Its queued messages do not travel in a hand off by hand yet.":
+    "Seine Nachrichten in der Warteschlange gehen bei einer Übergabe von Hand noch nicht mit.",
+  "Up to {n} threads go in one hand off. Hand off the rest after.":
+    "Bis zu {n} Threads gehen in einer Übergabe. Übergib den Rest danach.",
+  "{provider} sign-in expired on {machine}": "{provider}-Anmeldung auf {machine} abgelaufen",
+  "{provider} sign-in expired": "{provider}-Anmeldung abgelaufen",
+  "{from} can start work on {to}": "{from} kann Arbeit auf {to} starten",
+  "{from} can't start work on {to}": "{from} kann keine Arbeit auf {to} starten",
+  "Allow it on {there} in Settings > Machines":
+    "Erlaube es auf {there} unter Einstellungen > Rechner",
+  "Set up {here} to start work on {there}": "{here} einrichten, um Arbeit auf {there} zu starten",
+  "Change what {here} may do on {there}": "Ändern, was {here} auf {there} darf",
+  "Only on {machine}": "Nur auf {machine}",
+  "{there} can start work on {here}: agents on {there} may start threads in {here}'s projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. {here} can start work on {there}: agents on {here} may start threads there, up to the access {there} allows.":
+    "{there} kann Arbeit auf {here} starten: Agents auf {there} dürfen Threads in den Projekten von {here} starten. Stoppen lehnt neue Arbeit sofort ab; Threads, die schon laufen, stoppen 2 Minuten später. {here} kann Arbeit auf {there} starten: Agents auf {here} dürfen dort Threads starten, bis zu dem Zugriff, den {there} erlaubt.",
+  "Only {machineLabel} can allow this. On {machineLabel}, open Settings > Machines and find {hereLabel}'s card: if it offers Connect, connect first, then choose Allow… there.":
+    "Nur {machineLabel} kann das erlauben. Öffne auf {machineLabel} Einstellungen > Rechner und suche die Karte von {hereLabel}: Bietet sie „Verbinden“ an, verbinde zuerst, dann wähle „Erlauben…“.",
+  "Not set up yet. Step 1: add {machineLabel} so {hereLabel}'s server can reach it. Step 2: Allow.":
+    "Noch nicht eingerichtet. Schritt 1: Füge {machineLabel} hinzu, damit der Server von {hereLabel} ihn erreicht. Schritt 2: Erlauben.",
+  "Its app": "Seine App",
+  "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
+    "Wenn die App dieses Rechners diesen hier öffnet, fragt sie einmal nach einem Code: Der Code erscheint dort, und du gibst ihn hier ein.",
 };

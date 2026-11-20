@@ -76,10 +76,15 @@ const WALKS = [
   { entry: "start", locale: "en-US", theme: "dark", width: 390, height: 844 },
   { entry: "start", locale: "de-DE", theme: "light", width: 1280, height: 800 },
   { entry: "connection", locale: "de-DE", theme: "dark", width: 390, height: 844 },
+  // Projects still loading when the step opens: once the scan ends with Import enabled,
+  // a real Enter must still go on without importing (1387 closing review).
+  { entry: "connection", locale: "en-US", theme: "light", width: 1280, height: 800, scans: "late" },
 ];
 const EXPECTED = {
   start: ["start", "agents", "access", "import"],
   connection: ["connection", "agents", "access", "import"],
+  // Enter, not the walker's press, ends the Projects step.
+  late: ["connection", "agents", "access"],
 };
 // Chosen, granted or imported: a walk on neutral actions does none of these.
 const FORBIDDEN_CALLS = ["accept", "import", "createProject", "openSetupAuthPrompt"];
@@ -113,8 +118,11 @@ for (const walk of WALKS) {
   const shots = [];
   const labels = [];
   let steps = [];
+  let focusAfterScans = null;
   try {
-    await page.goto(`${origin}/?entry=${walk.entry}&theme=${walk.theme}`);
+    await page.goto(
+      `${origin}/?entry=${walk.entry}&theme=${walk.theme}${walk.scans ? `&scans=${walk.scans}` : ""}`,
+    );
     await page.waitForLoadState("networkidle");
     steps = await walkFirstRun(page, {
       until: () => page.locator("[data-fixture-done]").isVisible(),
@@ -132,6 +140,18 @@ for (const walk of WALKS) {
         const name = `${walk.entry}-${walk.locale}-${walk.theme}-${walk.width}-${shots.length + 1}-${step}.png`;
         await page.screenshot({ path: NodePath.join(output, name) });
         shots.push(name);
+        if (walk.scans === "late" && step === "import") {
+          await page.evaluate(() => window.finishScans());
+          await page
+            .locator('[data-wizard-step="import"] [data-wizard-primary]:not(:disabled)')
+            .waitFor({ timeout: 15_000 });
+          await page.waitForTimeout(150);
+          focusAfterScans = await page.evaluate(() => ({
+            neutral: document.activeElement?.hasAttribute("data-wizard-neutral") ?? false,
+            primary: document.activeElement?.hasAttribute("data-wizard-primary") ?? false,
+          }));
+          await page.keyboard.press("Enter");
+        }
       },
     });
     await page.locator("[data-fixture-done]").waitFor({ timeout: 15_000 });
@@ -140,16 +160,16 @@ for (const walk of WALKS) {
     steps = error.firstRunSteps ?? steps;
     await page.screenshot({ path: NodePath.join(output, `FAILED-${at.replaceAll(" ", "-")}.png`) });
   }
-  if (steps.join() !== EXPECTED[walk.entry].join())
-    fail(
-      at,
-      `walked ${steps.join(" > ") || "nothing"}, expected ${EXPECTED[walk.entry].join(" > ")}`,
-    );
+  const expected = EXPECTED[walk.scans ?? walk.entry];
+  if (steps.join() !== expected.join())
+    fail(at, `walked ${steps.join(" > ") || "nothing"}, expected ${expected.join(" > ")}`);
+  if (walk.scans === "late" && !(focusAfterScans?.neutral && !focusAfterScans.primary))
+    fail(at, `after the scan ended focus was ${JSON.stringify(focusAfterScans)}, not the neutral control`);
   const calls = await page.evaluate(() => window.fixtureCalls.map((call) => call[0]));
   for (const call of FORBIDDEN_CALLS) if (calls.includes(call)) fail(at, `the walk called ${call}`);
   if (!calls.includes("done")) fail(at, "setup did not finish");
   for (const error of errors) fail(at, `page error: ${error}`);
-  report.push({ ...walk, steps, labels, calls, screenshots: shots });
+  report.push({ ...walk, steps, labels, calls, focusAfterScans, screenshots: shots });
   await context.close();
 }
 // The German walks went through German setup: no neutral action reads as in English.

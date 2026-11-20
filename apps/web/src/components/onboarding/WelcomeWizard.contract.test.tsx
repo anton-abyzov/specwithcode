@@ -28,6 +28,16 @@ const world = vi.hoisted(() => ({
   refresh: vi.fn(),
 }));
 
+// The Chrome and Mac apps rows read live machine state; their own tests cover them.
+vi.mock("./ChromeAccessRow", () => ({
+  ChromeAccessRow: () => <li data-access-row="browser" />,
+}));
+vi.mock("./MacAppsRow", () => ({
+  MacAppsRow: () => <li data-access-row="mac-apps" />,
+}));
+vi.mock("./IPhoneRow", () => ({
+  IPhoneRow: () => <li data-access-row="iphone" />,
+}));
 vi.mock("@clerk/react", () => ({
   useAuth: () => world.auth,
   useUser: () => ({ user: null }),
@@ -305,20 +315,36 @@ it("offers no neutral action while this machine's link is still being read", asy
   expect(contract().neutral).toHaveLength(0);
 });
 
-it("has no enabled neutral control while the Access step saves", async () => {
+it("keeps Continue as the Access step's one neutral control, also while an answer saves", async () => {
   let finish = (_: unknown) => {};
   world.accept.mockImplementation(() => new Promise((resolve) => (finish = resolve)));
   await render();
   await act(async () => contract().neutral[0]!.click());
   await act(async () => contract().neutral[0]!.click());
   expect(contract().step).toBe("access");
-  expect(contract().neutral.map((element) => element.textContent?.trim())).toEqual([
-    "Keep Supervised",
-  ]);
+  expect(contract().neutral.map((element) => element.textContent?.trim())).toEqual(["Continue"]);
+  // A row's answer is not the step's: it saves in place and Continue stays.
   await act(async () => button("Use Full access")!.click());
-  expect(contract().neutral).toHaveLength(0);
+  expect(contract().step).toBe("access");
+  expect(contract().neutral.map((element) => element.textContent?.trim())).toEqual(["Continue"]);
   await act(async () => finish(new Map([["test-env", "approval-required"]])));
+  expect(contract().step).toBe("access");
+  await act(async () => contract().neutral[0]!.click());
   expect(contract().step).toBe("import");
+});
+
+it("keeps focus on the neutral control when projects finish loading, so Enter imports nothing", async () => {
+  world.scansPending = true;
+  await render();
+  for (let index = 0; index < 3; index++) await act(async () => contract().neutral[0]!.click());
+  expect(contract().step).toBe("import");
+  // The scans finish in the same mounted step: its footer is drawn again with Import enabled.
+  world.scansPending = false;
+  await render();
+  expect(button("Import 1 project")).toBeDefined();
+  expect(document.activeElement?.textContent?.trim()).toBe("Do not import projects");
+  expect(document.activeElement?.hasAttribute("data-wizard-neutral")).toBe(true);
+  expect(world.importThreads).not.toHaveBeenCalled();
 });
 
 it("keeps the import step's neutral control while projects load, and none while an import runs", async () => {

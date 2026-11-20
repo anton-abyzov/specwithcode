@@ -412,6 +412,10 @@ const STUDIO_MCP_TOOLS: Readonly<Record<string, StudioMcpToolDefinition>> = {
   ),
   studio_decide: tool(["Decide", "Deciding", "Decided", "between options"], "environment-read"),
   studio_project_read: tool(["Read", "Reading", "Read", "a project"], "project-read"),
+  request_specweave_setup: tool(
+    ["Ask", "Asking", "Asked", "to set up SpecWeave"],
+    "project-update",
+  ),
   studio_project_create: tool(
     ["Register", "Registering", "Registered", "a project"],
     "project-create",

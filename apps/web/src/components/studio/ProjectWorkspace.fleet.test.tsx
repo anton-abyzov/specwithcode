@@ -205,99 +205,62 @@ describe("handoff recovery after the active coordinator moves", () => {
   });
 });
 
-describe("a workers-only copy whose coordinator runs on another machine", () => {
+describe("a linked machine beside other machines of the project (AC-35)", () => {
   const domain = { id: "one", title: "Atlas", coordinatorId: "c", members: [] };
-  const coordinatorRef = { environmentId: "m4", projectId: "main", coordinatorThreadId: "main" };
-  async function viewCopy() {
-    // "Copy files only" from m4 left this copy transferred to m4's coordinator.
-    Object.assign(state.project, {
+  const other = (id: string, environmentId: string, binding: Record<string, unknown>) =>
+    ({
+      id,
+      environmentId,
+      workspaceRoot: `/${environmentId}/atlas`,
       workspaceSettings: {
         logicalProject: domain,
-        coordinatorBinding: { epoch: 1, state: "transferred", successor: coordinatorRef },
+        coordinatorBinding: binding,
+        coordinatorThreadId: id,
       },
+    }) as never;
+  async function view(binding: Record<string, unknown>, others: never[]) {
+    Object.assign(state.project, {
+      workspaceSettings: { logicalProject: domain, coordinatorBinding: binding },
     });
-    state.otherCheckouts = [
-      {
-        id: "main",
-        environmentId: "m4",
-        workspaceRoot: "/m4/atlas",
-        workspaceSettings: {
-          logicalProject: domain,
-          coordinatorBinding: { epoch: 1, state: "active" },
-          coordinatorThreadId: "main",
-        },
-      } as never,
-    ];
-    state.pairedHosts = ["m4"];
+    state.otherCheckouts = others;
+    state.pairedHosts = ["m4", "old"];
     state.savedMachines = { atlas: "host:project" };
+    state.shells = [shell("worker")];
     await render();
   }
-  const notice = () => container.querySelector<HTMLElement>("[data-workers-only]");
+  const m4 = other("main", "m4", { epoch: 1, state: "active" });
+  // A machine on the old version, back with a record that says it took over from this one.
+  const oldPeer = other("taken", "old", {
+    epoch: 9,
+    state: "active",
+    predecessor: { environmentId: "host", projectId: "project", coordinatorThreadId: "c" },
+  });
 
-  it("names the coordinator's machine and opens its checkout from the notice", async () => {
-    // This copy never ran a coordinator, so it has no conversation to keep.
-    state.shells = [shell("worker")];
-    try {
-      await viewCopy();
-      expect(notice()?.dataset.workersOnly).toBe("m4:main");
-      expect(notice()?.textContent).toContain(
-        "Main for Atlas is m4. This copy takes work from there.",
+  it("keeps the message box on this machine's own coordinator, with an old peer back too", async () => {
+    for (const others of [[m4], [m4, oldPeer]]) {
+      // This machine followed m4 before the update; it runs its own coordinator now.
+      await view({ epoch: 1, state: "active" }, others);
+      expect(container.querySelector("[data-workers-only]")).toBeNull();
+      expect(container.querySelector("[data-continue-here]")).toBeNull();
+      expect(container.textContent).not.toMatch(
+        /Send opens it there|coordinator (for Atlas )?is on|Continue here|gives way|needs an update/,
       );
-      expect(container.textContent).not.toContain("kept as history");
-      expect(sendButton().disabled).toBe(true);
-      // This window has no write access on m4, so the switch says what to do instead of
-      // opening a move m4 would refuse. It never offers a second coordinator here.
-      const makeMain = notice()!.querySelector<HTMLButtonElement>("[data-make-main]")!;
-      expect(makeMain.textContent).toBe("Make host main");
-      expect(makeMain.disabled).toBe(true);
-      expect(notice()?.textContent).toContain(
-        "This window can only read m4, so it cannot move main from there.",
-      );
-      expect(notice()?.textContent).not.toMatch(/again/i);
-      await click("Write to m4's coordinator");
-      // The page now views m4's coordinator, where work for this copy is started.
-      expect(state.savedMachines.atlas).toBe("m4:main");
-    } finally {
-      delete (state.project as { workspaceSettings?: unknown }).workspaceSettings;
     }
   });
 
-  it("makes this copy main through main's own confirmed move, then returns here", async () => {
-    state.shells = [shell("worker")];
-    // This window may operate and write on m4, so the move can start from there.
-    state.recoveryHosts = ["m4"];
-    try {
-      await viewCopy();
-      const makeMain = notice()!.querySelector<HTMLButtonElement>("[data-make-main]")!;
-      expect(makeMain.disabled).toBe(false);
-      expect(notice()?.textContent).toContain(
-        "Making host main moves the coordinator and its conversation here from m4, which becomes a copy.",
-      );
-      await act(async () => makeMain.click());
-      // The conversation to move is on m4: its page is shown, and its move dialog opens.
-      expect(state.savedMachines.atlas).toBe("m4:main");
-      expect(document.querySelector('[role="dialog"]')).toBeNull();
-      await render();
-      const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
-      expect(dialog).not.toBeNull();
-      // Closing the dialog without moving returns to the copy's page.
-      await act(async () =>
-        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
-      );
-      expect(state.savedMachines.atlas).toBe("host:project");
-    } finally {
-      delete (state.project as { workspaceSettings?: unknown }).workspaceSettings;
-    }
-  });
-
-  it("keeps the history wording for a copy that ran a coordinator before", async () => {
-    try {
-      await viewCopy();
-      expect(notice()?.textContent).toContain(
-        "Main for Atlas is m4. This copy takes work from there. The conversation here is kept as history.",
-      );
-    } finally {
-      delete (state.project as { workspaceSettings?: unknown }).workspaceSettings;
-    }
+  it("says a machine still on the old version needs an update, and sends nothing elsewhere", async () => {
+    await view(
+      {
+        epoch: 1,
+        state: "transferred",
+        successor: { environmentId: "m4", projectId: "main", coordinatorThreadId: "main" },
+      },
+      [m4],
+    );
+    expect(container.textContent).toContain(
+      "This machine needs an update before its coordinator can take messages.",
+    );
+    expect(container.querySelector("[data-workers-only]")).toBeNull();
+    expect(container.querySelector("[data-continue-here]")).toBeNull();
   });
 });

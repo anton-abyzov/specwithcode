@@ -470,7 +470,7 @@ export const makeSkillSearch = Effect.fn("SkillSearch.make")(function* (deps: Sk
       };
     });
 
-  return { search };
+  return { search, vault: findVault };
 });
 
 export type SkillSearch = Effect.Success<ReturnType<typeof makeSkillSearch>>;

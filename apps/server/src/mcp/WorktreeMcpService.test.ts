@@ -446,6 +446,10 @@ describe("studio_worktree_handoff", () => {
       const result = yield* runHandoff(harness, { branch: "feature/no-continuation" });
       expect(result.continuation).toEqual({ status: "skipped" });
       expect(harness.sendToThread).not.toHaveBeenCalled();
+      // Without a continuation the move is a stop the parent hears of.
+      expect(harness.dispatch).toHaveBeenCalledWith(
+        expect.not.objectContaining({ continuesInWorktree: true }),
+      );
     });
   });
 
@@ -458,6 +462,10 @@ describe("studio_worktree_handoff", () => {
       });
 
       expect(result.continuation).toEqual({ status: "scheduled", delivery: "queued" });
+      // The move says the work continues, so a delegated child's result waits for it.
+      expect(harness.dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "thread.metadata.update", continuesInWorktree: true }),
+      );
       expect(harness.sendToThread).toHaveBeenCalledWith(
         expect.objectContaining({
           projectId,

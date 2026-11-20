@@ -52,8 +52,6 @@ import { buildProviderInstanceUpdatePatch } from "../settings/SettingsPanels.log
 import { OpenAI } from "../Icons";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
-import { ScrollArea } from "../ui/scroll-area";
-import { cn } from "../../lib/utils";
 import { useT, useTx } from "../../i18n";
 import { AgentCommand, AgentRow, AgentRowStatus } from "./AgentRow";
 import { FoundAgentRow, GitRow, InstallAgentRow, ProviderAgentRow } from "./AgentRows";
@@ -64,6 +62,7 @@ import {
   useAgentSetupPanel,
 } from "./AgentSetupPanel";
 import { MachineBasics } from "./MachineBasics";
+import { ModelsBlock } from "./ModelsBlock";
 import { Checkbox } from "../ui/checkbox";
 import { StepShell, useHeldFor, WizardStepFooter } from "./WizardFrame";
 
@@ -88,10 +87,13 @@ export function AgentsStep({
   environmentIds,
   onBack,
   onContinue,
+  onReadyChange,
 }: {
   readonly environmentIds: readonly EnvironmentId[];
   readonly onBack?: (() => void) | undefined;
   readonly onContinue: () => void;
+  /** Whether an agent is ready, for the step's picture. */
+  readonly onReadyChange?: ((ready: boolean) => void) | undefined;
 }) {
   const t = useT();
   const tx = useTx();
@@ -123,47 +125,59 @@ export function AgentsStep({
     [],
   );
   const busy = installing.length > 0;
+  // A sign-in in progress keeps Continue pressable, but it is no longer the
+  // step's neutral action: a walker never leaves in the middle of one.
+  const [signingIn, setSigningIn] = useState<readonly EnvironmentId[]>([]);
+  const onSigningIn = useCallback(
+    (environmentId: EnvironmentId, open: boolean) =>
+      setSigningIn((current) =>
+        open === current.includes(environmentId)
+          ? current
+          : open
+            ? [...current, environmentId]
+            : current.filter((id) => id !== environmentId),
+      ),
+    [],
+  );
   const checkStalled = useHeldFor(reported.kind === "checking", AGENT_CHECK_TIMEOUT_MS);
   const readiness = checkStalled ? ({ kind: "none" } as const) : reported;
+  const ready = readiness.kind === "ready";
+  useEffect(() => onReadyChange?.(ready), [ready, onReadyChange]);
   return (
     <StepShell title={t("wizard.agents.title")} description={t("wizard.agents.description")}>
-      <ScrollArea scrollFade className="mt-5 h-auto max-h-[min(32rem,55dvh)]">
-        <div className="space-y-5 pr-3">
-          {machines.map(({ environmentId, label }) => (
-            <ConnectedAgentsStep
-              key={environmentId}
-              environmentId={environmentId}
-              machineLabel={label}
-              onInstalling={onInstalling}
-            />
-          ))}
-        </div>
-      </ScrollArea>
-      <p
-        role="status"
-        className={cn(
-          "mt-4 text-sm leading-relaxed",
-          readiness.kind === "ready"
-            ? "text-success-foreground"
-            : readiness.kind === "checking"
-              ? "text-muted-foreground"
-              : "text-warning-foreground",
-        )}
-      >
-        {agentReadinessMessage(readiness, tx)}
-      </p>
+      {/* No scroll region of its own: the wizard panel is the one thing that scrolls,
+          so the Models block is never cut by an inner fold. */}
+      <div className="mt-5 space-y-5">
+        {machines.map(({ environmentId, label }) => (
+          <ConnectedAgentsStep
+            key={environmentId}
+            environmentId={environmentId}
+            machineLabel={label}
+            onInstalling={onInstalling}
+            onSigningIn={onSigningIn}
+          />
+        ))}
+      </div>
       <WizardStepFooter
         back={onBack ? { onClick: onBack, disabled: busy } : undefined}
+        // In the footer, so the gate's own line is in view without scrolling past the agents.
         note={
           busy
             ? tx("An install is running. Wait for it to end, or close its log to stop it.")
-            : null
+            : agentReadinessMessage(readiness, tx)
+        }
+        noteTone={
+          busy || readiness.kind === "checking"
+            ? "muted"
+            : readiness.kind === "ready"
+              ? "success"
+              : "warning"
         }
         primary={{
           disabled: busy,
           label: readiness.kind === "none" ? tx("Continue without an agent") : t("wizard.continue"),
           onClick: onContinue,
-          neutral: true,
+          neutral: signingIn.length === 0,
           variant: readiness.kind === "none" ? "outline" : "default",
         }}
       />
@@ -175,10 +189,12 @@ function ConnectedAgentsStep({
   environmentId,
   machineLabel,
   onInstalling,
+  onSigningIn,
 }: {
   readonly environmentId: EnvironmentId;
   readonly machineLabel: string;
   readonly onInstalling: (environmentId: EnvironmentId, running: boolean) => void;
+  readonly onSigningIn?: ((environmentId: EnvironmentId, open: boolean) => void) | undefined;
 }) {
   const t = useT();
   const tx = useTx();
@@ -340,7 +356,8 @@ function ConnectedAgentsStep({
     if (ended.purpose === "install") {
       setSignInAfterTurnOn((current) => (current === ended.agent ? null : current));
     }
-    void refreshProviders({ environmentId, input: {} });
+    // A sign-in may have just ended in that terminal: read the account past the cache.
+    void refreshProviders({ environmentId, input: { fresh: true } });
     find();
   };
 
@@ -367,6 +384,11 @@ function ConnectedAgentsStep({
     onInstalling(environmentId, installRunning);
     return () => onInstalling(environmentId, false);
   }, [environmentId, installRunning, onInstalling]);
+  const signInOpen = terminalSession?.purpose === "signIn";
+  useEffect(() => {
+    onSigningIn?.(environmentId, signInOpen);
+    return () => onSigningIn?.(environmentId, false);
+  }, [environmentId, signInOpen, onSigningIn]);
 
   const panelBlocked = terminalSession !== null || serverConfig === null || !canOperateTerminal;
   const codexMenu = (
@@ -384,6 +406,116 @@ function ConnectedAgentsStep({
     </Menu>
   );
 
+  const renderRow = (row: OnboardingAgentRow) => {
+    if (row.kind === "install") {
+      const failed = installFailed === row.agent;
+      const installing =
+        !failed && terminalSession?.purpose === "install" && terminalSession.agent === row.agent;
+      return (
+        <InstallAgentRow
+          key={row.key}
+          agent={row.agent}
+          name={rowName(row.agent)}
+          command={
+            os && canInstallOnboardingAgent(row.agent)
+              ? resolveOnboardingProviderInstallCommand(row.agent, os)
+              : null
+          }
+          installing={installing}
+          failed={failed}
+          disabled={panelBlocked || !os}
+          onInstall={() => install(row.agent)}
+        />
+      );
+    }
+    if (row.kind === "found") {
+      return (
+        <FoundAgentRow
+          key={row.key}
+          found={{
+            agent: row.agent,
+            kind: row.registry ? "registry" : "builtIn",
+            state: row.state,
+          }}
+          name={rowName(row.agent)}
+          readOnly={!canManage}
+          onTurnOn={() => turnOn(row.agent)}
+          onSignIn={() => {
+            setSignInAfterTurnOn(row.agent);
+            turnOn(row.agent);
+          }}
+          onAdd={() => setAddingAgent(true)}
+        />
+      );
+    }
+    if (row.agent === "codex") {
+      const command =
+        row.provider && settings && os
+          ? resolveAgentSignInCommand(row.provider, settings, os)
+          : null;
+      return serverConfig !== null ? (
+        <OnboardingCodexSetup
+          key={row.key}
+          environmentId={environmentId}
+          provider={row.provider}
+          serverConfig={serverConfig}
+          createdAccount={row.key === createdAccount?.instanceId ? createdAccount : null}
+          onAutoStartConsumed={() =>
+            setCreatedAccount((account) => (account ? { ...account, autoStart: false } : null))
+          }
+          menu={codexMenu}
+          signedOutFooter={command ? <AgentCommand command={command} flush /> : null}
+        />
+      ) : (
+        <AgentRow
+          key={row.key}
+          agent="codex"
+          state="checking"
+          icon={<OpenAI className="size-5 shrink-0 fill-foreground" />}
+          name={rowName("codex", row.provider)}
+          uses={tx(onboardingAgentUses("codex"))}
+          status={<AgentRowStatus tone="checking">{tx("Checking…")}</AgentRowStatus>}
+        />
+      );
+    }
+    const provider = row.provider;
+    if (provider === undefined) return null;
+    const command = settings && os ? resolveAgentSignInCommand(provider, settings, os) : null;
+    const name = rowName(row.agent, provider);
+    return (
+      <ProviderAgentRow
+        key={row.key}
+        environmentId={environmentId}
+        machineLabel={machineLabel}
+        provider={provider}
+        name={name}
+        os={os}
+        command={command}
+        registryAgentId={
+          provider.driver === "acpRegistry"
+            ? acpAgentIdForInstanceConfig(settings?.providerInstances[provider.instanceId]?.config)
+            : undefined
+        }
+        panelOpen={terminalSession !== null}
+        panelAvailable={panel.available}
+        onOpenPanel={() => {
+          if (command === null) return;
+          openPanel({
+            agent: row.agent,
+            agentName: name,
+            providerInstanceId: provider.instanceId,
+            command,
+            purpose: "signIn",
+          });
+        }}
+        checking={panel.checkingInstance === provider.instanceId}
+        signInEnded={panel.endedInstance === provider.instanceId}
+        autoSignIn={signInAfterTurnOn === row.agent}
+        onAutoSignInDone={autoSignInDone}
+      />
+    );
+  };
+
   return (
     <section>
       <div className="mb-2 flex items-center justify-between gap-3">
@@ -397,9 +529,9 @@ function ConnectedAgentsStep({
             setRechecking(true);
             panel.stopChecking();
             find();
-            void Promise.resolve(refreshProviders({ environmentId, input: {} })).finally(() =>
-              setRechecking(false),
-            );
+            void Promise.resolve(
+              refreshProviders({ environmentId, input: { fresh: true } }),
+            ).finally(() => setRechecking(false));
           }}
         >
           {rechecking ? tx("Checking…") : tx("Check again")}
@@ -409,122 +541,17 @@ function ConnectedAgentsStep({
         <p className="mb-2 text-sm text-muted-foreground">{t("wizard.agents.noTerminal")}</p>
       ) : null}
       <div className="space-y-1.5">
-        {rows.map((row) => {
-          if (row.kind === "install") {
-            const failed = installFailed === row.agent;
-            const installing =
-              !failed &&
-              terminalSession?.purpose === "install" &&
-              terminalSession.agent === row.agent;
-            return (
-              <InstallAgentRow
-                key={row.key}
-                agent={row.agent}
-                name={rowName(row.agent)}
-                command={
-                  os && canInstallOnboardingAgent(row.agent)
-                    ? resolveOnboardingProviderInstallCommand(row.agent, os)
-                    : null
-                }
-                installing={installing}
-                failed={failed}
-                disabled={panelBlocked || !os}
-                onInstall={() => install(row.agent)}
-              />
-            );
-          }
-          if (row.kind === "found") {
-            return (
-              <FoundAgentRow
-                key={row.key}
-                found={{
-                  agent: row.agent,
-                  kind: row.registry ? "registry" : "builtIn",
-                  state: row.state,
-                }}
-                name={rowName(row.agent)}
-                readOnly={!canManage}
-                onTurnOn={() => turnOn(row.agent)}
-                onSignIn={() => {
-                  setSignInAfterTurnOn(row.agent);
-                  turnOn(row.agent);
-                }}
-                onAdd={() => setAddingAgent(true)}
-              />
-            );
-          }
-          if (row.agent === "codex") {
-            const command =
-              row.provider && settings && os
-                ? resolveAgentSignInCommand(row.provider, settings, os)
-                : null;
-            return serverConfig !== null ? (
-              <OnboardingCodexSetup
-                key={row.key}
-                environmentId={environmentId}
-                provider={row.provider}
-                serverConfig={serverConfig}
-                createdAccount={row.key === createdAccount?.instanceId ? createdAccount : null}
-                onAutoStartConsumed={() =>
-                  setCreatedAccount((account) =>
-                    account ? { ...account, autoStart: false } : null,
-                  )
-                }
-                menu={codexMenu}
-                signedOutFooter={command ? <AgentCommand command={command} flush /> : null}
-              />
-            ) : (
-              <AgentRow
-                key={row.key}
-                agent="codex"
-                state="checking"
-                icon={<OpenAI className="size-5 shrink-0 fill-foreground" />}
-                name={rowName("codex", row.provider)}
-                uses={tx(onboardingAgentUses("codex"))}
-                status={<AgentRowStatus tone="checking">{tx("Checking…")}</AgentRowStatus>}
-              />
-            );
-          }
-          const provider = row.provider;
-          if (provider === undefined) return null;
-          const command = settings && os ? resolveAgentSignInCommand(provider, settings, os) : null;
-          const name = rowName(row.agent, provider);
-          return (
-            <ProviderAgentRow
-              key={row.key}
-              environmentId={environmentId}
-              machineLabel={machineLabel}
-              provider={provider}
-              name={name}
-              os={os}
-              command={command}
-              registryAgentId={
-                provider.driver === "acpRegistry"
-                  ? acpAgentIdForInstanceConfig(
-                      settings?.providerInstances[provider.instanceId]?.config,
-                    )
-                  : undefined
-              }
-              panelOpen={terminalSession !== null}
-              panelAvailable={panel.available}
-              onOpenPanel={() => {
-                if (command === null) return;
-                openPanel({
-                  agent: row.agent,
-                  agentName: name,
-                  providerInstanceId: provider.instanceId,
-                  command,
-                  purpose: "signIn",
-                });
-              }}
-              checking={panel.checkingInstance === provider.instanceId}
-              signInEnded={panel.endedInstance === provider.instanceId}
-              autoSignIn={signInAfterTurnOn === row.agent}
-              onAutoSignInDone={autoSignInDone}
-            />
-          );
-        })}
+        {rows.map((row) => (
+          // The Models block's "Add one" moves focus to the first row here that is not ready.
+          <div
+            key={row.key}
+            data-agent-ready={row.kind === "agent" && row.state === "ready" ? "true" : "false"}
+          >
+            {renderRow(row)}
+          </div>
+        ))}
       </div>
+      <ModelsBlock environmentId={environmentId} machineLabel={machineLabel} />
       {list.notInstalled.length > 0 ? (
         <p className="mt-2 px-1 text-xs text-muted-foreground" data-agents-not-installed>
           {tx("Not installed: {agents}.", {

@@ -202,6 +202,16 @@ describe("Copilot sign-in failure messages name the cause and the fix", () => {
   it("reads the version from copilot --version output", () => {
     assert.strictEqual(readCopilotVersion("GitHub Copilot CLI 1.0.97\n"), "1.0.97");
     assert.isUndefined(readCopilotVersion("dev build"));
+    // Copilot CLI 1.0.114 prints exactly this.
+    assert.strictEqual(
+      readCopilotVersion(
+        "GitHub Copilot CLI 1.0.114.\nRun 'copilot update' to check for updates.\n",
+      ),
+      "1.0.114",
+    );
+    assert.strictEqual(readCopilotVersion("copilot v1.2.3, build 7"), "1.2.3");
+    assert.isUndefined(readCopilotVersion("GitHub Copilot CLI 1.0.114.5"));
+    assert.isUndefined(readCopilotVersion("listening on 127.0.0.1"));
   });
   it("reads the version Copilot CLI 1.0.104 prints with a trailing period", () => {
     // Exact output of `copilot --version` for @github/copilot 1.0.104 (November 18, 2026).

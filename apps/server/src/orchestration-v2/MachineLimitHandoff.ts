@@ -28,12 +28,16 @@ import {
 } from "@specweave-studio/shared/personalAssistant";
 import {
   type EnvironmentId,
+  type ProviderLimitMachineTarget,
   WS_METHODS,
   WsLimitHandoffRpcGroup,
   type LimitHandoffCandidate,
   type LimitHandoffCandidatesResult,
   LimitHandoffError,
+  type LimitHandoffTrackDecision,
+  MODEL_TRACK_LABELS,
   type ModelSelection,
+  type ModelTrack,
   type OrchestrationV2ThreadShell,
   type OrchestratorMcpMachineListResult,
   type ProjectId,
@@ -49,6 +53,7 @@ import {
   targetMachineLabel,
 } from "@specweave-studio/shared/machineFallback";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
+import { usageResetAt } from "@specweave-studio/shared/providerFallback";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -59,6 +64,14 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as RemoteWorkers from "../fleet/RemoteWorkers.ts";
+import {
+  describeReviewWait,
+  machineReviewTarget,
+  REVIEW_FAMILY_UNKNOWN,
+  type ReviewStays,
+  sourceReviewLock,
+} from "../handoff/handoffReviewLock.ts";
+import { AUTOMATIC_OFF } from "../handoff/HandoffTransferRunner.ts";
 import { HandoffTurnGate } from "../handoff/HandoffTurnGate.ts";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
@@ -66,7 +79,17 @@ import * as Projects from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { providerUsageSummary } from "../usage/providerUsageSummary.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import type { PeerCheckRequest } from "../handoff/handoffPlan.ts";
 import { isBlockingRuntimeRequest, type PendingRequestSummary } from "./blockingRuntimeRequest.ts";
+import {
+  type JudgedTrackMachine,
+  judgeTrackMachine,
+  type ThreadTrackState,
+  type TrackCheckAnswer,
+  trackDecision,
+  trackMachineReach,
+  trackOutReason,
+} from "./limitHandoffTrack.ts";
 
 /** An idle thread at the threshold moves only when its latest turn ended this recently (D-06). */
 export const LIMIT_PREMOVE_RECENT_MS = 10 * 60_000;
@@ -100,7 +123,19 @@ export interface LimitHandoffRequest {
   readonly sourceSummary: string;
   /** The target model as the setting names it ("Claude Opus 5.5"), for the notice. */
   readonly modelLabel?: string;
+  /** The track that is out here, when that is why the thread leaves (1390). */
+  readonly track?: ModelTrack;
+  /** When the usage window that set the move off resets, for the transfer record. */
+  readonly usageWindowKey?: string;
+  /** The run the move was admitted for; with `resume`, what the transfer is fenced to. */
+  readonly runId?: string;
 }
+
+/** What a machine is asked before an automatic track start; the port adds this machine's identity. */
+export type LimitHandoffCheckInput = Pick<
+  PeerCheckRequest,
+  "start" | "thresholdPercent" | "threads"
+>;
 
 /** 0967 starts its messages with the machine ("Minis: …", "Minis did not answer."). */
 const namesMachine = (message: string, label: string) =>
@@ -136,6 +171,16 @@ export type LimitHandoffOutcome =
 export interface LimitHandoffPortShape {
   readonly available: boolean;
   readonly handOff: (request: LimitHandoffRequest) => Effect.Effect<LimitHandoffOutcome>;
+  /**
+   * Asks a machine what it would run a track's thread on, before anything is
+   * copied there. Without it no thread leaves for a track that is out here.
+   */
+  readonly check?: (
+    environmentId: EnvironmentId,
+    input: LimitHandoffCheckInput,
+  ) => Effect.Effect<Exclude<TrackCheckAnswer, { readonly kind: "unreachable" }>>;
+  /** The thread's "Hand off automatically" is Off: nothing starts for it by itself. */
+  readonly optedOut?: (threadId: ThreadId) => Effect.Effect<boolean>;
 }
 
 export const LIMIT_HANDOFF_UNAVAILABLE_MESSAGE =
@@ -162,6 +207,8 @@ export interface LimitHandoffTrigger {
   readonly reason: LimitHandoffReason;
   readonly resume: boolean;
   readonly key: string;
+  /** Set for a thread on a track that is out on this machine: the target is asked for that track. */
+  readonly track?: Extract<ThreadTrackState, { readonly kind: "track" }>;
 }
 
 type TriggerThread = Pick<
@@ -184,6 +231,11 @@ type TriggerRule = Pick<
  * completed in the last ten minutes (moved with no resume). Redeeming a
  * reset, spending credits and API credits keep their priority; under "Same
  * machine first" a local fallback model goes first.
+ *
+ * A thread on a track ignores that order (1390): no machine is asked while
+ * its track has room here, and one is asked once the track is out here,
+ * whatever the saved order says. A thread whose track is not known, and a
+ * review thread, start nothing by themselves.
  */
 export function limitHandoffTrigger(input: {
   readonly thread: TriggerThread;
@@ -197,13 +249,20 @@ export function limitHandoffTrigger(input: {
   readonly localStep: string | null;
   /** The usage window the threshold belongs to, so an idle thread moves once per window. */
   readonly windowKey: string;
+  /** The thread's track and whether it is out here; absent for a project without tracks. */
+  readonly track?: ThreadTrackState;
 }): LimitHandoffTrigger | null {
   const { thread, rule } = input;
+  const track = input.track ?? { kind: "none" };
+  if (track.kind === "held") return null;
   if (rule.providerLimitAction !== "switch") return null;
   if ((rule.providerLimitMachineTargets ?? []).length === 0) return null;
   if (input.localStep !== null && input.localStep !== "switch") return null;
-  if (input.localStep === "switch" && rule.providerLimitTargetOrder === "same-machine-first")
+  if (track.kind === "track") {
+    if (!track.outHere) return null;
+  } else if (input.localStep === "switch" && rule.providerLimitTargetOrder === "same-machine-first")
     return null;
+  const onTrack = track.kind === "track" ? { track } : {};
   if (thread.latestRunId === null || thread.activeRunId !== null) return null;
   // A question the next message answers, or one an earlier run left, holds
   // nothing; the sweep fills in that detail (a bare summary still holds).
@@ -214,6 +273,7 @@ export function limitHandoffTrigger(input: {
       reason: "usage-limit",
       resume: true,
       key: `limit-handoff:${thread.id}:${thread.latestRunId}`,
+      ...onTrack,
     };
   if (!input.atThreshold || thread.status !== "completed") return null;
   const endedMs =
@@ -225,6 +285,7 @@ export function limitHandoffTrigger(input: {
     reason: "threshold",
     resume: false,
     key: `limit-premove:${thread.id}:${thread.providerInstanceId}:${input.windowKey}`,
+    ...onTrack,
   };
 }
 
@@ -244,6 +305,14 @@ type InDoubt = {
 };
 /** Why no machine took the thread, for the run it was judged on. */
 type Waiting = { readonly text: string; readonly runId: string | null; readonly atMs: number };
+/** The last decision for a thread on a track; its machines are not asked again before `recheckAtMs`. */
+type Tracked = {
+  readonly key: string;
+  readonly runId: string | null;
+  readonly decision: LimitHandoffTrackDecision;
+  readonly recheckAtMs: number;
+  readonly atMs: number;
+};
 
 interface State {
   readonly moved: ReadonlyMap<string, Moved>;
@@ -251,7 +320,17 @@ interface State {
   /** Per trigger key, non-retryable refusals by target. */
   readonly refused: ReadonlyMap<string, ReadonlyMap<string, Refusal>>;
   readonly waiting: ReadonlyMap<string, Waiting>;
+  /** Per thread. */
+  readonly tracks: ReadonlyMap<string, Tracked>;
 }
+
+/** A wait on a track is kept until the machines are asked again, however far that is. */
+const pruneTracks = (tracks: ReadonlyMap<string, Tracked>, nowMs: number): Map<string, Tracked> =>
+  new Map(
+    [...tracks].filter(
+      ([, value]) => nowMs - value.atMs < STATE_MAX_AGE_MS || nowMs < value.recheckAtMs,
+    ),
+  );
 
 const prune = <V extends { readonly atMs?: number; readonly sinceMs?: number }>(
   map: ReadonlyMap<string, V>,
@@ -324,7 +403,10 @@ export class MachineLimitHandoff extends Context.Reference<MachineLimitHandoffSh
   { defaultValue: () => disabled },
 ) {}
 
-const verdictToCandidate = (verdict: MachineCandidateVerdict): LimitHandoffCandidate => ({
+/** A verdict, and for a review thread that stays, what about this machine keeps it. */
+type Verdict = MachineCandidateVerdict & { readonly review?: ReviewStays };
+
+const verdictToCandidate = (verdict: Verdict): LimitHandoffCandidate => ({
   environmentId: verdict.target.environmentId,
   machineLabel: verdict.machineLabel,
   modelSelection: verdict.target.modelSelection,
@@ -333,6 +415,7 @@ const verdictToCandidate = (verdict: MachineCandidateVerdict): LimitHandoffCandi
   text: verdict.text,
   usedPercent: verdict.usedPercent,
   resetsAt: verdict.resetsAt,
+  ...(verdict.review === undefined ? {} : { review: verdict.review }),
 });
 
 /**
@@ -364,6 +447,7 @@ export const make = Effect.gen(function* () {
     inDoubt: new Map(),
     refused: new Map(),
     waiting: new Map(),
+    tracks: new Map(),
   });
   const machineLists = yield* Ref.make(
     new Map<
@@ -394,7 +478,7 @@ export const make = Effect.gen(function* () {
       OrchestrationV2ThreadShell,
       "projectId" | "providerInstanceId" | "worktreePath"
     > &
-      Partial<Pick<OrchestrationV2ThreadShell, "routing">>;
+      Partial<Pick<OrchestrationV2ThreadShell, "routing" | "title" | "modelSelection">>;
     readonly rule: ServerSettingsValue;
     readonly source: ServerProvider | undefined;
     readonly projectTitle: string | null;
@@ -405,7 +489,7 @@ export const make = Effect.gen(function* () {
       // A machine target is a fallback too, so it stays inside this machine's list.
       // Reach rules decide first: no target at all when work may not cross machines.
       if (teamRulesMachines(yield* currentTeamRules) === "none") {
-        return [] as ReadonlyArray<MachineCandidateVerdict>;
+        return [] as ReadonlyArray<Verdict>;
       }
       // The list is the one for this thread's folder, which a zone or repository can narrow.
       const folderProject = yield* projects
@@ -414,11 +498,11 @@ export const make = Effect.gen(function* () {
       const teamRules = yield* teamRulesForFolder(
         input.thread.worktreePath ?? Option.getOrUndefined(folderProject)?.workspaceRoot,
       );
-      // A review delegation (TaskRoutingDecision.reviewFamily) stays on this
-      // machine: a handoff does not carry its reviewer lock, so another
-      // machine's fallback could continue it on the author's family. It waits.
-      if (input.thread.routing?.reviewFamily !== undefined)
-        return [] as ReadonlyArray<MachineCandidateVerdict>;
+      // A review thread carries its reviewer lock (1390 AC-40): a machine is a
+      // target only when it keeps the lock and offers a reviewer inside it.
+      // One whose reviewer has no known family cannot be locked, so it waits.
+      const review = sourceReviewLock(input.thread);
+      if (review.kind === "unknown-family") return [] as ReadonlyArray<Verdict>;
       const targets = input.rule.providerLimitMachineTargets.filter(
         (target) =>
           teamRulesSelectionRefusal(teamRules, {
@@ -426,10 +510,10 @@ export const make = Effect.gen(function* () {
             model: target.modelSelection.model,
           }) === null,
       );
-      if (targets.length === 0) return [] as ReadonlyArray<MachineCandidateVerdict>;
+      if (targets.length === 0) return [] as ReadonlyArray<Verdict>;
       const list = yield* machinesFor(input.thread.projectId, input.nowMs);
       if (typeof list === "string")
-        return targets.map((target): MachineCandidateVerdict => {
+        return targets.map((target): Verdict => {
           const machineLabel = targetMachineLabel(target, undefined);
           return {
             target,
@@ -456,8 +540,49 @@ export const make = Effect.gen(function* () {
         driverKind: input.source?.driver ?? "",
         accountFingerprint: sourceUsage?.accountFingerprint ?? null,
       };
-      return targets.map((target) => {
-        const machine = list.machines.find((row) => row.environmentId === target.environmentId);
+      const judgeOn = (
+        target: ProviderLimitMachineTarget,
+        machine: (typeof list.machines)[number] | undefined,
+      ) =>
+        judgeMachineCandidate({
+          target,
+          machine,
+          source,
+          projectTitle: input.projectTitle,
+          linkedEnvironmentIds,
+          thresholdPercent: input.rule.providerLimitSwitchAtPercent,
+          unknownUsageEligible: input.rule.providerLimitUnknownUsageEligible,
+          nowMs: input.nowMs,
+          excludedModels: input.rule.providerLimitExcludedModels,
+        });
+      return targets.map((saved): Verdict => {
+        const machine = list.machines.find((row) => row.environmentId === saved.environmentId);
+        const locked =
+          review.kind !== "lock" || machine?.teamRulesRefused !== undefined
+            ? null
+            : machineReviewTarget({
+                lock: review.lock,
+                target: saved,
+                machine,
+                machineLabel: targetMachineLabel(saved, machine),
+                allowed: (driver, model) =>
+                  teamRulesSelectionRefusal(teamRules, { driver, model }) === null,
+                usable: (target) => judgeOn(target, machine).eligible,
+              });
+        if (locked?.kind === "stays") {
+          const reason = locked.review === "update_needed" ? "update_needed" : "refused";
+          return {
+            target: saved,
+            machineLabel: targetMachineLabel(saved, machine),
+            eligible: false,
+            reason,
+            text: locked.text,
+            usedPercent: null,
+            resetsAt: null,
+            review: locked.review,
+          };
+        }
+        const target = locked?.target ?? saved;
         if (machine?.teamRulesRefused !== undefined) {
           const machineLabel = targetMachineLabel(target, machine);
           return {
@@ -470,17 +595,9 @@ export const make = Effect.gen(function* () {
             resetsAt: null,
           } satisfies MachineCandidateVerdict;
         }
-        const verdict = judgeMachineCandidate({
-          target,
-          machine,
-          source,
-          projectTitle: input.projectTitle,
-          linkedEnvironmentIds,
-          thresholdPercent: input.rule.providerLimitSwitchAtPercent,
-          unknownUsageEligible: input.rule.providerLimitUnknownUsageEligible,
-          nowMs: input.nowMs,
-          excludedModels: input.rule.providerLimitExcludedModels,
-        });
+        const judged = judgeOn(target, machine);
+        // A review moves only to a machine that was read and keeps its lock.
+        const verdict = locked !== null && !locked.proven ? { ...judged, eligible: false } : judged;
         // A personal assistant's threads never continue on another machine.
         if (Option.isSome(project) && isPersonalAssistantProject(project.value))
           return {
@@ -501,6 +618,51 @@ export const make = Effect.gen(function* () {
                 ? refusal.message
                 : `${verdict.machineLabel}: ${refusal.message}`,
             };
+      });
+    });
+
+  /**
+   * The machines a track's thread may go to: each machine of the saved targets
+   * once, in their order, with why it cannot be asked when it cannot. The model
+   * it would run is the machine's own answer, never the saved target's.
+   */
+  const trackMachines = (
+    thread: Pick<OrchestrationV2ThreadShell, "projectId" | "worktreePath">,
+    rule: ServerSettingsValue,
+    projectTitle: string | null,
+    nowMs: number,
+  ) =>
+    Effect.gen(function* () {
+      if (teamRulesMachines(yield* currentTeamRules) === "none") return [];
+      const project = yield* projects
+        .getById(thread.projectId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      // A personal assistant's threads never continue on another machine.
+      if (Option.isSome(project) && isPersonalAssistantProject(project.value)) return [];
+      const teamRules = yield* teamRulesForFolder(
+        thread.worktreePath ?? Option.getOrUndefined(project)?.workspaceRoot,
+      );
+      const list = yield* machinesFor(thread.projectId, nowMs);
+      const seen = new Set<string>();
+      return rule.providerLimitMachineTargets.flatMap((target) => {
+        if (seen.has(target.environmentId)) return [];
+        seen.add(target.environmentId);
+        const machine =
+          typeof list === "string"
+            ? undefined
+            : list.machines.find((row) => row.environmentId === target.environmentId);
+        const label = targetMachineLabel(target, machine);
+        return [
+          {
+            environmentId: target.environmentId,
+            label,
+            reach:
+              typeof list === "string"
+                ? `${label}: ${list}`
+                : trackMachineReach({ label, machine, projectTitle }),
+            teamRules,
+          },
+        ];
       });
     });
 
@@ -548,8 +710,10 @@ export const make = Effect.gen(function* () {
     }
     const source = input.providers.find((p) => p.instanceId === thread.providerInstanceId);
     const doubt = current.inDoubt.get(trigger.key);
+    // A track that is out here asks each machine for that track; a move in doubt is settled first.
+    const tracked = trigger.track !== undefined && doubt === undefined ? trigger.track : null;
     const verdicts =
-      doubt === undefined
+      doubt === undefined && tracked === null
         ? yield* judge({
             thread,
             rule: input.rule,
@@ -568,8 +732,53 @@ export const make = Effect.gen(function* () {
     const localLabel = typeof list === "string" ? "this machine" : list.local.label;
     // Refusals worth asking again later still name their reason in the wait text.
     const transient = new Map<string, Refusal>();
-    for (const attempt of attempts) {
-      if (doubt === undefined && !(yield* input.admit)) return "skipped" as const;
+    // When the window that sends the thread away resets: the track's first reset here, or
+    // the stop's own. A thread sent for it is not sent straight back before then.
+    // An idle thread moved at the threshold has no stop: its sign-in's own reset is the end.
+    const stopResetMs = Date.parse(thread.usageLimitResetAt ?? "");
+    const windowEndMs =
+      tracked !== null
+        ? tracked.earliestResetMs
+        : Number.isFinite(stopResetMs)
+          ? stopResetMs
+          : source === undefined
+            ? null
+            : usageResetAt(
+                source,
+                input.rule.providerLimitSwitchAtPercent ?? 100,
+                nowMs,
+                thread.modelSelection.model,
+              );
+    const windowEnd =
+      windowEndMs !== null && Number.isFinite(windowEndMs)
+        ? DateTime.formatIso(DateTime.makeUnsafe(windowEndMs))
+        : null;
+    /** Asks one target to take the thread; "next" when it refused and nothing moved. */
+    const moveTo = Effect.fnUntraced(function* (
+      attempt: {
+        readonly target: MachineCandidateVerdict["target"];
+        readonly machineLabel: string;
+      },
+      summary: string,
+      track?: ModelTrack,
+    ) {
+      // The last check before sending: the trigger, and with it the track's state here, read afresh.
+      if (doubt === undefined) {
+        if (!(yield* input.admit)) return "skipped" as const;
+        // The destination was approved under settings that may have changed since.
+        const saved = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
+        const targets =
+          saved === null
+            ? []
+            : resolveProjectSettings(saved, thread.projectId).settings.providerLimitMachineTargets;
+        if (!targets.some((target) => target.environmentId === attempt.target.environmentId))
+          return "skipped" as const;
+        // Off may have been chosen while a machine answered; unreadable counts as Off.
+        if (port.optedOut !== undefined && (yield* port.optedOut(thread.id))) {
+          yield* setWaiting(AUTOMATIC_OFF);
+          return "skipped" as const;
+        }
+      }
       yield* Ref.update(state, (s) => ({
         ...s,
         inDoubt: new Map(s.inDoubt).set(trigger.key, {
@@ -587,10 +796,13 @@ export const make = Effect.gen(function* () {
         reason: trigger.reason,
         resume: trigger.resume,
         idempotencyKey: trigger.key,
-        sourceSummary: sourceSummary(thread, trigger, source, input.rule, localLabel),
+        sourceSummary: summary,
         ...(attempt.target.modelLabel === undefined
           ? {}
           : { modelLabel: attempt.target.modelLabel }),
+        ...(track === undefined ? {} : { track }),
+        ...(thread.latestRunId === null ? {} : { runId: thread.latestRunId }),
+        ...(windowEnd === null ? {} : { usageWindowKey: windowEnd }),
       };
       // Interrupting 0967 mid-takeover would leave the lease "handing-off" with nobody to
       // settle it, so the move runs detached and the timeout (or a stopping sweep) only
@@ -674,6 +886,158 @@ export const make = Effect.gen(function* () {
         code: outcome.code,
         retryable: outcome.retryable,
       });
+      return { refused: outcome.message };
+    });
+
+    if (tracked !== null) {
+      // A review keeps its reviewer: no machine is asked for a track on its behalf.
+      if (sourceReviewLock(thread).kind !== "none") return "skipped" as const;
+      if (port.optedOut !== undefined && (yield* port.optedOut(thread.id))) {
+        yield* setWaiting(AUTOMATIC_OFF);
+        return "skipped" as const;
+      }
+      const held = current.tracks.get(thread.id);
+      // No machine had the track: nothing is asked again before the reset it named.
+      if (
+        held !== undefined &&
+        held.key === trigger.key &&
+        held.decision.target === null &&
+        nowMs < held.recheckAtMs
+      )
+        return "skipped" as const;
+      const check = port.check;
+      if (check === undefined) {
+        yield* setWaiting(LIMIT_HANDOFF_UNAVAILABLE_MESSAGE);
+        return "skipped" as const;
+      }
+      const remember = (decision: LimitHandoffTrackDecision) =>
+        Ref.update(state, (s) => ({
+          ...s,
+          tracks: pruneTracks(s.tracks, nowMs).set(thread.id, {
+            key: trigger.key,
+            runId: thread.latestRunId,
+            decision,
+            recheckAtMs: decision.recheckAt === null ? nowMs : Date.parse(decision.recheckAt),
+            atMs: nowMs,
+          }),
+        }));
+      const decide = (
+        machines: ReadonlyArray<JudgedTrackMachine>,
+        target: LimitHandoffTrackDecision["target"],
+      ) =>
+        trackDecision({
+          threadId: thread.id,
+          track: tracked.track,
+          machineLabel: localLabel,
+          outHere: tracked.outHere,
+          localResetMs: tracked.earliestResetMs,
+          machines,
+          target,
+          nowMs,
+        });
+      const judged: Array<JudgedTrackMachine> = [];
+      for (const machine of yield* trackMachines(thread, input.rule, input.projectTitle, nowMs)) {
+        const answer: TrackCheckAnswer =
+          machine.reach !== null
+            ? { kind: "unreachable", line: machine.reach }
+            : yield* check(machine.environmentId, {
+                start: "automatic",
+                thresholdPercent: input.rule.providerLimitSwitchAtPercent,
+                threads: [
+                  {
+                    sourceThreadId: thread.id,
+                    sourceProjectId: thread.projectId,
+                    modelSelection: thread.modelSelection,
+                    track: tracked.track,
+                    driverKind: source?.driver ?? "",
+                    accountFingerprints: [...tracked.fingerprints],
+                  },
+                ],
+              });
+        const row = judgeTrackMachine({
+          environmentId: machine.environmentId,
+          machineLabel: machine.label,
+          threadId: thread.id,
+          answer,
+        });
+        const selection = row.state === "room" ? (row.evidence?.modelSelection ?? null) : null;
+        if (selection === null) {
+          judged.push(row);
+          continue;
+        }
+        // The sign-in the machine confirmed stays inside this folder's rules, like any fallback.
+        const rules = teamRulesSelectionRefusal(machine.teamRules, {
+          driver: teamRulesInstanceDriver(input.rule, selection.instanceId),
+          model: selection.model,
+        });
+        if (rules !== null) {
+          judged.push({
+            ...row,
+            state: "error",
+            line: `${row.machineLabel}: ${rules.message}`,
+            evidence: null,
+          });
+          continue;
+        }
+        const result = yield* moveTo(
+          {
+            target: {
+              environmentId: machine.environmentId,
+              label: row.machineLabel,
+              modelSelection: selection,
+            },
+            machineLabel: row.machineLabel,
+          },
+          trackOutReason(tracked.track, localLabel),
+          tracked.track,
+        );
+        if (result === "skipped") return result;
+        if (result === "handled") {
+          yield* remember(
+            decide([...judged, row], {
+              environmentId: machine.environmentId,
+              machineLabel: row.machineLabel,
+              modelSelection: selection,
+              disposition: trigger.resume ? "resume" : "ready",
+            }),
+          );
+          return result;
+        }
+        judged.push({
+          ...row,
+          state: "error",
+          line: namesMachine(result.refused, row.machineLabel)
+            ? result.refused
+            : `${row.machineLabel}: ${result.refused}`,
+          evidence: null,
+        });
+      }
+      const decision = decide(judged, null);
+      yield* remember(decision);
+      yield* setWaiting(
+        decision.everyMachineOut
+          ? `${MODEL_TRACK_LABELS[tracked.track]} track is out on every machine.`
+          : judged.length === 0
+            ? "No other machine is set up to take over."
+            : `No other machine has room: ${judged.map((machine) => machine.line).join("; ")}.`,
+      );
+      yield* Effect.logInfo("orchestration-v2.limit-handoff.track-wait", {
+        threadId: thread.id,
+        key: trigger.key,
+        track: tracked.track,
+        everyMachineOut: decision.everyMachineOut,
+        recheckAt: decision.recheckAt,
+        machines: judged.map((machine) => machine.state),
+      });
+      return "skipped" as const;
+    }
+
+    for (const attempt of attempts) {
+      const result = yield* moveTo(
+        attempt,
+        sourceSummary(thread, trigger, source, input.rule, localLabel),
+      );
+      if (result === "skipped" || result === "handled") return result;
     }
     const latest = yield* Ref.get(state);
     const shown = yield* judge({
@@ -684,7 +1048,16 @@ export const make = Effect.gen(function* () {
       nowMs,
       refusals: new Map([...transient, ...(latest.refused.get(trigger.key) ?? [])]),
     });
-    yield* setWaiting(describeMachineWait(shown));
+    const unlockable =
+      sourceReviewLock(thread).kind === "unknown-family" &&
+      input.rule.providerLimitMachineTargets.length > 0;
+    // A review that stays is told once, by its own row.
+    yield* setWaiting(
+      unlockable
+        ? REVIEW_FAMILY_UNKNOWN
+        : (describeReviewWait(shown) ??
+            describeMachineWait(shown.filter((verdict) => verdict.review === undefined))),
+    );
     yield* Effect.logInfo("orchestration-v2.limit-handoff.no-machine", {
       threadId: thread.id,
       key: trigger.key,
@@ -734,6 +1107,7 @@ export const make = Effect.gen(function* () {
         : undefined,
     });
     const waiting = current.waiting.get(thread.id);
+    const tracked = current.tracks.get(thread.id);
     return {
       available: (yield* portOf).available,
       order: rule.providerLimitTargetOrder,
@@ -744,6 +1118,12 @@ export const make = Effect.gen(function* () {
         waiting.runId === thread.latestRunId &&
         nowMs - waiting.atMs < STATE_MAX_AGE_MS
           ? waiting.text
+          : null,
+      track:
+        tracked !== undefined &&
+        tracked.runId === thread.latestRunId &&
+        (nowMs - tracked.atMs < STATE_MAX_AGE_MS || nowMs < tracked.recheckAtMs)
+          ? tracked.decision
           : null,
       checkedAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs)),
     } satisfies LimitHandoffCandidatesResult;

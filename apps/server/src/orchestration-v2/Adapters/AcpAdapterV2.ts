@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import { holdFailedStopTeardown, withStopTeardown } from "../../process/stopTeardowns.ts";
 import * as NodePath from "node:path";
 
 import {
@@ -65,9 +66,13 @@ import {
   type AcpMcpOverAcpBridge,
 } from "../../mcp/AcpMcpOverAcpBridge.ts";
 import {
+  acpSessionUsageIncrease,
   addAcpTurnUsage,
+  normalizeAcpPromptUsage,
   normalizeAcpTurnTokenUsage,
   readAcpPromptUsage,
+  readAcpRawPromptUsage,
+  type AcpRawPromptUsage,
   type AcpTurnUsageCounts,
 } from "../../provider/AcpTurnTokenUsage.ts";
 import { mcpToolPresentation } from "../../provider/McpToolPresentation.ts";
@@ -160,7 +165,22 @@ export const ACP_PROTOCOL = "acp.ndjson-jsonrpc" as const;
  * the hydrated tool frame; two seconds split that tail into a second synthetic
  * wake. Longer floors (4–20s) only prolonged Working. No per-model carveouts.
  */
+
 const ACP_DEFERRED_FINALIZE_DEBOUNCE: Duration.Input = "3000 millis";
+
+/**
+ * A failed ACP process-group teardown: the agent's processes may still run, so the
+ * folder change stays blocked until the runtime's teardown recovers (a replacement
+ * closes the old scope, whose finalizer force-kills the group) or the server restarts.
+ * ACP exposes no liveness probe for the old group, so the teardown state is the evidence.
+ */
+function holdFolderUntilTeardownRecovers(
+  appThreadId: string | null,
+  readState: () => Promise<{ readonly _tag: string }>,
+): void {
+  if (appThreadId === null) return;
+  holdFailedStopTeardown(appThreadId, () => readState().then((state) => state._tag !== "Failed"));
+}
 
 export interface AcpAdapterV2RuntimeInput {
   readonly cwd: string;
@@ -261,6 +281,11 @@ export interface AcpAdapterV2Flavor {
   readonly driver: ProviderDriverKind;
   /** SpecWeave's tool slug for SPECWEAVE_TOOL; the driver kind when omitted. */
   readonly specweaveTool?: string;
+  /**
+   * The agent's `session/prompt` usage is the running total of its live
+   * session (GitHub Copilot), so each turn stores the increase instead.
+   */
+  readonly promptUsageIsSessionTotal?: boolean;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
   readonly clientCapabilitiesMeta?: Record<string, boolean>;
   readonly normalizeSessionUpdate?: (
@@ -1464,6 +1489,11 @@ interface ActiveAcpTurn {
   /** What the prompts of this turn reported consuming; absent when the agent says nothing. */
   promptUsage?: AcpTurnUsageCounts;
   /**
+   * For an agent that reports session totals: the usage may include an
+   * earlier prompt that reported nothing, or miss a count, so it is partial.
+   */
+  promptUsageUncertain?: boolean;
+  /**
    * Completed the moment `runtime.prompt` resolves on the wire, before the
    * completion callback requests `runtimeCallbackPermit`. Failure does not
    * complete this; settled-soft classification ORs it with `promptSettled`.
@@ -1981,6 +2011,16 @@ export function makeAcpAdapterV2(
         const promptInstructionStates = yield* Ref.make(
           new Map<string, StudioAcpInstructionState>(),
         );
+        // Last session totals per live runtime and session, for an agent whose
+        // prompt usage is a session total. Keyed by the runtime object, so a
+        // new or replacement process, whose counters start again, has none.
+        // `open` is set while a prompt is out and `unreported` once one ended
+        // without totals (failed, or no usage), so the next increase also
+        // covers it and is stored as partial.
+        const sessionUsageTotals = new WeakMap<
+          object,
+          Map<string, { totals: AcpRawPromptUsage | undefined; open: boolean; unreported: boolean }>
+        >();
         const runtimeRestartRequired = yield* Ref.make(false);
         // Native sessions whose restored history the model rejected (for
         // example a missing Gemini thought signature). Loading one again
@@ -6861,6 +6901,7 @@ export function makeAcpAdapterV2(
                   context.promptUsage,
                   context.subagents.size > 0,
                   status,
+                  context.promptUsageUncertain !== true,
                 ),
               }),
         });
@@ -7570,6 +7611,25 @@ export function makeAcpAdapterV2(
               projectAdditionalDirectories === undefined
                 ? undefined
                 : { projectAdditionalDirectories };
+            const promptRuntime = runtime;
+            const promptSessionId = (yield* Ref.get(activeSessionId)) ?? requestedSessionId;
+            const sessionTotals = (() => {
+              if (flavor.promptUsageIsSessionTotal !== true) return undefined;
+              let sessions = sessionUsageTotals.get(promptRuntime);
+              if (sessions === undefined) {
+                sessions = new Map();
+                sessionUsageTotals.set(promptRuntime, sessions);
+              }
+              let entry = sessions.get(promptSessionId);
+              if (entry === undefined) {
+                entry = { totals: undefined, open: false, unreported: false };
+                sessions.set(promptSessionId, entry);
+              }
+              // The previous prompt never came back with usage (it failed).
+              if (entry.open) entry.unreported = true;
+              entry.open = true;
+              return entry;
+            })();
             yield* runtime.prompt({ prompt: promptParts!.prompt }, promptOptions).pipe(
               Effect.tap(() =>
                 Ref.update(promptInstructionStates, (current) => {
@@ -7589,10 +7649,29 @@ export function makeAcpAdapterV2(
                 runRuntimeCallbackAtGeneration(
                   promptGeneration,
                   Effect.gen(function* () {
+                    let promptUsage: AcpTurnUsageCounts | undefined;
+                    let promptUsageUncertain = false;
+                    if (sessionTotals === undefined) {
+                      promptUsage = readAcpPromptUsage(result);
+                    } else {
+                      sessionTotals.open = false;
+                      const totals = readAcpRawPromptUsage(result);
+                      if (totals === undefined) {
+                        sessionTotals.unreported = true;
+                      } else {
+                        const increase = acpSessionUsageIncrease(sessionTotals.totals, totals);
+                        promptUsage = normalizeAcpPromptUsage(increase.usage);
+                        promptUsageUncertain = sessionTotals.unreported || !increase.complete;
+                        sessionTotals.totals = totals;
+                        sessionTotals.unreported = false;
+                      }
+                    }
+                    // The totals advance even when the turn already ended, so
+                    // the next turn's increase never counts this prompt again.
                     if (context.finalized) return;
-                    const promptUsage = readAcpPromptUsage(result);
                     if (promptUsage !== undefined) {
                       context.promptUsage = addAcpTurnUsage(context.promptUsage, promptUsage);
+                      if (promptUsageUncertain) context.promptUsageUncertain = true;
                     }
                     // A refusal or a limit stop ended the turn without finishing it,
                     // so it settles failed with the reason instead of completed.
@@ -8073,6 +8152,10 @@ export function makeAcpAdapterV2(
                             });
                             yield* Ref.set(runtimeTeardownState, { _tag: "Failed", error });
                             yield* Deferred.fail(teardownBarrier, error).pipe(Effect.ignore);
+                            holdFolderUntilTeardownRecovers(
+                              turnInput.providerThread.appThreadId,
+                              () => Effect.runPromise(Ref.get(runtimeTeardownState)),
+                            );
                             return yield* error;
                           }
                           const teardownExit = yield* runtime.terminateProcessGroup.pipe(
@@ -8087,6 +8170,10 @@ export function makeAcpAdapterV2(
                             });
                             yield* Ref.set(runtimeTeardownState, { _tag: "Failed", error });
                             yield* Deferred.fail(teardownBarrier, error).pipe(Effect.ignore);
+                            holdFolderUntilTeardownRecovers(
+                              turnInput.providerThread.appThreadId,
+                              () => Effect.runPromise(Ref.get(runtimeTeardownState)),
+                            );
                             return yield* error;
                           }
                           yield* Ref.set(runtimeRestartRequired, true);
@@ -8144,6 +8231,9 @@ export function makeAcpAdapterV2(
                       });
                       yield* Ref.set(runtimeTeardownState, { _tag: "Failed", error });
                       yield* Deferred.fail(teardownBarrier!, error).pipe(Effect.ignore);
+                      holdFolderUntilTeardownRecovers(turnInput.providerThread.appThreadId, () =>
+                        Effect.runPromise(Ref.get(runtimeTeardownState)),
+                      );
                       return error;
                     });
                     const runTransition = Effect.gen(function* () {
@@ -8210,6 +8300,39 @@ export function makeAcpAdapterV2(
                         if (!context.finalized) {
                           yield* finalizeTurn(context, "interrupted");
                         }
+                        // An agent that ignored the cancel is still busy with the
+                        // stopped prompt. A user Stop replaces its runtime now, which
+                        // ends the agent's process; otherwise the next turn starts a
+                        // fresh runtime instead of queueing behind it.
+                        if (!hardRestart) {
+                          yield* Ref.set(runtimeRestartRequired, true);
+                          if (turnInput.requestRuntimeRestart === true) {
+                            const replaced = yield* restartRuntimeAfterTeardownIfRequired(
+                              turnInput.providerThread.appThreadId,
+                            ).pipe(
+                              Effect.catchCause((cause) =>
+                                Effect.gen(function* () {
+                                  yield* Effect.logWarning(
+                                    "ACP Stop could not replace a runtime that ignored the cancel",
+                                    { driver, providerTurnId: turnInput.providerTurnId, cause },
+                                  );
+                                  // The busy agent still runs: the folder change stays
+                                  // blocked until a later turn replaces the runtime.
+                                  const appThreadId = turnInput.providerThread.appThreadId;
+                                  if (appThreadId !== null) {
+                                    holdFailedStopTeardown(appThreadId, () =>
+                                      Effect.runPromise(Ref.get(runtimeRestartRequired)).then(
+                                        (required) => !required,
+                                      ),
+                                    );
+                                  }
+                                  return false;
+                                }),
+                              ),
+                            );
+                            if (replaced) return;
+                          }
+                        }
                         return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                           driver,
                           detail: `ACP provider turn ${turnInput.providerTurnId} did not acknowledge cancellation before the interrupt timeout`,
@@ -8238,7 +8361,12 @@ export function makeAcpAdapterV2(
               );
             },
             (effect, turnInput) =>
-              effect.pipe(
+              // The folder change waits while a user Stop ends (or replaces) the agent.
+              (turnInput.requestRuntimeRestart === true &&
+              turnInput.providerThread.appThreadId !== null
+                ? withStopTeardown(turnInput.providerThread.appThreadId, effect)
+                : effect
+              ).pipe(
                 Effect.mapError(
                   (cause) =>
                     new ProviderAdapter.ProviderAdapterInterruptError({

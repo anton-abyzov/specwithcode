@@ -268,6 +268,7 @@ it.effect("refuses changes to a resting copy: its runner's copy is the only one 
         yield* (yield* service.routineCopies!()).snapshot({
           projectId: "project-a" as ProjectId,
           logicalProjectId: "logical-a",
+          recipient: "env-standby",
         });
         state.role = TRANSFERRED;
         const refused = [
@@ -323,6 +324,7 @@ it.effect("a mark left by an earlier shared project does not strand a resting ro
         yield* (yield* service.routineCopies!()).snapshot({
           projectId: "project-a" as ProjectId,
           logicalProjectId: "logical:earlier",
+          recipient: "env-standby",
         });
         state.role = TRANSFERRED;
         yield* service.setEnabled({ id: "routine" as never, enabled: false });

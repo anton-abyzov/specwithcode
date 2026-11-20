@@ -16,9 +16,12 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
+import { ownMachineLabel } from "../../../fleet/machineNames.ts";
 import { isLogicalProjectBinding } from "../../../fleet/remoteWorkerMatching.ts";
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as ServerSettings from "../../../serverSettings.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import { readCaller } from "../../threadAccess.ts";
 
@@ -140,6 +143,11 @@ export const listFederatedProjectThreads = (input: OrchestratorMcpThreadListInpu
       return yield* local();
 
     const workers = yield* RemoteWorkers.RemoteWorkers;
+    // This machine's rows carry its name: the user may read them from another machine.
+    const hereLabel = yield* ownMachineLabel(
+      yield* Effect.serviceOption(ServerEnvironment.ServerEnvironment),
+      yield* Effect.serviceOption(ServerSettings.ServerSettingsService),
+    );
     const ownMember: LogicalProjectMember = {
       environmentId: scope.environmentId,
       projectId: caller.projectId,
@@ -165,7 +173,11 @@ export const listFederatedProjectThreads = (input: OrchestratorMcpThreadListInpu
           const machine: OrchestratorMcpMachineRef =
             target.kind === "remote"
               ? target.machine
-              : { id: "local", label: "This machine", environmentId: scope.environmentId };
+              : {
+                  id: "local",
+                  label: hereLabel ?? "This machine",
+                  environmentId: scope.environmentId,
+                };
           if (machine.environmentId !== member.environmentId)
             return yield* failure("The configured machine identity changed.");
           if (logicalProjectMemberKey(member) !== logicalProjectMemberKey(ownMember)) {
