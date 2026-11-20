@@ -289,7 +289,11 @@ describe("estimateOutside", () => {
         })),
       } as UsageLimitHistorySeries;
       const window = pickOutsideWindow([[history]], KEY)!;
-      expect(limitResets(window)).toEqual([t0 + 5 * minute, t0 + 5.5 * minute + week]);
+      // With a known length the second restart is placed at its own time, else at the read.
+      expect(limitResets(window)).toEqual([
+        t0 + 5 * minute,
+        t0 + (windowDurationMins === undefined ? 5.5 : 5) * minute + week,
+      ]);
       const result = estimateOutside(input(history, [], { periodEndMs: t0 + 8 * DAY }));
       expect(result.kind).toBe("estimate");
       if (result.kind !== "estimate") return;
@@ -379,9 +383,18 @@ describe("estimateOutside", () => {
           state = (state * 1664525 + 1013904223) % 2 ** 32;
           return state / 2 ** 32;
         };
-        const times = [0];
-        let at = 0;
-        const reads = 3 + Math.floor(random() * 6);
+        // The history starts before the first reset, just after it with the
+        // passed reset time still on the read, or somewhere inside a window.
+        const opening = random();
+        let at =
+          opening < 0.4
+            ? 0
+            : opening < 0.7
+              ? first + (0.5 + random() * 4) * minute
+              : first + random() * 0.9 * length;
+        at = Math.round(at / 30_000) * 30_000;
+        const times = [at];
+        const reads = 2 + Math.floor(random() * 7);
         for (let read = 1; read < reads; read += 1) {
           const pick = random();
           at +=
@@ -415,7 +428,7 @@ describe("estimateOutside", () => {
             ? usedAt(times[read]!)
             : Math.max(0, usedAt(times[read]!) - usedAt(times[read - 1]!));
         }
-        const late = (time: number) => startOf(time) > 0 && time - startOf(time) < 5 * minute;
+        const late = (time: number) => time - startOf(time) < 5 * minute;
         for (const lag of [false, true]) {
           for (const withLength of [true, false]) {
             const history = {
@@ -439,14 +452,16 @@ describe("estimateOutside", () => {
               lag,
               withLength,
               resets: limitResets(window).length,
-              points: result.kind === "estimate" ? result.consumedPoints : 0,
+              // Under one point the estimate says the limit did not move.
+              points:
+                result.kind === "estimate" ? result.consumedPoints : points < 1.05 ? points : -1,
             }).toEqual({
               kind,
               seed,
               lag,
               withLength,
               resets,
-              points: points < 1 ? expect.any(Number) : expect.closeTo(points, 0),
+              points: expect.closeTo(points, 0),
             });
           }
         }
