@@ -4885,10 +4885,6 @@ export const zh: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "无法把 AppImage 的路径写入命令。请把 AppImage 移到更简单的文件夹，再从那里打开。",
   "Could not write {path} ({error}).": "无法写入 {path}（{error}）。",
-  "{there} can start work here": "{there} 可以在这里开始工作",
-  "{there} can't start work here": "{there} 不能在这里开始工作",
-  "This machine can start work on {there}": "此机器可以在 {there} 上开始工作",
-  "This machine can't start work on {there}": "此机器不能在 {there} 上开始工作",
   "until you stop it": "直到你停止",
   "1 running thread stops at {time}.": "1 个运行中的线程将于 {time} 停止。",
   "{count} running threads stop at {time}.": "{count} 个运行中的线程将于 {time} 停止。",
@@ -4906,13 +4902,9 @@ export const zh: PhraseCatalog = {
   "More for {machine}": "{machine} 的更多选项",
   "Hide connection details": "隐藏连接详情",
   "Let {thereLabel} start work here": "让 {thereLabel} 在这里开始工作",
-  "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
-    "{there} 可以在这里开始工作：它的代理可以在此机器的项目中启动线程。停止会立即拒绝新工作；正在运行的线程在 2 分钟后停止。此机器可以在 {there} 上开始工作：这里的代理可以在 {there} 允许的访问范围内在那里启动线程。",
   "Allow {there} to start work here": "允许 {there} 在此开始工作",
   "Stop {there} starting work here": "停止 {there} 在此开始工作",
   "Allow {there} again to start work here": "再次允许 {there} 在此开始工作",
-  "Set up this machine to start work on {there}": "设置本机在 {there} 上开始工作",
-  "Change what this machine may do on {there}": "更改本机在 {there} 上可以做的事",
   Advisor: "顾问",
   "Let threads ask a stronger model": "允许会话询问更强的模型",
   "A thread can ask a stronger model to review its approach, then keep working. Each consult spends the advisor model's usage.":
@@ -5271,7 +5263,6 @@ export const zh: PhraseCatalog = {
   "Separate project · also on {machine}": "独立项目 · {machine} 上也有",
   "{machine} has this repository as a separate project. Link them from the project menu to share one coordinator, plan and memory.":
     "{machine} 把此仓库作为独立项目添加。从项目菜单关联后，可共享同一个协调者、计划和记忆。",
-  "Only on this machine": "仅在这台电脑上",
   "No other machine has this project.": "没有其他电脑有这个项目。",
   "Connect to see its state": "连接后可查看状态",
   "This app cannot see this machine, so it cannot tell what it does for this project.":
@@ -5700,4 +5691,16 @@ export const zh: PhraseCatalog = {
     "一次交接最多 {n} 个线程。其余的之后再交接。",
   "{provider} sign-in expired on {machine}": "{machine} 上的 {provider} 登录已过期",
   "{provider} sign-in expired": "{provider} 登录已过期",
+  "{from} can start work on {to}": "{from} 可以在 {to} 上开始工作",
+  "{from} can't start work on {to}": "{from} 不能在 {to} 上开始工作",
+  "Allow it on {there} in Settings > Machines": "请在 {there} 的 设置 > 机器 中允许",
+  "Set up {here} to start work on {there}": "设置 {here}，使其可以在 {there} 上开始工作",
+  "Change what {here} may do on {there}": "更改 {here} 在 {there} 上可以做的事",
+  "Only on {machine}": "仅在 {machine} 上",
+  "{there} can start work on {here}: agents on {there} may start threads in {here}'s projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. {here} can start work on {there}: agents on {here} may start threads there, up to the access {there} allows.":
+    "{there} 可以在 {here} 上开始工作：{there} 上的智能体可以在 {here} 的项目中开始线程。停止会立即拒绝新工作；已在运行的线程会在 2 分钟后停止。{here} 可以在 {there} 上开始工作：{here} 上的智能体可以在那里开始线程，权限以 {there} 允许的为上限。",
+  "Only {machineLabel} can allow this: on {machineLabel}, open Settings > Machines and choose Allow… on {hereLabel}'s card.":
+    "只有 {machineLabel} 能允许此操作：在 {machineLabel} 上打开 设置 > 机器，在 {hereLabel} 的卡片上选择“允许…”。",
+  "Not set up yet. Step 1: add {machineLabel} so {hereLabel}'s server can reach it. Step 2: Allow.":
+    "尚未设置。第 1 步：添加 {machineLabel}，让 {hereLabel} 的服务器能连到它。第 2 步：允许。",
 };

@@ -565,7 +565,7 @@ describe("buildMachineRows project lists", () => {
       project("scratch", {}, "/Users/a/scratch"),
     ]);
     expect(row?.projects.own.map((entry) => [entry.title, entry.roleLabel])).toEqual([
-      ["mine", "Only on this machine"],
+      ["mine", "Only on {machine}"],
     ]);
     expect(row?.projects.automated.map((entry) => entry.title)).toEqual(["check"]);
     expect(row?.projects.archived.map((entry) => entry.title)).toEqual(["old", "old-check"]);
@@ -600,7 +600,9 @@ describe("buildMachineRows project lists", () => {
     expect(entry?.roleValues).toEqual({ machine: "Windows" });
     expect(entry?.alsoOn).toEqual(["Windows"]);
     const [otherRow] = rowsFor([project("alone")]);
-    expect(otherRow?.projects.own[0]?.roleLabel).toBe("Only on this machine");
+    // Named, because the card is about another machine than the one showing it.
+    expect(otherRow?.projects.own[0]?.roleLabel).toBe("Only on {machine}");
+    expect(otherRow?.projects.own[0]?.roleValues).toEqual({ machine: "M4MAX" });
   });
 
   it("puts shared copies ahead of the ones only this machine has", () => {

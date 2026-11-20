@@ -5075,10 +5075,6 @@ export const ru: PhraseCatalog = {
   "The AppImage's path cannot be written into the command. Move the AppImage to a simpler folder and open it from there.":
     "Путь к AppImage нельзя записать в команду. Переместите AppImage в папку с простым путём и откройте его оттуда.",
   "Could not write {path} ({error}).": "Не удалось записать {path} ({error}).",
-  "{there} can start work here": "{there} может начинать работу здесь",
-  "{there} can't start work here": "{there} не может начинать работу здесь",
-  "This machine can start work on {there}": "Эта машина может начинать работу на {there}",
-  "This machine can't start work on {there}": "Эта машина не может начинать работу на {there}",
   "until you stop it": "пока вы не остановите",
   "1 running thread stops at {time}.": "1 работающий поток остановится в {time}.",
   "{count} running threads stop at {time}.": "Работающие потоки ({count}) остановятся в {time}.",
@@ -5096,14 +5092,9 @@ export const ru: PhraseCatalog = {
   "More for {machine}": "Ещё для {machine}",
   "Hide connection details": "Скрыть сведения о подключении",
   "Let {thereLabel} start work here": "Разрешить {thereLabel} начинать работу здесь",
-  "{there} can start work here: its agents may start threads in this machine's projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. This machine can start work on {there}: agents here may start threads there, up to the access {there} allows.":
-    "{there} может начинать работу здесь: его агенты могут запускать потоки в проектах этой машины. «Остановить» сразу отклоняет новую работу; уже запущенные потоки останавливаются через 2 минуты. Эта машина может начинать работу на {there}: здешние агенты могут запускать там потоки в пределах доступа, который разрешает {there}.",
   "Allow {there} to start work here": "Разрешить {there} начинать работу здесь",
   "Stop {there} starting work here": "Запретить {there} начинать работу здесь",
   "Allow {there} again to start work here": "Снова разрешить {there} начинать работу здесь",
-  "Set up this machine to start work on {there}":
-    "Настроить эту машину для запуска работы на {there}",
-  "Change what this machine may do on {there}": "Изменить, что этой машине можно на {there}",
   Advisor: "Советник",
   "Let threads ask a stronger model": "Разрешить тредам спрашивать более сильную модель",
   "A thread can ask a stronger model to review its approach, then keep working. Each consult spends the advisor model's usage.":
@@ -5493,7 +5484,6 @@ export const ru: PhraseCatalog = {
   "Separate project · also on {machine}": "Отдельный проект · также на {machine}",
   "{machine} has this repository as a separate project. Link them from the project menu to share one coordinator, plan and memory.":
     "На {machine} этот репозиторий добавлен как отдельный проект. Свяжите их из меню проекта, чтобы у них были общие координатор, план и память.",
-  "Only on this machine": "Только на этой машине",
   "No other machine has this project.": "Ни на одной другой машине нет этого проекта.",
   "Connect to see its state": "Подключитесь, чтобы увидеть состояние",
   "This app cannot see this machine, so it cannot tell what it does for this project.":
@@ -5947,4 +5937,16 @@ export const ru: PhraseCatalog = {
     "За одну передачу уходит до {n} тредов. Остальные передайте потом.",
   "{provider} sign-in expired on {machine}": "Вход в {provider} на {machine} истёк",
   "{provider} sign-in expired": "Вход в {provider} истёк",
+  "{from} can start work on {to}": "{from} может начинать работу на {to}",
+  "{from} can't start work on {to}": "{from} не может начинать работу на {to}",
+  "Allow it on {there} in Settings > Machines": "Разрешите это на {there} в «Настройки > Машины»",
+  "Set up {here} to start work on {there}": "Настроить {here}, чтобы начинать работу на {there}",
+  "Change what {here} may do on {there}": "Изменить, что {here} можно на {there}",
+  "Only on {machine}": "Только на {machine}",
+  "{there} can start work on {here}: agents on {there} may start threads in {here}'s projects. Stop refuses new work at once; threads it already runs stop 2 minutes later. {here} can start work on {there}: agents on {here} may start threads there, up to the access {there} allows.":
+    "{there} может начинать работу на {here}: агенты на {there} могут запускать треды в проектах {here}. «Остановить» сразу отклоняет новую работу; уже запущенные треды останавливаются через 2 минуты. {here} может начинать работу на {there}: агенты на {here} могут запускать там треды в пределах доступа, который разрешает {there}.",
+  "Only {machineLabel} can allow this: on {machineLabel}, open Settings > Machines and choose Allow… on {hereLabel}'s card.":
+    "Разрешить это может только {machineLabel}: на {machineLabel} откройте «Настройки > Машины» и нажмите «Разрешить…» на карточке {hereLabel}.",
+  "Not set up yet. Step 1: add {machineLabel} so {hereLabel}'s server can reach it. Step 2: Allow.":
+    "Ещё не настроено. Шаг 1: добавьте {machineLabel}, чтобы сервер {hereLabel} мог до неё достучаться. Шаг 2: «Разрешить».",
 };

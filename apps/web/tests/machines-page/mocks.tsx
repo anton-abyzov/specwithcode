@@ -3,13 +3,16 @@ import type { ReactNode } from "react";
 export const Link = ({ children }: { children: ReactNode }) => (
   <a href="#connections">{children}</a>
 );
+// The desktop app: it can add a machine it has full access to.
+export const isElectron = true;
 export const useAtomValue = () => null;
 export const desktopNetworkAccessStateAtom = null;
 export const useProjects = () => [];
 export const useServerConfigs = () => new Map();
 export const useEnvironments = () => ({ environments: [] });
 export const usePrimaryEnvironmentId = () => "env-m4";
-export const useEnvironmentScope = (id: string) => id !== "env-phone";
+export const useEnvironmentScope = (id: string | null) =>
+  id !== "env-phone" && !String(id).endsWith("-no-access");
 export const readEnvironmentScope = () => true;
 export const useEnvironmentScopeAccess = (id: string) =>
   id === "env-phone" ? "denied" : "granted";

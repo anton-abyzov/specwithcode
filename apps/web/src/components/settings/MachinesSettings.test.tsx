@@ -31,6 +31,8 @@ const runtime = vi.hoisted(() => ({
   step: "add-phone" as "sign-in" | "turn-on" | "add-phone" | "done" | "loading",
   connectKind: "on" as "on" | "unknown" | "unavailable",
   phoneCard: true,
+  // The desktop app, which can add a machine it has full access to.
+  electron: false,
 }));
 
 vi.mock("./useSettingsProjectGroups", () => ({ useSettingsProjectGroups: () => [] }));
@@ -88,6 +90,12 @@ vi.mock("./HandoffModeSettings", () => ({ HandoffModeSettings: () => null }));
 // Access requests poll every connected machine; they have their own tests.
 vi.mock("../away/AwayAccessRequests", () => ({ AwayAccessRequestsAll: () => null }));
 vi.mock("./usePrimaryFleet", () => ({ usePrimaryFleet: () => runtime.fleet }));
+vi.mock("../../env", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../env")>()),
+  get isElectron() {
+    return runtime.electron;
+  },
+}));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({ environments: runtime.environments }),
   usePrimaryEnvironmentId: () => null,
@@ -445,7 +453,7 @@ describe("Settings > Machines", () => {
     expect(html).toContain("Online");
     expect(html).toContain("not open in this window");
     expect(html).not.toContain("Not connected");
-    expect(html).toContain("This machine can start work on MacBook Pro");
+    expect(html).toContain("M4MAX can start work on MacBook Pro");
     expect(html).not.toContain('href="/settings/machines"');
     // One sentence per direction with its one button; the rest sits under ⋯.
     expect(html).toContain('data-slot="machine-directions"');
@@ -572,9 +580,9 @@ describe("Settings > Machines", () => {
     };
     const html = renderToStaticMarkup(<MachinesSettingsPanel />);
     expect(html).toContain('aria-label="Who can run work here"');
-    expect(html).toContain("MacBook Pro can start work here");
+    expect(html).toContain("MacBook Pro can start work on M4MAX");
     expect(html).toContain("Linked projects");
-    expect(html.match(/MacBook Pro can start work here/g)).toHaveLength(1);
+    expect(html.match(/MacBook Pro can start work on M4MAX/g)).toHaveLength(1);
     expect(html).toContain('data-direction-action="stop"');
     expect(html).not.toContain("use this machine too");
   });
@@ -710,12 +718,12 @@ describe("Settings > Machines", () => {
     setUp();
     runtime.grants = { grants: [], projects: [], accounts: [] };
     const html = renderToStaticMarkup(<MachinesSettingsPanel />);
-    expect(html).toContain("MacBook Pro can&#x27;t start work here");
+    expect(html).toContain("MacBook Pro can&#x27;t start work on M4MAX");
     expect(html).toContain("Not set up");
     expect(html).toContain('data-direction-action="allow-setup"');
     expect(html).not.toContain("use this machine too");
     // Never for this machine itself.
-    expect(html).not.toContain("M4MAX can&#x27;t start work here");
+    expect(html).not.toContain("M4MAX can&#x27;t start work on M4MAX");
   });
 
   it("shows no allow-back step before the grants load or once that machine holds a grant", () => {
@@ -961,10 +969,22 @@ describe("Add for agents", () => {
     expect(html).toContain("Step 1: add Windows");
   });
 
-  it("names the manual route, with no button, when the connection cannot add it", () => {
-    const html = view(false);
+  it("names the machine that can allow it, with no button, when the connection cannot add it", () => {
+    const html = renderToStaticMarkup(
+      <AddForAgentsView
+        machineLabel="Windows"
+        hereLabel="M4"
+        allowed={false}
+        adding={false}
+        error={null}
+        onAdd={vi.fn()}
+      />,
+    );
     expect(html).not.toContain(">Add Windows<");
-    expect(html).toContain("choose Join a main machine");
+    expect(html).toContain(
+      "Only Windows can allow this: on Windows, open Settings &gt; Machines and choose Allow… on M4&#x27;s card.",
+    );
+    expect(html).not.toMatch(/main machine/iu);
   });
 
   it("says what is next once added, with no button to press twice", () => {
@@ -985,5 +1005,67 @@ describe("Add for agents", () => {
 
   it("shows why adding failed", () => {
     expect(view(true, "Machine offline")).toContain("Machine offline");
+  });
+});
+
+describe("Machine card: Set up… and Allow… always land on a step", () => {
+  const m2 = EnvironmentId.make("env-m2");
+  let container: HTMLDivElement;
+  let root: import("react-dom/client").Root;
+  async function mount() {
+    setUp();
+    // ministorm is connected but not on this machine's server, and has no grant here.
+    runtime.environments = [...runtime.environments, environment(m2, "ministorm")];
+    runtime.grants = { grants: [], projects: [], accounts: [] };
+    const { createRoot } = await import("react-dom/client");
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root.render(<MachinesSettingsPanel />));
+    return container.querySelector<HTMLElement>('li[aria-label="ministorm"]')!;
+  }
+  afterEach(async () => {
+    await act(async () => root?.unmount());
+    container?.remove();
+    runtime.electron = false;
+  });
+  /** Presses twice; the second press, with the panel already open, used to do nothing. */
+  async function pressTwice(button: HTMLButtonElement, landed: () => void) {
+    for (const _press of [1, 2]) {
+      button.focus();
+      await act(async () => button.click());
+      expect(document.activeElement).not.toBe(button);
+      landed();
+    }
+  }
+
+  it("says where to allow it, with no dead button, when this app cannot add the machine", async () => {
+    const card = await mount();
+    const outgoing = card.querySelector('[data-direction="outgoing"]')!;
+    expect(outgoing.textContent).toContain("M4MAX can't start work on ministorm");
+    expect(outgoing.textContent).toContain("Allow it on ministorm in Settings > Machines");
+    expect(outgoing.querySelector("button")).toBeNull();
+    expect(card.textContent).not.toMatch(/main machine|this machine can/iu);
+  });
+
+  it("Set up… opens Connection details and focuses Add, on every press", async () => {
+    runtime.electron = true;
+    const card = await mount();
+    const setUpButton = card.querySelector<HTMLButtonElement>('[data-direction-action="set-up"]')!;
+    expect(setUpButton.getAttribute("aria-label")).toBe("Set up M4MAX to start work on ministorm");
+    await pressTwice(setUpButton, () =>
+      expect(document.activeElement?.textContent).toBe("Add ministorm"),
+    );
+    expect(setUpButton.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("the first-time Allow… focuses the allow step, on every press", async () => {
+    const card = await mount();
+    const allow = card.querySelector<HTMLButtonElement>('[data-direction-action="allow-setup"]')!;
+    await pressTwice(allow, () =>
+      expect(
+        card.querySelector('[data-setup-step="incoming"]')!.contains(document.activeElement),
+      ).toBe(true),
+    );
   });
 });

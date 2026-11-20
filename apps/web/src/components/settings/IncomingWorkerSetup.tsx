@@ -376,7 +376,12 @@ export function IncomingWorkerAction({
       </label>
       {/* The selects do not save on their own, so the button always shows. */}
       <div className="space-y-1">
-        <Button size="xs" disabled={pending || unavailable !== null} onClick={() => void allow()}>
+        <Button
+          size="xs"
+          disabled={pending || unavailable !== null}
+          data-setup-action=""
+          onClick={() => void allow()}
+        >
           {pending
             ? tx("Setting up…")
             : (actionLabel ?? tx("Allow {coordinatorLabel}", { coordinatorLabel }))}
