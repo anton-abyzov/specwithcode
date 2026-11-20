@@ -429,9 +429,16 @@ const layerAccessRequestsProvided = AccessRequests.layer.pipe(
 // and other server code reads and subscribes to it.
 const layerCoordinatorRoleProvided = CoordinatorRole.layer.pipe(Layer.provide(layerProjectService));
 
+/**
+ * The handoff gate the scheduler reads to rest a routine whose thread moved to
+ * another machine. Exported so a test builds the scheduler with this exact layer.
+ */
+export const layerScheduledTaskHandoffGate = Layer.empty;
+
 const layerScheduledTaskProvided = ScheduledTaskService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      layerScheduledTaskHandoffGate,
       layerThreadLaunchProvided,
       layerThreadManagementProvided,
       layerSecretRequestsProvided,

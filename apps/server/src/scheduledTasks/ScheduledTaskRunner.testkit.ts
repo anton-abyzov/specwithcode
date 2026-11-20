@@ -194,6 +194,14 @@ export const fleet = (
     readonly release?: Record<string, "1.0.377">;
     /** How often a due pass looks for routines to settle; absent, the test settles by hand. */
     readonly pace?: number;
+    /**
+     * The handoff gate a machine's scheduler gets in place of the stub that
+     * reads `state.movedThreads`, given its environment id; the server's own.
+     */
+    readonly handoffGate?: (
+      environment: Layer.Layer<ServerEnvironment.ServerEnvironment>,
+      environmentId: EnvironmentId,
+    ) => Layer.Layer<never>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -375,10 +383,18 @@ export const fleet = (
                 })),
             ),
           }),
-          Layer.succeed(HandoffTurnGate, {
-            ...HandoffTurnGate.defaultValue(),
-            continuedOn: (threadId) => Effect.sync(() => state.movedThreads.get(threadId) ?? null),
-          }),
+          options.handoffGate === undefined
+            ? Layer.succeed(HandoffTurnGate, {
+                ...HandoffTurnGate.defaultValue(),
+                continuedOn: (threadId) =>
+                  Effect.sync(() => state.movedThreads.get(threadId) ?? null),
+              })
+            : options.handoffGate(
+                Layer.mock(ServerEnvironment.ServerEnvironment)({
+                  getEnvironmentId: Effect.succeed(environmentId),
+                }),
+                environmentId,
+              ),
         );
         const sqlRef: { current: SqlClient.SqlClient | null } = { current: null };
         const database = yield* Layer.build(Layer.fresh(Sqlite.layerMemory));
