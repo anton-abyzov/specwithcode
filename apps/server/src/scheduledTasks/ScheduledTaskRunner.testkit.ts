@@ -54,6 +54,13 @@ import { receive377 } from "./ScheduledTaskTransfer.release377.testkit.ts";
 import { taskError } from "./ScheduledTaskStorage.ts";
 import { makeTransfer, type ScheduledTaskTransfer } from "./ScheduledTaskTransfer.ts";
 
+/** A machine's scheduler, waiting for its database. */
+export type SchedulerLayer = Layer.Layer<
+  Service.ScheduledTaskService,
+  Layer.Error<typeof Service.layer>,
+  SqlClient.SqlClient
+>;
+
 /** A body as the other machine reads it: JSON, so nothing JSON cannot carry arrives. */
 export const overTheWire = (value: unknown): unknown => parseJson(stringifyJson(value));
 
@@ -78,6 +85,8 @@ export interface Machine {
     fence: string | null;
     launches: number;
     sends: number;
+    /** How many times a routine's command check ran on this machine. */
+    checks: number;
     /** Threads handed off from this machine, and where to. */
     movedThreads: Map<string, string>;
     /** Its coordinator was started beside the project's own: active, and no predecessor. */
@@ -100,6 +109,13 @@ export interface Machine {
      * each row is to its runner.
      */
     beforeRecordsRead: Effect.Effect<void> | null;
+    /** How many project lookups this machine made, and how many when its last check started. */
+    projectLookups: number;
+    lookupsAtCheck: number | null;
+    /** How many project lookups this machine made when it last sent a routine's prompt. */
+    lookupsAtSend: number | null;
+    /** Runs inside this machine's project lookup number `at`, before it answers. */
+    duringProjectLookup: { readonly at: number; readonly run: Effect.Effect<void> } | null;
   };
   readonly sql: SqlClient.SqlClient;
   readonly service: Service.ScheduledTaskService["Service"];
@@ -194,6 +210,16 @@ export const fleet = (
     readonly release?: Record<string, "1.0.377">;
     /** How often a due pass looks for routines to settle; absent, the test settles by hand. */
     readonly pace?: number;
+    /**
+     * Builds each machine's scheduler over the testkit's services, in place of
+     * `Service.layer` with the stub handoff gate that reads `state.movedThreads`:
+     * the server's own composition, given the machine's identity.
+     */
+    readonly scheduler?: <Services>(
+      services: Layer.Layer<Services>,
+      environment: Layer.Layer<ServerEnvironment.ServerEnvironment>,
+      environmentId: EnvironmentId,
+    ) => SchedulerLayer;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -261,6 +287,7 @@ export const fleet = (
           fence: null,
           launches: 0,
           sends: 0,
+          checks: 0,
           movedThreads: new Map(),
           beside: false,
           listFails: false,
@@ -268,6 +295,10 @@ export const fleet = (
           binding: null,
           beforeRevisionsRead: null,
           beforeRecordsRead: null,
+          projectLookups: 0,
+          lookupsAtCheck: null,
+          lookupsAtSend: null,
+          duringProjectLookup: null,
         };
         // The binding this copy's project row carries, as the release before wrote it.
         const binding = () =>
@@ -302,7 +333,13 @@ export const fleet = (
           NodeCrypto.layer,
           Layer.mock(ProjectStore.ProjectStoreV2)({
             get: (id: ProjectId) =>
-              Effect.succeed(id === projectId ? Option.some(projectRow()) : Option.none()),
+              Effect.suspend(() => {
+                state.projectLookups++;
+                const hook = state.duringProjectLookup;
+                if (hook === null || hook.at !== state.projectLookups) return Effect.void;
+                state.duringProjectLookup = null;
+                return hook.run;
+              }).pipe(Effect.as(id === projectId ? Option.some(projectRow()) : Option.none())),
             list: () => Effect.succeed([projectRow()]),
           }),
           Layer.mock(ThreadLaunch.ThreadLaunchService)({
@@ -317,11 +354,19 @@ export const fleet = (
             sendToThread: () =>
               Effect.sync(() => {
                 state.sends++;
+                state.lookupsAtSend = state.projectLookups;
                 return {} as never;
               }),
           }),
           Layer.mock(SecretRequests.SecretRequests)({}),
-          Layer.mock(ProcessRunner.ProcessRunner)({}),
+          Layer.mock(ProcessRunner.ProcessRunner)({
+            run: () =>
+              Effect.sync(() => {
+                state.checks++;
+                state.lookupsAtCheck = state.projectLookups;
+                return { stdout: "", stderr: "", code: 0, timedOut: false } as never;
+              }),
+          }),
           Layer.mock(ProjectCoordinator.ProjectCoordinatorService)({
             start: (input) =>
               Effect.gen(function* () {
@@ -375,11 +420,29 @@ export const fleet = (
                 })),
             ),
           }),
-          Layer.succeed(HandoffTurnGate, {
-            ...HandoffTurnGate.defaultValue(),
-            continuedOn: (threadId) => Effect.sync(() => state.movedThreads.get(threadId) ?? null),
-          }),
+          options.scheduler !== undefined
+            ? Layer.empty
+            : Layer.succeed(HandoffTurnGate, {
+                ...HandoffTurnGate.defaultValue(),
+                continuedOn: (threadId) =>
+                  Effect.sync(() => {
+                    const label = state.movedThreads.get(threadId);
+                    return label === undefined
+                      ? ({ kind: "here" } as const)
+                      : ({ kind: "moved", machineLabel: label } as const);
+                  }),
+              }),
         );
+        const scheduler =
+          options.scheduler === undefined
+            ? Service.layer.pipe(Layer.provide(dependencies))
+            : options.scheduler(
+                dependencies,
+                Layer.mock(ServerEnvironment.ServerEnvironment)({
+                  getEnvironmentId: Effect.succeed(environmentId),
+                }),
+                environmentId,
+              );
         const sqlRef: { current: SqlClient.SqlClient | null } = { current: null };
         const database = yield* Layer.build(Layer.fresh(Sqlite.layerMemory));
         const sql = Context.get(database, SqlClient.SqlClient);
@@ -408,12 +471,7 @@ export const fleet = (
           },
         });
         const context = yield* Layer.build(
-          Layer.fresh(
-            Service.layer.pipe(
-              Layer.provide(dependencies),
-              Layer.provide(Layer.succeed(SqlClient.SqlClient, watched)),
-            ),
-          ),
+          Layer.fresh(scheduler.pipe(Layer.provide(Layer.succeed(SqlClient.SqlClient, watched)))),
         );
         const old = options.release?.[name] === "1.0.377";
         const projects = Effect.sync(() => {
@@ -452,12 +510,7 @@ export const fleet = (
         const scope = yield* Effect.scope;
         const reopen = Effect.gen(function* () {
           const again = yield* Layer.buildWithScope(
-            Layer.fresh(
-              Service.layer.pipe(
-                Layer.provide(dependencies),
-                Layer.provide(Layer.succeed(SqlClient.SqlClient, watched)),
-              ),
-            ),
+            Layer.fresh(scheduler.pipe(Layer.provide(Layer.succeed(SqlClient.SqlClient, watched)))),
             scope,
           );
           live.current = yield* serverOver(Context.get(again, Service.ScheduledTaskService));

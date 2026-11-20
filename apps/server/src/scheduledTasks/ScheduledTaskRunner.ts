@@ -96,7 +96,6 @@ import {
   OLDER_RUNNER_SAVE_REFUSAL,
   UNSEEN_ROUTINE_EDIT_REFUSAL,
   HANDOVER_RESTING_COPY_REFUSAL,
-  threadHandedOffNote,
 } from "./ScheduledTaskRunnerRecords.ts";
 
 export * from "./ScheduledTaskRunnerRecords.ts";
@@ -130,8 +129,8 @@ export interface RoutineRunnerDeps {
   readonly legacyOwner: (projectId: ProjectId) => Effect.Effect<boolean>;
   /** This machine, or null on a host with no identity (then nothing is settled with peers). */
   readonly selfEnvironmentId: Effect.Effect<string | null>;
-  /** The machine a thread was handed off to, when this copy of it no longer runs. */
-  readonly threadMovedTo: (threadId: string) => Effect.Effect<string | null>;
+  /** Holds a worker's routine unless a turn on its thread could start here (routineThreadHold). */
+  readonly threadHold: (task: GateTask) => Effect.Effect<RoutineCoordinatorHold | null>;
   readonly findTask: (
     id: ScheduledTaskId,
   ) => Effect.Effect<ScheduledTask | null, ScheduledTaskError>;
@@ -338,6 +337,10 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
 
     const hold = (task: GateTask): Effect.Effect<RoutineCoordinatorHold | null> =>
       Effect.gen(function* () {
+        // A worker's routine runs here only where a turn on its thread could start,
+        // whatever starts it (1390 AC-45).
+        const thread = yield* deps.threadHold(task);
+        if (thread !== null) return thread;
         // A webhook routine stays with the machine its URL points to, and has no record.
         if (task.schedule.type === "webhook") return null;
         const record = task.id === undefined ? null : yield* records.readStrict(task.id);
@@ -347,14 +350,7 @@ export const makeRoutineRunner = (deps: RoutineRunnerDeps) =>
           if (record.state === "staged" || record.state === "moving")
             return { kind: "wait", reason: MOVING_ROUTINE_WAIT } as const;
         }
-        if (!isCoordinatorOwnedRoutine(task)) {
-          if (task.threadId != null) {
-            const movedTo = yield* deps.threadMovedTo(task.threadId);
-            if (movedTo !== null)
-              return { kind: "rest", note: threadHandedOffNote(movedTo) } as const;
-          }
-          return null;
-        }
+        if (!isCoordinatorOwnedRoutine(task)) return null;
         if (
           record !== null &&
           record.state === "settled" &&

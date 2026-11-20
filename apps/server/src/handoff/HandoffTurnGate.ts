@@ -18,6 +18,15 @@ import { autoFenceRefusal } from "./HandoffAutoContinue.ts";
 import * as HandoffModeStore from "./HandoffModeStore.ts";
 import type { HandoffDocument } from "./handoffState.ts";
 
+/**
+ * Where a thread runs, as this machine's handoff state tells it: here, on the
+ * machine it was handed off to, or unknown while that state does not read.
+ */
+export type ThreadContinuation =
+  | { readonly kind: "here" }
+  | { readonly kind: "moved"; readonly machineLabel: string }
+  | { readonly kind: "unknown" };
+
 export interface HandoffTurnGateShape {
   /** Null when a turn may start; otherwise the reason it may not. Never fails. */
   readonly check: (threadId: ThreadId) => Effect.Effect<string | null>;
@@ -27,10 +36,11 @@ export interface HandoffTurnGateShape {
    */
   readonly pendingSeed?: (threadId: ThreadId) => Effect.Effect<string | null>;
   /**
-   * The machine this thread was handed off to, when this copy no longer runs
-   * it; null otherwise. Never fails. Absent means none (test gates).
+   * Whether this copy of the thread still runs here, was handed off to another
+   * machine, or cannot tell because the handoff state does not read. Never
+   * fails. Absent means here (test gates).
    */
-  readonly continuedOn?: (threadId: ThreadId) => Effect.Effect<string | null>;
+  readonly continuedOn?: (threadId: ThreadId) => Effect.Effect<ThreadContinuation>;
 }
 
 export class HandoffTurnGate extends Context.Reference<HandoffTurnGateShape>(
@@ -42,6 +52,39 @@ export class HandoffTurnGate extends Context.Reference<HandoffTurnGateShape>(
     }),
   },
 ) {}
+
+/**
+ * Whether a worker's routine may run on this machine, by the same rule as a
+ * turn on its thread (1390 AC-45): it runs only when a turn could start here.
+ * A thread handed off to a named machine rests the routine; any other refusal
+ * (a lease another machine holds, a handoff without its answer yet, a paused
+ * machine, a state that does not read) makes it wait.
+ */
+export type RoutineThreadPlace =
+  | { readonly kind: "here" }
+  | { readonly kind: "moved"; readonly machineLabel: string }
+  | { readonly kind: "wait"; readonly reason: string };
+
+export const HANDOFF_STATE_UNREAD_WAIT =
+  "Waiting: this machine cannot read its handoff state, so its thread may have moved.";
+
+export const routineThreadPlace = (
+  gate: HandoffTurnGateShape,
+  threadId: ThreadId,
+): Effect.Effect<RoutineThreadPlace> =>
+  Effect.gen(function* () {
+    const continued =
+      gate.continuedOn === undefined
+        ? { kind: "here" as const }
+        : yield* gate.continuedOn(threadId);
+    if (continued.kind === "moved") return continued;
+    if (continued.kind === "unknown")
+      return { kind: "wait", reason: HANDOFF_STATE_UNREAD_WAIT } as const;
+    const refusal = yield* gate.check(threadId);
+    return refusal === null
+      ? ({ kind: "here" } as const)
+      : ({ kind: "wait", reason: `Waiting: its thread cannot run here now. ${refusal}` } as const);
+  });
 
 /** Why a turn may not start on this machine, or null. Pure, for tests. */
 /** Why a thread waits after this machine paused on losing its network. */
@@ -111,8 +154,16 @@ export const layer = Layer.effect(
         ),
       continuedOn: (threadId: ThreadId) =>
         store.read.pipe(
-          Effect.map((document) => document.threads[threadId]?.continuedOn?.machineLabel ?? null),
-          Effect.catchCause(() => Effect.succeed(null)),
+          Effect.map((document): ThreadContinuation => {
+            const label = document.threads[threadId]?.continuedOn?.machineLabel;
+            return label === undefined ? { kind: "here" } : { kind: "moved", machineLabel: label };
+          }),
+          // A state that does not read may say the thread moved: never "here" (1390 AC-45).
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Handoff mode could not read where a thread runs", { cause }).pipe(
+              Effect.as({ kind: "unknown" } as const),
+            ),
+          ),
         ),
     };
   }),
