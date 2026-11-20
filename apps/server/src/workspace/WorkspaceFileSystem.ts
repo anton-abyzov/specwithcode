@@ -208,7 +208,7 @@ function countLeadingBoms(text: string): number {
 /** What a save finds in the file it would replace. */
 type ExistingFile =
   | { readonly kind: "missing" }
-  | { readonly kind: "text"; readonly leadingBoms: number }
+  | { readonly kind: "text"; readonly leadingBoms: number; readonly handle: NodeFSP.FileHandle }
   | { readonly kind: "not-text" }
   | { readonly kind: "not-file" }
   | { readonly kind: "changed" }
@@ -226,8 +226,8 @@ const EXISTING_FILE_CHUNK_BYTES = 64 * 1024;
  * exist allows a create: any other failure refuses the save, since a file the
  * check could not read may be exactly the one it protects. `checkedStat` is what
  * the protected-path check saw; an open file that differs from it was swapped.
- * Best effort: the write opens the path again, so a swap after this check still
- * lands on the new file.
+ * A text file comes back with its handle still open for writing, so the save
+ * replaces the very file this check read, not one swapped in after it.
  */
 async function readExistingText(
   filePath: string,
@@ -239,16 +239,18 @@ async function readExistingText(
     // destination names no link. Windows lacks both.
     handle = await NodeFSP.open(
       filePath,
-      NodeFS.constants.O_RDONLY |
+      NodeFS.constants.O_RDWR |
         (NodeFS.constants.O_NONBLOCK ?? 0) |
         (NodeFS.constants.O_NOFOLLOW ?? 0),
     );
   } catch (cause) {
-    return isMissingPathError(cause)
-      ? { kind: "missing" }
-      : { kind: "failed", operation: "open", cause };
+    if (isMissingPathError(cause)) return { kind: "missing" };
+    // A folder cannot be opened for writing.
+    if ((cause as NodeJS.ErrnoException | null)?.code === "EISDIR") return { kind: "not-file" };
+    return { kind: "failed", operation: "open", cause };
   }
   let operation: "stat" | "read" = "stat";
+  let keepOpen = false;
   try {
     const stat = await handle.stat({ bigint: true });
     if (checkedStat === null || checkedStat.dev !== stat.dev || checkedStat.ino !== stat.ino) {
@@ -284,11 +286,56 @@ async function readExistingText(
     } catch {
       return { kind: "not-text" };
     }
-    return { kind: "text", leadingBoms };
+    keepOpen = true;
+    return { kind: "text", leadingBoms, handle };
   } catch (cause) {
     return { kind: "failed", operation, cause };
   } finally {
-    await handle.close().catch(() => undefined);
+    if (!keepOpen) await handle.close().catch(() => undefined);
+  }
+}
+
+const fileChangedError = () =>
+  Object.assign(new Error("The file changed while it was being saved."), { code: "EAGAIN" });
+
+/**
+ * Replaces the checked file through its open handle. The path must still name
+ * it: a file swapped in since the check is left alone and the save refused.
+ */
+async function replaceCheckedFile(
+  handle: NodeFSP.FileHandle,
+  filePath: string,
+  bytes: Uint8Array,
+): Promise<void> {
+  const [opened, current] = await Promise.all([
+    handle.stat({ bigint: true }),
+    NodeFSP.stat(filePath, { bigint: true }),
+  ]);
+  if (opened.dev !== current.dev || opened.ino !== current.ino) throw fileChangedError();
+  await handle.truncate(0);
+  await writeAll(handle, bytes);
+}
+
+/** Creates a file that did not exist at the check; one that appeared since is refused. */
+async function createCheckedFile(filePath: string, bytes: Uint8Array): Promise<void> {
+  const handle = await NodeFSP.open(
+    filePath,
+    NodeFS.constants.O_WRONLY |
+      NodeFS.constants.O_CREAT |
+      NodeFS.constants.O_EXCL |
+      (NodeFS.constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    await writeAll(handle, bytes);
+  } finally {
+    await handle.close();
+  }
+}
+
+async function writeAll(handle: NodeFSP.FileHandle, bytes: Uint8Array): Promise<void> {
+  for (let offset = 0; offset < bytes.length; ) {
+    const { bytesWritten } = await handle.write(bytes, offset, bytes.length - offset, offset);
+    offset += bytesWritten;
   }
 }
 
@@ -627,7 +674,22 @@ export const make = Effect.gen(function* () {
     );
     // A file that is not UTF-8 text is never overwritten through this call,
     // whoever asks: its contents could not have come from a read here.
-    const existing = yield* Effect.promise(() => readExistingText(destination, checkedStat));
+    return yield* Effect.acquireUseRelease(
+      Effect.promise(() => readExistingText(destination, checkedStat)),
+      (existing) => saveChecked(input, target, destination, existing),
+      (existing) =>
+        existing.kind === "text"
+          ? Effect.promise(() => existing.handle.close().catch(() => undefined))
+          : Effect.void,
+    );
+  });
+
+  const saveChecked = Effect.fn("WorkspaceFileSystem.saveChecked")(function* (
+    input: Parameters<WorkspaceFileSystem["Service"]["writeFile"]>[0],
+    target: { readonly absolutePath: string; readonly relativePath: string },
+    destination: string,
+    existing: ExistingFile,
+  ) {
     switch (existing.kind) {
       case "not-text":
         return yield* new WorkspaceBinaryFileError({
@@ -649,22 +711,18 @@ export const make = Effect.gen(function* () {
           resolvedPath: destination,
           operationPath: destination,
           operation: existing.kind === "failed" ? existing.operation : "open",
-          cause:
-            existing.kind === "failed"
-              ? existing.cause
-              : Object.assign(new Error("The file changed while it was being saved."), {
-                  code: "EAGAIN",
-                }),
+          cause: existing.kind === "failed" ? existing.cause : fileChangedError(),
         });
     }
-    // The read drops one leading byte order mark, so contents with fewer marks
-    // than the file get that one back and a read-then-save keeps every byte. New
-    // contents saved over a marked file inherit its mark too, as the file's own
-    // encoding choice.
+    // The read drops one leading byte order mark, so a marked file always gets
+    // it back: a read-then-save keeps every byte, and a U+FEFF typed at the start
+    // stays text. New contents saved over a marked file inherit its mark too, as
+    // the file's own encoding choice.
     const contents =
-      existing.kind === "text" && existing.leadingBoms > countLeadingBoms(input.contents)
+      existing.kind === "text" && existing.leadingBoms > 0
         ? UTF8_BOM + input.contents
         : input.contents;
+    const bytes = new TextEncoder().encode(contents);
 
     yield* fileSystem.makeDirectory(path.dirname(target.absolutePath), { recursive: true }).pipe(
       Effect.mapError(
@@ -679,19 +737,21 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-    yield* fileSystem.writeFileString(target.absolutePath, contents).pipe(
-      Effect.mapError(
-        (cause) =>
-          new WorkspaceFileSystemOperationError({
-            workspaceRoot: input.cwd,
-            relativePath: input.relativePath,
-            resolvedPath: target.absolutePath,
-            operationPath: target.absolutePath,
-            operation: "write-file",
-            cause,
-          }),
-      ),
-    );
+    yield* Effect.tryPromise({
+      try: () =>
+        existing.kind === "text"
+          ? replaceCheckedFile(existing.handle, destination, bytes)
+          : createCheckedFile(destination, bytes),
+      catch: (cause) =>
+        new WorkspaceFileSystemOperationError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: target.absolutePath,
+          operationPath: target.absolutePath,
+          operation: "write-file",
+          cause,
+        }),
+    });
     yield* workspaceEntries.refresh(input.cwd);
     return { relativePath: target.relativePath };
   });
