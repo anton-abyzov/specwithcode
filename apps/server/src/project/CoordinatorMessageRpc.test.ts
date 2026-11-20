@@ -1,10 +1,20 @@
 import { describe, expect, it } from "@effect/vitest";
+import { WS_METHODS } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import { refusesOwnerOnlyRpc } from "../auth/RpcAuthorization.ts";
 import { OTHER_PROJECT, outgoing, PROJECT } from "./CoordinatorMessageReceiver.testkit.ts";
 import { listCoordinatorMessages, toCoordinatorMessageView } from "./CoordinatorMessageRpc.ts";
 import { layerMemory } from "./CoordinatorMessageStore.ts";
 
 describe("projects.coordinatorMessages", () => {
+  it("is the owner's read: a peer coordinator's key is refused", () => {
+    const method = WS_METHODS.projectsCoordinatorMessages;
+    expect(
+      refusesOwnerOnlyRpc(method, { kind: "coordinator", environmentId: "linux" as never }),
+    ).toBe(true);
+    expect(refusesOwnerOnlyRpc(method, { kind: "device", id: "laptop" } as never)).toBe(false);
+  });
+
   it.effect("lists one project's messages oldest first, without refused ones", () =>
     Effect.gen(function* () {
       const snapshot = yield* listCoordinatorMessages({ projectId: PROJECT });

@@ -229,4 +229,6 @@ export const COORDINATOR_MESSAGE_PHRASES = [
   "Report on {machine}",
   "File on {machine}",
   "Pull request",
+  "Open coordinator",
+  "{status} when sent",
 ] as const;

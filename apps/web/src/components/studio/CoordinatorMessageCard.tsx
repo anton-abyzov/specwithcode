@@ -5,11 +5,12 @@
  * that sent it with where it stands. Pure: the conversation and the headless
  * fixture pass the messages in.
  */
-import type {
-  CoordinatorMessageRef,
-  CoordinatorMessageView,
-  EnvironmentId,
-  ThreadId,
+import {
+  isWebUrl,
+  type CoordinatorMessageRef,
+  type CoordinatorMessageView,
+  type EnvironmentId,
+  type ThreadId,
 } from "@specweave-studio/contracts";
 import { ArrowUpRightIcon } from "lucide-react";
 import type { ReactNode } from "react";
@@ -34,6 +35,13 @@ export type CoordinatorMessageCardProps = {
   /** Renders a message's text; plain paragraphs when not given. */
   readonly renderText?: ((text: string) => ReactNode) | undefined;
   readonly formatTime?: ((epochMs: number) => string) | undefined;
+  /** A referenced thread's status now, when this machine sees it; else its status at send. */
+  readonly threadStatus?: ((threadId: string, environmentId: string) => string | null) | undefined;
+  /**
+   * Show replies under the message they answer (the default). Off where every message has its
+   * own row in time order, so a reply shows once.
+   */
+  readonly nestReplies?: boolean | undefined;
 };
 
 function MachineName({ environmentId }: { readonly environmentId: string }) {
@@ -66,24 +74,39 @@ function plainText(text: string): ReactNode {
 function RefChip({
   value,
   onOpenThread,
+  threadStatus,
 }: {
   readonly value: CoordinatorMessageRef;
-  readonly onOpenThread: CoordinatorMessageCardProps["onOpenThread"];
-}) {
+} & Pick<CoordinatorMessageCardProps, "onOpenThread" | "threadStatus">) {
   const tx = useTx();
   const nickname = useMachineNicknames();
-  if (value.kind === "pull_request")
-    return (
-      <a className="sws-coordinator-message-ref" href={value.url} target="_blank" rel="noreferrer">
+  if (value.kind === "pull_request") {
+    const label = (
+      <>
         {tx("Pull request")} · {value.title}
-      </a>
+      </>
     );
+    // A peer's message is untrusted: only an http(s) link becomes clickable.
+    return isWebUrl(value.url) ? (
+      <a className="sws-coordinator-message-ref" href={value.url} target="_blank" rel="noreferrer">
+        {label}
+      </a>
+    ) : (
+      <span className="sws-coordinator-message-ref">{label}</span>
+    );
+  }
   const machine = nickname(value.environmentId);
   if (value.kind === "thread") {
+    const live = threadStatus?.(value.threadId, value.environmentId) ?? null;
+    const status =
+      live ??
+      (value.statusAtSend ? tx("{status} when sent", { status: value.statusAtSend }) : null);
     const label = (
       <>
         {tx("Thread on {machine}", { machine })} · {value.title}
-        {value.statusAtSend ? ` · ${value.statusAtSend}` : null}
+        {status ? (
+          <span data-thread-status={live === null ? "at-send" : "live"}> · {status}</span>
+        ) : null}
       </>
     );
     return onOpenThread ? (
@@ -149,7 +172,7 @@ function IncomingMessage(
   const tx = useTx();
   const nickname = useMachineNicknames();
   const machine = <MachineName environmentId={message.peerEnvironmentId} />;
-  const replies = repliesTo(message, all);
+  const replies = props.nestReplies === false ? [] : repliesTo(message, all);
   return (
     <details
       className="sws-coordinator-message"
@@ -185,7 +208,12 @@ function IncomingMessage(
         {message.refs.length > 0 ? (
           <div className="sws-coordinator-message-refs">
             {message.refs.map((ref, index) => (
-              <RefChip key={index} value={ref} onOpenThread={props.onOpenThread} />
+              <RefChip
+                key={index}
+                value={ref}
+                onOpenThread={props.onOpenThread}
+                threadStatus={props.threadStatus}
+              />
             ))}
           </div>
         ) : null}
@@ -215,7 +243,7 @@ function OutgoingMessage(
   const { message, all } = props;
   const tx = useTx();
   const machine = <MachineName environmentId={message.peerEnvironmentId} />;
-  const replies = props.nested ? [] : repliesTo(message, all);
+  const replies = props.nested || props.nestReplies === false ? [] : repliesTo(message, all);
   return (
     <div
       className="sws-coordinator-message-line"
@@ -239,6 +267,7 @@ function OutgoingMessage(
         </span>
         <span className="sws-coordinator-message-subject">{message.subject}</span>
         <StateLabel message={message} />
+        {props.nested ? null : <OpenPeer {...props} />}
       </p>
       {replies.length > 0 ? (
         <div className="sws-coordinator-message-replies">
@@ -262,6 +291,7 @@ export function CoordinatorMessageCard(
     <div
       className="sws-coordinator-messages"
       data-coordinator-messages=""
+      role="group"
       aria-label={tx("Messages between coordinators")}
     >
       {messages.map((message) =>

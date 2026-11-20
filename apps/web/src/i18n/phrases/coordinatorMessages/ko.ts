@@ -29,4 +29,6 @@ export const coordinatorMessagesKo: PhraseCatalog = {
   "Report on {machine}": "{machine}의 보고서",
   "File on {machine}": "{machine}의 파일",
   "Pull request": "풀 리퀘스트",
+  "Open coordinator": "코디네이터 열기",
+  "{status} when sent": "보낼 때: {status}",
 };

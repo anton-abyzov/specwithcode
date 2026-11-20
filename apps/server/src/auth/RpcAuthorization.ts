@@ -414,6 +414,9 @@ const OWNER_ONLY_RPC_METHODS: ReadonlySet<string> = new Set([
   // Sends this machine's secret files, sealed, to one of the owner's machines: a person
   // running the copy decides that, never another machine's key that reached this socket.
   WS_METHODS.machineHandoffCopySealedSecrets,
+  // The kept messages between this project's coordinators and every linked machine are
+  // for the owner's window; a peer's key reads its own copy on its own machine.
+  WS_METHODS.projectsCoordinatorMessages,
   ...PERSONAL_DATA_RPC_METHODS,
   ...TEAM_USAGE_OWNER_RPC_METHODS,
 ]);
@@ -423,11 +426,13 @@ const ownerOnlyRpcMessage = (method: string) =>
     ? "Only this machine's owner can approve access here."
     : method === WS_METHODS.machineHandoffCopySealedSecrets
       ? "Only a person running the copy can send this machine's secret files."
-      : TEAM_USAGE_OWNER_RPC_METHODS.includes(method)
-        ? "Only a person on this machine can change what it shares with a team."
-        : PERSONAL_DATA_RPC_METHODS.includes(method)
-          ? "Only this machine's owner can see or change personal data access here."
-          : "Only this machine's owner can start, stop or change Away here.";
+      : method === WS_METHODS.projectsCoordinatorMessages
+        ? "Only this machine's owner can read the messages between its coordinators."
+        : TEAM_USAGE_OWNER_RPC_METHODS.includes(method)
+          ? "Only a person on this machine can change what it shares with a team."
+          : PERSONAL_DATA_RPC_METHODS.includes(method)
+            ? "Only this machine's owner can see or change personal data access here."
+            : "Only this machine's owner can start, stop or change Away here.";
 
 export const refusesOwnerOnlyRpc = (method: string, principal: AuthPrincipal | undefined) =>
   principal?.kind === "coordinator" && OWNER_ONLY_RPC_METHODS.has(method);

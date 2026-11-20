@@ -29,4 +29,6 @@ export const coordinatorMessagesJa: PhraseCatalog = {
   "Report on {machine}": "{machine} のレポート",
   "File on {machine}": "{machine} のファイル",
   "Pull request": "プルリクエスト",
+  "Open coordinator": "コーディネーターを開く",
+  "{status} when sent": "送信時: {status}",
 };

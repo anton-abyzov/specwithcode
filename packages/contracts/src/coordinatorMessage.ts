@@ -96,6 +96,16 @@ export const CoordinatorMessageBody = Schema.Struct({
 });
 export type CoordinatorMessageBody = typeof CoordinatorMessageBody.Type;
 
+/** True for an absolute http or https URL, the only links a card opens. */
+export function isWebUrl(url: string): boolean {
+  try {
+    const { protocol } = new URL(url);
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Why a message cannot be sent as written, in words the sending agent can
  * act on, or null. `tooLarge` marks a limit the detail belongs in a report
@@ -133,6 +143,8 @@ export function coordinatorMessageProblem(
     )
   )
     return invalid(`A referenced path is over ${COORDINATOR_MESSAGE_PATH_MAX} characters.`);
+  if (message.refs.some((ref) => ref.kind === "pull_request" && !isWebUrl(ref.url)))
+    return invalid("A pull request reference is an http or https URL.");
   if (message.subject.trim() === "") return invalid("A message needs a subject.");
   if (message.kind === "reply" && message.replyTo === undefined)
     return invalid("A reply names the message it answers (replyTo).");

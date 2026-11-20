@@ -560,7 +560,10 @@ export function CoordinatorConversation({
   // Each worker started on another machine sits under the reply of the turn that
   // started it, so later messages follow it rather than stacking under it.
   const remote = useProjectRemoteWorkers(project.environmentId, project.id);
-  const peer = useConversationCoordinatorMessages(project, onOpenThread, timestampFormat);
+  const peer = useConversationCoordinatorMessages(project, onOpenThread, timestampFormat, [
+    ...workers,
+    ...remoteWorkerThreads,
+  ]);
   const [peerOnly, setPeerOnly] = useState(false);
   useLiveRefresh(remote.refresh, {
     enabled: remote.available,
@@ -675,7 +678,11 @@ export function CoordinatorConversation({
       ),
     [remote.workers, rows, firstShown, coordinatorId],
   );
-  const { outgoing, cards: peerCards } = usePeerMessagePlacement(peer, rows, firstShown);
+  const {
+    outgoing,
+    cards: peerCards,
+    incomingRest,
+  } = usePeerMessagePlacement(peer, rows, firstShown);
   // Where the reader was, measured from the end, while older messages are on their
   // way, and how many messages the window held when they were asked for.
   const keptPlace = useRef<{ fromEnd: number; windowSize: number } | null>(null);
@@ -916,6 +923,7 @@ export function CoordinatorConversation({
           </Fragment>
         ))}
         {peerOnly ? null : <CoordinatorOutgoingMessages {...peer.card} messages={outgoing.rest} />}
+        {peerOnly ? null : <CoordinatorMessageCard {...peer.card} messages={incomingRest} />}
         <RemoteWorkerCardList workers={remotePlacement.live} onOpenThread={onOpenThread} />
         <CoordinatorAccessWaiting
           entries={accessWaiting}

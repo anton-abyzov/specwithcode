@@ -28,4 +28,6 @@ export const coordinatorMessagesZh: PhraseCatalog = {
   "Report on {machine}": "{machine} 上的报告",
   "File on {machine}": "{machine} 上的文件",
   "Pull request": "拉取请求",
+  "Open coordinator": "打开协调器",
+  "{status} when sent": "发送时：{status}",
 };

@@ -29,4 +29,6 @@ export const coordinatorMessagesPt: PhraseCatalog = {
   "Report on {machine}": "Relatório em {machine}",
   "File on {machine}": "Arquivo em {machine}",
   "Pull request": "Pull request",
+  "Open coordinator": "Abrir coordenador",
+  "{status} when sent": "{status} ao enviar",
 };
