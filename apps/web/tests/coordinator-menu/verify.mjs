@@ -120,9 +120,12 @@ try {
       );
       NodeAssert.equal(await at("conversation", "[data-reply-source-machine]").count(), 1);
       // A thread chip and a relayed note name the worker's machine.
-      NodeAssert.match(
-        (await at("conversation", "[data-thread-chip]").textContent()).replace(/\s+/g, " "),
-        /Release notes · M5/,
+      // The chip's title and machine are separate boxes, so the machine is checked on its own.
+      await assertShown(
+        page,
+        at("conversation", "[data-thread-chip] .sws-thread-link-machine"),
+        "· M5",
+        width,
       );
       NodeAssert.equal(
         (await at("conversation", "[data-relayed-from]").textContent()).trim(),
