@@ -7191,39 +7191,56 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               let terminalsHandled = false;
               const endTerminalsAfterFailedStop = Effect.gen(function* () {
                 if (terminalsHandled) return;
-                const runningItems = yield* Ref.get(runningCommandItemsByTurn);
-                const terminals = new Map<
-                  string,
-                  { readonly nativeThreadId: string; readonly processId: string }
-                >();
-                for (const target of interruptTargets) {
-                  const items = runningItems.get(target.context.nativeTurnId);
-                  if (items === undefined || items.size === 0) continue;
-                  const nativeThreadId = yield* getNativeThreadId(
-                    target.context.providerThread,
-                  ).pipe(Effect.option);
-                  for (const item of items.values()) {
-                    if (item.processId === undefined) continue;
-                    if (Option.isNone(nativeThreadId)) {
-                      // No address for the terminal: only a restart can end it.
-                      if (appThreadId !== null)
-                        holdFailedStopTeardown(appThreadId, () => Promise.resolve(false));
-                      continue;
+                // Codex may report another terminal while these requests run: each pass
+                // reads the tracked terminals again, until one finds none not yet tried.
+                const tried = new Set<string>();
+                let unaddressed = false;
+                let settled = false;
+                for (let pass = 0; pass < 5; pass++) {
+                  const runningItems = yield* Ref.get(runningCommandItemsByTurn);
+                  const terminals = new Map<
+                    string,
+                    { readonly nativeThreadId: string; readonly processId: string }
+                  >();
+                  for (const target of interruptTargets) {
+                    const items = runningItems.get(target.context.nativeTurnId);
+                    if (items === undefined || items.size === 0) continue;
+                    const nativeThreadId = yield* getNativeThreadId(
+                      target.context.providerThread,
+                    ).pipe(Effect.option);
+                    for (const item of items.values()) {
+                      if (item.processId === undefined) continue;
+                      if (Option.isNone(nativeThreadId)) {
+                        unaddressed = true;
+                        continue;
+                      }
+                      const key = `${nativeThreadId.value}:${item.processId}`;
+                      if (tried.has(key)) continue;
+                      tried.add(key);
+                      terminals.set(key, {
+                        nativeThreadId: nativeThreadId.value,
+                        processId: item.processId,
+                      });
                     }
-                    terminals.set(`${nativeThreadId.value}:${item.processId}`, {
-                      nativeThreadId: nativeThreadId.value,
-                      processId: item.processId,
-                    });
                   }
+                  if (terminals.size === 0) {
+                    settled = true;
+                    break;
+                  }
+                  yield* Effect.forEach(
+                    terminals.values(),
+                    ({ nativeThreadId, processId }) =>
+                      terminateBackgroundTerminal(nativeThreadId, processId).pipe(
+                        Effect.catchCause(() => holdUntilTerminalEnds(nativeThreadId, processId)),
+                      ),
+                    { concurrency: "unbounded", discard: true },
+                  );
                 }
-                yield* Effect.forEach(
-                  terminals.values(),
-                  ({ nativeThreadId, processId }) =>
-                    terminateBackgroundTerminal(nativeThreadId, processId).pipe(
-                      Effect.catchCause(() => holdUntilTerminalEnds(nativeThreadId, processId)),
-                    ),
-                  { concurrency: "unbounded", discard: true },
-                );
+                // No address for a terminal, or Codex still reporting new ones after the
+                // last pass: only a restart can end them.
+                if ((unaddressed || !settled) && appThreadId !== null) {
+                  holdFailedStopTeardown(appThreadId, () => Promise.resolve(false));
+                }
                 // A native turn Codex never confirmed ended (its interrupt was refused) may
                 // still run a foreground command, which has no terminal to end. The finalizer
                 // below forgets it, so the folder change waits until Codex reports it ended.
@@ -7434,6 +7451,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                           Number(attemptedTerminalKeys.has(leftKey)) -
                           Number(attemptedTerminalKeys.has(rightKey)),
                       );
+                    // At once: one slow reply must not push the rest past the folder
+                    // change's minute.
                     return yield* Effect.forEach(
                       pendingTerminals,
                       ([key, { nativeThreadId, processId }]) =>
@@ -7452,6 +7471,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                             }),
                           ),
                         ),
+                      { concurrency: "unbounded" },
                     );
                   });
 
