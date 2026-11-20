@@ -318,25 +318,24 @@ export function SheetChartCard(props: {
   const tone = props.tone ?? 0;
   const activeSort: SheetChartSort = overrides?.sort ?? chart.sort ?? "none";
   const activeAggregate: SheetChartAggregate = overrides?.aggregate ?? chart.aggregate ?? "none";
-  const activeFilters = overrides?.filterValues ?? chart.filterValues ?? [];
+  const activeFilters =
+    overrides?.filterValues !== undefined ? overrides.filterValues : (chart.filterValues ?? []);
+  const normFilter = (value: string) => value.trim().toLowerCase();
   const hasFilters = series.availableFilters.length > 1;
   const showControls = onOverridesChange !== undefined && (hasFilters || series.points.length > 1);
 
   const toggleFilter = (value: string) => {
     if (!onOverridesChange) return;
-    const exists = activeFilters.includes(value);
+    const target = normFilter(value);
+    const exists = activeFilters.some((entry) => normFilter(entry) === target);
     const nextFilters = exists
-      ? activeFilters.filter((entry) => entry !== value)
+      ? activeFilters.filter((entry) => normFilter(entry) !== target)
       : [...activeFilters, value];
-    if (nextFilters.length > 0) {
-      onOverridesChange({
-        ...overrides,
-        filterValues: nextFilters,
-      });
-    } else {
-      const { filterValues: _removed, ...rest } = overrides ?? {};
-      onOverridesChange(rest);
-    }
+    // Explicitly store [] when clearing so a saved chart.filterValues is not reapplied.
+    onOverridesChange({
+      ...overrides,
+      filterValues: nextFilters,
+    });
   };
 
   return (
@@ -405,14 +404,18 @@ export function SheetChartCard(props: {
                 data-active={activeFilters.length === 0}
                 data-chart-filter-all={chart.id}
                 onClick={() => {
-                  const { filterValues: _removed, ...rest } = overrides ?? {};
-                  onOverridesChange(rest);
+                  onOverridesChange({
+                    ...overrides,
+                    filterValues: [],
+                  });
                 }}
               >
                 {tx("All")}
               </button>
               {series.availableFilters.slice(0, 12).map((filterValue) => {
-                const selected = activeFilters.includes(filterValue);
+                const selected = activeFilters.some(
+                  (entry) => normFilter(entry) === normFilter(filterValue),
+                );
                 return (
                   <button
                     key={filterValue}

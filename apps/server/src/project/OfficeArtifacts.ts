@@ -137,13 +137,37 @@ const writesInFlight = new Map<string, Promise<void>>();
 const LOCK_STALE_MS = 30_000;
 const LOCK_TIMEOUT_MS = 4_000;
 
+function isProcessAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error: unknown) {
+    const code = (error as NodeJS.ErrnoException | null)?.code;
+    // EPERM means the process exists under another user; ESRCH means it is gone.
+    return code === "EPERM";
+  }
+}
+
+function parseLockOwner(raw: string): { readonly pid: number; readonly token: string } | null {
+  const trimmed = raw.trim();
+  const sep = trimmed.indexOf(":");
+  if (sep <= 0) return null;
+  const pid = Number.parseInt(trimmed.slice(0, sep), 10);
+  const token = trimmed.slice(sep + 1).trim();
+  if (!Number.isInteger(pid) || pid <= 0 || token.length === 0) return null;
+  return { pid, token };
+}
+
 async function withCrossProcessLock<T>(
   realRoot: string,
   stem: string,
-  run: () => Promise<T>,
+  run: (assertLockOwned: () => Promise<void>) => Promise<T>,
 ): Promise<T> {
   const lockRelative = `${OFFICE_ARTIFACTS_DIR}/.${stem}.lock`;
   const lockPath = NodePath.join(realRoot, ...lockRelative.split("/"));
+  const ownerToken = NodeCrypto.randomUUID();
+  const payload = `${process.pid}:${ownerToken}\n`;
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
   let acquired = false;
   while (!acquired) {
@@ -154,7 +178,8 @@ async function withCrossProcessLock<T>(
         NodeFS.constants.O_CREAT | NodeFS.constants.O_EXCL | NodeFS.constants.O_WRONLY,
       );
       try {
-        await handle.writeFile(`${process.pid}:${Date.now()}\n`, "utf8");
+        await handle.writeFile(payload, "utf8");
+        await handle.sync().catch(() => undefined);
       } finally {
         await handle.close().catch(() => undefined);
       }
@@ -164,8 +189,22 @@ async function withCrossProcessLock<T>(
       if (code !== "EEXIST") throw error;
       const stat = await NodeFSP.lstat(lockPath).catch(() => null);
       if (stat !== null && stat.isFile() && Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
-        await NodeFSP.unlink(lockPath).catch(() => undefined);
-        continue;
+        const existingRaw = await NodeFSP.readFile(lockPath, "utf8").catch(() => null);
+        const owner = existingRaw !== null ? parseLockOwner(existingRaw) : null;
+        // Never evict a live owner process even if its write paused past LOCK_STALE_MS.
+        if (owner === null || !isProcessAlive(owner.pid)) {
+          // Atomically claim the stale lock via rename so two contenders cannot
+          // unlink a newly created successor lock.
+          const reclaimPath = `${lockPath}.reclaim.${NodeCrypto.randomUUID()}`;
+          const renamed = await NodeFSP.rename(lockPath, reclaimPath).then(
+            () => true,
+            () => false,
+          );
+          if (renamed) {
+            await NodeFSP.unlink(reclaimPath).catch(() => undefined);
+            continue;
+          }
+        }
       }
       if (Date.now() >= deadline) {
         throw invalid(`Sheet ${stem} is currently being written by another process. Try again.`);
@@ -173,10 +212,23 @@ async function withCrossProcessLock<T>(
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
   }
+  const verifyStillOwned = async (): Promise<boolean> => {
+    const current = await NodeFSP.readFile(lockPath, "utf8").catch(() => null);
+    if (current === null) return false;
+    const owner = parseLockOwner(current);
+    return owner !== null && owner.pid === process.pid && owner.token === ownerToken;
+  };
+  const assertLockOwned = async (): Promise<void> => {
+    if (!(await verifyStillOwned())) {
+      throw invalid(`Lost write lock for sheet ${stem} before commit. Retry.`);
+    }
+  };
   try {
-    return await run();
+    return await run(assertLockOwned);
   } finally {
-    await NodeFSP.unlink(lockPath).catch(() => undefined);
+    if (await verifyStillOwned()) {
+      await NodeFSP.unlink(lockPath).catch(() => undefined);
+    }
   }
 }
 
@@ -222,7 +274,7 @@ export async function writeSheetArtifact(
   const realRoot = await artifactsRoot(workspaceRoot, true);
   const relativePath = relativePathOf(stem);
   return oneWriteAtATime(`${realRoot}\0${stem}`, () =>
-    withCrossProcessLock(realRoot, stem, async () => {
+    withCrossProcessLock(realRoot, stem, async (assertLockOwned) => {
       const before = await readFrom(realRoot, stem).catch((error: unknown) => {
         // A broken file of that name is replaced by a plain write, never merged into.
         if (options.merge === true || options.expectedRevision !== undefined) throw error;
@@ -274,6 +326,7 @@ export async function writeSheetArtifact(
       }
       await writer.close();
       try {
+        await assertLockOwned();
         await NodeFSP.rename(temporaryPath, target);
       } catch (error) {
         await NodeFSP.unlink(temporaryPath).catch(() => undefined);
@@ -289,4 +342,133 @@ export async function writeSheetArtifact(
       };
     }),
   );
+}
+
+/**
+ * Locked compare-and-set write for any `.sheet.json` file in a workspace
+ * (including viewer saves through WorkspaceFileSystem). When the file lives
+ * under `.specweave/artifacts/<stem>.sheet.json`, shares the exact same lock
+ * and revision check as MCP `sheet_write`.
+ */
+export async function writeSheetFileCompareAndSet(
+  workspaceRoot: string,
+  relativePath: string,
+  contents: string,
+  expectedRevision: string,
+): Promise<void> {
+  const normalizedRel = relativePath.replace(/\\/g, "/").replace(/^\/+/, "");
+  const artifactsPrefix = `${OFFICE_ARTIFACTS_DIR}/`;
+  if (
+    normalizedRel.startsWith(artifactsPrefix) &&
+    normalizedRel.endsWith(SHEET_ARTIFACT_SUFFIX) &&
+    !normalizedRel.slice(artifactsPrefix.length).includes("/")
+  ) {
+    const stem = normalizedRel.slice(artifactsPrefix.length, -SHEET_ARTIFACT_SUFFIX.length);
+    let parsedJson: unknown;
+    try {
+      parsedJson = JSON.parse(contents);
+    } catch {
+      throw invalid("Sheet contents are not valid JSON.");
+    }
+    await writeSheetArtifact(workspaceRoot, parsedJson, {
+      name: stem,
+      expectedRevision,
+    });
+    return;
+  }
+
+  // Non-artifacts `.sheet.json` file (e.g., elsewhere in a project folder):
+  // serialize with an adjacent lock file and enforce expectedRevision atomically.
+  const realRoot = await NodeFSP.realpath(workspaceRoot);
+  const target = NodePath.resolve(realRoot, ...normalizedRel.split("/"));
+  const lockKey = `${realRoot}\0${normalizedRel}`;
+  const lockPath = `${target}.lock`;
+  const ownerToken = NodeCrypto.randomUUID();
+  const payload = `${process.pid}:${ownerToken}\n`;
+
+  await oneWriteAtATime(lockKey, async () => {
+    await NodeFSP.mkdir(NodePath.dirname(target), { recursive: true });
+    const deadline = Date.now() + LOCK_TIMEOUT_MS;
+    let acquired = false;
+    while (!acquired) {
+      try {
+        const handle = await NodeFSP.open(
+          lockPath,
+          NodeFS.constants.O_CREAT | NodeFS.constants.O_EXCL | NodeFS.constants.O_WRONLY,
+        );
+        try {
+          await handle.writeFile(payload, "utf8");
+          await handle.sync().catch(() => undefined);
+        } finally {
+          await handle.close().catch(() => undefined);
+        }
+        acquired = true;
+      } catch (error: unknown) {
+        const code = (error as NodeJS.ErrnoException | null)?.code;
+        if (code !== "EEXIST") throw error;
+        const stat = await NodeFSP.lstat(lockPath).catch(() => null);
+        if (stat !== null && stat.isFile() && Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
+          const existingRaw = await NodeFSP.readFile(lockPath, "utf8").catch(() => null);
+          const owner = existingRaw !== null ? parseLockOwner(existingRaw) : null;
+          if (owner === null || !isProcessAlive(owner.pid)) {
+            const reclaimPath = `${lockPath}.reclaim.${NodeCrypto.randomUUID()}`;
+            if (await NodeFSP.rename(lockPath, reclaimPath).then(() => true, () => false)) {
+              await NodeFSP.unlink(reclaimPath).catch(() => undefined);
+              continue;
+            }
+          }
+        }
+        if (Date.now() >= deadline) {
+          throw invalid(`Sheet ${normalizedRel} is currently being written by another process.`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    }
+    const verifyOwned = async (): Promise<boolean> => {
+      const current = await NodeFSP.readFile(lockPath, "utf8").catch(() => null);
+      if (current === null) return false;
+      const owner = parseLockOwner(current);
+      return owner !== null && owner.pid === process.pid && owner.token === ownerToken;
+    };
+    try {
+      const currentContents = await NodeFSP.readFile(target, "utf8").catch(() => null);
+      if (currentContents === null) {
+        throw invalid(
+          `Conflict: expected revision ${expectedRevision}, but ${normalizedRel} does not exist.`,
+        );
+      }
+      const currentRevision = sheetContentRevision(currentContents);
+      if (currentRevision !== expectedRevision) {
+        throw invalid(
+          `Conflict: ${normalizedRel} changed on disk (expected ${expectedRevision}, current ${currentRevision}).`,
+        );
+      }
+      const tempPath = `${target}.${NodeCrypto.randomUUID()}.tmp`;
+      const handle = await NodeFSP.open(
+        tempPath,
+        NodeFS.constants.O_CREAT | NodeFS.constants.O_EXCL | NodeFS.constants.O_WRONLY,
+      );
+      try {
+        await handle.writeFile(contents, "utf8");
+        await handle.sync();
+      } catch (error) {
+        await handle.close().catch(() => undefined);
+        await NodeFSP.unlink(tempPath).catch(() => undefined);
+        throw error;
+      }
+      await handle.close();
+      if (!(await verifyOwned())) {
+        await NodeFSP.unlink(tempPath).catch(() => undefined);
+        throw invalid(`Lost write lock for ${normalizedRel} before commit.`);
+      }
+      await NodeFSP.rename(tempPath, target).catch(async (error) => {
+        await NodeFSP.unlink(tempPath).catch(() => undefined);
+        throw error;
+      });
+    } finally {
+      if (await verifyOwned()) {
+        await NodeFSP.unlink(lockPath).catch(() => undefined);
+      }
+    }
+  });
 }

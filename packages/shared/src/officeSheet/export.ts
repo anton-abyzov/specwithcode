@@ -14,6 +14,7 @@ import {
   type SheetTab,
   columnIndex,
   columnLetters,
+  parseCellAddress,
   rangeLookup,
   safeLinkHref,
   usedRange,
@@ -28,6 +29,7 @@ export interface SheetHtmlExportOptions {
 
 const DEFAULT_SERIES_LIGHT = ["#2563eb", "#0891b2", "#16a34a", "#d97706", "#9333ea", "#e11d48"];
 const DEFAULT_SERIES_DARK = ["#60a5fa", "#22d3ee", "#4ade80", "#fbbf24", "#c084fc", "#fb7185"];
+export const SHEET_EXPORT_CELL_BUDGET = 50_000;
 
 function escapeHtml(text: string): string {
   return text
@@ -38,8 +40,63 @@ function escapeHtml(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
+function escapeMarkdownInline(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/([\\`*_{}[\]()#+\-.!|~])/g, "\\$1")
+    .replace(/\r?\n/g, " ")
+    .trim();
+}
+
 function escapeMarkdownCell(text: string): string {
-  return text.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, " ").trim();
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\\/g, "\\\\")
+    .replace(/\|/g, "\\|")
+    .replace(/\r?\n/g, " ")
+    .trim();
+}
+
+/**
+ * Resolve exportable rows and columns for a tab within a cumulative cell budget.
+ * For sparse tabs whose bounding box exceeds the budget (e.g., A1 and ZZ100000),
+ * compacts to populated rows and columns so export never stalls or OOMs.
+ */
+function resolveExportGrid(
+  tab: SheetTab,
+  range: CellRange,
+  remainingBudget: number,
+): { readonly rows: number[]; readonly cols: number[]; readonly cellCount: number } {
+  const visibleCols = visibleOrderedColumns(tab, range);
+  const denseRowCount = range.end.row - range.start.row + 1;
+  const denseCells = denseRowCount * visibleCols.length;
+  if (denseCells <= remainingBudget) {
+    const rows: number[] = [];
+    for (let r = range.start.row; r <= range.end.row; r += 1) rows.push(r);
+    return { rows, cols: visibleCols, cellCount: denseCells };
+  }
+  const populatedRows = new Set<number>();
+  const populatedCols = new Set<number>();
+  for (const addr of Object.keys(tab.cells)) {
+    const parsed = parseCellAddress(addr);
+    if (parsed) {
+      populatedRows.add(parsed.row);
+      populatedCols.add(parsed.col);
+    }
+  }
+  const rows = [...populatedRows].sort((a, b) => a - b);
+  const cols = visibleCols.filter((c) => populatedCols.has(c));
+  const compactedCells = rows.length * cols.length;
+  if (compactedCells > remainingBudget) {
+    throw new Error(
+      `Sheet export exceeds the ${SHEET_EXPORT_CELL_BUDGET.toLocaleString()} cell export budget.`,
+    );
+  }
+  return { rows, cols, cellCount: compactedCells };
 }
 
 /**
@@ -73,29 +130,28 @@ export function exportSheetToMarkdown(
   document: SheetDocument,
   evaluation: SheetEvaluation = evaluateSheet(document),
 ): string {
-  const sections: string[] = [`# ${document.title}`];
+  const sections: string[] = [`# ${escapeMarkdownInline(document.title)}`];
+  let remainingBudget = SHEET_EXPORT_CELL_BUDGET;
 
   document.tabs.forEach((tab, tabIndex) => {
-    sections.push(`\n## ${tab.name}`);
+    sections.push(`\n## ${escapeMarkdownInline(tab.name)}`);
     const range = usedRange(tab);
     if (!range) {
       sections.push("\n*(Empty tab)*");
     } else {
-      const cols = visibleOrderedColumns(tab, range);
-      if (cols.length === 0) {
+      const grid = resolveExportGrid(tab, range, remainingBudget);
+      remainingBudget -= grid.cellCount;
+      if (grid.cols.length === 0) {
         sections.push("\n*(All columns hidden)*");
       } else {
         const formatAt = rangeLookup(tab.formats);
-        const rows: string[][] = [];
-        for (let row = range.start.row; row <= range.end.row; row += 1) {
-          rows.push(
-            cols.map((col) => {
-              const value = evaluation.valueAt(tabIndex, { col, row });
-              return escapeMarkdownCell(formatSheetValue(value, formatAt({ col, row })));
-            }),
-          );
-        }
-        const header = rows[0] ?? cols.map((col) => columnLetters(col));
+        const rows = grid.rows.map((row) =>
+          grid.cols.map((col) => {
+            const value = evaluation.valueAt(tabIndex, { col, row });
+            return escapeMarkdownCell(formatSheetValue(value, formatAt({ col, row })));
+          }),
+        );
+        const header = rows[0] ?? grid.cols.map((col) => columnLetters(col));
         const body = rows.slice(1);
         const lines: string[] = [
           `| ${header.join(" | ")} |`,
@@ -108,7 +164,7 @@ export function exportSheetToMarkdown(
 
     for (const chart of tab.charts ?? []) {
       const series = chartSeries(document, evaluation, tabIndex, chart);
-      sections.push(`\n### Chart: ${chart.title}`);
+      sections.push(`\n### Chart: ${escapeMarkdownInline(chart.title)}`);
       if (series.points.length === 0) {
         sections.push("\n*(No chart data)*");
         continue;
@@ -162,24 +218,29 @@ function renderChartSvg(
     const padBottom = 38;
     const plotW = width - padX * 2;
     const plotH = height - padTop - padBottom;
-    const maxVal = Math.max(1, ...series.points.map((p) => Math.max(0, p.value)));
+    const minVal = Math.min(0, series.min);
+    const maxVal = Math.max(0, series.max);
+    const span = maxVal - minVal || 1;
+    const zeroY = padTop + (maxVal / span) * plotH;
     const slot = plotW / series.points.length;
     const barW = Math.max(10, Math.min(44, slot * 0.65));
     const bars = series.points
       .map((point, idx) => {
-        const h = Math.max(2, (Math.max(0, point.value) / maxVal) * plotH);
+        const scaled = (Math.abs(point.value) / span) * plotH;
+        const h = point.value === 0 ? 1.5 : Math.max(2, scaled);
         const x = padX + idx * slot + (slot - barW) / 2;
-        const y = padTop + (plotH - h);
+        const y = point.value >= 0 ? zeroY - h : zeroY;
         const labelX = x + barW / 2;
+        const valY = point.value >= 0 ? y - 5 : y + h + 11;
         return `<g>
   <rect class="svg-bar${animatedClass}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="4" fill="${colorAt(idx)}"><title>${escapeHtml(point.label)}: ${escapeHtml(compactNumber(point.value))}</title></rect>
-  <text x="${labelX.toFixed(1)}" y="${(y - 5).toFixed(1)}" text-anchor="middle" class="svg-val">${escapeHtml(compactNumber(point.value))}</text>
+  <text x="${labelX.toFixed(1)}" y="${valY.toFixed(1)}" text-anchor="middle" class="svg-val">${escapeHtml(compactNumber(point.value))}</text>
   <text x="${labelX.toFixed(1)}" y="${(height - 12).toFixed(1)}" text-anchor="middle" class="svg-lbl">${escapeHtml(point.label.slice(0, 14))}</text>
 </g>`;
       })
       .join("\n");
     return `<svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(chart.title)}">
-  <line x1="${padX}" y1="${padTop + plotH}" x2="${width - padX}" y2="${padTop + plotH}" class="svg-axis" />
+  <line x1="${padX}" y1="${zeroY.toFixed(1)}" x2="${width - padX}" y2="${zeroY.toFixed(1)}" class="svg-axis" />
   ${bars}
 </svg>`;
   }
@@ -282,6 +343,7 @@ export function exportSheetToStandaloneHtml(
         ? DEFAULT_SERIES_DARK
         : DEFAULT_SERIES_LIGHT;
 
+  let remainingBudget = SHEET_EXPORT_CELL_BUDGET;
   const tabsHtml = document.tabs
     .map((tab, tabIndex) => {
       const range = usedRange(tab);
@@ -290,11 +352,11 @@ export function exportSheetToStandaloneHtml(
 
       let tableHtml = `<p class="empty">Empty tab</p>`;
       if (range) {
-        const cols = visibleOrderedColumns(tab, range);
-        if (cols.length > 0) {
-          const rowsHtml: string[] = [];
-          for (let row = range.start.row; row <= range.end.row; row += 1) {
-            const cellsHtml = cols
+        const grid = resolveExportGrid(tab, range, remainingBudget);
+        remainingBudget -= grid.cellCount;
+        if (grid.cols.length > 0) {
+          const rowsHtml = grid.rows.map((row) => {
+            const cellsHtml = grid.cols
               .map((col) => {
                 const value = evaluation.valueAt(tabIndex, { col, row });
                 const style = styleAt({ col, row });
@@ -317,8 +379,8 @@ export function exportSheetToStandaloneHtml(
                 return `<${tag}${cls}${inlineStyle}>${inner}</${tag}>`;
               })
               .join("");
-            rowsHtml.push(`<tr>${cellsHtml}</tr>`);
-          }
+            return `<tr>${cellsHtml}</tr>`;
+          });
           tableHtml = `<div class="table-wrap"><table><tbody>${rowsHtml.join("\n")}</tbody></table></div>`;
         }
       }

@@ -53,7 +53,10 @@ const STATEMENT = JSON.stringify({
 
 let renderer: ReactTestRenderer | null = null;
 
-function render(text: string, onSave?: (contents: string) => Promise<boolean>): ReactTestRenderer {
+function render(
+  text: string,
+  onSave?: (contents: string, expectedRevision?: string) => Promise<boolean | "conflict">,
+): ReactTestRenderer {
   act(() => {
     renderer = create(<SheetView text={text} mode="light" onSave={onSave} />);
   });
@@ -390,6 +393,112 @@ describe("SheetView", () => {
     await act(async () => {
       resolveSave(true);
     });
+  });
+
+  it("passes expectedRevision on save and preserves draft on server conflict", async () => {
+    const calls: Array<{ contents: string; expectedRevision: string | undefined }> = [];
+    const onSave = async (contents: string, expectedRevision?: string) => {
+      calls.push({ contents, expectedRevision });
+      return calls.length === 1 ? ("conflict" as const) : true;
+    };
+    const inst = render(STATEMENT, onSave);
+    act(() => cell(inst.root, "A2").props.onMouseDown({ shiftKey: false }));
+    act(() => cell(inst.root, "B3").props.onMouseDown({ shiftKey: true }));
+    act(() => inst.root.findByProps({ "data-sheet-insert-chart": true }).props.onClick());
+    await act(async () => {
+      await inst.root.findByType("form").props.onSubmit({ preventDefault: () => {} });
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.expectedRevision).toMatch(/^r1-/);
+    // Conflict banner stays visible with the draft intact.
+    expect(inst.root.findAllByProps({ "data-sheet-conflict": true })).toHaveLength(1);
+
+    // "Keep my edits" forces the save without the stale expectedRevision.
+    await act(async () => {
+      await inst.root.findByProps({ "data-sheet-conflict-keep": true }).props.onClick();
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.expectedRevision).toBeUndefined();
+    expect(inst.root.findAllByProps({ "data-sheet-conflict": true })).toHaveLength(0);
+  });
+
+  it("isolates chart overrides across tabs, clears saved filters on All, and keeps summary rows pinned on sort", () => {
+    const doc = JSON.stringify({
+      title: "Multi-tab",
+      tabs: [
+        {
+          name: "First",
+          cells: {
+            A1: "Item",
+            B1: "Amount",
+            A2: "Alpha",
+            B2: 100,
+            A3: "Beta",
+            B3: 300,
+            A4: "Total",
+            B4: "=SUM(B2:B3)",
+          },
+          styles: { "A4:B4": { bold: true, topBorder: true } },
+          charts: [
+            {
+              id: "chart-1",
+              type: "bar",
+              title: "First Chart",
+              labels: "A2:A3",
+              values: "B2:B3",
+              filterValues: ["Alpha"],
+            },
+          ],
+        },
+        {
+          name: "Second",
+          cells: {
+            A1: "Region",
+            B1: "Sales",
+            A2: "North",
+            B2: 50,
+            A3: "South",
+            B3: 80,
+          },
+          charts: [
+            {
+              id: "chart-1",
+              type: "bar",
+              title: "Second Chart",
+              labels: "A2:A3",
+              values: "B2:B3",
+            },
+          ],
+        },
+      ],
+    });
+    const inst = render(doc);
+
+    // Clicking "All" on First's chart-1 clears its saved filterValues: ["Alpha"].
+    const barCount = () =>
+      inst.root.findAll((node) => node.type === "span" && node.props.className === "office-bars-label")
+        .length;
+    expect(barCount()).toBe(1);
+    act(() => inst.root.findByProps({ "data-chart-filter-all": "chart-1" }).props.onClick());
+    expect(barCount()).toBe(2);
+
+    // Filter First's chart-1 to Beta, then switch to Second: Second's chart-1 must NOT inherit Beta.
+    act(() => inst.root.findByProps({ "data-chart-filter": "Beta" }).props.onClick());
+    expect(barCount()).toBe(1);
+    const tabs = inst.root.findAllByProps({ role: "tab" });
+    act(() => tabs[1]!.props.onClick());
+    expect(barCount()).toBe(2);
+
+    // Switch back to First and sort column B descending: Total (row 4, topBorder) stays at the bottom.
+    act(() => tabs[0]!.props.onClick());
+    act(() => inst.root.findByProps({ "data-col-sort": "B" }).props.onClick()); // asc
+    act(() => inst.root.findByProps({ "data-col-sort": "B" }).props.onClick()); // desc
+    const bodyRows = inst.root.findByType("tbody").findAllByType("tr");
+    const firstColValues = bodyRows
+      .slice(0, 4)
+      .map((tr) => textOf(tr.findAllByType("td")[0]!));
+    expect(firstColValues).toEqual(["Item", "Beta", "Alpha", "Total"]);
   });
 });
 

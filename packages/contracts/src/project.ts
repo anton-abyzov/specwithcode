@@ -944,6 +944,8 @@ export const ProjectWriteFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
   contents: Schema.String,
+  /** Optional compare-and-set revision for `.sheet.json` writes. */
+  expectedRevision: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProjectWriteFileInput = typeof ProjectWriteFileInput.Type;
 

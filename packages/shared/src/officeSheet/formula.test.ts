@@ -298,6 +298,35 @@ describe("sheet formulas", () => {
     expect(at("E13")).toBe(32);
     expect(at("E14")).toBe(2);
   });
+
+  it("tracks dependencies and cycles across expanded AVERAGEIF/SUMIF target ranges", () => {
+    // Key order puts B2 after C1; B2 is a formula cell reached via expanded B1 target.
+    const doc = sheet({
+      Main: {
+        A1: "x",
+        A2: "x",
+        B1: 10,
+        C1: '=AVERAGEIF(A1:A2,"x",B1)',
+        B2: "=30",
+      },
+    });
+    const evaluation = evaluateSheet(doc);
+    expect(evaluation.errors).toEqual([]);
+    expect(evaluation.valueAt(0, parseCellAddress("C1")!)).toBe(20);
+
+    // Back-reference from expanded B2 to C1 must be caught as a #CYCLE!
+    const cyclic = sheet({
+      Main: {
+        A1: "x",
+        A2: "x",
+        B1: 10,
+        C1: '=AVERAGEIF(A1:A2,"x",B1)',
+        B2: "=C1+1",
+      },
+    });
+    const cyclicEval = evaluateSheet(cyclic);
+    expect(cyclicEval.valueAt(0, parseCellAddress("C1")!)).toEqual({ error: "#CYCLE!" });
+  });
 });
 
 describe("sheet limits and validation", () => {

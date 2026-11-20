@@ -12,6 +12,8 @@
  */
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
+import { SHEET_ARTIFACT_SUFFIX } from "@specweave-studio/shared/officeSheet";
+import { writeSheetFileCompareAndSet } from "../project/OfficeArtifacts.ts";
 import * as NodePath from "node:path";
 
 import type {
@@ -493,6 +495,33 @@ export const make = Effect.gen(function* () {
       ))
     ) {
       return yield* sensitivePathError(input, target.absolutePath, "write-file");
+    }
+
+    if (
+      input.expectedRevision !== undefined &&
+      target.relativePath.endsWith(SHEET_ARTIFACT_SUFFIX)
+    ) {
+      yield* Effect.tryPromise({
+        try: () =>
+          writeSheetFileCompareAndSet(
+            input.cwd,
+            target.relativePath,
+            input.contents,
+            input.expectedRevision!,
+          ),
+        catch: (cause) =>
+          new WorkspaceFileSystemOperationError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            resolvedPath: target.absolutePath,
+            operationPath: target.absolutePath,
+            operation: "write-file",
+            cause,
+          }),
+      });
+      return {
+        relativePath: target.relativePath,
+      };
     }
 
     yield* fileSystem.makeDirectory(path.dirname(target.absolutePath), { recursive: true }).pipe(

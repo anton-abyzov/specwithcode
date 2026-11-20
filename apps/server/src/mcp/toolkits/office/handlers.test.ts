@@ -16,7 +16,11 @@ import * as Stream from "effect/Stream";
 
 import * as Threads from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as OfficeArtifactService from "../../../project/OfficeArtifactService.ts";
-import { readSheetArtifact, writeSheetArtifact } from "../../../project/OfficeArtifacts.ts";
+import {
+  readSheetArtifact,
+  writeSheetArtifact,
+  writeSheetFileCompareAndSet,
+} from "../../../project/OfficeArtifacts.ts";
 import { ProjectLibraryProblem } from "../../../project/ProjectLibrary.ts";
 import * as Context from "../../McpInvocationContext.ts";
 import * as Access from "../../McpToolAccess.ts";
@@ -401,9 +405,9 @@ it.effect("enforces expectedRevision compare-and-set and recovers stale lockfile
       (afterConflict.cells as Array<Record<string, unknown>>).find((c) => c.cell === "B2"),
     ).toMatchObject({ value: 2400 });
 
-    // A stale cross-process lockfile (>30s old) is evicted automatically.
+    // A stale cross-process lockfile (>30s old) from a dead PID is evicted automatically.
     const lockPath = NodePath.join(root, ".specweave/artifacts/.cas-sheet.lock");
-    NodeFS.writeFileSync(lockPath, "999999\n");
+    NodeFS.writeFileSync(lockPath, "999999:dead-token\n");
     NodeFS.utimesSync(lockPath, 0, 0);
     const recovered = yield* call("sheet_write", {
       name: "cas-sheet",
@@ -413,5 +417,66 @@ it.effect("enforces expectedRevision compare-and-set and recovers stale lockfile
     });
     expect(recovered).toMatchObject({ name: "cas-sheet", created: false });
     expect(NodeFS.existsSync(lockPath)).toBe(false);
+  }).pipe(Effect.provide(layerFor(scope))),
+);
+
+it.effect("refuses to evict an old lock held by a live process", () =>
+  Effect.gen(function* () {
+    const created = yield* call("sheet_write", { ...BUDGET, name: "live-lock-sheet" });
+    const lockPath = NodePath.join(root, ".specweave/artifacts/.live-lock-sheet.lock");
+    // Even if backdated past LOCK_STALE_MS, a live PID (process.pid) must not be evicted.
+    NodeFS.writeFileSync(lockPath, `${process.pid}:live-token\n`);
+    NodeFS.utimesSync(lockPath, 0, 0);
+    try {
+      const blocked = yield* call("sheet_write", {
+        name: "live-lock-sheet",
+        merge: true,
+        expectedRevision: created.revision,
+        tabs: [{ name: "Plan", cells: { B2: 2600 } }],
+      });
+      expect(blocked).toMatchObject({
+        code: "invalid_request",
+        message: expect.stringContaining("currently being written by another process"),
+      });
+      // The live owner's lock file must still be intact.
+      expect(NodeFS.readFileSync(lockPath, "utf8")).toBe(`${process.pid}:live-token\n`);
+    } finally {
+      NodeFS.unlinkSync(lockPath);
+    }
+  }).pipe(Effect.provide(layerFor(scope))),
+);
+
+it.effect("enforces compare-and-set on viewer saves via writeSheetFileCompareAndSet", () =>
+  Effect.gen(function* () {
+    const created = yield* call("sheet_write", { ...BUDGET, name: "viewer-cas" });
+    const relativePath = ".specweave/artifacts/viewer-cas.sheet.json";
+    const fullPath = NodePath.join(root, relativePath);
+    const raw = NodeFS.readFileSync(fullPath, "utf8");
+
+    // A viewer save with a stale expectedRevision fails with Conflict and leaves the file intact.
+    const staleError = yield* Effect.promise(async () => {
+      try {
+        await writeSheetFileCompareAndSet(
+          root,
+          relativePath,
+          raw.replace("10000", "99999"),
+          "r1-stale0000000000",
+        );
+        return null;
+      } catch (err) {
+        return err instanceof Error ? err.message : String(err);
+      }
+    });
+    expect(staleError).toContain("Conflict:");
+    expect(NodeFS.readFileSync(fullPath, "utf8")).toBe(raw);
+
+    // A viewer save with the matching revision succeeds.
+    const updatedContents = raw.replace("2150", "3500");
+    yield* Effect.promise(() =>
+      writeSheetFileCompareAndSet(root, relativePath, updatedContents, created.revision),
+    );
+    const read = yield* call("sheet_read", { name: "viewer-cas" });
+    const cells = read.cells as Array<Record<string, unknown>>;
+    expect(cells.find((cell) => cell.cell === "B2")?.value).toBe(3500);
   }).pipe(Effect.provide(layerFor(scope))),
 );

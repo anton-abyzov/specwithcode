@@ -665,9 +665,36 @@ export function evaluateSheet(document: SheetDocument): SheetEvaluation {
         case "bin":
           stack.push(node.a, node.b);
           break;
-        case "call":
+        case "call": {
+          const fn = node.name.toUpperCase();
+          if ((fn === "SUMIF" || fn === "AVERAGEIF") && node.args.length >= 3) {
+            const criteriaArg = node.args[0]!;
+            const targetArg = node.args[2]!;
+            const criteriaShape =
+              criteriaArg.k === "range"
+                ? { cols: criteriaArg.c2 - criteriaArg.c1, rows: criteriaArg.r2 - criteriaArg.r1 }
+                : criteriaArg.k === "ref"
+                  ? { cols: 0, rows: 0 }
+                  : null;
+            if (criteriaShape !== null && (targetArg.k === "ref" || targetArg.k === "range")) {
+              const tabIndex = resolveTab(targetArg.tab, cell.tab);
+              const startCol = targetArg.k === "ref" ? targetArg.col : targetArg.c1;
+              const startRow = targetArg.k === "ref" ? targetArg.row : targetArg.r1;
+              if (tabIndex !== null) {
+                walkRange(
+                  tabs[tabIndex]!,
+                  startCol,
+                  startRow,
+                  startCol + criteriaShape.cols,
+                  startRow + criteriaShape.rows,
+                  (key) => addDep(tabIndex, key),
+                );
+              }
+            }
+          }
           for (const arg of node.args) stack.push(arg);
           break;
+        }
         default:
           break;
       }

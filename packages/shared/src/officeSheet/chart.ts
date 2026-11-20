@@ -40,15 +40,16 @@ export interface SheetChartSeries {
   readonly problem: "range" | "empty" | null;
 }
 
-/** The first cells of a range, in reading order, never more than a chart draws. */
+const CHART_SOURCE_CELL_LIMIT = 50_000;
+
+/** Source cells of a range in reading order, bounded by a safe source cap before transforms. */
 function cellsOf(range: CellRange): Array<{ col: number; row: number }> {
   const cells: Array<{ col: number; row: number }> = [];
-  const limit = SHEET_LIMITS.chartPoints;
   const byColumn = range.end.col === range.start.col || range.end.row !== range.start.row;
   const lastRow = byColumn ? range.end.row : range.start.row;
   for (let col = range.start.col; col <= range.end.col; col += 1) {
     for (let row = range.start.row; row <= lastRow; row += 1) {
-      if (cells.length >= limit) return cells;
+      if (cells.length >= CHART_SOURCE_CELL_LIMIT) return cells;
       cells.push({ col, row });
     }
   }
@@ -126,7 +127,8 @@ export function chartSeries(
   }
   if (rawRows.length === 0) return none("empty", availableFilters);
 
-  const activeFilters = overrides?.filterValues ?? chart.filterValues;
+  const activeFilters =
+    overrides?.filterValues !== undefined ? overrides.filterValues : chart.filterValues;
   const filtered =
     activeFilters && activeFilters.length > 0
       ? (() => {
@@ -190,8 +192,12 @@ export function chartSeries(
   }
 
   const topN = overrides?.topN ?? chart.topN;
-  if (topN !== undefined && topN >= 1 && points.length > topN) {
-    points = points.slice(0, topN);
+  const renderLimit =
+    topN !== undefined && topN >= 1
+      ? Math.min(topN, SHEET_LIMITS.chartPoints)
+      : SHEET_LIMITS.chartPoints;
+  if (points.length > renderLimit) {
+    points = points.slice(0, renderLimit);
   }
 
   const total = points.reduce((sum, point) => sum + Math.max(0, point.value), 0);

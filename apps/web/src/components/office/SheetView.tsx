@@ -122,8 +122,10 @@ export function SheetView(props: {
   readonly text: string;
   readonly mode: OfficeThemeMode;
   readonly themeSource?: OfficeThemeSource | null | undefined;
-  /** Writes the new file contents; resolves false when the write failed. */
-  readonly onSave?: ((contents: string) => Promise<boolean>) | undefined;
+  /** Writes the new file contents; resolves false on failure or "conflict" on revision mismatch. */
+  readonly onSave?:
+    | ((contents: string, expectedRevision?: string) => Promise<boolean | "conflict">)
+    | undefined;
   /** Tells the host which design system the file names, so it can load it. */
   readonly onDesignSystem?: ((id: string | null) => void) | undefined;
   /** Optional hook for HTML export (defaults to browser Blob download). */
@@ -141,9 +143,10 @@ export function SheetView(props: {
     readonly savedRevision: string;
     readonly document: SheetDocument;
   }>();
+  const [serverConflict, setServerConflict] = useState(false);
   const isOwnSaveLanding = draft !== undefined && incomingRevision === draft.savedRevision;
   const hasExternalConflict =
-    draft !== undefined && draft.from !== props.text && !isOwnSaveLanding;
+    serverConflict || (draft !== undefined && draft.from !== props.text && !isOwnSaveLanding);
   const document = parsed.ok
     ? draft !== undefined && (draft.from === props.text || hasExternalConflict)
       ? draft.document
@@ -190,11 +193,19 @@ export function SheetView(props: {
     return { ...tab, widths: { ...tab.widths, ...localWidths } };
   }, [localWidths, tab]);
 
+  const chartOverrideKey = (tabName: string, chartId: string): string => `${tabName}\0${chartId}`;
+
   const grid = useMemo(() => {
     if (!effectiveTab || !document || !evaluation) return null;
     const used = usedRange(effectiveTab);
     const series = (effectiveTab.charts ?? []).map((chart) =>
-      chartSeries(document, evaluation, activeIndex, chart, chartOverrides[chart.id]),
+      chartSeries(
+        document,
+        evaluation,
+        activeIndex,
+        chart,
+        chartOverrides[chartOverrideKey(effectiveTab.name, chart.id)],
+      ),
     );
     const boxes = layoutSheetCharts(
       effectiveTab,
@@ -211,6 +222,7 @@ export function SheetView(props: {
       start: { col: 0, row: 0 },
       end: { col: columns - 1, row: rows - 1 },
     });
+    const styleOf = rangeLookup(effectiveTab.styles);
     const chipRanges = (effectiveTab.chips ?? [])
       .map((range) => parseCellRange(range))
       .filter((range): range is CellRange => range !== null);
@@ -237,8 +249,13 @@ export function SheetView(props: {
     );
     if (columnSort !== null && used !== null) {
       const dataEnd = Math.min(rows - 1, used.end.row);
+      const isSummaryRow = (row: number): boolean =>
+        displayCols.some((col) => styleOf({ col, row })?.topBorder === true);
       const headerRows = displayRows.filter((row) => row === 0);
-      const sortableRows = displayRows.filter((row) => row > 0 && row <= dataEnd);
+      const summaryRows = displayRows.filter((row) => row > 0 && row <= dataEnd && isSummaryRow(row));
+      const sortableRows = displayRows.filter(
+        (row) => row > 0 && row <= dataEnd && !isSummaryRow(row),
+      );
       const tailRows = displayRows.filter((row) => row > dataEnd);
       const dir = columnSort.direction === "asc" ? 1 : -1;
       sortableRows.sort((a, b) => {
@@ -250,7 +267,7 @@ export function SheetView(props: {
         if (typeof va === "number" && typeof vb === "number") return (va - vb) * dir;
         return String(va).localeCompare(String(vb)) * dir;
       });
-      displayRows = [...headerRows, ...sortableRows, ...tailRows];
+      displayRows = [...headerRows, ...sortableRows, ...summaryRows, ...tailRows];
     }
     return {
       rows,
@@ -266,7 +283,7 @@ export function SheetView(props: {
       series,
       boxes,
       formatOf: rangeLookup(effectiveTab.formats),
-      styleOf: rangeLookup(effectiveTab.styles),
+      styleOf,
     };
   }, [activeIndex, chartOverrides, collapsedGroups, columnSort, document, effectiveTab, evaluation]);
 
@@ -308,7 +325,7 @@ export function SheetView(props: {
     setSelection(event.shiftKey ? { anchor: selection.anchor, focus } : { anchor: focus, focus });
   };
 
-  const save = async (next: SheetDocument): Promise<boolean> => {
+  const save = async (next: SheetDocument, options?: { readonly force?: boolean }): Promise<boolean> => {
     if (!props.onSave) return false;
     const checked = validateSheetDocument(next);
     if (!checked.ok) {
@@ -323,13 +340,19 @@ export function SheetView(props: {
       savedRevision: sheetContentRevision(serialized),
       document: checked.document,
     });
-    const saved = await props.onSave(serialized);
+    const outcome = await props.onSave(serialized, options?.force ? undefined : incomingRevision);
     setSaving(false);
-    if (!saved) {
+    if (outcome === "conflict") {
+      setServerConflict(true);
+      return false;
+    }
+    if (!outcome) {
       setDraft(undefined);
       setSaveError(tx("The chart could not be saved."));
+      return false;
     }
-    return saved;
+    setServerConflict(false);
+    return true;
   };
 
   const insertChart = async () => {
@@ -547,6 +570,7 @@ export function SheetView(props: {
               data-sheet-conflict-reload
               onClick={() => {
                 setDraft(undefined);
+                setServerConflict(false);
                 setSaveError(null);
               }}
             >
@@ -557,7 +581,7 @@ export function SheetView(props: {
                 type="button"
                 size="sm"
                 data-sheet-conflict-keep
-                onClick={() => void save(draft.document)}
+                onClick={() => void save(draft.document, { force: true })}
               >
                 {tx("Keep my edits")}
               </Button>
@@ -849,13 +873,21 @@ export function SheetView(props: {
                     chart={chart}
                     series={series}
                     tone={index}
-                    overrides={chartOverrides[chart.id]}
-                    onOverridesChange={(next) =>
-                      setChartOverrides((prev) => ({ ...prev, [chart.id]: next }))
-                    }
+                    overrides={chartOverrides[chartOverrideKey(tab.name, chart.id)]}
+                    onOverridesChange={(next) => {
+                      const key = chartOverrideKey(tab.name, chart.id);
+                      setChartOverrides((prev) => ({ ...prev, [key]: next }));
+                    }}
                     onRemove={
                       props.onSave && !saving
-                        ? () => void save(removeChart(document, activeIndex, chart.id))
+                        ? () => {
+                            const key = chartOverrideKey(tab.name, chart.id);
+                            setChartOverrides((prev) => {
+                              const { [key]: _removed, ...rest } = prev;
+                              return rest;
+                            });
+                            void save(removeChart(document, activeIndex, chart.id));
+                          }
                         : undefined
                     }
                   />

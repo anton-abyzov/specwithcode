@@ -48,6 +48,9 @@ describe("sheet exporters and organization metadata", () => {
     expect(md).toContain("| Item | Amount | Link |");
     expect(md).not.toContain("SecretCol");
     expect(md).toContain("Infra \\| Core");
+    expect(md).toContain("&lt;b&gt;Ops&lt;/b&gt;");
+    expect(md).not.toContain("<b>Ops</b>");
+    expect(md).not.toContain("<script>");
     expect(md).toContain("### Chart: Spend by item");
 
     const html = exportSheetToStandaloneHtml(doc, { mode: "dark" });
@@ -60,6 +63,62 @@ describe("sheet exporters and organization metadata", () => {
     expect(html).not.toContain('href="javascript:');
     expect(html).toContain("prefers-reduced-motion: reduce");
     expect(html).not.toContain("SecretCol");
+  });
+
+  it("compacts sparse sheets instead of materializing millions of empty cells", () => {
+    const checked = validateSheetDocument({
+      title: "Sparse Export",
+      tabs: [
+        {
+          name: "Far",
+          cells: { A1: "Start", ZZ100000: "End" },
+        },
+      ],
+    });
+    if (!checked.ok) throw new Error(checked.error);
+    const md = exportSheetToMarkdown(checked.document);
+    expect(md).toContain("Start");
+    expect(md).toContain("End");
+    expect(md.length).toBeLessThan(1000);
+
+    const html = exportSheetToStandaloneHtml(checked.document);
+    expect(html).toContain("Start");
+    expect(html).toContain("End");
+    expect(html.length).toBeLessThan(10_000);
+  });
+
+  it("renders signed negative column bars below the zero axis in HTML export", () => {
+    const checked = validateSheetDocument({
+      title: "PnL",
+      tabs: [
+        {
+          name: "Summary",
+          cells: {
+            A1: "Gain",
+            B1: 100,
+            A2: "Flat",
+            B2: 0,
+            A3: "Loss",
+            B3: -50,
+          },
+          charts: [
+            {
+              id: "pnl",
+              type: "column",
+              title: "Profit and Loss",
+              labels: "A1:A3",
+              values: "B1:B3",
+            },
+          ],
+        },
+      ],
+    });
+    if (!checked.ok) throw new Error(checked.error);
+    const html = exportSheetToStandaloneHtml(checked.document);
+    const rects = [...html.matchAll(/<rect class="svg-bar[^"]*"[^>]*y="([^"]+)"[^>]*height="([^"]+)"/g)];
+    expect(rects).toHaveLength(3);
+    const [, flatRect, lossRect] = rects;
+    expect(Number(lossRect![2])).toBeGreaterThan(Number(flatRect![2]) * 5);
   });
 
   it("computes deterministic content revisions", () => {

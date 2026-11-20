@@ -4,6 +4,7 @@ import {
   SHEET_ARTIFACT_SUFFIX,
   SHEET_LIMITS,
 } from "@specweave-studio/shared/officeSheet";
+import { Cause } from "effect";
 import { type ReactNode, useCallback, useMemo, useState } from "react";
 
 import { useTheme } from "~/hooks/useTheme";
@@ -86,12 +87,22 @@ export function SheetFileView(props: {
   const relativePath = sheetRelativePath(props.cwd, props.path);
   const { environmentId, cwd, path } = props;
   const save = useCallback(
-    async (contents: string): Promise<boolean> => {
+    async (contents: string, expectedRevision?: string): Promise<boolean | "conflict"> => {
       // Only the sheet that is open, and never more than a sheet may hold.
       if (relativePath === null || !relativePath.endsWith(SHEET_ARTIFACT_SUFFIX)) return false;
       if (new TextEncoder().encode(contents).byteLength > SHEET_LIMITS.bytes) return false;
-      const result = await writeFile({ environmentId, input: { cwd, relativePath, contents } });
-      if (result._tag !== "Success") return false;
+      const result = await writeFile({
+        environmentId,
+        input:
+          expectedRevision !== undefined
+            ? { cwd, relativePath, contents, expectedRevision }
+            : { cwd, relativePath, contents },
+      });
+      if (result._tag !== "Success") {
+        const message = Cause.pretty(result.cause);
+        if (message.includes("Conflict:")) return "conflict";
+        return false;
+      }
       setProjectFileQueryData(environmentId, cwd, path, contents);
       return true;
     },
