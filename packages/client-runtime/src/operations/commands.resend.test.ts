@@ -142,14 +142,27 @@ const makeSupervisor = Effect.fn("TestSendResend.makeSupervisor")(function* () {
   } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
 });
 
-// A socket that comes and goes before the send fiber looks at it: subscribers
-// hear about the session, but the supervisor no longer holds one.
+// A socket that comes and goes while the send waits for it: the supervisor
+// shows it to exactly one look, the wait's, and holds no session after that.
 const flap = (
   supervisor: EnvironmentSupervisor.EnvironmentSupervisor["Service"],
   session: RpcSession.RpcSession,
 ) =>
   Effect.sync(() => {
-    supervisor.session.value = Option.none();
+    let held: Option.Option<RpcSession.RpcSession> | undefined = Option.some(session);
+    let value = Option.none<RpcSession.RpcSession>();
+    Object.defineProperty(supervisor.session, "value", {
+      configurable: true,
+      get: () => {
+        const shown = held ?? value;
+        held = undefined;
+        return shown;
+      },
+      set: (next: Option.Option<RpcSession.RpcSession>) => {
+        held = undefined;
+        value = next;
+      },
+    });
     PubSub.publishUnsafe(supervisor.session.pubsub, Option.some(session));
     PubSub.publishUnsafe(supervisor.session.pubsub, Option.none());
   });

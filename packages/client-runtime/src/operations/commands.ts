@@ -422,10 +422,14 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
     );
   });
   // Waits for a session other than the one that dropped, unless the supervisor
-  // stops trying: the app disconnected, or the connection is blocked.
+  // stops trying: the app disconnected, or the connection is blocked. A change
+  // only wakes the wait: the stream can still hand over a session that is
+  // already gone, and taking it would spin on a missing session, so the wait
+  // looks at the session the supervisor holds now.
   const nextSession = (lost: Option.Option<RpcSession.RpcSession>) =>
     Effect.raceFirst(
       SubscriptionRef.changes(supervisor.session).pipe(
+        Stream.mapEffect(() => SubscriptionRef.get(supervisor.session)),
         Stream.filter(
           (session) =>
             Option.isSome(session) && !(Option.isSome(lost) && session.value === lost.value),
