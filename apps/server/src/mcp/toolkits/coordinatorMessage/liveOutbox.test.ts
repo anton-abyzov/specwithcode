@@ -36,7 +36,7 @@ describe("live coordinator outbox wiring", () => {
                 messageId: request.messageId,
                 count: 1,
               })
-            : Effect.fail(new Error("offline"));
+            : Effect.fail(new Outbox.CoordinatorMessageOutboxError({ message: "offline" }));
         }),
       coordinatorMessageReceipt: () =>
         Effect.succeed({ capabilities: ["coordinator-message.v1"], state: "settling" }),

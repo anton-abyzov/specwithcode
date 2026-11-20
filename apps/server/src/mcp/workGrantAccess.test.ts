@@ -145,7 +145,7 @@ describe("assertThreadWritable", () => {
       }),
   );
 
-  it.effect("names the refusing machine and sends the user to its coordinator", () =>
+  it.effect("names the refusing machine and points an agent to coordinator messages", () =>
     Effect.gen(function* () {
       const active = linked({ epoch: 3, state: "active", operationId: "start-op" });
       const named = refusal(
@@ -157,7 +157,8 @@ describe("assertThreadWritable", () => {
         ),
       );
       expect(named).toContain("belongs to Machine B's own coordinator");
-      expect(named).toContain("Open Machine B's coordinator");
+      expect(named).toContain("studio_coordinator_message");
+      expect(named).not.toContain("migrate the thread first");
       expect(named).not.toContain("Ask this machine's coordinator");
       // Unlinked work names the machine too, and still refuses (D-01 widens nothing).
       const unlinked = projectFixture(project, { title: "EasyChamp" });

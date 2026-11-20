@@ -1,6 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Filesystem link fixtures exercise opened-handle validation.
 import { mkdir, mkdtemp, rm, symlink, writeFile, link } from "node:fs/promises";
 import { tmpdir } from "node:os";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Native paths match the file-handle reader under test.
 import path from "node:path";
 import { readReportPage, REPORT_MAX_BYTES } from "./reportRead.ts";
 let root = "";

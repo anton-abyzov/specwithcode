@@ -7,7 +7,11 @@ import {
   coordinatorMessageRowId,
   layerMemory,
 } from "./CoordinatorMessageStore.ts";
-import { makeOutbox, COORDINATOR_MESSAGE_OUTBOX_TTL_MS } from "./CoordinatorMessageOutbox.ts";
+import {
+  CoordinatorMessageOutboxError,
+  makeOutbox,
+  COORDINATOR_MESSAGE_OUTBOX_TTL_MS,
+} from "./CoordinatorMessageOutbox.ts";
 
 describe("coordinator message outbox", () => {
   it.effect("keeps a lost-response retry stable and persists before sending", () =>
@@ -22,7 +26,10 @@ describe("coordinator message outbox", () => {
           Effect.gen(function* () {
             expect(yield* store.all).toHaveLength(1);
             requests.push(request.clientRequestId);
-            if (requests.length === 1) return yield* Effect.fail(new Error("reply lost"));
+            if (requests.length === 1)
+              return yield* Effect.fail(
+                new CoordinatorMessageOutboxError({ message: "reply lost" }),
+              );
             return {
               capabilities: ["coordinator-message.v1"],
               outcome: "duplicate" as const,

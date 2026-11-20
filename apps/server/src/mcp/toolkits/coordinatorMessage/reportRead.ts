@@ -1,6 +1,9 @@
 /** Bounded report pages. Only a path already named in an outgoing message reaches here. */
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Numeric O_NOFOLLOW flags and opened-inode validation require Node file handles.
 import { constants } from "node:fs";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Numeric O_NOFOLLOW flags and opened-inode validation require Node file handles.
 import { open, realpath, lstat } from "node:fs/promises";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Canonical native paths are checked against the opened file handle.
 import path from "node:path";
 export const REPORT_MAX_BYTES = 256 * 1024;
 export const REPORT_PAGE_CHARS = 8000;

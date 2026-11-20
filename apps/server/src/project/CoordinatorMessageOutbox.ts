@@ -1,3 +1,8 @@
+import * as Data from "effect/Data";
+import { stringifyJson } from "../json.ts";
+import type { HandoffPeerError } from "../handoff/handoffPeers.ts";
+import type { ProjectServiceError } from "./ProjectService.ts";
+import type { CoordinatorMessageStoreError } from "./CoordinatorMessageStore.ts";
 /** Durable outgoing messages. A retry keeps both ids, including after a lost reply. */
 import {
   COORDINATOR_MESSAGE_CAPABILITY,
@@ -17,6 +22,15 @@ import {
   coordinatorMessageRowId,
 } from "./CoordinatorMessageStore.ts";
 
+export class CoordinatorMessageOutboxError extends Data.TaggedError(
+  "CoordinatorMessageOutboxError",
+)<{ readonly message: string }> {}
+export type OutboxFailure =
+  | CoordinatorMessageOutboxError
+  | CoordinatorMessageStoreError
+  | ProjectServiceError
+  | HandoffPeerError;
+
 export const COORDINATOR_MESSAGE_OUTBOX_TTL_MS = 24 * 60 * 60 * 1000;
 
 export interface CoordinatorMessageOutboxDeps {
@@ -26,10 +40,10 @@ export interface CoordinatorMessageOutboxDeps {
   readonly deliver: (
     record: CoordinatorMessageRecord,
     request: CoordinatorMessageDeliverRequest,
-  ) => Effect.Effect<CoordinatorMessageDeliverResponse, unknown>;
+  ) => Effect.Effect<CoordinatorMessageDeliverResponse, OutboxFailure>;
   readonly receipt?: (
     record: CoordinatorMessageRecord,
-  ) => Effect.Effect<"read" | "not_delivered" | undefined, unknown>;
+  ) => Effect.Effect<"read" | "not_delivered" | undefined, OutboxFailure>;
   /** Resolve the receiver's project from the current link, never a cached project id. */
   readonly receiverProject: (record: CoordinatorMessageRecord) => Effect.Effect<ProjectId>;
 }
@@ -65,7 +79,10 @@ export const makeOutbox = (deps: CoordinatorMessageOutboxDeps) =>
       enqueue: (record: CoordinatorMessageRecord) =>
         Effect.gen(function* () {
           const problem = coordinatorMessageProblem(record);
-          if (problem !== null) return yield* Effect.fail(new Error(problem.message));
+          if (problem !== null)
+            return yield* Effect.fail(
+              new CoordinatorMessageOutboxError({ message: problem.message }),
+            );
           if (
             record.direction !== "outgoing" ||
             record.state !== "queued" ||
@@ -74,79 +91,90 @@ export const makeOutbox = (deps: CoordinatorMessageOutboxDeps) =>
             record.id !== coordinatorMessageRowId({ ...record })
           )
             return yield* Effect.fail(
-              new Error("An outgoing message needs stable message and request ids."),
+              new CoordinatorMessageOutboxError({
+                message: "An outgoing message needs stable message and request ids.",
+              }),
             );
           if (!(yield* deps.authorize(record)))
             return yield* Effect.fail(
-              new Error("This coordinator may no longer send this message."),
+              new CoordinatorMessageOutboxError({
+                message: "This coordinator may no longer send this message.",
+              }),
             );
           const now = yield* Clock.currentTimeMillis;
-          const result = yield* deps.store.update<string | Error>(now, (rows) => {
-            const collision = rows.find((row) => row.id === record.id);
-            if (
-              collision !== undefined &&
-              (collision.clientRequestIds[0] !== record.clientRequestIds[0] ||
-                JSON.stringify([
-                  collision.kind,
-                  collision.subject,
-                  collision.text,
-                  collision.refs,
-                  collision.userStep,
-                  collision.replyTo,
+          const result = yield* deps.store.update<string | CoordinatorMessageOutboxError>(
+            now,
+            (rows) => {
+              const collision = rows.find((row) => row.id === record.id);
+              if (
+                collision !== undefined &&
+                (collision.clientRequestIds[0] !== record.clientRequestIds[0] ||
+                  stringifyJson([
+                    collision.kind,
+                    collision.subject,
+                    collision.text,
+                    collision.refs,
+                    collision.userStep,
+                    collision.replyTo,
+                  ]) !==
+                    stringifyJson([
+                      record.kind,
+                      record.subject,
+                      record.text,
+                      record.refs,
+                      record.userStep,
+                      record.replyTo,
+                    ]))
+              )
+                return {
+                  records: rows,
+                  result: new CoordinatorMessageOutboxError({
+                    message: "A message id cannot be reused for different content.",
+                  }),
+                };
+              const prior = rows.find(
+                (row) =>
+                  row.direction === "outgoing" &&
+                  row.projectId === record.projectId &&
+                  row.peerEnvironmentId === record.peerEnvironmentId &&
+                  row.clientRequestIds.includes(record.clientRequestIds[0]!),
+              );
+              if (
+                prior !== undefined &&
+                stringifyJson([
+                  prior.kind,
+                  prior.subject,
+                  prior.text,
+                  prior.refs,
+                  prior.userStep,
+                  prior.replyTo,
+                  prior.logicalProjectId,
                 ]) !==
-                  JSON.stringify([
+                  stringifyJson([
                     record.kind,
                     record.subject,
                     record.text,
                     record.refs,
                     record.userStep,
                     record.replyTo,
-                  ]))
-            )
-              return {
-                records: rows,
-                result: new Error("A message id cannot be reused for different content."),
-              };
-            const prior = rows.find(
-              (row) =>
-                row.direction === "outgoing" &&
-                row.projectId === record.projectId &&
-                row.peerEnvironmentId === record.peerEnvironmentId &&
-                row.clientRequestIds.includes(record.clientRequestIds[0]!),
-            );
-            if (
-              prior !== undefined &&
-              JSON.stringify([
-                prior.kind,
-                prior.subject,
-                prior.text,
-                prior.refs,
-                prior.userStep,
-                prior.replyTo,
-                prior.logicalProjectId,
-              ]) !==
-                JSON.stringify([
-                  record.kind,
-                  record.subject,
-                  record.text,
-                  record.refs,
-                  record.userStep,
-                  record.replyTo,
-                  record.logicalProjectId,
-                ])
-            )
-              return {
-                records: rows,
-                result: new Error("A request id cannot be reused for different content."),
-              };
-            return prior === undefined
-              ? {
-                  records: [...rows, { ...record, receivedAt: now, updatedAt: now }],
-                  result: record.externalId,
-                }
-              : { records: rows, result: prior.externalId };
-          });
-          if (result instanceof Error) return yield* Effect.fail(result);
+                    record.logicalProjectId,
+                  ])
+              )
+                return {
+                  records: rows,
+                  result: new CoordinatorMessageOutboxError({
+                    message: "A request id cannot be reused for different content.",
+                  }),
+                };
+              return prior === undefined
+                ? {
+                    records: [...rows, { ...record, receivedAt: now, updatedAt: now }],
+                    result: record.externalId,
+                  }
+                : { records: rows, result: prior.externalId };
+            },
+          );
+          if (result instanceof CoordinatorMessageOutboxError) return yield* Effect.fail(result);
           return result;
         }),
       /** Serialized passes prevent reconnect and regular sync from sending concurrently. */
@@ -231,7 +259,7 @@ export class CoordinatorMessageOutbox extends Context.Service<
       readonly machine: string;
       readonly clientRequestId: string;
       readonly message: CoordinatorMessageBody;
-    }) => Effect.Effect<CoordinatorMessageRecord, unknown>;
+    }) => Effect.Effect<CoordinatorMessageRecord, OutboxFailure>;
     readonly read: (input: {
       readonly projectId: ProjectId;
       readonly threadId: ThreadId;
@@ -240,9 +268,9 @@ export class CoordinatorMessageOutbox extends Context.Service<
       readonly offset: number;
     }) => Effect.Effect<
       { readonly content: string; readonly offset: number; readonly nextOffset: number | null },
-      unknown
+      OutboxFailure
     >;
-    readonly flush: Effect.Effect<void, unknown>;
+    readonly flush: Effect.Effect<void, OutboxFailure>;
   }
 >()("specweave-studio/project/CoordinatorMessageOutbox") {}
 
@@ -271,7 +299,7 @@ export const layer = Layer.effect(
         return own.length === 1 && remote.length === 1
           ? {
               ...remote[0]!,
-              membershipStamp: JSON.stringify([
+              membershipStamp: stringifyJson([
                 own[0]!.linkId,
                 own[0]!.generation,
                 remote[0]!.linkId,
@@ -296,7 +324,11 @@ export const layer = Layer.effect(
         destination(row.projectId, row.peerEnvironmentId, row.logicalProjectId).pipe(
           Effect.flatMap((member) =>
             member === undefined
-              ? Effect.fail(new Error("The project is no longer linked."))
+              ? Effect.fail(
+                  new CoordinatorMessageOutboxError({
+                    message: "The project is no longer linked.",
+                  }),
+                )
               : Effect.succeed(member.projectId),
           ),
           Effect.orDie,
@@ -336,10 +368,16 @@ export const layer = Layer.effect(
       Effect.gen(function* () {
         if (input.threadId !== `project-coordinator:${input.projectId}`)
           return yield* Effect.fail(
-            new Error("Only this project's coordinator may send a coordinator message."),
+            new CoordinatorMessageOutboxError({
+              message: "Only this project's coordinator may send a coordinator message.",
+            }),
           );
         if (!input.clientRequestId.trim() || input.clientRequestId.length > 128)
-          return yield* Effect.fail(new Error("clientRequestId must contain 1 to 128 characters."));
+          return yield* Effect.fail(
+            new CoordinatorMessageOutboxError({
+              message: "clientRequestId must contain 1 to 128 characters.",
+            }),
+          );
         const target = (yield* peers.targets).filter(
           (item) =>
             item.machineId === input.machine ||
@@ -347,13 +385,21 @@ export const layer = Layer.effect(
             item.label === input.machine,
         );
         if (target.length !== 1)
-          return yield* Effect.fail(new Error("Name one linked machine unambiguously."));
+          return yield* Effect.fail(
+            new CoordinatorMessageOutboxError({
+              message: "Name one linked machine unambiguously.",
+            }),
+          );
         const project = yield* projects.getById(input.projectId);
         const logical = Option.isSome(project)
           ? project.value.workspaceSettings?.logicalProject
           : undefined;
         if (logical === undefined)
-          return yield* Effect.fail(new Error("Coordinator messages require a linked project."));
+          return yield* Effect.fail(
+            new CoordinatorMessageOutboxError({
+              message: "Coordinator messages require a linked project.",
+            }),
+          );
         const peer = target[0]!.environmentId;
         let message = input.message;
         const rows = yield* store.all;
@@ -375,9 +421,10 @@ export const layer = Layer.effect(
             ))
         )
           return yield* Effect.fail(
-            new Error(
-              "A turn woken by this machine may only reply to its incoming non-reply message.",
-            ),
+            new CoordinatorMessageOutboxError({
+              message:
+                "A turn woken by this machine may only reply to its incoming non-reply message.",
+            }),
           );
         if (message.replyTo !== undefined) {
           const original = rows.find(
@@ -389,14 +436,18 @@ export const layer = Layer.effect(
           );
           if (original === undefined || original.kind === "reply")
             return yield* Effect.fail(
-              new Error("A reply must answer an incoming message that is not itself a reply."),
+              new CoordinatorMessageOutboxError({
+                message: "A reply must answer an incoming message that is not itself a reply.",
+              }),
             );
           message = { ...message, replyTo: original.externalId };
         }
         const member = yield* destination(input.projectId, peer, logical.id);
         if (member === undefined)
-          return yield* Effect.fail(new Error("The destination is no longer linked."));
-        const externalId = `cm-${sha256([JSON.stringify([input.projectId, peer, input.clientRequestId])]).toString("hex")}`;
+          return yield* Effect.fail(
+            new CoordinatorMessageOutboxError({ message: "The destination is no longer linked." }),
+          );
+        const externalId = `cm-${sha256([stringifyJson([input.projectId, peer, input.clientRequestId])]).toString("hex")}`;
         const row = {
           externalId,
           direction: "outgoing" as const,
@@ -423,14 +474,20 @@ export const layer = Layer.effect(
             record.peerEnvironmentId === peer,
         );
         if (result === undefined)
-          return yield* Effect.fail(new Error("The outgoing message could not be read."));
+          return yield* Effect.fail(
+            new CoordinatorMessageOutboxError({
+              message: "The outgoing message could not be read.",
+            }),
+          );
         return result;
       });
     const read: CoordinatorMessageOutbox["Service"]["read"] = (input) =>
       Effect.gen(function* () {
         if (input.threadId !== `project-coordinator:${input.projectId}`)
           return yield* Effect.fail(
-            new Error("Only this project's coordinator may read a coordinator report."),
+            new CoordinatorMessageOutboxError({
+              message: "Only this project's coordinator may read a coordinator report.",
+            }),
           );
         const row = (yield* store.all).find(
           (record) =>
@@ -447,14 +504,22 @@ export const layer = Layer.effect(
               ref.path === input.path,
           )
         )
-          return yield* Effect.fail(new Error("The message does not name that report."));
+          return yield* Effect.fail(
+            new CoordinatorMessageOutboxError({
+              message: "The message does not name that report.",
+            }),
+          );
         const member = yield* destination(
           row.projectId,
           row.peerEnvironmentId,
           row.logicalProjectId,
         );
         if (member === undefined)
-          return yield* Effect.fail(new Error("This project is no longer linked to that machine."));
+          return yield* Effect.fail(
+            new CoordinatorMessageOutboxError({
+              message: "This project is no longer linked to that machine.",
+            }),
+          );
         const page = yield* peers.coordinatorMessageRead(row.peerEnvironmentId, {
           capabilities: [COORDINATOR_MESSAGE_CAPABILITY],
           logicalProjectId: row.logicalProjectId,
@@ -470,10 +535,14 @@ export const layer = Layer.effect(
         );
         if (currentMember === undefined || currentMember.membershipStamp !== member.membershipStamp)
           return yield* Effect.fail(
-            new Error("The project link changed while the report was read."),
+            new CoordinatorMessageOutboxError({
+              message: "The project link changed while the report was read.",
+            }),
           );
         if (!page.capabilities.includes(COORDINATOR_MESSAGE_CAPABILITY))
-          return yield* Effect.fail(new Error("The report's machine needs an update."));
+          return yield* Effect.fail(
+            new CoordinatorMessageOutboxError({ message: "The report's machine needs an update." }),
+          );
         return { content: page.content, offset: page.offset, nextOffset: page.nextOffset };
       });
     return CoordinatorMessageOutbox.of({ send, read, flush: box.flush });

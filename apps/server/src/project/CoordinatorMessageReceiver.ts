@@ -118,6 +118,17 @@ const DAY_MS = 24 * HOUR_MS;
 /** How often due messages are delivered. */
 const FLUSH_EVERY = Duration.seconds(15);
 
+export interface CoordinatorMessageAccess {
+  readonly operate: boolean;
+  readonly sessionId: string;
+  /** The team rules the caller named on the request, checked again before delivery. */
+  readonly teamRulesFingerprint?: string | undefined;
+  /** The device facts the credential carried, checked again before delivery. */
+  readonly device?: EnvironmentAuth.McpClientDevice | undefined;
+  /** The credential's signed expiry, epoch milliseconds; delivery stops at it. */
+  readonly credentialExpiresAt?: number | undefined;
+}
+
 export class CoordinatorMessageReceiver extends Context.Service<
   CoordinatorMessageReceiver,
   {
@@ -128,26 +139,17 @@ export class CoordinatorMessageReceiver extends Context.Service<
     readonly deliver: (
       caller: ReceiverCaller,
       request: CoordinatorMessageDeliverRequest,
-      access: {
-        readonly operate: boolean;
-        readonly sessionId: string;
-        /** The team rules the caller named on the request, checked again before delivery. */
-        readonly teamRulesFingerprint?: string | undefined;
-        /** The device facts the credential carried, checked again before delivery. */
-        readonly device?: EnvironmentAuth.McpClientDevice | undefined;
-        /** The credential's signed expiry, epoch milliseconds; delivery stops at it. */
-        readonly credentialExpiresAt?: number | undefined;
-      },
+      access: CoordinatorMessageAccess,
     ) => Effect.Effect<CoordinatorMessageDeliverResponse, HandoffRefusal>;
     readonly receipt: (
       caller: ReceiverCaller,
       request: CoordinatorMessageReceiptRequest,
-      access: Parameters<CoordinatorMessageReceiver["Service"]["deliver"]>[2],
+      access: CoordinatorMessageAccess,
     ) => Effect.Effect<CoordinatorMessageReceiptResponse, HandoffRefusal>;
     readonly read: (
       caller: ReceiverCaller,
       request: CoordinatorMessageReadRequest,
-      access: Parameters<CoordinatorMessageReceiver["Service"]["deliver"]>[2],
+      access: CoordinatorMessageAccess,
     ) => Effect.Effect<CoordinatorMessageReadResponse, HandoffRefusal>;
     /**
      * The grant this machine keeps for the credential's coordinator, read
@@ -1324,7 +1326,7 @@ export const make = Effect.gen(function* () {
   const inspectAuthority = (
     caller: ReceiverCaller,
     request: CoordinatorMessageReceiptRequest,
-    access: Parameters<CoordinatorMessageReceiver["Service"]["deliver"]>[2],
+    access: CoordinatorMessageAccess,
   ) =>
     Effect.gen(function* () {
       const label = yield* namer;
