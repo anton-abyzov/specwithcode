@@ -126,10 +126,11 @@ async function screenPixels(page, locator) {
 const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 
 /**
- * Teal on screen, whatever a stylesheet does: the computed colour and text fill match the
- * teal reference, and the name's own pixels, read from a screenshot, match it too. The glyphs'
- * fully covered pixels (those farthest from the background) are averaged; a hidden,
- * transparent, refilled, filtered or covered name has too few of them or the wrong colour.
+ * The name's colour under the production stylesheet: its computed colour and text fill equal
+ * the teal reference, and its own screenshot has enough high-contrast pixels whose mean is
+ * within 30 of teal and nearer teal than M5's blue. A stylesheet written to defeat the check,
+ * for example an opaque overlay that hides the letters and paints a teal patch, is not caught:
+ * the fixture guards production styles, not hostile ones.
  */
 async function assertPaintedTeal(page, locator, theme) {
   const [teal, blue] = await machineReferences(page);
