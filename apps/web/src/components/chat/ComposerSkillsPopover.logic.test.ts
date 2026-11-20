@@ -705,7 +705,35 @@ describe("skills an agent only advertises by name", () => {
         uses: [],
       }).flatMap((group) => group.items)[0]!.detail;
     expect(detail("claudeAgent", inside)).toBe("v1.0.0 · locked v9.9.9 · lock: acme/skills");
+    // One entry per name in a lock file: it names the other folder, so this copy has none.
     expect(detail("codex", outside)).toBe("v1.0.0 · no lock entry");
+    // Drift of the locked copy is not a change to the copy the lock does not cover.
+    const drifted = { ...notes, drift: "drift" } as ProjectSkillRow;
+    const note = (instanceId: string, path: string) =>
+      composerSkillVersion({ rows: [drifted] }, instanceId, { name: "notes", path }).note;
+    expect(note("claudeAgent", inside)).toBe("modified");
+    expect(note("codex", outside)).toBeUndefined();
+  });
+
+  it("does not say a user copy has no lock entry when the row keeps the project lock", () => {
+    const user = "/home/me/.agents/skills/notes/SKILL.md";
+    const notes = locked(
+      row({
+        name: "notes",
+        lockVersion: "1.0.0",
+        providers: [{ ...presence({ instanceId: "codex", path: user }), scope: "user" }],
+      }),
+      "github:acme/skills",
+    );
+    const detail = (rows: ProjectSkillRow[]) =>
+      buildComposerSkillGroups({
+        skills: [skill({ name: "notes", path: user, scope: "user" })],
+        instanceId: "codex",
+        snapshot: { rows },
+        uses: [],
+      }).flatMap((group) => group.items)[0]!.detail;
+    expect(detail([notes])).toBe("no version · lock status unknown");
+    expect(detail([{ ...notes, lock: null }])).toBe("no version · no lock entry");
   });
 
   it("opens Settings under the row's own name when the advertised name differs in case", () => {

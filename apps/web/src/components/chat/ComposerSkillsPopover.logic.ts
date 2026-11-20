@@ -128,6 +128,8 @@ export interface ComposerSkillFile {
   readonly version: string | null | undefined;
   /** The source of a lock of the file's own scope that lists it, else null. */
   readonly lockSource: string | null;
+  /** The row kept the project lock; this copy's own level was not looked up. */
+  readonly otherLock: boolean;
   /** The name Settings lists the file under; it can differ from the advertised name in case. */
   readonly rowName: string;
 }
@@ -200,6 +202,11 @@ function lockCovers(row: ProjectSkillRow, level: string, path: string): boolean 
   return row.lock.lockedPaths === undefined || row.lock.lockedPaths.includes(path);
 }
 
+/** A row holds one lock, the project's first: a copy at another level may have its own. */
+function lockOfOtherLevel(row: ProjectSkillRow, level: string): boolean {
+  return row.lock?.lockScope === "project" && level !== "project";
+}
+
 export function composerSkillVersion(
   snapshot: Pick<ProjectSkillsSnapshot, "rows">,
   instanceId: string | null,
@@ -222,7 +229,8 @@ export function composerSkillVersion(
       : null;
   const note = row.divergent
     ? "copies differ"
-    : row.drift === "drift"
+    : // Drift is measured against the lock: it says nothing of a copy the lock does not cover.
+      row.drift === "drift" && matchingLock
       ? "modified"
       : matchingLock?.version && observed && matchingLock.version !== observed.value
         ? `locked v${matchingLock.version}`
@@ -291,6 +299,7 @@ export function composerSkillFilesNamed(
       lockSource: lockCovers(row, level, path)
         ? (projectSkillSourceLinks(row)?.label ?? row.lock?.source ?? "vskill")
         : null,
+      otherLock: lockOfOtherLevel(row, level),
       rowName: row.name,
     });
   };
@@ -318,9 +327,13 @@ function versionWords(version: string | null | undefined): string | null {
   return version ? `v${version.replace(/^v/i, "")}` : "no version";
 }
 
-function lockWords(level: string, lockSource: string | null): string | null {
+/**
+ * `otherLock`: the row kept the project lock, which wins over the user lock,
+ * so whether a user copy has a lock entry of its own is not in this read.
+ */
+function lockWords(level: string, lockSource: string | null, otherLock = false): string | null {
   if (!LOCKABLE_LEVELS.has(level)) return null;
-  return lockSource ? `lock: ${lockSource}` : "no lock entry";
+  return lockSource ? `lock: ${lockSource}` : otherLock ? "lock status unknown" : "no lock entry";
 }
 
 function groupOfLevel(level: string): ComposerSkillGroupId {
@@ -394,7 +407,9 @@ export function buildComposerSkillGroups(input: {
         ? [
             version.value ? `v${version.value.replace(/^v/i, "")}` : "no version",
             ...(version.note && version.note !== "copies differ" ? [version.note] : []),
-            ...(row ? [lockWords(level, lockSource) ?? []].flat() : []),
+            ...(row
+              ? [lockWords(level, lockSource, lockOfOtherLevel(row, level)) ?? []].flat()
+              : []),
           ]
         : pending
           ? ["Checking…"]
@@ -485,7 +500,7 @@ export function buildComposerSkillGroups(input: {
           ? `${versionWords(version.value)} from lock`
           : versionWords(version.value),
         ...(note && note !== "copies differ" ? [note] : []),
-        lockWords(file.level, file.lockSource),
+        lockWords(file.level, file.lockSource, file.otherLock),
       ]
         .filter(Boolean)
         .join(" · "),
