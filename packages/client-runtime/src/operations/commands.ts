@@ -434,7 +434,10 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
     );
   const send = Effect.gen(function* () {
     let command = initial;
-    for (let resends = 0; ; resends += 1) {
+    // Counts only resends of attempts that went out on a socket; the deadline
+    // bounds the rest.
+    let resends = 0;
+    for (let first = true; ; first = false) {
       const attemptSession = yield* SubscriptionRef.get(supervisor.session);
       // A child fiber: interrupting this send stops the wait here and is never
       // mistaken for a dropped socket. It starts at once, so a command sent
@@ -445,19 +448,16 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
       if (Exit.isSuccess(exit)) return exit.value;
       // A resend that found no session never left this window: the socket that
       // served the refresh dropped before it. It waits for the next one too.
-      const unsentResend =
-        resends > 0 &&
-        exit.cause.reasons.some(
-          (reason) =>
-            reason._tag === "Fail" &&
-            (reason.error as { readonly _tag?: unknown })._tag === "EnvironmentRpcUnavailableError",
-        );
-      if (!lostTransport(exit.cause) && !unsentResend) return yield* exit;
+      const unsent = noSession(exit.cause);
+      if (!lostTransport(exit.cause) && !(unsent && !first)) return yield* exit;
       // A protocol error on a session that is still up (a reply that fails to
       // decode) brings no next session, so it fails now.
       if (!Cause.hasInterruptsOnly(exit.cause) && !(yield* sessionGone(attemptSession)))
         return yield* exit;
-      if (resends >= MAX_LOST_TRANSPORT_RESENDS) return yield* lostForGood();
+      if (!unsent) {
+        if (resends >= MAX_LOST_TRANSPORT_RESENDS) return yield* lostForGood();
+        resends += 1;
+      }
       // Wait for a session other than the one that dropped, then rebuild the
       // command on it. A refresh that loses its own socket waits for the next one.
       let lostSession = attemptSession;
