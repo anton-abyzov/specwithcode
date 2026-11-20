@@ -5738,7 +5738,6 @@ export const zh: PhraseCatalog = {
   "Your servers on {machine}": "{machine} 上的服务器",
   "Compare by AI tool": "按 AI 工具比较",
   "Enter details by hand": "手动输入详细信息",
-  "Not changed": "未更改",
   Undone: "已撤销",
   "Turned off": "已关闭",
   "Turned on": "已开启",

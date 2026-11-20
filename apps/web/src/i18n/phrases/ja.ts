@@ -5993,7 +5993,6 @@ export const ja: PhraseCatalog = {
   "Your servers on {machine}": "{machine} のサーバー",
   "Compare by AI tool": "AI ツール別に比較",
   "Enter details by hand": "詳細を手入力",
-  "Not changed": "変更なし",
   Undone: "元に戻しました",
   "Turned off": "オフにしました",
   "Turned on": "オンにしました",

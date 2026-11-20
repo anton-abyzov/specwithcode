@@ -432,6 +432,12 @@ it("offers a search once the list is longer than eight servers", async () => {
   const search = renderer.root.find((n) => n.type === "input");
   await act(() => search.props.onChange({ target: { value: "server-7" } }));
   expect(byTestId("server-row")).toHaveLength(1);
+  state.query = { ...state.query, data: { ...snapshot, plugins: [], connections: many(8) } };
+  await act(() => renderer.update(<NativeConnectionsPanel environmentId={mac} />));
+  const retainedSearch = renderer.root.find((n) => n.type === "input");
+  await act(() => retainedSearch.props.onChange({ target: { value: "" } }));
+  expect(byTestId("server-row")).toHaveLength(8);
+  expect(renderer.root.findAll((n) => n.type === "input")).toEqual([]);
 });
 it("offers no list edits to a sign-in that cannot change the machine's files", async () => {
   state.query.data = { ...snapshot, plugins: [], connections: [entry("codex", "linear")] };

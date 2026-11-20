@@ -6013,7 +6013,6 @@ export const es: PhraseCatalog = {
   "Your servers on {machine}": "Tus servidores en {machine}",
   "Compare by AI tool": "Comparar por herramienta de IA",
   "Enter details by hand": "Introducir los datos a mano",
-  "Not changed": "Sin cambios",
   Undone: "Deshecho",
   "Turned off": "Desactivado",
   "Turned on": "Activado",

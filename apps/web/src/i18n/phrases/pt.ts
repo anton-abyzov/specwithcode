@@ -5985,7 +5985,6 @@ export const pt: PhraseCatalog = {
   "Your servers on {machine}": "Seus servidores em {machine}",
   "Compare by AI tool": "Comparar por ferramenta de IA",
   "Enter details by hand": "Inserir detalhes manualmente",
-  "Not changed": "Sem alteração",
   Undone: "Desfeito",
   "Turned off": "Desativado",
   "Turned on": "Ativado",

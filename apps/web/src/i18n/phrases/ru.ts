@@ -5984,7 +5984,6 @@ export const ru: PhraseCatalog = {
   "Your servers on {machine}": "Ваши серверы на {machine}",
   "Compare by AI tool": "Сравнить по ИИ-инструментам",
   "Enter details by hand": "Ввести данные вручную",
-  "Not changed": "Без изменений",
   Undone: "Отменено",
   "Turned off": "Выключен",
   "Turned on": "Включён",

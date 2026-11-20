@@ -5920,7 +5920,6 @@ export const ko: PhraseCatalog = {
   "Your servers on {machine}": "{machine}의 서버",
   "Compare by AI tool": "AI 도구별 비교",
   "Enter details by hand": "세부 정보 직접 입력",
-  "Not changed": "변경 안 됨",
   Undone: "실행 취소됨",
   "Turned off": "껐음",
   "Turned on": "켰음",
