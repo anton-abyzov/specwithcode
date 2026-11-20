@@ -132,6 +132,22 @@ interface Place {
 }
 
 /**
+ * What is known of the window the reads are in: where it began, or only a
+ * time that lies inside it (a restart counted on a read without a reset time).
+ */
+type KnownWindow = (Place & { readonly inside?: undefined }) | { readonly inside: number };
+
+/** A window start this close after a read is the same reset, read a little apart. */
+const SAME_WINDOW_SLACK_MS = 5 * 60 * 1000;
+
+/** True when `place` is a later window than `known`. */
+function isLaterWindow(place: Place, known: KnownWindow, lengthMs: number): boolean {
+  return known.inside === undefined
+    ? place.start - known.start >= lengthMs / 2
+    : place.start > known.inside + SAME_WINDOW_SLACK_MS;
+}
+
+/**
  * A reset time still ahead is the end of the read's window, one length after
  * its start. One that has passed is a reset that happened by then: where the
  * read's window began.
@@ -183,18 +199,16 @@ function scanWindow(window: OutsideWindow): {
   const exactLength = window.lengthMs !== null;
   const lengthMs =
     window.lengthMs ?? NOMINAL_WINDOW_MS[window.windowKind === "monthly" ? "monthly" : "weekly"];
-  // The window of the last read that carried a reset time, and whether a
-  // restart was counted since that read.
-  let known = placeOf(previous, lengthMs, exactLength);
-  let countedSince = false;
+  // The window the reads are in, as far as a reset time or a counted restart
+  // has told: later reads are compared with it.
+  let known: KnownWindow | null = placeOf(previous, lengthMs, exactLength);
   for (let index = 1; index < samples.length; index += 1) {
     const current = samples[index]!;
     if (current.at <= previous.at) continue;
     const fell = peak - current.usedPercent;
     const place = placeOf(current, lengthMs, exactLength);
     // The provider's word on a restart since the last placed read, if it gave one.
-    const crossed =
-      place !== null && known !== null ? place.start - known.start >= lengthMs / 2 : null;
+    const crossed = place !== null && known !== null ? isLaterWindow(place, known, lengthMs) : null;
     const due =
       previous.resetsAt !== null &&
       previous.resetsAt > previous.at &&
@@ -202,11 +216,13 @@ function scanWindow(window: OutsideWindow): {
     // A read without a reset time, taken inside a window known exactly, is
     // still in it: a fall there is not the provider's word.
     const inside =
-      place === null && known !== null && known.exact && current.at < known.start + lengthMs;
+      place === null &&
+      known !== null &&
+      known.inside === undefined &&
+      known.exact &&
+      current.at < known.start + lengthMs;
     const announced =
-      crossed === null
-        ? !inside && resetBetween(previous, current, window.lengthMs)
-        : crossed && !countedSince;
+      crossed === null ? !inside && resetBetween(previous, current, window.lengthMs) : crossed;
     const worded = crossed === null ? due : crossed;
     if (fell > NOISE_FALL_POINTS && !worded && recovers(samples, index, peak)) {
       if (current.usedPercent < peak / 2) doubts.push(current.at);
@@ -221,7 +237,20 @@ function scanWindow(window: OutsideWindow): {
           : due
             ? previous.resetsAt!
             : current.at;
-      countedSince = true;
+      if (place === null) {
+        // The read does not say which window it is in. A due reset time does,
+        // counted on by whole windows, when the length is the provider's or
+        // the read is well short of one. Else all that is known is that the
+        // read lies inside the new window.
+        const since = due ? current.at - previous.resetsAt! : 0;
+        known =
+          due && (exactLength || since < lengthMs / 2)
+            ? {
+                start: previous.resetsAt! + Math.floor(since / lengthMs) * lengthMs,
+                exact: exactLength,
+              }
+            : { inside: current.at };
+      }
       // What was gained before the reset is not known; what shows after it is.
       stretches.push({
         from: Math.min(resetAt, current.at - 1),
@@ -239,10 +268,7 @@ function scanWindow(window: OutsideWindow): {
       });
       if (current.usedPercent > peak || fell > NOISE_FALL_POINTS) peak = current.usedPercent;
     }
-    if (place !== null) {
-      known = place;
-      countedSince = false;
-    }
+    if (place !== null) known = place;
     previous = current;
   }
   return { stretches, doubts };

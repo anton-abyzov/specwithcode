@@ -370,6 +370,8 @@ describe("estimateOutside", () => {
     const minute = 60_000;
     const first = 5 * minute;
     let checked = 0;
+    let mixed = 0;
+    const openings = [0, 0, 0];
     for (const [kind, days] of [
       ["weekly", 7],
       ["monthly", 30],
@@ -378,11 +380,13 @@ describe("estimateOutside", () => {
       const windowOf = (at: number) => Math.floor((at - first) / length);
       const startOf = (at: number) => first + windowOf(at) * length;
       for (let seed = 1; seed <= 600; seed += 1) {
-        let state = seed;
+        // Spread the seeds first: neighbouring seeds give neighbouring first draws.
+        let state = (seed * 2_654_435_761) % 2 ** 32;
         const random = () => {
           state = (state * 1664525 + 1013904223) % 2 ** 32;
           return state / 2 ** 32;
         };
+        random();
         // The history starts before the first reset, just after it with the
         // passed reset time still on the read, or somewhere inside a window.
         const opening = random();
@@ -393,6 +397,7 @@ describe("estimateOutside", () => {
               ? first + (0.5 + random() * 4) * minute
               : first + random() * 0.9 * length;
         at = Math.round(at / 30_000) * 30_000;
+        openings[opening < 0.4 ? 0 : opening < 0.7 ? 1 : 2]! += 1;
         const times = [at];
         const reads = 2 + Math.floor(random() * 7);
         for (let read = 1; read < reads; read += 1) {
@@ -429,16 +434,38 @@ describe("estimateOutside", () => {
             : Math.max(0, usedAt(times[read]!) - usedAt(times[read - 1]!));
         }
         const late = (time: number) => time - startOf(time) < 5 * minute;
-        for (const lag of [false, true]) {
+        // A third run leaves the reset time off some reads. A restart seen
+        // first on such a read shows only as a fall, so the run is made only
+        // when every restart can be told: by a clear fall from a mark high
+        // enough not to be taken for a stale read, or by a reset time on the
+        // read with one on an earlier read to compare it with.
+        const bare = times.map(() => random() < 0.3);
+        const tellable = times.every((time, read) => {
+          if (read === 0 || windowOf(time) === windowOf(times[read - 1]!)) return true;
+          const mark = usedAt(times[read - 1]!);
+          if (mark - usedAt(time) > 5 && mark > 12) return true;
+          return !bare[read] && bare.slice(0, read).some((isBare) => !isBare);
+        });
+        const runs: Array<readonly [lag: boolean, drop: boolean]> = [
+          [false, false],
+          [true, false],
+        ];
+        if (tellable && bare.some(Boolean)) {
+          mixed += 1;
+          runs.push([random() < 0.5, true]);
+        }
+        for (const [lag, drop] of runs) {
           for (const withLength of [true, false]) {
             const history = {
               ...series(0, () => 0),
               windowKind: kind,
               windowDurationMins: withLength ? days * 24 * 60 : undefined,
-              samples: times.map((time) => ({
+              samples: times.map((time, read) => ({
                 at: iso(t0 + time),
                 usedPercent: usedAt(time),
-                resetsAt: iso(t0 + startOf(time) + (lag && late(time) ? 0 : length)),
+                ...(drop && bare[read]
+                  ? {}
+                  : { resetsAt: iso(t0 + startOf(time) + (lag && late(time) ? 0 : length)) }),
               })),
             } as UsageLimitHistorySeries;
             const window = pickOutsideWindow([[history]], KEY)!;
@@ -450,15 +477,21 @@ describe("estimateOutside", () => {
               kind,
               seed,
               lag,
+              drop,
               withLength,
               resets: limitResets(window).length,
               // Under one point the estimate says the limit did not move.
               points:
-                result.kind === "estimate" ? result.consumedPoints : points < 1.05 ? points : -1,
+                result.kind === "estimate"
+                  ? result.consumedPoints
+                  : result.reason === "noUse" && points < 1.05
+                    ? points
+                    : -1,
             }).toEqual({
               kind,
               seed,
               lag,
+              drop,
               withLength,
               resets,
               points: expect.closeTo(points, 0),
@@ -467,7 +500,43 @@ describe("estimateOutside", () => {
         }
       }
     }
-    expect(checked).toBe(4800);
+    expect(checked).toBe(4800 + 2 * mixed);
+    expect(mixed).toBeGreaterThan(300);
+    for (const count of openings) expect(count).toBeGreaterThan(200);
+  });
+
+  it("counts a later reset after one counted on a read without a reset time", () => {
+    // Reset at minute 5, seen on a read that carries no reset time; the next
+    // read names the following reset, a window on.
+    const minute = 60_000;
+    for (const [kind, days] of [
+      ["weekly", 7],
+      ["monthly", 30],
+    ] as const) {
+      const length = days * DAY;
+      for (const withLength of [true, false]) {
+        const history = {
+          ...series(0, () => 0),
+          windowKind: kind,
+          windowDurationMins: withLength ? days * 24 * 60 : undefined,
+          samples: [
+            { at: iso(t0), usedPercent: 80, resetsAt: iso(t0 + 5 * minute) },
+            { at: iso(t0 + 6 * minute), usedPercent: 10 },
+            {
+              at: iso(t0 + 6 * minute + length),
+              usedPercent: 20,
+              resetsAt: iso(t0 + 5 * minute + length),
+            },
+          ],
+        } as UsageLimitHistorySeries;
+        const window = pickOutsideWindow([[history]], KEY)!;
+        expect(limitResets(window)).toEqual([t0 + 5 * minute, t0 + 5 * minute + length]);
+        const result = estimateOutside(input(history, [], { periodEndMs: t0 + length + DAY }));
+        expect(result.kind).toBe("estimate");
+        if (result.kind !== "estimate") return;
+        expect(result.consumedPoints).toBeCloseTo(30, 1);
+      }
+    }
   });
 
   it("says so when the only movement was a read taken as a misread", () => {
