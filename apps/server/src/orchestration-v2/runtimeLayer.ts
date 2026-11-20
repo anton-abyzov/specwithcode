@@ -441,14 +441,14 @@ export const scheduledTaskLayerOver = <ROut, E, RIn>(services: Layer.Layer<ROut,
 
 const layerScheduledTaskProvided = scheduledTaskLayerOver(
   Layer.mergeAll(
-      layerThreadLaunchProvided,
-      layerThreadManagementProvided,
-      layerSecretRequestsProvided,
-      layerProjectCoordinatorProvided,
-      ProcessRunner.layer,
-      // Routines fire only where this machine coordinates their project.
-      layerCoordinatorRoleProvided,
-      CoordinatorWakeGate.layer,
+    layerThreadLaunchProvided,
+    layerThreadManagementProvided,
+    layerSecretRequestsProvided,
+    layerProjectCoordinatorProvided,
+    ProcessRunner.layer,
+    // Routines fire only where this machine coordinates their project.
+    layerCoordinatorRoleProvided,
+    CoordinatorWakeGate.layer,
   ),
 );
 // The routines a coordinator sends its standby, served by the scheduler above.

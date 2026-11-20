@@ -445,9 +445,7 @@ export const fleet = (
           },
         });
         const context = yield* Layer.build(
-          Layer.fresh(
-            scheduler.pipe(Layer.provide(Layer.succeed(SqlClient.SqlClient, watched))),
-          ),
+          Layer.fresh(scheduler.pipe(Layer.provide(Layer.succeed(SqlClient.SqlClient, watched)))),
         );
         const old = options.release?.[name] === "1.0.377";
         const projects = Effect.sync(() => {
@@ -486,9 +484,7 @@ export const fleet = (
         const scope = yield* Effect.scope;
         const reopen = Effect.gen(function* () {
           const again = yield* Layer.buildWithScope(
-            Layer.fresh(
-              scheduler.pipe(Layer.provide(Layer.succeed(SqlClient.SqlClient, watched))),
-            ),
+            Layer.fresh(scheduler.pipe(Layer.provide(Layer.succeed(SqlClient.SqlClient, watched)))),
             scope,
           );
           live.current = yield* serverOver(Context.get(again, Service.ScheduledTaskService));

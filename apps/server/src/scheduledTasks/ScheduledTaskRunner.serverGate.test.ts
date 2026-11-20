@@ -180,27 +180,29 @@ it.effect("a webhook delivery after the handoff runs nothing, not even its check
   }).pipe(Effect.scoped),
 );
 
-it.effect("a handoff file that does not read makes the routine wait, and it runs once it reads", () =>
-  Effect.gen(function* () {
-    yield* TestClock.setTime(Date.parse(NOON));
-    const gates = serverGates("{ not json");
-    const { machines } = yield* fleet(["alpha"], { scheduler: gates.scheduler });
-    const [alpha] = machines as [Machine];
-    yield* addWorker(alpha);
-    yield* alpha.seed({ threadId: WORKER, check: { command: "true" } });
-    yield* alpha.makeDue(DUE);
-    yield* settle(alpha);
-    yield* alpha.due;
-    assert.equal(alpha.fires(), 0);
-    assert.equal(alpha.state.checks, 0);
-    // Still due: the next pass looks again.
-    assert.equal((yield* alpha.row)?.next_run_at, DUE);
-    yield* alpha.due;
-    assert.equal(alpha.fires(), 0);
+it.effect(
+  "a handoff file that does not read makes the routine wait, and it runs once it reads",
+  () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOON));
+      const gates = serverGates("{ not json");
+      const { machines } = yield* fleet(["alpha"], { scheduler: gates.scheduler });
+      const [alpha] = machines as [Machine];
+      yield* addWorker(alpha);
+      yield* alpha.seed({ threadId: WORKER, check: { command: "true" } });
+      yield* alpha.makeDue(DUE);
+      yield* settle(alpha);
+      yield* alpha.due;
+      assert.equal(alpha.fires(), 0);
+      assert.equal(alpha.state.checks, 0);
+      // Still due: the next pass looks again.
+      assert.equal((yield* alpha.row)?.next_run_at, DUE);
+      yield* alpha.due;
+      assert.equal(alpha.fires(), 0);
 
-    gates.rewrite(NOT_MOVED);
-    yield* alpha.due;
-    assert.equal(alpha.state.checks, 1);
-    assert.equal(alpha.fires(), 1);
-  }).pipe(Effect.scoped),
+      gates.rewrite(NOT_MOVED);
+      yield* alpha.due;
+      assert.equal(alpha.state.checks, 1);
+      assert.equal(alpha.fires(), 1);
+    }).pipe(Effect.scoped),
 );
