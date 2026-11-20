@@ -5703,4 +5703,49 @@ export const zh: PhraseCatalog = {
   "Its app": "它的应用",
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "当那台电脑的应用打开这台电脑时，会请求一次代码：代码显示在那边，你在这里输入。",
+  "Review each finished increment automatically": "自动审查每个完成的增量",
+  "Review each finished increment": "审查每个完成的增量",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "当你启动的线程结束，且其增量的所有任务都已完成或跳过时，另一系列的模型会在新线程中审查这些工作，每个增量一次。适用于本机的项目，除非某个项目单独设置。你或智能体请求的审查，以及关闭增量时的审查，都会照常进行。",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "当你启动的线程结束，且其增量的所有任务都已完成或跳过时，另一系列的模型会在新线程中审查这些工作，每个增量一次。仅适用于此项目。你或智能体请求的审查，以及关闭增量时的审查，都会照常进行。",
+  "not installed": "未安装",
+  "does not list it": "未提供此模型",
+  "Needs {source}, {state}.": "需要 {source}，{state}。",
+  "Needs {source}, not set up on this machine.": "需要 {source}，此机器上未设置。",
+  "Billing unknown. Listing it lets a thread continue on it.":
+    "计费方式未知。列入后，线程可以在其上继续。",
+  "Keep at least one source. To list every source again, use the built-in order.":
+    "请至少保留一个来源。要重新列出所有来源，请使用内置顺序。",
+  "Every source on this machine is already listed.": "此机器上的所有来源都已在列表中。",
+  "Needs setup": "需要设置",
+  "Add source": "添加来源",
+  "Not set up on this machine": "此机器上未设置",
+  "Where a model runs, first to last. A source not listed is tried after these.":
+    "模型运行的位置，从第一个到最后一个。未列出的来源会在这些之后尝试。",
+  Subscription: "订阅",
+  Credits: "积分",
+  "Per token": "按 token 计费",
+  "Billing unknown": "计费方式未知",
+  "Route for": "路由:",
+  "First to last. Saved for this model on every track.":
+    "按从上到下的顺序尝试。对所有列表中的这个模型都有效。",
+  "Use the automatic order": "使用自动顺序",
+  "Asks before first run": "首次运行前询问",
+  "Never run it on": "永不在此运行:",
+  "No source here runs this model now.": "这里目前没有来源能运行这个模型。",
+  "Pinned: only this source runs the model. When it cannot, the next model is tried.":
+    "已固定:只有这个来源运行该模型。它无法运行时,改试下一个模型。",
+  "Never runs this model": "永不运行这个模型",
+  "Never runs this model:": "永不运行这个模型:",
+  Restore: "恢复",
+  "Paid sources": "付费来源",
+  "Asks before its first run once added.": "添加后,首次运行前会询问。",
+  "Available via": "可通过",
+  "Usually offers it": "通常提供",
+  "Your route": "自定义路由",
+  "Asks first": "先询问",
+  Route: "路由",
+  "Allow once": "允许一次",
+  "Always for this model": "此模型始终允许",
 };

@@ -6002,4 +6002,52 @@ export const fr: PhraseCatalog = {
   "Its app": "Son app",
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "Quand l’app de cette machine ouvre celle-ci, elle demande un code une fois : le code s’affiche là-bas, et vous le saisissez ici.",
+  "Review each finished increment automatically": "Relire automatiquement chaque incrément terminé",
+  "Review each finished increment": "Relire chaque incrément terminé",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "Quand un fil que vous avez lancé se termine et que toutes les tâches de son incrément sont faites ou ignorées, un modèle d'une autre famille relit le travail dans un nouveau fil, une fois par incrément. S'applique aux projets de cette machine, sauf si un projet le change. Les relectures que vous ou un agent demandez, et la relecture à la clôture de l'incrément, ont lieu dans tous les cas.",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "Quand un fil que vous avez lancé se termine et que toutes les tâches de son incrément sont faites ou ignorées, un modèle d'une autre famille relit le travail dans un nouveau fil, une fois par incrément. S'applique à ce projet uniquement. Les relectures que vous ou un agent demandez, et la relecture à la clôture de l'incrément, ont lieu dans tous les cas.",
+  "not installed": "non installé",
+  "does not list it": "ne le propose pas",
+  "Needs {source}, {state}.": "Nécessite {source}, {state}.",
+  "Needs {source}, not set up on this machine.":
+    "Nécessite {source}, non configuré sur cette machine.",
+  "Billing unknown. Listing it lets a thread continue on it.":
+    "Facturation inconnue. Si elle est listée, un fil peut continuer dessus.",
+  "Keep at least one source. To list every source again, use the built-in order.":
+    "Gardez au moins une source. Pour lister à nouveau toutes les sources, utilisez l'ordre intégré.",
+  "Every source on this machine is already listed.":
+    "Toutes les sources de cette machine sont déjà listées.",
+  "Needs setup": "Configuration requise",
+  "Add source": "Ajouter une source",
+  "Not set up on this machine": "Non configuré sur cette machine",
+  "Where a model runs, first to last. A source not listed is tried after these.":
+    "Où un modèle s'exécute, de la première à la dernière. Une source non listée est essayée après celles-ci.",
+  Subscription: "Abonnement",
+  Credits: "Crédits",
+  "Per token": "Au token",
+  "Billing unknown": "Facturation inconnue",
+  "Route for": "Itinéraire de",
+  "First to last. Saved for this model on every track.":
+    "De la première à la dernière. Enregistré pour ce modèle dans toutes les listes.",
+  "Use the automatic order": "Utiliser l'ordre automatique",
+  "Asks before first run": "Demande avant la première exécution",
+  "Never run it on": "Ne jamais l'exécuter sur",
+  "No source here runs this model now.":
+    "Aucune source ici ne peut exécuter ce modèle pour l'instant.",
+  "Pinned: only this source runs the model. When it cannot, the next model is tried.":
+    "Épinglée : seule cette source exécute le modèle. Si elle ne peut pas, le modèle suivant est essayé.",
+  "Never runs this model": "N'exécute jamais ce modèle",
+  "Never runs this model:": "N'exécute jamais ce modèle :",
+  Restore: "Restaurer",
+  "Paid sources": "Sources payantes",
+  "Asks before its first run once added.": "Demande avant sa première exécution une fois ajoutée.",
+  "Available via": "Disponible via",
+  "Usually offers it": "Le propose généralement",
+  "Your route": "Votre itinéraire",
+  "Asks first": "Demande d'abord",
+  Route: "Itinéraire",
+  "Allow once": "Autoriser une fois",
+  "Always for this model": "Toujours pour ce modèle",
 };

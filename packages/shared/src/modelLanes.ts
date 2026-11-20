@@ -287,6 +287,7 @@ export interface ResolveLaneRoutingInput {
   readonly switchAtPercent?: number | null | undefined;
   readonly limitedInstanceIds?: ReadonlySet<string> | undefined;
   readonly runnableInstanceIds?: ReadonlySet<string> | undefined;
+  readonly refusedSelections?: ReadonlySet<string> | undefined;
 }
 
 const selectionKey = (selection: Pick<ModelSelection, "instanceId" | "model">) =>
@@ -316,8 +317,10 @@ export function laneEntryUnavailable(
     | "switchAtPercent"
     | "limitedInstanceIds"
     | "runnableInstanceIds"
+    | "refusedSelections"
   >,
 ): string | null {
+  if (input.refusedSelections?.has(selectionKey(selection))) return "source declined for this model";
   const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
   if (provider === undefined) return "not on this machine";
   const model = findModel(provider, selection.model);

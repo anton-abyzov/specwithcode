@@ -5885,4 +5885,49 @@ export const ko: PhraseCatalog = {
   "Its app": "해당 앱",
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "그 컴퓨터의 앱이 이 컴퓨터를 열 때 한 번 코드를 요청합니다. 코드는 그쪽에 표시되고, 여기서 입력합니다.",
+  "Review each finished increment automatically": "완료된 인크리먼트마다 자동으로 리뷰",
+  "Review each finished increment": "완료된 인크리먼트마다 리뷰",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "직접 시작한 스레드가 끝나고 해당 인크리먼트의 모든 작업이 완료되거나 건너뛰어지면, 다른 계열의 모델이 새 스레드에서 작업을 리뷰합니다. 인크리먼트마다 한 번입니다. 프로젝트가 따로 정하지 않으면 이 머신의 프로젝트에 적용됩니다. 직접 또는 에이전트가 요청한 리뷰와 인크리먼트 종료 시 리뷰는 이 설정과 상관없이 실행됩니다.",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "직접 시작한 스레드가 끝나고 해당 인크리먼트의 모든 작업이 완료되거나 건너뛰어지면, 다른 계열의 모델이 새 스레드에서 작업을 리뷰합니다. 인크리먼트마다 한 번입니다. 이 프로젝트에만 적용됩니다. 직접 또는 에이전트가 요청한 리뷰와 인크리먼트 종료 시 리뷰는 이 설정과 상관없이 실행됩니다.",
+  "not installed": "설치되지 않음",
+  "does not list it": "이 모델을 제공하지 않음",
+  "Needs {source}, {state}.": "{source} 필요, {state}.",
+  "Needs {source}, not set up on this machine.": "{source} 필요, 이 기기에 설정되지 않음.",
+  "Billing unknown. Listing it lets a thread continue on it.":
+    "청구 방식을 알 수 없습니다. 목록에 넣으면 스레드가 여기서 이어서 실행할 수 있습니다.",
+  "Keep at least one source. To list every source again, use the built-in order.":
+    "소스를 하나 이상 남겨 두세요. 모든 소스를 다시 표시하려면 기본 순서를 사용하세요.",
+  "Every source on this machine is already listed.": "이 기기의 모든 소스가 이미 목록에 있습니다.",
+  "Needs setup": "설정 필요",
+  "Add source": "소스 추가",
+  "Not set up on this machine": "이 기기에 설정되지 않음",
+  "Where a model runs, first to last. A source not listed is tried after these.":
+    "모델이 실행되는 곳을 위에서부터 차례로 시도합니다. 목록에 없는 소스는 이후에 시도합니다.",
+  Subscription: "구독",
+  Credits: "크레딧",
+  "Per token": "토큰당 과금",
+  "Billing unknown": "과금 방식 알 수 없음",
+  "Route for": "경로:",
+  "First to last. Saved for this model on every track.":
+    "위에서부터 순서대로 시도합니다. 모든 목록에서 이 모델에 적용됩니다.",
+  "Use the automatic order": "자동 순서 사용",
+  "Asks before first run": "첫 실행 전에 확인",
+  "Never run it on": "다음에서 실행 안 함:",
+  "No source here runs this model now.": "지금 이 모델을 실행할 수 있는 소스가 없습니다.",
+  "Pinned: only this source runs the model. When it cannot, the next model is tried.":
+    "고정됨: 이 소스만 모델을 실행합니다. 실행할 수 없으면 다음 모델을 시도합니다.",
+  "Never runs this model": "이 모델을 실행하지 않음",
+  "Never runs this model:": "이 모델을 실행하지 않음:",
+  Restore: "복원",
+  "Paid sources": "유료 소스",
+  "Asks before its first run once added.": "추가하면 첫 실행 전에 확인합니다.",
+  "Available via": "제공하는 곳",
+  "Usually offers it": "보통 제공함",
+  "Your route": "내 경로",
+  "Asks first": "먼저 확인",
+  Route: "경로",
+  "Allow once": "한 번 허용",
+  "Always for this model": "이 모델은 항상 허용",
 };

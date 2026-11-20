@@ -5951,4 +5951,53 @@ export const pt: PhraseCatalog = {
   "Its app": "O app dele",
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "Quando o app daquela máquina abrir esta, ele pede um código uma vez: o código aparece lá, e você o digita aqui.",
+  "Review each finished increment automatically":
+    "Revisar automaticamente cada incremento concluído",
+  "Review each finished increment": "Revisar cada incremento concluído",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "Quando um thread que você iniciou termina e todas as tarefas do incremento estão feitas ou puladas, um modelo de outra família revisa o trabalho em um novo thread, uma vez por incremento. Vale para os projetos desta máquina, a menos que um projeto mude. Revisões que você ou um agente pedem, e a revisão no fechamento do incremento, acontecem de qualquer forma.",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "Quando um thread que você iniciou termina e todas as tarefas do incremento estão feitas ou puladas, um modelo de outra família revisa o trabalho em um novo thread, uma vez por incremento. Vale só para este projeto. Revisões que você ou um agente pedem, e a revisão no fechamento do incremento, acontecem de qualquer forma.",
+  "not installed": "não instalado",
+  "does not list it": "não o oferece",
+  "Needs {source}, {state}.": "Precisa de {source}, {state}.",
+  "Needs {source}, not set up on this machine.":
+    "Precisa de {source}, não configurado nesta máquina.",
+  "Billing unknown. Listing it lets a thread continue on it.":
+    "Cobrança desconhecida. Na lista, uma conversa pode continuar nela.",
+  "Keep at least one source. To list every source again, use the built-in order.":
+    "Mantenha pelo menos uma fonte. Para listar todas de novo, use a ordem padrão.",
+  "Every source on this machine is already listed.":
+    "Todas as fontes desta máquina já estão na lista.",
+  "Needs setup": "Precisa de configuração",
+  "Add source": "Adicionar fonte",
+  "Not set up on this machine": "Não configurado nesta máquina",
+  "Where a model runs, first to last. A source not listed is tried after these.":
+    "Onde um modelo roda, da primeira à última. Uma fonte fora da lista é tentada depois destas.",
+  Subscription: "Assinatura",
+  Credits: "Créditos",
+  "Per token": "Por token",
+  "Billing unknown": "Cobrança desconhecida",
+  "Route for": "Rota de",
+  "First to last. Saved for this model on every track.":
+    "Da primeira à última. Vale para este modelo em todas as listas.",
+  "Use the automatic order": "Usar a ordem automática",
+  "Asks before first run": "Pergunta antes da primeira execução",
+  "Never run it on": "Nunca executar em",
+  "No source here runs this model now.": "Nenhuma fonte aqui pode executar este modelo agora.",
+  "Pinned: only this source runs the model. When it cannot, the next model is tried.":
+    "Fixada: só esta fonte executa o modelo. Se ela não puder, o próximo modelo é tentado.",
+  "Never runs this model": "Nunca executa este modelo",
+  "Never runs this model:": "Nunca executa este modelo:",
+  Restore: "Restaurar",
+  "Paid sources": "Fontes pagas",
+  "Asks before its first run once added.":
+    "Pergunta antes da primeira execução depois de adicionada.",
+  "Available via": "Disponível via",
+  "Usually offers it": "Costuma oferecer",
+  "Your route": "Sua rota",
+  "Asks first": "Pergunta antes",
+  Route: "Rota",
+  "Allow once": "Permitir uma vez",
+  "Always for this model": "Sempre para este modelo",
 };

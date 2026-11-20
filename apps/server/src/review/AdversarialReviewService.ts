@@ -199,6 +199,7 @@ const make = Effect.gen(function* () {
       tiers: settings.modelTiers,
       excludedModels: settings.providerLimitExcludedModels,
       sourceOrder: settings.defaultModelProviders,
+      routes: settings.modelRoutes,
       nowMs,
       limitedInstanceIds: yield* limitedInstances(nowMs),
     });

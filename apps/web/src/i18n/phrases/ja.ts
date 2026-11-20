@@ -5958,4 +5958,49 @@ export const ja: PhraseCatalog = {
   "Its app": "そのアプリ",
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "そのマシンのアプリがこのマシンを開くとき、一度だけコードを求めます。コードはあちらに表示され、ここで入力します。",
+  "Review each finished increment automatically": "完了したインクリメントを毎回自動でレビュー",
+  "Review each finished increment": "完了したインクリメントを毎回レビュー",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "自分で始めたスレッドが終わり、そのインクリメントのタスクがすべて完了またはスキップになると、別ファミリーのモデルが新しいスレッドで作業をレビューします。インクリメントごとに 1 回です。プロジェクトが個別に設定しない限り、このマシンのプロジェクトに適用されます。あなたやエージェントが依頼するレビューと、インクリメント終了時のレビューは、この設定に関係なく実行されます。",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "自分で始めたスレッドが終わり、そのインクリメントのタスクがすべて完了またはスキップになると、別ファミリーのモデルが新しいスレッドで作業をレビューします。インクリメントごとに 1 回です。このプロジェクトにのみ適用されます。あなたやエージェントが依頼するレビューと、インクリメント終了時のレビューは、この設定に関係なく実行されます。",
+  "not installed": "未インストール",
+  "does not list it": "このモデルを提供していません",
+  "Needs {source}, {state}.": "{source} が必要です（{state}）。",
+  "Needs {source}, not set up on this machine.": "{source} が必要です。このマシンでは未設定です。",
+  "Billing unknown. Listing it lets a thread continue on it.":
+    "課金方法が不明です。リストに入れると、スレッドがそこで続行できます。",
+  "Keep at least one source. To list every source again, use the built-in order.":
+    "ソースを少なくとも 1 つ残してください。すべてのソースを再び並べるには、組み込みの順序を使います。",
+  "Every source on this machine is already listed.": "このマシンのソースはすべてリストにあります。",
+  "Needs setup": "設定が必要",
+  "Add source": "ソースを追加",
+  "Not set up on this machine": "このマシンでは未設定",
+  "Where a model runs, first to last. A source not listed is tried after these.":
+    "モデルを実行する場所を上から順に試します。リストにないソースはこれらの後に試します。",
+  Subscription: "サブスクリプション",
+  Credits: "クレジット",
+  "Per token": "トークン課金",
+  "Billing unknown": "課金不明",
+  "Route for": "ルート:",
+  "First to last. Saved for this model on every track.":
+    "上から順に試します。この設定はすべてのリストのこのモデルに適用されます。",
+  "Use the automatic order": "自動の順序を使う",
+  "Asks before first run": "初回実行前に確認",
+  "Never run it on": "実行しない:",
+  "No source here runs this model now.": "このモデルを今実行できるソースはここにありません。",
+  "Pinned: only this source runs the model. When it cannot, the next model is tried.":
+    "固定: このソースだけがモデルを実行します。実行できないときは次のモデルを試します。",
+  "Never runs this model": "このモデルを実行しない",
+  "Never runs this model:": "このモデルを実行しない:",
+  Restore: "元に戻す",
+  "Paid sources": "有料のソース",
+  "Asks before its first run once added.": "追加すると初回実行前に確認します。",
+  "Available via": "利用可能なソース",
+  "Usually offers it": "通常は提供しています",
+  "Your route": "カスタムルート",
+  "Asks first": "先に確認",
+  Route: "ルート",
+  "Allow once": "今回だけ許可",
+  "Always for this model": "このモデルは常に許可",
 };

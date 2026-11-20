@@ -12,6 +12,7 @@
  */
 import type {
   ModelSelection,
+  ModelRoutes,
   ProviderInstanceId,
   ProviderModelTier,
   ProviderModelTiers,
@@ -40,6 +41,7 @@ export interface ReviewDelegationInput {
   readonly tiers?: ProviderModelTiers | undefined;
   readonly excludedModels?: ReadonlyArray<ExcludedFallbackModel> | undefined;
   readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | undefined;
+  readonly routes?: ModelRoutes | null | undefined;
   readonly policy: IncrementReviewPolicy | null;
   readonly nowMs: number;
   readonly limitedInstanceIds?: ReadonlySet<string> | undefined;
@@ -137,6 +139,7 @@ export function reviewDelegationTarget(input: ReviewDelegationInput): ReviewDele
     tier: input.tier,
     tiers: input.tiers,
     sourceOrder: input.sourceOrder,
+    routes: input.routes,
   });
   if (policy?.model !== undefined) {
     const pinned = policyModelSelections(input.providers, policy.model);
@@ -179,6 +182,7 @@ export function reviewDelegationTarget(input: ReviewDelegationInput): ReviewDele
     tiers: input.tiers,
     excludedModels: input.excludedModels,
     sourceOrder: input.sourceOrder,
+    routes: input.routes,
     nowMs: input.nowMs,
     limitedInstanceIds: input.limitedInstanceIds,
   });

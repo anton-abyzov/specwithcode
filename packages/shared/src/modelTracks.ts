@@ -20,14 +20,16 @@ import {
   isPaidModelBilling,
   type ModelLane,
   type ModelLanes,
+  type ModelRoutes,
   type ModelSelection,
   type ModelTrack,
   type ProviderInstanceId,
   providerModelBilling,
   type ServerProvider,
 } from "@specweave-studio/contracts";
-import { isSameModel, sameModelOn } from "./modelIdentity.ts";
-import { newestOfFamily } from "./modelTiers.ts";
+import { describeModel, isSameModel, sameModelOn } from "./modelIdentity.ts";
+import { compareModelVersions, modelFamily as releaseOf, newestOfFamily } from "./modelTiers.ts";
+import { applyRoute, routeConsent, routeFor } from "./modelRoutes.ts";
 import {
   isGeminiSpendProvider,
   isPerTokenProvider,
@@ -122,7 +124,9 @@ export function providersForModel<P extends TrackProvider>(input: {
   readonly preferFree?: boolean | undefined;
   /**
    * A built-in entry: a provider that lists another release of the model's
-   * family serves its newest one (GPT-6.1 Sol for a GPT-6.2 Sol entry).
+   * family serves its newest one (GPT-6.1 Sol for a GPT-6.2 Sol entry). An
+   * older release off the maker's harness only while no provider lists the
+   * model or a newer one.
    */
   readonly family?: boolean | undefined;
 }): ReadonlyArray<ModelProviderChoice<P>> {
@@ -130,13 +134,38 @@ export function providersForModel<P extends TrackProvider>(input: {
     const index = input.order?.indexOf(instanceId) ?? -1;
     return index === -1 ? Number.MAX_SAFE_INTEGER : index;
   };
-  return input.providers
-    .flatMap((provider, listed) => {
-      if (!provider.enabled) return [];
-      const slug =
-        sameModelOn(provider, input.model) ??
-        (input.family === true ? newestOfFamily(provider, input.model.slug) : undefined);
-      if (slug === undefined) return [];
+  // An older release stands in for the model on its maker's own harness (GPT-6.1 Sol on Codex
+  // for GPT-6.2 Sol), or anywhere while no source lists the model or a newer one: a reseller's
+  // older release (Copilot's Fable 5) never stands in for a model another source has.
+  const wanted = input.family === true ? releaseOf(input.model.slug) : null;
+  const older = (slug: string) => {
+    const release = wanted === null ? null : releaseOf(slug);
+    return (
+      wanted !== null &&
+      release !== null &&
+      compareModelVersions(release.version, wanted.version) < 0
+    );
+  };
+  const served = input.providers.flatMap((provider, listed) => {
+    if (!provider.enabled) return [];
+    const exact = sameModelOn(provider, input.model);
+    const slug =
+      exact ?? (input.family === true ? newestOfFamily(provider, input.model.slug) : undefined);
+    return slug === undefined
+      ? []
+      : [
+          {
+            provider,
+            listed,
+            slug,
+            older: exact === undefined && older(slug),
+          },
+        ];
+  });
+  const current = served.some((entry) => !entry.older);
+  return served
+    .flatMap(({ provider, listed, slug, older: stale }) => {
+      if (stale && current && !isMakerOf(provider, input.model)) return [];
       const used = input.usedPercent?.(provider, slug) ?? null;
       return [
         {
@@ -193,20 +222,29 @@ export function defaultTrackSelections(
   providers: ReadonlyArray<TrackProvider>,
   /** The saved Sources order: a source the person ranked first wins over the maker's harness. */
   order?: ReadonlyArray<ProviderInstanceId> | null,
+  /** Per-model routes: a dropped source never serves an entry, a pinned one alone does. */
+  routes?: ModelRoutes | null,
+  askable = false,
 ): ReadonlyArray<ModelSelection> {
   return DEFAULT_MODEL_TRACKS[track].flatMap((entry) => {
     // Never a source billed per token or with unknown billing: a built-in
-    // entry is nobody's spending choice, whatever a saved Sources order ranks first.
-    const best = providersForModel({
-      providers,
-      model: { slug: entry.model },
-      order: order ?? undefined,
-      preferFree: entry.free,
-      family: true,
-    }).find(
-      ({ provider, slug }) =>
-        !isHeldSource(provider as Partial<ServerProvider> as ServerProvider, slug),
-    );
+    // entry is nobody's spending choice, whatever a saved Sources order ranks
+    // first, unless the model's route allowed that source for it.
+    const route = routeFor(routes, { slug: entry.model });
+    const best = applyRoute(
+      providersForModel({
+        providers,
+        model: { slug: entry.model },
+        order: order ?? undefined,
+        preferFree: entry.free,
+        family: true,
+      }),
+      route,
+    ).find(({ provider, slug }) => {
+      const held = isHeldSource(provider as Partial<ServerProvider> as ServerProvider, slug);
+      const consent = routeConsent(route, provider.instanceId, held);
+      return consent === "plan" || (track !== "review" && (consent === "allowed" || (askable && consent === "ask")));
+    });
     return best === undefined
       ? []
       : [
@@ -385,6 +423,8 @@ export function effectiveModelLanes(
   lanes: ModelLanes | null | undefined,
   providers: ReadonlyArray<TrackProvider>,
   order?: ReadonlyArray<ProviderInstanceId> | null,
+  routes?: ModelRoutes | null,
+  askable = false,
 ): EffectiveModelLanes {
   // A saved entry without an effort runs at its start level, as the Models page shows it;
   // one saved from a built-in row runs on the release of its family a source lists.
@@ -403,7 +443,7 @@ export function effectiveModelLanes(
   };
   const fit = (lane: ModelLane) => {
     if (builtIn[lane]) {
-      const entries = defaultTrackSelections(TRACK_OF_LANE[lane], providers, order);
+      const entries = defaultTrackSelections(TRACK_OF_LANE[lane], providers, order, routes, askable);
       return { entries, family: entries.map(() => true) };
     }
     const list = saved(lane);
@@ -439,6 +479,11 @@ export function defaultLaneOfModel(
  * passed over only when no account can run it. An added account is never one
  * billed per token or with unknown billing; an entry the person saved keeps
  * its own account first, whatever it bills.
+ *
+ * A model's route (see `modelRoutes`) goes over that: its order first, a
+ * dropped account never, a pinned one alone. A held account the route lists
+ * comes along once allowed for the model, or, with `askable`, before that,
+ * for the caller to ask about (`routeConsent` says which).
  */
 export function launchTrackLanes(
   lanes: ModelLanes | null | undefined,
@@ -446,8 +491,10 @@ export function launchTrackLanes(
   order?: ReadonlyArray<ProviderInstanceId> | null,
   /** With a time, accounts nobody ranked go by room, as the Models page lists them. */
   nowMs?: number,
+  options?: { readonly routes?: ModelRoutes | null | undefined; readonly askable?: boolean },
 ): ModelLanes {
-  const { lanes: fitted, family: follows } = effectiveModelLanes(lanes, providers, order);
+  const routes = options?.routes;
+  const { lanes: fitted, family: follows } = effectiveModelLanes(lanes, providers, order, routes, options?.askable);
   // A built-in entry runs on any release of its family; a saved one on its own
   // model, unless it was saved from a built-in row (`followsBuiltInFamily`).
   const expand = (
@@ -463,8 +510,9 @@ export function launchTrackLanes(
       out.push(selection);
     };
     for (const [at, entry] of entries.entries()) {
-      push(entry);
-      for (const { provider, slug } of providersForModel({
+      const own = providers.find((provider) => provider.instanceId === entry.instanceId);
+      const route = routeFor(routes, describeModel(own, entry.model));
+      const ranked = providersForModel({
         providers,
         model: { slug: entry.model },
         order: order ?? undefined,
@@ -476,7 +524,39 @@ export function launchTrackLanes(
               usedPercent: (source: TrackProvider, served: string) =>
                 providerUsedPercent(source as ServerProvider, nowMs, served),
             }),
-      })) {
+      });
+      const runs = (provider: ServerProvider, slug: string) => {
+        const consent = routeConsent(route, provider.instanceId, isHeldSource(provider, slug));
+        if (consent === "plan" || consent === "allowed") return true;
+        if (consent === "ask") return options?.askable === true;
+        // A saved entry naming its own account is the person's consent, as without a route.
+        return provider.instanceId === entry.instanceId && slug === entry.model;
+      };
+      if (route === null) {
+        push(entry);
+      } else {
+        // The entry's own account keeps its place only where the route has none for it.
+        const routed = applyRoute(ranked, route);
+        const ownRouted = routed.some((choice) => choice.provider.instanceId === entry.instanceId);
+        const ownDropped =
+          route.dropped.includes(entry.instanceId) ||
+          (route.pinned && route.order[0] !== entry.instanceId);
+        const ownHeldAsk =
+          own !== undefined &&
+          routeConsent(route, entry.instanceId, isHeldSource(own, entry.model)) === "ask" &&
+          options?.askable !== true;
+        if (!ownDropped && !ownHeldAsk && (route.order.length === 0 || !ownRouted)) push(entry);
+        for (const { provider, slug } of routed) {
+          if (!runs(provider, slug)) continue;
+          push(
+            provider.instanceId === entry.instanceId && slug === entry.model
+              ? entry
+              : trackAlternate(entry, { instanceId: provider.instanceId, model: slug }, providers),
+          );
+        }
+        continue;
+      }
+      for (const { provider, slug } of ranked) {
         if (provider.instanceId === entry.instanceId) continue;
         if (isHeldSource(provider as ServerProvider, slug)) continue;
         push(trackAlternate(entry, { instanceId: provider.instanceId, model: slug }, providers));
@@ -501,6 +581,7 @@ export function projectDraftModelSelection(
     readonly defaultModelSelection: ModelSelection | null;
     readonly modelLanes?: ModelLanes | null | undefined;
     readonly defaultModelProviders?: ReadonlyArray<ProviderInstanceId> | null | undefined;
+    readonly modelRoutes?: ModelRoutes | null | undefined;
   },
   providers: ReadonlyArray<TrackProvider>,
 ): ModelSelection | null {
@@ -518,6 +599,7 @@ export function projectDraftModelSelection(
       settings.modelLanes,
       providers,
       settings.defaultModelProviders,
+      settings.modelRoutes,
     ).lanes.routine.find(listed) ?? settings.defaultModelSelection
   );
 }

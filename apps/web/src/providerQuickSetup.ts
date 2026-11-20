@@ -30,7 +30,9 @@ const ACP_REGISTRY = ProviderDriverKind.make("acpRegistry");
  * The plain name a featured agent gets on a new machine. Another machine's
  * label can name settings that are not copied, such as "Gemini CLI (Vertex AI)".
  */
-const FEATURED_AGENT_NAMES: Readonly<Record<(typeof FEATURED_ACP_AGENT_IDS)[number], string>> = {
+export const FEATURED_AGENT_NAMES: Readonly<
+  Record<(typeof FEATURED_ACP_AGENT_IDS)[number], string>
+> = {
   "github-copilot-cli": "GitHub Copilot",
   "grok-build": "Grok",
   gemini: "Gemini CLI",

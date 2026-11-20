@@ -5950,4 +5950,51 @@ export const ru: PhraseCatalog = {
   "Its app": "Его приложение",
   "When that machine's app opens this one, it asks once for a code: the code shows there, and you type it here.":
     "Когда приложение той машины откроет эту, оно один раз попросит код: код показывается там, а вводите его здесь.",
+  "Review each finished increment automatically":
+    "Автоматически проверять каждый готовый инкремент",
+  "Review each finished increment": "Проверять каждый готовый инкремент",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this machine's projects unless a project overrides it. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "Когда запущенный вами тред завершается и все задачи его инкремента выполнены или пропущены, модель из другого семейства проверяет работу в новом треде, один раз на инкремент. Действует для проектов этой машины, если проект не задал своё. Проверки, которые просите вы или агент, и проверка при закрытии инкремента идут в любом случае.",
+  "When a thread you started finishes and every task of its increment is done or skipped, a model from another family reviews the work in a new thread, once per increment. Applies to this project only. Reviews you or an agent ask for, and the review at increment close, run either way.":
+    "Когда запущенный вами тред завершается и все задачи его инкремента выполнены или пропущены, модель из другого семейства проверяет работу в новом треде, один раз на инкремент. Действует только для этого проекта. Проверки, которые просите вы или агент, и проверка при закрытии инкремента идут в любом случае.",
+  "not installed": "не установлен",
+  "does not list it": "не предлагает её",
+  "Needs {source}, {state}.": "Нужен {source}: {state}.",
+  "Needs {source}, not set up on this machine.": "Нужен {source}: на этом компьютере не настроен.",
+  "Billing unknown. Listing it lets a thread continue on it.":
+    "Оплата неизвестна. Если источник в списке, тред может продолжить работу на нём.",
+  "Keep at least one source. To list every source again, use the built-in order.":
+    "Оставьте хотя бы один источник. Чтобы снова показать все источники, верните встроенный порядок.",
+  "Every source on this machine is already listed.": "Все источники этого компьютера уже в списке.",
+  "Needs setup": "Нужна настройка",
+  "Add source": "Добавить источник",
+  "Not set up on this machine": "На этом компьютере не настроен",
+  "Where a model runs, first to last. A source not listed is tried after these.":
+    "Где работает модель, от первого к последнему. Источники не из списка пробуются после них.",
+  Subscription: "Подписка",
+  Credits: "Кредиты",
+  "Per token": "Оплата за токены",
+  "Billing unknown": "Оплата неизвестна",
+  "Route for": "Маршрут для",
+  "First to last. Saved for this model on every track.":
+    "Сверху вниз. Действует для этой модели во всех списках.",
+  "Use the automatic order": "Использовать автоматический порядок",
+  "Asks before first run": "Спросит перед первым запуском",
+  "Never run it on": "Никогда не запускать на",
+  "No source here runs this model now.":
+    "Сейчас ни один источник здесь не может запустить эту модель.",
+  "Pinned: only this source runs the model. When it cannot, the next model is tried.":
+    "Закреплено: модель запускает только этот источник. Если он не может, пробуется следующая модель.",
+  "Never runs this model": "Никогда не запускает эту модель",
+  "Never runs this model:": "Никогда не запускает эту модель:",
+  Restore: "Вернуть",
+  "Paid sources": "Платные источники",
+  "Asks before its first run once added.": "После добавления спросит перед первым запуском.",
+  "Available via": "Доступно через",
+  "Usually offers it": "Обычно предлагает",
+  "Your route": "Свой маршрут",
+  "Asks first": "Сначала спросит",
+  Route: "Маршрут",
+  "Allow once": "Разрешить один раз",
+  "Always for this model": "Всегда для этой модели",
 };

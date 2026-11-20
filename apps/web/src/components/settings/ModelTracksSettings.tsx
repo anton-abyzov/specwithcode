@@ -1,29 +1,16 @@
 import {
-  DndContext,
-  type DragEndEvent,
-  KeyboardSensor,
-  PointerSensor,
-  closestCenter,
-  useSensor,
-  useSensors,
-} from "@dnd-kit/core";
-import { restrictToParentElement, restrictToVerticalAxis } from "@dnd-kit/modifiers";
-import {
-  SortableContext,
-  sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy,
-} from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
-import {
+  type EnvironmentId,
   MAX_LANE_MODELS,
   MODEL_TRACK_LABELS,
   type ModelLanes,
+  type ModelRoute,
+  type ModelRoutes,
   type ModelSelection,
   type ModelTrack,
   type ProviderInstanceId,
   type ServerProvider,
 } from "@specweave-studio/contracts";
+import { listedSources } from "@specweave-studio/shared/modelSources";
 import { createModelSelection } from "@specweave-studio/shared/model";
 import {
   effortLabel,
@@ -33,28 +20,23 @@ import {
   withEffortSelection,
 } from "@specweave-studio/shared/effortLevel";
 import { describeModel } from "@specweave-studio/shared/modelIdentity";
+import { withModelRoute } from "@specweave-studio/shared/modelRoutes";
 import {
   addTrackEntry,
-  describeSources,
   describeTrack,
-  moveSource,
   moveTrackEntry,
   savedBuiltInTrack,
   singleReviewFamily,
-  type SourceMoveRefusal,
-  type SourceRow,
-  type SourceStatus,
   type TrackEntryRefusal,
   trackEntryRefusal,
   type TrackRow,
   type TrackSource,
 } from "@specweave-studio/shared/modelTrackRules";
 import { TRACK_LANES, trackEntryEffort } from "@specweave-studio/shared/modelTracks";
-import { GripVerticalIcon, XIcon } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { ChevronDownIcon, ChevronUpIcon, XIcon } from "lucide-react";
+import { Fragment, type ReactNode, useState } from "react";
 
 import { useTx } from "../../i18n";
-import { cn } from "../../lib/utils";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import { savedModelTracks } from "../../onboarding/firstRunModels.logic";
 import {
@@ -70,7 +52,9 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
-import { clock } from "./FallbackOrderList";
+import { Card, Note, SortableList, SortableRow, statusChip } from "./ModelListParts";
+import { ModelRoutePanel } from "./ModelRouteCard";
+import { MissingTrackSource, SourcesCard } from "./ModelSourcesCard";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
   PolicyTooltip,
@@ -112,35 +96,6 @@ function holdNote(source: TrackSource, track: ModelTrack, tx: Tx): string | null
   return track === "review"
     ? `${billing}, ${tx("never reviews")}`
     : `${billing}, ${tx("never automatic")}`;
-}
-
-const SOURCE_REFUSALS: Record<SourceMoveRefusal, string> = {
-  "held-source": "Billed per use or with unknown billing, so it is never picked on its own.",
-  "into-held": "Sources picked automatically stay above the ones that are not.",
-};
-
-function statusChip(
-  status: SourceStatus,
-  tx: Tx,
-): { readonly label: string; readonly variant: "success" | "warning" | "outline" } {
-  switch (status.state) {
-    case "ready":
-      return { label: tx("Ready"), variant: "success" };
-    case "limited":
-      return {
-        label:
-          status.until === null
-            ? tx("Limit reached")
-            : `${tx("Limit until")} ${clock(status.until)}`,
-        variant: "warning",
-      };
-    case "sign-in":
-      return { label: tx("Sign in"), variant: "warning" };
-    case "not-installed":
-      return { label: tx("Not installed"), variant: "outline" };
-    case "not-ready":
-      return { label: tx("Not ready"), variant: "outline" };
-  }
 }
 
 /** What the top entry of each track is for; the entries under it are its fallbacks. */
@@ -270,114 +225,10 @@ function followsName(row: TrackRow, providers: ReadonlyArray<ServerProvider>): s
   return describeModel(source, slug).name ?? slug;
 }
 
-/** A grip, a position and the row's content; the grip also reorders by keyboard. */
-function SortableRow(props: {
-  readonly id: string;
-  readonly position: number;
-  readonly label: string;
-  readonly locked?: boolean;
-  readonly children: ReactNode;
-}) {
-  const tx = useTx();
-  const sortable = useSortable({ id: props.id, disabled: props.locked === true });
-  return (
-    <li
-      ref={sortable.setNodeRef}
-      style={{
-        transform: CSS.Translate.toString(sortable.transform),
-        transition: sortable.transition,
-      }}
-      className={cn(
-        "flex items-center gap-2 border-b border-border/70 px-3 py-2 last:border-b-0",
-        sortable.isDragging && "relative z-10 rounded-md bg-background shadow-md",
-      )}
-    >
-      <button
-        type="button"
-        ref={sortable.setActivatorNodeRef}
-        {...sortable.attributes}
-        {...sortable.listeners}
-        disabled={props.locked === true}
-        aria-label={`${tx("Reorder")} ${props.label}, ${tx("position")} ${props.position}`}
-        className="flex size-6 shrink-0 cursor-grab touch-none items-center justify-center rounded text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing disabled:cursor-default disabled:opacity-40"
-      >
-        <GripVerticalIcon className="size-3.5" />
-      </button>
-      <span className="w-4 shrink-0 text-xs text-muted-foreground tabular-nums">
-        {props.position}
-      </span>
-      {props.children}
-    </li>
-  );
-}
-
-function SortableList(props: {
-  readonly label: string;
-  readonly ids: ReadonlyArray<string>;
-  readonly onMove: (from: number, to: number) => void;
-  readonly children: ReactNode;
-}) {
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  );
-  const onDragEnd = (event: DragEndEvent) => {
-    const from = props.ids.indexOf(String(event.active.id));
-    const to = event.over === null ? -1 : props.ids.indexOf(String(event.over.id));
-    if (from !== -1 && to !== -1 && from !== to) props.onMove(from, to);
-  };
-  return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={closestCenter}
-      modifiers={[restrictToVerticalAxis, restrictToParentElement]}
-      onDragEnd={onDragEnd}
-    >
-      <SortableContext items={[...props.ids]} strategy={verticalListSortingStrategy}>
-        <ol aria-label={props.label} className="flex flex-col">
-          {props.children}
-        </ol>
-      </SortableContext>
-    </DndContext>
-  );
-}
-
-function Card(props: {
-  readonly id: string;
-  readonly title: string;
-  readonly hint: string;
-  readonly control?: ReactNode;
-  readonly children: ReactNode;
-}) {
-  return (
-    <section
-      id={props.id}
-      aria-label={props.title}
-      className="overflow-hidden rounded-xl border border-border bg-card"
-    >
-      <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border/70 px-3 py-2.5">
-        <h3 className="text-sm font-semibold">{props.title}</h3>
-        <p className="min-w-0 flex-1 text-xs text-muted-foreground">{props.hint}</p>
-        {props.control}
-      </header>
-      {props.children}
-    </section>
-  );
-}
-
-const Note = (props: { readonly tone?: "warning"; readonly children: ReactNode }) => (
-  <p
-    role={props.tone === "warning" ? "alert" : undefined}
-    className={cn(
-      "border-t border-border/70 px-3 py-2 text-xs",
-      props.tone === "warning" ? "text-warning-foreground" : "text-muted-foreground",
-    )}
-  >
-    {props.children}
-  </p>
-);
-
 function TrackCard(props: {
+  readonly environmentId: EnvironmentId | null;
+  /** Registry agents with an entry on this machine, by registry id. */
+  readonly configuredAgents: ReadonlySet<string>;
   readonly track: ModelTrack;
   readonly saved: ReadonlyArray<ModelSelection>;
   readonly providers: ReadonlyArray<ServerProvider>;
@@ -390,16 +241,21 @@ function TrackCard(props: {
   /** A line under the list, such as when the track applies. */
   readonly note?: ReactNode;
   readonly onSave: (models: ReadonlyArray<ModelSelection>) => void;
+  /** Per-model routes, kept for the whole machine; null where this page cannot change them. */
+  readonly routes?: ModelRoutes | undefined;
+  readonly onSaveRoute?: ((row: TrackRow, route: ModelRoute) => void) | undefined;
 }) {
   const tx = useTx();
   const { track, saved, providers } = props;
   const [refusal, setRefusal] = useState<TrackEntryRefusal | null>(null);
+  const [opened, setOpened] = useState<string | null>(null);
   const rows = describeTrack({
     track,
     saved,
     providers,
     sourceOrder: props.sourceOrder,
     nowMs: props.nowMs,
+    routes: props.routes,
   });
   const title = MODEL_TRACK_LABELS[track];
   // Reordering or removing a built-in row saves the list as the person's own.
@@ -438,104 +294,155 @@ function TrackCard(props: {
     >
       <SortableList label={`${title} ${tx("order")}`} ids={movable.map(key)} onMove={move}>
         {rows.map((row, index) => (
-          <SortableRow
-            key={key(row)}
-            id={key(row)}
-            position={index + 1}
-            label={row.name}
-            locked={row.selection === null}
-          >
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="truncate text-sm font-medium">{row.name}</span>
-                {row.selection !== null &&
-                rows.findIndex(
-                  (entry) =>
-                    entry.selection !== null && entry.sources.some((source) => source.used),
-                ) === index ? (
-                  <Badge variant="outline" size="sm">
-                    {tx(TRACK_FIRST[track])}
-                  </Badge>
-                ) : null}
-                {row.free ? (
-                  <Badge variant="info" size="sm">
-                    {tx("Free, used last")}
-                  </Badge>
-                ) : null}
-                {row.misplaced ? (
-                  <Badge variant="warning" size="sm">
-                    {tx("Free model: remove it, hard work waits for a reset")}
-                  </Badge>
-                ) : null}
-                {row.follows !== null ? (
-                  <Badge variant="outline" size="sm">
-                    {`${tx("Follows newest")}: ${followsName(row, providers)}`}
-                  </Badge>
-                ) : null}
-              </div>
-              <ul
-                aria-label={`${tx("Sources for")} ${row.name}`}
-                className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"
-              >
-                {row.sources.length === 0 ? (
-                  <li>
+          <Fragment key={key(row)}>
+            <SortableRow
+              id={key(row)}
+              position={index + 1}
+              label={row.name}
+              locked={row.selection === null}
+            >
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="truncate text-sm font-medium">{row.name}</span>
+                  {row.selection !== null &&
+                  rows.findIndex((entry) => entry.selection !== null && entry.sources.some((source) => source.used)) === index ? (
                     <Badge variant="outline" size="sm">
-                      {tx("Not installed")}
-                    </Badge>{" "}
-                    {tx("No source on this machine lists it.")}
-                  </li>
-                ) : (
-                  row.sources.map((source, at) => {
-                    const chip = statusChip(source.status, tx);
-                    const hold = holdNote(source, track, tx);
-                    return (
-                      <li key={source.provider.instanceId} className="flex items-center gap-1">
-                        {at > 0 && source.used ? <span aria-hidden>{tx("then")}</span> : null}
-                        <span className="text-foreground">{props.sourceName(source.provider)}</span>
-                        {source.used ? (
-                          <Badge variant={chip.variant} size="sm">
-                            {chip.label}
-                          </Badge>
-                        ) : null}
-                        {hold !== null ? (
-                          <Badge variant="warning" size="sm">
-                            {hold}
-                          </Badge>
-                        ) : null}
+                      {tx(TRACK_FIRST[track])}
+                    </Badge>
+                  ) : null}
+                  {row.free ? (
+                    <Badge variant="info" size="sm">
+                      {tx("Free, used last")}
+                    </Badge>
+                  ) : null}
+                  {row.misplaced ? (
+                    <Badge variant="warning" size="sm">
+                      {tx("Free model: remove it, hard work waits for a reset")}
+                    </Badge>
+                  ) : null}
+                  {row.follows !== null ? (
+                    <Badge variant="outline" size="sm">
+                      {`${tx("Follows newest")}: ${followsName(row, providers)}`}
+                    </Badge>
+                  ) : null}
+                  {row.route !== null ? (
+                    <Badge variant="outline" size="sm">
+                      {tx("Your route")}
+                    </Badge>
+                  ) : null}
+                </div>
+                <ul
+                  aria-label={`${tx("Sources for")} ${row.name}`}
+                  className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"
+                >
+                  {row.sources.length === 0 ? (
+                    props.environmentId === null ? (
+                      <li>
+                        <Badge variant="outline" size="sm">
+                          {tx("Not installed")}
+                        </Badge>{" "}
+                        {tx("No source on this machine lists it.")}
                       </li>
-                    );
-                  })
-                )}
-              </ul>
-            </div>
-            <TrackEffortSelect
-              selection={row.selection}
-              effort={row.effort}
-              sources={row.sources}
-              providers={providers}
-              label={`${tx("Effort for")} ${row.name}`}
-              disabled={props.mixed}
-              onChange={(selection) =>
-                props.onSave(
-                  // A built-in track saves every built-in entry as it is, this row's level changed.
-                  row.builtIn
-                    ? savedBuiltInTrack({ rows, at: index, selection })
-                    : current.map((entry, at) => (at === movable.indexOf(row) ? selection : entry)),
-                )
-              }
-            />
-            {row.selection !== null ? (
-              <Button
-                type="button"
-                variant="ghost-muted"
-                size="icon-xs"
-                aria-label={`${tx("Remove")} ${row.name}`}
-                onClick={() => props.onSave(current.filter((_, at) => at !== movable.indexOf(row)))}
-              >
-                <XIcon className="size-3" />
-              </Button>
+                    ) : (
+                      <MissingTrackSource
+                        environmentId={props.environmentId}
+                        providers={providers}
+                        model={row.model}
+                        pinned={row.selection?.instanceId ?? null}
+                        nowMs={props.nowMs}
+                        sourceName={props.sourceName}
+                        configuredAgents={props.configuredAgents}
+                      />
+                    )
+                  ) : (
+                    row.sources.map((source, at) => {
+                      const chip = statusChip(source.status, tx);
+                      const hold = holdNote(source, track, tx);
+                      return (
+                        <li key={source.provider.instanceId} className="flex items-center gap-1">
+                          {at > 0 && source.used ? <span aria-hidden>{tx("then")}</span> : null}
+                          <span className="text-foreground">
+                            {props.sourceName(source.provider)}
+                          </span>
+                          {source.ask ? (
+                            <Badge variant="warning" size="sm">
+                              {tx("Asks first")}
+                            </Badge>
+                          ) : source.used ? (
+                            <Badge variant={chip.variant} size="sm">
+                              {chip.label}
+                            </Badge>
+                          ) : null}
+                          {hold !== null && !source.ask ? (
+                            <Badge variant="warning" size="sm">
+                              {hold}
+                            </Badge>
+                          ) : null}
+                        </li>
+                      );
+                    })
+                  )}
+                </ul>
+              </div>
+              <TrackEffortSelect
+                selection={row.selection}
+                effort={row.effort}
+                sources={row.sources}
+                providers={providers}
+                label={`${tx("Effort for")} ${row.name}`}
+                disabled={props.mixed}
+                onChange={(selection) =>
+                  props.onSave(
+                    row.builtIn
+                      ? savedBuiltInTrack({ rows, at: index, selection })
+                      : current.map((entry, at) => (at === movable.indexOf(row) ? selection : entry)),
+                  )
+                }
+              />
+              {props.onSaveRoute !== undefined ? (
+                <Button
+                  type="button"
+                  size="xs"
+                  variant={opened === key(row) ? "default" : "outline"}
+                  aria-expanded={opened === key(row)}
+                  aria-label={`${tx("Route for")} ${row.name}`}
+                  onClick={() => setOpened(opened === key(row) ? null : key(row))}
+                >
+                  {tx("Route")}
+                  {opened === key(row) ? (
+                    <ChevronUpIcon className="size-3" />
+                  ) : (
+                    <ChevronDownIcon className="size-3" />
+                  )}
+                </Button>
+              ) : null}
+              {row.selection !== null ? (
+                <Button
+                  type="button"
+                  variant="ghost-muted"
+                  size="icon-xs"
+                  aria-label={`${tx("Remove")} ${row.name}`}
+                  onClick={() =>
+                    props.onSave(current.filter((_, at) => at !== movable.indexOf(row)))
+                  }
+                >
+                  <XIcon className="size-3" />
+                </Button>
+              ) : null}
+            </SortableRow>
+            {opened === key(row) && props.onSaveRoute !== undefined ? (
+              <li className="border-b border-border/70 last:border-b-0">
+                <ModelRoutePanel
+                  environmentId={props.environmentId}
+                  row={row}
+                  providers={providers}
+                  nowMs={props.nowMs}
+                  sourceName={props.sourceName}
+                  onSave={(route) => props.onSaveRoute?.(row, route)}
+                />
+              </li>
             ) : null}
-          </SortableRow>
+          </Fragment>
         ))}
       </SortableList>
       <div className="flex flex-wrap items-center gap-2 border-t border-border/70 px-3 py-2">
@@ -572,74 +479,6 @@ function TrackCard(props: {
   );
 }
 
-function sourceKind(row: SourceRow, tx: Tx): string {
-  if (row.hold === "per-token") return tx("Billed per use, never automatic");
-  if (row.hold === "unknown-billing") return tx("Billing unknown, never automatic");
-  if (row.free) return tx("Free plan");
-  return row.home === null ? tx("Subscription") : tx("Harness");
-}
-
-function SourcesCard(props: {
-  readonly rows: ReadonlyArray<SourceRow>;
-  readonly order: ReadonlyArray<ProviderInstanceId>;
-  readonly saved: boolean;
-  readonly sourceName: (provider: ServerProvider) => string;
-  readonly onSave: (order: ReadonlyArray<ProviderInstanceId>) => void;
-}) {
-  const tx = useTx();
-  const [refusal, setRefusal] = useState<SourceMoveRefusal | null>(null);
-  const { rows } = props;
-  const move = (from: number, to: number) => {
-    const result = moveSource(rows, from, to, props.order);
-    if ("refused" in result) return setRefusal(result.refused);
-    setRefusal(null);
-    props.onSave(result.order);
-  };
-  return (
-    <Card
-      id="model-sources"
-      title={tx("Sources")}
-      hint={tx("Where a model runs, first to last. A model's own harness comes first.")}
-    >
-      <SortableList
-        label={tx("Sources order")}
-        ids={rows.map((row) => row.provider.instanceId)}
-        onMove={move}
-      >
-        {rows.map((row, index) => {
-          const chip = statusChip(row.status, tx);
-          const name = props.sourceName(row.provider);
-          return (
-            <SortableRow
-              key={row.provider.instanceId}
-              id={row.provider.instanceId}
-              position={index + 1}
-              label={name}
-              locked={row.hold !== null}
-            >
-              <div className="min-w-0 flex-1">
-                <span className="truncate text-sm font-medium">{name}</span>
-                <p className="text-xs text-muted-foreground">{sourceKind(row, tx)}</p>
-              </div>
-              <Badge variant={chip.variant} size="sm">
-                {chip.label}
-              </Badge>
-            </SortableRow>
-          );
-        })}
-      </SortableList>
-      {props.saved ? (
-        <div className="border-t border-border/70 px-3 py-2">
-          <Button type="button" size="xs" variant="outline" onClick={() => props.onSave([])}>
-            {tx("Use the built-in order")}
-          </Button>
-        </div>
-      ) : null}
-      {refusal !== null ? <Note tone="warning">{tx(SOURCE_REFUSALS[refusal])}</Note> : null}
-    </Card>
-  );
-}
-
 /**
  * The three model tracks and the Sources order: which model does routine
  * work, hard work and reviews, and which harness or subscription each model
@@ -649,7 +488,7 @@ function SourcesCard(props: {
  */
 export function ModelTracksSettings({ sources = true }: { readonly sources?: boolean } = {}) {
   const tx = useTx();
-  const { target } = useSettingsScope();
+  const { target, scope } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const { environments } = useEnvironments();
@@ -676,10 +515,24 @@ export function ModelTracksSettings({ sources = true }: { readonly sources?: boo
           modelLanes: { [TRACK_LANES[track]]: [...models] } as unknown as ModelLanes,
         });
 
+  const configuredAgents = new Set(
+    entries.flatMap((entry) =>
+      entry.driverKind === "acpRegistry" && entry.acpRegistryAgentId !== undefined
+        ? [entry.acpRegistryAgentId]
+        : [],
+    ),
+  );
   const sourceName = (provider: ServerProvider) =>
     entries.find((entry) => entry.instanceId === provider.instanceId)?.displayName ??
     provider.displayName ??
     provider.instanceId;
+  // Routes are kept for the whole machine, so they change only where the machine's settings do.
+  const machineScope = scope.kind === "environment" || scope.kind === "all";
+  const routes = settings.modelRoutes ?? {};
+  const saveRoute = (row: TrackRow, route: ModelRoute) =>
+    updateSettings({
+      modelRoutes: withModelRoute(routes, { slug: row.model, name: row.name }, route),
+    });
   const pickerSelection = resolveDefaultProviderModelSelection(providers, saved.daily[0] ?? null);
   const picker =
     (track: ModelTrack) => (onPick: (selection: ModelSelection) => void, disabled: boolean) =>
@@ -710,6 +563,10 @@ export function ModelTracksSettings({ sources = true }: { readonly sources?: boo
       {(["daily", "complex", "review"] as const).map((track) => (
         <TrackCard
           key={track}
+          routes={routes}
+          onSaveRoute={machineScope ? saveRoute : undefined}
+          environmentId={target?.environmentId ?? null}
+          configuredAgents={configuredAgents}
           track={track}
           saved={saved[track]}
           providers={providers}
@@ -761,12 +618,15 @@ export function ModelTracksSettings({ sources = true }: { readonly sources?: boo
           }
         />
       ))}
-      {sources ? (
+      {sources && target?.environmentId ? (
         <SourcesCard
-          rows={describeSources({ providers, order: sourceOrder, nowMs })}
+          environmentId={target.environmentId}
+          rows={listedSources({ providers, order: sourceOrder, nowMs })}
+          providers={providers}
           order={sourceOrder}
-          saved={sourceOrder.length > 0}
+          nowMs={nowMs}
           sourceName={sourceName}
+          configuredAgents={configuredAgents}
           onSave={(order) => updateSettings({ defaultModelProviders: [...order] })}
         />
       ) : null}
