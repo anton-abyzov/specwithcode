@@ -25,6 +25,8 @@ export {
   OrchestrationV2LimitRecoveryUpdate,
 } from "./orchestrationV2LimitRecovery.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
+import { CoordinatorPeerMessage } from "./coordinatorMessage.ts";
+export * from "./coordinatorMessage.ts";
 import {
   AccessRequestScope,
   AccessRequestSubject,
@@ -765,6 +767,10 @@ export const OrchestrationV2Run = Schema.Struct({
   queueHeldForRestart: Schema.optional(Schema.Boolean),
   /** A service update cancelled this queued run; the restart queues its message again. */
   cancelledForUpdate: Schema.optional(Schema.Boolean),
+  /** Starts at once or never: not queued or continued before a provider takes it (1427). */
+  startOnly: Schema.optional(Schema.Boolean),
+  /** Epoch milliseconds a start-only run must reach its provider before. */
+  authorityEndsAt: Schema.optional(Schema.Number),
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -1399,6 +1405,7 @@ export const OrchestrationV2ConversationMessage = Schema.Struct({
   scheduledTaskId: Schema.optional(ScheduledTaskId),
   // The sending agent's thread in this environment, separate from the receiving thread.
   senderThreadId: Schema.optional(ThreadId),
+  peerMessage: Schema.optional(CoordinatorPeerMessage), // Another machine's coordinator message.
   id: MessageId,
   threadId: ThreadId,
   runId: Schema.NullOr(RunId),
@@ -3507,6 +3514,10 @@ export const OrchestrationV2Command = Schema.Union([
     usageLimitContinuationOfRunId: Schema.optional(RunId),
     manualContinuationOfRunId: Schema.optional(RunId),
     usageLimitRecoveryRequestId: Schema.optional(CommandId),
+    /** Start a turn now or refuse, never queue; the refusal is not recorded. */
+    startOnly: Schema.optional(Schema.Boolean),
+    /** Epoch milliseconds: refused, unrecorded, if the start commits at or after this. */
+    authorityEndsAt: Schema.optional(Schema.Number),
     /** Resolve untargeted delivery against the server's serialized thread state. */
     deliveryIntent: Schema.optional(Schema.Literals(["auto", "steer", "restart"])),
     delegatedCompletion: Schema.optional(

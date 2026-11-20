@@ -12,11 +12,13 @@ import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as WorkGrants from "../fleet/WorkGrants.ts";
+import { coordinatorOfPrincipal } from "../fleet/workGrantPolicy.ts";
 import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import { callerFingerprint, teamRulesSessionRefusal } from "../teamRules/TeamRulesReach.ts";
 import { parseJson } from "../json.ts";
 import { clientRuntimeModeCeiling } from "../mcp/McpInvocationContext.ts";
 import { CoordinatorLeaseReceiver } from "../project/CoordinatorLeaseRoute.ts";
+import { CoordinatorMessageReceiver } from "../project/CoordinatorMessageReceiver.ts";
 import { LinkedMemoryPeerReceiver } from "../project/LinkedMemoryPeers.ts";
 import { LinkedPeerReceiver } from "../project/LinkedPeerRoute.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
@@ -53,6 +55,7 @@ import {
   TransferStatusRequest,
   FolderWorkRequest,
 } from "./handoffWire.ts";
+import { CoordinatorMessageDeliverRequest } from "./coordinatorMessageWire.ts";
 import { isRetiredReason } from "./handoffState.ts";
 import {
   LinkedContentRequest,
@@ -158,13 +161,23 @@ export const layer = HttpRouter.add(
             Effect.orElseSucceed(() => structured),
           );
 
+    // Absent on a server built without coordinator messages: the path reads as unknown there.
+    const messages = yield* Effect.serviceOption(CoordinatorMessageReceiver);
     const auth = yield* EnvironmentAuth.EnvironmentAuth;
     const client = yield* auth.authenticateMcpClient(request).pipe(Effect.option);
     if (Option.isNone(client))
       return yield* unread(refusal(401, "unauthorized", { code: "needs_grant" }));
     const grants = yield* WorkGrants.WorkGrants;
-    const grant = yield* grants.forClient(client.value).pipe(Effect.option);
+    // A message reads the kept grant and never creates or settles one (1427).
+    const grant = yield* (
+      path === "coordinator-message" && Option.isSome(messages)
+        ? messages.value.grantFor(client.value)
+        : grants.forClient(client.value)
+    ).pipe(Effect.option);
     if (Option.isNone(grant) || grant.value === undefined) {
+      const sender = coordinatorOfPrincipal(client.value.principal);
+      if (path === "coordinator-message" && Option.isSome(messages) && sender !== undefined)
+        return fromRefusal(yield* messages.value.ungranted(sender));
       return yield* unread(
         refusal(403, "Only a paired machine's worker credential may hand off here.", {
           code: "needs_grant",
@@ -176,6 +189,9 @@ export const layer = HttpRouter.add(
       // A standby stops standing by for a coordinator this machine revoked.
       if (path === "coordinator-lease")
         yield* (yield* CoordinatorLeaseReceiver).grantRefused(grant.value.coordinatorEnvironmentId);
+      // A message's refusal names both machines (1427 AC-12).
+      if (path === "coordinator-message" && Option.isSome(messages))
+        return fromRefusal(yield* messages.value.revoked(grant.value.coordinatorEnvironmentId));
       return yield* unread(
         refusal(403, "This machine revoked that machine's work here.", {
           code: "needs_grant",
@@ -299,6 +315,25 @@ export const layer = HttpRouter.add(
         return Option.isNone(input)
           ? invalid
           : yield* answer((yield* LinkedMemoryPeerReceiver).memoryMerge(caller, input.value));
+      }
+      case "coordinator-message": {
+        const input = decodeJson(CoordinatorMessageDeliverRequest, body.value);
+        return Option.isNone(input)
+          ? invalid
+          : Option.isNone(messages)
+            ? refusal(404, "not_found", { code: "not_found" })
+            : yield* answer(
+                messages.value.deliver(caller, input.value, {
+                  // A problem or a request needs a credential that may operate here.
+                  operate: client.value.access !== "read-only",
+                  sessionId: client.value.sessionId,
+                  teamRulesFingerprint: callerFingerprint(request.headers),
+                  ...(client.value.device === undefined ? {} : { device: client.value.device }),
+                  ...(client.value.credentialExpiresAt === undefined
+                    ? {}
+                    : { credentialExpiresAt: client.value.credentialExpiresAt }),
+                }),
+              );
       }
       case "linked-digest": {
         const input = decodeJson(LinkedDigestRequest, body.value);

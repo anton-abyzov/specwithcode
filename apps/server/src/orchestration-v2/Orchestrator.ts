@@ -133,6 +133,16 @@ import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings
 import { apiCreditDetourResumeRefused } from "./providerOpenFailure.ts";
 import { PRESWITCH_TURN_STARTED, preswitchMoveRefusal } from "./limitPreswitchGuard.ts";
 import {
+  commitDeadline,
+  continuesUnofferedStartOnlyRun,
+  deadlineRefusal,
+  START_AUTHORITY_ENDED,
+  START_ONLY_NOT_CONTINUED,
+  START_ONLY_WOULD_QUEUE,
+  startOnlyRunFields,
+  withoutStartOnly,
+} from "./startOnlyDispatch.ts";
+import {
   LIMIT_PRESWITCH_COMMAND_PREFIX,
   launchFallbackAfterMove,
   limitPreswitchAfterMove,
@@ -263,6 +273,13 @@ export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDi
     return `Failed to dispatch orchestration command ${this.commandType} (${this.commandId}).`;
   }
 }
+
+/** A start-only refusal (`startOnlyDispatch.ts`). */
+const startRefusal = (
+  command: { readonly commandId: CommandId; readonly type: string },
+  cause: string,
+) =>
+  new OrchestratorDispatchError({ commandId: command.commandId, commandType: command.type, cause });
 
 export class OrchestratorCommandRejectedError extends Schema.TaggedError<OrchestratorCommandRejectedError>()(
   "OrchestratorCommandRejectedError",
@@ -5625,7 +5642,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
       const restartedRun: OrchestrationV2Run = {
-        ...targetRun,
+        ...withoutStartOnly(targetRun),
         providerInstanceId: input.modelSelection.instanceId,
         modelSelection: input.modelSelection,
         providerThreadId: restartProviderThread.id,
@@ -5879,6 +5896,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: handoffRefusal,
         });
       }
+      if (continuesUnofferedStartOnlyRun(command, projection))
+        return yield* startRefusal(command, START_ONLY_NOT_CONTINUED);
       // A thread whose last runs all failed stops re-running itself.
       const breakerRefusal = failedRunBreakerRefusal(
         isBreakerGuardedRun(command),
@@ -6157,6 +6176,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ]);
         projection = yield* getProjectionWithPendingEvents(command.threadId, events);
       }
+      if (
+        command.authorityEndsAt !== undefined &&
+        DateTime.toEpochMillis(yield* DateTime.now) >= command.authorityEndsAt
+      )
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: START_AUTHORITY_ENDED,
+        });
       const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
       let dispatchMode = resolveMessageDispatchIntent(
         projection,
@@ -6475,6 +6503,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             dispatchMode.type === "start_immediately" ||
             dispatchMode.type === "queue_after_active"));
       if (shouldQueue) {
+        if (command.startOnly === true)
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: START_ONLY_WOULD_QUEUE,
+          });
         if (pendingMergeBackTransfers.length > 0) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
@@ -6992,6 +7026,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ? {}
             : { manualCodexCreditIntent: command.manualCodexCreditIntent }),
           ...(command.sourcePlanRef === undefined ? {} : { sourcePlanRef: command.sourcePlanRef }),
+          ...startOnlyRunFields(command),
           ...(command.restartContinuationOfRunId === undefined
             ? {}
             : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
@@ -7691,6 +7726,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? {}
           : { manualCodexCreditIntent: command.manualCodexCreditIntent }),
         ...(command.sourcePlanRef === undefined ? {} : { sourcePlanRef: command.sourcePlanRef }),
+        ...startOnlyRunFields(command),
         ...(command.restartContinuationOfRunId === undefined
           ? {}
           : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
@@ -13565,7 +13601,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause._tag === "OrchestratorThreadAboveModeLimitError" ||
             cause._tag === "OrchestratorTeamRulesRefusedError" ||
             // A turn beat the move before the limit: it may go out after that turn.
-            (cause._tag === "OrchestratorDispatchError" && cause.cause === PRESWITCH_TURN_STARTED)
+            (cause._tag === "OrchestratorDispatchError" &&
+              (cause.cause === PRESWITCH_TURN_STARTED ||
+                cause.cause === START_ONLY_WOULD_QUEUE ||
+                cause.cause === START_AUTHORITY_ENDED))
           )
             return yield* cause;
           // An answer's id is stable per request and answer, so a retry after a
@@ -13648,6 +13687,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(expectedThreadSequence === undefined ? {} : { expectedThreadSequence }),
         events: plan.events,
         effects: plan.effects,
+        ...commitDeadline(command),
         ...(plan.cancelUnsettledEffects === undefined
           ? {}
           : { cancelUnsettledEffects: plan.cancelUnsettledEffects }),
@@ -13661,6 +13701,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               cause,
             }),
         ),
+        Effect.mapError((error) => deadlineRefusal(error, (cause) => startRefusal(command, cause))),
       );
 
     if (committed.receipt.status === "rejected") {
