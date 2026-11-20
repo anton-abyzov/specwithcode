@@ -11,9 +11,34 @@
 /** Written into each checkpoint commit message so a later diff knows the HEAD it was taken at. */
 export const CHECKPOINT_HEAD_TRAILER = "head";
 
-export function checkpointMessage(checkpointRef: string, headOid: string | null): string {
+export function checkpointMessage(
+  checkpointRef: string,
+  headOid: string | null,
+  ignoredPaths: ReadonlyArray<string> | null = null,
+): string {
   const subject = `specweave-studio checkpoint ref=${checkpointRef}`;
-  return headOid === null ? subject : `${subject}\n\n${CHECKPOINT_HEAD_TRAILER}=${headOid}`;
+  const trailers = [
+    ...(headOid === null ? [] : [`${CHECKPOINT_HEAD_TRAILER}=${headOid}`]),
+    ...(ignoredPaths === null ? [] : [`ignored=${JSON.stringify(ignoredPaths)}`]),
+  ];
+  return trailers.length === 0 ? subject : `${subject}\n\n${trailers.join("\n")}`;
+}
+
+/**
+ * The repository-relative ignored paths (directories end in "/") that existed when the
+ * checkpoint was taken, or null when the checkpoint did not record them.
+ */
+export function checkpointIgnoredPaths(message: string): ReadonlyArray<string> | null {
+  const match = /^ignored=(\[.*\])\s*$/m.exec(message);
+  if (!match) return null;
+  try {
+    const parsed: unknown = JSON.parse(match[1]!);
+    return Array.isArray(parsed) && parsed.every((entry) => typeof entry === "string")
+      ? parsed
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 /** The HEAD a checkpoint was taken at, or null for checkpoints written before it was recorded. */

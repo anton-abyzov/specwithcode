@@ -40,6 +40,7 @@ import {
 } from "./GitVcsDriverCore.ts";
 import {
   checkpointHeadOid,
+  checkpointIgnoredPaths,
   checkpointMessage,
   headMoveOnlyPaths,
   localCommitsSince,
@@ -459,6 +460,8 @@ const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
+// The pre-turn ignored paths travel on the command line (commit message, clean excludes).
+const CHECKPOINT_IGNORED_MAX_BYTES = 8 * 1024;
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
   "-c",
   "core.fsmonitor=false",
@@ -1210,7 +1213,41 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       // The HEAD it was taken at lets a later diff tell edits from a checkout or pull.
       const headOid = headExists ? yield* resolveHeadCommit(input.cwd) : null;
       const branch = locate ? yield* resolveCheckedOutBranch(operation, input.cwd) : undefined;
-      const message = checkpointMessage(input.checkpointRef, headOid);
+      // Revert must never delete what was ignored before the turn, so record it when it fits.
+      const ignoredListing = yield* execute({
+        operation,
+        cwd: input.cwd,
+        args: [
+          ...indexConfig,
+          "ls-files",
+          "--others",
+          "--ignored",
+          "--exclude-standard",
+          "--directory",
+          "--full-name",
+          "-z",
+          "--",
+          ".",
+        ],
+        env: commitEnv,
+        allowNonZeroExit: true,
+        maxOutputBytes: CHECKPOINT_IGNORED_MAX_BYTES,
+        outputMode: "truncate",
+      });
+      const ignoredEntries = splitNullSeparatedGitStdoutPaths(ignoredListing);
+      // Git also lists an untracked directory holding only ignored files, then each file;
+      // record the files so new files in that directory are not protected with them.
+      const ignoredPaths =
+        ignoredListing.exitCode === 0 &&
+        !ignoredListing.stdoutTruncated &&
+        !ignoredListing.stdout.includes("\uFFFD")
+          ? ignoredEntries.filter(
+              (entry) =>
+                !entry.endsWith("/") ||
+                !ignoredEntries.some((other) => other !== entry && other.startsWith(entry)),
+            )
+          : null;
+      const message = checkpointMessage(input.checkpointRef, headOid, ignoredPaths);
       const commitTreeResult = yield* execute({
         operation,
         cwd: input.cwd,
@@ -1334,6 +1371,29 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         return false;
       }
 
+      const checkpointBody = yield* execute({
+        operation,
+        cwd: input.cwd,
+        args: ["log", "-1", "--format=%B", commitOid],
+        allowNonZeroExit: true,
+      });
+      // Paths ignored before the turn, which no clean may remove; null for older checkpoints.
+      const preserved =
+        checkpointBody.exitCode === 0 ? checkpointIgnoredPaths(checkpointBody.stdout) : null;
+      const indexPaths = execute({
+        operation,
+        cwd: input.cwd,
+        args: ["ls-files", "-z", "--", "."],
+        maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+        outputMode: "truncate",
+      }).pipe(
+        Effect.map((result) =>
+          result.stdoutTruncated ? null : new Set(splitNullSeparatedGitStdoutPaths(result)),
+        ),
+      );
+      // Without a HEAD there is nothing to reset to, so keep what the user had staged.
+      const stagedBefore = (yield* hasHeadCommit(input.cwd)) ? null : yield* indexPaths;
+
       const tracked = yield* execute({
         operation,
         cwd: input.cwd,
@@ -1360,49 +1420,144 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               }),
           ),
         );
-      // Restoring the checkpoint stages its tree; unstage it, with or without a first commit.
+      // Restoring the checkpoint stages its tree; unstage what the restore staged.
       const resetIndex = Effect.gen(function* () {
         // Git for Windows removes an emptied nested workspace directory itself.
         yield* recreateWorkspace("git clean");
+        const stagedAfter = stagedBefore === null ? null : yield* indexPaths;
+        if (stagedBefore === null || stagedAfter === null) {
+          yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: ["reset", "--quiet", "--", "."],
+          });
+          return;
+        }
+        const added = [...stagedAfter].filter((entry) => !stagedBefore.has(entry));
+        if (added.length === 0) return;
         yield* execute({
           operation,
           cwd: input.cwd,
-          args: ["reset", "--quiet", "--", "."],
+          args: [
+            "--literal-pathspecs",
+            "reset",
+            "--quiet",
+            "--pathspec-from-file=-",
+            "--pathspec-file-nul",
+          ],
+          stdin: `${added.join("\0")}\0`,
         });
       });
+      // Report why the workspace is not clean even if unstaging fails too.
+      const failRestore = (exitCode: number, detail: string) =>
+        resetIndex.pipe(
+          Effect.as(detail),
+          Effect.catch((resetError) =>
+            Effect.succeed(
+              `${detail} Unstaging the restored files also failed: ${resetError.message}`,
+            ),
+          ),
+          Effect.flatMap((fullDetail) =>
+            Effect.fail(
+              new VcsProcessExitError({
+                operation,
+                command: "git clean",
+                cwd: input.cwd,
+                exitCode,
+                detail: fullDetail,
+              }),
+            ),
+          ),
+        );
       const workspaceIsEmpty = fileSystem.readDirectory(input.cwd).pipe(
         Effect.map((entries) => entries.length === 0),
         Effect.orElseSucceed(() => false),
       );
       // Restoring away the last tracked file can remove a nested workspace directory.
       yield* recreateWorkspace("git restore");
+      // Command-line excludes outrank every .gitignore, so a turn's negation cannot expose them.
+      const preservedExcludes = (preserved ?? []).flatMap((entry) => {
+        const literal = entry.replace(/[\\*?[]/g, "\\$&");
+        return ["-e", `/${literal.replace(/ +$/, (spaces) => spaces.replaceAll(" ", "\\ "))}`];
+      });
       const clean = execute({
         operation,
         cwd: input.cwd,
-        args: ["clean", "-fd", "--", "."],
+        args: ["clean", "-fd", ...preservedExcludes, "--", "."],
         env: { LC_ALL: "C" },
         allowNonZeroExit: true,
       });
+      const workspacePrefix =
+        preserved === null
+          ? ""
+          : (yield* execute({ operation, cwd: input.cwd, args: ["rev-parse", "--show-prefix"] }))
+              .stdout.trim();
+      // A .gitignore the turn created can hide itself ("*"). Remove such ignored ignore files
+      // when the checkpoint proves they are new; then clean exposes what they hid.
+      const removeNewIgnoreFiles = Effect.gen(function* () {
+        if (preserved === null) return false;
+        yield* recreateWorkspace("git clean");
+        const listing = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: [
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "--directory",
+            "-z",
+            "--",
+            ".",
+          ],
+          allowNonZeroExit: true,
+          maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+          outputMode: "truncate",
+        });
+        if (listing.exitCode !== 0 || listing.stdoutTruncated) return false;
+        const created = splitNullSeparatedGitStdoutPaths(listing).filter((entry) => {
+          if (entry !== ".gitignore" && !entry.endsWith("/.gitignore")) return false;
+          const fullName = `${workspacePrefix}${entry}`;
+          return !preserved.some(
+            (kept) => fullName === kept || (kept.endsWith("/") && fullName.startsWith(kept)),
+          );
+        });
+        for (const entry of created) {
+          yield* fileSystem.remove(path.join(input.cwd, entry)).pipe(
+            Effect.mapError(
+              (cause) =>
+                new VcsProcessExitError({
+                  operation,
+                  command: "git clean",
+                  cwd: input.cwd,
+                  exitCode: 0,
+                  detail: `Could not remove ${entry}: ${cause.message}`,
+                }),
+            ),
+          );
+        }
+        return created.length > 0;
+      });
       const removedSomething = (stdout: string) => gitCleanListsWorkspacePath(stdout, "Removing");
       let cleaned = yield* clean;
-      // Removing a .gitignore the turn created exposes the files it hid; clean again until
-      // a pass removes nothing. The bound only stops a runaway loop. A .gitignore that was
-      // itself ignored at capture is not restored, so if the turn un-ignores it, a later
-      // pass can remove it and then the files it used to hide.
-      for (
-        let pass = 1;
-        pass < 64 && cleaned.exitCode === 0 && removedSomething(cleaned.stdout);
-        pass++
-      ) {
+      // Removing a .gitignore the turn created exposes the files it hid; clean again until a
+      // pass removes nothing. Only a checkpoint that recorded its ignored files allows a second
+      // pass; otherwise one pass runs and anything it exposed fails the restore below.
+      let settled = false;
+      for (let pass = 1; pass < 64 && cleaned.exitCode === 0; pass++) {
+        if (!removedSomething(cleaned.stdout)) {
+          settled = !(yield* removeNewIgnoreFiles);
+          if (settled) break;
+        } else if (preserved === null) break;
         yield* recreateWorkspace("git clean");
         cleaned = yield* clean;
       }
-      if (cleaned.exitCode === 0 && removedSomething(cleaned.stdout)) {
+      if (cleaned.exitCode === 0 && !settled) {
         yield* recreateWorkspace("git clean");
         const remaining = yield* execute({
           operation,
           cwd: input.cwd,
-          args: ["clean", "-dn", "--", "."],
+          args: ["clean", "-dn", ...preservedExcludes, "--", "."],
           env: { LC_ALL: "C" },
           allowNonZeroExit: true,
         });
@@ -1412,17 +1567,12 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           gitCleanListsWorkspacePath(remaining.stdout, "Would remove") ||
           (/^Would remove /m.test(remaining.stdout) && !(yield* workspaceIsEmpty));
         if (remaining.exitCode !== 0 || untrackedRemain) {
-          yield* resetIndex;
-          return yield* new VcsProcessExitError({
-            operation,
-            command: "git clean",
-            cwd: input.cwd,
-            exitCode: remaining.exitCode,
-            detail:
-              remaining.exitCode !== 0
-                ? remaining.stderr.trim() || "Could not check the checkpoint workspace."
-                : "Could not clean the checkpoint workspace: untracked files remain.",
-          });
+          return yield* failRestore(
+            remaining.exitCode,
+            remaining.exitCode !== 0
+              ? remaining.stderr.trim() || "Could not check the checkpoint workspace."
+              : "Could not clean the checkpoint workspace: untracked files remain.",
+          );
         }
       }
       if (cleaned.exitCode !== 0) {
@@ -1432,14 +1582,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           /^warning: failed to remove \.\/: [^\n]+$/.test(cleaned.stderr.trim()) &&
           (yield* workspaceIsEmpty);
         if (!emptiedWorkspace) {
-          yield* resetIndex;
-          return yield* new VcsProcessExitError({
-            operation,
-            command: "git clean",
-            cwd: input.cwd,
-            exitCode: cleaned.exitCode,
-            detail: cleaned.stderr.trim() || "Could not clean the checkpoint workspace.",
-          });
+          return yield* failRestore(
+            cleaned.exitCode,
+            cleaned.stderr.trim() || "Could not clean the checkpoint workspace.",
+          );
         }
       }
       yield* resetIndex;
