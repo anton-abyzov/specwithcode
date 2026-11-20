@@ -7076,7 +7076,48 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 }
               }
 
+              // Terminals this Stop ended, or holds the folder change for: the rest are ended
+              // before the Stop forgets them.
+              const handledTerminalKeys = new Set<string>();
               const cleanupInterruptState = Effect.gen(function* () {
+                // A terminal of a turn found late (a child Codex reported while a failed
+                // Stop ran) was never ended: end it now, or hold the folder change for it.
+                const runningItems = yield* Ref.get(runningCommandItemsByTurn);
+                const leftover = new Map<
+                  string,
+                  { readonly nativeThreadId: string; readonly processId: string }
+                >();
+                for (const target of interruptTargets) {
+                  if (settledTurnContexts.includes(target.context)) continue;
+                  const items = runningItems.get(target.context.nativeTurnId);
+                  if (items === undefined || items.size === 0) continue;
+                  const nativeThreadId = yield* getNativeThreadId(
+                    target.context.providerThread,
+                  ).pipe(Effect.option);
+                  for (const item of items.values()) {
+                    if (item.processId === undefined) continue;
+                    if (Option.isNone(nativeThreadId)) {
+                      if (appThreadId !== null)
+                        holdFailedStopTeardown(appThreadId, () => Promise.resolve(false));
+                      continue;
+                    }
+                    const key = `${nativeThreadId.value}:${item.processId}`;
+                    if (handledTerminalKeys.has(key)) continue;
+                    leftover.set(key, {
+                      nativeThreadId: nativeThreadId.value,
+                      processId: item.processId,
+                    });
+                  }
+                }
+                yield* Effect.forEach(
+                  leftover,
+                  ([key, { nativeThreadId, processId }]) =>
+                    terminateBackgroundTerminal(nativeThreadId, processId).pipe(
+                      Effect.andThen(Effect.sync(() => handledTerminalKeys.add(key))),
+                      Effect.catchCause(() => holdUntilTerminalEnds(nativeThreadId, processId)),
+                    ),
+                  { concurrency: "unbounded", discard: true },
+                ).pipe(Effect.catchCause(() => Effect.void));
                 yield* Ref.update(turnWaiters, (current) => {
                   const updated = new Map(current);
                   for (const target of interruptTargets) {
@@ -7107,6 +7148,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               const appThreadId = requestedInput.providerThread.appThreadId;
               const holdUntilTerminalEnds = (nativeThreadId: string, processId: string) =>
                 Effect.gen(function* () {
+                  handledTerminalKeys.add(`${nativeThreadId}:${processId}`);
                   if (appThreadId === null) return;
                   const confirmEnded = confirmBackgroundTerminalEnded(nativeThreadId, processId);
                   const release = holdFailedStopTeardown(appThreadId, () =>
@@ -7193,9 +7235,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 if (terminalsHandled) return;
                 // Codex may report another terminal while these requests run: each pass
                 // reads the tracked terminals again, until one finds none not yet tried.
+                // What is still new after the last pass is ended by the cleanup below.
                 const tried = new Set<string>();
                 let unaddressed = false;
-                let settled = false;
                 for (let pass = 0; pass < 5; pass++) {
                   const runningItems = yield* Ref.get(runningCommandItemsByTurn);
                   const terminals = new Map<
@@ -7223,22 +7265,19 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                       });
                     }
                   }
-                  if (terminals.size === 0) {
-                    settled = true;
-                    break;
-                  }
+                  if (terminals.size === 0) break;
                   yield* Effect.forEach(
-                    terminals.values(),
-                    ({ nativeThreadId, processId }) =>
+                    terminals,
+                    ([key, { nativeThreadId, processId }]) =>
                       terminateBackgroundTerminal(nativeThreadId, processId).pipe(
+                        Effect.andThen(Effect.sync(() => handledTerminalKeys.add(key))),
                         Effect.catchCause(() => holdUntilTerminalEnds(nativeThreadId, processId)),
                       ),
                     { concurrency: "unbounded", discard: true },
                   );
                 }
-                // No address for a terminal, or Codex still reporting new ones after the
-                // last pass: only a restart can end them.
-                if ((unaddressed || !settled) && appThreadId !== null) {
+                // No address for a terminal: only a restart can end it.
+                if (unaddressed && appThreadId !== null) {
                   holdFailedStopTeardown(appThreadId, () => Promise.resolve(false));
                 }
                 // A native turn Codex never confirmed ended (its interrupt was refused) may
@@ -7384,38 +7423,45 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               });
 
               yield* Effect.gen(function* () {
-                for (const target of interruptTargets) {
-                  const context = target.context;
-                  // A null start timestamp acknowledges a queued turn; Codex cannot interrupt it
-                  // until turn/started confirms that the native task exists.
-                  if (context.nativeStartReady !== undefined) {
-                    const ready = yield* Deferred.await(context.nativeStartReady).pipe(
-                      Effect.timeoutOption("10 seconds"),
-                    );
-                    if (Option.isNone(ready)) {
-                      return yield* toProtocolError(
-                        "Codex did not start the queued turn within 10 seconds; Stop could not be delivered.",
-                      );
-                    }
-                  }
-                  if ((yield* Ref.get(activeTurns)).get(context.nativeTurnId) !== context) {
-                    continue;
-                  }
-                  // An app-server that never answers must not hold Stop past the folder
-                  // change's minute: it fails like a refused interrupt, and the cleanup
-                  // below ends the tracked terminals and holds the turn.
-                  const answered = yield* client
-                    .request("turn/interrupt", {
-                      threadId: yield* getNativeThreadId(context.providerThread),
-                      turnId: context.nativeTurnId,
-                    })
-                    .pipe(Effect.timeoutOption("10 seconds"));
-                  if (Option.isNone(answered)) {
-                    return yield* toProtocolError(
-                      "Codex did not answer the Stop within 10 seconds.",
-                    );
-                  }
-                }
+                // Each turn of the lineage at once: one slow reply must not push the rest
+                // past the folder change's minute.
+                yield* Effect.forEach(
+                  interruptTargets,
+                  (target) =>
+                    Effect.gen(function* () {
+                      const context = target.context;
+                      // A null start timestamp acknowledges a queued turn; Codex cannot interrupt it
+                      // until turn/started confirms that the native task exists.
+                      if (context.nativeStartReady !== undefined) {
+                        const ready = yield* Deferred.await(context.nativeStartReady).pipe(
+                          Effect.timeoutOption("10 seconds"),
+                        );
+                        if (Option.isNone(ready)) {
+                          return yield* toProtocolError(
+                            "Codex did not start the queued turn within 10 seconds; Stop could not be delivered.",
+                          );
+                        }
+                      }
+                      if ((yield* Ref.get(activeTurns)).get(context.nativeTurnId) !== context) {
+                        return;
+                      }
+                      // An app-server that never answers must not hold Stop past the folder
+                      // change's minute: it fails like a refused interrupt, and the cleanup
+                      // below ends the tracked terminals and holds the turn.
+                      const answered = yield* client
+                        .request("turn/interrupt", {
+                          threadId: yield* getNativeThreadId(context.providerThread),
+                          turnId: context.nativeTurnId,
+                        })
+                        .pipe(Effect.timeoutOption("10 seconds"));
+                      if (Option.isNone(answered)) {
+                        return yield* toProtocolError(
+                          "Codex did not answer the Stop within 10 seconds.",
+                        );
+                      }
+                    }),
+                  { concurrency: "unbounded", discard: true },
+                );
                 const containedTerminalKeys = new Set<string>();
                 const attemptedTerminalKeys = new Set<string>();
                 const collectTrackedTerminals = (targets: typeof interruptTargets) =>
@@ -7460,6 +7506,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                           attemptedTerminalKeys.add(key);
                           yield* terminateBackgroundTerminal(nativeThreadId, processId);
                           containedTerminalKeys.add(key);
+                          handledTerminalKeys.add(key);
                         }).pipe(
                           Effect.as({ success: true as const }),
                           Effect.catch((error) =>
