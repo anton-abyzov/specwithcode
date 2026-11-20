@@ -145,8 +145,8 @@ export function sheetColumnWidth(tab: SheetTab, col: number): number {
 
 /** How tall a chart draws, from its kind and how many points it has. */
 export function chartHeight(type: SheetChartType, points: number): number {
-  if (type === "bar") return 64 + Math.max(1, Math.min(points, 40)) * 28;
-  if (type === "donut") return 216;
+  if (type === "bar") return 84 + Math.max(1, Math.min(points, 40)) * 28;
+  if (type === "donut") return 240;
   return 300;
 }
 

@@ -424,7 +424,7 @@ export function validateSheetDocument(value: unknown): SheetValidation {
         if (!isRecord(rawChart)) return fail(`Tab "${name}": each chart must be an object.`);
         const type = rawChart.type;
         if (typeof type !== "string" || !CHART_TYPES.has(type)) {
-          return fail(`Tab "${name}": a chart type must be bar, line or donut.`);
+          return fail(`Tab "${name}": a chart type must be bar, column, line or donut.`);
         }
         const chartTitle = typeof rawChart.title === "string" ? rawChart.title.trim() : "";
         if (chartTitle.length === 0 || chartTitle.length > SHEET_LIMITS.titleChars) {
@@ -438,6 +438,9 @@ export function validateSheetDocument(value: unknown): SheetValidation {
           return fail(`Tab "${name}": chart "${chartTitle}" needs labels and values ranges.`);
         }
         const at = typeof rawChart.at === "string" ? parseCellAddress(rawChart.at.trim()) : null;
+        if (rawChart.at !== undefined && !at) {
+          return fail(`Tab "${name}": chart "${chartTitle}" needs a single cell address for at.`);
+        }
         let id =
           typeof rawChart.id === "string" && CHART_ID_PATTERN.test(rawChart.id)
             ? rawChart.id

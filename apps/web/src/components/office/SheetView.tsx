@@ -127,9 +127,11 @@ export function SheetView(props: {
       tab,
       series.map((entry) => entry.points.length),
     );
-    // The grid reaches under every chart, so a chart never hangs off its edge.
-    const lastRow = Math.max(used ? used.end.row : 0, ...boxes.map((box) => box.endRow));
-    const lastCol = Math.max(used ? used.end.col : 0, ...boxes.map((box) => box.endCol));
+    const visibleBoxes = boxes.filter(
+      (box) => box.endRow < SHEET_VIEW_ROWS && box.endCol < SHEET_VIEW_COLUMNS,
+    );
+    const lastRow = Math.max(used ? used.end.row : 0, ...visibleBoxes.map((box) => box.endRow));
+    const lastCol = Math.max(used ? used.end.col : 0, ...visibleBoxes.map((box) => box.endCol));
     const rows = Math.min(SHEET_VIEW_ROWS, Math.max(MIN_ROWS, lastRow + 3));
     const columns = Math.min(SHEET_VIEW_COLUMNS, Math.max(MIN_COLUMNS, lastCol + 2));
     const chipRanges = (tab.chips ?? [])
@@ -138,7 +140,7 @@ export function SheetView(props: {
     return {
       rows,
       columns,
-      clipped: (used ? used.end.row : 0) + 1 > rows || (used ? used.end.col : 0) + 1 > columns,
+      clipped: visibleBoxes.length !== boxes.length || lastRow >= rows || lastCol >= columns,
       chipRanges,
       width:
         SHEET_GRID.gutterWidth +
@@ -366,17 +368,19 @@ export function SheetView(props: {
                             ? { anchor: current.anchor, focus: address }
                             : { anchor: address, focus: address },
                         );
+                      const cellStyle = grid.styleOf(address);
                       const common = {
                         "data-cell": cellName(address),
                         "data-selected": selected,
                         "data-focused": focused,
+                        "data-rule": cellStyle?.topBorder,
+                        "data-fill": cellStyle?.fill,
                         onMouseDown: (event: { shiftKey: boolean }) => pick(event.shiftKey),
                         onMouseEnter: (event: { buttons: number }) => {
                           if (event.buttons === 1) pick(true);
                         },
                       };
                       if (value === null) return <td key={col} {...common} />;
-                      const cellStyle = grid.styleOf(address);
                       const text = formatSheetValue(value, grid.formatOf(address));
                       const numeric = typeof value === "number";
                       const href = typeof value === "string" ? safeLinkHref(value) : null;
@@ -395,8 +399,6 @@ export function SheetView(props: {
                           data-bold={cellStyle?.bold}
                           data-italic={cellStyle?.italic}
                           data-heading={cellStyle?.heading}
-                          data-rule={cellStyle?.topBorder}
-                          data-fill={cellStyle?.fill}
                         >
                           {chip ? (
                             <span className="office-chip" data-chip={chipColor.get(text)}>
@@ -423,7 +425,8 @@ export function SheetView(props: {
             {(tab.charts ?? []).map((chart, index) => {
               const box = grid.boxes[index];
               const series = grid.series[index];
-              if (!box || !series) return null;
+              if (!box || !series || box.endRow >= grid.rows || box.endCol >= grid.columns)
+                return null;
               return (
                 <div
                   key={chart.id}

@@ -113,10 +113,25 @@ describe("SheetView", () => {
       chart
         .findAllByProps({ className: "office-bars-bar" })
         .map((bar) => bar.props.style["--office-bar-share"]),
-    ).toEqual([1, 0]);
+    ).toEqual([1, 45000.5 / 120000]);
     // The chart sits on the grid, two columns right of its data and level with it.
     const placed = root.findByProps({ className: "office-grid-chart" });
     expect(placed.props.style).toMatchObject({ left: 44 + 3 * 112, top: 28, width: 520 });
+  });
+
+  it("keeps fill and top border on blank cells inside a styled header", () => {
+    const sheet = JSON.parse(STATEMENT);
+    sheet.tabs[0].styles["A1:C1"] = { fill: true, topBorder: true };
+    const { root } = render(JSON.stringify(sheet));
+    expect(cell(root, "C1").props).toMatchObject({ "data-fill": true, "data-rule": true });
+  });
+
+  it("reports a chart beyond the visible grid without rendering an off-grid card", () => {
+    const sheet = JSON.parse(STATEMENT);
+    sheet.tabs[0].charts[0].at = "D501";
+    const { root } = render(JSON.stringify(sheet));
+    expect(root.findAllByProps({ "data-chart-id": "chart-1" })).toHaveLength(0);
+    expect(textOf(root)).toContain("Showing the first");
   });
 
   it("switches tabs", () => {

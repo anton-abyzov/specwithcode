@@ -77,7 +77,7 @@ function Axis(props: { readonly scale: Scale }): ReactNode {
 /** Horizontal bars, one per label, each with its value and its share of the total. */
 function BarChart(props: { readonly series: SheetChartSeries; readonly tone: number }): ReactNode {
   const { points } = props.series;
-  const max = Math.max(0, ...points.map((point) => point.value));
+  const max = Math.max(0, ...points.map((point) => Math.abs(point.value)));
   return (
     <ul className="office-bars">
       {points.slice(0, 40).map((point, index) => (
@@ -91,7 +91,7 @@ function BarChart(props: { readonly series: SheetChartSeries; readonly tone: num
               style={
                 {
                   // The stylesheet scales this share inside the room left for the value.
-                  "--office-bar-share": max > 0 ? Math.max(0, point.value / max) : 0,
+                  "--office-bar-share": max > 0 ? Math.abs(point.value) / max : 0,
                   background: seriesColor(props.tone),
                 } as CSSProperties
               }
