@@ -8,6 +8,8 @@ This renders the production `MessagesTimeline` under the production `ChatHeader`
 - **Everything** (Verbose), chosen from the menu: the finished turn's notes, command output and thoughts are open, and so is the running turn's thought.
 - **Results only** (Concise), reached with ⌥⌘O: a "Show: Results only" toast appears; the running turn keeps only its latest note and no thought, and its finished command sits behind the live row; the finished turn's fold reads "Ran 2 commands and changed 1 file" and its failing output is hidden.
 
+It checks the thread's own level too: each level is listed once; "This thread" pins the level on screen and keeps the menu open; the trigger's name then ends "(this thread)"; ⌥⌘O moves that level and the toast reads "Show in this thread: Results only" while the default stays; "Every thread" drops it. The menu must stay inside the window at both widths. With `?project=1` the thread belongs to a project (answered by `projectStubs.tsx`, the style kept in `localStorage`): the trigger reads "Concise · Folded steps" at desktop width and the level alone at 390 px, and choosing Detailed changes the trigger's name. `&replies=read-only` and `&replies=mixed` show those states.
+
 It also checks that the trigger's accessible name follows the level, that away from Normal the trigger shows the level's name, that it sits at the header's end after the thread title, that the level survives a reload, that the shortcut wraps back to Normal, and that the page never scrolls sideways. The rows near the start of the thread are checked at desktop width only, because the list renders just the end of the thread on a phone.
 
 From the repository root, using Node 22.20:
@@ -18,3 +20,5 @@ STUDIO_PLAYWRIGHT_MODULE=/absolute/path/to/playwright-core/index.mjs node apps/w
 ```
 
 If Playwright's matching Chromium is absent, set `STUDIO_CHROMIUM_EXECUTABLE` to an installed headless Chromium. The runner always uses `headless: true`, `PWDEBUG=0` and `PLAYWRIGHT_HTML_OPEN=never`. It serves the build on an ephemeral loopback port, blocks every other request, and closes both the browser and the server when it finishes. Screenshots (`thread-<level>-<theme>-<width>.png`) and `receipt.json` go to `.artifacts/timeline-detail/evidence/`, or to `TIMELINE_DETAIL_UI_OUTPUT`.
+
+`record.mjs` walks the menu the way a person would (reply style, a level for every thread, a level for this thread, the shortcut twice, back to the default) and saves one video per width, `web-1280.webm` and `web-390.webm`, plus `steps.json` with the trigger's text and name after each step, to `TIMELINE_DETAIL_VIDEO_OUTPUT`. `TIMELINE_DETAIL_QUERY='&project=1'` adds the project. It uses only roles and the trigger's data attribute, so it also runs against an older build for a before and after pair.

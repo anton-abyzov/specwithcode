@@ -31,10 +31,10 @@ const LEVEL_NAMES = { concise: "Results only", normal: "Folded steps", verbose: 
 
 async function choose(page, level) {
   await page.locator("[data-timeline-detail]").click();
-  // The default group, the menu's last radio of that name.
+  // Each level is listed once; the coordinator follows the default.
   await page
+    .getByLabel("Conversation shows")
     .getByRole("menuitemradio", { name: new RegExp(`^${LEVEL_NAMES[level]}`) })
-    .last()
     .click();
   await page.waitForFunction(
     (value) => document.querySelector("[data-timeline-detail]")?.dataset.timelineDetail === value,

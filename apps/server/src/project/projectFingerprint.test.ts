@@ -30,6 +30,13 @@ const git = (cwd: string, ...args: string[]) =>
       GIT_AUTHOR_EMAIL: "fixture@example.invalid",
       GIT_COMMITTER_NAME: "Fixture",
       GIT_COMMITTER_EMAIL: "fixture@example.invalid",
+      // A commit otherwise starts detached maintenance, which can still be writing in
+      // .git/objects while a test copies the repository.
+      GIT_CONFIG_COUNT: "2",
+      GIT_CONFIG_KEY_0: "maintenance.auto",
+      GIT_CONFIG_VALUE_0: "false",
+      GIT_CONFIG_KEY_1: "gc.auto",
+      GIT_CONFIG_VALUE_1: "0",
     },
   });
 const repository = (folder: string, origin: string | null) => {
