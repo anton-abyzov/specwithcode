@@ -617,6 +617,7 @@ it.effect(
         kind: "type",
         text: "background text",
         application: "Notes",
+        requireBackgroundField: true,
         sessionKey: "thread-computer-test",
       });
     }).pipe(Effect.scoped, Effect.provide(layer));

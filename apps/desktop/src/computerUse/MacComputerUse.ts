@@ -30,6 +30,7 @@ import {
   type DisplayGeometry,
   type DisplayPoint,
   dragStepsAtPoints,
+  findWindowAtPointForApplication,
   findWindowForApplication,
   type InputStep,
   IPHONE_MIRRORING_BUNDLE_ID,
@@ -42,7 +43,6 @@ import {
   type MirroringScene,
   mirroringActionSteps,
   moveStepsAtPoint,
-  PASTE_STEPS,
   type ReplayOptions,
   type ScreenArea,
   scrollStepsAtPoint,
@@ -283,7 +283,7 @@ type BackgroundFieldState =
       readonly reason: string;
     };
 
-const MAX_SESSION_STATE = 32;
+const MAX_SESSION_STATE = 256;
 /** Per-session last window capture, for mapping window-relative coordinates without cross-thread leaks. */
 const windowCaptures = new Map<string, WindowCaptureState>();
 /** Per-session last editable AX control targeted by a background click, for clipboard-free AX typing. */
@@ -374,6 +374,7 @@ async function runAxAction(request: {
   readonly mode: "click" | "type";
   readonly pid: number;
   readonly windowId?: number;
+  readonly expectedWindowBounds?: ScreenArea | undefined;
   readonly x: number;
   readonly y: number;
   readonly text?: string;
@@ -493,6 +494,7 @@ async function runOnMirroring(
   action: ComputerUseAction,
   display: DisplayGeometry,
   displayPoint?: DisplayPoint,
+  displayToPoint?: DisplayPoint,
 ): Promise<{ frontmost: string | undefined } | undefined> {
   if ((await mirroringRunning()) === false) return undefined;
   const scene = await readMirroringScene();
@@ -510,6 +512,7 @@ async function runOnMirroring(
     cursor: Electron.screen.getCursorScreenPoint(),
     lastPoint: lastMirroringPoint,
     ...(displayPoint === undefined ? {} : { displayPoint }),
+    ...(displayToPoint === undefined ? {} : { displayToPoint }),
   });
   if (plan === undefined) return undefined;
   if (plan.activate) {
@@ -539,15 +542,15 @@ async function runOnMirroring(
   }
 }
 
-/** Puts text on the clipboard, pastes it, then gives the user's clipboard back if unchanged. */
+/** Types text directly to the verified frontmost PID via Unicode CGEvents without touching the clipboard. */
 async function typeText(
   text: string,
   guard?: { readonly expectedFrontmost?: string | undefined; readonly forbidPid?: number },
 ): Promise<string | undefined> {
   try {
-    return await replay(PASTE_STEPS, {
+    return await replay([], {
       yieldForHumanInput: true,
-      pasteText: text,
+      unicodeText: text,
       ...(guard?.expectedFrontmost === undefined
         ? {}
         : { expectedFrontmost: guard.expectedFrontmost }),
@@ -555,14 +558,17 @@ async function typeText(
     });
   } catch (error) {
     if (error instanceof Error) {
-      if (error.message.includes("paste-uncertain")) {
+      if (error.message.includes("type-uncertain")) {
         throw new ComputerUseInputError(
-          "Focus or clipboard changed after Cmd+V was dispatched, so the paste outcome is uncertain. Take a screenshot to check what arrived before retrying.",
+          "Focus changed partway through typing, so part of the text may have arrived. Take a screenshot to check what arrived before retrying.",
         );
       }
-      if (error.message.includes("pid-dispatch-unavailable")) {
+      if (
+        error.message.includes("unicode-dispatch-unavailable") ||
+        error.message.includes("pid-dispatch-unavailable")
+      ) {
         throw new ComputerUseInputError(
-          "Could not target the frontmost application directly for paste. Bring the target app forward with computer_open and try again.",
+          "Could not target the frontmost application directly for keyboard input. Bring the target app forward with computer_open and try again.",
         );
       }
       if (
@@ -573,11 +579,6 @@ async function typeText(
           guard?.expectedFrontmost !== undefined
             ? `Cannot type into "${guard.expectedFrontmost}" in the background: frontmost app changed before input could be sent. Bring "${guard.expectedFrontmost}" to the front with computer_open and try again.`
             : "Cannot type while SpecWithCode is in front. Bring the target app forward with computer_open and try again.",
-        );
-      }
-      if (error.message.includes("clipboard-changed")) {
-        throw new ComputerUseInputError(
-          "Clipboard changed while preparing to type, so nothing was pasted. Try again when the user is not copying.",
         );
       }
     }
@@ -859,7 +860,7 @@ export async function runComputerUseAction(
             (w) => w.windowId === activeCapture.windowId && w.pid === activeCapture.pid,
           )
         : action.application !== undefined && scene !== undefined
-          ? findWindowForApplication(scene, action.application)
+          ? findWindowAtPointForApplication(scene, point, action.application)
           : undefined;
       const targetPid = hasWindowContext ? activeCapture.pid : liveTargetWindow?.pid;
       const targetWindowId = hasWindowContext ? activeCapture.windowId : liveTargetWindow?.windowId;
@@ -879,12 +880,14 @@ export async function runComputerUseAction(
         targetPid > 0 &&
         targetPid !== process.pid &&
         targetWindowId !== undefined &&
-        targetWindowId > 0
+        targetWindowId > 0 &&
+        targetBounds !== undefined
       ) {
         const ax = await runAxAction({
           mode: "click",
           pid: targetPid,
           windowId: targetWindowId,
+          expectedWindowBounds: targetBounds,
           x: point.x,
           y: point.y,
         });
@@ -1007,6 +1010,15 @@ export async function runComputerUseAction(
         );
       }
       const field = backgroundFields.get(sessionKey);
+      if (
+        action.requireBackgroundField === true &&
+        (field === undefined ||
+          (action.application !== undefined && !sameAppName(field.application, action.application)))
+      ) {
+        throw new ComputerUseInputError(
+          `The previously selected background field in "${action.application ?? "the target app"}" is no longer available. Take a fresh screenshot and click the field again before typing.`,
+        );
+      }
       const scene =
         field !== undefined || action.application !== undefined
           ? await readWindowsScene()
@@ -1033,6 +1045,7 @@ export async function runComputerUseAction(
             mode: "type",
             pid: field.pid,
             windowId: field.windowId,
+            expectedWindowBounds: field.bounds,
             x: field.x,
             y: field.y,
             text: action.text,
@@ -1219,7 +1232,7 @@ export async function runComputerUseAction(
         sameAppName(action.application, IPHONE_MIRRORING_PROCESS);
       const shouldCheckMirroring = action.application === undefined || isNamedMirroring;
       const mirrored = shouldCheckMirroring
-        ? await runOnMirroring(action, display, from)
+        ? await runOnMirroring(action, display, from, to)
         : undefined;
       if (mirrored !== undefined) {
         frontmost = mirrored.frontmost;
@@ -1232,7 +1245,7 @@ export async function runComputerUseAction(
         );
       }
       if (action.application !== undefined) {
-        const safety =
+        const startSafety =
           scene === undefined
             ? ({ ok: false, actualOwner: "an unknown application" } as const)
             : canSafelyFallbackHidClick(
@@ -1242,9 +1255,24 @@ export async function runComputerUseAction(
                 process.pid,
                 hasWindowContext ? activeCapture.windowId : undefined,
               );
-        if (!safety.ok) {
+        if (!startSafety.ok) {
           throw new ComputerUseInputError(
-            `Cannot drag in "${action.application}" in the background: the start point is currently covered by ${safety.actualOwner}. Bring "${action.application}" forward with computer_open and try again.`,
+            `Cannot drag in "${action.application}" in the background: the start point is currently covered by ${startSafety.actualOwner}. Bring "${action.application}" forward with computer_open and try again.`,
+          );
+        }
+        const dropSafety =
+          scene === undefined
+            ? ({ ok: false, actualOwner: "an unknown application" } as const)
+            : canSafelyFallbackHidClick(
+                scene,
+                to,
+                action.application,
+                process.pid,
+                hasWindowContext ? activeCapture.windowId : undefined,
+              );
+        if (!dropSafety.ok) {
+          throw new ComputerUseInputError(
+            `Cannot drag in "${action.application}" in the background: the drop point is currently covered by ${dropSafety.actualOwner}. Bring "${action.application}" forward with computer_open and try again.`,
           );
         }
       }
@@ -1262,6 +1290,12 @@ export async function runComputerUseAction(
                   application: action.application,
                   ...(hasWindowContext ? { windowId: activeCapture.windowId } : {}),
                 },
+                expectedDropOwner: {
+                  x: to.x,
+                  y: to.y,
+                  application: action.application,
+                  ...(hasWindowContext ? { windowId: activeCapture.windowId } : {}),
+                },
               }),
         });
       } catch (error) {
@@ -1273,11 +1307,12 @@ export async function runComputerUseAction(
           }
           if (
             error.message.includes("point-owner-changed") ||
+            error.message.includes("drop-owner-changed") ||
             error.message.includes("forbidden-frontmost-pid")
           ) {
             throw new ComputerUseInputError(
               action.application !== undefined
-                ? `Cannot drag in "${action.application}" in the background: the window at the target point changed before input could be sent. Bring "${action.application}" forward with computer_open and try again.`
+                ? `Cannot drag in "${action.application}" in the background: the window at the start or drop point changed before input could complete. Bring "${action.application}" forward with computer_open and try again.`
                 : "Cannot drag while SpecWithCode is in front. Bring the target app forward with computer_open and try again.",
             );
           }

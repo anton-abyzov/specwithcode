@@ -11,6 +11,7 @@ import {
   canSafelyFallbackHidType,
   clickStepsAtPoint,
   ComputerUseInputError,
+  findWindowAtPointForApplication,
   findWindowForApplication,
   frontMirroringWindow,
   type InputStep,
@@ -716,12 +717,101 @@ describe("background computer use helpers", () => {
     expect(JXA_AX_ACTION_SCRIPT).toContain("ax-field-unidentifiable");
     expect(JXA_AX_ACTION_SCRIPT).toContain("AXNumberOfCharacters");
     expect(JXA_AX_ACTION_SCRIPT).toContain("charCount !== 0");
+    // Never use private _AXUIElementGetWindow SPI; verify window identity via public AXValueGetValue.
+    expect(JXA_AX_ACTION_SCRIPT).not.toContain("_AXUIElementGetWindow");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("AXValueGetValue");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("AXPosition");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("AXSize");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("expectedWindowBounds");
     // Never request focus during background AX clicks.
     expect(JXA_AX_ACTION_SCRIPT).not.toContain("AXFocused");
-    // Input script enforces point-owner revalidation and tracks human cursor movement across steps.
+    // Input script enforces point-owner + drop-owner revalidation, drag cancel, clipboard-free Unicode typing, and human cursor tracking.
     expect(JXA_INPUT_SCRIPT).toContain("checkPointOwner");
+    expect(JXA_INPUT_SCRIPT).toContain("checkDropOwner");
+    expect(JXA_INPUT_SCRIPT).toContain("drop-owner-changed");
+    expect(JXA_INPUT_SCRIPT).toContain("CGEventKeyboardSetUnicodeString");
+    expect(JXA_INPUT_SCRIPT).not.toContain("NSPasteboard");
     expect(JXA_INPUT_SCRIPT).toContain("point-owner-changed");
     expect(JXA_INPUT_SCRIPT).toContain("humanMoved");
+  });
+
+  it("finds the exposed second window at a display point for the same application", () => {
+    const scene = {
+      windows: [
+        {
+          owner: "Notes",
+          layer: 0,
+          alpha: 1,
+          windowId: 10,
+          pid: 100,
+          x: 0,
+          y: 0,
+          width: 400,
+          height: 400,
+        },
+        {
+          owner: "Notes",
+          layer: 0,
+          alpha: 1,
+          windowId: 20,
+          pid: 100,
+          x: 500,
+          y: 100,
+          width: 400,
+          height: 400,
+        },
+      ],
+    };
+    expect(findWindowAtPointForApplication(scene, { x: 600, y: 200 }, "Notes")?.windowId).toBe(20);
+    expect(findWindowAtPointForApplication(scene, { x: 100, y: 100 }, "Notes")?.windowId).toBe(10);
+    expect(findWindowAtPointForApplication(scene, { x: 950, y: 950 }, "Notes")).toBeUndefined();
+  });
+
+  it("uses mapped displayPoint and displayToPoint for Mirroring drags and rejects drops outside Mirroring", () => {
+    const scene: MirroringScene = {
+      frontmostBundleId: IPHONE_MIRRORING_BUNDLE_ID,
+      windows: [
+        {
+          owner: "iPhone Mirroring",
+          mirroring: true,
+          layer: 0,
+          alpha: 1,
+          x: 400,
+          y: 100,
+          width: 320,
+          height: 680,
+        },
+      ],
+    };
+    const plan = mirroringActionSteps(
+      { kind: "drag", fromX: 50, fromY: 100, toX: 150, toY: 200 },
+      { width: 1440, height: 900 },
+      {
+        scene,
+        cursor: { x: 0, y: 0 },
+        displayPoint: { x: 450, y: 200 },
+        displayToPoint: { x: 550, y: 300 },
+      },
+    );
+    expect(plan).toBeDefined();
+    expect(plan?.point).toEqual({ x: 450, y: 200 });
+    expect(
+      plan?.steps.some(
+        (step) => step.type === "mouse" && step.event === 2 && step.x === 550 && step.y === 300,
+      ),
+    ).toBe(true);
+
+    const outsideDrop = mirroringActionSteps(
+      { kind: "drag", fromX: 50, fromY: 100, toX: 900, toY: 900 },
+      { width: 1440, height: 900 },
+      {
+        scene,
+        cursor: { x: 0, y: 0 },
+        displayPoint: { x: 450, y: 200 },
+        displayToPoint: { x: 900, y: 900 },
+      },
+    );
+    expect(outsideDrop).toBeUndefined();
   });
 
   it("rejects stale window captures when a window moves, resizes, or closes", () => {
@@ -1124,78 +1214,22 @@ describe("background computer use helpers", () => {
     ]);
   });
 
-  it("gates pasteText on frontmost guard and restores NSPasteboard only when changeCount matches", () => {
-    let changeCount = 10;
-    let clipboardText = "user-original";
-    let clearCount = 0;
-    let writeObjectsCount = 0;
-    let bumpChangeCountDuringPaste = false;
-    const pasteboard = {
-      get changeCount() {
-        return changeCount;
-      },
-      get pasteboardItems() {
-        const snapshot = clipboardText;
-        return {
-          isNil: () => false,
-          count: 1,
-          objectAtIndex: () => ({
-            types: {
-              isNil: () => false,
-              count: 1,
-              objectAtIndex: () => "public.utf8-plain-text",
-            },
-            dataForType: () => ({
-              isNil: () => false,
-              raw: snapshot,
-            }),
-          }),
-        };
-      },
-      get clearContents() {
-        clearCount++;
-        changeCount++;
-        clipboardText = "";
-        return changeCount;
-      },
-      setStringForType: (val: { raw: string }) => {
-        clipboardText = val.raw;
-        return true;
-      },
-      writeObjects: (arr: { items: Array<{ data: { raw: string } }> }) => {
-        writeObjectsCount++;
-        clipboardText = arr.items[0]?.data.raw ?? "";
-        return true;
-      },
-    };
+  it("types unicodeText directly via CGEventKeyboardSetUnicodeString + CGEventPostToPid without touching clipboard", () => {
+    let frontAppName = "Notes";
+    let flipAfterTwoPosts = false;
+    let postCount = 0;
+    const sent: Array<{ pid: number; keyCode: number; down: boolean; unicode?: string }> = [];
     const bridge = {
+      NSUTF16LittleEndianStringEncoding: 10,
       NSWorkspace: {
         sharedWorkspace: {
-          frontmostApplication: {
-            isNil: () => false,
-            localizedName: { js: "Notes" },
-            processIdentifier: 100,
-          },
-        },
-      },
-      NSPasteboard: { generalPasteboard: pasteboard },
-      NSPasteboardTypeString: "public.utf8-plain-text",
-      NSData: { dataWithData: (d: unknown) => d },
-      NSMutableArray: {
-        get array() {
-          const items: Array<unknown> = [];
-          return { items, addObject: (o: unknown) => items.push(o) };
-        },
-      },
-      NSPasteboardItem: {
-        alloc: {
-          get init() {
-            const item: { data?: unknown } = {};
-            return Object.assign(item, {
-              setDataForType: (d: unknown) => {
-                item.data = d;
-              },
-            });
+          get frontmostApplication() {
+            return {
+              isNil: () => false,
+              processIdentifier: 100,
+              localizedName: { js: frontAppName },
+              bundleIdentifier: { isNil: () => false, js: "com.apple.Notes" },
+            };
           },
         },
       },
@@ -1203,58 +1237,71 @@ describe("background computer use helpers", () => {
       CGEventCreateKeyboardEvent: (_: unknown, keyCode: number, down: boolean) => ({
         keyCode,
         down,
+        unicode: undefined as string | undefined,
       }),
       CGEventSetFlags: () => undefined,
-      CGEventPost: () => {
-        throw new Error("paste keystrokes must use CGEventPostToPid, not global CGEventPost");
+      CGEventKeyboardSetUnicodeString: (ev: { unicode?: string }, _len: number, bytes: string) => {
+        ev.unicode = bytes;
       },
-      CGEventPostToPid: (pid: number) => {
-        expect(pid).toBe(100);
-        if (bumpChangeCountDuringPaste) {
-          changeCount++;
-          clipboardText = "user-copied-same-or-new";
-        }
+      CGEventPost: () => {
+        throw new Error("unicode typing must use CGEventPostToPid, not global CGEventPost");
+      },
+      CGEventPostToPid: (pid: number, ev: { keyCode: number; down: boolean; unicode?: string }) => {
+        postCount++;
+        sent.push({
+          pid,
+          keyCode: ev.keyCode,
+          down: ev.down,
+          ...(ev.unicode === undefined ? {} : { unicode: ev.unicode }),
+        });
+        if (flipAfterTwoPosts && postCount === 2) frontAppName = "Terminal";
       },
     };
     const context = NodeVM.createContext({
-      ObjC: { import: () => undefined },
-      $: Object.assign((val: string) => ({ raw: val }), bridge),
+      ObjC: { import: () => undefined, bindFunction: () => undefined },
+      $: Object.assign(
+        (val: string) => ({
+          length: val.length,
+          dataUsingEncoding: () => ({ bytes: val }),
+        }),
+        bridge,
+      ),
       delay: () => undefined,
     });
     NodeVM.runInContext(JXA_INPUT_SCRIPT, context);
 
-    // Refused replay must NEVER touch the clipboard.
+    // Refused replay must not post any events.
     expect(() =>
       (context.run as (argv: Array<string>) => string)([
-        JSON.stringify(PASTE_STEPS),
-        JSON.stringify({ pasteText: "secret", expectedFrontmost: "Safari" }),
+        JSON.stringify([]),
+        JSON.stringify({ unicodeText: "secret", expectedFrontmost: "Safari" }),
       ]),
     ).toThrow(/not-frontmost-app/);
-    expect(clearCount).toBe(0);
-    expect(clipboardText).toBe("user-original");
+    expect(sent).toHaveLength(0);
 
-    // Successful replay writes pasteText and restores original when changeCount matches.
+    // Successful replay posts Unicode chunks + Return (36) + Tab (48) directly to PID 100.
     (context.run as (argv: Array<string>) => string)([
-      JSON.stringify(PASTE_STEPS),
-      JSON.stringify({ pasteText: "typed-text", expectedFrontmost: "Notes" }),
+      JSON.stringify([]),
+      JSON.stringify({ unicodeText: "Hi 🚀\n\tok", expectedFrontmost: "Notes" }),
     ]);
-    expect(writeObjectsCount).toBe(1);
-    expect(clipboardText).toBe("user-original");
+    expect(sent.every((e) => e.pid === 100)).toBe(true);
+    expect(sent.some((e) => e.unicode === "Hi 🚀" && e.down)).toBe(true);
+    expect(sent.some((e) => e.keyCode === 36 && e.down)).toBe(true);
+    expect(sent.some((e) => e.keyCode === 48 && e.down)).toBe(true);
+    expect(sent.some((e) => e.unicode === "ok" && e.down)).toBe(true);
 
-    // If user copied something during paste (changeCount bumped), abort before
-    // pasting and do NOT overwrite the user's clipboard.
-    bumpChangeCountDuringPaste = true;
+    // Mid-string focus change throws type-uncertain so callers know partial text may have arrived.
+    postCount = 0;
+    flipAfterTwoPosts = true;
     expect(() =>
       (context.run as (argv: Array<string>) => string)([
-        JSON.stringify(PASTE_STEPS),
-        JSON.stringify({ pasteText: "typed-text", expectedFrontmost: "Notes" }),
+        JSON.stringify([]),
+        JSON.stringify({ unicodeText: "first\nsecond", expectedFrontmost: "Notes" }),
       ]),
-    ).toThrow(/clipboard-changed/);
-    expect(writeObjectsCount).toBe(1);
-    expect(clipboardText).toBe("user-copied-same-or-new");
+    ).toThrow(/type-uncertain: not-frontmost-app/);
   });
 
-  it("rejects different windowId of the same app in canSafelyFallbackHidClick and checks windowId in JXA", () => {
+  it("rejects different windowId of the same app in canSafelyFallbackHidClick and verifies AX window via public AXValueGetValue", () => {
     const twoWindowsSameApp = {
       frontmost: "Notes",
       windows: [
@@ -1288,13 +1335,27 @@ describe("background computer use helpers", () => {
     expect(
       canSafelyFallbackHidClick(twoWindowsSameApp, { x: 200, y: 200 }, "Notes", 999, 202),
     ).toEqual({ ok: true });
-    expect(JXA_AX_ACTION_SCRIPT).toContain("_AXUIElementGetWindow");
+    expect(JXA_AX_ACTION_SCRIPT).not.toContain("_AXUIElementGetWindow");
+    expect(JXA_AX_ACTION_SCRIPT).toContain("AXValueGetValue");
     expect(JXA_AX_ACTION_SCRIPT).toContain("ax-window-mismatch");
     expect(JXA_AX_ACTION_SCRIPT).toContain("ax-window-unverifiable");
+    expect(JXA_AX_ACTION_SCRIPT).toContain('var id = copyStringAttr(el, "AXIdentifier");');
+    expect(JXA_AX_ACTION_SCRIPT).toContain('if (!id.ok || !id.value) return "";');
+    expect(JXA_AX_ACTION_SCRIPT).toContain('$("AXWindow")');
+    expect(JXA_AX_ACTION_SCRIPT).toContain("function verifyWindowAtPoint(req)");
+    expect(JXA_AX_ACTION_SCRIPT).toContain('"ax-window-occluded"');
+    expect(JXA_AX_ACTION_SCRIPT).toContain("readStdin()");
+    expect(JXA_INPUT_SCRIPT).toContain("readStdin()");
   });
 
-  it("detects human pointer movement before the first synthetic event and reports paste-uncertain after V-down", () => {
-    const posted: Array<{ type: number; x?: number; y?: number }> = [];
+  it("detects human pointer movement before the first synthetic event and cancels drag if drop owner changes", () => {
+    const posted: Array<{
+      type?: number;
+      keyCode?: number;
+      down?: boolean;
+      x?: number;
+      y?: number;
+    }> = [];
     let cursorPos = { x: 900, y: 600 };
     let cursorReads = 0;
     const pointerBridge = {
@@ -1327,7 +1388,7 @@ describe("background computer use helpers", () => {
       },
     };
     const ctx1 = NodeVM.createContext({
-      ObjC: { import: () => undefined },
+      ObjC: { import: () => undefined, bindFunction: () => undefined },
       $: pointerBridge,
       delay: () => undefined,
     });
@@ -1340,11 +1401,18 @@ describe("background computer use helpers", () => {
     ).toThrow(/human-moved/);
     expect(posted).toHaveLength(0);
 
-    // After V-down is dispatched, a subsequent clipboard change throws paste-uncertain
-    // rather than claiming nothing was pasted.
-    let changeCount = 5;
-    let pasteKeyPosts = 0;
-    const pasteBridge = {
+    // If the drop point becomes covered by an unapproved app mid-drag (before mouseUp),
+    // the script presses Escape (keyCode 53), drags back to start, releases there, and throws.
+    let dropOccluded = false;
+    const dragPosted: Array<{
+      type?: number;
+      keyCode?: number;
+      down?: boolean;
+      x?: number;
+      y?: number;
+    }> = [];
+    const dragBridge = {
+      NSScreen: { screens: { isNil: () => false, count: 0 } },
       NSWorkspace: {
         sharedWorkspace: {
           frontmostApplication: {
@@ -1354,144 +1422,76 @@ describe("background computer use helpers", () => {
           },
         },
       },
-      NSPasteboard: {
-        generalPasteboard: {
-          get changeCount() {
-            return changeCount;
-          },
-          get pasteboardItems() {
-            return { isNil: () => true, count: 0 };
-          },
-          get clearContents() {
-            changeCount++;
-            return changeCount;
-          },
-          setStringForType: () => true,
-          writeObjects: () => true,
+      CGWindowListCopyWindowInfo: () => [
+        ...(dropOccluded
+          ? [
+              {
+                kCGWindowOwnerName: "Terminal",
+                kCGWindowOwnerPID: 200,
+                kCGWindowNumber: 99,
+                kCGWindowLayer: 0,
+                kCGWindowAlpha: 1,
+                kCGWindowBounds: { X: 250, Y: 250, Width: 200, Height: 200 },
+              },
+            ]
+          : []),
+        {
+          kCGWindowOwnerName: "Notes",
+          kCGWindowOwnerPID: 100,
+          kCGWindowNumber: 42,
+          kCGWindowLayer: 0,
+          kCGWindowAlpha: 1,
+          kCGWindowBounds: { X: 0, Y: 0, Width: 500, Height: 500 },
         },
-      },
-      NSPasteboardTypeString: "public.utf8-plain-text",
+      ],
       CGEventSourceSecondsSinceLastEventType: () => 1,
       CGEventCreateKeyboardEvent: (_: unknown, keyCode: number, down: boolean) => ({
         keyCode,
         down,
       }),
+      CGEventCreateMouseEvent: (_: unknown, type: number, point: { x: number; y: number }) => ({
+        type,
+        x: point.x,
+        y: point.y,
+      }),
+      CGEventSetIntegerValueField: () => undefined,
       CGEventSetFlags: () => undefined,
-      CGEventPost: () => undefined,
-      CGEventPostToPid: (_pid: number, ev: { keyCode: number; down: boolean }) => {
-        pasteKeyPosts++;
-        // V-down is keyCode 9, down: true; bump changeCount right after it posts.
-        if (ev.keyCode === 9 && ev.down) changeCount++;
+      CGEventPost: (
+        _: number,
+        event: { type?: number; keyCode?: number; down?: boolean; x?: number; y?: number },
+      ) => {
+        dragPosted.push({ ...event });
+        if (event.type === 6) dropOccluded = true;
       },
     };
     const ctx2 = NodeVM.createContext({
-      ObjC: { import: () => undefined },
-      $: Object.assign((val: string) => ({ raw: val }), pasteBridge),
+      ObjC: {
+        import: () => undefined,
+        bindFunction: () => undefined,
+        deepUnwrap: (v: unknown) => v,
+        castRefToObject: (v: unknown) => v,
+      },
+      $: dragBridge,
       delay: () => undefined,
     });
     NodeVM.runInContext(JXA_INPUT_SCRIPT, ctx2);
+    const dragSteps: Array<InputStep> = [
+      { type: "mouse", event: 5, button: 0, x: 100, y: 100, clickState: 0, flags: 0 },
+      { type: "mouse", event: 1, button: 0, x: 100, y: 100, clickState: 1, flags: 0 },
+      { type: "mouse", event: 6, button: 0, x: 300, y: 300, clickState: 0, flags: 0 },
+      { type: "mouse", event: 2, button: 0, x: 300, y: 300, clickState: 1, flags: 0 },
+    ];
     expect(() =>
       (ctx2.run as (argv: Array<string>) => string)([
-        JSON.stringify(PASTE_STEPS),
-        JSON.stringify({ pasteText: "hello", expectedFrontmost: "Notes" }),
+        JSON.stringify(dragSteps),
+        JSON.stringify({
+          expectedPointOwner: { x: 100, y: 100, application: "Notes", windowId: 42 },
+          expectedDropOwner: { x: 300, y: 300, application: "Notes", windowId: 42 },
+        }),
       ]),
-    ).toThrow(/paste-uncertain: clipboard-changed/);
-    expect(pasteKeyPosts).toBeGreaterThanOrEqual(2);
-  });
-
-  it("aborts paste before writing clipboard if focus or changeCount changes during snapshot", () => {
-    let frontAppName = "Notes";
-    let changeCount = 5;
-    let clearCount = 0;
-    let postedKeys = 0;
-    let flipFocusOnSnapshot = false;
-    let bumpChangeCountOnSnapshot = false;
-    const pbItem = {
-      types: { isNil: () => false, count: 1, objectAtIndex: () => "public.utf8-plain-text" },
-      dataForType: () => {
-        if (flipFocusOnSnapshot) frontAppName = "Terminal";
-        if (bumpChangeCountOnSnapshot) changeCount++;
-        return { isNil: () => false, bytes: "saved" };
-      },
-    };
-    const bridge = {
-      NSWorkspace: {
-        sharedWorkspace: {
-          get frontmostApplication() {
-            return {
-              isNil: () => false,
-              processIdentifier: 100,
-              localizedName: { js: frontAppName },
-              bundleIdentifier: { isNil: () => false, js: "com.apple.Notes" },
-            };
-          },
-        },
-      },
-      NSPasteboardTypeString: "public.utf8-plain-text",
-      NSData: { dataWithData: (d: unknown) => d },
-      NSPasteboardItem: { alloc: { init: () => ({ setDataForType: () => undefined }) } },
-      NSMutableArray: { array: () => ({ addObject: () => undefined }) },
-      NSPasteboard: {
-        generalPasteboard: {
-          get changeCount() {
-            return changeCount;
-          },
-          get pasteboardItems() {
-            return { isNil: () => false, count: 1, objectAtIndex: () => pbItem };
-          },
-          get clearContents() {
-            clearCount++;
-            changeCount++;
-            return 0;
-          },
-          setStringForType: () => undefined,
-          writeObjects: () => true,
-        },
-      },
-      CGEventCreateKeyboardEvent: () => ({ kind: "key" }),
-      CGEventSetFlags: () => undefined,
-      CGEventPost: () => {
-        postedKeys++;
-      },
-    };
-    const context = NodeVM.createContext({
-      ObjC: { import: () => undefined },
-      $: Object.assign((val: string) => ({ raw: val }), bridge),
-      delay: () => undefined,
-    });
-    NodeVM.runInContext(JXA_INPUT_SCRIPT, context);
-
-    flipFocusOnSnapshot = true;
-    expect(() =>
-      (context.run as (argv: Array<string>) => string)([
-        JSON.stringify(PASTE_STEPS),
-        JSON.stringify({ pasteText: "secret", expectedFrontmost: "Notes" }),
-      ]),
-    ).toThrow(/not-frontmost-app/);
-    expect(clearCount).toBe(0);
-    expect(postedKeys).toBe(0);
-
-    frontAppName = "Notes";
-    flipFocusOnSnapshot = false;
-    bumpChangeCountOnSnapshot = true;
-    expect(() =>
-      (context.run as (argv: Array<string>) => string)([
-        JSON.stringify(PASTE_STEPS),
-        JSON.stringify({ pasteText: "secret", expectedFrontmost: "Notes" }),
-      ]),
-    ).toThrow(/clipboard-changed/);
-    expect(clearCount).toBe(0);
-    expect(postedKeys).toBe(0);
-  });
-
-  it("verifies topmost windowId at point and reads stdin in JXA scripts", () => {
-    expect(JXA_AX_ACTION_SCRIPT).toContain('var id = copyStringAttr(el, "AXIdentifier");');
-    expect(JXA_AX_ACTION_SCRIPT).toContain('if (!id.ok || !id.value) return "";');
-    expect(JXA_AX_ACTION_SCRIPT).toContain('$("AXWindow")');
-    expect(JXA_AX_ACTION_SCRIPT).toContain("function verifyWindowAtPoint(req)");
-    expect(JXA_AX_ACTION_SCRIPT).toContain('"ax-window-occluded"');
-    expect(JXA_AX_ACTION_SCRIPT).toContain('"ax-window-unverifiable"');
-    expect(JXA_AX_ACTION_SCRIPT).toContain("readStdin()");
-    expect(JXA_INPUT_SCRIPT).toContain("readStdin()");
+    ).toThrow(/drop-owner-changed:Terminal/);
+    // Escape was pressed and mouseUp was released back at start (100, 100), never at (300, 300).
+    expect(dragPosted.some((e) => e.keyCode === 53 && e.down === true)).toBe(true);
+    expect(dragPosted.at(-1)).toEqual({ type: 2, x: 100, y: 100 });
   });
 });

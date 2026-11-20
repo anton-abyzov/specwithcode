@@ -122,20 +122,27 @@ export interface ReplayOptions {
   readonly restoreCursor?: boolean;
   /** Abort before posting any HID event if this app is not frontmost (case-insensitive). */
   readonly expectedFrontmost?: string;
-  /** Abort before posting any HID event if the topmost window at `(x, y)` is not owned by `application`. */
+  /** Abort before posting any HID event if the topmost window at `(x, y)` is not owned by `application` (and `windowId` when set). */
   readonly expectedPointOwner?: {
     readonly x: number;
     readonly y: number;
     readonly application: string;
+    readonly windowId?: number;
+  };
+  /** For drags: abort before starting or cancel before mouse-up if the drop point `(x, y)` is not owned by `application` (and `windowId` when set). */
+  readonly expectedDropOwner?: {
+    readonly x: number;
+    readonly y: number;
+    readonly application: string;
+    readonly windowId?: number;
   };
   /** Abort before posting any HID event if this PID (e.g. SpecWithCode) is frontmost or owns the target point. */
   readonly forbidPid?: number;
   /**
-   * When set, write this text to NSPasteboard only after yield and guard checks pass,
-   * then restore the previous pasteboard contents after paste completes iff
-   * NSPasteboard.changeCount still matches the value written by this replay.
+   * When set, type this text directly to the verified frontmost PID via public
+   * CGEventKeyboardSetUnicodeString + CGEventPostToPid without touching NSPasteboard.
    */
-  readonly pasteText?: string;
+  readonly unicodeText?: string;
 }
 
 /** Builds Quartz scroll steps at an already-resolved global display point (no primary-display clamp). */
@@ -679,6 +686,27 @@ export function findWindowForApplication(
   return fallback;
 }
 
+/** Finds the frontmost visible window of `application` that covers `point` (for display-space clicks). */
+export function findWindowAtPointForApplication(
+  scene: ScreenScene,
+  point: DisplayPoint,
+  application: string,
+): ScreenWindow | undefined {
+  const target = application.trim();
+  if (target === "") return undefined;
+  const lower = target.toLowerCase();
+  for (const window of scene.windows) {
+    if (window.layer !== 0 || !(window.alpha > 0) || !(window.width > 0) || !(window.height > 0)) {
+      continue;
+    }
+    if (!contains(window, point)) continue;
+    const owner = named(window.owner);
+    if (owner === undefined) continue;
+    if (owner === target || owner.toLowerCase() === lower) return window;
+  }
+  return undefined;
+}
+
 /**
  * Checks whether a previously captured window still exists on screen with the
  * same PID and unchanged bounds so cached window-relative coordinates remain valid.
@@ -1032,6 +1060,8 @@ export interface MirroringContext {
   readonly lastPoint?: DisplayPoint | undefined;
   /** Pre-resolved global display point (e.g. from a targeted window capture on a secondary display). */
   readonly displayPoint?: DisplayPoint | undefined;
+  /** Pre-resolved global display drop point for window-captured drags. */
+  readonly displayToPoint?: DisplayPoint | undefined;
 }
 
 export interface MirroringPlan {
@@ -1099,9 +1129,11 @@ export function mirroringActionSteps(
       };
     }
     case "drag": {
-      const point = toDisplayPoint(display, action.fromX, action.fromY);
-      if (mirroringWindowAt(context.scene, point) === undefined) return undefined;
-      return { steps: [awaitMirroring(), ...actionSteps(action, display)], point, activate };
+      const from = context.displayPoint ?? toDisplayPoint(display, action.fromX, action.fromY);
+      const to = context.displayToPoint ?? toDisplayPoint(display, action.toX, action.toY);
+      if (mirroringWindowAt(context.scene, from) === undefined) return undefined;
+      if (mirroringWindowAt(context.scene, to) === undefined) return undefined;
+      return { steps: [awaitMirroring(), ...dragStepsAtPoints(from, to)], point: from, activate };
     }
     case "key": {
       const window = frontMirroringWindow(context.scene);

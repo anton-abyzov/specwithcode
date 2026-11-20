@@ -49,11 +49,14 @@ export const UNKNOWN_TARGET_REFUSAL =
 
 const CAPTURED_APPS_MAX_ENTRIES = 128;
 const capturedApplicationByThread = new Map<string, string>();
+/** Non-evicting sticky set of threads whose last screenshot was a targeted window capture. */
+const windowCaptureThreads = new Set<string>();
 const selectedInputApplicationByThread = new Map<string, string>();
 
 /** Test hook: clears per-thread capture/input routing caches between isolated test cases. */
 export const clearComputerHandlerState = () => {
   capturedApplicationByThread.clear();
+  windowCaptureThreads.clear();
   selectedInputApplicationByThread.clear();
 };
 
@@ -102,6 +105,12 @@ const targetApps = (action: ComputerUseAction, broker: Broker, threadId: string)
       const capturedApp = capturedApplicationByThread.get(threadId);
       if (capturedApp !== undefined) {
         return [capturedApp];
+      }
+      if (windowCaptureThreads.has(threadId)) {
+        return yield* new ComputerUseToolError({
+          reason:
+            "The captured window context for this thread expired. Take a fresh computer_screenshot first.",
+        });
       }
     }
     if (action.kind === "type") {
@@ -261,6 +270,7 @@ const look = (action: ComputerUseAction) =>
     });
     if (action.kind === "screenshot") {
       capturedApplicationByThread.delete(scope.thread.threadId);
+      windowCaptureThreads.delete(scope.thread.threadId);
     }
     return result;
   });
@@ -272,6 +282,19 @@ const run = (action: ComputerUseAction) =>
     const threadId = scope.thread.threadId;
     const names = yield* requireAppAccess(action, scope, broker);
     const capturedApp = capturedApplicationByThread.get(threadId);
+    const hasWindowCapture = windowCaptureThreads.has(threadId);
+    const selectedInputApp = selectedInputApplicationByThread.get(threadId);
+    if (
+      action.kind === "move" &&
+      hasWindowCapture &&
+      capturedApp === undefined &&
+      action.application === undefined
+    ) {
+      return yield* new ComputerUseToolError({
+        reason:
+          "The captured window context for this thread expired. Take a fresh computer_screenshot first.",
+      });
+    }
     const withApp: ComputerUseAction = (() => {
       if (action.kind === "click" || action.kind === "scroll" || action.kind === "drag") {
         if (action.application === undefined && capturedApp !== undefined) {
@@ -279,8 +302,8 @@ const run = (action: ComputerUseAction) =>
         }
         if (
           action.application !== undefined &&
-          capturedApp !== undefined &&
-          sameAppName(action.application, capturedApp)
+          ((capturedApp !== undefined && sameAppName(action.application, capturedApp)) ||
+            (hasWindowCapture && capturedApp === undefined))
         ) {
           return { ...action, coordinateSpace: "window" };
         }
@@ -295,20 +318,26 @@ const run = (action: ComputerUseAction) =>
         }
         if (
           action.application !== undefined &&
-          capturedApp !== undefined &&
-          sameAppName(action.application, capturedApp)
+          ((capturedApp !== undefined && sameAppName(action.application, capturedApp)) ||
+            (hasWindowCapture && capturedApp === undefined))
         ) {
           return { ...action, coordinateSpace: "window" };
         }
         return action;
       }
-      if (
-        action.kind === "type" &&
-        action.application === undefined &&
-        names.length === 1 &&
-        names[0] !== undefined
-      ) {
-        return { ...action, application: names[0] };
+      if (action.kind === "type") {
+        const targetApp =
+          action.application ??
+          (names.length === 1 && names[0] !== undefined ? names[0] : undefined);
+        const requireBackgroundField =
+          selectedInputApp !== undefined &&
+          targetApp !== undefined &&
+          sameAppName(selectedInputApp, targetApp);
+        return {
+          ...action,
+          ...(targetApp === undefined ? {} : { application: targetApp }),
+          ...(requireBackgroundField ? { requireBackgroundField: true } : {}),
+        };
       }
       return action;
     })();
@@ -328,11 +357,14 @@ const run = (action: ComputerUseAction) =>
     if (action.kind === "screenshot") {
       if (action.application !== undefined) {
         setCapturedApplication(threadId, action.application);
+        windowCaptureThreads.add(threadId);
       } else {
         capturedApplicationByThread.delete(threadId);
+        windowCaptureThreads.delete(threadId);
       }
     } else if (action.kind === "open") {
       capturedApplicationByThread.delete(threadId);
+      windowCaptureThreads.delete(threadId);
     } else if (action.kind === "click") {
       if (
         result.delivery === "background_ax" &&

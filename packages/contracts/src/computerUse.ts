@@ -152,6 +152,7 @@ export const ComputerUseAction = Schema.Union([
     kind: Schema.Literal("type"),
     text: Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(10_000)),
     application: Schema.optional(ApplicationName),
+    requireBackgroundField: Schema.optional(Schema.Boolean),
     sessionKey: Schema.optional(SessionKey),
   }),
   Schema.Struct({
