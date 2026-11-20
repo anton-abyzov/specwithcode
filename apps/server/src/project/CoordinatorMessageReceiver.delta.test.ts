@@ -438,7 +438,8 @@ describe("CoordinatorMessageReceiver checks the admitting device again (round 4 
         yield* receiver.deliver(caller, request(), {
           operate: true,
           sessionId: `session-${caller.sourceEnvironmentId}`,
-        });
+          credentialExpiresAt: 8.64e15,
+        } as Parameters<typeof receiver.deliver>[2]);
         yield* settle;
         expect(harness.sends).toHaveLength(0);
         expect((yield* records)[0]!.state).toBe("refused");
@@ -453,6 +454,102 @@ describe("CoordinatorMessageReceiver checks the admitting device again (round 4 
         harness.device = "unreadable";
         yield* settle;
         expect(harness.sends).toHaveLength(0);
+        expect((yield* records)[0]!.state).toBe("refused");
+      }),
+    ),
+  );
+});
+
+describe("CoordinatorMessageReceiver keeps the credential's signed expiry (round 5 finding 1)", () => {
+  it.effect("bounds the start by the expiry the credential carried when it sent", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        // A renewal moves the session's expiry; the signed one stays with the message.
+        yield* deliver(receiver, callerFrom(LINUX), request(), true, undefined, {}, 200_000);
+        yield* settle;
+        expect(harness.sends[0]!.authorityEndsAt).toBe(200_000);
+      }),
+    ),
+  );
+
+  it.effect("drops a message whose credential expired, though its session was renewed", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        yield* deliver(receiver, callerFrom(LINUX), request(), true, undefined, {}, 30_000);
+        yield* settle;
+        expect(harness.sends).toHaveLength(0);
+        expect((yield* records)[0]!.state).toBe("refused");
+      }),
+    ),
+  );
+
+  it.effect("drops a message admitted without its credential's expiry", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        const caller = callerFrom(LINUX);
+        yield* receiver.deliver(caller, request(), {
+          operate: true,
+          sessionId: `session-${caller.sourceEnvironmentId}`,
+          device: {},
+        });
+        yield* settle;
+        expect(harness.sends).toHaveLength(0);
+        expect((yield* records)[0]!.state).toBe("refused");
+      }),
+    ),
+  );
+});
+
+describe("CoordinatorMessageReceiver counts a message delivered once a provider took it (round 5 finding 3)", () => {
+  it.effect("waits for the provider to take the turn before marking it delivered", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        harness.startOutcome = "starting";
+        yield* deliver(receiver, callerFrom(LINUX), request());
+        yield* settle;
+        expect(harness.sends).toHaveLength(1);
+        expect((yield* records)[0]!.state).not.toBe("delivered");
+        // The provider takes the prompt; the next flush sees it and sends nothing more.
+        harness.started.set("run-1", "taken");
+        yield* settle;
+        expect(harness.sends).toHaveLength(1);
+        expect((yield* records)[0]!.state).toBe("delivered");
+      }),
+    ),
+  );
+
+  it.effect("sends again, under new ids and fresh checks, a turn no provider took", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        harness.startOutcome = "not-started";
+        yield* deliver(receiver, callerFrom(LINUX), request());
+        yield* settle;
+        expect(harness.sends).toHaveLength(1);
+        expect((yield* records)[0]!.state).not.toBe("delivered");
+        harness.startOutcome = "taken";
+        // Not at once: a provider that keeps refusing is not sent the message every flush.
+        yield* settle;
+        expect(harness.sends).toHaveLength(1);
+        yield* TestClock.adjust("10 minutes");
+        yield* settle;
+        expect(harness.sends).toHaveLength(2);
+        expect(harness.sends[1]!.commandId).not.toBe(harness.sends[0]!.commandId);
+        expect(harness.sends[1]!.messageId).not.toBe(harness.sends[0]!.messageId);
+        expect((yield* records)[0]!.state).toBe("delivered");
+      }),
+    ),
+  );
+
+  it.effect("checks the sender's authority again before sending it again", () =>
+    run((receiver, harness) =>
+      Effect.gen(function* () {
+        harness.startOutcome = "not-started";
+        yield* deliver(receiver, callerFrom(LINUX), request());
+        yield* settle;
+        harness.policies.set(LINUX, policyFor(LINUX, { revokedAt: "1970-01-01T00:00:01.000Z" }));
+        yield* TestClock.adjust("10 minutes");
+        yield* settle;
+        expect(harness.sends).toHaveLength(1);
         expect((yield* records)[0]!.state).toBe("refused");
       }),
     ),

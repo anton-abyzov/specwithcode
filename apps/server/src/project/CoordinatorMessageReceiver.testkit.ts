@@ -181,6 +181,13 @@ export interface Harness {
    * start one now (nothing recorded), or fails after it may have started one.
    */
   send: "started" | "refused" | "unknown";
+  /**
+   * What becomes of a started turn: the provider took its prompt, it is still
+   * starting, or it ended before any provider took it.
+   */
+  startOutcome: StartOutcome;
+  /** Every started run on M5's coordinator thread by id, and what became of it. */
+  readonly started: Map<string, StartOutcome>;
   /** This machine's team rules. */
   teamRules: TeamRulesState;
   /** Runs while a send is in flight, after the receiver read the store. */
@@ -202,6 +209,10 @@ export interface Harness {
   /** Whether M5's coordinator is in a turn. */
   busy: boolean;
 }
+
+export type StartOutcome = "taken" | "starting" | "not-started";
+
+const startedStatus = { taken: "completed", starting: "starting", "not-started": "failed" };
 
 /** Records every call; anything but the calls a delivery needs dies. */
 export const recording = <T extends object>(allowed: Partial<T>, calls: Array<string>): T =>
@@ -242,6 +253,8 @@ export const setup = (initial: CoordinatorMessageStore.CoordinatorMessageRecord[
     runs: new Map(),
     dispatched: [],
     send: "started",
+    startOutcome: "taken",
+    started: new Map(),
     teamRules: { status: "none" },
     duringSend: undefined,
     duringLookup: undefined,
@@ -278,7 +291,20 @@ export const setup = (initial: CoordinatorMessageStore.CoordinatorMessageRecord[
                 : [
                     ...(harness.busy ? [{ id: "run-busy", status: "running" }] : []),
                     ...[...harness.runs].map(([id, status]) => ({ id, status })),
+                    ...[...harness.started].map(([id, outcome]) => ({
+                      id,
+                      status: startedStatus[outcome],
+                      activeAttemptId: `attempt-${id}`,
+                    })),
                   ],
+            attempts: [],
+            // A provider turn is recorded once the provider took the prompt.
+            providerTurns:
+              threadId !== COORDINATOR
+                ? []
+                : [...harness.started].flatMap(([id, outcome]) =>
+                    outcome === "taken" ? [{ runAttemptId: `attempt-${id}` }] : [],
+                  ),
           }),
         )) as never,
       sendToThread: ((input: ThreadManagementService.ThreadManagementSendInput) =>
@@ -293,7 +319,9 @@ export const setup = (initial: CoordinatorMessageStore.CoordinatorMessageRecord[
             return yield* Effect.fail({ _tag: "OrchestratorDispatchError", cause: "Would queue." });
           if (harness.send === "unknown")
             return yield* Effect.fail({ _tag: "ThreadManagementDurableRunProjectionError" });
-          return { delivery: "started", run: { id: `run-${harness.sends.length}` } };
+          const runId = `run-${harness.sends.length}`;
+          harness.started.set(runId, harness.startOutcome);
+          return { delivery: "started", run: { id: runId } };
         })) as never,
     },
     harness.threadCalls,
@@ -375,6 +403,8 @@ export const deliver = (
   teamRulesFingerprint?: string,
   /** The device binding the caller's credential carried. */
   device: { readonly boundDevice?: { readonly key: string; readonly approval: string } } = {},
+  /** The signed expiry of the credential the caller presented, epoch milliseconds. */
+  credentialExpiresAt = 8.64e15,
 ) =>
   receiver
     .deliver(caller, input, {
@@ -382,7 +412,8 @@ export const deliver = (
       sessionId: `session-${caller.sourceEnvironmentId}`,
       ...(teamRulesFingerprint === undefined ? {} : { teamRulesFingerprint }),
       device,
-    })
+      credentialExpiresAt,
+    } as Parameters<Receiver["deliver"]>[2])
     .pipe(
       Effect.result,
       Effect.map((result) =>

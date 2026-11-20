@@ -21,6 +21,8 @@ import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import { LIMIT_FALLBACK_MESSAGE_PREFIX } from "./providerOpenFailure.ts";
+import { START_AUTHORITY_ENDED } from "./startOnlyDispatch.ts";
 
 const projectId = ProjectId.make("project:start-only");
 const instanceId = ProviderInstanceId.make("codex");
@@ -43,6 +45,30 @@ const layerTest = ThreadManagementService.layer.pipe(
         { name: "start-only" },
         ProviderAdapterRegistry.layerFromAdapters([adapter]),
         { databaseLayer: layerDatabase, runEffectWorker: false },
+      ),
+    ),
+  ),
+);
+
+// How far the clock moves while a run is planned, after the first deadline check.
+let advanceWhilePlanning: string | undefined;
+const layerPlanningTakesTime = ThreadManagementService.layer.pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(
+      layerDatabase,
+      ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+      ProviderReplayHarness.layerWithRegistry(
+        { name: "start-only-planning" },
+        ProviderAdapterRegistry.layerFromAdapters([adapter]),
+        {
+          databaseLayer: layerDatabase,
+          runEffectWorker: false,
+          onRuntimePolicyResolve: Effect.suspend(() =>
+            advanceWhilePlanning === undefined
+              ? Effect.void
+              : TestClock.adjust(advanceWhilePlanning as "2 seconds"),
+          ),
+        },
       ),
     ),
   ),
@@ -193,4 +219,65 @@ it.effect(
       const sent = yield* threads.sendToThread({ ...late, authorityEndsAt: 10_001 });
       assert.equal(sent.delivery, "started");
     }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("a deadline that passes while the start is planned is refused at the commit", () =>
+  Effect.gen(function* () {
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    const commitThread = ThreadId.make("thread:start-only-commit");
+    yield* createThread(commitThread);
+    const endsAt = DateTime.toEpochMillis(yield* DateTime.now) + 1_000;
+    const late = { ...message("commit-late", commitThread), authorityEndsAt: endsAt };
+    advanceWhilePlanning = "2 seconds";
+    const refused = yield* threads
+      .sendToThread(late)
+      .pipe(Effect.flip, Effect.ensuring(Effect.sync(() => (advanceWhilePlanning = undefined))));
+    assert.equal(refused._tag, "OrchestratorDispatchError");
+    assert.equal((refused as { readonly cause?: unknown }).cause, START_AUTHORITY_ENDED);
+    // Nothing reached the thread, and nothing was recorded: the same command goes through later.
+    assert.deepEqual(yield* statuses(commitThread), []);
+    const sent = yield* threads.sendToThread({ ...late, authorityEndsAt: endsAt + 60_000 });
+    assert.equal(sent.delivery, "started");
+  }).pipe(Effect.provide(layerPlanningTakesTime)),
+);
+
+it.effect("a server continuation of a start-only run the provider never took is refused", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    const cutThread = ThreadId.make("thread:start-only-cut");
+    yield* createThread(cutThread);
+    yield* threads.sendToThread({ ...message("cut", cutThread), authorityEndsAt: 9e15 });
+    // The run keeps the restriction until the provider start.
+    const run = (yield* orchestrator.getThreadProjection(cutThread)).runs[0]!;
+    assert.isTrue(run.startOnly);
+    assert.equal(run.authorityEndsAt, 9e15);
+    // It failed before any provider took its prompt: no provider turn is recorded.
+    const now = yield* DateTime.now;
+    yield* projections.apply({
+      id: EventId.make(`event:${run.id}:failed`),
+      type: "run.updated",
+      threadId: cutThread,
+      runId: run.id,
+      occurredAt: now,
+      payload: { ...run, status: "failed", completedAt: now },
+    });
+    const id = `${LIMIT_FALLBACK_MESSAGE_PREFIX}${cutThread}:1`;
+    const refused = yield* orchestrator
+      .dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(id),
+        threadId: cutThread,
+        messageId: MessageId.make(id),
+        text: "Continue where you left off.",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "agent",
+        creationSource: "server",
+      })
+      .pipe(Effect.flip);
+    assert.equal(refused._tag, "OrchestratorDispatchError");
+    assert.deepEqual(yield* statuses(cutThread), ["failed"]);
+  }).pipe(Effect.provide(layerTest)),
 );
