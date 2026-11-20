@@ -149,7 +149,7 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
   );
   // Windows runs the block as it is: its sudo raises the system's own approval.
   const sendsElevation =
-    // Only sudo and doas can use the machine's prompt; su and pkexec ask for themselves.
+    // Only sudo can use the machine's prompt; su, doas and pkexec ask for themselves.
     promptSupported && hostOs !== "windows" && (elevation?.sudo ?? false);
   const promptAvailable = sendsElevation && hostOs === "darwin";
   const nonceKey =

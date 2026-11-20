@@ -89,6 +89,24 @@ describe("Open in Terminal", () => {
     expect(NodeFS.existsSync(NodePath.join(dir, "pwned"))).toBe(false);
   });
 
+  it("removes only its own file when the block uses a variable named self", async () => {
+    const keep = NodePath.join(root, "README.md");
+    NodeFS.writeFileSync(keep, "keep");
+    await prepareTerminalAppRun({
+      command: `self="${keep}"\n_specwithcode_command_file="${keep}" 2>/dev/null\ntrue`,
+      cwd,
+      dir: root,
+      name: "run-4",
+      nonce: NONCE,
+      shell: "/bin/sh",
+      openPath: fakeOpen,
+    });
+    const file = NodePath.join(root, "run-4.command");
+    NodeChildProcess.spawnSync(file, [], { encoding: "utf8" });
+    expect(NodeFS.existsSync(keep)).toBe(true);
+    expect(NodeFS.existsSync(file)).toBe(false);
+  });
+
   it("says nothing was handed over when Terminal cannot be opened", async () => {
     NodeFS.writeFileSync(fakeOpen, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
     const command = await prepareTerminalAppRun({

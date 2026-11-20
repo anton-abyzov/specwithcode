@@ -42,8 +42,8 @@ export async function prepareTerminalAppRun(input: TerminalAppRunInput): Promise
     .map((folder) => `cd ${shellQuote(folder)} 2>/dev/null`)
     .join(" || ");
   const script = `#!${shell} -l
-self=${shellQuote(file)}
-trap 'rm -f "$self"' EXIT
+readonly _specwithcode_command_file=${shellQuote(file)}
+trap '/bin/rm -f -- "$_specwithcode_command_file"' EXIT
 ${folders} || cd "$HOME" || exit 1
 ${input.command}
 `;

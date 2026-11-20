@@ -40,6 +40,11 @@ describe("shellRunElevation", () => {
     "npm run build \\\n  && sudo npm link",
     "time sudo ls",
     "'sudo' ls",
+    'echo "$(echo "ok"; sudo rm -rf /etc/hosts)"',
+    '"env" sudo id',
+    '"command" sudo id',
+    "xargs --weird 1 sudo rm",
+    "osascript -e 'do shell script \"x\" with Administrator Privileges'",
     '"sudo" ls',
     "\\sudo ls",
     'echo "$(sudo id)"',
@@ -107,6 +112,7 @@ describe("shellRunElevation", () => {
   it("tells the machine's prompt apart from other ways to become an administrator", () => {
     expect(shellRunElevation("sudo ls").sudo).toBe(true);
     expect(shellRunElevation("su -c ls").sudo).toBe(false);
+    expect(shellRunElevation("doas ls").sudo).toBe(false);
     expect(shellRunElevation("pkexec ls").sudo).toBe(false);
   });
 
@@ -126,6 +132,17 @@ describe("shellRunElevation", () => {
   });
 
   it.each([
+    ['echo "$(echo "ok"; sudo rm -rf /etc/hosts)"', "/etc/hosts"],
+    ["nice -n 5 launchctl disable system/x", "launchctl disable"],
+    ["timeout 30 pfctl -e", "pfctl -e"],
+    ["timeout -s KILL 30 pfctl -e", "pfctl -e"],
+    ["env -u FOO networksetup -setdnsservers Wi-Fi 1.1.1.1", "networksetup -setdnsservers"],
+    ["caffeinate -t 60 pmset -a sleep 0", "pmset -a"],
+    ["xargs -I cat rm /etc/hosts", "/etc/hosts"],
+    ["find /etc -okdir rm {} +", "/etc"],
+    ["dseditgroup -o edit -a bob -t user read", "dseditgroup -o"],
+    ["defaults -currentHost write /Library/Preferences/x k v", "/Library/Preferences/x"],
+    ["doas rm /etc/hosts", "/etc/hosts"],
     ["sudo networksetup -setdnsservers Wi-Fi 1.1.1.1", "networksetup -setdnsservers"],
     ["sudo scutil --set HostName box", "scutil --set"],
     ["sudo pmset -a sleep 0", "pmset -a"],

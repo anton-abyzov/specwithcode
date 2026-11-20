@@ -96,6 +96,13 @@ describe("administrator code-block runs", () => {
     launchctl: NodePath.join(bin, "launchctl"),
     osascript: NodePath.join(bin, "osascript"),
   });
+  const waitUntil = (test: string, ...paths: string[]) =>
+    NodeChildProcess.spawnSync("/bin/sh", [
+      "-c",
+      `until ${test}; do sleep 0.05; done`,
+      "sh",
+      ...paths,
+    ]);
   const prepare = (command: string, runsDir = NodePath.join(root, "runs")) =>
     prepareElevatedRun({
       command,
@@ -242,6 +249,27 @@ describe("administrator code-block runs", () => {
     expect(NodeFS.readdirSync(NodePath.join(root, "runs"))).toEqual([]);
   });
 
+  it("ends the block, drops the ticket and removes the folder when the run is killed", async () => {
+    const runsDir = NodePath.join(root, "runs");
+    const wrapped = await prepare(`echo $$ > "${NodePath.join(state, "block-pid")}"; sleep 30`);
+    const dir = NodePath.dirname(wrapped.slice("/bin/sh '".length, -1));
+    const child = NodeChildProcess.spawn("/bin/sh", ["-c", `exec ${wrapped}`], {
+      env: environment(),
+      stdio: "ignore",
+    });
+    waitUntil('[ -s "$1" ]', NodePath.join(state, "block-pid"));
+    expect(hasState("ticket")).toBe(true);
+    // The value that signs the states is off the disk while the block runs.
+    expect(NodeFS.existsSync(NodePath.join(dir, "nonce"))).toBe(false);
+    expect(NodeFS.readFileSync(NodePath.join(dir, "run.sh"), "utf8")).not.toContain(NONCE);
+    const blockPid = NodeFS.readFileSync(NodePath.join(state, "block-pid"), "utf8").trim();
+    child.kill("SIGKILL");
+    await new Promise((resolve) => child.on("exit", resolve));
+    waitUntil('[ -z "$(ls "$1")" ] && ! kill -0 "$2" 2>/dev/null', runsDir, blockPid);
+    expect(hasState("ticket")).toBe(false);
+    expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+  });
+
   it("gives each run its own folder, so an ending run cannot remove the next one's", async () => {
     const first = await prepare("echo one");
     const second = await prepare("echo two");
@@ -369,6 +397,39 @@ describe("elevationPromptLabel", () => {
     expect(label).toContain("echo step 0\necho step 1\necho step 2\n");
     expect(label).toContain("…\nsudo rm -rf /Library/Important\n");
     expect(label).toContain("more lines. Read the whole command in SpecWithCode first.");
+  });
+});
+
+describe("the dialog's command lines", () => {
+  const label = (command: string) =>
+    elevationPromptLabel({ command, machineName: "M5", elevation: {} });
+  const filler = Array.from({ length: 12 }, (_, index) => `echo step ${index}`);
+
+  it("keeps the administrator part of a line padded past the limit", () => {
+    const text = label(`echo ${"a".repeat(300)} && sudo rm -rf /Library/Important`);
+    expect(text).toContain(" … sudo rm -rf /Library/Important");
+  });
+
+  it.each([
+    "/usr/bin/sudo rm -rf /Library/Important",
+    "sudoedit /etc/hosts",
+    '"sudo" rm -rf /Library/Important',
+    "osascript -e 'do shell script \"rm x\" with administrator privileges'",
+  ])("shows %j from far down a long block", (line) => {
+    expect(label([...filler, line].join("\n"))).toContain(`…\n${line}\n`);
+  });
+
+  it("does not let comments that mention sudo take the administrator lines' places", () => {
+    const comments = Array.from({ length: 6 }, (_, index) => `# sudo note ${index}`);
+    const text = label([...filler, ...comments, "sudo rm -rf /Library/Important"].join("\n"));
+    expect(text).toContain("sudo rm -rf /Library/Important\n");
+  });
+
+  it("says so when administrator lines do not fit", () => {
+    const many = Array.from({ length: 9 }, (_, index) => `sudo rm /Library/x${index}`);
+    expect(label([...filler, ...many].join("\n"))).toContain(
+      "4 of them as administrator. Read the whole command in SpecWithCode first.",
+    );
   });
 });
 

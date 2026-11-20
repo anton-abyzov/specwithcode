@@ -23,6 +23,8 @@ import {
   type TerminalElevationRequest,
 } from "@specweave-studio/contracts";
 
+import { shellRunElevation } from "@specweave-studio/shared/shellRunElevation";
+
 import { prepareTerminalAppRun } from "./openInTerminal.ts";
 
 /** Seconds the password dialog waits before it gives up. */
@@ -37,12 +39,18 @@ export interface ElevatedRunTools {
   readonly uname: string;
   readonly launchctl: string;
   readonly osascript: string;
+  readonly cat: string;
+  readonly rm: string;
+  readonly sleep: string;
 }
 const SYSTEM_TOOLS: ElevatedRunTools = {
   sudo: "/usr/bin/sudo",
   uname: "/usr/bin/uname",
   launchctl: "/bin/launchctl",
   osascript: "/usr/bin/osascript",
+  cat: "/bin/cat",
+  rm: "/bin/rm",
+  sleep: "/bin/sleep",
 };
 
 export interface ElevatedRunInput {
@@ -89,24 +97,43 @@ function plainLine(value: string, maxLength: number): string {
   return line.length > maxLength ? `${line.slice(0, maxLength - 1)}…` : line;
 }
 
-const RUNS_AS_ADMINISTRATOR = /(?:^|[\s;&|(`'"])(?:sudo|doas|su|pkexec)(?:\s|$)/;
+const ADMINISTRATOR_WORD = /\b(?:sudo|sudoedit|doas|su|pkexec)\b|administrator\s+privileges/gi;
+
+/** Whether a line runs something as administrator; a comment that mentions sudo does not. */
+const runsAsAdministrator = (line: string): boolean => shellRunElevation(line).administrator;
+
+/**
+ * One line of the block for the dialog. A long line keeps its start and the
+ * part that runs as administrator, so padding cannot push that part out.
+ */
+function labelLine(raw: string): string {
+  const line = plainLine(raw, Number.MAX_SAFE_INTEGER);
+  if (line.length <= LABEL_LINE_CHARS || !runsAsAdministrator(line))
+    return plainLine(line, LABEL_LINE_CHARS);
+  const headChars = 60;
+  const tailChars = LABEL_LINE_CHARS - headChars - 3;
+  const at = [...line.matchAll(ADMINISTRATOR_WORD)]
+    .map((match) => match.index)
+    .find((index) => index >= headChars);
+  if (at === undefined) return plainLine(line, LABEL_LINE_CHARS);
+  return `${line.slice(0, headChars)} … ${plainLine(line.slice(at), tailChars)}`;
+}
 
 /**
  * The lines of the block the dialog shows. A long block shows its start and
  * then the lines that run as administrator, so harmless opening lines cannot
- * push them out of sight.
+ * push them out of sight; if some still do not fit, the dialog says so.
  */
 function labelCommandLines(command: string): string[] {
-  const lines = command
-    .split("\n")
-    .map((line) => plainLine(line, LABEL_LINE_CHARS))
-    .filter((line) => line.length > 0);
+  const rawLines = command.split("\n").filter((line) => plainLine(line, 2).length > 0);
+  const lines = rawLines.map(labelLine);
   if (lines.length <= LABEL_COMMAND_LINES) return lines;
+  const administrator = rawLines.map(runsAsAdministrator);
   const shown = new Set<number>();
   for (let index = 0; index < LABEL_LEADING_LINES; index += 1) shown.add(index);
   for (let index = LABEL_LEADING_LINES; index < lines.length; index += 1) {
     if (shown.size >= LABEL_COMMAND_LINES) break;
-    if (RUNS_AS_ADMINISTRATOR.test(lines[index] ?? "")) shown.add(index);
+    if (administrator[index]) shown.add(index);
   }
   for (let index = LABEL_LEADING_LINES; shown.size < LABEL_COMMAND_LINES; index += 1)
     shown.add(index);
@@ -117,8 +144,12 @@ function labelCommandLines(command: string): string[] {
     result.push(lines[index] ?? "");
   });
   const hidden = lines.length - picked.length;
+  const hiddenAdministrator = administrator.filter((is, index) => is && !shown.has(index)).length;
+  const more = `… ${hidden} more ${hidden === 1 ? "line" : "lines"}`;
   result.push(
-    `… ${hidden} more ${hidden === 1 ? "line" : "lines"}. Read the whole command in SpecWithCode first.`,
+    hiddenAdministrator > 0
+      ? `${more}, ${hiddenAdministrator} of them as administrator. Read the whole command in SpecWithCode first.`
+      : `${more}. Read the whole command in SpecWithCode first.`,
   );
   return result;
 }
@@ -193,21 +224,28 @@ OSA
 `;
 }
 
-function wrapperScript(dir: string, nonce: string, tools: ElevatedRunTools): string {
+function wrapperScript(dir: string, tools: ElevatedRunTools): string {
   const sudo = shellQuote(tools.sudo);
+  const cat = shellQuote(tools.cat);
+  const rm = shellQuote(tools.rm);
   return `#!/bin/sh
 # Asks for the administrator password once, runs the block, forgets the ticket.
 dir=${shellQuote(dir)}
-mark() { printf '${markerFormat(nonce)}' "$1"; }
+# The value that signs this run's states leaves the disk before the block starts.
+nonce="$(${cat} "$dir/nonce" 2>/dev/null)"
+${rm} -f "$dir/nonce"
+mark() { printf '\\033]${TERMINAL_ELEVATION_OSC};elevation=%s;%s\\007' "$1" "$nonce"; }
 primed=0
 phase=check
 ask_pid=
+watch_pid=
 cleanup() {
+  [ -n "$watch_pid" ] && kill "$watch_pid" 2>/dev/null
   # Only a ticket this run asked for is dropped.
   [ "$primed" = 1 ] && ${sudo} -k 2>/dev/null
   [ -n "$ask_pid" ] && kill "$ask_pid" 2>/dev/null
-  [ -f "$dir/askpass.pid" ] && kill "$(cat "$dir/askpass.pid")" 2>/dev/null
-  rm -rf "$dir"
+  [ -f "$dir/askpass.pid" ] && kill "$(${cat} "$dir/askpass.pid")" 2>/dev/null
+  ${rm} -rf "$dir"
 }
 stop() {
   if [ "$phase" = prompt ]; then
@@ -237,7 +275,7 @@ if ! ${sudo} -n true 2>/dev/null; then
   ask_pid=
   if [ "$asked" != 0 ]; then
     state=denied
-    [ -f "$dir/answer" ] && state="$(cat "$dir/answer")"
+    [ -f "$dir/answer" ] && state="$(${cat} "$dir/answer")"
     case "$state" in cancelled|timeout|unavailable) ;; *) state=denied ;; esac
     phase=done
     mark "$state"
@@ -246,8 +284,20 @@ if ! ${sudo} -n true 2>/dev/null; then
   primed=1
 fi
 phase=run
+# The shell cannot act on a signal while the block runs, and a kill gives it no
+# chance at all. This watcher outlives it: it ends the block, drops the ticket
+# and removes the folder once this script is gone.
+(
+  trap '' HUP INT
+  while kill -0 "$$" 2>/dev/null; do ${shellQuote(tools.sleep)} 1; done
+  [ -f "$dir/block.pid" ] && kill "$(${cat} "$dir/block.pid")" 2>/dev/null
+  [ "$primed" = 1 ] && ${sudo} -k 2>/dev/null
+  ${rm} -rf "$dir"
+) </dev/null >/dev/null 2>&1 &
+watch_pid=$!
 mark started
-"\${SHELL:-/bin/sh}" -c "$(cat "$dir/block.sh")"
+# The block runs unchanged in the user's shell; the first shell only records its process.
+/bin/sh -c 'echo "$$" > "$1"; shift; exec "$@"' sh "$dir/block.pid" "\${SHELL:-/bin/sh}" -c "$(${cat} "$dir/block.sh")"
 exit $?
 `;
 }
@@ -295,6 +345,7 @@ export async function prepareElevatedRun(input: ElevatedRunInput): Promise<strin
     0o600,
   );
   await write("askpass.sh", askpassScript(dir, tools.osascript), 0o700);
-  await write("run.sh", wrapperScript(dir, nonce, tools), 0o700);
+  await write("nonce", nonce, 0o600);
+  await write("run.sh", wrapperScript(dir, tools), 0o700);
   return `/bin/sh ${shellQuote(NodePath.join(dir, "run.sh"))}`;
 }
