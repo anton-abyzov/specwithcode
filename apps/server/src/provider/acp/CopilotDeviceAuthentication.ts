@@ -1,3 +1,4 @@
+import { CopilotSignInHostPattern } from "@specweave-studio/contracts";
 import * as NodeUtil from "node:util";
 import type { AcpRegistrySettings } from "@specweave-studio/contracts";
 
@@ -17,18 +18,23 @@ export const copilotNodeMissingMessage = (): string =>
   "Copilot CLI runs on Node.js, which this machine does not have. SpecWithCode can install it: use Install Node.js in Settings > Machines or in first-run setup, " +
   SIGN_IN_AGAIN;
 
+/**
+ * Every message that this action fixes names it with these words; the sign-in
+ * step shows the button next to such a message (CopilotSignInHints.tsx).
+ */
+export const COPILOT_INSTALL_ACTION = "Install / update agent for GitHub Copilot";
+const USE_INSTALL = `Use ${COPILOT_INSTALL_ACTION} (here or in Settings > Providers),`;
+
 export const copilotCliNotInstalledMessage = (): string =>
-  "Copilot CLI is not installed or not prepared on this machine. Use Install / update agent for GitHub Copilot in Settings > Providers, " +
-  SIGN_IN_AGAIN;
+  `Copilot CLI is not installed or not prepared on this machine. ${USE_INSTALL} ${SIGN_IN_AGAIN}`;
 
 export const copilotLoginUnrecognizedMessage = (): string =>
-  "This Copilot CLI offers a sign-in command SpecWithCode does not recognize. Use Install / update agent for GitHub Copilot in Settings > Providers, " +
-  SIGN_IN_AGAIN;
+  `This Copilot CLI offers a sign-in command SpecWithCode does not recognize. ${USE_INSTALL} ${SIGN_IN_AGAIN}`;
 
 /** The version found (if any) and whether `login --help` lists `--device-code`. */
 export function copilotCliTooOldMessage(found: string | undefined, hasDeviceCode: boolean): string {
   const needed = `${COPILOT_DEVICE_LOGIN_MIN_VERSION} or newer`;
-  const update = `Use Install / update agent for GitHub Copilot in Settings > Providers to update it, ${SIGN_IN_AGAIN}`;
+  const update = `${USE_INSTALL} ${SIGN_IN_AGAIN}`;
   if (found === undefined)
     return `Could not read which Copilot CLI version is installed. Sign-in needs Copilot CLI ${needed}. ${update}`;
   const major = Number(/^(\d+)\./u.exec(found)?.[1]);
@@ -58,7 +64,7 @@ export function copilotCliNoAnswerMessage(
         : reason.kind === "truncated"
           ? `${program} printed more output than expected`
           : `${program}'s answer could not be read`;
-  return `${what} while SpecWithCode checked it before sign-in. Retry sign-in; if it keeps failing, use Install / update agent for GitHub Copilot in Settings > Providers.`;
+  return `${what} while SpecWithCode checked it before sign-in. Retry sign-in; if it keeps failing, use ${COPILOT_INSTALL_ACTION} (here or in Settings > Providers).`;
 }
 
 /** An npm shim that cannot find Node.js (`env: node: No such file…`, `'node' is not recognized…`). */
@@ -72,18 +78,70 @@ export function copilotOutputShowsNodeMissing(exitCode: number, output: string):
 }
 
 /**
- * Reads `X.Y.Z` from `copilot --version` output. Copilot CLI 1.0.114 ends the
- * line with a period (`GitHub Copilot CLI 1.0.114.`), so sentence punctuation
- * may follow the version; a longer version such as `1.0.114.5` is not read.
+ * Reads `X.Y.Z` from `copilot --version` output. Copilot CLI 1.0.114 prints
+ * `GitHub Copilot CLI 1.0.114.`, so sentence punctuation after the version is
+ * allowed; a pre-release suffix (`1.0.95-preview`) or a fourth part is not.
  */
 export const readCopilotVersion = (output: string): string | undefined =>
-  /(?:^|\s)v?(\d+\.\d+\.\d+)[.,;:)]?(?:\s|$)/u.exec(output)?.[1];
+  /(?:^|[\s(])v?(\d+\.\d+\.\d+)(?=[.,;:)]*(?:\s|$))/mu.exec(output)?.[1];
 
 /**
- * Starts device sign-in against the one enterprise host found among this
- * machine's gh sign-ins, when Copilot's `login --help` lists `--host` and the
- * agent did not choose a host itself.
+ * A GitHub host as a bare lowercase hostname: `github.com`, `company.ghe.com`,
+ * or the same written as an https URL with nothing after the host.
  */
+export function normalizeCopilotHost(value: string | undefined): string | undefined {
+  const text = value?.trim().toLowerCase();
+  if (!text) return undefined;
+  try {
+    const url = new URL(text.includes("://") ? text : `https://${text}`);
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      url.port ||
+      url.pathname !== "/" ||
+      url.search ||
+      url.hash ||
+      !CopilotSignInHostPattern.test(url.hostname)
+    )
+      return undefined;
+    return url.hostname;
+  } catch {
+    return undefined;
+  }
+}
+
+export const copilotHostInvalidMessage = (): string =>
+  "That GitHub host is not valid. Use github.com or an enterprise host such as company.ghe.com, then sign in again.";
+
+/**
+ * The `--host` Copilot device sign-in gets, first match wins: the host picked
+ * in the sign-in step, Copilot's own COPILOT_GH_HOST, then GH_HOST, then the
+ * one enterprise host gh is signed in to. `undefined` leaves the CLI on its
+ * default, github.com; github.com is passed only to override a host variable.
+ */
+export function resolveCopilotLoginHost(input: {
+  readonly picked: string | undefined;
+  readonly environment: NodeJS.ProcessEnv;
+  readonly ghEnterpriseHost: string | undefined;
+}): string | undefined {
+  const fromEnvironment =
+    normalizeCopilotHost(input.environment.COPILOT_GH_HOST) ??
+    normalizeCopilotHost(input.environment.GH_HOST);
+  const host = input.picked ?? fromEnvironment ?? normalizeCopilotHost(input.ghEnterpriseHost);
+  return host === "github.com" && (fromEnvironment ?? "github.com") === "github.com"
+    ? undefined
+    : host;
+}
+
+/**
+ * Starts device sign-in against `host` (see resolveCopilotLoginHost), when
+ * Copilot's `login --help` lists `--host` and the agent did not choose a host
+ * itself.
+ */
+export const supportsCopilotLoginHost = (help: string): boolean =>
+  /(?:^|\s)--host(?:[\s=,]|$)/u.test(help);
+
 export function withCopilotLoginHost(
   args: ReadonlyArray<string>,
   help: string,
@@ -91,7 +149,7 @@ export function withCopilotLoginHost(
 ): ReadonlyArray<string> {
   if (
     host === undefined ||
-    !/(?:^|\s)--host(?:[\s=,]|$)/u.test(help) ||
+    !supportsCopilotLoginHost(help) ||
     args.some((arg) => arg === "--host" || arg.startsWith("--host="))
   )
     return args;

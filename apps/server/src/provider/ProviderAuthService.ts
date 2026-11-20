@@ -50,6 +50,7 @@ export interface ProviderAuthController {
     methodId?: string,
     returnUrl?: string,
     callbackMode?: "server" | "client",
+    host?: string,
   ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
   readonly complete: (
     ownerSessionId: string,
@@ -296,6 +297,7 @@ export const makeProviderAuthService = Effect.gen(function* () {
             input.methodId,
             input.returnUrl,
             input.callbackMode,
+            input.host,
           );
         }),
       );

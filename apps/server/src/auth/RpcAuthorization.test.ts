@@ -1,4 +1,5 @@
 import {
+  AuthAccessWriteScope,
   AuthEnvironmentMaintainScope,
   AuthDiagnosticsReadScope,
   AuthFilesystemReadScope,
@@ -40,6 +41,32 @@ import {
 import * as RpcAuthorization from "./RpcAuthorization.ts";
 
 describe("RPC authorization scopes", () => {
+  it("allows only local owner sessions to select a Copilot sign-in host", () => {
+    const owner = { subject: "desktop-bootstrap", scopes: [AuthProvidersManageScope] } as const;
+    for (const subject of ["desktop-bootstrap", "administrative-bootstrap", "local-cli-owner"]) {
+      expect(RpcAuthorization.canSelectCopilotSignInHost({ ...owner, subject })).toBe(true);
+    }
+    const serviceOwner = {
+      subject: "one-time-token",
+      scopes: [AuthProvidersManageScope, AuthAccessWriteScope],
+    } as const;
+    expect(RpcAuthorization.canSelectCopilotSignInHost(serviceOwner)).toBe(true);
+    expect(RpcAuthorization.canSelectCopilotSignInHost({ ...serviceOwner, boundDevice: {} })).toBe(false);
+    expect(RpcAuthorization.canSelectCopilotSignInHost({ ...owner, scopes: [] })).toBe(false);
+    expect(
+      RpcAuthorization.canSelectCopilotSignInHost({ ...owner, subject: "managed-relay-bootstrap" }),
+    ).toBe(false);
+    expect(
+      RpcAuthorization.canSelectCopilotSignInHost({
+        ...owner,
+        principal: { kind: "coordinator", environmentId: EnvironmentId.make("env-m4") },
+      }),
+    ).toBe(false);
+    expect(
+      RpcAuthorization.canSelectCopilotSignInHost({ ...owner, deviceKey: "jkt:laptop" }),
+    ).toBe(false);
+  });
+
   it("declares exactly one scope for every RPC in the server group", () => {
     expect(new Set(Object.keys(RPC_REQUIRED_SCOPES))).toEqual(new Set(WsRpcGroup.requests.keys()));
   });
