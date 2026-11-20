@@ -31,6 +31,7 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } f
 import { useOpenChat } from "../hooks/useOpenChat";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import {
+  useEnvironment,
   useEnvironmentIds,
   usePrimaryEnvironmentId,
   useUnreachableEnvironmentIds,
@@ -72,12 +73,7 @@ import { paneWords } from "../studio/assistantTerms";
 import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import { currentRemoteWorkerLaunchers } from "../studio/remoteWorkerLaunchers";
 import { useMachineIdentities } from "../studio/machineIdentity";
-import {
-  ActionMachineName,
-  actionMachineFor,
-  onMachineText,
-  threadActionMachineId,
-} from "../studio/actionMachine";
+import { ActionMachineName, actionMachineAt, onMachineText } from "../studio/actionMachine";
 
 /** A system notification still on screen, until the user comes back. */
 // The desktop bridge accepts notification titles up to 256 characters.
@@ -261,11 +257,13 @@ function EnvironmentNotifications({
     presence.current = { ownEnvironmentId, knownEnvironmentIds, unreachableEnvironmentIds };
   }, [ownEnvironmentId, knownEnvironmentIds, unreachableEnvironmentIds]);
   // An alert names the machine to act on when it is not this window's (1427 AC-07).
+  // It names where Open thread goes, this environment, by its own label.
   const identityOf = useMachineIdentities();
-  const identityOfRef = useRef(identityOf);
+  const environmentLabel = useEnvironment(environmentId)?.label;
+  const identityOfRef = useRef({ identityOf, environmentLabel });
   useLayoutEffect(() => {
-    identityOfRef.current = identityOf;
-  }, [identityOf]);
+    identityOfRef.current = { identityOf, environmentLabel };
+  }, [identityOf, environmentLabel]);
   // The shell reducer keeps the thread list and unchanged thread objects
   // stable, so this only rescans when a thread actually changed.
   const threads =
@@ -575,21 +573,18 @@ function EnvironmentNotifications({
             const say = paneWords(
               thread.projectId != null && assistantIds.current.has(thread.projectId),
             );
-            // "Sign-in needed on M5": the thread's machine, when it is not this window's.
-            // A finished thread asks nothing, so its alert names no machine.
+            // "Sign-in needed on M5": the machine Open thread goes to, when it is not
+            // this window's. A finished thread asks nothing, so its alert names no machine.
             const actionMachine =
               kind === "completion"
                 ? null
-                : actionMachineFor(
-                    identityOfRef.current(
-                      threadActionMachineId({
-                        executionMachineId: currentRaw.executionMachineId,
-                        environmentId,
-                      }),
-                      currentRaw.executionMachineLabel,
-                    ),
-                    presence.current.ownEnvironmentId,
-                  );
+                : actionMachineAt({
+                    dispatchEnvironmentId: environmentId,
+                    windowEnvironmentId: presence.current.ownEnvironmentId,
+                    identityOf: identityOfRef.current.identityOf,
+                    labelOf: (id) =>
+                      id === environmentId ? identityOfRef.current.environmentLabel : undefined,
+                  });
             const onActionMachine = (text: string) => onMachineText(text, actionMachine?.name);
             const baseTitle = say(
               kind === "stalled"
