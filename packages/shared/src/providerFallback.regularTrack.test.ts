@@ -254,12 +254,12 @@ describe("regular work never falls back to a Review-track model", () => {
     // Sol is on both built-in tracks: Daily keeps it on the Regular side.
     expect(reviewOnly({ model: "gpt-6.1-sol" })).toBe(false);
     expect(reviewOnly({ model: OPUS })).toBe(false);
-    // The person's own Review track decides which line is held back.
+    // A saved Review order still reserves Muse for review unless Regular work names it.
     const own = reviewOnlyModel({
       ...rule,
       adversarialReview: { reviewers: [{ instanceId: id("codex"), model: "gpt-6-astra" }] },
     });
-    expect(own({ model: "muse-wonder-1.0" })).toBe(false);
+    expect(own({ model: "muse-wonder-1.0" })).toBe(true);
     // Complex names Astra: it stays on the Regular side.
     expect(own({ model: "gpt-6-astra" })).toBe(false);
   });

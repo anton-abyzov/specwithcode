@@ -265,7 +265,7 @@ describe("ModelTracksSettings effort", () => {
     const reviewers = state.update.mock.calls[0]![0].adversarialReview
       .reviewers as ModelSelection[];
     expect(reviewers.map((entry) => entry.model)).toEqual(["gemini-4-neon", "gpt-6.2-sol"]);
-    expect(reviewers[0]?.options).toEqual([{ id: "reasoningEffort", value: "high" }]);
+    expect(reviewers[0]?.options).toBeUndefined();
     expect(reviewers[1]?.options).toEqual([{ id: "reasoningEffort", value: "high" }]);
   });
 
