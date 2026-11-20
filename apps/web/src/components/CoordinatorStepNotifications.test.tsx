@@ -197,15 +197,32 @@ describe("CoordinatorStepNotifications (1427 AC-19)", () => {
     expect(state.sounds).toBe(0);
   });
 
+  it("toasts in a focused window under default settings", async () => {
+    state.focused = true;
+    state.settings = {
+      notificationMode: "off",
+      inAppNotificationsEnabled: false,
+      inputNeededAlertsEnabled: true,
+    };
+    state.list = [step()];
+    await render();
+    expect(state.toasts).toHaveLength(1);
+  });
+
   it("treats toasts turned off in a focused window as handled, never retried", async () => {
     const bridge = vi.fn(async () => true);
     (globalThis.window as { desktopBridge: unknown }).desktopBridge = {
       showThreadNotification: bridge,
     };
     state.focused = true;
-    state.settings = { ...state.settings, inAppNotificationsEnabled: false };
+    state.settings = {
+      notificationMode: "sound",
+      inAppNotificationsEnabled: false,
+      inputNeededAlertsEnabled: false,
+    };
     state.list = [step()];
     await render();
+    expect(state.sounds).toBe(1);
     state.focused = false;
     state.list = [step()];
     await rerender();

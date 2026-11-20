@@ -178,31 +178,34 @@ function ProjectStepNotifications({ project }: { readonly project: EnvironmentPr
         });
         const focused = document.visibilityState === "visible" && document.hasFocus();
         if (focused && (delivery === "post" || presence.ownEnvironmentId === environmentId)) {
-          // Toasts are off here: a deliberate skip, never retried.
-          if (!getClientSettings().inAppNotificationsEnabled) return true;
-          const toastId = toastManager.add({
-            type: "info",
-            title,
-            description: body,
-            data: {
-              hideCopyButton: true,
-              leadingIcon: (
-                <MessagesSquareIcon aria-hidden className="size-4 text-info-foreground" />
-              ),
-            },
-            ...(target
-              ? {
-                  actionProps: {
-                    children: say("Open coordinator", {}),
-                    onClick: () => {
-                      toastManager.close(toastId);
-                      void open(target);
-                    },
-                  },
-                }
-              : {}),
-          });
-          // Only the device the serving machine picked plays the sound, so it plays once.
+          // A step asks for the person, so "Alert when input is needed" shows it too.
+          const { inAppNotificationsEnabled, inputNeededAlertsEnabled } = getClientSettings();
+          const toastId = !(inAppNotificationsEnabled || inputNeededAlertsEnabled === true)
+            ? null
+            : toastManager.add({
+                type: "info",
+                title,
+                description: body,
+                data: {
+                  hideCopyButton: true,
+                  leadingIcon: (
+                    <MessagesSquareIcon aria-hidden className="size-4 text-info-foreground" />
+                  ),
+                },
+                ...(target
+                  ? {
+                      actionProps: {
+                        children: say("Open coordinator", {}),
+                        onClick: () => {
+                          if (toastId !== null) toastManager.close(toastId);
+                          void open(target);
+                        },
+                      },
+                    }
+                  : {}),
+              });
+          // Only the device the serving machine picked plays the sound, so it plays once;
+          // with toasts off it is still handled here, never retried.
           if (delivery === "post") playStepSound();
           return true;
         }
