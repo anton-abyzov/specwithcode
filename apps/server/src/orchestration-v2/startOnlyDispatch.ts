@@ -15,6 +15,7 @@ import type {
   OrchestrationV2RunAttempt,
 } from "@specweave-studio/contracts";
 
+import { latestExecutedRun } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 
@@ -107,8 +108,9 @@ export const unofferedStartOnlyRun = (
 
 /**
  * Whether a server-created dispatch continues a start-only run no provider
- * took: a restart continuation names its run; the fallback, retry, resume and
- * context-recovery continuations continue the thread's latest run.
+ * took. The sources are the runs it names (by field, or by id inside its
+ * message or command id) and, for a recovery, the thread's last run that
+ * ran. A held queued run is never the source, so it cannot hide one.
  */
 export const continuesUnofferedStartOnlyRun = (
   command: {
@@ -116,6 +118,8 @@ export const continuesUnofferedStartOnlyRun = (
     readonly messageId: string;
     readonly creationSource?: string | undefined;
     readonly restartContinuationOfRunId?: string | undefined;
+    readonly usageLimitContinuationOfRunId?: string | undefined;
+    readonly manualContinuationOfRunId?: string | undefined;
   },
   projection: {
     readonly runs: ReadonlyArray<OrchestrationV2Run>;
@@ -124,21 +128,25 @@ export const continuesUnofferedStartOnlyRun = (
   },
 ): boolean => {
   if (command.creationSource !== "server") return false;
+  const named = [
+    command.restartContinuationOfRunId,
+    command.usageLimitContinuationOfRunId,
+    command.manualContinuationOfRunId,
+  ];
   const recovery =
     isServerContinuation(command as Parameters<typeof isServerContinuation>[0]) ||
     [CONTEXT_COMPACT_MESSAGE_PREFIX, CONTEXT_RETRY_MESSAGE_PREFIX].some((prefix) =>
       command.messageId.startsWith(prefix),
     );
-  const continued =
-    command.restartContinuationOfRunId !== undefined
-      ? projection.runs.find((run) => run.id === command.restartContinuationOfRunId)
-      : recovery
-        ? projection.runs.reduce<OrchestrationV2Run | undefined>(
-            (latest, run) => (latest === undefined || run.ordinal > latest.ordinal ? run : latest),
-            undefined,
-          )
-        : undefined;
-  return unofferedStartOnlyRun(continued, projection.providerTurns, projection.attempts);
+  if (!recovery && named.every((id) => id === undefined)) return false;
+  const latest = recovery ? latestExecutedRun(projection.runs) : null;
+  return projection.runs.some(
+    (run) =>
+      (named.includes(run.id) ||
+        run === latest ||
+        (recovery && (command.messageId.includes(run.id) || command.commandId.includes(run.id)))) &&
+      unofferedStartOnlyRun(run, projection.providerTurns, projection.attempts),
+  );
 };
 
 /**

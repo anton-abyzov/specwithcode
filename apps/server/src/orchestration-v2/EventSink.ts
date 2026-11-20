@@ -18,6 +18,7 @@ import {
   ThreadId,
 } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -76,6 +77,12 @@ export class EventSinkStreamError extends Schema.TaggedError<EventSinkStreamErro
       : `Failed to stream orchestration V2 events for thread ${this.threadId}.`;
   }
 }
+
+/** A command's `authorityEndsAt` passed before its transaction could commit; nothing was written. */
+export class CommitAuthorityEnded extends Schema.TaggedError<CommitAuthorityEnded>()(
+  "CommitAuthorityEnded",
+  { authorityEndsAt: Schema.Number },
+) {}
 
 export const EventSinkV2Error = Schema.Union([EventSinkWriteError, EventSinkStreamError]);
 export type EventSinkV2Error = typeof EventSinkV2Error.Type;
@@ -146,6 +153,8 @@ export interface EventSinkV2Shape {
     readonly commandType: string;
     /** Deferred lifecycle decisions must still observe this snapshot at commit. */
     readonly expectedThreadSequence?: number;
+    /** Epoch milliseconds: the transaction rolls back if it is reached at or after this. */
+    readonly authorityEndsAt?: number;
     readonly acceptedAt: DateTime.Utc;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     readonly effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
@@ -260,9 +269,11 @@ const layerBase: Layer.Layer<
     // waits, so a writer that holds the transaction while it waits for the
     // lane is not blocked for long.
     const publishLane = yield* Semaphore.make(1);
-    const commitThenPublish = <A, E, R>(
+    const commitThenPublish = <A, E, R, E2 = never>(
       transaction: Effect.Effect<A, E, R>,
       publish: (committed: A) => Effect.Effect<void>,
+      // The last step before the commit, after every wait: failing rolls everything back.
+      lastCheck: (written: A) => Effect.Effect<void, E2> = () => Effect.void,
     ) =>
       Effect.suspend(() => {
         let holdsLane = false;
@@ -275,7 +286,9 @@ const layerBase: Layer.Layer<
           Effect.uninterruptible,
         );
         return sql
-          .withTransaction(Effect.tap(transaction, () => takeLane))
+          .withTransaction(
+            Effect.tap(transaction, (written) => Effect.andThen(takeLane, lastCheck(written))),
+          )
           .pipe(
             Effect.tap(publish),
             Effect.ensuring(
@@ -935,6 +948,14 @@ const layerBase: Layer.Layer<
             }
             if (result.committed) yield* publishStoredEvents(result.storedEvents);
           }),
+        (written) =>
+          !written.committed || input.authorityEndsAt === undefined
+            ? Effect.void
+            : Effect.flatMap(Clock.currentTimeMillis, (now) =>
+                now >= input.authorityEndsAt!
+                  ? Effect.fail(new CommitAuthorityEnded({ authorityEndsAt: input.authorityEndsAt! }))
+                  : Effect.void,
+              ),
       );
       return {
         receipt: result.receipt,
