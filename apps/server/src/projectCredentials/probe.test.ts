@@ -490,28 +490,33 @@ describe("Cloudflare and npm checks", () => {
   });
 
   // A shell script stands in for the tool.
-  it.skipIf(windowsHost)("hears which sentence a real tool printed and keeps none of it", async () => {
-    const signedIn = await tool(
-      tools,
-      "wrangler",
-      "#!/bin/sh\necho 'You are logged in with an OAuth Token, associated with the email someone@example.com.'\n",
-    );
-    const entry = CREDENTIAL_CATALOG.find((item) => item.id === "cloudflare")!;
-    const options = { cwd: base, env: { PATH: "/usr/bin:/bin" }, timeoutMs: 5000 };
-    const run = await spawnProbe(signedIn, [], { ...options, says: entry.probe!.says });
-    expect(run).toEqual({ exitCode: 0, printed: true, timedOut: false, said: "signedIn" });
-    expect(JSON.stringify(run)).not.toContain("example.com");
-    const signedOut = await tool(
-      tools,
-      "wrangler-out",
-      "#!/bin/sh\necho 'You are not authenticated. Please run `wrangler login`.'\n",
-    );
-    expect((await spawnProbe(signedOut, [], { ...options, says: entry.probe!.says })).said).toBe(
-      "signedOut",
-    );
-    const other = await tool(tools, "wrangler-other", "#!/bin/sh\necho something else\n");
-    expect((await spawnProbe(other, [], { ...options, says: entry.probe!.says })).said).toBeNull();
-  });
+  it.skipIf(windowsHost)(
+    "hears which sentence a real tool printed and keeps none of it",
+    async () => {
+      const signedIn = await tool(
+        tools,
+        "wrangler",
+        "#!/bin/sh\necho 'You are logged in with an OAuth Token, associated with the email someone@example.com.'\n",
+      );
+      const entry = CREDENTIAL_CATALOG.find((item) => item.id === "cloudflare")!;
+      const options = { cwd: base, env: { PATH: "/usr/bin:/bin" }, timeoutMs: 5000 };
+      const run = await spawnProbe(signedIn, [], { ...options, says: entry.probe!.says });
+      expect(run).toEqual({ exitCode: 0, printed: true, timedOut: false, said: "signedIn" });
+      expect(JSON.stringify(run)).not.toContain("example.com");
+      const signedOut = await tool(
+        tools,
+        "wrangler-out",
+        "#!/bin/sh\necho 'You are not authenticated. Please run `wrangler login`.'\n",
+      );
+      expect((await spawnProbe(signedOut, [], { ...options, says: entry.probe!.says })).said).toBe(
+        "signedOut",
+      );
+      const other = await tool(tools, "wrangler-other", "#!/bin/sh\necho something else\n");
+      expect(
+        (await spawnProbe(other, [], { ...options, says: entry.probe!.says })).said,
+      ).toBeNull();
+    },
+  );
 
   it("asks npm who is signed in, by exit code, and takes only its refusal as signed out", async () => {
     await tool(tools, "npm");
@@ -532,28 +537,31 @@ describe("Cloudflare and npm checks", () => {
   });
 
   // A shell script stands in for the tool.
-  it.skipIf(windowsHost)("hears a refusal on a real tool's error output and keeps none of it", async () => {
-    const entry = CREDENTIAL_CATALOG.find((item) => item.id === "npm")!;
-    const options = { cwd: base, env: { PATH: "/usr/bin:/bin" }, timeoutMs: 5000 };
-    const refused = await tool(
-      tools,
-      "npm",
-      "#!/bin/sh\necho 'npm error code ENEEDAUTH' >&2\necho 'npm error need auth for someone' >&2\nexit 1\n",
-    );
-    const run = await spawnProbe(refused, ["whoami"], {
-      ...options,
-      refusal: entry.probe!.refusal!,
-    });
-    expect(run).toEqual({ exitCode: 1, printed: false, timedOut: false, refused: true });
-    const offline = await tool(
-      tools,
-      "npm-offline",
-      "#!/bin/sh\necho 'npm error code ENOTFOUND' >&2\nexit 1\n",
-    );
-    expect(
-      (await spawnProbe(offline, [], { ...options, refusal: entry.probe!.refusal! })).refused,
-    ).toBe(false);
-  });
+  it.skipIf(windowsHost)(
+    "hears a refusal on a real tool's error output and keeps none of it",
+    async () => {
+      const entry = CREDENTIAL_CATALOG.find((item) => item.id === "npm")!;
+      const options = { cwd: base, env: { PATH: "/usr/bin:/bin" }, timeoutMs: 5000 };
+      const refused = await tool(
+        tools,
+        "npm",
+        "#!/bin/sh\necho 'npm error code ENEEDAUTH' >&2\necho 'npm error need auth for someone' >&2\nexit 1\n",
+      );
+      const run = await spawnProbe(refused, ["whoami"], {
+        ...options,
+        refusal: entry.probe!.refusal!,
+      });
+      expect(run).toEqual({ exitCode: 1, printed: false, timedOut: false, refused: true });
+      const offline = await tool(
+        tools,
+        "npm-offline",
+        "#!/bin/sh\necho 'npm error code ENOTFOUND' >&2\nexit 1\n",
+      );
+      expect(
+        (await spawnProbe(offline, [], { ...options, refusal: entry.probe!.refusal! })).refused,
+      ).toBe(false);
+    },
+  );
 });
 
 describe("where the tool is", () => {

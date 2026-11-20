@@ -102,8 +102,7 @@ describe("readManifest", () => {
   it("reports a failed check instead of a missing list", async () => {
     await put(JSON.stringify({ version: 1, credentials: [] }));
     vi.mocked(NodeFSP.lstat).mockImplementation((async (path: string, options?: object) => {
-      if (path === manifestPath())
-        throw Object.assign(new Error("i/o error"), { code: "EIO" });
+      if (path === manifestPath()) throw Object.assign(new Error("i/o error"), { code: "EIO" });
       return actualFSP.lstat(path, options);
     }) as typeof NodeFSP.lstat);
     expect(await readManifest(root)).toMatchObject({ ok: false, problem: /cannot be read/u });
