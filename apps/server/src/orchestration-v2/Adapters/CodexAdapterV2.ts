@@ -995,6 +995,8 @@ function describeCodexGoal(goal: OrchestrationV2ProviderGoal): string {
  * request has its own 10-second bound.
  */
 const STOP_FOREGROUND_BUDGET_MS = 30_000;
+/** How many terminals of ended turns a session remembers before holding for the oldest. */
+const FORGOTTEN_TERMINALS_CAP = 200;
 const CODEX_GOAL_CONTINUATION_GRACE = "5 seconds";
 
 const providerTurnsForThread = (
@@ -2115,7 +2117,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         // The folder-change holds of such Stops, by native turn: its completion releases them.
         // Terminals of turns that ended (failed or interrupted) while their commands were
         // tracked: a turn's end is no proof its terminal ended, so a Stop whose lineage the
-        // turn belongs to still ends them. The most recent only.
+        // turn belongs to still ends them. Past the cap the oldest is not dropped: its thread
+        // holds the folder change until Codex confirms that terminal ended.
         const forgottenTerminals: Array<{
           readonly context: ActiveCodexTurnContext;
           readonly processId: string;
@@ -2583,6 +2586,50 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   ),
             ),
           );
+
+        /** Holds the folder change of the terminal's thread until Codex confirms it ended. */
+        const holdForgottenTerminal = (forgotten: (typeof forgottenTerminals)[number]) =>
+          Effect.gen(function* () {
+            const appThreadId = forgotten.context.providerThread.appThreadId;
+            if (appThreadId === null) return;
+            const nativeThreadId = yield* getNativeThreadId(forgotten.context.providerThread).pipe(
+              Effect.option,
+            );
+            holdFailedStopTeardown(appThreadId, () =>
+              Option.isNone(nativeThreadId)
+                ? Promise.resolve(false)
+                : Effect.runPromise(
+                    confirmBackgroundTerminalEnded(nativeThreadId.value, forgotten.processId),
+                  ),
+            );
+          });
+        /**
+         * Ends the terminals of ended turns that `matches` claims (a Stop's own turns), at
+         * once; one Codex cannot confirm ended holds the folder change until it does.
+         */
+        const endForgottenTerminals = (matches: (context: ActiveCodexTurnContext) => boolean) =>
+          Effect.gen(function* () {
+            const claimed = forgottenTerminals.filter((forgotten) => matches(forgotten.context));
+            if (claimed.length === 0) return;
+            for (const forgotten of claimed) {
+              forgottenTerminals.splice(forgottenTerminals.indexOf(forgotten), 1);
+            }
+            yield* Effect.forEach(
+              claimed,
+              (forgotten) =>
+                Effect.gen(function* () {
+                  const nativeThreadId = yield* getNativeThreadId(
+                    forgotten.context.providerThread,
+                  ).pipe(Effect.option);
+                  if (Option.isNone(nativeThreadId)) return yield* holdForgottenTerminal(forgotten);
+                  yield* terminateBackgroundTerminal(
+                    nativeThreadId.value,
+                    forgotten.processId,
+                  ).pipe(Effect.catchCause(() => holdForgottenTerminal(forgotten)));
+                }),
+              { concurrency: "unbounded", discard: true },
+            );
+          });
 
         /**
          * Yielded exec cells can start MCP / dynamic tools that never receive
@@ -6117,7 +6164,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   ?.values() ?? []) {
                   if (item.processId === undefined) continue;
                   forgottenTerminals.push({ context: input.context, processId: item.processId });
-                  if (forgottenTerminals.length > 200) forgottenTerminals.shift();
+                  if (forgottenTerminals.length > FORGOTTEN_TERMINALS_CAP) {
+                    yield* holdForgottenTerminal(forgottenTerminals.shift()!);
+                  }
                 }
                 yield* Ref.update(runningCommandItemsByTurn, (current) => {
                   if (!current.has(input.nativeTurnId)) {
@@ -7062,6 +7111,21 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 ),
               ];
               if (interruptTargetContexts.length === 0) {
+                // The turn ended (failed) before this Stop arrived, its terminals tracked:
+                // they are ended now, with its children's.
+                const endedRoots = forgottenTerminals
+                  .map((forgotten) => forgotten.context)
+                  .filter(
+                    (context) =>
+                      context.providerTurnId === turnInput.providerTurnId ||
+                      (turnInput.requestRuntimeRestart === true &&
+                        context.providerThread.id === turnInput.providerThread.id),
+                  );
+                yield* endForgottenTerminals((context) =>
+                  endedRoots.some(
+                    (root) => context === root || isDescendantCodexTurn(context, root),
+                  ),
+                );
                 // Stop on a settled turn this process retains nothing for
                 // (released, restarted, or every command already reported).
                 if (turnInput.requestRuntimeRestart === true) return;

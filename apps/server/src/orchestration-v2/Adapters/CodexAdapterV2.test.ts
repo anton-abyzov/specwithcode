@@ -5975,6 +5975,146 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
+  it.effect("ends the terminal of a turn that failed before its queued Stop arrived", () =>
+    Effect.gen(function* () {
+      const terminations: unknown[] = [];
+      const transcript = makeCodexReplayTranscript({
+        scenario: "failed-root-before-stop",
+        entries: [
+          ...backgroundExecTranscript.entries.slice(0, -3),
+          {
+            type: "emit_inbound",
+            afterMs: 500,
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: BG_NATIVE_THREAD,
+                turn: makeCodexReplayTurn({ id: BG_NATIVE_TURN, status: "failed" }),
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            frame: {
+              id: 4,
+              method: "thread/backgroundTerminals/terminate",
+              params: { threadId: BG_NATIVE_THREAD, processId: "4242" },
+            },
+          },
+          { type: "emit_inbound", frame: { id: 4, result: { terminated: true } } },
+        ],
+      });
+      const harness = yield* makeCodexReplayHarness(
+        transcript,
+        () => Effect.void,
+        (method, params) =>
+          Effect.sync(() => {
+            if (method === "thread/backgroundTerminals/terminate") terminations.push(params);
+          }),
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("failed-root-before-stop"),
+          text: BG_PROMPT,
+        }),
+      );
+      yield* awaitUntil(
+        () =>
+          harness.events.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "command_execution" &&
+              event.turnItem.status === "running",
+          ),
+        "root terminal 4242 is tracked",
+      );
+      const providerTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+        driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+        nativeTurnId: BG_NATIVE_TURN,
+      });
+      // Stop was pressed while the turn ran; it reaches the adapter after the failure.
+      yield* TestClock.adjust("1 second");
+      yield* awaitUntil(() => harness.terminalEvents().length === 1, "root turn failed");
+      assert.equal(harness.terminalEvents()[0]?.status, "failed");
+      const stop = yield* harness.runtime
+        .interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId,
+          requestRuntimeRestart: true,
+        })
+        .pipe(Effect.exit);
+      assert.equal(stop._tag, "Success");
+      // The failed turn's terminal is ended by the Stop that arrived after it.
+      assert.deepEqual(terminations, [{ threadId: BG_NATIVE_THREAD, processId: "4242" }]);
+      assert.isFalse(stopTeardownPending(harness.providerThread.appThreadId!));
+      assert.isFalse(
+        yield* harness.runtime.hasPendingBackgroundWorkForThread!(harness.providerThread),
+      );
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect("holds the folder change for a terminal the ended-turn history could not keep", () =>
+    Effect.gen(function* () {
+      // A turn fails with more tracked terminals than the history keeps.
+      const transcript = makeCodexReplayTranscript({
+        scenario: "ended-turn-history-overflow",
+        entries: [
+          ...backgroundExecTranscript.entries.slice(0, -3),
+          ...Array.from({ length: 200 }, (_, index) => ({
+            type: "emit_inbound" as const,
+            frame: {
+              method: "item/started",
+              params: {
+                item: {
+                  ...backgroundCommandItem("inProgress"),
+                  id: `extra-exec-${index}`,
+                  processId: String(5000 + index),
+                },
+                threadId: BG_NATIVE_THREAD,
+                turnId: BG_NATIVE_TURN,
+                startedAtMs: 1782622440700,
+              },
+            },
+          })),
+          {
+            type: "emit_inbound",
+            afterMs: 500,
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: BG_NATIVE_THREAD,
+                turn: makeCodexReplayTurn({ id: BG_NATIVE_TURN, status: "failed" }),
+              },
+            },
+          },
+        ],
+      });
+      const harness = yield* makeCodexReplayHarness(transcript);
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("ended-turn-history-overflow"),
+          text: BG_PROMPT,
+        }),
+      );
+      const appThreadId = harness.providerThread.appThreadId!;
+      assert.isFalse(stopTeardownFailed(appThreadId));
+      yield* TestClock.adjust("1 second");
+      yield* awaitUntil(() => harness.terminalEvents().length === 1, "turn failed");
+      // The 201st terminal pushes the oldest (4242) out of the history: it is not dropped
+      // silently, the thread holds the folder change until Codex confirms it ended.
+      yield* awaitUntil(
+        () => stopTeardownFailed(appThreadId),
+        "hold for the terminal past the cap",
+      );
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
   it.effect("ends the terminal of a child that failed while a failed Stop ran", () =>
     Effect.gen(function* () {
       const terminationRequested = yield* Deferred.make<void>();
