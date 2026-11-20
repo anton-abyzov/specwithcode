@@ -104,6 +104,14 @@ function ProjectStepNotifications({ project }: { readonly project: EnvironmentPr
   // skipped too, so a slow delivery is not started twice.
   const raised = useRef(new Set<string>());
   const inFlight = useRef(new Set<string>());
+  // An unmounted notifier shows nothing; the step stays unhandled for the next one.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     const busy = new Set([...raised.current, ...inFlight.current]);
@@ -129,7 +137,7 @@ function ProjectStepNotifications({ project }: { readonly project: EnvironmentPr
 
       async function deliver(): Promise<boolean> {
         const { project: current, tx: say, identityOf: name, openChat: open } = latest.current;
-        if (!isNotificationOwner() || !notificationsConnected()) return false;
+        if (!mounted.current || !isNotificationOwner() || !notificationsConnected()) return false;
         // A step is a request for the person: every level but "none" lets it through.
         if (
           !projectAlertAllowed(projectNotificationLevel(current), {
@@ -154,6 +162,7 @@ function ProjectStepNotifications({ project }: { readonly project: EnvironmentPr
         // The serving machine picks the one device that pops it up and plays it;
         // a focused window on the receiving machine shows it as a toast.
         const read = await readNotificationTarget(environmentId);
+        if (!mounted.current) return false;
         const { presence } = latest.current;
         const delivery = decideNotificationDelivery({
           read,
@@ -169,7 +178,8 @@ function ProjectStepNotifications({ project }: { readonly project: EnvironmentPr
         });
         const focused = document.visibilityState === "visible" && document.hasFocus();
         if (focused && (delivery === "post" || presence.ownEnvironmentId === environmentId)) {
-          if (!getClientSettings().inAppNotificationsEnabled) return false;
+          // Toasts are off here: a deliberate skip, never retried.
+          if (!getClientSettings().inAppNotificationsEnabled) return true;
           const toastId = toastManager.add({
             type: "info",
             title,
@@ -192,7 +202,8 @@ function ProjectStepNotifications({ project }: { readonly project: EnvironmentPr
                 }
               : {}),
           });
-          playStepSound();
+          // Only the device the serving machine picked plays the sound, so it plays once.
+          if (delivery === "post") playStepSound();
           return true;
         }
         // Another device shows it, or it only badges: handled, never retried.

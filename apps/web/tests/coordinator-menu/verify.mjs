@@ -263,7 +263,7 @@ try {
       );
       NodeAssert.equal(
         (await problem.locator(".sws-coordinator-message-ref").textContent()).trim(),
-        "Thread on M5 · Release notes · waiting",
+        "Thread on M5 · Release notes · waiting when sent",
       );
       const asked = messages.locator(
         '[data-coordinator-message="request"][data-direction="outgoing"]',

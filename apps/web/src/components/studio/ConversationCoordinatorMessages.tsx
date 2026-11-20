@@ -14,10 +14,12 @@ import {
   coordinatorMessageRoots,
   coordinatorMessageRow,
   placeOutgoingMessages,
+  repliesTo,
   rowMessages,
 } from "../../studio/coordinatorMessages";
 import { useCoordinatorMessages } from "../../studio/useCoordinatorMessages";
 import { formatShortTimestamp } from "../../timestampFormat";
+import { viewerIso } from "../../viewerDate";
 import ChatMarkdown from "../ChatMarkdown";
 import { threadRelationshipStatusLabel } from "../chat/ThreadRelationshipIcon";
 import { Button } from "../ui/button";
@@ -84,7 +86,7 @@ export function useConversationCoordinatorMessages(
     };
   }, [statusKey]);
   const card = useMemo<CoordinatorMessageCardProps>(
-    // Every message has its own row in the conversation, so replies are not nested there.
+    // Every posted message has its own row in the conversation; placement nests the others.
     () => ({
       all: list,
       onOpenThread,
@@ -102,7 +104,10 @@ export function useConversationCoordinatorMessages(
 /**
  * Where the shown rows put messages: a posted message's card replaces its row
  * (one whose record is gone keeps its plain row), and each message this machine
- * sent sits under the reply of the turn that sent it.
+ * sent sits under the reply of the turn that sent it, with the answers no row shows
+ * (quiet, held or arriving) under it. A message no row stands for
+ * shows at the end, unless it is older than the first shown row while earlier
+ * rows are hidden: it shows once they are.
  */
 export function usePeerMessagePlacement(
   peer: {
@@ -110,9 +115,14 @@ export function usePeerMessagePlacement(
     readonly card: CoordinatorMessageCardProps;
   },
   rows: readonly {
-    readonly message: { readonly id: string; readonly runId?: string | null | undefined };
+    readonly message: {
+      readonly id: string;
+      readonly runId?: string | null | undefined;
+      readonly createdAt?: Parameters<typeof viewerIso>[0];
+    };
   }[],
   firstShown: number,
+  moreHistory = false,
 ) {
   const { byId } = peer;
   const { all } = peer.card;
@@ -124,10 +134,21 @@ export function usePeerMessagePlacement(
       const found = at === null ? [] : rowMessages(at, byId, all);
       if (found.length > 0) cards.set(message.id, found);
     }
-    const outgoing = placeOutgoingMessages(
+    // Every loaded row, so a message sent by a turn above the window stays with that turn.
+    const placed = placeOutgoingMessages(
       all,
-      shown.map((message) => ({ id: message.id, runId: message.runId ?? null })),
+      rows.map(({ message }) => ({ id: message.id, runId: message.runId ?? null })),
     );
+    const firstAt = Date.parse(viewerIso(shown[0]?.createdAt) ?? "");
+    const earlier =
+      (firstShown > 0 || moreHistory) && Number.isFinite(firstAt)
+        ? (message: CoordinatorMessageView) => message.receivedAt < firstAt
+        : () => false;
+    const shownIds = new Set(shown.map((message) => message.id));
+    const outgoing = {
+      byRow: new Map([...placed.byRow].filter(([rowId]) => shownIds.has(rowId))),
+      rest: placed.rest.filter((message) => !earlier(message)),
+    };
     // Incoming messages no row stands for, shown or above the window (quiet, held or not
     // yet posted), so none is lost from the conversation.
     const carded = new Set(
@@ -136,11 +157,29 @@ export function usePeerMessagePlacement(
         return at === null ? [] : rowMessages(at, byId, all).map((each) => each.id);
       }),
     );
+    const nests = (reply: CoordinatorMessageView) =>
+      reply.direction === "incoming" && !carded.has(reply.id);
+    // Answers nest under the message they answer, wherever it sits, so each shows once.
+    const nested = new Set(
+      [...[...placed.byRow.values()].flat(), ...placed.rest].flatMap((sent) =>
+        repliesTo(sent, all)
+          .filter(nests)
+          .map((reply) => reply.id),
+      ),
+    );
     const incomingRest = all
-      .filter((message) => message.direction === "incoming" && !carded.has(message.id))
+      .filter(
+        (message) =>
+          message.direction === "incoming" &&
+          !carded.has(message.id) &&
+          !nested.has(message.id) &&
+          !earlier(message),
+      )
       .toSorted((a, b) => a.receivedAt - b.receivedAt);
-    return { cards, outgoing, incomingRest };
-  }, [rows, firstShown, byId, all]);
+    // Incoming messages never nest our replies here: those sit under the turn that sent them.
+    const card = { ...peer.card, nestReplies: nests };
+    return { cards, outgoing, incomingRest, card };
+  }, [rows, firstShown, moreHistory, byId, all, peer.card]);
 }
 
 /** The filter's switch, shown once a message was sent or received here. */

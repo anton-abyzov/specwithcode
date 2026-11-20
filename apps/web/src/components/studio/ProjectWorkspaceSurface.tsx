@@ -1971,6 +1971,9 @@ export function ProjectWorkspaceSurface({
                     (thread) => thread.environmentId === project.environmentId,
                   )}
                   remoteWorkerThreads={coordinatorRemoteWorkerThreads}
+                  peerThreads={workers.filter(
+                    (thread) => thread.environmentId !== project.environmentId,
+                  )}
                   environmentThreads={linkTargets}
                   onOpenThread={openThread}
                   canChange={canWriteSourceControl && connected}

@@ -38,10 +38,10 @@ export type CoordinatorMessageCardProps = {
   /** A referenced thread's status now, when this machine sees it; else its status at send. */
   readonly threadStatus?: ((threadId: string, environmentId: string) => string | null) | undefined;
   /**
-   * Show replies under the message they answer (the default). Off where every message has its
-   * own row in time order, so a reply shows once.
+   * Show replies under the message they answer (the default). A function nests only the replies
+   * it accepts, where the others have their own row in time order, so a reply shows once.
    */
-  readonly nestReplies?: boolean | undefined;
+  readonly nestReplies?: boolean | ((reply: CoordinatorMessageView) => boolean) | undefined;
 };
 
 function MachineName({ environmentId }: { readonly environmentId: string }) {
@@ -164,6 +164,15 @@ function OpenPeer({
   );
 }
 
+function nestedReplies(
+  message: CoordinatorMessageView,
+  { all, nestReplies = true }: CoordinatorMessageCardProps,
+): CoordinatorMessageView[] {
+  if (nestReplies === false) return [];
+  const replies = repliesTo(message, all);
+  return nestReplies === true ? replies : replies.filter(nestReplies);
+}
+
 /** One incoming message: header, then its subject, text, step, refs and replies. */
 function IncomingMessage(
   props: CoordinatorMessageCardProps & { readonly message: CoordinatorMessageView },
@@ -172,7 +181,7 @@ function IncomingMessage(
   const tx = useTx();
   const nickname = useMachineNicknames();
   const machine = <MachineName environmentId={message.peerEnvironmentId} />;
-  const replies = props.nestReplies === false ? [] : repliesTo(message, all);
+  const replies = nestedReplies(message, props);
   return (
     <details
       className="sws-coordinator-message"
@@ -243,7 +252,7 @@ function OutgoingMessage(
   const { message, all } = props;
   const tx = useTx();
   const machine = <MachineName environmentId={message.peerEnvironmentId} />;
-  const replies = props.nested || props.nestReplies === false ? [] : repliesTo(message, all);
+  const replies = props.nested ? [] : nestedReplies(message, props);
   return (
     <div
       className="sws-coordinator-message-line"

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 vi.mock("../../studio/useCoordinatorMessages", () => ({ useCoordinatorMessages: () => ({}) }));
 
 import { usePeerMessagePlacement } from "./ConversationCoordinatorMessages";
+import { CoordinatorOutgoingMessages } from "./CoordinatorMessageCard";
 
 const id = (letter: string) => `cm-${letter.repeat(40)}`;
 
@@ -28,8 +29,9 @@ function message(letter: string, over: Partial<CoordinatorMessageView> = {}) {
 
 function place(
   all: CoordinatorMessageView[],
-  rows: { message: { id: string; runId?: string | null } }[],
+  rows: { message: { id: string; runId?: string | null; createdAt?: string } }[],
   firstShown: number,
+  moreHistory = false,
 ) {
   let result: ReturnType<typeof usePeerMessagePlacement> | undefined;
   function Probe() {
@@ -37,6 +39,7 @@ function place(
       { byId: new Map(all.map((each) => [each.id, each])), card: { all } },
       rows,
       firstShown,
+      moreHistory,
     );
     return null;
   }
@@ -57,5 +60,31 @@ describe("usePeerMessagePlacement (1427 AC-18)", () => {
     const { cards, incomingRest } = place([posted, above, quiet, sent], rows, 1);
     expect([...cards.keys()]).toEqual([`coordinator-message:${posted.id}:1`]);
     expect(incomingRest.map((each) => each.id)).toEqual([quiet.id]);
+  });
+
+  it("keeps a message sent by a hidden turn out of the end, and older ones while history loads", () => {
+    const hidden = message("a", { direction: "outgoing", sourceRunId: "run-1" });
+    const unplaced = message("b", { direction: "outgoing", receivedAt: 50 });
+    const late = message("c", { direction: "outgoing", receivedAt: 5_000 });
+    const rows = [
+      { message: { id: "row-1", runId: "run-1", createdAt: new Date(10).toISOString() } },
+      { message: { id: "row-2", runId: "run-2", createdAt: new Date(1_000).toISOString() } },
+    ];
+    const { outgoing } = place([hidden, unplaced, late], rows, 1);
+    expect([...outgoing.byRow.keys()]).toEqual([]);
+    expect(outgoing.rest.map((each) => each.id)).toEqual([late.id]);
+    const loading = place([unplaced, late], rows.slice(1), 0, true);
+    expect(loading.outgoing.rest.map((each) => each.id)).toEqual([late.id]);
+  });
+
+  it("nests a quiet answer under the message it answers, once", () => {
+    const sent = message("a", { direction: "outgoing", sourceRunId: "run-1" });
+    const answer = message("b", { kind: "reply", replyTo: sent.externalId, state: "quiet" });
+    const rows = [{ message: { id: "row-1", runId: "run-1" } }];
+    const { outgoing, incomingRest, card } = place([sent, answer], rows, 0);
+    expect(outgoing.byRow.get("row-1")?.map((each) => each.id)).toEqual([sent.id]);
+    expect(incomingRest).toEqual([]);
+    const html = renderToStaticMarkup(<CoordinatorOutgoingMessages {...card} messages={[sent]} />);
+    expect(html.match(/data-direction="incoming"/g)).toHaveLength(1);
   });
 });

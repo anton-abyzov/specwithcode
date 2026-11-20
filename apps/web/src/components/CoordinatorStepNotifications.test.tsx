@@ -85,7 +85,7 @@ function step(over: Partial<CoordinatorMessageView> = {}): CoordinatorMessageVie
     externalId: "ext-1",
     direction: "incoming",
     peerEnvironmentId: "env-m5",
-    kind: "question",
+    kind: "request",
     subject: "Sign in",
     text: "",
     userStep: { text: "sign in to GitHub", environmentId: "env-m5" },
@@ -186,6 +186,31 @@ describe("CoordinatorStepNotifications (1427 AC-19)", () => {
     expect(state.toasts).toHaveLength(1);
     expect(JSON.stringify(state.toasts[0])).toContain("m5");
     expect(state.sounds).toBe(1);
+  });
+
+  it("toasts without a sound in a focused window the serving machine did not pick", async () => {
+    state.focused = true;
+    state.delivery = "skip";
+    state.list = [step()];
+    await render();
+    expect(state.toasts).toHaveLength(1);
+    expect(state.sounds).toBe(0);
+  });
+
+  it("treats toasts turned off in a focused window as handled, never retried", async () => {
+    const bridge = vi.fn(async () => true);
+    (globalThis.window as { desktopBridge: unknown }).desktopBridge = {
+      showThreadNotification: bridge,
+    };
+    state.focused = true;
+    state.settings = { ...state.settings, inAppNotificationsEnabled: false };
+    state.list = [step()];
+    await render();
+    state.focused = false;
+    state.list = [step()];
+    await rerender();
+    expect(state.toasts).toHaveLength(0);
+    expect(bridge).not.toHaveBeenCalled();
   });
 
   it("lets 'Alert when input is needed' raise a step when desktop alerts are off", async () => {

@@ -224,6 +224,7 @@ export function CoordinatorConversation({
   coordinatorId,
   workers,
   remoteWorkerThreads = EMPTY_REMOTE_WORKER_THREADS,
+  peerThreads = EMPTY_REMOTE_WORKER_THREADS,
   environmentThreads,
   onOpenThread,
   canChange,
@@ -245,6 +246,8 @@ export function CoordinatorConversation({
   workers: readonly EnvironmentThreadShell[];
   /** This project's worker threads on other machines, so their access requests show here too. */
   remoteWorkerThreads?: readonly EnvironmentThreadShell[];
+  /** Linked machines' threads, so a message's chips show their live status. */
+  peerThreads?: readonly EnvironmentThreadShell[];
   /** Every thread of the project's environment, live or deleted, that a link may name. */
   environmentThreads: readonly ThreadLinkTarget[];
   onOpenThread: (id: ThreadId, environmentId?: EnvironmentId) => void;
@@ -563,6 +566,7 @@ export function CoordinatorConversation({
   const peer = useConversationCoordinatorMessages(project, onOpenThread, timestampFormat, [
     ...workers,
     ...remoteWorkerThreads,
+    ...peerThreads,
   ]);
   const [peerOnly, setPeerOnly] = useState(false);
   useLiveRefresh(remote.refresh, {
@@ -678,11 +682,8 @@ export function CoordinatorConversation({
       ),
     [remote.workers, rows, firstShown, coordinatorId],
   );
-  const {
-    outgoing,
-    cards: peerCards,
-    incomingRest,
-  } = usePeerMessagePlacement(peer, rows, firstShown);
+  const placement = usePeerMessagePlacement(peer, rows, firstShown, history.hasMoreHistory);
+  const { cards: peerCards, outgoing, incomingRest, card: peerCard } = placement;
   // Where the reader was, measured from the end, while older messages are on their
   // way, and how many messages the window held when they were asked for.
   const keptPlace = useRef<{ fromEnd: number; windowSize: number } | null>(null);
@@ -853,7 +854,7 @@ export function CoordinatorConversation({
               </>
             ) : null}
             {row.decision?.folded ? null : peerCards.has(row.message.id) ? (
-              <CoordinatorMessageCard {...peer.card} messages={peerCards.get(row.message.id)!} />
+              <CoordinatorMessageCard {...peerCard} messages={peerCards.get(row.message.id)!} />
             ) : (
               <CheckedWakeLine
                 group={checkedGroups?.get(row.message.id)}
@@ -917,13 +918,13 @@ export function CoordinatorConversation({
               onOpenThread={onOpenThread}
             />
             <CoordinatorOutgoingMessages
-              {...peer.card}
+              {...peerCard}
               messages={outgoing.byRow.get(row.message.id) ?? []}
             />
           </Fragment>
         ))}
-        {peerOnly ? null : <CoordinatorOutgoingMessages {...peer.card} messages={outgoing.rest} />}
-        {peerOnly ? null : <CoordinatorMessageCard {...peer.card} messages={incomingRest} />}
+        {peerOnly ? null : <CoordinatorOutgoingMessages {...peerCard} messages={outgoing.rest} />}
+        {peerOnly ? null : <CoordinatorMessageCard {...peerCard} messages={incomingRest} />}
         <RemoteWorkerCardList workers={remotePlacement.live} onOpenThread={onOpenThread} />
         <CoordinatorAccessWaiting
           entries={accessWaiting}
