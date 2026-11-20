@@ -826,7 +826,7 @@ it.effect(
             shotCalls += 1;
             if (shotCalls === 2) {
               markSecondShotStarted();
-              yield* Effect.never;
+              return yield* Effect.never;
             }
           }),
       });
