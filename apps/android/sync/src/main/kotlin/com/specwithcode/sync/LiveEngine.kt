@@ -415,6 +415,7 @@ class LiveEngine(
                             is ServerConfigStreamItem.Snapshot -> {
                                 if (item.config.environment.environmentId != entry.environmentId) continue
                                 entry.config = item.config
+                                entry.settingsWritable = settingsWritable(entry, entry.connection.routeOf(socket))
                             }
                             is ServerConfigStreamItem.SettingsUpdated -> {
                                 entry.config = entry.config?.copy(settings = item.settings)
