@@ -39,8 +39,9 @@ export function sourceMachine(
 export function senderWithMachine(
   thread: (Parameters<typeof threadMachineSuffix>[0] & { readonly title: string }) | undefined,
   coordinatorEnvironmentId: string,
+  name: (environmentId: string, fallback?: string | null) => string = knownName,
 ): string | null {
   if (!thread) return null;
-  const machine = threadMachineSuffix(thread, coordinatorEnvironmentId, knownName);
+  const machine = threadMachineSuffix(thread, coordinatorEnvironmentId, name);
   return machine && thread.title.trim() ? `${thread.title.trim()} · ${machine}` : thread.title;
 }
